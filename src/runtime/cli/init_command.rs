@@ -8,7 +8,6 @@ use bun_core::{self as bun, Environment, Global, Output, env_var, fmt as bun_fmt
 use bun_core::{MutableString, ZStr, strings};
 use bun_js_printer as js_printer;
 use bun_parsers::json;
-use bun_paths::{self, path_buffer_pool};
 use bun_resolver::fs as Fs;
 use bun_sys::{self, Fd};
 
@@ -869,17 +868,18 @@ impl InitCommand {
                     Output::flush();
                 }
 
-                if !fields.entry_point.is_empty()
+                let entry_point = bun_paths::from_portable(&fields.entry_point);
+                if !entry_point.is_empty()
                     && is_safe_entry_point_path(&fields.entry_point)
-                    && !exists(&fields.entry_point)
+                    && !exists(&entry_point)
                 {
-                    if let Some(dirname) = bun_core::dirname(&fields.entry_point) {
+                    if let Some(dirname) = bun_paths::dirname(&entry_point) {
                         if dirname != b"." {
                             let _ = bun_sys::Dir::cwd().make_path(dirname);
                         }
                     }
 
-                    let mut ep_z = fields.entry_point.clone();
+                    let mut ep_z = entry_point.into_owned();
                     ep_z.push(0);
                     let ep_zstr = ZStr::from_slice_with_nul(&ep_z[..]);
                     // SAFETY: ep_z[len-1] == 0 written above
@@ -993,7 +993,7 @@ impl Assets {
 
     fn create_new(filename: &ZStr, contents: &[u8]) -> Result<(), Error> {
         // Create parent dirs then open.
-        if let Some(dir) = bun_core::dirname(filename.as_bytes()) {
+        if let Some(dir) = bun_paths::dirname(filename.as_bytes()) {
             if !dir.is_empty() && dir != b"." {
                 let _ = bun_sys::Dir::cwd().make_path(dir);
             }
@@ -1466,13 +1466,11 @@ impl Template {
             return false;
         }
 
-        let mut pathbuffer = path_buffer_pool::get();
-
         let Some(path) = env_var::PATH.get() else {
             return false;
         };
         let top_level_dir = Fs::FileSystem::get().top_level_dir();
-        bun_which::which(&mut *pathbuffer, path, top_level_dir, b"claude").is_some()
+        bun_which::which(path, top_level_dir, b"claude").is_some()
     }
 
     fn create_agent_rule() {
@@ -1582,29 +1580,8 @@ impl Template {
         #[cfg(windows)]
         {
             if let Some(user) = bun_core::getenv_z_any_case(bun_core::zstr!("USER")) {
-                let mut pathbuf = path_buffer_pool::get();
-                // Fallible on overflow, do not panic.
-                let path: &ZStr = {
-                    use std::io::Write as _;
-                    let total = pathbuf.len();
-                    let mut cursor: &mut [u8] = &mut pathbuf[..];
-                    if cursor.write_all(b"C:\\Users\\").is_err()
-                        || cursor.write_all(user).is_err()
-                        || cursor
-                            .write_all(b"\\AppData\\Local\\Programs\\Cursor\\Cursor.exe")
-                            .is_err()
-                    {
-                        return false;
-                    }
-                    let remaining = cursor.len();
-                    let written = total - remaining;
-                    if written >= total {
-                        return false;
-                    }
-                    ZStr::nul_terminate(&mut pathbuf, written)
-                };
-
-                if bun_sys::exists(path.as_bytes()) {
+                let exe = br"AppData\Local\Programs\Cursor\Cursor.exe";
+                if bun_sys::exists_z(&bun_paths::Path::from_parts(&[br"C:\Users", user, exe])) {
                     return true;
                 }
             }
@@ -1937,7 +1914,7 @@ fn is_type_script_entry_point(entry_point: &[u8]) -> bool {
 /// (absolute paths or any `..` segment), so `bun init` only creates files
 /// inside the current working directory.
 fn is_safe_entry_point_path(path: &[u8]) -> bool {
-    !bun_paths::is_absolute_loose(path) && !strings::split_any(path, b"/\\").any(|seg| seg == b"..")
+    !bun_paths::portable::is_absolute(path) && !bun_paths::portable::has_dot_dot(path)
 }
 
 #[inline]

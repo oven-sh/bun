@@ -691,6 +691,7 @@ fn typescript_file_names_end_in_typescript_extensions() {
 fn join_unrooted_never_replaces_base() {
     assert_eq!(join_unrooted(b"/p", b"c:/x"), b"/p/c:/x");
     assert_eq!(join_unrooted(b"/p", b"/x"), b"/p/x");
+    assert_eq!(join_unrooted(b"/", b"/x"), b"/x");
     assert_eq!(join_unrooted(b"/p", b"a/../b"), b"/p/b");
     assert_eq!(join(b"/p", b"c:/x"), b"/c:/x");
 }

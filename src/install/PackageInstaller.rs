@@ -1,11 +1,11 @@
 use core::sync::atomic::Ordering;
 
+use crate::resolvers::folder_resolver::is_whole_file_system;
 use bun_collections::{ArrayHashMap, DynamicBitSet, StringHashMap};
 use bun_core::fmt::PathSep;
 use bun_core::{Global, Output};
 use bun_core::{ZStr, strings};
-use bun_paths::resolve_path::{dirname, join_abs_string_buf_z_checked, join_z_buf};
-use bun_paths::{AbsPath, AutoAbsPath, MAX_PATH_BYTES, PathBuffer, SEP, platform};
+use bun_paths::{MAX_PATH_BYTES, NameTooLong, Path, PathBuffer};
 use bun_semver::String;
 use bun_sys::{Dir, Fd};
 
@@ -77,7 +77,7 @@ pub struct PackageInstaller<'a> {
     pub(crate) pkg_name_hashes: bun_ptr::RawSlice<PackageNameHash>,
     pub(crate) bins: bun_ptr::RawSlice<Bin>,
     pub(crate) resolutions: bun_ptr::RawSlice<Resolution>,
-    pub(crate) destination_dir_subpath_buf: PathBuffer,
+    pub(crate) destination_dir_subpath: Path,
     pub(crate) folder_path_buf: PathBuffer,
     pub(crate) successfully_installed: Bitset,
     pub(crate) current_tree_id: lockfile::tree::Id,
@@ -205,55 +205,28 @@ impl DeferredLinks {
     }
 }
 
-const NAME_TOO_LONG: crate::Error = crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG);
-
-/// A cheaper `join_z_buf` for two paths that are already normalized. A warm install calls this for
-/// every package.
-fn join_normalized_z<'b>(buf: &'b mut [u8], folder: &[u8], file_path: &[u8]) -> &'b ZStr {
-    // A scoped alias contains a `/`, which Windows needs converted to `\`.
-    if cfg!(windows) {
-        return join_z_buf::<platform::Auto>(buf, &[folder, file_path]);
-    }
-    let mut len = 0;
-    if !folder.is_empty() {
-        buf[..folder.len()].copy_from_slice(folder);
-        buf[folder.len()] = SEP;
-        len = folder.len() + 1;
-    }
-    buf[len..len + file_path.len()].copy_from_slice(file_path);
-    len += file_path.len();
-    ZStr::nul_terminate(buf, len)
-}
-
 impl NodeModulesFolder {
+    /// `from_root` is the path of a tree.
+    pub(crate) fn set_path(&mut self, from_root: &[u8]) {
+        let mut path = Path::from_top_level_dir();
+        path.push_trailing_sep();
+        path.extend_from_slice(from_root);
+        self.path.clear();
+        self.path.extend_from_slice(&path);
+    }
+
     /// Returns the path of `file_path` in this folder, relative to the root `node_modules`, so a
     /// syscall on that directory's fd does not walk the directories above it.
-    fn path_from_root<'b>(&self, buf: &'b mut [u8], file_path: &ZStr) -> &'b ZStr {
-        let top_level_dir = strings::without_trailing_slash(FileSystem::get().top_level_dir());
-        let folder = (self.path.strip_prefix(top_level_dir))
-            .and_then(|rest| rest.strip_prefix(&[SEP]))
-            .and_then(|rest| rest.strip_prefix(b"node_modules"))
-            .and_then(|rest| {
-                rest.strip_prefix(&[SEP])
-                    .or_else(|| rest.is_empty().then_some(rest))
-            })
-            .unwrap_or(self.path.as_slice());
-        join_normalized_z(buf, folder, file_path.as_bytes())
-    }
-
-    /// Since the stack size of these functions are rather large, let's not let them be inlined.
-    #[inline(never)]
-    fn directory_exists_at_without_opening_directories(
-        &self,
-        root_node_modules_dir: &Dir,
-        file_path: &ZStr,
-    ) -> bool {
-        let mut path_buf = bun_paths::path_buffer_pool::get();
-        bun_sys::directory_exists_at(
-            root_node_modules_dir.fd(),
-            self.path_from_root(path_buf.as_mut_slice(), file_path),
-        )
-        .unwrap_or(false)
+    fn path_from_root(&self, file_path: &[u8]) -> Path {
+        let folder = bun_paths::strip_prefix(&self.path, FileSystem::get().top_level_dir())
+            .and_then(|rest| bun_paths::strip_prefix(rest, b"node_modules"))
+            .unwrap_or(&self.path);
+        // Windows needs `..` resolved. Elsewhere skip it: a warm install calls this for every package.
+        if cfg!(windows) {
+            Path::join(&[folder, file_path])
+        } else {
+            Path::from_parts(&[folder, file_path])
+        }
     }
 
     pub(crate) fn directory_exists_at(
@@ -262,8 +235,8 @@ impl NodeModulesFolder {
         file_path: &ZStr,
     ) -> bool {
         if file_path.len() + self.path.len() * 2 < MAX_PATH_BYTES {
-            return self
-                .directory_exists_at_without_opening_directories(root_node_modules_dir, file_path);
+            let path = self.path_from_root(file_path);
+            return bun_sys::directory_exists_at(root_node_modules_dir, &path).unwrap_or(false);
         }
 
         let dir = match self.open_dir(root_node_modules_dir) {
@@ -280,31 +253,11 @@ impl NodeModulesFolder {
         file_path: &ZStr,
     ) -> Option<bun_sys::Stat> {
         if file_path.len() + self.path.len() * 2 < MAX_PATH_BYTES {
-            let mut path_buf = bun_paths::path_buffer_pool::get();
-            return bun_sys::fstatat(
-                root_node_modules_dir.fd(),
-                self.path_from_root(path_buf.as_mut_slice(), file_path),
-            )
-            .ok();
+            return bun_sys::fstatat(root_node_modules_dir, &self.path_from_root(file_path)).ok();
         }
 
         let dir = self.open_dir(root_node_modules_dir).ok()?;
         bun_sys::fstatat(&dir, file_path).ok()
-    }
-
-    /// Since the stack size of these functions are rather large, let's not let them be inlined.
-    #[inline(never)]
-    fn open_file_without_opening_directories(
-        &self,
-        root_node_modules_dir: &Dir,
-        file_path: &ZStr,
-    ) -> bun_sys::Result<bun_sys::File> {
-        let mut path_buf = bun_paths::path_buffer_pool::get();
-        root_node_modules_dir.open_file(
-            self.path_from_root(path_buf.as_mut_slice(), file_path),
-            bun_sys::O::RDONLY,
-            0,
-        )
     }
 
     pub(crate) fn read_small_file(
@@ -329,7 +282,8 @@ impl NodeModulesFolder {
     ) -> crate::Result<bun_sys::File> {
         if self.path.len() + file_path.len() * 2 < MAX_PATH_BYTES {
             // If we do not run the risk of ENAMETOOLONG, then let's just avoid opening the extra directories altogether.
-            match self.open_file_without_opening_directories(root_node_modules_dir, file_path) {
+            let path = self.path_from_root(file_path);
+            match root_node_modules_dir.open_file(&path, bun_sys::O::RDONLY, 0) {
                 Err(e) => match e.get_errno() {
                     // Just incase we're wrong, let's try the fallback
                     bun_sys::Errno::EPERM
@@ -349,21 +303,11 @@ impl NodeModulesFolder {
         res.map_err(|e| e.to_zig_err().into())
     }
 
-    #[cfg(unix)]
-    fn path_z<'b>(&self, buf: &'b mut PathBuffer) -> crate::Result<&'b ZStr> {
-        if self.path.len() >= MAX_PATH_BYTES {
-            return Err(NAME_TOO_LONG);
-        }
-        Ok(bun_paths::resolve_path::z(self.path.as_slice(), buf))
-    }
-
     pub(crate) fn open_dir(&self, root: &Dir) -> crate::Result<Dir> {
         #[cfg(unix)]
         {
-            let mut path_buf = bun_paths::path_buffer_pool::get();
-            let path_z = self.path_z(&mut path_buf)?;
             return root
-                .open_at_with(path_z.as_bytes(), 0)
+                .open_at_with(&self.path, 0)
                 .map_err(|e| e.to_zig_err().into());
         }
 
@@ -389,9 +333,8 @@ impl NodeModulesFolder {
             if lockfile.is_importer_tree_id(self.tree_id) {
                 return Ok(root.make_open_path(self.path.as_slice(), Default::default())?);
             }
-            let mut path_buf = bun_paths::path_buffer_pool::get();
-            let path = self.path_z(&mut path_buf)?;
-            Ok(package_install::make_open_real_dir(root, path)?)
+            let path = Path::from(&self.path);
+            Ok(package_install::make_open_real_dir(root, &path)?)
         }
 
         #[cfg(not(unix))]
@@ -504,9 +447,8 @@ pub(crate) fn abs_node_modules_path(
     lockfile: &Lockfile,
     string_buf: &[u8],
     tree_id: lockfile::tree::Id,
-) -> Option<AbsPath> {
-    let mut rel_buf = bun_paths::path_buffer_pool::get();
-    rel_buf[..b"node_modules".len()].copy_from_slice(b"node_modules");
+) -> Option<Path> {
+    let mut rel_buf = Path::new();
     let mut depth_buf = lockfile::tree::depth_buf_uninit();
     let (rel, _) = lockfile::tree::relative_path_and_depth::<
         { lockfile::tree::IteratorPathStyle::NodeModules },
@@ -519,9 +461,9 @@ pub(crate) fn abs_node_modules_path(
         &mut rel_buf,
         &mut depth_buf,
     );
-    let mut abs = AbsPath::init_top_level_dir();
-    abs.try_append(rel.as_bytes()).ok()?;
-    Some(abs)
+    let mut abs = Path::from_top_level_dir();
+    abs.push(rel);
+    abs.check_len().ok()
 }
 
 /// For a workspace or a `link:` package, this only removes the link.
@@ -532,7 +474,7 @@ pub(crate) fn remove_placed_package(
 ) {
     let string_buf = lockfile.buffers.string_bytes.as_slice();
     let Some(Ok(node_modules)) =
-        abs_node_modules_path(lockfile, string_buf, tree_id).map(|path| Dir::open(path.slice()))
+        abs_node_modules_path(lockfile, string_buf, tree_id).map(|path| Dir::open(&path))
     else {
         return;
     };
@@ -672,16 +614,7 @@ impl<'a> PackageInstaller<'a> {
         if self.trees[tree_id as usize].binaries.count() > 0 {
             self.seen_bin_links.clear();
 
-            let mut link_target_buf = bun_paths::path_buffer_pool::get();
-            let mut link_dest_buf = bun_paths::path_buffer_pool::get();
-            let mut link_rel_buf = bun_paths::path_buffer_pool::get();
-            self.link_tree_bins(
-                tree_id,
-                BinPass::TreeDone,
-                link_target_buf.as_mut_slice(),
-                link_dest_buf.as_mut_slice(),
-                link_rel_buf.as_mut_slice(),
-            );
+            self.link_tree_bins(tree_id, BinPass::TreeDone);
         }
 
         if !is_pending_package_install {
@@ -696,19 +629,11 @@ impl<'a> PackageInstaller<'a> {
         self.increment_tree_install_count(is_pending_package_install, log_level);
     }
 
-    fn link_tree_bins(
-        &mut self,
-        tree_id: TreeContextId,
-        pass: BinPass,
-        link_target_buf: &mut [u8],
-        link_dest_buf: &mut [u8],
-        link_rel_buf: &mut [u8],
-    ) {
+    fn link_tree_bins(&mut self, tree_id: TreeContextId, pass: BinPass) {
         let lockfile = self.lockfile();
         let manager = self.manager_mut();
         let string_buf = lockfile.buffers.string_bytes.as_slice();
-        let mut node_modules_path: AbsPath =
-            AbsPath::from(self.node_modules.path.as_slice()).unwrap_or_oom();
+        let node_modules_path = Path::from(&self.node_modules.path);
         let mut is_behind_link = (!lockfile.is_importer_tree_id(tree_id)).then_some(false);
 
         let pkgs = &lockfile.packages;
@@ -722,13 +647,10 @@ impl<'a> PackageInstaller<'a> {
         let tree = &mut self.trees[tree_id as usize];
         let mut deferred: Vec<DependencyID> = Vec::new();
 
-        // If the `.bin` path doesn't fit in the buffer, the linker reports an error for each bin.
-        if let Some(bin_dir) = join_abs_string_buf_z_checked::<platform::Auto>(
-            self.node_modules.path.as_slice(),
-            link_dest_buf,
-            &[b".bin"],
-        ) && let Err(err) =
-            crate::prune::remove_planted_link(&self.root_node_modules_folder, bin_dir)
+        // If the `.bin` path is too long, the linker reports an error for each bin.
+        if let Ok(bin_dir) = Path::from_parts(&[&node_modules_path, b".bin"]).check_len()
+            && let Err(err) =
+                crate::prune::remove_planted_link(&self.root_node_modules_folder, &bin_dir)
         {
             bun_ast::add_error_pretty!(
                 manager.log_mut(),
@@ -742,7 +664,7 @@ impl<'a> PackageInstaller<'a> {
             return;
         }
         if pass == BinPass::AfterScripts {
-            bin::see_linked_names(node_modules_path.slice(), &mut self.seen_bin_links);
+            bin::see_linked_names(&node_modules_path, &mut self.seen_bin_links);
         }
 
         while let Some(dep_id) = tree.binaries.remove_or_null() {
@@ -757,7 +679,7 @@ impl<'a> PackageInstaller<'a> {
                 .slice(string_buf);
             let mut target_package_name = alias;
             let mut can_retry_without_native_binlink_optimization = false;
-            let mut target_node_modules_path_opt: Option<AbsPath> = None;
+            let mut target_node_modules_path_opt: Option<Path> = None;
             let mut defer_this_bin = false;
 
             'native_binlink_optimization: {
@@ -858,16 +780,16 @@ impl<'a> PackageInstaller<'a> {
                     string_buf,
                     extern_string_buf: lockfile.buffers.extern_strings.as_slice(),
                     seen: Some(&mut self.seen_bin_links),
-                    target_node_modules_path: target_node_modules_path_opt.as_ref(),
-                    node_modules_path: &mut node_modules_path,
-                    abs_target_buf: link_target_buf,
-                    rel_buf: link_rel_buf,
+                    target_node_modules_path: target_node_modules_path_opt
+                        .as_deref()
+                        .map(ZStr::as_bytes),
+                    node_modules_path: &node_modules_path,
                     is_behind_link,
                     err: None,
                     skipped_due_to_missing_bin: false,
                 };
 
-                bin_linker.link(global, link_dest_buf);
+                bin_linker.link(global);
                 is_behind_link = bin_linker.is_behind_link;
 
                 if can_retry_without_native_binlink_optimization
@@ -932,20 +854,12 @@ impl<'a> PackageInstaller<'a> {
 
     fn link_queued_bins(&mut self, pass: BinPass) {
         let mut depth_buf = lockfile::tree::depth_buf_uninit();
-        let mut node_modules_rel_path_buf = bun_paths::path_buffer_pool::get();
-        node_modules_rel_path_buf[..b"node_modules".len()].copy_from_slice(b"node_modules");
-
-        let mut link_target_buf = bun_paths::path_buffer_pool::get();
-        let mut link_dest_buf = bun_paths::path_buffer_pool::get();
-        let mut link_rel_buf = bun_paths::path_buffer_pool::get();
+        let mut node_modules_rel_path_buf = Path::new();
 
         let trees_len = self.trees.len();
         for tree_id in 0..trees_len {
             if self.trees[tree_id].binaries.count() > 0 {
                 self.seen_bin_links.clear();
-                self.node_modules.path.truncate(
-                    strings::without_trailing_slash(FileSystem::get().top_level_dir()).len() + 1,
-                );
                 let (rel_path, _) = lockfile::tree::relative_path_and_depth::<
                     { lockfile::tree::IteratorPathStyle::NodeModules },
                 >(
@@ -958,17 +872,8 @@ impl<'a> PackageInstaller<'a> {
                     &mut depth_buf,
                 );
 
-                self.node_modules
-                    .path
-                    .extend_from_slice(rel_path.as_bytes());
-
-                self.link_tree_bins(
-                    tree_id as u32,
-                    pass,
-                    link_target_buf.as_mut_slice(),
-                    link_dest_buf.as_mut_slice(),
-                    link_rel_buf.as_mut_slice(),
-                );
+                self.node_modules.set_path(rel_path);
+                self.link_tree_bins(tree_id as u32, pass);
             }
         }
     }
@@ -1231,17 +1136,13 @@ impl<'a> PackageInstaller<'a> {
         if let Some((scope, _)) = strings::split_once_char(alias, b'/')
             && open.scope != scope
         {
-            let mut path_buf = bun_paths::path_buffer_pool::get();
             // Open it relative to the directory that's already open, so the full path doesn't have
             // to fit in a buffer.
             #[cfg(not(windows))]
-            let scope_path = bun_paths::resolve_path::z(scope, &mut path_buf);
+            let scope_path = Path::from(scope);
             #[cfg(windows)]
-            let scope_path = join_z_buf::<platform::Auto>(
-                path_buf.as_mut_slice(),
-                &[node_modules.path.as_slice(), scope],
-            );
-            crate::prune::remove_planted_link(&open.dir, scope_path)?;
+            let scope_path = Path::join(&[&node_modules.path, scope]);
+            crate::prune::remove_planted_link(&open.dir, &scope_path)?;
             open.scope.clear();
             open.scope.extend_from_slice(scope);
         }
@@ -1293,8 +1194,7 @@ impl<'a> PackageInstaller<'a> {
     /// Makes `tree_id` the current tree, as the walk does.
     fn enter_tree(&mut self, tree_id: lockfile::tree::Id) {
         let mut depth_buf = lockfile::tree::depth_buf_uninit();
-        let mut rel_path_buf = bun_paths::path_buffer_pool::get();
-        rel_path_buf[..b"node_modules".len()].copy_from_slice(b"node_modules");
+        let mut rel_path_buf = Path::new();
         let (rel_path, _) = lockfile::tree::relative_path_and_depth::<
             { lockfile::tree::IteratorPathStyle::NodeModules },
         >(
@@ -1306,13 +1206,7 @@ impl<'a> PackageInstaller<'a> {
             &mut rel_path_buf,
             &mut depth_buf,
         );
-        let path = &mut self.node_modules.path;
-        path.clear();
-        path.extend_from_slice(strings::without_trailing_slash(
-            FileSystem::get().top_level_dir(),
-        ));
-        path.push(SEP);
-        path.extend_from_slice(rel_path.as_bytes());
+        self.node_modules.set_path(rel_path);
         self.node_modules.tree_id = tree_id;
         self.current_tree_id = tree_id;
     }
@@ -1599,12 +1493,8 @@ impl<'a> PackageInstaller<'a> {
     }
 
     /// The absolute path of `alias` in the current tree's `node_modules`.
-    fn package_path(&self, alias: &[u8]) -> crate::Result<AutoAbsPath> {
-        let mut path = AutoAbsPath::init();
-        path.try_append(self.node_modules.path.as_slice())
-            .and_then(|()| path.try_append(alias))
-            .map_err(|_| NAME_TOO_LONG)?;
-        Ok(path)
+    fn package_path(&self, alias: &[u8]) -> Result<Path, NameTooLong> {
+        Path::from_parts(&[&self.node_modules.path, alias]).check_len()
     }
 
     fn get_installed_package_scripts_count(
@@ -1612,7 +1502,7 @@ impl<'a> PackageInstaller<'a> {
         alias: &[u8],
         package_id: PackageID,
         resolution_tag: resolution::Tag,
-        folder_path: &mut bun_paths::AutoAbsPath,
+        folder_path: &[u8],
         log_level: Options::LogLevel,
     ) -> usize {
         debug_assert!(resolution_tag != resolution::Tag::Root);
@@ -1670,7 +1560,7 @@ impl<'a> PackageInstaller<'a> {
             }
         }
 
-        count += scripts.wants_default_node_gyp(folder_path.slice(), gypfile) as usize;
+        count += scripts.wants_default_node_gyp(folder_path, gypfile) as usize;
 
         count
     }
@@ -1734,12 +1624,8 @@ impl<'a> PackageInstaller<'a> {
             return;
         }
 
-        let destination_dir_subpath = {
-            let alias = alias.slice(string_buf!());
-            self.destination_dir_subpath_buf[..alias.len()].copy_from_slice(alias);
-            self.destination_dir_subpath_buf[alias.len()] = 0;
-            ZStr::from_buf(&self.destination_dir_subpath_buf, alias.len())
-        };
+        self.destination_dir_subpath.set(alias.slice(string_buf!()));
+        let destination_dir_subpath: &ZStr = &self.destination_dir_subpath;
 
         let pkg_name_hash = self.pkg_name_hashes[package_id as usize];
 
@@ -1892,9 +1778,13 @@ impl<'a> PackageInstaller<'a> {
                     }
                     return self.fail(is_pending_package_install, log_level);
                 }
-                if is_transitive
-                    && bin::bin_target_escapes_package_dir(folder)
-                    && !self.lockfile().is_trusted_folder_dependency(dependency_id)
+                let is_inside_package =
+                    is_transitive && !self.lockfile().is_trusted_folder_dependency(dependency_id);
+                if !is_workspace
+                    && match is_inside_package {
+                        true => bin::bin_target_escapes_package_dir(folder),
+                        false => is_whole_file_system(folder),
+                    }
                 {
                     if log_level != Options::LogLevel::Silent {
                         bun_core::pretty_errorln!(
@@ -1910,10 +1800,10 @@ impl<'a> PackageInstaller<'a> {
                 if !is_transitive && matches!(folder, b"" | b".") {
                     installer.cache_dir_subpath = bun_core::zstr!(".");
                 } else {
-                    self.folder_path_buf[..folder.len()].copy_from_slice(folder);
-                    self.folder_path_buf[folder.len()] = 0;
-                    installer.cache_dir_subpath =
-                        ZStr::from_buf(&self.folder_path_buf, folder.len());
+                    let len = package_manager::folder_in(&mut self.folder_path_buf, b"", folder)
+                        .expect("the length is checked above")
+                        .len();
+                    installer.cache_dir_subpath = ZStr::from_buf(&self.folder_path_buf, len);
                 }
                 // cache_dir might not be created yet (if it's in node_modules)
                 installer.cache_dir = Fd::cwd();
@@ -1954,10 +1844,11 @@ impl<'a> PackageInstaller<'a> {
                             package_manager::global_link_dir_path(self.manager_mut()),
                         )
                     };
-                    let sep_len = global_link_dir.last().is_some_and(|&c| c != SEP) as usize;
-                    let len = global_link_dir.len() + sep_len + folder.len();
-                    // The resolution of a bun.lock row is used as written.
-                    if len >= self.folder_path_buf.len() {
+                    let Ok(path) = package_manager::folder_in(
+                        &mut self.folder_path_buf,
+                        global_link_dir,
+                        folder,
+                    ) else {
                         if log_level != Options::LogLevel::Silent {
                             Output::err(
                                 "ENAMETOOLONG",
@@ -1966,14 +1857,8 @@ impl<'a> PackageInstaller<'a> {
                             );
                         }
                         return self.fail(is_pending_package_install, log_level);
-                    }
-                    let buf = self.folder_path_buf.as_mut_slice();
-                    buf[..global_link_dir.len()].copy_from_slice(global_link_dir);
-                    if sep_len != 0 {
-                        buf[global_link_dir.len()] = SEP;
-                    }
-                    buf[global_link_dir.len() + sep_len..len].copy_from_slice(folder);
-                    buf[len] = 0;
+                    };
+                    let len = path.len();
                     installer.cache_dir_subpath = ZStr::from_buf(&self.folder_path_buf, len);
                     installer.cache_dir = directory;
                 }
@@ -2181,14 +2066,8 @@ impl<'a> PackageInstaller<'a> {
                         // One declared by an npm manifest (`Package::from_npm`) is verbatim,
                         // i.e. relative to the declaring package, which installs at
                         // `dirname(node_modules.path)` because transitive folders never hoist.
-                        let dir_name = {
-                            let d = dirname::<platform::Auto>(self.node_modules.path.as_slice());
-                            if d.is_empty() {
-                                self.node_modules.path.as_slice()
-                            } else {
-                                d
-                            }
-                        };
+                        let dir_name = bun_paths::dirname(&self.node_modules.path)
+                            .unwrap_or(&self.node_modules.path);
 
                         let owned_cache_dir = match self.root_node_modules_folder.open_dir(
                             dir_name,
@@ -2216,15 +2095,12 @@ impl<'a> PackageInstaller<'a> {
                         } else if installer.cache_dir_subpath.as_bytes() != b"." {
                             // A folder that a package ships inside itself is linked from where it
                             // is.
-                            let mut shipped_buf = bun_paths::path_buffer_pool::get();
-                            match join_abs_string_buf_z_checked::<platform::Auto>(
-                                dir_name,
-                                shipped_buf.as_mut_slice(),
-                                &[installer.cache_dir_subpath.as_bytes()],
-                            ) {
-                                Some(shipped) => PackageInstall {
+                            match Path::resolve(&[dir_name, installer.cache_dir_subpath])
+                                .check_len()
+                            {
+                                Ok(shipped) => PackageInstall {
                                     cache_dir: Fd::cwd(),
-                                    cache_dir_subpath: shipped,
+                                    cache_dir_subpath: &shipped,
                                     ..installer
                                 }
                                 .install_from_link(
@@ -2232,8 +2108,8 @@ impl<'a> PackageInstaller<'a> {
                                     destination_dir,
                                     &self.manager().total_tasks,
                                 ),
-                                None => package_install::InstallResult::fail(
-                                    crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG),
+                                Err(err) => package_install::InstallResult::fail(
+                                    err.into(),
                                     package_install::Step::OpeningCacheDir,
                                 ),
                             }
@@ -2264,7 +2140,12 @@ impl<'a> PackageInstaller<'a> {
                     }
 
                     let copy = (self.copy_trees)
-                        .is_set_allow_out_of_bound(self.current_tree_id as usize, false);
+                        .is_set_allow_out_of_bound(self.current_tree_id as usize, false)
+                        || (PackageInstall::supported_method() == package_install::Method::Symlink
+                            && resolution.can_enqueue_install_task()
+                            && !package_manager::node_can_import_from(
+                                &self.manager_mut().get_cache_directory().path,
+                            ));
                     if can_defer_link.unwrap_or_else(|| {
                         self.can_defer_link(
                             alias.slice(string_buf!()),
@@ -2277,9 +2158,7 @@ impl<'a> PackageInstaller<'a> {
                             dependency_id,
                             tree_dir: destination_fd,
                             cache_dir: installer.cache_dir,
-                            cache_dir_subpath: bun_core::ZBox::from_bytes(
-                                installer.cache_dir_subpath.as_bytes(),
-                            ),
+                            cache_dir_subpath: installer.cache_dir_subpath.to_zbox(),
                             destination_dir_subpath: bun_core::ZBox::from_bytes(
                                 alias.slice(string_buf!()),
                             ),
@@ -2456,18 +2335,16 @@ impl<'a> PackageInstaller<'a> {
                     && self.metas[package_id as usize].has_install_script()
                 {
                     // `hasInstallScript` is a false positive when binding.gyp is not published.
-                    let count = self.package_path(alias.slice(string_buf!())).map_or(
-                        0,
-                        |mut folder_path| {
-                            self.get_installed_package_scripts_count(
-                                alias.slice(string_buf!()),
-                                package_id,
-                                resolution.tag,
-                                &mut folder_path,
-                                log_level,
-                            )
-                        },
-                    );
+                    let folder_path = self.package_path(alias.slice(string_buf!()));
+                    let count = folder_path.map_or(0, |folder_path| {
+                        self.get_installed_package_scripts_count(
+                            alias.slice(string_buf!()),
+                            package_id,
+                            resolution.tag,
+                            &folder_path,
+                            log_level,
+                        )
+                    });
                     if count > 0 {
                         if log_level.is_verbose() {
                             bun_core::pretty_error!(
@@ -2609,11 +2486,11 @@ impl<'a> PackageInstaller<'a> {
         let (alias, alias_hash) = (dep.name, dep.name_hash);
         let pkg_name_hash = self.pkg_name_hashes[package_id as usize];
 
-        let mut folder_path = match self.package_path(alias.slice(string_buf)) {
+        let folder_path = match self.package_path(alias.slice(string_buf)) {
             Ok(folder_path) => folder_path,
             Err(err) => {
                 let name = alias.slice(string_buf);
-                return self.on_scripts_error(log_level, "enqueue lifecycle", name, err);
+                return self.on_scripts_error(log_level, "enqueue lifecycle", name, err.into());
             }
         };
 
@@ -2647,7 +2524,7 @@ impl<'a> PackageInstaller<'a> {
         if self.enqueue_lifecycle_scripts(
             alias.slice(string_buf),
             log_level,
-            &mut folder_path,
+            &folder_path,
             dependency_id,
             package_id,
             resolution,
@@ -2674,7 +2551,7 @@ impl<'a> PackageInstaller<'a> {
         &mut self,
         folder_name: &[u8],
         log_level: Options::LogLevel,
-        package_path: &mut bun_paths::AutoAbsPath,
+        package_path: &[u8],
         dependency_id: DependencyID,
         package_id: PackageID,
         resolution: &Resolution,

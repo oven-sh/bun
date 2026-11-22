@@ -289,11 +289,7 @@ impl FdOp for ReadFile {
                     err.path = self.path_for_error();
                     return Err(err);
                 }
-                Err(_) if self.could_block => {}
-                // Never ends: https://github.com/oven-sh/bun/pull/49337
-                Err(_) => loop {
-                    core::hint::spin_loop();
-                },
+                Err(_) => self.could_block = true,
             }
         }
         if self.buffer.len() + 16_000 < self.buffer.capacity() {
@@ -378,7 +374,7 @@ impl ReadFileUV {
     }
 
     fn open(self: Box<Self>) {
-        let mut buf = bun_paths::path_buffer_pool::get();
+        let mut buf = bun_paths::Path::new();
         let path = self.file_store.pathlike.path().slice_z(&mut buf).as_ptr();
 
         let loop_ = self.loop_;

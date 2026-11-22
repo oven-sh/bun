@@ -14,7 +14,6 @@ pub(crate) struct WebSocketProxy {
     /// WebSocket upgrade request to send after CONNECT succeeds
     websocket_request_buf: Box<[u8]>,
     /// TLS tunnel for wss:// through HTTP proxy.
-    /// Holds one ref; `Drop` calls shutdown() and releases it.
     tunnel: Option<RefPtr<WebSocketProxyTunnel>>,
 }
 
@@ -66,8 +65,9 @@ impl WebSocketProxy {
 impl Drop for WebSocketProxy {
     fn drop(&mut self) {
         // target_host / websocket_request_buf: Box<[u8]> drops automatically.
-        if let Some(tunnel) = self.tunnel.take() {
-            WebSocketProxyTunnel::shutdown(&tunnel);
+        if let Some(tunnel) = &self.tunnel {
+            tunnel.detach_upgrade_client();
+            tunnel.shutdown();
         }
     }
 }

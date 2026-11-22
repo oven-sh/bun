@@ -171,7 +171,7 @@ mod windows_impl {
     impl crate::node::fs::async_::AsyncMkdirpTarget for WriteFileWindows {
         fn directory(&self) -> &[u8] {
             let path = self.path();
-            bun_core::dirname(path).unwrap_or(path)
+            bun_paths::dirname(path).unwrap_or(path)
         }
         fn set_error(&mut self, err: sys::Error) {
             self.err = Some(err);

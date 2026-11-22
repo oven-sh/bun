@@ -103,17 +103,9 @@ impl Entry {
         // `percent_encode_write` takes `&mut Vec<u8>`.
         let mut source_map_strings: Vec<u8> = Vec::new();
 
-        #[cfg(windows)]
-        let mut buf = bun_paths::path_buffer_pool::get();
-
         for native_file_path in paths.iter() {
-            let native_file_path: &[u8] = native_file_path;
             source_map_strings.extend_from_slice(b",");
-            #[cfg(windows)]
-            let path: &[u8] =
-                bun_paths::resolve_path::path_to_posix_buf::<u8>(native_file_path, &mut **buf);
-            #[cfg(not(windows))]
-            let path: &[u8] = native_file_path;
+            let path: &[u8] = &bun_paths::to_portable(native_file_path);
 
             if bun_paths::is_absolute(path) {
                 let is_windows_drive_path = cfg!(windows) && path[0] != b'/';

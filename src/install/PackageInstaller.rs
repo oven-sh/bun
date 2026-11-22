@@ -1,8 +1,10 @@
+use core::ops::DerefMut;
 use core::sync::atomic::Ordering;
 
 use crate::resolvers::folder_resolver::is_whole_file_system;
 use bun_collections::{ArrayHashMap, DynamicBitSet, StringHashMap};
 use bun_core::fmt::PathSep;
+use bun_core::scoped::SetForScope;
 use bun_core::{Global, Output};
 use bun_core::{ZStr, strings};
 use bun_paths::{MAX_PATH_BYTES, NameTooLong, Path, PathBuffer};
@@ -82,7 +84,6 @@ pub struct PackageInstaller<'a> {
     pub(crate) destination_dir_subpath: Path,
     pub(crate) folder_path_buf: PathBuffer,
     pub(crate) successfully_installed: Bitset,
-    pub(crate) current_tree_id: lockfile::tree::Id,
     /// Trees that live under a self-contained workspace: packages there are copied
     /// (real files) rather than hardlinked/cloned/symlinked from the cache, so tools
     /// that walk, prune or rewrite that node_modules cannot reach the shared cache.
@@ -617,7 +618,7 @@ impl<'a> PackageInstaller<'a> {
         is_pending_package_install: bool,
         log_level: Options::LogLevel,
     ) {
-        let tree_id = self.current_tree_id;
+        let tree_id = self.node_modules.tree_id;
         if self.defer_event(|| DeferredEvent::Count(tree_id)) {
             return;
         }
@@ -1029,18 +1030,18 @@ impl<'a> PackageInstaller<'a> {
         if self.pending_install_count == 0 {
             return;
         }
-        let prev_node_modules = core::mem::take(&mut self.node_modules);
-        let prev_tree_id = self.current_tree_id;
+        let mut scope = self.leave_tree();
+        let this = &mut *scope;
 
-        let trees_len = self.trees.len();
+        let trees_len = this.trees.len();
         for i in 0..trees_len {
-            if self.trees[i].pending_installs.is_empty() {
+            if this.trees[i].pending_installs.is_empty() {
                 continue;
             }
             if FORCE
                 || Self::can_install_package_for_tree(
-                    &self.completed_trees,
-                    self.lockfile().buffers.trees.as_slice(),
+                    &this.completed_trees,
+                    this.lockfile().buffers.trees.as_slice(),
                     i as u32,
                 )
             {
@@ -1048,20 +1049,19 @@ impl<'a> PackageInstaller<'a> {
                 // to call `installAvailablePackages` recursively. Starting at id 0 and
                 // going up ensures we will reach any trees that will be able to install
                 // packages upon completing the current tree
-                let resolutions = self.resolutions;
-                let pending = core::mem::take(&mut self.trees[i].pending_installs);
-                self.pending_install_count -= pending.len();
+                let resolutions = this.resolutions;
+                let pending = core::mem::take(&mut this.trees[i].pending_installs);
+                this.pending_install_count -= pending.len();
                 for context in pending {
-                    let package_id = self.lockfile().buffers.resolutions.as_slice()
+                    let package_id = this.lockfile().buffers.resolutions.as_slice()
                         [context.dependency_id as usize];
-                    let name = self.names[package_id as usize];
-                    self.node_modules.tree_id = context.tree_id;
-                    self.node_modules.path = context.path;
-                    self.current_tree_id = context.tree_id;
+                    let name = this.names[package_id as usize];
+                    this.node_modules.tree_id = context.tree_id;
+                    this.node_modules.path = context.path;
 
                     let needs_verify = false;
                     let is_pending_package_install = true;
-                    self.install_package_with_name_and_resolution(
+                    this.install_package_with_name_and_resolution(
                         // This id might be different from the id used to enqueue the task. Important
                         // to use the correct one because the package might be aliased with a different
                         // name
@@ -1076,9 +1076,6 @@ impl<'a> PackageInstaller<'a> {
                 }
             }
         }
-
-        self.node_modules = prev_node_modules;
-        self.current_tree_id = prev_tree_id;
     }
 
     pub(crate) fn complete_remaining_scripts(&mut self, log_level: Options::LogLevel) {
@@ -1196,7 +1193,7 @@ impl<'a> PackageInstaller<'a> {
         let Some(deferred) = &self.deferred else {
             return false;
         };
-        let tree_id = self.current_tree_id;
+        let tree_id = self.node_modules.tree_id;
         let resolution = &self.resolutions[package_id as usize];
         resolution.tag.can_enqueue_install_task()
             && (deferred.tree_dirs.len() < DeferredLinks::MAX_TREES
@@ -1232,6 +1229,12 @@ impl<'a> PackageInstaller<'a> {
         }
     }
 
+    /// Back in the current tree on drop.
+    #[must_use]
+    pub(crate) fn leave_tree(&mut self) -> impl DerefMut<Target = Self> {
+        SetForScope::new(self, |this| &mut this.node_modules, Default::default())
+    }
+
     /// Makes `tree_id` the current tree, as the walk does.
     fn enter_tree(&mut self, tree_id: lockfile::tree::Id) {
         let mut depth_buf = lockfile::tree::depth_buf_uninit();
@@ -1249,7 +1252,6 @@ impl<'a> PackageInstaller<'a> {
         );
         self.node_modules.set_path(rel_path);
         self.node_modules.tree_id = tree_id;
-        self.current_tree_id = tree_id;
     }
 
     /// Returns true if the thread pool has to link the waiting packages before the walk enters
@@ -1299,24 +1301,24 @@ impl<'a> PackageInstaller<'a> {
         events: Vec<(usize, DeferredEvent)>,
         log_level: Options::LogLevel,
     ) {
-        let prev_node_modules = core::mem::take(&mut self.node_modules);
-        let prev_tree_id = self.current_tree_id;
-        let resolutions = self.resolutions;
+        let mut scope = self.leave_tree();
+        let this = &mut *scope;
+        let resolutions = this.resolutions;
         // A tree that's complete now unblocks the trees below it.
         let is_pending_package_install = false;
 
         let mut events = events.into_iter().peekable();
         for (index, job) in batch.jobs.into_iter().enumerate() {
-            if self.node_modules.path.is_empty() || self.current_tree_id != job.tree_id {
-                self.enter_tree(job.tree_id);
+            if this.node_modules.path.is_empty() || this.node_modules.tree_id != job.tree_id {
+                this.enter_tree(job.tree_id);
             }
             let package_id =
-                self.lockfile().buffers.resolutions.as_slice()[job.dependency_id as usize];
-            self.finish_install(
+                this.lockfile().buffers.resolutions.as_slice()[job.dependency_id as usize];
+            this.finish_install(
                 job.dependency_id,
                 package_id,
                 log_level,
-                self.names[package_id as usize],
+                this.names[package_id as usize],
                 &resolutions[package_id as usize],
                 is_pending_package_install,
                 job.tree_dir,
@@ -1325,12 +1327,12 @@ impl<'a> PackageInstaller<'a> {
             while let Some((_, event)) = events.next_if(|(after, _)| *after == index + 1) {
                 let (DeferredEvent::Count(tree_id) | DeferredEvent::Install { tree_id, .. }) =
                     event;
-                if self.current_tree_id != tree_id {
-                    self.enter_tree(tree_id);
+                if this.node_modules.tree_id != tree_id {
+                    this.enter_tree(tree_id);
                 }
                 match event {
                     DeferredEvent::Count(_) => {
-                        self.increment_tree_install_count(is_pending_package_install, log_level);
+                        this.increment_tree_install_count(is_pending_package_install, log_level);
                     }
                     DeferredEvent::Install {
                         dependency_id,
@@ -1338,12 +1340,12 @@ impl<'a> PackageInstaller<'a> {
                         ..
                     } => {
                         let package_id =
-                            self.lockfile().buffers.resolutions.as_slice()[dependency_id as usize];
-                        self.install_package_with_name_and_resolution(
+                            this.lockfile().buffers.resolutions.as_slice()[dependency_id as usize];
+                        this.install_package_with_name_and_resolution(
                             dependency_id,
                             package_id,
                             log_level,
-                            self.names[package_id as usize],
+                            this.names[package_id as usize],
                             &resolutions[package_id as usize],
                             needs_verify,
                             is_pending_package_install,
@@ -1353,9 +1355,8 @@ impl<'a> PackageInstaller<'a> {
             }
         }
         debug_assert!(events.next().is_none());
+        drop(scope);
 
-        self.node_modules = prev_node_modules;
-        self.current_tree_id = prev_tree_id;
         // The downloads and patches that this queued don't count as pending until they're
         // scheduled.
         self.manager_mut().drain_dependency_list();
@@ -1473,39 +1474,33 @@ impl<'a> PackageInstaller<'a> {
 
         if let Some(removed) = self.manager_mut().task_queue.fetch_remove(&task_id) {
             let callbacks = removed.value;
-            // Manual save/restore of self.node_modules / self.current_tree_id
-            // (see install_available_packages). Infallible body — both exit
-            // paths below restore the saved values.
-            let prev_node_modules = core::mem::take(&mut self.node_modules);
-            let prev_tree_id = self.current_tree_id;
+            let mut scope = self.leave_tree();
+            let this = &mut *scope;
 
             if callbacks.is_empty() {
                 bun_output::scoped_log!(
                     PackageInstaller,
                     "Unexpected state: no callbacks for async task."
                 );
-                self.node_modules = prev_node_modules;
-                self.current_tree_id = prev_tree_id;
                 return;
             }
 
             // `self.resolutions` is `RawSlice<Resolution>` (Copy); copy out
             // so the `&Resolution` argument borrows the local, not `*self`.
-            let resolutions = self.resolutions;
+            let resolutions = this.resolutions;
             for cb in callbacks.iter() {
                 let TaskCallbackContext::DependencyInstallContext(context) = cb else {
                     debug_assert!(false, "expected DependencyInstallContext");
                     continue;
                 };
                 let callback_package_id =
-                    self.lockfile().buffers.resolutions.as_slice()[context.dependency_id as usize];
-                self.node_modules.tree_id = context.tree_id;
+                    this.lockfile().buffers.resolutions.as_slice()[context.dependency_id as usize];
+                this.node_modules.tree_id = context.tree_id;
                 // `DependencyInstallContext.path: Vec<u8>` — clone since `cb` is `&`.
-                self.node_modules.path.clone_from(&context.path);
-                self.current_tree_id = context.tree_id;
+                this.node_modules.path.clone_from(&context.path);
                 let needs_verify = false;
                 let is_pending_package_install = false;
-                self.install_package_with_name_and_resolution(
+                this.install_package_with_name_and_resolution(
                     // This id might be different from the id used to enqueue the task. Important
                     // to use the correct one because the package might be aliased with a different
                     // name
@@ -1518,8 +1513,6 @@ impl<'a> PackageInstaller<'a> {
                     is_pending_package_install,
                 );
             }
-            self.node_modules = prev_node_modules;
-            self.current_tree_id = prev_tree_id;
             return;
         }
 
@@ -1656,7 +1649,7 @@ impl<'a> PackageInstaller<'a> {
             )
         });
         if can_defer_link == Some(false) {
-            let tree_id = self.current_tree_id;
+            let tree_id = self.node_modules.tree_id;
             self.defer_event(|| DeferredEvent::Install {
                 tree_id,
                 dependency_id,
@@ -1813,8 +1806,10 @@ impl<'a> PackageInstaller<'a> {
                 let folder = folder_str.slice(string_buf!());
 
                 // transitive folder dependencies are not hoisted
-                let is_transitive =
-                    !is_workspace && !self.lockfile().is_workspace_tree_id(self.current_tree_id);
+                let is_transitive = !is_workspace
+                    && !self
+                        .lockfile()
+                        .is_workspace_tree_id(self.node_modules.tree_id);
                 if folder.len() >= self.folder_path_buf.len() {
                     if log_level != Options::LogLevel::Silent {
                         Output::err(
@@ -1922,7 +1917,7 @@ impl<'a> PackageInstaller<'a> {
             }
         }
 
-        let tree = &self.trees[self.current_tree_id as usize];
+        let tree = &self.trees[self.node_modules.tree_id as usize];
         let (inside_replaced_folder, outlived_root) =
             (tree.inside_replaced_folder, tree.outlived_root);
         let verifying = needs_verify && !self.skip_verify_installed_version_number;
@@ -1949,7 +1944,7 @@ impl<'a> PackageInstaller<'a> {
                 resolution::Tag::Symlink | resolution::Tag::Workspace | resolution::Tag::Root
             )
         {
-            self.trees[self.current_tree_id as usize]
+            self.trees[self.node_modules.tree_id as usize]
                 .replaced
                 .push(dependency_id);
         }
@@ -1978,7 +1973,7 @@ impl<'a> PackageInstaller<'a> {
 
                 let context =
                     TaskCallbackContext::DependencyInstallContext(DependencyInstallContext {
-                        tree_id: self.current_tree_id,
+                        tree_id: self.node_modules.tree_id,
                         path: self.node_modules.path.clone(),
                         dependency_id,
                     });
@@ -2026,7 +2021,7 @@ impl<'a> PackageInstaller<'a> {
                     if let patch_install::Callback::Apply(apply) = &mut task.callback {
                         apply.install_context = Some(patch_install::InstallContext {
                             dependency_id,
-                            tree_id: self.current_tree_id,
+                            tree_id: self.node_modules.tree_id,
                             path: self.node_modules.path.clone(),
                         });
                     }
@@ -2039,14 +2034,14 @@ impl<'a> PackageInstaller<'a> {
                 && !Self::can_install_package_for_tree(
                     &self.completed_trees,
                     self.lockfile().buffers.trees.as_slice(),
-                    self.current_tree_id,
+                    self.node_modules.tree_id,
                 )
             {
-                self.trees[self.current_tree_id as usize]
+                self.trees[self.node_modules.tree_id as usize]
                     .pending_installs
                     .push(DependencyInstallContext {
                         dependency_id,
-                        tree_id: self.current_tree_id,
+                        tree_id: self.node_modules.tree_id,
                         path: self.node_modules.path.clone(),
                     });
                 self.pending_install_count += 1;
@@ -2094,7 +2089,9 @@ impl<'a> PackageInstaller<'a> {
 
                     if resolution.tag == resolution::Tag::Root
                         || (resolution.tag == resolution::Tag::Folder
-                            && !self.lockfile().is_workspace_tree_id(self.current_tree_id))
+                            && !self
+                                .lockfile()
+                                .is_workspace_tree_id(self.node_modules.tree_id))
                     {
                         // This is a transitive folder dependency. It is not hoisted.
                         //
@@ -2103,7 +2100,7 @@ impl<'a> PackageInstaller<'a> {
                         // install it from `installer.cache_dir` (the cwd, set in the switch above).
                         // The same holds for a path from a root `overrides`/`resolutions` rule.
                         if resolution.tag == resolution::Tag::Folder
-                            && (self.lockfile().is_folder_tree_id(self.current_tree_id)
+                            && (self.lockfile().is_folder_tree_id(self.node_modules.tree_id)
                                 || self.lockfile().is_overridden_dependency(dependency_id))
                         {
                             break 'result installer.install(
@@ -2193,7 +2190,7 @@ impl<'a> PackageInstaller<'a> {
                     }
 
                     let copy = (self.copy_trees)
-                        .is_set_allow_out_of_bound(self.current_tree_id as usize, false)
+                        .is_set_allow_out_of_bound(self.node_modules.tree_id as usize, false)
                         || (PackageInstall::supported_method() == package_install::Method::Symlink
                             && resolution.can_enqueue_install_task()
                             && !package_manager::node_can_import_from(
@@ -2207,7 +2204,7 @@ impl<'a> PackageInstaller<'a> {
                         )
                     }) {
                         return self.defer_link(package_install::LinkJob {
-                            tree_id: self.current_tree_id,
+                            tree_id: self.node_modules.tree_id,
                             dependency_id,
                             tree_dir: destination_fd,
                             cache_dir: installer.cache_dir,
@@ -2273,7 +2270,7 @@ impl<'a> PackageInstaller<'a> {
             }
 
             if self.bins[package_id as usize].tag != bin::Tag::None {
-                self.trees[self.current_tree_id as usize]
+                self.trees[self.node_modules.tree_id as usize]
                     .binaries
                     .add(dependency_id)
                     .unwrap_or_oom();
@@ -2350,7 +2347,7 @@ impl<'a> PackageInstaller<'a> {
                 }
 
                 if self.bins[package_id as usize].tag != bin::Tag::None {
-                    self.trees[self.current_tree_id as usize]
+                    self.trees[self.node_modules.tree_id as usize]
                         .binaries
                         .add(dependency_id)
                         .unwrap_or_oom();
@@ -2519,7 +2516,7 @@ impl<'a> PackageInstaller<'a> {
     /// The next install would take the package for complete.
     fn remove_if_out_of_memory(&self, alias: &[u8]) {
         if check_memory().is_err() {
-            remove_placed_package(self.lockfile(), self.current_tree_id, alias);
+            remove_placed_package(self.lockfile(), self.node_modules.tree_id, alias);
         }
     }
 
@@ -2665,17 +2662,17 @@ impl<'a> PackageInstaller<'a> {
             .manager()
             .is_package_required(dependency_id, package_id);
         if self.bins[package_id as usize].tag != bin::Tag::None {
-            self.trees[self.current_tree_id as usize]
+            self.trees[self.node_modules.tree_id as usize]
                 .bins_after_scripts
                 .push(dependency_id);
         }
         self.unfinished_scripts
             .borrow_mut()
-            .push((self.current_tree_id, scripts_list.package_name.clone()));
+            .push((self.node_modules.tree_id, scripts_list.package_name.clone()));
         self.pending_lifecycle_scripts.push(PendingLifecycleScript {
             list: scripts_list,
             dependency_id,
-            tree_id: self.current_tree_id,
+            tree_id: self.node_modules.tree_id,
             optional,
         });
         true

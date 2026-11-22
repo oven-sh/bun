@@ -11,6 +11,7 @@ use bun_core::{Global, Output, ZBox, ZStr, handle_oom, strings};
 use bun_install_types::NodeLinker::NodeLinker;
 use bun_paths::Path;
 use bun_sys::{self as sys, Dir, E, EntryKind, O};
+use bun_threading::wait_group::Pending;
 use bun_threading::{WaitGroup, WorkPool};
 
 use crate::isolated_install::installer::Installer;
@@ -3117,14 +3118,13 @@ impl OldModules {
     /// Deletes it on another thread. Anything that can't be deleted stays until the next `bun
     /// prune`.
     pub(crate) fn remove(&self) -> OldModulesRemoval {
-        let done = Arc::new(WaitGroup::init_with_count(1));
+        let done = Arc::new(WaitGroup::init());
         handle_oom(WorkPool::go(
-            (self.0.clone(), Arc::clone(&done)),
-            |(name, done): (Box<[u8]>, Arc<WaitGroup>)| {
+            (self.0.clone(), Pending::new(Arc::clone(&done))),
+            |(name, _pending): (Box<[u8]>, Pending<Arc<WaitGroup>>)| {
                 if let Ok(node_modules) = Dir::open(ROOT_DIR) {
                     let _ = node_modules.delete_tree(&name);
                 }
-                done.finish();
             },
         ));
         OldModulesRemoval(done)

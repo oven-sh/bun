@@ -1,6 +1,7 @@
 //! HTTP client.
 
 #![warn(unused_must_use)]
+#![feature(arbitrary_self_types)]
 #![feature(core_io_borrowed_buf)]
 pub mod error;
 pub use error::{CertError, Error, Result};
@@ -1168,9 +1169,9 @@ pub(crate) fn get_tls_hostname<'c>(client: &'c HTTPClient<'_>, allow_proxy_url: 
 
 // ── support types ───────────────────────────────────────────────────────
 #[derive(Clone, Copy)]
-enum PendingH2Resolution {
+enum PendingH2Resolution<'a> {
     /// ALPN selected h2; waiters attach onto this session.
-    H2(h2::SessionPtr),
+    H2(&'a RefPtr<h2::ClientSession>),
     /// Handshake completed and ALPN selected http/1.1. Waiters can be pinned
     /// to h1 (and h2-pinned waiters failed) since the server has spoken.
     H1,
@@ -2005,10 +2006,10 @@ impl<'a> HTTPClient<'a> {
                 // unified here, so rebuild from the InternalSocket.
                 let tls_socket = uws::SocketTLS::from_any(socket.socket);
                 let ctx = self.get_ssl_ctx::<true>();
-                // The context's registry holds the session's ref from here on.
                 let session = h2::ClientSession::create(ctx, tls_socket, self);
                 GenHttpContext::<true>::tag_as_h2(tls_socket, session.as_ptr());
-                self.resolve_pending_h2(PendingH2Resolution::H2(session));
+                self.resolve_pending_h2(PendingH2Resolution::H2(&session));
+                Self::ssl_ctx_mut(ctx).register_h2(session);
                 return Break(NextStep::AttachH2);
             }
             self.flags.protocol = Protocol::Http1_1;
@@ -3573,7 +3574,7 @@ impl<'a> HTTPClient<'a> {
 
     /// The leader of a coalesced cold connect has learned the ALPN outcome (or
     /// failed). Dispatch every waiter accordingly.
-    fn resolve_pending_h2(&mut self, resolution: PendingH2Resolution) {
+    fn resolve_pending_h2(&mut self, resolution: PendingH2Resolution<'_>) {
         let Some(pc_ptr) = self.pending_h2.take() else {
             return;
         };
@@ -3593,7 +3594,7 @@ impl<'a> HTTPClient<'a> {
                 continue;
             }
             match resolution {
-                PendingH2Resolution::H2(session) => h2::ClientSession::enqueue(session, waiter),
+                PendingH2Resolution::H2(session) => session.clone().enqueue(waiter),
                 PendingH2Resolution::H1 => {
                     // ALPN selected http/1.1 on the leader's handshake; an
                     // h2-pinned waiter would just open a fresh TLS connection

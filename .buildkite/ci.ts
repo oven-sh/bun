@@ -1534,7 +1534,7 @@ function getPipelineOptions(): PipelineOptions | undefined {
     skipSizeCheck: parseOption(/\[(skip size( check)?|allow size)\]/i),
     buildPlatforms: Array.from(buildPlatformsMap.values()).filter(p => p.os === "windows" && p.arch === "aarch64"),
     testPlatforms: Array.from(testPlatformsMap.values()).filter(p => p.os === "windows" && p.arch === "aarch64"),
-    testFiles: ["aot/zz-diagnose"],
+    testFiles: ["aot/zz-diagnose", "js/web/intl", "aot/engine/native", "js/web/workers", "js/web/atomics"],
   };
 }
 

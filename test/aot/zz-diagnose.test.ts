@@ -146,6 +146,28 @@ test.skipIf(!(isWindows && process.arch === "arm64") && !process.env.ZZ_DIAGNOSE
     }
     console.log(out.filter(line => line.startsWith("===")).join("\n"));
     console.log(`symbols ${symbols.length}`);
+    if (isWindows) {
+      const table = image.readUInt32LE(0x3c) + 24 + image.readUInt16LE(image.readUInt32LE(0x3c) + 20);
+      const [size, rva, offset] = [8, 12, 20].map(at => image.readUInt32LE(table + at));
+      const starts = new Map(symbols.filter(([at]) => at >= rva && at < rva + size));
+      let [loops, pages] = [0, 0];
+      for (let at = 0; at + 40 < size; at += 4) {
+        const word = image.readUInt32LE(offset + at);
+        if ((word & 0x3fe08000) >>> 0 === 0x08400000 || (word & 0x3fe08000) >>> 0 === 0x08408000) loops++;
+        if ((word & 0x9f000000) >>> 0 !== 0x90000000) continue;
+        pages++;
+        const page = ((rva + at) & ~0xfff) + (((((word >>> 5) & 0x7ffff) << 13) >> 11) + ((word >>> 29) & 3)) * 4096;
+        for (let next = 4; next <= 32; next += 4) {
+          const load = image.readUInt32LE(offset + at + next);
+          if ((load & 0xffc00000) >>> 0 === 0xf9400000 && ((load >>> 5) & 31) === (word & 31)) {
+            const name = starts.get(page + ((load >>> 10) & 0xfff) * 8);
+            if (name) console.log(`=== loads from code +${next}: ${name.slice(0, 80)} in ${nameOf(rva + at)}`);
+          }
+          if ((load & 31) === (word & 31)) break;
+        }
+      }
+      console.log(`=== ${pages} adrp, ${loops} exclusive loads`);
+    }
     for (const part of Buffer.from(Bun.gzipSync(out.join("\n")))
       .toString("base64")
       .match(/.{1,6000}/g)!)

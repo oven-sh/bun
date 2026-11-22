@@ -12,13 +12,14 @@ pub(super) enum Timer {
     Qpack,
     Pacing,
     KeepAlive,
+    Silence,
     Blocked,
     Path,
     KeyDiscard,
 }
 
 impl Timer {
-    pub(super) const ALL: [Self; 12] = [
+    pub(super) const ALL: [Self; 13] = [
         Self::Handshake,
         Self::Idle,
         Self::Progress,
@@ -28,6 +29,7 @@ impl Timer {
         Self::Qpack,
         Self::Pacing,
         Self::KeepAlive,
+        Self::Silence,
         Self::Blocked,
         Self::Path,
         Self::KeyDiscard,

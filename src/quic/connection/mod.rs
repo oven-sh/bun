@@ -13,6 +13,7 @@ mod received;
 mod recovery;
 mod runs;
 mod sent;
+mod silence;
 mod space;
 pub(crate) mod streams;
 mod timers;
@@ -154,6 +155,7 @@ pub struct Connection {
     ack_policy: ack_frequency::Policy,
     ack_controller: Option<ack_frequency::Controller>,
     ack_only_packets: u32,
+    silence: silence::Silence,
 
     tolerated_load: TokenBucket,
     earned_load: u64,
@@ -272,6 +274,7 @@ impl Connection {
             ack_policy: Default::default(),
             ack_controller: None,
             ack_only_packets: 0,
+            silence: Default::default(),
             tolerated_load: TOLERATED_LOAD,
             earned_load: 0,
             idle_timeout: Duration::from_millis(local.max_idle_timeout_millis),
@@ -432,6 +435,7 @@ impl Connection {
                 }
                 (self.timers).set(Timer::KeepAlive, now + self.keep_alive_period);
             }
+            Timer::Silence => self.break_silence(now),
             Timer::Blocked => self.streams.repeat_blocked(),
             Timer::Path => match self.on_path_timeout(now, shared) {
                 Ok(()) => self.set_path_timer(),

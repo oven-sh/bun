@@ -130,11 +130,14 @@ impl Connection {
                         path.on_received(len);
                     }
                     self.restart_idle_timer(now);
-                    let pause = match self.spaces.data.received.unacked_eliciting {
-                        0 => self.keep_alive_period,
-                        _ => self.expected_pause,
-                    };
-                    self.timers.set(Timer::KeepAlive, now + pause);
+                    let soon = now + self.expected_pause;
+                    if self.spaces.data.received.unacked_eliciting > 0
+                        || self.expected_pause == self.keep_alive_period
+                    {
+                        self.timers.set(Timer::KeepAlive, soon);
+                    } else if self.timers.get(Timer::KeepAlive) > soon {
+                        (self.timers).set(Timer::KeepAlive, now + self.keep_alive_period);
+                    }
                     self.has_sent_since_receiving = false;
                     if self.pto_count > 1 {
                         self.on_sign_of_life();
@@ -540,7 +543,10 @@ impl Connection {
                 offset,
                 data,
                 fin,
-            } => return self.on_stream(id, offset, data, fin, arrival.is_early, shared),
+            } => {
+                (self.silence.is_over, self.silence.was_datagram) = (true, false);
+                return self.on_stream(id, offset, data, fin, arrival.is_early, shared);
+            }
             Frame::Ack(ack) => {
                 self.on_ack(now, arrival.space, &ack)?;
                 // RFC 9001 §4.1.2.
@@ -628,6 +634,7 @@ impl Connection {
             }
             Frame::HandshakeDone => return self.confirm_handshake(now, shared),
             Frame::Datagram { data, frame_len } => {
+                (self.silence.is_over, self.silence.was_datagram) = (true, true);
                 return self.on_datagram(data, frame_len, arrival.is_early);
             }
             Frame::AckFrequency { .. } if !self.config.adapts_ack_frequency => {

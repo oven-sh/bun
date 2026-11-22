@@ -3,7 +3,7 @@ use bun_quic::Layer::Transport;
 use bun_quic::transport_code::APPLICATION_ERROR;
 use bun_quic::{Duration, KeepAlive, StreamId};
 
-use crate::harness::raw::Kind::{Handshake, Initial};
+use crate::harness::raw::Kind::{Handshake, Initial, Short};
 use crate::harness::raw::{RTT, Raw};
 
 impl Raw {
@@ -248,6 +248,195 @@ fn keep_alive_is_due_sooner_after_data() {
         raw.advance(1);
         assert_eq!(raw.frames(), "ping");
     }
+}
+
+const CHALLENGE: &str = "path_challenge 12345678";
+
+impl Raw {
+    fn keep_sending(&mut self, frames: &str, times: usize, period: u64) {
+        for _ in 0..times {
+            self.advance(period);
+            self.send(frames);
+        }
+        self.forget();
+    }
+
+    fn quiet(self) -> Self {
+        let raw = self.config(|it| {
+            (it.keep_alive, it.progress_timeout) = (KeepAlive::Never, Duration::ZERO);
+            it.parameters.max_datagram_frame_size = 100;
+        });
+        raw.connected()
+    }
+
+    fn kept_sending(mut self) -> Self {
+        self.keep_sending("ack, stream 3 0 a", 20, 1);
+        self
+    }
+
+    /// Or until the end. Returns how many milliseconds that took.
+    fn wait_for_ping(&mut self) -> u64 {
+        let start = self.now;
+        while self.peer.closed.is_none() && self.frames() != "ping" {
+            self.forget();
+            self.wait();
+        }
+        (self.now - start).as_millis()
+    }
+}
+
+/// RFC 9000 §9.3.
+#[test]
+fn client_speaks_up_when_a_server_that_kept_sending_falls_silent() {
+    for (raw, frames, runs, wait) in [
+        (Raw::server(), "stream 3 0 a", &[(19, 1)][..], 30_000),
+        (Raw::server(), "stream 3 0 a", &[(20, 1)], 135),
+        (Raw::server(), "stream 3 0 a", &[(1, 5000), (19, 1)], 135),
+        (Raw::server(), "stream 3 0 a", &[(25, 500)], 1000),
+        (Raw::server(), "stream 3 0 a", &[(9, 1600), (11, 1)], 1573),
+        (Raw::server(), "stream 3 0 a", &[(25, 3750)], 7500),
+        (Raw::server(), "stream 3 0 a", &[(25, 3751)], 30_000),
+        (
+            Raw::server(),
+            "stream 3 0 a",
+            &[(25, 3000), (1, 5000)],
+            30_000,
+        ),
+        (Raw::server(), "fin 3 0 a", &[(20, 1)], 30_000),
+        (Raw::server(), "datagram a", &[(20, 1)], 135),
+        (Raw::server(), "datagram a, fin 3 0 a", &[(20, 1)], 30_000),
+        (Raw::server(), "ping", &[(20, 1)], 30_000),
+        (Raw::client(), "stream 2 0 a", &[(20, 1)], 30_000),
+    ] {
+        let mut raw = raw.quiet();
+        for &(times, period) in runs {
+            raw.keep_sending(&format!("ack, {frames}"), times, period);
+        }
+        assert_eq!(raw.wait_for_ping(), wait);
+    }
+}
+
+#[test]
+fn client_goes_on_speaking_up_until_the_idle_timeout() {
+    let mut raw = Raw::server().quiet().kept_sending();
+    for pause in [135, 135, 270, 540, 1080, 2160, 3750, 3750] {
+        assert_eq!(raw.wait_for_ping(), pause);
+    }
+    assert_eq!(raw.wait_for_the_end(), 30_000 - 32 * 135 - 2 * 3750);
+}
+
+#[test]
+fn client_goes_on_speaking_up_without_an_idle_timeout() {
+    let raw = Raw::server().config(|it| it.parameters.max_idle_timeout_millis = 0);
+    let mut raw = raw.quiet().kept_sending();
+    let pauses = (0..12).map(|_| raw.wait_for_ping());
+    assert_eq!(pauses.last(), Some(60_000));
+}
+
+#[test]
+fn client_that_has_spoken_up_is_content_with_an_acknowledgment() {
+    for (answers, waits) in [
+        (&["ack"][..], [30_000, 0]),
+        (&["first ack"], [30_000, 0]),
+        (&["ack, ping"], [30_000, 0]),
+        (&["ping", "ping"], [540 - 200, 1080]),
+        (&["ack, stream 3 0 a"], [2 * 740, 135]),
+        (&["stream 3 0 a", "ack"], [2 * 740, 135]),
+        (&[CHALLENGE], [135, 135]),
+        (&["ack", CHALLENGE], [135, 135]),
+        (&[CHALLENGE, "first ack"], [135, 135]),
+        (&[CHALLENGE, "stream 3 0 a"], [135, 135]),
+        (&[CHALLENGE, "ack, stream 3 0 a"], [2 * 740, 135]),
+        (&[CHALLENGE, "ack"], [30_000, 0]),
+    ] {
+        let mut raw = Raw::server().quiet().kept_sending();
+        let before = raw.connection().stats();
+        raw.wait_for_ping();
+        let first_ack = raw.ack(Short);
+        (0..2).for_each(|_| _ = raw.wait_for_ping());
+        raw.advance(200);
+        for &answer in answers {
+            let is_late = answer == "first ack";
+            raw.send(if is_late { &first_ack } else { answer });
+        }
+        let after = raw.connection().stats();
+        assert_eq!(after.smoothed_rtt, before.smoothed_rtt);
+        assert_eq!(after.congestion_window, before.congestion_window);
+        assert_eq!([(); 2].map(|()| raw.wait_for_ping()), waits);
+    }
+}
+
+#[test]
+fn client_that_is_late_goes_by_what_it_has_read() {
+    for (pings, frames, packets, wait) in [
+        (0, "stream 3 0 a", "", 2 * 500),
+        (1, "stream 3 0 a", "", 2 * 635),
+        (1, "ack", "", 30_000),
+        (1, CHALLENGE, "1[path_response, ack]", 135),
+    ] {
+        let mut raw = Raw::server().quiet().kept_sending();
+        (0..pings).for_each(|_| _ = raw.wait_for_ping());
+        raw.now = raw.now + Duration::from_millis(500);
+        raw.send(frames);
+        assert_eq!(raw.outline(), packets);
+        assert_eq!(raw.wait_for_ping(), wait);
+    }
+}
+
+#[test]
+fn time_without_a_stream_is_not_a_pause() {
+    let mut raw = Raw::server().quiet();
+    raw.keep_sending("ack, fin 3 0 a", 20, 1);
+    raw.keep_sending("ack, stream 7 0 a", 1, 8000);
+    assert_eq!(raw.wait_for_ping(), 156);
+}
+
+#[test]
+fn client_does_not_wait_for_an_acknowledgment_for_ever() {
+    let mut raw = Raw::server().quiet();
+    raw.send(CHALLENGE);
+    raw.advance(1000);
+    raw.keep_sending("stream 3 0 a", 20, 1);
+    assert_eq!(raw.wait_for_ping(), 135);
+}
+
+#[test]
+fn server_does_not_wait_for_its_response_to_be_acknowledged() {
+    let mut raw = Raw::client().quiet();
+    raw.send("ack");
+    raw.advance(1000);
+    raw.send(CHALLENGE);
+    raw.advance(RTT);
+    assert_eq!(raw.sleeps_for(), 30_000 - RTT);
+}
+
+#[test]
+fn acknowledgments_do_not_put_off_a_keep_alive_that_is_due_soon() {
+    let mut raw = Raw::server().connected();
+    raw.send("ack, stream 3 0 a");
+    raw.keep_sending("ack", 2, RTT);
+    assert_eq!(raw.wait_for_ping(), 1000 - 2 * RTT);
+}
+
+#[test]
+fn client_speaks_up_later_if_something_is_in_flight() {
+    let mut raw = Raw::server().quiet().kept_sending();
+    raw.advance(130);
+    raw.request_packets("a");
+    raw.advance(RTT);
+    assert_eq!(raw.packets(), "");
+    raw.send("ack");
+    assert_eq!(raw.wait_for_ping(), 135 + 135 - 130 - RTT);
+}
+
+#[test]
+fn client_stops_speaking_up_to_a_server_that_only_challenges() {
+    let mut raw = Raw::server().quiet().kept_sending();
+    let start = raw.now;
+    while raw.wait_for_ping() < 30_000 {
+        raw.send(&format!("ack, {CHALLENGE}"));
+    }
+    assert_eq!((raw.now - start).as_millis(), 59_981);
 }
 
 #[test]

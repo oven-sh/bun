@@ -370,12 +370,16 @@ impl Connection {
     }
 
     fn backed_off(&self, timeout: Duration) -> Duration {
+        self.backed_off_by(self.pto_count, timeout)
+    }
+
+    pub(super) fn backed_off_by(&self, count: u32, timeout: Duration) -> Duration {
         let timeout = timeout.max(MIN_PROBE_TIMEOUT);
         let max = match self.is_confirmed() && !self.idle_timeout.is_zero() {
             true => (self.idle_timeout / PROBES_PER_IDLE_TIMEOUT).max(timeout * 2),
             false => Duration::MAX,
         };
-        (timeout * (1 << self.pto_count.min(16))).min(max.min(MAX_PROBE_TIMEOUT))
+        (timeout * (1 << count.min(16))).min(max.min(MAX_PROBE_TIMEOUT))
     }
 
     /// Acknowledgments are not usually delayed for more than a packet, nor by a peer that has an answer.

@@ -116,6 +116,9 @@ impl Connection {
             self.restart_progress_timer(now);
         }
         self.timers.stop(Timer::Pacing);
+        if self.side.is_client() {
+            self.listen(now);
+        }
         // RFC 9002 §6.2.2.1.
         if self.phase == Phase::Handshake && self.timers.get(Timer::Loss) <= now {
             self.on_loss_timeout(now);
@@ -401,9 +404,10 @@ impl Connection {
         let asks_for_ack = self.ack_only_packets >= MAX_ACK_ONLY_PACKETS
             && after_ack > draft.packet.payload_start
             && !self.spaces.data.sent.has_in_flight();
-        if !draft.is_eliciting && (is_probe || asks_for_ack) && out.len() < end {
+        let breaks_silence = core::mem::take(&mut self.silence.owes_ping);
+        if !draft.is_eliciting && (is_probe || asks_for_ack || breaks_silence) && out.len() < end {
             out.push(kind::PING as u8);
-            draft.is_eliciting = true;
+            draft.is_eliciting = !breaks_silence;
         }
         draft.finish(out)
     }
@@ -590,6 +594,7 @@ impl Connection {
             if self.path.is_wanted || is_active && is_response {
                 let number = draft.packet.number;
                 (self.spaces.data.received).write_ack(now, number, out, frames_end);
+                self.await_acknowledgment(now, number);
             }
             if max_len == MIN_DATAGRAM_LEN {
                 out.resize(frames_end, 0);

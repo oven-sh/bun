@@ -1400,9 +1400,9 @@ extern "C" void WebSocket__willSendRequest(WebCore::WebSocket* webSocket, WebCor
     webSocket->willSendRequest(request.span(), socket);
 }
 
-extern "C" void WebSocket__didFailToRead(WebCore::WebSocket* webSocket, Bun::OwnedString code)
+extern "C" void WebSocket__socketDidFail(WebCore::WebSocket* webSocket, int32_t closeCode, bool isWrite, Bun::OwnedString tlsReason)
 {
-    webSocket->didFailToRead(code.transferToWTFString());
+    webSocket->socketDidFail(closeCode, isWrite, tlsReason.transferToWTFString());
 }
 
 extern "C" bool WebSocket__isWsMode(WebCore::WebSocket* webSocket)

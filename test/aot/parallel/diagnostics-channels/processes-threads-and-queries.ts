@@ -1,3 +1,4 @@
+// Child processes, workers, UDP sockets, Console and node:sqlite publish their channels.
 import { spawn } from "node:child_process";
 import { Console } from "node:console";
 import dgram from "node:dgram";

@@ -1,3 +1,4 @@
+// node:http2 publishes the http2.* channels.
 import { AsyncLocalStorage } from "node:async_hooks";
 import { subscribe } from "node:diagnostics_channel";
 import { once } from "node:events";

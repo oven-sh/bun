@@ -1,3 +1,4 @@
+// Tracing and bounded channels enter and leave the stores that are bound to them.
 import { AsyncLocalStorage } from "node:async_hooks";
 import * as dc from "node:diagnostics_channel";
 

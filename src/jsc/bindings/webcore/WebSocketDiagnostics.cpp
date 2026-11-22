@@ -4,7 +4,6 @@
 #include "WebSocket.h"
 
 #include "AsyncContextFrame.h"
-#include "BunClientData.h"
 #include "BunString.h"
 #include "JSDOMExceptionHandling.h"
 #include "JSWebSocket.h"
@@ -15,6 +14,8 @@
 #include <wtf/CryptographicallyRandomNumber.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/Base64.h>
+
+extern "C" JSC::EncodedJSValue Bun__socketReadErrorFromCloseCode(JSC::JSGlobalObject*, int code);
 
 namespace WebCore {
 
@@ -164,6 +165,9 @@ void WebSocket::willSendRequest(std::span<const uint8_t> request, us_socket_t* s
 {
     if (!m_requestTracer || request.size() < 2) [[likely]]
         return;
+    // The end of a TLS renegotiation gets here too.
+    if (std::exchange(m_didSendRequest, true))
+        return;
 
     m_sentRequest = makeUnique<SentRequest>(String { byteCast<Latin1Character>(request.first(request.size() - 2)) }, addressOfSocket(socket, false), addressOfSocket(socket, true));
     queueTaskKeepingObjectAlive(*this, TaskSource::WebSocket, [](WebSocket& ws) {
@@ -303,26 +307,26 @@ void WebSocket::publishPingOrPong(Opcode opcode, JSValue payload)
     callInContext(hook, arguments);
 }
 
-void WebSocket::didFailToRead(String&& code)
+void WebSocket::socketDidFail(int32_t closeCode, bool isWrite, String&& tlsReason)
 {
     if (!diagnosticsHook()) [[likely]]
         return;
 
-    queueTaskKeepingObjectAlive(*this, TaskSource::WebSocket, [code = WTF::move(code)](WebSocket& ws) {
+    queueTaskKeepingObjectAlive(*this, TaskSource::WebSocket, [closeCode, isWrite, tlsReason = WTF::move(tlsReason)](WebSocket& ws) {
         JSObject* hook = ws.diagnosticsHook();
         if (!hook)
             return;
+
         auto* globalObject = ws.scriptExecutionContext()->jsGlobalObject();
         auto& vm = getVM(globalObject);
-        auto& names = builtinNames(vm);
-        JSObject* error = createError(globalObject, makeString("read "_s, code));
-        error->putDirect(vm, names.codePublicName(), jsString(vm, code));
-        error->putDirect(vm, names.syscallPublicName(), jsNontrivialString(vm, "read"_s));
-
         MarkedArgumentBuffer arguments;
-        arguments.append(jsEvent(WebSocketEvent::SocketError));
+        arguments.append(jsEvent(closeCode ? WebSocketEvent::SocketError : WebSocketEvent::TLSError));
         arguments.append(ws.wrapper());
-        arguments.append(error);
+        if (closeCode) {
+            arguments.append(JSValue::decode(Bun__socketReadErrorFromCloseCode(globalObject, closeCode)));
+            arguments.append(jsNontrivialString(vm, isWrite ? "write"_s : "read"_s));
+        } else
+            arguments.append(jsString(vm, tlsReason));
         ws.callInContext(hook, arguments);
     });
 }

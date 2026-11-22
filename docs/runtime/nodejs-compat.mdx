@@ -38,6 +38,7 @@ We update this page regularly. It reflects the latest version of Bun's compatibi
 - `trailers` is always empty. Bun does not publish informational (1xx) responses.
 - Bun does not publish the chunks of a redirect that it follows, or of a `Bun.file()` that it sends with `sendfile`.
 - Bun publishes nothing for a request that starts while no `undici:*` channel has a subscriber.
+- `undici:websocket:socket_error` reports a failed write only if the connection to the server, or to the proxy if there is one, uses TLS. The `code` can be `ECONNRESET` where Node has `EPIPE`.
 
 ### [`node:dns`](https://nodejs.org/api/dns.html)
 

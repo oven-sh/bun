@@ -40,6 +40,7 @@ enum class WebSocketEvent : uint8_t {
     Open,
     Close,
     SocketError,
+    TLSError,
     Ping,
     Pong,
 };

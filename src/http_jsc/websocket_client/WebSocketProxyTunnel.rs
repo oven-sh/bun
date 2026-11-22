@@ -290,6 +290,9 @@ impl ssl_wrapper::Handler for &WebSocketProxyTunnel {
 
         let Some(upgrade_client) = self.upgrade_client() else {
             self.renegotiation_ended.set(success);
+            if !success && let Some(ws) = self.connected_websocket() {
+                ws.report_tls_error(&ssl_error);
+            }
             return;
         };
 
@@ -388,6 +391,10 @@ impl bun_ptr::Detach for WebSocketProxyTunnel {
 impl WebSocketProxyTunnel {
     fn upgrade_client(&self) -> Option<UpgradeClientRef> {
         self.upgrade_client.with_taken(|client| client.clone())
+    }
+
+    pub(crate) fn connected_websocket(&self) -> Option<RefPtr<WebSocketClient>> {
+        self.connected_websocket.cloned()
     }
 
     /// Clear the upgrade client reference. Called before tunnel shutdown during

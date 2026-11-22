@@ -46,7 +46,7 @@ use super::cpp_websocket::{CppWebSocket, HandshakeVerdict, TlsHandshake, TlsPeer
 use super::websocket_deflate as WebSocketDeflate;
 use super::websocket_proxy::WebSocketProxy;
 use super::websocket_proxy_tunnel::WebSocketProxyTunnel;
-use crate::websocket_client::ErrorCode;
+use crate::websocket_client::{ErrorCode, WebSocketClient};
 
 // LAYERING: SSLConfig was MOVE_DOWN'd from bun_runtime::api::server_config →
 // bun_http::ssl_config (data + as_usockets/for_client_verification). The
@@ -578,6 +578,10 @@ where
         self.proxy.get().as_ref()?.get_tunnel().cloned()
     }
 
+    fn tunneled_websocket(&self) -> Option<RefPtr<WebSocketClient>> {
+        self.tunnel()?.connected_websocket()
+    }
+
     pub(crate) fn cancel(self: RefPtr<Self>) {
         self.clear_data();
 
@@ -621,9 +625,14 @@ where
     pub fn handle_close(self: RefPtr<Self>, code: c_int) {
         log!("onClose");
         bun_jsc::mark_binding!();
+        if let Some(ws) = self.tunneled_websocket() {
+            ws.report_close_error(self.tcp.get(), code);
+        }
         self.clear_data();
         self.tcp.set(Socket::<SSL>::detached());
-        let (system_code, detail) = match failed_read_errno_name(code) {
+        // Values above the `CloseCode` range are the errno of a failed read. A FIN goes through
+        // `handle_end` instead.
+        let (system_code, detail) = match socket_errno_name(code).filter(|_| code > 2) {
             Some(name) => (
                 BunString::static_(name),
                 BunString::create_format(format_args!("read {name}")),
@@ -698,6 +707,9 @@ where
                 self.report_request();
             }
         } else {
+            if let Some(ws) = self.tunneled_websocket() {
+                ws.report_tls_error(&ssl_error);
+            }
             // if we are here is because server rejected us, and the error_no is the cause of this
             // if we set reject_unauthorized == false this means the server requires custom CA aka NODE_EXTRA_CA_CERTS
             self.fail_tls(ssl_error, false);
@@ -1544,12 +1556,6 @@ fn socket_errno_name(errno: c_int) -> Option<&'static str> {
         return None;
     }
     bun_errno::SystemErrno::init(i64::from(errno)).map(Into::into)
-}
-
-/// For the `code` of `handle_close`. Values above the `CloseCode` range are the errno of a failed
-/// read. A FIN goes through `handle_end` instead.
-pub(crate) fn failed_read_errno_name(code: c_int) -> Option<&'static str> {
-    socket_errno_name(code).filter(|_| code > 2)
 }
 
 /// Errno name after `socket(2)` / `connect(2)` failed synchronously.

@@ -1,3 +1,4 @@
+// fetch() and WebSocket publish the undici:* channels, in the async context of their caller.
 import { AsyncLocalStorage } from "node:async_hooks";
 import { subscribe } from "node:diagnostics_channel";
 

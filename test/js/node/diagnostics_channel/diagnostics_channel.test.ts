@@ -1,6 +1,7 @@
 import { gc } from "bun";
+import { socketFaultInjection } from "bun:internal-for-testing";
 import { beforeEach, describe, expect, mock, test } from "bun:test";
-import { bunEnv, bunExe, tls as certificate, isWindows, normalizeBunSnapshot, tempDir } from "harness";
+import { bunEnv, bunExe, tls as certificate, isWindows, nodeExe, normalizeBunSnapshot, tempDir } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { execFile, spawn } from "node:child_process";
 import {
@@ -20,7 +21,15 @@ import https from "node:https";
 import net from "node:net";
 import { DatabaseSync } from "node:sqlite";
 import tls from "node:tls";
-import { promisify } from "node:util";
+import { getSystemErrorName, promisify } from "node:util";
+import {
+  createConnectProxy,
+  ignoreAmbientNoProxy,
+  startOriginWithCorruptRecord,
+  startRenegotiatingWssServer,
+  TLS_RECORD,
+} from "../../web/websocket/proxy-test-utils";
+import { closePayload, createPeer, encodeFrame, OP } from "../../web/websocket/raw-peer";
 
 describe("Channel", () => {
   // test-diagnostics-channel-has-subscribers.js
@@ -402,6 +411,63 @@ describe("Channel", () => {
       }),
     ).toThrow(expect.objectContaining({ errors: [mine, ofStore] }));
     expect(left.getStore()).toBeUndefined();
+  });
+
+  test.each([undefined, "outer"])("a store does not need withScope(), entered from %p", async outer => {
+    // The shape of what dd-trace 5.35.0 binds.
+    const handles = new AsyncLocalStorage<object>();
+    const values = new WeakMap<object, unknown>();
+    const store: any = Object.assign(() => {}, {
+      getStore: () => values.get(handles.getStore()!),
+      enterWith(value: unknown) {
+        const handle = {};
+        values.set(handle, value);
+        handles.enterWith(handle);
+      },
+      run: (value: unknown, fn: () => unknown) => handles.exit(() => (store.enterWith(value), fn())),
+    });
+    const tracing = tracingChannel(`no-with-scope-${outer}`);
+    tracing.start.bindStore(store, () => "start");
+    tracing.asyncStart.bindStore(store, () => "asyncStart");
+    using _ = {
+      [Symbol.dispose]() {
+        tracing.start.unbindStore(store);
+        tracing.asyncStart.unbindStore(store);
+        handles.disable();
+      },
+    };
+
+    const seen: unknown[][] = [];
+    const see = () => void seen.at(-1)!.push(store.getStore());
+    const calls = [
+      () => tracing.start.runStores({}, see),
+      () => tracing.traceSync(see),
+      () => expect(() => tracing.traceSync(() => (see(), JSON.parse("")))).toThrow(SyntaxError),
+      () => tracing.traceCallback(done => (see(), done(), see()), 0, {}, undefined, see),
+      () => tracing.tracePromise(async () => (see(), await nextTurn(), see())),
+      () => boundedChannel(tracing).run({}, see),
+      () => {
+        using _ = (tracing.start as any).withStoreScope({});
+        see();
+      },
+    ];
+    if (outer) store.enterWith(outer);
+    for (const call of calls) {
+      seen.push([]);
+      const result = call();
+      see();
+      await result;
+    }
+
+    expect(seen).toEqual([
+      ["start", outer],
+      ["start", outer],
+      ["start", outer],
+      ["start", "asyncStart", "start", outer],
+      ["start", outer, "start"],
+      ["start", outer],
+      ["start", outer],
+    ]);
   });
 
   test("withStoreScope() can be disposed twice", () => {
@@ -2160,6 +2226,19 @@ describe("undici:* of fetch()", () => {
     expect(published.log).toEqual(["trailers a"]);
   });
 
+  test("a 205 announces a body that is still to come", async () => {
+    await using server = await listening(
+      net.createServer(socket =>
+        socket.on("error", () => {}).once("data", () => socket.write("HTTP/1.1 205 OK\r\nContent-Length: 4\r\n\r\n")),
+      ),
+    );
+    using published = record("undici:request:", ["headers", "trailers", "error"]);
+    const over = Promise.race([published.until("trailers"), published.until("error")]);
+    expect((await fetch(`http://127.0.0.1:${server.port}`)).body).toBeNull();
+    await over;
+    expect(published.log).toEqual(["headers", "trailers"]);
+  });
+
   test("the body of the request fails", async () => {
     using server = serve();
     using published = record(
@@ -2252,10 +2331,11 @@ describe("undici:* of fetch()", () => {
 });
 
 describe("undici:* of WebSocket", () => {
-  const serve = (websocket: Partial<Bun.WebSocketHandler<undefined>> = {}) =>
+  const serve = (websocket: Partial<Bun.WebSocketHandler<undefined>> = {}, tls?: Bun.TLSOptions) =>
     Bun.serve({
       port: 0,
       hostname: "127.0.0.1",
+      tls,
       fetch(request, server) {
         const headers = { added: request.headers.get("added") ?? "", date: "now" };
         if (!request.url.endsWith("/404") && server.upgrade(request, { headers })) return;
@@ -2341,6 +2421,136 @@ describe("undici:* of WebSocket", () => {
       "request:headers",
       "request:trailers",
     ]);
+  });
+
+  test.skipIf(!nodeExe())("the server renegotiates before it answers", async () => {
+    await using server = await startRenegotiatingWssServer("before the 101");
+    using requests = recordRequests();
+    const ws = new WebSocket(`wss://127.0.0.1:${server.port}`, { tls: { ca: certificate.cert } } as any);
+    ws.onopen = () => ws.terminate();
+    await closed(ws);
+    expect(requests.log).toEqual([
+      "request:create",
+      "client:beforeConnect",
+      "client:connected",
+      "client:sendHeaders",
+      "request:bodySent",
+      "request:headers",
+      "request:trailers",
+    ]);
+  });
+
+  describe("socket_error", () => {
+    ignoreAmbientNoProxy();
+
+    const recordErrors = () =>
+      record("undici:websocket:", ["socket_error", "close"], (event, { message, code, syscall, errno }) =>
+        event === "close" ? code : { message, code, syscall, errno: errno && getSystemErrorName(errno) },
+      );
+    const reset = (syscall: string) => ({
+      message: `${syscall} ECONNRESET`,
+      code: "ECONNRESET",
+      syscall,
+      errno: "ECONNRESET",
+    });
+    const badRecord = {
+      message: expect.stringContaining("DECRYPTION_FAILED_OR_BAD_RECORD_MAC"),
+      code: "ERR_SSL_DECRYPTION_FAILED_OR_BAD_RECORD_MAC",
+    };
+
+    describe.each([
+      ["ws", "no"],
+      ["wss", "no"],
+      ["ws", "http"],
+      ["wss", "http"],
+      ["ws", "https"],
+      ["wss", "https"],
+    ])("%s:// with %s proxy", (scheme, proxyScheme) => {
+      /** `harm` gets the other end of the TCP connection of an open WebSocket. */
+      async function publishedAfter(harm: (peer: net.Socket, ws: WebSocket) => void) {
+        using origin = serve({}, scheme === "wss" ? certificate : undefined);
+        await using proxy = await listening(createConnectProxy({ tls: proxyScheme === "https" }));
+        let peer: net.Socket;
+        await using hop = await listening(
+          net.createServer(socket => {
+            const next = net.connect(proxyScheme === "no" ? origin.port! : proxy.port, "127.0.0.1");
+            peer = socket.on("error", () => {}).on("close", () => next.destroy());
+            next.on("error", () => {}).on("close", () => socket.destroy());
+            socket.pipe(next).pipe(socket);
+          }),
+        );
+        using published = recordErrors();
+        const ws = new WebSocket(`${scheme}://127.0.0.1:${proxyScheme === "no" ? hop.port : origin.port}`, {
+          proxy: proxyScheme === "no" ? undefined : `${proxyScheme}://127.0.0.1:${hop.port}`,
+          tls: { ca: certificate.cert },
+        } as any);
+        await once(ws, "open");
+        harm(peer!, ws);
+        await closed(ws);
+        return published.log;
+      }
+
+      test("the peer resets the connection", async () => {
+        expect(await publishedAfter(peer => peer.resetAndDestroy())).toEqual([reset("read"), 1006]);
+      });
+
+      test("the peer ends the connection", async () => {
+        expect(await publishedAfter(peer => peer.end())).toEqual([1006]);
+      });
+
+      test("terminate()", async () => {
+        expect(await publishedAfter((_, ws) => ws.terminate())).toEqual([1006]);
+      });
+
+      test.skipIf(scheme === "ws" && proxyScheme !== "https")("a TLS record is corrupt", async () => {
+        const record = Buffer.from([TLS_RECORD.applicationData, 3, 3, 0, 40, ...Buffer.alloc(40, 7)]);
+        expect(await publishedAfter(peer => peer.write(record))).toEqual([badRecord, 1006]);
+      });
+    });
+
+    describe.skipIf(!socketFaultInjection.available() || isWindows).each(["no", "https"])(
+      "wss:// with %s proxy, the kernel refuses the second write",
+      proxyScheme => {
+        test.each([
+          ["a message, after the Pong", encodeFrame(OP.ping), ["write ECONNRESET", "1006 false"]],
+          ["the close_notify, after the Close frame", encodeFrame(OP.close, closePayload(1000)), ["1000 true"]],
+        ])("%s", async (_, afterUpgrade, expected) => {
+          // Neither answers a FIN, as a peer that is gone.
+          await using proxy = await listening(createConnectProxy({ tls: true, tlsOptions: { allowHalfOpen: true } }));
+          await using origin = await createPeer({ secure: true, afterUpgrade });
+          expect(
+            await run(`
+              const { socketFaultInjection } = require("bun:internal-for-testing");
+              process.env.NO_PROXY = process.env.no_proxy = "";
+              dc.subscribe("undici:websocket:socket_error", error => console.log(error.message));
+              dc.subscribe("undici:websocket:ping", () => ws.send("message"));
+              const ws = new WebSocket("${origin.url}", {
+                proxy: ${proxyScheme === "no" ? undefined : `"https://127.0.0.1:${proxy.port}"`},
+                tls: { rejectUnauthorized: false },
+              });
+              ws.onopen = () => socketFaultInjection.set({ syscall: "send", action: "errno", errno: "ECONNRESET", after: 1 });
+              ws.onclose = ({ code, wasClean }) => console.log(code, wasClean);
+            `),
+          ).toEqual(expected);
+        });
+      },
+    );
+
+    test.skipIf(!nodeExe())("the peer ends the connection during a renegotiation", async () => {
+      await using server = await startRenegotiatingWssServer("and ends");
+      using published = recordErrors();
+      const ws = new WebSocket(`wss://127.0.0.1:${server.port}`, { tls: { ca: certificate.cert } } as any);
+      ws.onopen = () => ws.send("message");
+      await closed(ws);
+      expect(published.log).toEqual([1006]);
+    });
+
+    test.each(["direct", "http", "https"] as const)("a corrupt TLS record comes with the 101: %s", async route => {
+      await using origin = await startOriginWithCorruptRecord(route, []);
+      using published = recordErrors();
+      await closed(new WebSocket(origin.url, { proxy: origin.proxy, tls: { ca: certificate.cert } } as any));
+      expect(published.log).toEqual([expect.objectContaining({ code: expect.stringMatching(/^ERR_SSL_/) }), 1006]);
+    });
   });
 
   test("the connection is refused", async () => {

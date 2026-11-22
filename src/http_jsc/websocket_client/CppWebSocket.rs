@@ -128,7 +128,12 @@ unsafe extern "C" {
         request: FfiSlice<'_>,
         socket: *mut bun_uws_sys::us_socket_t,
     );
-    safe fn WebSocket__didFailToRead(websocket_context: &CppWebSocket, code: BunString);
+    safe fn WebSocket__socketDidFail(
+        websocket_context: &CppWebSocket,
+        close_code: i32,
+        is_write: bool,
+        tls_reason: BunString,
+    );
     safe fn WebSocket__isWsMode(websocket_context: &CppWebSocket) -> bool;
     safe fn WebSocket__didReceiveResponseBody(
         websocket_context: &CppWebSocket,
@@ -265,8 +270,13 @@ impl CppWebSocket {
     }
 
     /// For `node:diagnostics_channel`. No JS runs.
-    pub(crate) fn did_fail_to_read(&self, errno_name: &'static str) {
-        WebSocket__didFailToRead(self, BunString::static_(errno_name));
+    pub(crate) fn did_close_with_error(&self, close_code: i32, is_write: bool) {
+        WebSocket__socketDidFail(self, close_code, is_write, BunString::EMPTY);
+    }
+
+    /// For `node:diagnostics_channel`. No JS runs.
+    pub(crate) fn did_fail_tls(&self, reason: &[u8]) {
+        WebSocket__socketDidFail(self, 0, false, BunString::clone_utf8(reason));
     }
 
     /// True if the `ws` module created this WebSocket. A field read on the C++ side: no JS runs.

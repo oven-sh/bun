@@ -8,9 +8,11 @@ const { isIP } = require("internal/net/isIP");
 const ArrayPrototypeSlice = Array.prototype.slice;
 const BufferFrom = Buffer.from;
 const NumberParseInt = Number.parseInt;
+const ObjectAssign = Object.assign;
 const ObjectDefineProperty = Object.defineProperty;
 const ObjectHasOwn = Object.hasOwn;
 const RegExpPrototypeExec = RegExp.prototype.exec;
+const SafeError = Error;
 const StringPrototypeIndexOf = String.prototype.indexOf;
 const StringPrototypeSlice = String.prototype.slice;
 const StringPrototypeSplit: (this: string, separator: string) => string[] = String.prototype.split;
@@ -53,6 +55,7 @@ const enum WebSocketEvent {
   Open,
   Close,
   SocketError,
+  TLSError,
   Ping,
   Pong,
 }
@@ -501,7 +504,17 @@ function publishWebSocketEvent(event: WebSocketEvent, websocket: WebSocket, a: a
       onClose.publish({ websocket, code: a, reason: b });
       break;
     case WebSocketEvent.SocketError:
-      onSocketError.publish(a);
+      if (onSocketError.hasSubscribers) {
+        const { errno, code } = a;
+        onSocketError.publish(ObjectAssign(new SafeError(`${b} ${code}`), { errno, code, syscall: b }));
+      }
+      break;
+    case WebSocketEvent.TLSError:
+      if (onSocketError.hasSubscribers) {
+        const error = require("internal/tls").tlsHandshakeError({ code: "EPROTO", reason: a });
+        // BoringSSL's name for a close_notify during a renegotiation.
+        if (error.code !== "ERR_SSL_SSL_HANDSHAKE_FAILURE") onSocketError.publish(error);
+      }
       break;
     case WebSocketEvent.Ping:
       onPing.publish({ payload: a, websocket });

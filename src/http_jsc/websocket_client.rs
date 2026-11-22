@@ -27,7 +27,6 @@ use bun_uws_sys::us_socket_t;
 use self::cpp_websocket::{CppWebSocket, TlsHandshake};
 use self::websocket_deflate::WebSocketDeflate;
 use self::websocket_proxy_tunnel::WebSocketProxyTunnel;
-use self::websocket_upgrade_client::failed_read_errno_name;
 
 #[path = "websocket_client/CppWebSocket.rs"]
 pub mod cpp_websocket;
@@ -398,6 +397,9 @@ impl<const SSL: bool> WebSocket<SSL> {
         let Some(ws) = self.cpp_websocket() else {
             return;
         };
+        if success == 0 {
+            self.report_tls_error(&ssl_error);
+        }
         if !ws.accepts_tls_peer(
             TlsHandshake::Renegotiation,
             socket.ssl_mut(),
@@ -409,6 +411,27 @@ impl<const SSL: bool> WebSocket<SSL> {
         }
     }
 
+    /// `socket` closes with `code`. In tunnel mode it is the upgrade client's.
+    pub(crate) fn report_close_error<const TLS: bool>(&self, socket: Socket<TLS>, code: i32) {
+        let is_write = TLS && socket.ssl_send_rejected();
+        // A peer that has sent its Close frame does not have to wait for our close_notify.
+        let is_over = self.sent_fin.get() && self.close_received.borrow().is_some();
+        // Values above the `CloseCode` range are an errno.
+        if code > 2
+            && !(is_write && is_over)
+            && let Some(ws) = self.cpp_websocket()
+        {
+            ws.did_close_with_error(code, is_write);
+        }
+    }
+
+    /// A read failed in the TLS session with the target or with the proxy.
+    pub(crate) fn report_tls_error(&self, ssl_error: &us_bun_verify_error_t) {
+        if let Some(ws) = self.cpp_websocket() {
+            ws.did_fail_tls(ssl_error.reason_bytes());
+        }
+    }
+
     fn detach_tcp(&self) {
         let mut tcp = self.tcp.get();
         tcp.detach();
@@ -417,11 +440,7 @@ impl<const SSL: bool> WebSocket<SSL> {
 
     pub fn handle_close(self: RefPtr<Self>, code: i32) {
         log!("onClose");
-        if let Some(name) = failed_read_errno_name(code)
-            && let Some(ws) = self.cpp_websocket()
-        {
-            ws.did_fail_to_read(name);
-        }
+        self.report_close_error(self.tcp.get(), code);
         self.detach_tcp();
         self.parse_initial_data();
         self.finish(Outcome::Closed);

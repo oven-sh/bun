@@ -1824,6 +1824,9 @@ impl FetchTasklet {
     fn null_body_value(&mut self) -> BodyValue {
         self.scheduled_response_buffer = MutableString::default();
         if self.result.has_more {
+            if let Some(trace) = &self.trace {
+                trace.events.push(TraceEvent::ResponseEnd);
+            }
             self.abandon_response_body();
         }
         BodyValue::Null

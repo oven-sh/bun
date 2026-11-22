@@ -298,7 +298,8 @@ public:
     }
     // These two run no script.
     void willSendRequest(std::span<const uint8_t> request, us_socket_t*);
-    void didFailToRead(String&& code);
+    // `closeCode` is 0 if it was the TLS session that failed.
+    void socketDidFail(int32_t closeCode, bool isWrite, String&& tlsReason);
 
     size_t memoryCost() const;
 
@@ -441,6 +442,7 @@ private:
     JSValueInWrappedObject m_requestTracer;
     // From willSendRequest() to publishSentRequest().
     std::unique_ptr<SentRequest> m_sentRequest;
+    bool m_didSendRequest { false };
     // From the 101 to publishOpen().
     std::unique_ptr<AcceptedHandshake> m_acceptedHandshake;
 

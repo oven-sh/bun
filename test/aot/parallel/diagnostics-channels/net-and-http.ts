@@ -1,3 +1,4 @@
+// node:net and node:http publish the net.* and http.* channels.
 import { subscribe, unsubscribe } from "node:diagnostics_channel";
 import { once } from "node:events";
 import http from "node:http";

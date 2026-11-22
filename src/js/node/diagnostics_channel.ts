@@ -35,7 +35,11 @@ const WeakRefPrototypeDeref = WeakRef.prototype.deref;
 type ChannelName = string | symbol;
 type Subscription = (message: unknown, name: ChannelName) => void;
 type Transform = (data: unknown) => unknown;
-type Store = InstanceType<$BunModules["node:async_hooks"]["AsyncLocalStorage"]>;
+interface Store {
+  getStore(): unknown;
+  enterWith(context: unknown): void;
+  withScope?(context: unknown): Disposable;
+}
 type Stores = Map<Store, Transform | undefined>;
 type Traced = (...args: any[]) => unknown;
 type Reaction = (value: unknown) => unknown;
@@ -95,6 +99,14 @@ function aggregate(inner: unknown, outer: unknown) {
 
 const kNoScopes: Disposable[] = [];
 
+// Node throws without withScope(). dd-trace up to 5.35 binds an object of its own that lacks it.
+function enterStore(store: Store, context: unknown): Disposable {
+  if (store.withScope) return store.withScope(context);
+  const previous = store.getStore();
+  store.enterWith(context);
+  return { [SymbolDispose]: () => store.enterWith(previous) };
+}
+
 function enterBoundStores(stores: Stores, data: unknown, scopes: Disposable[]) {
   stores.$forEach((transform, store) => {
     let context = data;
@@ -106,7 +118,7 @@ function enterBoundStores(stores: Stores, data: unknown, scopes: Disposable[]) {
         return;
       }
     }
-    $arrayPush(scopes, store.withScope(context));
+    $arrayPush(scopes, enterStore(store, context));
   });
 }
 

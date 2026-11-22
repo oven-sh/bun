@@ -5121,7 +5121,7 @@ fn check_named_files(
     if let Some(unwanted) = unwanted {
         let module = |file: FileId| &program.files.modules[file.idx()];
         let wanted = to_check.iter().copied().filter(|&file| {
-            matches!(module(file).hir.kind, FileKind::Ts | FileKind::Tsx)
+            matches!(module(file).facts.kind, FileKind::Ts | FileKind::Tsx)
                 && !module(file).is_from_external_library
                 && !unwanted.contains(module(file).path.text)
         });

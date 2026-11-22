@@ -201,7 +201,7 @@ const NT_POLICY: &[u8] = br"Software\Policies\Microsoft\Windows NT\DNSClient";
 const SYSTEM_POLICY: &[u8] = br"Software\Policies\Microsoft\System\DNSClient";
 
 pub(super) fn configure(config: &mut Config) {
-    let directory = registry_string(TCPIP, b"DatabasePath");
+    let directory = registry_string(TCPIP, b"DatabasePath").filter(|it| !it.is_empty());
     let hosts = directory.map(|it| Path::from_parts(&[&it[..], b"hosts"]));
     config.hosts_path = hosts.unwrap_or_default().to_zbox();
     let mut add_domains = |key: &[u8], values: &[&[u8]]| {

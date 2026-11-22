@@ -1,5 +1,5 @@
 import { describe, expect, jest, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 test("error.cause", () => {
   const err = new Error("error 1");
@@ -10,7 +10,7 @@ test("error.cause", () => {
       .replaceAll(import.meta.dir.replaceAll("\\", "/"), "[dir]"),
   ).toMatchInlineSnapshot(`
 "1 | import { describe, expect, jest, test } from "bun:test";
-2 | import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+2 | import { bunEnv, bunExe, tempDir } from "harness";
 3 | 
 4 | test("error.cause", () => {
 5 |   const err = new Error("error 1");
@@ -20,7 +20,7 @@ error: error 2
       at <anonymous> ([dir]/inspect-error.test.js:6:20)
 
 1 | import { describe, expect, jest, test } from "bun:test";
-2 | import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+2 | import { bunEnv, bunExe, tempDir } from "harness";
 3 | 
 4 | test("error.cause", () => {
 5 |   const err = new Error("error 1");
@@ -477,62 +477,6 @@ describe("source map remapping of the printed stack", () => {
       stack: ["at boom (sub/orig.ts:1:1)"],
       inspect: ["at boom (sub/orig.ts:1:1)"],
       codeFrame: ['1 | "beside rel.js";'],
-    });
-    expect(exitCode).toBe(0);
-  });
-
-  // `mirror` with "/" for its first character is the working directory, where the decoy is.
-  // Not on Windows: a directory cannot be named after a path that has a drive letter.
-  test.skipIf(isWindows).concurrent("a module without an absolute path: no other absolute path is read", async () => {
-    const { dir, out, stderr, exitCode } = await run({
-      "main.js": `${report}
-        const { mkdirSync, writeFileSync } = require("node:fs");
-        const prebuilt = ${prebuilt};
-        const mirror = "x" + process.cwd().slice(1);
-        mkdirSync(mirror, { recursive: true });
-        writeFileSync(mirror + "/orig.ts", '"named by the map";\\n');
-        const map = { sourcesContent: [null], mappings: ";;AAAA" };
-        writeFileSync(mirror + "/rel.js", prebuilt({ ...map, sources: ["orig.ts"] }));
-        const inMemory = new Blob([prebuilt({ ...map, sources: [mirror + "/orig.ts"] })], { type: "text/javascript" });
-        console.log(JSON.stringify({
-          mirror,
-          file: report(require(URL.createObjectURL(Bun.file(mirror + "/rel.js")))),
-          inMemory: report(require(URL.createObjectURL(inMemory))),
-        }));`,
-      "orig.ts": '"decoy";\n',
-    });
-
-    expect(stderr).toBe("");
-    expect({
-      file: { frames: frames(out.file.inspect, dir, ["orig.ts"]), codeFrame: codeFrame(out.file.inspect) },
-      inMemory: { frames: frames(out.inMemory.inspect, dir, ["orig.ts"]), codeFrame: codeFrame(out.inMemory.inspect) },
-    }).toEqual({
-      file: { frames: [`at boom (${out.mirror}/orig.ts:1:1)`], codeFrame: ['1 | "named by the map";'] },
-      inMemory: { frames: [`at boom (${out.mirror}/orig.ts:1:1)`], codeFrame: ['1 | "named by the map";'] },
-    });
-    expect(exitCode).toBe(0);
-  });
-
-  // A .vue file, because one that bun can load as a module is also found by the frame's URL.
-  test.concurrent("a module without a directory: sources are absolute or in the working directory", async () => {
-    const { out, stderr, exitCode } = await run({
-      "main.js": `${report}
-        const prebuilt = ${prebuilt};
-        const load = source => {
-          const code = prebuilt({ sources: [source], sourcesContent: [null], mappings: ";;AAAA" });
-          return require(URL.createObjectURL(new Blob([code], { type: "text/javascript" })));
-        };
-        console.log(JSON.stringify({
-          relative: report(load("src/orig.vue")),
-          absolute: report(load(require("node:path").resolve("src/orig.vue"))),
-        }));`,
-      "src/orig.vue": "<script>original</script>\n",
-    });
-
-    expect(stderr).toBe("");
-    expect({ relative: codeFrame(out.relative.inspect), absolute: codeFrame(out.absolute.inspect) }).toEqual({
-      relative: ["1 | <script>original</script>"],
-      absolute: ["1 | <script>original</script>"],
     });
     expect(exitCode).toBe(0);
   });

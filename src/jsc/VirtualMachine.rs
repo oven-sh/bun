@@ -8,6 +8,7 @@ use core::ffi::{c_int, c_void};
 use core::ptr::NonNull;
 
 use bun_bundler::Transpiler;
+use bun_core::scoped::{ScopedCell as _, ScopedFlag as _, SetForScope};
 use bun_io as Async;
 use bun_uws as uws;
 
@@ -1851,8 +1852,7 @@ impl VirtualMachine {
         // the print, then route the value through `printException` /
         // `printErrorlikeObject` (ConsoleObject formatter). The save/restore
         // has no higher-tier dep, so it lives here unconditionally.
-        let prev_had_errors = self.had_errors.get();
-        self.had_errors.set(false);
+        let _had_errors = self.had_errors.set_for_scope(false);
 
         // The actual print path needs `ConsoleObject::Formatter` +
         // `ZigException` (high tier). Dispatch through `RuntimeHooks` —
@@ -1888,10 +1888,6 @@ impl VirtualMachine {
             }
             let _ = writer.flush();
         }
-
-        // The hook does not unwind across the dispatch boundary, so restore
-        // linearly.
-        self.had_errors.set(prev_had_errors);
     }
 
     /// Looks up (or
@@ -1978,13 +1974,12 @@ impl VirtualMachine {
         if isBunTest.load(core::sync::atomic::Ordering::Relaxed) {
             // What a listener throws comes back here, and is the runner's.
             if self.is_running_vitest_entry.get() && !self.is_handling_uncaught_exception.get() {
-                self.is_handling_uncaught_exception.set(true);
+                let _handling = self.is_handling_uncaught_exception.raise_for_scope();
                 let handled = Bun__handleUncaughtException(
                     global_object,
                     err.to_error().unwrap_or(err),
                     if is_rejection { 1 } else { 0 },
                 ) > 0;
-                self.is_handling_uncaught_exception.set(false);
                 if handled {
                     return true;
                 }
@@ -2010,7 +2005,8 @@ impl VirtualMachine {
             (hooks.process_exit)(global_object, 7);
             panic!("Uncaught exception while handling uncaught exception");
         }
-        self.is_handling_uncaught_exception.set(true);
+        // Held across `on_unhandled_rejection`: a handler that throws there exits with code 7.
+        let handling = self.is_handling_uncaught_exception.raise_for_scope();
         let handled = Bun__handleUncaughtException(
             global_object,
             err.to_error().unwrap_or(err),
@@ -2031,7 +2027,7 @@ impl VirtualMachine {
                 // `process_exit` emits `exit`, re-entering here if a listener
                 // throws. No handler is running, so drop the recursion guard or
                 // that re-entry exits 7 ("handler threw") instead of 1.
-                self.is_handling_uncaught_exception.set(false);
+                drop(handling);
                 (hooks.process_exit)(global_object, 1);
                 panic!("made it past process.exit()");
             }
@@ -2040,14 +2036,6 @@ impl VirtualMachine {
             self.exit_handler.exit_code.set(1);
             (self.on_unhandled_rejection.get())(self, global_object, err);
         }
-        // Note: this reset must cover BOTH the FFI call and the
-        // `onUnhandledRejection` callback above. The flag must stay raised
-        // while that callback runs so a re-entrant `uncaught_exception` from
-        // a user handler trips the recursion guard and hard-exits with code 7
-        // instead of recursing. Neither the FFI call nor the fn-pointer
-        // callback unwind past this frame (re-entry hits `process_exit` →
-        // `panic!`, which never returns), so a linear reset here suffices.
-        self.is_handling_uncaught_exception.set(false);
         handled
     }
 
@@ -2161,9 +2149,8 @@ impl VirtualMachine {
 
         // process.exit() never reaches drain_microtasks; flush AutoFlusher sinks here.
         if !self.is_inside_deferred_task_queue.get() {
-            self.is_inside_deferred_task_queue.set(true);
+            let _inside = self.is_inside_deferred_task_queue.raise_for_scope();
             self.event_loop().deferred_tasks.run();
-            self.is_inside_deferred_task_queue.set(false);
         }
 
         // The loop won't tick again, so flush now.
@@ -5880,10 +5867,11 @@ impl VirtualMachine {
                 // SAFETY: `ctx` is `&mut AggCtx` for the duration of `for_each`.
                 let ctx = unsafe { bun_ptr::callback_ctx::<AggCtx<'_, '_>>(ctx) };
                 let vm = VirtualMachine::get();
-                let formatter = &mut *ctx.formatter;
+                let depth = ctx.formatter.depth.saturating_add(1);
+                let mut deeper = SetForScope::new(&mut *ctx.formatter, |f| &mut f.depth, depth);
+                let formatter = &mut *deeper;
                 let writer = &mut *ctx.writer;
                 ctx.printed_member = true;
-                formatter.depth = formatter.depth.saturating_add(1);
                 if next_value.is_cell()
                     && next_value.js_type() == crate::JSType::ErrorInstance
                     && formatter.visited_contains(next_value)
@@ -5920,7 +5908,6 @@ impl VirtualMachine {
                         ctx.allow_side_effects,
                     );
                 }
-                formatter.depth = formatter.depth.saturating_sub(1);
             }
             let mut ctx = AggCtx {
                 formatter: &mut *formatter,
@@ -6637,8 +6624,8 @@ impl VirtualMachine {
         use crate::console_object::formatter::TagOptions;
         use crate::console_object::{Tag, TagPayload};
 
-        let prev_had_errors = self.had_errors.replace(true);
-        scopeguard::defer! { self.had_errors.set(prev_had_errors) }
+        let prev_had_errors = self.had_errors.get();
+        let _had_errors = self.had_errors.set_for_scope(true);
 
         if allow_side_effects {
             if let Some(debugger) = self.debugger.get() {
@@ -7087,23 +7074,20 @@ impl VirtualMachine {
         let mut exception_list = exception_list;
         for err in &errors_to_append {
             writer.write_all(b"\n")?;
-            let prev_depth = formatter.depth;
-            formatter.depth = formatter.depth.saturating_add(1);
-            let over_cap = formatter.depth > formatter.error_chain_max_depth();
-            let result: crate::CrateResult<()> = if over_cap {
-                pretty_write!(writer, "<r><cyan>[Error ...]<r>").map_err(Into::into)
+            let depth = formatter.depth.saturating_add(1);
+            let mut formatter = SetForScope::new(&mut *formatter, |f| &mut f.depth, depth);
+            if depth > formatter.error_chain_max_depth() {
+                pretty_write!(writer, "<r><cyan>[Error ...]<r>")?;
             } else {
                 self.print_error_instance_js(
                     err.value(),
                     exception_list.as_deref_mut(),
-                    formatter,
+                    &mut formatter,
                     writer,
                     allow_ansi_color,
                     allow_side_effects,
-                )
-            };
-            formatter.depth = prev_depth;
-            result?;
+                )?;
+            }
         }
 
         Ok(())

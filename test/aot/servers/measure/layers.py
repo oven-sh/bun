@@ -66,7 +66,7 @@ def bun(dso, symbol):
         return "malloc"
     if dso.startswith(LIBC):
         return "libc"
-    if re.match(r"icu_\d+::|u[a-z]+_\d+$|u[a-z0-9]+_[a-zA-Z0-9]+_\d+$", symbol):
+    if re.match(r"icu_\d+::|<*bun_icu::|u[a-z]+_\d+$|u[a-z0-9]+_[a-zA-Z0-9]+_\d+$", symbol):
         return "icu"
     if BINDINGS.search(symbol):
         return "native"

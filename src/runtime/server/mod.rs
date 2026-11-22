@@ -6,6 +6,7 @@ use core::cell::OnceCell;
 use core::ffi::{c_char, c_int, c_void};
 use core::sync::atomic::Ordering;
 
+use bun_core::scoped::{ScopedCell as _, ScopedFlag as _};
 use bun_io::KeepAlive;
 use bun_uws as uws;
 use bun_uws_sys as uws_sys;
@@ -1055,10 +1056,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
     /// Runs `close`, which closes sockets whose close callbacks report back to this server. The caller runs `apply_phase` afterwards.
     fn while_closing<R>(&self, close: impl FnOnce() -> R) -> R {
-        let was_held = self.phase_held.replace(true);
-        let result = close();
-        self.phase_held.set(was_held);
-        result
+        let _held = self.phase_held.set_for_scope(true);
+        close()
     }
 
     fn with_websocket_handler(&self, update: impl FnOnce(&mut WebSocketServerHandler)) {
@@ -1181,7 +1180,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             return;
         }
         // `drop(dev)` can report completed requests, and `schedule_deinit` must not free `self` in this frame.
-        self.phase_held.set(true);
+        let _held = self.phase_held.raise_for_scope();
 
         // At VM shutdown no tick would run the task.
         if self.all_closed_promise.get().has_value() && !self.vm().is_shutting_down() {
@@ -1224,7 +1223,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
             drop(self.open_ref.take());
         }
-        self.phase_held.set(false);
     }
 
     /// The last ref is gone: the JS wrapper is collected and the server is drained.

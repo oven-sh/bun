@@ -19,6 +19,7 @@ use crate::node::{Encoding, StringOrBuffer};
 use crate::socket::{NativeCallbacks, NewSocket};
 use bstr::BStr;
 use bun_collections::{ByteVecExt, HiveArrayFallback, VecExt, recycle_vec};
+use bun_core::scoped::ScopedFlag as _;
 use bun_event_loop::{ContextId, RefTask, Task, TaskTag, task_tag};
 use bun_hpack::Indexing;
 use bun_http_types::h2::flow_control::{DEFAULT_WINDOW_SIZE, MAX_WINDOW_SIZE};
@@ -1561,9 +1562,10 @@ impl H2FrameParser {
                     else {
                         return 0;
                     };
-                    self.js_socket_flushing.set(true);
-                    let result = self.call_on_write(output_value);
-                    self.js_socket_flushing.set(false);
+                    let result = {
+                        let _flushing = self.js_socket_flushing.raise_for_scope();
+                        self.call_on_write(output_value)
+                    };
 
                     // Same contract as _write: -1 dropped, 0 queued by the socket, else sent.
                     let code = if result.is_number() {

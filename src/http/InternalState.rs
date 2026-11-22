@@ -254,18 +254,15 @@ impl<'a> InternalState<'a> {
         is_final_chunk: bool,
         max_output: usize,
     ) -> Result<usize, Error> {
+        debug_assert!(self.compressed_body.list.is_empty());
         // A response that declared a Content-Encoding but sent zero body bytes
         // (e.g. an empty chunked gzip response) has nothing to decompress.
         // Running the decompressor anyway makes it report a truncated stream
         // (ZlibError); Node treats this as an empty body.
         if buffer.is_empty() && self.total_body_received == 0 {
-            self.compressed_body.reset();
             return Ok(0);
         }
 
-        // `self.compressed_body.reset()` must run on every exit. scopeguard would
-        // hold &mut self.compressed_body across the body and conflict with &mut self.decompressor,
-        // so each early-return below calls it explicitly.
         let mut still_needs_to_decompress = true;
         let mut consumed = buffer.len();
 
@@ -348,7 +345,6 @@ impl<'a> InternalState<'a> {
                         .try_reserve_exact(result.written)
                         .is_err()
                     {
-                        self.compressed_body.reset();
                         return Err(bun_alloc::AllocError.into());
                     }
                     self.decoded_body
@@ -370,7 +366,6 @@ impl<'a> InternalState<'a> {
                     .decoded_body
                     .grow_by((min as usize).max(32).min(max_output))
                 {
-                    self.compressed_body.reset();
                     return Err(err.into());
                 }
             }
@@ -391,14 +386,12 @@ impl<'a> InternalState<'a> {
                             bstr::BStr::new(err.name()),
                         );
                         Output::flush();
-                        self.compressed_body.reset();
                         return Err(err);
                     }
                 }
             }
         }
 
-        self.compressed_body.reset();
         Ok(consumed)
     }
 

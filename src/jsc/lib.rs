@@ -221,12 +221,9 @@ pub trait ConsoleFormatter {
         cell: JSType,
     ) -> JsResult<()>;
 
-    /// `formatter.indent += 1` — bump nesting level for the duration of a
-    /// `{ … }` block. Paired with [`indent_dec`]. Prefer [`IndentScope`] over
-    /// calling this pair manually when the indented region contains `?` early
-    /// returns.
+    /// For [`IndentScope`].
     fn indent_inc(&mut self);
-    /// Saturating decrement of the nesting level.
+    /// For [`IndentScope`]. Saturates.
     fn indent_dec(&mut self);
     /// Shorthand for [`IndentScope::new`]. Shadow the binding for the indented
     /// block; the guard `Deref`s to `&mut Self` so method calls auto-deref, and

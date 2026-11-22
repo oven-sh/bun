@@ -36,6 +36,10 @@
     "default": 60000,
     "asan": 240000
   },
+  "aot/hardened-icu.test.ts": {
+    "default": 2000,
+    "asan": 8000
+  },
   "aot/hardened-zstd.test.ts": {
     "default": 2000,
     "asan": 8000

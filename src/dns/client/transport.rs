@@ -30,6 +30,8 @@ const MAX_TRIES_PER_SOCKET: usize = 1 << 15;
 /// Messages that answer nothing, after which the event loop gets its turn.
 const MAX_STRAYS_PER_READ: usize = 64;
 const MAX_FRAME_LEN: usize = 2 + u16::MAX as usize;
+/// A stream that is so far behind takes no more than it has room for.
+const LONG_OUTPUT_LEN: usize = 256 * MAX_TRIES_PER_SOCKET;
 
 type MessageId = u16;
 
@@ -56,8 +58,10 @@ struct Try {
     deadline: Deadline,
 }
 
-/// The number orders tries by age.
-type Deadline = (Duration, u64);
+/// Orders tries by age.
+type TryNumber = u64;
+
+type Deadline = (Duration, TryNumber);
 
 struct Connection<T> {
     socket: T,
@@ -70,9 +74,16 @@ struct Connection<T> {
     tries: HashMap<MessageId, Try>,
     /// How many more it should take.
     room: usize,
+    /// What it gets when it is renewed.
+    next_room: usize,
+    /// Or renewed.
     opened: Duration,
-    /// The frames that the socket has yet to take.
+    /// What a stream has yet to take.
     output: Vec<u8>,
+    /// The datagrams of the tries that the system had no room for.
+    unsent: BTreeMap<TryNumber, Vec<u8>>,
+    /// Since the last flush.
+    was_written: bool,
     /// The start of a frame.
     input: Vec<u8>,
 }
@@ -114,8 +125,11 @@ impl<T: Socket> Connection<T> {
                 Transport::Udp => TRIES_PER_UDP_SOCKET,
                 Transport::Tcp => MAX_TRIES_PER_SOCKET,
             },
+            next_room: TRIES_PER_UDP_SOCKET,
             opened: now,
             output: Vec::new(),
+            unsent: BTreeMap::new(),
+            was_written: false,
             input: Vec::new(),
         })
     }
@@ -125,20 +139,35 @@ impl<T: Socket> Connection<T> {
     }
 
     fn can_take_more(&self) -> bool {
-        self.tries.len() < MAX_TRIES_PER_SOCKET
+        self.tries.len() < MAX_TRIES_PER_SOCKET && self.output.len() < LONG_OUTPUT_LEN
     }
 
-    fn write(&mut self, question: &Question, id: MessageId) -> Result<(), Failed> {
-        let waiting = self.output.len();
-        question.write_frame(id, &mut self.output);
+    /// In place of a new one, which there is not. Finding that out can take long.
+    fn renew(&mut self, now: Duration) {
+        if self.transport == Transport::Udp {
+            self.room = self.next_room.min(MAX_TRIES_PER_SOCKET - self.tries.len());
+            self.next_room = self.next_room.saturating_mul(2);
+            self.opened = now;
+        }
+    }
+
+    fn write(
+        &mut self,
+        question: &Question,
+        id: MessageId,
+        number: TryNumber,
+    ) -> Result<(), Failed> {
+        let has_to_wait = self.is_connecting || !self.output.is_empty();
+        question.write_query(id, self.transport, &mut self.output);
         match self.transport {
             Transport::Udp => {
-                let message = self.output.get(waiting + 2..).unwrap_or_default();
-                if send(&mut self.socket, message)?.is_some() {
-                    self.output.truncate(waiting);
+                self.was_written = true;
+                if send(&mut self.socket, &self.output)?.is_none() {
+                    self.unsent.insert(number, self.output.clone());
                 }
+                self.output.clear();
             }
-            Transport::Tcp if self.is_connecting || waiting > 0 => {}
+            Transport::Tcp if has_to_wait => {}
             Transport::Tcp => return self.flush(),
         }
         self.watch();
@@ -147,35 +176,27 @@ impl<T: Socket> Connection<T> {
 
     fn flush(&mut self) -> Result<(), Failed> {
         self.is_connecting = false;
-        let mut rest = &*self.output;
-        match self.transport {
-            Transport::Udp => {
-                let mut had_room = false;
-                while let Some((message, next)) = message::split_frame(rest) {
-                    if message::id_of(message).is_some_and(|id| self.tries.contains_key(&id)) {
-                        match send(&mut self.socket, message)? {
-                            Some(_) => had_room = true,
-                            None if had_room => break,
-                            // It has waited in vain, and is as good as lost on the way.
-                            None => {}
-                        }
-                    }
-                    rest = next;
-                }
-            }
-            Transport::Tcp if rest.is_empty() => {}
-            Transport::Tcp => {
-                let sent = send(&mut self.socket, rest)?;
-                rest = rest.get(sent.unwrap_or(0)..).unwrap_or_default();
-            }
+        if !self.output.is_empty() {
+            let sent = send(&mut self.socket, &self.output)?.unwrap_or(0);
+            self.output.drain(..sent.min(self.output.len()));
         }
-        self.output.drain(..self.output.len() - rest.len());
+        // What was reported may be out of date.
+        let mut can_wait = core::mem::take(&mut self.was_written);
+        while let Some(datagram) = self.unsent.first_entry() {
+            match send(&mut self.socket, datagram.get())? {
+                Some(_) => can_wait = true,
+                None if can_wait => break,
+                // It has waited in vain, and is as good as lost on the way.
+                None => {}
+            }
+            datagram.remove();
+        }
         self.watch();
         Ok(())
     }
 
     fn watch(&mut self) {
-        let writable = !self.output.is_empty();
+        let writable = !self.output.is_empty() || !self.unsent.is_empty();
         if self.watches_writable.replace(writable) != Some(writable) {
             self.socket.watch(writable);
         }
@@ -187,7 +208,7 @@ pub(crate) struct Connections<T> {
     deadlines: BTreeMap<Deadline, (SocketId, MessageId)>,
     /// Those that may have been left without a try during this call.
     idle: Vec<SocketId>,
-    try_count: u64,
+    last_try: TryNumber,
 }
 
 impl<T> Default for Connections<T> {
@@ -196,7 +217,7 @@ impl<T> Default for Connections<T> {
             open: HashMap::default(),
             deadlines: BTreeMap::new(),
             idle: Vec::new(),
-            try_count: 0,
+            last_try: 0,
         }
     }
 }
@@ -285,7 +306,10 @@ impl<S: System, R> Client<S, R> {
                 let new = Connection::open(&mut self.system, transport, server, local, self.now);
                 match (new, last) {
                     (Some(new), _) => open.entry(new.socket.id()).insert(new),
-                    (None, Some(last)) if last.get().can_take_more() => last,
+                    (None, Some(mut last)) if last.get().can_take_more() => {
+                        last.get_mut().renew(self.now);
+                        last
+                    }
                     (None, _) => {
                         let server = server.id;
                         self.servers.failed(server, self.now);
@@ -302,7 +326,9 @@ impl<S: System, R> Client<S, R> {
                 break id;
             }
         };
-        if connection.write(&question, id).is_err() {
+        self.connections.last_try += 1;
+        let number = self.connections.last_try;
+        if connection.write(&question, id, number).is_err() {
             let connection = entry.remove();
             self.fail(connection);
             return self.retry_later(question, Error::ECONNREFUSED);
@@ -315,8 +341,7 @@ impl<S: System, R> Client<S, R> {
             None => self.config.timeout,
         };
         let timeout = back_off(timeout, rounds, &mut self.system);
-        self.connections.try_count += 1;
-        let deadline = (self.now.saturating_add(timeout), self.connections.try_count);
+        let deadline = (self.now.saturating_add(timeout), number);
         self.connections.deadlines.insert(deadline, (socket, id));
         let new = Try {
             question,
@@ -419,10 +444,11 @@ impl<S: System, R> Client<S, R> {
         while let Some(first) = self.connections.deadlines.first_entry()
             && first.key().0 <= self.now
         {
-            let (socket, id) = first.remove();
+            let ((_, number), (socket, id)) = first.remove_entry();
             let entry = self.connections.open.entry(socket);
             entry.and_modify(|connection| {
                 connection.room = 0;
+                connection.unsent.remove(&number);
                 self.servers.failed(connection.server, self.now);
                 let late = connection.tries.remove(&id);
                 let retry = late.map(|it| Step::Retry(it.question, Some(Error::ETIMEOUT)));
@@ -471,9 +497,8 @@ impl<S: System, R> Client<S, R> {
             }
             let is_drained = buffer.len() < buffer.capacity();
             let mut rest = &*buffer;
-            while let Some((message, next)) = message::split_frame(rest) {
+            while let Some(message) = message::take_frame(&mut rest) {
                 strays += usize::from(!self.receive(connection, message));
-                rest = next;
             }
             buffer.drain(..buffer.len() - rest.len());
             if is_drained {
@@ -501,6 +526,7 @@ impl<S: System, R> Client<S, R> {
             sent,
             deadline,
         } = entry.remove();
+        connection.unsent.remove(&deadline.1);
         self.connections.deadlines.remove(&deadline);
         match received {
             Received::Reply(message) => {

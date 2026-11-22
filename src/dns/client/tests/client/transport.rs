@@ -119,10 +119,64 @@ fn full_socket_is_better_than_none() {
     test.world().randoms.extend(0..=u16::MAX);
     test.ask("first.test");
     test.world().unreachable = test.client.servers().collect();
+    test.wait(1000);
     for index in 1..32768 {
         assert_eq!(test.ask(&format!("{index}.test")).socket, 0);
     }
+    assert_eq!(test.world().connect_calls, 11);
     assert_eq!(test.resolve(RecordType::A, "last.test").len(), 1);
+}
+
+#[test]
+fn new_socket_soon_after_there_was_none() {
+    let mut test = one_server().start();
+    for index in 0..128 {
+        let is_full = index == 64;
+        test.world().unreachable = test.client.servers().filter(|_| is_full).collect();
+        assert_eq!(test.ask(&format!("{index}.test")).socket, 0);
+    }
+    assert_eq!(test.ask("last.test").socket, 1);
+}
+
+#[test]
+fn new_stream_as_soon_as_there_is_one() {
+    let mut test = over_tcp().start();
+    test.ask("a.test");
+    test.wait(1);
+    test.ask("b.test");
+    test.world().unreachable = test.client.servers().collect();
+    test.wait(1999);
+    assert_eq!(test.sent_one().socket, 0);
+    test.world().unreachable.clear();
+    assert_eq!(test.ask("c.test").socket, 1);
+}
+
+#[test]
+fn stream_that_is_far_behind_is_no_better_than_none() {
+    let mut test = over_tcp().tries(1).start();
+    test.world().streams_take_time = true;
+    // 256 bytes with the header, the type, the class and the length.
+    let name = |index| format!("{index:058}.{0:058}.{0:058}.{0:059}", 0);
+    test.resolve(RecordType::A, &name(0));
+    test.wait(1);
+    test.resolve(RecordType::A, &name(1));
+    test.world().unreachable = test.client.servers().collect();
+    assert_eq!(test.wait(1999), ["ETIMEOUT"]);
+    for index in 2..32768 {
+        assert_eq!(test.resolve(RecordType::A, &name(index)), NOTHING);
+    }
+    let last = test.resolve(RecordType::A, "last.test");
+    assert_eq!(last, ["32769: ECONNREFUSED"]);
+}
+
+#[test]
+fn old_socket_is_better_than_none() {
+    let mut test = one_server().start();
+    test.ask("a.test");
+    test.world().unreachable = test.client.servers().collect();
+    test.wait(1000);
+    let sockets = ["b.test", "c.test"].map(|name| test.ask(name).socket);
+    assert_eq!((sockets, test.world().connect_calls), ([0, 0], 2));
 }
 
 #[test]
@@ -566,7 +620,9 @@ fn datagrams_wait_for_room() {
         assert_eq!(test.resolve(RecordType::A, name), NOTHING);
     }
     assert_eq!(test.ask("d.test").question(), "d.test A");
-    test.world().send_results.extend([Ok(0), Err(WouldBlock)]);
+    let results = [Err(WouldBlock), Ok(0), Err(WouldBlock)];
+    test.world().send_results.extend(results);
+    test.process(0, false, true);
     test.process(0, false, true);
     let [a] = test.sent_exactly();
     assert_eq!(test.deliver(&a, &good(&a)), GOOD);
@@ -581,10 +637,12 @@ fn datagrams_wait_for_room() {
 #[test]
 fn datagrams_that_a_writable_socket_does_not_take_are_lost() {
     let mut test = one_server().start();
-    test.world().send_results.extend([Err(WouldBlock); 5]);
+    test.world().send_results.extend([Err(WouldBlock); 6]);
     for name in ["a.test", "b.test", "c.test"] {
         test.resolve(RecordType::A, name);
     }
+    assert_eq!(test.process(0, false, true), NOTHING);
+    assert_eq!(test.world().opened[0].watches, [true]);
     assert_eq!(test.process(0, false, true), NOTHING);
     assert_eq!(test.sent_exactly().map(|it| it.question()), ["c.test A"]);
     assert_eq!(test.world().opened[0].watches, [true, false]);
@@ -602,6 +660,34 @@ fn datagram_that_waits_for_too_long() {
     assert_eq!(test.wait(1999), ["ETIMEOUT"]);
     test.process(0, false, true);
     assert_eq!(test.sent_exactly().map(|it| it.question()), ["b.test A"]);
+}
+
+#[test]
+fn newer_datagram_takes_the_room() {
+    let mut test = one_server().start();
+    test.world().send_results.extend([Err(WouldBlock); 2]);
+    test.resolve(RecordType::A, "a.test");
+    test.process(0, false, true);
+    test.ask("b.test");
+    test.world().send_results.push_back(Err(WouldBlock));
+    test.process(0, false, true);
+    test.process(0, false, true);
+    assert_eq!(test.sent_one().question(), "a.test A");
+}
+
+#[test]
+fn reply_to_a_datagram_that_waits() {
+    let mut test = one_server().tries(2).start();
+    test.world().randoms.extend([7, 8, 7]);
+    let a = test.ask("a.test");
+    test.wait(1);
+    test.ask("b.test");
+    test.world().unreachable = test.client.servers().collect();
+    test.world().send_results.push_back(Err(WouldBlock));
+    assert_eq!(test.wait(1999), NOTHING);
+    assert_eq!(test.deliver(&a, &good(&a)), GOOD);
+    test.process(0, false, true);
+    assert!(test.sent().is_empty());
 }
 
 #[test]

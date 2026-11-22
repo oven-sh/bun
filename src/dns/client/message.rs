@@ -5,6 +5,7 @@ use std::rc::Rc;
 
 use crate::Error;
 use crate::name::{self, Name};
+use crate::system::Transport;
 
 /// The types that can be asked for, with their values on the wire.
 #[repr(u16)]
@@ -89,20 +90,25 @@ impl Question {
         self.bytes.eq_ignore_ascii_case(bytes)
     }
 
-    /// Appends the message behind its length.
-    pub(crate) fn write_frame(&self, id: u16, to: &mut Vec<u8>) {
+    /// Appends the message, for TCP behind its length.
+    pub(crate) fn write_query(&self, id: u16, transport: Transport, to: &mut Vec<u8>) {
         let len = HEADER_LEN + self.bytes.len();
         to.reserve(2 + len);
-        let header = [len as u16, id, FLAG_RECURSION_DESIRED, 1, 0, 0, 0].map(u16::to_be_bytes);
+        if transport == Transport::Tcp {
+            to.extend_from_slice(&(len as u16).to_be_bytes());
+        }
+        let header = [id, FLAG_RECURSION_DESIRED, 1, 0, 0, 0].map(u16::to_be_bytes);
         to.extend_from_slice(header.as_flattened());
         to.extend_from_slice(&self.bytes);
     }
 }
 
-/// The message in the frame that `bytes` start with, and what follows it.
-pub(crate) fn split_frame(bytes: &[u8]) -> Option<(&[u8], &[u8])> {
+/// The message in the frame that `bytes` start with. They move past it if it is complete.
+pub(crate) fn take_frame<'a>(bytes: &mut &'a [u8]) -> Option<&'a [u8]> {
     let (len, rest) = bytes.split_first_chunk()?;
-    rest.split_at_checked(usize::from(u16::from_be_bytes(*len)))
+    let (message, rest) = rest.split_at_checked(usize::from(u16::from_be_bytes(*len)))?;
+    *bytes = rest;
+    Some(message)
 }
 
 pub(crate) fn id_of(message: &[u8]) -> Option<u16> {

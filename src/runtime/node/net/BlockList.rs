@@ -21,8 +21,7 @@ use crate::socket::socket_address::{SocketAddress, sockaddr};
 
 use crate::socket::socket_address::inet::{self, AF_INET, AF_INET6};
 
-/// `&ZStr` → `&str` for `format_args!`. IP presentation strings and AF family
-/// names are ASCII by construction (`inet_ntop` output / static literals).
+/// `&ZStr` → `&str` for `format_args!`. AF family names are ASCII literals.
 #[inline]
 fn z(s: &ZStr) -> &str {
     // SAFETY: callers pass ASCII-only `ZStr`s (see above).
@@ -294,33 +293,23 @@ impl BlockList {
 
         for (i, rule) in rules.iter().enumerate() {
             let s = match rule {
-                Rule::Addr(a) => {
-                    let mut buf = [0u8; inet::INET6_ADDRSTRLEN as usize];
-                    BunString::create_format(format_args!(
-                        "Address: {} {}",
-                        z(a.family().upper()),
-                        z(a.fmt(&mut buf)),
-                    ))
-                }
-                Rule::Range { start, end } => {
-                    let mut buf_s = [0u8; inet::INET6_ADDRSTRLEN as usize];
-                    let mut buf_e = [0u8; inet::INET6_ADDRSTRLEN as usize];
-                    BunString::create_format(format_args!(
-                        "Range: {} {}-{}",
-                        z(start.family().upper()),
-                        z(start.fmt(&mut buf_s)),
-                        z(end.fmt(&mut buf_e)),
-                    ))
-                }
-                Rule::Subnet { network, prefix } => {
-                    let mut buf = [0u8; inet::INET6_ADDRSTRLEN as usize];
-                    BunString::create_format(format_args!(
-                        "Subnet: {} {}/{}",
-                        z(network.family().upper()),
-                        z(network.fmt(&mut buf)),
-                        prefix,
-                    ))
-                }
+                Rule::Addr(a) => BunString::create_format(format_args!(
+                    "Address: {} {}",
+                    z(a.family().upper()),
+                    a.text(),
+                )),
+                Rule::Range { start, end } => BunString::create_format(format_args!(
+                    "Range: {} {}-{}",
+                    z(start.family().upper()),
+                    start.text(),
+                    end.text(),
+                )),
+                Rule::Subnet { network, prefix } => BunString::create_format(format_args!(
+                    "Subnet: {} {}/{}",
+                    z(network.family().upper()),
+                    network.text(),
+                    prefix,
+                )),
             };
             array.put_index(global, i as u32, s.into_js(global)?)?;
         }

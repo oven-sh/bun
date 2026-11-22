@@ -411,7 +411,7 @@ pub(crate) fn run_task(
         task_tag::DnsErrorDeferred => boxed_arm!(
             task,
             [Dns],
-            |error: crate::dns_jsc::cares_jsc::ErrorDeferredTask| -> JsResult<()> { error.run() }
+            |error: crate::dns_jsc::answer_jsc::ErrorDeferredTask| -> JsResult<()> { error.run() }
         )?,
         task_tag::HandledPromise => {
             boxed!(task, bun_jsc::virtual_machine_exports::HandledPromiseTask).run();
@@ -939,13 +939,16 @@ unsafe fn __bun_run_io(owner: Owner, event: IoEvent) {
             [Dns],
             (
                 resolver: *mut DNSResolver = owner.ptr().cast::<DNSResolver>(),
-                fd: i32 = event.fd.native(),
-                readable: bool = event.flags.contains(PollFlag::Readable),
-                writable: bool = event.flags.contains(PollFlag::Writable),
+                socket: usize = bun_dns::os::socket_id(event.fd),
+                events: bun_dns_client::Events = bun_dns_client::Events {
+                    readable: !event.flags.is_disjoint(PollFlag::Readable | PollFlag::Eof | PollFlag::Hup),
+                    writable: event.flags.contains(PollFlag::Writable),
+                    failed: event.flags.contains(PollFlag::Eof),
+                },
             ) {
                 // SAFETY: tag set with this pointee type at `OwnedFilePoll::new`.
                 let resolver = unsafe { RefPtr::init_ref(resolver) };
-                resolver.on_dns_poll(fd, readable, writable);
+                resolver.on_dns_poll(socket, events);
             }
         ),
         #[cfg(target_os = "macos")]
@@ -1697,7 +1700,7 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
             release_boxed_in!([Test], crate::test_runner::bun_test::RunTestsTask)
         }
         task_tag::DnsErrorDeferred => {
-            release_boxed_in!([Dns], crate::dns_jsc::cares_jsc::ErrorDeferredTask)
+            release_boxed_in!([Dns], crate::dns_jsc::answer_jsc::ErrorDeferredTask)
         }
         task_tag::HandledPromise => {
             boxed!(task, bun_jsc::virtual_machine_exports::HandledPromiseTask).release_unrun()

@@ -14,7 +14,7 @@
 #include <string.h>
 // clang-format on
 
-extern "C" const char* ares_inet_ntop(int af, const char* src, char* dst, size_t size);
+extern "C" size_t Bun__formatIpAddress(char (&buffer)[64], bool is_ipv6);
 
 using uWS::H3App;
 using uWS::Http3Request;
@@ -215,8 +215,7 @@ void uws_h3_res_cork(uws_h3_res_t* res, void* ctx, void (*corker)(void*))
 
 uint64_t uws_h3_res_get_remote_address_info(uws_h3_res_t* res, const char** dest, int* port, bool* is_ipv6)
 {
-    /* Mirror uws_res_get_remote_address_info: stringify with inet_ntop so the
-     * caller gets a text slice, not raw in_addr bytes. */
+    /* Mirror uws_res_get_remote_address_info: the caller gets text, not raw in_addr bytes. */
     static thread_local char b[64];
     int len = 0, ipv6 = 0;
     us_quic_socket_t* qs = us_quic_stream_socket((us_quic_stream_t*)res);
@@ -232,16 +231,9 @@ uint64_t uws_h3_res_get_remote_address_info(uws_h3_res_t* res, const char** dest
         *is_ipv6 = false;
         return 0;
     }
-    if (len == 4) {
-        ares_inet_ntop(AF_INET, b, &b[4], 64 - 4);
-        *dest = &b[4];
-        *is_ipv6 = false;
-    } else {
-        ares_inet_ntop(AF_INET6, b, &b[16], 64 - 16);
-        *dest = &b[16];
-        *is_ipv6 = true;
-    }
-    return (uint64_t)strlen(*dest);
+    *dest = b;
+    *is_ipv6 = len != 4;
+    return Bun__formatIpAddress(b, *is_ipv6);
 }
 
 /* ───── request ───── */

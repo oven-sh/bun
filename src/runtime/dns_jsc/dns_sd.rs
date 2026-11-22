@@ -272,10 +272,7 @@ impl QueryState {
         match error_code {
             ERR_NO_ERROR if flags & FLAGS_ADD != 0 => {
                 if let Some(address) = address_from_record(rrtype, rdata, interface_index) {
-                    self.results.push(GetAddrInfoResult {
-                        address,
-                        ttl: ttl as i32,
-                    });
+                    self.results.push(GetAddrInfoResult { address, ttl });
                 }
             }
             ERR_TIMEOUT => self.saw_timeout = true,
@@ -684,7 +681,7 @@ impl SharedConnection {
         true
     }
 
-    /// VM teardown: fail in-flight requests (like c-ares' EDESTRUCTION) and release the fd/FilePoll.
+    /// VM teardown: fail in-flight requests (like the client's EDESTRUCTION) and release the fd/FilePoll.
     pub(crate) fn close_for_terminate() {
         let Some(mut conn) = Self::take() else {
             return;

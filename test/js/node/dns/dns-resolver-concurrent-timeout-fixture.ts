@@ -1,4 +1,4 @@
-// Exercises the c-ares timeout timer with more concurrent queries than the
+// Exercises the resolver's timeout timer with more concurrent queries than the
 // resolver's 32-slot pending cache: 32 queries get an instant answer (filling
 // every tracked slot) and 8 more are never answered and must ETIMEOUT via the
 // poll timer. Before the fix, the 8 overflow queries were invisible to the

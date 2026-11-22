@@ -37,6 +37,31 @@ describe("NodeTLS.cpp", () => {
     expect(canonicalizeIP("::ffff:192.168.1.1")).toBe("::ffff:192.168.1.1");
   });
 
+  test("canonicalizeIP shortens the first of the longest runs of zeros", () => {
+    const expected: Record<string, string> = {
+      "0:0:0:0:0:0:0:0": "::",
+      "0:0:0:0:0:0:0:2": "::2",
+      "0:0:0:0:0:0:0:ffff": "::ffff",
+      "0:0:0:0:0:0:1:0": "::0.1.0.0",
+      "0:0:0:0:0:0:102:304": "::1.2.3.4",
+      "0:0:0:0:0:ffff:0:0": "::ffff:0.0.0.0",
+      "0:0:0:0:0:ffff:ffff:ffff": "::ffff:255.255.255.255",
+      "0:0:0:0:0:fffe:102:304": "::fffe:102:304",
+      "0:0:0:0:ffff:0:102:304": "::ffff:0:102:304",
+      "1:0:0:0:0:ffff:102:304": "1::ffff:102:304",
+      "0:1:2:3:4:5:6:7": "0:1:2:3:4:5:6:7",
+      "1:0:2:0:3:0:4:0": "1:0:2:0:3:0:4:0",
+      "1:0:0:2:0:0:3:4": "1::2:0:0:3:4",
+      "1:0:0:2:0:0:0:3": "1:0:0:2::3",
+      "0:0:1:0:0:0:2:0": "0:0:1::2:0",
+      "000f:0010:00ff:0100:0fff:1000:FFFF:0": "f:10:ff:100:fff:1000:ffff:0",
+      "ffff:ffff:ffff:ffff:ffff:ffff:255.255.255.255": "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
+      "0.9.10.99": "0.9.10.99",
+      "100.109.200.255": "100.109.200.255",
+    };
+    expect(Object.fromEntries(Object.keys(expected).map(text => [text, canonicalizeIP(text)]))).toEqual(expected);
+  });
+
   // Node.js parses with libuv's uv_inet_pton: a dotted quad, or an IPv6 address
   // up to the first "%". The zone id is not in the result and is not checked.
   // The text is a C string there, so it ends at a NUL. Every expected value

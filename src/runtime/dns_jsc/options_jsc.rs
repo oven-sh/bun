@@ -1,5 +1,5 @@
 //! `from_js`/`to_js` for `GetAddrInfo` and its nested option types, plus
-//! `address_to_js`/`results_to_js`. The pure types stay in `src/dns/`.
+//! `results_to_js`. The pure types stay in `src/dns/`.
 
 use bun_jsc::{JSGlobalObject, JSValue, JsResult, StringJsc as _};
 
@@ -112,7 +112,8 @@ pub(crate) fn results_to_js(list: &[GaiResult], global: &JSGlobalObject) -> JsRe
 
 pub(crate) fn result_to_js(this: &GaiResult, global: &JSGlobalObject) -> JsResult<JSValue> {
     let obj = JSValue::create_empty_object(global, 3);
-    obj.put(global, b"address", address_to_js(&this.address, global)?);
+    let address = address_to_string(&this.address).into_js(global)?;
+    obj.put(global, b"address", address);
     obj.put(
         global,
         b"family",
@@ -125,12 +126,4 @@ pub(crate) fn result_to_js(this: &GaiResult, global: &JSGlobalObject) -> JsResul
     );
     obj.put(global, b"ttl", JSValue::js_number(f64::from(this.ttl)));
     Ok(obj)
-}
-
-pub(crate) fn address_to_js(
-    // `bun_dns::Address` is the `bun_sys::net::Address` sockaddr wrapper.
-    address: &bun_dns::Address,
-    global: &JSGlobalObject,
-) -> JsResult<JSValue> {
-    address_to_string(address).into_js(global)
 }

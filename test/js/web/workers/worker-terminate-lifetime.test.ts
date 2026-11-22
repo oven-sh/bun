@@ -121,14 +121,14 @@ test(
   timeout,
 );
 
-// Regression: the per-VM c-ares channel was destroyed in deinit_runtime_state
+// Regression: the per-VM DNS client was closed in deinit_runtime_state
 // (RuntimeState drop) AFTER JSC teardown and RareData.file_polls drop.
-// ares_destroy() synchronously fires EDESTRUCTION query callbacks and socket-
-// state callbacks, which then dereferenced the freed JSGlobalObject and the
+// Closing it fails its queries with EDESTRUCTION and drops its polls, which
+// then dereferenced the freed JSGlobalObject and the
 // freed FilePoll hive. ASAN-only: release builds read freed memory without
 // crashing. Upstream Node test-worker-dns-terminate.js.
 test.skipIf(!isASAN)(
-  "terminate() while dns.lookup() is in flight does not UAF on c-ares channel teardown",
+  "terminate() while dns.lookup() is in flight does not UAF on DNS client teardown",
   async () => {
     await using proc = Bun.spawn({
       cmd: [
@@ -139,12 +139,12 @@ test.skipIf(!isASAN)(
         let done = 0;
         for (let i = 0; i < 4; i++) {
           const w = new Worker(
-            // Hermetic: point the global resolver's c-ares channel at a local
+            // Hermetic: point the global resolver at a local
             // UDP socket that never replies, so both queries are guaranteed
             // in-flight (socket registered, no completion) when terminate()
             // lands. node:dns.lookup() uses the getaddrinfo backend, so opt
-            // into c-ares explicitly to put an ares_getaddrinfo request in
-            // flight alongside resolve4's ares_query.
+            // into "c-ares" explicitly to put a lookup in flight alongside
+            // resolve4's query.
             'const dgram = require("dgram");' +
             'const dns = require("dns");' +
             'const s = dgram.createSocket("udp4");' +

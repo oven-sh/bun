@@ -36,7 +36,7 @@ export const DNSResolver = b.class({
   refCounted: true,
   types: [table.viewType("bun.dns.NativeResolver"), table.exactType("$Bindgen.DNSResolver")],
   proto: {
-    cancel: method,
+    cancel: {},
     getServers,
     resolve: { ...resolve, length: 3 },
     resolveAny: query,

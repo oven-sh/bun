@@ -1,12 +1,14 @@
 import { dnsGetaddrinfoError } from "bun:internal-for-testing";
 import { beforeAll, describe, expect, it, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, bunRun, isLinux, isWindows } from "harness";
+import { bunEnv, bunExe, bunRun, isLinux, isWindows, tempDir } from "harness";
 import * as dgram from "node:dgram";
 import * as dns from "node:dns";
 import * as dns_promises from "node:dns/promises";
 import { once } from "node:events";
 import * as fs from "node:fs";
+import * as net from "node:net";
 import * as os from "node:os";
+import * as path from "node:path";
 import * as util from "node:util";
 
 beforeAll(() => {
@@ -99,9 +101,8 @@ test("dns.resolveSrv (_test._tcp.invalid.localhost)", () => {
 
 // RFC 2782 (SRV) and RFC 3403 (NAPTR) say the names in RDATA must not be
 // compressed, but a lot of deployed resolvers (dnsmasq, mDNSResponder, older
-// BIND, various corporate forwarders) still compress them. c-ares 1.34.8
-// rejected these responses with EBADRESP. c-ares 1.34.9 accepts them again
-// (RFC 3597 section 4); make sure it stays that way.
+// BIND, various corporate forwarders) still compress them, and RFC 3597
+// section 4 says to accept that.
 //
 // Serves one answer of the given type for every query. The answer's RDATA is
 // built by `rdata`, which receives a compression pointer to QNAME so the name
@@ -466,10 +467,10 @@ test("dns.lookup (localhost)", () => {
 });
 
 // dns.lookup()'s contract is getaddrinfo(3), so it must use the system
-// resolver, not c-ares, which reads /etc/resolv.conf directly and bypasses
+// resolver, not the "c-ares" backend, which reads /etc/resolv.conf directly and bypasses
 // NSS/systemd-resolved on split-DNS hosts (#37378). "127.1" is a legacy IPv4
-// literal: getaddrinfo resolves it locally with no DNS traffic, while c-ares
-// treats it as a hostname and queries the configured servers, here a local
+// literal: getaddrinfo resolves it locally with no DNS traffic, while "c-ares"
+// does not, and its configured servers are a local
 // responder that REFUSEs every query. Linux-only: it is the one platform
 // where the default Bun.dns backend is c-ares.
 test.skipIf(!isLinux)("dns.lookup uses getaddrinfo, not the c-ares resolver", async () => {
@@ -512,7 +513,7 @@ test.skipIf(!isLinux)("dns.lookup uses getaddrinfo, not the c-ares resolver", as
   expect(exitCode).toBe(0);
 });
 
-// On Windows, c-ares closes the UDP socket from inside its uv_poll_t's poll callback. A nested uv_run
+// On Windows, the resolver closes the UDP socket from inside its uv_poll_t's poll callback. A nested uv_run
 // must not run the close callback that frees the handle while libuv is still dispatching to it.
 test("dns.Resolver: a query's promise reaction can re-enter the event loop", async () => {
   const rounds = 20;
@@ -564,7 +565,7 @@ test("dns.Resolver: a query's promise reaction can re-enter the event loop", asy
       if (reentries !== before + 1) throw new Error("Bun.build() returned without spinning the event loop");
     }
 
-    // Each round uses a new name, because c-ares answers a repeated name from its cache without opening a socket.
+    // Each round uses a new name, because the resolver answers a repeated name from its cache without opening a socket.
     for (let i = 0; i < ${rounds}; i++) {
       const addresses = await resolver.resolve4("round" + i + ".example.test").then(addresses => {
         reenterEventLoop();
@@ -1091,7 +1092,7 @@ describe("pending cache", () => {
 
   // Bun.dns.lookup with the c-ares backend goes through the default resolver,
   // so point that resolver at the fake server in a child process. The trailing
-  // dot keeps c-ares from also trying the host's search domains.
+  // dot keeps it from also trying the host's search domains.
   test.concurrent("concurrent c-ares lookup() of the same name share one query", async () => {
     const { socket, queries, port } = await startFakeServer();
     try {
@@ -1141,7 +1142,7 @@ describe("resolve record types", () => {
     return b;
   }
   function charString(s) {
-    return Buffer.concat([Buffer.from([s.length]), Buffer.from(s)]);
+    return Buffer.concat([Buffer.from([Buffer.byteLength(s)]), Buffer.from(s)]);
   }
   // One answer RR: <owner> 60 IN <rrtype> <rdata>
   function rr(owner, rrtype, rdata) {
@@ -1276,31 +1277,28 @@ describe("resolve record types", () => {
   ];
   const byType = Object.fromEntries(cases.map(c => [c.rrtype, c]));
 
-  // No answers is NXDOMAIN.
-  async function startFakeServer(answersFor = (qname, rrtype) => byType[rrtype].answers(qname)) {
+  // `answersFor` returns the answers or an rcode. No answers is NXDOMAIN.
+  function respond(query, queries, answersFor = (qname, rrtype) => byType[rrtype].answers(qname)) {
+    const labels = [];
+    let off = 12;
+    while (query[off] !== 0) {
+      labels.push(query.toString("latin1", off + 1, off + 1 + query[off]));
+      off += query[off] + 1;
+    }
+    const rrtype = Object.keys(WIRE).find(rrtype => WIRE[rrtype] === query.readUInt16BE(off + 1));
+    const qname = labels.join(".");
+    queries.push(`${rrtype} ${qname || "."}`);
+
+    const result = answersFor(qname, rrtype);
+    const [rcode, answers] = typeof result === "number" ? [result, []] : [result.length ? 0 : 3, result];
+    const header = [query.subarray(0, 2), u16(0x8180 | rcode), u16(1), u16(answers.length), u32(0)];
+    return Buffer.concat([...header, query.subarray(12, off + 5), ...answers]);
+  }
+
+  async function startFakeServer(answersFor) {
     const socket = dgram.createSocket("udp4");
     const queries = [];
-    const ids = new Set();
-    socket.on("message", (query, rinfo) => {
-      const labels = [];
-      let off = 12;
-      while (query[off] !== 0) {
-        labels.push(query.toString("latin1", off + 1, off + 1 + query[off]));
-        off += query[off] + 1;
-      }
-      const rrtype = Object.keys(WIRE).find(rrtype => WIRE[rrtype] === query.readUInt16BE(off + 1));
-      const question = query.subarray(12, off + 5);
-      const qname = labels.join(".");
-      // A retry keeps its id.
-      const id = `${query.readUInt16BE(0)} ${qname}`;
-      if (!ids.has(id)) queries.push(`${rrtype} ${qname || "."}`);
-      ids.add(id);
-
-      const answers = answersFor(qname, rrtype);
-      const rcode = answers.length ? 0x80 : 0x83;
-      const header = Buffer.from([query[0], query[1], 0x81, rcode, 0, 1, 0, answers.length, 0, 0, 0, 0]);
-      socket.send(Buffer.concat([header, question, ...answers]), rinfo.port, rinfo.address);
-    });
+    socket.on("message", (query, rinfo) => socket.send(respond(query, queries, answersFor), rinfo.port, rinfo.address));
     socket.bind(0, "127.0.0.1");
     await once(socket, "listening");
     const resolver = new dns_promises.Resolver({ timeout: 5000, tries: 1 });
@@ -1378,7 +1376,7 @@ describe("resolve record types", () => {
   });
 
   // lookupService() asks the servers of the default resolver.
-  test.concurrent("lookupService() names the address in its error, and joins by address and port", async () => {
+  test.concurrent("lookupService() names the address in its error, and asks once for all ports", async () => {
     const { socket, queries } = await startFakeServer(qname =>
       qname === "1.2.0.192.in-addr.arpa" ? byType.PTR.answers(qname) : [],
     );
@@ -1391,12 +1389,183 @@ describe("resolve record types", () => {
         const { message, hostname } = await dns.promises.lookupService("192.0.2.2", 80).catch(e => e);
         console.log(message, hostname);
       `;
-      expect(await bunRun(["-e", script])).toSpawn("61001\n61002\n61001\ngetnameinfo ENOTFOUND 192.0.2.2 192.0.2.2");
-      expect(queries).toEqual([
-        "PTR 1.2.0.192.in-addr.arpa",
-        "PTR 1.2.0.192.in-addr.arpa",
-        "PTR 2.2.0.192.in-addr.arpa",
+      // The longest that it waits before it asks again.
+      expect(await bunRun(["-e", script], { RES_OPTIONS: "timeout:5" })).toSpawn(
+        "61001\n61002\n61001\ngetnameinfo ENOTFOUND 192.0.2.2 192.0.2.2",
+      );
+      expect(queries).toEqual(["PTR 1.2.0.192.in-addr.arpa", "PTR 2.2.0.192.in-addr.arpa"]);
+    } finally {
+      socket.close();
+    }
+  });
+
+  test.concurrent.each([
+    [0, "ENODATA"],
+    [1, "EFORMERR"],
+    [2, "ESERVFAIL"],
+    [3, "ENOTFOUND"],
+    [4, "ENOTIMP"],
+    [5, "EREFUSED"],
+  ])("rcode %d without answers is %s", async (rcode, code) => {
+    const { socket, resolver } = await startFakeServer(() => rcode);
+    try {
+      expect(await resolver.resolve4(NAME).catch(err => err.code)).toBe(code);
+    } finally {
+      socket.close();
+    }
+  });
+
+  // https://github.com/oven-sh/bun/issues/44777
+  test.concurrent("a record shows as soon as the server has it", async () => {
+    let exists = false;
+    const { socket, resolver } = await startFakeServer(qname => (exists ? byType.TXT.answers(qname) : 0));
+    try {
+      expect(await resolver.resolveTxt(NAME).catch(err => err.code)).toBe("ENODATA");
+      exists = true;
+      expect(await resolver.resolveTxt(NAME)).toEqual(byType.TXT.expected);
+    } finally {
+      socket.close();
+    }
+  });
+
+  test.concurrent("the regexp of a NAPTR record is UTF-8", async () => {
+    const rdata = [u16(1), u16(2), charString("U"), charString("E2U"), charString("!.*!é!"), encodeName("")];
+    const { socket, resolver } = await startFakeServer(qname => [rr(qname, "NAPTR", Buffer.concat(rdata))]);
+    try {
+      expect(await resolver.resolveNaptr(NAME)).toEqual([
+        { flags: "U", service: "E2U", regexp: "!.*!é!", replacement: "", order: 1, preference: 2 },
       ]);
+    } finally {
+      socket.close();
+    }
+  });
+
+  test.concurrent("the strings of a TXT record stay together", async () => {
+    const records = [["a", "", "b"], ["c"]];
+    const { socket, resolver } = await startFakeServer(qname =>
+      records.map(strings => rr(qname, "TXT", Buffer.concat(strings.map(charString)))),
+    );
+    try {
+      expect(await Promise.all([resolver.resolveTxt(NAME), resolver.resolveAny(NAME)])).toEqual([
+        records,
+        records.map(entries => ({ entries, type: "TXT" })),
+      ]);
+    } finally {
+      socket.close();
+    }
+  });
+
+  test.concurrent("resolve4() has the ttl of each of 260 addresses", async () => {
+    const addresses = Array.from({ length: 260 }, (_, i) => [10, 0, i >> 8, i & 255]);
+    const { socket, resolver } = await startFakeServer(qname => addresses.map(it => rr(qname, "A", Buffer.from(it))));
+    try {
+      expect(await resolver.resolve4(NAME, { ttl: true })).toEqual(
+        addresses.map(it => ({ address: it.join("."), ttl: 60 })),
+      );
+    } finally {
+      socket.close();
+    }
+  });
+
+  test.concurrent("150 queries at once get their own answers", async () => {
+    const { socket, resolver } = await startFakeServer(qname => [rr(qname, "PTR", encodeName("to." + qname))]);
+    try {
+      const names = Array.from({ length: 150 }, (_, i) => `${i}.test`);
+      expect(await Promise.all(names.map(name => resolver.resolvePtr(name)))).toEqual(
+        names.map(name => ["to." + name]),
+      );
+    } finally {
+      socket.close();
+    }
+  });
+
+  test.concurrent("the next server is asked if nothing listens on the first", async () => {
+    const [gone, { socket, resolver: other }] = await Promise.all([startFakeServer(), startFakeServer()]);
+    const servers = [...gone.resolver.getServers(), ...other.getServers()];
+    await new Promise(closed => gone.socket.close(closed));
+    try {
+      const resolver = new dns_promises.Resolver({ timeout: 250 });
+      resolver.setServers(servers);
+      expect(await resolver.resolve4(NAME)).toEqual(byType.A.expected);
+      expect(resolver.getServers()).toEqual(servers.toReversed());
+    } finally {
+      socket.close();
+    }
+  });
+
+  // Not every system has all of 127.0.0.0/8 on its loopback interface.
+  test.concurrent.skipIf(!isLinux)("queries come from the address given to setLocalAddress()", async () => {
+    const { socket, resolver } = await startFakeServer();
+    try {
+      resolver.setLocalAddress("127.0.0.2");
+      const [[, rinfo], addresses] = await Promise.all([once(socket, "message"), resolver.resolve4(NAME)]);
+      expect([rinfo.address, addresses]).toEqual(["127.0.0.2", byType.A.expected]);
+    } finally {
+      socket.close();
+    }
+  });
+
+  test.concurrent("RES_OPTIONS=use-vc sends the queries over one TCP connection", async () => {
+    const strings = Array.from({ length: 200 }, (_, i) => Buffer.alloc(255, String(i)).toString());
+    const answersFor = qname => [rr(qname, "TXT", Buffer.concat(strings.map(charString)))];
+    const queries = [];
+    let connections = 0;
+    await using server = net.createServer(socket => {
+      connections++;
+      let input = Buffer.alloc(0);
+      socket.on("error", () => {});
+      socket.on("data", chunk => {
+        input = Buffer.concat([input, chunk]);
+        while (input.length >= 2 && input.length >= 2 + input.readUInt16BE(0)) {
+          const end = 2 + input.readUInt16BE(0);
+          const reply = respond(input.subarray(2, end), queries, answersFor);
+          socket.write(u16(reply.length));
+          socket.write(reply);
+          input = input.subarray(end);
+        }
+      });
+    });
+    const gone = net.createServer();
+    await Promise.all([server, gone].map(it => once(it.listen(0, "127.0.0.1"), "listening")));
+    const gonePort = gone.address().port;
+    await once(gone.close(), "close");
+    const script = `
+      const { Resolver } = require("node:dns/promises");
+      const resolver = new Resolver({ timeout: 5000, tries: 1 });
+      resolver.setServers(["127.0.0.1:${server.address().port}"]);
+      for (const records of await Promise.all(["a.test", "b.test", "c.test"].map(name => resolver.resolveTxt(name))))
+        console.log(Bun.hash(records.join()));
+      resolver.setServers(["127.0.0.1:${gonePort}"]);
+      console.log(await resolver.resolveTxt("a.test").catch(err => err.code));
+    `;
+    const hash = Bun.hash(strings.join()) + "n";
+    expect(await bunRun(["-e", script], { RES_OPTIONS: "use-vc" })).toSpawn(
+      [hash, hash, hash, "ECONNREFUSED"].join("\n"),
+    );
+    expect({ queries, connections }).toEqual({ queries: ["TXT a.test", "TXT b.test", "TXT c.test"], connections: 1 });
+  });
+
+  test.concurrent.each([
+    { host: "one", env: {}, expected: ["A one.search.test", "A one"] },
+    { host: "one.two", env: {}, expected: ["A one.two", "A one.two.search.test"] },
+    { host: "one.two", env: { RES_OPTIONS: "ndots:2" }, expected: ["A one.two.search.test", "A one.two"] },
+    { host: "one.", env: {}, expected: ["A one"] },
+    { host: "no.data.", env: {}, expected: ["A no.data"] },
+    { host: "Alias", env: {}, expected: ["A real.test"] },
+    { host: "one.LocalHost", env: {}, expected: [], output: "127.0.0.1" },
+  ])("Bun.dns.lookup($host) with $env asks for $expected", async ({ host, env, expected, output }) => {
+    using dir = tempDir("dns-hostaliases", { aliases: "other other.test\nalias real.test\n" });
+    const { socket, queries } = await startFakeServer(qname => (qname === "no.data" ? 0 : 3));
+    try {
+      const script = `
+        require("node:dns").setServers(["127.0.0.1:${socket.address().port}"]);
+        const lookup = Bun.dns.lookup("${host}", { backend: "c-ares", family: 4 });
+        console.log(await lookup.then(([{ address }]) => address, err => err.code));
+      `;
+      const HOSTALIASES = path.join(String(dir), "aliases");
+      env = { LOCALDOMAIN: "search.test", RES_OPTIONS: "ndots:1", HOSTALIASES, ...env };
+      expect(await bunRun(["-e", script], env)).toSpawn(output ?? "DNS_ENOTFOUND");
+      expect([...new Set(queries)]).toEqual(expected);
     } finally {
       socket.close();
     }

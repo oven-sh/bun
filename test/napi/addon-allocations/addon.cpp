@@ -5,6 +5,7 @@
 #define NAPI_VERSION 10
 #include <node_api.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cstdint>
 #include <cstdio>
@@ -816,12 +817,14 @@ void countCallAndLeave()
     std::set_new_handler(nullptr);
 }
 
-// The C++ library defines this member out of line, so the allocation is the library's. The largest std::wstring is as
-// close to SIZE_MAX as tooMuch. Never destroyed, so that the compiler has to make the call.
+// The C++ library defines this member out of line, so the allocation is the library's. The length is below what any
+// version of libc++ allows, and its bytes are as close to SIZE_MAX as tooMuch. max_size() can be more than libc++
+// allows: it is the header's, and the library that runs can be newer. libstdc++ allows less. Never destroyed, so that
+// the compiler has to make the call.
 void* reserveWideString(size_t)
 {
     static auto* text = new std::wstring;
-    text->reserve(text->max_size());
+    text->reserve(std::min(text->max_size(), SIZE_MAX / sizeof(wchar_t) - 64));
     return text->data();
 }
 
@@ -863,6 +866,8 @@ napi_value askForTooMuch(napi_env, napi_callback_info)
             form.request(tooMuch);
         } catch (const std::bad_alloc&) {
             outcome = ": std::bad_alloc";
+        } catch (const std::length_error&) {
+            outcome = ": std::length_error";
         } catch (...) {
             outcome = ": another exception";
         }

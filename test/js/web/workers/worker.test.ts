@@ -448,6 +448,111 @@ describe("web worker", () => {
     });
   });
 
+  // The entry point of a worker is a module: a function that is called with the JSGlobalObject cell as `this` sees undefined.
+  describe("an event that native code dispatches on the worker's global object has self as its target", () => {
+    const seenBy = `
+      function seenBy(thisValue, event) {
+        return {
+          type: event.type,
+          this: thisValue === self,
+          target: event.target === self,
+          currentTarget: event.currentTarget === globalThis,
+          srcElement: event.srcElement === self,
+          composedPath: event.composedPath().map(target => target === self),
+        };
+      }`;
+    const everythingIsSelf = { this: true, target: true, currentTarget: true, srcElement: true, composedPath: [true] };
+
+    function start(source: string) {
+      const worker = new Worker(URL.createObjectURL(new Blob([seenBy, source])));
+      const message = Promise.withResolvers<any>();
+      const error = Promise.withResolvers<ErrorEvent>();
+      worker.onmessage = event => message.resolve(event.data);
+      worker.onerror = event => error.resolve(event);
+      worker.addEventListener("close", event => {
+        const closed = new Error(`the worker closed (${event.code}) before it answered`);
+        message.reject(closed);
+        error.reject(closed);
+      });
+      return { worker, message: message.promise, error: error.promise };
+    }
+
+    // The first message of a worker that must not fail. With `data`, it is the answer to that message.
+    async function answerOf(source: string, data?: unknown) {
+      const { worker, message, error } = start(source);
+      try {
+        if (data !== undefined) worker.postMessage(data);
+        return await Promise.race([
+          message,
+          error.then(event => Promise.reject(new Error(`the worker failed before it answered: ${event.message}`))),
+        ]);
+      } finally {
+        worker.terminate();
+      }
+    }
+
+    test("message: a function in onmessage", async () => {
+      const answer = await answerOf(
+        `onmessage = function (event) {
+          this.postMessage({ ...seenBy(this, event), data: event.data });
+        };`,
+        "ping",
+      );
+      expect(answer).toEqual({ type: "message", ...everythingIsSelf, data: "ping" });
+    });
+
+    test("message: a function listener", async () => {
+      const answer = await answerOf(
+        `addEventListener("message", function (event) {
+          postMessage({ ...seenBy(this, event), data: event.data });
+        });`,
+        "ping",
+      );
+      expect(answer).toEqual({ type: "message", ...everythingIsSelf, data: "ping" });
+    });
+
+    // https://github.com/web-platform-tests/wpt/blob/master/workers/interfaces/DedicatedWorkerGlobalScope/EventTarget.worker.js
+    // Each of its two tests answers with what it asserts on.
+    test("WPT: EventTarget.worker.js", async () => {
+      const answer = await answerOf(`
+        const answers = {};
+        {
+          var i = 0;
+          addEventListener("message", function listener(evt) {
+            ++i;
+            removeEventListener("message", listener, true);
+          }, true);
+          self.dispatchEvent(new Event("message"));
+          self.dispatchEvent(new Event("message"));
+          answers.removeEventListener = i;
+        }
+        {
+          addEventListener("message", function(evt) {
+            answers.target = evt.target === self;
+          }, true);
+          self.dispatchEvent(new Event("message"));
+        }
+        postMessage(answers);`);
+      expect(answer).toEqual({ removeEventListener: 1, target: true });
+    });
+
+    test("error: a function listener, for an error that nothing in the worker catches", async () => {
+      const { worker, message, error } = start(`
+        addEventListener("error", function (event) {
+          postMessage({ ...seenBy(this, event), message: event.error.message });
+        });
+        throw new Error("boom");`);
+      try {
+        // The Worker object hears of the error as well, before or after the message.
+        const [seen, reported] = await Promise.allSettled([message, error]);
+        expect(seen).toEqual({ status: "fulfilled", value: { type: "error", ...everythingIsSelf, message: "boom" } });
+        expect(reported).toMatchObject({ status: "fulfilled", value: { type: "error" } });
+      } finally {
+        worker.terminate();
+      }
+    });
+  });
+
   // As in browsers (and Node's Web Worker), the worker's implicit port opens once the entry's
   // synchronous part has run: a message dispatched while no 'message' handler exists is dropped.
   // node:worker_threads' parentPort is what queues until a listener is attached. #40141

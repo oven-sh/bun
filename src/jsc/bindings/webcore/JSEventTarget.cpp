@@ -134,9 +134,11 @@ static inline JSC::EncodedJSValue jsEventTargetPrototypeFunction_addEventListene
         auto errorInstance = JSC::ErrorInstance::create(vm, lexicalGlobalObject->errorStructure(JSC::ErrorType::Error), warningMessage, JSValue(), nullptr, RuntimeType::TypeNothing, JSC::ErrorType::Error);
         RETURN_IF_EXCEPTION(throwScope, {});
         errorInstance->putDirect(vm, vm.propertyNames->name, jsString(vm, String("AddEventListenerArgumentTypeWarning"_s)));
-        JSObject& target = *castedThis;
-        errorInstance->putDirect(vm, vm.propertyNames->target, &target);
+        JSObject& owner = *castedThis;
+        // As an event on this target answers it: `globalThis` for a global object.
+        JSValue target = toJS(lexicalGlobalObject, uncheckedDowncast<JSDOMGlobalObject>(owner.globalObject()), impl);
         RETURN_IF_EXCEPTION(throwScope, {});
+        errorInstance->putDirect(vm, vm.propertyNames->target, target);
         errorInstance->putDirect(vm, vm.propertyNames->type, jsString(vm, WTF::move(type)));
         Bun::Process::emitWarningErrorInstance(lexicalGlobalObject, errorInstance);
         RETURN_IF_EXCEPTION(throwScope, {});

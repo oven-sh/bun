@@ -43,15 +43,8 @@ using namespace JSC;
 
 EventTarget* JSEventTarget::toWrapped(VM& vm, JSValue value)
 {
-    // if (value.inherits<JSWindowProxy>())
-    //     return &uncheckedDowncast<JSWindowProxy>(asObject(value))->wrapped();
-    // if (value.inherits<JSDOMWindow>())
-    //     return &uncheckedDowncast<JSDOMWindow>(asObject(value))->wrapped();
-    if (value.inherits<JSDOMGlobalObject>())
-        return uncheckedDowncast<JSDOMGlobalObject>(asObject(value))->globalEventScope.ptr();
-    if (value.inherits<JSEventTarget>())
-        return &uncheckedDowncast<JSEventTarget>(asObject(value))->wrapped();
-    return nullptr;
+    auto target = jsEventTargetCast(vm, value);
+    return target.isNull() ? nullptr : &target.wrapped();
 }
 
 void noteGlobalObjectStoodInForReceiverOfEvents(JSGlobalObject& lexicalGlobalObject)

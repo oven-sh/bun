@@ -24,7 +24,7 @@ import { afterAll, expect } from "bun:test";
 import { readFileSync, writeFileSync } from "fs";
 import { isASAN, isDebug, isLinux, isMusl, isWindows } from "harness";
 import { join } from "path";
-import { beforeAll, describe, test } from "../supported";
+import { describe, test } from "../supported";
 import { application, build, countsInstructions, stagesOf, type Build, type Dress, type StageName } from "./measure";
 
 const lines = 100_000;
@@ -153,10 +153,6 @@ const shapeOf = (value: unknown): unknown =>
     : typeof value;
 
 describe.skipIf(!!whyNotBuilt)("compile/aot/compiler budgets", () => {
-  // Both builds run at once and have ended before the first check. Left to the checks, the erased build would begin when the typed build has ended: a check that waits for
-  // its build keeps one of the places that `--max-concurrency` gives, and a check that is not yet met runs alone. A check of a build that failed says so itself.
-  beforeAll(() => Promise.allSettled(dresses.map(built)), timeout);
-
   afterAll(() => {
     if (process.env.AOT_BUDGETS !== "lower") return;
     for (const stage of budgetedStages) budgets.instructions[stage][libc] = lowered(stage, limitOf(stage), 0);
@@ -171,24 +167,42 @@ describe.skipIf(!!whyNotBuilt)("compile/aot/compiler budgets", () => {
     });
   });
 
+  // A build that left a part of the application out would be held to the limits for the rest.
+  // These two checks stand in front of every other, one of each build beside the other. The first check of a build starts it and waits for it, so both builds run at once.
+  // Behind the checks of one build, the other build would begin when the first has ended: a check that waits keeps one of the places that `--max-concurrency` gives,
+  // and a check that is not yet met runs alone.
+  for (const dress of dresses)
+    test.concurrent(
+      `${dress}: the build reads every line of the application`,
+      async () => {
+        const { counts, linesWritten } = await built(dress);
+        expect(counts.SourceLines).toBe(linesWritten);
+      },
+      timeout,
+    );
+
+  for (const dress of dresses)
+    test.concurrent(
+      `${dress}: the build prints every number that a check reads`,
+      async () => {
+        const finished = await built(dress);
+        const stages = stagesOf(finished);
+        expect({
+          counters: countersRead.filter(name => finished.counts[name] > 0),
+          instructions: stagesCounted.filter(stage => stages[stage].instructions! > 0),
+        }).toEqual({ counters: countersRead, instructions: stagesCounted });
+      },
+      timeout,
+    );
+
   for (const dress of dresses) {
-    // A build that left a part of the application out would be held to the limits for the rest.
-    test(`${dress}: the build reads every line of the application`, async () => {
-      const { counts, linesWritten } = await built(dress);
-      expect(counts.SourceLines).toBe(linesWritten);
-    });
-
-    test(`${dress}: the build prints every number that a check reads`, async () => {
-      const finished = await built(dress);
-      const stages = stagesOf(finished);
-      expect({
-        counters: countersRead.filter(name => finished.counts[name] > 0),
-        instructions: stagesCounted.filter(stage => stages[stage].instructions! > 0),
-      }).toEqual({ counters: countersRead, instructions: stagesCounted });
-    });
-
+    // `concurrent` comes first: with a sanitizer `test` is concurrent already, and only its own `concurrent` allows for that.
     for (const [stage, parts] of Object.entries(budgetedPartsOf) as [StageName, BudgetedStage[]][])
-      (whyNotCounted ? test.skip : measuredWhereNotYetMet[dress][stage] ? test.failing : test)(
+      (whyNotCounted
+        ? test.concurrent.skipIf(true)
+        : measuredWhereNotYetMet[dress][stage]
+          ? test.failing
+          : test.concurrent)(
         nameOfCheck(
           `${dress}: instructions of ${stage}`,
           measuredWhereNotYetMet[dress][stage],
@@ -205,10 +219,11 @@ describe.skipIf(!!whyNotBuilt)("compile/aot/compiler budgets", () => {
           console.error(line);
           expect(instructions, line).toBeLessThanOrEqual(allowed);
         },
+        timeout,
       );
 
     for (const touch of touches)
-      (measuredWhereNotYetMet[dress][touch] ? test.failing : test)(
+      (measuredWhereNotYetMet[dress][touch] ? test.failing : test.concurrent)(
         nameOfCheck(
           `${dress}: ${touch} per ${unitOfTouch[touch]}`,
           measuredWhereNotYetMet[dress][touch],
@@ -222,6 +237,7 @@ describe.skipIf(!!whyNotBuilt)("compile/aot/compiler budgets", () => {
           console.error(line);
           expect(ratio, line).toBeLessThanOrEqual(budgets.touches[touch]);
         },
+        timeout,
       );
   }
 });

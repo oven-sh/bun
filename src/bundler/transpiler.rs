@@ -2741,7 +2741,7 @@ impl<'a> Transpiler<'a> {
         };
 
         let mut template = self.entry_naming_template();
-        template.placeholder.dir = pathname.dir.into();
+        template.set_dir(&self.options.root_dir, pathname.dir);
         template.placeholder.name = pathname.base.into();
         template.placeholder.ext = ext.into();
         if template.needs(options::PlaceholderField::Target) {

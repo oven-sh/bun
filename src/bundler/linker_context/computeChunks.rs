@@ -681,7 +681,7 @@ pub(crate) fn compute_chunks<'a>(
             };
 
             let root_dir = &this.resolver.opts.root_dir;
-            chunk.template.placeholder.dir = Path::relative(root_dir, dir).as_bytes().into();
+            (chunk.template).set_dir(root_dir, &Path::relative(root_dir, dir));
         }
 
         if !mirrors_source {

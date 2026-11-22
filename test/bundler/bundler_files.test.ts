@@ -1,6 +1,7 @@
 import type { BunPlugin, OnResolveCallback } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, bunRun, tempDir } from "harness";
+import { bunEnv, bunExe, bunRun, isWindows, substDrive, tempDir } from "harness";
+import { readdirSync, readFileSync } from "node:fs";
 import { basename, join, relative, sep } from "node:path";
 
 describe("bundler files option", () => {
@@ -1009,6 +1010,47 @@ describe("bundler files option", () => {
       sources: [name],
     });
   });
+
+  test.skipIf(!isWindows)("the output of a key on another volume stays in outdir", async () => {
+    using dir = tempDir("files-other-volume", {});
+    using drive = substDrive(String(dir));
+    const keys = [`${drive.root}a\\b\\index.js`, `\\\\?\\${drive.root}a\\index.js`, `B:\\a\\index.js`];
+    const outdir = join(String(dir), "out");
+    const { outputs } = await Bun.build({
+      entrypoints: keys,
+      files: Object.fromEntries(keys.map(key => [key, `console.log(1);`])),
+      root: String(dir),
+      outdir,
+    });
+    expect(outputs.map(output => relative(outdir, output.path)).sort()).toEqual([
+      "B_\\a\\index.js",
+      `____${drive.root[0]}_\\a\\index.js`,
+      "a\\b\\index.js",
+    ]);
+    expect(readdirSync(String(dir))).toEqual(["out"]);
+  });
+
+  test.skipIf(!isWindows)(
+    "a key is relative to a working directory on a drive that stands for a directory",
+    async () => {
+      using dir = tempDir("files-subst-cwd", {
+        "w/build.js": `await Bun.build({ entrypoints: ["/src/a.js"], files: { "/src/a.js": "" }, outdir: "out" });`,
+        "w/src/a.js": "// source",
+      });
+      using drive = substDrive(String(dir));
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build.js"],
+        cwd: join(drive.root, "w"),
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(readFileSync(join(String(dir), "w", "src", "a.js"), "utf8")).toBe("// source");
+      expect(readdirSync(join(String(dir), "w", "out"), { recursive: true })).toEqual(["src", "src\\a.js"]);
+      expect(exitCode).toBe(0);
+    },
+  );
 
   test("a key with backslashes overrides the file", async () => {
     using dir = tempDir("files-backslash-key", {

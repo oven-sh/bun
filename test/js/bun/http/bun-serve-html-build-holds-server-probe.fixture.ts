@@ -2,14 +2,20 @@
 //
 // PROBE=snap    : no FFI. After the fixture reports that the server was not collected: heap snapshot, then other
 //                 ways to ask for a collection.
-// PROBE=late    : snap, and the stack and the registers are copied first.
-// PROBE=lateref : late, and a second server gives the cell header to look for in that copy (before the snapshot).
+// PROBE=late    : snap, and the stack is copied first.
 // PROBE=early   : late, and FinalizationRegistry.prototype.register, fetch, setTimeout and
 //                 AbortController.prototype.abort are wrapped to copy the stack at those points. register also
 //                 gives the address of the server.
 // PROBE=early2  : early, and Promise.prototype.then and the resolve of Promise.withResolvers() are wrapped too.
 // PROBE=gcwrap  : early, and Bun.gc is wrapped so that the stack is copied from the frame that called the collection.
-import { fullGC, gcAndSweep, generateHeapSnapshotForDebugging, heapStats, jscDescribe } from "bun:jsc";
+//
+// PROBE_ALWAYS=1 : run the analysis also when the server was collected.
+// PROBE_SYMS=1   : for the words of the dumps that point into the executable, add the function table entry and the
+//                  code bytes, so that they can be matched to a build that has symbols.
+// PROBE_POKE=<n> : at the n-th setTimeout, write zero into every stack word that holds the generator of the async
+//                  function that created the server.
+// PROBE_MARK=1   : write a line to stderr at every copy (to read BUN_JSC_verboseSanitizeStack=1 by).
+import { fullGC, generateHeapSnapshotForDebugging, heapStats, jscDescribe } from "bun:jsc";
 
 const variant = process.env.PROBE ?? "late";
 const out: any = { variant, platform: process.platform, arch: process.arch, errors: [] as string[] };
@@ -21,20 +27,30 @@ const origGc = Bun.gc;
 
 // ---- native layer -------------------------------------------------------------------------------------------------
 
+type FunctionEntry = { begin: number; end: number; unwind: number; imageBase: number };
 type Native = {
   stackBase: number;
   stackReserveLow: number;
   image: { base: number; size: number };
-  regNames: [string, number][]; // name, offset into a captured context
-  spOffset: number;
+  spOffset: number; // of the stack pointer in a captured context
   alloc(bytes: number): number;
   captureContext(at: number): void;
   copy(dst: number, src: number, bytes: number): void;
+  zero(at: number, bytes: number): void;
+  mark(text: string): void;
+  lookupFunction(addr: number): FunctionEntry | null;
   committedLow(): number;
-  readable(addr: bigint): boolean;
   read: typeof import("bun:ffi").read;
   toArrayBuffer: typeof import("bun:ffi").toArrayBuffer;
 };
+
+const markBytes = new Uint8Array(256);
+function fillMark(text: string): number {
+  const length = Math.min(text.length, 255);
+  for (let i = 0; i < length; i++) markBytes[i] = text.charCodeAt(i);
+  markBytes[length] = 10;
+  return length + 1;
+}
 
 function makeWindows(): Native {
   const { dlopen, ptr, read, toArrayBuffer } = require("bun:ffi") as typeof import("bun:ffi");
@@ -45,23 +61,47 @@ function makeWindows(): Native {
     VirtualAlloc: { args: ["ptr", "u64", "u32", "u32"], returns: "ptr" },
     GetModuleHandleW: { args: ["ptr"], returns: "ptr" },
   }).symbols;
-  let copy: (dst: number, src: number, bytes: number) => void;
+  const ntdll = dlopen("ntdll.dll", {
+    memcpy: { args: ["ptr", "ptr", "u64"], returns: "ptr" },
+    memset: { args: ["ptr", "i32", "u64"], returns: "ptr" },
+  }).symbols;
+  let lookup: ((addr: number) => FunctionEntry | null) | undefined;
+  let mark: ((text: string) => void) | undefined;
   try {
-    const ntdll = dlopen("ntdll.dll", { memcpy: { args: ["ptr", "ptr", "u64"], returns: "ptr" } }).symbols;
-    copy = (dst, src, bytes) => void ntdll.memcpy(dst as any, src as any, bytes);
+    const more = dlopen("kernel32.dll", {
+      RtlLookupFunctionEntry: { args: ["u64", "ptr", "ptr"], returns: "ptr" },
+      GetStdHandle: { args: ["u32"], returns: "ptr" },
+      WriteFile: { args: ["ptr", "ptr", "u32", "ptr", "ptr"], returns: "i32" },
+    }).symbols;
+    const imageBaseOut = new BigUint64Array(1);
+    const imageBasePtr = ptr(imageBaseOut);
+    lookup = addr => {
+      const entry = Number(more.RtlLookupFunctionEntry(addr, imageBasePtr, null));
+      if (!entry) return null;
+      return {
+        begin: read.u32(entry as any, 0),
+        end: read.u32(entry as any, 4),
+        unwind: read.u32(entry as any, 8),
+        imageBase: Number(imageBaseOut[0]),
+      };
+    };
+    const stderrHandle = more.GetStdHandle(0xfffffff4); // STD_ERROR_HANDLE
+    const written = new Uint32Array(2);
+    const writtenPtr = ptr(written);
+    const markPtr = ptr(markBytes);
+    mark = text => void more.WriteFile(stderrHandle, markPtr, fillMark(text), writtenPtr, null);
   } catch (e) {
-    err("ntdll memcpy", e);
-    const alt = dlopen("kernel32.dll", { RtlMoveMemory: { args: ["ptr", "ptr", "u64"], returns: "void" } }).symbols;
-    copy = (dst, src, bytes) => void alt.RtlMoveMemory(dst as any, src as any, bytes);
+    err("kernel32 extras", e);
   }
   const limits = new BigUint64Array(2);
   k32.GetCurrentThreadStackLimits(ptr(limits), ptr(limits, 8));
   const stackReserveLow = Number(limits[0]);
   const stackBase = Number(limits[1]);
 
+  // The view first: taking `.buffer` moves the storage of a small typed array, and the pointer has to be the new one.
   const mbi = new BigUint64Array(8);
-  const mbiPtr = ptr(mbi);
   const mbi32 = new Uint32Array(mbi.buffer);
+  const mbiPtr = ptr(mbi);
   const query = (addr: number) => {
     const n = Number(k32.VirtualQuery(addr as any, mbiPtr, 48));
     if (n === 0) return null;
@@ -83,51 +123,12 @@ function makeWindows(): Native {
     err("image", e);
   }
 
-  const regNames: [string, number][] = [];
-  let spOffset: number;
-  if (process.arch === "x64") {
-    const gpr = [
-      "rax",
-      "rcx",
-      "rdx",
-      "rbx",
-      "rsp",
-      "rbp",
-      "rsi",
-      "rdi",
-      "r8",
-      "r9",
-      "r10",
-      "r11",
-      "r12",
-      "r13",
-      "r14",
-      "r15",
-      "rip",
-    ];
-    gpr.forEach((name, i) => regNames.push([name, 0x78 + i * 8]));
-    for (let i = 0; i < 16; i++) {
-      regNames.push(["xmm" + i + ".lo", 0x1a0 + i * 16]);
-      regNames.push(["xmm" + i + ".hi", 0x1a8 + i * 16]);
-    }
-    spOffset = 0x98;
-  } else {
-    for (let i = 0; i <= 28; i++) regNames.push(["x" + i, 0x8 + i * 8]);
-    regNames.push(["fp", 0xf0], ["lr", 0xf8], ["sp", 0x100], ["pc", 0x108]);
-    for (let i = 0; i < 32; i++) {
-      regNames.push(["v" + i + ".lo", 0x110 + i * 16]);
-      regNames.push(["v" + i + ".hi", 0x118 + i * 16]);
-    }
-    spOffset = 0x100;
-  }
-
-  const regionCache: [number, number, boolean][] = [];
   return {
     stackBase,
     stackReserveLow,
     image,
-    regNames,
-    spOffset,
+    // CONTEXT.Rsp, or CONTEXT.Sp on arm64
+    spOffset: process.arch === "x64" ? 0x98 : 0x100,
     read,
     toArrayBuffer,
     alloc(bytes) {
@@ -140,7 +141,14 @@ function makeWindows(): Native {
     captureContext(at) {
       k32.RtlCaptureContext(at as any);
     },
-    copy,
+    copy(dst, src, bytes) {
+      ntdll.memcpy(dst as any, src as any, bytes);
+    },
+    zero(at, bytes) {
+      ntdll.memset(at as any, 0, bytes);
+    },
+    mark: mark ?? (() => {}),
+    lookupFunction: lookup ?? (() => null),
     committedLow() {
       // The reservation is [reserve low, base): reserved pages, then guard pages, then the committed part.
       let addr = stackReserveLow;
@@ -152,24 +160,17 @@ function makeWindows(): Native {
       }
       return 0;
     },
-    readable(address) {
-      const addr = Number(address);
-      for (const [lo, hi, ok] of regionCache) if (addr >= lo && addr < hi) return ok;
-      const q = query(addr);
-      if (!q || q.size === 0) return false;
-      const ok = isReadable(q);
-      if (regionCache.length < 4096) regionCache.push([q.base, q.base + q.size, ok]);
-      return ok;
-    },
   };
 }
 
 function makeLinux(): Native {
-  const { dlopen, read, toArrayBuffer } = require("bun:ffi") as typeof import("bun:ffi");
+  const { dlopen, ptr, read, toArrayBuffer } = require("bun:ffi") as typeof import("bun:ffi");
   const libc = dlopen("libc.so.6", {
     getcontext: { args: ["ptr"], returns: "i32" },
     memcpy: { args: ["ptr", "ptr", "u64"], returns: "ptr" },
+    memset: { args: ["ptr", "i32", "u64"], returns: "ptr" },
     mmap: { args: ["ptr", "u64", "i32", "i32", "i32", "i64"], returns: "ptr" },
+    write: { args: ["i32", "ptr", "u64"], returns: "i64" },
   }).symbols;
   const fs = require("node:fs");
   const maps = () =>
@@ -185,32 +186,12 @@ function makeLinux(): Native {
   const stack = all.find(m => m.name === "[stack]")!;
   const exeName = all.find(x => x.name.startsWith("/"))!.name;
   const exe = all.filter(m => m.name === exeName);
-  // ucontext_t: gregs at 40, in the order R8 R9 R10 R11 R12 R13 R14 R15 RDI RSI RBP RBX RDX RAX RCX RSP RIP
-  const names = [
-    "r8",
-    "r9",
-    "r10",
-    "r11",
-    "r12",
-    "r13",
-    "r14",
-    "r15",
-    "rdi",
-    "rsi",
-    "rbp",
-    "rbx",
-    "rdx",
-    "rax",
-    "rcx",
-    "rsp",
-    "rip",
-  ];
-  let cache: ReturnType<typeof maps> | undefined;
+  const markPtr = ptr(markBytes);
   return {
     stackBase: stack.hi,
     stackReserveLow: stack.lo,
     image: { base: exe[0].lo, size: exe[exe.length - 1].hi - exe[0].lo },
-    regNames: names.map((name, i) => [name, 40 + i * 8] as [string, number]),
+    // ucontext_t: gregs at 40, REG_RSP is 15
     spOffset: 40 + 15 * 8,
     read,
     toArrayBuffer,
@@ -223,13 +204,17 @@ function makeLinux(): Native {
     copy(dst, src, bytes) {
       libc.memcpy(dst as any, src as any, bytes);
     },
+    zero(at, bytes) {
+      libc.memset(at as any, 0, bytes);
+    },
+    mark(text) {
+      libc.write(2, markPtr, fillMark(text));
+    },
+    lookupFunction() {
+      return null;
+    },
     committedLow() {
       return maps().find(m => m.name === "[stack]")!.lo;
-    },
-    readable(address) {
-      const addr = Number(address);
-      cache ??= maps();
-      return cache.some(m => addr >= m.lo && addr < m.hi && m.perms[0] === "r");
     },
   };
 }
@@ -257,6 +242,7 @@ const tagId = (name: string) => {
   if (i < 0) i = tagNames.push(name) - 1;
   return i;
 };
+const marks = !!process.env.PROBE_MARK;
 
 if (variant !== "snap") {
   try {
@@ -299,13 +285,52 @@ function copyStack(tag: number): number {
   meta[m + 3] = lo;
   meta[m + 4] = sp;
   storeUsed += bytes;
+  if (marks) n.mark("@@CP " + copies + " " + tagNames[tag] + " " + sp.toString(16));
   return copies++;
+}
+
+// A word of a copy, read from the native store without a typed array. Exact for pointers.
+const storedWord = (copy: number, addr: number) =>
+  native!.read.ptr((storeBase + meta[copy * 5 + 1] + (addr - meta[copy * 5 + 3])) as any, 0);
+const isHeapPointer = (w: number) => {
+  const n = native!;
+  return (
+    w > 0x10000 &&
+    w < 0x800000000000 &&
+    w % 8 === 0 &&
+    !(w >= n.stackReserveLow && w <= n.stackBase) &&
+    !(w >= n.image.base && w < n.image.base + n.image.size)
+  );
+};
+
+// The frame of a resumed async function body has its generator in local 0 (one word under the frame pointer) and
+// again as argument 0 (0x30 over it), and the generator's frame as argument 4. The first copy that AbortController's
+// abort() made is taken while the function that created the server runs, two frames up.
+type GeneratorSlot = { copy: number; slot: number; generator: number; frame: number; others: number };
+function findGenerator(): GeneratorSlot | undefined {
+  let copy = -1;
+  for (let c = 0; c < copies && copy < 0; c++) if (tagNames[meta[c * 5]] === "abort") copy = c;
+  if (copy < 0) return undefined;
+  const sp = meta[copy * 5 + 4];
+  const end = Math.min(sp + 0x1000, meta[copy * 5 + 3] + meta[copy * 5 + 2] - 0x60);
+  let first: GeneratorSlot | undefined;
+  for (let a = sp; a < end; a += 8) {
+    const w = storedWord(copy, a);
+    if (!isHeapPointer(w) || storedWord(copy, a + 0x38) !== w) continue;
+    const frame = storedWord(copy, a + 0x58);
+    if (!isHeapPointer(frame) || frame === w) continue;
+    if (first) first.others++;
+    else first = { copy, slot: a, generator: w, frame, others: 0 };
+  }
+  return first;
 }
 
 // ---- wrappers ------------------------------------------------------------------------------------------------------
 
 let targetDescription: string | undefined;
 const early = variant === "early" || variant === "early2" || variant === "gcwrap";
+const pokeAt = Number(process.env.PROBE_POKE ?? 0);
+let timeoutCalls = 0;
 if (early && native) {
   try {
     const TAG_REGISTER = tagId("register"),
@@ -327,7 +352,26 @@ if (early && native) {
       return origFetch(a, b);
     };
     (globalThis as any).setTimeout = function (cb: any, ms: any) {
-      copyStack(TAG_TIMEOUT);
+      const copy = copyStack(TAG_TIMEOUT);
+      if (++timeoutCalls === pokeAt && copy >= 0) {
+        // Zero every live stack word that holds the generator. If one of them is what keeps the server, the next
+        // collection frees it.
+        try {
+          const n = native!;
+          const found = findGenerator();
+          const poke: any = (out.poke = { atTimeout: timeoutCalls, copy, found: !!found, zeroed: [] as string[] });
+          if (found) {
+            const sp = meta[copy * 5 + 4];
+            for (let a = sp; a < n.stackBase; a += 8) {
+              if (n.read.ptr(a as any, 0) !== found.generator) continue;
+              n.zero(a, 8);
+              poke.zeroed.push((n.stackBase - a).toString(16));
+            }
+          }
+        } catch (e) {
+          err("poke", e);
+        }
+      }
       return origSetTimeout(cb, ms);
     };
     const origAbort = AbortController.prototype.abort;
@@ -368,42 +412,6 @@ if (early && native) {
   }
 }
 
-// PROBE_GC=shift   : Bun.gc is called through one more JS frame, and nothing else changes.
-// PROBE_GC=clobber : that frame first runs a deep recursion whose frames hold numbers only, so the collection that
-//                    follows runs over a stack that holds no old pointer below that frame.
-const gcMode = process.env.PROBE_GC;
-if (gcMode === "shift") {
-  (Bun as any).gc = function (force: any) {
-    return origGc(force);
-  };
-} else if (gcMode === "clobber") {
-  const fillA = function fillA(depth: number, x: number): number {
-    let a = x + 1,
-      b = x + 2,
-      c = x + 3,
-      d = x + 4,
-      e = x + 5,
-      f = x + 6,
-      g = x + 7;
-    if (depth > 0) a += fillB(depth - 1, b);
-    return a + b + c + d + e + f + g;
-  };
-  const fillB = function fillB(depth: number, x: number): number {
-    let a = x + 1,
-      b = x + 2,
-      c = x + 3,
-      d = x + 4;
-    if (depth > 0) a += fillA(depth - 1, c);
-    return a + b + c + d;
-  };
-  (Bun as any).gc = function (force: any) {
-    fillA(300, 1);
-    fillB(301, 2);
-    return origGc(force);
-  };
-}
-out.gcMode = gcMode;
-
 const always = !!process.env.PROBE_ALWAYS;
 const TAG_LATE = tagId("late");
 let lateCopy = -1;
@@ -416,6 +424,7 @@ console.log = function (...args: any[]) {
   origLog.apply(console, args);
   if (!isReport) return;
   out.fixture = line;
+  out.timeoutCalls = timeoutCalls;
   if (failed || always) {
     late()
       .catch(e => err("late", e))
@@ -435,7 +444,7 @@ function emit() {
   origLog("@@PROBE@@" + payload);
 }
 
-// ---- after the fixture failed --------------------------------------------------------------------------------------
+// ---- after the fixture printed its report --------------------------------------------------------------------------
 
 const serverClassNames = ["HTTPServer", "DebugHTTPServer", "HTTPSServer", "DebugHTTPSServer"];
 const liveServers = () => {
@@ -581,7 +590,6 @@ function snapshotAnalysis() {
 // ---- reading the stack copies --------------------------------------------------------------------------------------
 
 let store32: Uint32Array | undefined;
-let ctx32: Uint32Array | undefined;
 const copyInfo = (i: number) => {
   const m = i * 5;
   return { tag: tagNames[meta[m]], first: meta[m + 1] / 8, words: meta[m + 2] / 8, lo: meta[m + 3], sp: meta[m + 4] };
@@ -628,17 +636,10 @@ function classify(hi: number, lo: number, ranges?: Ranges): string {
   return hex64(hi, lo);
 }
 
-const regsOf = (copy: number, ranges?: Ranges) =>
-  native!.regNames.map(([name, off]) => {
-    const at = (copy * CTX_BYTES + off) / 4;
-    return [name, classify(ctx32![at + 1], ctx32![at], ranges)] as [string, string];
-  });
-
-// Every place in a stack copy, and every register, that holds a pointer into one of the cells.
+// Every place in a stack copy that holds a pointer into one of the cells.
 function hitsIn(copy: number, ranges: Ranges) {
   const info = copyInfo(copy);
-  const hits: { reg?: string; underBase?: number; aboveSp?: number; v: string }[] = [];
-  for (const [name, text] of regsOf(copy, ranges)) if (text[0] === "T") hits.push({ reg: name, v: text });
+  const hits: { underBase: number; aboveSp: number; v: string }[] = [];
   const s = store32!;
   for (let i = 0, at = info.first * 2; i < info.words; i++, at += 2) {
     const hi = s[at + 1];
@@ -655,11 +656,11 @@ function hitsIn(copy: number, ranges: Ranges) {
   return hits;
 }
 
-// `count` words of a copy from `fromAddr` up, classified. Runs of zero are collapsed to z<n>.
-function dump(copy: number, fromAddr: number, count: number, ranges?: Ranges) {
+// The words of a copy in [fromAddr, toAddr), classified. Runs of zero are collapsed to z<n>.
+function dump(copy: number, fromAddr: number, toAddr: number, ranges?: Ranges) {
   const info = copyInfo(copy);
   let i = Math.max(0, Math.floor((fromAddr - info.lo) / 8));
-  const end = Math.min(info.words, i + count);
+  const end = Math.min(info.words, Math.ceil((toAddr - info.lo) / 8));
   const parts: string[] = [];
   let zeros = 0;
   const first = native!.stackBase - (info.lo + i * 8);
@@ -675,7 +676,39 @@ function dump(copy: number, fromAddr: number, count: number, ranges?: Ranges) {
     parts.push(classify(hi, lo, ranges));
   }
   if (zeros) parts.push("z" + zeros);
-  return { firstUnderBase: first, spUnderBase: native!.stackBase - info.sp, words: parts.join(" ") };
+  return {
+    copy,
+    tag: info.tag,
+    firstUnderBase: first,
+    spUnderBase: native!.stackBase - info.sp,
+    words: parts.join(" "),
+  };
+}
+
+// For a word that points into the executable: [begin, end] of its function (from the function table), the unwind
+// codes, and the code in front of it. Enough to find the same function in a build that has symbols.
+function describeCode(rva: number) {
+  const n = native!;
+  const addr = n.image.base + rva;
+  const entry = n.lookupFunction(addr);
+  if (!entry) return null;
+  const bytes = (from: number, count: number) => {
+    let text = "";
+    for (let i = 0; i < count; i++)
+      text += n.read
+        .u8((from + i) as any, 0)
+        .toString(16)
+        .padStart(2, "0");
+    return text;
+  };
+  const info = entry.imageBase + entry.unwind;
+  const codes = n.read.u8((info + 2) as any, 0);
+  return [
+    entry.begin.toString(16),
+    entry.end.toString(16),
+    bytes(info, 4 + 2 * Math.min(codes, 24)),
+    bytes(addr - 24, 32),
+  ];
 }
 
 async function late() {
@@ -691,7 +724,6 @@ async function late() {
       storeUsed,
     };
     store32 = new Uint32Array(n.toArrayBuffer(storeBase as any, 0, storeUsed));
-    ctx32 = new Uint32Array(n.toArrayBuffer(ctxBase as any, 0, Math.max(copies, 1) * CTX_BYTES));
   }
 
   let serverCell: number | undefined;
@@ -700,205 +732,130 @@ async function late() {
     const m = /0x[0-9a-f]+/i.exec(targetDescription);
     if (m) serverCell = Number(m[0]);
   }
-  let refCell: number | undefined;
-  if (n && variant === "lateref" && lateCopy >= 0) {
-    // No early hook: look for a pointer to a cell with the header of a server. A second server gives the header.
-    try {
-      let ref: any = Bun.serve({ port: 0, development: false, fetch: () => new Response("ref") });
-      const refDescription = jscDescribe(ref);
-      refCell = Number(/0x[0-9a-f]+/i.exec(refDescription)![0]);
-      // StructureID, indexing type, JSType and flags. Not the cell state, which the collector writes.
-      const headerLo = n.read.u32(refCell as any, 0);
-      const headerHi = n.read.u32(refCell as any, 4) & 0x00ffffff;
-      ref.stop(true);
-      ref = undefined;
-      out.ref = { description: refDescription, header: hex64(headerHi, headerLo) };
-      const info = copyInfo(lateCopy);
-      const seen = new Map<number, number>();
-      const rejected = new Set<number>();
-      const consider = (hi: number, lo: number) => {
-        if (hi === 0 || hi >= 0x10000 || lo % 8 !== 0) return;
-        const v = hi * 4294967296 + lo;
-        if (v === refCell || rejected.has(v)) return;
-        if (v >= n.stackReserveLow && v <= n.stackBase) return;
-        if (v >= n.image.base && v < n.image.base + n.image.size) return;
-        if (seen.has(v)) return void seen.set(v, seen.get(v)! + 1);
-        if (
-          n.readable(BigInt(v)) &&
-          n.readable(BigInt(v + 7)) &&
-          n.read.u32(v as any, 0) === headerLo &&
-          (n.read.u32(v as any, 4) & 0x00ffffff) === headerHi
-        )
-          seen.set(v, 1);
-        else rejected.add(v);
-      };
-      for (let i = 0, at = info.first * 2; i < info.words; i++, at += 2) consider(store32![at + 1], store32![at]);
-      for (const [, off] of n.regNames) {
-        const at = (lateCopy * CTX_BYTES + off) / 4;
-        consider(ctx32![at + 1], ctx32![at]);
-      }
-      out.headerCandidates = [...seen].map(([v, count]) => ({ cell: hex(v), count }));
-      if (seen.size === 1) serverCell = [...seen.keys()][0];
-    } catch (e) {
-      err("header search", e);
-    }
-  }
 
   // What the collector's own analyzer says. This collection runs from another host function than Bun.gc.
   let scan: Cell[] = [];
   try {
     const analysis = snapshotAnalysis();
-    scan = analysis.scan.filter(c => c.addr !== refCell);
+    scan = analysis.scan;
     out.snapshot = {
       nodeCount: analysis.nodeCount,
       edgeCount: analysis.edgeCount,
       rootCount: analysis.rootCount,
       servers: analysis.servers,
     };
-    const instances = analysis.servers.filter((s: any) => s.isInstance && Number(s.addr) !== refCell);
+    const instances = analysis.servers.filter((s: any) => s.isInstance);
     if (serverCell === undefined && instances.length === 1) serverCell = Number(instances[0].addr);
   } catch (e) {
     err("snapshot", e);
   }
   out.liveServersAfterSnapshot = liveServers();
 
-  if (n && lateCopy >= 0) {
+  if (n && copies > 0) {
     try {
       if (serverCell !== undefined) {
         out.serverCell = hex(serverCell);
-        // What is in front of the cell (its PreciseAllocation, if it is one) and the cell itself, raw.
-        const raw: string[] = [];
-        for (let off = -0x80; off < 0x100; off += 8)
-          raw.push(hex64(n.read.u32((serverCell + off) as any, 4), n.read.u32((serverCell + off) as any, 0)));
-        out.cellMemoryFromMinus0x80 = raw.join(" ");
         // PreciseAllocation::m_cellSize, if the cell is a precise allocation (its address is 8 mod 16). The
         // conservative scan accepts a pointer to any byte of the cell and to the byte after it.
         const preciseCellSize = serverCell % 16 === 8 ? n.read.u32((serverCell - 0x58) as any, 0) : 0;
         const bytes = preciseCellSize >= 16 && preciseCellSize <= 4096 ? preciseCellSize : 0x100;
-        out.serverCellBytes = bytes;
         const known = scan.find(c => c.addr === serverCell);
         if (known) known.bytes = bytes;
         else scan.push({ id: 0, name: "#0 server", addr: serverCell, bytes });
       }
+      // The generator of the function that created the server, as the stack showed it while that function ran.
+      const generator = findGenerator();
+      if (generator) {
+        out.generator = {
+          copy: generator.copy,
+          slotUnderBase: (n.stackBase - generator.slot).toString(16),
+          slotAboveSp: generator.slot - meta[generator.copy * 5 + 4],
+          generator: hex(generator.generator),
+          frame: hex(generator.frame),
+          otherCandidates: generator.others,
+        };
+        if (!scan.some(c => c.addr === generator.generator))
+          scan.push({ id: 1, name: "#1 generator", addr: generator.generator, bytes: 64 });
+        if (!scan.some(c => c.addr === generator.frame))
+          scan.push({ id: 2, name: "#2 generator frame", addr: generator.frame, bytes: 64 });
+      }
       out.scanCells = scan.length;
       const ranges = makeRanges(scan);
-      const info = copyInfo(lateCopy);
-      out.lateSpUnderBase = n.stackBase - info.sp;
-      out.lateHits = hitsIn(lateCopy, ranges);
-      out.lateRegs = regsOf(lateCopy, ranges)
-        .map(([name, text]) => name + "=" + text)
-        .join(" ");
-      // The stack from 6 KB under the captured stack pointer to 3 KB over it.
-      out.lateStack = dump(lateCopy, info.sp - 6144, (6144 + 3072) / 8, ranges);
 
-      // The slots that hold one of the cells in one of the last copies, through all copies.
+      // The slots that hold one of the cells in one of the last copies, and the slot the generator was in.
       const slotSet = new Set<number>();
-      const lastCopies: number[] = [];
-      for (let c = copies - 1; c >= 0 && lastCopies.length < 4; c--) lastCopies.push(c);
-      const hitsOfLast = new Map<number, ReturnType<typeof hitsIn>>();
-      for (const c of lastCopies) {
-        const hits = hitsIn(c, ranges);
-        hitsOfLast.set(c, hits);
-        for (const h of hits) if (h.underBase !== undefined) slotSet.add(h.underBase);
-      }
+      if (generator) slotSet.add(n.stackBase - generator.slot);
+      const hitsOf = new Map<number, ReturnType<typeof hitsIn>>();
+      for (let c = 0; c < copies; c++) hitsOf.set(c, hitsIn(c, ranges));
+      for (let c = copies - 1; c >= 0 && c >= copies - 4; c--) for (const h of hitsOf.get(c)!) slotSet.add(h.underBase);
       const slots = [...slotSet].sort((a, b) => a - b);
       out.slots = slots.map(s => s.toString(16));
-      out.around = slots
-        .slice(0, 10)
-        .map(under => ({
-          slot: under.toString(16),
-          ...dump(copies - 1, n.stackBase - under - 16 * 8, 16 + 220, ranges),
-        }));
-      if (copies > 1) {
-        const timeline: string[] = [];
-        let last = "";
-        for (let c = 0; c < copies; c++) {
+      if (lateCopy >= 0) out.lateHits = hitsOf.get(lateCopy);
+
+      const timeline: string[] = [];
+      let last = "";
+      for (let c = 0; c < copies; c++) {
+        const ci = copyInfo(c);
+        const row = slots
+          .map(under => {
+            const addr = n.stackBase - under;
+            if (addr < ci.lo || addr >= ci.lo + ci.words * 8) return "?";
+            const at = (ci.first + (addr - ci.lo) / 8) * 2;
+            return classify(store32![at + 1], store32![at], ranges);
+          })
+          .join(",");
+        const all = hitsOf
+          .get(c)!
+          .slice(0, 40)
+          .map(h => h.underBase.toString(16) + (h.aboveSp < 0 ? "d" : "") + "=" + h.v)
+          .join(",");
+        const text = "sp=" + (n.stackBase - ci.sp).toString(16) + " slots=[" + row + "] all=[" + all + "]";
+        if (text !== last || c === copies - 1) timeline.push(c + ":" + ci.tag + " " + text);
+        last = text;
+      }
+      out.timeline = timeline;
+
+      if (process.env.PROBE_SYMS) {
+        // One copy for each stack depth a copy was made at: from under the stack pointer (or the deepest slot, if
+        // that is deeper) to well over the highest slot.
+        const deepest = slots.length ? n.stackBase - slots[slots.length - 1] : undefined;
+        const highest = slots.length ? n.stackBase - slots[0] : undefined;
+        const seenSp = new Set<number>();
+        const dumps: any[] = [];
+        for (let c = 0; c < copies && dumps.length < 14; c++) {
           const ci = copyInfo(c);
-          const row = slots
-            .map(under => {
-              const addr = n.stackBase - under;
-              if (addr < ci.lo || addr >= ci.lo + ci.words * 8) return "?";
-              const at = (ci.first + (addr - ci.lo) / 8) * 2;
-              return classify(store32![at + 1], store32![at], ranges);
-            })
-            .join(",");
-          const hits = hitsOfLast.get(c) ?? hitsIn(c, ranges);
-          const regs = hits
-            .filter(h => h.reg)
-            .map(h => h.reg + "=" + h.v)
-            .join("+");
-          const all = hits
-            .filter(h => h.underBase !== undefined)
-            .slice(0, 40)
-            .map(h => h.underBase!.toString(16) + (h.aboveSp! < 0 ? "d" : "") + "=" + h.v)
-            .join(",");
-          const text =
-            "sp=" + (n.stackBase - ci.sp).toString(16) + " slots=[" + row + "] regs=[" + regs + "] all=[" + all + "]";
-          if (text !== last || c === copies - 1) timeline.push(c + ":" + ci.tag + " " + text);
-          last = text;
+          if (seenSp.has(ci.sp) && c !== copies - 1) continue;
+          seenSp.add(ci.sp);
+          const from = Math.min(ci.sp, deepest ?? ci.sp) - 0x80;
+          const to = highest === undefined ? ci.sp + 0x1800 : Math.max(highest, ci.sp) + 0xa00;
+          dumps.push(dump(c, from, to, ranges));
         }
-        out.timeline = timeline;
-        // For the gc wrapper: the stack right after a collection returned, seen from the frame that called it.
-        let gcCopy = -1;
-        for (let c = 0; c < copies; c++) if (copyInfo(c).tag === "afterGc") gcCopy = c;
-        if (gcCopy >= 0) {
-          const ci = copyInfo(gcCopy);
-          out.afterGc = {
-            copy: gcCopy,
-            hits: hitsIn(gcCopy, ranges),
-            regs: regsOf(gcCopy, ranges)
-              .map(([name, text]) => name + "=" + text)
-              .join(" "),
-            stack: dump(gcCopy, ci.sp - 8192, (8192 + 3072) / 8, ranges),
-          };
+        out.dumps = dumps;
+        const symbols: Record<string, any> = {};
+        let count = 0;
+        for (const d of dumps) {
+          for (const word of (d.words as string).split(" ")) {
+            if (!word.startsWith("I+") || word.slice(2) in symbols || count >= 700) continue;
+            symbols[word.slice(2)] = describeCode(parseInt(word.slice(2), 16));
+            count++;
+          }
         }
-        // The same for the last copy that a wrapped setTimeout made: it is inside the loop that fails.
-        let timerCopy = -1;
-        for (let c = 0; c < copies; c++) if (copyInfo(c).tag === "setTimeout") timerCopy = c;
-        if (timerCopy >= 0) {
-          const ci = copyInfo(timerCopy);
-          out.lastTimer = {
-            copy: timerCopy,
-            hits: hitsIn(timerCopy, ranges),
-            regs: regsOf(timerCopy, ranges)
-              .map(([name, text]) => name + "=" + text)
-              .join(" "),
-            stack: dump(timerCopy, ci.sp - 8192, (8192 + 3072) / 8, ranges),
-          };
-        }
+        out.symbols = symbols;
       }
     } catch (e) {
-      err("hits", e);
+      err("stack", e);
     }
   }
 
-  // Which way of asking for a collection frees it, if any.
-  const steps: [string, () => void | Promise<void>][] = [
+  // Whether it is freed once this frame is gone.
+  out.steps = [];
+  for (const [name, run] of [
     ["turn", () => {}],
     ["Bun.gc(true)", () => void origGc(true)],
     ["fullGC()", () => void fullGC()],
-    ["gcAndSweep()", () => void gcAndSweep()],
-    [
-      "Bun.gc(true) 40 frames deeper",
-      () =>
-        (function deeper(depth: number): void {
-          if (depth) return deeper(depth - 1);
-          origGc(true);
-        })(40),
-    ],
-    ["Bun.gc(true) from a timer callback", () => new Promise<void>(r => origSetTimeout(() => (origGc(true), r()), 0))],
-    ["Bun.gc(true) from a sync callback", () => void [1].forEach(() => void origGc(true))],
-    [
-      "Bun.gc(true) x5",
-      async () => {
-        for (let i = 0; i < 5; i++) (origGc(true), await turn());
-      },
-    ],
-  ];
-  out.steps = [];
-  for (const [name, run] of steps) {
+  ] as [string, () => void][]) {
     try {
-      await run();
+      run();
       await turn();
       out.steps.push(name + " -> " + liveServers());
     } catch (e) {
@@ -906,3 +863,39 @@ async function late() {
     }
   }
 }
+
+// PROBE_GC=shift   : Bun.gc is called through one more JS frame, and nothing else changes.
+// PROBE_GC=clobber : that frame first runs a deep recursion whose frames hold numbers only, so the collection that
+//                    follows runs over a stack that holds no old pointer below that frame.
+const gcMode = process.env.PROBE_GC;
+if (gcMode === "shift") {
+  (Bun as any).gc = function (force: any) {
+    return origGc(force);
+  };
+} else if (gcMode === "clobber") {
+  const fillA = function fillA(depth: number, x: number): number {
+    let a = x + 1,
+      b = x + 2,
+      c = x + 3,
+      d = x + 4,
+      e = x + 5,
+      f = x + 6,
+      g = x + 7;
+    if (depth > 0) a += fillB(depth - 1, b);
+    return a + b + c + d + e + f + g;
+  };
+  const fillB = function fillB(depth: number, x: number): number {
+    let a = x + 1,
+      b = x + 2,
+      c = x + 3,
+      d = x + 4;
+    if (depth > 0) a += fillA(depth - 1, c);
+    return a + b + c + d;
+  };
+  (Bun as any).gc = function (force: any) {
+    fillA(300, 1);
+    fillB(301, 2);
+    return origGc(force);
+  };
+}
+out.gcMode = gcMode;

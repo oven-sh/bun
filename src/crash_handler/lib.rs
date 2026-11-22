@@ -2879,28 +2879,26 @@ mod draft {
 
     /// How many frames a crash reports at most.
     const CRASH_TRACE_FRAMES: usize = 20;
-    /// What the frames may take of the trace string. On POSIX every frame of a crash fits, each with the longest name.
-    const FRAMES_CAPACITY: usize = if cfg!(windows) {
-        768
+    /// The capacity of the buffer that a trace string is built in. The frames take what the header and the reason leave of it.
+    /// On POSIX every frame of a crash fits beside 1 KB of those, each with the longest name. It is 1 KB on Windows, which reports a stack overflow on the stack that overflowed.
+    const TRACE_STRING_CAPACITY: usize = if cfg!(windows) {
+        1024
     } else {
-        CRASH_TRACE_FRAMES * StackLine::MAX_ENCODED_LEN
+        1024 + CRASH_TRACE_FRAMES * StackLine::MAX_ENCODED_LEN
     };
-    /// What the header and the reason have of the trace string beside the frames.
-    const HEADER_AND_REASON_CAPACITY: usize = if cfg!(windows) { 256 } else { 1024 };
-    /// The capacity of the buffer that a trace string is built in. It is 1 KB on Windows, which reports a stack overflow on the stack that overflowed.
-    const TRACE_STRING_CAPACITY: usize = FRAMES_CAPACITY + HEADER_AND_REASON_CAPACITY;
     type TraceStringBuf = BoundedArray<u8, TRACE_STRING_CAPACITY>;
 
-    /// Writes `lines`, the innermost first, up to the first that does not fit in `FRAMES_CAPACITY`: a string decodes without its outermost frames.
+    /// Writes `lines`, the innermost first, up to the first that does not fit in `capacity`: a string decodes without its outermost frames.
     fn write_frames(
         lines: impl Iterator<Item = Option<StackLine>>,
+        capacity: usize,
         writer: &mut impl Write,
     ) -> crate::Result<()> {
         let mut written = 0;
         for line in lines {
             let mut frame = BoundedArray::<u8, { StackLine::MAX_ENCODED_LEN }>::default();
             StackLine::write_encoded(line.as_ref(), frame.writer())?;
-            if written + frame.len() > FRAMES_CAPACITY {
+            if written + frame.len() > capacity {
                 break;
             }
             written += frame.len();
@@ -2931,7 +2929,8 @@ mod draft {
         }
     }
 
-    fn encode_trace_string(opts: &TraceString<'_>, writer: &mut impl Write) -> crate::Result<()> {
+    /// What a trace string has before its frames.
+    fn write_header(writer: &mut impl Write) -> crate::Result<()> {
         writer.write_all(report_base_url())?;
         writer.write_all(b"/")?;
         writer.write_all(Environment::VERSION_STRING.as_bytes())?;
@@ -2943,8 +2942,39 @@ mod draft {
         writer.write_all(GIT_SHA.as_bytes())?;
 
         let packed_features: u64 = bun_analytics::packed_features().bits();
-        write_u64_as_two_vlqs(writer, packed_features as usize)?;
+        write_u64_as_two_vlqs(writer, packed_features as usize)
+    }
 
+    /// What a trace string carries for a panic message that does not fit in it: the zlib stream of `message too long`, in base64.
+    const PANIC_MESSAGE_TOO_LONG: &[u8] = b"eAEBEADv/21lc3NhZ2UgdG9vIGxvbmc1GgYo";
+
+    /// The message of a panic as a trace string carries it.
+    fn encode_panic_message<'a>(
+        message: &[u8],
+        b64_bytes: &'a mut [u8; 2048],
+    ) -> crate::Result<&'a [u8]> {
+        use bun_zlib::deflate;
+
+        let mut compressed = Vec::new();
+        let options = deflate::Options {
+            level: deflate::Level::BEST,
+            ..Default::default()
+        };
+        deflate::compress(message, &mut compressed, deflate::Container::Zlib, options).map_err(
+            |error| match error {
+                bun_zlib::Error::Alloc(error) => crate::Error::Alloc(error),
+                _ => crate::Error::Unexpected,
+            },
+        )?;
+
+        if bun_base64::encode_len(&compressed) > b64_bytes.len() {
+            return Ok(PANIC_MESSAGE_TOO_LONG);
+        }
+        let b64_len = bun_base64::encode(b64_bytes, &compressed);
+        Ok(strings::trim_right(&b64_bytes[0..b64_len], b"="))
+    }
+
+    fn encode_trace_string(opts: &TraceString<'_>, writer: &mut impl Write) -> crate::Result<()> {
         let mut name_bytes: [u8; 1024] = [0; 1024];
 
         let mut names_build = true;
@@ -2958,34 +2988,59 @@ mod draft {
             }
             line
         });
-        write_frames(lines, writer)?;
+        let mut b64_bytes: [u8; 2048] = [0; 2048];
+        let panic_message: &[u8] = match opts.reason {
+            CrashReason::Panic(message) => encode_panic_message(message, &mut b64_bytes)?,
+            _ => b"",
+        };
+        write_trace_string(lines, opts.reason, panic_message, opts.action, writer)
+    }
 
+    /// Writes a trace string of at most `TRACE_STRING_CAPACITY` bytes. The frames take what the header and the reason leave.
+    /// `panic_message` is from `encode_panic_message`. One that alone does not fit is left out, and the frames stay.
+    fn write_trace_string(
+        lines: impl Iterator<Item = Option<StackLine>>,
+        reason: CrashReason<'_>,
+        panic_message: &[u8],
+        action: TraceStringAction,
+        writer: &mut impl Write,
+    ) -> crate::Result<()> {
+        let len_beside_frames = |panic_message: &[u8]| -> crate::Result<usize> {
+            let mut counted = bun_io::DiscardingWriter::new();
+            write_header(&mut counted)?;
+            write_after_frames(reason, panic_message, action, &mut counted)?;
+            Ok(counted.count)
+        };
+        let mut panic_message = panic_message;
+        let mut beside_frames = len_beside_frames(panic_message)?;
+        if beside_frames > TRACE_STRING_CAPACITY {
+            panic_message = PANIC_MESSAGE_TOO_LONG;
+            beside_frames = len_beside_frames(panic_message)?;
+        }
+
+        write_header(writer)?;
+        write_frames(
+            lines,
+            TRACE_STRING_CAPACITY.saturating_sub(beside_frames),
+            writer,
+        )?;
+        write_after_frames(reason, panic_message, action, writer)
+    }
+
+    /// What a trace string has after its frames: the end of the frames, the reason, and the action.
+    fn write_after_frames(
+        reason: CrashReason<'_>,
+        panic_message: &[u8],
+        action: TraceStringAction,
+        writer: &mut impl Write,
+    ) -> crate::Result<()> {
         writer.write_all(VLQ::ZERO.slice())?;
 
         // The following switch must be kept in sync with `bun.report`'s decoder implementation.
-        match opts.reason {
-            CrashReason::Panic(message) => {
-                use bun_zlib::deflate;
+        match reason {
+            CrashReason::Panic(_) => {
                 writer.write_byte(b'0')?;
-
-                let mut compressed = Vec::new();
-                let options = deflate::Options {
-                    level: deflate::Level::BEST,
-                    ..Default::default()
-                };
-                deflate::compress(message, &mut compressed, deflate::Container::Zlib, options)
-                    .map_err(|error| match error {
-                        bun_zlib::Error::Alloc(error) => crate::Error::Alloc(error),
-                        _ => crate::Error::Unexpected,
-                    })?;
-
-                let mut b64_bytes: [u8; 2048] = [0; 2048];
-                if bun_base64::encode_len(&compressed) > b64_bytes.len() {
-                    return Err(crate::Error::Sys(bun_errno::SystemErrno::ENOSPC));
-                }
-                let b64_len = bun_base64::encode(&mut b64_bytes, &compressed);
-
-                writer.write_all(strings::trim_right(&b64_bytes[0..b64_len], b"="))?;
+                writer.write_all(panic_message)?;
             }
 
             CrashReason::Unreachable => writer.write_byte(b'1')?,
@@ -3024,7 +3079,7 @@ mod draft {
             }
         }
 
-        if opts.action == TraceStringAction::ViewTrace {
+        if action == TraceStringAction::ViewTrace {
             writer.write_all(b"/view")?;
         }
         Ok(())
@@ -3939,8 +3994,40 @@ mod draft {
 
         fn written(lines: impl Iterator<Item = Option<StackLine>>) -> Vec<u8> {
             let mut frames = TraceStringBuf::default();
-            write_frames(lines, frames.writer()).unwrap();
+            write_frames(lines, TRACE_STRING_CAPACITY, frames.writer()).unwrap();
             frames.const_slice().to_vec()
+        }
+
+        fn longest_frame() -> Option<StackLine> {
+            line(object_of(&[&[b'a'; MAX_OBJECT_NAME_LEN]]), i32::MAX)
+        }
+
+        fn header() -> Vec<u8> {
+            let mut header = TraceStringBuf::default();
+            write_header(header.writer()).unwrap();
+            header.const_slice().to_vec()
+        }
+
+        fn after_frames(
+            reason: CrashReason<'_>,
+            panic_message: &[u8],
+            action: TraceStringAction,
+        ) -> Vec<u8> {
+            let mut after_frames = TraceStringBuf::default();
+            write_after_frames(reason, panic_message, action, after_frames.writer()).unwrap();
+            after_frames.const_slice().to_vec()
+        }
+
+        /// A trace string, written to the buffer that a crash writes it to.
+        fn trace_string(
+            lines: impl Iterator<Item = Option<StackLine>>,
+            reason: CrashReason<'_>,
+            panic_message: &[u8],
+            action: TraceStringAction,
+        ) -> Vec<u8> {
+            let mut string = TraceStringBuf::default();
+            write_trace_string(lines, reason, panic_message, action, string.writer()).unwrap();
+            string.const_slice().to_vec()
         }
 
         /// A frame with a name as bun.report reads it: 1, the length of the name, the name, the offset.
@@ -3970,12 +4057,11 @@ mod draft {
 
         #[test]
         fn the_frames_end_before_the_first_that_does_not_fit() {
-            let longest = || line(object_of(&[&[b'a'; MAX_OBJECT_NAME_LEN]]), i32::MAX);
-            let fit = FRAMES_CAPACITY / StackLine::MAX_ENCODED_LEN;
+            let fit = TRACE_STRING_CAPACITY / StackLine::MAX_ENCODED_LEN;
             let unknown_frame_that_would_fit = [None];
             assert_eq!(
                 written(
-                    core::iter::repeat_with(longest)
+                    core::iter::repeat_with(longest_frame)
                         .take(fit + 1)
                         .chain(unknown_frame_that_would_fit)
                 ),
@@ -3986,10 +4072,81 @@ mod draft {
         #[test]
         #[cfg(not(windows))]
         fn every_frame_of_a_crash_fits_with_the_longest_name() {
-            let longest = || line(object_of(&[&[b'a'; MAX_OBJECT_NAME_LEN]]), i32::MAX);
+            let reason = CrashReason::SegmentationFault(usize::MAX);
+            let action = TraceStringAction::ViewTrace;
+            let lines = core::iter::repeat_with(longest_frame).take(CRASH_TRACE_FRAMES);
+            let frames = frame(&[b'a'; MAX_OBJECT_NAME_LEN], i32::MAX).repeat(CRASH_TRACE_FRAMES);
             assert_eq!(
-                written(core::iter::repeat_with(longest).take(CRASH_TRACE_FRAMES)),
-                frame(&[b'a'; MAX_OBJECT_NAME_LEN], i32::MAX).repeat(CRASH_TRACE_FRAMES)
+                trace_string(lines, reason, b"", action),
+                [header(), frames, after_frames(reason, b"", action)].concat()
+            );
+        }
+
+        #[test]
+        fn the_frames_take_what_the_header_and_the_reason_leave() {
+            // A third of the smallest buffer.
+            let panic_message = [b'A'; 340];
+            let reasons = [
+                CrashReason::Panic(b""),
+                CrashReason::SegmentationFault(usize::MAX),
+                CrashReason::StackOverflow,
+                CrashReason::ZigError(b"OutOfMemory"),
+            ];
+            for reason in reasons {
+                for action in [TraceStringAction::OpenIssue, TraceStringAction::ViewTrace] {
+                    // More frames of one byte than the buffer has bytes.
+                    let lines = core::iter::repeat_with(|| None).take(2 * TRACE_STRING_CAPACITY);
+                    let header = header();
+                    let after_frames = after_frames(reason, &panic_message, action);
+                    let left = TRACE_STRING_CAPACITY - header.len() - after_frames.len();
+                    assert_eq!(
+                        trace_string(lines, reason, &panic_message, action),
+                        [header, b"_".repeat(left), after_frames].concat()
+                    );
+                }
+            }
+        }
+
+        #[test]
+        fn a_panic_message_that_does_not_fit_is_left_out_and_the_frames_stay() {
+            let reason = CrashReason::Panic(b"");
+            let action = TraceStringAction::OpenIssue;
+            let lines = core::iter::repeat_with(longest_frame).take(2);
+            assert_eq!(
+                trace_string(lines, reason, &[b'A'; TRACE_STRING_CAPACITY], action),
+                [
+                    header(),
+                    frame(&[b'a'; MAX_OBJECT_NAME_LEN], i32::MAX).repeat(2),
+                    after_frames(reason, PANIC_MESSAGE_TOO_LONG, action)
+                ]
+                .concat()
+            );
+        }
+
+        #[test]
+        fn what_stands_for_a_panic_message_is_a_zlib_stream_in_base64() {
+            let message = b"message too long";
+            let length = u16::try_from(message.len()).unwrap();
+            let (mut low, mut high) = (1u32, 0u32);
+            for &byte in message {
+                low = (low + u32::from(byte)) % 65521;
+                high = (high + low) % 65521;
+            }
+            let adler32 = high << 16 | low;
+            // The zlib header, then one stored block, the last: its length, the complement of that, and the bytes.
+            let stream = [
+                &[0x78, 0x01, 0x01][..],
+                &length.to_le_bytes(),
+                &(!length).to_le_bytes(),
+                message,
+                &adler32.to_be_bytes(),
+            ]
+            .concat();
+            let encoder = &bun_base64::zig_base64::STANDARD_NO_PAD.encoder;
+            let mut encoded = vec![0; encoder.calc_size(stream.len())];
+            assert_eq!(
+                encoder.encode(&mut encoded, &stream),
+                PANIC_MESSAGE_TOO_LONG
             );
         }
 

@@ -51,39 +51,41 @@ require("bun:ffi").dlopen(process.argv[1], { LLVMContextCreate: { returns: "ptr"
 console.log("loaded");
 `;
 
-test.skipIf(!isMacOS)(
-  "probe: what aborts on this machine without the fix",
-  async () => {
-    const llvmLibraries: string[] = [];
-    const kegs: Record<string, string[]> = {};
-    for (const prefix of ["/opt/homebrew/opt", "/usr/local/opt"]) {
-      if (!existsSync(prefix)) continue;
-      kegs[prefix] = readdirSync(prefix).filter(name => name.startsWith("llvm"));
-      for (const keg of kegs[prefix]) {
-        const library = join(prefix, keg, "lib", "libLLVM.dylib");
-        if (existsSync(library)) llvmLibraries.push(library);
-      }
-    }
+// Several test files call this, so that the shards of a lane run it on several machines.
+export function probe() {
+  test.skipIf(!isMacOS)("probe: what aborts on this machine without the fix", collect, 300_000);
+}
 
-    const report = {
-      bun: `${Bun.version} ${Bun.revision.slice(0, 9)}`,
-      agent: process.env.BUILDKITE_AGENT_NAME ?? null,
-      arch: process.arch,
-      macOS: await text(["/usr/bin/sw_vers", "-productVersion"]),
-      model: await text(["/usr/sbin/sysctl", "-n", "hw.model"]),
-      virtualMachine: await text(["/usr/sbin/sysctl", "-n", "kern.hv_vmm_present"]),
-      darwin: os.release(),
-      kegs,
-      alignedNothrowNew: await run([bunExe(), "-e", callsAlignedNothrowNew]),
-      libLLVM: Object.fromEntries(
-        await Promise.all(
-          llvmLibraries.map(async library => [library, await run([bunExe(), "-e", loadsLibrary, library])]),
-        ),
+async function collect() {
+  const llvmLibraries: string[] = [];
+  const kegs: Record<string, string[]> = {};
+  for (const prefix of ["/opt/homebrew/opt", "/usr/local/opt"]) {
+    if (!existsSync(prefix)) continue;
+    kegs[prefix] = readdirSync(prefix).filter(name => name.startsWith("llvm"));
+    for (const keg of kegs[prefix]) {
+      const library = join(prefix, keg, "lib", "libLLVM.dylib");
+      if (existsSync(library)) llvmLibraries.push(library);
+    }
+  }
+
+  const report = {
+    bun: `${Bun.version} ${Bun.revision.slice(0, 9)}`,
+    agent: process.env.BUILDKITE_AGENT_NAME ?? null,
+    hostname: os.hostname(),
+    arch: process.arch,
+    macOS: await text(["/usr/bin/sw_vers", "-productVersion"]),
+    model: await text(["/usr/sbin/sysctl", "-n", "hw.model"]),
+    virtualMachine: await text(["/usr/sbin/sysctl", "-n", "kern.hv_vmm_present"]),
+    darwin: os.release(),
+    kegs,
+    alignedNothrowNew: await run([bunExe(), "-e", callsAlignedNothrowNew]),
+    libLLVM: Object.fromEntries(
+      await Promise.all(
+        llvmLibraries.map(async library => [library, await run([bunExe(), "-e", loadsLibrary, library])]),
       ),
-      metalFX: await run([bunExe(), join(import.meta.dir, "operator-new-probe-metalfx-fixture.ts")]),
-    };
-    console.log("PROBE REPORT " + JSON.stringify(report, null, 2));
-    expect(report).toEqual("this probe fails on purpose: the report is what was received" as any);
-  },
-  300_000,
-);
+    ),
+    metalFX: await run([bunExe(), join(import.meta.dir, "operator-new-probe-metalfx-fixture.ts")]),
+  };
+  console.log("PROBE REPORT " + JSON.stringify(report, null, 2));
+  expect(report).toEqual("this probe fails on purpose: the report is what was received" as any);
+}

@@ -109,6 +109,7 @@ fn nameserver() {
         "[x]:53",
         "fe80::1",
         "fe80::1%",
+        "fe80::1%0",
         "fe80::1%nothing",
         "febf::1",
         "fec0::1",

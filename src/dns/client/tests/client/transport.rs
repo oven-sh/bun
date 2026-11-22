@@ -47,14 +47,16 @@ fn one_event_reads_all_there_is() {
 
 #[test]
 fn events_without_a_cause() {
-    let mut test = one_server().start();
-    let query = test.ask("a.test");
-    assert_eq!(test.process(0, true, true), NOTHING);
-    assert_eq!(test.process(0, false, false), NOTHING);
-    assert_eq!(test.world().send_calls, 1);
-    assert_eq!(test.world().opened[0].receive_calls, 1);
-    assert_eq!(shown(&test.client.process(99, Events::default())), NOTHING);
-    assert_eq!(test.deliver(&query, &good(&query)), GOOD);
+    for setup in [one_server(), over_tcp()] {
+        let mut test = setup.start();
+        let query = test.ask("a.test");
+        assert_eq!(test.process(0, true, true), NOTHING);
+        assert_eq!(test.process(0, false, false), NOTHING);
+        assert_eq!(test.world().send_calls, 1);
+        assert_eq!(test.world().opened[0].receive_calls, 1);
+        assert_eq!(shown(&test.client.process(99, Events::default())), NOTHING);
+        assert_eq!(test.deliver(&query, &good(&query)), GOOD);
+    }
 }
 
 #[test]
@@ -324,6 +326,11 @@ fn reply_without_one_question() {
         message.truncate(12);
     };
     assert_eq!(outcome(&header), ["EBADRESP"]);
+    let answer_only = |message: &mut Vec<u8>| {
+        message[5] = 0;
+        message.drain(12..24);
+    };
+    assert_eq!(outcome(&answer_only), ["EBADRESP"]);
 }
 
 #[test]
@@ -552,26 +559,65 @@ fn last_error_is_reported() {
 }
 
 #[test]
-fn datagram_without_room_is_lost() {
+fn datagrams_wait_for_room() {
     let mut test = one_server().start();
-    test.world().send_results.push_back(Err(WouldBlock));
-    assert_eq!(test.resolve(RecordType::A, "a.test"), NOTHING);
-    assert_eq!(test.ask("b.test").question(), "b.test A");
-    assert_eq!(test.world().opened[0].watches, [false]);
+    test.world().send_results.extend([Err(WouldBlock); 3]);
+    for name in ["a.test", "b.test", "c.test"] {
+        assert_eq!(test.resolve(RecordType::A, name), NOTHING);
+    }
+    assert_eq!(test.ask("d.test").question(), "d.test A");
+    test.world().send_results.extend([Ok(0), Err(WouldBlock)]);
+    test.process(0, false, true);
+    let [a] = test.sent_exactly();
+    assert_eq!(test.deliver(&a, &good(&a)), GOOD);
+    test.process(0, false, true);
+    assert_eq!(
+        test.sent_exactly().map(|it| it.question()),
+        ["b.test A", "c.test A"]
+    );
+    assert_eq!(test.world().opened[0].watches, [true, false]);
+}
+
+#[test]
+fn datagrams_that_a_writable_socket_does_not_take_are_lost() {
+    let mut test = one_server().start();
+    test.world().send_results.extend([Err(WouldBlock); 5]);
+    for name in ["a.test", "b.test", "c.test"] {
+        test.resolve(RecordType::A, name);
+    }
+    assert_eq!(test.process(0, false, true), NOTHING);
+    assert_eq!(test.sent_exactly().map(|it| it.question()), ["c.test A"]);
+    assert_eq!(test.world().opened[0].watches, [true, false]);
     test.wait(2000);
-    assert_eq!(test.sent().len(), 2);
+    assert_eq!(test.sent().len(), 3);
+}
+
+#[test]
+fn datagram_that_waits_for_too_long() {
+    let mut test = one_server().tries(1).start();
+    test.world().send_results.extend([Err(WouldBlock); 2]);
+    test.resolve(RecordType::A, "a.test");
+    test.wait(1);
+    test.resolve(RecordType::A, "b.test");
+    assert_eq!(test.wait(1999), ["ETIMEOUT"]);
+    test.process(0, false, true);
+    assert_eq!(test.sent_exactly().map(|it| it.question()), ["b.test A"]);
 }
 
 #[test]
 fn flush_fails() {
-    let mut test = over_tcp().tries(1).start();
-    test.world()
-        .send_results
-        .extend([Err(WouldBlock), Err(Failed)]);
-    test.resolve(RecordType::A, "a.test");
-    assert_eq!(test.process(0, true, true), ["ECONNREFUSED"]);
-    assert_eq!(test.world().opened[0].receive_calls, 0);
-    assert!(test.is_idle());
+    let as_it_is: fn(&[u8]) -> Vec<u8> = <[u8]>::to_vec;
+    for (setup, wrap) in [(one_server(), as_it_is), (over_tcp(), frame)] {
+        let mut test = setup.tries(1).start();
+        let a = test.ask("a.test");
+        test.world()
+            .send_results
+            .extend([Err(WouldBlock), Err(Failed)]);
+        test.resolve(RecordType::A, "b.test");
+        test.arrive(0, &wrap(&good(&a)));
+        assert_eq!(test.process(0, true, true), [GOOD[0], "2: ECONNREFUSED"]);
+        assert!(test.is_idle());
+    }
 }
 
 #[test]

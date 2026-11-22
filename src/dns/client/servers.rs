@@ -2,6 +2,7 @@
 
 use core::net::SocketAddr;
 use core::time::Duration;
+use std::collections::VecDeque;
 
 use bun_collections::index_sort;
 
@@ -29,6 +30,11 @@ pub(crate) struct Server {
 }
 
 impl Server {
+    /// Lower is better.
+    fn rank(&self) -> (u8, Duration, usize) {
+        (self.failures, self.retry_at, self.position)
+    }
+
     /// The one that took the last query. It may have been closed since.
     pub(crate) fn socket(&mut self, transport: Transport) -> &mut Option<SocketId> {
         match transport {
@@ -41,7 +47,7 @@ impl Server {
 /// Best first.
 #[derive(Default)]
 pub(crate) struct Servers {
-    list: Vec<Server>,
+    list: VecDeque<Server>,
     last_id: ServerId,
 }
 
@@ -58,14 +64,9 @@ impl Servers {
         self.list.iter_mut().find(|server| server.id == id)
     }
 
-    fn sort(&mut self) {
-        let key = |server: &Server| (server.failures, server.retry_at, server.position);
-        index_sort::sort_slice_unstable_by_key(&mut self.list, key);
-    }
-
     /// One that stays keeps its history.
     pub(crate) fn replace(&mut self, addresses: impl Iterator<Item = SocketAddr>) {
-        let mut old = core::mem::take(&mut self.list);
+        let mut old = Vec::from(core::mem::take(&mut self.list));
         for address in addresses {
             let is_at_address = |server: &Server| {
                 (server.address.ip(), server.address.port()) == (address.ip(), address.port())
@@ -89,27 +90,27 @@ impl Servers {
                     latency: Latency::default(),
                 }
             });
-            self.list.push(Server { position, ..server });
+            self.list.push_back(Server { position, ..server });
         }
-        self.sort();
+        index_sort::sort_slice_unstable_by_key(self.list.make_contiguous(), Server::rank);
     }
 
     pub(crate) fn best(&mut self) -> Option<&mut Server> {
-        self.list.first_mut()
+        self.list.front_mut()
     }
 
     pub(crate) fn one_of_the_best(&mut self, random: u16) -> Option<&mut Server> {
-        let fewest = self.list.first().map(|server| server.failures);
+        let fewest = self.list.front().map(|server| server.failures);
         let count = self.list.partition_point(|it| Some(it.failures) == fewest);
         self.list.get_mut(usize::from(random).checked_rem(count)?)
     }
 
     pub(crate) fn any_failed(&self) -> bool {
-        self.list.last().is_some_and(|server| server.failures > 0)
+        self.list.back().is_some_and(|server| server.failures > 0)
     }
 
     pub(crate) fn all_failed(&self) -> bool {
-        self.list.iter().all(|server| server.failures > 0)
+        self.list.front().is_some_and(|server| server.failures > 0)
     }
 
     /// One that may have come back, other than the best.
@@ -121,25 +122,33 @@ impl Servers {
     }
 
     pub(crate) fn failed(&mut self, id: ServerId, now: Duration) {
-        for server in self.list.iter_mut().filter(|server| server.id == id) {
+        self.change(id, |server| {
             server.failures = MAX_FAILURES.min(server.failures + 1);
             server.retry_at = now.saturating_add(RETRY_DELAY);
-        }
-        self.sort();
+        });
     }
 
     /// `took` is `None` if it tells nothing about the next query.
     pub(crate) fn answered(&mut self, id: ServerId, took: Option<Duration>, now: Duration) {
-        let any_failed = self.any_failed();
-        for server in self.list.iter_mut().filter(|server| server.id == id) {
+        self.change(id, |server| {
             server.failures = 0;
             server.retry_at = Duration::ZERO;
             if let Some(took) = took {
                 server.latency.record(took, now);
             }
-        }
-        if any_failed {
-            self.sort();
+        });
+    }
+
+    fn change(&mut self, id: ServerId, change: impl FnOnce(&mut Server)) {
+        let found = self.list.iter_mut().enumerate().find(|(_, it)| it.id == id);
+        let misplaced = found.and_then(|(index, server)| {
+            let rank = server.rank();
+            change(server);
+            (server.rank() != rank).then_some(index)
+        });
+        if let Some(server) = misplaced.and_then(|index| self.list.remove(index)) {
+            let index = self.list.partition_point(|it| it.rank() < server.rank());
+            self.list.insert(index, server);
         }
     }
 }

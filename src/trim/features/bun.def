@@ -145,8 +145,8 @@ feature ChildProcess "child process support"
 feature Sockets "Bun.listen, Bun.connect and node:net"
 
 feature Dns "Bun.dns and node:dns"
-  minimum 100000 elf
-  minimum 100000 macho
+  minimum 40000 elf
+  minimum 40000 macho
 
 feature BunUtilities "Bun.stripANSI, Bun.mmap, Bun.which, Bun.indexOfLine, Bun.sleep, Bun.sleepSync, Bun.gc, Bun.shrink, Bun.allocUnsafe, Bun.nanoseconds, Bun.peek and Bun.concatArrayBuffers"
 

@@ -5,7 +5,6 @@ use std::rc::Rc;
 
 use crate::Error;
 use crate::name::{self, Name};
-use crate::system::Transport;
 
 /// The types that can be asked for, with their values on the wire.
 #[repr(u16)]
@@ -90,14 +89,11 @@ impl Question {
         self.bytes.eq_ignore_ascii_case(bytes)
     }
 
-    /// Appends the message, for TCP behind its length.
-    pub(crate) fn write_query(&self, id: u16, transport: Transport, to: &mut Vec<u8>) {
+    /// Appends the message behind its length.
+    pub(crate) fn write_frame(&self, id: u16, to: &mut Vec<u8>) {
         let len = HEADER_LEN + self.bytes.len();
         to.reserve(2 + len);
-        if transport == Transport::Tcp {
-            to.extend_from_slice(&(len as u16).to_be_bytes());
-        }
-        let header = [id, FLAG_RECURSION_DESIRED, 1, 0, 0, 0].map(u16::to_be_bytes);
+        let header = [len as u16, id, FLAG_RECURSION_DESIRED, 1, 0, 0, 0].map(u16::to_be_bytes);
         to.extend_from_slice(header.as_flattened());
         to.extend_from_slice(&self.bytes);
     }

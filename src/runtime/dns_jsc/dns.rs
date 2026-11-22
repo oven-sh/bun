@@ -1711,7 +1711,8 @@ impl bun_dns::os::Poll for DnsPoll {
             UvDnsPoll::destroy(poll);
             return None;
         }
-        (rc >= 0).then_some(Self(poll))
+        let closes_on_drop = Self(poll);
+        (rc >= 0).then_some(closes_on_drop)
     }
 
     fn watch(&self, writable: bool) {
@@ -1844,10 +1845,13 @@ impl Resolver {
     ) -> JSValue {
         let (promise, query) =
             PendingQuery::join_or_create(self, kind, hash, name, global_this, context);
-        let Some(query) = query else {
-            return promise;
-        };
-        let answers = self.with_client(|client| send(client, query));
+        if let Some(query) = query {
+            self.request_sent(self.with_client(|client| send(client, query)));
+        }
+        promise
+    }
+
+    fn request_sent(self: &RefPtr<Self>, answers: Answers<PendingQuery>) {
         if self.has_queries() {
             self.add_timer(None, TIMEOUT_CHECK_INTERVAL_MS);
         } else {
@@ -1856,7 +1860,6 @@ impl Resolver {
             self.add_timer(None, 0);
         }
         answers.into_iter().for_each(PendingQuery::complete);
-        promise
     }
 
     fn request_completed(self: &RefPtr<Self>, answers: Answers<PendingQuery>) {
@@ -1907,17 +1910,19 @@ impl Resolver {
 
     /// Opens it if it is closed.
     fn with_client<T>(&self, call: impl FnOnce(&mut Client) -> T) -> T {
-        let open = || {
-            let context = match self.made_in {
-                Some(made_in) => self.vm.context_of(made_in),
-                None => self.vm.root_context(),
-            };
-            // SAFETY: it stays in its box, and the handle is disarmed when it drops.
-            unsafe { bun_jsc::AbortHandle::arm_owner(self.as_ctx_ptr(), context) };
-            Client::new(Os::new(PollOwner(self.as_ctx_ptr())), self.options)
-        };
         self.client
-            .with_mut(|client| call(client.get_or_insert_with(open)))
+            .with_mut(|client| call(client.get_or_insert_with(|| self.open_client())))
+    }
+
+    #[cold]
+    fn open_client(&self) -> Client {
+        let context = match self.made_in {
+            Some(made_in) => self.vm.context_of(made_in),
+            None => self.vm.root_context(),
+        };
+        // SAFETY: it stays in its box, and the handle is disarmed when it drops.
+        unsafe { bun_jsc::AbortHandle::arm_owner(self.as_ctx_ptr(), context) };
+        Client::new(Os::new(PollOwner(self.as_ctx_ptr())), self.options)
     }
 
     // ───────────── poll callbacks ─────────────

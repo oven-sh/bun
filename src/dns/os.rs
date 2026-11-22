@@ -152,7 +152,9 @@ impl<P: Poll> System for Os<P> {
         let socket = open(&address, kind).ok()?;
         let fd = socket.fd();
         #[cfg(windows)]
-        let _ = net::setsockopt_int(fd, sock::SOL_SOCKET, sock::SO_RANDOMIZE_PORT, 1);
+        if transport == Transport::Udp {
+            let _ = net::setsockopt_int(fd, sock::SOL_SOCKET, sock::SO_RANDOMIZE_PORT, 1);
+        }
         if transport == Transport::Tcp {
             net::setsockopt_int(fd, sock::IPPROTO_TCP, sock::TCP_NODELAY, 1).ok()?;
             #[cfg(any(target_os = "linux", target_os = "android"))]

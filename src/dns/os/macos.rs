@@ -77,7 +77,6 @@ unsafe fn add(resolver: &Resolver, config: &mut Config) {
                     SocketAddr::V6(server) if server.scope_id() != 0 => server.scope_id(),
                     _ => resolver.interface,
                 };
-                let interface = Some(interface).filter(|&index| index != 0);
                 config.add_server(server.ip(), port.unwrap_or(resolver.port), interface);
             }
         }

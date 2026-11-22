@@ -180,20 +180,11 @@ impl Adapters {
     }
 }
 
-/// What routing would go by. Lower is better.
-fn metric(adapter: &Adapter, server: &Address, ip: IpAddr) -> u32 {
-    let of_interface = match ip {
-        IpAddr::V4(_) => adapter.ipv4_metric,
-        IpAddr::V6(_) => adapter.ipv6_metric,
-    };
-    if ip.is_loopback() {
-        return of_interface;
-    }
+/// Routing goes by its sum with the metric of the interface. Lower is better.
+fn route_metric(adapter: &Adapter, server: &Address) -> Option<u32> {
     let (mut route, mut source) = (Route::default(), *server);
-    match GetBestRoute2(&adapter.luid, 0, None, server, 0, &mut route, &mut source) {
-        ERROR_SUCCESS => route.metric.saturating_add(of_interface),
-        _ => u32::MAX,
-    }
+    let status = GetBestRoute2(&adapter.luid, 0, None, server, 0, &mut route, &mut source);
+    (status == ERROR_SUCCESS).then_some(route.metric)
 }
 
 const TCPIP: &[u8] = br"System\CurrentControlSet\Services\Tcpip\Parameters";
@@ -201,7 +192,8 @@ const NT_POLICY: &[u8] = br"Software\Policies\Microsoft\Windows NT\DNSClient";
 const SYSTEM_POLICY: &[u8] = br"Software\Policies\Microsoft\System\DNSClient";
 
 pub(super) fn configure(config: &mut Config) {
-    let directory = registry_string(TCPIP, b"DatabasePath").filter(|it| !it.is_empty());
+    let directory = registry_string(TCPIP, b"DatabasePath");
+    let directory = directory.filter(|it| bun_paths::is_fully_qualified(it));
     let hosts = directory.map(|it| Path::from_parts(&[&it[..], b"hosts"]));
     config.hosts_path = hosts.unwrap_or_default().to_zbox();
     let mut add_domains = |key: &[u8], values: &[&[u8]]| {
@@ -222,18 +214,27 @@ pub(super) fn configure(config: &mut Config) {
             let key = [TCPIP, br"\Interfaces\", bun_core::slice_to_nul(name)].concat();
             add_domains(&key, &[b"SearchList", b"Domain", b"DhcpDomain"]);
         }
+        let (mut last_ipv4_route, mut last_ipv6_route) = (0, 0);
         for address in adapters.servers(&adapter) {
             if let Some(server) = address.to_socket_addr()
                 && !server.ip().is_unspecified()
                 && server.ip() != Ipv4Addr::BROADCAST
             {
-                let metric = metric(&adapter, &address, server.ip());
+                let (interface, last_route) = match server.ip() {
+                    IpAddr::V4(_) => (adapter.ipv4_metric, &mut last_ipv4_route),
+                    IpAddr::V6(_) => (adapter.ipv6_metric, &mut last_ipv6_route),
+                };
+                // No adapter has a route to a loopback address. It follows the server before it.
+                let route = (server.ip().is_loopback().then_some(*last_route))
+                    .or_else(|| route_metric(&adapter, &address));
+                *last_route = route.unwrap_or(*last_route);
+                let metric = route.map_or(u32::MAX, |route| route.saturating_add(interface));
                 servers.push((metric, server, adapter.ipv6_index));
             }
         }
     }
     index_sort::sort_slice_by_key(&mut servers, |&(metric, ..)| metric);
     for (_, server, interface) in servers {
-        config.add_server(server.ip(), server.port(), Some(interface));
+        config.add_server(server.ip(), server.port(), interface);
     }
 }

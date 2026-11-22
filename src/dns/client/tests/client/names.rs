@@ -47,7 +47,7 @@ fn to_the_wire() {
     }
     for text in [
         "..", ".a", "a..", "a..b", "a b", "a\0", "é", "a:b", r"\", r"a\", r"\9", r"\09", r"\04a",
-        r"\256", r"\260", r"\300", r"\000", r"\\", r"\ ", ".onion",
+        r"\256", r"\260", r"\301", r"\000", r"\\", r"\ ", ".onion",
     ] {
         assert_eq!(encoded(text), "EBADNAME", "{text}");
     }

@@ -88,7 +88,7 @@ impl Config {
             config.set_options(options);
         }
         if config.servers.is_empty() {
-            config.add_server(Ipv4Addr::LOCALHOST.into(), DEFAULT_PORT, None);
+            config.add_server(Ipv4Addr::LOCALHOST.into(), DEFAULT_PORT, 0);
         }
         if config.domains.is_empty()
             && let Some(hostname) = system.hostname()
@@ -126,16 +126,16 @@ impl Config {
         }
     }
 
-    /// `interface` is the index of the one that a link-local address is on. Port 0 is the default one.
-    pub fn add_server(&mut self, ip: IpAddr, port: u16, interface: Option<u32>) {
+    /// `interface` is the index of the one that a link-local address is on, or 0. Port 0 is the default one.
+    pub fn add_server(&mut self, ip: IpAddr, port: u16, interface: u32) {
         let port = port_or_default(port);
         let address = match (ip, interface) {
             // RFC 3879 deprecated fec0::/10, which Windows and Android still list.
             (IpAddr::V6(ip), _) if ip.segments()[0] & 0xffc0 == 0xfec0 => return,
-            (IpAddr::V6(ip), Some(index)) if ip.is_unicast_link_local() => {
-                SocketAddrV6::new(ip, port, 0, index).into()
+            (IpAddr::V6(ip), 0) if ip.is_unicast_link_local() => return,
+            (IpAddr::V6(ip), _) if ip.is_unicast_link_local() => {
+                SocketAddrV6::new(ip, port, 0, interface).into()
             }
-            (IpAddr::V6(ip), None) if ip.is_unicast_link_local() => return,
             _ => SocketAddr::new(ip, port),
         };
         self.servers.push(address);
@@ -153,7 +153,7 @@ impl Config {
             };
             let interface =
                 interface.and_then(|it| system.interface_index(it).or_else(|| parse_number(it)));
-            self.add_server(ip, port, interface);
+            self.add_server(ip, port, interface.unwrap_or(0));
         }
     }
 

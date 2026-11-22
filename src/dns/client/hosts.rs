@@ -39,12 +39,13 @@ impl Table {
     fn add(&mut self, ip: IpAddr, host: &[u8]) {
         let key = host.to_ascii_lowercase().into_boxed_slice();
         let addresses = self.addresses.entry(key).or_default();
-        if addresses.contains(&ip) {
-            return;
-        }
-        addresses.push(ip);
         let names = self.names.entry(ip).or_default();
-        if names.len() <= MAX_ALIASES {
+        if names.len() > MAX_ALIASES {
+            if !addresses.contains(&ip) {
+                addresses.push(ip);
+            }
+        } else if !names.iter().any(|name| name.eq_ignore_ascii_case(host)) {
+            addresses.push(ip);
             names.push(host.into());
         }
     }

@@ -61,9 +61,11 @@ fn names_on_several_lines() {
 #[test]
 fn many_names_for_an_address() {
     let names: Vec<_> = (0..200).map(|index| format!("h{index}")).collect();
-    let text = format!("0.0.0.0 {}", names.join("\n0.0.0.0 "));
+    let text = format!("0.0.0.0 {0}\n0.0.0.0 {0}", names.join("\n0.0.0.0 "));
     assert_eq!(hosts(&text).reverse("0.0.0.0"), [names[1..=100].join(", ")]);
-    assert_eq!(addresses(&text, "h199"), "0.0.0.0/0");
+    for name in ["h0", "h100", "h101", "h199"] {
+        assert_eq!(addresses(&text, name), "0.0.0.0/0");
+    }
 }
 
 #[test]

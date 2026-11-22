@@ -71,13 +71,21 @@ struct Connection<T> {
     /// How many more it should take.
     room: usize,
     opened: Duration,
-    /// What a stream has yet to take.
+    /// The frames that the socket has yet to take.
     output: Vec<u8>,
     /// The start of a frame.
     input: Vec<u8>,
 }
 
 struct Failed;
+
+/// `None` if there is no room.
+fn send(socket: &mut impl Socket, data: &[u8]) -> Result<Option<usize>, Failed> {
+    match socket.send(data) {
+        Err(SocketError::Failed) => Err(Failed),
+        sent => Ok(sent.ok()),
+    }
+}
 
 impl<T: Socket> Connection<T> {
     fn open(
@@ -121,10 +129,17 @@ impl<T: Socket> Connection<T> {
     }
 
     fn write(&mut self, question: &Question, id: MessageId) -> Result<(), Failed> {
-        let has_to_wait = self.is_connecting || !self.output.is_empty();
-        question.write_query(id, self.transport, &mut self.output);
-        if !has_to_wait {
-            return self.flush();
+        let waiting = self.output.len();
+        question.write_frame(id, &mut self.output);
+        match self.transport {
+            Transport::Udp => {
+                let message = self.output.get(waiting + 2..).unwrap_or_default();
+                if send(&mut self.socket, message)?.is_some() {
+                    self.output.truncate(waiting);
+                }
+            }
+            Transport::Tcp if self.is_connecting || waiting > 0 => {}
+            Transport::Tcp => return self.flush(),
         }
         self.watch();
         Ok(())
@@ -132,15 +147,29 @@ impl<T: Socket> Connection<T> {
 
     fn flush(&mut self) -> Result<(), Failed> {
         self.is_connecting = false;
-        if !self.output.is_empty() {
-            let sent = match (self.socket.send(&self.output), self.transport) {
-                (Err(SocketError::Failed), _) => return Err(Failed),
-                // A datagram that finds no room is as good as lost on the way.
-                (_, Transport::Udp) => usize::MAX,
-                (sent, Transport::Tcp) => sent.unwrap_or(0),
-            };
-            self.output.drain(..sent.min(self.output.len()));
+        let mut rest = &*self.output;
+        match self.transport {
+            Transport::Udp => {
+                let mut had_room = false;
+                while let Some((message, next)) = message::split_frame(rest) {
+                    if message::id_of(message).is_some_and(|id| self.tries.contains_key(&id)) {
+                        match send(&mut self.socket, message)? {
+                            Some(_) => had_room = true,
+                            None if had_room => break,
+                            // It has waited in vain, and is as good as lost on the way.
+                            None => {}
+                        }
+                    }
+                    rest = next;
+                }
+            }
+            Transport::Tcp if rest.is_empty() => {}
+            Transport::Tcp => {
+                let sent = send(&mut self.socket, rest)?;
+                rest = rest.get(sent.unwrap_or(0)..).unwrap_or_default();
+            }
         }
+        self.output.drain(..self.output.len() - rest.len());
         self.watch();
         Ok(())
     }
@@ -408,8 +437,8 @@ impl<S: System, R> Client<S, R> {
         let Some(mut connection) = self.connections.open.remove(&socket) else {
             return;
         };
-        if (events.writable && connection.flush().is_err())
-            || (events.readable && self.read(&mut connection).is_err())
+        if (events.readable && self.read(&mut connection).is_err())
+            || (events.writable && connection.flush().is_err())
             || (events.failed && !connection.tries.is_empty())
         {
             return self.fail(connection);

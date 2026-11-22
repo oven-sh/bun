@@ -502,6 +502,19 @@ impl Raw {
         self.forget();
     }
 
+    /// Until `count` more have arrived.
+    pub(crate) fn receive_packets(&mut self, count: usize) {
+        let id = self.peer.open(Direction::Unidirectional);
+        for at in 1..=count {
+            self.peer.send(id, b"a", false);
+            self.forget();
+            if at % 10 == 0 || at == count {
+                self.advance(RTT);
+                self.send("ack");
+            }
+        }
+    }
+
     /// RFC 9000 §17.2.5.
     pub(crate) fn retry(&self, token: &[u8]) -> Vec<u8> {
         let packet = [&self.long_header(3), token].concat();

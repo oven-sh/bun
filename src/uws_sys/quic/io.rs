@@ -10,11 +10,11 @@ use crate::udp;
 
 /// `LIBUS_UDP_RECV_COUNT`.
 const DATAGRAMS_PER_READ: c_int = 8;
-/// How much to read before answering, for each connection that has to.
-const READ_LEN_PER_CONNECTION: usize = 256 * 1024;
-const MAX_READ_LEN: usize = 8 << 20;
-/// What a datagram counts for on top of its length.
-const DATAGRAM_OVERHEAD: usize = 256;
+/// How many datagrams to read before answering, for each connection that has to.
+const READ_LEN_PER_CONNECTION: usize = 176;
+const MAX_READ_LEN: usize = 32 * READ_LEN_PER_CONNECTION;
+/// Above this, a datagram counts for several.
+const LARGE_DATAGRAM_LEN: usize = 2048;
 /// Where a datagram of this length comes from, there is probably more.
 const FULL_DATAGRAM_LEN: usize = 1200;
 /// For how long the first answers wait for the application to come up with more, while the peer may have nothing to do.
@@ -209,7 +209,7 @@ impl Binding {
                 len => len as usize,
             };
             let payload = buffer.get_payload(at);
-            read.len += payload.len() + DATAGRAM_OVERHEAD;
+            read.len += payload.len().div_ceil(len.min(LARGE_DATAGRAM_LEN)).max(1);
             read.may_be_more = (FULL_DATAGRAM_LEN..len).contains(&payload.len());
             payload.chunks_mut(len).for_each(|it| f(&from, it));
         }
@@ -313,8 +313,8 @@ impl Outbox {
         {
             if !self.has_unsent() {
                 self.batch.clear();
-                endpoint.poll_transmit(now(), &mut self.batch, DATAGRAMS_PER_BATCH, &mut visit);
-                let is_full = self.batch.len() >= DATAGRAMS_PER_BATCH;
+                let is_full =
+                    endpoint.poll_transmit(now(), &mut self.batch, DATAGRAMS_PER_BATCH, &mut visit);
                 self.batches_left = self.batches_left.saturating_sub(is_full.into());
                 on_batch(&self.batch);
                 self.address(&binding);

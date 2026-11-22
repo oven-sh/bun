@@ -8,6 +8,7 @@ use super::Connection;
 use super::ids::RemoteId;
 use super::mtu::Mtu;
 use super::recovery::INITIAL_PACKET_THRESHOLD;
+use super::runs::Runs;
 use super::sent::Control;
 use super::timers::Timer;
 use crate::cid::{LocalId, ResetToken};
@@ -421,6 +422,7 @@ impl Connection {
             // RFC 9000 §9.4.
             (self.rtt, self.first_sample_at) = (Rtt::default(), Instant::NEVER);
             self.congestion.restart(self.path.mtu.current);
+            self.runs = Runs::default();
             self.packet_threshold = INITIAL_PACKET_THRESHOLD;
             if let Some(controller) = &mut self.ack_controller {
                 controller.restart();

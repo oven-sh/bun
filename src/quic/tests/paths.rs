@@ -298,6 +298,41 @@ fn a_client_does_without_the_zone_of_its_server() {
 }
 
 #[test]
+fn runs_get_longer_after_a_rebinding() {
+    let mut raw = Raw::client().connected();
+    raw.receive_packets(260);
+    let id = raw.peer.open(Unidirectional);
+    raw.peer.send(id, &[0; 5000], false);
+    raw.lose();
+    raw.addresses.peer.set_port(2000);
+    raw.send_expanded("ping");
+    raw.peer.longest_run = 0;
+    raw.send("respond");
+    assert_eq!(raw.peer.longest_run, 2);
+}
+
+#[test]
+fn runs_start_over_on_another_path() {
+    for (address, longest_run) in [("192.0.2.1:2000", 8), ("192.0.2.9:2000", 2)] {
+        let mut raw = Raw::client().connected();
+        raw.receive_packets(260);
+        let id = raw.peer.open(Unidirectional);
+        for len in [3000, 5500, 0, 9000] {
+            raw.peer.longest_run = 0;
+            raw.peer.send(id, &vec![0; len], false);
+            raw.advance(RTT);
+            raw.send("ack");
+            if len == 0 {
+                raw.addresses.peer = address.parse().unwrap();
+                raw.send_expanded("ping");
+                raw.send("respond");
+            }
+        }
+        assert_eq!(raw.peer.longest_run, longest_run);
+    }
+}
+
+#[test]
 fn search_for_the_datagram_size_goes_on_after_a_rebinding() {
     let mut raw = Raw::client().with("max_udp_payload_size=").connected();
     raw.request_packets(&"a".repeat(10));

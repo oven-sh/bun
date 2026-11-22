@@ -12,6 +12,11 @@ const MICROS_PER_HALVING: u64 = 512;
 pub(super) const MAX_OVERFLOWS: u32 = 5;
 /// After how many without an overflow one is forgotten.
 const QUANTA_PER_OVERFLOW: u64 = 256;
+/// If it is back within this many, it takes four times as long to forget it again.
+const QUANTA_PER_RELAPSE: u64 = 32;
+const MAX_RELAPSES: u32 = 3;
+/// In bytes. It takes more than a burst to overflow a longer one.
+const SHORT_QUEUE: u64 = 96 * 1024;
 /// In packets.
 const CAUTIOUS_TURN: usize = 16;
 /// A burst starts after the time that this many packets take, or else after `MAX_PAUSE`.
@@ -56,6 +61,10 @@ pub(super) struct Pacer {
     /// Of a queue on the path. Each one halves the bursts.
     overflows: u32,
     sent_since_overflow: u64,
+    /// Or rather since one was forgotten.
+    has_forgotten: bool,
+    /// Which overflow has come back, and how many times.
+    relapses: (u32, u32),
     last_sent_at: Instant,
     /// When what has been sent is through an interface that is only faster than the pace by a third.
     left_at: Instant,
@@ -66,6 +75,10 @@ pub(super) struct Pacer {
     is_shared: bool,
     /// What the rate comes to in [`GRANULARITY`].
     steady: u64,
+    /// Since the last packet.
+    has_run_dry: bool,
+    /// Nothing has been heard of what was sent since the flight was empty. The free burst may still be in the queue.
+    is_restarting: bool,
     trial: Trial,
 }
 
@@ -101,6 +114,10 @@ impl Pacer {
         }
     }
 
+    pub(super) fn is_queue_short(&self, queue_delay: Duration) -> bool {
+        queue_delay.as_micros() < self.time_per_byte.saturating_mul(SHORT_QUEUE) >> FRACTION_BITS
+    }
+
     #[inline]
     pub(super) fn bonus(&self) -> u64 {
         self.bonus
@@ -124,7 +141,10 @@ impl Pacer {
     #[inline]
     pub(super) fn delay(&mut self, now: Instant) -> Option<Instant> {
         if self.rest == 0 && self.next <= now + self.lead() {
-            self.rest = self.quantum;
+            self.rest = match self.is_restarting && self.next > now {
+                true => 1,
+                false => self.quantum,
+            };
         }
         if self.rest > 0 {
             return None;
@@ -138,14 +158,27 @@ impl Pacer {
         self.catch_up_until = Instant::default();
     }
 
+    pub(super) fn on_application_limited(&mut self) {
+        self.on_limited_otherwise();
+        self.has_run_dry = true;
+    }
+
     pub(super) fn on_idle_restart(&mut self, now: Instant, is_recovering: bool) {
         (self.next, self.left_at) = (self.next.min(now), now);
+        self.is_restarting = self.has_run_dry && !is_recovering;
         if now - self.last_sent_at > self.max_lag {
             self.trial.abandon();
         }
         if !is_recovering {
             self.burst_tokens = BURST;
         }
+        if self.overflows > 0 {
+            self.shorten_burst();
+        }
+    }
+
+    pub(super) fn shorten_burst(&mut self) {
+        self.burst_tokens = self.burst_tokens.min(BURST / 2);
     }
 
     #[inline]
@@ -157,7 +190,7 @@ impl Pacer {
             true => Place::First,
             false => Place::Later,
         };
-        self.last_sent_at = now;
+        (self.last_sent_at, self.has_run_dry) = (now, false);
         self.left_at =
             self.left_at.max(now) + Duration::from_micros((time / 4 * 3) >> FRACTION_BITS);
         if self.burst_tokens > 0 {
@@ -167,7 +200,7 @@ impl Pacer {
         self.rest = self.rest.saturating_sub(len.into());
         self.sent_since_overflow += u64::from(len);
         if self.sent_since_overflow > QUANTA_PER_OVERFLOW * self.max_quantum() {
-            (self.overflows, self.sent_since_overflow) = (self.overflows.saturating_sub(1), 0);
+            self.forget_overflow();
         }
         if now > self.catch_up_until {
             self.next = self.next.max(now);
@@ -193,13 +226,44 @@ impl Pacer {
             };
     }
 
-    pub(super) fn on_loss(&mut self) {
-        (self.burst_tokens, self.rest) = (0, 0);
+    pub(super) fn on_feedback(&mut self, has_loss: bool) {
+        self.is_restarting = false;
+        if has_loss {
+            (self.burst_tokens, self.rest) = (0, 0);
+        }
     }
 
-    pub(super) fn on_overflow(&mut self) {
+    /// `in_flight` has been sent since then.
+    pub(super) fn on_overflow(&mut self, is_burst_at_fault: bool, in_flight: u64) {
+        let is_relapse = is_burst_at_fault
+            && self.sent_since_overflow <= QUANTA_PER_RELAPSE * self.max_quantum() + in_flight;
         self.overflows = (self.overflows + 1).min(self.trial.max_overflows());
+        if core::mem::take(&mut self.has_forgotten) {
+            let (overflow, count) = self.relapses;
+            let count = u32::from(overflow == self.overflows) * count + 1;
+            self.relapses = (
+                self.overflows,
+                u32::from(is_relapse) * count.min(MAX_RELAPSES),
+            );
+        }
         self.sent_since_overflow = 0;
+    }
+
+    fn forget_overflow(&mut self) {
+        let (overflow, count) = self.relapses;
+        let quanta = QUANTA_PER_OVERFLOW << (u32::from(overflow == self.overflows) * 2 * count);
+        if self.sent_since_overflow > quanta * self.max_quantum() {
+            if overflow > self.overflows {
+                self.relapses = (0, 0);
+            }
+            self.has_forgotten = self.overflows > 0;
+            (self.overflows, self.sent_since_overflow) = (self.overflows.saturating_sub(1), 0);
+        }
+    }
+
+    #[inline]
+    pub(super) fn is_on_trial(&self) -> bool {
+        self.trial.is_unsettled()
     }
 
     #[inline]

@@ -138,10 +138,8 @@ impl Connection {
 
     #[inline]
     pub(super) fn update_unsent_target(&mut self) {
-        let window = self.congestion.window();
-        let available = window.saturating_sub(self.congestion.in_flight());
-        self.streams.state.unsent_target = available + 2 * WRITE_CHUNK;
-        self.streams.state.max_retained = MIN_RETAINED.max(3 * window);
+        self.streams.state.unsent_target = self.congestion.room() + 2 * WRITE_CHUNK;
+        self.streams.state.max_retained = MIN_RETAINED.max(3 * self.congestion.window());
     }
 
     /// Returns false if there is nothing to send.
@@ -156,22 +154,30 @@ impl Connection {
         let out = &mut batch.bytes;
         let start = out.len();
         let end = start + self.path.allowance();
-        let (mut max_run, mut is_eliciting) = (1, false);
+        let (mut max_run, mut is_eliciting) = (0, false);
         if self.phase != Phase::Confirmed || content != Content::Anything {
             self.write_coalesced(now, content, out, end, shared);
         } else if let Some(draft) = self.draft_data(now, out, end, shared) {
             self.send(now, &draft, out);
             is_eliciting = draft.is_eliciting;
-            if self.pto_count == 0 {
-                max_run = self.runs.max_len;
+            let next_number = self.spaces.data.next_number;
+            if self.congestion.spreads_out() {
+                self.runs.suspend(next_number);
+            } else if self.pto_count == 0 {
+                let (unsent, room) = (self.streams.state.unsent(), self.congestion.room());
+                max_run = (self.runs).max_len(next_number, unsent, room, self.path.mtu.current);
             }
         }
         let len = out.len() - start;
+        if shared.was_backed_up && len < self.path.mtu.current.into() {
+            max_run = 0;
+        }
         if len > 0 {
             self.path.on_sent(len);
             let position = batch.commit(&self.path.addresses, start, max_run);
             if is_eliciting && let Some(packet) = self.spaces.data.sent.packets.back_mut() {
                 packet.position = position;
+                self.runs.on_sent(packet);
             }
         }
         len > 0
@@ -553,6 +559,7 @@ impl Connection {
             && self.spaces.data.next_number >= PACKETS_BEFORE_MTU_PROBE
             && self.phase == Phase::Confirmed
             && self.pto_count == 0
+            && (self.has_frames() || self.spaces.data.received.is_ack_due)
             && self.may_send(now)
             && let out = &mut batch.bytes
             && let start = out.len()
@@ -564,7 +571,7 @@ impl Connection {
             self.path.mtu.on_probe_sent(len);
             draft.is_eliciting = true;
             self.send(now, &draft.end(out), out);
-            batch.commit(&self.path.addresses, start, 1);
+            batch.commit(&self.path.addresses, start, 0);
         }
     }
 
@@ -601,7 +608,7 @@ impl Connection {
             }
             self.send(now, &draft.end(out), out);
             self.path.on_sent(out.len() - start);
-            batch.commit(&self.path.addresses, start, 1);
+            batch.commit(&self.path.addresses, start, 0);
         }
     }
 

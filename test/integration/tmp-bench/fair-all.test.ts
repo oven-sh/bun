@@ -1,2 +1,2 @@
 import { bench } from "./run";
-bench("cond.js", "all", "fs.,fs ,Bun.,open + close,promises,writer() one,FileSink,dns", "before;", "3");
+bench("three.js", "slowturn.js", ";1000_2000;1000_500;500_500", "all");

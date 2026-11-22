@@ -1,2 +1,2 @@
 import { bench } from "./run";
-bench("yieldtest.js");
+bench("handshake.js", "2", "15");

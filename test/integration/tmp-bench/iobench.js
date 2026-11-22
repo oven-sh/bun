@@ -199,7 +199,7 @@ const http =
       const t = now();
       await Promise.all(
         Array.from({ length: workers }, async () => {
-          while (now() - t < 1500 * SHORT) n += unit((await (await fetch(url, init)).arrayBuffer()).byteLength);
+          for (let body; now() - t < 1500 * SHORT; n += unit(body.byteLength)) body = await (await fetch(url, init)).arrayBuffer();
         }),
       );
       return n / ((now() - t) / 1000);

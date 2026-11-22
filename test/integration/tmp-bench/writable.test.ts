@@ -1,2 +1,2 @@
 import { bench } from "./run";
-bench("three.js", "slowturn.js", "1");
+bench("three.js", "slowturn.js", "before;", "1");

@@ -1,2 +1,2 @@
 import { bench } from "./run";
-bench("cond.js", "all", "tcp ,http ,cpu", "before;", "3");
+bench("three.js", "busyping.js", "before;", "5", "tcp$");

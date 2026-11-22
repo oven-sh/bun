@@ -1,2 +1,2 @@
 import { bench } from "./run";
-bench("cond.js", "1", "worker,begin to,bursts,one by one,x32,Bun.write,busy cpus,setTimeout", "before;", "3");
+bench("cond.js", "1", "worker,busy cpus,begin to,50 ms turns,server k=", "before;", "5");

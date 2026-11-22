@@ -1,2 +1,2 @@
 import { bench } from "./run";
-bench("cond.js", "all", "worker,begin to,first ,setTimeout,setImmediate,startup,busy cpus", "before;", "3");
+bench("cond.js", "all", "busy cpus,begin to,8 workers,first ", "before;", "5");

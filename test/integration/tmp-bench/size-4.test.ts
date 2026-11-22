@@ -1,2 +1,2 @@
 import { bench } from "./run";
-bench("cond.js", "1", "tcp ,http ,child std,ipc,named pipe,lines into", "before;", "3");
+bench("cond.js", "all", "http ,tcp ,lines into,child stdin,child stdout", "before;", "7");

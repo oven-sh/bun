@@ -1,2 +1,2 @@
 import { bench } from "./run";
-bench("three.js", "sizes.js");
+bench("overdue.js", "20");

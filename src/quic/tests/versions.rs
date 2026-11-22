@@ -121,15 +121,36 @@ fn a_server_moves_to_the_version_that_it_prefers() {
     }
 }
 
+#[test]
+fn a_server_stays_with_the_version_that_it_has_answered_in() {
+    let mut raw = Raw::client().with("version_information=#000000016b3343cf00000001");
+    raw.send_in(Initial, "hello 0 100");
+    assert_eq!(raw.versions_of_packets(), [V1]);
+    raw.send_in(Initial, "hello 100");
+    assert_eq!(raw.versions_of_packets(), [V1; 2]);
+    let advertised = raw.peer_parameter("version_information");
+    assert_eq!(advertised.unwrap(), "#000000016b3343cf00000001");
+    raw.shake_hands();
+    assert_eq!(raw.events(), "ready, confirmed");
+}
+
 /// RFC 9369 §4.1.
 #[test]
 fn a_client_follows() {
     use Version::{V1 as One, V2 as Two};
-    for (versions, first, chosen) in [(&[One, Two], V1, V2), (&[Two, One], V2, V1)] {
+    for (versions, first, chosen, is_acked) in [
+        (&[One, Two], V1, V2, false),
+        (&[One, Two], V1, V2, true),
+        (&[Two, One], V2, V1, false),
+    ] {
         let mut raw = Raw::server().config(|it| it.versions = versions);
         raw.set(&format!("version_information=#{chosen:08x}{chosen:08x}"));
         raw.start(&[]);
         assert_eq!(raw.versions_of_packets(), [first]);
+        if is_acked {
+            raw.send_in(Initial, "ack");
+            raw.forget();
+        }
         raw.version = chosen;
         raw.send_in(Initial, "ack, hello");
         assert_eq!(raw.versions_of_packets(), [chosen]);

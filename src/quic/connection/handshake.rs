@@ -515,7 +515,10 @@ impl Connection {
         let is_available =
             |it: &Version| peer.is_some_and(|peer| peer.available.contains(&it.number()));
         let preferred = self.compatible_versions().find(is_available);
-        if let Some(version) = preferred.filter(|&it| it != self.version && !accepts_early_data) {
+        // Some clients go by the first packet that they get.
+        let has_answered = (self.spaces.initial.as_ref()).is_none_or(|it| it.next_number > 0);
+        let may_switch = !accepts_early_data && !has_answered;
+        if let Some(version) = preferred.filter(|&it| it != self.version && may_switch) {
             self.switch_version(version);
         }
         self.set_version_information();

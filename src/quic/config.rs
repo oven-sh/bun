@@ -6,7 +6,8 @@ use crate::version::Version;
 /// For the connections that share it.
 #[derive(Clone)]
 pub struct Config {
-    /// A client starts with the first one. A server moves to the last one that the client can move to.
+    /// A client starts with the first one. A server moves to the last one that the client can move to, unless it has
+    /// sent a packet by then.
     pub versions: &'static [Version],
     /// The connection fills in what is its own. The delay of acknowledgments and the number of IDs are fixed.
     pub parameters: TransportParameters,

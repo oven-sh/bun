@@ -30,6 +30,14 @@ impl Style {
             _ => Style::Posix,
         }
     }
+
+    /// True if `a` and `b` are the same path by this style's case rules.
+    fn is_same(self, a: &[u8], b: &[u8]) -> bool {
+        match self {
+            Style::Posix => a == b,
+            Style::Windows => a.eq_ignore_ascii_case(b),
+        }
+    }
 }
 
 /// Converts a native path or a command-line argument. Replaces `\` with `/` on platforms where `\` is a separator.
@@ -205,11 +213,7 @@ pub fn inside<'p>(directory: &[u8], path: &'p [u8]) -> Option<&'p [u8]> {
 
 pub fn inside_as<'p>(style: Style, directory: &[u8], path: &'p [u8]) -> Option<&'p [u8]> {
     let (start, rest) = path.split_at_checked(directory.len())?;
-    let is_same = match style {
-        Style::Posix => start == directory,
-        Style::Windows => start.eq_ignore_ascii_case(directory),
-    };
-    match (is_same, directory.ends_with(b"/")) {
+    match (style.is_same(start, directory), directory.ends_with(b"/")) {
         (false, _) => None,
         (true, true) => Some(rest),
         (true, false) => rest.strip_prefix(b"/"),
@@ -236,11 +240,7 @@ pub fn is_at_or_inside(outer: &[u8], path: &[u8]) -> bool {
 }
 
 pub fn is_at_or_inside_as(style: Style, outer: &[u8], path: &[u8]) -> bool {
-    let is_same = match style {
-        Style::Posix => outer == path,
-        Style::Windows => outer.eq_ignore_ascii_case(path),
-    };
-    is_same || inside_as(style, outer, path).is_some()
+    style.is_same(outer, path) || inside_as(style, outer, path).is_some()
 }
 
 /// `path.dirname(path)`. A root is its own parent.

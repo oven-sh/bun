@@ -2056,9 +2056,10 @@ mod _async_tasks {
             move_waiting_descriptors();
             #[cfg(any(target_os = "linux", target_os = "android"))]
             if <Op<{ F }> as NodeFSDispatch<R, A>>::ANSWERS_FROM_CACHE {
-                crate::jsc_hooks::runtime_state_of(global_object.bun_vm())
+                let vm = global_object.bun_vm();
+                crate::jsc_hooks::runtime_state_of(vm)
                     .fs_cached_descriptors
-                    .close_on_pool();
+                    .close_on_pool(vm.event_loop().iteration_number());
             }
             if let Ok(result) = &result {
                 args.write_back(result.bytes_read());
@@ -9645,6 +9646,8 @@ pub(crate) enum CachedAnswer<R> {
 #[derive(Default)]
 pub(crate) struct CachedDescriptors {
     waiting: core::cell::Cell<Vec<sys::Fd>>,
+    /// The go of the last hand-off to the pool: one per go.
+    handed_off_in: core::cell::Cell<u64>,
 }
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -9670,8 +9673,16 @@ impl CachedDescriptors {
         self.waiting.set(waiting);
     }
 
-    /// One pool task for all that wait: the completion of a `stat` calls this, a turn after the go that opened them.
-    fn close_on_pool(&self) {
+    /// One pool task for all that wait: each completion of a `stat` asks for it, a turn after the go that opened them.
+    fn close_on_pool(&self, go: u64) {
+        // The completions of one go share it: each starts a `stat` that adds a descriptor, which waits for the next go.
+        if self.handed_off_in.replace(go) == go {
+            return;
+        }
+        self.close_all_on_pool();
+    }
+
+    fn close_all_on_pool(&self) {
         let fds = self.waiting.take();
         if fds.is_empty() {
             return;
@@ -9688,7 +9699,7 @@ impl CachedDescriptors {
 #[cfg(any(target_os = "linux", target_os = "android"))]
 impl Drop for CachedDescriptors {
     fn drop(&mut self) {
-        self.close_on_pool();
+        self.close_all_on_pool();
     }
 }
 

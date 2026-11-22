@@ -49,7 +49,11 @@ pub struct Spin {
     began_at_ns: u64,
     waits: u16,
     len: u16,
+    /// More of it has piled up for a thread that has slept.
+    work: u64,
     /// From one wait to the next, in the last phase asleep.
+    gap_asleep_ns: u64,
+    /// The same for a piece of work.
     pace_asleep_ns: u64,
     next_len_asleep: u16,
     misses: u8,
@@ -62,6 +66,8 @@ impl Spin {
             began_at_ns: 0,
             waits: 0,
             len: TRIAL,
+            work: 0,
+            gap_asleep_ns: 0,
             pace_asleep_ns: 0,
             next_len_asleep: TRIAL,
             misses: 0,
@@ -71,14 +77,14 @@ impl Spin {
     pub fn limit_ns(&self) -> u64 {
         if self.is_awake && has_other_cpu() {
             // What is so much later than for a thread that sleeps may be waiting for this CPU.
-            AWAKE_NS.min(2 * self.pace_asleep_ns)
+            AWAKE_NS.min(2 * self.gap_asleep_ns)
         } else {
             0
         }
     }
 
-    /// With the time asleep, if it came to that after `awake_ns`.
-    pub fn waited(&mut self, from_ns: u64, to_ns: u64, awake_ns: u64) {
+    /// With the time asleep, if it came to that after `awake_ns`. `work` was done since the last time.
+    pub fn waited(&mut self, from_ns: u64, to_ns: u64, awake_ns: u64, work: u64) {
         let ns = to_ns.saturating_sub(from_ns);
         if self.is_awake && awake_ns > 0 {
             self.misses = if ns > awake_ns { self.misses + 1 } else { 0 };
@@ -91,14 +97,18 @@ impl Spin {
             return self.begin(false, self.next_len_asleep);
         }
         if self.waits == 0 {
-            self.began_at_ns = to_ns;
+            (self.began_at_ns, self.work) = (to_ns, 0);
+        } else {
+            self.work += work.max(1);
         }
         self.waits += 1;
         if self.waits <= self.len && !is_lost {
             return;
         }
-        let pace_ns = to_ns.saturating_sub(self.began_at_ns) / u64::from(self.len);
+        let phase_ns = to_ns.saturating_sub(self.began_at_ns);
+        let pace_ns = phase_ns / self.work;
         if !self.is_awake {
+            self.gap_asleep_ns = phase_ns / u64::from(self.len);
             self.pace_asleep_ns = pace_ns;
             self.begin(true, TRIAL);
         } else if is_lost || pace_ns * 8 > self.pace_asleep_ns * 7 {
@@ -133,7 +143,7 @@ mod tests {
             let is_caught = comes - from <= spin.limit_ns();
             count += u64::from(spin.limit_ns() > 0);
             now = comes + if is_caught { 0 } else { WAKE_NS };
-            spin.waited(from, now, spin.limit_ns());
+            spin.waited(from, now, spin.limit_ns(), 1);
         }
         count / 100
     }
@@ -160,6 +170,20 @@ mod tests {
     }
 
     #[test]
+    fn sleeps_where_that_only_makes_the_batches_larger() {
+        for pace_ns in [7_000, 10_000, 15_000] {
+            let (mut spin, mut now, mut awake) = (Spin::new(), 1_u64, 0);
+            for _ in 0..10_000 {
+                let (last, from) = (now, now + 1_000);
+                awake += u64::from(spin.limit_ns() > 0);
+                now = from.next_multiple_of(pace_ns) + WAKE_NS * u64::from(spin.limit_ns() == 0);
+                spin.waited(from, now, spin.limit_ns(), now / pace_ns - last / pace_ns);
+            }
+            assert!(awake < 1_000, "{pace_ns} {awake}");
+        }
+    }
+
+    #[test]
     fn loses_little_where_the_work_needs_this_cpu() {
         for turn_ns in [5_000, 20_000, 60_000] {
             let (mut spin, mut now, mut lost) = (Spin::new(), 1, 0);
@@ -167,7 +191,7 @@ mod tests {
                 let from = now + turn_ns / 2;
                 lost += spin.limit_ns();
                 now = from + spin.limit_ns() + turn_ns / 2;
-                spin.waited(from, now, spin.limit_ns());
+                spin.waited(from, now, spin.limit_ns(), 1);
             }
             assert!(lost * 40 < now, "{turn_ns}");
         }

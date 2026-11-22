@@ -25,6 +25,8 @@ struct State {
     /// One of them is awake, and takes the next task without a signal.
     is_spinning: bool,
     spin: Spin,
+    /// Tasks, since `spin` was last told.
+    taken: u64,
     /// When a thread last ran out of tasks.
     idle_since: Option<u64>,
 }
@@ -92,6 +94,7 @@ impl FifoPool {
                 idle_threads: 0,
                 is_spinning: false,
                 spin: Spin::new(),
+                taken: 0,
                 idle_since: None,
             }),
             queued: Condition::new(),
@@ -171,6 +174,7 @@ impl FifoPool {
         loop {
             while let Some(Queued(task)) = state.tasks.pop_front() {
                 state.idle_threads -= 1;
+                state.taken += 1;
                 drop(state);
                 // SAFETY: what `schedule` was given, once.
                 unsafe { ((*task).callback)(task) };
@@ -211,7 +215,8 @@ impl FifoPool {
                 }
             }
             if let Some(since) = state.idle_since.take() {
-                state.spin.waited(since, now_ns(), limit);
+                let taken = core::mem::take(&mut state.taken);
+                state.spin.waited(since, now_ns(), limit, taken);
             }
         }
     }

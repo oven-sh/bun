@@ -2,7 +2,7 @@ use core::cell::{Cell, RefCell};
 use core::cmp::Reverse;
 use core::ffi::c_void;
 use core::ptr::NonNull;
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::collections::{BinaryHeap, VecDeque};
 use std::os::windows::io::OwnedHandle;
 use std::rc::Rc;
@@ -42,7 +42,8 @@ const BATCH: usize = 128;
 pub(crate) struct Shared {
     pub(crate) handle: OwnedHandle,
     bell: Bell,
-    is_wake_posted: AtomicBool,
+    /// The first is posted.
+    wakes: AtomicU64,
     is_parked: AtomicBool,
     outcomes: Guarded<Vec<(Token, Outcome)>>,
     pending_writes: Guarded<usize>,
@@ -78,7 +79,7 @@ pub struct Waker(Arc<Shared>);
 
 impl Waker {
     pub fn wake(&self) {
-        if !self.0.is_wake_posted.swap(true, Ordering::SeqCst) {
+        if self.0.wakes.fetch_add(1, Ordering::SeqCst) == 0 {
             self.0.notify(key::WAKE);
         }
     }
@@ -112,6 +113,8 @@ pub struct Port {
     timer: Timer,
     listener: Listener,
     spin: Cell<Spin>,
+    /// Events, since `spin` was last told.
+    work: Cell<u64>,
     /// Since the last wait. What is sent unasked comes in larger pieces to a thread that sleeps.
     has_received: Cell<bool>,
     has_sent: Cell<bool>,
@@ -156,7 +159,7 @@ impl Port {
             shared: Arc::new(Shared {
                 handle: sys::create_port(u32::MAX)?,
                 bell: Bell::default(),
-                is_wake_posted: AtomicBool::new(false),
+                wakes: AtomicU64::new(0),
                 is_parked: AtomicBool::new(false),
                 outcomes: Guarded::default(),
                 pending_writes: Guarded::default(),
@@ -167,6 +170,7 @@ impl Port {
             timer: Timer::default(),
             listener: Listener::default(),
             spin: Cell::new(Spin::new()),
+            work: Cell::new(0),
             has_received: Cell::new(false),
             has_sent: Cell::new(false),
             batch: [const { Cell::new(Packet::EMPTY) }; BATCH],
@@ -406,7 +410,7 @@ impl Port {
         if now.saturating_sub(start) > IDLE_NS {
             self.busy_since_ns.set(now);
         }
-        spin.waited(start, now, awake_ns);
+        spin.waited(start, now, awake_ns, self.work.take());
         self.spin.set(spin);
         is_first
     }
@@ -565,16 +569,23 @@ impl Port {
 
     fn deliver(&self, packet: Packet, on_event: &impl Fn(Event)) {
         match packet.key {
-            key::SOCKET => self.sockets.complete(self, packet.context, on_event),
+            key::SOCKET => {
+                self.add_work(1);
+                self.sockets.complete(self, packet.context, on_event);
+            }
             key::POLL_AGAIN => self.sockets.poll_again(packet.context),
             key::REQUEST | key::FILE if self.must_wait(packet) => self.hold_end(packet),
-            key::REQUEST | key::FILE => self.requests.complete(self, packet),
+            key::REQUEST | key::FILE => {
+                self.add_work(1);
+                self.requests.complete(self, packet);
+            }
             key::INPUT => {
                 self.inputs.update(|count| count - 1);
+                self.add_work(1);
                 self.requests.complete(self, packet);
             }
             key::WAKE => {
-                self.shared.is_wake_posted.swap(false, Ordering::SeqCst);
+                self.add_work(self.shared.wakes.swap(0, Ordering::SeqCst));
                 on_event(Event::Wake);
             }
             key::OUTCOMES => {
@@ -587,6 +598,10 @@ impl Port {
             }
             _ => {}
         }
+    }
+
+    fn add_work(&self, count: u64) {
+        self.work.update(|work| work + count);
     }
 
     /// Cancels everything, and nothing is called back from now on.

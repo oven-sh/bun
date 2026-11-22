@@ -77,6 +77,7 @@ struct Inner {
     /// Others may read it too, so data is only taken out at a moment when the reader is known to want it.
     is_input_shared: Cell<bool>,
     was_full: Cell<bool>,
+    takes_long_writes_whole: Cell<bool>,
     read: Cell<Option<InFlight>>,
     write: Cell<Option<InFlight>>,
 }
@@ -97,6 +98,7 @@ impl Pipe {
             io: OnceCell::new(),
             is_input_shared: Cell::new(is_input_shared),
             was_full: Cell::new(false),
+            takes_long_writes_whole: Cell::new(false),
             read: Cell::new(None),
             write: Cell::new(None),
         }))
@@ -160,6 +162,11 @@ impl Pipe {
     /// For an end that nobody else reads.
     pub fn read_ahead(&self) {
         self.0.is_input_shared.set(false);
+    }
+
+    /// What has not been read of a write is lost when the writer exits.
+    pub fn take_long_writes_whole(&self) {
+        self.0.takes_long_writes_whole.set(true);
     }
 
     pub fn peer_process_id(&self) -> Option<u32> {
@@ -417,6 +424,19 @@ impl Inner {
         }
     }
 
+    fn read_rest_of_long_write(self: &Rc<Self>, in_hand: usize) -> bool {
+        if self.takes_long_writes_whole.get()
+            && let (Some(wanted), Some(Io::Overlapped(file))) =
+                (self.endpoint.wanted(), self.io.get())
+            && let Ok(Some(available)) = named_pipe::input(self.handle.raw())
+            && let len @ STREAM_SIZE.. = available.min(wanted.saturating_sub(in_hand))
+        {
+            self.started_read(file.read_much(len, self.on_read(Inner::on_data)));
+            return true;
+        }
+        false
+    }
+
     /// `true` if more is to be expected.
     fn size_next_read(&self, read: &Vec<u8>) -> bool {
         self.was_full.set(read.len() >= BUSY_SIZE);
@@ -436,7 +456,9 @@ impl Inner {
             } else {
                 self.endpoint.port.did_receive();
             }
-            self.add_what_followed(&mut buffer, BUSY_SIZE);
+            if !(is_much && self.read_rest_of_long_write(buffer.len())) {
+                self.add_what_followed(&mut buffer, BUSY_SIZE);
+            }
             self.endpoint.hold(ReadEvent::Data(buffer));
             return self.report_read();
         }

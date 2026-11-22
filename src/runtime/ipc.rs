@@ -1862,6 +1862,7 @@ impl SendQueue {
     pub(crate) fn windows_configure_server(&self, pipe: Pipe) -> bun_sys::Result<()> {
         log!("configureServer");
         pipe.update_ref(false);
+        pipe.take_long_writes_whole();
         let owner = Owner::new(PollTag::IpcChannel, self.root_ptr().cast());
         // SAFETY: both are in the heap allocation that `owner` points to.
         unsafe {

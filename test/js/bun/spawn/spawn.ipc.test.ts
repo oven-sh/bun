@@ -1,4 +1,5 @@
 import { spawn } from "bun";
+import { dlopen } from "bun:ffi";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, gcTick, isLinux, isWindows, tempDir } from "harness";
 import { spawn as nodeSpawn } from "node:child_process";
@@ -700,6 +701,62 @@ describe.concurrent.skipIf(!isWindows)("frames on the channel", () => {
     expect(headers).toEqual(headers.map(() => [1, 0]));
     if (serialization === "json") expect(Buffer.concat(data).toString()).toBe('"a"\n"bc"\n');
     else expect(Buffer.concat(data).toString("latin1")).toMatch(/a[^]*bc/);
+  });
+});
+
+it.skipIf(!isWindows)("a long write to the channel is taken out whole", async () => {
+  const { OpenProcess, WaitForSingleObject, CloseHandle } = dlopen("kernel32.dll", {
+    OpenProcess: { args: ["u32", "i32", "u32"], returns: "u64" },
+    WaitForSingleObject: { args: ["u64", "u32"], returns: "u32" },
+    CloseHandle: { args: ["u64"], returns: "i32" },
+  }).symbols;
+  const SYNCHRONIZE = 0x100000;
+  const got: number[] = [];
+  let waited;
+  const { promise, resolve } = Promise.withResolvers<void>();
+  await using child = spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const text = Buffer.from('"a"\\n"' + Buffer.alloc(2_000_000, "x") + '"\\n');
+       fs.writeSync(3, Buffer.concat([Buffer.from(new Uint32Array([1, 0, text.length, 0]).buffer), text]));
+       Bun.sleepSync(30_000);`,
+    ],
+    env: bunEnv,
+    stdio: ["ignore", "inherit", "inherit"],
+    serialization: "json",
+    ipc(message, child) {
+      if (got.push(message.length) > 1) return;
+      const process = OpenProcess(SYNCHRONIZE, 0, child.pid);
+      child.kill("SIGKILL");
+      waited = WaitForSingleObject(process, 4000);
+      CloseHandle(process);
+    },
+    onDisconnect: () => resolve(),
+  });
+  await Promise.all([promise, child.exited]);
+  expect({ waited, got }).toEqual({ waited: 0, got: [1, 2_000_000] });
+});
+
+// One at a time: the child does not wait long for a parent that is busy.
+describe.skipIf(!isWindows).each(["json", "advanced"] as const)("in %s mode", serialization => {
+  it.each([
+    ["exits", "process.exit(0)"],
+    ["throws", "throw new Error()"],
+    ["kills itself", "process.kill(process.pid, 'SIGKILL')"],
+  ])("a long message arrives that a child sent right before it %s", async (_, leave) => {
+    const got: number[] = [];
+    const { promise, resolve } = Promise.withResolvers<void>();
+    await using child = spawn({
+      cmd: [bunExe(), "-e", `process.send(Buffer.alloc(2_000_000, "x").toString()); ${leave}`],
+      env: bunEnv,
+      stdio: ["ignore", "ignore", "ignore"],
+      serialization,
+      ipc: message => void got.push(message.length),
+      onDisconnect: () => resolve(),
+    });
+    await Promise.all([promise, child.exited]);
+    expect(got).toEqual([2_000_000]);
   });
 });
 

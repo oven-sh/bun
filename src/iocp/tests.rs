@@ -1399,6 +1399,48 @@ fn a_thread_waits_for_writes_but_not_for_long() {
 }
 
 #[test]
+fn a_thread_waits_for_a_write_that_would_end_with_it() {
+    let port = Port::new().unwrap();
+    let (bound, _peer) = pipe(&port, AsyncFile::exclusive);
+    let _write = bound.write(vec![0; 200_000], 0, |_| unreachable!());
+    assert_eq!(port.requests.writes_of_thread(), 0);
+
+    let (file, peer) = pipe(&port, AsyncFile::shared);
+    let _read = start_read(&file, &Slot::default());
+    assert_eq!(port.requests.writes_of_thread(), 0);
+    let wrote = Slot::default();
+    let _write = file.write(vec![0; 200_000], 0, into(&wrote));
+    let reader = std::thread::spawn(move || {
+        assert_eq!(peer.read(&mut vec![0; 200_000]).unwrap(), 200_000);
+        peer
+    });
+    assert!(!port.wait_for_pending_writes());
+    assert!(port.requests.writes_of_thread() == 0 && wrote.borrow().is_none());
+    run_until(&port, || wrote.borrow().is_some());
+
+    let _peer = reader.join().unwrap();
+    let _never = file.write(vec![0; 200_000], 0, |_| unreachable!());
+    CLOCK_STEP.set(Duration::from_millis(200));
+    assert!(!port.wait_for_pending_writes());
+    assert_eq!(port.requests.writes_of_thread(), 1);
+}
+
+#[test]
+fn much_that_is_read_at_once_waits_for_the_next_turn() {
+    let port = Port::new().unwrap();
+    let (file, peer) = pipe(&port, AsyncFile::exclusive);
+    peer.write_all(b"ab").unwrap();
+    let (file, read, request) = (Rc::new(file), Slot::default(), Rc::new(Cell::new(None)));
+    let (done, place) = (into(&read), Rc::clone(&request));
+    let _start = Request::defer(&port, move || place.set(file.read_much(2, done).ok()));
+    turn(&port, Duration::ZERO);
+    assert!(read.borrow().is_none());
+    assert!(port.prepare());
+    turn(&port, Duration::ZERO);
+    assert_eq!(read.take().unwrap().buffer, b"ab");
+}
+
+#[test]
 fn writes_can_be_limited() {
     let port = Port::new().unwrap();
     let (file, _peer) = pipe(&port, AsyncFile::exclusive);

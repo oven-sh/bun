@@ -194,13 +194,17 @@ impl Port {
     pub fn wait_for_pending_writes(&self) -> bool {
         const PATIENCE_NS: u64 = 500_000_000;
         let deadline = now_ns() + PATIENCE_NS;
+        let before = *self.shared.pending_writes.lock() + self.requests.writes_of_thread();
+        while self.requests.writes_of_thread() > 0 && now_ns() < deadline {
+            let left = deadline.saturating_sub(now_ns());
+            self.fetch(Timeout::After(left.div_ceil(100) as i64));
+        }
         let mut count = self.shared.pending_writes.lock();
-        let before = *count;
         while *count > 0 && now_ns() < deadline {
             let left = deadline.saturating_sub(now_ns());
             let _ = (self.shared.all_written).timed_wait_guarded(&mut count, left);
         }
-        (1..before).contains(&*count)
+        (1..before).contains(&(*count + self.requests.writes_of_thread()))
     }
 
     pub fn did_receive(&self) {

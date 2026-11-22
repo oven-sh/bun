@@ -85,6 +85,8 @@ struct Slot {
     /// How much of the spare capacity of `buffer` the system may fill.
     room: Cell<usize>,
     shared: Cell<Option<Rc<dyn AsRef<[u8]>>>>,
+    /// The system cancels it when the thread ends, before it closes any file.
+    is_write_of_thread: Cell<bool>,
     outcome: Cell<Option<Outcome>>,
     event: OnceCell<OwnedHandle>,
     notifier: Notifier,
@@ -215,6 +217,16 @@ impl Requests {
 
     pub(crate) fn has_abandoned(&self) -> bool {
         self.abandoned.get() > 0
+    }
+
+    pub(crate) fn writes_of_thread(&self) -> usize {
+        let slab = self.slab.borrow();
+        let pending = slab.used().filter(|(_, slot)| {
+            slot.awaits.get() == Awaits::Io
+                && slot.is_write_of_thread.get()
+                && slot.status.get().0 == NTSTATUS::PENDING
+        });
+        pending.count()
     }
 
     #[cfg(test)]
@@ -395,6 +407,7 @@ enum Bytes {
 #[derive(Copy, Clone)]
 enum AtOnce {
     Defer,
+    NextTurn,
     /// It takes its place between what it has caused here and what others do about it.
     Post,
     Return,
@@ -454,6 +467,16 @@ impl AsyncFile {
     ) -> Result<Request, Completion> {
         let bytes = Bytes::Fill(buffer, max_len);
         self.submit(Call::Read, bytes, AtOnce::Defer, Box::new(done))
+    }
+
+    /// For `len` bytes that are there already, and take long to deal with: timers run before `done`.
+    pub fn read_much(
+        &self,
+        len: usize,
+        done: impl FnOnce(Completion) + 'static,
+    ) -> Result<Request, Completion> {
+        let bytes = Bytes::Fill(Vec::with_capacity(len.min(MAX_LEN)), len);
+        self.submit(Call::Read, bytes, AtOnce::NextTurn, Box::new(done))
     }
 
     /// Writes some of `buffer[from..]`.
@@ -661,11 +684,13 @@ impl AsyncFile {
             let packet = Packet::new(key::REQUEST, token.to_raw());
             match at_once {
                 AtOnce::Defer => port.defer(packet),
+                AtOnce::NextTurn => port.defer_to_next_turn(packet),
                 AtOnce::Post => port.post(packet),
                 AtOnce::Return => return give_back(),
             }
         }
         slot.file.set(Some(Arc::clone(&self.handle)));
+        (slot.is_write_of_thread).set(event.is_some() && matches!(call, Call::Write));
         Ok(Request::new(port, token, &slot, awaits, Callback::Io(done)))
     }
 }

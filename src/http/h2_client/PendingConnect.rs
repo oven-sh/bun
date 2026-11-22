@@ -27,8 +27,36 @@ pub struct PendingConnect {
 }
 
 impl PendingConnect {
-    pub(crate) fn new(init: Self) -> Box<Self> {
-        Box::new(init)
+    /// `client.pending_h2` borrows the result, which the context's `pending_h2_connects` has to own.
+    pub(crate) fn led_by(
+        client: &mut InFlightRequest,
+        hostname: &[u8],
+        port: u16,
+        transport: Transport,
+    ) -> Box<Self> {
+        let ssl_config = SSLConfig::raw_ptr(client.tls_props.as_ref());
+        let mut this = Box::new(Self {
+            hostname: Box::<[u8]>::from(hostname),
+            port,
+            transport,
+            ssl_config: ssl_config.and_then(|it| NonNull::new(it.cast_mut())),
+            verification: client.socket_verification(),
+            pool_id: client.pool.id,
+            waiters: Vec::new(),
+        });
+        client.pending_h2 = Some(NonNull::from(&mut *this));
+        this
+    }
+
+    pub(crate) fn abort_waiter(list: &mut [Box<Self>], async_http_id: u32) -> bool {
+        for pending in list {
+            let mut waiters = pending.waiters.iter();
+            if let Some(at) = waiters.position(|it| it.async_http_id == async_http_id) {
+                pending.waiters.swap_remove(at).fail(crate::Error::Aborted);
+                return true;
+            }
+        }
+        false
     }
 
     pub(crate) fn matches(

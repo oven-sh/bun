@@ -464,17 +464,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
     /// onto a leader's in-flight TLS connect) never registered a socket,
     /// so it can only be found by scanning here.
     pub(crate) fn abort_pending_h2_waiter(&mut self, async_http_id: u32) -> bool {
-        for pc in &mut self.pending_h2_connects {
-            let pos = pc
-                .waiters
-                .iter()
-                .position(|w| w.async_http_id == async_http_id);
-            if let Some(i) = pos {
-                pc.waiters.swap_remove(i).fail(crate::Error::Aborted);
-                return true;
-            }
-        }
-        false
+        h2::PendingConnect::abort_waiter(&mut self.pending_h2_connects, async_http_id)
     }
 
     /// Take `session` out of `active_h2_sessions`, returning the registry's
@@ -1087,27 +1077,10 @@ impl<const SSL: bool> HTTPContext<SSL> {
         port: u16,
         transport: Transport,
     ) {
-        if !client.can_offer_h2() {
-            return;
+        if client.can_offer_h2() {
+            let pending = h2::PendingConnect::led_by(client, hostname, port, transport);
+            self.pending_h2_connects.push(pending);
         }
-        let cfg =
-            SSLConfig::raw_ptr(client.tls_props.as_ref()).and_then(|p| NonNull::new(p.cast_mut()));
-        let mut pc = h2::PendingConnect::new(h2::PendingConnect {
-            hostname: Box::<[u8]>::from(hostname),
-            port,
-            transport,
-            ssl_config: cfg,
-            verification: client.socket_verification(),
-            pool_id: client.pool.id,
-            waiters: Vec::new(),
-        });
-        // `client.pending_h2 = pc` stores a *borrowed* backref into the
-        // Vec-owned allocation so `resolve_pending_h2` can dispatch
-        // coalesced waiters once ALPN resolves. Ownership stays with
-        // `pending_h2_connects`; the Box address is stable across the
-        // Vec push.
-        client.pending_h2 = Some(NonNull::from(&mut *pc));
-        self.pending_h2_connects.push(pc);
     }
 
     /// Connects to `client.connected_url.hostname`.

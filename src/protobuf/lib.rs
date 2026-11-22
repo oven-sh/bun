@@ -78,20 +78,20 @@ pub struct Options<'a> {
     pub is_schema_by_name: &'a dyn Fn(&[u8]) -> bool,
 }
 
-pub fn compile(path: &[u8], text: &[u8], options: &Options<'_>) -> Result<Vec<u8>, Error> {
-    let files = program::load(path, text, options.read)?;
+pub fn compile(path: &[u8], schema: &[u8], options: &Options<'_>) -> Result<Vec<u8>, Error> {
+    let files = program::load(path, schema, options.read)?;
     let program = program::Program::new(&files)?;
     emit::emit(&program, options).map(String::into_bytes)
 }
 
 pub fn compile_or_log(
     path: &[u8],
-    text: &[u8],
+    schema: &[u8],
     options: &Options<'_>,
     log: &mut Log,
 ) -> Option<Vec<u8>> {
-    let module = compile(path, text, options);
-    module.map_err(|error| error.add_to(log, path, text)).ok()
+    let module = compile(path, schema, options);
+    module.map_err(|error| error.add_to(log, path, schema)).ok()
 }
 
 pub fn read_from_disk(path: &[u8]) -> Option<Vec<u8>> {

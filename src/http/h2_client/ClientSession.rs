@@ -311,19 +311,29 @@ impl ClientSession {
         socket: HTTPSocket<SSL>,
         client: &HTTPClient,
     ) -> SessionPtr {
+        let connection = match SSL {
+            true => Connection::Tls(socket.assume_ssl(), ctx.cast()),
+            false => Connection::Cleartext(socket.assume_tcp(), ctx.cast()),
+        };
+        let this = Self::new(connection, client);
+        // `ctx` is a live back-ref to the owning context (set-once,
+        // HTTP-thread-only, no ancestor `&mut HTTPContext` on this path) —
+        // route through the centralised [`HTTPClient::ssl_ctx_mut`] accessor.
+        HTTPClient::ssl_ctx_mut(ctx).register_h2(this)
+    }
+
+    fn new(connection: Connection, client: &HTTPClient) -> RefPtr<ClientSession> {
         let url = &client.connected_url;
         let (hostname, port, transport) = match client.unix_socket_path {
             b"" => (url.hostname, url.get_port_auto(), Transport::Tcp),
             path => (path, 0, Transport::Unix),
         };
-        let this = RefPtr::new(ClientSession {
+        super::live_sessions.fetch_add(1, Ordering::Relaxed);
+        RefPtr::new(ClientSession {
             ref_count: Cell::new(1),
             encoder: bun_hpack::Encoder::new(),
             decoder: bun_hpack::Decoder::new(),
-            connection: match SSL {
-                true => Connection::Tls(socket.assume_ssl(), ctx.cast()),
-                false => Connection::Cleartext(socket.assume_tcp(), ctx.cast()),
-            },
+            connection,
             hostname: Box::<[u8]>::from(hostname),
             port,
             transport,
@@ -359,12 +369,7 @@ impl ClientSession {
             conn_send_window: wire::DEFAULT_WINDOW_SIZE as i32,
             conn_unacked_bytes: 0,
             registry_index: Cell::new(u32::MAX),
-        });
-        super::live_sessions.fetch_add(1, Ordering::Relaxed);
-        // `ctx` is a live back-ref to the owning context (set-once,
-        // HTTP-thread-only, no ancestor `&mut HTTPContext` on this path) —
-        // route through the centralised [`HTTPClient::ssl_ctx_mut`] accessor.
-        HTTPClient::ssl_ctx_mut(ctx).register_h2(this)
+        })
     }
 
     pub(crate) fn has_headroom(&self) -> bool {

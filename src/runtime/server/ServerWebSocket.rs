@@ -1159,7 +1159,9 @@ impl ServerWebSocket {
         let mut buf = [0u8; 64];
         let mut text_buf = [0u8; 512];
 
-        let address_bytes = self.websocket().get_remote_address(&mut buf);
+        let Some(address_bytes) = self.websocket().get_remote_address(&mut buf) else {
+            return Ok(JSValue::UNDEFINED);
+        };
         // `format_ip` strips trailing `:port` and `[..]`. Use `SocketAddr{V4,V6}` so
         // `format_ip`'s strip logic sees the expected `addr:port` / `[addr]:port`
         // shape — passing a bare `IpAddr` would corrupt IPv6 (no brackets/port,

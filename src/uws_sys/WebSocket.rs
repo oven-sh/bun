@@ -11,10 +11,10 @@ use bun_core::strings;
 use bun_ptr::BackRef;
 use bun_websocket::deflate::{Compressor, Decompressor, InflateError, Params};
 use bun_websocket::frame::{
-    AUTO_PONG_BACKPRESSURE_LIMIT, MAX_CONTROL_PAYLOAD, WebsocketHeader, write_unmasked_head,
+    AUTO_PONG_BACKPRESSURE_LIMIT, Flags, MAX_CONTROL_PAYLOAD, WebsocketHeader, write_unmasked_head,
 };
 use bun_websocket::handshake;
-use bun_websocket::reader::{Failure, Message, Reader, parse_close};
+use bun_websocket::reader::{Failure, Message, Reader, control_frames_len, parse_close};
 use bun_websocket::topics::{self, SubscriberId, Topics};
 
 use crate::response::Response;
@@ -477,21 +477,7 @@ impl<const SSL: bool> Response<SSL> {
         if !self.can_upgrade() {
             return false;
         }
-        let is_smallest =
-            ctx.behavior.get().compression & COMPRESSOR_MASK == DEDICATED_COMPRESSOR_3KB;
-        let state = State {
-            user_data,
-            reader: RefCell::new(Reader::new(deflate_params.is_some())),
-            compressor: RefCell::new(
-                deflate_params.and_then(|params| Compressor::dedicated(params, is_smallest)),
-            ),
-            decompressor: RefCell::new(deflate_params.and_then(Decompressor::dedicated)),
-            subscriber: Cell::new(None),
-            is_shutting_down: Cell::new(false),
-            is_close_frame_sent: Cell::new(false),
-            has_timed_out: Cell::new(false),
-            needs_drain_event: Cell::new(false),
-        };
+        let state = State::new(user_data, deflate_params, ctx.behavior.get().compression);
         let ws = AnyWebSocket(self.socket());
         let kind = if SSL {
             SocketKind::UwsWsTls
@@ -526,12 +512,43 @@ struct State {
     compressor: RefCell<Option<Compressor>>,
     decompressor: RefCell<Option<Decompressor>>,
     subscriber: Cell<Option<SubscriberId>>,
-    is_shutting_down: Cell<bool>,
+    phase: Cell<Phase>,
     /// A socket of the `ws` package reads on until the peer's Close frame.
     is_close_frame_sent: Cell<bool>,
     has_timed_out: Cell<bool>,
     /// A send reported backpressure, and no drain event has seen an empty buffer since.
     needs_drain_event: Cell<bool>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Phase {
+    Open,
+    /// More frames were read than the one that a handler has.
+    OpenWithUnreadFrames,
+    ShuttingDown,
+}
+
+impl State {
+    fn new(user_data: *mut c_void, deflate_params: Option<Params>, compression: i32) -> Self {
+        let is_smallest = compression & COMPRESSOR_MASK == DEDICATED_COMPRESSOR_3KB;
+        Self {
+            user_data,
+            reader: RefCell::new(Reader::new(deflate_params.is_some())),
+            compressor: RefCell::new(
+                deflate_params.and_then(|params| Compressor::dedicated(params, is_smallest)),
+            ),
+            decompressor: RefCell::new(deflate_params.and_then(Decompressor::dedicated)),
+            subscriber: Cell::new(None),
+            phase: Cell::new(Phase::Open),
+            is_close_frame_sent: Cell::new(false),
+            has_timed_out: Cell::new(false),
+            needs_drain_event: Cell::new(false),
+        }
+    }
+
+    fn is_shutting_down(&self) -> bool {
+        self.phase.get() == Phase::ShuttingDown
+    }
 }
 
 const STATE_OFFSET: usize = 64;
@@ -598,8 +615,8 @@ impl AnyWebSocket {
         c::uws_socket_buffered_amount(self.socket())
     }
 
-    pub fn get_remote_address(self, buf: &mut [u8]) -> &[u8] {
-        self.socket().remote_address(buf).unwrap_or_default()
+    pub fn get_remote_address(self, buf: &mut [u8]) -> Option<&[u8]> {
+        self.socket().remote_address(buf).ok()
     }
 
     /// Run `f` while the socket is corked.
@@ -635,7 +652,7 @@ impl AnyWebSocket {
     }
 
     fn has_stopped_reading(self) -> bool {
-        self.socket().is_closed() || self.state().is_shutting_down.get()
+        self.socket().is_closed() || self.state().is_shutting_down()
     }
 
     /// What `send` would return now.
@@ -683,7 +700,11 @@ impl AnyWebSocket {
         if compress && fin {
             self.write_compressed(message, opcode)
         } else {
-            self.write_frame(message, opcode, false, fin)
+            self.write_frame(
+                message,
+                opcode,
+                if fin { Flags::Final } else { Flags::None },
+            )
         }
     }
 
@@ -695,7 +716,7 @@ impl AnyWebSocket {
             || !state.reader.borrow().allows_compression()
             || self.behavior().compression & COMPRESSOR_MASK == 0
         {
-            return self.write_frame(message, opcode, false, true);
+            return self.write_frame(message, opcode, Flags::Final);
         }
         let shared = self.context().app.get().shared();
         let out = &mut *shared.compressed.borrow_mut();
@@ -703,23 +724,20 @@ impl AnyWebSocket {
             Some(compressor) => compressor.compress(message, out),
             None => shared.compressor.borrow_mut().compress(message, out),
         };
-        let payload = if is_compressed { out } else { message };
-        self.write_frame(payload, opcode, is_compressed, true)
+        if is_compressed {
+            self.write_frame(out, opcode, Flags::FinalCompressed)
+        } else {
+            self.write_frame(message, opcode, Flags::Final)
+        }
     }
 
-    fn write_frame(
-        self,
-        payload: &[u8],
-        opcode: Opcode,
-        is_compressed: bool,
-        fin: bool,
-    ) -> SendStatus {
+    fn write_frame(self, payload: &[u8], opcode: Opcode, flags: Flags) -> SendStatus {
         let len = WebsocketHeader::frame_size(payload.len(), false);
         let mut attribute = 0;
         let buffer = c::uws_socket_send_buffer(self.socket(), len, &mut attribute);
         // SAFETY: room for `len` bytes, until the next call on a socket.
         let buffer = unsafe { core::slice::from_raw_parts_mut(buffer, len) };
-        let (_, rest) = write_unmasked_head(buffer, opcode, payload.len(), is_compressed, fin);
+        let (_, rest) = write_unmasked_head(buffer, opcode, payload.len(), flags);
         rest.write_copy_of_slice(payload);
         self.after_write(match attribute {
             c::NEEDS_DRAIN => self.write(b""),
@@ -730,7 +748,8 @@ impl AnyWebSocket {
 
     fn write_frame_directly(self, payload: &[u8], opcode: Opcode, fin: bool) -> SendStatus {
         let mut head = [MaybeUninit::uninit(); 10];
-        let (head, _) = write_unmasked_head(&mut head, opcode, payload.len(), false, fin);
+        let flags = if fin { Flags::Final } else { Flags::None };
+        let (head, _) = write_unmasked_head(&mut head, opcode, payload.len(), flags);
         let at_once = payload.len().min(c_int::MAX as usize - head.len());
         let written = self.socket().write2(head, &payload[..at_once]) as usize;
         let has_backpressure = written != head.len() + payload.len();
@@ -803,14 +822,14 @@ impl AnyWebSocket {
                 0 | 1005 | 1006 => 0,
                 _ => 2 + message.len(),
             };
-            self.write_frame(&payload[..len], Opcode::Close, false, true);
+            self.write_frame(&payload[..len], Opcode::Close, Flags::Final);
         }
         c::uws_socket_uncork(self.socket());
     }
 
     /// The Close frame, then the FIN. False if that has begun before.
     fn shut_down(self, code: i32, message: &[u8]) -> bool {
-        if self.state().is_shutting_down.replace(true) {
+        if self.state().phase.replace(Phase::ShuttingDown) == Phase::ShuttingDown {
             return false;
         }
         self.send_close_frame(code, message);
@@ -847,7 +866,7 @@ impl AnyWebSocket {
 
     /// Closes the connection with 1011 after failing to allocate a copy of an incoming message. It must not allocate either.
     pub fn fail_out_of_memory(self) {
-        if self.state().is_shutting_down.get() {
+        if self.state().is_shutting_down() {
             return;
         }
         self.leave_topics();
@@ -855,7 +874,7 @@ impl AnyWebSocket {
             return self.fail(Failure::OutOfMemory);
         }
         // A Close frame would grow the buffer.
-        self.state().is_shutting_down.set(true);
+        self.state().phase.set(Phase::ShuttingDown);
         self.emit_failure(Failure::OutOfMemory);
         self.socket().close(CloseCode::failure);
     }
@@ -930,6 +949,11 @@ impl AnyWebSocket {
         while !input.is_empty() {
             let max_len = self.behavior().max_payload_length;
             let message = (reader.borrow_mut()).read_frame(&mut input, max_len, &mut room);
+            self.state().phase.set(if input.is_empty() {
+                Phase::Open
+            } else {
+                Phase::OpenWithUnreadFrames
+            });
             let Some(message) = message? else {
                 continue;
             };
@@ -972,14 +996,13 @@ impl AnyWebSocket {
                         (shared.decompressor.borrow_mut()).decompress(payload, &mut out, max_len)
                     }
                 };
-                let result = match result {
-                    Ok(()) => self.emit_message(&out, opcode),
-                    Err(InflateError::Corrupt) => Err(Failure::CompressedData),
-                    Err(InflateError::TooLarge) => Err(Failure::MessageTooBig),
-                    Err(InflateError::OutOfMemory) => return Err(Failure::OutOfMemory),
-                };
+                result.map_err(|error| match error {
+                    InflateError::Corrupt => Failure::CompressedData,
+                    InflateError::TooLarge => Failure::MessageTooBig,
+                    InflateError::OutOfMemory => Failure::OutOfMemory,
+                })?;
+                self.emit_message(&out, opcode)?;
                 shared.decompressed.set(out);
-                result?;
             }
             opcode => self.emit_message(payload, opcode)?,
         }
@@ -1025,8 +1048,12 @@ static VTABLE: VTable = VTable {
 extern "C" fn on_data(socket: *mut us_socket_t, data: *mut u8, len: c_int) -> *mut us_socket_t {
     let ws = AnyWebSocket(socket);
     let state = ws.state();
-    if state.is_shutting_down.get() {
-        return socket;
+    // SAFETY: the loop lends what it read for the call.
+    let data = unsafe { core::slice::from_raw_parts_mut(data, len as usize) };
+    match state.phase.get() {
+        Phase::Open => {}
+        Phase::OpenWithUnreadFrames => return on_data_before_unread_frames(ws, data),
+        Phase::ShuttingDown => return socket,
     }
     // The rest of a TLS read arrives after a pause too.
     if !ws.is_paused() {
@@ -1035,8 +1062,6 @@ extern "C" fn on_data(socket: *mut us_socket_t, data: *mut u8, len: c_int) -> *m
     state.has_timed_out.set(false);
 
     c::uws_socket_cork(ws.socket());
-    // SAFETY: the loop lends what it read for the call.
-    let data = unsafe { core::slice::from_raw_parts_mut(data, len as usize) };
     if let Err(failure) = ws.read(data) {
         state.reader.borrow_mut().release();
         match failure {
@@ -1046,6 +1071,26 @@ extern "C" fn on_data(socket: *mut us_socket_t, data: *mut u8, len: c_int) -> *m
     }
     c::uws_socket_uncork(ws.socket());
     socket
+}
+
+/// A handler runs the event loop. Only control frames may overtake the others.
+#[cold]
+fn on_data_before_unread_frames(ws: AnyWebSocket, data: &mut [u8]) -> *mut us_socket_t {
+    let (control_frames, rest) = data.split_at_mut(control_frames_len(data));
+    let failure = (rest.first()).map(|byte| Failure::Interleaved(Opcode::from_raw(byte & 0xf)));
+    ws.state().phase.set(Phase::Open);
+    on_data(
+        ws.0,
+        control_frames.as_mut_ptr(),
+        control_frames.len() as c_int,
+    );
+    if !ws.has_stopped_reading() {
+        ws.state().phase.set(Phase::OpenWithUnreadFrames);
+        if let Some(failure) = failure {
+            ws.fail(failure);
+        }
+    }
+    ws.0
 }
 
 extern "C" fn on_writable(socket: *mut us_socket_t) -> *mut us_socket_t {
@@ -1059,13 +1104,13 @@ extern "C" fn on_writable(socket: *mut us_socket_t) -> *mut us_socket_t {
     let after = ws.get_buffered_amount();
 
     if before == 0 || before > after {
-        if state.is_shutting_down.get() {
+        if state.is_shutting_down() {
             ws.set_timeout(ws.context().timeouts.get().answer);
         } else if !ws.is_paused() {
             ws.restart_idle_timeout();
         }
     }
-    if state.is_shutting_down.get() {
+    if state.is_shutting_down() {
         if after == 0 {
             ws.socket().shutdown();
         }
@@ -1085,7 +1130,7 @@ extern "C" fn on_close(
     let ws = AnyWebSocket(socket);
     let state = ws.state();
     c::uws_socket_on_upgraded_close(ws.socket());
-    if !state.is_shutting_down.get() {
+    if !state.is_shutting_down() {
         ws.leave_topics();
         let reason = if reason.is_null() {
             b""
@@ -1106,7 +1151,7 @@ extern "C" fn on_timeout(socket: *mut us_socket_t) -> *mut us_socket_t {
     let ws = AnyWebSocket(socket);
     let state = ws.state();
     if ws.behavior().send_pings_automatically
-        && !state.is_shutting_down.get()
+        && !state.is_shutting_down()
         && !state.has_timed_out.replace(true)
     {
         ws.set_timeout(ws.context().timeouts.get().answer);

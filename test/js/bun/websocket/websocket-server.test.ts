@@ -3989,6 +3989,49 @@ describe("a message that arrives while a handler runs the event loop", () => {
     expect(await client.roundTrip()).toEqual([]);
     expect(seen).toEqual(["first", "second"]);
   });
+
+  it.each([
+    ["a message does not overtake", frame(OP.text, "third"), ["first", "close 1006"]],
+    ["a Ping leaves alone", frame(OP.ping, ""), ["first", "ping", "second"]],
+    [
+      "a message behind a Ping does not overtake",
+      Buffer.concat([frame(OP.ping, ""), frame(OP.binary, "")]),
+      ["first", "ping", "close 1006"],
+    ],
+  ])("%s the frames that were read before it", async (_, bytes, expected) => {
+    const seen: string[] = [];
+    const arrived = Promise.withResolvers<void>();
+    const returned = Promise.withResolvers<void>();
+    function see(event: string) {
+      seen.push(event);
+      arrived.resolve();
+    }
+    using server = serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch: (req, server) => void server.upgrade(req),
+      websocket: {
+        message(_, message) {
+          if (seen.push(String(message)) > 1) return arrived.resolve();
+          // Or the client would read the answer.
+          client.socket.pause();
+          client.write(bytes);
+          Bun.build({
+            entrypoints: ["/a.js"],
+            files: { "/a.js": "" },
+            plugins: [{ name: "wait", setup: () => arrived.promise }],
+          });
+          setImmediate(returned.resolve);
+        },
+        ping: () => see("ping"),
+        close: (_, code) => see(`close ${code}`),
+      },
+    });
+    using client = await RawClient.upgrade(server.port!);
+    client.write(Buffer.concat([frame(OP.text, "first"), frame(OP.text, "second")]));
+    await returned.promise;
+    expect(seen).toEqual(expected);
+  });
 });
 
 describe.skipIf(!isASAN)("a handler closes a socket, then runs the event loop", () => {

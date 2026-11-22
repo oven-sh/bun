@@ -92,6 +92,20 @@ pub fn parse_close(payload: &[u8], validates_utf8: bool) -> Result<(u16, &[u8]),
     Ok((code, reason))
 }
 
+/// How many bytes at the start of `input` are whole control frames.
+pub fn control_frames_len(input: &[u8]) -> usize {
+    let mut rest = input;
+    while let Some(header) = rest
+        .first_chunk()
+        .map(|bytes| WebsocketHeader::from_slice(*bytes))
+        && header.opcode().is_control()
+        && let Some(next) = rest.get(WebsocketHeader::frame_size(header.len().into(), true)..)
+    {
+        rest = next;
+    }
+    input.len() - rest.len()
+}
+
 /// A whole message, or a control frame.
 pub struct Message<'a> {
     pub opcode: Opcode,

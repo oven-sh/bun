@@ -2,9 +2,9 @@ use std::borrow::Cow;
 use std::cell::RefCell;
 use std::mem::MaybeUninit;
 
-use bun_websocket::frame::{Opcode, write_unmasked_head};
+use bun_websocket::frame::{Flags, Opcode, write_unmasked_head};
 use bun_websocket::handshake::{has_broken_compression, negotiate_compression};
-use bun_websocket::reader::{ControlFrameRoom, Failure, Reader, parse_close};
+use bun_websocket::reader::{ControlFrameRoom, Failure, Reader, control_frames_len, parse_close};
 use bun_websocket::topics::{Message, Receiver, Topics};
 
 #[unsafe(no_mangle)]
@@ -252,6 +252,15 @@ mod reader {
     }
 
     #[test]
+    fn finds_the_end_of_control_frames() {
+        let control_frames = [frame(FIN | 9, b""), frame(FIN | 10, &bytes(125))].concat();
+        for rest in [&b""[..], &frame(FIN | 1, b""), &frame(FIN | 9, b"a")[..6]] {
+            let input = [&control_frames, rest].concat();
+            assert_eq!(control_frames_len(&input), control_frames.len());
+        }
+    }
+
+    #[test]
     fn parses_close_frames() {
         assert_eq!(parse_close(b"", false), Ok((1005, &b""[..])));
         assert_eq!(parse_close(b"\x03", false), Err(Failure::ClosePayload));
@@ -269,21 +278,25 @@ mod reader {
 
 #[test]
 fn writes_heads() {
-    for (opcode, len, is_compressed, is_final, expected) in [
-        (Opcode::Text, 0, false, true, &b"\x81\0"[..]),
-        (Opcode::Continue, 125, false, false, b"\0\x7d"),
-        (Opcode::Binary, 126, true, true, b"\xc2\x7e\0\x7e"),
-        (Opcode::Binary, 65535, false, true, b"\x82\x7e\xff\xff"),
+    for (opcode, len, flags, expected) in [
+        (Opcode::Text, 0, Flags::Final, &b"\x81\0"[..]),
+        (Opcode::Continue, 125, Flags::None, b"\0\x7d"),
+        (
+            Opcode::Binary,
+            126,
+            Flags::FinalCompressed,
+            b"\xc2\x7e\0\x7e",
+        ),
+        (Opcode::Binary, 65535, Flags::Final, b"\x82\x7e\xff\xff"),
         (
             Opcode::Text,
             65536,
-            false,
-            false,
+            Flags::None,
             b"\x01\x7f\0\0\0\0\0\x01\0\0",
         ),
     ] {
         let mut out = [core::mem::MaybeUninit::uninit(); 12];
-        let (head, rest) = write_unmasked_head(&mut out, opcode, len, is_compressed, is_final);
+        let (head, rest) = write_unmasked_head(&mut out, opcode, len, flags);
         assert_eq!((head, rest.len()), (expected, 12 - expected.len()));
     }
 }

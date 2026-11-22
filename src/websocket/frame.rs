@@ -195,14 +195,22 @@ impl WebsocketHeader {
     }
 }
 
+/// The FIN and RSV1 bits of a frame that a server sends.
+#[repr(u8)]
+#[derive(Clone, Copy)]
+pub enum Flags {
+    None = 0,
+    Final = 0x80,
+    FinalCompressed = 0xc0,
+}
+
 /// Writes what precedes `len` bytes that a server sends. Returns it, and the rest of `out`.
 #[inline]
 pub fn write_unmasked_head(
     out: &mut [MaybeUninit<u8>],
     opcode: Opcode,
     len: usize,
-    is_compressed: bool,
-    is_final: bool,
+    flags: Flags,
 ) -> (&[u8], &mut [MaybeUninit<u8>]) {
     fn write<const N: usize>(
         out: &mut [MaybeUninit<u8>],
@@ -212,10 +220,10 @@ pub fn write_unmasked_head(
         (head.write_copy_of_slice(&bytes), rest)
     }
 
-    let mut header = WebsocketHeader::new(WebsocketHeader::pack_length(len), false, opcode);
-    header.set_compressed(is_compressed);
-    header.set_final(is_final);
-    let [a, b] = header.0.to_be_bytes();
+    let [a, b] = [
+        flags as u8 | opcode as u8,
+        WebsocketHeader::pack_length(len),
+    ];
     let [c, d, e, f, g, h, i, j] = (len as u64).to_be_bytes();
     match WebsocketHeader::length_byte_count(len) {
         0 => write(out, [a, b]),

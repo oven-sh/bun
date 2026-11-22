@@ -177,47 +177,54 @@ test.concurrent.skipIf(!isMacOS || !cc)(
     const [compileErrors, compileExitCode] = await Promise.all([compile.stderr.text(), compile.exited]);
     if (compileExitCode !== 0) throw new Error(`could not compile reports-read-advice.c: ${compileErrors}`);
 
-    const out = path.join(String(dir), "compiled");
-    const build = Bun.spawnSync({
-      cmd: [bunExe(), "build", "--compile", path.join(String(dir), "entry.ts"), "--outfile", out],
-      env: bunEnv,
-      stderr: "pipe",
-      stdout: "pipe",
-    });
-    expect(build.stderr.toString()).not.toContain("error:");
-    expect(build.exitCode).toBe(0);
-
-    const inode = statSync(out, { bigint: true }).ino;
-    for (const [flag, advised] of [
-      [undefined, true],
-      ["1", false],
-    ] as const) {
-      await using proc = Bun.spawn({
-        cmd: [out],
-        env: { ...bunEnv, DYLD_INSERT_LIBRARIES: library, BUN_FEATURE_FLAG_DISABLE_STANDALONE_MADVISE: flag },
-        stdout: "pipe",
+    // What the executable loads at startup: the text of the entry point, or
+    // with --bytecode its bytecode, which holds the string and not the text.
+    const text = `// @bun\n// entry.ts\nconsole.log(${JSON.stringify(marker)});\n`;
+    for (const bytecode of [false, true]) {
+      const out = path.join(String(dir), bytecode ? "compiled-bytecode" : "compiled");
+      const build = Bun.spawnSync({
+        cmd: [bunExe(), "build", "--compile", ...(bytecode ? ["--bytecode"] : []), "entry.ts", "--outfile", out],
+        cwd: String(dir),
+        env: bunEnv,
         stderr: "pipe",
+        stdout: "pipe",
       });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(build.stderr.toString()).not.toContain("error:");
+      expect(build.exitCode).toBe(0);
 
-      const reported = /^F_RDADVISE inode=(\d+) offset=(\d+) count=(\d+)\n/gm;
-      const advice = await Promise.all(
-        Array.from(stderr.matchAll(reported), async ([, file, offset, count]) => ({
-          ofExecutable: BigInt(file) === inode,
-          // The text of the entry point is what this executable loads at startup.
-          holdsEntryPoint: (
-            await Bun.file(out)
-              .slice(Number(offset), Number(offset) + Number(count))
-              .text()
-          ).includes(marker),
-        })),
-      );
-      expect({ stdout, advice, stderr: stderr.replace(reported, ""), exitCode }).toEqual({
-        stdout: marker + "\n",
-        advice: advised ? [{ ofExecutable: true, holdsEntryPoint: true }] : [],
-        stderr: "",
-        exitCode: 0,
-      });
+      const inode = statSync(out, { bigint: true }).ino;
+      for (const [flag, advised] of [
+        [undefined, true],
+        ["1", false],
+      ] as const) {
+        await using proc = Bun.spawn({
+          cmd: [out],
+          env: { ...bunEnv, DYLD_INSERT_LIBRARIES: library, BUN_FEATURE_FLAG_DISABLE_STANDALONE_MADVISE: flag },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+        const reported = /^F_RDADVISE inode=(\d+) offset=(\d+) count=(\d+)\n/gm;
+        const advice = await Promise.all(
+          Array.from(stderr.matchAll(reported), async ([, file, offset, count]) => {
+            const range = Bun.file(out).slice(Number(offset), Number(offset) + Number(count));
+            const read = await range.text();
+            return {
+              ofExecutable: BigInt(file) === inode,
+              read: bytecode ? { string: read.includes(marker), text: read.includes(JSON.stringify(marker)) } : read,
+            };
+          }),
+        );
+        expect({ bytecode, flag, stdout, advice, stderr: stderr.replace(reported, ""), exitCode }).toEqual({
+          bytecode,
+          flag,
+          stdout: marker + "\n",
+          advice: advised ? [{ ofExecutable: true, read: bytecode ? { string: true, text: false } : text }] : [],
+          stderr: "",
+          exitCode: 0,
+        });
+      }
     }
   },
   30_000,

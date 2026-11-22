@@ -545,6 +545,28 @@ test.if(process.platform === "darwin")("macOS has the assumed image offset with 
   });
 });
 
+test.if(process.platform === "darwin")("the trace string is the same with a library inserted", async () => {
+  // Taken for another image, each frame of bun is written as unknown.
+  const [plain, inserted] = await Promise.all(
+    [undefined, "/usr/lib/libz.1.dylib"].map(async library => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          path.join(import.meta.dir, "fixture-crash.js"),
+          "panic",
+          "--debug-crash-handler-use-trace-string",
+        ],
+        env: { ...noReportEnv, DYLD_INSERT_LIBRARIES: library },
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const [, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      // The link ends with "invoked crashByPanic() handler" as a zlib stream.
+      return stderr.match(/^ (\S+A0eNrLzCvLz05NUUguSizOcKoMSMzLTNbQVMhIzEvJSS0CAK\/LCxc)$/m)?.[1];
+    }),
+  );
+  expect({ plain: typeof plain, inserted }).toEqual({ plain: "string", inserted: plain });
+});
+
 test("raise ignoring panic handler does not trigger the panic handler", async () => {
   let sent = false;
   const resolve_handler = Promise.withResolvers();

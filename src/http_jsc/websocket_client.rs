@@ -92,8 +92,7 @@ enum Transport {
     /// `self.tcp`. Every transport is reset to this once the connection closes, with `tcp` detached.
     Socket,
     /// wss:// through an HTTP proxy. The tunnel handles TLS, so this is only used with SSL=false.
-    /// Holds one ref, released in `clear_data`.
-    Tunnel(RefPtr<WebSocketProxyTunnel>),
+    Tunnel(bun_ptr::Attached<WebSocketProxyTunnel>),
     /// A JS stream. Writes go through C++, which always accepts the whole buffer.
     /// Reads arrive through `feed`. C++ holds the only ref on this client.
     Stream,
@@ -287,10 +286,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         self.message_is_compressed.set(false);
         self.deflate.replace(None);
         drop(self.secure.take());
-        // Detach the tunnel first so its shutdown callbacks cannot re-enter this path.
         if let Transport::Tunnel(tunnel) = self.transport.replace(Transport::Socket) {
-            tunnel.clear_connected_web_socket();
-            WebSocketProxyTunnel::shutdown(&tunnel);
             drop(tunnel);
             // Release the I/O-layer ref taken in init_with_tunnel() — the
             // tunnel was this struct's socket-equivalent owner. In the
@@ -1695,7 +1691,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             deflate_params,
             None,
             &[],
-            Transport::Tunnel(RefPtr::from_this(tunnel)),
+            Transport::Tunnel(RefPtr::from_this(tunnel).into()),
             options,
         );
 

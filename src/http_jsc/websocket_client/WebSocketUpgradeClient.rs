@@ -1607,15 +1607,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
             self.hostname.set(ZBox::default());
         }
 
-        // Clean up proxy state. Null the field and detach the tunnel's
-        // back-reference before deinit so that SSLWrapper shutdown callbacks
-        // cannot re-enter clear_data() while the proxy is still reachable.
-        if let Some(proxy) = self.proxy.replace(None) {
-            if let Some(tunnel) = proxy.get_tunnel() {
-                tunnel.detach_upgrade_client();
-            }
-            drop(proxy);
-        }
+        self.proxy.set(None);
         self.ssl_config.set(None);
         // secure: Option<OwnedSslCtx> — Drop releases the ref taken in `connect`.
         self.secure.set(None);

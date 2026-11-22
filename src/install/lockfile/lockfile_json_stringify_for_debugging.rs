@@ -194,8 +194,7 @@ where
         let hoisted_deps = this.buffers.hoisted_dependencies.as_slice();
         let resolutions = this.buffers.resolutions.as_slice();
         let mut depth_buf = tree::depth_buf_uninit();
-        let mut path_buf = bun_paths::path_buffer_pool::get();
-        path_buf[..b"node_modules".len()].copy_from_slice(b"node_modules");
+        let mut path_buf = bun_paths::Path::new();
 
         for tree_id in 0..this.buffers.trees.len() {
             w.begin_object()?;
@@ -217,16 +216,7 @@ where
                 );
 
             w.object_field(b"path")?;
-            w.print(format_args!(
-                "\"{}\"",
-                bun_fmt::fmt_path(
-                    relative_path,
-                    bun_fmt::PathFormatOptions {
-                        path_sep: bun_fmt::PathSep::Posix,
-                        ..Default::default()
-                    },
-                )
-            ))?;
+            w.write(&*bun_paths::to_portable(relative_path))?;
 
             w.object_field(b"depth")?;
             w.write(depth)?;
@@ -305,10 +295,10 @@ where
                 w.write(res.tag.name().unwrap_or("").as_bytes())?;
 
                 w.object_field(b"value")?;
-                w.print(format_args!("\"{}\"", res.fmt(sb, bun_fmt::PathSep::Posix)))?;
+                w.write(res.fmt(sb, bun_fmt::PathSep::Posix).to_string().as_bytes())?;
 
                 w.object_field(b"resolved")?;
-                w.print(format_args!("\"{}\"", res.fmt_url(sb)))?;
+                w.write(res.fmt_url(sb).to_string().as_bytes())?;
 
                 let _ = w.end_object();
             }

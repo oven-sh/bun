@@ -189,6 +189,10 @@ unsafe extern "C" {
         key_length: usize,
         value: JSValue,
     ) -> bool;
+    pub(super) safe fn Bun__Bindgen__tryCopyString(
+        global: &JSGlobalObject,
+        text: &bun_core::EncodedSlice<'_>,
+    ) -> JSValue;
     pub(super) fn Bun__Bindgen__constructorForClass(
         global: &JSGlobalObject,
         class_index: u32,

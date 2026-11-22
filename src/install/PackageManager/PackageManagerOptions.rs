@@ -8,6 +8,7 @@ use super::Subcommand;
 use super::command_line_arguments::{self, CommandLineArguments};
 use bun_dotenv::Loader as DotEnvLoader;
 use bun_install::{Features, Npm};
+use bun_paths::Path;
 
 /// Network policy for this install.
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
@@ -616,16 +617,20 @@ fn make_open_dir(path: &[u8]) -> crate::Result<bun_sys::Fd> {
         .map_err(Into::into)
 }
 
-/// Opens `<base>/<parts...>`. `base` comes from the environment and can have any length.
-fn make_open_dir_under(base: &[u8], parts: &[&[u8]]) -> crate::Result<bun_sys::Fd> {
-    use bun_paths::{platform, resolve_path::join_abs_string_buf_checked};
+/// Opens `<dir>/<subdir>`. `dir` comes from the environment and can have any length.
+fn make_open_dir_under(dir: &[u8], subdir: &[u8]) -> crate::Result<bun_sys::Fd> {
+    make_open_dir(&Path::resolve(&[dir, subdir]).check_len()?)
+}
 
-    let base = expand_home(base);
-    let mut buf = bun_paths::path_buffer_pool::get();
-    let Some(path) = join_abs_string_buf_checked::<platform::Auto>(&base, &mut buf.0, parts) else {
-        return Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
-    };
-    make_open_dir(path)
+/// `None` for a relative value, which would let the working directory choose.
+fn usable(dir: &[u8]) -> Option<Box<[u8]>> {
+    let dir = directory_from_env(dir);
+    bun_paths::is_absolute(&dir).then_some(dir)
+}
+
+/// Bun creates names below it, so what exists cannot decide what a `\` means.
+pub(crate) fn directory_from_env(dir: &[u8]) -> Box<[u8]> {
+    expand_home(&bun_paths::portable::from_portable_rooted(dir))
 }
 
 pub fn open_global_dir(explicit_global_dir: &[u8]) -> crate::Result<bun_sys::Fd> {
@@ -637,15 +642,15 @@ pub fn open_global_dir(explicit_global_dir: &[u8]) -> crate::Result<bun_sys::Fd>
         return make_open_dir(explicit_global_dir);
     }
 
-    if let Some(home_dir) = env_var::BUN_INSTALL.get() {
-        return make_open_dir_under(home_dir, &[b"install", b"global"]);
+    if let Some(home_dir) = env_var::BUN_INSTALL.get_not_empty() {
+        let home_dir = usable(home_dir).ok_or(crate::Error::RelativeBunInstall)?;
+        return make_open_dir_under(&home_dir, b"install/global");
     }
 
-    if let Some(home_dir) = env_var::XDG_CACHE_HOME
-        .get()
-        .or_else(|| env_var::HOME.get())
+    if let Some(home_dir) = (env_var::XDG_CACHE_HOME.get().and_then(usable))
+        .or_else(|| env_var::HOME.get().and_then(usable))
     {
-        return make_open_dir_under(home_dir, &[b".bun", b"install", b"global"]);
+        return make_open_dir_under(&home_dir, b".bun/install/global");
     }
 
     Err(crate::Error::NoGlobalDirectoryFound)
@@ -663,15 +668,15 @@ pub(crate) fn open_global_bin_dir(opts_: Option<&Api::BunInstall>) -> crate::Res
         return make_open_dir(home_dir);
     }
 
-    if let Some(home_dir) = env_var::BUN_INSTALL.get() {
-        return make_open_dir_under(home_dir, &[b"bin"]);
+    if let Some(home_dir) = env_var::BUN_INSTALL.get_not_empty() {
+        let home_dir = usable(home_dir).ok_or(crate::Error::RelativeBunInstall)?;
+        return make_open_dir_under(&home_dir, b"bin");
     }
 
-    if let Some(home_dir) = env_var::XDG_CACHE_HOME
-        .get()
-        .or_else(|| env_var::HOME.get())
+    if let Some(home_dir) = (env_var::XDG_CACHE_HOME.get().and_then(usable))
+        .or_else(|| env_var::HOME.get().and_then(usable))
     {
-        return make_open_dir_under(home_dir, &[b".bun", b"bin"]);
+        return make_open_dir_under(&home_dir, b".bun/bin");
     }
 
     Err(crate::Error::MissingGlobalBinDirectoryTrySettingBUNINSTALL)

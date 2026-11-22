@@ -18,7 +18,6 @@ use bun_alloc::Arena;
 use bun_ast::Index;
 use bun_bundler::{BundleV2, Transpiler};
 use bun_collections::{DynamicBitSet, StringHashMap, StringSet};
-use bun_core::PathBuffer as CorePathBuffer;
 use bun_core::strings;
 use bun_core::{self, Global, Output, ZBox, env_var, fmt as bun_fmt};
 #[cfg(not(windows))]
@@ -26,9 +25,6 @@ use bun_core::{ZStr, getenv_z};
 #[cfg(windows)]
 use bun_jsc::EventLoopHandle;
 use bun_jsc::virtual_machine::VirtualMachine;
-#[cfg(not(windows))]
-use bun_paths::SEP;
-use bun_paths::{self, platform, resolve_path};
 use bun_ptr::Interned;
 #[cfg(not(windows))]
 use bun_resolver::fs::RealFS;
@@ -327,19 +323,12 @@ pub(crate) fn init_watch_trigger() -> Option<ZBox> {
             let mut rand = [0u8; 16];
             bun_boringssl_sys::rand_bytes(&mut rand);
             let tmpdir = RealFS::tmpdir_path();
-            let mut fresh: Vec<u8> = Vec::new();
-            {
-                use std::io::Write as _;
-                write!(
-                    &mut fresh,
-                    "{}{}.bun-test-changed-{}.trigger",
-                    BStr::new(strings::without_trailing_slash(tmpdir)),
-                    SEP as char,
-                    bun_fmt::hex_lower(&rand),
-                )
-                .expect("unreachable");
-            }
-            let fresh = ZBox::from_vec(fresh);
+            let mut fresh = bun_paths::Path::from(tmpdir);
+            fresh.push_fmt(format_args!(
+                ".bun-test-changed-{}.trigger",
+                bun_fmt::hex_lower(&rand)
+            ));
+            let fresh = fresh.to_zbox();
             // Export once so every exec()'d descendant inherits the same
             // path. Adding (not removing) an env var is safe w.r.t.
             // the environ snapshot; it simply won't be visible to code that
@@ -423,13 +412,7 @@ fn get_changed_files(
     top_level_dir: &[u8],
     since: &[u8],
 ) -> core::result::Result<StringSet, GitError> {
-    let mut which_buf = CorePathBuffer([0u8; bun_core::MAX_PATH_BYTES]);
-    let Some(git_path) = which(
-        &mut which_buf,
-        env_var::PATH.get().unwrap_or(b""),
-        top_level_dir,
-        b"git",
-    ) else {
+    let Some(git_path) = &which(env_var::PATH.get().unwrap_or(b""), top_level_dir, b"git") else {
         return Err(GitError::GitNotFound);
     };
 
@@ -605,21 +588,17 @@ fn run_git(git_path: &[u8], cwd: &[u8], args: &[&[u8]]) -> GitResult {
 /// Parse newline-delimited repo-relative paths from git output, join each
 /// with the repository root, and insert existing files into `set`.
 fn append_paths(set: &mut StringSet, git_root: &[u8], stdout: &[u8]) {
-    let mut buf = bun_paths::path_buffer_pool::get();
     for line in strings::tokenize_any(stdout, b"\r\n") {
         let rel = strings::trim(line, b" \t");
         if rel.is_empty() {
             continue;
         }
-        let abs = resolve_path::join_abs_string_buf::<platform::Auto>(git_root, &mut buf.0, &[rel]);
+        let abs = bun_paths::Path::resolve(&[git_root, rel]);
         // Skip deletions; the bundler can only parse files that exist.
-        if !sys::exists(abs) {
+        if !sys::exists_z(&abs) {
             continue;
         }
-        // `StringSet.insert` dupes the key internally; abort on OOM rather
-        // than propagating so the set can never be left holding a pointer
-        // into our stack `buf` on the errdefer cleanup path.
-        let _ = set.insert(abs); // OOM-only Result
+        let _ = set.insert(&abs); // OOM-only Result
     }
 }
 

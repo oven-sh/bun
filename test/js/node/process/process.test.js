@@ -344,6 +344,17 @@ it("process.env defineProperty routes through the env setter for accessor-backed
   expect({ ny, utcAgain, exitCode }).toEqual({ ny: (utc + 24 - 5) % 24, utcAgain: utc, exitCode: 0 });
 });
 
+it.if(isWindows)("process.chdir() to the root of a share", () => {
+  const cwd = process.cwd();
+  const share = `\\\\LOCALHOST\\${import.meta.path[0]}$`;
+  try {
+    process.chdir(share);
+    expect(process.cwd()).toBe(share);
+  } finally {
+    process.chdir(cwd);
+  }
+});
+
 it("process.chdir() on root dir", () => {
   const cwd = process.cwd();
   try {

@@ -4008,6 +4008,21 @@ it("clientError after a kept-alive request reuses the connection's socket and un
   }
 });
 
+it("rawPacket of 'clientError' has the method of a dispatched request as it was sent", async () => {
+  const payload = "POST / HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n\r\nzz\r\n";
+  await using server = createServer(req => req.resume());
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const errors: unknown[] = [];
+  server.on("clientError", (error: any, serverSocket) => {
+    errors.push({ code: error.code, rawPacket: String(error.rawPacket) });
+    serverSocket.end();
+  });
+  const socket = connect((server.address() as AddressInfo).port, "127.0.0.1");
+  socket.end(payload);
+  await once(socket.resume(), "close");
+  expect(errors).toEqual([{ code: "HPE_INVALID_CHUNK_SIZE", rawPacket: payload }]);
+});
+
 describe("malformed request line reaches 'connection' and 'clientError' with a writable socket", () => {
   it.each([
     ["method token followed by CRLF", "BOGUS\r\n\r\n"],
@@ -4016,6 +4031,7 @@ describe("malformed request line reaches 'connection' and 'clientError' with a w
     ["CONNECT-prefixed token followed by CRLF", "CONNECTX\r\n\r\n"],
     ["single method char followed by CRLF", "G\r\n\r\n"],
     ["single method char with full line", "G / HTTP/1.1\r\nHost: localhost\r\n\r\n"],
+    ["byte above 0x7f in the method", "G\u00c9T / HTTP/1.1\r\nHost: localhost\r\n\r\n"],
   ])("%s", async (_name, payload) => {
     const events: string[] = [];
     const { promise: errored, resolve: onErrored, reject: onErroredFail } = Promise.withResolvers<void>();

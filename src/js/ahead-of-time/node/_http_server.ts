@@ -1181,7 +1181,7 @@ Server.prototype[kRealListen] = function (
       bunServer: $Node.NativeHTTPServer,
       url: string,
       method: string,
-      // Native dispatch bitfield (kDispatch* in NodeHTTP.cpp): presence and token bits for the headers the dispatcher consults, so no header object or array is materialized unless user code reads them.
+      // Native dispatch bitfield (Dispatch in NodeHTTPResponse.rs): presence and token bits for the headers the dispatcher consults, so no header object or array is materialized unless user code reads them.
       dispatchBits: number,
       handle: $Node.NodeHTTPResponse,
       hasBody: boolean,
@@ -1628,7 +1628,7 @@ Server.prototype[kRealListen] = function (
         bunServer: $Node.NativeHTTPServer,
         url: string,
         method: string,
-        // Native dispatch bitfield (kDispatch* in NodeHTTP.cpp): presence and token bits for the headers the dispatcher consults, so no header object or array is materialized unless user code reads them.
+        // Native dispatch bitfield (Dispatch in NodeHTTPResponse.rs): presence and token bits for the headers the dispatcher consults, so no header object or array is materialized unless user code reads them.
         dispatchBits: number,
         handle: $Node.NodeHTTPResponse,
         hasBody: boolean,
@@ -2042,7 +2042,7 @@ function onServerRequestEvent(this: $Node.HttpServerSocket, event: NodeHTTPRespo
     }
   }
 }
-// uWS::HttpParserError
+// RequestError in src/http1/request/error.rs
 enum HttpParserError {
   HTTP_PARSER_ERROR_NONE = 0,
   HTTP_PARSER_ERROR_INVALID_CHUNKED_ENCODING = 1,
@@ -4499,7 +4499,7 @@ const RE_CONN_CLOSE = /(?:^|\W)close(?:$|\W)/i;
 const enum DispatchBits {
   // Native dispatch bitfield: presence/token bits for the request headers the
   // dispatcher consults, computed in one native pass over the raw headers
-  // (kDispatch* in src/jsc/bindings/NodeHTTP.cpp - keep in sync). This is what
+  // (Dispatch in src/runtime/server/NodeHTTPResponse.rs - keep in sync). This is what
   // lets the framework never materialize req.headers/req.rawHeaders unless
   // user code reads them.
   conn_close = 1 << 0,

@@ -50,3 +50,12 @@ pub(crate) static LINE: ByteSet = ByteSet::new(&[0..=9, 11..=12, 14..=0xff]);
 
 /// All but CR, LF and NUL: <https://fetch.spec.whatwg.org/#header-value>
 pub(crate) static RELAXED_CONTENT: ByteSet = ByteSet::new(&[1..=9, 11..=12, 14..=0xff]);
+
+/// [`CONTENT`] and DEL.
+pub(crate) static CONTENT_OR_DELETE: ByteSet = ByteSet::new(&[b'\t'..=b'\t', b' '..=0xff]);
+
+pub(crate) static ABOVE_SPACE: ByteSet = ByteSet::new(core::slice::from_ref(&(b'!'..=0xff)));
+
+pub(crate) static METHOD: ByteSet = ByteSet::new(&[b'-'..=b'-', b'A'..=b'Z', b'a'..=b'z']);
+
+pub(crate) static UPPERCASE_METHOD: ByteSet = ByteSet::new(&[b'-'..=b'-', b'A'..=b'Z']);

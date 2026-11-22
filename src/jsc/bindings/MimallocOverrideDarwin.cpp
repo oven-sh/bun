@@ -58,9 +58,7 @@ NEVER_INLINE void* moveSystemBlock(void* block, size_t newSize)
     return result;
 }
 
-// malloc_zone_memalign returns null for an alignment below sizeof(void*). operator new takes every power of two, so
-// libc++'s raises such an alignment to sizeof(void*) before it asks, and so does this. llvm::allocate_buffer passes
-// alignof(Bucket): 4 for a DenseMap of ints.
+// malloc_zone_memalign returns null for an alignment below sizeof(void*), which llvm::allocate_buffer passes.
 ALWAYS_INLINE void* allocateAlignedSystemBlock(size_t size, std::align_val_t alignment)
 {
     return malloc_zone_memalign(malloc_default_zone(), std::max(static_cast<size_t>(alignment), sizeof(void*)), size);

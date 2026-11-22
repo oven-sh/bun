@@ -22,6 +22,7 @@ use core::marker::PhantomData;
 use core::mem::{ManuallyDrop, MaybeUninit};
 use core::ptr::NonNull;
 
+use bun_core::heap;
 use bun_event_loop::ConcurrentTask::ConcurrentTask;
 use bun_io::{JsKeepAlive, KeepAlive};
 use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
@@ -207,6 +208,8 @@ pub trait JobContext: Sized + 'static {
 /// What a [`Job`] runs. Implement it for a job that moves between threads and can wait on
 /// something external; [`JobContext`] is the short form for the others.
 pub trait OwnedJob: Sized + 'static {
+    /// What [`run`](Self::run) or [`unrun`](Self::unrun) uses up.
+    type Start: Send;
     type OffThread: Send;
     type Js: JsAffine;
     type Outcome: Send;
@@ -216,10 +219,10 @@ pub trait OwnedJob: Sized + 'static {
     /// As [`JobContext::OUTLIVES_SCRIPT`].
     const OUTLIVES_SCRIPT: bool;
 
-    /// As [`JobContext::run`].
-    fn run(job: Running<Self>);
+    /// Pool thread, unless the VM is in its final wait.
+    fn run(job: Running<Self>, start: Self::Start);
     /// Of a job that is handed back without `run`.
-    fn unrun() -> Self::Outcome;
+    fn unrun(start: Self::Start) -> Self::Outcome;
     /// As [`JobContext::then`].
     fn then(
         off: Self::OffThread,
@@ -233,20 +236,21 @@ pub trait OwnedJob: Sized + 'static {
 }
 
 impl<C: JobContext> OwnedJob for C {
+    type Start = ();
     type OffThread = C::OffThread;
     type Js = C::Js;
     type Outcome = ();
     const CANCELLABLE: bool = false;
     const OUTLIVES_SCRIPT: bool = <C as JobContext>::OUTLIVES_SCRIPT;
 
-    fn run(job: Running<Self>) {
+    fn run(job: Running<Self>, (): ()) {
         // SAFETY: as `Running::off`, which a `Completion` does not offer.
         let off = unsafe { &mut (*job.job.as_ptr()).off };
         if let Some(done) = <C as JobContext>::run(off, Completion(job)) {
             done.finish();
         }
     }
-    fn unrun() {}
+    fn unrun((): ()) {}
     fn then(off: C::OffThread, (): (), js: C::Js, cx: &JsThread<'_>) -> JsResult<()> {
         <C as JobContext>::then(off, js, cx)
     }
@@ -338,9 +342,9 @@ pub struct Job<C: OwnedJob> {
     /// First (asserted at the bottom of the file): erased dispatch casts
     /// `*mut Job<C>` to `*mut JobHeader`.
     header: JobHeader,
-    /// Moved into the [`Running`] when the pool picks the job up; `None`
-    /// from then on (never touched on the JS side).
-    ticket: Option<Ticket>,
+    /// Moved out when the pool picks the job up; `None` from then on (never
+    /// touched on the JS side).
+    start: Option<(Ticket, C::Start)>,
     task: WorkPoolTask,
     /// What [`Running::finish`] queues on the JS thread.
     concurrent_task: ConcurrentTask,
@@ -365,11 +369,19 @@ impl<C: OwnedJob> bun_event_loop::Taskable for Job<C> {
     }
 }
 
-impl<C: OwnedJob> Job<C> {
+impl<C: JobContext> Job<C> {
     /// JS thread: build the job, keep the loop alive for it, hand it to the pool.
     #[track_caller]
     pub fn schedule(cx: &JsThread<'_>, off: C::OffThread, js: C::Js) {
-        let job = bun_core::heap::into_raw(Box::new(Self {
+        Self::schedule_owned(cx, (), off, js);
+    }
+}
+
+impl<C: OwnedJob> Job<C> {
+    /// As [`schedule`](Self::schedule).
+    #[track_caller]
+    pub fn schedule_owned(cx: &JsThread<'_>, start: C::Start, off: C::OffThread, js: C::Js) {
+        let job = heap::into_raw(Box::new(Self {
             header: JobHeader {
                 // SAFETY: (this and the entry below) the erased dispatchers are
                 // only reached through this header, so `p` is this `Job<C>`.
@@ -389,7 +401,7 @@ impl<C: OwnedJob> Job<C> {
                 },
                 generation: cx.vm().test_isolation_generation.get(),
             },
-            ticket: Some(cx.vm().ticket()),
+            start: Some((cx.vm().ticket(), start)),
             task: WorkPoolTask {
                 node: Default::default(),
                 callback: Self::run_on_pool,
@@ -415,15 +427,15 @@ impl<C: OwnedJob> Job<C> {
         let this: *mut Self = unsafe { bun_core::from_field_ptr!(Self, task, task) };
         // SAFETY: live job, exclusively the pool's for this callback; the
         // ticket leaves the job here, for good.
-        let ticket = unsafe { (*this).ticket.take().expect("job") };
+        let (ticket, start) = unsafe { (*this).start.take().expect("job") };
         let job = Running {
             job: NonNull::new(this).expect("job"),
             ticket,
         };
         if job.ticket.cancelled() {
-            return job.finish(C::unrun());
+            return job.finish(C::unrun(start));
         }
-        C::run(job);
+        C::run(job, start);
     }
 
     /// JS thread: reclaim a posted job and drop its keep-alive; the parts
@@ -433,8 +445,7 @@ impl<C: OwnedJob> Job<C> {
     /// `this` is the job its `Running` posted; called once, on `vm`'s thread.
     unsafe fn take(this: *mut Self, vm: &VirtualMachine) -> (C::OffThread, C::Outcome, C::Js) {
         // SAFETY: fn contract.
-        let (outcome, mut job) =
-            unsafe { ((*this).outcome.assume_init_read(), Box::from_raw(this)) };
+        let (outcome, mut job) = unsafe { ((*this).outcome.assume_init_read(), heap::take(this)) };
         if C::CANCELLABLE {
             vm.jobs.with_mut(|j| j.unlink(&raw mut job.header));
         }

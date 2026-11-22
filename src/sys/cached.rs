@@ -9,11 +9,11 @@ use crate::{CloseOnDrop, Fd, O, PosixStat};
 
 bun_core::declare_scope!(fs_cached, hidden);
 
-/// Whether the last component of the path is followed if it is a symlink.
+/// Whether the walk follows symlinks, as `stat` does, or must meet none: `lstat` of a symlink is not answered here.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Symlink {
     Follow,
-    NoFollow,
+    Refuse,
 }
 
 /// Why [`stat`] has no attributes to give.
@@ -22,6 +22,8 @@ pub enum NoStat {
     NotFound,
     /// The kernel was asked and cannot tell without a wait: not cached, a mount point on the way, or a symlink it must read.
     Unknown,
+    /// The kernel refuses this path each time it is asked: a symlink where the walk may meet none.
+    Refused,
     /// The kernel was not asked: the walk would not start on a mount that answers from memory.
     NotAsked,
 }
@@ -39,11 +41,12 @@ pub fn is_available() -> bool {
 }
 
 fn open(path: &ZStr, symlink: Symlink, resolve: ResolveFlags) -> Result<Fd, i32> {
-    let nofollow = match symlink {
-        Symlink::Follow => 0,
-        Symlink::NoFollow => O::NOFOLLOW,
+    // `statx` of a symlink can read the disk (fscrypt decrypts the link for its size), so no descriptor of one is opened.
+    let resolve = match symlink {
+        Symlink::Follow => resolve,
+        Symlink::Refuse => resolve | ResolveFlags::NO_SYMLINKS,
     };
-    linux_syscall::openat2(Fd::cwd(), path, O::PATH | O::CLOEXEC | nofollow, 0, resolve)
+    linux_syscall::openat2(Fd::cwd(), path, O::PATH | O::CLOEXEC, 0, resolve)
 }
 
 /// In blocks of 512 bytes: what a `close` here may free of a file removed meanwhile (0.1 ms per MiB, more if the journal is busy).
@@ -59,16 +62,26 @@ pub fn stat(
     if !is_available() || !crate::SUPPORTS_STATX_ON_LINUX.load(Ordering::Relaxed) {
         return Err(NoStat::NotAsked);
     }
-    let (start, generation) = match path.as_bytes().first() {
-        Some(b'/') => (&ROOT, 0),
-        _ => (&CWD, CWD_GENERATION.load(Ordering::SeqCst)),
+    let is_relative = path.as_bytes().first() != Some(&b'/');
+    let (start, generation) = match is_relative {
+        false => (&ROOT, 0),
+        true => (&CWD, CWD_GENERATION.load(Ordering::SeqCst)),
     };
     let Mount::InMemory(mount) = start.load(generation) else {
         return Err(NoStat::NotAsked);
     };
-    let file = match open(path, symlink, ResolveFlags::CACHED | ResolveFlags::NO_XDEV) {
+    let opened = open(path, symlink, ResolveFlags::CACHED | ResolveFlags::NO_XDEV);
+    // Another thread changes the working directory: the walk may have started in the new one.
+    if is_relative && CWD_GENERATION.load(Ordering::SeqCst) != generation {
+        if let Ok(fd) = opened {
+            close_elsewhere(fd);
+        }
+        return Err(NoStat::Unknown);
+    }
+    let file = match opened {
         Ok(fd) => CloseOnDrop::new(fd),
         Err(libc::ENOENT) => return Err(NoStat::NotFound),
+        Err(libc::ELOOP) if symlink == Symlink::Refuse => return Err(NoStat::Refused),
         Err(libc::ENOSYS) => {
             // A seccomp policy that came after `learn_mounts`.
             AVAILABILITY.store(UNAVAILABLE, Ordering::Relaxed);
@@ -141,7 +154,7 @@ impl Start {
     }
 
     /// Classifies the mount of `directory` if that is still to do. Three calls in a row that cannot tell make it `Other`.
-    fn learn(&self, generation: impl Fn() -> u32, directory: &ZStr, root: Option<Mount>) {
+    fn learn(&self, generation: fn() -> u32, directory: &ZStr, root: Option<Mount>) {
         let before = generation();
         if self.load(before) != Mount::Unknown {
             return;
@@ -164,8 +177,8 @@ static CWD: Start = Start(AtomicU64::new(0), AtomicU8::new(0));
 /// Counts the changes of the working directory: what [`CWD`] learned before one is void.
 static CWD_GENERATION: AtomicU32 = AtomicU32::new(0);
 
-/// After `chdir` has succeeded.
-pub(crate) fn working_directory_changed() {
+/// Before `chdir` and after it: a walk that starts between the two does not count for either directory.
+pub(crate) fn working_directory_changes() {
     CWD_GENERATION.fetch_add(1, Ordering::SeqCst);
 }
 
@@ -217,13 +230,8 @@ fn is_transient(errno: i32) -> bool {
 
 /// `None`: could not tell this time.
 fn kernel_honours_resolve_cached() -> Option<bool> {
-    use bun_core::env_var::feature_flag::{
-        BUN_FEATURE_FLAG_DISABLE_ASYNC_FS_FAST_PATH as DISABLED,
-        BUN_FEATURE_FLAG_EXPERIMENTAL_ASYNC_FS_FAST_PATH as EXPERIMENTAL,
-    };
-    let enabled =
-        bun_core::env::IS_CANARY || bun_core::env::IS_DEBUG || EXPERIMENTAL.get().unwrap_or(false);
-    if !enabled || DISABLED.get().unwrap_or(false) {
+    use bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_EXPERIMENTAL_ASYNC_FS_FAST_PATH as ENABLED;
+    if !ENABLED.get().unwrap_or(false) {
         return Some(false);
     }
     // Fails without `openat2` (before Linux 5.6, Android, seccomp) and without `RESOLVE_CACHED` (before 5.12).
@@ -240,7 +248,7 @@ fn kernel_honours_resolve_cached() -> Option<bool> {
     }
     match open(
         ZStr::from_slice_with_nul(&name),
-        Symlink::NoFollow,
+        Symlink::Follow,
         ResolveFlags::CACHED,
     ) {
         Ok(fd) => {
@@ -268,6 +276,29 @@ fn classify(directory: &ZStr, root: Option<Mount>) -> Result<Mount, Unclassified
         Ok(fd) => CloseOnDrop::new(fd),
         Err(err) => return this_time(i32::from(err.errno)),
     };
+    // The driver first: `statx` of a directory on NFS or 9p can wait for its server.
+    let mount = match mount_of(plain.fd()) {
+        Ok(Some(mount)) => mount,
+        Ok(None) => return Ok(Mount::Other),
+        Err(errno) => return this_time(errno),
+    };
+    if root != Some(Mount::InMemory(mount)) {
+        let table = match crate::File::read_from(Fd::cwd(), b"/proc/self/mountinfo") {
+            Ok(table) => table,
+            Err(err) => return this_time(i32::from(err.errno)),
+        };
+        let filesystem = filesystem_of(&table, mount).unwrap_or_default();
+        bun_core::scoped_log!(
+            fs_cached,
+            "{} is on mount {} ({})",
+            bstr::BStr::new(directory.as_bytes()),
+            mount,
+            bstr::BStr::new(filesystem)
+        );
+        if !answers_from_memory(filesystem) {
+            return Ok(Mount::Other);
+        }
+    }
     let resolve = ResolveFlags::CACHED | ResolveFlags::NO_XDEV;
     let cached = match open(directory, Symlink::Follow, resolve) {
         Ok(fd) => CloseOnDrop::new(fd),
@@ -283,26 +314,30 @@ fn classify(directory: &ZStr, root: Option<Mount>) -> Result<Mount, Unclassified
     if (cached.1, cached.0.dev, cached.0.ino) != (plain.1, plain.0.dev, plain.0.ino) {
         return Err(Unclassified::Translated);
     }
-    let Ok(mount) = u32::try_from(plain.1) else {
-        return Ok(Mount::Other);
-    };
-    if root != Some(Mount::InMemory(mount)) {
-        let Ok(table) = crate::File::read_from(Fd::cwd(), b"/proc/self/mountinfo") else {
-            return Ok(Mount::Other);
-        };
-        let filesystem = filesystem_of(&table, mount).unwrap_or_default();
-        bun_core::scoped_log!(
-            fs_cached,
-            "{} is on mount {} ({})",
-            bstr::BStr::new(directory.as_bytes()),
-            mount,
-            bstr::BStr::new(filesystem)
-        );
-        if !answers_from_memory(filesystem) {
-            return Ok(Mount::Other);
-        }
+    Ok(match plain.1 == u64::from(mount) {
+        true => Mount::InMemory(mount),
+        false => Mount::Other,
+    })
+}
+
+/// The mount of a descriptor as procfs tells it: the filesystem of the descriptor is not asked. `Ok(None)`: procfs does not say.
+fn mount_of(fd: Fd) -> Result<Option<u32>, i32> {
+    use std::io::Write as _;
+    let mut path = [0u8; 40];
+    let mut rest = &mut path[..39];
+    if write!(rest, "/proc/self/fdinfo/{}", fd.native()).is_err() {
+        return Ok(None);
     }
-    Ok(Mount::InMemory(mount))
+    let length = 39 - rest.len();
+    let path = ZStr::from_slice_with_nul(&path[..=length]);
+    let fdinfo = match crate::open(path, O::RDONLY | O::CLOEXEC, 0) {
+        Ok(fd) => CloseOnDrop::new(fd),
+        Err(err) => return Err(i32::from(err.errno)),
+    };
+    let mut text = [0u8; 256];
+    let length = crate::read(fdinfo.fd(), &mut text).map_err(|err| i32::from(err.errno))?;
+    Ok(split(&text[..length], b'\n')
+        .find_map(|line| parse_id(line.strip_prefix(b"mnt_id:")?.trim_ascii())))
 }
 
 /// The lines of a text of procfs, or the fields of one of its lines.

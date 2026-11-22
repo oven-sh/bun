@@ -78,8 +78,6 @@ pub struct EventLoop {
     /// until the queue is empty (a task that re-posts itself there never lets
     /// the loop poll). Promoted into `tasks` by `auto_tick`, like immediates.
     yield_tasks: Cell<Vec<Task>>,
-    /// The [`iteration_number`](Self::iteration_number) at which `enqueue_task_for_next_turn` last woke the loop.
-    woken_in: Cell<u64>,
 
     pub(crate) concurrent_tasks: ConcurrentQueue,
     /// See `TaskTag::is_plugin_request`: as other threads post them, and as this thread has taken them.
@@ -137,7 +135,6 @@ impl EventLoop {
             immediate_tasks: Cell::default(),
             next_immediate_tasks: Cell::default(),
             yield_tasks: Cell::default(),
-            woken_in: Cell::new(u64::MAX),
             concurrent_tasks: ConcurrentQueue::default(),
             concurrent_plugin_requests: ConcurrentQueue::default(),
             plugin_requests: UnsafeCell::new(Queue::init()),
@@ -1016,44 +1013,6 @@ impl EventLoop {
         unsafe { &mut *self.yield_tasks.as_ptr() }.push(task);
     }
 
-    /// As [`enqueue_task_after_yield`](Self::enqueue_task_after_yield), also for script that the loop runs on its way into a poll.
-    pub fn enqueue_task_for_next_turn(&self, task: Task) {
-        self.enqueue_task_after_yield(task);
-        // Such script runs after the loop has chosen how long to wait. One wake-up serves all that is queued before the poll.
-        let go = self.iteration_number();
-        if self.woken_in.replace(go) != go {
-            self.wakeup();
-        }
-    }
-
-    /// The jobs among what waits for the next turn become runnable. Returns whether a job waits, as `bun test` asks when a file's last test has ended.
-    pub fn promote_finished_jobs(&self) -> bool {
-        let is_job = |task: &Task| task.tag() == bun_event_loop::task_tag::AnyTaskJob;
-        // SAFETY: `write_item` only allocates, and nothing else touches the queue here.
-        let tasks = unsafe { &mut *self.tasks.get() };
-        // One that `auto_tick` made runnable, if the caller has not ticked since.
-        let (mut waits, mut seen) = (false, 0);
-        while !waits && seen < tasks.readable_length() {
-            let slice = tasks.readable_slice(seen);
-            waits = slice.iter().any(is_job);
-            seen += slice.len();
-        }
-        if !self.has_yield_tasks() {
-            return waits;
-        }
-        let mut rest = Vec::new();
-        for task in self.yield_tasks.take() {
-            if is_job(&task) {
-                let _ = tasks.write_item(task);
-                waits = true;
-            } else {
-                rest.push(task);
-            }
-        }
-        self.yield_tasks.set(rest);
-        waits
-    }
-
     pub(crate) fn has_yield_tasks(&self) -> bool {
         // SAFETY: a read of the length.
         !unsafe { &*self.yield_tasks.as_ptr() }.is_empty()
@@ -1375,13 +1334,8 @@ impl EventLoop {
         // `tick()` below can start work (e.g. a --hot reload) whose only wake
         // source is a cross-thread `wakeup()`; bound the park, same as the GC
         // timerfd used to. libuv's `tick_with_timeout` ignores the argument.
-        // `auto_tick` does not run in this mode: what yielded to a poll becomes runnable here.
-        let park_seconds = if self.promote_yield_tasks() { 0 } else { 1 };
         loop_.tick_with_timeout(
-            Some(&bun_core::Timespec {
-                sec: park_seconds,
-                nsec: 0,
-            }),
+            Some(&bun_core::Timespec { sec: 1, nsec: 0 }),
             uws::NOW_NS_UNKNOWN,
         );
 

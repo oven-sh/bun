@@ -7,8 +7,9 @@
 // The files are in a temporary directory that becomes the working directory, and most paths
 // are relative: an absolute path is answered only on the mount of the root directory, and not
 // through a directory that is a mount point in any mount namespace (/tmp under systemd).
-// BUN_FEATURE_FLAG_DISABLE_ASYNC_FS_FAST_PATH=1 gives the thread pool's numbers, and
-// BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING=1 adds how many calls the JS thread answered.
+// BUN_FEATURE_FLAG_EXPERIMENTAL_ASYNC_FS_FAST_PATH=1 lets the JS thread answer (without it the
+// numbers are the thread pool's), and BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING=1 adds how many
+// calls it answered.
 import { existsSync, mkdtempSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { lstat, readFile, stat } from "node:fs/promises";
 import fs from "node:fs";
@@ -35,7 +36,8 @@ const neverSeen = () => missing("never-seen-" + fresh++);
 const single = {
   "statSync(file)": () => statSync("file.txt"),
   "await stat(file)": () => stat("file.txt"),
-  "await lstat(symlink)": () => lstat("link"),
+  "await lstat(file)": () => lstat("file.txt"),
+  "await lstat(symlink), not answered": () => lstat("link"),
   "await stat(file of 2 MiB)": () => stat("large.bin"),
   "await stat(absolute path of file)": () => stat(join(dir, "file.txt")),
   "await stat(missing)": () => missing("missing.txt"),

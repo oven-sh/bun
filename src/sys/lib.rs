@@ -3191,17 +3191,26 @@ mod posix_impl {
         Ok(rc)
     }
     pub fn chdir(path: &ZStr) -> Maybe<()> {
-        // SAFETY: `ZStr::as_ptr()` yields a valid NUL-terminated C string.
-        check_p!(unsafe { libc::chdir(path.as_ptr()) }, Tag::chdir, path);
         #[cfg(any(target_os = "linux", target_os = "android"))]
-        crate::cached::working_directory_changed();
-        Ok(())
+        crate::cached::working_directory_changes();
+        let call = || {
+            // SAFETY: `ZStr::as_ptr()` yields a valid NUL-terminated C string.
+            check_p!(unsafe { libc::chdir(path.as_ptr()) }, Tag::chdir, path);
+            Ok(())
+        };
+        let result = call();
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        crate::cached::working_directory_changes();
+        result
     }
     pub fn fchdir(fd: Fd) -> Maybe<()> {
-        check!(safe_libc::fchdir(fd.native()), Tag::fchdir);
         #[cfg(any(target_os = "linux", target_os = "android"))]
-        crate::cached::working_directory_changed();
-        Ok(())
+        crate::cached::working_directory_changes();
+        let call = || Ok(check!(safe_libc::fchdir(fd.native()), Tag::fchdir));
+        let result = call().map(|_| ());
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        crate::cached::working_directory_changes();
+        result
     }
     pub fn umask(mode: Mode) -> Mode {
         // `Mode` is normalized to u32 across platforms; libc::mode_t is u16 on

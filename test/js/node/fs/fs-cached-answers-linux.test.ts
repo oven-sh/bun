@@ -1,10 +1,10 @@
-// On Linux the JS thread answers an async stat or lstat itself when the kernel holds the answer
-// in memory (`openat2(RESOLVE_CACHED)`), and hands everything else to the thread pool. These
-// tests pin what a caller can observe of that: the same results and errors as the pool gives,
-// the place in the event loop, and that the pool still gets what the kernel cannot answer
-// without waiting.
+// On Linux, with BUN_FEATURE_FLAG_EXPERIMENTAL_ASYNC_FS_FAST_PATH=1, the JS thread answers an async
+// stat or lstat itself when the kernel holds the answer in memory (`openat2(RESOLVE_CACHED)`), and
+// hands everything else to the thread pool. These tests pin what a caller can observe of that: the
+// same results and errors as the pool gives, the place in the event loop, and that the pool still
+// gets what the kernel cannot answer without waiting.
 import { afterAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, libcPathForDlopen, tempDir, tls } from "harness";
+import { bunEnv, bunExe, isLinux, libcPathForDlopen, tempDir } from "harness";
 import { existsSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { release } from "node:os";
 
@@ -102,7 +102,7 @@ async function run(
 ) {
   await using proc = Bun.spawn({
     cmd: wrap([bunExe(), "-e", `const canAnswer = ${canAnswer};` + prelude + script]),
-    // A release build that is not a canary answers only where it is asked to.
+    // Without the flag every call is the pool's.
     env: { ...bunEnv, BUN_FEATURE_FLAG_EXPERIMENTAL_ASYNC_FS_FAST_PATH: "1", ...env },
     cwd: dir,
     stdout: "pipe",
@@ -127,10 +127,18 @@ describe.skipIf(!isLinux)("async fs operations that the kernel can answer from i
     // The JS thread does not close the descriptor of a file this large itself.
     ["stat of a file of 2 MiB", `fsp.stat("large.bin")`, `fs.statSync("large.bin")`, "yes"],
     ["lstat of a file", `fsp.lstat("file.txt")`, `fs.lstatSync("file.txt")`, "yes"],
-    ["lstat of a symlink", `fsp.lstat("link")`, `fs.lstatSync("link")`, "yes"],
-    ["lstat of a dangling symlink", `fsp.lstat("dangling")`, `fs.lstatSync("dangling")`, "yes"],
+    // `statx` of a symlink can read the disk: the walk of an `lstat` may meet no symlink, and the
+    // kernel refuses such a path each time, which is not held against the other calls.
+    ["lstat of a symlink", `fsp.lstat("link")`, `fs.lstatSync("link")`, "never asked"],
+    ["lstat of a dangling symlink", `fsp.lstat("dangling")`, `fs.lstatSync("dangling")`, "never asked"],
+    [
+      "lstat below a symlink to a directory",
+      `fsp.lstat("sublink/inner.txt")`,
+      `fs.lstatSync("sublink/inner.txt")`,
+      "never asked",
+    ],
     ["fs.stat with a callback", `callback(fs.stat, "file.txt")`, `fs.statSync("file.txt")`, "yes"],
-    ["fs.lstat with a callback", `callback(fs.lstat, "link")`, `fs.lstatSync("link")`, "yes"],
+    ["fs.lstat with a callback", `callback(fs.lstat, "file.txt")`, `fs.lstatSync("file.txt")`, "yes"],
     ["Bun.file().stat()", `Bun.file("file.txt").stat()`, `fs.statSync("file.txt")`, "yes"],
     [
       "stat of a missing file",
@@ -440,38 +448,6 @@ describe.skipIf(!isLinux)("async fs operations that the kernel can answer from i
     expect(result).toEqual({ caught: 20, isAnswered: answersFromCache(cwd) && remembersMissingNames(cwd) });
   });
 
-  test.concurrent("a later call that the pool answers completes behind an answer", async () => {
-    using dir = tempDir("fs-cached", files);
-    const cwd = String(dir);
-    const result = await run(
-      cwd,
-      `
-      (async () => {
-        await warm();
-        const orders = new Set();
-        for (let round = 0; round < 10; round++) {
-          await asking();
-          // From a callback of the pool: the loop takes what the pool has finished before it ends the turn.
-          const { log, hits } = await new Promise(resolve => fs.readFile("sub/inner.txt", () => {
-            const log = [];
-            const before = getCounters().fs_cached_hit;
-            const done = () => { if (log.length === 2) resolve({ log, hits }); };
-            fs.stat("file.txt", () => { log.push("stat"); done(); });
-            fs.access("file.txt", () => { log.push("access"); done(); });
-            const hits = getCounters().fs_cached_hit - before;
-            // The pool is done with the second call before this callback returns.
-            for (const end = performance.now() + 5; performance.now() < end; );
-          }));
-          // Where the pool answers both, either can be first.
-          if (hits === 1) orders.add(log.join(", "));
-        }
-        console.log(JSON.stringify([...orders]));
-      })();
-      `,
-    );
-    expect(result).toEqual(answersFromCache(cwd) ? ["stat, access"] : []);
-  });
-
   test.concurrent("a chain of awaited calls lets timers, immediates and I/O run", async () => {
     using dir = tempDir("fs-cached", files);
     const cwd = String(dir);
@@ -591,24 +567,29 @@ describe.skipIf(!isLinux)("async fs operations that the kernel can answer from i
     }
   });
 
-  test.concurrent.each(["BUN_FEATURE_FLAG_DISABLE_ASYNC_FS_FAST_PATH", "BUN_FEATURE_FLAG_DISABLE_RESOLVE_BENEATH"])(
-    "%s leaves every call to the pool",
-    async flag => {
-      using dir = tempDir("fs-cached", files);
-      const result = await run(
-        String(dir),
-        `
-        (async () => {
-          await warm();
-          await warm();
-          console.log(JSON.stringify(await counted(async () => [(await fsp.stat("file.txt")).size, (await fsp.lstat(".")).isDirectory(), (await settle(() => fsp.stat("missing.txt"))).error.code])));
-        })();
-        `,
-        { [flag]: "1" },
-      );
-      expect(result).toEqual({ result: [5, true, "ENOENT"], hits: 0, misses: 0 });
-    },
-  );
+  test.concurrent.each([
+    [
+      "without BUN_FEATURE_FLAG_EXPERIMENTAL_ASYNC_FS_FAST_PATH",
+      { BUN_FEATURE_FLAG_EXPERIMENTAL_ASYNC_FS_FAST_PATH: "0" },
+    ],
+    ["with BUN_FEATURE_FLAG_DISABLE_RESOLVE_BENEATH", { BUN_FEATURE_FLAG_DISABLE_RESOLVE_BENEATH: "1" }],
+  ])("%s every call is the pool's", async (_name, env) => {
+    using dir = tempDir("fs-cached", files);
+    const result = await run(
+      String(dir),
+      `
+      (async () => {
+        await warm();
+        await warm();
+        console.log(JSON.stringify(await counted(async () => [(await fsp.stat("file.txt")).size, (await fsp.lstat(".")).isDirectory(), (await settle(() => fsp.stat("missing.txt"))).error.code])));
+      })();
+      `,
+      env,
+      cmd => cmd,
+      false,
+    );
+    expect(result).toEqual({ result: [5, true, "ENOENT"], hits: 0, misses: 0 });
+  });
 
   test.concurrent("a worker that exits with answers still queued", async () => {
     using dir = tempDir("fs-cached", files);
@@ -828,189 +809,6 @@ describe.skipIf(!isLinux)("async fs operations that the kernel can answer from i
     });
   });
 
-  test.concurrent("a loop that parks between its turns does not park on an answer", async () => {
-    using dir = tempDir("fs-cached-hot", {
-      "server.js": `
-        const fsp = require("node:fs/promises");
-        const { getCounters } = require("bun:internal-for-testing");
-        const server = Bun.serve({
-          port: 0,
-          async fetch() {
-            const before = getCounters().fs_cached_hit;
-            const started = performance.now();
-            // More in a row than one turn of the loop takes from its queue.
-            for (let i = 0; i < 40; i++) await fsp.stat(".");
-            return Response.json({ hits: getCounters().fs_cached_hit - before, ms: performance.now() - started });
-          },
-        });
-        console.log(JSON.stringify({ port: server.port }));
-        // After an unhandled rejection only the watcher keeps the process alive, and the loop
-        // then waits up to a second for another thread between two turns.
-        Promise.reject(new Error("unhandled on purpose"));
-      `,
-    });
-    const cwd = String(dir);
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "--hot", "server.js"],
-      env: { ...bunEnv, BUN_FEATURE_FLAG_EXPERIMENTAL_ASYNC_FS_FAST_PATH: "1" },
-      cwd,
-      stdout: "pipe",
-      stderr: "ignore",
-    });
-    let printed = "";
-    for await (const chunk of proc.stdout) {
-      printed += new TextDecoder().decode(chunk);
-      if (/\{"port":\d+\}/.test(printed)) break;
-    }
-    const { port } = JSON.parse(/\{"port":\d+\}/.exec(printed)![0]);
-    const canAnswer = answersFromCache(cwd);
-    let answer = { hits: -1, ms: 0 };
-    for (let attempt = 0; attempt < 50 && (canAnswer ? answer.hits !== 40 : attempt < 1); attempt++) {
-      answer = await (await fetch(`http://127.0.0.1:${port}/`)).json();
-    }
-    if (canAnswer) {
-      expect({ hits: answer.hits, isParked: answer.ms >= 900 }).toEqual({ hits: 40, isParked: false });
-    }
-  });
-
-  // `bun test` does not wait for a promise that a test lets float. The run is red only if the
-  // answer is there when the file's last test ends, and then the error is that file's.
-  test.concurrent("in bun test, an answer that floats is an error of its own file", async () => {
-    const floats = (then: string) => `
-      import { test } from "bun:test";
-      import { stat } from "node:fs/promises";
-      test("t", async () => {
-        stat("missing.txt");
-        // A pool thread has answered by now too.
-        for (const end = performance.now() + 100; performance.now() < end; );
-        ${then}
-      });
-    `;
-    using dir = tempDir("fs-cached-runner", {
-      ...files,
-      "package.json": `{ "name": "p" }`,
-      "a-warm.test.mjs": `
-        import { test } from "bun:test";
-        import { stat } from "node:fs/promises";
-        test("warm", async () => {
-          for (let i = 0; i < 30; i++) {
-            await stat("file.txt");
-            await stat("missing.txt").catch(() => {});
-            await new Promise(resolve => setImmediate(resolve));
-          }
-        });
-      `,
-      "b-ends-at-once.test.mjs": floats(""),
-      "c-ends-in-an-immediate.test.mjs": floats("await new Promise(resolve => setImmediate(resolve));"),
-      "d-last.test.mjs": `import { test } from "bun:test"; test("t", () => {});`,
-    });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "test"],
-      env: { ...bunEnv, NO_COLOR: "1", BUN_FEATURE_FLAG_EXPERIMENTAL_ASYNC_FS_FAST_PATH: "1" },
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    const withError = new Set<string>();
-    let file = "";
-    for (const line of (stdout + "\n" + stderr).split("\n")) {
-      file = /^(\S+)\.test\.mjs:$/.exec(line)?.[1] ?? file;
-      // The error ends the test if the test still runs, and is one between tests if not.
-      if (line === "# Unhandled error between tests" || line.startsWith("(fail) ")) withError.add(file);
-    }
-    expect({ withError: [...withError].sort(), exitCode }).toEqual({
-      withError: ["b-ends-at-once", "c-ends-in-an-immediate"],
-      exitCode: 1,
-    });
-  });
-
-  // The loop delivers HTTP/3 stream data to script on its way into a poll, after it has chosen how
-  // long to wait. What such script leaves for the next turn must not wait for the next packet.
-  test.concurrent("an answer in an HTTP/3 handler does not wait for the stream", async () => {
-    using dir = tempDir("fs-cached-h3", files);
-    const cwd = String(dir);
-    const canAnswer = answersFromCache(cwd);
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `const canAnswer = ${canAnswer};` +
-          prelude +
-          `
-        const server = Bun.serve({
-          port: 0,
-          hostname: "127.0.0.1",
-          tls: ${JSON.stringify(tls)},
-          http3: true,
-          async fetch(req) {
-            // The kernel answers the first on this thread. A pool thread answers the second.
-            const call = req.url.endsWith("/answered") ? () => fsp.stat("file.txt") : () => fsp.access("file.txt");
-            const reader = req.body.getReader();
-            // The client fills the stream's window meanwhile: a later read then waits for the stream.
-            await Bun.sleep(10);
-            let ms = null;
-            let hits = 0;
-            while (true) {
-              let isSettled = false;
-              const read = reader.read().then(result => ((isSettled = true), result));
-              await null;
-              await null;
-              await null;
-              // A read that its own microtasks did not settle is settled by the stream.
-              const isFromStream = !isSettled;
-              if ((await read).done) break;
-              if (isFromStream && ms === null) {
-                const started = performance.now();
-                ({ hits } = await counted(call));
-                ms = performance.now() - started;
-              }
-            }
-            return Response.json({ ms, hits });
-          },
-        });
-        (async () => {
-          await warm();
-          await asking();
-          console.log(JSON.stringify({ port: server.port }));
-        })();
-        `,
-      ],
-      env: { ...bunEnv, BUN_FEATURE_FLAG_EXPERIMENTAL_ASYNC_FS_FAST_PATH: "1" },
-      cwd,
-      stdout: "pipe",
-      stderr: "inherit",
-    });
-    let printed = "";
-    for await (const chunk of proc.stdout) {
-      printed += new TextDecoder().decode(chunk);
-      if (/\{"port":\d+\}/.test(printed)) break;
-    }
-    const { port } = JSON.parse(/\{"port":\d+\}/.exec(printed)![0]);
-    const upload = async (path: string): Promise<{ ms: number | null; hits: number }> => {
-      const response = await fetch(`https://127.0.0.1:${port}${path}`, {
-        method: "POST",
-        body: Buffer.alloc(1536 * 1024, "x"),
-        protocol: "http3",
-        tls: { rejectUnauthorized: false },
-      });
-      return await response.json();
-    };
-    const answered: number[] = [];
-    const pooled: number[] = [];
-    for (let round = 0; round < 12 && (answered.length < 5 || pooled.length < 5); round++) {
-      const answer = await upload("/answered");
-      if (answer.ms !== null && answer.hits === 1) answered.push(answer.ms);
-      const pool = await upload("/pool");
-      if (pool.ms !== null) pooled.push(pool.ms);
-    }
-    const median = (values: number[]) => values.sort((a, b) => a - b)[values.length >> 1];
-    // Parked, an answer waits for the stream's next packet or timer: 15 ms and more where the pool takes 0.2 ms.
-    if (canAnswer && answered.length >= 3 && pooled.length >= 3) {
-      expect(median(answered)).toBeLessThan(5 * median(pooled) + 1);
-    }
-  });
-
   // CI has FUSE. A filesystem that is slow to answer holds up neither the JS thread nor what
   // the pool answers for other paths.
   const canMountFuse =
@@ -1136,24 +934,31 @@ describe.skipIf(!isLinux)("async fs operations that the kernel can answer from i
   test.skipIf(!canMountOverlay)("with the working directory on overlayfs", async () => {
     using dir = tempDir("fs-cached-overlay", { lower: files, scratch: {}, merged: {} });
     const cwd = String(dir);
-    const rows: [name: string, async_: string, sync: string, isAnswered: boolean][] = [
-      ["file of the lower layer", `fsp.stat("file.txt")`, `fs.statSync("file.txt")`, true],
-      ["file of the upper layer", `fsp.stat("upper.txt")`, `fs.statSync("upper.txt")`, true],
-      ["directory", `fsp.stat("sub")`, `fs.statSync("sub")`, true],
-      ["below a directory", `fsp.stat("sub/inner.txt")`, `fs.statSync("sub/inner.txt")`, true],
-      ["missing file", `fsp.stat("missing.txt")`, `fs.statSync("missing.txt")`, true],
-      ["lstat of a symlink", `fsp.lstat("link")`, `fs.lstatSync("link")`, true],
+    type Answered = "yes" | "asked in vain" | "never asked";
+    const rows: [name: string, async_: string, sync: string, answered: Answered][] = [
+      ["file of the lower layer", `fsp.stat("file.txt")`, `fs.statSync("file.txt")`, "yes"],
+      ["file of the upper layer", `fsp.stat("upper.txt")`, `fs.statSync("upper.txt")`, "yes"],
+      ["directory", `fsp.stat("sub")`, `fs.statSync("sub")`, "yes"],
+      ["below a directory", `fsp.stat("sub/inner.txt")`, `fs.statSync("sub/inner.txt")`, "yes"],
+      ["missing file", `fsp.stat("missing.txt")`, `fs.statSync("missing.txt")`, "yes"],
+      ["lstat of a file", `fsp.lstat("file.txt")`, `fs.lstatSync("file.txt")`, "yes"],
+      ["lstat of a symlink", `fsp.lstat("link")`, `fs.lstatSync("link")`, "never asked"],
       // overlayfs does not let a cached lookup read a symlink.
-      ["through a symlink", `fsp.stat("link")`, `fs.statSync("link")`, false],
+      ["through a symlink", `fsp.stat("link")`, `fs.statSync("link")`, "asked in vain"],
       // The walk from the root directory may not cross onto the overlay mount.
-      ["absolute path", `fsp.stat(process.cwd() + "/file.txt")`, `fs.statSync(process.cwd() + "/file.txt")`, false],
+      [
+        "absolute path",
+        `fsp.stat(process.cwd() + "/file.txt")`,
+        `fs.statSync(process.cwd() + "/file.txt")`,
+        "asked in vain",
+      ],
     ];
     const { type, results } = await run(
       cwd,
       `
       fs.writeFileSync("upper.txt", "upper");
       fs.symlinkSync("file.txt", "link");
-      const rows = [${rows.map(([, async_, sync, isAnswered]) => `[${isAnswered}, () => ${async_}, () => ${sync}]`).join(",\n")}];
+      const rows = [${rows.map(([, async_, sync, answered]) => `[${answered === "yes"}, () => ${async_}, () => ${sync}]`).join(",\n")}];
       (async () => {
         await warm();
         const mount = fs.readFileSync("/proc/self/mountinfo", "utf8").split("\\n").find(line => line.split(" ")[4] === process.cwd());
@@ -1175,21 +980,22 @@ describe.skipIf(!isLinux)("async fs operations that the kernel can answer from i
     );
     expect(type).toBe("overlay");
     const seen = Object.fromEntries(
-      rows.map(([name, , , isAnswered], index) => {
+      rows.map(([name, , , answered], index) => {
         const { first, repeats, sync } = results[index];
         // Whoever answers, the answer is that of the sync function.
         expect(first).toEqual(sync);
         expect(repeats.result).toEqual([sync, sync, sync]);
         const { hits, misses } = repeats;
-        return [name, isAnswered ? { hits, misses } : { hits, isAsked: misses >= 1 }];
+        return [name, answered === "asked in vain" ? { hits, isAsked: misses >= 1 } : { hits, misses }];
       }),
     );
     if (kernelHasResolveCached) {
+      const expected = { "yes": { hits: 3, misses: 0 }, "never asked": { hits: 0, misses: 0 } };
       expect(seen).toEqual(
         Object.fromEntries(
-          rows.map(([name, , , isAnswered]) => [
+          rows.map(([name, , , answered]) => [
             name,
-            isAnswered ? { hits: 3, misses: 0 } : { hits: 0, isAsked: true },
+            answered === "asked in vain" ? { hits: 0, isAsked: true } : expected[answered],
           ]),
         ),
       );
@@ -1284,7 +1090,7 @@ describe.skipIf(!isLinux)("async fs operations that the kernel can answer from i
         };
         const [answered, fromPool] = await Promise.all([
           program({}),
-          program({ BUN_FEATURE_FLAG_DISABLE_ASYNC_FS_FAST_PATH: "1" }),
+          program({ BUN_FEATURE_FLAG_EXPERIMENTAL_ASYNC_FS_FAST_PATH: "0" }),
         ]);
         const results = (run: typeof answered) =>
           Object.fromEntries(Object.entries(run).map(([name, row]) => [name, row.results]));

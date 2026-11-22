@@ -691,11 +691,12 @@ describe.skipIf(!isLinux)("async fs operations when seccomp refuses openat2", ()
 
   // For a policy that kills the process on a call it does not list.
   test.concurrent.each([
-    ["BUN_FEATURE_FLAG_DISABLE_ASYNC_FS_FAST_PATH", "1"],
+    // The flag that `run` sets is what makes Bun ask the kernel's caches.
+    ["BUN_FEATURE_FLAG_EXPERIMENTAL_ASYNC_FS_FAST_PATH", "0"],
     ["BUN_FEATURE_FLAG_DISABLE_RESOLVE_BENEATH", "1"],
     // What makes the kernel an Android one to Bun: there `openat2` is never made.
     ["ANDROID_ROOT", "<dir>/android"],
-  ])("with %s the call is not made", async (name, value) => {
+  ])("with %s=%s the call is not made", async (name, value) => {
     const [unguarded, guarded] = await Promise.all([run(KILL), run(KILL, { [name]: value })]);
     if (unguarded == null || guarded == null) return;
     // The policy bites wherever Bun asks the kernel's caches at all.

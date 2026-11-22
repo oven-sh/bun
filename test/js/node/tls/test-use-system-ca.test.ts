@@ -380,6 +380,12 @@ describe.skipIf(isWindows)("default store and OpenSSL's default paths", () => {
     using dir = tempDir("default-ca-dir", { "468820ba.0": "not a certificate", "468820ba.1": ca1 });
     expect(await connectWith({ SSL_CERT_DIR: String(dir) })).toBe("authorized");
   });
+
+  test("nor does one that has no end", async () => {
+    using dir = tempDir("default-ca-dir", { "468820ba.1": ca1 });
+    symlinkSync("/dev/zero", join(String(dir), "468820ba.0"));
+    expect(await connectWith({ SSL_CERT_DIR: String(dir) })).toBe("authorized");
+  });
 });
 
 describe.concurrent("--use-openssl-ca", () => {

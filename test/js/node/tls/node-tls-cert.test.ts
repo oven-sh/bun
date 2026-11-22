@@ -1883,6 +1883,7 @@ describe("several certificates match one issuer", () => {
       it.each<[string, Buffer, string?, string?]>([
         ["a long form", longForm(tbs)],
         ["an indefinite length", indefinite(tbs)],
+        ["a low tag in the long form", Buffer.concat([hex("3f10"), tbs.subarray(1)])],
         ...names.map((name): [string, Buffer] => [`${name}: a long form`, changed({ [name]: longForm(fields[name]) })]),
         ["an empty RDN in the issuer", changed({ issuer: seq(rdn("550403", "root"), hex("3100")) })],
         ["an empty RDN in the subject", changed({ subject: seq(hex("3100"), rdn("550403", "root")) })],
@@ -1927,6 +1928,18 @@ describe("several certificates match one issuer", () => {
         expect(await outcomes(changed({ issuer }))).toEqual(all("INVALID_PURPOSE", "authorized"));
       });
 
+      it("do not get it sent to peers, unlike in Node.js", async () => {
+        const entry = signed(longForm(fieldsOf(intermediate)[0]), caKey);
+        const ca = armor("TRUSTED CERTIFICATE", Buffer.concat([entry, trustOnly(anyPurpose)])) + root;
+        await using one = await serve(leaf, { ca });
+        await using several = await serve(leaf, { ca, key: [key, serverTls.key], cert: [leaf, serverTls.single] });
+        const ciphers = "ECDHE-ECDSA-AES128-GCM-SHA256";
+        expect([
+          await connect(one.port, { ca: root }),
+          await connect(several.port, { ca: root, ciphers, maxVersion: "TLSv1.2" }),
+        ]).toEqual(["UNABLE_TO_VERIFY_LEAF_SIGNATURE", "UNABLE_TO_VERIFY_LEAF_SIGNATURE"]);
+      });
+
       it("do not get it in the way if they name no use", async () => {
         const entry = signed(longForm(fieldsOf(intermediate)[0]), caKey);
         const alias = seq(hex("0c0141"));
@@ -1946,6 +1959,13 @@ describe("several certificates match one issuer", () => {
           ]),
         ).toBe("INVALID_PURPOSE");
       });
+    });
+
+    it("are read after a name that only BoringSSL parses, unlike in Node.js", async () => {
+      const name = seq(tlv(0x31, seq(oid("550403"), hex("020101"))));
+      expect(await verify(chain, root + mint(name, name, ca) + withSettings(intermediate, reject(serverAuth)))).toBe(
+        "INVALID_PURPOSE",
+      );
     });
 
     it("are those of the first copy", async () => {
@@ -2027,6 +2047,7 @@ describe("several certificates match one issuer", () => {
     const policy = (n: string) => seq(oid(`2a03${n}`));
     const policies = (...body: Buffer[]) => extension("551d20", seq(...body));
     const requirePolicy = extension("551d24", seq(hex("800100")), true);
+    const rawNetscapeType = (value: string) => extension("6086480186f8420101", hex(value));
     const distributionPoint = seq(seq(tlv(0xa0, tlv(0xa0, tlv(0x86, Buffer.from("http://crl.test/"))))));
 
     it.each([
@@ -2036,6 +2057,11 @@ describe("several certificates match one issuer", () => {
       ["a Netscape type for servers", [netscapeType("server")], "authorized"],
       ["a critical Netscape type", [netscapeType("server", true)], "authorized"],
       ["a Netscape type for clients", [netscapeType("client")], "INVALID_PURPOSE"],
+      ["a Netscape type with unused bits set", [rawNetscapeType("03020641")], "authorized"],
+      ["a Netscape type with that for servers among them", [rawNetscapeType("030207c0")], "INVALID_PURPOSE"],
+      ["a Netscape type in a long form", [rawNetscapeType("0381020640")], "authorized"],
+      ["a byte after a Netscape type", [rawNetscapeType("0302064000")], "authorized"],
+      ["a malformed Netscape type", [rawNetscapeType("0500")], "UNABLE_TO_VERIFY_LEAF_SIGNATURE"],
       ["critical CRL distribution points", [extension("551d1f", distributionPoint, true)], "authorized"],
       ["a critical OCSP noCheck", [extension("2b0601050507300105", hex("0500"), true)], "authorized"],
       ["no policy in certificatePolicies", [policies()], "authorized"],
@@ -2370,6 +2396,12 @@ describe("several certificates match one issuer", () => {
     ["a byte order mark after a certificate", (pem: string) => unrelated[0] + byteOrderMark + pem, true],
     ["a byte order mark after a private key", (pem: string) => key + byteOrderMark + pem, true],
     ["a byte order mark after a comment", (pem: string) => "# comment\n" + byteOrderMark + pem, false],
+    ["lines of 253 characters", (pem: string) => pem.replace(/(?<!-)\n(?!-)/g, "").replace(/.{253}/g, "$&\n"), true],
+    ["lines of 254 characters", (pem: string) => pem.replace(/(?<!-)\n(?!-)/g, "").replace(/.{254}/g, "$&\n"), true],
+    ["no last line, ahead of another", (pem: string) => pem.replace(/-----END.*\n/, "") + pem, true],
+    ["two such ahead of it", (pem: string) => unrelated[0].replace(/-----END.*\n/, "") + unrelated[1] + pem, true],
+    ["253 characters ahead of it", (pem: string) => Buffer.alloc(253, "#") + pem, false],
+    ["254 characters ahead of it", (pem: string) => Buffer.alloc(254, "#") + pem, true],
     ["a NUL in a comment", (pem: string) => "# comment\0\n" + pem, true],
     ["a NUL after a certificate", (pem: string) => unrelated[0] + "\0\n" + pem, true],
     ["a NUL at the end of each line", (pem: string) => pem.replaceAll("\n", "\0\n"), true],
@@ -2463,6 +2495,11 @@ describe("several certificates match one issuer", () => {
 
   it("a NUL does not end `cert` or `key` either", async () => {
     await using server = await serve(leaf + "\0\n" + intermediate, { key: "\0\n" + key });
+    expect(await connect(server.port, { ca: root })).toBe("authorized");
+  });
+
+  it("nor does a byte order mark hide a block of them", async () => {
+    await using server = await serve(byteOrderMark + leaf + byteOrderMark + intermediate, { key: byteOrderMark + key });
     expect(await connect(server.port, { ca: root })).toBe("authorized");
   });
 
@@ -2600,6 +2637,13 @@ describe("several certificates match one issuer", () => {
         "parameters: context-specific and constructed": withParameters("a102ffff"),
         "parameters: last of an indefinite length": changed({ algorithm: indefinite(seq(oid("2a0304"), seq())) }),
         "parameters: indefinite within indefinite": withParameters("3080a080050000000000"),
+        "parameters: tag 0": withParameters("000141"),
+        "parameters: the highest tag": withParameters("9f87ffffff7f00"),
+        "parameters: a length of no bytes, in 127": withParameters("04ff" + "00".repeat(127)),
+        "parameters: a length in 5 bytes": withParameters("0485000000000141"),
+        "a low tag in the long form": changed({ serial: hex("1f020101") }),
+        "the same, padded": changed({ serial: hex("1f80020101") }),
+        "a piece with tag 0": withExtension(hex("2403000141")),
         "7 unused bits": seq(tbs(), algorithms.ec, hex("030207ff")),
       };
       expect(outcomes(armored(read))).toEqual(Object.fromEntries(Object.keys(read).map(name => [name, true])));
@@ -2680,6 +2724,14 @@ describe("several certificates match one issuer", () => {
         "parameters: a SEQUENCE not tagged as constructed": withParameters("1000"),
         "parameters: a SET not tagged as constructed": withParameters("1100"),
         "parameters: cut short": withParameters("8102ff"),
+        "parameters: cut within the tag": withParameters("9f81"),
+        "parameters: cut after the tag": withParameters("81"),
+        "parameters: cut within the length": withParameters("818200"),
+        "parameters: past the highest tag": withParameters("9f888080800000"),
+        "parameters: a length of 2 ** 64 + 1": withParameters("048901000000000000000141"),
+        "parameters: indefinite and not constructed": withParameters("80800000"),
+        "a tag that is 2 ** 29 too high": changed({ serial: hex("1f82808080020101") }),
+        "the same, for a SEQUENCE": changed({ key: Buffer.concat([hex("1f8280808010"), fields.key.subarray(1)]) }),
         "parameters: an end of contents too few": withParameters("3080a0800000"),
       };
       const thrown = Object.entries(outcomes(armored(refused))).map(([name, code]) => [name, typeof code]);
@@ -2765,7 +2817,7 @@ describe("several certificates match one issuer", () => {
   });
 
   describe.concurrent("in the default store", () => {
-    type Source = "NODE_EXTRA_CA_CERTS" | "SSL_CERT_FILE";
+    type Source = "NODE_EXTRA_CA_CERTS" | "SSL_CERT_FILE" | "SSL_CERT_DIR";
     const good = (name: string) => mint(name, name, ca);
     const bad = (name: string) => copy("CA:FALSE", "usual", name, name);
 
@@ -2776,14 +2828,24 @@ describe("several certificates match one issuer", () => {
       main = "main.mjs",
     ) {
       const files = { NODE_EXTRA_CA_CERTS: unrelated.slice(0, 20), SSL_CERT_FILE: unrelated.slice(20) };
+      const hashed: Record<string, string> = {};
       const chains: Record<string, string> = {};
       for (const [name, sources] of Object.entries(cases)) {
         chains[name] = leaf + mint("intermediate", name, ca);
-        for (const [source, [first, ...rest]] of Object.entries(sources(name)) as [Source, string[]][]) {
+        const { SSL_CERT_DIR = [], ...lists } = sources(name);
+        for (const [source, [first, ...rest]] of Object.entries(lists) as [keyof typeof files, string[]][]) {
           files[source] = [first, ...files[source], ...rest];
+        }
+        const digest = createHash("sha1").update(rdn("550403", name.toLowerCase())).digest();
+        const hash = digest.subarray(0, 4).reverse().toString("hex");
+        const count = { "": 0, "r": 0 };
+        for (const file of SSL_CERT_DIR) {
+          const type = file.includes("X509 CRL") ? "r" : "";
+          hashed[`hashed/${hash}.${type}${count[type]++}`] = file;
         }
       }
       using dir = tempDir("same-subject", {
+        ...hashed,
         "extra.pem": files.NODE_EXTRA_CA_CERTS.join(""),
         "file.pem": files.SSL_CERT_FILE.join(""),
         "plan.json": JSON.stringify({ key, chains, crl: crlOf("intermediate") }),
@@ -2844,7 +2906,7 @@ describe("several certificates match one issuer", () => {
           NODE_USE_SYSTEM_CA: undefined,
           NODE_EXTRA_CA_CERTS: join(String(dir), "extra.pem"),
           SSL_CERT_FILE: join(String(dir), "file.pem"),
-          SSL_CERT_DIR: "",
+          SSL_CERT_DIR: Object.keys(hashed).length ? join(String(dir), "hashed") : "",
         },
         stdout: "pipe",
         stderr: "pipe",
@@ -2983,6 +3045,69 @@ describe("several certificates match one issuer", () => {
           "crl.mjs",
         ),
       ).toEqual({ outcomes: { with: "authorized", without: "UNABLE_TO_GET_CRL" }, exitCode: 0 });
+    });
+
+    it("so do those in SSL_CERT_DIR", async () => {
+      const inLongForm = (name: string) => armor("X509 CRL", longForm(derOf(crlOf(name))));
+      expect(
+        await run(
+          ["--use-openssl-ca"],
+          {
+            plain: name => ({ SSL_CERT_DIR: [good(name), crlOf(name)] }),
+            longForm: name => ({ SSL_CERT_DIR: [good(name), inLongForm(name)] }),
+            second: name => ({ SSL_CERT_DIR: [good(name), crlOf("other") + crlOf(name) + armor("X509 CRL", cut)] }),
+            without: name => ({ SSL_CERT_DIR: [good(name)] }),
+          },
+          "crl.mjs",
+        ),
+      ).toEqual({
+        outcomes: { plain: "authorized", longForm: "authorized", second: "authorized", without: "UNABLE_TO_GET_CRL" },
+        exitCode: 0,
+      });
+    });
+
+    it("the files in SSL_CERT_DIR are read like `ca`, but for NULs", async () => {
+      const inFiles =
+        (...files: ((pem: string) => string)[]) =>
+        (name: string) => {
+          const pem = good(name);
+          return { SSL_CERT_DIR: files.map(file => file(pem)) };
+        };
+      const plain = (pem: string) => pem;
+      const rejectedInLongForm = (pem: string) => {
+        const [tbs, ...rest] = fieldsOf(pem);
+        return armor("TRUSTED CERTIFICATE", Buffer.concat([seq(longForm(tbs), ...rest), reject(serverAuth)]));
+      };
+      expect(
+        await run(["--use-openssl-ca"], {
+          byteOrderMark: inFiles(pem => byteOrderMark + pem),
+          longForm: inFiles(pem => armor("CERTIFICATE", longForm(derOf(pem)))),
+          emptyPassphrase: inFiles(pem => encrypted(pem, "")),
+          last: inFiles(pem => unrelated.join("") + pem),
+          beforeMalformed: inFiles(pem => pem + armor("CERTIFICATE", cut)),
+          afterMalformed: inFiles(pem => armor("CERTIFICATE", cut) + pem),
+          rejectedWithMark: inFiles(pem => byteOrderMark + withSettings(pem, reject(serverAuth)), plain),
+          rejectedWithAlias: inFiles(pem => withSettings(pem, seq(tlv(0xa0, serverAuth), hex("0c01e9"))), plain),
+          rejectedInLongForm: inFiles(rejectedInLongForm, plain),
+          rejectedWithNuls: inFiles(pem => withSettings(pem, reject(serverAuth)).replaceAll("\n", "\0junk\n"), plain),
+          afterNul: inFiles(pem => unrelated[0] + "\0\n" + pem),
+        }),
+      ).toEqual({
+        outcomes: {
+          byteOrderMark: authorized,
+          longForm: authorized,
+          emptyPassphrase: authorized,
+          last: authorized,
+          beforeMalformed: authorized,
+          afterMalformed: missing,
+          rejectedWithMark: notACA,
+          rejectedWithAlias: notACA,
+          rejectedInLongForm: notACA,
+          rejectedWithNuls: notACA,
+          afterNul: missing,
+        },
+        exitCode: 0,
+      });
     });
 
     it.skipIf(!isLinux)("a file of the system store is read up to a block that is malformed", async () => {

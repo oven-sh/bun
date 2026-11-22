@@ -77,6 +77,13 @@ describe("new X509Certificate()", () => {
   test("with a PEM that starts with a byte order mark", () => {
     const pem = readFileSync(path.join(import.meta.dir, "..", "test", "fixtures", "keys", "agent1-cert.pem"), "utf8");
     expect(new X509Certificate("\ufeff" + pem).fingerprint256).toBe(new X509Certificate(pem).fingerprint256);
+    expect(() => new X509Certificate("\ufeff\ufeff" + pem)).toThrow("NO_START_LINE");
+  });
+
+  test.each([253, 254])("with a PEM that has lines of %d characters", width => {
+    const pem = readFileSync(path.join(import.meta.dir, "../test/fixtures/keys/agent1-cert.pem"), "utf8");
+    const wide = pem.replace(/(?<!-)\n(?!-)/g, "").replace(new RegExp(`.{${width}}`, "g"), "$&\n");
+    expect(new X509Certificate(wide).fingerprint256).toBe(new X509Certificate(pem).fingerprint256);
   });
 
   test("with a detached view, which is empty", () => {

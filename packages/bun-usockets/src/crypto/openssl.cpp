@@ -970,6 +970,13 @@ static int us_ssl_ctx_auto_chain(SSL_CTX *ctx) {
   us_x509_stack_ptr chain{X509_STORE_CTX_get1_chain(walk.get())};
   if (chain == NULL) return 0;
   us_x509_ptr leaf{sk_X509_shift(chain.get())};
+  size_t num_signed = 0;
+  for (; num_signed < sk_X509_num(chain.get()); num_signed++) {
+    const ASN1_BIT_STRING *signature;
+    X509_get0_signature(&signature, NULL, sk_X509_value(chain.get(), num_signed));
+    if (signature->length == 0) break;
+  }
+  while (sk_X509_num(chain.get()) > num_signed) X509_free(sk_X509_pop(chain.get()));
   return SSL_CTX_set1_chain(ctx, chain.get());
 }
 

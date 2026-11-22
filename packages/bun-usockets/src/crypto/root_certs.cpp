@@ -290,15 +290,16 @@ extern "C" X509_STORE *us_get_default_ca_store() {
   const us_openssl_default_cert_file &file = us_get_openssl_default_cert_file();
   // First, so that trust settings are not dropped for a plain copy of the same certificate.
   for (size_t i = 0; file.trusted != nullptr && i < sk_X509_num(file.trusted); i++) {
-    X509_STORE_add_cert(store.get(), sk_X509_value(file.trusted, i));
+    if (!X509_STORE_add_cert(store.get(), sk_X509_value(file.trusted, i))) Bun__outOfMemory();
   }
   for (size_t i = 0; file.crls != nullptr && i < sk_X509_CRL_num(file.crls); i++) {
-    X509_STORE_add_crl(store.get(), sk_X509_CRL_value(file.crls, i));
+    if (!X509_STORE_add_crl(store.get(), sk_X509_CRL_value(file.crls, i))) Bun__outOfMemory();
   }
   X509_LOOKUP *hash_dir = X509_STORE_add_lookup(store.get(), X509_LOOKUP_hash_dir());
   if (hash_dir == NULL) {
     return NULL;
   }
+  X509_LOOKUP_hash_dir_set_load_cb(hash_dir, us_x509_store_load_hashed_file);
   X509_LOOKUP_add_dir(hash_dir, NULL, X509_FILETYPE_DEFAULT);
   ERR_clear_error();
 

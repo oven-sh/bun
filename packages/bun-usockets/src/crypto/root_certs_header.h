@@ -49,7 +49,7 @@ const us_system_certs_t &us_get_root_system_certs();
 typedef void (*us_on_cert_file)(void *ctx, const uint8_t *data, size_t len);
 extern "C" int Bun__readCertificateFile(const char *path, void *ctx, us_on_cert_file on_file);
 
-// ca_pem.cpp. The BIOs are read-only memory BIOs.
+// ca_pem.cpp
 
 // Whether TRUSTED CERTIFICATE blocks, and what follows a certificate in its block, are read as by the _AUX functions.
 enum class us_ca_trust { ignored, read };
@@ -58,15 +58,11 @@ struct us_pem_block {
   char *name = nullptr, *header = nullptr;
   uint8_t *data = nullptr;
   long len = 0;
-  // What was left of the document ahead of the block.
-  const uint8_t *text = nullptr;
-  size_t text_len = 0;
   ~us_pem_block() {
     OPENSSL_free(name);
     OPENSSL_free(header);
     OPENSSL_free(data);
   }
-  // PEM_read_bio, past the byte order mark that OpenSSL ignores ahead of a block.
   bool read(BIO *in);
   bool is(const char *label) const;
   bool is_plain_certificate() const;
@@ -88,6 +84,9 @@ struct us_ca_reader {
   bool passed_over = false;
   X509 *next(CRYPTO_BUFFER **out_der = nullptr);
 };
+
+// An X509_LOOKUP_load_cb.
+void us_x509_store_load_hashed_file(X509_STORE *store, const char *path, int type);
 
 #else
 #define CPPDECL extern

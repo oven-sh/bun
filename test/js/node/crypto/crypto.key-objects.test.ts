@@ -769,6 +769,8 @@ describe("crypto.KeyObjects", () => {
     expect(createPrivateKey("\ufeff" + privatePem).equals(createPrivateKey(privatePem))).toBe(true);
     expect(createPublicKey("\ufeff" + publicPem).equals(createPublicKey(publicPem))).toBe(true);
     expect(createPublicKey("\ufeff" + privatePem).equals(createPublicKey(publicPem))).toBe(true);
+    expect(() => createPrivateKey("\ufeff\ufeff" + privatePem)).toThrow();
+    expect(() => createPublicKey("\ufeff\ufeff" + publicPem)).toThrow();
   });
 
   test("private encrypted should work", async () => {

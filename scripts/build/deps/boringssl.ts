@@ -24,7 +24,7 @@ import { quote } from "../shell.ts";
 import type { Dependency, DirectBuild } from "../source.ts";
 import { LIBC_ALLOCATION_SYMBOLS, depSourceDir } from "../source.ts";
 
-const BORINGSSL_COMMIT = "81e6e7d71ab543155ffac9fe8dee239b9f6c47ed";
+const BORINGSSL_COMMIT = "9497fe89db514cc78aa606b15daa8fcab29ab1f5";
 
 export const boringssl: Dependency = {
   name: "boringssl",

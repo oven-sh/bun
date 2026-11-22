@@ -6,18 +6,20 @@
 #include <openssl/bytestring.h>
 #include <openssl/err.h>
 #include <openssl/pool.h>
+#include <errno.h>
+#include <limits.h>
 #include <string.h>
+#include <algorithm>
 #include <string>
 #include <utility>
 
 // An entry can withdraw trust, so it must not pass for malformed, or for the end, because memory ran out.
 static void us_check_memory() {
-  if (ERR_equals(ERR_peek_error(), ERR_LIB_CRYPTO, ERR_R_MALLOC_FAILURE)) Bun__outOfMemory();
+  uint32_t err = ERR_peek_error();
+  if (ERR_equals(err, ERR_LIB_CRYPTO, ERR_R_MALLOC_FAILURE) || ERR_equals(err, ERR_LIB_SYS, ENOMEM)) Bun__outOfMemory();
 }
 
 // Reads what d2i_X509 and d2i_X509_CERT_AUX of OpenSSL accept, and copies it in a form that those of BoringSSL accept.
-// Left out are the headers that CBS does not read: tag 0, a low tag number in the long form, and more than 4 bytes for
-// a length.
 // https://github.com/nodejs/node/blob/v26.12.1/deps/openssl/openssl/crypto/asn1/tasn_dec.c
 namespace us_openssl_syntax {
 
@@ -29,12 +31,37 @@ static bool at_end_of_contents(const CBS *in) {
 
 static bool more(const CBS *in) { return CBS_len(in) != 0 && !at_end_of_contents(in); }
 
-// 0, which is not a tag, if there is no element.
+// `body` is empty if the length is indefinite.
+// https://github.com/nodejs/node/blob/v26.12.1/deps/openssl/openssl/crypto/asn1/asn1_lib.c#L46
+static bool element(CBS *in, CBS_ASN1_TAG *tag, CBS *body, bool *indefinite) {
+  uint8_t first, byte;
+  if (!CBS_get_u8(in, &first)) return false;
+  uint32_t number = first & 0x1f;
+  if (number == 0x1f) {
+    number = 0;
+    do {
+      if (number > INT_MAX >> 7 || !CBS_get_u8(in, &byte)) return false;
+      number = number << 7 | (byte & 0x7f);
+    } while (byte & 0x80);
+  }
+  *tag = (first & 0xe0u) << CBS_ASN1_TAG_SHIFT | std::min(number, CBS_ASN1_TAG_NUMBER_MASK);
+  if (!CBS_get_u8(in, &byte)) return false;
+  *indefinite = byte == 0x80;
+  if (*indefinite && !(*tag & CBS_ASN1_CONSTRUCTED)) return false;
+  size_t len = byte & 0x80 ? 0 : byte;
+  for (int left = byte & 0x80 ? byte & 0x7f : 0; left != 0; left--) {
+    if (len > CBS_len(in) || !CBS_get_u8(in, &byte)) return false;
+    len = len << 8 | byte;
+  }
+  return CBS_get_bytes(in, body, len);
+}
+
+// 0 if there is no element.
 static CBS_ASN1_TAG peek(const CBS *in) {
-  CBS copy = *in;
+  CBS copy = *in, body;
   CBS_ASN1_TAG tag;
-  int indefinite;
-  return CBS_get_any_ber_asn1_element(&copy, nullptr, &tag, nullptr, nullptr, &indefinite) ? tag : 0;
+  bool indefinite;
+  return element(&copy, &tag, &body, &indefinite) ? tag : 0;
 }
 
 static bool next_is(const CBS *in, CBS_ASN1_TAG tag) {
@@ -43,11 +70,11 @@ static bool next_is(const CBS *in, CBS_ASN1_TAG tag) {
 
 static bool contents(CBS *in, auto read) {
   CBS body;
-  size_t header_len;
-  int indefinite;
-  if (!CBS_get_any_ber_asn1_element(in, &body, nullptr, &header_len, nullptr, &indefinite)) return false;
+  CBS_ASN1_TAG tag;
+  bool indefinite;
+  if (!element(in, &tag, &body, &indefinite)) return false;
   if (indefinite) return read(in) && at_end_of_contents(in) && CBS_skip(in, 2);
-  return CBS_skip(&body, header_len) && read(&body) && CBS_len(&body) == 0;
+  return read(&body) && CBS_len(&body) == 0;
 }
 
 static bool constructed(CBS *in, CBS_ASN1_TAG tag, auto read) {
@@ -112,8 +139,10 @@ static bool optional(CBS *in, CBS_ASN1_TAG tag, CBS_ASN1_TAG type) {
 static bool skip(CBS *in) {
   size_t open = 0;
   do {
-    int indefinite;
-    if (!CBS_get_any_ber_asn1_element(in, nullptr, nullptr, nullptr, nullptr, &indefinite)) return false;
+    CBS body;
+    CBS_ASN1_TAG tag;
+    bool indefinite;
+    if (!element(in, &tag, &body, &indefinite)) return false;
     for (open += indefinite; open != 0 && at_end_of_contents(in); open--) CBS_skip(in, 2);
   } while (open != 0);
   return true;
@@ -275,6 +304,18 @@ static bool copy_signed(CBS *in, CBB *out, auto to_be_signed) {
   });
 }
 
+static bool certificate(CBS *in, CBB *out) { return copy_signed(in, out, verbatim_tbs_certificate); }
+
+static bool crl(CBS *in, CBB *out) { return copy_signed(in, out, verbatim); }
+
+// A path can end at it but not go through it, and it is not sent to peers.
+static bool unsigned_certificate(CBS *in, CBB *out) {
+  return copy_constructed(in, CBS_ASN1_SEQUENCE, out, [](CBS *fields, CBB *out) {
+    return tbs_certificate(fields, out) && algorithm(fields, out) && skip(fields) &&
+           add(out, CBS_ASN1_BITSTRING, std::string(1, '\0'));
+  });
+}
+
 // Only the trusted and the rejected uses are copied.
 // https://github.com/nodejs/node/blob/v26.12.1/deps/openssl/openssl/crypto/x509/x_x509a.c
 static bool trust_settings(CBS *in, CBB *out) {
@@ -292,13 +333,6 @@ static bool trust_settings(CBS *in, CBB *out) {
 } // namespace us_openssl_syntax
 
 bool us_pem_block::read(BIO *in) {
-  static constexpr uint8_t byte_order_mark[] = {0xef, 0xbb, 0xbf};
-  if (BIO_mem_contents(in, &text, &text_len) && text_len > sizeof(byte_order_mark) &&
-      memcmp(text, byte_order_mark, sizeof(byte_order_mark)) == 0) {
-    uint8_t skipped[sizeof(byte_order_mark)];
-    BIO_read(in, skipped, sizeof(skipped));
-    BIO_mem_contents(in, &text, &text_len);
-  }
   ERR_clear_error();
   if (PEM_read_bio(in, &name, &header, &data, &len)) return true;
   us_check_memory();
@@ -311,15 +345,16 @@ bool us_pem_block::is_plain_certificate() const { return is(PEM_STRING_X509) || 
 
 bool us_pem_block::decrypt() {
   if (header[0] == '\0') return true;
-  us_unique_ptr<BIO, BIO_free> again{BIO_new_mem_buf(text, text_len)};
+  us_unique_ptr<BIO, BIO_free> again{BIO_new(BIO_s_mem())};
+  bool ok = again && PEM_write_bio(again.get(), name, header, data, len);
   OPENSSL_free(std::exchange(data, nullptr));
-  bool ok = again && PEM_bytes_read_bio(&data, &len, nullptr, name, again.get(), us_no_password_callback, nullptr);
+  ok = ok && PEM_bytes_read_bio(&data, &len, nullptr, name, again.get(), us_no_password_callback, nullptr);
   if (!ok) us_check_memory();
   return ok;
 }
 
 // For what BoringSSL has refused. Fails if OpenSSL refuses it too.
-static bool us_reencode(us_pem_block *block, auto to_be_signed, us_ca_trust trust) {
+static bool us_reencode(us_pem_block *block, bool (*reencode)(CBS *, CBB *), us_ca_trust trust) {
   us_check_memory();
   ERR_clear_error();
   CBS rest;
@@ -329,7 +364,7 @@ static bool us_reencode(us_pem_block *block, auto to_be_signed, us_ca_trust trus
   us_unique_ptr<CBB, CBB_cleanup> copy{&storage};
   uint8_t *data;
   size_t len;
-  if (!CBB_init(copy.get(), block->len) || !us_openssl_syntax::copy_signed(&rest, copy.get(), to_be_signed) ||
+  if (!CBB_init(copy.get(), block->len) || !reencode(&rest, copy.get()) ||
       (trust == us_ca_trust::read && CBS_len(&rest) != 0 && !us_openssl_syntax::trust_settings(&rest, copy.get())) ||
       !CBB_finish(copy.get(), &data, &len)) {
     us_check_memory();
@@ -344,15 +379,15 @@ static bool us_reencode(us_pem_block *block, auto to_be_signed, us_ca_trust trus
 static auto us_use_ca(us_pem_block *block, us_ca_trust trust, bool *out_malformed, auto use) -> decltype(use()) {
   *out_malformed = false;
   if (auto result = use()) return result;
-  *out_malformed = !us_reencode(block, us_openssl_syntax::verbatim_tbs_certificate, trust);
+  *out_malformed = !us_reencode(block, us_openssl_syntax::certificate, trust);
   if (*out_malformed) return {};
   auto result = use();
   CBS rest, uses;
   CBS_init(&rest, block->data, block->len);
   if (!result && CBS_get_asn1(&rest, nullptr, CBS_ASN1_SEQUENCE) && CBS_get_asn1(&rest, &uses, CBS_ASN1_SEQUENCE) &&
       CBS_len(&uses) != 0) {
-    // These must not get lost. The signature does not fit the copy, so a path can end at it but not go through it.
-    if (us_reencode(block, us_openssl_syntax::tbs_certificate, trust)) result = use();
+    // These must not get lost.
+    if (us_reencode(block, us_openssl_syntax::unsigned_certificate, trust)) result = use();
     *out_malformed = !result;
   }
   if (!result) us_check_memory();
@@ -391,7 +426,7 @@ X509_CRL *us_pem_block::parse_crl() {
     return d2i_X509_CRL(nullptr, &end, len);
   };
   X509_CRL *crl = parse();
-  if (crl == nullptr && us_reencode(this, us_openssl_syntax::verbatim, us_ca_trust::ignored)) crl = parse();
+  if (crl == nullptr && us_reencode(this, us_openssl_syntax::crl, us_ca_trust::ignored)) crl = parse();
   if (crl == nullptr) us_check_memory();
   return crl;
 }
@@ -424,32 +459,47 @@ extern "C" uint8_t *us_pem_read_indexable_ca(BIO *in, size_t *out_len) {
   }
 }
 
-extern "C" int us_x509_store_add_cas(X509_STORE *store, SSL_CTX *names, const char *pem, size_t len) {
-  us_unique_ptr<BIO, BIO_free> in{BIO_new_mem_buf(pem, len)};
-  if (in == nullptr) return 0;
-  us_ca_reader reader{in.get(), us_ca_trust::read};
+static bool us_add_cas(X509_STORE *store, SSL_CTX *names, BIO *in) {
+  us_ca_reader reader{in, us_ca_trust::read};
   while (us_unique_ptr<X509, X509_free> cert{reader.next()}) {
-    if (!X509_STORE_add_cert(store, cert.get()) || (names && !SSL_CTX_add_client_CA(names, cert.get()))) return 0;
+    if (!X509_STORE_add_cert(store, cert.get()) || (names && !SSL_CTX_add_client_CA(names, cert.get()))) return false;
   }
   ERR_clear_error();
-  return 1;
+  return true;
+}
+
+static bool us_add_crls(X509_STORE *store, BIO *in) {
+  bool added = false;
+  for (;;) {
+    us_pem_block block;
+    if (!block.read(in)) break;
+    if (!block.is(PEM_STRING_X509_CRL)) continue;
+    if (!block.decrypt()) return false;
+    us_unique_ptr<X509_CRL, X509_CRL_free> crl{block.parse_crl()};
+    if (crl == nullptr || !X509_STORE_add_crl(store, crl.get())) return false;
+    added = true;
+  }
+  return added && ERR_equals(ERR_peek_last_error(), ERR_LIB_PEM, PEM_R_NO_START_LINE);
+}
+
+extern "C" int us_x509_store_add_cas(X509_STORE *store, SSL_CTX *names, const char *pem, size_t len) {
+  us_unique_ptr<BIO, BIO_free> in{BIO_new_mem_buf(pem, len)};
+  return in && us_add_cas(store, names, in.get());
 }
 
 // https://github.com/nodejs/node/blob/v26.12.1/src/crypto/crypto_tls_certificates.cc#L54
 extern "C" int us_x509_store_add_crls(X509_STORE *store, const char *pem, size_t len) {
   us_unique_ptr<BIO, BIO_free> in{BIO_new_mem_buf(pem, len)};
-  if (in == nullptr) return 0;
-  int added = 0;
-  for (;;) {
-    us_pem_block block;
-    if (!block.read(in.get())) break;
-    if (!block.is(PEM_STRING_X509_CRL)) continue;
-    if (!block.decrypt()) return 0;
-    us_unique_ptr<X509_CRL, X509_CRL_free> crl{block.parse_crl()};
-    if (crl == nullptr || !X509_STORE_add_crl(store, crl.get())) return 0;
-    added = 1;
-  }
-  if (!added || !ERR_equals(ERR_peek_last_error(), ERR_LIB_PEM, PEM_R_NO_START_LINE)) return 0;
+  if (in == nullptr || !us_add_crls(store, in.get())) return 0;
   ERR_clear_error();
   return X509_STORE_set_flags(store, X509_V_FLAG_CRL_CHECK | X509_V_FLAG_CRL_CHECK_ALL);
+}
+
+void us_x509_store_load_hashed_file(X509_STORE *store, const char *path, int type) {
+  ERR_clear_error();
+  if (us_unique_ptr<BIO, BIO_free> file{BIO_new_file(path, "rb")}) {
+    type == X509_LU_CRL ? us_add_crls(store, file.get()) : us_add_cas(store, nullptr, file.get());
+  }
+  us_check_memory();
+  ERR_clear_error();
 }

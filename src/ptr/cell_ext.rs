@@ -1,6 +1,8 @@
 use core::cell::Cell;
 use core::mem::ManuallyDrop;
 
+use crate::{AnyRefCounted, RefPtr};
+
 pub trait CellExt<T> {
     /// The cell holds `T::default()` while `f` runs, and what is stored in it meanwhile is dropped.
     fn with_taken<R>(&self, f: impl FnOnce(&mut T) -> R) -> R;
@@ -25,6 +27,10 @@ impl<T: Default> CellExt<T> for Cell<T> {
 pub trait OptionCellExt {
     /// One load, where `with_taken` copies a large `T` out and back.
     fn is_some(&self) -> bool;
+
+    fn is_none(&self) -> bool {
+        !self.is_some()
+    }
 }
 
 impl<T> OptionCellExt for Cell<Option<T>> {
@@ -33,6 +39,20 @@ impl<T> OptionCellExt for Cell<Option<T>> {
         let is_some = value.is_some();
         self.put_back(value);
         is_some
+    }
+}
+
+pub trait RefPtrCellExt<T: AnyRefCounted> {
+    fn cloned(&self) -> Option<RefPtr<T>>;
+}
+
+impl<T: AnyRefCounted> RefPtrCellExt<T> for Cell<Option<RefPtr<T>>> {
+    fn cloned(&self) -> Option<RefPtr<T>> {
+        let value = self.take();
+        let ptr = value.as_ref().map(RefPtr::as_ptr);
+        self.put_back(value);
+        // SAFETY: the cell holds a ref.
+        Some(unsafe { RefPtr::init_ref(ptr?) })
     }
 }
 
@@ -106,7 +126,7 @@ mod tests {
         assert!(cell.is_some());
         assert_eq!(Rc::strong_count(&counted), 2);
         cell.set(None);
-        assert!(!cell.is_some());
+        assert!(cell.is_none());
         assert_eq!(Rc::strong_count(&counted), 1);
     }
 

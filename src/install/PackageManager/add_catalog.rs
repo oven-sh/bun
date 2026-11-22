@@ -15,14 +15,10 @@ use bun_install::{
     Dependency, INVALID_PACKAGE_ID, Lockfile, PackageID, PackageNameHash, resolution,
 };
 use bun_install_types::DependencyGroup;
-use bun_paths::path_buffer_pool;
-use bun_paths::resolve_path::{join_abs_string_buf, platform};
-
-use crate::bun_fs::FileSystem;
 
 use super::add_remove_with_filter::{
     WorkspaceMembers, WorkspaceTarget, fetch_entry_root, load_workspace_members,
-    local_relative_path,
+    local_relative_path, workspace_package_json_path,
 };
 use super::options::LogLevel;
 use super::package_json_editor::{self as PackageJSONEditor, EditOptions};
@@ -324,24 +320,14 @@ fn collect_root_entries(root: &Expr, group: &[u8], out: &mut Vec<RootEntry>) {
 }
 
 fn member_targets(ws: &WorkspaceMembers) -> Vec<WorkspaceTarget> {
-    let top_level = FileSystem::get().top_level_dir();
-    let mut buf = path_buffer_pool::get();
     ws.members
         .keys()
         .iter()
         .zip(ws.members.values())
-        .map(|(rel, entry)| {
-            let rel: &[u8] = rel;
-            WorkspaceTarget {
-                name: entry.name.clone(),
-                name_hash: Some(bun_semver::string::Builder::string_hash(&entry.name)),
-                package_json_path: join_abs_string_buf::<platform::Auto>(
-                    top_level,
-                    &mut buf.0,
-                    &[rel, b"package.json"],
-                )
-                .into(),
-            }
+        .map(|(rel, entry)| WorkspaceTarget {
+            name: entry.name.clone(),
+            name_hash: Some(bun_semver::string::Builder::string_hash(&entry.name)),
+            package_json_path: workspace_package_json_path(rel),
         })
         .collect()
 }

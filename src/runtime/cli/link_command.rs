@@ -2,8 +2,6 @@ use bstr::BStr;
 
 use bun_core::strings;
 use bun_core::{Global, Output};
-use bun_paths::AbsPath;
-use bun_resolver::fs::FileSystem;
 use bun_sys::{Dir, Fd, FdDirExt};
 
 use bun_install::Features;
@@ -67,8 +65,7 @@ pub(crate) fn load_package_for_link(
     let mut package = Package::default();
 
     // A copy: the source borrows its path while `parse` below borrows `manager` mutably.
-    let package_json_path =
-        bun_core::ZBox::from_bytes(manager.original_package_json_path.as_bytes());
+    let package_json_path = manager.original_package_json_path.to_zbox();
     let package_json_source = match bun_ast::to_source(&package_json_path, Default::default()) {
         Ok(s) => s,
         Err(e) => {
@@ -175,11 +172,8 @@ pub(crate) fn link_global_bins(
         return None;
     }
     let name = lockfile.str(&package.name);
-    let mut link_target_buf = bun_paths::path_buffer_pool::get();
-    let mut link_dest_buf = bun_paths::path_buffer_pool::get();
-    let mut link_rel_buf = bun_paths::path_buffer_pool::get();
 
-    let mut node_modules_path = match <AbsPath>::init_fd_path(Fd::from_std_dir(node_modules)) {
+    let node_modules_path = match bun_sys::get_fd_path_owned(Fd::from_std_dir(node_modules)) {
         Ok(p) => p,
         Err(e) => {
             if manager.options.log_level != LogLevel::Silent {
@@ -191,7 +185,7 @@ pub(crate) fn link_global_bins(
 
     let mut bin_linker = bin::Linker {
         bin: package.bin,
-        node_modules_path: &mut node_modules_path,
+        node_modules_path: &node_modules_path,
         global_bin_path: manager.options.bin_path,
         target_node_modules_path: None,
         target_package_name: name,
@@ -199,16 +193,14 @@ pub(crate) fn link_global_bins(
         string_buf: lockfile.buffers.string_bytes.as_slice(),
         extern_string_buf: lockfile.buffers.extern_strings.as_slice(),
         seen: None,
-        abs_target_buf: link_target_buf.as_mut_slice(),
-        rel_buf: link_rel_buf.as_mut_slice(),
         is_behind_link: Some(false),
         err: None,
         skipped_due_to_missing_bin: false,
     };
     if unlink {
-        bin_linker.unlink(true, link_dest_buf.as_mut_slice());
+        bin_linker.unlink(true);
     } else {
-        bin_linker.link(true, link_dest_buf.as_mut_slice());
+        bin_linker.link(true);
     }
     bin_linker.err
 }
@@ -245,20 +237,9 @@ fn link(ctx: command::Context) -> crate::Result<()> {
 
         #[cfg(windows)]
         {
-            use bun_core::ZStr;
-            use bun_paths::{platform, resolve_path};
-            let top_level = bun_paths::string_paths::without_trailing_slash_windows_path(
-                FileSystem::get().top_level_dir(),
-            );
-            let mut link_path_buf = bun_paths::path_buffer_pool::get();
-            link_path_buf.0[..top_level.len()].copy_from_slice(top_level);
-            let link_path = ZStr::nul_terminate(&mut link_path_buf, top_level.len());
-            let global_path = pm::global_link_dir_path(manager);
-            let dest_path =
-                resolve_path::join_abs_string_z::<platform::Windows>(global_path, &[name]);
             if let Err(e) = bun_sys::sys_uv::symlink_uv(
-                link_path,
-                dest_path,
+                &bun_paths::Path::from_top_level_dir(),
+                &bun_paths::Path::resolve(&[pm::global_link_dir_path(manager), name]),
                 bun_sys::windows::libuv::UV_FS_SYMLINK_JUNCTION,
             ) {
                 bun_core::pretty_errorln!(
@@ -271,7 +252,7 @@ fn link(ctx: command::Context) -> crate::Result<()> {
         #[cfg(not(windows))]
         {
             if let Err(e) = node_modules.sym_link(
-                FileSystem::get().top_level_dir_without_trailing_slash(),
+                &bun_paths::Path::from_top_level_dir(),
                 name,
                 // is_directory
                 true,

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, bunRun, isWindows, tempDir } from "harness";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 
@@ -296,4 +296,79 @@ describe.concurrent("bun lint and bun fmt", () => {
     expect(onlyFormat.exitCode).toBe(2);
     expect(onlyLint).toEqual({ stdout: expect.any(String), error: undefined, exitCode: 0 });
   });
+});
+
+test.skipIf(isWindows)("a backslash separates in the path of an entry point, and not in a data: URL", async () => {
+  using dir = tempDir("bunfig-entry-points", {
+    "bunfig.toml": String.raw`
+      [bundle]
+      entryPoints = ['.\src\a.js', './src/[id]\d.js', '\src\e.js', 'data:text/javascript,console.log("b\x63")']
+    `,
+    "src/a.js": `console.log("a");`,
+    "src/[id]/d.js": `console.log("d");`,
+    "src/e.js": `console.log("e");`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "--root=.", "--outdir=out", "--entry-naming=[hash].js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  const outputs = await Array.fromAsync(new Bun.Glob("out/*.js").scan({ cwd: String(dir), absolute: true }), file =>
+    Bun.file(file).text(),
+  );
+
+  expect(stderr).toBe("");
+  expect(outputs.map(text => text.match(/^console\.log\("(.*)"\);$/m)?.[1]).sort()).toEqual(["a", "bc", "d", "e"]);
+  expect(exitCode).toBe(0);
+});
+
+test.skipIf(isWindows)("bunfig.toml is loaded when the cwd contains a backslash", async () => {
+  using dir = tempDir("bunfig-backslash", { "a\\b": { "bunfig.toml": `[define]\nFROM = '"bunfig"'\n` } });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-p", "FROM"],
+    env: bunEnv,
+    cwd: join(String(dir), "a\\b"),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stdout, stderr }).toEqual({ stdout: "bunfig\n", stderr: "" });
+  expect(exitCode).toBe(0);
+});
+
+test("a backslash separates in jsxImportSource and [macros]", async () => {
+  using dir = tempDir("bunfig-specifiers", {
+    "bunfig.toml": String.raw`
+      jsxImportSource = 'pkg\jsx'
+      [macros.target]
+      value = 'pkg\macro\index.js'
+    `,
+    "node_modules/pkg/jsx/jsx-dev-runtime.js": `exports.jsxDEV = () => "jsx";`,
+    "node_modules/pkg/macro/index.js": `export const value = () => "macro";`,
+    "index.tsx": `import { value } from "target"; console.log(<a />, value());`,
+  });
+  expect(await bunRun(join(String(dir), "index.tsx"))).toMatchObject({
+    stdout: expect.stringMatching(/^jsx macro$/m),
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+test.skipIf(isWindows)("a path that starts with a backslash is below the project", async () => {
+  using dir = tempDir("bunfig-leading-backslash", {
+    "bunfig.toml": String.raw`
+      [test]
+      root = '\tests'
+    `,
+    "tests/a.test.js": `test("runs", () => {});`,
+  });
+  await using proc = Bun.spawn({ cmd: [bunExe(), "test"], env: bunEnv, cwd: String(dir), stderr: "pipe" });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toContain(" 1 pass");
+  expect(exitCode).toBe(0);
 });

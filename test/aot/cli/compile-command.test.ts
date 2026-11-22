@@ -259,6 +259,53 @@ describe.concurrent("bun compile", () => {
     buildLimit,
   );
 
+  test.skipIf(isWindows).each(["compile", "build --compile --aot"])(
+    "bun %s: a backslash escapes in a pattern of [bundle] entryPoints",
+    command =>
+      slot(async () => {
+        using dir = tempDir("compile-bunfig-entry-pattern", {
+          "pages/[id]/app.js": `console.log("[id]");`,
+          "pages/i/app.js": `console.log("i");`,
+          "bunfig.toml": `[bundle]\nentryPoints = ['pages/\\[id\\]/*.js']\n`,
+        });
+        const folder = String(dir);
+        expect(await bun(folder, ...command.split(" "), "--outfile", "out")).toMatchObject({ exitCode: 0 });
+        expect(await spawned([executable(folder, "out")], folder, env)).toMatchObject({
+          stdout: "[id]\n",
+          exitCode: 0,
+        });
+      }),
+    buildLimit,
+  );
+
+  test.skipIf(isWindows).each(["data/", "<dir>/"])(
+    "finds the files of --asset %s beside the program",
+    asset =>
+      slot(async () => {
+        using dir = tempDir("compile-asset-trailing-slash", {
+          "app/cli.js": `console.log(require("fs").readFileSync(import.meta.dir + "/data/x.txt", "utf8"));`,
+          "app/data/x.txt": "x",
+        });
+        const folder = join(String(dir), "app");
+        const build = await bun(
+          folder,
+          "compile",
+          "cli.js",
+          "--asset",
+          asset.replace("<dir>", folder),
+          "--outfile",
+          "../out",
+        );
+        expect(build.stderr).not.toContain("warn");
+        rmSync(folder, { recursive: true });
+        expect(await spawned([executable(String(dir), "out")], String(dir), env)).toMatchObject({
+          stdout: "x\n",
+          exitCode: 0,
+        });
+      }),
+    buildLimit,
+  );
+
   test(
     "Bun.build compiles, and --no-aot and plain --compile do not",
     () =>

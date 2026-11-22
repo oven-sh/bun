@@ -14,8 +14,7 @@ use crate::common::utypes::{
 use crate::sys::file::{self, Mapping, ok_or_oom};
 use crate::sys::package;
 use bun_core::{ZStr, strings, zstr};
-use bun_paths::resolve_path::posix_to_platform_in_place;
-use bun_paths::{DELIMITER, SEP};
+use bun_paths::{DELIMITER, SEP, to_native_in_place};
 use bun_sys::CloseOnDrop;
 use std::ffi::{CStr, CString};
 
@@ -150,7 +149,7 @@ fn directories(
 ) -> Result<&'static [u8], UErrorCode> {
     let list = list.get_or_try_init(|| {
         let mut directories = try_to_vec(bun_core::getenv_z(variable).unwrap_or_default())?;
-        posix_to_platform_in_place(&mut directories);
+        to_native_in_place(&mut directories);
         Ok(directories)
     });
     list.map(Vec::as_slice)
@@ -316,7 +315,7 @@ impl Search {
     #[cold]
     fn in_files(&mut self, directories: &[u8], package: &[u8], suffix: &[u8]) -> Found {
         let mut suffix = try_to_vec(suffix)?;
-        posix_to_platform_in_place(&mut suffix);
+        to_native_in_place(&mut suffix);
         for path in candidate_paths(directories, package, Some(&suffix)) {
             let file = read_item_file(path?, &|info| self.accepts(info));
             if let Some(Some(file)) = self.keep_error(file)?

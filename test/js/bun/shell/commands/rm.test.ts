@@ -498,3 +498,24 @@ test("operands longer than the path scratch buffers are reported, not a crash", 
   });
   expect(exitCode).toBe(0);
 });
+
+test.skipIf(isWindows)("the root check reads a backslash as part of a name, as the removal does", async () => {
+  // Without -r no directory can be removed, whatever the check decides.
+  const { exitCode, stderr } = await $`rm ${"/no-such-dir\\x\\y/.."}`.quiet();
+  expect(stderr.toString()).toBe('rm: "/no-such-dir\\x\\y/.." may not be removed\n');
+  expect(exitCode).toBe(1);
+});
+
+test("an empty operand names nothing", async () => {
+  using dir = tempDir("rm-empty-operand", { "a.txt": "", "sub/b.txt": "" });
+  const { exitCode } = await $`rm -rf ${""}`.cwd(String(dir)).quiet();
+  expect(readdirSync(String(dir), { recursive: true }).sort()).toEqual(["a.txt", "sub", path.join("sub", "b.txt")]);
+  expect(exitCode).toBe(0);
+});
+
+test("removes a directory that is written with ./", async () => {
+  using dir = tempDir("rm-dot-slash", { "sub/b.txt": "" });
+  const { exitCode } = await $`rm -r ./sub`.cwd(String(dir)).quiet();
+  expect(readdirSync(String(dir))).toEqual([]);
+  expect(exitCode).toBe(0);
+});

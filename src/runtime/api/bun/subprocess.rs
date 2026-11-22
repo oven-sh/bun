@@ -4,7 +4,7 @@
 use core::cell::Cell;
 use core::ptr::NonNull;
 
-use bun_ptr::{RefCount, RefPtr};
+use bun_ptr::{Attached, RefCount, RefPtr};
 
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 use bun_jsc::{
@@ -86,8 +86,7 @@ pub(crate) use bun_spawn::process::StdioKind;
 #[derive(bun_ptr::RefCounted)]
 pub struct Subprocess<'a> {
     pub(crate) ref_count: RefCount<Subprocess<'a>>,
-    /// The construction ref on the `Process` (detached in [`Subprocess::finalize`]).
-    pub(crate) process: RefPtr<Process>,
+    pub(crate) process: bun_spawn::ProcessHandle,
     pub(crate) stdin: JsCell<Writable>,
     pub(crate) stdout: JsCell<Readable>,
     pub(crate) stderr: JsCell<Readable>,
@@ -103,7 +102,7 @@ pub struct Subprocess<'a> {
     pub closed: Cell<EnumSet<StdioKind>>,
     pub this_value: JsCell<JsRef>,
 
-    pub(crate) ipc_data: JsCell<Option<RefPtr<IPC::SendQueue>>>,
+    pub(crate) ipc_data: JsCell<Option<Attached<IPC::SendQueue>>>,
     pub(crate) flags: Cell<Flags>,
 
     /// Weak observer of the stdin `FileSink` — holds no ownership/ref. `onStdinDestroyed`
@@ -177,7 +176,6 @@ bitflags::bitflags! {
     pub struct Flags: u8 {
         const IS_SYNC                      = 1 << 0;
         const HAS_STDIN_DESTRUCTOR_CALLED  = 1 << 2;
-        const FINALIZED                    = 1 << 3;
         const IS_STDIN_A_READABLE_STREAM   = 1 << 5;
         /// Terminal was created inline by spawn (vs. an existing Terminal passed
         /// by the caller). Owned terminals are closed when the subprocess exits
@@ -502,17 +500,8 @@ impl Subprocess<'_> {
         }
     }
 
-    pub(crate) fn kill(
-        &self,
-        this_value: JsWrapper<'_, Self>,
-        cx: &mut JsScope<'_>,
-        signal: JsLocal<'_>,
-    ) -> JsResult<()> {
+    pub(crate) fn kill(&self, cx: &mut JsScope<'_>, signal: JsLocal<'_>) -> JsResult<()> {
         let global_this = cx.global();
-        // Safe: this method can only be called while the object is alive (reachable from JS)
-        // The finalizer only runs when the object becomes unreachable
-        self.this_value
-            .with_mut(|v| v.update(global_this, this_value.to_js()));
 
         // If signal is 0, then no actual signal is sent, but error checking
         // is still performed.
@@ -559,11 +548,7 @@ impl Subprocess<'_> {
         let _stdin_sink_ref = self.stdin_sink_ref.replace(None);
         self.update_flags(|f| f.insert(Flags::HAS_STDIN_DESTRUCTOR_CALLED));
         self.weak_file_sink_stdin_ptr.set(None);
-
-        if !self.flags.get().contains(Flags::FINALIZED) {
-            // otherwise update the pending activity flag
-            self.update_has_pending_activity();
-        }
+        self.update_has_pending_activity();
     }
 
     pub(crate) fn send(
@@ -956,11 +941,6 @@ impl Subprocess<'_> {
 
     pub fn finalize(&self) {
         bun_output::scoped_log!(Subprocess, "finalize");
-        // Ensure any code which references the "this" value doesn't attempt to
-        // access it after it's been freed We cannot call any methods which
-        // access GC'd values during the finalizer
-        self.this_value.with_mut(|v| v.finalize());
-
         self.clear_abort_signal();
 
         debug_assert!(
@@ -984,23 +964,12 @@ impl Subprocess<'_> {
             self.stdin_sink_ref.set(None);
         }
 
-        self.process().detach();
         self.event_loop_timer.disarm();
         self.set_event_loop_timer_refd(false);
 
         self.stdout_maxbuf.set(None);
         self.stderr_maxbuf.set(None);
-
-        if let Some(ipc_data) = self.ipc_data.take() {
-            // In normal operation the socket is already `.closed` by the time we
-            // get here (that is what allowed `compute_has_pending_activity` to drop
-            // to false and let GC collect us). Detach and release our ref; any
-            // still-queued close task holds its own ref and frees the SendQueue
-            // when it runs.
-            ipc_data.detach();
-        }
-
-        self.update_flags(|f| f.insert(Flags::FINALIZED));
+        self.ipc_data.set(None);
     }
 
     pub(crate) fn get_exited(
@@ -1133,7 +1102,7 @@ impl Subprocess<'_> {
     }
 
     pub(crate) fn ipc(&self) -> Option<&IPC::SendQueue> {
-        self.ipc_data.get().as_deref()
+        self.ipc_data.get().as_ref().map(|ipc| &***ipc)
     }
 }
 

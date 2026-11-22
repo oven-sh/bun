@@ -100,7 +100,8 @@ mod unix {
 mod windows {
     use super::{CStr, CloseOnDrop, File, set_oom};
     use crate::common::memory::{defer_oom, try_filled};
-    use bun_core::strings;
+    use bun_core::WStr;
+    use bun_core::strings::try_convert_utf8_to_utf16_in_buffer;
     use bun_sys::windows::*;
     use std::ffi::c_void;
     use std::os::windows::io::{AsHandle, BorrowedHandle, HandleOrNull, OwnedHandle};
@@ -140,8 +141,10 @@ mod windows {
     pub(crate) fn open(path: &CStr) -> Option<CloseOnDrop> {
         let path = path.to_bytes();
         let mut wide = defer_oom(try_filled(0, path.len() + 1))?;
+        let length = try_convert_utf8_to_utf16_in_buffer(&mut wide, path)?.len();
+        *wide.get_mut(length)? = 0;
         let file = CreateFileW(
-            strings::convert_utf8_to_utf16_in_buffer_z(&mut wide, path),
+            WStr::from_buf(&wide, length),
             GENERIC_READ,
             FILE_SHARE_READ,
             OPEN_EXISTING,

@@ -281,19 +281,9 @@ pub(crate) fn remove_packets(
     }
 }
 
-/// The system allocates the packet, so this waits while it has no memory.
 pub(crate) fn post(port: &OwnedHandle, key: usize, context: usize) {
-    loop {
-        match NtSetIoCompletion(port.as_raw_handle(), key, context, NTSTATUS::SUCCESS, 0) {
-            NTSTATUS::INSUFFICIENT_RESOURCES | NTSTATUS::NO_MEMORY => {
-                std::thread::sleep(core::time::Duration::from_millis(1));
-            }
-            status => {
-                debug_assert!(NT_SUCCESS(status));
-                return;
-            }
-        }
-    }
+    let status = NtSetIoCompletion(port.as_raw_handle(), key, context, NTSTATUS::SUCCESS, 0);
+    assert!(NT_SUCCESS(status), "NtSetIoCompletion failed: {status:x?}");
 }
 
 /// Only asks: the request still reports its end, which can be a success.

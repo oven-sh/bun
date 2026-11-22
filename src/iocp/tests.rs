@@ -612,13 +612,11 @@ fn a_port_can_be_refused() {
 }
 
 #[test]
-fn a_wake_waits_for_memory() {
+#[should_panic = "NtSetIoCompletion failed"]
+fn a_wake_does_not_get_lost() {
     let port = Port::new().unwrap();
-    for result in [NO_RESOURCES, status(NTSTATUS::NO_MEMORY)] {
-        let _refused = fail(Call::NtSetIoCompletion, 2, result);
-        port.waker().wake();
-        assert_eq!(turn(&port, Duration::from_secs(10)), 1);
-    }
+    let _refused = fail(Call::NtSetIoCompletion, 1, NO_RESOURCES);
+    port.waker().wake();
 }
 
 type Spawn = fn(Box<dyn FnOnce() + Send>);

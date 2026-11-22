@@ -289,6 +289,43 @@ describe("Decimal", () => {
     });
   });
 
+  // The tests of the engine run on ICU4C, not on src/icu. No Number or string takes exponents like these there.
+  test.concurrent("Intl", async () => {
+    const max = "9.999999999999999999999999999999999e6144";
+    const third = "0." + Buffer.alloc(34, "3");
+    const cases: [string, unknown][] = [
+      [`d("1234567.891").toLocaleString("de-DE")`, "1.234.567,891"],
+      [`["NaN", "Infinity", "-Infinity", "-0"].map(x => format(x))`, ["NaN", "∞", "-∞", "-0"]],
+      [`format("${third}", { maximumFractionDigits: 40 })`, third],
+      [`format("${third}", { style: "percent", maximumFractionDigits: 2 })`, "33.33%"],
+      [`format("${third}", { ...cents, roundingIncrement: 25 })`, "0.25"],
+      [`format("9007199254740993.995", { style: "currency", currency: "USD" })`, "$9,007,199,254,740,994.00"],
+      [`format("9007199254740993.5", { style: "unit", unit: "meter" })`, "9,007,199,254,740,993.5 m"],
+      [`format("${max}", { useGrouping: false })`, "" + Buffer.alloc(34, "9") + Buffer.alloc(6111, "0")],
+      [`format("${max}", { notation: "scientific" })`, "1E6145"],
+      [`format("-1e6144", { notation: "engineering" })`, "-1E6144"],
+      [`format("1e400", { notation: "compact", useGrouping: false })`, "1" + Buffer.alloc(388, "0") + "T"],
+      [`format("1e-6176", { notation: "scientific" })`, "1E-6176"],
+      [`format("1e-6176", { maximumSignificantDigits: 1 })`, "0." + Buffer.alloc(6175, "0") + "1"],
+      [`["ceil", "floor"].map(roundingMode => format("1e-6176", { ...cents, roundingMode }))`, ["0.01", "0.00"]],
+      [`["ceil", "floor"].map(roundingMode => format("-1e-6176", { ...cents, roundingMode }))`, ["-0.00", "-0.01"]],
+      [`scientific.formatToParts(d("-1.5e-400")).map(part => part.value)`, ["-", "1", ".", "5", "E", "-", "400"]],
+      [`scientific.formatRange(d("1e-400"), d("1e400")).split(/\\s*–\\s*/)`, ["1E-400", "1E400"]],
+      [`scientific.formatRange(d("NaN"), d("1"))`, "throws RangeError"],
+      [`["1", "1.5", "1e400"].map(x => new Intl.PluralRules("en").select(d(x)))`, ["one", "other", "other"]],
+      [`new Intl.PluralRules("en").selectRange(d("1.0001"), d("1"))`, "one"],
+      [`new Intl.PluralRules("sl").selectRange(d("101"), d("3"))`, "few"],
+      [`new Intl.PluralRules("en").selectRange(d("1e400"), d("1e401"))`, "other"],
+    ];
+    const setup = `
+      const format = (text, options) => new Intl.NumberFormat("en-US", options).format(d(text));
+      const cents = { minimumFractionDigits: 2, maximumFractionDigits: 2 };
+      const scientific = new Intl.NumberFormat("en-US", { notation: "scientific" });
+    `;
+    const expressions = cases.map(([expression]) => expression);
+    expect(await evaluate(setup, expressions)).toEqual(cases.map(([, expected]) => expected));
+  });
+
   describe.concurrent("databases", () => {
     test("bun:sqlite and node:sqlite bind it as text", async () => {
       const text = "1.234567890123456789012345678901234";

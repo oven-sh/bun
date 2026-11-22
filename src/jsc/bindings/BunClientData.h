@@ -23,8 +23,13 @@ namespace Bun {
 // execution (WebCore's forbidExecution() at the same point). Beneath script it stays pending for JSC to unwind. True if
 // taken. bindings.cpp.
 bool takeTerminationOutsideScript(JSC::VM&, JSC::TopExceptionScope&);
+// For a native frame that calls script and reports what it threw (a dispatcher, a loop). True: an error, now cleared.
+// False: the VM's termination, which is not the callee's error, and takeTerminationOutsideScript() has run. A frame that
+// hands the exception to its own caller takes nothing: RETURN_IF_EXCEPTION there.
+bool clearExceptionOrTakeTermination(JSC::VM&, JSC::TopExceptionScope&);
 }
 extern "C" bool Bun__VM__takeTerminationOutsideScript(JSC::JSGlobalObject*);
+extern "C" void JSC__JSGlobalObject__throwTerminationException(JSC::JSGlobalObject*); // bindings.cpp
 
 namespace WebCore {
 class WorkerMessagingProxy;
@@ -82,8 +87,31 @@ class DOMWrapperWorld;
 #include "NodeVMOptionNames.h"
 #include "NodeVMSourceOriginCache.h"
 #include <JavaScriptCore/HeapObserver.h>
+#include <wtf/SetForScope.h>
+#include <wtf/StackPointer.h>
 namespace Zig {
 class GlobalObject;
+}
+namespace Bun {
+// What JSC's NakedPtr<Exception> overloads of call() tell ahead-of-time compiled code while their callee runs: a native
+// frame at this depth takes what the callee throws. For a frame that takes it from the plain overload instead.
+class NativeCatcherScope {
+public:
+    ALWAYS_INLINE explicit NativeCatcherScope(JSC::VM& vm)
+    {
+#if ENABLE(AOT)
+        if (vm.hasCompiledCode()) [[unlikely]]
+            m_catcher.emplace(vm.aotState().exceptionCatcherStackPointer, currentStackPointer());
+#else
+        UNUSED_PARAM(vm);
+#endif
+    }
+
+private:
+#if ENABLE(AOT)
+    std::optional<SetForScope<void*>> m_catcher;
+#endif
+};
 }
 class VersionSqlite3;
 
@@ -278,6 +306,9 @@ public:
     // Stopping: the stop has been requested (any thread; `!scriptAllowed()`). Stopped: it has been carried out on
     // this thread and JSC forbids execution. Either way no script may be entered on this VM.
     ALWAYS_INLINE bool isStoppingOrStopped(const JSC::VM& vm) const { return !scriptAllowed() || vm.executionForbidden(); }
+    // What a native frame reads before it calls script: isStoppingOrStopped(), or a termination is unwinding the script
+    // beneath that frame (a node:vm timeout leaves the gate open) and no script is entered over it.
+    ALWAYS_INLINE bool mustNotEnterScript(const JSC::VM& vm) const { return isStoppingOrStopped(vm) || vm.hasPendingTerminationException(); }
     Bun::JSCTaskScheduler deferredWorkTimer;
 
     // One slot per string of the executable's module-info string table,

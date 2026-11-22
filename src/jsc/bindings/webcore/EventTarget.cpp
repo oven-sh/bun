@@ -285,8 +285,12 @@ void EventTarget::innerInvokeEventListeners(Event& event, EventListenerVector li
         JSC::EnsureStillAliveScope jsFunctionProtector(registeredListener->callback().jsFunction());
 
         // Do this before invocation to avoid reentrancy issues.
-        if (registeredListener->isOnce())
+        if (registeredListener->isOnce()) {
+            // A termination is unwinding the script beneath: handleEvent() enters no listener over it, so this one stays registered.
+            if (context->vm().hasPendingTerminationException()) [[unlikely]]
+                break;
             removeEventListener(event.type(), registeredListener->callback(), registeredListener->useCapture());
+        }
 
         if (registeredListener->isPassive())
             event.setInPassiveListener(true);

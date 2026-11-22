@@ -109,7 +109,13 @@ public:
     // The entry point has evaluated: Pending -> Running, queued tasks and messages are delivered.
     void workerGlobalScopeStarted(Zig::GlobalObject&);
     void postMessageToWorkerObject(MessageWithMessagePorts&&);
-    void postErrorToWorkerObject(Zig::GlobalObject&, const String& message, JSC::JSValue error);
+    // For the parent's 'error' event. The clone reads the error, so it is made before the worker's own 'error' listeners run.
+    struct ErrorForWorkerObject {
+        RefPtr<SerializedScriptValue> error;
+        String code;
+    };
+    ErrorForWorkerObject serializeErrorForWorkerObject(Zig::GlobalObject&, JSC::JSValue error);
+    void postErrorToWorkerObject(const String& message, ErrorForWorkerObject&&);
     // The worker's heap is full, so the parent makes the error. Touches no heap of the worker: safe inside an allocation.
     void postOutOfMemoryErrorToWorkerObject();
     // Parent thread: the thread was to start after the constructor had returned, and could not. What the constructor throws otherwise.
@@ -137,7 +143,6 @@ private:
     void drainMessagesToWorkerObject(ScriptExecutionContext&, DrainBudget);
     void rejectAllCrossVMRequests();
     void postMessageErrorToWorkerObject(String&& message);
-    bool postSerializedErrorToWorkerObject(Zig::GlobalObject&, const String& message, JSC::JSValue error);
 
     // Parent thread only.
     RefPtr<ScriptExecutionContext> m_scriptExecutionContext;

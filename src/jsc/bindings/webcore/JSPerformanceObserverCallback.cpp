@@ -69,7 +69,7 @@ CallbackResult<typename IDLUndefined::ImplementationType> JSPerformanceObserverC
     args.append(&observer == &thisObject ? thisValue : toJS<IDLInterface<PerformanceObserver>>(lexicalGlobalObject, globalObject, observer));
     ASSERT(!args.hasOverflowed());
 
-    NakedPtr<JSC::Exception> returnedException;
+    JSC::Exception* returnedException = nullptr;
     m_data.invokeCallback(vm, thisValue, args, JSCallbackData::CallbackType::Function, Identifier(), returnedException);
     if (returnedException) {
         UNUSED_PARAM(lexicalGlobalObject);

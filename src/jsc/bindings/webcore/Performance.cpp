@@ -291,8 +291,12 @@ void Performance::scheduleTaskIfNeeded()
     m_hasScheduledTimingBufferDeliveryTask = true;
     context->postTask([protectedThis = Ref { *this }, this](ScriptExecutionContext& context) {
         m_hasScheduledTimingBufferDeliveryTask = false;
-        for (auto& observer : copyToVector(m_observers))
+        for (auto& observer : copyToVector(m_observers)) {
+            // deliver() takes the observer's entries before it calls: they stay where the callback is not entered.
+            if (context.mustNotEnterScript()) [[unlikely]]
+                break;
             observer->deliver();
+        }
     });
 }
 

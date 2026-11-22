@@ -1,0 +1,13 @@
+{
+  "src/jsc/bindings/JSCommonJSExtensions.cpp": 1,
+  "src/jsc/bindings/JSCommonJSModule.cpp": 5,
+  "src/jsc/bindings/JSMockFunction.cpp": 1,
+  "src/jsc/bindings/LintNodes.cpp": 2,
+  "src/jsc/bindings/ZigGlobalObject.cpp": 1,
+  "src/jsc/bindings/bindings.cpp": 2,
+  "src/jsc/bindings/napi.cpp": 2,
+  "src/jsc/bindings/webcore/JSErrorHandler.cpp": 1,
+  "src/jsc/bindings/webcore/WebSocket.cpp": 1,
+  "src/jsc/modules/NodeModuleModule.cpp": 1,
+  "src/runtime/bake/BakeProduction.cpp": 1
+}

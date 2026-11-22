@@ -474,17 +474,21 @@ void WorkerMessagingProxy::postMessageErrorToWorkerObject(String&& message)
     });
 }
 
-bool WorkerMessagingProxy::postSerializedErrorToWorkerObject(Zig::GlobalObject& workerGlobalObject, const String& message, JSC::JSValue value)
+WorkerMessagingProxy::ErrorForWorkerObject WorkerMessagingProxy::serializeErrorForWorkerObject(Zig::GlobalObject& workerGlobalObject, JSC::JSValue value)
 {
-    // Top of the worker's error-dispatch stack: neither the structured clone (which can run script
-    // through getters even in NonThrowing mode) nor the `code` read may leave an exception behind.
+    // A Web Worker's parent gets the message only.
+    if (m_options.kind != WorkerOptions::Kind::Node)
+        return {};
+
+    // The structured clone (which can run script through getters even in NonThrowing mode) and the `code`
+    // read leave no error behind. A termination stays pending: the dispatch that follows enters no listener over it.
     auto& vm = JSC::getVM(&workerGlobalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     auto serialized = SerializedScriptValue::create(workerGlobalObject, value, SerializationForStorage::No, SerializationErrorMode::NonThrowing);
     CLEAR_IF_EXCEPTION(scope);
     if (!serialized)
-        return false;
+        return {};
 
     // Structured clone keeps only the standard Error fields; Node's worker 'error' event also
     // preserves a string `error.code` (lib/internal/error_serdes.js).
@@ -496,7 +500,17 @@ bool WorkerMessagingProxy::postSerializedErrorToWorkerObject(Zig::GlobalObject& 
         CLEAR_IF_EXCEPTION(scope);
     }
 
-    return ScriptExecutionContext::postTaskTo(m_loaderContextIdentifier, m_loaderLoopKind, [protectedThis = Ref { *this }, serialized = serialized.releaseNonNull(), errorCode = WTF::move(errorCode).isolatedCopy(), message = message.isolatedCopy()](ScriptExecutionContext& context) {
+    return { WTF::move(serialized), WTF::move(errorCode).isolatedCopy() };
+}
+
+void WorkerMessagingProxy::postErrorToWorkerObject(const String& message, ErrorForWorkerObject&& forParent)
+{
+    if (!forParent.error) {
+        postMessageErrorToWorkerObject(String { message });
+        return;
+    }
+
+    bool posted = ScriptExecutionContext::postTaskTo(m_loaderContextIdentifier, m_loaderLoopKind, [protectedThis = Ref { *this }, serialized = forParent.error.releaseNonNull(), errorCode = WTF::move(forParent.code), message = message.isolatedCopy()](ScriptExecutionContext& context) {
         RefPtr workerObject = protectedThis->m_workerObject;
         if (!workerObject)
             return;
@@ -518,19 +532,8 @@ bool WorkerMessagingProxy::postSerializedErrorToWorkerObject(Zig::GlobalObject& 
         }
         workerObject->dispatchEvent(ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes));
     });
-}
-
-void WorkerMessagingProxy::postErrorToWorkerObject(Zig::GlobalObject& workerGlobalObject, const String& message, JSC::JSValue error)
-{
-    switch (m_options.kind) {
-    case WorkerOptions::Kind::Web:
+    if (!posted)
         postMessageErrorToWorkerObject(String { message });
-        return;
-    case WorkerOptions::Kind::Node:
-        if (!postSerializedErrorToWorkerObject(workerGlobalObject, message, error))
-            postMessageErrorToWorkerObject(String { message });
-        return;
-    }
 }
 
 void WorkerMessagingProxy::postOutOfMemoryErrorToWorkerObject()

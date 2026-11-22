@@ -1095,7 +1095,7 @@ fn step_sequence_one(
         };
         if sequence.evaluate_timeout(buntest, active_entry, now) {
             if let Some(context) = sequence.context.get() {
-                TestContext::abort_signal(context, global_this);
+                TestContext::abort_signal(context, global_this)?;
             }
             let entry_data = EntryData {
                 sequence_index,
@@ -1246,7 +1246,7 @@ fn step_sequence_one(
             *now = Timespec::now_force_real_time();
             if sequence.evaluate_timeout(buntest, next_id, now) {
                 if let Some(context) = context {
-                    TestContext::abort_signal(context, global_this);
+                    TestContext::abort_signal(context, global_this)?;
                 }
                 report_around_timeout(buntest, global_this, next_item, &callback_data)?;
             } else if sequence.waits_for_matchers() {

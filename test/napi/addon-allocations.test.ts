@@ -85,8 +85,8 @@ describe.skipIf(isWindows || !compiler)("a native addon's allocations", () => {
   const whenAThreadEnds = ["released by a thread-local destructor"];
 
   // The places that release blocks as the process ends print a line each.
-  async function printedBy(addonFunction: string) {
-    const result = await run("operators.js", [addonFunction], { MallocDebugReport: "crash", ADDON: addon });
+  async function printedBy(addonFunction: string, env: Record<string, string> = {}) {
+    const result = await run("operators.js", [addonFunction], { MallocDebugReport: "crash", ADDON: addon, ...env });
     return { ...result, stdout: result.stdout.replace(/^released by .*\n/gm, "") };
   }
 
@@ -124,6 +124,23 @@ describe.skipIf(isWindows || !compiler)("a native addon's allocations", () => {
         exitCode: 0,
         signalCode: null,
       });
+    },
+    120_000,
+  );
+
+  // The report is the runtime's on macOS, where the addon and the runtime share one C++ library.
+  test.skipIf(!isMacOS || isASAN)(
+    "a request that operator new cannot serve and the addon does not catch is reported as out of memory",
+    async () => {
+      // CI collects crash reports for crashes that nobody expects.
+      const result = await printedBy("askForTooMuchAndLeaveIt", {
+        BUN_CRASH_REPORT_URL: "",
+        BUN_ENABLE_CRASH_REPORTING: "0",
+      });
+      expect(result.stderr).toContain("Bun has run out of memory");
+      expect(result.stderr).not.toContain("A C++ exception occurred");
+      expect(result.stdout).toBe("");
+      expect(result.exitCode).not.toBe(0);
     },
     120_000,
   );

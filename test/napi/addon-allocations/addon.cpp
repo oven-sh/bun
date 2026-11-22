@@ -871,6 +871,15 @@ napi_value askForTooMuch(napi_env, napi_callback_info)
     return nullptr;
 }
 
+// askForTooMuchAndLeaveIt(): what operator new throws leaves the addon, and nothing catches it.
+napi_value askForTooMuchAndLeaveIt(napi_env, napi_callback_info)
+{
+    static void* volatile block;
+    block = ::operator new(tooMuch);
+    writeLine(1, "operator new returned", "");
+    return nullptr;
+}
+
 } // namespace
 
 NAPI_MODULE_INIT()
@@ -933,6 +942,7 @@ NAPI_MODULE_INIT()
         { "countFinalizersFromNow", countFinalizersFromNow },
         { "printImagesOfOperators", printImagesOfOperators },
         { "askForTooMuch", askForTooMuch },
+        { "askForTooMuchAndLeaveIt", askForTooMuchAndLeaveIt },
     };
     for (auto& entry : functions) {
         napi_value function;

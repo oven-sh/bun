@@ -513,9 +513,11 @@ function emitJscPrograms(
       from.flatMap(d => d.objects),
     );
     if (program.name === "testaot") objects.push(...aotNativeTestObjects);
+    // What -moutline-atomics calls is in no library of MSVC's.
+    const rustCrates = [...(program.rustCrates ?? []), ...(cfg.windows && cfg.arm64 ? ["compiler_builtins"] : [])];
     const exe = link(n, cfg, program.name, [...objects, ...builtinTableObjects, ...depLink.eager], {
       lazyObjects: depLink.lazy,
-      libs: [...(program.libs ?? []), ...rust.rlibsFor(program.rustCrates ?? []), ...from.flatMap(d => d.libs)],
+      libs: [...(program.libs ?? []), ...rust.rlibsFor(rustCrates), ...from.flatMap(d => d.libs)],
       flags: [...computeTargetLinkFlags(cfg), ...program.ldflags, ...systemLibs(cfg)],
     });
     // The file is `<name>[.exe]` at the build root, so `ninja <name>` already

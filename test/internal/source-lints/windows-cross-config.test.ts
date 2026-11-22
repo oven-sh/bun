@@ -16,7 +16,7 @@ import { isWindows } from "harness";
 import { resolveConfig, type Config, type PartialConfig, type Toolchain } from "../../../scripts/build/config.ts";
 import { mimalloc } from "../../../scripts/build/deps/mimalloc.ts";
 import { webkit } from "../../../scripts/build/deps/webkit.ts";
-import { computeFlags } from "../../../scripts/build/flags.ts";
+import { computeDepFlags, computeFlags } from "../../../scripts/build/flags.ts";
 import { rustTarget } from "../../../scripts/build/rust.ts";
 import type { DirectBuild } from "../../../scripts/build/source.ts";
 
@@ -106,6 +106,15 @@ describe.skipIf(isWindows)("Windows cross-compile LTO config (non-windows host)"
     );
     for (const cfg of [resolveWindowsCross(), resolveWindowsCross({ arch: "aarch64" }), freebsd, darwin]) {
       expect((mimalloc.build(cfg) as DirectBuild).cflags).toContain("-fno-builtin-malloc");
+    }
+  });
+
+  test("C and C++ outline their atomics on arm64, as rustc does", () => {
+    for (const compute of [computeFlags, computeDepFlags]) {
+      const { cflags, cxxflags } = compute(resolveWindowsCross({ arch: "aarch64" }));
+      expect(cflags).toContain("/clang:-moutline-atomics");
+      expect(cxxflags).toContain("/clang:-moutline-atomics");
+      expect(compute(resolveWindowsCross()).cxxflags).not.toContain("/clang:-moutline-atomics");
     }
   });
 

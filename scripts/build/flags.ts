@@ -260,6 +260,12 @@ export const globalFlags: Flag[] = [
   // ─── CPU target ───
   ...cpuTargetFlags,
   {
+    // rustc's default for the target, so without it LTO inlines no Rust into C++. Also in WebKit's `MARCH_FLAG`.
+    flag: "/clang:-moutline-atomics",
+    when: c => c.windows && c.arm64,
+    desc: "ARM64 Windows: LSE atomics where the CPU has them, as clang does by itself for the other ARM64 targets",
+  },
+  {
     // CMake auto-added these via CMAKE_OSX_DEPLOYMENT_TARGET/CMAKE_OSX_SYSROOT;
     // we must add explicitly. Without this, clang/ld64 default to the host SDK
     // version — CI builds get minos=15.0, breaking macOS 13/14 users at launch.

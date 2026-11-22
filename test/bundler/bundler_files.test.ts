@@ -1,7 +1,7 @@
 import type { BunPlugin, OnResolveCallback } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, bunRun, tempDir } from "harness";
-import { basename, join } from "node:path";
+import { basename, join, relative, sep } from "node:path";
 
 describe("bundler files option", () => {
   test("basic in-memory file bundling", async () => {
@@ -993,6 +993,21 @@ describe("bundler files option", () => {
     const { outputs } = await Bun.build({ ...options, outdir: String(dir) });
     expect(outputs[0].path).toBe(join(String(dir), "in-memory", "index.js"));
     expect(await Bun.file(outputs[0].path).text()).toContain("console.log(1)");
+  });
+
+  test("the metafile and the source map name a key that starts with a slash from the working directory", async () => {
+    const { outputs, metafile } = await Bun.build({
+      entrypoints: ["/in-memory/index.js"],
+      files: { "/in-memory/index.js": `console.log(1);` },
+      naming: "[name].js",
+      metafile: true,
+      sourcemap: "external",
+    });
+    const name = relative(process.cwd(), "/in-memory/index.js").replaceAll(sep, "/");
+    expect({ inputs: Object.keys(metafile!.inputs), sources: (await outputs[1].json()).sources }).toEqual({
+      inputs: [name],
+      sources: [name],
+    });
   });
 
   test("a key with backslashes overrides the file", async () => {

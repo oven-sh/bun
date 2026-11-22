@@ -47,8 +47,6 @@ impl<U: PathUnit> RawBuf<U> {
     #[inline(always)]
     fn from_vec(vec: Vec<U>) -> Self {
         let (ptr, _, capacity) = vec.into_parts();
-        // A path still live at `exit` never drops, and an optimized build may have discarded its stack slot.
-        bun_core::asan::ignore_object(ptr.as_ptr().cast());
         Self { ptr, capacity }
     }
 
@@ -100,6 +98,10 @@ impl<U: PathUnit> PathBackend for HeapBackend<U> {
 
     #[inline(always)]
     fn as_ptr(&self) -> *const U {
+        // A path still live at `exit` never drops. LeakSanitizer finds it only if it keeps a stack slot.
+        if bun_core::env::ENABLE_ASAN {
+            core::hint::black_box(self);
+        }
         self.0.ptr.as_ptr()
     }
 

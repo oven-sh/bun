@@ -3050,6 +3050,20 @@ test.concurrent.skipIf(isDebug || isASAN)("an empty baseUrl is the directory of 
   expect(await bunRun(join(String(dir), "src", "entry.js"))).toSpawn("index");
 });
 
+test.concurrent('an alias to a package with "extends" in its tsconfig.json loads "main"', async () => {
+  using dir = tempDir("resolve-tsconfig-alias-extends", {
+    "tsconfig.json": JSON.stringify({ compilerOptions: { paths: { lib: ["./packages/lib"] } } }),
+    "base.json": "{}",
+    "packages/lib/tsconfig.json": JSON.stringify({ extends: "../../base.json" }),
+    "packages/lib/package.json": JSON.stringify({ name: "lib", main: "dist/index.js" }),
+    "packages/lib/index.ts": `export default "index";`,
+    "packages/lib/dist/index.js": `export default "main";`,
+    "other.js": `export { default } from "lib";`,
+    "entry.js": `import first from "lib"; import second from "./other.js"; console.log(first, second);`,
+  });
+  expect(await bunRun(join(String(dir), "entry.js"))).toSpawn("main main");
+});
+
 test.concurrent.each(["/./", "//"])("finds a worker that is created later and written with %s", async separator => {
   using dir = tempDir("resolve-worker-spelling", {
     "w/old.js": `postMessage("old");`,

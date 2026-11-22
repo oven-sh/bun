@@ -49,6 +49,8 @@ impl GitEnv {
         map.remove(b"BUN_INTERNAL_BUNX_HAS_COPY");
         // Git ignores `refs/replace`, so a commit hash always gives the content that it names.
         bun_core::handle_oom(map.put(b"GIT_NO_REPLACE_OBJECTS", b"1"));
+        // `git_runner` goes by the words of messages, which gettext leaves alone then.
+        bun_core::handle_oom(map.put(b"LANGUAGE", b"C"));
 
         if let Some(configured) = configured {
             // Prompts are off by default, because the install's own output would hide them.

@@ -632,6 +632,7 @@ void *us_socket_group_connect(struct us_socket_group_t *group, unsigned char kin
     c->pending_resolve_callback = 1;
     c->addrinfo_req = ai_req;
     c->port = port;
+    c->error_if_exhausted = ECONNREFUSED;
     us_internal_socket_group_link_connecting_socket(group, c);
 
 #ifdef _WIN32
@@ -670,6 +671,18 @@ struct us_socket_t *us_socket_group_connect_unix(struct us_socket_group_t *group
     return connect_socket;
 }
 
+/* An address that there was no memory to try has not refused the connection. */
+static void note_untried_address(struct us_connecting_socket_t *c) {
+    int error = LIBUS_ERR;
+#ifdef _WIN32
+    if (error == WSAENOBUFS) {
+#else
+    if (error == ENOMEM || error == ENOBUFS) {
+#endif
+        c->error_if_exhausted = error;
+    }
+}
+
 static int start_connections(struct us_connecting_socket_t *c, int count) {
     int opened = 0;
     struct us_socket_group_t *group = c->group;
@@ -680,12 +693,14 @@ static int start_connections(struct us_connecting_socket_t *c, int count) {
         /* The deferred-DNS path does not carry a local binding. */
         us_fd_t connect_socket_fd = bsd_create_connect_socket(&addr, NULL, c->options);
         if (!connect_socket_fd) {
+            note_untried_address(c);
             continue;
         }
         bsd_socket_nodelay(connect_socket_fd.get(), 1);
         struct us_socket_t *s = (struct us_socket_t *) us_internal_start_poll(loop, std::move(connect_socket_fd), POLL_TYPE_SEMI_SOCKET,
                                                                               sizeof(struct us_socket_t) + c->socket_ext_size, LIBUS_SOCKET_WRITABLE);
         if (!s) {
+            note_untried_address(c);
             continue;
         }
         ++opened;
@@ -744,7 +759,7 @@ void us_internal_socket_after_resolve(struct us_connecting_socket_t *c) {
     if (opened == 0) {
         /* Same as the exhausted path in us_internal_socket_after_open: a
          * real connect failure must not be reported as a caller abort. */
-        c->error = ECONNREFUSED;
+        c->error = c->error_if_exhausted;
         us_connecting_socket_close(c);
     }
 }
@@ -791,7 +806,7 @@ void us_internal_socket_after_open(struct us_socket_t *s, int error) {
                      * us_connecting_socket_close defaults c->error to
                      * ECANCELED (caller abort) and never invalidates the
                      * DNS cache entry for the dead host. */
-                    c->error = ECONNREFUSED;
+                    c->error = c->error_if_exhausted;
                     us_connecting_socket_close(c);
                 }
             }

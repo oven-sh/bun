@@ -1,6 +1,7 @@
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::PackageManager;
+use crate::error::OUT_OF_MEMORY_SIGNAL;
 use crate::isolated_install::installer::{CompleteState, Installer, Step};
 use crate::isolated_install::store::{EntryColumns, entry};
 use crate::lockfile_real::Scripts as LockfileScripts;
@@ -804,7 +805,10 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         match status {
             Status::Exited(exit) => {
                 if exit.code > 0 {
-                    if self.optional {
+                    // How a shell reports a signal.
+                    if OUT_OF_MEMORY_SIGNAL.is_some_and(|signal| exit.code == 128 + signal) {
+                        bun_sys::note_out_of_memory(bun_sys::Tag::waitpid);
+                    } else if self.optional {
                         self.discard_failed_optional_package();
                         return;
                     }
@@ -901,6 +905,9 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                     bstr::BStr::new(&self.package_name),
                     signal_code.fmt(Output::enable_ansi_colors_stderr()),
                 );
+                if OUT_OF_MEMORY_SIGNAL == Some(signal) {
+                    bun_sys::note_out_of_memory(bun_sys::Tag::waitpid);
+                }
                 self.discard_packages_with_unfinished_scripts();
 
                 Global::raise_ignoring_panic_handler_raw(core::ffi::c_int::from(signal));

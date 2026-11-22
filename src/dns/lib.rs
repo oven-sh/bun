@@ -31,6 +31,12 @@ mod sock {
 
 pub use sock::addrinfo;
 
+#[cfg(not(windows))]
+pub use libc::EAI_MEMORY;
+/// `WSA_NOT_ENOUGH_MEMORY`
+#[cfg(windows)]
+pub const EAI_MEMORY: c_int = 8;
+
 /// What `getaddrinfo` returns.
 pub struct AddrInfoList(NonNull<addrinfo>);
 
@@ -54,6 +60,10 @@ impl AddrInfoList {
         // `list` is unspecified on failure.
         match NonNull::new(list) {
             Some(list) if status == 0 => Ok(Self(list)),
+            #[cfg(unix)]
+            _ if status == libc::EAI_SYSTEM && bun_sys::last_errno() == libc::ENOMEM => {
+                Err(EAI_MEMORY)
+            }
             _ => Err(status),
         }
     }

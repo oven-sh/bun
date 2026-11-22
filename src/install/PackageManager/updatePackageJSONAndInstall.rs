@@ -413,6 +413,7 @@ fn update_package_json_and_install_with_manager_with_updates(
 /// Runs after the install. Removes what's left in the root `node_modules` of the packages that the
 /// command removed.
 pub(super) fn remove_leftover_node_modules(manager: &mut PackageManager) {
+    scopeguard::defer! { crate::error::exit_if_out_of_memory() }
     if !manager.options.do_.contains(Do::WRITE_PACKAGE_JSON) {
         return;
     }

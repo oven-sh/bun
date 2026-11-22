@@ -384,6 +384,7 @@ impl PackageManager {
             .and_then(|env_path| crate::RunCommand::find_shell(env_path, cwd))
             .map(ZStr::from_slice_with_nul);
 
+        crate::error::check_memory()?;
         RealLifecycleScriptSubprocess::spawn_package_scripts(
             self,
             list,

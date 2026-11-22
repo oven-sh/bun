@@ -321,6 +321,7 @@ pub fn prune(manager: &mut PackageManager, original_cwd: &[u8]) -> crate::Result
         Layout::Hoisted => plan_hoisted(manager, &workspace_names, selection.as_ref(), &mut plan),
         Layout::Isolated => plan_isolated(manager, &workspace_names, selection.as_ref(), &mut plan),
     }
+    crate::error::exit_if_out_of_memory();
     if !plan.linked_folders.is_empty() {
         if !quiet {
             for folder in plan.sorted_linked_folders() {
@@ -379,6 +380,7 @@ pub fn prune(manager: &mut PackageManager, original_cwd: &[u8]) -> crate::Result
     let failed = execute(&plan, quiet);
     let lost_bins = housekeeping(&plan, layout, manager);
     hand_over_names(&plan, &lost_bins, layout, manager);
+    crate::error::exit_if_out_of_memory();
 
     if !quiet {
         Output::flush();
@@ -2613,7 +2615,7 @@ fn store_link_target(dir: &Dir, name: &[u8]) -> Option<Box<[u8]>> {
     None
 }
 
-fn remove_link(dir: &Dir, name: &[u8]) -> sys::Maybe<()> {
+pub(crate) fn remove_link(dir: &Dir, name: &[u8]) -> sys::Maybe<()> {
     let z = &ZBox::from_bytes(name);
     let result = sys::unlinkat(dir.fd(), z);
     #[cfg(windows)]

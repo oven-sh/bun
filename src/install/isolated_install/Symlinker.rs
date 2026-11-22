@@ -122,6 +122,7 @@ impl Symlinker<'_> {
                                 if bun_sys::exists_z(&package_json) {
                                     return Ok(false);
                                 }
+                                crate::error::check_memory()?;
                                 if !self.is_behind_link {
                                     if bun_sys::rmdir(self.dest)
                                         .is_err_and(|err| err.get_errno() == Errno::EBUSY)

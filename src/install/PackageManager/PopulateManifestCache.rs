@@ -35,7 +35,7 @@ impl From<crate::network_task::ForManifestError> for StartManifestTaskError {
 impl From<StartManifestTaskError> for crate::Error {
     fn from(e: StartManifestTaskError) -> Self {
         match e {
-            StartManifestTaskError::OutOfMemory => crate::Error::Alloc(bun_alloc::AllocError),
+            StartManifestTaskError::OutOfMemory => bun_alloc::AllocError.into(),
             StartManifestTaskError::InvalidURL => crate::Error::InvalidURL,
         }
     }

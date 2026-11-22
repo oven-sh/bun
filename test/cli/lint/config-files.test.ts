@@ -6901,6 +6901,46 @@ describe.skipIf(!hasRunner)("Windows paths, on every platform", () => {
     ).toEqual([expected, expected]);
   });
 
+  // A project can itself be in a `node_modules`, with its config file there, above it, or somewhere else.
+  test("oxlint's `node_modules` ignore doesn't count the directories that contain the working directory", async () => {
+    const config = { ...quiet, ...noVar };
+    const project = (root: string, basePath: string, cwd: string | undefined, spelled = root) => ({
+      basePath: `${root}/${basePath}`,
+      cwd: cwd === undefined ? undefined : `${spelled}/${cwd}`,
+      flavor: "oxlint",
+      config,
+      files: ["pkgs/node_modules/proj/a.js", "pkgs/node_modules/proj/node_modules/dep/b.js", "node_modules/p/c.js"].map(
+        it => `${root}/${it}`,
+      ),
+      directories: ["pkgs/node_modules", "pkgs/node_modules/proj", "pkgs/node_modules/proj/node_modules"].map(
+        it => `${root}/${it}`,
+      ),
+    });
+    const own = { files: [["no-var"], "ignored", "ignored"], directories: [false, false, true] };
+    const all = { files: ["ignored", "ignored", "ignored"], directories: [true, true, true] };
+    for (const root of ["/x", "C:/x", "//server/share/x"]) {
+      expect(
+        await resolveConfigs([
+          project(root, "", "pkgs/node_modules/proj"),
+          project(root, "", "pkgs/node_modules/proj/src"),
+          project(root, "cfg", "pkgs/node_modules/proj"),
+          project(root, "pkgs/node_modules/proj", "pkgs/node_modules/proj/src"),
+          // The working directory is the project's root, or there is none.
+          project(root, "", ""),
+          project(root, "", undefined),
+        ]),
+      ).toEqual([own, own, own, own, all, all]);
+    }
+    // Windows paths are the same in any letter case.
+    expect(
+      await resolveConfigs([
+        project("C:/x", "", "PKGS/node_modules/proj", "c:/X"),
+        project("C:/x", "cfg", "PKGS/node_modules/proj", "c:/X"),
+        project("//server/share/x", "", "PKGS/node_modules/proj", "//SERVER/share/x"),
+      ]),
+    ).toEqual([own, own, own]);
+  });
+
   test.each(["oxlint", "eslintrc"])("`extends` in an %s config can use `\\`", async flavor => {
     const [{ error, files }] = await resolveConfigs([
       {

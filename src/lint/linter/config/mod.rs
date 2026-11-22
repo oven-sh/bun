@@ -1138,18 +1138,18 @@ impl Config {
         // See `Config::relative`. An absolute path has a `/` even before a drive name.
         let is_outside = |it: &[u8]| it.starts_with(b"/");
         let drive_at = usize::from(!self.base_path.starts_with(b"/"));
+        // A relative path doesn't show whether it's a Windows path.
+        let style = paths::Style::of(&self.base_path);
+        let contains = |outer: &[u8], path: &[u8]| paths::is_at_or_inside_as(style, outer, path);
         match self.started.as_deref() {
             Some(start) if is_outside(start) && is_outside(directory) => {
-                paths::is_at_or_inside(&directory[drive_at..], &start[drive_at..])
+                contains(&directory[drive_at..], &start[drive_at..])
             }
             Some(start) if !is_outside(directory) => {
-                !is_outside(start) && paths::is_at_or_inside(directory, start)
+                !is_outside(start) && contains(directory, start)
             }
             // A directory outside the base path that contains the working directory also contains the base path.
-            _ => {
-                is_outside(directory)
-                    && paths::is_at_or_inside(&directory[drive_at..], &self.base_path)
-            }
+            _ => is_outside(directory) && contains(&directory[drive_at..], &self.base_path),
         }
     }
 

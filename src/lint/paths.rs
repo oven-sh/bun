@@ -232,11 +232,15 @@ pub fn below_shared<'p>(other: &[u8], path: &'p [u8]) -> &'p [u8] {
 
 /// True if `path` is `outer` or inside it. Both must be resolved.
 pub fn is_at_or_inside(outer: &[u8], path: &[u8]) -> bool {
-    let is_same = match Style::of(outer) {
+    is_at_or_inside_as(Style::of(outer), outer, path)
+}
+
+pub fn is_at_or_inside_as(style: Style, outer: &[u8], path: &[u8]) -> bool {
+    let is_same = match style {
         Style::Posix => outer == path,
         Style::Windows => outer.eq_ignore_ascii_case(path),
     };
-    is_same || inside(outer, path).is_some()
+    is_same || inside_as(style, outer, path).is_some()
 }
 
 /// `path.dirname(path)`. A root is its own parent.

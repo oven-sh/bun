@@ -26,13 +26,16 @@ use crate::with;
 const CRYPTO_WINDOW: u64 = 64 * 1024;
 const UNVALIDATED_CRYPTO_WINDOW: u64 = 16 * 1024;
 const MAX_HELLO_LEN: usize = 16 * 1024;
+/// TLS has room for one ticket and not much more.
+const MAX_TICKET_INPUT_LEN: usize = 256;
 const CRYPTO_BUFFER_EXCEEDED: Error = Error::transport(
     transport_code::CRYPTO_BUFFER_EXCEEDED,
     "crypto buffer exceeded",
 );
 /// It leaves room for frames in an Initial packet.
 const MAX_TOKEN_LEN: usize = 512;
-const MAX_TICKETS: u8 = 16;
+pub(super) const MAX_TICKETS: u8 = 16;
+const PATIENCE_FOR_TICKET: Duration = Duration::from_secs(1);
 const MAX_TOKENS: u8 = 16;
 const TICKET_FORMAT: u32 = 1;
 /// What a peer has to accept on a request stream for HTTP/3 to be practical.
@@ -62,6 +65,8 @@ pub(super) struct Setup {
     hello: Vec<u8>,
     /// Packets for which there are no keys yet.
     pub(super) undecryptable: Vec<Vec<u8>>,
+    /// How many of them a server has seen with a short header since the last Handshake packet.
+    pub(super) premature_packets: Option<u32>,
     /// They are worth another try.
     pub(super) can_read_more: bool,
     /// With them. They have been waiting, so they tell nothing about the round trip.
@@ -83,6 +88,7 @@ impl Setup {
             remembered: None,
             hello: Vec::new(),
             undecryptable: Vec::new(),
+            premature_packets: None,
             can_read_more: false,
             is_catching_up: false,
         }
@@ -226,8 +232,8 @@ impl Handshake<'_> {
 
     pub fn ticket(&mut self, session: &[u8]) {
         let connection = &mut *self.connection;
-        connection.tickets_received = connection.tickets_received.saturating_add(1);
-        if connection.tickets_received <= MAX_TICKETS {
+        if let Some(left) = connection.tickets_wanted.checked_sub(1) {
+            connection.tickets_wanted = left;
             let ticket = Ticket {
                 version: connection.version,
                 session,
@@ -263,7 +269,11 @@ impl Connection {
     }
 
     pub(super) fn read_hello(&mut self, now: Instant, shared: &mut Shared) -> Result {
-        let hello = (self.setup.as_mut()).map(|it| core::mem::take(&mut it.hello));
+        let hello = (self.setup.as_mut()).map(|it| {
+            // What still cannot be read has less room from now on.
+            it.can_read_more = true;
+            core::mem::take(&mut it.hello)
+        });
         self.continue_handshake(now, Level::Initial, &hello.unwrap_or_default(), shared)
     }
 
@@ -326,13 +336,19 @@ impl Connection {
     /// For when there are no events left that it is needed for.
     #[inline]
     pub(super) fn release_tls(&mut self) {
-        if self.tls.is_some() && self.is_confirmed() && !self.wants_tickets() {
+        if self.tls.is_some() && self.is_confirmed() && self.tickets_wanted == 0 {
             self.tls = None;
         }
     }
 
-    fn wants_tickets(&self) -> bool {
-        self.side.is_client() && self.config.wants_tickets && self.tickets_received < MAX_TICKETS
+    fn wait_for_tickets(&mut self, now: Instant) {
+        if self.tickets_wanted > 0 && self.is_confirmed() {
+            let patience = match self.tickets_wanted {
+                MAX_TICKETS => PATIENCE_FOR_TICKET * 2,
+                _ => PATIENCE_FOR_TICKET,
+            };
+            (self.timers).set(Timer::Handshake, now + patience.max(self.settling_period()));
+        }
     }
 
     fn advance_tls(&mut self, now: Instant, input: Option<(Level, &[u8])>) -> Result<Status> {
@@ -361,7 +377,6 @@ impl Connection {
             true => CRYPTO_WINDOW,
             false => UNVALIDATED_CRYPTO_WINDOW,
         };
-        let wants_tickets = self.wants_tickets();
         let Some(space) = self.spaces.get_mut(id) else {
             return Ok(());
         };
@@ -373,7 +388,7 @@ impl Connection {
             if self.side.is_server() {
                 return Err(alert_error(UNEXPECTED_MESSAGE));
             }
-            if !wants_tickets {
+            if self.tickets_wanted == 0 {
                 return Ok(());
             }
             self.streams.state.add_load(Load::Heavy);
@@ -433,7 +448,14 @@ impl Connection {
                 };
             }
         }
-        self.continue_handshake(now, level, data, shared)
+        if id != SpaceId::Data {
+            return self.continue_handshake(now, level, data, shared);
+        }
+        for piece in data.chunks(MAX_TICKET_INPUT_LEN) {
+            self.continue_handshake(now, level, piece, shared)?;
+        }
+        self.wait_for_tickets(now);
+        Ok(())
     }
 
     fn continue_handshake(
@@ -516,7 +538,8 @@ impl Connection {
             |it: &Version| peer.is_some_and(|peer| peer.available.contains(&it.number()));
         let preferred = self.compatible_versions().find(is_available);
         // Some clients go by the first packet that they get.
-        let has_answered = (self.spaces.initial.as_ref()).is_none_or(|it| it.next_number > 0);
+        let has_answered = self.local.retry_source_connection_id.is_some()
+            || (self.spaces.initial.as_ref()).is_none_or(|it| it.next_number > 0);
         let may_switch = !accepts_early_data && !has_answered;
         if let Some(version) = preferred.filter(|&it| it != self.version && may_switch) {
             self.switch_version(version);
@@ -622,6 +645,7 @@ impl Connection {
         }
         self.phase = Phase::Confirmed;
         self.timers.stop(Timer::Handshake);
+        self.wait_for_tickets(now);
         self.discard_space(now, |it| it.initial.take());
         self.discard_space(now, |it| it.handshake.take());
         self.emit(Event::HandshakeConfirmed);
@@ -668,6 +692,7 @@ impl Connection {
         setup.other_keys = None;
         self.path.remote.id = header.source;
         self.set_initial_keys();
+        self.spaces.open(SpaceId::Initial).crypto_ends.clear();
         self.resend_all(SpaceId::Initial);
         self.resend_all(SpaceId::Data);
         self.pto_count = 0;

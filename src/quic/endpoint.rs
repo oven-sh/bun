@@ -476,12 +476,14 @@ impl Endpoint {
             && without_zone(from.peer) == without_zone(remains.addresses.peer)
         {
             // RFC 9000 §10.2.1.
-            remains.datagrams_received = remains.datagrams_received.saturating_add(1);
-            if remains.datagrams_received.is_power_of_two()
-                && (1..=AMPLIFICATION_FACTOR * datagram.len()).contains(&remains.farewell.len())
-            {
-                let farewell = remains.farewell.clone();
-                self.reply(from, farewell);
+            remains.allowance += AMPLIFICATION_FACTOR * datagram.len();
+            if (1..=remains.allowance).contains(&remains.farewell.len()) {
+                remains.datagrams_received = remains.datagrams_received.saturating_add(1);
+                if remains.datagrams_received.is_power_of_two() {
+                    remains.allowance -= remains.farewell.len();
+                    let farewell = remains.farewell.clone();
+                    self.reply(from, farewell);
+                }
             }
         }
         None

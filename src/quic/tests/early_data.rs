@@ -40,6 +40,21 @@ fn packets_that_are_ahead_of_the_end_of_the_hello() {
     assert_eq!(raw.events(), "ready, 0 opened, 0 fin a");
 }
 
+#[test]
+fn packets_that_arrive_with_the_hello() {
+    for (first, last, ack) in [
+        ("hello", "ping", "1[ack 0-30]"),
+        ("hello 0 100", "hello 100", "1[ack 0-12]"),
+    ] {
+        let mut raw = Raw::client().with_ticket();
+        raw.waits = false;
+        raw.send_in(Initial, first);
+        (0..31).for_each(|_| raw.send_in(Early, "ping, padding 1200"));
+        raw.send_in(Initial, last);
+        assert!(raw.packets().ends_with(ack));
+    }
+}
+
 /// RFC 9001 §4.9.3.
 #[test]
 fn late_packets_are_read_for_a_while() {
@@ -267,6 +282,6 @@ fn idle_timeout_that_was_remembered_does_not_last() {
     raw.resume();
     raw.shake_hands();
     raw.confirm();
-    raw.advance(1000);
+    raw.advance(2000);
     assert_eq!(raw.peer.endpoint.timeout(), None);
 }

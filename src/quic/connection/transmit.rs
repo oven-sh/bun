@@ -20,7 +20,7 @@ use crate::frame::kind;
 use crate::packet::{
     FIXED_BIT, KEY_PHASE, LongFields, LongKind, MIN_DATAGRAM_LEN, SPIN_BIT, Unsealed, number_len,
 };
-use crate::stream_id::Direction;
+use crate::stream_id::{Direction, Side};
 use crate::time::{Duration, Instant};
 use crate::token::Scope;
 
@@ -96,9 +96,19 @@ impl Connection {
                 && self.close_frame.is_for_application()
                 && self.write_datagram(now, Content::Crypto, batch, shared)
             {}
-            let start = batch.bytes.len();
+            let (start, allowance) = (batch.bytes.len(), self.path.allowance());
             self.write_datagram(now, Content::Close, batch, shared);
-            self.farewell = batch.bytes.get(start..).unwrap_or_default().to_vec();
+            let sent = batch.bytes.get(start..).unwrap_or_default();
+            let mut farewell = Vec::new();
+            match allowance < MIN_DATAGRAM_LEN {
+                true => {
+                    let end = MIN_DATAGRAM_LEN;
+                    self.write_coalesced(now, Content::Close, &mut farewell, end, shared);
+                }
+                false => farewell.extend_from_slice(sent),
+            }
+            self.owes_farewell = farewell.len() > sent.len();
+            self.farewell = farewell;
             self.end();
         }
         false
@@ -336,7 +346,7 @@ impl Connection {
             if !space.has_crypto_to_send() {
                 space.crypto_send.on_lost(0..space.crypto_send.sent());
             }
-            draft.is_eliciting = write_crypto_frames(space, out, end);
+            draft.is_eliciting = write_crypto_frames(self.side, space, out, end);
             if !draft.is_eliciting && space.probes > 0 && out.len() < end {
                 out.push(kind::PING as u8);
                 draft.is_eliciting = true;
@@ -437,7 +447,7 @@ impl Connection {
         let has_datagrams = self.has_datagrams();
         let space = &mut self.spaces.data;
         if space.has_crypto_to_send() {
-            write_crypto_frames(space, out, end);
+            write_crypto_frames(self.side, space, out, end);
         }
         let sent = &mut space.sent.frames;
         if self.local_ids.has_frames() {
@@ -658,14 +668,21 @@ impl Draft {
 }
 
 /// Returns whether it wrote any.
-fn write_crypto_frames(space: &mut Space, out: &mut Vec<u8>, end: usize) -> bool {
+fn write_crypto_frames(side: Side, space: &mut Space, out: &mut Vec<u8>, end: usize) -> bool {
     let (buffer, start) = (&mut space.crypto_send, out.len());
     loop {
         let range = (buffer.first_lost()).unwrap_or_else(|| buffer.sent()..buffer.end());
-        let room = end.saturating_sub(out.len() + 1 + varint_len(range.start) + 2);
-        let len = (range.end - range.start).min(room as u64);
-        if len == 0 {
+        // Some servers make no use of a frame of which they have read a part.
+        let next = (space.crypto_ends).partition_point(|&it| it <= range.start);
+        let former_end = space.crypto_ends.get(next).copied();
+        let whole = range.end.min(former_end.unwrap_or(u64::MAX)) - range.start;
+        let room = |at: usize| end.saturating_sub(at + 1 + varint_len(range.start) + 2) as u64;
+        let len = whole.min(room(out.len()));
+        if len == 0 || len < whole && former_end.is_some() && whole <= room(start) {
             return out.len() > start;
+        }
+        if side.is_client() && former_end != Some(range.start + len) {
+            space.crypto_ends.insert(next, range.start + len);
         }
         out.push(kind::CRYPTO as u8);
         out.varint(range.start);

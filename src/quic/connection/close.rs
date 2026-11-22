@@ -111,6 +111,12 @@ impl Connection {
         }
     }
 
+    /// Likewise, but the peer has time to be the first and to give its reason.
+    pub fn close_after_peer(&mut self, now: Instant) {
+        self.yields = true;
+        self.close(now);
+    }
+
     /// For the end of [`Self::close`] and [`Self::go_away`].
     pub fn set_close_error(&mut self, layer: Layer, code: u64, reason: &[u8]) {
         if self.is_receiving() {
@@ -198,7 +204,8 @@ impl Connection {
         if !is_graceful && (self.side.is_client() || table.has_application_streams()) {
             return;
         }
-        let is_busy = state.has_frames()
+        let is_busy = self.yields
+            || state.has_frames()
             || self.has_datagrams()
             || table.has_unacked_data()
             || !is_graceful && table.has_unsettled_requests();
@@ -234,7 +241,7 @@ impl Connection {
     }
 
     #[inline]
-    fn min_idle_timeout(&self) -> Duration {
+    pub(super) fn min_idle_timeout(&self) -> Duration {
         let probe_timeout = match self.rtt.has_sample() {
             true => self.probe_timeout().max(MIN_IDLE_PROBE_TIMEOUT),
             false => INITIAL_IDLE_PROBE_TIMEOUT,
@@ -291,6 +298,8 @@ impl Connection {
     /// Whether the peer may have dropped the connection by the time something new arrives.
     pub fn is_stale(&self, now: Instant) -> bool {
         let margin = (self.settling_period()).clamp(self.idle_timeout / 16, self.idle_timeout / 2);
-        self.pto_count >= MAX_UNANSWERED_PROBES || now + margin >= self.timers.get(Timer::Idle)
+        self.pto_count >= MAX_UNANSWERED_PROBES
+            || self.silence.pings > MAX_UNANSWERED_PROBES
+            || now + margin >= self.timers.get(Timer::Idle)
     }
 }

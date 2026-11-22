@@ -1,5 +1,7 @@
 //! RFC 9000 §12.3.
 
+use smallvec::SmallVec;
+
 use super::received::Received;
 use super::sent::Sent;
 use super::streams::assembler::Assembler;
@@ -27,6 +29,8 @@ pub(super) struct Space {
     /// How many packets to send whatever the congestion controller says (RFC 9002 §6.2.4).
     pub(super) probes: u8,
     pub(super) crypto_send: SendBuffer,
+    /// Where CRYPTO frames of a client have ended, in order.
+    pub(super) crypto_ends: SmallVec<[u64; 2]>,
     /// What comes after `crypto_read`.
     pub(super) crypto_kept: Assembler,
     pub(super) crypto_read: u64,

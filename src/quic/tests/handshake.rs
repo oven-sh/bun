@@ -8,7 +8,7 @@ use bun_quic::{Batch, Direction, Duration, Side};
 
 use crate::harness::keys::{V1, V2};
 use crate::harness::raw::Kind::{Handshake, Initial, Short};
-use crate::harness::raw::{RTT, Raw};
+use crate::harness::raw::{Packet, RTT, Raw};
 use crate::harness::tls::{TICKET, Toy, message};
 use crate::harness::wire::show_hex;
 
@@ -330,6 +330,55 @@ fn lost_packets_of_a_flight() {
     assert_eq!(raw.take()[0].frames, sent[4].frames);
 }
 
+impl Raw {
+    /// Where the CRYPTO frames of each packet start.
+    fn crypto_offsets(&mut self) -> String {
+        let offsets = |packet: Packet| {
+            let rest = (packet.frames.iter()).filter_map(|it| it.strip_prefix("crypto "));
+            let offsets = rest.filter_map(|it| it.split_ascii_whitespace().next());
+            offsets.collect::<Vec<_>>().join(" ")
+        };
+        let packets = self.take().into_iter().map(offsets);
+        packets.collect::<Vec<_>>().join(", ")
+    }
+}
+
+#[test]
+fn crypto_frames_of_a_client_start_where_they_did_before() {
+    let mut raw = Raw::server();
+    raw.peer.tls.hello_len = 4000;
+    raw.start(&[]);
+    assert_eq!(raw.crypto_offsets(), "0, 1148, 2295, 3442");
+    raw.advance(RTT);
+    raw.send_retry(&[1; 50]);
+    assert_eq!(raw.crypto_offsets(), "0, 1102, 2203, 3304");
+    raw.source = vec![1; 20];
+    for start in [
+        "0, 1085 1102",
+        "0, 1083 1085, 1102",
+        "0, 1081 1083 1085, 1102",
+    ] {
+        raw.now = raw.now + Duration::from_secs(3);
+        raw.send_in(Initial, "ping");
+        raw.next[0] += 1;
+        let offsets = format!("{start}, 2169 2203, 3253 3304");
+        assert_eq!(raw.crypto_offsets(), offsets);
+    }
+}
+
+#[test]
+fn crypto_frames_of_a_server_fill_the_packets() {
+    let mut raw = Raw::client();
+    raw.peer.tls.certificate_len = 2500;
+    raw.start(&[]);
+    assert_eq!(raw.crypto_offsets(), "0, 0, 894, 2046");
+    raw.advance(RTT);
+    raw.send_all(&[(Initial, "ack"), (Handshake, "ping")]);
+    raw.forget();
+    raw.wait();
+    assert_eq!(raw.crypto_offsets(), "0, 1153, 2305");
+}
+
 #[test]
 fn the_end_of_the_handshake_is_repeated() {
     let mut raw = Raw::server();
@@ -358,6 +407,39 @@ fn the_end_of_the_handshake_is_repeated() {
         raw.frames()
             .starts_with("handshake_done, new_token, crypto 0 ")
     );
+}
+
+#[test]
+fn a_server_that_waits_for_the_end_of_the_handshake_is_heard_from() {
+    let answered = |raw: &mut Raw, count| -> Vec<_> {
+        let is_answered = |_: &u32| {
+            raw.send("ping");
+            raw.outline() == "H[ack]"
+        };
+        (1..=count).filter(is_answered).collect()
+    };
+    let mut raw = Raw::client();
+    raw.start(&[]);
+    raw.forget();
+    assert_eq!(answered(&mut raw, 3), []);
+    for (frames, times) in [("ack", 1), ("ack", 1), ("ping", 20)] {
+        (0..times).for_each(|_| raw.send_in(Handshake, frames));
+        raw.forget();
+        assert_eq!(answered(&mut raw, 40), [1, 2, 4, 8, 16, 32]);
+    }
+    raw.next[1] -= 1;
+    raw.send_in(Handshake, "ping");
+    assert_eq!(answered(&mut raw, 3), []);
+    raw.waits = false;
+    raw.send_in(Handshake, "ping");
+    (0..2).for_each(|_| raw.send("ping"));
+    assert_eq!(answered(&mut raw, 1), [1]);
+
+    let mut raw = Raw::server();
+    raw.start(&[]);
+    raw.send_all(&[(Initial, "ack, hello"), (Handshake, "ping")]);
+    raw.forget();
+    assert_eq!(answered(&mut raw, 3), []);
 }
 
 /// RFC 9001 §4.8.
@@ -472,6 +554,45 @@ fn tickets_and_tokens() {
         assert_eq!(raw.events(), events);
         assert_eq!(raw.connection().tls().is_some(), wants_tickets);
     }
+}
+
+#[test]
+fn tickets_are_not_awaited_for_ever() {
+    let ticket = message(TICKET, &[b"a"]);
+    for (first, pauses, count, has_tls) in [
+        ("handshake_done", &[1999, 999, 999][..], 3, true),
+        ("handshake_done", &[1999, 1000], 1, false),
+        ("handshake_done", &[2000], 0, false),
+        ("handshake_done", &[1; 15], 15, true),
+        ("handshake_done", &[1; 17], 16, false),
+        ("ping", &[1, 3000], 2, true),
+    ] {
+        let mut raw = Raw::server().config(|it| it.wants_tickets = true);
+        raw.start(&[]);
+        raw.shake_hands();
+        raw.send(first);
+        for (at, &pause) in pauses.iter().enumerate() {
+            raw.advance(pause);
+            let offset = at * ticket.len();
+            raw.send(&format!("crypto {offset} {}", show_hex(&ticket)));
+        }
+        assert_eq!(raw.peer.tickets.len(), count);
+        assert_eq!(raw.connection().tls().is_some(), has_tls);
+    }
+}
+
+#[test]
+fn long_tickets_out_of_order() {
+    let mut raw = Raw::server()
+        .config(|it| it.wants_tickets = true)
+        .connected();
+    let tickets = message(TICKET, &[&[1; 16_000]]).repeat(3);
+    let mut pieces: Vec<_> = tickets.chunks(1000).enumerate().collect();
+    pieces.rotate_left(1);
+    for (at, piece) in pieces {
+        raw.send(&format!("crypto {} {}", at * 1000, show_hex(piece)));
+    }
+    assert_eq!(raw.events(), "ticket, ticket, ticket");
 }
 
 struct Careless(Box<Toy>);

@@ -354,6 +354,28 @@ fn server_closes_when_the_client_knows_that_it_goes_away() {
     }
 }
 
+#[test]
+fn client_lets_the_server_close() {
+    let steps: [(Step, _); 2] = [
+        (
+            |it| it.send("application_close 7 why"),
+            "closed by application_close 0x7 why",
+        ),
+        (|it| it.advance(SETTLING_PERIOD), "closed: Local"),
+    ];
+    for (step, events) in steps {
+        let mut raw = Raw::server().config(http3).connected_with("");
+        raw.send("ack");
+        let now = raw.now;
+        raw.connection().close_after_peer(now);
+        raw.process();
+        raw.advance(SETTLING_PERIOD - 1);
+        assert_eq!((raw.close, raw.events()), (None, "".into()));
+        step(&mut raw);
+        assert_eq!(raw.events(), events);
+    }
+}
+
 /// RFC 9000 §10.2.2.
 #[test]
 fn close_from_the_peer() {
@@ -478,6 +500,33 @@ fn silent_close() {
     raw.connection().abort_silently();
     assert_eq!(raw.events(), "0 closed, closed: Local");
     assert_eq!(raw.packets(), "");
+}
+
+/// RFC 9000 §8.1.
+#[test]
+fn close_that_has_to_wait_for_an_allowance() {
+    const CLOSE: &str = "close 0x2, close 0x2, close 0x2";
+    for (certificate_len, reason_len, delay, at_once, answered) in [
+        (2900, 0, 524, CLOSE, &[1, 2, 4][..]),
+        (2900, 0, 525, CLOSE, &[]),
+        (2990, 0, 2999, "close 0x2", &[1, 2, 4]),
+        (6000, 0, 2999, "", &[1, 2, 4]),
+        (6000, 0, 3000, "", &[]),
+        (6000, 90, 0, "", &[3, 6]),
+    ] {
+        let mut raw = Raw::client();
+        raw.peer.tls.certificate_len = certificate_len;
+        raw.start(&[]);
+        raw.forget();
+        raw.abort(Transport, 2, &filler(0, reason_len));
+        assert_eq!(raw.lose(), at_once);
+        raw.advance(delay);
+        let is_answered = |_: &u32| {
+            raw.send_in(Handshake, "ping");
+            raw.lose().starts_with("close")
+        };
+        assert_eq!((1..=7).filter(is_answered).collect::<Vec<_>>(), answered);
+    }
 }
 
 /// RFC 9000 §10.3.1.

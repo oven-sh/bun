@@ -3,6 +3,7 @@ use crate::time::Instant;
 /// In the order in which they are handled.
 #[derive(Debug, Clone, Copy)]
 pub(super) enum Timer {
+    /// And then for the tickets that follow it.
     Handshake,
     Idle,
     Progress,

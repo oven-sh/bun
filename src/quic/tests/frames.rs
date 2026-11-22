@@ -1,7 +1,7 @@
 use bun_quic::Layer::Transport;
 use bun_quic::transport_code::*;
 
-use crate::harness::raw::Kind::{Handshake, Short};
+use crate::harness::raw::Kind::{Early, Handshake, Initial, Short};
 use crate::harness::raw::Raw;
 use crate::harness::wire::{FRAMES, MAX, frames};
 
@@ -125,6 +125,32 @@ fn frames_that_handshake_packets_cannot_have() {
             let error = Some((Transport, PROTOCOL_VIOLATION));
             assert_eq!(raw.error(), error, "{sample}");
         }
+    }
+}
+
+#[test]
+fn loss_bits_of_a_client_that_says_it_sends_them_are_ignored() {
+    let violation = Some((Transport, PROTOCOL_VIOLATION));
+    for (mut raw, value, error) in [
+        (Raw::client(), &[1, 1][..], None),
+        (Raw::client(), &[1, 0], violation),
+        (Raw::client(), &[2, 0x40, 1], None),
+        (Raw::server(), &[1, 1], violation),
+    ] {
+        raw.more_parameters = [&[0x50, 0x57], value, &[27, 0]].concat();
+        let mut raw = raw.connected();
+        raw.flipped = 0x18;
+        raw.send("path_challenge 12345678");
+        let is_read = raw.frames().starts_with("path_response");
+        assert_eq!((raw.error(), is_read), (error, error.is_none()));
+    }
+    for kind in [Early, Handshake] {
+        let mut raw = Raw::client().with_ticket();
+        raw.more_parameters = vec![0x50, 0x57, 1, 1];
+        raw.send_in(Initial, "hello");
+        raw.flipped = 0x08;
+        raw.send_in(kind, "ping");
+        assert_eq!(raw.error(), violation);
     }
 }
 

@@ -328,7 +328,7 @@ impl Connection {
             }
         };
         let (context, has_data) = (stream.context, stream.has_ready());
-        let mut has_more = false;
+        let (mut has_more, mut is_cut_off) = (false, false);
         if let Role::Message(message) = &mut stream.role {
             if let Some(fields) = message.take_fields(has_data) {
                 state.made_progress = true;
@@ -342,9 +342,9 @@ impl Connection {
                 let event = StreamEvent::Headers(fields);
                 return Ok(Some(Event::Stream(id, context, event)));
             }
-            has_more = message.has_pending_fields();
+            (has_more, is_cut_off) = (message.has_pending_fields(), message.is_cut_off);
         }
-        let is_last = stream.is_read_to_end() && !has_more;
+        let is_last = (stream.is_read_to_end() || is_cut_off) && !has_more;
         if !(has_data && has_more) {
             state.pop_readable(Some(stream));
         }
@@ -357,6 +357,10 @@ impl Connection {
             stream.held += data.len() as u64;
         }
         match is_last {
+            true if is_cut_off => {
+                stream.abandon_message(id, self.http3.as_deref_mut());
+                state.stop(id, stream, http3_code::REQUEST_CANCELLED);
+            }
             true => state.finish_reading(id, stream),
             false => state.credit(id, stream),
         }

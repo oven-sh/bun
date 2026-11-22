@@ -37,6 +37,10 @@ pub(crate) struct Message {
     /// From the `priority` field of a request.
     pub(crate) priority: Option<Priority>,
     is_tunnel: bool,
+    /// RFC 9110 §6.4.1.
+    has_no_content: bool,
+    /// It comes with some all the same, which is not worth waiting for.
+    pub(crate) is_cut_off: bool,
     pub(crate) has_sent_headers: bool,
     pub(crate) is_head_request: bool,
     pub(crate) is_connect_request: bool,
@@ -132,7 +136,7 @@ impl Message {
             };
             let (payload, is_end) = self.cursor.read_payload(&mut rest);
             match kind {
-                kind::DATA => ready.push(payload),
+                kind::DATA if !self.has_no_content => ready.push(payload),
                 kind::HEADERS if is_end && self.section.is_empty() => {
                     if !self.decode(payload, !ready.is_empty(), reader)? {
                         self.collect(payload, reader.http3)?;
@@ -173,6 +177,7 @@ impl Message {
         {
             *expected = expected.checked_sub(len).ok_or(MALFORMED)?;
         }
+        self.is_cut_off |= kind == kind::DATA && len > 0 && self.has_no_content;
         if kind == kind::HEADERS && len > reader.config.tolerated_fields.size as u64 {
             return Err(MALFORMED);
         }
@@ -256,13 +261,11 @@ impl Message {
             }
             // RFC 9114 §4.1.2.
             Expected::Response => {
-                self.expected_len = match summary.status {
-                    ..300 if self.is_connect_request => None,
-                    204 | 304 => Some(0),
-                    _ if self.is_head_request => Some(0),
-                    _ => summary.content_length,
-                };
                 self.is_tunnel = self.is_connect_request && summary.status < 300;
+                self.has_no_content = !self.is_tunnel
+                    && (self.is_head_request || matches!(summary.status, 204 | 304));
+                self.expected_len =
+                    (summary.content_length).filter(|_| !self.is_tunnel && !self.has_no_content);
             }
             Expected::Request => {
                 self.expected_len = summary.content_length.filter(|_| !summary.is_connect);

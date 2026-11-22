@@ -111,7 +111,7 @@ pub struct Connection {
     peer: Box<TransportParameters>,
     is_ready: bool,
     can_open_streams: bool,
-    tickets_received: u8,
+    tickets_wanted: u8,
     tokens_received: u8,
     origin_frames_received: u8,
 
@@ -168,10 +168,14 @@ pub struct Connection {
     datagrams: Datagrams,
     http3: Option<Box<Http3>>,
 
+    /// See [`Self::close_after_peer`].
+    yields: bool,
     close_reason: CloseReason,
     close_frame: CloseFrame,
-    /// The datagram that had the CONNECTION_CLOSE frame.
+    /// The datagram with the CONNECTION_CLOSE frame.
     farewell: Vec<u8>,
+    /// There was no room for all of it (RFC 9000 §8.1).
+    owes_farewell: bool,
     /// Whether packets are to be expected after the end.
     lingers: bool,
 }
@@ -194,6 +198,9 @@ pub(crate) struct Remains {
     pub(crate) addresses: Addresses,
     pub(crate) farewell: Vec<u8>,
     pub(crate) lingers_for: Duration,
+    /// How many bytes can be sent.
+    pub(crate) allowance: usize,
+    /// Those that could be answered.
     pub(crate) datagrams_received: u32,
 }
 
@@ -238,7 +245,10 @@ impl Connection {
             peer: Box::default(),
             is_ready: false,
             can_open_streams: false,
-            tickets_received: 0,
+            tickets_wanted: match side.is_client() && config.wants_tickets {
+                true => handshake::MAX_TICKETS,
+                false => 0,
+            },
             tokens_received: 0,
             origin_frames_received: 0,
             spaces: Spaces::default(),
@@ -282,9 +292,11 @@ impl Connection {
             streams: Streams::new(side, &local, &config, u64::from_ne_bytes(seed)),
             datagrams: Datagrams::default(),
             http3: None,
+            yields: false,
             close_reason: CloseReason::Local,
             close_frame: CloseFrame::no_error(config.http3.is_some()),
             farewell: Vec::new(),
+            owes_farewell: false,
             lingers: true,
             local,
             config,
@@ -377,9 +389,11 @@ impl Connection {
             addresses: self.path.addresses,
             farewell: core::mem::take(&mut self.farewell),
             lingers_for: match self.lingers {
+                true if self.owes_farewell => self.min_idle_timeout(),
                 true => self.settling_period(),
                 false => Duration::ZERO,
             },
+            allowance: 0,
             datagrams_received: 0,
         }
     }
@@ -400,6 +414,7 @@ impl Connection {
 
     fn on_timeout(&mut self, now: Instant, timer: Timer, shared: &mut Shared) {
         match timer {
+            Timer::Handshake if self.is_confirmed() => self.tickets_wanted = 0,
             Timer::Handshake => self.time_out(now, CloseReason::HandshakeTimeout),
             Timer::Idle if self.phase == Phase::Handshake => {
                 self.time_out(now, CloseReason::HandshakeTimeout);

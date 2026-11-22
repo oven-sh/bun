@@ -134,6 +134,21 @@ fn a_server_stays_with_the_version_that_it_has_answered_in() {
     assert_eq!(raw.events(), "ready, confirmed");
 }
 
+#[test]
+fn a_retry_packet_is_an_answer() {
+    let mut raw = Raw::client().with("version_information=#000000016b3343cf00000001");
+    let retry = loop {
+        raw.send_in(Initial, "ping");
+        if let Some(packet) = raw.take().pop() {
+            break packet;
+        }
+    };
+    (raw.token, raw.destination) = (retry.token, retry.source.clone());
+    raw.retry_source = Some(retry.source);
+    raw.send_in(Initial, "hello");
+    assert_eq!(raw.versions_of_packets(), [V1; 2]);
+}
+
 /// RFC 9369 §4.1.
 #[test]
 fn a_client_follows() {

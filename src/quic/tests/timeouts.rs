@@ -17,6 +17,17 @@ impl Raw {
         }
         (self.now - start).as_millis()
     }
+
+    /// Returns how many there were.
+    fn answer_pings_for(&mut self, millis: u64) -> usize {
+        let is_ping = |_: &u64| {
+            self.advance(10);
+            let is_ping = self.frames().ends_with("ping");
+            self.keep_sending("ack", usize::from(is_ping), 0);
+            is_ping
+        };
+        (0..millis / 10).filter(is_ping).count()
+    }
 }
 
 /// RFC 9000 §10.1.
@@ -312,18 +323,34 @@ impl Raw {
 fn client_speaks_up_when_a_server_that_kept_sending_falls_silent() {
     for (raw, frames, runs, wait) in [
         (Raw::server(), "stream 3 0 a", &[(19, 1)][..], 1000),
-        (Raw::server(), "stream 3 0 a", &[(2, 600)], 1200),
+        (Raw::server(), "stream 3 0 a", &[(2, 600)], 1000),
+        (Raw::server(), "stream 3 0 a", &[(3, 600)], 1200),
         (Raw::server(), "stream 3 0 a", &[(20, 1)], 135),
         (Raw::server(), "stream 3 0 a", &[(1, 5000), (19, 1)], 135),
         (Raw::server(), "stream 3 0 a", &[(25, 500)], 1000),
         (Raw::server(), "stream 3 0 a", &[(9, 800), (11, 1)], 786),
-        (Raw::server(), "stream 3 0 a", &[(9, 1600), (11, 1)], 1000),
-        (Raw::server(), "stream 3 0 a", &[(9, 1600), (1, 500)], 1000),
-        (Raw::server(), "stream 3 0 a", &[(9, 1600), (1, 501)], 3000),
-        (Raw::server(), "stream 3 0 a", &[(25, 3749)], 7498),
-        (Raw::server(), "stream 3 0 a", &[(25, 9000)], 7500),
+        (Raw::server(), "stream 3 0 a", &[(9, 1600), (1, 1)], 3000),
+        (Raw::server(), "stream 3 0 a", &[(9, 4000), (19, 1)], 2347),
+        (Raw::server(), "stream 3 0 a", &[(9, 4000), (20, 1)], 1000),
+        (Raw::server(), "stream 3 0 a", &[(2, 900), (1, 500)], 1000),
+        (Raw::server(), "stream 3 0 a", &[(2, 900), (1, 501)], 1687),
+        (
+            Raw::server(),
+            "stream 3 0 a",
+            &[(2, 900), (19, 1), (1, 900)],
+            1800,
+        ),
+        (
+            Raw::server(),
+            "stream 3 0 a",
+            &[(2, 900), (20, 1), (1, 900)],
+            1000,
+        ),
+        (Raw::server(), "stream 3 0 a", &[(25, 2999)], 5998),
+        (Raw::server(), "stream 3 0 a", &[(25, 9000)], 6000),
         (Raw::server(), "fin 3 0 a", &[(20, 1)], 30_000),
         (Raw::server(), "datagram a", &[(20, 1)], 135),
+        (Raw::server(), "datagram a", &[(1, 1)], 1000),
         (Raw::server(), "datagram a, fin 3 0 a", &[(20, 1)], 30_000),
         (Raw::server(), "ping", &[(20, 1)], 30_000),
         (Raw::client(), "stream 2 0 a", &[(20, 1)], 30_000),
@@ -360,13 +387,13 @@ fn client_that_has_spoken_up_is_content_with_an_acknowledgment_for_a_while() {
         (&["first ack"], [1000, 135]),
         (&["ack, ping"], [1000, 135]),
         (&["ping", "ping"], [540 - 200, 1080]),
-        (&["ack, stream 3 0 a"], [2 * 740, 135]),
-        (&["stream 3 0 a", "ack"], [2 * 740, 135]),
+        (&["ack, stream 3 0 a"], [1000, 135]),
+        (&["stream 3 0 a", "ack"], [1000, 135]),
         (&[CHALLENGE], [135, 135]),
         (&["ack", CHALLENGE], [135, 135]),
         (&[CHALLENGE, "first ack"], [135, 135]),
         (&[CHALLENGE, "stream 3 0 a"], [135, 135]),
-        (&[CHALLENGE, "ack, stream 3 0 a"], [2 * 740, 135]),
+        (&[CHALLENGE, "ack, stream 3 0 a"], [1000, 135]),
         (&[CHALLENGE, "ack"], [1000, 135]),
     ] {
         let mut raw = Raw::server().quiet().kept_sending();
@@ -389,8 +416,8 @@ fn client_that_has_spoken_up_is_content_with_an_acknowledgment_for_a_while() {
 #[test]
 fn client_that_is_late_goes_by_what_it_has_read() {
     for (pings, frames, packets, wait) in [
-        (0, "stream 3 0 a", "", 2 * 500),
-        (1, "stream 3 0 a", "", 2 * 635),
+        (0, "stream 3 0 a", "", 1000),
+        (1, "stream 3 0 a", "", 1000),
         (1, "ack", "", 1000),
         (1, CHALLENGE, "1[path_response, ack]", 135),
     ] {
@@ -498,9 +525,8 @@ fn client_speaks_up_if_a_request_is_not_answered() {
         (fall_silent, nothing, 123),
         (fall_silent, |raw| raw.send("ack, ping"), 123),
         (finish, nothing, 1000),
-        (tick, nothing, 1000),
-        (tick, |raw| raw.send("stream 0 0 a"), 1000),
-        (tick, |raw| raw.keep_sending("stream 0 0 a", 1, 600), 7500),
+        (tick, nothing, 6000),
+        (tick, |raw| raw.send("stream 0 0 a"), 6000),
         (ask_in_vain, nothing, 1000),
         (
             nothing,
@@ -517,6 +543,169 @@ fn client_speaks_up_if_a_request_is_not_answered() {
         after(&mut raw);
         assert_eq!(raw.wait_for_ping(), wait);
     }
+}
+
+#[test]
+fn client_learns_how_long_answers_take() {
+    for (delay, pings) in [
+        (900, [0, 0, 0, 0]),
+        (5000, [2, 2, 0, 0]),
+        (25_000, [3, 3, 1, 1]),
+    ] {
+        let mut raw = Raw::server().quiet();
+        for pings in pings {
+            let id = raw.be_asked();
+            assert_eq!(raw.answer_pings_for(delay), pings);
+            raw.send(&format!("fin {id} 0 a"));
+        }
+    }
+}
+
+#[test]
+fn one_slow_answer_is_not_the_pace() {
+    let mut raw = Raw::server().quiet();
+    let (first, second) = (raw.be_asked(), raw.be_asked());
+    raw.send(&format!("fin {first} 0 a"));
+    raw.answer_pings_for(5000);
+    raw.send(&format!("stream {second} 0 a"));
+    assert_eq!(raw.wait_for_ping(), 1000);
+}
+
+#[test]
+fn pace_of_messages_that_take_two_packets() {
+    let mut raw = Raw::server().quiet();
+    for pings in [2, 2, 0, 0, 0] {
+        raw.keep_sending("stream 3 0 a", 2, 1);
+        assert_eq!(raw.answer_pings_for(5000), pings);
+    }
+}
+
+#[test]
+fn client_does_not_start_over_with_each_piece_of_a_request() {
+    for (period, pings, wait) in [(1500, [1, 0, 0, 0], 2000), (5000, [2, 1, 0, 0], 6000)] {
+        for (is_answered, wait) in [(false, wait), (true, 1000)] {
+            let mut raw = Raw::server().quiet();
+            let id = raw.peer.open(Bidirectional);
+            for pings in pings {
+                raw.peer.send(id, b"a", false);
+                raw.keep_sending("ack", 1, RTT);
+                assert_eq!(raw.answer_pings_for(period), pings);
+            }
+            if is_answered {
+                raw.keep_sending("stream 0 0 a", 41, 1);
+                raw.answer_pings_for(9000);
+            }
+            raw.peer.send(id, b"a", !is_answered);
+            raw.keep_sending("ack", 1, RTT);
+            assert_eq!(raw.wait_for_ping(), wait);
+        }
+    }
+
+    let mut raw = Raw::server().quiet();
+    for _ in 0..2 {
+        let id = raw.peer.open(Bidirectional);
+        raw.peer.send(id, b"a", false);
+        raw.keep_sending("ack", 1, RTT);
+        assert_eq!(raw.answer_pings_for(9000), 3);
+    }
+
+    let mut raw = Raw::server().quiet();
+    raw.keep_sending("ack, stream 3 0 a", 4, 5000);
+    let id = raw.peer.open(Bidirectional);
+    for lag in [1, 2] {
+        raw.peer.send(id, b"a", false);
+        raw.advance(RTT);
+        raw.waits = false;
+        raw.send("ack");
+        raw.now = raw.now + Duration::from_millis(lag);
+        raw.forget();
+    }
+    assert_eq!(raw.wait_for_ping(), 5999);
+}
+
+#[test]
+fn time_that_a_request_takes_is_not_a_pause() {
+    let mut raw = Raw::server().quiet();
+    for _ in 0..2 {
+        let id = raw.peer.open(Bidirectional);
+        raw.peer.send(id, b"a", false);
+        raw.keep_sending("ack", 1, RTT);
+        raw.peer.send(id, b"a", false);
+        for at in 0..30 {
+            raw.advance(RTT);
+            let ack = raw.ack(Short);
+            raw.peer.send(id, b"a", at == 29);
+            raw.process();
+            raw.send(&ack);
+        }
+        raw.keep_sending(&format!("ack, fin {id} 0 a"), 1, RTT);
+    }
+    raw.be_asked();
+    assert_eq!(raw.wait_for_ping(), 1000);
+}
+
+#[test]
+fn request_that_is_acknowledged_in_steps() {
+    let mut raw = Raw::server().quiet();
+    let id = raw.peer.open(Bidirectional);
+    raw.peer.send(id, b"a", false);
+    raw.advance(RTT);
+    let ack = raw.ack(Short);
+    raw.peer.send(id, b"a", true);
+    raw.process();
+    raw.send(&ack);
+    raw.keep_sending("ack", 1, RTT);
+    assert_eq!(raw.wait_for_ping(), 1000);
+}
+
+#[test]
+fn pace_of_requests_that_are_answered_at_once() {
+    for answer in [&["ack, stream 0 0 a"][..], &["ack", "stream 0 0 a"]] {
+        let mut raw = Raw::server().quiet();
+        let id = raw.peer.open(Bidirectional);
+        for pings in [2, 2, 0, 0, 0] {
+            raw.peer.send(id, b"a", false);
+            (answer.iter()).for_each(|it| raw.keep_sending(it, 1, RTT));
+            assert_eq!(raw.answer_pings_for(5000), pings);
+        }
+    }
+}
+
+#[test]
+fn client_does_not_speak_up_if_nothing_is_left_to_arrive() {
+    let steps: [fn(&mut Raw); 4] = [
+        |raw| {
+            let id = raw.be_asked();
+            raw.connection().set_paused(StreamId(id), true);
+            raw.send("fin 0 0 a");
+        },
+        |raw| {
+            let id = raw.peer.open(Bidirectional);
+            raw.peer.send(id, b"a", false);
+            raw.keep_sending("ack, fin 0 0 a", 1, RTT);
+        },
+        |raw| {
+            raw.peer.open(Unidirectional);
+            raw.send("fin 3 0 a");
+        },
+        |raw| {
+            raw.send("datagram a");
+            let id = raw.be_asked();
+            raw.send(&format!("reset_stream {id} 0 0"));
+        },
+    ];
+    for step in steps {
+        let mut raw = Raw::server().quiet();
+        step(&mut raw);
+        assert_eq!(raw.wait_for_ping(), 30_000);
+    }
+
+    let mut raw = Raw::server().quiet();
+    steps[1](&mut raw);
+    raw.send(CHALLENGE);
+    raw.advance(100);
+    raw.forget();
+    assert_eq!((raw.wait(), raw.outline()), (23, "1[ack, ping]".into()));
 }
 
 #[test]
@@ -836,6 +1025,16 @@ fn connection_that_the_peer_may_have_given_up() {
         assert_eq!(raw.connection().is_stale(now), is_stale);
     }
     raw.send("ack");
+    let now = raw.now;
+    assert!(!raw.connection().is_stale(now));
+
+    let mut raw = Raw::server().quiet().kept_sending();
+    for is_stale in [false, false, false, true] {
+        raw.wait_for_ping();
+        let now = raw.now;
+        assert_eq!(raw.connection().is_stale(now), is_stale);
+    }
+    raw.send("ping");
     let now = raw.now;
     assert!(!raw.connection().is_stale(now));
 }

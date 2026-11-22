@@ -74,6 +74,17 @@ struct Counts {
     remote_receive: u64,
 }
 
+/// How much has been acknowledged of what was written to a stream, of which the peer has yet to finish its side.
+#[derive(Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) enum Asked {
+    #[default]
+    Nothing,
+    InPart,
+    /// All of it, which is more of what is [`State::unanswered`].
+    Again,
+    Anew,
+}
+
 /// What the streams share.
 #[derive(Default)]
 pub(crate) struct State {
@@ -88,8 +99,9 @@ pub(crate) struct State {
     pub(super) owed: Control,
     /// The application has read or written.
     pub(super) made_progress: bool,
-    /// All that was written to a stream has been acknowledged, and the peer has yet to finish its side.
-    pub(super) has_asked: bool,
+    pub(super) asked: Asked,
+    /// The stream that asked last, and whether it is finished, until something arrives.
+    pub(super) unanswered: Option<(StreamId, bool)>,
     /// Something has arrived without what precedes it.
     pub(super) misses_data: bool,
     /// See [`Self::add_load`].
@@ -431,6 +443,12 @@ impl Table {
     #[inline]
     pub(super) fn has_application_streams(&self) -> bool {
         self.unreleased > 0
+    }
+
+    pub(super) fn has_unfinished_reads(&self) -> bool {
+        (self.map.values()).any(|it| {
+            !it.flags.intersects(Flags::READ_DONE | Flags::RELEASED) && !it.is_read_to_end()
+        })
     }
 
     /// Whether the peer has yet to learn that a request is not going to be answered.

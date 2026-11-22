@@ -234,6 +234,9 @@ impl Session for Toy {
             return Ok(Status::InProgress);
         };
         let input = [&self.input, data].concat();
+        if level == Level::Application && input.len() > 16 * 1024 {
+            return Err(Alert::INTERNAL_ERROR);
+        }
         let mut rest = &input[..];
         while let Some((kind, parts)) = next_message(&mut rest) {
             self.handle(level, kind, &parts, handshake)?;

@@ -85,6 +85,7 @@ pub struct Session {
     has_started: bool,
     has_local_parameters: bool,
     has_peer_parameters: bool,
+    has_sent_tickets: bool,
     is_complete: bool,
 }
 
@@ -114,6 +115,7 @@ impl Session {
             has_started: false,
             has_local_parameters: false,
             has_peer_parameters: false,
+            has_sent_tickets: false,
             is_complete: false,
         };
         // SAFETY: `ssl` is live.
@@ -348,10 +350,29 @@ unsafe extern "C" fn add_handshake_data(
             call.set_local_parameters(ssl)?;
         }
         // SAFETY: BoringSSL passes data of this length.
-        (call.handshake).send(level_from(level)?, unsafe { slice(data, len) });
+        let (level, data) = (level_from(level)?, unsafe { slice(data, len) });
+        // It comes in pieces of 16 KiB, and one is what clients are known to have room for (RFC 9000 §7.5).
+        if level != Level::Application {
+            call.handshake.send(level, data);
+        } else if !core::mem::replace(&mut call.session.has_sent_tickets, true) {
+            call.handshake.send(level, usable_tickets(data));
+        }
         Some(1)
     });
     result.unwrap_or(0)
+}
+
+/// Those that are whole (RFC 8446 §4), and not too long for a ClientHello message.
+fn usable_tickets(data: &[u8]) -> &[u8] {
+    const MAX_LEN: u32 = 13 * 1024;
+    let mut rest = data;
+    while let [_, a, b, c, body @ ..] = rest
+        && let len @ ..=MAX_LEN = u32::from_be_bytes([0, *a, *b, *c])
+        && let Some(next) = body.get(len as usize..)
+    {
+        rest = next;
+    }
+    data.split_at(data.len() - rest.len()).0
 }
 
 extern "C" fn flush_flight(_: &SSL) -> c_int {

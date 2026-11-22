@@ -1,5 +1,6 @@
 //! RFC 9000 §12 and §13.1.
 
+use super::handshake::Awaited;
 use super::ids::RemoteId;
 use super::key_update::Generation;
 use super::received::Order;
@@ -132,6 +133,7 @@ impl Connection {
                     self.restart_idle_timer(now);
                     (self.timers).set(Timer::KeepAlive, now + self.keep_alive_period);
                     self.has_sent_since_receiving = false;
+                    self.silence.pings = 0;
                     if self.pto_count > 1 {
                         self.on_sign_of_life();
                     }
@@ -303,7 +305,11 @@ impl Connection {
             is_early,
             destination: &header.destination,
         };
-        self.process(&arrival, &packet, shared)
+        let is_new = self.process(&arrival, &packet, shared)?;
+        if is_new && id == SpaceId::Handshake && self.side.is_server() {
+            crate::with(self.setup.as_mut(), |it| it.premature_packets = Some(0));
+        }
+        Ok(is_new)
     }
 
     /// RFC 9369 §4.1.
@@ -345,6 +351,7 @@ impl Connection {
         let space = &self.spaces.data;
         let Some(keys) = (space.read_keys.as_ref()).filter(|_| self.phase != Phase::Handshake)
         else {
+            self.remind_of_handshake();
             self.postpone(packet);
             return Ok(false);
         };
@@ -417,10 +424,22 @@ impl Connection {
         }
     }
 
+    /// Some clients that hear nothing repeat 1-RTT packets first, and the end of the handshake last.
+    #[cold]
+    fn remind_of_handshake(&mut self) {
+        if let (Some(setup), Some(space)) = (&mut self.setup, &mut self.spaces.handshake)
+            && let Some(count) = &mut setup.premature_packets
+        {
+            *count = count.saturating_add(1);
+            space.received.is_ack_due |= count.is_power_of_two();
+        }
+    }
+
     fn postpone(&mut self, packet: &[u8]) {
+        let is_brief = self.awaited() == Some(Awaited::Turn);
         if let Some(setup) = &mut self.setup {
             let len: usize = setup.undecryptable.iter().map(Vec::len).sum();
-            let max_len = match self.path.is_validated {
+            let max_len = match self.path.is_validated || is_brief {
                 true => MAX_UNDECRYPTABLE_LEN,
                 false => UNVALIDATED_MAX_UNDECRYPTABLE_LEN,
             };
@@ -453,7 +472,10 @@ impl Connection {
     #[inline]
     fn process(&mut self, arrival: &Arrival, packet: &Opened, shared: &mut Shared) -> Result<bool> {
         let space = self.spaces.open(arrival.space);
-        if packet.has_reserved_bits() {
+        // Some clients go on using them as agreed with the server that their ticket is from.
+        let has_loss_bits =
+            || arrival.space == SpaceId::Data && !arrival.is_early && self.peer.sends_loss_bits;
+        if packet.has_reserved_bits() && !has_loss_bits() {
             return Err(Error::violation("reserved bits are set"));
         }
         if space.received.is_duplicate(packet.number) {

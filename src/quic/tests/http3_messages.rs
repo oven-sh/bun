@@ -103,6 +103,9 @@ fn well_formed_responses() {
         ("GET", ":status=204", "data", "0 fin -"),
         ("GET", ":status=304 content-length=9", "", "0 fin -"),
         ("HEAD", ":status=200 content-length=9", "", "0 fin -"),
+        ("GET", ":status=204", "data a", "0 fin -"),
+        ("GET", ":status=304", "data a, data b", "0 fin -"),
+        ("HEAD", ":status=200 content-length=1", "data a", "0 fin -"),
         ("CONNECT", OK, "data a", "0 fin a"),
         ("CONNECT", ":status=407", "headers a=b", "0 Trailers a=b"),
     ] {
@@ -115,6 +118,26 @@ fn well_formed_responses() {
                     .starts_with(&format!("0 Head {head}, {events},"))
             );
         }
+    }
+}
+
+#[test]
+fn content_that_a_response_cannot_have_is_not_awaited() {
+    for (rest, events, frames) in [
+        ("data", "", ""),
+        (
+            "data a",
+            ", 0 fin -, 0 closed",
+            "stop_sending 0 0x10c, stream 6 1 @",
+        ),
+    ] {
+        let mut raw = Raw::http3(Server).connected_with("");
+        raw.request(":method=HEAD :authority=a");
+        raw.forget();
+        let [frame, _] = encodings(OK);
+        raw.write_http3(0, &format!("{frame}, {rest}"), false);
+        assert_eq!(raw.events(), format!("0 Head {OK}{events}"));
+        assert_eq!(raw.frames(), frames);
     }
 }
 

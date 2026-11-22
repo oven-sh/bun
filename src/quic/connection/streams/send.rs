@@ -2,7 +2,7 @@ use core::ops::Range;
 use std::collections::VecDeque;
 
 use super::stream::UNKNOWN_SIZE;
-use super::{Flags, State, Stream, Streams, Table};
+use super::{Asked, Flags, State, Stream, Streams, Table};
 use crate::coding::{MAX_VARINT, Write, varint_len};
 use crate::connection::sent::{Control, Frames, SentFrame};
 use crate::event::{Event, StreamEvent};
@@ -608,12 +608,20 @@ impl Streams {
         if fin {
             stream.flags.insert(Flags::FIN_ACKED);
         }
-        if stream.send.is_acked() {
-            self.state.has_asked |= !stream.flags.contains(Flags::READ_DONE);
-            if stream.flags.contains(Flags::FIN_ACKED) {
-                stream.flags.insert(Flags::SEND_DONE);
-                self.remove_if_finished(id);
-            }
+        let is_finished = stream.flags.contains(Flags::FIN_ACKED);
+        if !stream.flags.contains(Flags::READ_DONE) {
+            let last = Some((id, is_finished));
+            self.state.asked = self.state.asked.max(if !stream.send.is_acked() {
+                Asked::InPart
+            } else if core::mem::replace(&mut self.state.unanswered, last) == last {
+                Asked::Again
+            } else {
+                Asked::Anew
+            });
+        }
+        if is_finished && stream.send.is_acked() {
+            stream.flags.insert(Flags::SEND_DONE);
+            self.remove_if_finished(id);
         }
     }
 

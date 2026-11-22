@@ -30,6 +30,8 @@ mod id {
     pub(super) const VERSION_INFORMATION: u64 = 0x11;
     /// RFC 9221 §3.
     pub(super) const MAX_DATAGRAM_FRAME_SIZE: u64 = 0x20;
+    /// draft-ferrieuxhamchaoui-quic-lossbits-03 §5.
+    pub(super) const LOSS_BITS: u64 = 0x1057;
     /// draft-iyengar-quic-delayed-ack-02 §3.
     pub(super) const MIN_ACK_DELAY: u64 = 0xff02_de1a;
 }
@@ -56,6 +58,7 @@ pub struct TransportParameters {
     pub(crate) version_information: Option<VersionInformation>,
     pub max_datagram_frame_size: u64,
     pub(crate) min_ack_delay_micros: Option<u64>,
+    pub(crate) sends_loss_bits: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -96,6 +99,7 @@ impl Default for TransportParameters {
             version_information: None,
             max_datagram_frame_size: 0,
             min_ack_delay_micros: None,
+            sends_loss_bits: false,
         }
     }
 }
@@ -193,6 +197,7 @@ impl TransportParameters {
             let (id, mut value) = (input.varint()?, input.prefixed_bytes()?);
             let bit = match id {
                 ..=id::VERSION_INFORMATION | id::MAX_DATAGRAM_FRAME_SIZE => id,
+                id::LOSS_BITS if sender.is_client() => 62,
                 id::MIN_ACK_DELAY => 63,
                 _ => continue,
             };
@@ -228,6 +233,7 @@ impl TransportParameters {
             id::VERSION_INFORMATION => {
                 self.version_information = Some(VersionInformation::read(value)?);
             }
+            id::LOSS_BITS => self.sends_loss_bits = value.varint()? == 1,
             id::MIN_ACK_DELAY => self.min_ack_delay_micros = Some(value.varint()?),
             _ => {
                 let integer = self.integers().into_iter().find(|it| it.0 == id);

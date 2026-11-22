@@ -54,8 +54,6 @@ public:
     JSC::JSObject* jsFunction() const final { return m_jsFunction.get(); }
     JSC::JSObject* wrapper() const final { return m_wrapper.get(); }
 
-    String functionName() const;
-
     void replaceJSFunctionForAttributeListener(JSC::JSObject* function, JSC::JSObject* wrapper);
     static bool wasCreatedFromMarkup(const EventListener& listener)
     {

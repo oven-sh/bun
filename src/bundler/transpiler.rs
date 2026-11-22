@@ -1285,6 +1285,7 @@ impl<'a> Transpiler<'a> {
                     import_meta_glob: None,
                     import_meta_main_value: None,
                     lower_import_meta_main_for_node_js: false,
+                    compile: false,
                     framework: None,
                     repl_mode: self.options.repl_mode,
                     lower_toml_datetimes: false,

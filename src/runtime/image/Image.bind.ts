@@ -13,6 +13,7 @@ const settlingWith = (value: table.TableType) => ({
 
 export const Image = b.class({
   rustPath: "crate::image::Image",
+  thisValue: "this_ref",
   estimatedSize: true,
   construct: {
     passStructure: true,

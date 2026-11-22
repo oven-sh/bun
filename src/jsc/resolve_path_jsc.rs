@@ -4,7 +4,6 @@
 
 use crate::JSGlobalObject;
 use bun_core::String as BunString;
-use bun_paths::resolve_path;
 
 /// The C++ caller `transferToWTFString()`s the result.
 #[unsafe(no_mangle)]
@@ -20,16 +19,7 @@ extern "C" fn ResolvePath__joinAbsStringBufCurrentPlatformBunString(
         .unwrap_or_else(|| bun_paths::fs::FileSystem::instance().top_level_dir());
     let _ = global_object; // the cwd is process-wide
 
-    // The input is user-controlled and may be arbitrarily long. The
-    // threadlocal `join_buf` is only 4096 bytes, so allocate a buffer sized
-    // to fit.
-    let mut buf = vec![0u8; cwd.len() + str.slice().len() + 2];
-
-    let out_slice = resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(
-        cwd,
-        &mut buf,
-        &[str.slice()],
-    );
-
-    BunString::clone_utf8(out_slice)
+    let mut path = bun_paths::Path::resolve(&[cwd, str.slice()]);
+    path.copy_trailing_sep_from(str.slice());
+    BunString::clone_utf8(&path)
 }

@@ -870,7 +870,7 @@ impl BlobExt for Blob {
         {
             writer.write_str(" {\n")?;
             {
-                formatter.indent_inc();
+                let mut formatter = formatter.indented();
 
                 if show_name {
                     formatter.write_indent(writer)?;
@@ -926,8 +926,6 @@ impl BlobExt for Blob {
                         self.last_modified.get(),
                     )?;
                 }
-
-                formatter.indent_dec();
             }
             formatter.write_indent(writer)?;
             writer.write_str("}")?;
@@ -1201,7 +1199,7 @@ impl BlobExt for Blob {
                 let file = if let PathOrFileDescriptor::Fd(fd) = pathlike {
                     bun_sys::MaybeOwnedFile::Borrowed(*fd)
                 } else {
-                    let mut file_path = bun_paths::path_buffer_pool::get();
+                    let mut file_path = bun_paths::Path::new();
                     let path = pathlike.path().slice_z(&mut file_path);
                     let flags = bun_sys::O::WRONLY
                         | bun_sys::O::CREAT
@@ -1297,7 +1295,7 @@ impl BlobExt for Blob {
 
         // `pipe_stream` takes its own refs; init's +1 drops with `file_sink` on return.
         let mut readable_stream = readable_stream;
-        match webcore::FileSink::pipe_stream(&file_sink, &mut readable_stream, cx.global()) {
+        match file_sink.pipe_stream(&mut readable_stream, cx.global()) {
             Ok(promise) => Ok(promise),
             Err(err) => {
                 Ok(JSPromise::rejected_promise_with_caught_exception(cx.global(), err)?.to_js())
@@ -1391,7 +1389,7 @@ impl BlobExt for Blob {
             let file = match pathlike {
                 PathOrFileDescriptor::Fd(fd) => bun_sys::MaybeOwnedFile::Borrowed(*fd),
                 PathOrFileDescriptor::Path(p) => {
-                    let mut file_path = bun_paths::path_buffer_pool::get();
+                    let mut file_path = bun_paths::Path::new();
                     let flags = bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::NONBLOCK;
                     if let Some(err) = node::fs::refuse_open_for_write(p.slice(), flags) {
                         return Err(global_this.throw_value(err.to_js(global_this)));
@@ -1433,7 +1431,7 @@ impl BlobExt for Blob {
                 sink.close_with_graph(context);
             }
 
-            return Ok(webcore::FileSink::to_js(sink, global_this));
+            return Ok(sink.to_js(global_this));
         }
 
         #[cfg(not(windows))]
@@ -1477,7 +1475,7 @@ impl BlobExt for Blob {
                 return Err(global_this.throw_value(err.to_js(global_this)));
             }
 
-            Ok(webcore::FileSink::to_js(sink, global_this))
+            Ok(sink.to_js(global_this))
         }
     }
     fn get_slice_from(
@@ -3307,7 +3305,7 @@ pub(crate) enum Retry {
 /// Create the parent directories of `path`.
 #[inline(never)]
 pub(crate) fn mkdirp_parent(path: &[u8]) -> bun_sys::Result<()> {
-    let Some(dirname) = bun_core::dirname(path) else {
+    let Some(dirname) = bun_paths::dirname(path) else {
         return Err(bun_sys::Error::from_code(
             bun_sys::E::ENOENT,
             bun_sys::Tag::mkdir,
@@ -3453,7 +3451,7 @@ fn write_file_with_empty_source_to_destination(
                                 }
                                 let dirpath: &[u8] = match &file.pathlike {
                                     PathOrFileDescriptor::Path(path) => {
-                                        match bun_core::dirname(path.slice()) {
+                                        match bun_paths::dirname(path.slice()) {
                                             Some(d) => d,
                                             None => break 'err,
                                         }
@@ -3480,7 +3478,7 @@ fn write_file_with_empty_source_to_destination(
                                 }
 
                                 // SAFETY: we check if `file.pathlike` is an fd above, returning if it is.
-                                let mut buf = bun_paths::path_buffer_pool::get();
+                                let mut buf = bun_paths::Path::new();
                                 let mode: bun_sys::Mode =
                                     options.mode.unwrap_or(node::fs::DEFAULT_PERMISSION);
                                 match bun_sys::File::open(
@@ -4320,7 +4318,7 @@ fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
         lent = pathlike.fd();
         bun_sys::File::borrow(&lent)
     } else {
-        let mut file_path = bun_paths::path_buffer_pool::get();
+        let mut file_path = bun_paths::Path::new();
         match bun_sys::open(
             pathlike.path().slice_z(&mut file_path),
             // we deliberately don't use O_TRUNC here
@@ -4405,7 +4403,7 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
         lent = pathlike.fd();
         bun_sys::File::borrow(&lent)
     } else {
-        let mut file_path = bun_paths::path_buffer_pool::get();
+        let mut file_path = bun_paths::Path::new();
         let flags = if cfg!(not(windows)) {
             bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::NONBLOCK
         } else {
@@ -4986,7 +4984,7 @@ fn resolve_file_stat(store: &RefPtr<Store>) {
     let file = Store::data_mut(store).as_file_mut();
     match &file.pathlike {
         PathOrFileDescriptor::Path(path) => {
-            let mut buffer = bun_paths::path_buffer_pool::get();
+            let mut buffer = bun_paths::Path::new();
             match bun_sys::stat(path.slice_z(&mut buffer)) {
                 bun_sys::Result::Ok(stat) => {
                     file.max_size = if bun_sys::S::ISREG(stat.st_mode as _) || stat.st_size > 0 {
@@ -5053,7 +5051,7 @@ pub(crate) fn store_yields_bytes_once(store: &RefPtr<Store>) -> bool {
     } else if let PathOrFileDescriptor::Path(path) = &file.pathlike {
         // Not `resolve_file_stat`: the `Bun.file()` sharing `store` answers from what that caches.
         if file.mode_seen_by_clone.is_none() {
-            let mut buffer = bun_paths::path_buffer_pool::get();
+            let mut buffer = bun_paths::Path::new();
             if let bun_sys::Result::Ok(stat) = bun_sys::stat(path.slice_z(&mut buffer)) {
                 file.mode_seen_by_clone = Some(stat.st_mode as bun_sys::Mode);
             }

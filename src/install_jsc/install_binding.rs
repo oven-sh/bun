@@ -9,7 +9,6 @@ pub(crate) fn parse_lockfile(cx: &mut JsScope<'_>, cwd: &[u8]) -> bun_jsc::JsRes
         WriteStream, WriteStreamOptions, json_stringify,
     };
     use bun_install::lockfile::{LoadResult, Lockfile};
-    use bun_paths::resolve_path;
 
     let global = cx.global();
     let mut log = bun_ast::Log::init();
@@ -25,10 +24,7 @@ pub(crate) fn parse_lockfile(cx: &mut JsScope<'_>, cwd: &[u8]) -> bun_jsc::JsRes
         }
     };
 
-    let lockfile_path = resolve_path::join_abs_string_z::<resolve_path::platform::Auto>(
-        cwd,
-        &[b"bun.lockb".as_slice()],
-    );
+    let lockfile_path = bun_paths::Path::resolve(&[cwd, b"bun.lockb"]);
 
     let mut lockfile_ = Lockfile::default();
 

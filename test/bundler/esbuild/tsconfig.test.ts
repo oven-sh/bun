@@ -309,6 +309,32 @@ describe("bundler", () => {
       stdout: "123",
     },
   });
+  itBundled("tsconfig/ExtendsWrittenWithBackslashes", {
+    files: {
+      "/Users/user/project/src/entry.ts": /* ts */ `
+        import test from '#/test'
+        console.log(test)
+      `,
+      "/Users/user/project/src/test.ts": `export default 123`,
+      "/Users/user/project/tsconfig.json": /* json */ `
+        {
+          "extends": ".\\\\config\\\\tsconfig.paths.json"
+        }
+      `,
+      "/Users/user/project/config/tsconfig.paths.json": /* json */ `
+        {
+          "compilerOptions": {
+            "paths": {
+              "#/*": ["../src/*"]
+            }
+          }
+        }
+      `,
+    },
+    run: {
+      stdout: "123",
+    },
+  });
   itBundled("tsconfig/PathsOverriddenBaseURLDifferentDir", {
     files: {
       "/Users/user/project/src/entry.ts": /* ts */ `

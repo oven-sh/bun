@@ -17,8 +17,7 @@ use bun_core::{CStrList, CStrRef, CStringList, ZStr};
 #[cfg(unix)]
 use bun_spawn::SpawnResultExt as _;
 use bun_spawn::{
-    Process, ProcessExit, ProcessExitKind, ProcessHandle, Rusage, SpawnOptions, SpawnProcessResult,
-    Status,
+    ProcessExit, ProcessExitKind, ProcessHandle, SpawnOptions, SpawnProcessResult, Status,
 };
 #[cfg(unix)]
 use bun_sys::Fd;
@@ -112,9 +111,8 @@ impl YarnCommands {
 pub fn strip_bin_dirs(path: &[u8]) -> Vec<u8> {
     let mut result = Vec::with_capacity(path.len());
     for entry in bun_core::strings::split(path, &[bun_paths::DELIMITER]) {
-        let dir = bun_core::strings::without_trailing_slash(entry);
-        let is_bin_dir = bun_paths::basename(dir) == b".bin"
-            && bun_paths::dirname(dir)
+        let is_bin_dir = bun_paths::basename(entry) == b".bin"
+            && bun_paths::dirname(entry)
                 .is_some_and(|parent| bun_paths::basename(parent) == b"node_modules");
         if !is_bin_dir {
             if !result.is_empty() {
@@ -734,19 +732,12 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             let event_loop = (*this).event_loop();
             let process = (*this)
                 .process
-                .insert(spawned.to_process_handle(event_loop))
-                .this_ptr();
+                .insert(spawned.to_process_handle(event_loop));
             process.set_exit_handler(ProcessExit::new(ProcessExitKind::LifecycleScript, this));
 
-            if let Err(err) = Process::watch_or_reap(process) {
-                if !process.has_exited() {
-                    // SAFETY: all-zero is a valid Rusage (#[repr(C)] POD).
-                    Process::on_exit(
-                        process,
-                        Status::Err(err),
-                        &bun_core::ffi::zeroed::<Rusage>(),
-                    );
-                }
+            let mut rusage = bun_core::ffi::zeroed();
+            if let Some(exit) = process.watch_or_exit(&mut rusage) {
+                exit.dispatch(&rusage);
             }
         }
     }

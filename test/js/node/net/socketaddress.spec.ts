@@ -216,6 +216,14 @@ describe("SocketAddress.parse", () => {
   });
 
   it.each([
+    ["1.2.3.4:81/", { address: "1.2.3.4", port: 81, family: "ipv4" }],
+    ["[::1]:81/", { address: "::1", port: 81, family: "ipv6" }],
+  ])("(%s as a 16-bit string) == %o", (input, expected) => {
+    const sa = SocketAddress.parse(Buffer.from(input, "utf16le").toString("utf16le"));
+    expect((sa as any)?.toJSON()).toMatchObject(expected);
+  });
+
+  it.each([
     "",
     "invalid",
     "x",

@@ -4,17 +4,15 @@ use std::io::Write as _;
 use bun_ast as js_ast;
 use bun_ast::{E, Expr, G};
 use bun_core::{Global, Output, strings};
-use bun_paths::path_buffer_pool;
-use bun_paths::resolve_path::{join_abs_string_buf, platform};
 use bun_semver as semver;
 
-use crate::bun_fs::FileSystem;
 use bun_install::dependency::{self, DependencyExt as _, TagExt as _};
 use bun_install::lockfile::CatalogMap;
 use bun_install::lockfile::package::PackageColumns as _;
 use bun_install::{Dependency, INVALID_PACKAGE_ID, Lockfile, resolution};
 use bun_install_types::{DependencyGroup, PackageNameHash};
 
+use super::add_remove_with_filter::workspace_package_json_path;
 use super::package_manager_options::{Do, Enable};
 use super::workspace_package_json_cache::{GetJSONOptions, GetResult};
 use super::{CatalogUpdateInfo, PackageManager, PackageUpdateInfo, Subcommand, UpdateRequest};
@@ -635,8 +633,6 @@ pub(crate) fn steer_used_catalogs_to_latest(
     let package_json_cache = &mut manager.workspace_package_json_cache;
     let lockfile = parsed.unwrap_or(&mut *manager.lockfile);
 
-    let top_level = strings::without_trailing_slash(FileSystem::get().top_level_dir());
-    let mut path_buf = path_buffer_pool::get();
     // The root's package.json, then each member's.
     for workspace in 0..=lockfile.workspace_paths.count() {
         let workspace_path: &[u8] = match workspace.checked_sub(1) {
@@ -644,17 +640,13 @@ pub(crate) fn steer_used_catalogs_to_latest(
                 .slice(lockfile.buffers.string_bytes.as_slice()),
             None => b"",
         };
-        let package_json_path = join_abs_string_buf::<platform::Auto>(
-            top_level,
-            &mut path_buf.0,
-            &[workspace_path, b"package.json"],
-        );
+        let package_json_path = workspace_package_json_path(workspace_path);
         let options = GetJSONOptions {
             init_reset_store: false,
             ..Default::default()
         };
         let GetResult::Entry(entry) =
-            package_json_cache.get_with_path(log, package_json_path, options)
+            package_json_cache.get_with_path(log, &package_json_path, options)
         else {
             continue;
         };

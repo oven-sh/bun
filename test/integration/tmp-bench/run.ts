@@ -6,7 +6,7 @@ import { join } from "node:path";
 
 const LIMIT = 270_000;
 export function bench(script: string, ...args: string[]) {
-  test.skipIf(!isWindows || (process.arch === "x64" && args[0] === "busy"))(
+  test.skipIf(!isWindows)(
     script,
     async () => {
       using dir = tempDir("tmp-bench", {});
@@ -24,7 +24,18 @@ export function bench(script: string, ...args: string[]) {
         const shipped = join(import.meta.dir, "../../../release", name + ".zip");
         if (existsSync(shipped)) now = await unzip(shipped, "new");
       }
-      const before = now;
+      let before = process.env.BEFORE_BUN;
+      if (!before) {
+        const [build, step] = [143695, name.slice(4) + "-build-bun"];
+        const json = (url: string) => fetch("https://buildkite.com" + url).then(it => it.json());
+        const { records } = await json(`/bun/bun/builds/${build}/data/jobs?page=1`);
+        const job = records.findLast(it => it.step_key === step && it.exit_status === 0);
+        const artifacts = `/organizations/bun/pipelines/bun/builds/${build}/jobs/${job.id}/artifacts`;
+        const { id } = (await json(artifacts)).find(it => it.path === name + ".zip");
+        const zip = join(String(dir), "before.zip");
+        await Bun.write(zip, await fetch(`https://buildkite.com${artifacts}/${id}`));
+        before = await unzip(zip, "before");
+      }
       console.log("old", old, "before", before, "new", now);
       await Bun.spawn(
         [

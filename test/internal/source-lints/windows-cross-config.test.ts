@@ -91,12 +91,20 @@ describe.skipIf(isWindows)("Windows cross-compile LTO config (non-windows host)"
     expect(resolveWindowsCross({ arch: "aarch64", lto: false }).lto).toBe(false);
   });
 
-  test("LTO leaves mimalloc out of line on arm64, as on FreeBSD", () => {
+  test("LTO leaves mimalloc out of line, also where it overrides nothing", () => {
     const freebsd = resolveConfig(
       { os: "freebsd", arch: "x64", buildType: "Release", freebsdSysroot: "/fake" },
       mockToolchain(),
     );
-    for (const cfg of [resolveWindowsCross({ arch: "aarch64" }), freebsd]) {
+    const darwin = resolveConfig(
+      { os: "darwin", arch: "aarch64", buildType: "Release" },
+      mockToolchain({
+        ld64Lld: "/fake/llvm/bin/ld64.lld",
+        dsymutil: "/fake/llvm/bin/dsymutil",
+        clangResourceDir: "/fake/llvm/lib/clang/23",
+      }),
+    );
+    for (const cfg of [resolveWindowsCross(), resolveWindowsCross({ arch: "aarch64" }), freebsd, darwin]) {
       expect((mimalloc.build(cfg) as DirectBuild).cflags).toContain("-fno-builtin-malloc");
     }
   });

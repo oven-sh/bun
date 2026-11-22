@@ -130,7 +130,7 @@ impl Loader {
         }
         names.sort_unstable_by(|a, b| a.as_bytes().cmp(b.as_bytes()));
 
-        let mut path = Vec::with_capacity(dir_path.len() + 64);
+        let mut path = bun_paths::Path::from(dir_path);
         for name in &names {
             let Ok(st) = bun_sys::fstatat(dir.fd(), name) else {
                 continue;
@@ -142,11 +142,7 @@ impl Loader {
             {
                 continue;
             }
-            path.clear();
-            path.extend_from_slice(dir_path);
-            path.push(b'/');
-            path.extend_from_slice(name.as_bytes());
-            self.load_file(ZBox::from_bytes(&path).as_zstr());
+            self.load_file(&path.push_scoped(name.as_bytes()));
         }
     }
 }

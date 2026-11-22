@@ -48,7 +48,7 @@ const findToolStrings = (file: Buffer) =>
   allToolStrings.filter(each => file.includes(each.slice(each.indexOf(": ") + 2)));
 
 // Keys that ICU's date, number and currency formatters look up in its data.
-const formatterStrings = ["/DateTimePatterns%atTime", "CurrencyPlurals", "currencySpacing", "surroundingMatch"];
+const formatterStrings = ["dayPeriod/format/abbreviated", "CurrencyPlurals", "currencySpacing", "CurrencyUnitPatterns"];
 
 // What the engine calls the doors through which the host lays, runs and ends a mock, where it counts what they do: MockDoor in AOTModules.cpp.
 // Only `bun:test` lays a mock. A door that a program without it keeps is reached by a way that the feature Test does not own, and all that stands behind the door with it:

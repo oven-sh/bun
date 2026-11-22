@@ -27,8 +27,6 @@ pub enum Error {
     #[error(transparent)]
     Http(#[from] bun_http::Error),
     #[error(transparent)]
-    Paths(#[from] bun_paths::Error),
-    #[error(transparent)]
     Options(#[from] bun_options_types::Error),
 }
 
@@ -59,7 +57,6 @@ impl Error {
             Self::Sys(e) => <&'static str>::from(e),
             Self::Alloc(_) => "OutOfMemory",
             Self::Http(e) => e.name(),
-            Self::Paths(e) => e.name(),
             Self::Options(e) => e.name(),
         }
     }

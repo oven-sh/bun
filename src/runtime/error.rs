@@ -214,8 +214,6 @@ pub enum Error {
     #[error(transparent)]
     Resolver(#[from] bun_resolver::Error),
     #[error(transparent)]
-    Paths(#[from] bun_paths::Error),
-    #[error(transparent)]
     Parsers(#[from] bun_parsers::Error),
     #[error(transparent)]
     Bunfig(#[from] bun_bunfig::Error),
@@ -433,7 +431,6 @@ impl Error {
             Self::Spawn(e) => e.name(),
             Self::Install(e) => e.name(),
             Self::Resolver(e) => e.name(),
-            Self::Paths(e) => e.name(),
             Self::Parsers(e) => e.name(),
             Self::Bunfig(e) => e.name(),
             Self::JsParser(e) => e.name(),

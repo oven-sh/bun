@@ -41,12 +41,12 @@ for (let i = 0; i < values.length; i++) { if (values[i] === copies[i]) equal++; 
 console.log(equal, notLess, values.length);
 
 // One modulus for many remainders, then another, then both by turns.
-function mod(a, b) { const result = a % b; return result >= 0n ? result : b + result; }
+function wrapped(value, round) { const left = value % round; if (left < 0n) return left + round; return left; }
 for (const modulus of [(1n << 255n) - 19n, (1n << 256n) - 2n ** 32n - 977n, 2n ** 256n - 2n ** 224n + 2n ** 192n + 2n ** 96n - 1n, 2n ** 521n - 1n, 2n ** 384n - 2n ** 128n - 2n ** 96n + 2n ** 32n - 1n, 2n ** 130n - 5n, 1000000007n, 2n ** 1024n - 105n]) {
-  let a = mod(randomBigInt(20), modulus), b = mod(randomBigInt(20), modulus), hash = 11;
+  let a = wrapped(randomBigInt(20), modulus), b = wrapped(randomBigInt(20), modulus), hash = 11;
   for (let i = 0; i < 260; i++) {
-    const sum = mod(a + b, modulus), difference = mod(a - b, modulus), product = mod(a * b, modulus), square = mod(a * a, modulus);
-    hash = digest(sum.toString(16) + difference.toString(16) + product.toString(16) + square.toString(16) + mod(modulus, modulus) + mod(modulus - 1n, modulus).toString(16) + mod(-modulus, modulus) + mod(modulus * modulus - 1n, modulus).toString(16) + (modulus * 2n % modulus), hash);
+    const sum = wrapped(a + b, modulus), difference = wrapped(a - b, modulus), product = wrapped(a * b, modulus), square = wrapped(a * a, modulus);
+    hash = digest(sum.toString(16) + difference.toString(16) + product.toString(16) + square.toString(16) + wrapped(modulus, modulus) + wrapped(modulus - 1n, modulus).toString(16) + wrapped(-modulus, modulus) + wrapped(modulus * modulus - 1n, modulus).toString(16) + (modulus * 2n % modulus), hash);
     a = product + (i % 3 ? 1n : 0n); b = i % 5 ? square : difference;
   }
   console.log(modulus.toString(16).length, hash);
@@ -54,7 +54,7 @@ for (const modulus of [(1n << 255n) - 19n, (1n << 256n) - 2n ** 32n - 977n, 2n *
 {
   const p = (1n << 255n) - 19n, q = 2n ** 256n - 2n ** 32n - 977n;
   let a = randomBigInt(4), hash = 13;
-  for (let i = 0; i < 400; i++) { const m = i % 130 < 110 ? p : i % 2 ? p : q; a = mod(a * a + BigInt(i), m); hash = digest(a.toString(16), hash); }
+  for (let i = 0; i < 400; i++) { const m = i % 130 < 110 ? p : i % 2 ? p : q; a = wrapped(a * a + BigInt(i), m); hash = digest(a.toString(16), hash); }
   console.log("alternating", hash);
 }
 

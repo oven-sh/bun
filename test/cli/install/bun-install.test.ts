@@ -7372,6 +7372,33 @@ describe.concurrent("bun-install", () => {
     });
   });
 
+  test.skipIf(isWindows)('a backslash separates in a "file:" path and in the "bin" of a dependency', async () => {
+    using dir = tempDir("manifest-backslash", {
+      "package.json": JSON.stringify({ name: "foo", dependencies: { dep: "file:deps\\dep" } }),
+      "deps/dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0", bin: { hb: "bin\\hb.js" } }),
+      "deps/dep/bin/hb.js": "#!/usr/bin/env node\n",
+    });
+    await runBunInstall(env, String(dir));
+    expect(await file(join(String(dir), "node_modules", "dep", "package.json")).json()).toMatchObject({ name: "dep" });
+    expect(await readlink(join(String(dir), "node_modules", ".bin", "hb"))).toBe(join("..", "dep", "bin", "hb.js"));
+  });
+
+  test('an absolute path in the "bin" of a dependency is not linked', async () => {
+    using dir = tempDir("manifest-bin-absolute", {
+      "package.json": JSON.stringify({ name: "foo", dependencies: { dep: "file:dep", dirs: "file:dirs" } }),
+      "dep/package.json": JSON.stringify({
+        name: "dep",
+        version: "1.0.0",
+        bin: { absolute: "/bin/a.js", mixed: "x\\y/../../bin/a.js" },
+      }),
+      "dep/bin/a.js": "#!/usr/bin/env node\n",
+      "dirs/package.json": JSON.stringify({ name: "dirs", version: "1.0.0", directories: { bin: "/bin" } }),
+      "dirs/bin/in-dir": "#!/usr/bin/env node\n",
+    });
+    await runBunInstall(env, String(dir));
+    expect(await readdirSorted(join(String(dir), "node_modules", ".bin"))).toHaveBins(["mixed"]);
+  });
+
   // The root package.json is read on two paths: against a bun.lock that already lists
   // dependencies, and when the lockfile has to be created. Both report it the same way.
   describe.concurrent("root package.json that cannot be read or parsed", () => {

@@ -13,7 +13,6 @@ use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     self as jsc, JSGlobalObject, JSValue, JsCell, JsRef, JsResult, WorkPool, WorkPoolTask,
 };
-use bun_paths::resolve_path::{self as Path, platform};
 use bun_ptr::{BackRef, RefPtr, ThisPtr, ThreadSafeRefCount};
 use bun_resolver::fs;
 use bun_sys::{self, PosixStat};
@@ -22,7 +21,7 @@ use bun_threading::{Guarded, UnboundedQueue};
 use crate::generated_bindgen::node_fs_stat_watcher::js_StatWatcher as js;
 use crate::node::stat::{StatsBig, StatsSmall};
 use crate::node::types::PathLikeExt;
-use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
+use crate::timer::{EventLoopTimer, EventLoopTimerTag};
 
 bun_output::declare_scope!(StatWatcher, visible);
 
@@ -177,10 +176,7 @@ impl StatWatcherScheduler {
 
         // if the interval is 0 means that we stop the timer
         if interval == 0 {
-            // if the timer is active we need to remove it
-            if this.event_loop_timer.state.get() == EventLoopTimerState::ACTIVE {
-                timer_all.remove(&this.event_loop_timer);
-            }
+            timer_all.remove(&this.event_loop_timer);
             return;
         }
 
@@ -194,12 +190,9 @@ impl StatWatcherScheduler {
     }
 
     pub(crate) fn timer_callback(this: ThisPtr<Self>) {
-        let has_been_cleared = this.event_loop_timer.state.get() == EventLoopTimerState::CANCELLED
-            || this.vm().script_execution_status() != jsc::ScriptExecutionStatus::Running;
-
-        this.event_loop_timer.state.set(EventLoopTimerState::FIRED);
-
-        if has_been_cleared || this.is_shutdown.load(Ordering::Relaxed) {
+        if this.vm().script_execution_status() != jsc::ScriptExecutionStatus::Running
+            || this.is_shutdown.load(Ordering::Relaxed)
+        {
             return;
         }
 
@@ -361,7 +354,7 @@ pub(crate) struct StatWatcher {
     // gives safe `&JSGlobalObject` projection (Deref) at every read site.
     global_this: BackRef<JSGlobalObject>,
 
-    this_value: JsCell<JsRef>,
+    pub(crate) this_value: JsCell<JsRef>,
 
     poll_ref: JsKeepAlive,
 
@@ -481,7 +474,6 @@ impl StatWatcher {
     /// The scheduler holds its own ref; `closed` tells it to drop it.
     pub(crate) fn finalize(&self) {
         log!("Finalize\n");
-        self.this_value.with_mut(|r| r.finalize());
         self.closed.store(true, Ordering::Relaxed);
     }
 
@@ -606,21 +598,15 @@ impl StatWatcher {
     fn init(args: &Arguments) -> Result<JSValue, crate::Error> {
         log!("init");
 
-        let mut buf = bun_paths::path_buffer_pool::get();
-        // guard puts back on Drop
         let mut slice = args.path.slice();
         if strings::starts_with(slice, b"file://") {
             slice = &slice[b"file://".len()..];
         }
 
         let top_level_dir = fs::FileSystem::get().top_level_dir();
-        let parts: [&[u8]; 1] = [slice];
-        let file_path =
-            Path::join_abs_string_buf::<platform::Auto>(top_level_dir, &mut buf[..], &parts);
-
-        // allocSentinel + memcpy → owned NUL-terminated copy (ZBox)
-        let alloc_file_path = ZBox::from_bytes(file_path);
-        // errdefer free → Drop handles it
+        let mut file_path = bun_paths::Path::resolve(&[top_level_dir, slice]);
+        file_path.copy_trailing_sep_from(slice);
+        let alloc_file_path = file_path.to_zbox();
 
         // `args.global_this` is a `BackRef` (JSC_BORROW); safe Deref.
         let vm = args.global_this.bun_vm();
@@ -650,9 +636,9 @@ impl StatWatcher {
             this.poll_ref.ref_(this.ctx.loop_ctx());
         }
 
-        let js_this = js::to_js(this.clone(), &args.global_this);
-        this.this_value
-            .set(JsRef::init_strong(js_this, &args.global_this));
+        let wrapper = js::wrap(this.clone(), &args.global_this);
+        wrapper.set_js_ref_strong(&args.global_this);
+        let js_this = wrapper.to_js();
         js::listener_set_cached(js_this, &args.global_this, args.listener);
         // SAFETY: heap-allocated; `close()` disarms it before any drop.
         unsafe { bun_jsc::AbortHandle::arm_owner(this.as_ptr(), vm.context_of(args.context)) };

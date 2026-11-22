@@ -509,7 +509,7 @@ impl ShellSubprocess {
 
         let stdio0 = core::mem::replace(&mut spawn_args.stdio[0], Stdio::Ignore);
 
-        // `to_process` consumes the result for pid/pidfd; pull the fd handles out first.
+        // `to_process_handle` consumes the result for pid/pidfd; pull the fd handles out first.
         let spawn_stdin = spawn_result.stdin.take();
         let spawn_stdout = spawn_result.stdout.take();
         let spawn_stderr = spawn_result.stderr.take();
@@ -1364,7 +1364,8 @@ impl PipeReader {
         rc.reader.set_source(match result {
             StdioResult::Buffer(buf) => bun_io::Source::Pipe(buf),
             StdioResult::BufferFd(fd) => {
-                bun_io::Source::File(bun_io::Source::open_file(event_loop.loop_(), fd))
+                let file = bun_sys::File::from_fd(fd).into();
+                bun_io::Source::File(bun_io::Source::open_file(event_loop.loop_(), file))
             }
             StdioResult::UnownedFd(_) | StdioResult::Unavailable => panic!("Shouldn't happen."),
         });
@@ -1378,11 +1379,10 @@ impl PipeReader {
             .reader
             .start_with_current_pipe()
             .map(|()| ReadResult::Pending);
-        // `reader` owns the fd from here.
         #[cfg(not(windows))]
         let started = self.reader.start(
             self.event_loop.as_event_loop_ctx(),
-            self.stdio_result.take().unwrap().into_raw(),
+            self.stdio_result.take().unwrap().into(),
             true,
         );
         match started {

@@ -21,7 +21,7 @@ Bun statically links these libraries:
 | Library | License |
 |---------|---------|
 | [`boringssl`](https://boringssl.googlesource.com/boringssl/) | [several licenses](https://boringssl.googlesource.com/boringssl/+/refs/heads/master/LICENSE) |
-| [`brotli`](https://github.com/google/brotli) | MIT |
+| [`brotli`](https://github.com/google/brotli) (not linked: the Brotli codec is derived from parts of it) | MIT |
 | [`libarchive`](https://github.com/libarchive/libarchive) (not linked: `src/tar` is derived from parts of it) | [several licenses](https://github.com/libarchive/libarchive/blob/master/COPYING) |
 | [`llhttp`](https://github.com/nodejs/llhttp) (not linked: `src/http1` is derived from parts of it) | MIT |
 | [`lol-html`](https://github.com/cloudflare/lol-html/tree/master/c-api) | BSD 3-Clause |
@@ -30,16 +30,16 @@ Bun statically links these libraries:
 | [`lsquic`](https://github.com/litespeedtech/lsquic) | MIT (portions derived from [Chromium proto-quic](https://github.com/litespeedtech/lsquic/blob/master/LICENSE.chrome), BSD 3-Clause) |
 | [`mimalloc`](https://github.com/microsoft/mimalloc) | MIT |
 | [`picohttpparser`](https://github.com/h2o/picohttpparser) (not linked: `src/http1` is derived from parts of it) | dual-licensed under the Perl License or the MIT License |
-| [`zstd`](https://github.com/facebook/zstd) | dual-licensed under the BSD License or GPLv2 license |
+| [`zstd`](https://github.com/facebook/zstd) (not linked: `src/zstd` is derived from parts of it) | dual-licensed under the BSD License or GPLv2 license |
 | [`simdutf`](https://github.com/simdutf/simdutf) | Apache 2.0 |
 | [`tinycc`](https://github.com/tinycc/tinycc) | LGPL v2.1 |
 | [`uSockets`](https://github.com/uNetworking/uSockets) | Apache 2.0 |
-| [`zlib-ng`](https://github.com/zlib-ng/zlib-ng) | zlib |
+| [`zlib-ng`](https://github.com/zlib-ng/zlib-ng) (not linked: `src/zlib` is derived from parts of it) | zlib |
 | [`c-ares`](https://github.com/c-ares/c-ares) | MIT licensed |
-| [`libicu`](https://github.com/unicode-org/icu) 78 | [license here](https://github.com/unicode-org/icu/blob/main/icu4c/LICENSE) |
+| [`libicu`](https://github.com/unicode-org/icu) 79 (its data are linked, and `src/icu` is derived from parts of its code) | [license here](https://github.com/unicode-org/icu/blob/main/icu4c/LICENSE) |
 | [`libbase64`](https://github.com/aklomp/base64/blob/master/LICENSE) | BSD 2-Clause |
 | [`libuv`](https://github.com/libuv/libuv) (on Windows) | MIT |
-| [`libdeflate`](https://github.com/ebiggers/libdeflate) | MIT |
+| [`libdeflate`](https://github.com/ebiggers/libdeflate) (not linked: `src/deflate` and its checksum kernels are derived from it) | [MIT](https://github.com/ebiggers/libdeflate/blob/master/COPYING) |
 | [`libjpeg-turbo`](https://github.com/libjpeg-turbo/libjpeg-turbo) (not linked: the JPEG codec is derived from parts of it, and so based in part on the work of the Independent JPEG Group) | [BSD 3-Clause / IJG / zlib](https://github.com/libjpeg-turbo/libjpeg-turbo/blob/main/LICENSE.md) |
 | [`libspng`](https://github.com/randy408/libspng) (not linked: `src/png` is derived from parts of it) | BSD 2-Clause |
 | [`stb_image`](https://github.com/nothings/stb) (not linked: the PNG codec finds the Paeth predictor its way) | MIT or public domain |

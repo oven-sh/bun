@@ -3,13 +3,15 @@
 //! bundling, after the bundler has read every file ([`check_for_build_command`],
 //! [`check_for_bun_build`]).
 
+use super::short_run;
 use bstr::BStr;
 
 use bun_bundler::options::{TypeChecked, loaders_from_transform_options};
 use bun_clap as clap;
 use bun_core::{Global, Output, ZStr, env_var};
+use bun_paths::Path;
 use bun_sema_driver::format::{self, Layout, Style};
-use bun_sema_driver::host::{AlreadyRead, BeforeRead, Provided};
+use bun_sema_driver::host::{AlreadyRead, BeforeRead, Provided, check_entry_point_dirs};
 use bun_sema_driver::{
     Category, CommandLine, CompilerOption, Diagnostic, FlagError, PlanOptions, Progress,
     RejectedFlag, Report, Request, ScriptKind,
@@ -148,9 +150,8 @@ fn parse(args: &[&ZStr]) -> Options {
         Global::exit(0);
     }
     if let Some(cwd) = parsed.option(b"--cwd") {
-        // The `ZBox` is a temporary so that it's freed before `exit`, which never returns.
-        let directory = super::script_or_command::directory_of_cwd(cwd);
-        let changed = bun_sys::chdir(&bun_core::ZBox::from_vec(directory));
+        // The path is a temporary so that it's freed before `exit`, which never returns.
+        let changed = bun_sys::chdir(&super::script_or_command::directory_of_cwd(cwd));
         if let bun_sys::Result::Err(err) = changed {
             Output::err(
                 err,
@@ -534,6 +535,7 @@ impl CheckCommand {
         if options.aot {
             compile_check::exec(options)
         }
+        short_run::expect_many_threads();
         let (cwd, command_line) = (working_directory(), &options.command_line);
         // The closure returns the report so that it's never dropped. The process exits instead.
         let (exit_code, _report) = run(
@@ -640,6 +642,11 @@ pub(crate) fn check_before(entry_points: &[EntryPoint], before_read: Option<Befo
         return true;
     };
     let mut in_memory = (entry_points.iter()).filter_map(|it| Some((it.path, it.text?)));
+    let mut on_disk = paths.clone();
+    on_disk.retain(|path| !in_memory.clone().any(|it| it.0 == &path[..]));
+    if !on_disk.is_empty() && !can_check(&cwd, &on_disk) {
+        return false;
+    }
     let provided = Provided {
         already_read: already_read(&cwd, &mut in_memory),
         before_read,
@@ -652,6 +659,14 @@ pub(crate) fn check_before(entry_points: &[EntryPoint], before_read: Option<Befo
         conditions: args.map_or(&[][..], |args| &args.conditions[..]),
     };
     check_and_report(&Paths::EntryPoints(entries), provided)
+}
+
+fn can_check(cwd: &[u8], entry_points: &[Vec<u8>]) -> bool {
+    let mut log = bun_ast::Log::init();
+    let can_check = check_entry_point_dirs(cwd, entry_points, &mut log);
+    let _ = log.print(Output::error_writer());
+    Output::flush();
+    can_check
 }
 
 fn script_kind_of(loader: bun_ast::Loader) -> Option<ScriptKind> {
@@ -686,15 +701,13 @@ fn has_types_with(by_extension: &[(Vec<u8>, ScriptKind)], path: &[u8]) -> bool {
 /// change. This covers every file outside `node_modules`, including type-only files and
 /// configuration files. Returns `None` if there's no file watcher.
 pub(crate) fn watching(vm: &bun_jsc::virtual_machine::VirtualMachine) -> Option<BeforeRead> {
-    use bun_paths::{platform::Auto, resolve_path::join_abs_string};
     use bun_sema_driver::host::to_native;
     let watcher = std::sync::Arc::clone(vm.bun_watcher.get().as_deref()?);
     let cwd = working_directory();
     Some(Box::new(move |path| {
         if !bun_core::strings::contains(path, b"/node_modules/") {
             // The watcher keys files by their native path.
-            let _ =
-                watcher.add_file_by_path_slow(join_abs_string::<Auto>(&cwd, &[to_native(path)]));
+            let _ = watcher.add_file_by_path_slow(&Path::resolve(&[&cwd, to_native(path)]));
         }
     }))
 }
@@ -703,13 +716,12 @@ pub(crate) fn watching(vm: &bun_jsc::virtual_machine::VirtualMachine) -> Option<
 /// may start with a byte order mark.
 fn already_read(cwd: &[u8], sources: &mut dyn Iterator<Item = (&[u8], &[u8])>) -> AlreadyRead {
     use bun_core::strings::without_utf8_bom;
-    use bun_paths::{platform::Auto, resolve_path::join_abs_string};
+    use bun_sema_driver::host::{from_native, is_below_backslash};
     sources
-        .map(|(path, text)| {
-            let path = join_abs_string::<Auto>(cwd, &[path]);
-            let text = without_utf8_bom(text).to_vec();
-            (bun_sema_driver::host::from_native(path), text)
-        })
+        .map(|(path, text)| (Path::resolve(&[cwd, path]), text))
+        // The checker would take `a\b/c.ts` for `a/b/c.ts`.
+        .filter(|(path, _)| !is_below_backslash(path) || !bun_sys::exists_z(path))
+        .map(|(path, text)| (from_native(&path), without_utf8_bom(text).to_vec()))
         .collect()
 }
 
@@ -758,6 +770,9 @@ fn check_for_build(checked: TypeChecked, log: &mut bun_ast::Log, shows_progress:
     // Only stylesheets and the like.
     if paths.is_empty() {
         return true;
+    }
+    if !check_entry_point_dirs(cwd, &paths, log) {
+        return false;
     }
     let paths = Paths::EntryPoints(Entries {
         paths: &paths,
@@ -889,9 +904,8 @@ fn pages_of(cwd: &[u8], page: &[u8]) -> Vec<Vec<u8>> {
         }
     }
     pages.retain(|page| {
-        let page =
-            bun_paths::resolve_path::join_abs_string::<bun_paths::platform::Auto>(cwd, &[page]);
-        !bun_core::strings::contains(page, bun_paths::NODE_MODULES_NEEDLE)
+        let page = Path::resolve(&[cwd, page]);
+        !bun_core::strings::contains(&page, bun_paths::NODE_MODULES_NEEDLE)
     });
     pages
 }
@@ -899,8 +913,7 @@ fn pages_of(cwd: &[u8], page: &[u8]) -> Vec<Vec<u8>> {
 /// Absolute paths of the local files that the HTML entry point `page` imports, found with the
 /// bundler's HTML scanner. Empty if the page can't be read or parsed. The bundler reports that.
 fn imports_of_page(cwd: &[u8], page: &[u8]) -> Vec<Vec<u8>> {
-    use bun_paths::{platform::Auto, resolve_path};
-    let page = resolve_path::join_abs_string::<Auto>(cwd, &[page]).to_vec();
+    let page = Path::resolve(&[cwd, page]);
     let Ok(contents) = bun_sys::File::read_from(bun_core::Fd::cwd(), &page) else {
         return Vec::new();
     };
@@ -912,12 +925,12 @@ fn imports_of_page(cwd: &[u8], page: &[u8]) -> Vec<Vec<u8>> {
         return Vec::new();
     }
     let records = bun_bundler::html_scanner::scan_import_records(&mut log, &source);
-    let directory = resolve_path::dirname::<Auto>(&page);
+    let directory = bun_paths::dirname_or_root(&page);
     let is_url = |path: &[u8]| path.starts_with(b"//") || bun_core::strings::contains(path, b"://");
     (records.unwrap_or_default().iter())
         .map(|record| record.path.text())
         .filter(|path| !is_url(path))
-        .map(|path| resolve_path::join_abs_string::<Auto>(directory, &[path]).to_vec())
+        .map(|path| Path::resolve(&[directory, path]).to_vec())
         .collect()
 }
 
@@ -930,7 +943,8 @@ pub(crate) fn check_project_before(before_read: Option<BeforeRead>) -> bool {
         before_read,
         ..Default::default()
     };
-    check_and_report(&Paths::EntryPoints(Entries::default()), provided)
+    can_check(&working_directory(), &[])
+        && check_and_report(&Paths::EntryPoints(Entries::default()), provided)
 }
 
 /// `bun`'s `--tsconfig-override`. The runtime resolves with this tsconfig instead of any other.

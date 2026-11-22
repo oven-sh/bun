@@ -39,6 +39,11 @@ pub(in crate::lower) fn has_decorators(hir: &hir::File<'_>, modifiers: Span<Modi
     decorators_of(hir, modifiers).next().is_some()
 }
 
+/// The slot is undefined until the decorators have run, and what they run may read it.
+pub(in crate::lower) fn is_filled_by_decorators(hir: &hir::File<'_>, slot: ClassSlot) -> bool {
+    matches!(slot, ClassSlot::PrivateMethod(member) if has_decorators(hir, hir[member].modifiers))
+}
+
 pub(in crate::lower) fn is_declaration_only(hir: &hir::File<'_>, member: MemberId) -> bool {
     let node = hir[member];
     let is_legacy = hir.has_typescript_semantics() && hir.legacy_decorators;

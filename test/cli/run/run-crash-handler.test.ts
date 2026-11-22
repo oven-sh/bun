@@ -1,5 +1,5 @@
 import { crash_handler } from "bun:internal-for-testing";
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import {
   bunEnv,
   bunExe,
@@ -16,6 +16,10 @@ import {
 import { readFileSync, rmSync } from "node:fs";
 import { constants as osConstants } from "node:os";
 import path from "path";
+import { without } from "../../aot/harness/capabilities";
+import { withoutCoreDump } from "../../aot/harness/commands";
+import { unsupported } from "../../aot/harness/compiler";
+import { run } from "../../aot/harness/run";
 const { getMachOImageZeroOffset } = crash_handler;
 
 // CI sets BUN_CRASH_REPORT_URL so unexpected crashes are captured; these
@@ -60,6 +64,81 @@ test.if(isDebug && isLinux && hasSymbolizer)(
 const hasPointerAuthentication = isLinux && isArm64 && /\bpaca\b/.test(readFileSync("/proc/cpuinfo", "utf8"));
 test.if(hasPointerAuthentication)("a stack trace takes the signature off a return address", () => {
   expect(crash_handler.stackTraceStartsAtSignedReturnAddress()).toBe(true);
+});
+
+// The program finds the return addresses that `descend` has left on the stack and changes the bits where a signature goes.
+describe.if(hasPointerAuthentication && !isASAN && !unsupported)("signed return addresses of compiled code", () => {
+  const program = `import { read, toArrayBuffer } from "bun:ffi";
+import { readFileSync } from "node:fs";
+
+const mappings = readFileSync("/proc/self/maps", "utf8")
+  .trim()
+  .split("\\n")
+  .map(line => ({ line, range: line.split(/[- ]/, 2).map(digits => parseInt(digits, 16)) }));
+const [start, end] = mappings.find(({ line }) => line.endsWith("[stack]"))!.range;
+const code = mappings.filter(({ line }) => / ..x. /.test(line)).map(({ range }) => range);
+const halves = new Uint32Array(toArrayBuffer(start as never, 0, end - start));
+const before = halves.slice();
+
+function lowest(how: string): number {
+  const places = new Map<number, number[]>();
+  for (let at = 0; at < halves.length; at += 2) {
+    const address = (halves[at + 1] & 0xffff) * 2 ** 32 + halves[at];
+    if (halves[at] !== before[at] && code.some(([from, to]) => address >= from && address < to))
+      places.getOrInsert(address, []).push(at);
+  }
+  // What deeper calls have left behind lies below.
+  const row = [...places.values()].findLast(row => row.length >= 4)!;
+  for (let index = 0; index < row.length; index++) {
+    if (how === "wiped") halves[row[index]] = halves[row[index] + 1] = 0;
+    else if (how !== "plain") halves[row[index] + 1] ^= 0x500000;
+  }
+  return how === "returned to" ? 0 : read.u8(8 as never) + 1;
+}
+
+function descend(left: number): number {
+  return left ? descend(left - 1) + 1 : lowest(process.argv[2]);
+}
+
+console.log(descend(process.argv.length + 9));
+`;
+  const callers = [...Array(12).fill("at descend (./app.ts:30:17)"), "at ./app.ts:33:13"];
+  let dir: ReturnType<typeof tempDir>;
+
+  beforeAll(async () => {
+    dir = tempDir("signed-return-addresses", { "app.ts": program });
+    const cmd = [bunExe(), "build", "--compile", "--aot", "app.ts", "--outfile", "app"];
+    const { stderr, exitCode } = await run(cmd, String(dir));
+    expect({ stderr, exitCode }).toEqual({ stderr: expect.not.stringMatching(/^error\b/m), exitCode: 0 });
+  }, 60_000);
+  afterAll(() => dir?.[Symbol.dispose]());
+
+  async function crashed(how: string) {
+    const cmd = withoutCoreDump([path.join(String(dir), "app"), how]);
+    const { stdout, stderr, exitCode } = await run(cmd, String(dir), noReportEnv, 20_000);
+    expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 128 + osConstants.signals.SIGSEGV });
+    return { stderr, frames: stderr.match(/(?<=^ +)at .*/gm) };
+  }
+
+  test.each(["plain", "signed"])("every caller is named: %s", async how => {
+    expect((await crashed(how)).frames).toEqual(["at lowest (./app.ts:26:43)", ...callers]);
+  });
+
+  test("the report reads the words that the program finds", async () => {
+    const { frames } = await crashed("wiped");
+    expect(frames![0]).toBe("at lowest (./app.ts:26:43)");
+    expect(frames!.length).toBeLessThan(callers.length / 2);
+  });
+
+  // This is how a failed authentication ends without FEAT_FPAC. A hardened build authenticates here itself.
+  test.if(!!without("a hardened build"))(
+    "a return that faults names the place, and gives no address away",
+    async () => {
+      const { stderr, frames } = await crashed("returned to");
+      expect(frames).toEqual(callers);
+      expect(stderr).toMatch(/ x30=code\+0x\w+ sp=stack\+0x0 pc=code\+0x\w+$/m);
+    },
+  );
 });
 
 // `crash()` resets fatal-signal dispositions to SIG_DFL before re-raising so
@@ -200,6 +279,19 @@ test("the crash report lists the CPU features", async () => {
   } else {
     expect(cpuLine).toMatch(/^CPU: neon fp( \w+)*$/);
   }
+  expect(exitCode).not.toBe(0);
+});
+
+test("the trace string ends with the panic message as a zlib stream", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), path.join(import.meta.dir, "fixture-crash.js"), "panic", "--debug-crash-handler-use-trace-string"],
+    env: noReportEnv,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  // "invoked crashByPanic() handler"
+  expect(stderr).toMatch(/A0eNrLzCvLz05NUUguSizOcKoMSMzLTNbQVMhIzEvJSS0CAK\/LCxc(\/view)?\s/);
   expect(exitCode).not.toBe(0);
 });
 

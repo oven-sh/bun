@@ -9,6 +9,7 @@ use crate::embedded::Framework;
 use crate::fmt::Exclusions;
 use crate::gitignore::{self, Files};
 use crate::run::{Environment, Fatal, Pool};
+use crate::walk::{AwaitTurn, walk};
 use crate::{Linter, fs, paths};
 use bun_core::strings;
 use bun_lint::glob::{Minimatch, MinimatchOptions};
@@ -268,11 +269,8 @@ fn search(
     let dotfiles = search.dotfiles;
     let is_matched: Vec<AtomicBool> = matchers.iter().map(|_| AtomicBool::new(false)).collect();
     let registry = loader.linter.registry();
-    let (mut all_found, mut failure) = (
-        Guarded::new(std::mem::take(found)),
-        Guarded::new(None::<Fatal>),
-    );
-    let mut level = Vec::new();
+    let mut all_found = Guarded::new(std::mem::take(found));
+    let mut first = None;
     if fs::kind(&search.base_path) == Some(fs::Kind::Directory) {
         let inherited = loader.for_directory(&search.base_path)?;
         // From here on, a directory is only listed if it isn't ignored. ESLint always lists the starting directory,
@@ -288,7 +286,7 @@ fn search(
             if loader.collects_tsconfigs() {
                 (loader.searched_from.lock()).push(search.base_path.clone());
             }
-            level.push(Directory {
+            first = Some(Directory {
                 path: search.base_path.clone(),
                 trail: Arc::new(Trail {
                     real: real.unwrap_or_else(|| search.base_path.clone()),
@@ -303,204 +301,186 @@ fn search(
             });
         }
     }
-    while !level.is_empty() && failure.lock().is_none() {
-        let mut next = Guarded::new(Vec::new());
-        pool.for_each(level.len(), 1, &|index| {
-            let directory = &level[index];
-            let Some(mut listing) = fs::list(&directory.path) else {
-                return;
-            };
-            let entries = std::mem::take(&mut listing.entries);
-            if loader.collects_tsconfigs() {
-                // TypeScript reads one even if an ignore file excludes it. The consumer knows whether file names are
-                // case-sensitive here.
-                let names = [&b"tsconfig.json"[..], b"jsconfig.json"];
-                let files = entries.iter().filter(|it| !it.is_directory);
-                for file in
-                    files.filter(|it| names.iter().any(|name| it.name.eq_ignore_ascii_case(name)))
-                {
-                    (loader.tsconfigs.lock()).push(paths::join(&directory.path, &file.name));
-                }
+    let visit = |directory: &Directory, await_turn: AwaitTurn<'_>| {
+        let Some(mut listing) = fs::list(&directory.path) else {
+            return Ok(Vec::new());
+        };
+        let entries = std::mem::take(&mut listing.entries);
+        if loader.collects_tsconfigs() {
+            // TypeScript reads one even if an ignore file excludes it. The consumer knows whether file names are
+            // case-sensitive here.
+            let names = [&b"tsconfig.json"[..], b"jsconfig.json"];
+            let files = entries.iter().filter(|it| !it.is_directory);
+            for file in
+                files.filter(|it| names.iter().any(|name| it.name.eq_ignore_ascii_case(name)))
+            {
+                await_turn();
+                (loader.tsconfigs.lock()).push(paths::join(&directory.path, &file.name));
             }
-            let own = match directory.relative.is_empty() {
-                true => Ok(Arc::clone(&directory.inherited)),
-                false => {
-                    let files = entries
-                        .iter()
-                        .filter(|it| !it.is_directory)
-                        .map(|it| &it.name[..]);
-                    loader.for_listed_directory(&directory.path, files, &directory.inherited)
-                }
-            };
-            let own = match own {
-                Ok(own) => own,
-                Err(error) => {
-                    failure.lock().get_or_insert(error);
-                    return;
-                }
-            };
-            // ESLint looks up the configuration for anything that isn't a directory, whatever its name.
-            let lacks_file = loader.lacks_eslint_config_file(&own);
-            if lacks_file && let Some(file) = entries.iter().find(|it| !it.is_directory) {
-                let path = paths::join(&directory.path, &file.name);
-                failure.lock().get_or_insert(config_file_missing(&path));
-                return;
-            }
-            let is_hidden = directory.is_hidden && Arc::ptr_eq(&own, &directory.inherited);
-            // The listing already tells us whether there's a package.json, so most directories inherit the answer.
-            let has_package = || entries.iter().any(|it| it.name == b"package.json");
-            let detects = !directory.relative.is_empty() && own.flavor == Flavor::BuiltIn;
-            let decides = detects && has_package();
-            let own_frameworks = decides.then(|| read_frameworks(&directory.path)).flatten();
-            let is_repository_root = detects
-                && entries
+        }
+        let own = match directory.relative.is_empty() {
+            true => Arc::clone(&directory.inherited),
+            false => {
+                let files = entries
                     .iter()
-                    .any(|it| matches!(&it.name[..], b".git" | b".jj"));
-            let frameworks =
-                inherit_frameworks(directory.frameworks, own_frameworks, is_repository_root);
-            let reads_ignore_files = loader.reads_ignore_files(&own);
-            let mut ignores = directory.ignores.clone();
-            if reads_ignore_files && !loader.reads_ignore_files(&directory.inherited) {
-                // Ignore files start to apply here.
-                match loader.ignore_files_at(&directory.path, &own, are_all_in_repositories) {
-                    Some(own) => ignores = own,
-                    None => return,
-                }
-            } else if reads_ignore_files && !directory.relative.is_empty() {
-                let has = |name: &[u8]| entries.iter().any(|it| it.name == name);
-                ignores = ignores.and_in(&directory.path, loader.ignore_file_name(&own), has);
+                    .filter(|it| !it.is_directory)
+                    .map(|it| &it.name[..]);
+                let inherited = &directory.inherited;
+                loader.for_listed_directory(&directory.path, files, inherited, await_turn)?
             }
-            let (mut files, mut directories) = (Vec::new(), Vec::new());
-            let seen = match &directory.seen {
-                Some(seen) if Arc::ptr_eq(&own, &directory.inherited) => seen,
-                _ => &own.config.see(&directory.path),
-            };
-            let within = own.config.within(&directory.path, seen);
-            let mut within = within.with_frameworks(frameworks);
-            for mut entry in entries {
-                let path = paths::join(&directory.path, &entry.name);
-                let (mut real, mut is_loop) = (None, false);
-                // ESLint treats a link as a file, and finds out what it is when it reads it. ESLint 8 and oxlint
-                // resolve the link and follow it. As in the `ignore` crate, which oxlint walks with, a loop is a link
-                // to one of the directories on the path from the search's starting directory.
-                if entry.is_link && own.flavor != Flavor::Eslint {
-                    match fs::link_target_kind(&path) {
-                        Ok(Some(fs::Kind::Directory)) => {
-                            let Some(end) = fs::real_path(&path) else {
-                                continue;
-                            };
-                            is_loop = directory.trail.has(&end);
-                            if is_loop && own.flavor != Flavor::EslintRc {
-                                continue;
-                            }
-                            (real, entry.is_directory) = (Some(end), true);
-                        }
-                        Ok(_) => {}
-                        Err(error) => {
-                            // ESLint 8 throws regardless of the link's name.
-                            if own.flavor == Flavor::EslintRc
-                                && let Some(thrown) = eslint_8_stat_error(&error, &path)
-                            {
-                                failure.lock().get_or_insert(thrown);
-                                return;
-                            }
-                            // A dangling link is skipped.
+        };
+        // ESLint looks up the configuration for anything that isn't a directory, whatever its name.
+        let lacks_file = loader.lacks_eslint_config_file(&own);
+        if lacks_file && let Some(file) = entries.iter().find(|it| !it.is_directory) {
+            let path = paths::join(&directory.path, &file.name);
+            return Err(config_file_missing(&path));
+        }
+        let is_hidden = directory.is_hidden && Arc::ptr_eq(&own, &directory.inherited);
+        // The listing already tells us whether there's a package.json, so most directories inherit the answer.
+        let has_package = || entries.iter().any(|it| it.name == b"package.json");
+        let detects = !directory.relative.is_empty() && own.flavor == Flavor::BuiltIn;
+        let decides = detects && has_package();
+        let own_frameworks = decides.then(|| read_frameworks(&directory.path)).flatten();
+        let is_repository_root = detects
+            && entries
+                .iter()
+                .any(|it| matches!(&it.name[..], b".git" | b".jj"));
+        let frameworks =
+            inherit_frameworks(directory.frameworks, own_frameworks, is_repository_root);
+        let reads_ignore_files = loader.reads_ignore_files(&own);
+        let mut ignores = directory.ignores.clone();
+        if reads_ignore_files && !loader.reads_ignore_files(&directory.inherited) {
+            // Ignore files start to apply here.
+            match loader.ignore_files_at(&directory.path, &own, are_all_in_repositories) {
+                Some(own) => ignores = own,
+                None => return Ok(Vec::new()),
+            }
+        } else if reads_ignore_files && !directory.relative.is_empty() {
+            let has = |name: &[u8]| entries.iter().any(|it| it.name == name);
+            ignores = ignores.and_in(&directory.path, loader.ignore_file_name(&own), has);
+        }
+        let (mut files, mut directories) = (Vec::new(), Vec::new());
+        let seen = match &directory.seen {
+            Some(seen) if Arc::ptr_eq(&own, &directory.inherited) => seen,
+            _ => &own.config.see(&directory.path),
+        };
+        let within = own.config.within(&directory.path, seen);
+        let mut within = within.with_frameworks(frameworks);
+        for mut entry in entries {
+            let path = paths::join(&directory.path, &entry.name);
+            let (mut real, mut is_loop) = (None, false);
+            // ESLint treats a link as a file, and finds out what it is when it reads it. ESLint 8 and oxlint
+            // resolve the link and follow it. As in the `ignore` crate, which oxlint walks with, a loop is a link
+            // to one of the directories on the path from the search's starting directory.
+            if entry.is_link && own.flavor != Flavor::Eslint {
+                match fs::link_target_kind(&path) {
+                    Ok(Some(fs::Kind::Directory)) => {
+                        let Some(end) = fs::real_path(&path) else {
+                            continue;
+                        };
+                        is_loop = directory.trail.has(&end);
+                        if is_loop && own.flavor != Flavor::EslintRc {
                             continue;
                         }
+                        (real, entry.is_directory) = (Some(end), true);
                     }
-                }
-                if reads_ignore_files && ignores.is_ignored(&path, entry.is_directory) {
-                    continue;
-                }
-                if exclusions.matches(&loader.environment().cwd, &path) {
-                    continue;
-                }
-                let relative = match directory.relative.is_empty() {
-                    _ if !entry.is_directory && matches_everything => Vec::new(),
-                    true => entry.name.clone(),
-                    false => paths::join(&directory.relative, &entry.name),
-                };
-                if entry.is_directory {
-                    if !matchers.iter().any(|it| it.matches_partially(&relative)) {
-                        continue;
-                    }
-                    let cwd = &loader.environment().cwd[..];
-                    let is_hidden = is_hidden
-                        || within.is_directory_ignored(&path, dotfiles)
-                        || lacks_file && !paths::is_at_or_inside(cwd, &path);
-                    if !is_hidden || loader.looks_for_configurations_in(&own, &entry.name) {
-                        // ESLint 8 keeps following the loop until the system returns ELOOP.
-                        if is_loop {
-                            let label = "too many symbolic links encountered";
-                            failure
-                                .lock()
-                                .get_or_insert(cannot_follow("ELOOP", label, &path));
-                            return;
+                    Ok(_) => {}
+                    Err(error) => {
+                        // ESLint 8 throws regardless of the link's name.
+                        if own.flavor == Flavor::EslintRc
+                            && let Some(thrown) = eslint_8_stat_error(&error, &path)
+                        {
+                            return Err(thrown);
                         }
-                        let real =
-                            real.unwrap_or_else(|| paths::join(&directory.trail.real, &entry.name));
-                        directories.push(Directory {
-                            seen: Some(within.see_child(&path)),
-                            path,
-                            trail: Arc::new(Trail {
-                                real,
-                                above: Some(Arc::clone(&directory.trail)),
-                            }),
-                            relative,
-                            inherited: Arc::clone(&own),
-                            ignores: ignores.clone(),
-                            is_hidden,
-                            frameworks,
-                        });
-                    }
-                    continue;
-                }
-                if is_hidden {
-                    continue;
-                }
-                // The file's configuration as a file in a directory, and as a file selected by an ESLint 8 pattern.
-                let (mut config, mut selected) = (None, None);
-                let wanted = matchers.iter().zip(&search.patterns).zip(&is_matched);
-                for ((matcher, wanted), is_matched) in wanted {
-                    let selects = wanted.is_glob && own.flavor == Flavor::EslintRc;
-                    let config = if selects { &mut selected } else { &mut config };
-                    // The rest only matters until the pattern is known to match something.
-                    if (config.is_some() && is_matched.load(Ordering::Relaxed))
-                        || !matcher.matches(&relative)
-                    {
+                        // A dangling link is skipped.
                         continue;
                     }
-                    let config = config
-                        .get_or_insert_with(|| within.get(registry, &path, dotfiles, selects));
-                    if matches!(config, FileConfig::Matched(_)) {
-                        is_matched.store(true, Ordering::Relaxed);
-                    }
                 }
-                if let Some(FileConfig::Matched(config)) = selected.or(config)
-                    && let Some(size) = listing.size_of(&entry.name)
-                {
-                    files.push(Target {
+            }
+            if reads_ignore_files && ignores.is_ignored(&path, entry.is_directory) {
+                continue;
+            }
+            if exclusions.matches(&loader.environment().cwd, &path) {
+                continue;
+            }
+            let relative = match directory.relative.is_empty() {
+                _ if !entry.is_directory && matches_everything => Vec::new(),
+                true => entry.name.clone(),
+                false => paths::join(&directory.relative, &entry.name),
+            };
+            if entry.is_directory {
+                if !matchers.iter().any(|it| it.matches_partially(&relative)) {
+                    continue;
+                }
+                let cwd = &loader.environment().cwd[..];
+                let is_hidden = is_hidden
+                    || within.is_directory_ignored(&path, dotfiles)
+                    || lacks_file && !paths::is_at_or_inside(cwd, &path);
+                if !is_hidden || loader.looks_for_configurations_in(&own, &entry.name) {
+                    // ESLint 8 keeps following the loop until the system returns ELOOP.
+                    if is_loop {
+                        let label = "too many symbolic links encountered";
+                        return Err(cannot_follow("ELOOP", label, &path));
+                    }
+                    let real =
+                        real.unwrap_or_else(|| paths::join(&directory.trail.real, &entry.name));
+                    directories.push(Directory {
+                        seen: Some(within.see_child(&path)),
                         path,
-                        size,
-                        loaded: Arc::clone(&own),
-                        status: Status::Matched(config),
+                        trail: Arc::new(Trail {
+                            real,
+                            above: Some(Arc::clone(&directory.trail)),
+                        }),
+                        relative,
+                        inherited: Arc::clone(&own),
+                        ignores: ignores.clone(),
+                        is_hidden,
+                        frameworks,
                     });
                 }
+                continue;
             }
-            if !files.is_empty() {
-                all_found.lock().append(&mut files);
+            if is_hidden {
+                continue;
             }
-            if !directories.is_empty() {
-                next.lock().append(&mut directories);
+            // The file's configuration as a file in a directory, and as a file selected by an ESLint 8 pattern.
+            let (mut config, mut selected) = (None, None);
+            let wanted = matchers.iter().zip(&search.patterns).zip(&is_matched);
+            for ((matcher, wanted), is_matched) in wanted {
+                let selects = wanted.is_glob && own.flavor == Flavor::EslintRc;
+                let config = if selects { &mut selected } else { &mut config };
+                // The rest only matters until the pattern is known to match something.
+                if (config.is_some() && is_matched.load(Ordering::Relaxed))
+                    || !matcher.matches(&relative)
+                {
+                    continue;
+                }
+                let config =
+                    config.get_or_insert_with(|| within.get(registry, &path, dotfiles, selects));
+                if matches!(config, FileConfig::Matched(_)) {
+                    is_matched.store(true, Ordering::Relaxed);
+                }
             }
-        });
-        level = std::mem::take(next.get_mut());
-    }
+            if let Some(FileConfig::Matched(config)) = selected.or(config)
+                && let Some(size) = listing.size_of(&entry.name)
+            {
+                files.push(Target {
+                    path,
+                    size,
+                    loaded: Arc::clone(&own),
+                    status: Status::Matched(config),
+                });
+            }
+        }
+        if !files.is_empty() {
+            all_found.lock().append(&mut files);
+        }
+        Ok(directories)
+    };
+    let walked = first.map_or(Ok(()), |first| walk(pool, first, &visit));
     *found = std::mem::take(all_found.get_mut());
-    match failure.get_mut().take() {
-        Some(error) => Err(error),
-        None => Ok(is_matched.iter().position(|it| !it.load(Ordering::Relaxed))),
-    }
+    walked?;
+    Ok(is_matched.iter().position(|it| !it.load(Ordering::Relaxed)))
 }
 
 /// Returns what ESLint 8 and 9's `new FileEnumerator({ extensions }).iterateFiles(patterns)` yields. It searches from
@@ -730,7 +710,7 @@ pub(crate) fn find_files(
             false => no_files_found(&wanted.raw),
         });
     }
-    bun_lint::utils::sort::sort_by(&mut found, |a, b| a.path.cmp(&b.path));
+    pool.sort_by_path(&mut found, |it| &it.path);
     found.dedup_by(|a, b| a.path == b.path);
     Ok(found)
 }

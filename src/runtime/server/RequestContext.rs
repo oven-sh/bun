@@ -40,7 +40,7 @@ pub(crate) type ResponseStream<const SSL_ENABLED: bool> =
 /// This pre-allocates up to 2,048 RequestContext structs.
 /// It costs about 655,632 bytes.
 // Capacity 0 when heap-breakdown is enabled routes every allocation through
-// the fallback heap path so the per-type malloc zones can attribute them.
+// the fallback heap path.
 const REQUEST_CONTEXT_POOL_CAPACITY: usize = if bun_alloc::heap_breakdown::ENABLED {
     0
 } else {
@@ -1728,7 +1728,7 @@ where
         let crate::webcore::blob::store::Data::File(file) = &blob_ref.store().unwrap().data else {
             unreachable!("do_sendfile called with non-file blob");
         };
-        let mut file_buf = bun_paths::path_buffer_pool::get();
+        let mut file_buf = bun_paths::Path::new();
         let opened = match &file.pathlike {
             crate::webcore::node_types::PathOrFileDescriptor::Fd(_) => None,
             crate::webcore::node_types::PathOrFileDescriptor::Path(path) => {
@@ -1937,7 +1937,7 @@ where
 
         let server = self.server();
         FileResponseStream::start(file_response_stream::StartOptions {
-            fd: opened.map_or(file_response_stream::StreamFd::Borrowed(fd), Into::into),
+            fd: opened.map_or_else(|| file_response_stream::StreamFd::borrowed(fd), Into::into),
             resp,
             vm: bun_ptr::BackRef::new(server.vm()),
             file_type,

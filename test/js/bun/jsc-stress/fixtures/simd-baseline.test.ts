@@ -6,8 +6,19 @@
 // to catch both SIGILL and miscompilation from wrong instruction lowering.
 
 import { describe, expect, test } from "bun:test";
-import { deflateSync, inflateSync } from "node:zlib";
+import {
+  brotliCompressSync,
+  brotliDecompressSync,
+  constants,
+  crc32,
+  deflateSync,
+  gunzipSync,
+  gzipSync,
+  inflateSync,
+} from "node:zlib";
+import * as zlibGolden from "../../../node/zlib/zlib-golden/observe";
 import { decodeDifferences, encodeDifferences, inParts, loadCases } from "../../image/webp-golden/observe";
+import * as zstdGolden from "../../util/zstd-golden/observe";
 
 // Use Buffer.alloc instead of "x".repeat() — repeat is slow in debug JSC builds.
 const ascii256 = Buffer.alloc(256, "a").toString();
@@ -246,6 +257,103 @@ function linesOf(file: Uint8Array): Buffer {
   return inflateSync(Buffer.concat(idat));
 }
 
+describe("Brotli: Highway runtime dispatch", () => {
+  // src/jsc/bindings/highway_brotli.cpp is compiled for SSSE3 and for AVX2 on x64, and has separate code for arm64. All
+  // three have to lead to the same bytes. These checksums are from google/brotli. The loops in src/brotli that read and
+  // write bits are compiled with BMI2 and without.
+  // Text takes turns with bytes of few, of many, and of scattered values, and some of it comes again with changes.
+  const words = ["the ", "The ", "time ", "information ", "of ", "<div>", "</div>\n", "é", "working ", "1024, "];
+  const input = Buffer.alloc(24000);
+  let state = 1;
+  const random = () => (state = (Math.imul(state, 1664525) + 1013904223) >>> 0) >>> 16;
+  for (let at = 0, part = 0; at < input.length; part++) {
+    const end = Math.min(input.length, at + 300 + (random() % 900));
+    while (at < end) {
+      if (part % 5 === 0) {
+        at += input.write(words[random() % words.length], at);
+      } else if (part % 5 === 4 && random() % 16) {
+        input[at] = input[at - 1100 - (part % 3)];
+        at++;
+      } else {
+        input[at++] = random() & [0, 0x07, 0x7f, 0xc9, 0xff][part % 5];
+      }
+    }
+  }
+
+  test.each([
+    { quality: 5, expected: [0xa8b039ed, 0x3df1b1bd] },
+    { quality: 9, expected: [0x869eb61c, 0xfbea90a9] },
+    { quality: 10, expected: [0xf294e22b, 0x51cb00fb] },
+    { quality: 11, expected: [0x089c7811, 0x89fdfe52] },
+  ])("quality $quality", ({ quality, expected }) => {
+    const params = { [constants.BROTLI_PARAM_QUALITY]: quality };
+    const streams = [input.subarray(0, 1500), input].map(bytes => brotliCompressSync(bytes, { params }));
+    expect(streams.map(stream => Bun.hash.crc32(stream))).toEqual(expected);
+    expect(brotliDecompressSync(streams[1]).equals(input)).toBe(true);
+  });
+
+  test.each([0, 1, 2, 5])("many literals and long copies at quality %d", quality => {
+    state = 1;
+    const literals = Buffer.alloc(9000).map(() => random() & random());
+    const bytes = Buffer.concat([input, Buffer.alloc(200_000, "far"), literals, input]);
+    const params = { [constants.BROTLI_PARAM_QUALITY]: quality };
+    expect(brotliDecompressSync(brotliCompressSync(bytes, { params })).equals(bytes)).toBe(true);
+  });
+
+  // These depend on how bytes that are equally frequent get sorted.
+  test.each([
+    { quality: 0, expected: 0xf3f68ec3 },
+    { quality: 3, expected: 0x3b33ad84 },
+  ])("each number of distinct bytes at quality $quality", ({ quality, expected }) => {
+    const bytes = Array.from({ length: 700 }, (_, i) => Math.imul(i * i + 1, 0x9e3779b1) >>> 24);
+    const streams = Array.from({ length: 256 }, (_, last) =>
+      brotliCompressSync(Buffer.concat([Buffer.alloc(300), Buffer.from(bytes.map(byte => byte % (last + 1)))]), {
+        params: { [constants.BROTLI_PARAM_QUALITY]: quality },
+      }),
+    );
+    expect(Bun.hash.crc32(Buffer.concat(streams))).toBe(expected);
+  });
+
+  test("counts that are far from their place or too large to sort", () => {
+    const sumsOf = (gaps: number[]) => {
+      const isSum = [true];
+      for (let i = 1; i < 240; i++) isSum[i] = gaps.some(gap => isSum[i - gap]);
+      return [...Array(15).fill(5), ...isSum.map(is => (is ? 20 : 5))];
+    };
+    const large = [16400, 32744, 32745].map(count => Array(21).fill(1).with(10, count));
+    const streams = [sumsOf([4, 10, 23]), sumsOf([10, 23, 57, 132]), ...large].map(counts =>
+      brotliCompressSync(Buffer.concat(counts.map((count, i) => Buffer.alloc(count, 255 - i))), {
+        params: { [constants.BROTLI_PARAM_QUALITY]: 0 },
+      }),
+    );
+    expect(Bun.hash.crc32(Buffer.concat(streams))).toBe(0x38d935b8);
+  });
+
+  // Pairs of contexts cost the same to join, so their order decides.
+  test("short inputs", () => {
+    const starts = [100, 3936, 6308, 6336, 6772, 6836, 11384, 11688, 13124, 15672];
+    const streams = starts.map(start => brotliCompressSync(input.subarray(start, start + 150)));
+    expect(Bun.hash.crc32(Buffer.concat(streams))).toBe(0x0b9294f1);
+  });
+
+  // Each part takes its bytes from values that start `step` after those of the previous one.
+  test.each([
+    { seed: 7, parts: 10, size: 300, masks: [0xff, 0x0f], step: 0, expected: 0xeef0b62d },
+    { seed: 6, parts: 20, size: 300, masks: [0xff, 0x7f, 0x83, 0x87], step: 0, expected: 0xbebb1aef },
+    { seed: 15, parts: 30, size: 400, masks: [0x83, 0x87, 0x8f, 0x81], step: 0, expected: 0x79bd566c },
+    { seed: 1, parts: 72, size: 540, masks: [0x3f], step: 16, expected: 0x7355a11b },
+  ])("$parts parts with values of their own", ({ seed, parts, size, masks, step, expected }) => {
+    state = seed;
+    const values = Buffer.alloc(step * parts + 256).map((_, i) => (step ? random() >> 8 : i));
+    const bytes = Buffer.alloc(parts * size).map((_, i) => {
+      const part = Math.floor(i / size);
+      return values[step * part + ((random() >> 8) & masks[part % masks.length])];
+    });
+    const params = { [constants.BROTLI_PARAM_QUALITY]: 10 };
+    expect(Bun.hash.crc32(brotliCompressSync(bytes, { params }))).toBe(expected);
+  });
+});
+
 describe("JPEG codec: Highway runtime dispatch", () => {
   // src/jsc/bindings/highway_jpeg.cpp is compiled for SSSE3 and for AVX2 on x64, and has separate code for arm64. All
   // three have to give the same bytes. These checksums are from libjpeg-turbo 3.2.0.
@@ -481,5 +589,187 @@ describe("WebP codec: Highway runtime dispatch", () => {
     .filter(c => Object.keys(c.results).length > 0);
   test.each(inParts(lossy, ["layers", "stored"], 20))("encode, part %#", async some => {
     expect(await encodeDifferences(some)).toBe("");
+  });
+});
+
+const crcTable = new Uint32Array(256);
+for (let byte = 0; byte < 256; byte++) {
+  let state = byte;
+  for (let bit = 0; bit < 8; bit++) state = (state >>> 1) ^ (state & 1 ? 0xedb88320 : 0);
+  crcTable[byte] = state;
+}
+
+/** The checksums of the first `length` bytes, for each of `lengths`, which ascend. */
+function expectedChecksums(bytes: Uint8Array, lengths: number[], seed = 0) {
+  const crcs: number[] = [];
+  const adlers: number[] = [];
+  let state = ~seed;
+  let a = 1;
+  let b = 0;
+  let at = 0;
+  for (const length of lengths) {
+    for (; at < length; at++) {
+      state = crcTable[(state ^ bytes[at]) & 255] ^ (state >>> 8);
+      a = (a + bytes[at]) % 65521;
+      b = (b + a) % 65521;
+    }
+    crcs.push(~state >>> 0);
+    adlers.push(((b << 16) | a) >>> 0);
+  }
+  return { crcs, adlers };
+}
+
+const zlibCases = await zlibGolden.loadCases();
+
+describe("zlib: Highway runtime dispatch", () => {
+  // src/jsc/bindings/highway_checksums.cpp is compiled five times over on x64 and up to three times on arm64. An
+  // emulated Nehalem cannot multiply polynomials, and gets its CRC-32 from src/highway/checksums.rs.
+  function noise(length: number) {
+    const bytes = Buffer.alloc(length);
+    let state = 1;
+    for (let i = 0; i < length; i++) {
+      state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+      bytes[i] = state >>> 24;
+    }
+    return bytes;
+  }
+
+  const range = (from: number, to: number) => Array.from({ length: to - from }, (_, i) => from + i);
+  const around = (...lengths: number[]) => lengths.flatMap(length => range(length - 17, length + 18));
+  // Every way through the kernels begins or ends at one of these.
+  const short = range(0, 700);
+  const medium = around(896, 1152, 1248, 2048, 2208, 2400, 4096, 5552);
+  const long = [16383, 16384, 16385, 16399, 16400, 65535, 65536, 65537, 65551, 65552, 131072, 140001];
+
+  describe.each([
+    { name: "noise", bytes: noise(140064) },
+    // The sums of Adler-32 get as large as they can.
+    { name: "0xff", bytes: Buffer.alloc(140064, 0xff) },
+  ])("$name", ({ bytes }) => {
+    describe.each([
+      { name: "short", lengths: short },
+      { name: "medium", lengths: medium },
+      { name: "long", lengths: long },
+    ])("$name", ({ lengths }) => {
+      test.each([0, 13])("checksums from byte %i on", offset => {
+        const input = bytes.subarray(offset);
+        const seed = offset * 0x13579bdf;
+        const { crcs, adlers } = expectedChecksums(input, lengths, seed);
+        expect(lengths.map(length => crc32(input.subarray(0, length), seed))).toEqual(crcs);
+        expect(lengths.map(length => Bun.hash.crc32(input.subarray(0, length), seed))).toEqual(crcs);
+        expect(lengths.map(length => Bun.hash.adler32(input.subarray(0, length)))).toEqual(adlers);
+      });
+
+      test("stored blocks are copied and get their checksum", () => {
+        const some = lengths.filter((_, i) => lengths === long || i % 5 === 0);
+        const { crcs, adlers } = expectedChecksums(bytes, some);
+        const gzipped = some.map(length => gzipSync(bytes.subarray(0, length), { level: 0 }));
+        const deflated = some.map(length => deflateSync(bytes.subarray(0, length), { level: 0 }));
+        expect(gzipped.map(file => file.readUInt32LE(file.length - 8))).toEqual(crcs);
+        expect(deflated.map(file => file.readUInt32BE(file.length - 4))).toEqual(adlers);
+        const differs = (output: Buffer, i: number) => !output.equals(bytes.subarray(0, some[i]));
+        expect(some.filter((_, i) => differs(gunzipSync(gzipped[i]), i))).toEqual([]);
+        expect(some.filter((_, i) => differs(inflateSync(deflated[i]), i))).toEqual([]);
+      });
+    });
+  });
+
+  test("weights of either sign alone", () => {
+    // One half of every 128 or 256 bytes is zero, so that nothing cancels out.
+    for (const period of [128, 256]) {
+      for (const half of [0, 1]) {
+        const bytes = Buffer.alloc(65536);
+        for (let at = (half * period) / 2; at < bytes.length; at += period) bytes.fill(0xff, at, at + period / 2);
+        expect([Bun.hash.adler32(bytes)]).toEqual(expectedChecksums(bytes, [bytes.length]).adlers);
+      }
+    }
+  });
+
+  const { inParts, fewerIfSlow, sample } = zlibGolden;
+
+  // Parts of src/zlib are compiled with BMI2 and without. Each case is inflated again, and many have windows that slide.
+  test.each(inParts(fewerIfSlow(sample(zlibCases.whole, 8), 5), 10))("deflate and inflate, part %#", some => {
+    expect(zlibGolden.deflateDifferences(some)).toBe("");
+  });
+
+  test.each(inParts(fewerIfSlow(sample(zlibCases.damaged, 20), 3), 2))("inflate what is damaged, part %#", some => {
+    expect(zlibGolden.damagedDifferences(some)).toBe("");
+  });
+});
+
+describe("DEFLATE: Highway runtime dispatch", () => {
+  // src/jsc/bindings/highway_checksums.cpp has code for each width of vector, and for what does not fill one. Parts of
+  // src/deflate/{decompressor,block}.rs are compiled with BMI2 and without.
+  const library = "libdeflate";
+  const bytes = Buffer.alloc(140_000);
+  for (let i = 0, state = 1; i < bytes.length; i++) {
+    state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+    bytes[i] = state >>> 24;
+  }
+
+  const lengths = Array.from({ length: 150 }, (_, i) => i);
+  for (let power = 128; power <= 4096; power *= 2) {
+    for (const more of [-1, 0, 1, 15, 16, 17, 48, 100, 127]) lengths.push(power + more, 3 * power + more);
+  }
+  lengths.push(65_536, 65_537, 139_000);
+  function checksumsOf(input: Uint8Array) {
+    const { crcs, adlers } = expectedChecksums(input, [input.length]);
+    return { crc: crcs[0], adler: adlers[0] };
+  }
+  const parts = (bytes: Buffer) => lengths.map((length, i) => bytes.subarray(i % 67, (i % 67) + length));
+
+  test("CRC-32", () => {
+    const inputs = parts(bytes);
+    const trailers = inputs.map(input => Buffer.from(Bun.gzipSync(input, { library, level: 0 })).subarray(-8));
+    expect(trailers.map(trailer => trailer.readUInt32LE())).toEqual(inputs.map(input => checksumsOf(input).crc));
+  });
+
+  test("Adler-32", () => {
+    const inputs = [...parts(bytes), ...parts(Buffer.alloc(bytes.length, 255))];
+    expect(inputs.map(input => Bun.hash.adler32(input))).toEqual(inputs.map(input => checksumsOf(input).adler));
+  });
+
+  test.each([0, 384, 1120, 1216, 5504])("up to the last readable byte, from %i bytes on", least => {
+    // What a buffer can still grow into is not readable.
+    const last = new Uint8Array(new ArrayBuffer(65_536, { maxByteLength: 131_072 }));
+    last.set(bytes.subarray(0, last.length));
+    const ends = Array.from({ length: 70 }, (_, i) => last.subarray(-least - i - 1));
+    const expected = ends.map(checksumsOf);
+    expect(ends.map(end => ({ crc: Bun.hash.crc32(end), adler: Bun.hash.adler32(end) }))).toEqual(expected);
+    const crcs = ends.map(end => gzipSync(end, { level: 0 }).subarray(-8).readUInt32LE());
+    const adlers = ends.map(end => deflateSync(end, { level: 0 }).subarray(-4).readUInt32BE());
+    expect(crcs.map((crc, i) => ({ crc, adler: adlers[i] }))).toEqual(expected);
+  });
+
+  test.each([0, 4])("round trip with strategy %i of zlib", strategy => {
+    const input = Buffer.from(bytes.subarray(0, 6000).toString("base64").replaceAll("A", ascii256));
+    expect(input.equals(Bun.gunzipSync(gzipSync(input, { strategy }), { library }))).toBe(true);
+  });
+
+  test.each([1, 4, 6, 9, 12])("round trip at level %i", level => {
+    const input = Buffer.from(bytes.subarray(0, 6000).toString("hex").replaceAll("0", "zero "));
+    expect(input.equals(Bun.gunzipSync(Bun.gzipSync(input, { library, level })))).toBe(true);
+  });
+});
+
+const zstd = await zstdGolden.loadCases();
+
+describe("zstd codec: BMI2 runtime dispatch", () => {
+  // The hot loops of src/zstd are compiled with and without BMI2 on x64, and zstd-golden.test.ts gets to see the ones
+  // that suit the machine. In small parts, for the sake of Intel SDE.
+  test.each(inParts(zstd.encode, ["small"], 20))("compress, part %#", async some => {
+    expect(await zstdGolden.encodeDifferences(some)).toBe("");
+  });
+  test("as many literals as src/jsc/bindings/highway_zstd.cpp takes where it can", () => {
+    let state = 1;
+    const next = () => (state = (Math.imul(state, 1103515245) + 12345) >>> 0) >>> 24;
+    const frame = Bun.zstdCompressSync(
+      Uint8Array.from({ length: 20_000 }, () => next() & next()),
+      { level: 1 },
+    );
+    expect([frame.length, crc32(frame)]).toEqual([16390, 1591368713]);
+  });
+  test.each(inParts(zstd.decode, ["stored"], 40))("decompress, part %#", async some => {
+    expect(await zstdGolden.decodeDifferences(some)).toBe("");
   });
 });

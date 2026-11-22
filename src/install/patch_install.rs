@@ -1,6 +1,7 @@
 use crate::lockfile::package::PackageColumns as _;
 
 use bstr::BStr;
+use std::borrow::Cow;
 
 use bun_ast::{Loc, Log, Range, Source};
 use bun_core::ZBox;
@@ -105,22 +106,16 @@ pub struct InstallContext {
 }
 
 /// A relative path in `patchedDependencies` is resolved against the project directory.
-fn resolve_patchfile_path<'a>(
-    buf: &'a mut [u8],
-    spill: &'a mut Vec<u8>,
-    project_dir: &[u8],
-    patchfile_path: &[u8],
-) -> &'a ZStr {
-    let base: &[u8] = if path::is_absolute(patchfile_path) {
-        b""
-    } else {
-        project_dir
+fn resolve_patchfile_path(project_dir: &[u8], patchfile_path: &[u8]) -> path::Path {
+    let resolve = |spelling: &[u8]| match path::is_absolute(spelling) {
+        true => path::Path::join(&[spelling]),
+        false => path::Path::join(&[project_dir, spelling]),
     };
-    path::resolve_path::join_z_buf_spill::<path::platform::Auto>(
-        buf,
-        spill,
-        &[base, patchfile_path],
-    )
+    let as_written = resolve(patchfile_path);
+    match path::from_portable(patchfile_path) {
+        Cow::Owned(converted) if !sys::exists_z(&as_written) => resolve(&converted),
+        _ => as_written,
+    }
 }
 
 /// Returns `None` after logging a parse error. `log` copies the lines it quotes from `source`, so
@@ -401,15 +396,8 @@ impl PatchTask {
         let dir = self.project_dir;
         let patchfile_path = &patch.patchfilepath;
 
-        let mut absolute_patchfile_path_buf = bun_paths::path_buffer_pool::get();
-        let mut absolute_patchfile_path_spill = Vec::new();
         // 1. Parse the patch file
-        let absolute_patchfile_path = resolve_patchfile_path(
-            &mut absolute_patchfile_path_buf.0,
-            &mut absolute_patchfile_path_spill,
-            dir,
-            patchfile_path,
-        );
+        let absolute_patchfile_path: &ZStr = &resolve_patchfile_path(dir, patchfile_path);
         // TODO: can the patch file be anything other than utf-8?
 
         let patchfile_txt =
@@ -538,15 +526,8 @@ impl PatchTask {
         let dir = self.project_dir;
         let patchfile_path = &calc_hash.patchfile_path;
 
-        let mut absolute_patchfile_path_buf = bun_paths::path_buffer_pool::get();
-        let mut absolute_patchfile_path_spill = Vec::new();
         // parse the patch file
-        let absolute_patchfile_path = resolve_patchfile_path(
-            &mut absolute_patchfile_path_buf.0,
-            &mut absolute_patchfile_path_spill,
-            dir,
-            patchfile_path,
-        );
+        let absolute_patchfile_path: &ZStr = &resolve_patchfile_path(dir, patchfile_path);
 
         let stat: sys::Stat = match sys::stat(absolute_patchfile_path) {
             sys::Result::Err(e) => {
@@ -616,8 +597,6 @@ impl PatchTask {
             .unwrap_or_else(|| panic!("This is a bug"));
         let patchfile_path: Box<[u8]> =
             Box::from(patchdep.path.slice(&manager.lockfile.buffers.string_bytes));
-        // The field is only ever consumed as a byte slice (`join_z_buf` input,
-        // log formatting), so no trailing NUL is needed.
 
         let result = (manager.pending_patch_commit).patch_hash(name_and_version_hash);
         let tempdir = manager.get_temporary_directory().handle.fd();

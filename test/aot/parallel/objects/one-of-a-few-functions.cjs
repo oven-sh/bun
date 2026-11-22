@@ -2,121 +2,110 @@
 const lines = [];
 const tell = (...values) => lines.push(values.map(String).join(" "));
 
-function Shape() {
-  this.radius = 0;
+function Dish() {
+  this.grams = 0;
 }
-Shape.prototype.copy = function () {
+Dish.prototype.again = function () {
   return null;
 };
-Shape.prototype.set = function (other) {
-  this.radius = other.radius;
+Dish.prototype.price = function () {
+  return this.grams;
 };
-Shape.prototype.area = function () {
-  return this.radius;
+Dish.prototype.pour = function (into) {
+  into.grams = this.grams;
 };
-function heir(constructor) {
-  constructor.prototype = Object.create(Shape.prototype);
-  constructor.prototype.constructor = constructor;
+function below(kind, members) {
+  kind.prototype = Object.create(Dish.prototype);
+  for (const name of Object.keys(members)) kind.prototype[name] = members[name];
+  kind.prototype.constructor = kind;
 }
-function Circle(radius) {
-  this.radius = radius;
-  this.center = { x: radius };
+function Soup(grams) {
+  this.pot = { lids: grams };
+  this.grams = grams;
 }
-heir(Circle);
-Circle.prototype.copy = function () {
-  const made = new Circle(0);
-  made.set(this);
-  return made;
-};
-Circle.prototype.set = function (other) {
-  this.radius = other.radius;
-  this.center.x = other.center.x;
-};
-Circle.prototype.area = function () {
-  return 3.5 * this.radius + this.center.x;
-};
-function Box(side) {
-  this.side = side;
+below(Soup, {
+  price() { return this.pot.lids + this.grams / 4; },
+  pour(into) { into.pot.lids = this.pot.lids; into.grams = this.grams; },
+  again() { const bowl = new Soup(1); this.pour(bowl); return bowl; },
+});
+function Cake(slices) {
+  this.slices = slices;
 }
-heir(Box);
-Box.prototype.copy = function () {
-  const made = new Box(0);
-  made.set(this);
-  return made;
-};
-Box.prototype.set = function (other) {
-  this.side = other.side;
-};
-Box.prototype.area = function () {
-  return this.side * this.side;
-};
-function Plain() {}
-heir(Plain);
+below(Cake, {
+  price() { return this.slices * 7 - 1; },
+  again() { const cake = new Cake(2); this.pour(cake); return cake; },
+  pour(into) { into.slices = this.slices; },
+});
+function Water() {}
+below(Water, {});
 
 function pick(i) {
-  if (i % 4 === 0) return Circle;
-  if (i % 4 === 1) return Box;
-  return i % 4 === 2 ? Plain : Shape;
+  switch (i % 4) {
+    case 0: return Soup;
+    case 1: return Cake;
+    case 2: return Water;
+    default: return Dish;
+  }
 }
 const seen = [];
-function Fixture() {
-  this.shape = null;
+function Table() {
+  this.dish = null;
 }
-Fixture.prototype.create = function (def) {
-  this.shape = def.shape.copy();
+Table.prototype.serve = function (order) {
+  this.dish = order.dish.again();
 };
 const run = count => {
-  const fixture = new Fixture();
-  const def = { shape: null };
+  const order = { dish: null };
+  const table = new Table();
   let sum = 0;
   for (let i = 0; i < count; i++) {
     const Kind = pick(i);
-    def.shape = new Kind(i);
-    fixture.create(def);
-    if (fixture.shape) sum += fixture.shape.area() || 0;
-    if (def.shape instanceof Kind) sum += 0.25;
-    if (def.shape instanceof pick(i + 1)) sum += 100;
-    sum += def.shape.constructor === Kind ? 1 : 0.5;
+    order.dish = new Kind(i);
+    table.serve(order);
+    if (order.dish instanceof Kind) sum += 0.25;
+    sum += order.dish.constructor === Kind ? 1 : 0.5;
+    if (order.dish instanceof pick(i + 1)) sum += 100;
+    if (table.dish) sum += table.dish.price() || 0;
   }
   return sum;
 };
 tell(run(8), run(60));
 
-Plain.prototype.copy = function () {
-  seen.push(this instanceof Plain, Object.keys(this).length);
+Water.prototype.again = function () {
+  seen.push(Object.keys(this).length, this instanceof Water);
   return this;
 };
 tell(run(8), seen.join());
 
-const makers = [Circle, Box, Plain, Shape].map(kind => value => new kind(value));
+const makers = [Soup, Cake, Water, Dish].map(kind => value => new kind(value));
 let total = 0;
-for (let i = 0; i < 24; i++) total += makers[i % 4](i).area() || 0;
+for (let i = 0; i < 24; i++) total += makers[i % 4](i).price() || 0;
 tell(total);
 
-Object.defineProperty(Box, Symbol.hasInstance, {
+Object.defineProperty(Cake, Symbol.hasInstance, {
   value(value) {
-    seen.push(this === Box);
-    return value.side > 2;
+    seen.push(this === Cake);
+    return value.slices > 2;
   },
 });
 tell(run(8), seen.length, seen[seen.length - 1]);
 
-Circle.prototype.set = function (other) {
-  this.radius = "r" + other.radius;
+Soup.prototype.pour = function (into) {
+  into.grams = "g" + this.grams;
 };
 tell(run(5));
-Circle.prototype.set = function (other) {
-  Object.setPrototypeOf(this, Shape.prototype);
-  this.radius = other.radius;
+Soup.prototype.pour = function (into) {
+  into.grams = this.grams;
+  Object.setPrototypeOf(into, Dish.prototype);
 };
 tell(run(9));
-const kinds = [Circle, Box, Plain, Shape, class Late extends Shape {}, function () { return { area: () => 5, copy() { return this; } }; }];
+const kinds = [Soup, Cake, Water, Dish, class Late extends Dish {}, function () { return { price: () => 5, again() { return this; } }; }];
 total = 0;
 for (let i = 0; i < 30; i++) {
   const Kind = kinds[i % 6];
   const made = new Kind(i);
-  total += made.area() || 0;
-  if (i === 20) kinds[0] = new Proxy(Circle, { construct: (target, [radius]) => new target(radius * 2) });
+  total += made.price() || 0;
+  if (i === 20) kinds[0] = new Proxy(Soup, { construct: (target, [grams]) => new target(grams * 2) });
 }
 tell(total, kinds.map(kind => kind.name).join());
 console.log(lines.join("\n"));

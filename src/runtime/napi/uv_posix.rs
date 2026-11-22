@@ -41,7 +41,7 @@ use bun_ptr::{AliasableBox, CellExt};
 use bun_threading::work_pool::WorkPool;
 
 use crate::jsc_hooks::{RuntimeState, runtime_state, timer_all};
-use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
+use crate::timer::{EventLoopTimer, EventLoopTimerTag};
 
 bun_output::declare_scope!(uv, hidden);
 
@@ -863,14 +863,7 @@ impl UvTimerNode {
     /// `this` is a started timer's node, and this is the loop thread.
     pub(crate) unsafe fn on_fire(this: *mut UvTimerNode, vm: &VirtualMachine) -> JsResult<()> {
         // SAFETY: fn contract. A started timer is initialized and not closed.
-        let timer = unsafe {
-            // `FIRED` tells `update`/`remove` that the node isn't in the heap.
-            (*this)
-                .event_loop_timer
-                .state
-                .set(EventLoopTimerState::FIRED);
-            HandleRef::new((*this).timer)
-        };
+        let timer = unsafe { HandleRef::new((*this).timer) };
         timer.ref_state.set_active(false);
         let repeat_ms = timer.body.repeat_ms.get();
         if repeat_ms != 0 {

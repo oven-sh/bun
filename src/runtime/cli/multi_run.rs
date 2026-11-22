@@ -242,10 +242,10 @@ impl<'a> ProcessHandle<'a> {
             (&self.stdout_reader, stdout_pipe),
             (&self.stderr_reader, stderr_pipe),
         ] {
-            if let Some(fd) = file.map(bun_sys::File::into_raw) {
-                let _ = bun_sys::set_nonblocking(fd);
+            if let Some(file) = file {
+                let _ = bun_sys::set_nonblocking(file.fd());
                 let event_loop = self.shared.event_loop.as_event_loop_ctx();
-                let _ = pipe.reader.start(event_loop, fd, true)?;
+                let _ = pipe.reader.start(event_loop, file.into(), true)?;
             }
         }
         #[cfg(not(unix))]
@@ -594,8 +594,7 @@ fn add_script_configs<V: core::ops::Deref<Target = [u8]>>(
         // If it looks like a file path, prefix with bun executable
         let is_file = !raw_name.is_empty()
             && (raw_name[0] == b'.'
-                || raw_name[0] == b'/'
-                || (cfg!(windows) && raw_name[0] == b'\\')
+                || bun_paths::is_sep(raw_name[0])
                 || has_runnable_extension(raw_name));
         let command_z: Box<[u8]> = if is_file {
             let bun_path: &[u8] = bun::self_exe_path().map(|z| z.as_bytes()).unwrap_or(b"bun");

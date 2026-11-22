@@ -22,8 +22,6 @@
 
 #include "JSMessageChannel.h"
 
-#include "ExtendedDOMClientIsoSubspaces.h"
-#include "ExtendedDOMIsoSubspaces.h"
 #include "JSDOMAttribute.h"
 #include "JSDOMBinding.h"
 #include "JSDOMConstructor.h"
@@ -31,61 +29,20 @@
 #include "JSDOMExceptionHandling.h"
 #include "JSDOMGlobalObject.h"
 #include "JSDOMGlobalObjectInlines.h"
-#include "JSDOMWrapperCache.h"
+#include "JSDOMPrototype.h"
 #include "JSMessagePort.h"
 #include "ScriptExecutionContext.h"
-#include "WebCoreJSClientData.h"
-#include <JavaScriptCore/FunctionPrototype.h>
-#include <JavaScriptCore/HeapAnalyzer.h>
 #include <JavaScriptCore/JSCInlines.h>
-#include <JavaScriptCore/JSDestructibleObjectHeapCellType.h>
-#include <JavaScriptCore/SlotVisitorMacros.h>
-#include <JavaScriptCore/SubspaceInlines.h>
-#include <wtf/GetPtr.h>
-#include <wtf/PointerPreparations.h>
-#include <wtf/URL.h>
 
 namespace WebCore {
 using namespace JSC;
 
 // Attributes
 
-static JSC_DECLARE_CUSTOM_GETTER(jsMessageChannelConstructor);
 static JSC_DECLARE_CUSTOM_GETTER(jsMessageChannel_port1);
 static JSC_DECLARE_CUSTOM_GETTER(jsMessageChannel_port2);
 
-class JSMessageChannelPrototype final : public JSC::JSNonFinalObject {
-public:
-    using Base = JSC::JSNonFinalObject;
-    static JSMessageChannelPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
-    {
-        JSMessageChannelPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSMessageChannelPrototype))) JSMessageChannelPrototype(vm, globalObject, structure);
-        ptr->finishCreation(vm);
-        return ptr;
-    }
-
-    DECLARE_INFO;
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSMessageChannelPrototype, Base);
-        return &vm.plainObjectSpace();
-    }
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
-    }
-
-private:
-    JSMessageChannelPrototype(JSC::VM& vm, JSC::JSGlobalObject*, JSC::Structure* structure)
-        : JSC::JSNonFinalObject(vm, structure)
-    {
-    }
-
-    void finishCreation(JSC::VM&);
-};
-STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSMessageChannelPrototype, JSMessageChannelPrototype::Base);
-
+using JSMessageChannelPrototype = JSDOMPrototype<JSMessageChannel>;
 using JSMessageChannelDOMConstructor = JSDOMConstructor<JSMessageChannel, Bun::ErrorCode::ERR_CONSTRUCT_CALL_REQUIRED>;
 
 template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSMessageChannelDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
@@ -113,28 +70,17 @@ JSC_ANNOTATE_HOST_FUNCTION(JSMessageChannelDOMConstructorConstruct, JSMessageCha
 
 template<> const ClassInfo JSMessageChannelDOMConstructor::s_info = { "MessageChannel"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSMessageChannelDOMConstructor) };
 
-template<> JSValue JSMessageChannelDOMConstructor::prototypeForStructure(JSC::VM& vm, const JSDOMGlobalObject& globalObject)
-{
-    UNUSED_PARAM(vm);
-    return globalObject.functionPrototype();
-}
-
-template<> void JSMessageChannelDOMConstructor::initializeProperties(VM& vm, JSDOMGlobalObject& globalObject)
-{
-    initializeBaseProperties(vm, 0, "MessageChannel"_s, JSMessageChannel::prototype(vm, globalObject));
-}
-
 /* Hash table for prototype */
 
 static const HashTableValue JSMessageChannelPrototypeTableValues[] = {
-    { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsMessageChannelConstructor, 0 } },
+    { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, JSMessageChannelPrototype::constructorGetter, 0 } },
     { "port1"_s, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsMessageChannel_port1, 0 } },
     { "port2"_s, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsMessageChannel_port2, 0 } },
 };
 
-const ClassInfo JSMessageChannelPrototype::s_info = { "MessageChannel"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSMessageChannelPrototype) };
+template<> const ClassInfo JSMessageChannelPrototype::s_info = { "MessageChannel"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSMessageChannelPrototype) };
 
-void JSMessageChannelPrototype::finishCreation(VM& vm)
+template<> void JSMessageChannelPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     Bun::reifyStaticPropertyTable(vm, JSMessageChannel::info(), JSMessageChannelPrototypeTableValues, *this);
@@ -143,44 +89,14 @@ void JSMessageChannelPrototype::finishCreation(VM& vm)
 
 const ClassInfo JSMessageChannel::s_info = { "MessageChannel"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSMessageChannel) };
 
-JSMessageChannel::JSMessageChannel(Structure* structure, JSDOMGlobalObject& globalObject, Ref<MessageChannel>&& impl)
-    : JSDOMWrapper<MessageChannel>(structure, globalObject, WTF::move(impl))
-{
-}
-
-// static_assert(!std::is_base_of<ActiveDOMObject, MessageChannel>::value, "Interface is not marked as [ActiveDOMObject] even though implementation class subclasses ActiveDOMObject.");
-
 JSObject* JSMessageChannel::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    auto* structure = JSMessageChannelPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype());
-    structure->setMayBePrototype(true);
-    return JSMessageChannelPrototype::create(vm, &globalObject, structure);
-}
-
-JSObject* JSMessageChannel::prototype(VM& vm, JSDOMGlobalObject& globalObject)
-{
-    return getDOMPrototype<JSMessageChannel>(vm, globalObject);
+    return JSMessageChannelPrototype::create(vm, globalObject, globalObject.objectPrototype());
 }
 
 JSValue JSMessageChannel::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
     return getDOMConstructor<JSMessageChannelDOMConstructor, DOMConstructorID::MessageChannel>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
-}
-
-void JSMessageChannel::destroy(JSC::JSCell* cell)
-{
-    JSMessageChannel* thisObject = static_cast<JSMessageChannel*>(cell);
-    thisObject->JSMessageChannel::~JSMessageChannel();
-}
-
-JSC_DEFINE_CUSTOM_GETTER(jsMessageChannelConstructor, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* prototype = dynamicDowncast<JSMessageChannelPrototype>(JSValue::decode(thisValue));
-    if (!prototype) [[unlikely]]
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
-    return JSValue::encode(JSMessageChannel::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));
 }
 
 static inline JSValue jsMessageChannel_port1Getter(JSGlobalObject& lexicalGlobalObject, JSMessageChannel& thisObject)
@@ -207,59 +123,6 @@ static inline JSValue jsMessageChannel_port2Getter(JSGlobalObject& lexicalGlobal
 JSC_DEFINE_CUSTOM_GETTER(jsMessageChannel_port2, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSMessageChannel>::get<jsMessageChannel_port2Getter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
-}
-
-JSC::GCClient::IsoSubspace* JSMessageChannel::subspaceForImpl(JSC::VM& vm)
-{
-    return WebCore::subspaceForImpl<JSMessageChannel, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForMessageChannel, m_subspaceForMessageChannel));
-}
-
-template<typename Visitor>
-void JSMessageChannel::visitChildrenImpl(JSCell* cell, Visitor& visitor)
-{
-    auto* thisObject = uncheckedDowncast<JSMessageChannel>(cell);
-    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
-    Base::visitChildren(thisObject, visitor);
-    thisObject->visitAdditionalChildrenInGCThread(visitor);
-}
-
-DEFINE_VISIT_CHILDREN(JSMessageChannel);
-
-template<typename Visitor>
-void JSMessageChannel::visitOutputConstraints(JSCell* cell, Visitor& visitor)
-{
-    auto* thisObject = uncheckedDowncast<JSMessageChannel>(cell);
-    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
-    Base::visitOutputConstraints(thisObject, visitor);
-    thisObject->visitAdditionalChildrenInGCThread(visitor);
-}
-
-template void JSMessageChannel::visitOutputConstraints(JSCell*, AbstractSlotVisitor&);
-template void JSMessageChannel::visitOutputConstraints(JSCell*, SlotVisitor&);
-void JSMessageChannel::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
-{
-    auto* thisObject = uncheckedDowncast<JSMessageChannel>(cell);
-    analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
-    if (thisObject->scriptExecutionContext())
-        analyzer.setLabelForCell(cell, makeString("url "_s, thisObject->scriptExecutionContext()->url().string()));
-    Base::analyzeHeap(cell, analyzer);
-}
-
-JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<MessageChannel>&& impl)
-{
-    return createWrapper<MessageChannel>(globalObject, WTF::move(impl));
-}
-
-JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, MessageChannel& impl)
-{
-    return wrap(lexicalGlobalObject, globalObject, impl);
-}
-
-MessageChannel* JSMessageChannel::toWrapped(JSC::VM&, JSC::JSValue value)
-{
-    if (auto* wrapper = dynamicDowncast<JSMessageChannel>(value))
-        return &wrapper->wrapped();
-    return nullptr;
 }
 
 }

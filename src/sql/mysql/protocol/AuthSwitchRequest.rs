@@ -1,11 +1,12 @@
 use bun_core::strings;
 
+use super::any_mysql_error::Error as AnyMySQLError;
 use super::packet_reader::PacketReader;
 
-pub struct AuthSwitchRequest<'a> {
-    pub header: u8,
-    pub plugin_name: &'a [u8],
-    pub plugin_data: &'a [u8],
+pub(crate) struct AuthSwitchRequest<'a> {
+    pub(crate) header: u8,
+    pub(crate) plugin_name: &'a [u8],
+    pub(crate) plugin_data: &'a [u8],
 }
 
 impl Default for AuthSwitchRequest<'_> {
@@ -19,10 +20,13 @@ impl Default for AuthSwitchRequest<'_> {
 }
 
 impl<'a> AuthSwitchRequest<'a> {
-    pub fn decode_internal(&mut self, reader: PacketReader<'a>) -> crate::Result<()> {
+    pub(crate) fn decode_internal(
+        &mut self,
+        reader: PacketReader<'a>,
+    ) -> Result<(), AnyMySQLError> {
         self.header = reader.int::<u8>()?;
         if self.header != 0xfe {
-            return Err(crate::Error::InvalidAuthSwitchRequest);
+            return Err(AnyMySQLError::InvalidAuthSwitchRequest);
         }
 
         let remaining = reader.read(reader.peek().len())?;
@@ -35,6 +39,6 @@ impl<'a> AuthSwitchRequest<'a> {
             self.plugin_data = &remaining[zero + 1..];
             return Ok(());
         }
-        Err(crate::Error::InvalidAuthSwitchRequest)
+        Err(AnyMySQLError::InvalidAuthSwitchRequest)
     }
 }

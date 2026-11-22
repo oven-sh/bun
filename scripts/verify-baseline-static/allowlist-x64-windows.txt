@@ -770,6 +770,17 @@ bun::N_AVX3_ZEN4::ParseMappingsImpl                                  [AVX, AVX2,
 
 
 # ----------------------------------------------------------------------------
+# Bun Brotli encoder (src/jsc/bindings/highway_brotli.cpp).
+# Gate: BUN_HWY_DISPATCH (highway_dispatch.h) via hwy::SupportedTargets. (5 symbols)
+# ----------------------------------------------------------------------------
+bun::N_AVX2::BrotliAddEntries                                        [AVX, AVX2, BMI1, BMI2]
+bun::N_AVX2::BrotliEstimateCosts                                     [AVX, AVX2, BMI1, BMI2]
+bun::N_AVX2::BrotliFindSwitches                                      [AVX, AVX2, BMI1, BMI2]
+bun::N_AVX2::BrotliRemovePairs                                       [AVX, AVX2, BMI1, BMI2]
+bun::N_AVX2::BrotliSortLeaves                                        [AVX, AVX2, BMI1, BMI2]
+
+
+# ----------------------------------------------------------------------------
 # Bun JPEG transforms and color conversions (src/jsc/bindings/highway_jpeg.cpp).
 # Gate: BUN_HWY_DISPATCH (highway_dispatch.h) via hwy::SupportedTargets. (6 symbols)
 # ----------------------------------------------------------------------------
@@ -788,6 +799,67 @@ bun::N_AVX2::JpegYccToRgba                                           [AVX, AVX2]
 bun::N_AVX2::PngFilterRgba                                           [AVX, AVX2]
 bun::N_AVX2::PngUnfilter                                             [AVX, AVX2]
 bun::N_AVX2::UnfilterUp                                              [AVX, AVX2]
+
+
+# ----------------------------------------------------------------------------
+# Bun CRC-32 and Adler-32 (src/jsc/bindings/highway_checksums.cpp).
+# Gate: BUN_HWY_DISPATCH (highway_dispatch.h) via hwy::SupportedTargets,
+# and CPUID in OrWider() for *Vpclmulqdq. (16 symbols)
+# ----------------------------------------------------------------------------
+bun::N_SSE4::Crc32                   [PCLMULQDQ]
+bun::N_SSE4::CopyAndCrc32            [PCLMULQDQ]
+bun::N_AVX2::Crc32                   [AVX, PCLMULQDQ]
+bun::N_AVX2::CopyAndCrc32            [AVX, PCLMULQDQ]
+bun::N_AVX2::Crc32Vpclmulqdq         [AVX, AVX2, BMI2, PCLMULQDQ, VPCLMULQDQ]
+bun::N_AVX2::CopyAndCrc32Vpclmulqdq  [AVX, AVX2, BMI2, PCLMULQDQ, VPCLMULQDQ]
+bun::N_AVX3::Crc32                   [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, BMI2, PCLMULQDQ]
+bun::N_AVX3::CopyAndCrc32            [AVX, AVX2, AVX512F, AVX512VL, PCLMULQDQ]
+bun::N_AVX3_DL::Crc32                [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI, BMI2, PCLMULQDQ, VPCLMULQDQ]
+bun::N_AVX3_DL::CopyAndCrc32         [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, AVX512_VBMI, BMI2, PCLMULQDQ, VPCLMULQDQ]
+bun::N_AVX2::Adler32                 [AVX, AVX2, BMI2]
+bun::N_AVX2::CopyAndAdler32          [AVX, AVX2, BMI2]
+bun::N_AVX3::Adler32                 [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, BMI2]
+bun::N_AVX3::CopyAndAdler32          [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, BMI2]
+bun::N_AVX3_DL::Adler32              [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, AVX512_VNNI, BMI2]
+bun::N_AVX3_DL::CopyAndAdler32       [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, AVX512_VNNI, BMI2]
+
+
+# ----------------------------------------------------------------------------
+# Bun zstd encoder (src/jsc/bindings/highway_zstd.cpp).
+# Gate: BUN_HWY_DISPATCH (highway_dispatch.h) via hwy::SupportedTargets. (3 symbols)
+# ----------------------------------------------------------------------------
+bun::N_AVX3_DL::CountGroups     [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL]
+bun::N_AVX3_DL::ZstdCountBytes  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI2, BMI1, BMI2]
+bun::N_AVX3_DL::ZstdWriteCodes  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI, AVX512_VBMI2, BMI1, BMI2]
+
+
+# ----------------------------------------------------------------------------
+# Bun Brotli (src/brotli).
+# Gate: with_bmi2! (src/highway/lib.rs) via is_x86_feature_detected!("bmi2"). (8 symbols)
+# ----------------------------------------------------------------------------
+bun_brotli::decoder::commands::read_many_literals::bmi2      [BMI2]
+bun_brotli::decoder::commands::run_fast_in_contexts::bmi2    [BMI2]
+bun_brotli::decoder::commands::run_fast_in_one_tree::bmi2    [BMI2]
+bun_brotli::decoder::prefix_code::read_symbol_lengths::bmi2  [BMI2]
+bun_brotli::encoder::bit_stream::write_indexed::bmi2         [BMI2]
+bun_brotli::encoder::bit_stream::write_literals::bmi2        [BMI2]
+bun_brotli::encoder::fragment::write_items::bmi2             [BMI2]
+bun_brotli::encoder::fragment::write_literals::bmi2          [BMI2]
+
+
+# ----------------------------------------------------------------------------
+# Bun DEFLATE (src/deflate, src/zlib).
+# Gate: with_bmi2! (src/highway/lib.rs) via is_x86_feature_detected!("bmi2"). (9 symbols)
+# ----------------------------------------------------------------------------
+bun_deflate::block::write_body::bmi2                       [BMI2]
+bun_deflate::decompressor::decode_blocks::bmi2             [BMI2]
+bun_deflate::decompressor::decode_dynamic::bmi2            [BMI2]
+bun_zlib::deflate::encoding::put_symbols::bmi2             [BMI2]
+bun_zlib::deflate::quick::compress_up_to::bmi2             [BMI2]
+bun_zlib::inflate::codes::decode_to_slice::masked::bmi2    [BMI2]
+bun_zlib::inflate::codes::decode_to_slice::unmasked::bmi2  [BMI2]
+bun_zlib::inflate::codes::decode_to_vec::masked::bmi2      [BMI2]
+bun_zlib::inflate::codes::decode_to_vec::unmasked::bmi2    [BMI2]
 
 
 # ----------------------------------------------------------------------------
@@ -815,6 +887,13 @@ bun::N_AVX2::WebpUndoCrossColor                                      [AVX, AVX2,
 bun::N_AVX2::WebpUndoPrediction                                      [AVX, AVX2, BMI2]
 bun::N_AVX2::WebpUpsample                                            [AVX, AVX2]
 bun::N_AVX2::WebpYuvToRgba                                           [AVX, AVX2]
+
+
+# ----------------------------------------------------------------------------
+# Bun zlib (src/jsc/bindings/highway_zlib.cpp).
+# Gate: BUN_HWY_DISPATCH (highway_dispatch.h) via hwy::SupportedTargets. (1 symbol)
+# ----------------------------------------------------------------------------
+bun::N_AVX2::SubtractSaturating  [AVX, AVX2]
 
 
 # ----------------------------------------------------------------------------
@@ -908,22 +987,6 @@ CRYPTO_rdrand_multiple8_buf  [RDRAND]
 
 
 # ----------------------------------------------------------------------------
-# libdeflate.
-# (10 symbols)
-# ----------------------------------------------------------------------------
-adler32_x86_avx2                   [AVX, AVX2]
-adler32_x86_avx2_vnni              [AVX, AVX2, AVX_VNNI]
-adler32_x86_avx512_vl256_vnni      [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, AVX512_VNNI]
-adler32_x86_avx512_vl512_vnni      [AVX, AVX2, AVX512BW, AVX512F, AVX512_VNNI]
-crc32_x86_pclmulqdq                [PCLMULQDQ]
-crc32_x86_pclmulqdq_avx            [AVX, PCLMULQDQ]
-crc32_x86_vpclmulqdq_avx2          [AVX, AVX2, PCLMULQDQ, VPCLMULQDQ]
-crc32_x86_vpclmulqdq_avx512_vl256  [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, PCLMULQDQ, VPCLMULQDQ]
-crc32_x86_vpclmulqdq_avx512_vl512  [AVX, AVX2, AVX512BW, AVX512F, AVX512VL, PCLMULQDQ, VPCLMULQDQ]
-deflate_decompress_bmi2            [BMI2]
-
-
-# ----------------------------------------------------------------------------
 # Rust memchr AVX2 (direct dep + via lolhtml). Gate: is_x86_feature_detected!
 # — memchr stores the resolved fn-ptr in an AtomicPtr after CPUID, see
 # memchr::arch::x86_64::memchr::*_raw::detect / avx2::packedpair::Finder::new.
@@ -945,6 +1008,15 @@ memchr::arch::x86_64::memchr::memrchr_raw::find_avx2               [AVX, AVX2]
 _RNvNvNtNtNt<rust-hash>6memchr4arch6x86_646memchr10memchr_raw6detect   [AVX, AVX2]
 _RNvNvNtNtNt<rust-hash>6memchr4arch6x86_646memchr11memchr2_raw6detect  [AVX, AVX2]
 _RNvNvNtNtNt<rust-hash>6memchr4arch6x86_646memchr11memchr3_raw6detect  [AVX, AVX2]
+
+
+# ----------------------------------------------------------------------------
+# Bun zstd (src/zstd).
+# Gate: is_x86_feature_detected! in with_bmi2() (src/highway/lib.rs), its only caller.
+# (1 generic function, in both forms)
+# ----------------------------------------------------------------------------
+_RINvNv<rust-hash>11bun_highway9with_bmi24bmi2<generic-args>  [BMI1, BMI2, LZCNT]
+bun_highway::with_bmi2::bmi2<generic-args>                    [BMI1, BMI2, LZCNT]
 
 
 # ----------------------------------------------------------------------------
@@ -1095,59 +1167,6 @@ _RINvYNtNt<rust-hash>9hashbrown6hasher18DefaultHashBuilderNtNt<rust-hash>4core4h
 
 
 # ----------------------------------------------------------------------------
-# zlib-ng. Gate: init_functable() — cpu_check_features() CPUID at first call,
-# results cached in `functable` (vendor/zlib/functable.c, arch/x86/x86_features.c).
-# chunkcopy_safe is a static-inline in inflate_p.h that may outline from any of
-# the per-ISA inffast_tpl.h instantiations; the outlined copy is local to that
-# TU and only reachable from the gated inflate_fast_* of the same tier.
-# CHUNKCOPY_SAFE is its per-ISA twin in chunkset_tpl.h (the name is literal, not
-# a macro): same reachability, outlined by clang 23 where clang 21 inlined it.
-# (33 symbols)
-# ----------------------------------------------------------------------------
-# has_pclmulqdq
-crc32_pclmulqdq             [PCLMULQDQ]
-crc32_fold_pclmulqdq        [PCLMULQDQ]
-crc32_fold_pclmulqdq_copy   [PCLMULQDQ]
-crc32_fold_pclmulqdq_final  [PCLMULQDQ]
-crc32_fold_pclmulqdq_reset  [PCLMULQDQ]
-# has_avx2 && has_bmi2
-adler32_avx2                [AVX, AVX2, BMI2]
-adler32_fold_copy_avx2      [AVX, AVX2, BMI2]
-chunkmemset_avx2            [AVX, AVX2, BMI2]
-chunkmemset_safe_avx2       [AVX, AVX2, BMI2]
-compare256_avx2             [AVX, AVX2, BMI2]
-inflate_fast_avx2           [AVX, AVX2, BMI2]
-longest_match_avx2          [AVX, AVX2, BMI2]
-longest_match_slow_avx2     [AVX, AVX2, BMI2]
-slide_hash_avx2             [AVX, AVX2, BMI2]
-# Static helpers from chunkset_tpl.h / compare256: only called from the
-# functable-dispatched *_avx2/*_avx512 kernels above, but the cross-compiled
-# PDB gives them their own records instead of folding them into the callers.
-GET_CHUNK_MAG               [AVX, AVX2, AVX512BW, AVX512F, AVX512VL]
-gen_half_mask               [BMI2]
-# has_avx512_common (F+DQ+BW+VL+BMI2)
-adler32_avx512              [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2]
-adler32_fold_copy_avx512    [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2]
-chunkmemset_avx512          [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2]
-chunkmemset_safe_avx512     [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2]
-compare256_avx512           [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2]
-inflate_fast_avx512         [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2]
-longest_match_avx512        [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2]
-longest_match_slow_avx512   [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2]
-chunkcopy_safe              [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2]
-CHUNKCOPY_SAFE              [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2]
-# has_avx512vnni
-adler32_avx512_vnni            [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VNNI, BMI2]
-adler32_fold_copy_avx512_vnni  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VNNI, BMI2]
-# has_pclmulqdq && has_avx512_common && has_vpclmulqdq
-crc32_vpclmulqdq             [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2, PCLMULQDQ, VPCLMULQDQ]
-crc32_fold_vpclmulqdq        [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2, PCLMULQDQ, VPCLMULQDQ]
-crc32_fold_vpclmulqdq_copy   [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2, PCLMULQDQ, VPCLMULQDQ]
-crc32_fold_vpclmulqdq_final  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2, PCLMULQDQ, VPCLMULQDQ]
-crc32_fold_vpclmulqdq_reset  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI2, PCLMULQDQ, VPCLMULQDQ]
-
-
-# ----------------------------------------------------------------------------
 # Bun xxHash3 windows-x64. Gate: BUN_HWY_DISPATCH -> hwy::SupportedTargets() via CPUID. (6 symbols)
 # (PDB demangles to bun::xxh3::N_*::HashLong; unmaterialized variants show up as STALE.)
 # ----------------------------------------------------------------------------
@@ -1230,23 +1249,29 @@ JSC::AOT::findStringWithAVX2  [AVX, AVX2]
 
 # ----------------------------------------------------------------------------
 # Bun's Highway kernels for the scanner of `bun check`, `bun lint` and `bun fmt`. Gate: hwy::SupportedTargets via CPUID.
-# (18 symbols)
+# (24 symbols)
 # ----------------------------------------------------------------------------
 bun::N_AVX2::ScannerRunStopsImpl       [AVX, AVX2, BMI1, BMI2]
 bun::N_AVX2::LineStartsImpl            [AVX, AVX2, BMI1, BMI2]
+bun::N_AVX2::ByteBitsImpl              [AVX, AVX2, BMI2]
 bun::N_AVX2::OddBlocksImpl             [AVX, AVX2, BMI1, BMI2]
 bun::N_AVX3::ScannerRunStopsImpl       [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]
 bun::N_AVX3::LineStartsImpl            [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]
+bun::N_AVX3::ByteBitsImpl              [AVX, AVX512BW, AVX512F, BMI2]
 bun::N_AVX3::OddBlocksImpl             [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, BMI1, BMI2]
 bun::N_AVX10_2::ScannerRunStopsImpl    [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_FP16, AVX512_VBMI, BMI1, BMI2, GFNI]
 bun::N_AVX10_2::LineStartsImpl         [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_FP16, AVX512_VBMI, BMI1, BMI2, GFNI]
+bun::N_AVX10_2::ByteBitsImpl           [AVX, AVX512BW, AVX512F, BMI2]
 bun::N_AVX10_2::OddBlocksImpl          [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_FP16, AVX512_VBMI, BMI1, BMI2, GFNI]
 bun::N_AVX3_DL::ScannerRunStopsImpl    [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI, BMI1, BMI2, GFNI]
 bun::N_AVX3_DL::LineStartsImpl         [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI, BMI1, BMI2, GFNI]
+bun::N_AVX3_DL::ByteBitsImpl           [AVX, AVX512BW, AVX512F, BMI2]
 bun::N_AVX3_DL::OddBlocksImpl          [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI, BMI1, BMI2, GFNI]
 bun::N_AVX3_SPR::ScannerRunStopsImpl   [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_FP16, AVX512_VBMI, BMI1, BMI2, GFNI]
 bun::N_AVX3_SPR::LineStartsImpl        [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_FP16, AVX512_VBMI, BMI1, BMI2, GFNI]
+bun::N_AVX3_SPR::ByteBitsImpl          [AVX, AVX512BW, AVX512F, BMI2]
 bun::N_AVX3_SPR::OddBlocksImpl         [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_FP16, AVX512_VBMI, BMI1, BMI2, GFNI]
 bun::N_AVX3_ZEN4::ScannerRunStopsImpl  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI, BMI1, BMI2, GFNI]
 bun::N_AVX3_ZEN4::LineStartsImpl       [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI, BMI1, BMI2, GFNI]
+bun::N_AVX3_ZEN4::ByteBitsImpl         [AVX, AVX512BW, AVX512F, BMI2]
 bun::N_AVX3_ZEN4::OddBlocksImpl        [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI, BMI1, BMI2, GFNI]

@@ -94,7 +94,6 @@ export const AttributeIteratorResult = b.dictionary({ value: b.any, done: b.bool
 export const AttributeIterator = b.class({
   rustPath: "crate::api::html_rewriter::AttributeIterator",
   refCounted: true,
-  finalize: true,
   proto: {
     /** Neither keeps the receiver. */
     next: { returns: AttributeIteratorResult, capability: "heap", throws: true, uses: { this: [] } },
@@ -164,12 +163,11 @@ export const HTMLRewriter = b.class({
 export const HTMLRewriterTransform = b.class({
   rustPath: "crate::api::html_rewriter::RewriterPipe",
   refCounted: true,
-  finalize: true,
+  thisValue: "cell",
   internalFields: [
     "response",
     "inputStream",
     "outputStream",
-    "pendingPromise",
     "handlerError",
     "suspensionPromise",
     "handlers",

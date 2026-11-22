@@ -103,17 +103,9 @@ impl Entry {
         // `percent_encode_write` takes `&mut Vec<u8>`.
         let mut source_map_strings: Vec<u8> = Vec::new();
 
-        #[cfg(windows)]
-        let mut buf = bun_paths::path_buffer_pool::get();
-
         for native_file_path in paths.iter() {
-            let native_file_path: &[u8] = native_file_path;
             source_map_strings.extend_from_slice(b",");
-            #[cfg(windows)]
-            let path: &[u8] =
-                bun_paths::resolve_path::path_to_posix_buf::<u8>(native_file_path, &mut **buf);
-            #[cfg(not(windows))]
-            let path: &[u8] = native_file_path;
+            let path: &[u8] = &bun_paths::to_portable(native_file_path);
 
             if bun_paths::is_absolute(path) {
                 let is_windows_drive_path = cfg!(windows) && path[0] != b'/';
@@ -579,10 +571,7 @@ impl SourceMapStore {
     /// # Safety
     /// `timer` must point to the `weak_ref_sweep_timer` field of a live
     /// `SourceMapStore`.
-    pub(crate) fn sweep_weak_refs(
-        timer: *mut EventLoopTimer,
-        now_ts: &bun_event_loop::EventLoopTimer::Timespec,
-    ) {
+    pub(crate) fn sweep_weak_refs(timer: *mut EventLoopTimer, now_ts: &Timespec) {
         map_log!("sweepWeakRefs");
         // SAFETY: `timer` points to the `weak_ref_sweep_timer` field of a SourceMapStore.
         let store: &mut SourceMapStore = unsafe { &mut *SourceMapStore::from_timer_ptr(timer) };
@@ -597,10 +586,6 @@ impl SourceMapStore {
                 store.unref_count(item.key(), item.count);
             } else {
                 store.weak_refs.unget(&[item]).expect("unreachable"); // space exists since the last item was just removed.
-                store
-                    .weak_ref_sweep_timer
-                    .state
-                    .set(EventLoopTimerState::FIRED);
                 crate::jsc_hooks::timer_all().update(
                     OwnedTimer::node(&raw const store.weak_ref_sweep_timer),
                     &Timespec {

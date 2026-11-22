@@ -37,6 +37,40 @@ console.write("ok");
   });
 });
 
+// These are proxies: the object that answers for their own properties is the global object behind them.
+// console.write keeps its writer on `this` and reads it back as an own property, and the interpreter
+// remembered where the global object has it as a place in the proxy (oven-sh/WebKit#1048).
+test.concurrent.each([
+  ["globalThis", `globalThis`],
+  ["the global of a node:vm context", `require("node:vm").runInContext("this", require("node:vm").createContext({}))`],
+  [
+    "the global of a node:vm context that is not contextified",
+    `require("node:vm").runInContext("this", require("node:vm").createContext(require("node:vm").constants.DONT_CONTEXTIFY))`,
+  ],
+])("console.write writes every time when `this` is %s", async (_, receiver) => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+const receiver = ${receiver};
+for (let i = 0; i < 4; i++) console.write.call(receiver, i + "\\n");
+`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stdout, exitCode, signalCode: proc.signalCode }).toEqual({
+    stdout: "0\n1\n2\n3\n",
+    exitCode: 0,
+    signalCode: null,
+  });
+});
+
 // console.write() is a FileSink write() + flush(). With stdout on a pipe the
 // write() parks the bytes in the sink's buffer and marks the event loop alive
 // until they are flushed; the flush() drained them right away but used to leave

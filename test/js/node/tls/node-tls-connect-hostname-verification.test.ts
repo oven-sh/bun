@@ -1,4 +1,4 @@
-import { tls as ipSanCert } from "harness";
+import { bunEnv, bunExe, tls as ipSanCert } from "harness";
 import assert from "node:assert";
 import { once, type EventEmitter } from "node:events";
 import fs from "node:fs";
@@ -432,6 +432,25 @@ describe("checkServerIdentity after TLSSocket#connect()", { skip: typeof Bun ===
       socket.connect(options);
       await secureConnect(socket);
       assert.deepStrictEqual(seen(), { ...connectOptions("127.0.0.1"), isCallerObject: true });
+    });
+  });
+
+  // globalThis is a proxy, and the global object behind it is what has the callback as an own property.
+  // The interpreter remembered the place that the global object has it at as a place in the proxy, and
+  // the second handshake of the process read from there (oven-sh/WebKit#1048).
+  test("`this` is globalThis at every handshake when globalThis is the options of connect()", async () => {
+    await withServer(async port => {
+      await using child = Bun.spawn({
+        cmd: [bunExe(), path.join(import.meta.dirname, "node-tls-connect-global-options-fixture.ts")],
+        env: { ...bunEnv, CA_FILE: path.join(fixturesDir, "ca1-cert.pem"), SERVER_PORT: String(port) },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, , exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
+      assert.deepStrictEqual(
+        { stdout, exitCode, signalCode: child.signalCode },
+        { stdout: "[true,true,true]\n", exitCode: 0, signalCode: null },
+      );
     });
   });
 });

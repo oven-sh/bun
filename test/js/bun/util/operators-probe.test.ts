@@ -8,8 +8,8 @@ import { basename, join, resolve } from "node:path";
 
 const say = (line: string) => console.log(`PROBE [${process.arch} darwin ${release()}] ${line}`);
 
-// The header flags and the exported names of a thin 64-bit Mach-O file.
-function readMachO(path: string): { flags: number; exports: string[] } {
+// The header flags, the exported names and their offsets in the image, of a thin 64-bit Mach-O file.
+export function readMachO(path: string): { flags: number; exports: string[]; offsets: Map<string, number> } {
   const fd = openSync(path, "r");
   try {
     const read = (offset: number, size: number) => {
@@ -29,6 +29,7 @@ function readMachO(path: string): { flags: number; exports: string[] } {
         trie = read(commands.readUInt32LE(at + 40), commands.readUInt32LE(at + 44));
     }
     const exports: string[] = [];
+    const offsets = new Map<string, number>();
     const uleb = (at: number): [number, number] => {
       let value = 0;
       for (let shift = 0; ; shift += 7) {
@@ -39,7 +40,12 @@ function readMachO(path: string): { flags: number; exports: string[] } {
     };
     const walk = (node: number, prefix: string) => {
       let [terminalSize, at] = uleb(node);
-      if (terminalSize) exports.push(prefix);
+      if (terminalSize) {
+        exports.push(prefix);
+        // Flags, then the offset unless the export is of another image's symbol.
+        const [flags, afterFlags] = uleb(at);
+        if (!(flags & 0x8)) offsets.set(prefix, uleb(afterFlags)[0]);
+      }
       at += terminalSize;
       for (let children = trie[at++]!; children > 0; children--) {
         const end = trie.indexOf(0, at);
@@ -50,7 +56,7 @@ function readMachO(path: string): { flags: number; exports: string[] } {
       }
     };
     if (trie.length) walk(0, "");
-    return { flags: header.readUInt32LE(24), exports };
+    return { flags: header.readUInt32LE(24), exports, offsets };
   } finally {
     closeSync(fd);
   }
@@ -60,6 +66,63 @@ async function run(cmd: string[], env: Record<string, string | undefined> = {}, 
   await using child = Bun.spawn({ cmd, env: { ...bunEnv, ...env }, cwd, stdout: "pipe", stderr: "pipe" });
   const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
   return { stdout, stderr, exitCode, signalCode: child.signalCode };
+}
+
+// What the "cache patch" lines of dyld say. Each is one place in the shared cache and the definition it now calls. The
+// dyld of macOS 14 prints only these lines, and no names.
+export function describePatches(lines: string[], offsets: Map<string, number>, arch: string): string[] {
+  const said: string[] = [];
+  // A place in an arm64e library can hold a signed pointer: the address is its low 47 bits.
+  const patches = lines.flatMap(line => {
+    const match = /cache patch: (0x[0-9A-Fa-f]+) = (0x[0-9A-Fa-f]+)/.exec(line);
+    return match ? [{ place: BigInt(match[1]!), target: BigInt(match[2]!) & 0x7fffffffffffn }] : [];
+  });
+  const pageBits = arch === "arm64" ? 14n : 12n;
+  const pageSize = 1n << pageBits;
+  const targets = [...new Set(patches.map(patch => patch.target))];
+  said.push(
+    `cache patch lines: ${patches.length}, to ${targets.length} definitions, ` +
+      `on ${new Set(patches.map(patch => patch.place >> pageBits)).size} pages of ${pageSize} bytes`,
+  );
+  // Which operators the definitions are. The linker can give operators with the same code one address.
+  const kindsAt = new Map<bigint, Set<string>>();
+  for (const [name, offset] of offsets) {
+    if (!/^__Z[nd]/.test(name)) continue;
+    if (!kindsAt.has(BigInt(offset))) kindsAt.set(BigInt(offset), new Set());
+    kindsAt.get(BigInt(offset))!.add(name.startsWith("__Zn") ? "new" : "delete");
+  }
+  said.push(`the operators that the executable exports are at ${kindsAt.size} addresses`);
+  // The executable is loaded at the page boundary that puts the most definitions on an exported operator.
+  let base = 0n;
+  let most = 0;
+  for (const target of targets) {
+    for (const offset of kindsAt.keys()) {
+      const candidate = target - offset;
+      if (candidate % pageSize !== 0n) continue;
+      const fit = targets.filter(other => kindsAt.has(other - candidate)).length;
+      if (fit > most) [base, most] = [candidate, fit];
+    }
+  }
+  if (!most) return said;
+  const kindOf = (target: bigint) => [...(kindsAt.get(target - base) ?? ["something else"])].sort().join(" and ");
+  const count = (keys: string[]) => {
+    const counts = new Map<string, number>();
+    for (const key of keys) counts.set(key, (counts.get(key) ?? 0) + 1);
+    return [...counts]
+      .sort()
+      .map(([key, value]) => `${value} for ${key}`)
+      .join(", ");
+  };
+  const kindsOfPage = new Map<bigint, Set<string>>();
+  for (const { place, target } of patches) {
+    const page = place >> pageBits;
+    if (!kindsOfPage.has(page)) kindsOfPage.set(page, new Set());
+    kindsOfPage.get(page)!.add(kindOf(target));
+  }
+  said.push(`definitions: ${count(targets.map(kindOf))}`);
+  said.push(`places patched: ${count(patches.map(patch => kindOf(patch.target)))}`);
+  said.push(`pages written: ${count([...kindsOfPage.values()].map(kinds => [...kinds].sort().join(" and ")))}`);
+  return said;
 }
 
 test.skipIf(!isMacOS || isASAN)("PROBE: what the executable exports", () => {
@@ -85,7 +148,7 @@ test.skipIf(!isMacOS || isASAN)("PROBE: what dyld binds the operators to when th
       `${overridden.filter(name => name.startsWith("__Zn")).length} operator new, ` +
       `${overridden.filter(name => name.startsWith("__Zd")).length} operator delete`,
   );
-  say(`cache patch lines: ${lines.filter(line => line.includes("cache patch:")).length}`);
+  for (const line of describePatches(lines, readMachO(bunExe()).offsets, process.arch)) say(line);
   for (const name of ["__Znwm", "__ZdlPv", "__ZnwmSt19__type_descriptor_t"]) {
     const at = lines.findIndex(line => new RegExp(`looking for weak-def symbol '?${name}'?:?$`).test(line));
     const rest = at < 0 ? [] : lines.slice(at + 1);
@@ -120,7 +183,9 @@ NAPI_MODULE_INIT() { return exports; }
 // Image X, loaded after A, says where its operators are and releases what it allocates.
 const later = `
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <dlfcn.h>
 #include <new>
 #include <node_api.h>
@@ -143,6 +208,17 @@ NAPI_MODULE_INIT()
         release(block);
     }
     printf(", released 1000 blocks\\n");
+    if (getenv("PROBE_PAIRS")) {
+        const long pairs = 2000000;
+        timespec start, end;
+        clock_gettime(CLOCK_MONOTONIC, &start);
+        for (long i = 0; i < pairs; i++) {
+            void* volatile block = allocate(32);
+            release(block);
+        }
+        clock_gettime(CLOCK_MONOTONIC, &end);
+        printf("%.1f ns for a pair of operator new and operator delete\\n", ((end.tv_sec - start.tv_sec) * 1e9 + (end.tv_nsec - start.tv_nsec)) / pairs);
+    }
     fflush(stdout);
     return exports;
 }
@@ -200,6 +276,13 @@ test.skipIf(!isMacOS || isASAN)(
         continue;
       }
       if (name === "node") say(`pair: node is ${(await run([runtime, "--version"])).stdout.trim()}`);
+      const alone = `require(${JSON.stringify(join(folder, "later.node"))});`;
+      const times: string[] = [];
+      for (let repeat = 0; repeat < 3; repeat++) {
+        const { stdout } = await run([runtime, "-e", alone], { PROBE_PAIRS: "1" });
+        times.push(/([0-9.]+) ns for a pair/.exec(stdout)?.[1] ?? "?");
+      }
+      say(`pair: ${name}, later.node alone: ${times.join(", ")} ns for a pair of operator new and operator delete`);
       for (const first of ["malloc.node", "header.node"]) {
         const script = `require(${JSON.stringify(join(folder, first))}); require(${JSON.stringify(join(folder, "later.node"))});`;
         const result = await run([runtime, "-e", script], { MallocDebugReport: "stderr" });

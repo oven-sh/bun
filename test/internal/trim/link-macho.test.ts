@@ -460,6 +460,56 @@ describeEachMachine("Mach-O $name", machine => {
     });
   });
 
+  describe("the archive of the built-in sources", () => {
+    const archive = {
+      ...sources,
+      "archive.S": readFileSync(join(import.meta.dir, "../../../src/builtin_sources/archive.S"), "utf8"),
+      "builtin_sources.bin": Buffer.alloc(8192, 7),
+      "entry.c": entryCalling("more"),
+      "more.c": `
+        extern const char bun_builtin_sources_start[], bun_builtin_sources_end[];
+        int more(int x) { return bun_builtin_sources_start[x] + bun_builtin_sources_end[-x]; }
+      `,
+      "behind.c": `
+        const char not_aligned[] = { 1, 2, 3, 4, 5 };
+        __attribute__((noinline)) int reads_it(int x) { return not_aligned[x & 3]; }
+      `,
+    };
+    const objects = ["feature_code", "entry", "more", "archive", "behind", "embedder", "main"];
+
+    test.each([
+      ["another feature", "argc > 6 ? GUARDED(Other, reads_it, argc) : 0", [Other]],
+      ["retained code", "reads_it(argc) == 2 ? 0 : 1", undefined],
+    ])("goes with its reader alone when %s reads what lies behind it", async (_, otherwise, features) => {
+      using dir = tempDir("trim-macho-archive", {
+        ...archive,
+        "main.c": `
+          ${start}
+          int reads_it(int);
+          int main(int argc, char **argv) { return argc == 6 ? GUARDED(Extra, entered, argc) : ${otherwise}; }
+        `,
+      });
+      const { featuresOf, programResult, trimmedResult } = await linked(machine, String(dir), { objects });
+      expect(["bun_builtin_sources_start", "not_aligned"].map(featuresOf)).toEqual([[Extra], features]);
+      expectCleanRuns({ programResult, trimmedResult });
+    });
+
+    test("is retained when retained code only names its end", async () => {
+      using dir = tempDir("trim-macho-archive", {
+        ...archive,
+        "builtin_sources.bin": Buffer.alloc(8191, 7),
+        "main.c": `
+          ${start}
+          extern const char bun_builtin_sources_end[];
+          int main(int argc, char **argv) { return argc > 5 ? GUARDED(Extra, entered, argc) : bun_builtin_sources_end[-argc] == 7 ? 0 : 1; }
+        `,
+      });
+      const { featuresOf, programResult, trimmedResult } = await linked(machine, String(dir), { objects });
+      expect(["bun_builtin_sources_start", "entered"].map(featuresOf)).toEqual([undefined, [Extra]]);
+      expectCleanRuns({ programResult, trimmedResult });
+    });
+  });
+
   describe("the graph reader", () => {
     const mainReading = (name: string) => `
       ${start}

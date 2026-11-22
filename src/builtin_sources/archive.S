@@ -17,3 +17,5 @@
 BUN_SYM(bun_builtin_sources_start):
 .incbin "builtin_sources.bin"
 BUN_SYM(bun_builtin_sources_end):
+// Without a byte of its own, the trimmable Mach-O link takes this for a name of what lies behind it.
+.byte 0

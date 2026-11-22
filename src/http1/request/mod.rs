@@ -248,11 +248,11 @@ impl<'a, const IS_NODE: bool> Read<'a, IS_NODE> {
         }
     }
 
-    /// `bytes` has `earlier` bytes of earlier reads, then all or the start of `unread`.
+    /// `message` has `earlier` bytes of earlier reads, then all or the start of `unread`.
     fn start<C: Connection>(
         &self,
         mut connection: C,
-        bytes: &[u8],
+        message: &[u8],
         earlier: usize,
         unread: &'a [u8],
     ) -> Result<(C, &'a [u8], Start), Outcome> {
@@ -263,8 +263,8 @@ impl<'a, const IS_NODE: bool> Read<'a, IS_NODE> {
         };
         let parser = connection.parser();
         if IS_NODE && parser.is_tunnel {
-            let rest = after(bytes.len());
-            let connection = connection.on_body(bytes, false);
+            let rest = after(message.len());
+            let connection = connection.on_body(message, false);
             return Ok((
                 connection.ok_or_else(|| self.stop(rest))?,
                 rest,
@@ -274,17 +274,17 @@ impl<'a, const IS_NODE: bool> Read<'a, IS_NODE> {
         if parser.is_closing {
             return match IS_NODE {
                 true => Err(RequestError::ClosedConnection.into()),
-                false => Ok((connection, after(bytes.len()), Start::NotHttp)),
+                false => Ok((connection, after(message.len()), Start::NotHttp)),
             };
         }
 
         let mut storage = [MaybeUninit::uninit(); MAX_FIELDS];
-        let (mut request, len) = match Request::parse::<IS_NODE>(bytes, &mut storage, self.options)
-        {
-            Ok(parsed) => parsed,
-            Err(Stop::Short) => return Ok((connection, unread, Start::Short)),
-            Err(Stop::Failed(error)) => return Err(error.into()),
-        };
+        let (mut request, len) =
+            match Request::parse::<IS_NODE>(message, &mut storage, self.options) {
+                Ok(parsed) => parsed,
+                Err(Stop::Short) => return Ok((connection, unread, Start::Short)),
+                Err(Stop::Failed(error)) => return Err(error.into()),
+            };
         if len > self.max_head_len {
             return Err(RequestError::HeadTooLarge.into());
         }

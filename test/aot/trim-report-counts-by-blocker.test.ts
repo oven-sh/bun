@@ -72,7 +72,7 @@ describe.concurrent("one reason to keep more", () => {
       "dynamic-import runtime-code",
     ],
     ["Bun.plugin", "main.mjs", `Bun.plugin({ name: "made up", setup() {} });`, 215, everyBlocker],
-    ["process.dlopen", "main.mjs", `process.dlopen({ exports: {} }, ${fromOutside});`, 142, "native-code"],
+    ["process.dlopen", "main.mjs", `process.dlopen({ exports: {} }, ${fromOutside});`, 143, "native-code"],
   ]);
 });
 

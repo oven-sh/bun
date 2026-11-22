@@ -1,6 +1,7 @@
 //! blocking, but off the main thread
 
 use crate::node::fs as node_fs;
+#[cfg(windows)]
 use crate::node::types::PathLikeExt as _;
 #[cfg(windows)]
 use crate::server::file_response_stream::StreamFd;
@@ -21,8 +22,7 @@ use bun_jsc::JSPromise;
 #[cfg(not(windows))]
 use bun_jsc::SystemError;
 use bun_jsc::{self as jsc, JSValue};
-#[cfg(windows)]
-use bun_paths::PathBuffer;
+use bun_paths::Path;
 use bun_ptr::RefPtr;
 #[cfg(windows)]
 use bun_sys::ReturnCodeExt as _;
@@ -135,15 +135,13 @@ impl CopyFile {
             (PathOrFileDescriptor::Path(from), PathOrFileDescriptor::Path(to))
                 if self.offset == 0 =>
             {
-                let mut from_buf = bun_paths::path_buffer_pool::get();
-                let from = from.slice_z(&mut from_buf);
+                let from = &Path::from(from.slice());
                 let stat = bun_sys::stat(from)?;
                 if bun_sys::S::ISDIR(stat.st_mode as u32) {
                     return Err(unsupported_directory_error());
                 }
                 if bun_sys::S::ISREG(stat.st_mode as u32) {
-                    let mut to_buf = bun_paths::path_buffer_pool::get();
-                    let to = to.slice_z(&mut to_buf);
+                    let to = &Path::from(to.slice());
                     // The destination may exist or be on a network volume: then go on to fcopyfile.
                     let clone = || bun_sys::clonefile(from, to);
                     if creating_parents(&mut self.mkdirp, to.as_bytes(), clone).is_ok() {
@@ -159,28 +157,16 @@ impl CopyFile {
         let source = match source_file {
             PathOrFileDescriptor::Fd(fd) => MaybeOwnedFile::Borrowed(*fd),
             PathOrFileDescriptor::Path(path) => {
-                let mut buf = bun_paths::path_buffer_pool::get();
-                File::open(path.slice_z(&mut buf), OPEN_SOURCE_FLAGS, 0)?.into()
+                File::open(&Path::from(path.slice()), OPEN_SOURCE_FLAGS, 0)?.into()
             }
         };
         let destination = match destination_file {
             PathOrFileDescriptor::Fd(fd) => MaybeOwnedFile::Borrowed(*fd),
             PathOrFileDescriptor::Path(path) => {
-                let mut buf = bun_paths::path_buffer_pool::get();
-                // Not `slice_z`, which makes "" of a path that does not fit.
-                let len = path.slice().len().min(buf.len() - 1);
-                buf[..len].copy_from_slice(&path.slice()[..len]);
-                let path_z = bun_core::ZStr::nul_terminate(&mut buf[..], len);
+                let path = &Path::from(path.slice());
                 let mode = self.new_mode.unwrap_or(node_fs::DEFAULT_PERMISSION);
-                let open = || File::open(path_z, OPEN_DESTINATION_FLAGS, mode);
-                match creating_parents(&mut self.mkdirp, path_z.as_bytes(), open) {
-                    Ok(file) => file.into(),
-                    // mkdir failed.
-                    Err(err) if self.mkdirp && err.get_errno() == bun_sys::E::ENOENT => {
-                        return Err(err.into());
-                    }
-                    Err(err) => return Err(err.with_path(path.slice()).into()),
-                }
+                let open = || File::open(path, OPEN_DESTINATION_FLAGS, mode);
+                creating_parents(&mut self.mkdirp, path.as_bytes(), open)?.into()
             }
         };
 
@@ -757,7 +743,7 @@ impl CopyFileWindows {
     /// `None` if the descriptor has no path: the NUL device, or a pipe (`cat foo.txt | bun bar.ts`).
     fn copyfile_path<'b>(
         store: &Store,
-        buf: &'b mut PathBuffer,
+        buf: &'b mut Path,
     ) -> bun_sys::Result<Option<&'b bun_core::ZStr>> {
         let fd = match &store.data.as_file().pathlike {
             PathOrFileDescriptor::Path(path) => return Ok(Some(path.slice_z(buf))),
@@ -770,19 +756,20 @@ impl CopyFileWindows {
             )),
             bun_sys::FileKind::CharacterDevice => Ok(None),
             _ => {
-                let Ok(path) = bun_sys::get_fd_path(fd, buf) else {
+                let mut fd_path = bun_paths::path_buffer_pool::get();
+                let Ok(fd_path) = bun_sys::get_fd_path(fd, &mut fd_path) else {
                     return Ok(None);
                 };
-                let len = path.len();
-                Ok(Some(bun_core::ZStr::nul_terminate(buf, len)))
+                buf.set(fd_path);
+                Ok(Some(buf))
             }
         }
     }
 
     fn copyfile_paths<'b>(
         &self,
-        old_buf: &'b mut PathBuffer,
-        new_buf: &'b mut PathBuffer,
+        old_buf: &'b mut Path,
+        new_buf: &'b mut Path,
     ) -> bun_sys::Result<Option<(&'b bun_core::ZStr, &'b bun_core::ZStr)>> {
         let Some(new_path) = Self::copyfile_path(&self.destination_file_store, new_buf)? else {
             return Ok(None);
@@ -801,8 +788,8 @@ impl CopyFileWindows {
             return;
         }
 
-        let mut pathbuf1 = bun_paths::path_buffer_pool::get();
-        let mut pathbuf2 = bun_paths::path_buffer_pool::get();
+        let mut pathbuf1 = Path::new();
+        let mut pathbuf2 = Path::new();
         let (old_path, new_path) = match self.copyfile_paths(&mut pathbuf2, &mut pathbuf1) {
             Ok(Some(paths)) => paths,
             Ok(None) => return self.prepare_read_write_loop(),
@@ -860,7 +847,7 @@ impl CopyFileWindows {
                 PathOrFileDescriptor::Path(_)
             ) {
                 self.written_bytes = written;
-                let mut pathbuf = bun_paths::path_buffer_pool::get();
+                let mut pathbuf = Path::new();
                 let path_ptr = self
                     .destination_file_store
                     .data
@@ -982,7 +969,7 @@ extern "C" fn on_copy_file(req: *mut libuv::fs_t) {
         let source_missing = errno == bun_sys::E::ENOENT
             && match &this.source_file_store.data.as_file().pathlike {
                 PathOrFileDescriptor::Path(p) => {
-                    let mut buf = bun_paths::path_buffer_pool::get();
+                    let mut buf = Path::new();
                     matches!(
                         bun_sys::access(p.slice_z(&mut buf), 0),
                         bun_sys::Result::Err(e) if e.get_errno() == bun_sys::E::ENOENT
@@ -1027,7 +1014,7 @@ extern "C" fn on_copy_file(req: *mut libuv::fs_t) {
     // uv_fs_copyfile leaves `statbuf` empty.
     let size = match &this.destination_file_store.data.as_file().pathlike {
         PathOrFileDescriptor::Path(p) => {
-            let mut buf = bun_paths::path_buffer_pool::get();
+            let mut buf = Path::new();
             bun_sys::stat(p.slice_z(&mut buf)).map(|stat| stat.size())
         }
         PathOrFileDescriptor::Fd(fd) => bun_sys::fstat(*fd).map(|stat| stat.size()),

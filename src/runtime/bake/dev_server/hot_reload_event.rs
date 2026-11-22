@@ -52,9 +52,7 @@ impl HotReloadEvent {
         // First handle directories, because this may mutate `event.files`
         if dev.directory_watchers.watches.count() > 0 {
             for changed_dir_with_slash in self.dirs.keys() {
-                let changed_dir = bun_paths::string_paths::without_trailing_slash_windows_path(
-                    changed_dir_with_slash,
-                );
+                let changed_dir = bun_paths::without_trailing_sep(changed_dir_with_slash);
 
                 // Bust resolution cache, but since Bun does not watch all
                 // directories in a codebase, this only targets the following resolutions
@@ -75,11 +73,10 @@ impl HotReloadEvent {
                             .server_transpiler
                             .resolver
                             .resolve(
-                                bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
-                                    source_file_path.slice(),
-                                ),
+                                bun_paths::dirname_or_root(source_file_path.slice()),
                                 &dep.specifier,
-                                bun_ast::ImportKind::Stmt,
+                                // Like an import statement, but it takes a path.
+                                bun_ast::ImportKind::EntryPointBuild,
                             )
                             .is_ok();
 
@@ -191,15 +188,8 @@ impl HotReloadEvent {
             return;
         }
 
-        let ends_with_sep = bun_paths::Platform::AUTO.is_separator(dir_path[dir_path.len() - 1]);
-        self.extra_files.extend_from_slice(if ends_with_sep {
-            &dir_path[0..dir_path.len() - 1]
-        } else {
-            dir_path
-        });
-        self.extra_files.push(bun_paths::SEP);
-        self.extra_files.extend_from_slice(sub_path);
-        self.extra_files.push(0);
+        let path = bun_paths::Path::from_parts(&[dir_path, sub_path]);
+        self.extra_files.extend_from_slice(path.as_bytes_with_nul());
     }
 }
 

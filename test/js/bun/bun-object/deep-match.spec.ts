@@ -1,3 +1,5 @@
+import { runInNewContext } from "node:vm";
+
 type TestCase = [a: unknown, b: unknown];
 
 // @ts-ignore
@@ -44,6 +46,8 @@ describe("Bun.deepMatch", () => {
     [{ }, { a: undefined }], // NOTE: `b` may be a superset of `a`, but not vice-versa
     [{ a: { b: "foo" } }, { a: { b: "foo", c: undefined } }],
     [{ a: { b: "foo" } }, { a: { b: "foo", c: 1 } }],
+    [{ ["__proto__"]: { a: 1 } }, { ["__proto__"]: { a: 1, b: 2 } }],
+    [{ ["__proto__"]: { a: 1 } }, Object.create({ ["__proto__"]: { a: 1, b: 2 } })],
 
     // Arrays
     [[], []],
@@ -92,6 +96,8 @@ describe("Bun.deepMatch", () => {
     [{ a: { b: "foo", c: 1 } }, { a: { b: "foo" } }],
     [{ a: Symbol.for("a") }, { a: Symbol.for("b") }],
     [{ a: Symbol("a") }, { a: Symbol("a") }], // new symbols are never equal
+    [{ ["__proto__"]: {} }, {}], // an own property is not the prototype
+    [{ ["__proto__"]: { a: 1 } }, { __proto__: { a: 1 } }],
 
     // Arrays
     [[1, 2, 3], [1, 2]],
@@ -135,6 +141,11 @@ describe("Bun.deepMatch", () => {
     // ],
   ])("Bun.deepMatch(%p, %p) === false", (a, b) => {
     expect(Bun.deepMatch(a, b)).toBe(false);
+  });
+
+  // Jest only knows the Object.prototype of its own realm.
+  (process.versions.bun ? it : it.skip)("an own __proto__ is not the prototype of an object of another realm", () => {
+    expect(Bun.deepMatch({ ["__proto__"]: {} }, runInNewContext("({})"))).toBe(false);
   });
 
   it("When comparing same-shape objects with different constructors, returns true", () => {

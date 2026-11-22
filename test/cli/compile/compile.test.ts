@@ -584,6 +584,7 @@ describe.concurrent("bun compile with the name of an installed executable", () =
     ["next to it", () => "../outside.js"],
     ["above node_modules", () => "../../above.js"],
     ["by an absolute path", (dir: string) => join(dir, "above.js")],
+    ["behind an absolute path", (dir: string) => join(dir, "node_modules", "tool") + "/x\\..\\..\\outside.js"],
   ])("a bin outside the package is an error: %s", async (_, bin) => {
     using dir = tempDir("compile-installed-outside", {
       "node_modules/tool/index.js": "",

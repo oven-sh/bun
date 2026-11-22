@@ -15,7 +15,7 @@ use bun_jsc::{
     EncodedSliceJsc as _, EventLoopHandle, GlobalRef, JSGlobalObject, JSPromiseStrong, JSValue,
     JsCell, JsResult,
 };
-use bun_paths::{platform, resolve_path};
+use bun_paths::Path;
 use bun_ptr::{RefPtr, ThisPtr};
 use bun_removable_features::removable_body_behind_value;
 use bun_resolver::fs::FileSystem;
@@ -58,6 +58,12 @@ pub(crate) fn register(
             b'%' => "Path must not contain percent signs (cron interprets % as newline)",
             _ => "Path must not contain line breaks",
         }));
+    }
+    // Debian's cron reads `\\` as `\`, and fish reads `\'` as `'`.
+    if cfg!(not(windows)) && (strings::contains(&script, b"\\\\") || script.ends_with(b"\\")) {
+        return Err(invalid(
+            "Path must not end with a backslash or contain two in a row",
+        ));
     }
     let Ok(exe) = bun_core::self_exe_path() else {
         return Err(global.throw(format_args!("Failed to get bun executable path")));
@@ -103,7 +109,7 @@ fn path_of_url(global: &JSGlobalObject, url: JSValue) -> JsResult<PathLike<'stat
 fn resolve_script(global: &JSGlobalObject, path: &[u8]) -> Option<Vec<u8>> {
     let caller = global.get_caller_src_loc();
     let caller = caller.str.to_utf8();
-    let dir = resolve_path::dirname::<platform::Auto>(caller.slice());
+    let dir = bun_paths::dirname_or_root(caller.slice());
     let dir: &[u8] = if dir.is_empty() { b"." } else { dir };
     let mut resolved = (global.bun_vm().transpiler)
         .with_mut(|t| (t.resolver).resolve(dir, path, bun_ast::ImportKind::EntryPointRun))
@@ -246,10 +252,14 @@ impl OsJob {
         let vm = VirtualMachine::get();
         let event_loop = EventLoopHandle::init(vm.event_loop_ptr());
         #[cfg(windows)]
-        let (mut path_buf, envp) = (
-            bun_paths::path_buffer_pool::get(),
-            vm.env_loader().map.to_envp(),
-        );
+        let (schtasks, envp) = {
+            let path = vm.env_loader().map.get(b"PATH").unwrap_or(b"");
+            let found = bun_which::which(path, b"", b"schtasks");
+            (
+                found.ok_or("Could not find 'schtasks' in PATH")?,
+                vm.env_loader().map.to_envp(),
+            )
+        };
         let options = SpawnOptions {
             stdin: Stdio::Ignore,
             stdout,
@@ -259,11 +269,7 @@ impl OsJob {
             #[cfg(windows)]
             stderr: Stdio::Buffer,
             #[cfg(windows)]
-            argv0: {
-                let path = vm.env_loader().map.get(b"PATH").unwrap_or(b"");
-                let found = bun_which::which(&mut path_buf, path, b"", b"schtasks");
-                Some(found.ok_or("Could not find 'schtasks' in PATH")?.into())
-            },
+            argv0: Some((&*schtasks).into()),
             #[cfg(windows)]
             windows: spawn::WindowsOptions {
                 loop_: event_loop,
@@ -418,8 +424,8 @@ fn write_temp_file(
     let name = FileSystem::tmpname(suffix.as_bytes(), &mut buf.0, bun_core::fast_random())
         .map_err(|_| "Out of memory")?;
     let dir = bun_resolver::fs::RealFS::platform_temp_dir();
-    let path = resolve_path::join_abs_string::<platform::Auto>(dir, &[name.as_bytes()]);
-    write_file(path, (sys::O::EXCL, 0o600), contents, errors)
+    let path = Path::resolve(&[bun_core::top_level_dir(), dir, name.as_bytes()]);
+    write_file(&path, (sys::O::EXCL, 0o600), contents, errors)
 }
 
 #[cfg(not(any(target_os = "macos", windows)))]
@@ -450,8 +456,7 @@ mod backend {
 
     fn find() -> Result<Vec<u8>, Failure> {
         let path = bun_core::env_var::PATH.get().unwrap_or(b"/usr/bin:/bin");
-        let mut buf = bun_paths::path_buffer_pool::get();
-        let found = bun_which::which(&mut buf, path, b"", b"crontab");
+        let found = bun_which::which(path, b"", b"crontab");
         Ok(found.ok_or("crontab not found in PATH")?.to_vec())
     }
 
@@ -506,14 +511,13 @@ mod backend {
 
     pub(super) fn register(job: &Registration<'_>) -> Result<Command, Failure> {
         let home = HOME.get().ok_or("HOME environment variable not set")?;
-        let dir = format!("{}/Library/LaunchAgents", BStr::new(home));
-        (Fd::cwd().make_path(dir.as_bytes()))
+        (Fd::cwd().make_path(&[home, b"/Library/LaunchAgents"].concat()))
             .map_err(|_| "Failed to create ~/Library/LaunchAgents directory")?;
         let mut logs = bun_paths::path_buffer_pool::get();
         let logs = sys::darwin_user_temp_dir(&mut logs)
             .ok_or("Failed to find a private temporary directory for the logs")?;
         let plist = write_file(
-            plist_path(home, &job.title).as_bytes(),
+            &plist_path(home, &job.title),
             (sys::O::TRUNC, 0o644),
             bun_cron::launchd::plist(job, logs).as_bytes(),
             ["Failed to create plist file", "Failed to write plist"],
@@ -525,9 +529,10 @@ mod backend {
         Ok(bootout(title, Step::Bootout(title.clone())))
     }
 
-    fn plist_path(home: &[u8], title: &Title) -> String {
-        let home = BStr::new(home);
-        format!("{home}/Library/LaunchAgents/bun.cron.{title}.plist")
+    fn plist_path(home: &[u8], title: &Title) -> Path {
+        let mut path = Path::from(home);
+        write!(path, "/Library/LaunchAgents/bun.cron.{title}.plist");
+        path
     }
 
     fn bootout(title: &Title, step: Step) -> Command {
@@ -559,7 +564,7 @@ mod backend {
                 Step::Bootstrap => Ok(None),
                 Step::Bootout(title) => {
                     let home = HOME.get().ok_or("HOME not set")?;
-                    let _ = sys::unlink(&ZBox::from_bytes(plist_path(home, &title)));
+                    let _ = sys::unlink(&plist_path(home, &title));
                     Ok(None)
                 }
             }

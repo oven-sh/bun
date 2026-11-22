@@ -636,6 +636,36 @@ impl<T: AnyRefCounted> core::ops::Deref for RefPtr<T> {
     }
 }
 
+/// Points at something that it can outlive.
+pub trait Detach: AnyRefCounted {
+    fn detach(&self);
+}
+
+/// The ref held by what `T` points at. Dropping it detaches `T`.
+pub struct Attached<T: Detach>(RefPtr<T>);
+
+impl<T: Detach> From<RefPtr<T>> for Attached<T> {
+    #[inline]
+    fn from(value: RefPtr<T>) -> Self {
+        Self(value)
+    }
+}
+
+impl<T: Detach> Drop for Attached<T> {
+    #[inline]
+    fn drop(&mut self) {
+        T::detach(&self.0);
+    }
+}
+
+impl<T: Detach> core::ops::Deref for Attached<T> {
+    type Target = RefPtr<T>;
+    #[inline]
+    fn deref(&self) -> &RefPtr<T> {
+        &self.0
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // DebugData
 // ──────────────────────────────────────────────────────────────────────────

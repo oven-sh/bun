@@ -6,7 +6,6 @@ use core::mem::size_of;
 use bun_core::strings;
 use bun_http::Method;
 use bun_io::FileType;
-use bun_paths::resolve_path;
 use bun_ptr::{RefPtr, ThisPtr};
 use bun_resolver::fs::StatHash;
 use bun_sys::{self, Fd, File};
@@ -271,12 +270,7 @@ impl DirectoryRoute {
             if !had_trailing_slash {
                 return Some(Subpath::RedirectSlash);
             }
-            let mut buf = bun_paths::path_buffer_pool::get();
-            let joined = resolve_path::join_string_buf::<resolve_path::platform::Posix>(
-                &mut buf.0[..],
-                &[rel, b"index.html"],
-            );
-            let (f, s) = open_and_stat(joined)?;
+            let (f, s) = open_and_stat(&bun_paths::Path::from_parts(&[rel, b"index.html"]))?;
             return bun_sys::S::ISREG(s.st_mode as bun_sys::Mode)
                 .then_some(Subpath::File(f, s, true));
         }
@@ -287,8 +281,7 @@ impl DirectoryRoute {
 
     /// Symlinks resolve as with `openat2(RESOLVE_IN_ROOT)`, whether or not the kernel has it. Windows follows them anywhere.
     fn open_beneath(&self, rel: &[u8]) -> Option<File> {
-        let mut buf = bun_paths::path_buffer_pool::get();
-        let zrel = resolve_path::z(rel, &mut *buf);
+        let zrel: &bun_core::ZStr = &bun_paths::Path::from(rel);
         // NONBLOCK so opening a FIFO without a writer cannot block the event
         // loop on POSIX. Not on Windows: there `openat` maps it to omitting
         // FILE_SYNCHRONOUS_IO_NONALERT, which breaks the synchronous reads

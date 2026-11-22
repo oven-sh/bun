@@ -2,6 +2,8 @@ use bun_collections::ArrayHashMap;
 use bun_core::strings;
 use bun_js_parser::lexer as js_lexer;
 use bun_parsers::json_parser;
+use bun_paths::portable::{self, from_portable_rooted};
+use bun_sys::converted_spelling;
 use enumset::{EnumSet, EnumSetType};
 
 // D042: `options::jsx::{Pragma, Runtime, ImportSource, RUNTIME_MAP, ...}` is
@@ -413,7 +415,7 @@ impl TSConfigJSON {
         if let Some(extends_value) = extends_value {
             if !source.path.is_node_module() {
                 if let Some(str) = extends_value.as_str() {
-                    result.extends = Box::from(str);
+                    result.extends = converted_spelling(str, from_portable_rooted).into();
                 }
             }
         }
@@ -476,6 +478,7 @@ impl TSConfigJSON {
             // Parse "baseUrl"
             if let Some(base_url_prop) = base_url_v {
                 if let Some(base_url) = base_url_prop.as_str() {
+                    let base_url = converted_spelling(base_url, from_portable_rooted);
                     result.base_url =
                         match Self::str_replacing_templates(Box::from(base_url), source) {
                             Ok(v) => v,
@@ -549,7 +552,8 @@ impl TSConfigJSON {
             // Parse "jsxImportSource"
             if let Some(jsx_prop) = jsx_import_source_v {
                 if let Some(str) = jsx_prop.as_str() {
-                    result.jsx.package_name = str.to_vec().into();
+                    result.jsx.package_name =
+                        portable::from_portable_specifier(str).into_owned().into();
                     result.jsx.set_import_source();
                     result.jsx_flags.insert(JsxField::ImportSource);
                 }
@@ -667,6 +671,8 @@ impl TSConfigJSON {
                                         });
                                         if let Some(str_) = item.as_str() {
                                             let item_loc = this_item_loc;
+                                            let str_ =
+                                                converted_spelling(str_, from_portable_rooted);
                                             let str = match Self::str_replacing_templates(
                                                 Box::from(str_),
                                                 source,
@@ -817,12 +823,12 @@ impl TSConfigJSON {
         }
 
         // Relative "./" or "../" or ".\\" or "..\\"
-        if c0 == b'.' && (bun_paths::is_sep_any(c1) || (c1 == b'.' && bun_paths::is_sep_any(c2))) {
+        if c0 == b'.' && (portable::is_sep(c1) || (c1 == b'.' && portable::is_sep(c2))) {
             return true;
         }
 
         // Absolute DOS "c:/" or "c:\\"
-        if c1 == b':' && bun_paths::is_sep_any(c2) {
+        if c1 == b':' && portable::is_sep(c2) {
             match c0 {
                 b'a'..=b'z' | b'A'..=b'Z' => {
                     return true;
@@ -832,7 +838,7 @@ impl TSConfigJSON {
         }
 
         // Absolute unix "/"
-        if bun_paths::is_sep_any(c0) {
+        if portable::is_sep(c0) {
             return true;
         }
 

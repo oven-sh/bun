@@ -6,7 +6,7 @@ const js = { capability: "js", throws: true } as const;
 export const PostgresSQLQuery = b.class({
   rustPath: "crate::postgres::PostgresSQLQuery",
   refCounted: true,
-  finalize: true,
+  thisValue: "this_value",
   estimatedSize: true,
   internalFields: ["pendingValue", "target", "binding", "copy"],
   proto: {

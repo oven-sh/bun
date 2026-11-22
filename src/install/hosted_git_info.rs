@@ -1129,7 +1129,7 @@ pub(crate) mod formatters {
             // Owns the fragment that `committish` borrows.
             let fragment_utf8;
             let committish: Option<&[u8]> = if type_part.is_none() {
-                fragment_utf8 = url.fragment_identifier().into_utf8();
+                fragment_utf8 = url.fragment_identifier().to_utf8();
                 let fragment = fragment_utf8.slice();
                 if !fragment.is_empty() {
                     Some(fragment)

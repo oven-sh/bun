@@ -8,8 +8,7 @@ use bun_collections::ArrayHashMap;
 use bun_core::fmt::PathSep;
 use bun_core::{Output, ZBox, fmt as bun_fmt, handle_oom};
 use bun_core::{ZStr, strings};
-use bun_paths::resolve_path::{join_abs_string_z, platform};
-use bun_paths::{AutoAbsPath, EnvPath};
+use bun_paths::{EnvPath, Path};
 use bun_semver::string::Builder as SemverStringBuilder;
 use bun_sys as Syscall;
 
@@ -285,7 +284,7 @@ impl PackageManager {
         // need to clone because this is a copy before Lockfile.cleanWithLogger
         let name = root_package.name.slice(buf);
 
-        let mut top_level_dir = AutoAbsPath::init_top_level_dir();
+        let top_level_dir = Path::from_top_level_dir();
 
         let add_node_gyp_rebuild_script = root_package
             .scripts
@@ -294,7 +293,7 @@ impl PackageManager {
         if root_package.scripts.has_any() || add_node_gyp_rebuild_script {
             self.root_lifecycle_scripts = root_package.scripts.create_list(
                 buf,
-                &mut top_level_dir,
+                &top_level_dir,
                 name,
                 ResolutionTag::Root,
                 add_node_gyp_rebuild_script,
@@ -337,7 +336,6 @@ impl PackageManager {
             original_path.len() + 1 + b"node_modules/.bin".len() + cwd.len() + 1,
         )?;
 
-        let mut parent: Option<&[u8]> = Some(cwd);
         // An untrusted package can link a `node` or `sh` into a shared `.bin`, so that directory is
         // searched last.
         let mut env_path = EnvPath::init_capacity(original_path.len())?;
@@ -353,19 +351,14 @@ impl PackageManager {
         let mut inherited_path = list.is_dependency.then_some(env_path.slice());
         let store_entry = bun_paths::path_literal!("/node_modules/.bun/").as_bytes();
 
-        while let Some(dir) = parent {
-            if dir.len() != cwd.len() && !strings::contains(dir, store_entry) {
+        for (depth, dir) in bun_paths::ancestors(cwd).enumerate() {
+            if depth > 0 && !strings::contains(dir, store_entry) {
                 if let Some(inherited) = inherited_path.take() {
                     path.append(inherited)?;
                 }
             }
 
-            let mut builder = path.path_component_builder();
-            builder.append(dir);
-            builder.append(b"node_modules/.bin");
-            builder.apply()?;
-
-            parent = bun_paths::dirname(dir);
+            path.append(&Path::from_parts(&[dir, b"node_modules/.bin"]))?;
         }
 
         match inherited_path {
@@ -445,7 +438,7 @@ fn put_npm_package_env(
         .map
         .retain(|key, _| !key.starts_with(b"npm_package_") && !key.starts_with(b"npm_lifecycle_"));
 
-    let package_json_path = join_abs_string_z::<platform::Auto>(package_dir, &[b"package.json"]);
+    let package_json_path = Path::join(&[package_dir, b"package.json"]);
     script_env.put(b"npm_package_json", package_json_path.as_bytes())?;
     script_env.put(b"npm_package_name", package_name)?;
 
@@ -503,7 +496,7 @@ pub(crate) fn resolve_bin_dirs_in_path(
         if i > 0 {
             path.push(bun_paths::DELIMITER);
         }
-        let trimmed = strings::without_trailing_slash(entry);
+        let trimmed = bun_paths::without_trailing_sep(entry);
         if let Some(dir) = (spellings.iter())
             .find_map(|bin| trimmed.strip_suffix(*bin))
             .filter(|dir| bun_paths::is_absolute(dir))
@@ -526,7 +519,7 @@ fn append_path_without_ancestor_bins(
 ) -> Result<(), bun_alloc::AllocError> {
     let bin = bun_paths::path_literal!("/node_modules/.bin").as_bytes();
     for entry in strings::split(inherited, &[bun_paths::DELIMITER]) {
-        let is_ancestor_bin = strings::without_trailing_slash(entry)
+        let is_ancestor_bin = bun_paths::without_trailing_sep(entry)
             .strip_suffix(bin)
             .is_some_and(|dir| {
                 cwd.strip_prefix(dir)

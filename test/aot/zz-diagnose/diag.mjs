@@ -69,7 +69,7 @@ export function report(watched) {
   let frames = [];
   for (let start = Math.max(low, sp - 0x100); start < sp + 0x800; start += 8) {
     const chain = [];
-    for (let at = start; at >= low && at < high - 8 && at % 8 === 0 && chain.length < 200; ) {
+    for (let at = start; at >= low && at < high - 8 && at % 8 === 0 && chain.length < 200;) {
       chain.push({ fp: at, lr: Number(word(at + 8)) });
       const next = Number(word(at));
       if (next <= at) break;
@@ -81,20 +81,36 @@ export function report(watched) {
   const byAddress = new Map();
   for (let i = 0; i < snapshot.nodes.length; i += 7) {
     const [id, bytes, name, , label, address] = snapshot.nodes.slice(i, i + 7);
-    const node = { id, bytes, name: snapshot.nodeClassNames[name], label: snapshot.labels[label], address: Number(address), from: [], roots: [] };
+    const node = {
+      id,
+      bytes,
+      name: snapshot.nodeClassNames[name],
+      label: snapshot.labels[label],
+      address: parseInt(address, 16),
+      from: [],
+      roots: [],
+    };
     nodes.set(id, node);
     byAddress.set(node.address, node);
   }
   for (let i = 0; i < snapshot.edges.length; i += 4) {
     const type = snapshot.edgeTypes[snapshot.edges[i + 2]];
     const data = snapshot.edges[i + 3];
-    nodes.get(snapshot.edges[i + 1])?.from.push([snapshot.edges[i], type, type === "Property" || type === "Variable" ? snapshot.edgeNames[data] : data]);
+    nodes
+      .get(snapshot.edges[i + 1])
+      ?.from.push([
+        snapshot.edges[i],
+        type,
+        type === "Property" || type === "Variable" ? snapshot.edgeNames[data] : data,
+      ]);
   }
   for (let i = 0; i < snapshot.roots.length; i += 3)
-    nodes.get(snapshot.roots[i])?.roots.push(snapshot.labels[snapshot.roots[i + 1]] + "/" + snapshot.labels[snapshot.roots[i + 2]]);
+    nodes
+      .get(snapshot.roots[i])
+      ?.roots.push(snapshot.labels[snapshot.roots[i + 1]] + "/" + snapshot.labels[snapshot.roots[i + 2]]);
   const found = [];
   for (const object of held) {
-    const address = Number(/0x[0-9a-f]+/.exec(describe(object))[0]);
+    const address = parseInt(/Object: (\w+)/.exec(describe(object))[1], 16);
     const cells = [];
     const seen = new Set();
     const walk = (node, depth) => {
@@ -113,13 +129,23 @@ export function report(watched) {
           if (copy[i] >= first && copy[i] <= last + 8n) words.push({ at: low + i * 8, into: Number(copy[i] - first) });
         const registers = [];
         for (let i = 0; i < 100; i++) if (register(i) >= first && register(i) <= last + 8n) registers.push(i);
-        return { ...cell, address: hex(cell.address), from: cell.from.slice(0, 8).map(([id, ...rest]) => [nodes.get(id)?.name, nodes.get(id)?.label, id, ...rest].join(" ")), words, registers };
+        return {
+          ...cell,
+          address: hex(cell.address),
+          from: cell.from
+            .slice(0, 8)
+            .map(([id, ...rest]) => [nodes.get(id)?.name, nodes.get(id)?.label, id, ...rest].join(" ")),
+          words,
+          registers,
+        };
       }),
     });
   }
   const around = {};
   for (const { words } of found.map(({ cells }) => cells[0]))
     for (const { at } of words.slice(0, 8))
-      around[at] = Array.from({ length: 49 }, (_, i) => at + (i - 24) * 8).filter(a => a >= low && a < high).map(a => [a, word(a).toString(16)]);
+      around[at] = Array.from({ length: 49 }, (_, i) => at + (i - 24) * 8)
+        .filter(a => a >= low && a < high)
+        .map(a => [a, word(a).toString(16)]);
   console.error("DIAG " + JSON.stringify({ wasTakenBefore, base, low, high, sp, fp, frames, found, around }));
 }

@@ -883,7 +883,7 @@ function getTestBunStep(platform: Platform, options: PipelineOptions, testOption
   }
 
   if (testFiles?.length) {
-    args.push(...testFiles.map(testFile => `--include=${testFile}`));
+    args.push(...testFiles.map(testFile => `--include=${testFile}`), "--vendor=false");
   } else if (platform.tests) {
     args.push(...platform.tests.map(test => `--include=${test}`), "--vendor=false");
   } else {

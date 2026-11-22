@@ -2,7 +2,7 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { existsSync, readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { test } from "./supported";
 
 const program = readFileSync(join(import.meta.dir, "parallel/gc/function-objects-named-program-collected.mjs"), "utf8");
@@ -30,7 +30,27 @@ test.skipIf(!(isWindows && process.arch === "arm64") && !process.env.ZZ_DIAGNOSE
       ...Object.fromEntries(Object.entries(variants).map(([name, text]) => [name + ".mjs", text])),
     });
     const { BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: _, BUN_GARBAGE_COLLECTOR_LEVEL: __, ...env } = bunEnv;
-    const map = join(dirname(bunExe()), "bun-profile.map");
+    const out: string[] = [];
+    const folder = dirname(bunExe());
+    const inArchive = basename(folder) + "/bun-profile.map";
+    if (isWindows) Bun.spawnSync(["tar", "-xf", folder + ".zip", inArchive], { cwd: String(dir), stderr: "inherit" });
+    const map = join(String(dir), inArchive);
+    const image = readFileSync(bunExe());
+    const dumped = new Set<string>();
+    const codeAround = (rva: number) => {
+      const name = nameOf(rva);
+      if (!name) return;
+      const start = rva - parseInt(name.slice(name.lastIndexOf("+0x") + 3), 16);
+      const table = image.readUInt32LE(0x3c) + 24 + image.readUInt16LE(image.readUInt32LE(0x3c) + 20);
+      const delta = image.readUInt32LE(table + 20) - image.readUInt32LE(table + 12);
+      const key = name.slice(0, name.lastIndexOf("+0x"));
+      if (dumped.has(key)) return;
+      dumped.add(key);
+      const end = symbols.find(([at]) => at > start)![0];
+      out.push(
+        `CODE ${key} ${start.toString(16)} ${image.subarray(start + delta, Math.min(end, start + 24000) + delta).toString("hex")}`,
+      );
+    };
     const symbols: [number, string][] = [];
     if (existsSync(map))
       for (const [, name, address] of readFileSync(map, "latin1").matchAll(/^ \w{4}:\w{8}\s+(\S+)\s+(\w{16})\s/gm))
@@ -47,7 +67,6 @@ test.skipIf(!(isWindows && process.arch === "arm64") && !process.env.ZZ_DIAGNOSE
       }
       return `${symbols[from][1].slice(0, 110)}+0x${(rva - symbols[from][0]).toString(16)}`;
     };
-    const out: string[] = [];
     const rounds = Number(process.env.ZZ_DIAGNOSE ?? 50);
     for (const name of process.env.ZZ_ONLY?.split(",") ?? Object.keys(variants)) {
       const exe = join(String(dir), name + (isWindows ? ".exe" : ""));
@@ -87,6 +106,15 @@ test.skipIf(!(isWindows && process.arch === "arm64") && !process.env.ZZ_DIAGNOSE
             cells.slice(0, 1).flatMap((cell: any) => cell.words.map((word: any) => word.at)),
           );
           let below = 0;
+          frames.forEach(({ fp, lr }: any, index: number) => {
+            if (
+              marks.some(
+                (at: number) =>
+                  at >= sp - 0x800 && at >= (frames[index - 1]?.fp ?? 0) && at < (frames[index + 2]?.fp ?? high),
+              )
+            )
+              codeAround(lr - base);
+          });
           for (const { fp, lr } of frames) {
             for (const at of marks)
               if (at >= below && at < fp)
@@ -113,7 +141,12 @@ test.skipIf(!(isWindows && process.arch === "arm64") && !process.env.ZZ_DIAGNOSE
         out.push(`=== ${name} ${JSON.stringify(more)} ${JSON.stringify(counts)}`);
       }
     }
-    console.log(out.join("\n"));
+    console.log(out.filter(line => line.startsWith("===")).join("\n"));
+    console.log(`symbols ${symbols.length}`);
+    for (const part of Buffer.from(Bun.gzipSync(out.join("\n")))
+      .toString("base64")
+      .match(/.{1,6000}/g)!)
+      console.log("GZ " + part);
     expect("diagnosis").toBe("printed above");
   },
   170_000,

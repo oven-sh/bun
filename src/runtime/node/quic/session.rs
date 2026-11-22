@@ -731,12 +731,7 @@ impl QuicSession {
         self.mark_pending();
     }
 
-    fn stop_unclaimed_streams(&self) {
-        let code = if self.is_http3() {
-            http3_code::NO_ERROR
-        } else {
-            0
-        };
+    fn drop_unclaimed_streams(&self) {
         while let Some(&(at, key)) = self.unclaimed_streams.get().front() {
             if at > now() {
                 self.endpoint_ref().inspect(|ep| ep.plan_pass(at));
@@ -744,7 +739,7 @@ impl QuicSession {
             }
             self.unclaimed_streams.with_mut(VecDeque::pop_front);
             if let Some(stream) = self.live_stream(key) {
-                stream.stop_if_unclaimed(code);
+                stream.drop_if_unclaimed();
                 self.schedule_process();
             }
         }
@@ -792,7 +787,7 @@ impl QuicSession {
                 }
             }
         }
-        self.stop_unclaimed_streams();
+        self.drop_unclaimed_streams();
         if self.finish_deferred_close() {
             self.schedule_process();
         }
@@ -1467,7 +1462,7 @@ impl QuicSession {
         self.update(|conn| conn.set_close_error(layer, code, &reason));
         self.expect_end();
         self.update(Connection::note_progress);
-        if self.is_http3() && self.has_opened_stream() {
+        if self.is_http3() && (self.is_server || self.has_opened_stream()) {
             // RFC 9114 §5.2.
             self.update(Connection::go_away);
             self.close_after_streams.set(true);
@@ -1511,7 +1506,11 @@ impl QuicSession {
             && !(self.close_after_streams.get() && self.has_opened_stream());
         if is_due {
             self.is_close_deferred.set(false);
-            self.update(|conn| conn.close(now()));
+            let is_asked_for = self.with_state(|s| s.graceful_close != 0);
+            self.update(|conn| match is_asked_for {
+                true => conn.close(now()),
+                false => conn.close_after_peer(now()),
+            });
         }
         is_due
     }
@@ -1561,6 +1560,15 @@ impl QuicSession {
                     }
                     Err(err) => parse_error = Some(global.take_exception(err)),
                 }
+            } else if options.is_undefined() && self.is_server && !self.handshake_reported.get() {
+                self.update(|conn| {
+                    let code = match conn.is_ready() {
+                        true => transport_code::INTERNAL_ERROR,
+                        false => transport_code::CONNECTION_REFUSED,
+                    };
+                    conn.abort(now(), Layer::Transport, code, &[]);
+                });
+                self.endpoint_ref().map(QuicEndpoint::drive_once);
             } else {
                 // Node's server acks the packet that triggered the destroying
                 // callback.

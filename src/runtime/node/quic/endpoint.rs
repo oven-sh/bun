@@ -856,7 +856,7 @@ impl QuicEndpoint {
             return;
         }
         let listening = self.with_state(|s| s.listening) != 0;
-        let busy = listening || !self.sessions.get().is_empty();
+        let busy = listening || self.closing.get() || !self.sessions.get().is_empty();
         let ctx = bun_io::js_vm_ctx();
         if busy {
             self.poll_ref.ref_(ctx);
@@ -1147,6 +1147,7 @@ impl QuicEndpoint {
             .with_mut(|v| v.retain(|&s| s != session));
         self.pending_verneg
             .with_mut(|v| v.retain(|&(s, _, _)| s != session));
+        self.plan_followup();
     }
 
     fn release_native(&self) -> bool {
@@ -1465,6 +1466,7 @@ impl QuicEndpoint {
             (self.sessions.get().iter())
                 .filter_map(|&it| self.live_session(it))
                 .for_each(QuicSession::expect_end);
+            self.update_keepalive();
             self.schedule_process();
         }
     }

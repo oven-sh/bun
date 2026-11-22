@@ -308,6 +308,62 @@ describe("endpoint.close() while a session is live", () => {
   });
 });
 
+test.concurrent("destroy() keeps neither the client nor the process waiting", async () => {
+  using silent = await Bun.udpSocket({ hostname: "127.0.0.1" });
+  const listening = Promise.withResolvers<number[]>();
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const { connect, listen } = require("node:quic");
+       const { readFileSync } = require("node:fs");
+       const keys = [require("node:crypto").createPrivateKey(readFileSync("agent1-key.pem"))];
+       const sni = { "*": { keys, certs: [readFileSync("agent1-cert.pem")] } };
+       (await connect("127.0.0.1:${silent.port}", { version: 0x1a1a1a1a })).destroy();
+       let sessions = 0;
+       const first = await listen(async session => {
+         session.destroy();
+         if (++sessions < 2) return;
+         await first.close();
+         console.log("closed");
+       }, { sni });
+       const second = await listen(async () => {
+         await second.destroy();
+         console.log("destroyed");
+       }, { sni });
+       process.send([first.address.port, second.address.port]);
+       process.disconnect();`,
+    ],
+    env: bunEnv,
+    cwd: keysDir,
+    stdout: "pipe",
+    stderr: "pipe",
+    ipc: ports => listening.resolve(ports),
+  });
+  const output = Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  output.then(([, stderr]) => listening.reject(new Error(stderr)));
+  const [first, second] = await listening.promise;
+  await using endpoint = new QuicEndpoint();
+  const options = { endpoint, servername: "localhost", verifyPeer: "manual" } as SessionOptions;
+  const codes: bigint[] = [];
+  for (let i = 0; i < 2; i++) {
+    const client = await connect(`127.0.0.1:${first}`, options);
+    const [, closed]: any[] = await Promise.allSettled([client.opened, client.closed]);
+    codes.push(closed.reason?.errorCode);
+  }
+  const last = await connect(`127.0.0.1:${second}`, options);
+  last.closed.catch(() => {});
+  const [stdout, stderr, exitCode] = await output;
+  last.destroy();
+  // stderr contains the ExperimentalWarning.
+  expect({ codes, stdout: stdout.trim().split("\n").sort(), stderr, exitCode }).toEqual({
+    codes: [2n, 2n],
+    stdout: ["closed", "destroyed"],
+    stderr: expect.any(String),
+    exitCode: 0,
+  });
+});
+
 describe("node:quic in a Worker", () => {
   test("worker.terminate() doesn't crash with live sessions and streams", async () => {
     await using proc = Bun.spawn({

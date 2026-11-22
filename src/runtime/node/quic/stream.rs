@@ -426,12 +426,13 @@ impl QuicStream {
         self.holds_up_peer() && !self.awaits_reader.replace(true)
     }
 
-    pub(super) fn stop_if_unclaimed(&self, code: u64) {
+    /// Some clients do not look at the response before they have sent the whole request.
+    pub(super) fn drop_if_unclaimed(&self) {
         self.awaits_reader.set(false);
         if self.holds_up_peer() {
             self.drop_inbound();
             self.inbound.with_mut(|i| i.ended = true);
-            self.update(|conn, id| conn.stop(id, code));
+            self.release_unclaimed();
         }
     }
 

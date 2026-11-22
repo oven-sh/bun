@@ -450,6 +450,52 @@ describe("verifyClient", () => {
       client: "ERR_QUIC_TRANSPORT_ERROR",
     });
   });
+
+  test.each([
+    [1, 2],
+    [12, 1],
+    [14, 0],
+    [20, 0],
+  ])("a client with %d more certificates gets %d tickets, which it can use", async (more, expected) => {
+    const ca = readFileSync(join(keysDir, "ca1-cert.pem"));
+    await using server = await listen(
+      (session: any) => {
+        session.closed.catch(() => {});
+        session.onstream = (stream: any) => {
+          stream.closed.catch(() => {});
+          stream.setBody("answer");
+        };
+      },
+      { sni: { "*": { keys: [key], certs: [cert] } }, alpn: ["quic-test"], verifyClient: true, ca: [ca] },
+    );
+    async function ask(keys: (typeof key)[], sessionTicket?: Buffer) {
+      const tickets: Buffer[] = [];
+      const complete = Promise.withResolvers<void>();
+      if (expected === 0) complete.resolve();
+      await using client = await connect(server.address!, {
+        alpn: "quic-test",
+        servername: "localhost",
+        verifyPeer: "manual",
+        keys,
+        certs: [Buffer.concat([cert, ...Array(more).fill(ca)])],
+        sessionTicket,
+        onsessionticket(ticket: Buffer) {
+          if (tickets.push(ticket) === expected) complete.resolve();
+        },
+      } as SessionOptions);
+      await client.opened;
+      const stream = await client.createBidirectionalStream({ body: new TextEncoder().encode("question") });
+      const chunks: Uint8Array[] = [];
+      for await (const batch of stream) chunks.push(...batch);
+      expect(Buffer.concat(chunks).toString()).toBe("answer");
+      if (!sessionTicket) await complete.promise;
+      return tickets;
+    }
+    const tickets = await ask([key]);
+    expect(tickets.length).toBe(expected);
+    // Only a session that is resumed gets by without the key.
+    for (const ticket of tickets) await ask([], ticket);
+  });
 });
 
 describe("headers queued before the handshake", () => {
@@ -745,14 +791,65 @@ test.each(["is never read", "is read in part"])("a request that %s can be sent t
   );
   const client = await connect(server.address!, { ...options, verifyPeer: "manual" } as SessionOptions);
   const exchange = async () => {
-    const stream = await client.createBidirectionalStream({ body: Buffer.alloc(200 * 1024) });
+    let pulled = 0;
+    const stream = await client.createBidirectionalStream();
+    stream.setBody(
+      (async function* () {
+        for (; pulled < 32; pulled++) yield Buffer.alloc(32 * 1024);
+      })(),
+    );
     const chunks = (await Array.fromAsync(stream)).flat();
     await stream.closed;
-    return Buffer.concat(chunks).toString();
+    return [Buffer.concat(chunks).toString(), pulled];
   };
-  expect(await Promise.all([exchange(), exchange(), exchange()])).toEqual(["done", "done", "done"]);
+  expect(await Promise.all([exchange(), exchange(), exchange()])).toEqual(Array(3).fill(["done", 32]));
   await client.close();
 });
+
+test.each(["has been written", "is being written"])(
+  "session.close() while a response %s: the client gets GOAWAY, the response and the reason",
+  async how => {
+    const events: string[] = [];
+    const goaway = Promise.withResolvers<void>();
+    let accepted: QuicSession;
+    await using server = await listen(
+      session => {
+        accepted = session;
+        session.onstream = () => {};
+      },
+      {
+        sni: { "*": { keys: [key], certs: [cert] } },
+        onheaders() {
+          this.sendHeaders({ ":status": "200" });
+          this.setBody(
+            (async function* () {
+              if (how === "is being written") await goaway.promise;
+              yield Buffer.from("done");
+            })(),
+          );
+          const close = () => accepted.close({ code: 42, type: "application", reason: "why" });
+          how === "is being written" ? close() : this.closed.then(close);
+        },
+      },
+    );
+    const client = await connect(server.address!, {
+      servername: "localhost",
+      verifyPeer: "manual",
+      ongoaway() {
+        events.push("goaway");
+        goaway.resolve();
+      },
+    } as SessionOptions);
+    const stream = await client.createBidirectionalStream({ onheaders() {} });
+    stream.sendHeaders(
+      { ":method": "GET", ":path": "/", ":scheme": "https", ":authority": "localhost" },
+      { terminal: true },
+    );
+    expect(Buffer.concat((await Array.fromAsync(stream)).flat()).toString()).toBe("done");
+    expect(await Promise.allSettled([client.closed])).toMatchObject([{ reason: { errorCode: 42n, reason: "why" } }]);
+    expect(events).toEqual(["goaway"]);
+  },
+);
 
 test("streams can be read one after the other, in any order", async () => {
   const sizes = [2, 3, 4].map(megabytes => megabytes << 20);

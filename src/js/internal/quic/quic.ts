@@ -87,6 +87,9 @@ function assert(value, message?: string) {
   }
 }
 
+// Close options with which not even a client in mid-handshake is told.
+const kSilently = {};
+
 // Stand-in for Node's internalBinding('util').markPromiseAsHandled.
 function noop() {}
 function markPromiseAsHandled(promise) {
@@ -3511,7 +3514,7 @@ class QuicSession {
     const inner = this.#inner;
     if (inner.destroying || this.destroyed) return;
 
-    if (options !== undefined) options = validateCloseOptions(options);
+    if (options !== undefined && options !== kSilently) options = validateCloseOptions(options);
     inner.destroying = true;
 
     debug("destroying the session");
@@ -3594,7 +3597,7 @@ class QuicSession {
     inner.peerCertificate = undefined;
     inner.ephemeralKeyInfo = undefined;
 
-    this.#handle!.destroy(options);
+    this.#handle!.destroy(options === kSilently ? null : options);
     this.#handle = undefined;
 
     if (onSessionClosedChannel.hasSubscribers) {
@@ -4732,7 +4735,7 @@ class QuicEndpoint {
     const alreadyClosing = this.#isClosedOrClosing;
     for (const session of inner.sessions) {
       markPromiseAsHandled(session.closed);
-      session.destroy(error, !alreadyClosing && session[kHandshakeCompleted] ? closeOptions : undefined);
+      session.destroy(error, !alreadyClosing && session[kHandshakeCompleted] ? closeOptions : kSilently);
     }
     if (!this.#isClosedOrClosing) {
       this.close();

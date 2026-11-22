@@ -6,6 +6,7 @@ use bun_jsc::{
     self as jsc, ErrorCode, JSGlobalObject, JSPromise, JSPropertyIterator, JSValue, JsResult,
 };
 
+use bun_ptr::RefPtr;
 use bun_valkey::command::Reply;
 use bun_valkey::listeners::Name;
 
@@ -163,7 +164,7 @@ impl<Args> Command<Args> {
 impl JSValkeyClient {
     #[inline(never)]
     fn send_fixed<const N: usize>(
-        &self,
+        self: &RefPtr<Self>,
         this: JsWrapper<'_, Self>,
         global: &JSGlobalObject,
         command: &Command<[&'static str; N]>,
@@ -180,7 +181,7 @@ impl JSValkeyClient {
 
     #[inline(never)]
     fn send_varargs(
-        &self,
+        self: &RefPtr<Self>,
         this: JsWrapper<'_, Self>,
         global: &JSGlobalObject,
         command: &Command<Varargs>,
@@ -207,7 +208,7 @@ impl JSValkeyClient {
 
     #[inline(never)]
     fn send_key_then(
-        &self,
+        self: &RefPtr<Self>,
         this: JsWrapper<'_, Self>,
         global: &JSGlobalObject,
         command: &Command<AfterKey>,
@@ -237,7 +238,7 @@ impl JSValkeyClient {
 
     #[inline(never)]
     fn send_hincrby(
-        &self,
+        self: &RefPtr<Self>,
         this: JsWrapper<'_, Self>,
         global: &JSGlobalObject,
         command: &Command<()>,
@@ -268,7 +269,7 @@ macro_rules! method {
         $name:literal, $command:literal, $state:ident, $reply:ident, $args:expr
     ) => {
         pub(crate) fn $fn_name(
-            &self,
+            self: &RefPtr<Self>,
             this: JsWrapper<'_, Self>,
             cx: &mut JsScope<'_>,
             $($param: $ty,)*
@@ -358,7 +359,7 @@ macro_rules! cmd_hincrby {
 
 impl JSValkeyClient {
     pub(crate) fn js_send(
-        &self,
+        self: &RefPtr<Self>,
         this: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
         command: JsLocal<'_>,
@@ -392,7 +393,7 @@ impl JSValkeyClient {
     cmd!(get_buffer, "getBuffer", "GET" -> Buffer, NotSubscriber, key: "key");
 
     pub(crate) fn set(
-        &self,
+        self: &RefPtr<Self>,
         this: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
         key: JsLocal<'_>,
@@ -440,7 +441,7 @@ impl JSValkeyClient {
     cmd!(exists, "exists", "EXISTS" -> Bool, NotSubscriber, key: "key");
 
     pub(crate) fn expire(
-        &self,
+        self: &RefPtr<Self>,
         this: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
         key: JsLocal<'_>,
@@ -502,7 +503,7 @@ impl JSValkeyClient {
 
     // Implement hmget (get multiple values from hash)
     pub(crate) fn hmget(
-        &self,
+        self: &RefPtr<Self>,
         this: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
         key: JsLocal<'_>,
@@ -563,7 +564,7 @@ impl JSValkeyClient {
     cmd_hincrby!(hincrbyfloat, "hincrbyfloat", "HINCRBYFLOAT", NotSubscriber);
 
     fn hset_impl(
-        &self,
+        self: &RefPtr<Self>,
         this: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
         key: JsLocal<'_>,
@@ -655,7 +656,7 @@ impl JSValkeyClient {
     }
 
     pub(crate) fn hset(
-        &self,
+        self: &RefPtr<Self>,
         this: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
         key: JsLocal<'_>,
@@ -665,7 +666,7 @@ impl JSValkeyClient {
     }
 
     pub(crate) fn hmset(
-        &self,
+        self: &RefPtr<Self>,
         this: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
         key: JsLocal<'_>,
@@ -697,7 +698,7 @@ impl JSValkeyClient {
 
     // Implement ping (send a PING command with an optional message)
     pub(crate) fn ping(
-        &self,
+        self: &RefPtr<Self>,
         this: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
         message: JsLocal<'_>,
@@ -969,7 +970,7 @@ impl JSValkeyClient {
     cmd_strings_varargs!(xsetid, "xsetid", "XSETID", NotSubscriber);
 
     pub(crate) fn publish(
-        &self,
+        self: &RefPtr<Self>,
         this: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
         channel: JsLocal<'_>,
@@ -993,16 +994,13 @@ impl JSValkeyClient {
     }
 
     pub(crate) fn subscribe(
-        &self,
+        self: &RefPtr<Self>,
         this: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
         channel: JsLocal<'_>,
         listener: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
-        // For the dial and the writes ahead of `send()`.
-        let _guard = self.ref_guard();
-
         let (channel_or_many, handler_callback) = (channel.to_js(), listener.to_js());
 
         if !handler_callback.is_callable() {
@@ -1048,16 +1046,12 @@ impl JSValkeyClient {
     }
 
     pub(crate) fn unsubscribe(
-        &self,
+        self: &RefPtr<Self>,
         this: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
         args: &[JsLocal<'_>],
     ) -> JsResult<JSValue> {
         let global = cx.global();
-        // Hold a ref so `*self` stays live across the handler-map updates and
-        // the `send()` below.
-        let _guard = self.ref_guard();
-
         // Check if we're in subscription mode
         require_subscriber(self, "unsubscribe")?;
         let object = Object::from(this);
@@ -1149,16 +1143,15 @@ impl JSValkeyClient {
         let cx = cx.js_thread();
         let global = cx.global();
         // The duplicate is the calling script's, whoever made the original.
-        let new_client = js::wrap(self.clone_without_connecting(&cx), global);
-        let new_client_js = new_client.to_js();
+        let new_client = self.clone_without_connecting(&cx);
+        let wrapper = js::wrap(new_client.clone(), global);
         if let Some(callback) = js::check_server_identity_get_cached(this.to_js()) {
-            js::check_server_identity_set_cached(new_client_js, global, callback);
+            js::check_server_identity_set_cached(wrapper.to_js(), global, callback);
         }
         if self.get_connected() {
             new_client.connection_promise_returns_client.set(true);
-            return Ok(new_client.do_connect(global, (&new_client).into()));
+            return Ok(new_client.do_connect(global, (&wrapper).into()));
         }
-
-        Ok(JSPromise::resolved_promise_value(global, new_client_js))
+        Ok(JSPromise::resolved_promise_value(global, wrapper.to_js()))
     }
 }

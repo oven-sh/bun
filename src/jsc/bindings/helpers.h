@@ -277,6 +277,15 @@ static EncodedSlice toEncodedSlice(const WTF::StringView& str)
               str.length() };
 }
 
+// `str` is Latin-1 or UTF-16.
+static WTF::StringView toStringView(EncodedSlice str)
+{
+    RELEASE_ASSERT(!isTaggedUTF8Ptr(str.ptr));
+    if (isTaggedUTF16Ptr(str.ptr))
+        return std::span { reinterpret_cast<const char16_t*>(untag(str.ptr)), str.len };
+    return std::span { byteCast<Latin1Character>(untag(str.ptr)), str.len };
+}
+
 static void throwException(JSC::ThrowScope& scope, JSC::EncodedJSValue err, JSC::JSGlobalObject* global)
 {
     scope.throwException(global,

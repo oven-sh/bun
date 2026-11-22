@@ -2084,7 +2084,7 @@ describe("Valkey: Recovering After fail()", () => {
 
   describe("--redis-preconnect against a server that refuses HELLO", () => {
     test.concurrent.each([
-      { program: `console.log("done")`, stdout: "done\n", stderr: "", exitCode: 0 },
+      { program: `await Bun.stdin.text(); console.log("done")`, stdout: "done\n", stderr: "", exitCode: 0 },
       { program: `Bun.redis.ping().catch(() => console.log("caught"))`, stdout: "caught\n", stderr: "", exitCode: 0 },
       {
         program: `Bun.redis.onclose = () => Bun.redis.ping().catch(e => console.log(e.message))`,
@@ -2097,12 +2097,16 @@ describe("Valkey: Recovering After fail()", () => {
       const fake = helloServer({ HELLO: () => "-WRONGPASS invalid username-password pair\r\n" });
       const port = await fake.listen();
       try {
+        const refused = once(fake.server, "connection").then(([socket]) => closedOnServer(socket));
         await using proc = Bun.spawn({
           cmd: [bunExe(), "--redis-preconnect", "-e", program],
           env: { ...bunEnv, REDIS_URL: `redis://127.0.0.1:${port}` },
+          stdin: "pipe",
           stdout: "pipe",
           stderr: "pipe",
         });
+        await Promise.race([refused, proc.exited]);
+        proc.stdin.end();
         expect({ ...(await exitOutcome(proc)), dialed: fake.connections > 0 }).toEqual({ ...outcome, dialed: true });
       } finally {
         fake.server.close();

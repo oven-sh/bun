@@ -4,7 +4,10 @@
 mod deprecated;
 
 use super::config::oxlint_category;
+use super::resolved::needs_resolver;
+use super::write_json;
 use crate::languages::Language;
+use crate::options::Json;
 use crate::rule::{Meta, Plugin};
 use crate::runner::RuleEntry;
 use bun_core::strings;
@@ -268,6 +271,23 @@ pub fn oxlint_rule_key(id: &[u8]) -> Vec<u8> {
     }
 }
 
+/// The plugin and the rule that an `.oxlintrc.json` writes as `id`, like oxlint's `parse_rule_key`. oxlint merges a file
+/// with the files it extends by this name, so two aliases of one rule stay two entries there.
+pub fn oxlint_written_name(id: &[u8]) -> (Vec<u8>, &[u8]) {
+    let ((prefix, name), key) = (parse_rule_id(id), oxlint_rule_key(id));
+    let plugin = match (prefix, parse_rule_id(&key).0) {
+        (b"", b"") => Cow::Borrowed(&b"eslint"[..]),
+        (b"", key_prefix) => Cow::Borrowed(key_prefix),
+        (prefix, _) => canonical_oxlint_plugin(prefix),
+    };
+    let plugin = match &*plugin {
+        b"jsx-a11y" => &b"jsx_a11y"[..],
+        b"react-perf" => b"react_perf",
+        plugin => plugin,
+    };
+    (plugin.to_vec(), name)
+}
+
 /// The [`oxlint_rule_key`]s that oxlint's `-A`, `-W` and `-D` select for `name`. Without a plugin prefix, that's every
 /// rule with that name. With a prefix, it's only the rule oxlint has in that plugin. Aliases don't work here, so
 /// `typescript/no-unused-vars` and `eslint/no-explicit-any` select nothing.
@@ -367,6 +387,29 @@ impl Registry {
                 NativePlugins::None => false,
                 NativePlugins::Only(names) => names.iter().any(|it| **it == *prefix),
             }
+    }
+
+    /// JSON: `{ prefix: [package or null, ..names] }`, the rules for which an ESLint config never needs the package's.
+    pub fn rules_that_replace_packages(&self) -> Vec<u8> {
+        let text = |it: &str| Json::String(it.as_bytes().to_vec());
+        let mut all: Vec<(Vec<u8>, Json)> = Vec::new();
+        for &plugin in Plugin::ALL {
+            let prefix = plugin.prefix().as_bytes();
+            if !Plugin::is_native_under_eslint(prefix) || !self.replaces_plugin(prefix) {
+                continue;
+            }
+            let rules = self.rules.iter().filter(|it| it.meta.plugin == plugin);
+            let names = rules.map(|it| it.meta.name).filter(|name| {
+                (self.get_preferring(plugin, name.as_bytes(), false))
+                    .is_some_and(|it| !it.meta.hands_back && !needs_resolver(it.meta))
+            });
+            let package = plugin.package().map_or(Json::Null, text);
+            let entry = std::iter::once(package).chain(names.map(text)).collect();
+            all.push((prefix.to_vec(), Json::Array(entry)));
+        }
+        let mut json = Vec::new();
+        write_json(&mut json, &Json::Object(all));
+        json
     }
 
     pub fn all(&self) -> &[&'static RuleEntry] {

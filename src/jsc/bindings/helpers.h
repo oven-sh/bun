@@ -76,15 +76,14 @@ static WTF::String tryConvertValidUTF8ToString(std::span<const unsigned char> by
 
 static WTF::String convertUTF8ToString(std::span<const unsigned char> bytes)
 {
+    if (!bytes.empty() && simdutf::validate_utf8(reinterpret_cast<const char*>(bytes.data()), bytes.size())) [[likely]]
+        return tryConvertValidUTF8ToString(bytes);
+
     // fromUTF8ReplacingInvalidSequences CRASH()es past a ~2^30-byte input
     // (it sizes an intermediate Vector<char16_t> by byte count).
-    if (WTF::isValidCapacityForVector<char16_t>(bytes.size())) [[likely]]
-        return WTF::String::fromUTF8ReplacingInvalidSequences(bytes);
-
-    const char* data = reinterpret_cast<const char*>(bytes.data());
-    if (!simdutf::validate_utf8(data, bytes.size())) [[unlikely]]
+    if (!WTF::isValidCapacityForVector<char16_t>(bytes.size())) [[unlikely]]
         return {};
-    return tryConvertValidUTF8ToString(bytes);
+    return WTF::String::fromUTF8ReplacingInvalidSequences(bytes);
 }
 
 // `bytes` must be valid UTF-8. Returns null if the allocation fails or the result exceeds the max string length.
@@ -276,6 +275,15 @@ static EncodedSlice toEncodedSlice(const WTF::StringView& str)
         ? EncodedSliceEmpty
         : EncodedSlice { str.is8Bit() ? byteCast<uint8_t>(str.span8().data()) : taggedUTF16Ptr(str.span16().data()),
               str.length() };
+}
+
+// `str` is Latin-1 or UTF-16.
+static WTF::StringView toStringView(EncodedSlice str)
+{
+    RELEASE_ASSERT(!isTaggedUTF8Ptr(str.ptr));
+    if (isTaggedUTF16Ptr(str.ptr))
+        return std::span { reinterpret_cast<const char16_t*>(untag(str.ptr)), str.len };
+    return std::span { byteCast<Latin1Character>(untag(str.ptr)), str.len };
 }
 
 static void throwException(JSC::ThrowScope& scope, JSC::EncodedJSValue err, JSC::JSGlobalObject* global)

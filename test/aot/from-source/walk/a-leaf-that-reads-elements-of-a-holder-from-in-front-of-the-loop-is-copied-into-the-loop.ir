@@ -1,0 +1,26 @@
+# A helper that calls nothing and has no loop, of some fifty operations over lists that are handed to it, called in every turn of a loop: the call, its frame and the boxes of its numbers cost more than its arithmetic,
+# and the lists, which stand in front of the loop, are asked anew in every call. Leaves were copied up to 24 operations, and up to the window of a written call in loops (120) only where the call hands over an element of a view.
+# A leaf within that window is copied too where it reads elements under keys of a holder that the call hands over from in front of the loop: the loop's front asks the holder once: a package of statistics 169,031 > 110,362, ciphers 339,468 > 229,381.
+# Outside loops it stays a call; so it does where the holder is found in the turn.
+# f1 = cost, f2 = least, f3 = once, f4 = rows
+# LIBRARY: own
+# -- source: main.js
+# function cost(from, to, tolls, miles) { const back = from > 0 ? from - 1 : from; const paid = tolls[back] + tolls[to], far = miles[to] - miles[back]; const each = paid / (2 + to - back); return each * each - (tolls[back] + miles[to]) / (far * far + 3) + far * 2 - (to - back) * 0.5; }
+# function least(tolls, miles) { let best = Infinity; for (let from = 0; from < tolls.length; from++) { const c = cost(from, tolls.length - 1, tolls, miles); if (c < best) best = c; } return best; }
+# function once(tolls, miles) { return cost(1, tolls.length - 1, tolls, miles); }
+# function rows(roads) { let all = 0; for (let at = 0; at < roads.length; at++) all += cost(1, 2, roads[at], roads[at]); return all; }
+# publish(least, once, rows);
+# -- end of source
+# RUN(LEAST): walk f2 mechanisms=all
+# LEAST: code f2:Body
+# LEAST: frame 1 callee=f1
+# RUN(ONCE): walk f3 mechanisms=all
+# ONCE: code f3:Body
+# ONCE: = CallDirect {{*}}function=f1
+# RUN(ROWS): walk f4 mechanisms=all
+# ROWS: code f4:Body
+# ROWS-NOT: frame 1 callee=f1
+# ROWS: = CallDirect {{*}}function=f1
+# RUN(SHELL): run-in-shell globalThis.publish = (least, once, rows) => { const a = [1.5, 4, 9.5, 16], b = [2.25, 8.5, 38.75, 81]; print(least(a, b), once(a, b), rows([a, b, a]), least([], []), least([1], [1]), least(["2", 3], [4, "9"]), least(new Float64Array(a), new Float64Array(b))); try { print(least([1n, 2n], [1n, 2n])); } catch (e) { print(e.constructor.name); } };
+# SHELL: 156.19938655667795 168.2367033332326 221.82843593071897 Infinity 0.33333333333333337 67.2420634920635 156.19938655667795
+# SHELL-NEXT: TypeError

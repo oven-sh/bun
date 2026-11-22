@@ -122,7 +122,7 @@ const validateHeaderValue = (name, value) => {
 
 // Node's `getOptionValue('--insecure-http-parser')`. The flag is fixed during
 // CLI parsing, so reading it once here is equivalent.
-const insecureHTTPParser = $bindgen("node_http_binding.bind.ts", "getInsecureHTTPParser")();
+const insecureHTTPParser = $bindgen("node_http_binding.bind.ts", "insecureHTTPParser");
 
 const kIncomingMessage = Symbol("IncomingMessage");
 const kSkipPendingData = Symbol("SkipPendingData");

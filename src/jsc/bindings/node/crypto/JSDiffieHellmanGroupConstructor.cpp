@@ -43,15 +43,12 @@ JSC_DEFINE_HOST_FUNCTION(constructDiffieHellmanGroup, (JSC::JSGlobalObject * glo
         return Bun::ERR::CRYPTO_UNKNOWN_DH_GROUP(scope, globalObject);
     }
 
-    auto checkResult = dh.check();
-    if (checkResult == ncrypto::DHPointer::CheckResult::CHECK_FAILED) {
-        return Bun::ERR::CRYPTO_OPERATION_FAILED(scope, globalObject, "Checking DH parameters failed"_s);
-    }
-
     JSC::Structure* structure = structureForNewTarget(globalObject, callFrame->newTarget(), &Zig::GlobalObject::m_JSDiffieHellmanGroupClassStructure);
     RETURN_IF_EXCEPTION(scope, {});
 
-    return JSC::JSValue::encode(JSDiffieHellmanGroup::create(vm, structure, globalObject, WTF::move(dh), static_cast<int>(checkResult)));
+    // The built-in groups are not checked:
+    // https://github.com/nodejs/node/blob/v26.12.1/deps/ncrypto/ncrypto.cc#L2314
+    return JSC::JSValue::encode(JSDiffieHellmanGroup::create(vm, structure, globalObject, WTF::move(dh), static_cast<int>(ncrypto::DHPointer::CheckResult::NONE)));
 }
 
 } // namespace Bun

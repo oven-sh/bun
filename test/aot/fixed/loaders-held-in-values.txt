@@ -1,0 +1,8 @@
+#### json-by-held-require/main.mjs
+import "./t.json";
+const got = [require][0]("./t.json");
+console.log(Object.keys(got).sort().join(), got.version, typeof got.nested);
+#### json-by-held-require/t.json
+{ "version": "1.2.3", "nested": { "port": 80 } }
+#### json-by-held-require prints
+default,nested,version 1.2.3 object

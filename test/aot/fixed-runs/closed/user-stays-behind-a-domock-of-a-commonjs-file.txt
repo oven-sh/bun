@@ -1,0 +1,19 @@
+A mock comes ahead of the load of a module, so the body of the module never runs, and ends with its test file. The next test file imports only a user of the module, which has run: its imports read the module itself again, so the body runs when that graph comes by. That the user runs is printed and not held: plain takes the importers of a mocked module out of its loader with the mock, so they run again for the next test file, and a compiled importer runs once. Here: vi.doMock of a CommonJS file, and an import statement comes by.
+#### a.test.mjs
+import { test, mock, vi } from "bun:test";
+const log = (...words) => console.log("| CASE " + words.join(" "));
+test("a", async () => { vi.doMock("./lib.cjs", () => ({ v: "mock v" })); try { log("a", (await import("./user.mjs")).read()); } catch (error) { log("a caught", error.message); } });
+#### z.test.mjs
+import { test, mock, vi } from "bun:test";
+const log = (...words) => console.log("| CASE " + words.join(" "));
+import { read } from "./user.mjs";
+test("z", () => log("z", read()));
+#### lib.cjs
+console.log("| CASE lib runs");
+exports.v = "real v";
+#### package.json
+{}
+#### user.mjs
+import { v } from "./lib.cjs";
+console.log("user runs", v);
+export const read = () => v;

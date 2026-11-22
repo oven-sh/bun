@@ -1,0 +1,10 @@
+# -- source: main.js
+# const state = { count: 0 };
+# function put(flag) { if (!flag) return 0; state.count = state.count + 1; return 1; }
+# globalThis.put = put;
+# print(globalThis.put(true), state.count, globalThis.put(false));
+# -- end of source
+# Every test file runs with check=VerifyEachStage. Under it the code of each unit of a whole build is verified, in every build of the engine and not only in one with assertions. Link's effects of f1 are taken to name no write of ObjectFields, so the store of the body stops the build. No run is needed.
+# OPTIONS: testing=UnderstateEffects:Summary/f1/ObjectFields
+# DIAGNOSTIC: EffectsNotCounted
+# RUN: compile mechanisms=all

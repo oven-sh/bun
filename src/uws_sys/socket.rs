@@ -15,7 +15,7 @@ use core::ffi::{c_int, c_uint, c_void};
 use core::mem::size_of;
 use core::ptr::NonNull;
 
-use bun_core::{Fd, ZStr};
+use bun_core::{Fd, ZBox, ZStr};
 
 #[cfg(windows)]
 use crate::WindowsNamedPipe;
@@ -220,16 +220,6 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
             socket: self.socket,
         }
     }
-    /// Generic counterpart of [`Self::assume_ssl`]/[`Self::assume_tcp`] for
-    /// callers inside an `if IS_SSL { ... }` arm widening a concrete handle
-    /// back to the surrounding `NewSocketHandler<IS_SSL>`.
-    #[inline]
-    pub const fn cast_ssl<const NEW_SSL: bool>(self) -> NewSocketHandler<NEW_SSL> {
-        debug_assert!(IS_SSL == NEW_SSL);
-        NewSocketHandler {
-            socket: self.socket,
-        }
-    }
 
     #[inline]
     pub fn detach(&mut self) {
@@ -355,6 +345,13 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         )
     }
 
+    #[cfg(not(windows))]
+    pub fn read_now(&self) {
+        if let InternalSocket::Connected(s) = self.socket {
+            sock(s).read_now();
+        }
+    }
+
     /// Closes with a FIN before it returns; TLS sends close_notify but does not wait for the peer's, which `CloseCode::Normal` does.
     pub fn close_now(&self) {
         match self.socket {
@@ -427,14 +424,13 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
     /// Vectored raw write: one writev on real sockets; sequential raw writes on
     /// transports without an fd (duplex/pipe). Plain-TCP callers only — raw
     /// writes bypass TLS framing.
-    pub fn raw_writev(&self, iov: &[crate::UsIoVec]) -> i32 {
+    pub fn raw_writev(&self, iov: &[crate::UsIoVec<'_>]) -> i32 {
         on_socket!(self.socket;
             connected s => s.raw_writev(iov),
             duplex d => {
                 let mut total: i32 = 0;
                 for v in iov {
-                    // SAFETY: UsIoVec contract — base/len reference caller-owned memory
-                    let slice = unsafe { core::slice::from_raw_parts(v.base.cast::<u8>(), v.len) };
+                    let slice = v.as_slice();
                     let w = d.raw_write(slice);
                     if w > 0 { total += w; }
                     if w < slice.len() as i32 { break; }
@@ -444,8 +440,7 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
             pipe p => {
                 let mut total: i32 = 0;
                 for v in iov {
-                    // SAFETY: UsIoVec contract — base/len reference caller-owned memory
-                    let slice = unsafe { core::slice::from_raw_parts(v.base.cast::<u8>(), v.len) };
+                    let slice = v.as_slice();
                     let w = p.raw_write(slice);
                     if w > 0 { total += w; }
                     if w < slice.len() as i32 { break; }
@@ -560,19 +555,10 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         }
     }
 
-    /// Resume a handshake suspended by an asynchronous SNICallback. The ctx
-    /// reference is consumed (freed here when the socket is no longer a real
-    /// connected socket).
-    pub fn sni_resolve(&self, ctx: *mut crate::SslCtx, error: bool) {
-        match self.socket {
-            InternalSocket::Connected(s) => sock(s).sni_resolve(ctx, error),
-            _ => {
-                // The socket is gone; release the reference the caller handed us.
-                if !ctx.is_null() {
-                    // SAFETY: the caller passed an owned SSL_CTX reference.
-                    unsafe { bun_boringssl_sys::SSL_CTX_free(ctx) };
-                }
-            }
+    /// Resume a handshake suspended by an asynchronous SNICallback.
+    pub fn sni_resolve(&self, ctx: Option<bun_boringssl_sys::OwnedSslCtx>, error: bool) {
+        if let InternalSocket::Connected(s) = self.socket {
+            sock(s).sni_resolve(ctx, error);
         }
     }
 
@@ -760,7 +746,7 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
     /// Wrap an already-open fd. Ext stores `*mut This`; the socket is linked
     /// into `g` with kind `k`. Port of `NewSocketHandler.fromFd`.
     pub fn from_fd<This>(
-        g: &mut SocketGroup,
+        g: &SocketGroup,
         k: SocketKind,
         handle: Fd,
         this: *mut This,
@@ -793,7 +779,7 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
     /// Connect via a `SocketGroup` and stash `owner` in the socket ext.
     /// Replaces the deleted `connectAnon`/`connectPtr`.
     pub fn connect_group<Owner>(
-        g: &mut SocketGroup,
+        g: &SocketGroup,
         kind: SocketKind,
         ssl_ctx: Option<*mut SslCtx>,
         raw_host: &[u8],
@@ -811,19 +797,13 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         let host = bun_core::ip_address::strip_ipv6_brackets(raw_host);
         // SocketGroup.connect needs a NUL-terminated host.
         let mut stack = [0u8; 256];
-        let heap: Vec<u8>;
-        let host_z: &core::ffi::CStr = if host.len() < stack.len() {
+        let heap: ZBox;
+        let host_z: &ZStr = if host.len() < stack.len() {
             stack[..host.len()].copy_from_slice(host);
-            stack[host.len()] = 0;
-            ZStr::from_buf(&stack, host.len()).as_cstr()
+            ZStr::nul_terminate(&mut stack, host.len())
         } else {
-            heap = {
-                let mut v = Vec::with_capacity(host.len() + 1);
-                v.extend_from_slice(host);
-                v.push(0);
-                v
-            };
-            ZStr::from_slice_with_nul(&heap).as_cstr()
+            heap = ZBox::from_bytes(host);
+            &heap
         };
 
         // The dispatch trampolines read the ext slot as `Option<NonNull<_>>`
@@ -849,7 +829,7 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
     }
 
     pub fn connect_unix_group<Owner>(
-        g: &mut SocketGroup,
+        g: &SocketGroup,
         kind: SocketKind,
         ssl_ctx: Option<*mut SslCtx>,
         path: &[u8],
@@ -882,12 +862,12 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
     /// `&mut Owner` here would alias any live `&mut` the caller already holds).
     pub fn adopt_group<Owner>(
         tcp: *mut us_socket_t,
-        g: *mut SocketGroup,
+        g: &SocketGroup,
         kind: SocketKind,
         owner: *mut Owner,
         set_socket_field: impl FnOnce(*mut Owner, Self),
     ) -> bool {
-        // SAFETY: `tcp` and `g` are non-null FFI handles; ext sizes are word-sized.
+        // SAFETY: `tcp` is a non-null FFI handle; ext sizes are word-sized.
         let new_s = unsafe {
             sock_c::us_socket_adopt(
                 tcp,
@@ -915,15 +895,12 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
     }
 }
 
-/// Residual raw FFI: `adopt` takes a raw `*mut SocketGroup` from a caller
-/// that already holds it as raw, and `SocketGroup` is a sized `#[repr(C)]`
-/// mirror (not an opaque ZST), so `opaque_deref_mut` can't help.
 mod sock_c {
     use super::{SocketGroup, us_socket_t};
     unsafe extern "C" {
         pub(super) fn us_socket_adopt(
             s: *mut us_socket_t,
-            group: *mut SocketGroup,
+            group: *const SocketGroup,
             kind: u8,
             old_ext_size: i32,
             ext_size: i32,
@@ -989,6 +966,5 @@ impl AnySocket {
         fn shutdown(&self);
         fn shutdown_read(&self);
         fn local_port(&self) -> Option<u16>;
-        fn get_native_handle(&self) -> Option<*mut c_void>;
     }
 }

@@ -48,11 +48,11 @@ impl ReportSpans {
     }
 }
 
-const RESTRICTED_OBJECT_PROPERTY: Message = Message::new(
+const RESTRICTED_OBJECT_PROPERTY: &Message = &Message::new(
     "restrictedObjectProperty",
     "'{{objectName}}.{{propertyName}}' is restricted from being used.{{allowedPropertiesMessage}}{{message}}",
 );
-const RESTRICTED_PROPERTY: Message = Message::new(
+const RESTRICTED_PROPERTY: &Message = &Message::new(
     "restrictedProperty",
     "'{{propertyName}}' is restricted from being used.{{allowedObjectsMessage}}{{message}}",
 );

@@ -34,9 +34,9 @@ pub struct UpdateRequest {
     pub(crate) is_aliased: bool,
     pub failed: bool,
     /// This must be cloned to handle when the AST store resets.
-    /// ARENA-owned (AST `Expr.Data` store) — raw pointer per LIFETIMES.tsv;
+    /// ARENA-owned (AST `Expr.Data` store);
     /// only valid while the store that allocated it is alive.
-    pub(crate) e_string: Option<*mut js_ast::E::String>,
+    pub(crate) e_string: Option<bun_ast::StoreRef<js_ast::E::String>>,
 }
 
 impl Default for UpdateRequest {
@@ -175,19 +175,10 @@ impl UpdateRequest {
         // remove
         'outer: for positional in positionals {
             let mut input: Vec<u8> = strings::trim(positional, b" \n\r\t").to_vec();
-            {
-                // Replacing "\\\\" (2 bytes) with "/" (1 byte) never grows the string, so a
-                // buffer of `input.len` bytes is always sufficient. Previously this was a
-                // fixed `[2048]u8` stack array which overflowed for longer positionals.
-                let mut temp = vec![0u8; input.len()];
-                // `strings::replace` returns the replacement count.
-                let len = strings::replace(&input, b"\\\\", b"/", &mut temp);
-                let new_len = input.len() - len;
-                let input2 = &mut temp[..new_len];
-                bun_paths::resolve_path::platform_to_posix_in_place(input2);
-                input[..new_len].copy_from_slice(input2);
-                input.truncate(new_len);
+            if cfg!(windows) || !input.starts_with(b"/") {
+                input = strings::replace_owned(&input, b"\\\\", b"/");
             }
+            bun_paths::to_portable_in_place(&mut input);
             match subcommand {
                 Subcommand::Link | Subcommand::Unlink => {
                     if !input.starts_with(b"link:") {
@@ -240,7 +231,7 @@ impl UpdateRequest {
             };
             // scp-style `user@host:path/repo`, where `user` was split off as the alias
             if alias.is_some_and(|alias| !strings::contains_char(alias, b'/'))
-                && version.tag == dependency::version::Tag::Git
+                && version.tag() == dependency::version::Tag::Git
             {
                 if let Some(ver) = Dependency::parse_with_optional_tag(
                     placeholder,
@@ -253,7 +244,7 @@ impl UpdateRequest {
                 )
                 .filter(|ver| {
                     matches!(
-                        ver.tag,
+                        ver.tag(),
                         dependency::version::Tag::Git | dependency::version::Tag::Github
                     )
                 }) {
@@ -261,11 +252,11 @@ impl UpdateRequest {
                     version = ver;
                 }
             }
-            if match version.tag {
-                dependency::version::Tag::DistTag => {
-                    version.dist_tag().name.eql(placeholder, input, input)
+            if match &version.value {
+                dependency::Value::DistTag(dist_tag) => {
+                    dist_tag.name.eql(placeholder, input, input)
                 }
-                dependency::version::Tag::Npm => version.npm().name.eql(placeholder, input, input),
+                dependency::Value::Npm(npm) => npm.name.eql(placeholder, input, input),
                 _ => false,
             } {
                 return Err(unrecognised_format(log, positional, fatal));

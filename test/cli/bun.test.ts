@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
 import { dlopen, FFIType } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isCanary, isDebug, isMusl, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, isMusl, isWindows, tempDir } from "harness";
 import fs from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -298,6 +298,11 @@ describe("bun", () => {
       // 4. $HOME/.local/bin, once $HOME/.bun/bin does not exist.
       await installBunx({ HOME: join(String(dir), "home-local") });
       expect(fs.readlinkSync(join(String(dir), "home-local", ".local", "bin", bunxName))).toBe(exeRealpath);
+
+      // 5. A directory that is too long to exist is passed over.
+      fs.unlinkSync(join(String(dir), "home-bun", ".bun", "bin", bunxName));
+      await installBunx({ HOME: join(String(dir), "home-bun"), BUN_INSTALL: "/" + Buffer.alloc(5000, "a").toString() });
+      expect(fs.readlinkSync(join(String(dir), "home-bun", ".bun", "bin", bunxName))).toBe(exeRealpath);
     });
 
     test("reports that PowerShell completions do not exist when $SHELL is pwsh", async () => {
@@ -345,9 +350,10 @@ describe("bun", () => {
     });
 
     // IS_BUN_AUTO_UPDATE is what `bun upgrade` sets: the file is installed although stdout is a pipe.
-    async function installCompletions(args: string[], env: Record<string, string | undefined>) {
+    async function installCompletions(args: string[], env: Record<string, string | undefined>, cwd?: string) {
       await using proc = Bun.spawn({
         cmd: [bunExe(), "completions", ...args],
+        cwd,
         env: {
           ...bunEnv,
           BUN_INSTALL: undefined,
@@ -412,6 +418,20 @@ describe("bun", () => {
         expect(fs.readFileSync(join(String(dir), ".zshrc"), "utf8")).toBe(added);
         expect((await zsh(String(dir))).exitCode).toBe(0);
         expect(fs.readFileSync(join(String(dir), ".zshrc"), "utf8")).toBe(added);
+      });
+
+      test.concurrent.each([
+        ["empty", ""],
+        ["too long", "/" + Buffer.alloc(5000, "a").toString()],
+      ])("leaves the .zshrc of the cwd alone when $ZDOTDIR is %s", async (_, ZDOTDIR) => {
+        using dir = tempDir("completions-zdotdir", { "home/.bun/.keep": "", "home/.zshrc": "", "cwd/.zshrc": "" });
+        const HOME = join(String(dir), "home");
+
+        const env = { HOME, ZDOTDIR, SHELL: "/bin/zsh" };
+        const { exitCode } = await installCompletions([join(HOME, ".bun")], env, join(String(dir), "cwd"));
+        expect(fs.readFileSync(join(HOME, ".zshrc"), "utf8")).toContain("# bun completions");
+        expect(fs.readFileSync(join(String(dir), "cwd", ".zshrc"), "utf8")).toBe("");
+        expect(exitCode).toBe(0);
       });
     });
   });
@@ -532,62 +552,32 @@ describe("bun", () => {
     });
   });
 
-  describe.concurrent("bun lint is a command in canary builds only", () => {
-    test("bun --help lists it there", async () => {
-      await using proc = Bun.spawn({ cmd: [bunExe(), "--help"], env: bunEnv, stderr: "pipe" });
-      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-      const listed = stdout.split(/\r?\n/).flatMap(line => /^ {2}(check|lint|fmt) /.exec(line)?.[1] ?? []);
-      expect(listed).toEqual(isCanary ? ["check", "lint", "fmt"] : ["check", "fmt"]);
-      expect(exitCode).toBe(0);
-    });
-
-    test("elsewhere bun lint looks for a script", async () => {
-      using dir = tempDir("bun-lint-canary-only", { "package.json": "{}", "a.js": "debugger;\n" });
+  describe("test command line arguments", () => {
+    test
+      .skipIf(isWindows)
+      .each([
+        [{ "cfg\\x.toml": `preload = ["./real.ts"]` }],
+        [{ "cfg/x.toml": `preload = ["./real.ts"]`, "cfg\\x.toml": `preload = ["./decoy.ts"]` }],
+      ])("a backslash in --config separates unless that leads nowhere: %j", async files => {
+      using dir = tempDir("config-backslash", {
+        ...files,
+        "real.ts": `console.log("real");`,
+        "decoy.ts": `console.log("decoy");`,
+        "main.ts": `console.log("main");`,
+      });
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "lint", "a.js"],
+        cmd: [bunExe(), "--config=cfg\\x.toml", "main.ts"],
         env: bunEnv,
         cwd: String(dir),
         stdout: "pipe",
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      if (isCanary) expect(stdout).toContain("no-debugger");
-      else expect({ stdout, stderr }).toEqual({ stdout: "", stderr: 'error: Script not found "lint"\n' });
-      expect(exitCode).toBe(1);
-    });
-
-    // test/cli/lint has more of these, but a release build skips it.
-    test.each([
-      ["a script in package.json", { "package.json": `{ "scripts": { "lint": "echo the script" } }` }, "the script"],
-      ["lint.ts", { "lint.ts": `console.log("the file");` }, "the file"],
-      ["lint/index.js", { "lint/index.js": `console.log("the index");` }, "the index"],
-      // On Windows, an install creates different files for it.
-      ...(isWindows
-        ? []
-        : [
-            [
-              "node_modules/.bin/lint",
-              { "node_modules/.bin/lint": `#!/bin/sh\necho the executable\n` },
-              "the executable",
-            ],
-          ]),
-    ] as [string, Record<string, string>, string][])("everywhere bun lint runs %s", async (_, files, printed) => {
-      using dir = tempDir("bun-lint-of-the-project", { "a.js": "debugger;\n", ...files });
-      if ("node_modules/.bin/lint" in files) fs.chmodSync(join(String(dir), "node_modules/.bin/lint"), 0o755);
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "lint"],
-        env: bunEnv,
-        cwd: String(dir),
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-      expect(stdout.trim()).toBe(printed);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("real\nmain\n");
       expect(exitCode).toBe(0);
     });
-  });
 
-  describe("test command line arguments", () => {
     test("test --config, issue #4128", () => {
       const path = `${tmpdir()}/bunfig-${Date.now()}.toml`;
       fs.writeFileSync(path, "[debug]");
@@ -603,5 +593,32 @@ describe("bun", () => {
         fs.unlinkSync(path);
       }
     });
+
+    const files = {
+      "other.toml": `preload = ["./preload.js"]`,
+      "preload.js": `console.log("preload");`,
+      "index.js": `console.log("index");`,
+    };
+
+    test.concurrent.each(["--config=", "-c="])("%sother.toml is read", async flag => {
+      using dir = tempDir("config-flag", files);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), flag + "other.toml", "index.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr }).toEqual({ stdout: "preload\nindex\n", stderr: "" });
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  test("--help lists check, lint and fmt", async () => {
+    await using proc = Bun.spawn({ cmd: [bunExe(), "--help"], env: bunEnv, stderr: "pipe" });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const listed = stdout.split(/\r?\n/).flatMap(line => /^ {2}(check|lint|fmt) /.exec(line)?.[1] ?? []);
+    expect(listed).toEqual(["check", "lint", "fmt"]);
+    expect(exitCode).toBe(0);
   });
 });

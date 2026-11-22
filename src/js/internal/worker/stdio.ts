@@ -11,11 +11,21 @@
 
 const kFlushSync = Symbol("kFlushSync");
 
-type PortReadable = import("node:stream").Readable & { endFromOwner?(): void };
+interface PortReadable extends $Node.Readable {
+  endFromOwner?(): void;
+}
+
+interface PortWritable extends $Node.Writable {
+  [kFlushSync]: () => void;
+}
 
 // Readable fed by a MessagePort (worker.stdout/stderr on the parent, process.stdin
 // in the worker). The peer posts arrays of Buffers; null signals EOF.
-function makePortReadable(port: MessagePort, incrementsPortRef: boolean) {
+function makePortReadable(
+  port: MessagePort,
+  incrementsPortRef: boolean,
+  receiveMessageOnPort?: (port: unknown) => unknown,
+) {
   let ended = false;
   let startedReading = false;
   function onMessage(event: { data: Uint8Array[] | null }) {
@@ -59,12 +69,20 @@ function makePortReadable(port: MessagePort, incrementsPortRef: boolean) {
       port.unref();
     }
   });
-  // Lets the parent end worker.stdout/stderr when the worker exits abruptly.
+  // Lets the parent end worker.stdout/stderr when the worker exits. What the worker
+  // wrote and the port still holds comes first (node's kOnExit drains its port).
   stream.endFromOwner = function () {
-    if (ended === false) {
-      ended = true;
-      stream.push(null);
-      port.removeEventListener("message", onMessage);
+    try {
+      let entry: unknown;
+      while (ended === false && (entry = receiveMessageOnPort?.(port)) !== undefined) {
+        onMessage({ data: (entry as { message: Uint8Array[] | null }).message });
+      }
+    } finally {
+      if (ended === false) {
+        ended = true;
+        stream.push(null);
+        port.removeEventListener("message", onMessage);
+      }
     }
   };
   return stream;
@@ -78,7 +96,7 @@ function makePortWritable(port: MessagePort) {
   // event loop; release that immediately — the port is re-ref'd only while a
   // batch is awaiting its ack, so unflushed data keeps the writer alive
   // (node's kWaitingStreams) but an idle stream never pins the loop.
-  let pendingWriteCallback: ((error?: Error | null) => void) | null = null;
+  let pendingWriteCallback: $Node.ErrorCallback | null = null;
   function onAck() {
     const cb = pendingWriteCallback;
     if (cb !== null) {
@@ -91,11 +109,11 @@ function makePortWritable(port: MessagePort) {
   port.unref();
   const stream = new Writable({
     decodeStrings: false,
-    writev(chunks, cb) {
+    writev(chunks: $Node.ChunkToWrite[], cb: $Node.ErrorCallback) {
       const payload = new Array(chunks.length);
       for (let i = 0; i < chunks.length; i++) {
         const { chunk, encoding } = chunks[i];
-        payload[i] = typeof chunk === "string" ? Buffer.from(chunk, encoding) : chunk;
+        payload[i] = typeof chunk === "string" ? Buffer.from(chunk, encoding as BufferEncoding) : chunk;
       }
       port.postMessage(payload);
       if (process._exiting) {
@@ -108,11 +126,11 @@ function makePortWritable(port: MessagePort) {
         port.ref();
       }
     },
-    final(cb) {
+    final(cb: $Node.ErrorCallback) {
       port.postMessage(null);
       cb();
     },
-    destroy(err, cb) {
+    destroy(err: Error | null, cb: $Node.ErrorCallback) {
       // Discharge an in-flight batch: the reader may never ack a destroyed
       // stream, so release the loop ref taken in writev and complete the
       // parked callback; drop the ack listener so a late ack can't fire
@@ -126,7 +144,7 @@ function makePortWritable(port: MessagePort) {
       port.removeEventListener("message", onAck);
       cb(err);
     },
-  });
+  }) as PortWritable;
   // On a synchronous exit no ack can arrive; completing the parked writev lets
   // the Writable clear its buffer through writev, which now completes
   // synchronously because process._exiting is set (node's flushSync).
@@ -138,7 +156,7 @@ function makePortWritable(port: MessagePort) {
 function makeEndedReadable() {
   const Readable = require("internal/streams/readable");
   return new Readable({
-    read() {
+    read(this: $Node.Readable) {
       this.push(null);
     },
   });
@@ -149,4 +167,4 @@ export default {
   makePortReadable,
   makePortWritable,
   makeEndedReadable,
-};
+} as const;

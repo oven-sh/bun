@@ -143,9 +143,14 @@ function emitEOFIncomingMessageOuter(self) {
   // none, so skip the native call (and the socket/server option walk) for the
   // common GET/HEAD case.
   if (self[kHandle] !== undefined && !self[noBodySymbol]) {
-    // The lenient (insecureHTTPParser) value bytes must match what the parser
-    // accepted on the wire, or a CTL byte in a trailer value would vanish here.
-    const rawTrailers = self[kHandle].takeRequestTrailers(self.socket?.server?.insecureHTTPParser === true);
+    // The lenient value bytes must match what the parser accepted on the wire,
+    // or a CTL byte in a trailer value would make the trailers vanish here.
+    const server = self.socket?.server;
+    const { calculateLenientFlags, HTTPParser } = require("node:_http_common");
+    const rawTrailers = self[kHandle].takeRequestTrailers(
+      server != null &&
+        calculateLenientFlags(server.httpValidation, server.insecureHTTPParser) !== HTTPParser.kLenientNone,
+    );
     if (rawTrailers !== undefined) {
       self._addHeaderLines(rawTrailers, rawTrailers.length);
     }

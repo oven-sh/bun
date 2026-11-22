@@ -1,5 +1,6 @@
 #include "root.h"
 #include "_NativeModule.h"
+#include "BunCompiledModules.h"
 #include "CodeGenerationFromStrings.h"
 
 #include "ExceptionOr.h"
@@ -74,8 +75,14 @@ JSC_DEFINE_HOST_FUNCTION(functionStartRemoteDebugger,
     (JSGlobalObject * globalObject,
         CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(Inspector, functionStartRemoteDebugger);
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (JSValue error = Bun::errorIfDebuggerIsRefused(globalObject, "startRemoteDebugger from bun:jsc"_s)) [[unlikely]] {
+        throwException(globalObject, scope, error);
+        return {};
+    }
 
     // The debugger evaluates what its client sends, whatever the engine's eval setting.
     THROW_AND_RETURN_IF_CODE_GENERATION_FROM_STRINGS_IS_STRICT(globalObject, scope, {});
@@ -374,11 +381,11 @@ JSC_DEFINE_HOST_FUNCTION(functionMemoryUsageStatistics,
 #endif
 #endif
 
+    using MimallocString = std::unique_ptr<char, decltype([](char* string) { mi_free(string); })>;
     auto scope = DECLARE_THROW_SCOPE(vm);
     mi_collect(false);
-    if (char* json = mi_stats_get_json(0, nullptr)) {
-        JSValue parsed = JSONParse(globalObject, String::fromUTF8(json));
-        mi_free(json);
+    if (MimallocString json { mi_stats_get_json(0, nullptr) }) {
+        JSValue parsed = JSONParse(globalObject, String::fromUTF8(json.get()));
         RETURN_IF_EXCEPTION(scope, {});
         object->putDirect(vm, Identifier::fromString(vm, "mimalloc"_s),
             parsed.isEmpty() ? jsNull() : parsed);
@@ -401,9 +408,8 @@ JSC_DEFINE_HOST_FUNCTION(functionMemoryUsageStatistics,
 #else
             const bool hashAddresses = true;
 #endif
-            if (char* json = mi_heap_dump_json(includeBlocks, hashAddresses)) {
-                JSValue parsed = JSONParse(globalObject, String::fromUTF8(json));
-                mi_free(json);
+            if (MimallocString json { mi_heap_dump_json(includeBlocks, hashAddresses) }) {
+                JSValue parsed = JSONParse(globalObject, String::fromUTF8(json.get()));
                 RETURN_IF_EXCEPTION(scope, {});
                 object->putDirect(vm, Identifier::fromString(vm, "mimallocDump"_s),
                     parsed.isEmpty() ? jsNull() : parsed);
@@ -614,7 +620,11 @@ JSC_DECLARE_HOST_FUNCTION(functionTotalCompileTime);
 JSC_DEFINE_HOST_FUNCTION(functionTotalCompileTime,
     (JSGlobalObject*, CallFrame*))
 {
+#if ENABLE(JIT)
     return JSValue::encode(jsNumber(JIT::totalCompileTime().milliseconds()));
+#else
+    return JSValue::encode(jsNumber(0));
+#endif
 }
 
 JSC_DECLARE_HOST_FUNCTION(functionGetProtectedObjects);
@@ -622,6 +632,11 @@ JSC_DEFINE_HOST_FUNCTION(functionGetProtectedObjects,
     (JSGlobalObject * globalObject, CallFrame*))
 {
     auto& vm = globalObject->vm();
+    if (JSValue error = Bun::errorIfUnseenCodeIsRefused(globalObject, "getProtectedObjects from bun:jsc"_s)) [[unlikely]] {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        throwException(globalObject, scope, error);
+        return {};
+    }
     MarkedArgumentBuffer list;
     // Skip protected cells that aren't objects (unlinked code blocks, structures). They aren't JavaScript values.
     auto appendObject = [&](JSCell* cell) {
@@ -842,6 +857,7 @@ JSC_DEFINE_HOST_FUNCTION(functionSerialize,
     (JSGlobalObject * lexicalGlobalObject,
         CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(StructuredClone, functionSerialize);
     auto* globalObject = uncheckedDowncast<JSDOMGlobalObject>(lexicalGlobalObject);
     auto& vm = JSC::getVM(globalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -892,6 +908,7 @@ JSC_DEFINE_HOST_FUNCTION(functionSerialize,
 }
 JSC_DEFINE_HOST_FUNCTION(functionDeserialize, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(StructuredClone, functionDeserialize);
     auto& vm = JSC::getVM(globalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     JSValue value = callFrame->argument(0);
@@ -981,13 +998,13 @@ JSC_DEFINE_HOST_FUNCTION(functionBytecodeOrderStats, (JSGlobalObject * globalObj
     }
 
     JSObject* result = constructEmptyObject(globalObject);
-    result->putDirect(vm, Identifier::fromString(vm, "hot"_s), jsNumber(statistics->hot.count));
-    result->putDirect(vm, Identifier::fromString(vm, "unknown"_s), jsNumber(statistics->unknown.count));
-    result->putDirect(vm, Identifier::fromString(vm, "cold"_s), jsNumber(statistics->cold.count));
-    result->putDirect(vm, Identifier::fromString(vm, "hotBytes"_s), jsNumber(statistics->hot.bytes));
-    result->putDirect(vm, Identifier::fromString(vm, "unknownBytes"_s), jsNumber(statistics->unknown.bytes));
-    result->putDirect(vm, Identifier::fromString(vm, "coldBytes"_s), jsNumber(statistics->cold.bytes));
-    result->putDirect(vm, Identifier::fromString(vm, "regions"_s), regions);
+    Bun::putDirectNamed(vm, result, "hot"_s, jsNumber(statistics->hot.count));
+    Bun::putDirectNamed(vm, result, "unknown"_s, jsNumber(statistics->unknown.count));
+    Bun::putDirectNamed(vm, result, "cold"_s, jsNumber(statistics->cold.count));
+    Bun::putDirectNamed(vm, result, "hotBytes"_s, jsNumber(statistics->hot.bytes));
+    Bun::putDirectNamed(vm, result, "unknownBytes"_s, jsNumber(statistics->unknown.bytes));
+    Bun::putDirectNamed(vm, result, "coldBytes"_s, jsNumber(statistics->cold.bytes));
+    Bun::putDirectNamed(vm, result, "regions"_s, regions);
     return JSValue::encode(result);
 }
 

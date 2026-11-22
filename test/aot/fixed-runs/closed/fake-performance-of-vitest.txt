@@ -1,0 +1,34 @@
+vi.useFakeTimers() of "vitest" fakes `performance` too: compiled code reads the fake by name and by a key that the run puts together.
+#### clock.js
+export const later = (ms, f) => setTimeout(f, ms);
+export const now = () => Date.now();
+const key = ["perform", "ance"].join("");
+export const byKeyOfTheRun = () => globalThis[key];
+export const byName = since => Math.floor(performance.now() - since) + " " + JSON.stringify(performance.mark("m"));
+#### fakes.test.js
+import { test, vi } from "vitest";
+import { byKeyOfTheRun, byName, later, now } from "./clock.js";
+test("fakes", () => {
+  vi.useFakeTimers();
+  let hit = 0;
+  later(1000, () => hit++);
+  const [before, since] = [now(), byKeyOfTheRun().now()];
+  vi.advanceTimersByTime(5000);
+  console.log("| CASE timers:", hit, now() - before, vi.isFakeTimers());
+  console.log("| CASE by a key of the run:", byKeyOfTheRun().now() - since, JSON.stringify(byKeyOfTheRun().mark("m")), JSON.stringify(byKeyOfTheRun().getEntries()));
+  console.log("| CASE by name:", byName(since));
+  vi.useRealTimers();
+  console.log("| CASE real again:", vi.isFakeTimers(), typeof byKeyOfTheRun().mark("m").detail);
+});
+#### package.json
+{ "name": "p", "type": "module" }
+#### taken-out.test.js
+import { test, vi } from "vitest";
+import { byKeyOfTheRun } from "./clock.js";
+test("taken out of vi", () => {
+  const use = vi.useFakeTimers;
+  use();
+  console.log("| CASE taken out:", vi.isFakeTimers());
+  console.log("| CASE by a key of the run, taken out:", JSON.stringify(byKeyOfTheRun().measure("m")));
+  vi.useRealTimers();
+});

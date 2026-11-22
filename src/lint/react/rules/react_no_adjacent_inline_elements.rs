@@ -7,7 +7,7 @@ use bun_lint::rule::Plugin;
 /// Disallow adjacent inline elements not separated by whitespace.
 pub struct NoAdjacentInlineElements;
 
-const INLINE_ELEMENT: Message = Message::new(
+const INLINE_ELEMENT: &Message = &Message::new(
     "inlineElement",
     "Child elements which render as inline HTML elements should be separated by a space or wrapped in block level \
      elements.",

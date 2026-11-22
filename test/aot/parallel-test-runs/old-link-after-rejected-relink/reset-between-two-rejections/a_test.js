@@ -1,0 +1,23 @@
+import { test, vi, afterAll } from "bun:test";
+import { createRequire } from "node:module";
+const log = [], require = createRequire(import.meta.url);
+const tried = async load => { try { return "loaded " + (await load()).member(); } catch (error) { return error.name; } };
+const sync = ask => { try { return "answered " + ask(); } catch (error) { return error.name; } };
+afterAll(() => console.log("SAID", log.join()));
+const mock = () => ({ square: 20 }), paint = () => ({ blue: 30 });
+test("t", async () => {
+  vi.doMock("./shapes.mjs", mock);
+  const first = await import("./user.mjs");
+  vi.doUnmock("./shapes.mjs");
+  log.push("refused " + await tried(() => import("./user.mjs")));
+  log.push("old " + first.member());
+  vi.doMock("./shapes.mjs", mock);
+  vi.resetModules();
+  const second = await import("./user.mjs");
+  log.push("second " + second.member());
+  vi.doUnmock("./shapes.mjs");
+  log.push("removed");
+  log.push("old " + first.member() + " " + second.member());
+  log.push("refused " + await tried(() => import("./user.mjs")));
+  log.push("old " + first.member() + " " + second.member());
+});

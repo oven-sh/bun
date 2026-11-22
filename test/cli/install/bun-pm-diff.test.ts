@@ -99,11 +99,11 @@ afterAll(() => {
   root?.[Symbol.dispose]();
 });
 
-async function diff(args: string[], cwd = String(root)) {
+async function diff(args: string[], cwd = String(root), env = {}) {
   await using p = Bun.spawn({
     cmd: [bunExe(), "pm", "diff", ...args],
     cwd,
-    env: { ...bunEnv, NPM_CONFIG_REGISTRY: registry, BUN_CONFIG_REGISTRY: registry, NO_COLOR: "1" },
+    env: { ...bunEnv, NPM_CONFIG_REGISTRY: registry, BUN_CONFIG_REGISTRY: registry, NO_COLOR: "1", ...env },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -836,6 +836,67 @@ describe.concurrent("bun pm diff (canonical re-print)", () => {
     expect(text).toContain("3 formatting only");
     expect(changedLines(text)).toEqual([]);
     expect(exitCode).toBe(0);
+  });
+
+  test("a directive after a banner comment stays where it is written", async () => {
+    const filler = Array.from({ length: 40 }, (_, i) => `n.p${i}=t+${i};`).join("");
+    const long = (mul: number) => `module.exports=function(n,t){${filler}return n*${mul}};\n`;
+    const spaced = (mul: number) => `module.exports = function(n,t){ ${filler} return n*${mul} };\n`;
+    const banner = "/*! lib 1.0 | MIT */\n";
+    // One edit after the banner and the directive is one changed line of the un-minified print.
+    const edited = await pretty({
+      "a/x.min.js": banner + `"use strict";` + long(2),
+      "b/x.min.js": banner + `"use strict";` + long(3),
+    });
+    expect(edited.text).toMatch(/\nx\.min\.js ─+ unminified \+1 -1\n/);
+    // The same file with other spacing is a formatting change only.
+    const reformatted = await pretty({
+      "a/x.min.js": banner + `"use strict";` + long(2),
+      "b/x.min.js": banner + `"use strict";` + spaced(2),
+    });
+    expect(reformatted.text).toMatch(/\nx\.min\.js ─+ formatting only\n/);
+    // A string at the start of a block is kept too, and it does not make the block strict code.
+    const block = await pretty({
+      "a/sloppy.js": `{ "use strict"; var yield = 1; }\nexports.value = yield;\n`,
+      "b/sloppy.js": `{\n  "use strict";\n  var yield = 1;\n}\nexports.value = yield;\n`,
+      "a/with.js": `{ "use strict"; with (exports) { value = 1; } }\n`,
+      "b/with.js": `{\n  "use strict";\n  with (exports) {\n    value = 1;\n  }\n}\n`,
+    });
+    expect(block.text).toMatch(/\nsloppy\.js ─+ formatting only\n/);
+    expect(block.text).toMatch(/\nwith\.js ─+ formatting only\n/);
+    // Also where the string is all that the block holds, behind another statement or at the start of a function.
+    const only = await pretty({
+      "a/only.js": `exports.f = function (g) { g(); { "x"; } return g; };\nexports.h = function () { { "use strict"; } return this; };\n`,
+      "b/only.js": `exports.f = function (g) {\n  g();\n  {\n    "x";\n  }\n  return g;\n};\nexports.h = function () {\n  {\n    "use strict";\n  }\n  return this;\n};\n`,
+    });
+    expect(only.text).toMatch(/\nonly\.js ─+ formatting only\n/);
+    // A string statement that is not a directive is shown as it is written.
+    const added = await pretty({
+      "a/README.md": "x\n",
+      "b/README.md": "x\n",
+      "b/new.min.js": `{"a";run()}try{'x'}catch{}class C{static{"s"}}if(x)"y";` + long(2),
+    });
+    expect(
+      changedLines(added.text)
+        .map(l => l.replace(/^ +[\d:]+ │/, ""))
+        .slice(0, 15),
+    ).toEqual([
+      "+ {",
+      '+   "a";',
+      "+   run();",
+      "+ }",
+      "+ try {",
+      '+   "x";',
+      "+ } catch {}",
+      "+ ",
+      "+ class C {",
+      "+   static {",
+      '+     "s";',
+      "+   }",
+      "+ }",
+      "+ if (x)",
+      '+   "y";',
+    ]);
   });
 
   test("two minified builds with different mangled names diff down to the real change", async () => {
@@ -1703,6 +1764,28 @@ describe.concurrent("bun pm diff (hostile and awkward inputs)", () => {
     expect(mixed.exitCode).toBe(0);
   });
 
+  test("a trailing slash makes ./x.tgz/ a folder", async () => {
+    using dir = tempDir("pm-diff-tgz-folder", { "one.tgz": v1, "two": { ...v1, "index.js": v2["index.js"] } });
+
+    const { stdout, stderr, exitCode } = await diff(["./one.tgz/", "./two", "--name-only"], String(dir));
+
+    expect(stderr).toBe("");
+    expect(stdout.split("\n").filter(l => /^[AMD] /.test(l))).toEqual(["M index.js"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test.each(["..\\one", "~/two\\..\\one"])("a backslash separates in %s", async side => {
+    const two = { ...v1, "index.js": v2["index.js"] };
+    using dir = tempDir("pm-diff-backslash", { one: v1, two: { ...two, ...(isWindows ? {} : { "..\\one": two }) } });
+
+    const home = { HOME: String(dir), USERPROFILE: String(dir) };
+    const { stdout, stderr, exitCode } = await diff([side, ".", "--name-only"], join(String(dir), "two"), home);
+
+    expect(stderr).toBe("");
+    expect(stdout.split("\n")).toContain("M index.js");
+    expect(exitCode).toBe(0);
+  });
+
   test("a tarball entry larger than 64 MiB is read whole", async () => {
     // The tarball reader used to reject any entry over 64 MiB as "invalid archive entry size". blob.bin is the same
     // bytes on both sides, so a tarball read that is short, skips the entry, or scrambles it shows up as a blob.bin line.
@@ -2194,6 +2277,20 @@ describe.concurrent("bun pm diff (engine invariants)", () => {
       '-   background: url("a.png");',
       '+   background: url("https://example.com/b.png");',
     ]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("style sheets under the size limit are normalized whatever they add up to", async () => {
+    const { text, exitCode } = await pretty(
+      {
+        // As large as a file may be, and cheap: the parser gives up at the `;`.
+        "a/a.css": "@import;" + Buffer.alloc(64 * 1024 * 1024 - 8, " ").toString(),
+        "a/z.css": ".a{color:red}",
+        "b/z.css": ".a { color: red }",
+      },
+      ["--stat"],
+    );
+    expect(text).toMatch(/\n z\.css +│ formatting only\n/);
     expect(exitCode).toBe(0);
   });
 

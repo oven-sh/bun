@@ -166,7 +166,6 @@ const errors: ErrorCodeMapping = [
   ["ERR_POSTGRES_CONNECTION_CLOSED", Error, "PostgresError"],
   ["ERR_POSTGRES_CONNECTION_TIMEOUT", Error, "PostgresError"],
   ["ERR_POSTGRES_EXPECTED_REQUEST", Error, "PostgresError"],
-  ["ERR_POSTGRES_EXPECTED_STATEMENT", Error, "PostgresError"],
   ["ERR_POSTGRES_IDLE_TIMEOUT", Error, "PostgresError"],
   ["ERR_POSTGRES_INVALID_BACKEND_KEY_DATA", TypeError, "PostgresError"],
   ["ERR_POSTGRES_INVALID_BINARY_DATA", TypeError, "PostgresError"],
@@ -358,5 +357,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_INSPECTOR_COMMAND", Error],
   ["ERR_REDIS_SERVER_ERROR", Error, "RedisError"],
   ["ERR_FFI_CC_DISABLED", Error],
+  ["HPE_INVALID_URL", Error],
+  ["ERR_HTTP2_TOO_MANY_ORIGINS", Error],
 ];
 export default errors;

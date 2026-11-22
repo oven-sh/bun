@@ -1,15 +1,13 @@
 //! Route patterns: the encoded byte form, static patterns, parts, and parsing errors.
 
-use bun_paths::strings;
+use bun_core::strings;
 use core::fmt;
 use core::mem::size_of;
 
 use bun_alloc::{AllocError, Arena};
 use bun_collections::array_hash_map::ArrayHashContext;
 use bun_core::Output;
-use bun_paths::MAX_PATH_BYTES;
-
-use bun_paths::PathBuffer;
+use bun_paths::{MAX_PATH_BYTES, PathBuffer};
 
 use super::*;
 
@@ -375,18 +373,15 @@ pub(crate) struct ParsedPattern<'a> {
     pub kind: ParsedPatternKind,
 }
 
-#[derive(Copy, Clone, Eq, PartialEq, strum::IntoStaticStr)]
-pub enum ParsedPatternKind {
+#[derive(Copy, Clone, Eq, PartialEq)]
+pub(crate) enum ParsedPatternKind {
     /// Can be navigated to. Pages can have children, which allows having
     /// nested routes exactly how Remix allows them.
-    #[strum(serialize = "page")]
     Page,
     /// Is not considered when resolving navigations, but is still a valid
     /// node in the route tree.
-    #[strum(serialize = "layout")]
     Layout,
     /// Another file related to a route
-    #[strum(serialize = "extra")]
     Extra,
 }
 

@@ -49,14 +49,14 @@ pub(crate) enum Data {
     Html(Html),
 }
 
+/// What a route's client bundle is traced from.
+#[derive(Copy, Clone)]
+pub(crate) enum TraceRoot {
+    Framework(router::RouteIndex),
+    Html(incremental_graph::ClientFileIndex),
+}
+
 impl Data {
-    /// `Framework` payload accessor (asserts active variant).
-    pub(crate) fn framework(&self) -> &Framework {
-        match self {
-            Data::Framework(f) => f,
-            Data::Html(_) => unreachable!("expected .framework"),
-        }
-    }
     /// `Html` payload accessor (asserts active variant).
     pub(crate) fn html(&self) -> &Html {
         match self {
@@ -97,11 +97,11 @@ impl RouteBundle {
 }
 
 #[derive(Clone, Copy)]
-pub(crate) enum UnresolvedIndex {
+pub(crate) enum UnresolvedIndex<'a> {
     Framework(router::RouteIndex),
     /// `getOrPutRouteBundle` writes `dev_server_id` back through this and
     /// takes its own ref when stored.
-    Html(bun_ptr::ThisPtr<HTMLBundleRoute>),
+    Html(&'a RefPtr<HTMLBundleRoute>),
 }
 
 pub(crate) struct RouteBundle {

@@ -429,21 +429,36 @@ pub(crate) struct FormatterBuffers {
     cleaned: FxHashMap<Interned, Interned>,
 }
 
+impl FormatterBuffers {
+    pub(crate) fn make_room_for_document_of(&mut self, source: &[u8]) {
+        // oxc's measurements on the VS Code sources: a median of 0.19 elements per byte, with 95% of files below 0.4.
+        let room = Storage::RESERVED as usize + source.len() * 2 / 5;
+        // `reserve` would copy the whole block, which makes all of it resident.
+        if self.storage.pool.capacity() < room {
+            self.storage.pool = Vec::new();
+            self.storage.pool.reserve(room);
+        }
+    }
+}
+
 /// Collects the elements of a document.
+// The fields are laid out as declared: small ones that most accesses touch first, where x86-64 reaches them with a
+// one-byte offset.
+#[repr(C)]
 pub(crate) struct Formatter<'a> {
-    /// `storage.pool` is the document so far.
-    pub(crate) storage: Storage,
     /// Sees every element as it's written.
     tracker: Tracker,
+    /// `storage.pool` is the document so far.
+    pub(crate) storage: Storage,
     /// Scratch vectors. See [`Formatter::take_vec`].
     spare: Vec<Vec<FormatElement>>,
-    /// Maps interned content to its copy without soft line breaks.
-    cleaned: FxHashMap<Interned, Interned>,
-    next_group_id: Cell<u32>,
-    source: &'a [u8],
     /// Computed from `source`.
     odd_blocks: OddBlocks,
     context: JsFormatContext<'a>,
+    /// Maps interned content to its copy without soft line breaks.
+    cleaned: FxHashMap<Interned, Interned>,
+    source: &'a [u8],
+    next_group_id: Cell<u32>,
 }
 
 impl<'a> Formatter<'a> {
@@ -464,8 +479,6 @@ impl<'a> Formatter<'a> {
         tracker.clear();
         odd_blocks.mark(source);
         cleaned.clear();
-        // oxc's measurements on the VS Code sources: a median of 0.19 elements per byte, with 95% of files below 0.4.
-        storage.pool.reserve(source.len() * 2 / 5);
         Formatter {
             storage,
             tracker,
@@ -478,12 +491,29 @@ impl<'a> Formatter<'a> {
         }
     }
 
-    /// Returns the document's range and the buffers for reuse.
-    pub(crate) fn finish(self) -> (Interned, FormatterBuffers) {
-        let root = Interned {
+    /// Starts another document for the same source.
+    pub(crate) fn clear(&mut self) {
+        self.storage.pool.truncate(Storage::RESERVED as usize);
+        self.storage.variants.clear();
+        self.storage.text.clear();
+        self.tracker.clear();
+        if !self.cleaned.is_empty() {
+            self.cleaned.clear();
+        }
+        self.next_group_id.set(1);
+    }
+
+    /// The document's range.
+    pub(crate) fn root(&self) -> Interned {
+        Interned {
             start: Storage::RESERVED,
             len: (self.storage.pool.len() as u32).saturating_sub(Storage::RESERVED),
-        };
+        }
+    }
+
+    /// Returns the document's range and the buffers for reuse.
+    pub(crate) fn finish(self) -> (Interned, FormatterBuffers) {
+        let root = self.root();
         let buffers = FormatterBuffers {
             storage: self.storage,
             tracker: self.tracker,
@@ -687,6 +717,20 @@ impl<'a> Formatter<'a> {
         }));
     }
 
+    /// Writes the source text of `span`, which has no line break or tab, as it is.
+    #[inline]
+    pub(crate) fn write_source_line(&mut self, span: Span) {
+        let width = match self.is_plain_source(span) {
+            true => span.len(),
+            false => self.string_width(self.source.get(span.range()).unwrap_or_default()),
+        };
+        self.write_element(FormatElement::SourceText(Text {
+            start: span.start,
+            len: span.len(),
+            width: TextWidth::single(width),
+        }));
+    }
+
     #[inline(never)]
     fn write_odd_source_token(&mut self, span: Span) {
         let text = self.source.get(span.range()).unwrap_or_default();
@@ -834,7 +878,7 @@ impl<'a> Formatter<'a> {
     }
 
     /// Returns an element that represents everything written since `start_capture` returned `slot`.
-    fn end_intern(&mut self, slot: usize) -> Option<FormatElement> {
+    pub(crate) fn end_intern(&mut self, slot: usize) -> Option<FormatElement> {
         if self.storage.pool.len() == slot + 2 {
             let only = self.storage.pool.pop();
             self.storage.pool.truncate(slot);

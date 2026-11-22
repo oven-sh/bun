@@ -1,0 +1,17 @@
+// the road: a list pattern . the property: read only from the constructor . a class with an equal row . it holds a text
+class Bar { q: string = "bar-q"; r: number; constructor(r: number = 2) { this.r = r; } }
+class A { x: string = "start"; }
+class B { declare x: string; constructor() { Object.defineProperty(this, "x", { value: "start" }); } }
+const unseen = (0, eval)("(x) => x");
+const seen: string[] = [];
+function store(o: any, v: any): void { [o.x] = [v]; }
+function read(b: B): string { try { return String(b.x.length + b.x); } catch (error) { return (error as Error).constructor.name; } }
+const said = new Map<string, number>();
+for (let i = 0; i < 300; i++) {
+  const a = unseen(new A()), b = unseen(new B()), v = unseen("stored" + i);
+  let thrown = "-";
+  try { store(a, v); store(b, v); } catch (error) { thrown = (error as Error).constructor.name; }
+  const line = (read(b) + " " + thrown + " " + seen.length).replace(/[0-9]+/g, "#");
+  said.set(line, (said.get(line) ?? 0) + 1);
+}
+console.log([...said].map(([line, times]) => line + " x" + times).join(" | "));

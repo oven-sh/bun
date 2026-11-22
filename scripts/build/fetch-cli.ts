@@ -22,10 +22,10 @@
 
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { closeSync, existsSync, openSync, readFileSync, readSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
-import { downloadWithRetry, extractTarGz, fetchPrebuilt } from "./download.ts";
+import { downloadWithRetry, extractTarGz, fetchPrebuilt, pinnedSha256 } from "./download.ts";
 import { BuildError, assert } from "./error.ts";
 import { writeIfChanged } from "./fs.ts";
 import { formatElapsed } from "./tty.ts";
@@ -55,27 +55,6 @@ async function main(): Promise<void> {
       return fetchDep(name, repo, commit, dest, cache, patches);
     }
 
-    case "subst": {
-      // fetch-cli.ts subst <in> <out> [<from> <to>]...
-      // Replaces every literal occurrence of <from> with <to>. Used by
-      // DirectBuild deps to materialize *.h.in templates without running
-      // the upstream configure (e.g. zlib-ng's zlib.h.in → zlib.h, where
-      // the only substitution is `@ZLIB_SYMBOL_PREFIX@` → ``).
-      const [inPath, outPath, ...pairs] = args;
-      assert(inPath !== undefined && outPath !== undefined, "subst: missing in/out");
-      assert(pairs.length % 2 === 0, "subst: replacements must be <from> <to> pairs");
-      let text = await readFile(inPath, "utf8");
-      for (let i = 0; i + 1 < pairs.length; i += 2) {
-        assert(pairs[i]!.length > 0, `subst: empty <from> at index ${i}`);
-        text = text.split(pairs[i]!).join(pairs[i + 1]!);
-      }
-      // dep_subst is restat=1 — preserve mtime when the rendered text is
-      // unchanged so depfile-tracked .o files (libarchive ← zlib.h) don't
-      // recompile after a no-op re-fetch.
-      writeIfChanged(outPath, text);
-      return;
-    }
-
     case "check-undefined": {
       // fetch-cli.ts check-undefined <name> <nm> <rspfile> <stamp> <symbols>
       // <rspfile> is the edge's response file (one object per line);
@@ -90,14 +69,51 @@ async function main(): Promise<void> {
       return checkUndefined(name, nm, rspfile, stamp, symbols.split(","));
     }
 
-    case "prebuilt": {
-      // fetch-cli.ts prebuilt <name> <url> <dest> <identity> [...rm_paths]
-      const [name, url, dest, identity, ...rmPaths] = args;
+    case "check-defined": {
+      // fetch-cli.ts check-defined <name> <lib> <stamp> <symbols>
+      // <symbols> is comma-separated. Writes <stamp> when <lib> names every
+      // one of them. See Provides.requireDefined in source.ts.
+      const [name, lib, stamp, symbols] = args;
       assert(
-        name !== undefined && url !== undefined && dest !== undefined && identity !== undefined,
-        "prebuilt: missing name/url/dest/identity",
+        name !== undefined && lib !== undefined && stamp !== undefined && symbols !== undefined,
+        "check-defined: missing name/lib/stamp/symbols",
       );
-      return fetchPrebuilt(name, url, dest, identity, rmPaths);
+      return checkDefined(name, lib, stamp, symbols.split(","));
+    }
+
+    case "prebuilt": {
+      // fetch-cli.ts prebuilt <name> <url> <dest> <identity> <sha256sums> [...rm_paths]
+      // <sha256sums> is the file that pins the download, or `-` for none.
+      const [name, url, dest, identity, sums, ...rmPaths] = args;
+      assert(
+        name !== undefined && url !== undefined && dest !== undefined && identity !== undefined && sums !== undefined,
+        "prebuilt: missing name/url/dest/identity/sha256sums",
+      );
+      // A job that builds `codegen` alone reads the engine's code generators and nothing else of WebKit's tarball. A
+      // release has them as an asset of its own. An older one does not, and then it is the tarball after all.
+      if (name === "WebKit" && process.env.BUN_WEBKIT_GENERATORS_ONLY === "1") {
+        const generators = new URL("bun-webkit-aot-sources.tar.gz", url).href;
+        const fetchGenerators = (sha256?: string) =>
+          fetchPrebuilt(name, generators, dest, `${identity}-generators-only`, sha256, rmPaths);
+        if (sums !== "-") {
+          const sha256 = pinnedSha256(sums, generators);
+          if (sha256 !== undefined) return fetchGenerators(sha256);
+        } else {
+          try {
+            return await fetchGenerators();
+          } catch (error) {
+            if (!(error instanceof BuildError)) throw error;
+            console.log(`${generators} could not be fetched, fetching ${url}`);
+          }
+        }
+      }
+      if (sums === "-") return fetchPrebuilt(name, url, dest, identity, undefined, rmPaths);
+      const sha256 = pinnedSha256(sums, url);
+      assert(sha256 !== undefined, `No sha256 is pinned for ${url}`, {
+        file: sums,
+        hint: `After a change of version, run \`bun run pin-${name.toLowerCase()}\`. If the pins are current, the release has no such file`,
+      });
+      return fetchPrebuilt(name, url, dest, identity, sha256, rmPaths);
     }
 
     case undefined:
@@ -117,8 +133,7 @@ Usage: bun fetch-cli.ts <kind> <args...>
 
 Kinds:
   dep             <name> <repo> <commit> <dest> <cache> [...patches]
-  prebuilt        <name> <url> <dest> <identity> [...rm_paths]
-  subst           <in> <out> [<from> <to>]...
+  prebuilt        <name> <url> <dest> <identity> <sha256sums> [...rm_paths]
   check-undefined <name> <nm> <rspfile> <stamp> <symbol,...>
 
 This is invoked by ninja build rules. You shouldn't need to call it
@@ -188,6 +203,44 @@ function checkUndefined(name: string, nm: string, rspfile: string, stamp: string
     });
   }
   // dep_check_undefined is restat=1: an existing stamp keeps its mtime.
+  writeIfChanged(stamp, "");
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// check-defined: a prebuilt library has to name the given symbols
+// ───────────────────────────────────────────────────────────────────────────
+
+/**
+ * An archive's index and the string table of each member, object or bitcode,
+ * hold a name as plain bytes, so this needs no tool that may be missing. Only
+ * the definition names these symbols: nothing in the library refers to them.
+ */
+function checkDefined(name: string, lib: string, stamp: string, symbols: string[]): void {
+  const found = new Set<string>();
+  const longest = Math.max(...symbols.map(symbol => symbol.length));
+  const buffer = Buffer.allocUnsafe(64 << 20);
+  const descriptor = openSync(lib, "r");
+  try {
+    // What is kept from one read to the next is a name that lies across the two.
+    for (let kept = 0, read; (read = readSync(descriptor, buffer, kept, buffer.length - kept, null)) > 0;) {
+      const bytes = buffer.subarray(0, kept + read);
+      for (const symbol of symbols) if (bytes.includes(symbol)) found.add(symbol);
+      kept = Math.min(longest - 1, bytes.length);
+      buffer.copyWithin(0, bytes.length - kept, bytes.length);
+    }
+  } finally {
+    closeSync(descriptor);
+  }
+  const missing = symbols.filter(symbol => !found.has(symbol));
+  if (missing.length > 0) {
+    throw new BuildError(
+      `${name}: ${lib} was not compiled with what this build asks of it. It does not define ${missing.join(", ")}`,
+      {
+        hint: `requireDefined in scripts/build/deps/${name.toLowerCase()}.ts says which option each symbol stands for. Take a version of ${name} whose prebuilts are compiled with it, or compile ${name} here`,
+      },
+    );
+  }
+  // dep_check_defined is restat=1: an existing stamp keeps its mtime.
   writeIfChanged(stamp, "");
 }
 
@@ -266,19 +319,11 @@ async function fetchDep(
   // Github archives have a top-level directory <repo>-<commit>/. Strip it.
   await extractTarGz(tarballPath, dest);
 
-  // ─── Apply patches / overlays ───
+  // ─── Apply patches ───
   for (let i = 0; i < patches.length; i++) {
     const p = patches[i]!;
-    const name = basename(p);
-    if (p.endsWith(".patch")) {
-      console.log(`applying ${name}`);
-      applyPatch(dest, p, patchContents[i]!);
-    } else {
-      // Overlay file: copy into source root. Used for e.g. injecting a
-      // CMakeLists.txt into a project that doesn't have one (tinycc).
-      console.log(`overlay ${name}`);
-      await writeFile(join(dest, name), patchContents[i]!);
-    }
+    console.log(`applying ${basename(p)}`);
+    applyPatch(dest, p, patchContents[i]!);
   }
 
   // ─── Write stamp ───

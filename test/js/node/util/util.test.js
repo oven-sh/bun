@@ -384,6 +384,29 @@ describe("util", () => {
   it("format", () => {
     expect(util.format("%s:%s", "foo")).toBe("foo:%s");
   });
+  it("the first inspect does not call a replaced Function.prototype.bind", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const util = require("node:util");
+         const original = Function.prototype.bind;
+         let calls = 0;
+         Function.prototype.bind = function (...args) {
+           calls++;
+           return original.apply(this, args);
+         };
+         util.inspect({ count: 1, list: [new Map([[1, 2]])], set: new Set([1]), error: new Error("made up") });
+         Function.prototype.bind = original;
+         console.log(calls);`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "0\n", stderr: "", exitCode: 0 });
+  });
   // Messages verified against the node v26.3.0 binary.
   const invalidArgType = message =>
     expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE", name: "TypeError", message });
@@ -550,6 +573,76 @@ describe("util", () => {
     assert.strictEqual(util.styleText("red", "test", { validateStream: false }), "\u001b[31mtest\u001b[39m");
   });
 
+  // Expected values are from Node 26.
+  describe("diff", () => {
+    it("compares two strings by code unit", () => {
+      expect(util.diff("12345678", "12!!5!7!")).toEqual([
+        [0, "1"],
+        [0, "2"],
+        [1, "3"],
+        [1, "4"],
+        [-1, "!"],
+        [-1, "!"],
+        [0, "5"],
+        [1, "6"],
+        [-1, "!"],
+        [0, "7"],
+        [1, "8"],
+        [-1, "!"],
+      ]);
+      expect(util.diff("", "a")).toEqual([[-1, "a"]]);
+      expect(util.diff("a", "")).toEqual([[1, "a"]]);
+      expect(util.diff("😀a", "😀b")).toEqual([
+        [0, "\ud83d"],
+        [0, "\ude00"],
+        [1, "a"],
+        [-1, "b"],
+      ]);
+    });
+
+    it("compares two arrays of strings by item", () => {
+      expect(util.diff(["1", "2", "3"], ["1", "3", "4"])).toEqual([
+        [0, "1"],
+        [1, "2"],
+        [0, "3"],
+        [-1, "4"],
+      ]);
+      expect(util.diff(["ab"], "ab")).toEqual([
+        [1, "ab"],
+        [-1, "a"],
+        [-1, "b"],
+      ]);
+    });
+
+    it("returns an empty array for the same value", () => {
+      const lines = ["a"];
+      expect(util.diff("abc", "abc")).toEqual([]);
+      expect(util.diff(lines, lines)).toEqual([]);
+      expect(util.diff(1, 1)).toEqual([]);
+    });
+
+    it("throws for anything but strings", () => {
+      expect(() => util.diff(1, 2)).toThrow(
+        expect.objectContaining({
+          code: "ERR_INVALID_ARG_TYPE",
+          message: 'The "actual" argument must be of type string. Received type number (1)',
+        }),
+      );
+      expect(() => util.diff("a")).toThrow(
+        expect.objectContaining({
+          code: "ERR_INVALID_ARG_TYPE",
+          message: 'The "expected" argument must be of type string. Received undefined',
+        }),
+      );
+      expect(() => util.diff(["a", 1], ["a"])).toThrow(
+        expect.objectContaining({
+          code: "ERR_INVALID_ARG_TYPE",
+          message: 'The "actual[1]" argument must be of type string. Received type number (1)',
+        }),
+      );
+    });
+  });
+
   describe("getCallSites", () => {
     it("restores Error state when stackTraceLimit is non-writable", () => {
       const desc = Object.getOwnPropertyDescriptor(Error, "stackTraceLimit");
@@ -564,6 +657,32 @@ describe("util", () => {
         Object.defineProperty(Error, "stackTraceLimit", desc);
         Error.prepareStackTrace = savedPrepare;
       }
+    });
+
+    it.concurrent("keeps honoring frameCount after many calls", async () => {
+      // getCallSites assigns Error.stackTraceLimit from one site. Runs in a fresh process so
+      // that the JIT state of that site starts cold.
+      const fixture = `
+        import util from "node:util";
+        // try/finally keeps each call out of tail position, so every frame stays on the stack.
+        function deep(n, k) { try { return n <= 0 ? util.getCallSites(k).length : deep(n - 1, k); } finally {} }
+        const failures = [];
+        for (let i = 0; i < 400 && failures.length === 0; i++) {
+          const k = 1 + (i % 5);
+          const got = deep(8, k);
+          if (got !== k) failures.push({ call: i, frameCount: k, callSites: got });
+        }
+        process.stdout.write(JSON.stringify(failures));
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", fixture],
+        // Without compiler threads getCallSites reaches the optimizing JIT at a fixed call.
+        env: { ...bunEnv, BUN_JSC_useConcurrentJIT: "0" },
+        stderr: "inherit",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(stdout).toBe("[]");
+      expect(exitCode).toBe(0);
     });
 
     it("each frame has the node v26 shape", () => {

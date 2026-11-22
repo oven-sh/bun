@@ -2,7 +2,6 @@
 #include "JSNodeHTTPServerSocketPrototype.h"
 #include "AsyncContextFrame.h"
 #include "ZigGlobalObject.h"
-#include "ZigGeneratedClasses.h"
 #include "DOMIsoSubspaces.h"
 #include "ScriptExecutionContext.h"
 #include "helpers.h"
@@ -241,25 +240,22 @@ static std::string* requestTrailersFor(us_socket_t* socket)
     return &httpResponseData->nodeHttpRequestTrailers;
 }
 
-/* Move the connection's captured trailer section out, returning its (ptr, length)
- * through a thread-local buffer that stays valid until the next call on this
- * thread. Called by NodeHTTPResponse at the request's body fin, still inside the
+/* Copied and cleared by NodeHTTPResponse at the request's body fin, still inside the
  * parser, so a pipelined request cannot overwrite or inherit another's trailers. */
-extern "C" size_t Bun__NodeHTTP__takeRequestTrailerBytes(bool is_ssl, us_socket_t* socket, const char** out)
+extern "C" size_t Bun__NodeHTTP__requestTrailerBytes(bool is_ssl, us_socket_t* socket, const char** out)
 {
     *out = nullptr;
     if (!socket || us_socket_is_closed(socket)) {
         return 0;
     }
     std::string* trailers = is_ssl ? requestTrailersFor<true>(socket) : requestTrailersFor<false>(socket);
-    if (trailers->empty()) {
-        return 0;
-    }
-    static thread_local std::string taken;
-    taken = std::move(*trailers);
-    trailers->clear();
-    *out = taken.data();
-    return taken.size();
+    *out = trailers->data();
+    return trailers->size();
+}
+
+extern "C" void Bun__NodeHTTP__clearRequestTrailerBytes(bool is_ssl, us_socket_t* socket)
+{
+    std::string().swap(is_ssl ? *requestTrailersFor<true>(socket) : *requestTrailersFor<false>(socket));
 }
 
 /* Parse a raw trailer section into a flat [name, value, ...] JSArray, or
@@ -964,26 +960,22 @@ void JSNodeHTTPServerSocket::onData(const char* data, int length, bool last)
     if (scriptExecutionContext) {
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm());
         JSC::JSUint8Array* buffer = WebCore::createBuffer(globalObject, std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(data), length));
-        auto chunk = JSC::JSValue(buffer);
         if (auto* exception = scope.exception()) {
             (void)scope.tryClearException();
             globalObject->reportUncaughtExceptionAtEventLoop(globalObject, exception);
             RETURN_IF_EXCEPTION(scope, );
             return;
         }
-        gcProtect(chunk);
         // JS gets the chunk in a task, so its readStop() comes after the read loop: bound what the loop queues.
         queuedTunnelBytes += length;
         if (queuedTunnelBytes >= LIBUS_RECV_BUFFER_LENGTH && !tunnelReadsQueuedFull) {
             tunnelReadsQueuedFull = true;
             applyTunnelReads();
         }
-        scriptExecutionContext->postTask([self = this, chunk = chunk, last = last, length = static_cast<size_t>(length)](ScriptExecutionContext& context) {
+        scriptExecutionContext->postTask([self = this, chunk = JSC::Strong<JSC::JSUint8Array>(globalObject->vm(), buffer), last = last, length = static_cast<size_t>(length)](ScriptExecutionContext& context) {
             auto* globalObject = defaultGlobalObject(context.globalObject());
             auto* thisObject = self;
             auto* callbackObject = thisObject->functionToCallOnData.get();
-            EnsureStillAliveScope ensureChunkStillAlive(chunk);
-            gcUnprotect(chunk);
             // After the callback: a readStop() from it keeps the reads paused, with no resume in between.
             auto delivered = WTF::makeScopeExit([&] {
                 thisObject->didDeliverQueuedTunnelBytes(length);
@@ -996,7 +988,7 @@ void JSNodeHTTPServerSocket::onData(const char* data, int length, bool last)
             }
 
             MarkedArgumentBuffer args;
-            args.append(chunk);
+            args.append(chunk.get());
             args.append(JSC::jsBoolean(last));
             EnsureStillAliveScope ensureStillAlive(self);
 

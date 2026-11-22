@@ -1,6 +1,6 @@
 import { spawnSync } from "bun";
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, normalizeBunSnapshot, withoutAsanQuarantine } from "harness";
 import { join } from "path";
 
 test("reportError", () => {
@@ -147,12 +147,12 @@ test.concurrent.each([
   {
     name: "reportError(value)",
     script: `reportError(${throwsWhenPrinted}); console.log("after");`,
-    expected: { stdout: "after\n", stderr: "error\n\nBun v<bun-version>", exitCode: 1 },
+    expected: { stdout: "after\n", stderr: "error\n[threw while printing]\n\nBun v<bun-version>", exitCode: 1 },
   },
   {
     name: "unhandled rejection",
     script: `Promise.reject(${throwsWhenPrinted});`,
-    expected: { stdout: "", stderr: "error\n\nBun v<bun-version>", exitCode: 1 },
+    expected: { stdout: "", stderr: "error\n[threw while printing]\n\nBun v<bun-version>", exitCode: 1 },
   },
   {
     name: "AggregateError member",
@@ -168,4 +168,34 @@ test.concurrent.each([
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout, stderr: normalizeBunSnapshot(stderr), exitCode }).toEqual(expected);
+});
+
+test("printing an uncaught error from code without a source map does not leak its message", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const thrower = new Function("message", "return () => { throw new Error(message); }");
+      const target = new EventTarget();
+      function report(count) {
+        for (let i = 0; i < count; i++) {
+          target.addEventListener("x", thrower(Buffer.alloc(1024 * 1024, "x").toString("latin1")), { once: true });
+          target.dispatchEvent(new Event("x"));
+        }
+        Bun.gc(true);
+        return process.memoryUsage.rss();
+      }
+      const before = report(4);
+      console.log((report(64) - before) / 1024 / 1024);
+      `,
+    ],
+    env: withoutAsanQuarantine(bunEnv),
+    stdout: "pipe",
+    stderr: "ignore",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  // The leak is 64 MiB.
+  expect(parseFloat(stdout)).toBeLessThan(isASAN || isDebug ? 40 : 24);
+  expect(exitCode).toBe(1);
 });

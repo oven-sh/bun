@@ -332,6 +332,56 @@ test.concurrent.skipIf(!fault.available() || !isLinux)(
 // wait on child processes; `serialized` chains them behind one another. The
 // time a test spends waiting in that chain counts against its own timeout, so
 // each one gets an explicit timeout instead of Bun's 5000ms default.
+// The peer stays half-open and never answers the FIN, so only the writer can close the socket.
+// The close does not read for a paused socket: a peer that keeps sending would hold the loop.
+test.skipIf(skip).each(["reading", "paused"] as const)(
+  "send → more bytes than it was given: a %s Bun.connect socket sends nothing more and closes",
+  async state => {
+    let received = "";
+    let read = "";
+    const peerOpened = Promise.withResolvers<void>();
+    const peerEnded = Promise.withResolvers<void>();
+    const listener = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      allowHalfOpen: true,
+      socket: {
+        open(peer) {
+          peer.write("unread");
+          peerOpened.resolve();
+        },
+        data: (_, chunk) => void (received += chunk),
+        end: () => peerEnded.resolve(),
+      },
+    });
+    try {
+      const closed = Promise.withResolvers<string | undefined>();
+      const socket = await Bun.connect({
+        hostname: "127.0.0.1",
+        port: listener.port,
+        socket: {
+          data: (_, chunk) => void (read += chunk),
+          close: (_, error) => closed.resolve((error as NodeJS.ErrnoException | undefined)?.code),
+        },
+      });
+      if (state === "paused") socket.pause();
+      await peerOpened.promise;
+      fault.set({ syscall: "send", action: "excess", fd: (socket as any).fd });
+      const writes = [socket.write("hello"), socket.write("again")];
+      const code = await closed.promise;
+      await peerEnded.promise;
+      expect({ writes, code, received, read }).toEqual({
+        writes: [-1, -1],
+        code: "ECONNRESET",
+        received: "",
+        read: state === "paused" ? "" : expect.any(String),
+      });
+    } finally {
+      listener.stop(true);
+    }
+  },
+);
+
 describe.skipIf(skip)("h2 client under injected unclassified send errno (EPROTOTYPE)", () => {
   const H2_TIMEOUT_MS = 30_000;
   let chain: Promise<unknown> = Promise.resolve();

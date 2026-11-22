@@ -1,0 +1,34 @@
+# arm64: a fence behind two late stores of a new object. `info` and `head` are given by no literal, so they lie out of line. The code below makes an object with `info` from the start, as the copy of an object's own keys does: the extension is made behind the fence of the cell's own fields, and the value is stored into it. A fence of its own follows that store. x86-64 has no fence at all.
+# f1 = plain, f2 = later, f3 = carry
+# -- source: object-made-with-a-field-out-of-line-has-a-fence-behind-the-field.ts
+# declare function sink(...values: unknown[]): void;
+# interface Chain { text: string; kind: number; info?: unknown; head?: unknown }
+# function plain(i: number): Chain { return { text: "t", kind: i }; }
+# function later(chain: Chain, value: unknown) { chain.info = value; chain.head = value; }
+# function carry(value: unknown): Chain { return plain(1); }
+# sink(plain, later, carry);
+# -- end of source
+# -- code
+# code f3:Body {
+#   frame 0 callee=f3 callPosition=4294967295 module=m0
+#   b0(v0: anything?ParameterOfEscapedFunction @JSValue) entry=0:
+#     v1: L0 @Cell = NewObject -, v0, v0, v0 layout=L0 fields=[3, 2, 1] storage=Heap traits=[mayCollect, mayTouchMemory]
+#     v2: L0 @JSValue = Box v1
+#     Return v2
+# }
+# -- end of code
+# RUN(PLAN): plan layouts mechanisms=all
+# PLAN: "info" JSValue OutOfLine
+# REQUIRES(EMIT): arm64
+# RUN(EMIT): emit-code mechanisms=all
+# EMIT: unit f3:Body
+# EMIT: = Fence(
+# EMIT: AOTExtension_granuleBits
+# EMIT: = Store({{*}}bucket
+# EMIT-NEXT: = Branch(
+# EMIT: = Fence(
+# EMIT: = Return(
+# REQUIRES(NONE): x86_64
+# RUN(NONE): emit-code mechanisms=all
+# NONE: AOTExtension_granuleBits
+# NONE-NOT: = Fence(

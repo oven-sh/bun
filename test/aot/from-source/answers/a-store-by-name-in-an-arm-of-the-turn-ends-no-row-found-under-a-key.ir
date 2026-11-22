@@ -1,0 +1,18 @@
+# -- source: main.cjs
+# const zero = JSON.parse("0"), held = JSON.parse('{"rows":[1,2,3,4,5,6,7,8,9,10,11,12]}'), extra = { flag: 0 };
+# function row(data, w, extra) { let s = 0; for (let i = 0; i < data[w].length; i++) { s = s + data[w][i]; if (s < 0) extra.flag = 1; } return s; }
+# print(row([held][zero], ["rows"][zero], extra), extra.flag);
+# -- end of source
+# The read under a key that runs no code answers for a plain object of the host alone: it never reads a slot of a record or an instance of the program. It said that it read ObjectFields, so every typed store by name
+# ended what was remembered of the row, and a loop that sums into a field read generically in every turn.
+# `s = s + data[w][i]; if (s < 0) extra.flag = 1`, holder and key parameters: 37,008 > 2,921, plain Bun 3,033. A store by key, a definition or a deletion in the loop still asks for no row.
+# RUN(EVENT): compile KeyedRowLookupsHoisted mechanisms=all
+# EVENT: statistic KeyedRowLookupsHoisted 1
+# RUN(CHECKED): compile KeyedRowLookupsHoisted mechanisms=all testing=CheckProofsAtRunTime
+# CHECKED: statistic KeyedRowLookupsHoisted 1
+# RUN(RIGHT): run-in-shell mechanisms=all
+# RIGHT: 78 0
+# RIGHT-NEXT: exited with 0
+# RUN(HELD): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# HELD: 78 0
+# HELD-NEXT: exited with 0

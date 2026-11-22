@@ -81,39 +81,24 @@ pub(crate) fn infer_reactive_places(
         control_tests.of_block[block_id.0 as usize] = (start, tests.len() as u32);
     }
 
-    // Track phi operand reactive flags during fixpoint.
-    // In TS, isReactive() sets place.reactive as a side effect. But when a phi
-    // is already reactive, the TS `continue`s and skips operand processing.
-    // We track which phi operand Places should be marked reactive: one flag
-    // for each operand of each phi, in the order of the blocks.
-    let phi_operand_count = func.body.blocks.values().flat_map(|block| &block.phis);
-    let phi_operand_count = phi_operand_count.map(|phi| phi.operands.len()).sum();
-    let mut phi_operand_reactive = vec![false; phi_operand_count];
-
     // Fixpoint iteration — compute reactive set
     let mut is_settled = false;
     loop {
         reactive_map.start_round();
         stable_sidemap.start_round();
-        let mut next_phi_operand = 0;
         for (block_id, block) in &func.body.blocks {
             let has_reactive_control = control_tests.any_is_reactive(*block_id, &mut reactive_map);
 
             // Process phi nodes
             for phi in &block.phis {
-                let first_operand = next_phi_operand;
-                next_phi_operand += phi.operands.len();
                 if reactive_map.is_reactive(phi.place.identifier) {
-                    // TS does `continue` here — skips operand isReactive calls.
-                    // phi operand reactive flags stay as they were from last visit.
                     continue;
                 }
                 let mut is_phi_reactive = false;
-                for (op_idx, (_pred, operand)) in phi.operands.iter().enumerate() {
+                for operand in phi.operands.values() {
                     if reactive_map.is_reactive(operand.identifier) {
-                        phi_operand_reactive[first_operand + op_idx] = true;
                         is_phi_reactive = true;
-                        break; // TS breaks here — remaining operands NOT visited
+                        break;
                     }
                 }
                 if is_phi_reactive {
@@ -229,13 +214,7 @@ pub(crate) fn infer_reactive_places(
     }
 
     // Now apply reactive flags by replaying the traversal pattern.
-    apply_reactive_flags_replay(
-        func,
-        env,
-        &reactive_map.reactive_ids(),
-        &stable_sidemap,
-        &phi_operand_reactive,
-    );
+    apply_reactive_flags_replay(func, env, &reactive_map.reactive_ids(), &stable_sidemap);
 
     Ok(())
 }
@@ -555,7 +534,6 @@ fn apply_reactive_flags_replay(
     env: &mut Environment,
     reactive_ids: &[bool],
     stable_sidemap: &StableSidemap,
-    phi_operand_reactive: &[bool],
 ) {
     // 1. Mark params
     for param in &mut func.params {
@@ -564,7 +542,6 @@ fn apply_reactive_flags_replay(
     }
 
     // 2. Walk blocks
-    let mut phi_operand_reactive = phi_operand_reactive.iter();
     for block in func.body.blocks.values_mut() {
         // 2a. Phi nodes
         for phi in &mut block.phis {
@@ -572,9 +549,9 @@ fn apply_reactive_flags_replay(
                 phi.place.reactive = true;
             }
 
-            for (operand, &is_reactive) in phi.operands.values_mut().zip(&mut phi_operand_reactive)
-            {
-                if is_reactive {
+            // Not in upstream, which flags no operand behind the first reactive one. `visit_phi` reads the flag.
+            for operand in phi.operands.values_mut() {
+                if reactive_ids[operand.identifier.0 as usize] {
                     operand.reactive = true;
                 }
             }

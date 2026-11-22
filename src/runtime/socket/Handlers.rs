@@ -59,10 +59,7 @@ pub(crate) struct Handlers {
     /// Deliberately a nullable raw pointer and not a `BackRef`: a `BackRef`
     /// promises the pointee outlives the holder, and this one does not. Every
     /// accepted socket holds an `Rc<Handlers>` that routinely outlives the
-    /// `Listener` (uws defers the close of a force-closed socket past
-    /// `Listener::deinit`). What keeps it sound is that `deinit` clears this
-    /// field before freeing itself — so reads must go through [`listener`] and
-    /// handle `None`.
+    /// `Listener`, whose `Drop` clears this field: reads go through [`listener`] and handle `None`.
     ///
     /// [`listener`]: Self::listener
     listener: Cell<Option<NonNull<SocketListener>>>,
@@ -103,20 +100,15 @@ impl Handlers {
     }
 
     /// Records the listener that accepted these sockets (server mode only), or
-    /// clears it as that listener frees itself.
+    /// clears it when that listener is dropped.
     pub(crate) fn set_listener(&self, listener: Option<NonNull<SocketListener>>) {
         debug_assert!(self.mode == SocketMode::Server || listener.is_none());
         self.listener.set(listener);
     }
 
-    /// The accepting listener, or `None` for client-mode handlers and for a
-    /// listener already torn down by `Listener::deinit`.
+    /// The accepting listener, or `None` for client-mode handlers and for a dropped listener.
     pub(crate) fn listener(&self) -> Option<&SocketListener> {
-        // SAFETY: `Listener::listen` stores its `heap::into_raw` allocation root
-        // here, and `Listener::deinit` clears it before freeing that allocation
-        // (after force-closing every accepted socket), so a `Some` is live. The
-        // borrow cannot outlive `&self`, and nothing frees a `Listener` while a
-        // caller holds one — `deinit` runs from GC finalize, not from dispatch.
+        // SAFETY: the `Listener` is the payload of its wrapper, and its `Drop` (run by the sweeper, not from dispatch) clears this.
         self.listener.get().map(|l| unsafe { &*l.as_ptr() })
     }
 
@@ -201,16 +193,16 @@ impl Handlers {
     }
 
     /// Bumps `active_connections`, enters the JS event-loop scope, and returns
-    /// a [`Scope`] whose exit halves undo both. The scope holds its own `Rc`, so
+    /// a [`Scope`] whose exit halves undo both. The scope borrows the `Rc`, so
     /// a socket that closes and drops its reference mid-callback cannot free
     /// the `Handlers` the callback is still reading from.
     #[inline]
-    pub(crate) fn enter(self: &Rc<Self>) -> Scope {
+    pub(crate) fn enter(self: &Rc<Self>) -> Scope<'_> {
         self.mark_active();
         let context = self.vm.enter_context(self.context);
-        self.vm.event_loop_ref().enter();
+        self.vm.event_loop().enter();
         Scope {
-            handlers: Rc::clone(self),
+            handlers: self,
             _context: context,
         }
     }
@@ -258,7 +250,7 @@ impl Handlers {
         if let Some(listener) = self.listener() {
             if matches!(listener.listener.get(), ListenerType::None) {
                 listener.abort_handle.leave();
-                listener.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
+                listener.poll_ref.unref(bun_io::js_vm_ctx());
                 listener.this_value.with_mut(|r| r.downgrade());
                 listener
                     .strong_data
@@ -286,16 +278,13 @@ impl Handlers {
         let on_error = self.on_error();
 
         if on_error.is_empty() {
-            // SAFETY: `bun_vm()` is non-null for a Bun-owned global; single JS thread.
-            let _ =
-                global_object
-                    .bun_vm()
-                    .as_mut()
-                    .uncaught_exception(&global_object, args[1], false);
+            let _ = global_object
+                .bun_vm()
+                .uncaught_exception(&global_object, args[1], false);
             return Ok(());
         }
 
-        global_object.bun_vm().event_loop_mut().run_callback(
+        global_object.bun_vm().event_loop().run_callback(
             bun_event_loop::ContextId::NONE,
             on_error,
             &global_object,
@@ -332,7 +321,7 @@ impl Handlers {
             // VM outlives every `Handlers` (process-lifetime singleton).
             vm: global_object.bun_vm(),
             global_object: GlobalRef::from(global_object),
-            context: global_object.bun_vm().context_of_caller_no_frame().id(),
+            context: global_object.bun_vm().context_of_caller().id(),
             active_connections: Cell::new(0),
             mode,
             listener: Cell::new(None),
@@ -425,21 +414,21 @@ impl Handlers {
     }
 }
 
-/// One in-flight dispatch into JS. Holds an `Rc` so the callbacks it is about
+/// One in-flight dispatch into JS. Borrows the caller's `Rc`, so the callbacks it is about
 /// to invoke outlive a `close()` from inside them.
-pub(crate) struct Scope {
-    pub(crate) handlers: Rc<Handlers>,
+pub(crate) struct Scope<'a> {
+    pub(crate) handlers: &'a Rc<Handlers>,
     _context: bun_jsc::virtual_machine::ContextScope<'static>,
 }
 
-impl Scope {
+impl Scope<'_> {
     /// The event-loop `exit()` half, balancing the `enter()` in
     /// [`Handlers::enter`]. Split from the `active_connections` bookkeeping
     /// because draining microtasks here can synchronously reconnect or
     /// `upgradeTLS` the socket, so the caller must observe the resulting
     /// `handlers` state before deciding whether to decrement.
     pub(crate) fn exit_event_loop(&self) {
-        self.handlers.vm.event_loop_ref().exit();
+        self.handlers.vm.event_loop().exit();
     }
 
     /// The `active_connections` half: decrements and, on reaching zero,

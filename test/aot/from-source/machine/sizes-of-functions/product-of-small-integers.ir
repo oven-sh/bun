@@ -1,0 +1,12 @@
+# f1 = area
+# -- source: product-of-small-integers.ts
+# function area(width: number, height: number): number { return width * height; }
+# declare const input: any;
+# (globalThis as any).answer = area(input & 0xffff, input & 0x7fff);
+# -- end of source
+# The compiler before this one: 2 instructions, 0 of them patches.
+# When the bound was taken: steps: operations 5, patches 0, moves 0, unlikely or rare 0.
+# RUN(X64): steps most:5 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 5

@@ -6,37 +6,6 @@
 using namespace Bun;
 using namespace JSC;
 
-extern "C" void Bun__NidKeyPairJobCtx__deinit(NidKeyPairJobCtx* ctx)
-{
-    ctx->deinit();
-}
-
-void NidKeyPairJobCtx::deinit()
-{
-    delete this;
-}
-
-extern "C" void Bun__NidKeyPairJobCtx__runTask(NidKeyPairJobCtx* ctx, JSGlobalObject* globalObject)
-{
-    ncrypto::EVPKeyCtxPointer keyCtx = ctx->setup();
-    if (!keyCtx) {
-        return;
-    }
-    ctx->runTask(globalObject, keyCtx);
-}
-
-extern "C" void Bun__NidKeyPairJobCtx__runFromJS(NidKeyPairJobCtx* ctx, JSGlobalObject* globalObject, JSCallbackArgs* out)
-{
-    *out = ctx->runFromJS(globalObject);
-}
-
-extern "C" void Bun__NidKeyPairJob__createAndSchedule(JSGlobalObject* globalObject, NidKeyPairJobCtx* ctx, EncodedJSValue callback);
-void NidKeyPairJob::createAndSchedule(JSGlobalObject* globalObject, NidKeyPairJobCtx&& ctx, JSValue callback)
-{
-    NidKeyPairJobCtx* ctxCopy = new NidKeyPairJobCtx(WTF::move(ctx));
-    Bun__NidKeyPairJob__createAndSchedule(globalObject, ctxCopy, JSValue::encode(callback));
-}
-
 ncrypto::EVPKeyCtxPointer NidKeyPairJobCtx::setup()
 {
     ncrypto::EVPKeyCtxPointer ctx = ncrypto::EVPKeyCtxPointer::NewFromID(m_id);

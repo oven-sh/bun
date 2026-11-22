@@ -214,11 +214,8 @@ bool EventEmitter::fireEventListeners(const Identifier& eventType, const MarkedA
         return false;
     }
 
-    bool prevFiringEventListeners = data->isFiringEventListeners;
-    data->isFiringEventListeners = true;
-    auto fired = innerInvokeEventListeners(eventType, *listenersVector, arguments);
-    data->isFiringEventListeners = prevFiringEventListeners;
-    return fired;
+    SetForScope firingEventListenersScope(data->isFiringEventListeners, true);
+    return innerInvokeEventListeners(eventType, *listenersVector, arguments);
 }
 
 // Intentionally creates a copy of the listeners vector to avoid event listeners added after this point from being run.

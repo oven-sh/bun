@@ -1,0 +1,27 @@
+# -- source: main.cjs
+# globalThis.self = globalThis;
+# function fare(rider) {
+#   if (typeof rider === "function" || (typeof rider === "object" && rider !== null)) return rider.pays();
+#   if (typeof rider === "number") return rider & 31;
+#   return 2;
+# }
+# function rides(one, other) {
+#   if (typeof one === "function") return one.sits(other);
+#   if (typeof one === "object" && one !== null) return one.sits(other);
+#   return one > other;
+# }
+# function ahead(car) {
+#   let steps = 0;
+#   while (typeof car === "object") { if (!car) return null; car = car.next; if (++steps > 9) return car; }
+#   return car;
+# }
+# let sum = 0;
+# for (let i = 0; i < 5; i++) sum += fare(i * 9) + (rides(i, 2) ? 100 : 0) + ahead(i);
+# print(sum);
+# -- end of source
+# Two ways meet behind tests for an object and for a function: what is read there is no number, whoever may have laid the name on Number.prototype.
+# RUN: link functions mechanisms=all
+# CHECK: function f1 {{*}}result=int[0, {{*}}]
+# CHECK: function f2 {{*}}result=boolean
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 268

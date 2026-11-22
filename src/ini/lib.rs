@@ -116,7 +116,6 @@ pub use draft::{
 mod draft {
 
     use core::fmt;
-    use core::ptr;
 
     use bun_alloc::{AllocError, Arena, ArenaVec, ArenaVecExt as _};
     use bun_ast::E::Rope;
@@ -147,7 +146,7 @@ mod draft {
     // ──────────────────────────────────────────────────────────────────────────
 
     pub struct Parser<'a> {
-        pub(crate) source: &'a Source,
+        pub(crate) source: &'a Source<'a>,
         pub(crate) src: &'a [u8],
         pub out: Expr,
         pub(crate) env: &'a DotEnvLoader,
@@ -170,18 +169,18 @@ mod draft {
 
     enum PrepareResult<'bump> {
         Value(Expr),
-        Section(&'bump mut Rope),
+        Section(&'bump mut Rope<'bump>),
         Key(&'bump [u8]),
     }
 
     impl<'bump> PrepareResult<'bump> {
         bun_core::enum_unwrap!(PrepareResult, Value   => into fn into_value   -> Expr);
-        bun_core::enum_unwrap!(PrepareResult, Section => into fn into_section -> &'bump mut Rope);
+        bun_core::enum_unwrap!(PrepareResult, Section => into fn into_section -> &'bump mut Rope<'bump>);
         bun_core::enum_unwrap!(PrepareResult, Key     => into fn into_key     -> &'bump [u8]);
     }
 
     impl<'a> Parser<'a> {
-        pub fn init(source: &'a Source, env: &'a DotEnvLoader) -> Parser<'a> {
+        pub fn init(source: &'a Source<'a>, env: &'a DotEnvLoader) -> Parser<'a> {
             Parser {
                 src: source.contents.as_ref(),
                 out: Expr::init(E::Object::default(), Loc::EMPTY),
@@ -239,7 +238,7 @@ mod draft {
                         let offset = i32::try_from(line.as_ptr() as usize - src.as_ptr() as usize)
                             .unwrap()
                             + 1;
-                        let section: &mut Rope = Self::prepare_str(
+                        let section: &mut Rope<'_> = Self::prepare_str(
                             env,
                             source_path,
                             Usage::Section,
@@ -422,9 +421,7 @@ mod draft {
                         };
                         offset += 1;
                     }
-                    // JSON.parse("") would throw; json::parse_utf8 returns the
-                    // shared EMPTY_OBJECT static, which a later [section] write
-                    // could then mutate. Fall through to the string path instead.
+                    // JSON.parse("") would throw; json::parse_utf8 returns an empty object.
                     if val.is_empty() {
                         break 'out;
                     }
@@ -532,7 +529,7 @@ mod draft {
 
                 // RopeT is *Rope when usage==Section, else unit. In Rust we just
                 // keep an Option<&mut Rope> and ignore it for non-section usages.
-                let mut rope: Option<&'a mut Rope> = None;
+                let mut rope: Option<&'a mut Rope<'a>> = None;
                 let mut rope_parts: usize = 0;
 
                 let mut i: usize = 0;
@@ -885,10 +882,10 @@ mod draft {
             Ok(None)
         }
 
-        fn single_str_rope(ropealloc: &'a Arena, str_: &[u8]) -> OOM<&'a mut Rope> {
+        fn single_str_rope(ropealloc: &'a Arena, str_: &[u8]) -> OOM<&'a mut Rope<'a>> {
             let rope = ropealloc.alloc(Rope {
                 head: Expr::init(E::EString::init(str_), Loc::EMPTY),
-                next: ptr::null_mut(),
+                next: None,
             });
             Ok(rope)
         }
@@ -897,33 +894,33 @@ mod draft {
             bump: &'a Arena,
             ropealloc: &'a Arena,
             unesc: &mut ArenaVec<'a, u8>,
-            existing_rope: &mut Option<&'a mut Rope>,
+            existing_rope: &mut Option<&'a mut Rope<'a>>,
         ) -> OOM<()> {
             let slice = bump.alloc_slice_copy(&unesc[..]);
             let expr = Expr::init(E::EString::init(slice), Loc::EMPTY);
             if let Some(r) = existing_rope.as_deref_mut() {
-                let _ = r.append(expr, ropealloc)?;
+                r.append(expr, ropealloc);
             } else {
                 *existing_rope = Some(ropealloc.alloc(Rope {
                     head: expr,
-                    next: ptr::null_mut(),
+                    next: None,
                 }));
             }
             unesc.clear();
             Ok(())
         }
 
-        fn str_to_rope(ropealloc: &'a Arena, key: &[u8]) -> OOM<&'a mut Rope> {
+        fn str_to_rope(ropealloc: &'a Arena, key: &[u8]) -> OOM<&'a mut Rope<'a>> {
             let Some(mut dot_idx) = next_dot(key) else {
                 let rope = ropealloc.alloc(Rope {
                     head: Expr::init(E::EString::init(key), Loc::EMPTY),
-                    next: ptr::null_mut(),
+                    next: None,
                 });
                 return Ok(rope);
             };
-            let rope_head: &'a mut Rope = ropealloc.alloc(Rope {
+            let rope_head: &'a mut Rope<'a> = ropealloc.alloc(Rope {
                 head: Expr::init(E::EString::init(&key[..dot_idx]), Loc::EMPTY),
-                next: ptr::null_mut(),
+                next: None,
             });
 
             let mut segments: usize = 1;
@@ -932,14 +929,12 @@ mod draft {
                     Some(n) if segments < MAX_SECTION_ROPE_SEGMENTS => dot_idx + 1 + n,
                     _ => {
                         let rest = &key[dot_idx + 1..];
-                        let _ = rope_head
-                            .append(Expr::init(E::EString::init(rest), Loc::EMPTY), ropealloc)?;
+                        rope_head.append(Expr::init(E::EString::init(rest), Loc::EMPTY), ropealloc);
                         break;
                     }
                 };
                 let part = &key[dot_idx + 1..next_dot_idx];
-                let _ =
-                    rope_head.append(Expr::init(E::EString::init(part), Loc::EMPTY), ropealloc)?;
+                rope_head.append(Expr::init(E::EString::init(part), Loc::EMPTY), ropealloc);
                 segments += 1;
                 dot_idx = next_dot_idx;
             }
@@ -947,8 +942,6 @@ mod draft {
             Ok(rope_head)
         }
     }
-
-    // `IniTestingAPIs` — *_jsc alias deleted (see PORTING.md "Idiom map").
 
     // ──────────────────────────────────────────────────────────────────────────
     // ToStringFormatter
@@ -1148,9 +1141,7 @@ mod draft {
                 bstr::BStr::new(path),
             );
         }
-        let _ = log.print(std::ptr::from_mut::<bun_core::io::Writer>(
-            Output::error_writer(),
-        ));
+        let _ = log.print(Output::error_writer());
         log.reset();
     }
 
@@ -1173,7 +1164,7 @@ mod draft {
 
     impl RegistryKey {
         pub fn from_url(url_bytes: &[u8]) -> RegistryKey {
-            let owned = URL::from_string(&bun_core::String::borrow_utf8(url_bytes)).ok();
+            let owned = URL::from_string(&bun_core::StringView::borrow_utf8(url_bytes)).ok();
             let url = match &owned {
                 Some(owned) => owned.url(),
                 None => URL::parse(url_bytes),
@@ -1392,7 +1383,9 @@ mod draft {
         // We need to dupe all strings
         let out = &parser.out;
         // Relative paths in a `.npmrc` are resolved against the directory that contains it.
-        let dir = bun_core::dirname(source.path.text).unwrap_or_default();
+        let dir = bun_paths::dirname_or_root(source.path.text);
+        let resolve_path =
+            |path: &[u8]| BunInstall::resolve_path(dir, &bun_paths::from_portable(path));
 
         if let Some(query) = out.as_property(b"registry") {
             if let Some(str_) = query.expr.as_utf8_string_literal() {
@@ -1404,7 +1397,7 @@ mod draft {
 
         if let Some(query) = out.as_property(b"cache") {
             if let Some(str_) = query.expr.as_utf8_string_literal() {
-                install.cache_directory = Some(BunInstall::resolve_path(dir, str_));
+                install.cache_directory = Some(resolve_path(str_));
             } else if let Some(b) = query.expr.as_bool() {
                 install.disable_cache = Some(!b);
             }
@@ -1442,7 +1435,7 @@ mod draft {
 
         if let Some(query) = cafile {
             if let Some(cafile) = query.expr.as_string_cloned(bump)? {
-                install.cafile = Some(BunInstall::resolve_path(dir, cafile));
+                install.cafile = Some(resolve_path(cafile));
             }
         }
 
@@ -1616,14 +1609,8 @@ mod draft {
         create_matcher,
     };
 
-    /// `PnpmMatcher.fromExpr` operating on
-    /// `bun_ast::Expr` instead of the lower-tier `bun_ast::Expr`.
-    ///
-    /// `bun_install_types` (T2) cannot depend on `bun_js_parser` (T4),
-    /// and the two `ExprData` enums are distinct (closed Rust enums; only the leaf
-    /// `E::*` payloads are shared). `bun_ini` depends on both, so the T4-typed
-    /// overload lives here. The matcher construction is delegated to the shared
-    /// `create_matcher` helper in `bun_install_types::NodeLinker`.
+    /// `PnpmMatcher.fromExpr` operating on `bun_ast::Expr`. The matcher construction is delegated
+    /// to the shared `create_matcher` helper in `bun_install_types::NodeLinker`.
     fn pnpm_matcher_from_expr(
         expr: &Expr,
         log: &mut Log,

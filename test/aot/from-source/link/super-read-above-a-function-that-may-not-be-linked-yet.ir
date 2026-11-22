@@ -1,0 +1,13 @@
+# `super.hello` in a class below a constructor function looks the name up from the prototype object of the function, above which the class may not stand yet: the read may give undefined.
+# f1 = Sub, f5 = probe
+# -- source: super-read-above-a-function-that-may-not-be-linked-yet.js
+# class Base { hello() { return 1; } }
+# function Sub() { this.a = 1; }
+# class Top extends Sub { probe() { return super.hello; } }
+# const top = new Top();
+# top.probe();
+# Object.setPrototypeOf(Sub.prototype, Base.prototype);
+# top.probe();
+# -- end of source
+# RUN(LINK): link functions mechanisms=all
+# LINK: function f5 {{*}} result=undefined|

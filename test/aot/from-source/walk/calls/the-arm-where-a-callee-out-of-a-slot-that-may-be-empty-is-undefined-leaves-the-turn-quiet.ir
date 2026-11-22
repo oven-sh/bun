@@ -1,0 +1,25 @@
+# -- source: main.ts
+# declare function sink(value: unknown): void;
+# function pour(cup: Float64Array, jug: Float64Array, spoon: Float64Array): Float64Array { cup[0] = cup[1]! / 2 + jug[0]!; cup[1] = jug[1]! - spoon[0]!; return cup; }
+# function taste(cup: Float64Array, spoon: Float64Array): number { return cup[0]! - cup[1]! / spoon[1]!; }
+# const bar: any = {}; bar.pour = pour; bar.taste = taste;
+# const cup = new Float64Array(2), jug = new Float64Array([1.5, 2.5]), spoon = new Float64Array([0.5, 0.25]);
+# function evening(t: number): number { jug[0] = t & 7; let s = 0; for (let i = 0; i < 100; i++) { bar.pour(cup, jug, spoon); s += bar.taste(cup, spoon); } return s; }
+# sink(evening);
+# -- end of source
+# `bar.pour` is proven undefined|pour: its slot may be empty. The arm where it is undefined builds the call as written, to throw. Heard as a call, it has the loop bought twice, and `bar.pour` is asked in front
+# of the typed copy. `bar.taste` stands behind the stores of `pour`: its turn cannot begin again, so the call that throws is built in the typed copy: a call of what is no object runs no code,
+# the turns stay quiet, and the slots, the tests of the callees and the vectors of the views stand in front of the loop. It used to bear the effects of unknown code there, and the typed copy read all of it again in every turn.
+# f3 = evening
+# RUN: walk f3 mechanisms=all
+# CHECK-LABEL: code f3:Body
+# CHECK: Call {{*}}calleeName="bar.pour" traits=[mayThrow, mayThrowByRule, mayCollect, mayCallUnknownCode
+# CHECK: [[pour]]: undefined|f1 @JSValue = GetSlotOrUndefined {{*}}key="pour"
+# CHECK: [[test]]: boolean @Boolean = TypeTest [[pour]] testedType=f1
+# CHECK: Branch [[test]]
+# CHECK: isInLoop=true isLoopHead=true:
+# CHECK-NOT: calleeName="bar.
+# RUN(ANSWERS): run-in-shell globalThis.sink = f => { print(f(1)); print(f(2)); };
+# ANSWERS: -601
+# ANSWERS-NEXT: -500
+# ANSWERS-NEXT: exited with 0

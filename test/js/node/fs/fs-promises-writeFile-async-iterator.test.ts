@@ -35,8 +35,8 @@ test("fs.promises.writeFile async iterator throws on invalid input", async () =>
     yield Symbol("lolwhat");
   };
 
-  expect(() => writeFile(dir + "/file2.txt", symbolStream() as any)).toThrow();
-  expect(() =>
+  await expect(() => writeFile(dir + "/file2.txt", symbolStream() as any)).toThrow();
+  await expect(() =>
     writeFile(
       dir + "/file3.txt",
       (async function* () {
@@ -48,6 +48,6 @@ test("fs.promises.writeFile async iterator throws on invalid input", async () =>
   const fn = {
     [Symbol.asyncIterator]: mock(() => {}),
   };
-  expect(() => writeFile(String(dir), fn as any)).toThrow();
+  await expect(() => writeFile(String(dir), fn as any)).toThrow();
   expect(fn[Symbol.asyncIterator]).not.toBeCalled();
 });

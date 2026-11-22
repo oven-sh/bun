@@ -2,11 +2,12 @@
 //! `Sharing::Publishes` also adds the texts it first sees during checking. In any other checker
 //! such a text becomes a task-local atom (`OwnStore`).
 
-use crate::local::LOCAL;
+use crate::local::is_local_number;
 use crate::session::Session;
 use crate::types::{OwnStore, Sharing};
 use crate::util::memory::Cells;
 use crate::util::{AppendVec, GrowingSlots, SHARDS, spread_hash};
+use smallvec::SmallVec;
 use std::alloc::Global;
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -17,7 +18,8 @@ use std::sync::atomic::{AtomicU32, Ordering};
 pub struct Atom(pub u32);
 
 impl Atom {
-    pub const NONE: Atom = Atom(u32::MAX);
+    /// No name. Its text is empty, but interning the empty text gives `known::empty`.
+    pub const NONE: Atom = Atom(KNOWN_TEXTS.len() as u32 - 1);
 
     /// True if it's one of the words binder.go checks an `Identifier` for:
     /// `KindFirstFutureReservedWord` to `KindLastFutureReservedWord`, `await`
@@ -33,7 +35,7 @@ impl Atom {
     /// True if a task created it and hasn't published it yet.
     #[inline]
     pub fn is_own(self) -> bool {
-        self.0 & LOCAL != 0 && self != Atom::NONE
+        is_local_number(self.0)
     }
     #[inline]
     pub fn is_some(self) -> bool {
@@ -47,7 +49,7 @@ impl std::fmt::Debug for Atom {
     }
 }
 
-/// Texts of the atoms with constant numbers (`known`), indexed by number.
+/// Texts of the atoms with constant numbers (`known`, then `Atom::NONE`), indexed by number.
 pub const KNOWN_TEXTS: &[&[u8]] = known::ALL_TEXTS;
 
 /// A single-file interner numbers the texts that aren't in its file from here up. A multi-file
@@ -197,7 +199,8 @@ impl Tables {
 
     #[inline]
     fn class(&self, index: u32) -> u32 {
-        let cell = self.classes.existing(index / class::PER_CELL);
+        // Another thread may have just allocated the cells for another text.
+        let cell = self.classes.existing_acquire(index / class::PER_CELL);
         let classes = cell.map_or(0, |cell| cell.load(Ordering::Relaxed));
         classes >> (index % class::PER_CELL * class::BITS) & ((1 << class::BITS) - 1)
     }
@@ -272,6 +275,7 @@ macro_rules! known_atoms {
                 b"\xFE@iterator",
                 b"\xFE@asyncIterator",
                 b"\xFEglobal",
+                b"", // `Atom::NONE`, which stays last
             ];
             /// `[Symbol.iterator]` and `[Symbol.asyncIterator]` as property names. Interned right
             /// after `TEXTS`, because a `str` cannot contain their first byte.
@@ -288,6 +292,7 @@ known_atoms! {
     default = "default",
     export_equals = "export=",
     returned = "return=",
+    own_declaration = "declaration=",
     this = "this",
     undefined = "undefined",
     // `Atom::is_keyword_identifier` covers the range from here to `arguments`.
@@ -453,6 +458,75 @@ known_atoms! {
     setTimeout = "setTimeout",
     setInterval = "setInterval",
     execScript = "execScript",
+    use_strict = "use strict",
+    dirname = "__dirname",
+    filename = "__filename",
+    feature = "feature",
+    bun_bundle = "bun:bundle",
+    resolve = "resolve",
+    meta = "meta",
+    main = "main",
+    r#type = "type",
+    r#macro = "macro",
+    with = "with",
+    parse = "parse",
+    getBuiltinModule = "getBuiltinModule",
+    join = "join",
+    path = "path",
+    node_path = "node:path",
+    embed = "embed",
+    createRequire = "createRequire",
+    node_module = "node:module",
+    url = "url",
+    node_url = "node:url",
+    fileURLToPath = "fileURLToPath",
+    URL = "URL",
+    meta_filename = "filename",
+    meta_dir = "dir",
+    meta_dirname = "dirname",
+    Module = "Module",
+    node_process = "node:process",
+    mock = "mock",
+    jest = "jest",
+    vi = "vi",
+    bun_test = "bun:test",
+    setup = "setup",
+    jest_globals = "@jest/globals",
+    vitest = "vitest",
+    doMock = "doMock",
+    importActual = "importActual",
+    importMock = "importMock",
+    requireActual = "requireActual",
+    requireMock = "requireMock",
+    createMockFromModule = "createMockFromModule",
+    unmock = "unmock",
+    doUnmock = "doUnmock",
+    dontMock = "dontMock",
+    toMatchInlineSnapshot = "toMatchInlineSnapshot",
+    toThrowErrorMatchingInlineSnapshot = "toThrowErrorMatchingInlineSnapshot",
+    pathToFileURL = "pathToFileURL",
+    href = "href",
+    search = "search",
+    hash = "hash",
+    file_scheme = "file:",
+    file_scheme_and_slashes = "file://",
+    hoisted = "hoisted",
+    contexts = "contexts",
+    instances = "instances",
+    mockReturnThis = "mockReturnThis",
+    mockImplementation = "mockImplementation",
+    mockImplementationOnce = "mockImplementationOnce",
+    withImplementation = "withImplementation",
+    enumerable = "enumerable",
+    configurable = "configurable",
+    ShadowRealm = "ShadowRealm",
+    Worker = "Worker",
+    worker_threads = "worker_threads",
+    node_worker_threads = "node:worker_threads",
+    use_asm = "use asm",
+    hot = "hot",
+    charCodeAt = "charCodeAt",
+    env = "env",
 }
 
 /// Name prefix of a symbol-keyed property: `InternalSymbolNamePrefix` and `@`. Source text never
@@ -463,10 +537,25 @@ pub const SYMBOL_NAME_PREFIX: &[u8] = b"\xFE@";
 /// `InternalSymbolNamePrefix` and `#`. The string key `"#x"` is a different name.
 pub const PRIVATE_NAME_PREFIX: &[u8] = b"\xFE#";
 
+/// Name prefix of `require`, `module` and `exports` in a script, where they are names in the global scope.
+pub const NAME_IN_GLOBAL_SCOPE: &[u8] = b"\xFF";
+
+fn with_symbol_name_prefix(name: &[u8]) -> SmallVec<[u8; 64]> {
+    let mut text = SmallVec::new();
+    text.extend_from_slice(SYMBOL_NAME_PREFIX);
+    text.extend_from_slice(name);
+    text
+}
+
+/// `isReservedMemberName`: a name that the binder makes up, other than that of a symbol-keyed or a private property.
+pub fn is_reserved_member_name(name: &[u8]) -> bool {
+    matches!(name, [0xFE, next, ..] if !matches!(next, b'@' | b'#'))
+}
+
 /// `SymbolName`: returns the `#x` of a private name, which is stored as `\xFE#x@<class>`. Returns
 /// any other name unchanged.
 pub fn written_name(name: &[u8]) -> &[u8] {
-    if !name.starts_with(PRIVATE_NAME_PREFIX) {
+    if !matches!(name, [0xFE, b'#', ..]) {
         return name;
     }
     let private_name = &name[1..];
@@ -589,10 +678,6 @@ impl crate::table::Id for Atom {
     fn from_number(number: u32) -> Self {
         Atom(number)
     }
-    #[inline]
-    fn local_number(self) -> Option<u32> {
-        self.is_own().then_some(self.0 & !LOCAL)
-    }
 }
 
 /// An `Interner` for code that can't name its session's lifetime.
@@ -635,8 +720,8 @@ impl Intern for Interner<'_> {
 /// One interner per thread, for work where atoms never cross threads. Only the thread that interns
 /// a text writes or reads it.
 pub struct InternerPerThread<'s> {
-    all: Box<[Interner<'s>]>,
-    /// The first interner's `Interner::number`.
+    all: Box<[(&'s Session, std::sync::OnceLock<Interner<'s>>)]>,
+    /// No interner has this `Interner::number`.
     number: u64,
     /// How many threads have been assigned an interner.
     threads: std::sync::atomic::AtomicUsize,
@@ -649,22 +734,21 @@ thread_local! {
 }
 
 impl<'s> InternerPerThread<'s> {
-    /// Creates one interner per session. `sessions` must not be empty. If there are more threads
-    /// than sessions, threads share interners.
+    /// One interner per session, created when a thread first asks for it. `sessions` must not be
+    /// empty. If there are more threads than sessions, threads share interners.
     pub fn new_in(sessions: &'s [Session]) -> Self {
-        let all: Box<[Interner<'s>]> = sessions.iter().map(Interner::new_in).collect();
         InternerPerThread {
-            number: all.first().map_or(0, Interner::number),
-            all,
+            all: sessions.iter().map(|it| (it, Default::default())).collect(),
+            number: next_interner_number(),
             threads: Default::default(),
         }
     }
 
     /// The calling thread's interner.
     #[inline]
-    fn own(&self) -> &Interner<'s> {
+    pub fn own(&self) -> &Interner<'s> {
         let (owner_number, at) = OWN.get();
-        match self.all.get(at) {
+        match self.all.get(at).and_then(|it| it.1.get()) {
             Some(own) if owner_number == self.number => own,
             _ => self.assign(),
         }
@@ -678,7 +762,8 @@ impl<'s> InternerPerThread<'s> {
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let at = thread_index % self.all.len();
         OWN.set((self.number, at));
-        &self.all[at]
+        let (session, interner) = &self.all[at];
+        interner.get_or_init(|| Interner::new_in(session))
     }
 }
 
@@ -733,6 +818,8 @@ impl<'s> Interner<'s> {
             known::sym_async_iterator
         );
         assert_eq!(this.intern(b"\xFEglobal"), known::global_augmentation);
+        // Not interned: a lookup of the empty text finds `known::empty`.
+        assert_eq!(Atom(tables.texts.push(b""[..].into())), Atom::NONE);
         debug_assert!((KNOWN_TEXTS.iter().zip(0..)).all(|(text, i)| this.bytes(Atom(i)) == *text));
         this
     }
@@ -776,7 +863,11 @@ impl<'s> Interner<'s> {
             if recent.interner_number != self.number {
                 recent.interner_number = self.number;
                 match recent.entries.is_empty() {
-                    true => recent.entries = vec![Recent::EMPTY_ENTRY; 1 << Recent::BITS],
+                    true => {
+                        recent.entries.reserve_exact(1 << Recent::BITS);
+                        bun_alloc::prefault(recent.entries.spare_capacity_mut());
+                        (recent.entries).resize(1 << Recent::BITS, Recent::EMPTY_ENTRY);
+                    }
                     false => recent.entries.fill(Recent::EMPTY_ENTRY),
                 }
             }
@@ -825,6 +916,11 @@ impl<'s> Interner<'s> {
         if self.first == 0 {
             return None;
         }
+        self.find_below_first(spread, text)
+    }
+
+    #[inline(never)]
+    fn find_below_first(&self, spread: u64, text: &[u8]) -> Option<Atom> {
         let Tables { slots, texts, .. } = self.base;
         let matches = |i: u32| i < self.first && &**texts.get(i) == text;
         slots.find(spread, matches).map(Atom)
@@ -852,7 +948,7 @@ impl<'s> Interner<'s> {
     /// `name@id`, returns the name of the property keyed by a `unique symbol`
     /// (`getESSymbolLikeTypeForNode`).
     pub fn symbol_name(&self, name: &[u8]) -> Atom {
-        self.intern(&[SYMBOL_NAME_PREFIX, name].concat())
+        self.intern(&with_symbol_name_prefix(name))
     }
 }
 
@@ -862,6 +958,12 @@ fn as_text(bytes: &[u8]) -> std::borrow::Cow<'_, str> {
         [0xFE, rest @ ..] => std::borrow::Cow::Owned(format!("__{}", bstr::BStr::new(rest))),
         bytes => std::borrow::Cow::Owned(crate::messages::text(bytes)),
     }
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum SymbolNameKind {
+    Symbol,
+    Private,
 }
 
 /// The published atoms and the task-local ones, which is everything a task can see.
@@ -910,10 +1012,16 @@ impl<'p, 's> Atoms<'p, 's> {
             .or_else(|| self.own.find_atom(spread, text))
     }
 
+    #[cold]
+    #[inline(never)]
+    fn own_bytes(&self, atom: Atom) -> &'p [u8] {
+        self.own.atom_bytes(atom)
+    }
+
     #[inline]
     pub fn bytes(&self, atom: Atom) -> &'p [u8] {
         if atom.is_own() {
-            self.own.atom_bytes(atom)
+            self.own_bytes(atom)
         } else {
             self.published.bytes(atom)
         }
@@ -921,22 +1029,40 @@ impl<'p, 's> Atoms<'p, 's> {
 
     /// See `Interner::symbol_name`.
     pub fn symbol_name(&self, name: &[u8]) -> Atom {
-        self.intern(&[SYMBOL_NAME_PREFIX, name].concat())
+        self.intern(&with_symbol_name_prefix(name))
     }
 
     /// Returns `class_of` for `atom`'s text.
     #[inline]
     fn class(&self, atom: Atom) -> u32 {
         if atom.is_own() {
-            return class_of(self.bytes(atom));
+            return self.own_class(atom);
         }
         self.published.class(atom)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn own_class(&self, atom: Atom) -> u32 {
+        class_of(self.own_bytes(atom))
+    }
+
+    #[inline]
+    pub fn symbol_name_kind(&self, atom: Atom) -> Option<SymbolNameKind> {
+        let class = self.class(atom);
+        if class & class::IS_SYMBOL_NAME != 0 {
+            Some(SymbolNameKind::Symbol)
+        } else if class & class::IS_PRIVATE_SYMBOL_NAME != 0 {
+            Some(SymbolNameKind::Private)
+        } else {
+            None
+        }
     }
 
     /// `isLateBoundName`
     #[inline]
     pub fn is_symbol_name(&self, atom: Atom) -> bool {
-        atom.is_some() && self.class(atom) & class::IS_SYMBOL_NAME != 0
+        self.class(atom) & class::IS_SYMBOL_NAME != 0
     }
 
     /// `IsPrivateIdentifierSymbol`: true if the name starts with `PRIVATE_NAME_PREFIX`.
@@ -970,4 +1096,49 @@ impl<'p, 's> Atoms<'p, 's> {
 /// `String(n)`, which is a number's property name.
 pub fn number_to_string(n: f64) -> Vec<u8> {
     bun_core::fmt::FormatDouble::dtoa(&mut [0; 124], n).to_vec()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::AtomicBool;
+
+    /// A plain name has no stored class, so nothing orders the thread that asks for its class after the thread that
+    /// allocates the cells for another name. Only Miri can fail this test.
+    #[test]
+    fn a_class_is_read_while_another_thread_adds_a_name() {
+        let session = Session::new();
+        // An interner that's layered over another one starts without cells.
+        let atoms = Interner::over(&session, Interner::in_common(&session));
+        let plain = atoms.intern(b"plain");
+        assert!(plain.0 >= atoms.first);
+        // Relaxed, so that it orders nothing. It only makes the reader come second.
+        let added = AtomicBool::new(false);
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                atoms.intern(b"0");
+                added.store(true, Ordering::Relaxed);
+            });
+            scope.spawn(|| {
+                while !added.load(Ordering::Relaxed) {
+                    std::thread::yield_now();
+                }
+                for _ in 0..64 {
+                    assert_eq!(atoms.class(plain), 0);
+                }
+            });
+        });
+        assert_eq!(atoms.class(atoms.intern(b"0")), class::IS_NUMERIC);
+    }
+
+    #[test]
+    fn none_has_an_empty_text_and_is_not_interned() {
+        let session = Session::new();
+        let common = Interner::in_common(&session);
+        for atoms in [common, Interner::over(&session, common)] {
+            assert_eq!(atoms.bytes(Atom::NONE), b"");
+            assert_eq!(atoms.intern(b""), known::empty);
+            assert_eq!(atoms.lookup(b""), Some(known::empty));
+        }
+    }
 }

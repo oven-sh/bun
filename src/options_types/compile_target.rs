@@ -10,7 +10,7 @@ use std::io::Write as _;
 use bun_core::env::{ARCHITECTURE_NAMES, Architecture, OPERATING_SYSTEM_NAMES, OperatingSystem};
 use bun_core::{Environment, Global, env_var, fmt as bun_fmt};
 use bun_core::{ZStr, strings};
-use bun_paths::{self as path, PathBuffer};
+use bun_paths::{self as path, NameTooLong, Path};
 use bun_semver::{SlicedString, Version};
 use bun_sys::Fd;
 
@@ -117,6 +117,11 @@ impl CompileTarget {
         self.os == host.os && self.arch == host.arch && self.libc == host.libc
     }
 
+    /// This bun itself: the host platform at this version. x64 ships as one build, which `-baseline` names too.
+    pub fn is_this_bun(&self) -> bool {
+        self.is_host_platform() && self.version.eql(CompileTarget::default().version)
+    }
+
     pub fn to_npm_registry_url<'a>(&self, buf: &'a mut [u8]) -> crate::Result<&'a [u8]> {
         if let Some(url) = env_var::BUN_COMPILE_TARGET_TARBALL_URL.get() {
             if strings::has_prefix(url, b"http://") || strings::has_prefix(url, b"https://") {
@@ -187,44 +192,33 @@ impl CompileTarget {
         }
     }
 
-    pub fn exe_path<'a>(
+    pub fn exe_path(
         &self,
-        buf: &'a mut PathBuffer,
-        version_str: &'a ZStr,
+        version_str: &ZStr,
         _env: &mut bun_dotenv::Loader,
         needs_download: &mut bool,
-    ) -> Result<&'a ZStr, crate::Error> {
+    ) -> Result<Path, NameTooLong> {
         if self.is_default() {
             'brk: {
                 let Ok(self_exe_path) = bun_core::self_exe_path() else {
                     break 'brk;
                 };
-                if self_exe_path.len() >= buf.len() {
-                    return Err(crate::Error::BufferTooSmall);
-                }
-                buf[..self_exe_path.len()].copy_from_slice(self_exe_path.as_bytes());
-                buf[self_exe_path.len()] = 0;
                 *needs_download = false;
-                // SAFETY: buf[self_exe_path.len()] == 0 written above
-                return Ok(ZStr::from_buf(&buf[..], self_exe_path.len()));
+                return Ok(Path::from(self_exe_path));
             }
         }
 
         if bun_sys::exists_at(Fd::cwd(), version_str) {
             *needs_download = false;
-            return Ok(version_str);
+            return Ok(Path::from(version_str));
         }
 
         // T1 fallback ignores `_env` (full env-override chain lives in bun_install).
         let cache_dir = bun_sys::fetch_cache_directory_path();
-        let dest = path::resolve_path::join_abs_string_buf_z_checked::<path::platform::Auto>(
-            path::fs::FileSystem::instance().top_level_dir(),
-            &mut buf[..],
-            &[cache_dir.as_slice(), version_str.as_bytes()],
-        )
-        .ok_or(crate::Error::BufferTooSmall)?;
+        let top_level_dir = path::fs::FileSystem::instance().top_level_dir();
+        let dest = Path::resolve(&[top_level_dir, &cache_dir, version_str]).check_len()?;
 
-        if bun_sys::exists_at(Fd::cwd(), dest) {
+        if bun_sys::exists_at(Fd::cwd(), &dest) {
             *needs_download = false;
         }
 
@@ -378,7 +372,7 @@ impl CompileTarget {
                     bun_core::err_generic!(
                         "Unsupported target {} in \"bun{}\"\n\
                          To see the supported targets:\n  \
-                         https://bun.com/docs/bundler/executables",
+                         https://bun.com/docs/compiler/executables",
                         bun_fmt::quote(token),
                         bstr::BStr::new(input_),
                     );

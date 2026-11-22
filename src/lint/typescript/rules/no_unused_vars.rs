@@ -33,13 +33,13 @@ pub struct NoUnusedVars {
     reports_vars_only_used_as_types: bool,
 }
 
-const REMOVE_UNUSED_IMPORT_DECLARATION: Message = Message::new(
+const REMOVE_UNUSED_IMPORT_DECLARATION: &Message = &Message::new(
     "removeUnusedImportDeclaration",
     "Remove unused import declaration.",
 );
-const REMOVE_UNUSED_VAR: Message =
-    Message::new("removeUnusedVar", "Remove unused variable \"{{varName}}\".");
-const USED_ONLY_AS_TYPE: Message = Message::new(
+const REMOVE_UNUSED_VAR: &Message =
+    &Message::new("removeUnusedVar", "Remove unused variable \"{{varName}}\".");
+const USED_ONLY_AS_TYPE: &Message = &Message::new(
     "usedOnlyAsType",
     "'{{varName}}' is {{action}} but only used as a type{{additional}}.",
 );
@@ -1496,7 +1496,7 @@ impl NoUnusedVars {
     }
 
     /// oxlint's text for `variable` where typescript-eslint's message is `message`.
-    fn oxlint_text(&self, variable: Variable, message: Message) -> Vec<u8> {
+    fn oxlint_text(&self, variable: Variable, message: &'static Message) -> Vec<u8> {
         let name = variable.name().bytes();
         let (pronoun, plural) = oxlint_pronoun_for_symbol(variable);
         let message_text = |what: &str, hint: &str| {
@@ -1569,7 +1569,7 @@ impl NoUnusedVars {
     /// oxlint's `help`.
     #[cold]
     #[inline(never)]
-    fn oxlint_help(&self, variable: Variable, message: Message) -> String {
+    fn oxlint_help(&self, variable: Variable, message: &'static Message) -> String {
         if message.id == USED_IGNORED_VAR.id {
             let without_underscore = variable.name().bytes().strip_prefix(b"_");
             let to = match (
@@ -1725,7 +1725,7 @@ impl NoUnusedVars {
         cx: &Cx<'a, Self>,
         reported: &mut SymbolSet,
         unused_var: Variable<'a>,
-        message: Message,
+        message: &'static Message,
         (action, additional): (&'static str, String),
     ) {
         // oxlint's fixes use it as the set of unused variables.
@@ -1756,7 +1756,14 @@ impl NoUnusedVars {
         let mut report = cx.report(
             id,
             if is_oxlint {
-                Message::new(message.id, "{{text}}")
+                // `message` is one of the three this rule reports.
+                if message.id == USED_IGNORED_VAR.id {
+                    const { &Message::new(USED_IGNORED_VAR.id, "{{text}}") }
+                } else if message.id == USED_ONLY_AS_TYPE.id {
+                    const { &Message::new(USED_ONLY_AS_TYPE.id, "{{text}}") }
+                } else {
+                    const { &Message::new(UNUSED_VAR.id, "{{text}}") }
+                }
             } else {
                 message
             },

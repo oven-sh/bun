@@ -1,0 +1,29 @@
+# const descriptor = { value: "two" }; descriptor.get = hidden; Object.defineProperty(globalThis, "label", descriptor)
+# A control of a-definition-by-constant-data-on-the-global-object-hands-nothing-out.ir: what is stored into the data in front of the call is there at the call.
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# CHECK-NOT: function f1 unreached
+
+layout L0 fields=[{key="value" declared={type=anything} flags=[IsRequired]}]
+data d0 root=Object{layout=L0 members=[{key="value" value=String{value="two"}}]} module=m0
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="/$bun/js/builtins/stdio.ts" displayPath="/$bun/js/builtins/stdio.ts" flags=[IsLibrary]
+entry module=m0
+runtimefunction id=StdioGetLightStdioWriteStreams function=f1
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = Builtin builtin=Object
+    v2 = Builtin builtin=ObjectDefineProperty
+    v3 = String string="label"
+    v4 = Data data=d0
+    v5 = PropGet v0 key="hidden" [isFreeName]
+    PropSet v4, v5 key="get"
+    v7 = Call v2, v1, v0, v3, v4 calleeName="Object.defineProperty"
+    v8 = Undefined
+    Return v8
+}
+function f1 name="getLightStdioWriteStreams" module=m1 kind=Method role=Library flags=[HasExplicitName] length=7 enclosingRuntimeFunction=StdioGetLightStdioWriteStreams thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything, v6: anything):
+    Return v0
+}

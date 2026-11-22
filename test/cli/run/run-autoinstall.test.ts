@@ -8,7 +8,8 @@ import {
   isDebug,
   isLinux,
   isWindows,
-  tempDir,
+  runCommandMaxRSS,
+  autoInstallTempDir as tempDir,
   tls,
   unprivilegedSpawnOptions,
 } from "harness";
@@ -134,6 +135,24 @@ async function runAutoInstallWithEnv(env: Record<string, string>, cwd: string, .
 }
 
 const printNoDepsVersion = `console.log(require("no-deps").version);\n`;
+
+test.skipIf(isWindows)("auto-install works when HOME contains a backslash", async () => {
+  using registry = fixtureRegistry();
+  using dir = tempDir("autoinstall-home-backslash", {
+    "DOMAIN\\user/.keep": "",
+    "app/index.js": `console.log(require.resolve("no-deps"));`,
+    "app/bunfig.toml": registry.bunfig,
+  });
+  const HOME = join(String(dir), "DOMAIN\\user");
+  const env = { HOME, BUN_INSTALL: "", BUN_INSTALL_CACHE_DIR: "", XDG_CACHE_HOME: "" };
+
+  const { stdout, stderr, exitCode } = await runAutoInstallWithEnv(env, join(String(dir), "app"), "index.js");
+
+  expect(stderr).toBe("");
+  expect(stdout).toStartWith(join(HOME, ".bun/install/cache/no-deps@2.0.0"));
+  expect(readdirSync(String(dir)).sort()).toEqual(["DOMAIN\\user", "app"]);
+  expect(exitCode).toBe(0);
+});
 
 // docs/runtime/auto-install.mdx: a bare import resolves to the version range the
 // nearest package.json declares for it, and only falls back to `latest` when no
@@ -584,16 +603,12 @@ describe.concurrent("auto-install reads every dependency group of the project's 
       ),
     });
     const peak = async (...flags: string[]) => {
-      await using proc = Bun.spawn({
+      const { stdout, stderr, exitCode, maxRSS } = await runCommandMaxRSS({
         cmd: [bunExe(), ...flags, "index.js"],
         cwd: String(dir),
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
       });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok\n", stderr: "", exitCode: 0 });
-      return proc.resourceUsage()!.maxRSS;
+      return maxRSS;
     };
 
     const without = await peak("--no-install");
@@ -690,6 +705,7 @@ describe.concurrent("auto-install reads the project's package.json as `bun insta
     ["a member that is not listed", { workspaces: ["local"] }],
     ["file:", { dependencies: { "no-deps": "file:./local" } }],
     ["link:", { dependencies: { "no-deps": "link:./local" } }],
+    ["file: written with a backslash", { dependencies: { "no-deps": "file:.\\local" } }],
   ])("%s is the folder on disk", async (_, packageJson) => {
     using registry = fixtureRegistry();
     using dir = tempDir("autoinstall-local-folder", {
@@ -1692,6 +1708,24 @@ describe.concurrent("a failed registry lookup is retried by the next resolve", (
       requestsPerLookup: 2,
     },
   };
+
+  test("a lookup in a beforeExit listener leaves nothing for the event loop to run", async () => {
+    using registry = flakyRegistry(() => notFound());
+    const { stdout, exitCode } = await run(
+      registry,
+      `
+        let emitted = 0;
+        process.on("beforeExit", () => {
+          if (++emitted < 3) try { require("flaky-pkg"); } catch {}
+        });
+        process.on("exit", () => console.log(emitted));
+      `,
+    );
+
+    expect(stdout).toBe("1");
+    expect(registry.lookups).toEqual([["/flaky-pkg"]]);
+    expect(exitCode).toBe(0);
+  });
 
   test.each(Object.entries(failures))("%s", async (_, { respond, requestsPerLookup }) => {
     using registry = flakyRegistry(respond);
@@ -3061,6 +3095,20 @@ describe("auto-install reads the registries and credentials of .npmrc", () => {
         args: ["x.mjs"],
         cwd: dir => join(dir, "app", "inner"),
         files: r => ({ [`app/${name}`]: settings(r), "app/inner/x.mjs": importIt, ...files }),
+      });
+      expect(result).toEqual(fromDefaultRegistry);
+    });
+
+    cell("is not the one above a project whose folder is spelled with two separators", async () => {
+      const result = await autoInstall({
+        args: ["x.cjs"],
+        cwd: dir => join(dir, "app", "inner"),
+        files: r => ({
+          [`app/${name}`]: settings(r),
+          "app/inner/package.json": packageJson,
+          "app/inner/src/.keep": "",
+          "app/inner/x.cjs": `console.log(require(Bun.resolveSync("@corp/thing", __dirname + "//src")));\n`,
+        }),
       });
       expect(result).toEqual(fromDefaultRegistry);
     });

@@ -24,9 +24,11 @@
 #include "BunClientData.h"
 #include "CallSite.h"
 #include "ErrorStackTrace.h"
+#include "ObjectBindings.h"
 #include "headers-handwritten.h"
 
 #include <wtf/Scope.h>
+#include <wtf/SetForScope.h>
 #include <wtf/Threading.h>
 
 using namespace JSC;
@@ -166,7 +168,8 @@ static JSValue formatStackTraceToJSValue(JSC::VM& vm, Zig::GlobalObject* globalO
     if (callsPrepareStackTrace) {
         // In Node, if you console.log(error.stack) inside Error.prepareStackTrace
         // it will display the stack as a formatted string, so we have to do the same.
-        errorObject->putDirect(vm, vm.propertyNames->stack, stackStringValue, JSC::PropertyAttribute::DontEnum | 0);
+        putDirectOrThrow(lexicalGlobalObject, errorObject, vm.propertyNames->stack, stackStringValue, JSC::PropertyAttribute::DontEnum | 0);
+        RETURN_IF_EXCEPTION(scope, {});
 
         JSC::MarkedArgumentBuffer arguments;
         arguments.append(errorObject);
@@ -258,8 +261,7 @@ WTF::String formatStackTrace(
                 // "".test(/[a-0]/);
                 auto originalLine = WTF::OrdinalNumber::fromOneBasedInt(err->line());
 
-                OwnedZigStackFrames remappedFrames(1);
-                ZigStackFrame& remappedFrame = remappedFrames[0];
+                ZigStackFrame remappedFrame;
 
                 remappedFrame.position.line_zero_based = originalLine.zeroBasedInt();
                 remappedFrame.position.column_zero_based = 0;
@@ -271,7 +273,7 @@ WTF::String formatStackTrace(
                     // https://github.com/oven-sh/bun/issues/3595
                     if (!sourceURLForFrame.isEmpty()) {
                         remappedFrame.source_url = Bun::toStringRef(sourceURLForFrame);
-                        remappedFrames.remap(getBunVM());
+                        Bun__remapStackFramePositions(getBunVM(), &remappedFrame, 1);
 
                         sourceURLForFrame = remappedFrame.source_url.toWTFString();
                     }
@@ -316,12 +318,16 @@ WTF::String formatStackTrace(
     // Pass 1: collect (line, col, source_url) for frames that should be
     // source-mapped, then batch the remap so the Rust side can resolve each
     // file's map once instead of per frame.
-    OwnedZigStackFrames remappedFrames(framesCount);
+    WTF::Vector<ZigStackFrame, 8> remappedFrames(framesCount);
     WTF::Vector<WTF::String, 8> sourceURLs;
     WTF::Vector<LineColumn, 8> originalLineColumns;
     sourceURLs.grow(framesCount);
     originalLineColumns.grow(framesCount);
     bool anyRemap = false;
+#if ENABLE(AOT)
+    JSC::AOT::Typed::ModuleID previousCompiledModule;
+    size_t previousCompiledFrame = 0;
+#endif
 
     for (size_t i = 0; i < framesCount; i++) {
         StackFrame& frame = stackTrace.at(i);
@@ -336,6 +342,21 @@ WTF::String formatStackTrace(
         originalLineColumns[i] = {};
 
         if (!frame.hasLineAndColumnInfo()) continue;
+
+#if ENABLE(AOT)
+        if (frame.isCompiledFrame()) [[unlikely]] {
+            if (auto position = frame.compiledPosition()) {
+                originalLineColumns[i] = position->lineColumn;
+                if (position->source && !position->isInEvaluatedString) {
+                    sourceURLs[i] = position->source == previousCompiledModule ? sourceURLs[previousCompiledFrame] : JSC::AOT::displayPathOf(position->source);
+                    previousCompiledModule = position->source;
+                    previousCompiledFrame = i;
+                } else
+                    sourceURLs[i] = Zig::displayPath(frame.compiledFrame(), *position);
+            }
+            continue;
+        }
+#endif
 
         originalLineColumns[i] = frame.computeLineAndColumn();
 
@@ -362,7 +383,7 @@ WTF::String formatStackTrace(
     }
 
     if (anyRemap) {
-        remappedFrames.remap(getBunVM());
+        Bun__remapStackFramePositions(getBunVM(), remappedFrames.begin(), remappedFrames.size());
     }
 
     // Pass 2: format. Everything except (display line/col, source_url) is
@@ -397,7 +418,11 @@ WTF::String formatStackTrace(
                 column = displayColumn;
                 sourceURL = sourceURLForFrame;
 
-                if (remappedFrame.remapped) {
+                bool showsSourcePosition = remappedFrame.remapped;
+#if ENABLE(AOT)
+                showsSourcePosition |= frame.isCompiledFrame() && !frame.isBuiltinFunction() && !sourceURLForFrame.isEmpty();
+#endif
+                if (showsSourcePosition) {
                     if (errorInstance) {
                         errorInstance->putDirect(vm, builtinNames(vm).originalLinePublicName(), jsNumber(originalLine.oneBasedInt()), PropertyAttribute::DontEnum | 0);
                         errorInstance->putDirect(vm, builtinNames(vm).originalColumnPublicName(), jsNumber(originalColumn.oneBasedInt()), PropertyAttribute::DontEnum | 0);
@@ -498,7 +523,7 @@ static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObj
     // We need to sourcemap it if it's a GlobalObject.
 
     const int n = stackTrace.size();
-    OwnedZigStackFrames remappedFrames(n);
+    WTF::Vector<ZigStackFrame, 8> remappedFrames(n);
     WTF::Vector<WTF::String, 8> sourceURLs;
     WTF::Vector<bool, 8> didRemap;
     sourceURLs.grow(n);
@@ -531,7 +556,10 @@ static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObj
             }
         }
 
-        if (globalObjectForFrame == globalObject) {
+        // A position recorded at build time is already the one in the original source.
+        bool isOriginalPosition = Zig::hasOriginalSourcePosition(stackFrame);
+
+        if (globalObjectForFrame == globalObject && !isOriginalPosition) {
             if (JSCStackFrame::SourcePositions* sourcePositions = visibleFrame.getSourcePositions()) {
                 frame.position.line_zero_based = sourcePositions->line.zeroBasedInt();
                 frame.position.column_zero_based = sourcePositions->column.zeroBasedInt();
@@ -546,7 +574,7 @@ static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObj
     }
 
     if (anyRemap) {
-        remappedFrames.remap(globalObject->bunVM());
+        Bun__remapStackFramePositions(globalObject->bunVM(), remappedFrames.begin(), remappedFrames.size());
     }
 
     for (int i = 0; i < n; i++) {
@@ -589,10 +617,8 @@ static JSValue computeErrorInfoToJSValueWithoutSkipping(JSC::VM& vm, Vector<Stac
             RETURN_IF_EXCEPTION(scope, {});
             if (prepareStackTrace) {
                 if (prepareStackTrace.isCell() && prepareStackTrace.isObject() && prepareStackTrace.isCallable()) {
-                    globalObject->isInsideErrorPrepareStackTraceCallback = true;
-                    auto result = computeErrorInfoWithPrepareStackTrace(vm, globalObject, lexicalGlobalObject, stackTrace, line, column, sourceURL, errorInstance, prepareStackTrace.getObject());
-                    globalObject->isInsideErrorPrepareStackTraceCallback = false;
-                    RELEASE_AND_RETURN(scope, result);
+                    SetForScope insideCallback(globalObject->isInsideErrorPrepareStackTraceCallback, true);
+                    RELEASE_AND_RETURN(scope, computeErrorInfoWithPrepareStackTrace(vm, globalObject, lexicalGlobalObject, stackTrace, line, column, sourceURL, errorInstance, prepareStackTrace.getObject()));
                 }
             }
         }
@@ -600,10 +626,8 @@ static JSValue computeErrorInfoToJSValueWithoutSkipping(JSC::VM& vm, Vector<Stac
         if (JSValue prepareStackTrace = globalObject->m_errorConstructorPrepareStackTraceValue.get()) {
             if (prepareStackTrace) {
                 if (prepareStackTrace.isCallable()) {
-                    globalObject->isInsideErrorPrepareStackTraceCallback = true;
-                    auto result = computeErrorInfoWithPrepareStackTrace(vm, globalObject, lexicalGlobalObject, stackTrace, line, column, sourceURL, errorInstance, prepareStackTrace.getObject());
-                    globalObject->isInsideErrorPrepareStackTraceCallback = false;
-                    RELEASE_AND_RETURN(scope, result);
+                    SetForScope insideCallback(globalObject->isInsideErrorPrepareStackTraceCallback, true);
+                    RELEASE_AND_RETURN(scope, computeErrorInfoWithPrepareStackTrace(vm, globalObject, lexicalGlobalObject, stackTrace, line, column, sourceURL, errorInstance, prepareStackTrace.getObject()));
                 }
             }
         }
@@ -671,13 +695,12 @@ void computeLineColumnWithSourcemap(JSC::VM& vm, JSC::SourceProvider* _Nonnull s
     OrdinalNumber line = OrdinalNumber::fromOneBasedInt(lineColumn.line);
     OrdinalNumber column = OrdinalNumber::fromOneBasedInt(lineColumn.column);
 
-    OwnedZigStackFrames frames(1);
-    ZigStackFrame& frame = frames[0];
+    ZigStackFrame frame;
     frame.position.line_zero_based = line.zeroBasedInt();
     frame.position.column_zero_based = column.zeroBasedInt();
     frame.source_url = Bun::toStringRef(sourceURL);
 
-    frames.remap(Bun::vm(vm));
+    Bun__remapStackFramePositions(Bun::vm(vm), &frame, 1);
 
     if (frame.remapped) {
         lineColumn.line = frame.position.line().oneBasedInt();
@@ -835,6 +858,8 @@ JSC_DEFINE_CUSTOM_SETTER(errorInstanceLazyStackCustomSetter, (JSGlobalObject * g
     return true;
 }
 
+bool isImportMetaEnvForTests(JSC::JSObject*);
+
 JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
     Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(lexicalGlobalObject);
@@ -842,8 +867,9 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSC::JSValue objectArg = callFrame->argument(0);
+    // V8 rejects a Proxy too. JS would never see a `stack` written to the cell's own storage.
     // A WebAssembly GC object can't get a property and its Structure has no global object. V8 rejects it too.
-    if (!objectArg.isObject() || objectArg.asCell()->type() == JSC::JSType::WebAssemblyGCObjectType) {
+    if (!objectArg.isObject() || asObject(objectArg)->type() == JSC::ProxyObjectType || asObject(objectArg)->type() == JSC::JSType::WebAssemblyGCObjectType || isImportMetaEnvForTests(asObject(objectArg))) {
         return JSC::JSValue::encode(throwTypeError(lexicalGlobalObject, scope, "invalid_argument"_s));
     }
 
@@ -892,7 +918,8 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
         String sourceURL;
         JSValue result = computeErrorInfoToJSValue(vm, stackTrace, line, column, sourceURL, errorObject);
         RETURN_IF_EXCEPTION(scope, {});
-        errorObject->putDirect(vm, vm.propertyNames->stack, result, JSC::PropertyAttribute::DontEnum | 0);
+        putDirectOrThrow(globalObject, errorObject, vm.propertyNames->stack, result, JSC::PropertyAttribute::DontEnum | 0);
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     return JSC::JSValue::encode(JSC::jsUndefined());

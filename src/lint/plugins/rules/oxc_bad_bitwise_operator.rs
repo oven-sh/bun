@@ -5,9 +5,9 @@ use smallvec::{SmallVec, smallvec};
 /// This rule applies when bitwise operators are used where logical operators are expected.
 pub struct BadBitwiseOperator;
 
-const BAD_BITWISE_OPERATOR: Message = Message::new("", "Bad bitwise operator");
-const USE_LOGICAL_OPERATOR: Message =
-    Message::new("", "Bitwise operator '{{bad_operator}}' seems unintended. Did you mean logical operator '{{suggestion}}'?");
+const BAD_BITWISE_OPERATOR: &Message = &Message::new("", "Bad bitwise operator");
+const USE_LOGICAL_OPERATOR: &Message =
+    &Message::new("", "Bitwise operator '{{bad_operator}}' seems unintended. Did you mean logical operator '{{suggestion}}'?");
 
 impl Rule for BadBitwiseOperator {
     const META: Meta = Meta::oxlint(Plugin::Oxc, "bad-bitwise-operator", Kind::Suggestion).has_suggestions();

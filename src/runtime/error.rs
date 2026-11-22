@@ -72,8 +72,6 @@ pub enum Error {
     NotFound,
     #[error("EmptyKey")]
     EmptyKey,
-    #[error("FormatFailed")]
-    FormatFailed,
     #[error("SelfExePathFailed")]
     SelfExePathFailed,
     #[error("SpawnFailed")]
@@ -110,8 +108,6 @@ pub enum Error {
     CouldntReadCurrentDirectory,
     #[error("FailedToGetTempPath")]
     FailedToGetTempPath,
-    #[error("UnableToEncode")]
-    UnableToEncode,
     #[error("InvalidHeaderName")]
     InvalidHeaderName,
     #[error("FormatError")]
@@ -120,10 +116,6 @@ pub enum Error {
     ReadError,
     #[error("OpenError")]
     OpenError,
-    #[error("UnexpectedPendingResolution")]
-    UnexpectedPendingResolution,
-    #[error("AsyncModule")]
-    AsyncModule,
     #[error("BlobNotFound")]
     BlobNotFound,
     #[error("InvalidRoutePattern")]
@@ -222,8 +214,6 @@ pub enum Error {
     #[error(transparent)]
     Resolver(#[from] bun_resolver::Error),
     #[error(transparent)]
-    Paths(#[from] bun_paths::Error),
-    #[error(transparent)]
     Parsers(#[from] bun_parsers::Error),
     #[error(transparent)]
     Bunfig(#[from] bun_bunfig::Error),
@@ -236,11 +226,7 @@ pub enum Error {
     #[error(transparent)]
     Clap(#[from] bun_clap::Error),
     #[error(transparent)]
-    Zlib(#[from] bun_zlib::ZlibError),
-    #[error(transparent)]
     Http(#[from] bun_http::Error),
-    #[error(transparent)]
-    Hpack(#[from] bun_http::lshpack::HpackError),
     #[error(transparent)]
     JsPrinter(#[from] bun_js_printer::Error),
     #[error(transparent)]
@@ -274,11 +260,12 @@ impl From<bun_uws::ssl_wrapper::InitError> for Error {
     }
 }
 
-impl From<bun_libarchive::Error> for Error {
-    fn from(e: bun_libarchive::Error) -> Self {
+impl From<bun_archive::Error> for Error {
+    fn from(e: bun_archive::Error) -> Self {
         match e {
-            bun_libarchive::Error::Sys(s) => Self::Sys(s),
-            bun_libarchive::Error::Alloc(a) => Self::Alloc(a),
+            bun_archive::Error::Sys(s) => Self::Sys(s),
+            bun_archive::Error::Alloc(a) => Self::Alloc(a),
+            bun_archive::Error::LeavesDestination(e) => Self::Sys(e.into()),
             _ => Self::Unexpected,
         }
     }
@@ -372,7 +359,6 @@ impl Error {
             Self::MissingShell => "MissingShell",
             Self::NotFound => "NotFound",
             Self::EmptyKey => "EmptyKey",
-            Self::FormatFailed => "FormatFailed",
             Self::SelfExePathFailed => "SelfExePathFailed",
             Self::SpawnFailed => "SpawnFailed",
             Self::PipeStartFailed => "PipeStartFailed",
@@ -393,13 +379,10 @@ impl Error {
             Self::ThreadSpawnFailed => "ThreadSpawnFailed",
             Self::CouldntReadCurrentDirectory => "CouldntReadCurrentDirectory",
             Self::FailedToGetTempPath => "FailedToGetTempPath",
-            Self::UnableToEncode => "UnableToEncode",
             Self::InvalidHeaderName => "InvalidHeaderName",
             Self::FormatError => "FormatError",
             Self::ReadError => "ReadError",
             Self::OpenError => "OpenError",
-            Self::UnexpectedPendingResolution => "UnexpectedPendingResolution",
-            Self::AsyncModule => "AsyncModule",
             Self::BlobNotFound => "BlobNotFound",
             Self::InvalidRoutePattern => "InvalidRoutePattern",
             Self::InvalidRequest => "InvalidRequest",
@@ -448,16 +431,13 @@ impl Error {
             Self::Spawn(e) => e.name(),
             Self::Install(e) => e.name(),
             Self::Resolver(e) => e.name(),
-            Self::Paths(e) => e.name(),
             Self::Parsers(e) => e.name(),
             Self::Bunfig(e) => e.name(),
             Self::JsParser(e) => e.name(),
             Self::JsLexer(e) => <&'static str>::from(e),
             Self::StdFmt(_) => "FmtError",
             Self::Clap(e) => e.name(),
-            Self::Zlib(e) => <&'static str>::from(e),
             Self::Http(e) => e.name(),
-            Self::Hpack(e) => <&'static str>::from(e),
             Self::JsPrinter(e) => e.name(),
             Self::Sourcemap(e) => e.name(),
             Self::StandaloneGraph(e) => e.name(),

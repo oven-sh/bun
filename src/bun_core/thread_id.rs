@@ -59,11 +59,7 @@ pub type ThreadId = u64;
 pub type ThreadId = usize;
 
 /// Per-thread cache of [`current()`]. Without it, every call paid a syscall
-/// (`gettid`/`pthread_threadid_np`/`GetCurrentThreadId`). The
-/// bundler's `Worker::get(ctx)` calls `current()` once per scheduled task —
-/// parse, line-offset table, quoted source contents, compile-result
-/// generation, link step 5 — so a 19 K-module build paid ~109 K `gettid`
-/// syscalls (~36 % of total syscall time on the rolldown `apps/10000` bench).
+/// (`gettid`/`pthread_threadid_np`/`GetCurrentThreadId`).
 ///
 /// `0` is the unset sentinel: kernel TIDs / `pthread_threadid_np` IDs /
 /// Win32 thread IDs are all nonzero. A bare `#[thread_local]` slot (not the
@@ -95,8 +91,11 @@ pub fn current() -> ThreadId {
 fn current_uncached() -> ThreadId {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
-        // SAFETY: `gettid` takes no arguments and cannot fail.
-        return unsafe { libc::gettid() } as ThreadId;
+        unsafe extern "C" {
+            // safe: no args; infallible.
+            safe fn gettid() -> libc::pid_t;
+        }
+        return gettid() as ThreadId;
     }
     #[cfg(any(
         target_os = "macos",

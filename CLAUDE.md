@@ -114,7 +114,7 @@ test("(multi-file test) my feature", async () => {
 - **Rust code** (`src/**/*.rs`): Core runtime, JavaScript bindings, bundler, package manager. This is what compiles and ships.
 - **C++ code** (`src/jsc/bindings/*.cpp`): JavaScriptCore bindings, Web APIs
 - **TypeScript** (`src/js/`): Built-in JavaScript modules with special syntax (see JavaScript Modules section)
-- **Generated code**: Many `.rs` and `.cpp` files are auto-generated from `.classes.ts` and other sources. The build regenerates them automatically when their inputs change.
+- **Generated code**: Many `.rs` and `.cpp` files are auto-generated from `.bind.ts` and other sources. The build regenerates them automatically when their inputs change.
 
 ### Core Source Organization
 
@@ -126,10 +126,10 @@ The Rust side is a Cargo workspace of ~200 crates rooted at `Cargo.toml`. The ke
 - `src/runtime/bin_entry/` - process entry point (`main`); `bun_runtime` is the root of the crate graph; every crate's rlib is an input of the final link
 - `src/runtime/cli/` - CLI argument parsing and command dispatch
 - `src/js_parser/`, `src/js_printer/` - JavaScript/TypeScript parsing and printing (each is its own crate; the lexer is `src/js_parser/lexer.rs`)
-- `src/transpiler/` - Wrapper around the parser/printer with sourcemap support
+- `src/bundler/transpiler.rs` - Wrapper around the parser/printer with sourcemap support
 - `src/resolver/` - Module resolution system
 - `src/ast/` - AST node types and arena allocation
-- `src/jsc/bindings/` - C++ JavaScriptCore bindings (generated classes from `.classes.ts` + manual bindings)
+- `src/jsc/bindings/` - C++ JavaScriptCore bindings (classes generated from `.bind.ts` + manual bindings)
 - `src/jsc/` - Rust-side JSC glue (`VirtualMachine.rs`, `web_worker.rs`, `event_loop.rs`, FFI imports)
 - `src/runtime/api/` - Bun-specific JS-visible APIs (`BunObject.rs`, `JSBundler.rs`, `Glob`, `Archive`, …)
 - `src/runtime/server/` - `Bun.serve` HTTP/WebSocket server
@@ -142,16 +142,20 @@ The Rust side is a Cargo workspace of ~200 crates rooted at `Cargo.toml`. The ke
 - `src/shell/` - Cross-platform shell implementation
 - `src/css/` - CSS parser and processor
 - `src/http/` - HTTP client + `websocket_client/` (WebSocket, deflate)
+- `src/icu/` - the part of ICU's C API that JavaScriptCore, WTF and Bun call (not on macOS); the headers and the data come with WebKit
+- `src/zstd/` - zstd (`decoder/` and `encoder/` are crates of their own)
 - `src/sql/` - SQL database integrations (Postgres, MySQL, SQLite)
 - `src/bake/` - Server-side rendering / dev server framework
 
 #### Vendored Dependencies (`vendor/`)
 
-Third-party native libraries are vendored locally and can be read from disk (not git submodules): boringssl (TLS/crypto), brotli, cares (async DNS), hdrhistogram, highway (SIMD), libarchive (tar/zip), libdeflate, libuv (Windows event loop), lolhtml (HTML rewriter), lshpack (HTTP/2 HPACK), lsqpack + lsquic (HTTP/3), mimalloc (allocator), nodejs (headers), picohttpparser, rust-argon2 (argon2 for `Bun.password`, Rust), tinycc (FFI JIT, fork: oven-sh/tinycc), WebKit (JavaScriptCore), zlib (zlib-ng), zstd. Build configuration for these is in `scripts/build/deps/*.ts`.
+Third-party native libraries are vendored locally and can be read from disk (not git submodules): boringssl (TLS/crypto), cares (async DNS), highway (SIMD), libuv (Windows event loop), lolhtml (HTML rewriter), lsqpack + lsquic (HTTP/3), mimalloc (allocator), nodejs (headers), rust-argon2 (argon2 for `Bun.password`, Rust), tinycc (FFI JIT, fork: oven-sh/tinycc), WebKit (JavaScriptCore). Build configuration for these is in `scripts/build/deps/*.ts`.
 
-### JavaScript Class Implementation (C++)
+### JavaScript Class Implementation
 
-When implementing JavaScript classes in C++:
+Write a new class in Rust: a `b.class({ .. })` in a `*.bind.ts` file and the struct it names (`docs/project/bindgen.mdx`, "Classes"). For a Web API whose binding came from WebCore's generator, `webIDL: true` keeps what JavaScript sees; `src/runtime/webcore/URLPattern.bind.ts` is the example.
+
+The classes that are still written by hand in C++ follow these rules:
 
 1. Create three classes if there's a public constructor:
    - `class Foo : public JSC::JSDestructibleObject` (if has C++ fields)
@@ -166,8 +170,6 @@ When implementing JavaScript classes in C++:
 Code generation happens automatically as part of the build process. The main scripts are:
 
 - `src/codegen/bindgen.ts` - Generates Rust, C++ & TypeScript bindings from `*.bind.ts` files (`docs/project/bindgen.mdx`)
-- `src/codegen/generate-classes.ts` - Generates Rust & C++ bindings from `*.classes.ts` files
-- `src/codegen/generate-jssink.ts` - Generates stream-related classes
 - `src/codegen/bundle-modules.ts` - Bundles built-in modules like `node:fs`
 - `src/codegen/bundle-functions.ts` - Bundles global functions like `ReadableStream`
 

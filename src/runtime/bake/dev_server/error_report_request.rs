@@ -20,118 +20,58 @@ use bun_alloc::ArenaVecExt as _;
 use bun_alloc::Arena; // bumpalo::Bump re-export
 use bun_collections::ArrayHashMap;
 use bun_core::{Ordinal, Output};
-use bun_core::{String as BunString, strings};
+use bun_core::{String as BunString, StringOrView, strings};
 use bun_io::Write as _;
 use bun_jsc::{
     JSErrorCode, JSRuntimeType, ZigException, ZigStackFrame, ZigStackFrameCode,
     ZigStackFramePosition, ZigStackTrace,
 };
-use bun_paths::path_buffer_pool;
 use bun_uws::{self as uws, AnyResponse, Request};
 use bun_uws_sys::body_reader_mixin::{BodyReaderHandler, BodyResponse};
 
 use super::source_map_store::{self, GetResult, Key as SourceMapKey};
 use super::{CLIENT_PREFIX, DevServer};
-use crate::server::StaticRoute;
 use crate::server::static_route::InitFromBytesOptions;
-use bun_core::fmt::parse_hex_to_int;
+use crate::server::{PendingRequest, StaticRoute};
+use bun_core::fmt::parse_hex_to_u64;
 
 pub(crate) struct ErrorReportRequest {
-    // BACKREF: heap-allocated request; DevServer owns the server lifecycle and
-    // outlives every in-flight request (BackRef invariant).
-    dev: bun_ptr::BackRef<DevServer, bun_ptr::Mut>,
-    // BodyReaderMixin is a generic helper that stores the buffered body and
-    // dispatches to the two callbacks below.
-    body: uws::BodyReaderMixin<ErrorReportRequest>,
+    dev: PendingRequest<bun_ptr::BackRef<DevServer>>,
 }
 
-bun_core::intrusive_field!(ErrorReportRequest, body: uws::BodyReaderMixin<ErrorReportRequest>);
 impl BodyReaderHandler for ErrorReportRequest {
-    unsafe fn on_body(this: *mut Self, body: &[u8], resp: AnyResponse) -> bun_uws_sys::Result<()> {
-        // SAFETY: caller (BodyReaderMixin) passes the original heap-allocated
-        // pointer with full-allocation provenance and no live borrows.
-        unsafe { ErrorReportRequest::run_with_body(this, body, resp) }.map_err(Into::into)
-    }
-
-    unsafe fn on_error(this: *mut Self) {
-        // Caller passes the original heap-allocated pointer; finalize
-        // consumes it via heap::take exactly once.
-        ErrorReportRequest::finalize(this)
+    fn on_body(&self, body: &[u8], resp: AnyResponse) -> bun_uws_sys::Result<()> {
+        self.run_with_body(body, resp).map_err(Into::into)
     }
 }
 
 impl ErrorReportRequest {
     pub(crate) fn run<R: BodyResponse>(dev: &mut DevServer, _req: &mut Request, resp: &mut R) {
-        // Use the caller's `&mut DevServer` directly (matches
-        // `UnrefSourceMapRequest::run`) — no need to re-derive it through the
-        // freshly-allocated ctx's `BackRef` under `unsafe`.
-        dev.server
-            .as_mut()
-            .expect("server bound")
-            .on_pending_request();
-        let ctx = bun_core::heap::into_raw(Box::new(ErrorReportRequest {
-            dev: bun_ptr::BackRef::new_mut(dev),
-            body: uws::BodyReaderMixin::init(),
-        }));
-        uws::BodyReaderMixin::<ErrorReportRequest>::read_body(ctx, resp);
+        let dev = PendingRequest::new(bun_ptr::BackRef::new(dev));
+        uws::BodyReaderMixin::read_body(ErrorReportRequest { dev }, resp);
     }
 
-    /// `ctx` must be the pointer returned by `heap::alloc` in `run`; called
-    /// exactly once (success path here, or via `on_error` on abort/error).
-    fn finalize(ctx: *mut ErrorReportRequest) {
-        // SAFETY: `ctx` is the original Box allocation produced by `run`; no
-        // live borrow of `*ctx` exists (BodyReaderHandler hands us the raw
-        // pointer, never `&mut self`). Only reachable via `on_body`/`on_error`,
-        // both of which uphold this contract.
-        unsafe {
-            (*ctx)
-                .dev
-                .get_mut()
-                .server
-                .as_mut()
-                .unwrap()
-                .on_static_request_complete();
-            drop(bun_core::heap::take(ctx));
-        }
-    }
-
-    /// SAFETY: `ctx` must be the pointer returned by `heap::alloc` in `run`,
-    /// with no live `&`/`&mut` into the allocation. On `Ok(())` return this
-    /// consumes `ctx` via `finalize`; on `Err` the caller (BodyReaderMixin)
-    /// retains ownership and will call `on_error`.
-    unsafe fn run_with_body(
-        ctx: *mut ErrorReportRequest,
-        body: &[u8],
-        r: AnyResponse,
-    ) -> crate::Result<()> {
-        // .finalize has to be called last, but only in the non-error path.
-        // On error return, BodyReaderMixin calls `on_error` → `finalize`, so
-        // here we simply call `finalize` directly at the success tail.
-
+    fn run_with_body(&self, body: &[u8], r: AnyResponse) -> crate::Result<()> {
         let mut reader = bun_io::FixedBufferStream::new(body);
 
         let arena = Arena::new();
 
-        // BackRef::get() is safe under the back-reference invariant (DevServer
-        // outlives this request). No `&mut *ctx` is formed for the body of this
-        // fn — `finalize(ctx)` at the tail consumes the original Box pointer.
-        // SAFETY: `ctx` is the live heap allocation from `run` (caller contract).
-        let dev: &DevServer = unsafe { &*ctx }.dev.get();
+        let dev: &DevServer = self.dev.get();
 
         // Read payload, assemble ZigException
         let name = sanitize_for_terminal(read_string32(&mut reader)?, &arena);
         let message = sanitize_for_terminal(read_string32(&mut reader)?, &arena);
         let browser_url = sanitize_for_terminal(read_string32(&mut reader)?, &arena);
         let stack_count = reader.read_int_le::<u32>()?.min(255); // does not support more than 255
-        let mut frames: Vec<ZigStackFrame> = Vec::with_capacity(stack_count as usize);
+        let mut frames: Vec<ZigStackFrame<'_>> = Vec::with_capacity(stack_count as usize);
         for _ in 0..stack_count {
             let line = reader.read_int_le::<i32>()?;
             let column = reader.read_int_le::<i32>()?;
             let function_name = sanitize_for_terminal(read_string32(&mut reader)?, &arena);
             let file_name = sanitize_for_terminal(read_string32(&mut reader)?, &arena);
             frames.push(ZigStackFrame {
-                function_name: BunString::from_bytes(function_name),
-                source_url: BunString::from_bytes(file_name),
+                function_name: StringOrView::from_bytes(function_name),
+                source_url: StringOrView::from_bytes(file_name),
                 position: if line > 0 {
                     ZigStackFramePosition {
                         line: Ordinal::from_one_based(line),
@@ -177,7 +117,7 @@ impl ErrorReportRequest {
         let mut region_of_interest_line: u32 = 0;
         for frame in frames.iter_mut() {
             // Every `source_url` here is `Tag::EncodedSlice` (built via
-            // `String::from_bytes`), so `byte_slice()` is the right view.
+            // `StringOrView::from_bytes`), so `byte_slice()` is the right view.
             let source_url: &[u8] = frame.source_url.byte_slice();
             // The browser code strips "http://localhost:3000" when the string
             // has /_bun/client. It's done because JS can refer to `location`
@@ -224,7 +164,7 @@ impl ErrorReportRequest {
             if generated_mappings.len() <= 1
                 || frame.position.line.zero_based() < generated_mappings[1].lines.zero_based()
             {
-                frame.source_url = BunString::static_(RUNTIME_NAME); // matches value in source map
+                frame.source_url = BunString::static_(RUNTIME_NAME).into(); // matches value in source map
                 frame.position = ZigStackFramePosition::INVALID;
                 continue;
             }
@@ -242,11 +182,11 @@ impl ErrorReportRequest {
                 let index = remapped_position.source_index;
                 if index >= 1 && (index as usize - 1) < result.file_paths.len() {
                     let abs_path: &[u8] = &result.file_paths[index as usize - 1];
-                    frame.source_url = BunString::from_bytes(abs_path);
-                    let mut relative_path_buf = path_buffer_pool::get();
+                    frame.source_url = StringOrView::from_bytes(abs_path);
+                    let mut relative_path_buf = bun_paths::Path::new();
                     let rel_path = dev.relative_path(&mut relative_path_buf, abs_path);
                     if strings::eql(frame.function_name.byte_slice(), rel_path) {
-                        frame.function_name = BunString::EMPTY;
+                        frame.function_name = StringOrView::EMPTY;
                     }
                     frame.remapped = true;
 
@@ -268,7 +208,7 @@ impl ErrorReportRequest {
                     }
                 } else if index == 0 {
                     // Should be picked up by above but just in case.
-                    frame.source_url = BunString::static_(RUNTIME_NAME);
+                    frame.source_url = BunString::static_(RUNTIME_NAME).into();
                     frame.position = ZigStackFramePosition::INVALID;
                 }
             }
@@ -301,12 +241,12 @@ impl ErrorReportRequest {
         let mut exception = ZigException {
             r#type: JSErrorCode::Error,
             runtime_type: JSRuntimeType::NOTHING,
-            name: BunString::from_bytes(name),
-            message: BunString::from_bytes(message),
+            name: StringOrView::from_bytes(name),
+            message: StringOrView::from_bytes(message),
             stack: ZigStackTrace::from_frames(&mut frames),
             exception: core::ptr::null_mut(),
             remapped: false,
-            browser_url: BunString::from_bytes(browser_url),
+            browser_url: StringOrView::from_bytes(browser_url),
             errno: 0,
             syscall: BunString::EMPTY,
             system_code: BunString::EMPTY,
@@ -315,16 +255,12 @@ impl ErrorReportRequest {
         };
 
         {
-            let stderr = Output::error_writer_buffered();
+            let stderr = &mut Output::error_writer_buffered();
             let _flush = Output::flush_guard();
             // `print_externally_remapped_zig_exception` takes a runtime
             // `allow_ansi_color` flag.
             let ansi_colors = Output::enable_ansi_colors_stderr();
-            // `dev.vm` is `*const` (shared-ref provenance from `Options.vm`);
-            // `vm_mut()` recovers `&mut VirtualMachine` via the per-thread
-            // singleton (`VirtualMachine::get() -> *mut`), which carries
-            // mutable provenance. Single JS thread — no aliasing `&mut`.
-            let vm = dev.vm_mut();
+            let vm = dev.vm();
             let _ = vm.print_externally_remapped_zig_exception(
                 &mut exception,
                 None,
@@ -347,7 +283,7 @@ impl ErrorReportRequest {
 
             let src_to_write: &[u8] = frame.source_url.byte_slice();
             if strings::has_prefix_comptime(src_to_write, b"/") {
-                let mut relative_path_buf = path_buffer_pool::get();
+                let mut relative_path_buf = bun_paths::Path::new();
                 let file = dev.relative_path(&mut relative_path_buf, src_to_write);
                 _ = out.write_int_le::<u32>(file.len() as u32);
                 out.extend_from_slice(file);
@@ -393,11 +329,6 @@ impl ErrorReportRequest {
                 ..Default::default()
             },
         );
-        // `should_finalize_self = true;` — see Note at fn top.
-        // `ctx` is the original heap-allocated pointer (caller contract); the
-        // only borrow derived from it (`dev`) points into a separate DevServer
-        // allocation, so freeing `*ctx` does not invalidate any live reference.
-        ErrorReportRequest::finalize(ctx);
         Ok(())
     }
 }
@@ -422,7 +353,7 @@ fn parse_id(source_url: &[u8], browser_url: &[u8]) -> Option<source_map_store::K
         return None;
     }
     let hex = &after_prefix[after_prefix.len() - MIN_LEN..][..core::mem::size_of::<u64>() * 2];
-    Some(source_map_store::Key::init(parse_hex_to_int::<u64>(hex)?))
+    Some(source_map_store::Key::init(parse_hex_to_u64(hex)?))
 }
 
 /// Instead of decoding the entire file, just decode the desired section.

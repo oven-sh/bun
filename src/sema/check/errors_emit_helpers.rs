@@ -125,8 +125,8 @@ impl Checker<'_, '_> {
         let (options, module) = (&files.options, files.module(file));
         let is_commonjs_module = module.is_commonjs()
             && (options.module == ModuleKind::CommonJs || options.module.is_node());
-        module.hir.kind != FileKind::Declaration
-            && (module.hir.has_module_syntax || is_commonjs_module)
+        module.facts.kind != FileKind::Declaration
+            && (module.facts.has_module_syntax || is_commonjs_module)
     }
 
     /// FOR SPEED: true if `checkExternalEmitHelpers` can't report anything in `file`, whichever helper is requested,
@@ -980,7 +980,7 @@ impl Checker<'_, '_> {
             if of != file {
                 return false;
             }
-            let is_requesting = match hir[e].kind {
+            let is_requesting = match hir.checked_kind(e) {
                 ExprKind::Dot { .. } => is_private_name_at(hir, hir.name_pos(e)),
                 ExprKind::PrivateIdentifier(_)
                 | ExprKind::Yield { .. }
@@ -1196,7 +1196,7 @@ impl Checker<'_, '_> {
         }
         let (hir, bound) = (self.hir(file), self.bound(file));
         for &e in index.of(ExprTag::Dot) {
-            let ExprKind::Dot { .. } = hir[e].kind else {
+            let ExprKind::Dot { .. } = hir.checked_kind(e) else {
                 continue;
             };
             if !is_private_name_at(hir, hir.name_pos(e)) {

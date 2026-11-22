@@ -1,0 +1,108 @@
+# -- source: main.cjs
+# "use strict";
+# function add(a, b) { return (a + b) | 0; }
+# function line(a, b, x) { return (a * x + b) | 0; }
+# function tag(label, x) { return label + x; }
+# const plusFour = add.bind(null, 4), named = tag.bind(null, "n"), scale = line.bind(null, 3, 4);
+# function overOne(t) { let s = t & 1; for (let i = 0; i < t + 3; i++) s = (s + plusFour(i)) | 0; return s; }
+# function overTwo(t) { let s = t & 1; for (let i = 0; i < t + 3; i++) s = (s + scale(i)) | 0; return s; }
+# function overText(t) { let s = ""; for (let i = 0; i < t + 3; i++) s += named(i); return s; }
+# function overParameter(bound, t) { let s = t & 1; for (let i = 0; i < t + 3; i++) s = (s + bound(i)) | 0; return s; }
+# function attempt(run, first, second) { try { return run(first, second); } catch (error) { return error.constructor.name; } }
+# print(overOne(1), overTwo(1), overText(1), overParameter(scale, 1));
+# print(attempt(overOne, 2), attempt(overTwo, 2), attempt(overText, 2), outside(overParameter, line, add));
+# -- end of source
+# f1 = add, f2 = line, f3 = tag, f4 = overOne, f5 = overTwo, f6 = overText, f7 = overParameter, f8 = attempt
+# `add.bind(null, 4)` at the top of a file, called in a loop of another function. Of the word of the bound arguments Link kept a mark that there are some; the walk knew their number only where the bind stands in the same body.
+# Where the text of the bind tells how many arguments it binds, the type of what it makes says the number: BoundFunction<add, never, 1>: and the call asks the cell for it.
+# The primitives that are bound are seen to arrive at the parameters of the target (objects are not followed there): the call asks the words of the cell for them, so that the copy of the target reckons with numbers.
+# Nothing of it is proven: whatever else stands there is called as written.
+# RUN(HELD): link held variables mechanisms=all
+# HELD: BoundFunction<f1, never, 1>
+# HELD: BoundFunction<f3, never, 1>
+# HELD: BoundFunction<f2, never, 2>
+# RUN(ONE): walk f4 mechanisms=all
+# ONE: = HasNumberOfBoundArguments {{*}}count=1
+# ONE: = GetWordOfBoundFunction {{*}}index=2
+# ONE: = Add {{*}}form=Integers
+# RUN(TWO): walk f5 mechanisms=all
+# TWO: = HasNumberOfBoundArguments {{*}}count=2
+# TWO: = GetWordOfBoundFunction {{*}}index=3
+# RUN(TEXTS): walk f6 mechanisms=all
+# TEXTS: = HasNumberOfBoundArguments {{*}}count=1
+# RUN(HANDED): walk f7 mechanisms=all
+# HANDED: = HasNumberOfBoundArguments {{*}}count=2
+# HANDED: = TypeTest {{*}}testedType=i32
+# The shell binds whatever it likes: other numbers, fewer, none, more, a fraction, a text, an object, undefined, a BigInt where whole numbers were seen; twice; another target; no bound function at all.
+# RUN(SAME): run-in-shell swap = function (target) { return target.bind(null, 3, 4); }; outside = function (run, target, other) { try { return run(swap(target, other), 2); } catch (error) { return error.constructor.name; } };
+# SAME: 23 35 n0n1n2n3 35
+# SAME-NEXT: 30 50 n0n1n2n3n4 50
+# SAME-NEXT: exited with 0
+# RUN(OTHERNUMBERS): run-in-shell swap = function (target) { return target.bind(null, -7, 100); }; outside = function (run, target, other) { try { return run(swap(target, other), 2); } catch (error) { return error.constructor.name; } };
+# OTHERNUMBERS: 23 35 n0n1n2n3 35
+# OTHERNUMBERS-NEXT: 30 50 n0n1n2n3n4 430
+# OTHERNUMBERS-NEXT: exited with 0
+# RUN(FEWER): run-in-shell swap = function (target) { return target.bind(null, 3); }; outside = function (run, target, other) { try { return run(swap(target, other), 2); } catch (error) { return error.constructor.name; } };
+# FEWER: 23 35 n0n1n2n3 35
+# FEWER-NEXT: 30 50 n0n1n2n3n4 0
+# FEWER-NEXT: exited with 0
+# RUN(NONE): run-in-shell swap = function (target) { return target.bind(null); }; outside = function (run, target, other) { try { return run(swap(target, other), 2); } catch (error) { return error.constructor.name; } };
+# NONE: 23 35 n0n1n2n3 35
+# NONE-NEXT: 30 50 n0n1n2n3n4 0
+# NONE-NEXT: exited with 0
+# RUN(MORE): run-in-shell swap = function (target) { return target.bind(null, 3, 4, 5); }; outside = function (run, target, other) { try { return run(swap(target, other), 2); } catch (error) { return error.constructor.name; } };
+# MORE: 23 35 n0n1n2n3 35
+# MORE-NEXT: 30 50 n0n1n2n3n4 95
+# MORE-NEXT: exited with 0
+# RUN(FIVE): run-in-shell swap = function (target) { return target.bind(null, 1, 2, 3, 4, 5); }; outside = function (run, target, other) { try { return run(swap(target, other), 2); } catch (error) { return error.constructor.name; } };
+# FIVE: 23 35 n0n1n2n3 35
+# FIVE-NEXT: 30 50 n0n1n2n3n4 25
+# FIVE-NEXT: exited with 0
+# RUN(FRACTION): run-in-shell swap = function (target) { return target.bind(null, 3.5, 4); }; outside = function (run, target, other) { try { return run(swap(target, other), 2); } catch (error) { return error.constructor.name; } };
+# FRACTION: 23 35 n0n1n2n3 35
+# FRACTION-NEXT: 30 50 n0n1n2n3n4 54
+# FRACTION-NEXT: exited with 0
+# RUN(TEXT): run-in-shell swap = function (target) { return target.bind(null, "3", 4); }; outside = function (run, target, other) { try { return run(swap(target, other), 2); } catch (error) { return error.constructor.name; } };
+# TEXT: 23 35 n0n1n2n3 35
+# TEXT-NEXT: 30 50 n0n1n2n3n4 50
+# TEXT-NEXT: exited with 0
+# RUN(OBJECT): run-in-shell swap = function (target) { return target.bind(null, { valueOf() { return 9; } }, 4); }; outside = function (run, target, other) { try { return run(swap(target, other), 2); } catch (error) { return error.constructor.name; } };
+# OBJECT: 23 35 n0n1n2n3 35
+# OBJECT-NEXT: 30 50 n0n1n2n3n4 110
+# OBJECT-NEXT: exited with 0
+# RUN(MISSING): run-in-shell swap = function (target) { return target.bind(null, undefined, 4); }; outside = function (run, target, other) { try { return run(swap(target, other), 2); } catch (error) { return error.constructor.name; } };
+# MISSING: 23 35 n0n1n2n3 35
+# MISSING-NEXT: 30 50 n0n1n2n3n4 0
+# MISSING-NEXT: exited with 0
+# RUN(BIG): run-in-shell swap = function (target) { return target.bind(null, 3n, 4); }; outside = function (run, target, other) { try { return run(swap(target, other), 2); } catch (error) { return error.constructor.name; } };
+# BIG: 23 35 n0n1n2n3 35
+# BIG-NEXT: 30 50 n0n1n2n3n4 TypeError
+# BIG-NEXT: exited with 0
+# RUN(TWICE): run-in-shell swap = function (target) { return target.bind(null, 3).bind(null, 4); }; outside = function (run, target, other) { try { return run(swap(target, other), 2); } catch (error) { return error.constructor.name; } };
+# TWICE: 23 35 n0n1n2n3 35
+# TWICE-NEXT: 30 50 n0n1n2n3n4 50
+# TWICE-NEXT: exited with 0
+# RUN(OTHERTARGET): run-in-shell swap = function (target, other) { return other.bind(null, 3, 4); }; outside = function (run, target, other) { try { return run(swap(target, other), 2); } catch (error) { return error.constructor.name; } };
+# OTHERTARGET: 23 35 n0n1n2n3 35
+# OTHERTARGET-NEXT: 30 50 n0n1n2n3n4 35
+# OTHERTARGET-NEXT: exited with 0
+# RUN(CLOSURE): run-in-shell swap = function (target) { return function (x) { return -target(3, 4, x); }; }; outside = function (run, target, other) { try { return run(swap(target, other), 2); } catch (error) { return error.constructor.name; } };
+# CLOSURE: 23 35 n0n1n2n3 35
+# CLOSURE-NEXT: 30 50 n0n1n2n3n4 -50
+# CLOSURE-NEXT: exited with 0
+# RUN(PROXY): run-in-shell swap = function (target) { return new Proxy(target.bind(null, 3, 4), { }); }; outside = function (run, target, other) { try { return run(swap(target, other), 2); } catch (error) { return error.constructor.name; } };
+# PROXY: 23 35 n0n1n2n3 35
+# PROXY-NEXT: 30 50 n0n1n2n3n4 50
+# PROXY-NEXT: exited with 0
+# RUN(NUMBER): run-in-shell swap = function () { return 5; }; outside = function (run, target, other) { try { return run(swap(target, other), 2); } catch (error) { return error.constructor.name; } };
+# NUMBER: 23 35 n0n1n2n3 35
+# NUMBER-NEXT: 30 50 n0n1n2n3n4 TypeError
+# NUMBER-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime,CheckWalkAtRunTime swap = function (target) { return target.bind(null, "3", 4); }; outside = function (run, target, other) { try { return run(swap(target, other), 2); } catch (error) { return error.constructor.name; } };
+# CHECKED: 23 35 n0n1n2n3 35
+# CHECKED-NEXT: 30 50 n0n1n2n3n4 50
+# CHECKED-NEXT: exited with 0
+# RUN(CHECKEDTOO): run-in-shell testing=CheckProofsAtRunTime,CheckWalkAtRunTime swap = function (target) { return target.bind(null, 3); }; outside = function (run, target, other) { try { return run(swap(target, other), 2); } catch (error) { return error.constructor.name; } };
+# CHECKEDTOO: 23 35 n0n1n2n3 35
+# CHECKEDTOO-NEXT: 30 50 n0n1n2n3n4 0
+# CHECKEDTOO-NEXT: exited with 0

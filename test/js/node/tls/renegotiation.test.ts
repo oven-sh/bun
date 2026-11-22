@@ -1,4 +1,4 @@
-import type { Subprocess } from "bun";
+import { RedisClient, type Subprocess } from "bun";
 import { afterAll, beforeAll, expect, it } from "bun:test";
 import { readFileSync } from "fs";
 import { bunEnv, bunExe, isIPv6, tls } from "harness";
@@ -476,8 +476,13 @@ const backToBackRenegotiationServer = /* js */ `
         socket.resume();
         const responseFirst = head.startsWith("GET /response-first ");
         let asked = 0;
+        let answered = false;
         (function ask() {
-          if (asked === 3 && responseFirst) socket.write("HTTP/1.1 200 OK\\r\\nContent-Length: 2\\r\\n\\r\\nok");
+          // Since Node.js 26.10 a write() made in a handshake callback waits a turn of the loop, and renegotiate() does not.
+          if (asked === 3 && responseFirst && !answered) {
+            answered = true;
+            return socket.write("HTTP/1.1 200 OK\\r\\nContent-Length: 2\\r\\n\\r\\nok", ask);
+          }
           if (asked === 4) {
             if (isHttp) socket.end("HTTP/1.1 200 OK\\r\\nContent-Length: 2\\r\\nConnection: close\\r\\n\\r\\nok");
             return;
@@ -850,6 +855,58 @@ it("a Valkey client fails its command with the protocol error when the client re
     stderr: expect.any(String),
   });
 });
+
+// A second HELLO draws a reply too, and every later command then gets the reply to the one before it.
+it.concurrent.each(["HELLO", "GET a"])(
+  "a Valkey client sends HELLO once when the server renegotiates before it answers %s",
+  async renegotiateAt => {
+    await using server = Bun.spawn({
+      cmd: [
+        "node",
+        "-e",
+        `
+        const { SERVER_CERT: cert, SERVER_KEY: key, RENEGOTIATE_AT } = process.env;
+        const server = require("tls").createServer({ cert, key, maxVersion: "TLSv1.2" }, socket => {
+          const received = [];
+          socket.on("error", () => {});
+          socket.on("close", () => console.log(received.join()));
+          let pending = "";
+          socket.on("data", chunk => {
+            pending += chunk;
+            for (let match; (match = /HELLO|GET\\r\\n\\$1\\r\\n(.)/.exec(pending)); ) {
+              pending = pending.slice(match.index + match[0].length);
+              const name = match[1];
+              const command = name ? "GET " + name : "HELLO";
+              const answer = () => socket.write("+" + (name ?? "OK") + "\\r\\n");
+              if (command === RENEGOTIATE_AT && !received.includes(command)) socket.renegotiate({}, answer);
+              else answer();
+              received.push(command);
+            }
+          });
+        });
+        server.listen(0, "127.0.0.1", () => console.log(server.address().port));
+        `,
+      ],
+      stdout: "pipe",
+      stderr: "inherit",
+      stdin: "ignore",
+      env: { ...bunEnv, SERVER_CERT: tls.cert, SERVER_KEY: tls.key, RENEGOTIATE_AT: renegotiateAt },
+    });
+    const output = lines(server.stdout);
+    const port = Number((await output.next()).value);
+    const client = new RedisClient(`rediss://localhost:${port}`, { tls: { ca: tls.cert }, autoReconnect: false });
+    const values: unknown[] = [];
+    try {
+      for (const key of ["a", "b", "c"]) values.push(await client.get(key));
+    } finally {
+      client.close();
+    }
+    expect({ values, received: (await output.next()).value }).toEqual({
+      values: ["a", "b", "c"],
+      received: "HELLO,GET a,GET b,GET c",
+    });
+  },
+);
 
 // A renegotiation reports the certificate check of its own handshake. The client ends its write side while the first
 // handshake still runs, which sends nothing but marks the TLS session as shut down. That state must not turn the

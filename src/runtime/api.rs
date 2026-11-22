@@ -13,16 +13,12 @@ pub(crate) use crate::server::SavedRequest;
 
 pub(crate) use crate::socket;
 pub(crate) use crate::socket::Listener;
-pub(crate) use crate::socket::NewSocket;
 pub(crate) use crate::socket::SocketAddress;
 
 pub(crate) use crate::crypto;
 
 // ─── BuildMessage / ResolveMessage ───────────────────────────────────────────
-// Canonical defs live in `bun_jsc` (with `#[bun_jsc::JsClass]` derives wiring
-// the C++ `${T}__create`/`__fromJS`/`__finalize` symbols). `bun_runtime` already
-// depends on `bun_jsc`, so this is a plain downstream re-export — no cycle.
-// Exactly one Rust type backs each C++ `m_ctx` pointer.
+// Defined in `bun_jsc`.
 pub(crate) use bun_jsc::BuildMessage;
 pub(crate) use bun_jsc::ResolveMessage;
 
@@ -35,8 +31,8 @@ pub(crate) mod bun_object;
 pub(crate) mod crash_handler_jsc;
 #[path = "api/cron.rs"]
 pub(crate) mod cron;
-#[path = "api/cron_parser.rs"]
-pub(crate) mod cron_parser;
+#[path = "api/cron_os.rs"]
+pub(crate) mod cron_os;
 #[path = "api/csrf_jsc.rs"]
 pub(crate) mod csrf_jsc;
 #[path = "api/filesystem_router.rs"]
@@ -51,6 +47,8 @@ pub(crate) mod html_rewriter;
 pub(crate) mod js_bundle_completion_task;
 #[path = "api/JSBundler.rs"]
 pub(crate) mod js_bundler;
+#[path = "api/JSSourceMap.rs"]
+pub(crate) mod js_source_map;
 #[path = "api/JSTranspiler.rs"]
 pub(crate) mod js_transpiler;
 #[path = "api/JSON5Object.rs"]
@@ -67,6 +65,8 @@ pub(crate) mod output_file_jsc;
 pub(crate) mod standalone_graph_jsc;
 #[path = "api/TOMLObject.rs"]
 pub(crate) mod toml_object;
+#[path = "api/trim_testing.rs"]
+pub(crate) mod trim_testing;
 #[path = "api/UnsafeObject.rs"]
 pub(crate) mod unsafe_object;
 #[path = "api/XMLObject.rs"]
@@ -87,7 +87,6 @@ pub(crate) mod bun_process;
 #[path = "api/bun/spawn.rs"]
 pub(crate) mod bun_spawn;
 
-// JS-facing `Bun.Subprocess` payload (.classes.ts m_ctx).
 #[path = "api/bun/subprocess.rs"]
 pub(crate) mod bun_subprocess;
 
@@ -119,7 +118,6 @@ pub(crate) mod bun_x509;
 
 pub(crate) mod bun {
     pub(crate) use super::bun_process as process;
-    pub(crate) use super::bun_secure_context as secure_context;
     pub(crate) use super::bun_ssl_context_cache as ssl_context_cache;
     pub(crate) use super::bun_subprocess as subprocess;
     pub(crate) use process::Rusage;
@@ -131,15 +129,12 @@ pub(crate) mod bun {
 
     pub(crate) mod h2_frame_parser {
         pub(crate) use crate::api::h2_frame_parser_body::H2FrameParser;
-        // js2native thunk (`$rust(h2_frame_parser.rs, …)` in generated_js2native.rs).
-        pub(crate) use crate::api::h2_frame_parser_body::h2_frame_parser_constructor;
     }
 }
 
 pub(crate) use crate::api::bun::h2_frame_parser::H2FrameParser;
 pub(crate) use crate::api::bun::ssl_context_cache as SSLContextCache;
 pub(crate) use crate::api::js_bundler::BuildArtifact;
-pub(crate) use crate::api::js_bundler::JSBundler;
 
 // ─── shared scaffold for Bun.{TOML,JSONC,JSON5,YAML,XML}.parse ───────────────
 //
@@ -153,23 +148,19 @@ fn with_text_format_source<R>(
     path: &'static [u8],
     f: impl FnOnce(&bun_alloc::Arena, &mut bun_ast::Log, &bun_ast::Source) -> bun_jsc::JsResult<R>,
 ) -> bun_jsc::JsResult<R> {
-    // A private mi_heap costs microseconds to create, more than parsing a
-    // small document: keep one per thread and recycle it between calls.
-    // `#[thread_local]` rather than `thread_local!` so there is no
-    // destructor racing mimalloc's own thread teardown (as in
-    // `ast_memory_allocator.rs`); a parked heap is reclaimed with the thread.
-    #[thread_local]
-    static ARENA: core::cell::Cell<Option<bun_alloc::Arena>> = core::cell::Cell::new(None);
-    struct Recycle(Option<bun_alloc::Arena>);
-    impl Drop for Recycle {
+    use core::cell::Cell;
+    // A private mi_heap costs microseconds to create, more than parsing a small document.
+    struct Recycle<'a>(Option<bun_alloc::Arena>, &'a Cell<Option<bun_alloc::Arena>>);
+    impl Drop for Recycle<'_> {
         fn drop(&mut self) {
             if let Some(mut arena) = self.0.take() {
                 arena.reset_retain_with_limit(2 * 1024 * 1024);
-                ARENA.set(Some(arena));
+                self.1.set(Some(arena));
             }
         }
     }
-    let recycle = Recycle(Some(ARENA.take().unwrap_or_default()));
+    let slot = &global.bun_vm().text_format_arena;
+    let recycle = Recycle(Some(slot.take().unwrap_or_default()), slot);
     let arena = recycle.0.as_ref().expect("set above");
     let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(arena);
     let _ast_scope = ast_memory_allocator.enter();

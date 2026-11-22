@@ -4,7 +4,7 @@ export const StatWatcher = b.class({
   rustPath: "crate::node::node_fs_stat_watcher::StatWatcher",
   refCounted: true,
   finalize: true,
-  configurable: false,
+  thisValue: "this_value",
   internalFields: ["listener", "prevStat"],
   proto: {
     close: {},

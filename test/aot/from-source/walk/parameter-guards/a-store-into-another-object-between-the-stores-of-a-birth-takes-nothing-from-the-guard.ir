@@ -1,0 +1,16 @@
+# f1 = fly, f2 = Kite
+# -- source: a-store-into-another-object-between-the-stores-of-a-birth-takes-nothing-from-the-guard.ts
+# declare function sink(...values: unknown[]): void;
+# const sky: { last: string } = { last: "" };
+# class Kite {
+#     declare line: string; declare long: number; declare knots: number; declare tail?: Kite; declare torn: boolean; declare wind: number; declare color: string; declare bows: boolean; declare child?: string;
+#     constructor(line: string, child: string) {
+#         this.line = line; sky.last = child; this.long = 40; this.knots = 3; this.tail = undefined; this.torn = false;
+#         this.wind = -1; this.color = "red"; this.bows = true; this.child = undefined;
+#     }
+# }
+# function fly(line: any, child: any) { return new Kite(line, child); }
+# sink(fly);
+# -- end of source
+# RUN(PLAN): plan units mechanisms=all
+# PLAN: unit f2:ParameterGuard

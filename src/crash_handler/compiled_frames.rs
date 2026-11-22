@@ -293,33 +293,7 @@ fn is_in_own_segment(address: usize) -> bool {
 
 #[cfg(target_os = "macos")]
 fn is_in_own_segment(address: usize) -> bool {
-    use bun_sys::macho::{
-        LC_SEGMENT_64, LoadCommandIterator, mach_header_64, offset_in_code, segment_command_64,
-    };
-
-    unsafe extern "C" {
-        #[link_name = "_mh_execute_header"]
-        safe static HEADER: mach_header_64;
-    }
-    let header = &raw const HEADER;
-    // SAFETY: the load commands follow the header in the same mapped segment.
-    let commands = unsafe {
-        core::slice::from_raw_parts(header.add(1).cast::<u8>(), HEADER.sizeofcmds as usize)
-    };
-    let Some(first) = LoadCommandIterator::new(HEADER.ncmds, commands)
-        .filter(|command| command.cmd() == LC_SEGMENT_64)
-        .filter_map(|command| command.cast::<segment_command_64>())
-        .find(|segment| segment.filesize > 0)
-    else {
-        return false;
-    };
-    let offset_in_image = address.wrapping_sub(header.addr()) as u64;
-    offset_in_code(
-        HEADER.ncmds,
-        commands,
-        first.vmaddr.wrapping_add(offset_in_image),
-    )
-    .is_some()
+    bun_sys::macho::main_executable::offset_in_code(address).is_some()
 }
 
 #[cfg(test)]

@@ -5449,7 +5449,11 @@ pub mod macho {
             safe static HEADER: mach_header_64;
         }
 
-        fn load_commands() -> &'static [u8] {
+        pub fn header() -> &'static mach_header_64 {
+            &HEADER
+        }
+
+        pub fn load_commands() -> &'static [u8] {
             let header = &raw const HEADER;
             // SAFETY: `sizeofcmds` bytes of load commands follow the header in the same mapped segment.
             unsafe {
@@ -5473,6 +5477,12 @@ pub mod macho {
         /// The offset of the bytes at `addresses` from the executable's header in its file, which is the offset in the file unless the file is universal. `None` unless one segment maps all of them from the file.
         pub fn file_offset_of(addresses: core::ops::Range<usize>) -> Option<u64> {
             super::file_offset_of(header_address(), HEADER.ncmds, load_commands(), addresses)
+        }
+
+        /// The offset of `address` from the start of the executable's code, or `None` if the address isn't in the code.
+        pub fn offset_in_code(address: usize) -> Option<u64> {
+            let linked = super::linked_address(header_address(), &header_segment()?, address);
+            super::offset_in_code(HEADER.ncmds, load_commands(), linked)
         }
 
         /// The path that dyld loaded the executable from. Not for a signal handler: `dladdr` can take dyld's lock.

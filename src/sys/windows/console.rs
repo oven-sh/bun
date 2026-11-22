@@ -68,6 +68,64 @@ pub fn open(name: &WStr) -> Result<OwnedHandle, Win32Error> {
     super::CreateFileW(name, access, share, super::OPEN_EXISTING, 0)
 }
 
+fn host_process_id() -> Option<DWORD> {
+    const PROCESS_CONSOLE_HOST_PROCESS: ULONG = 49;
+    let mut id = 0usize;
+    // SAFETY: it writes at most the size given.
+    let status = unsafe {
+        super::ntdll::NtQueryInformationProcess(
+            super::GetCurrentProcess(),
+            PROCESS_CONSOLE_HOST_PROCESS,
+            (&raw mut id).cast(),
+            size_of_val(&id) as ULONG,
+            core::ptr::null_mut(),
+        )
+    };
+    // The low bits are flags.
+    super::NT_SUCCESS(status).then_some((id & !3) as DWORD)
+}
+
+/// Signalled when the console is gone, which its handles are not.
+pub fn open_host_process() -> Option<OwnedHandle> {
+    super::OpenProcess(super::SYNCHRONIZE, host_process_id()?).ok()
+}
+
+/// Keeps the thread, and calls `changed` on it when the size of the window may have changed.
+pub fn watch_layout(changed: impl Fn()) {
+    type Callback = extern "system" fn(HANDLE, u32, HANDLE, i32, i32, u32, u32);
+    type SetWinEventHook = extern "system" fn(u32, u32, HANDLE, Callback, u32, u32, u32) -> HANDLE;
+    type WaitMessage = extern "system" fn() -> BOOL;
+    type PeekMessageW = extern "system" fn(&mut [usize; 6], HANDLE, u32, u32, u32) -> BOOL;
+    const LOAD_LIBRARY_SEARCH_SYSTEM32: DWORD = 0x800;
+    const LAYOUT: u32 = 0x4005;
+    const OUT_OF_CONTEXT: u32 = 0;
+    const PM_REMOVE: u32 = 1;
+    extern "system" fn ignore(_: HANDLE, _: u32, _: HANDLE, _: i32, _: i32, _: u32, _: u32) {}
+
+    let (user32, null) = (bun_core::wstr!("user32.dll"), core::ptr::null_mut());
+    // SAFETY: the name ends with a NUL, the types are those of `winuser.h`, and a `MSG` takes six words.
+    let (set_hook, wait, peek) = unsafe {
+        kernel32::LoadLibraryExW(user32.as_ptr(), null, LOAD_LIBRARY_SEARCH_SYSTEM32);
+        (
+            super::find_export::<SetWinEventHook>(user32, c"SetWinEventHook"),
+            super::find_export::<WaitMessage>(user32, c"WaitMessage"),
+            super::find_export::<PeekMessageW>(user32, c"PeekMessageW"),
+        )
+    };
+    // Not every edition of Windows has them, and not every process may load them.
+    if let (Some(set_hook), Some(wait), Some(peek)) = (set_hook, wait, peek)
+        && let Some(host) = host_process_id()
+        && !set_hook(LAYOUT, LAYOUT, null, ignore, host, 0, OUT_OF_CONTEXT).is_null()
+    {
+        while wait() != 0 {
+            while peek(&mut [0; 6], null, 0, 0, PM_REMOVE) != 0 {}
+            changed();
+            // Output that scrolls is reported too.
+            kernel32::Sleep(33);
+        }
+    }
+}
+
 pub fn mode(console: HANDLE) -> Result<DWORD, Win32Error> {
     let mut mode = 0;
     check(GetConsoleMode(console, &mut mode)).map(|()| mode)

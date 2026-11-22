@@ -2,7 +2,7 @@ use core::cell::{Cell, OnceCell};
 use std::os::windows::io::{AsHandle as _, BorrowedHandle, OwnedHandle};
 use std::sync::Arc;
 
-use bun_windows_sys::{INFINITE, NTSTATUS};
+use bun_windows_sys::NTSTATUS;
 
 use crate::blocking;
 use crate::port::{Shared, key};
@@ -51,7 +51,7 @@ impl Notifier {
         self.cancel.set(Some(Arc::clone(&cancel)));
         let port = Arc::clone(port);
         blocking::spawn(move || {
-            bun_sys::windows::wait_for_either(cancel.as_handle(), target.as_handle(), INFINITE);
+            bun_sys::windows::wait_for_any(&[cancel.as_handle(), target.as_handle()]);
             sys::post(&port.handle, key::REQUEST, request.to_raw());
         });
         Some(())

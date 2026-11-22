@@ -1213,12 +1213,37 @@ describe.concurrent("in a terminal", () => {
       await child.gets(expected);
     });
 
-    it("a line is read after more than a second without input", async () => {
-      // The wait for the first key is renewed every second.
-      await using child = await start(`report(process.stdin); await Bun.sleep(1100); say("ready");`);
-      expect(await child.next()).toBe("ready");
-      child.type("late\r");
-      await child.gets("late\r\n");
+    it("the wait for a line ends with the console", async () => {
+      await using child = await start(`
+        const { dlopen } = require("bun:ffi"), host = new BigUint64Array(1);
+        dlopen("ntdll.dll", {
+          NtQueryInformationProcess: { args: ["i64", "u32", "ptr", "u32", "ptr"], returns: "i32" },
+        }).symbols.NtQueryInformationProcess(-1, 49, host, 8, null);
+        report(process.stdin);
+        await turns();
+        process.kill(Number(host[0] & ~3n));
+      `);
+      expect(await child.next()).toEqual(["data", "end"]);
+    });
+
+    it("SIGWINCH comes from a console that has a window", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `require("bun:ffi").dlopen("kernel32.dll", { AllocConsole: { args: [], returns: "i32" } }).symbols.AllocConsole();
+           process.on("SIGWINCH", () => (console.log("resized"), process.exit()));
+           let columns = 60;
+           const resize = () => Bun.spawn(["mode.com", "con", "cols=" + columns++], { stdin: "inherit", onExit: resize });
+           resize();`,
+        ],
+        env: bunEnv,
+        detached: true,
+        windowsHide: true,
+        stdio: ["ignore", "pipe", "inherit"],
+      });
+      expect(await proc.stdout.text()).toBe("resized\n");
+      expect(await proc.exited).toBe(0);
     });
 
     it("tty_wrap takes the modes of Node.js, on the input only", async () => {
@@ -1242,6 +1267,7 @@ describe.concurrent("in a terminal", () => {
       await using child = await start(`
         const first = () => {};
         process.on("SIGWINCH", first).off("SIGWINCH", first).on("SIGWINCH", () => say(process.stdout.getWindowSize()));
+        process.stdin.resume();
         say("ready");
       `);
       expect(await child.next()).toBe("ready");

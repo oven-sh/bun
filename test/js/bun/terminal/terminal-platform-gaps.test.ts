@@ -279,7 +279,8 @@ describe("Bun.Terminal platform behaviour", () => {
   // resize
   // ──────────────────────────────────────────────────────────────────────────
 
-  test("SAME: resize while child is running fires SIGWINCH in child", async () => {
+  // ConPTY has no window to watch, and only tells a reader of its input about a new size.
+  test.todoIf(isWindows)("SAME: resize while child is running fires SIGWINCH in child", async () => {
     const { output } = await runInTerminal(
       `process.on('SIGWINCH', () => setImmediate(() => {
          process.stdout.write('WINCH cols=' + process.stdout.columns + ' rows=' + process.stdout.rows);
@@ -299,6 +300,10 @@ describe("Bun.Terminal platform behaviour", () => {
   });
 
   test("SAME: child can observe resize by re-querying window size", async () => {
+    // SIGWINCH does not fire under ConPTY (see above), so the cached
+    // process.stdout.columns is stale. But the underlying syscall
+    // (TIOCGWINSZ / GetConsoleScreenBufferInfo) returns the new size, so an
+    // explicit refresh works on both platforms.
     const { output } = await runInTerminal(
       `let done = false;
        setInterval(() => {

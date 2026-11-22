@@ -25,6 +25,8 @@ struct Input {
     handle: OwnedHandle,
     /// Ends `Line::Waiting`.
     stop: OwnedHandle,
+    /// An AppContainer may not open it.
+    host: Option<OwnedHandle>,
 }
 
 impl Input {
@@ -37,12 +39,19 @@ impl Input {
         let input = Input {
             handle: open_input().or_else(|_| w::duplicate_handle(handle))?,
             stop: w::CreateEventW()?,
+            host: console::open_host_process(),
         };
         Ok(INPUT.get_or_init(|| input))
     }
 
     fn raw(&self) -> HANDLE {
         self.handle.as_raw_handle()
+    }
+
+    /// For a record or `stop`. `true` if the console is gone instead.
+    fn wait(&self, host: &OwnedHandle) -> bool {
+        let handles = [&self.stop, host, &self.handle];
+        w::wait_for_any(&handles.map(OwnedHandle::as_handle)) == 1
     }
 }
 
@@ -146,7 +155,9 @@ impl Shared {
             return Ok(false);
         }
         for record in console::read_records(input.raw(), &mut records[..count])? {
-            if record.is_input() && !self.take_wake(record.character) {
+            if record.event_type == key_input::WINDOW_BUFFER_SIZE_EVENT {
+                crate::console_signals::check_window_size();
+            } else if record.is_input() && !self.take_wake(record.character) {
                 // Another process has taken what was ahead of it.
                 console::write_records(input.raw(), &[*record])?;
             }
@@ -170,10 +181,7 @@ impl Shared {
 
 fn read_line(input: &Input, mut is_wanted_now: bool) {
     let mut shared = loop {
-        if !is_wanted_now {
-            // Nothing is signalled when the console goes away.
-            w::wait_for_either(input.stop.as_handle(), input.handle.as_handle(), 1000);
-        }
+        let is_gone = !is_wanted_now && input.host.as_ref().is_some_and(|host| input.wait(host));
         let mut shared = SHARED.lock();
         w::reset_event(&input.stop);
         if shared.readers.is_empty() || IS_RAW.load(Ordering::SeqCst) {
@@ -182,7 +190,13 @@ fn read_line(input: &Input, mut is_wanted_now: bool) {
         // A script that is running may have left the input to a child, or be about to pause.
         let is_wanted = core::mem::take(&mut is_wanted_now)
             || (shared.readers.iter()).any(|(_, reader)| reader.is_port_idle());
-        match shared.has_key(input) {
+        let has_key = match input.host {
+            _ if is_gone => Err(Win32Error::BROKEN_PIPE),
+            Some(_) => shared.has_key(input),
+            // Only the read itself ends with the console.
+            None => Ok(true),
+        };
+        match has_key {
             Ok(true) if !is_wanted => break shared,
             Ok(true) => {}
             Ok(false) => continue,

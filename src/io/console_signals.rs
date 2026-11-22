@@ -1,9 +1,9 @@
 //! The signals that Node.js makes of the events of a console.
 
 use core::ffi::c_int;
-use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use core::sync::atomic::{AtomicU32, Ordering};
 use std::os::windows::io::{AsRawHandle as _, OwnedHandle};
-use std::sync::OnceLock;
+use std::sync::{Once, OnceLock};
 
 use bun_sys::windows::{self as w, BOOL, DWORD, FALSE, TRUE, console};
 use bun_threading::Guarded;
@@ -62,7 +62,7 @@ extern "C" fn Bun__watchConsoleSignal(signal: c_int, is_watched: bool) {
     }
     WATCHED.fetch_or(1 << signal, Ordering::SeqCst);
     if signal == SIGWINCH {
-        poll_window_size();
+        watch_window_size();
     }
 }
 
@@ -81,26 +81,13 @@ pub(crate) fn check_window_size() -> bool {
     true
 }
 
-/// Only a reader of the console's input is told of a new size.
-fn poll_window_size() {
-    static IS_POLLING: AtomicBool = AtomicBool::new(false);
-    if IS_POLLING.swap(true, Ordering::SeqCst) {
-        return;
-    }
-    *WINDOW_SIZE.lock() = None;
-    if !check_window_size() {
-        return;
-    }
-    bun_iocp::blocking::spawn(|| {
-        loop {
-            w::kernel32::Sleep(150);
-            if !is_watched(SIGWINCH) {
-                IS_POLLING.store(false, Ordering::SeqCst);
-                if !is_watched(SIGWINCH) || IS_POLLING.swap(true, Ordering::SeqCst) {
-                    return;
-                }
-            }
-            check_window_size();
+/// A pseudo console has no window, and only tells who reads its input.
+fn watch_window_size() {
+    static ONCE: Once = Once::new();
+    ONCE.call_once(|| {
+        *WINDOW_SIZE.lock() = None;
+        if check_window_size() {
+            bun_iocp::blocking::spawn(|| console::watch_layout(|| _ = check_window_size()));
         }
     });
 }

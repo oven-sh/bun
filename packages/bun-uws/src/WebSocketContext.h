@@ -389,6 +389,11 @@ private:
             }
         }
 
+        if (asyncSocket->getBufferedAmount() == 0 && webSocketData->socketData && webSocketData->onSocketDrain) {
+            webSocketData->onSocketDrain(webSocketData->socketData, SSL, s);
+            if (us_socket_is_closed(s)) return s;
+        }
+
         /* Are we in (WebSocket) shutdown mode? */
         if (webSocketData->isShuttingDown) {
             /* Check if we just now drained completely */

@@ -182,6 +182,11 @@ static bool isTunnel(const JSNodeHTTPServerSocket* self)
     return self->is_ssl ? isInTunnelMode<true>(socket) : isInTunnelMode<false>(socket);
 }
 
+bool JSNodeHTTPServerSocket::flushesStreamBufferOnDrain() const
+{
+    return isTunnel(this);
+}
+
 void JSNodeHTTPServerSocket::applyTunnelReads()
 {
     if (!isTunnel(this)) {

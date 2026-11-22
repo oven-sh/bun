@@ -56,6 +56,8 @@ private:
     std::unique_ptr<Subscriber> subscriber;
 public:
     using OnSocketClosedCallback = void (*)(void* userData, int is_ssl, struct us_socket_t *rawSocket, int readError, bool peerEnded);
+    using OnSocketDrainCallback = void (*)(void* userData, int is_ssl, struct us_socket_t *rawSocket);
+    OnSocketDrainCallback onSocketDrain = nullptr;
     void *socketData = nullptr;
     /* node http compatibility callbacks */
     OnSocketClosedCallback onSocketClosed = nullptr;

@@ -388,6 +388,11 @@ fn kill_descendants() {
     }
 }
 
+/// [`kill_descendants`] while other threads still run: a child that one of them starts during the walk survives.
+pub fn kill_descendants_while_other_threads_run() {
+    kill_descendants();
+}
+
 /// Enumerate our direct children into `out`. Used by `spawnPosix`
 /// to snapshot pre-existing siblings before arming subreaper, so the post-wait
 /// `kill_subreaper_adoptees` can tell adopted orphans apart from `Bun.spawn`

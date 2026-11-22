@@ -1619,10 +1619,10 @@ async function runTests(downloaded: Promise<string> | undefined, printed: Promis
             continue;
           }
           list = null;
-          const ended = /^✗ (.+?) \((worker crashed|aborted:|no live workers)/.exec(line);
+          const ended = /^✗ (.+?) \((worker crashed|worker timed out|aborted:|no live workers)/.exec(line);
           // The groups of the pattern are not optional, and testPath is only set when it matched.
           const testPath = ended && norm(ended[1]!);
-          if (testPath) (ended![2] === "worker crashed" ? failed : incomplete).add(testPath);
+          if (testPath) (ended![2]!.startsWith("worker ") ? failed : incomplete).add(testPath);
         }
         evidence = failed.size + incomplete.size > 0;
       }

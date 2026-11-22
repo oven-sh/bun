@@ -169,6 +169,16 @@ unsafe extern "C" {
     );
 }
 
+/// How many threads a debugger keeps from running: paused at a breakpoint, or waiting for a debugger to connect.
+#[unsafe(no_mangle)]
+#[allow(non_upper_case_globals)]
+static Bun__Debugger__heldThreads: AtomicU32 = AtomicU32::new(0);
+
+/// Whether a debugger keeps a thread of this process from running. Any thread.
+pub fn holds_a_thread() -> bool {
+    Bun__Debugger__heldThreads.load(Ordering::SeqCst) > 0
+}
+
 static FUTEX_ATOMIC: AtomicU32 = AtomicU32::new(0);
 static HAS_CREATED_DEBUGGER: AtomicBool = AtomicBool::new(false);
 
@@ -211,6 +221,8 @@ impl Debugger {
         );
         // Reset `must_block_until_connected` on every exit path.
         scopeguard::defer! { dbg.must_block_until_connected.set(false); }
+        Bun__Debugger__heldThreads.fetch_add(1, Ordering::SeqCst);
+        scopeguard::defer! { Bun__Debugger__heldThreads.fetch_sub(1, Ordering::SeqCst); }
 
         bun_core::scoped_log!(debugger, "spin");
         // `FUTEX_ATOMIC` starts at 0 and nothing ever stores `1` before this

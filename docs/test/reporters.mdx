@@ -72,7 +72,7 @@ An uncaught exception or unhandled rejection while a test is running fails that 
 
 An error outside of any test is reported as a failed `<testcase>` named `(unhandled error)` in that file's `<testsuite>`. Examples are a test file or a preload script that throws while it loads, has a syntax error, or imports a module that doesn't exist.
 
-With `--parallel`, a file whose worker crashed has a failed `<testcase>` named `(worker crashed)`. The files that the crash kept from finishing or from starting have one named `(aborted)`. After `SIGINT` or `SIGTERM`, a file that was running has one named `(interrupted)`, and a file that hadn't started has one named `(aborted)`.
+With `--parallel`, a file whose worker crashed has a failed `<testcase>` named `(worker crashed)`. A file whose worker ended because a test blocked the event loop past its timeout has one named `(worker timed out)`. The files that the crash kept from finishing or from starting have one named `(aborted)`. After `SIGINT` or `SIGTERM`, a file that was running has one named `(interrupted)`, and a file that hadn't started has one named `(aborted)`.
 
 #### Configuring via bunfig.toml
 

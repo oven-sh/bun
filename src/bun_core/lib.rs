@@ -63,8 +63,8 @@ pub use string::{
     StringView, Utf8Bytes, Utf8WithString, WTFStringImpl, WTFStringImplExt, WTFStringImplStruct,
 };
 pub use string::{
-    STRING_ALLOCATION_LIMIT, cheap_prefix_normalizer, escape_reg_exp, identifier, lexer,
-    lexer_tables, parse_double, printer, quote_for_json, string_joiner, write,
+    STRING_ALLOCATION_LIMIT, escape_reg_exp, identifier, lexer, lexer_tables, parse_double,
+    printer, quote_for_json, string_joiner, write,
 };
 pub use string::{StringPointer, Tag, slice_to_nul};
 
@@ -231,78 +231,6 @@ pub use code_generation::{
     is_strict_only_beside_compiled_program, run_no_compiled_program_on_this_thread,
     runs_no_compiled_program,
 };
-
-/// Tier-0 path-separator predicates. Sunk from `bun_paths` so `bun_core::util`
-/// (dirname, which) can use them without an upward dep. `bun_paths` re-exports
-/// these as the canonical `is_sep_*` set.
-pub mod path_sep {
-    use crate::strings_impl::PathByte;
-    pub use bun_alloc::{SEP, SEP_STR};
-
-    // ─── u8 const fns (kept const for match-guard / const-eval callers) ─────
-
-    /// `/` **or** `\` on every target.
-    /// Use for parsing user-supplied / cross-platform path strings (tsconfig,
-    /// archive entries, Windows drive prefixes).
-    #[inline(always)]
-    pub const fn is_sep_any(c: u8) -> bool {
-        c == b'/' || c == b'\\'
-    }
-
-    /// Host-OS-native separator predicate: accepts `\` only when *compiled*
-    /// for Windows. Use when matching against real on-disk paths (glob, joins,
-    /// `which`, dirname).
-    #[inline(always)]
-    pub const fn is_sep_native(c: u8) -> bool {
-        c == b'/' || (cfg!(windows) && c == b'\\')
-    }
-
-    // ─── PathByte-generic forms (u8 / u16) ──────────────────────────────────
-
-    #[inline(always)]
-    pub fn is_sep_posix_t<T: PathByte>(c: T) -> bool {
-        c == T::from_u8(b'/')
-    }
-
-    #[inline(always)]
-    pub fn is_sep_any_t<T: PathByte>(c: T) -> bool {
-        c == T::from_u8(b'/') || c == T::from_u8(b'\\')
-    }
-
-    #[inline(always)]
-    pub fn is_sep_native_t<T: PathByte>(c: T) -> bool {
-        if cfg!(windows) {
-            is_sep_any_t(c)
-        } else {
-            is_sep_posix_t(c)
-        }
-    }
-
-    /// Host-OS-native absolute-path predicate.
-    /// POSIX: leading `/`. Windows: leading `/` or `\`, or 3-byte `X:/`|`X:\`
-    /// — **no** alphabetic gate on the drive byte, and a
-    /// bare `X:` with no trailing separator is **not** absolute.
-    ///
-    /// Sunk from `bun_paths::is_absolute` so tier-0 (`util::which`) and
-    /// tier-2+ share a single impl.
-    #[inline]
-    pub const fn is_absolute_native(p: &[u8]) -> bool {
-        #[cfg(not(windows))]
-        {
-            !p.is_empty() && p[0] == b'/'
-        }
-        #[cfg(windows)]
-        {
-            if p.is_empty() {
-                return false;
-            }
-            if is_sep_any(p[0]) {
-                return true;
-            }
-            p.len() >= 3 && p[1] == b':' && is_sep_any(p[2])
-        }
-    }
-}
 
 // ─── libm shims ───────────────────────────────────────────────────────────────
 // Canonical extern for libm's `powf`/`pow`.
@@ -547,7 +475,6 @@ pub mod output;
 bun_dispatch::link_interface! {
     pub OutputSink[Sys] {
         fn stderr() -> output::File;
-        fn make_path(cwd: Fd, dir: &[u8]) -> core::result::Result<(), Error>;
         fn create_file(cwd: Fd, path: &[u8]) -> core::result::Result<Fd, Error>;
         fn write_all_quiet(fd: Fd, bytes: &[u8]) -> bool;
         fn tty_winsize(fd: Fd) -> Option<Winsize>;
@@ -1154,14 +1081,13 @@ pub use crate::string::immutable::{
     SplitIterator, StringOrTinyString, UNICODE_REPLACEMENT, WHITESPACE_CHARS, append, cat,
     concat_with_length, contains_char, copy, count_char, decode_hex_to_bytes,
     decode_hex_to_bytes_truncate, encode_bytes_to_hex, ends_with_any, ends_with_char,
-    ends_with_char_or_is_zero_length, eql_any_comptime, eql_comptime, eql_comptime_utf16,
-    format_escapes, has_prefix, has_prefix_case_insensitive, has_prefix_comptime,
-    has_prefix_comptime_utf16, has_suffix_comptime, index_of, index_of_scalar, is_all_whitespace,
-    is_npm_package_name, is_npm_package_name_ignore_length, is_on_char_boundary,
-    is_utf8_char_boundary, is_valid_utf8, last_index_of, last_index_of_utf16,
-    length_of_leading_whitespace_ascii, memmem, order, order_t, percent_encode_write, sort_asc,
-    sort_desc, split, starts_with_case_insensitive_ascii, starts_with_char, str_utf8,
-    to_ascii_hex_value, to_utf16_alloc, trim_leading_char, trim_prefix, trim_prefix_comptime,
+    eql_any_comptime, eql_comptime, eql_comptime_utf16, format_escapes, has_prefix,
+    has_prefix_case_insensitive, has_prefix_comptime, has_prefix_comptime_utf16,
+    has_suffix_comptime, index_of, index_of_scalar, is_all_whitespace, is_npm_package_name,
+    is_npm_package_name_ignore_length, is_on_char_boundary, is_utf8_char_boundary, is_valid_utf8,
+    last_index_of, last_index_of_utf16, length_of_leading_whitespace_ascii, memmem, order, order_t,
+    percent_encode_write, sort_asc, sort_desc, split, starts_with_case_insensitive_ascii,
+    starts_with_char, str_utf8, to_ascii_hex_value, to_utf16_alloc, trim_leading_char, trim_prefix,
     trim_suffix, utf8_byte_sequence_length, utf16_eql_string, without_prefix,
     without_prefix_comptime, without_suffix_comptime, without_utf8_bom,
 };
@@ -1273,6 +1199,35 @@ pub(crate) mod strings_impl {
         out.extend_from_slice(&input[i..]);
         out
     }
+
+    #[inline]
+    pub fn replace_char_in_place<T: PathByte>(text: &mut [T], from: u8, to: u8) {
+        let (from, to) = (T::from_u8(from), T::from_u8(to));
+        // An unconditional store is what lets this be vectorized.
+        let replace = |unit: T| if unit == from { to } else { unit };
+        let Some(&last) = text.last_chunk::<16>() else {
+            return text.iter_mut().for_each(|unit| *unit = replace(*unit));
+        };
+        for chunk in text.as_chunks_mut::<16>().0 {
+            *chunk = chunk.map(replace);
+        }
+        // Overlaps the chunk before it, in place of a scalar loop.
+        if let Some(end) = text.last_chunk_mut() {
+            *end = last.map(replace);
+        }
+    }
+
+    /// [`replace_char_in_place`] on a copy, if there is anything to replace.
+    #[inline]
+    pub fn replace_char(text: &[u8], from: u8, to: u8) -> std::borrow::Cow<'_, [u8]> {
+        if !crate::strings::contains_char(text, from) {
+            return text.into();
+        }
+        let mut text = text.to_vec();
+        replace_char_in_place(&mut text, from, to);
+        text.into()
+    }
+
     /// Defers to libc `strncasecmp`/`_strnicmp` for the
     /// hot path (CSS parser, HTTP header matching). A `b` shorter than `a` is
     /// rejected instead of read past.
@@ -1331,52 +1286,6 @@ pub(crate) mod strings_impl {
             start += 1;
         }
         false
-    }
-    /// `bun.strings.isWindowsAbsolutePathMissingDriveLetter`
-    /// — true for `\foo`-style absolute paths that lack a `C:` / `\\?\` /
-    /// `\\server\` prefix and therefore need the cwd's drive prepended.
-    /// Generic over `u8`/`u16`.
-    pub fn is_windows_absolute_path_missing_drive_letter<T: PathByte>(chars: &[T]) -> bool {
-        // Release-mode callers may still pass `""`, so bail instead of
-        // indexing OOB.
-        debug_assert!(!chars.is_empty());
-        if chars.is_empty() {
-            return false;
-        }
-        let sep = crate::path_sep::is_sep_any_t::<T>;
-
-        // 'C:\hello' -> false — most common case, check first.
-        if !sep(chars[0]) {
-            debug_assert!(chars.len() > 2);
-            debug_assert!(chars[1] == T::from_u8(b':'));
-            return false;
-        }
-
-        if chars.len() > 4 {
-            // '\??\hello' -> false (NT object prefix)
-            if chars[1] == T::from_u8(b'?') && chars[2] == T::from_u8(b'?') && sep(chars[3]) {
-                return false;
-            }
-            // '\\?\hello' -> false (other NT object prefix)
-            // '\\.\hello' -> false (NT device prefix)
-            if sep(chars[1])
-                && (chars[2] == T::from_u8(b'?') || chars[2] == T::from_u8(b'.'))
-                && sep(chars[3])
-            {
-                return false;
-            }
-        }
-
-        // With `chars[0]` already known to be a separator, the filesystem
-        // root is longer than one char
-        // only via the UNC/device branch (`len >= 5 && sep[0] && sep[1] &&
-        // !sep[2]`); every other separator-led path resolves to a single-char
-        // root. Inlined here because `bun_paths` would be a tier-0 cycle.
-        //
-        // '\\Server\Share'  -> false (UNC)
-        // '\\Server\\Share' -> true  (extra separator — not UNC)
-        // '\Server\Share'   -> true  (posix-style)
-        !(chars.len() >= 5 && sep(chars[1]) && !sep(chars[2]))
     }
     /// `const fn` byte-slice equality — slice `==` is not `const` on stable, so
     /// const-context callers (clap param-name lookup, MultiArrayList field-name
@@ -1888,20 +1797,6 @@ pub(crate) mod strings_impl {
         Some(dst)
     }
 
-    // Bound relaxed Eq → PartialEq to match core::slice::<[T]>::starts_with /
-    // ends_with exactly. Bodies are semantically identical to the stdlib
-    // methods; kept as named free fns so call sites that read
-    // `strings::has_prefix_t(a, b)` keep their shape.
-    #[inline]
-    pub fn has_prefix_t<T: PartialEq>(s: &[T], prefix: &[T]) -> bool {
-        s.len() >= prefix.len() && s[..prefix.len()] == *prefix
-    }
-
-    #[inline]
-    pub fn has_suffix_t<T: PartialEq>(s: &[T], suffix: &[T]) -> bool {
-        s.len() >= suffix.len() && s[s.len() - suffix.len()..] == *suffix
-    }
-
     #[inline]
     pub fn eql_case_insensitive_ascii_check_length(a: &[u8], b: &[u8]) -> bool {
         eql_case_insensitive_ascii(a, b, true)
@@ -2198,8 +2093,7 @@ pub(crate) mod strings_impl {
     }
     // ─── path basename ─────────────────────────────────────────────────────
     // Minimal code-unit trait so the generic basename impls can live at T0
-    // without pulling `bun_paths::PathChar` (T1) down. `PathChar` and
-    // `PathUnit` both add `: PathByte` as a supertrait and inherit `from_u8`.
+    // without depending on `bun_paths::PathChar` (T1), which extends it.
     pub trait PathByte: Eq + crate::Pod {
         fn from_u8(b: u8) -> Self;
         /// `s` as the concrete slice it is, for code with a different kernel per width.
@@ -2261,79 +2155,7 @@ pub(crate) mod strings_impl {
         }
     }
 
-    /// Strip trailing `/` then return the final
-    /// component. `\` is NOT a separator. Empty / all-`/` input → `&[]`.
-    pub fn basename_posix<T: PathByte>(p: &[T]) -> &[T] {
-        let mut end = p.len();
-        while end > 0 && p[end - 1] == T::from_u8(b'/') {
-            end -= 1;
-        }
-        if end == 0 {
-            return &p[..0];
-        }
-        let mut start = end;
-        while start > 0 && p[start - 1] != T::from_u8(b'/') {
-            start -= 1;
-        }
-        &p[start..end]
-    }
-
-    /// Strips trailing `/`/`\`, treats a drive
-    /// designator `X:` at index 1 as a root delimiter (`"C:"` → `""`,
-    /// `"C:foo"` → `"foo"`, `"C:\\"` → `""`), then returns the final component.
-    pub fn basename_windows<T: PathByte>(p: &[T]) -> &[T] {
-        if p.is_empty() {
-            return &p[..0];
-        }
-        let mut end = p.len();
-        loop {
-            let c = p[end - 1];
-            if c == T::from_u8(b'/') || c == T::from_u8(b'\\') {
-                end -= 1;
-                if end == 0 {
-                    return &p[..0];
-                }
-                continue;
-            }
-            if c == T::from_u8(b':') && end == 2 {
-                return &p[..0];
-            }
-            break;
-        }
-        let mut start = end;
-        while start > 0
-            && p[start - 1] != T::from_u8(b'/')
-            && p[start - 1] != T::from_u8(b'\\')
-            && !(p[start - 1] == T::from_u8(b':') && start - 1 == 1)
-        {
-            start -= 1;
-        }
-        &p[start..end]
-    }
-
-    /// Dispatches to [`basename_windows`] on Windows and [`basename_posix`]
-    /// elsewhere.
-    #[inline]
-    pub fn basename(path: &[u8]) -> &[u8] {
-        if cfg!(windows) {
-            basename_windows(path)
-        } else {
-            basename_posix(path)
-        }
-    }
-    /// `bun.strings.removeLeadingDotSlash`. Hosted at T0
-    /// so `crate::string` (and `bun_paths::string_paths`) can reach it
-    /// without a `bun_paths` edge.
-    #[inline(always)]
-    pub fn remove_leading_dot_slash(slice: &[u8]) -> &[u8] {
-        if slice.len() >= 2 {
-            if &slice[..2] == b"./" || (cfg!(windows) && &slice[..2] == b".\\") {
-                return &slice[2..];
-            }
-        }
-        slice
-    }
-
+    /// Removes `/` and `\` on every platform. A native path has `bun_paths::without_trailing_sep`.
     pub fn without_trailing_slash(s: &[u8]) -> &[u8] {
         let mut e = s.len();
         while e > 1 && (s[e - 1] == b'/' || s[e - 1] == b'\\') {

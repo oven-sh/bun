@@ -2104,8 +2104,13 @@ describe.concurrent.skipIf(!isWindows)("fs.watch on Windows", () => {
     for (const root of [`\\\\?\\${base}`, `\\\\localhost\\${base[0]}$${base.slice(2)}`]) {
       using folder = watch(`${root}\\d`);
       using file = watch(`${root}\\d\\f`);
-      fs.appendFileSync(path.join(base, "d", "f"), "x");
-      expect([await folder.until("f"), await file.until("f")]).toEqual([[], []]);
+      // A server hears of the watch after fs.watch() has returned.
+      const changes = setInterval(() => fs.appendFileSync(path.join(base, "d", "f"), "x"), 5);
+      try {
+        expect([await folder.until("f"), await file.until("f")]).toEqual([[], []]);
+      } finally {
+        clearInterval(changes);
+      }
     }
   });
 

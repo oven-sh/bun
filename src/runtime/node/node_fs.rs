@@ -2054,12 +2054,6 @@ mod _async_tasks {
             let _dispatch = js.tracker.dispatch(global_object);
 
             move_waiting_descriptors();
-            #[cfg(any(target_os = "linux", target_os = "android"))]
-            if <Op<{ F }> as NodeFSDispatch<R, A>>::ANSWERS_FROM_CACHE {
-                crate::jsc_hooks::runtime_state_of(global_object.bun_vm())
-                    .fs_cached_descriptors
-                    .watch(cx);
-            }
             if let Ok(result) = &result {
                 args.write_back(result.bytes_read());
             }
@@ -2127,11 +2121,16 @@ mod _async_tasks {
                 tracker,
             };
             #[cfg(any(target_os = "linux", target_os = "android"))]
-            if <Op<{ F }> as NodeFSDispatch<R, A>>::ANSWERS_FROM_CACHE
-                && let Some(result) = answer_from_cache::<R, A, F>(cx.global().bun_vm(), &args)
-            {
-                bun_jsc::Job::<Self>::schedule_finished(cx, Self { args, result }, js);
-                return value;
+            if <Op<{ F }> as NodeFSDispatch<R, A>>::ANSWERS_FROM_CACHE {
+                let vm = cx.global().bun_vm();
+                let answer = answer_from_cache::<R, A, F>(vm, &args);
+                crate::jsc_hooks::runtime_state_of(vm)
+                    .fs_cached_descriptors
+                    .watch(cx);
+                if let Some(result) = answer {
+                    bun_jsc::Job::<Self>::schedule_finished(cx, Self { args, result }, js);
+                    return value;
+                }
             }
             #[cfg(any(target_os = "linux", target_os = "android"))]
             if sys::cached::is_available() {
@@ -9688,11 +9687,9 @@ impl CachedDescriptors {
         is_empty
     }
 
-    /// The completion of a `stat` asks that a [`DescriptorWatch`] looks at what waits, a turn from now.
+    /// Behind each call that may have opened one: a [`DescriptorWatch`] looks at what waits, a turn from now.
     fn watch(&self, cx: &bun_jsc::JsThread<'_>) {
-        // A macro's loop does not run again for what the macro leaves behind.
-        let is_regular = cx.global().bun_vm().current_loop_kind() == bun_jsc::LoopKind::Regular;
-        if self.is_watched.get() || self.is_empty() || !is_regular {
+        if self.is_watched.get() || self.is_empty() {
             return;
         }
         self.is_watched.set(true);

@@ -632,6 +632,51 @@ describe.skipIf(!isLinux)("async fs operations that the kernel can answer from i
     expect(result).toEqual({ queued: canAnswer ? 8 : expect.any(Number), exitCode: 0, left: 0 });
   });
 
+  test.concurrent("the descriptor of an answer that `bun test --isolate` never completes is closed", async () => {
+    const fixture = (body: string) => `const canAnswer = process.env.CAN_ANSWER === "1";` + prelude + body;
+    using dir = tempDir("fs-cached", {
+      ...files,
+      "first.test.ts": fixture(`
+        require("bun:test").test("leaves an answer behind", async () => {
+          await warm();
+          let answered = 0;
+          for (let attempt = 0; attempt < 3 && answered === 0; attempt++) {
+            await asking();
+            // No descriptor waits now, so nothing is due to look for one.
+            await closed("file.txt", ".");
+            const before = getCounters().fs_cached_hit;
+            // Its completion is due a turn later, under the next file: the runner drops it there.
+            fsp.stat("file.txt");
+            answered = getCounters().fs_cached_hit - before;
+          }
+          fs.writeFileSync("answered", String(answered));
+        });
+      `),
+      "second.test.ts": fixture(`
+        require("bun:test").test("finds no descriptor", async () => {
+          fs.writeFileSync("left", String(await closed("file.txt")));
+        });
+      `),
+    });
+    const cwd = String(dir);
+    const canAnswer = answersFromCache(cwd);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--isolate", "./first.test.ts", "./second.test.ts"],
+      env: { ...bunEnv, BUN_FEATURE_FLAG_EXPERIMENTAL_ASYNC_FS_FAST_PATH: "1", CAN_ANSWER: canAnswer ? "1" : "0" },
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const written = (name: string) =>
+      existsSync(`${cwd}/${name}`) ? readFileSync(`${cwd}/${name}`, "utf8") : stdout + stderr;
+    expect({ answered: written("answered"), left: written("left"), exitCode }).toEqual({
+      answered: canAnswer ? "1" : "0",
+      left: "0",
+      exitCode: 0,
+    });
+  });
+
   test.concurrent("with no descriptor left, the pool answers and nothing is remembered of it", async () => {
     using dir = tempDir("fs-cached", files);
     const cwd = String(dir);

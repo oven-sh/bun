@@ -62,7 +62,10 @@ pub fn stat(
     let is_relative = path.as_bytes().first() != Some(&b'/');
     let (start, generation) = match is_relative {
         false => (&ROOT, 0),
-        true => (&CWD, CWD_GENERATION.load(Ordering::SeqCst)),
+        true => match working_directory_generation() {
+            Some(generation) => (&CWD, generation),
+            None => return Err(NoStat::NotAsked),
+        },
     };
     let Mount::InMemory(mount) = start.load(generation) else {
         return Err(NoStat::NotAsked);
@@ -79,7 +82,7 @@ pub fn stat(
         Err(_) => return Err(NoStat::Unknown),
     };
     // Another thread changes the working directory: the walk may have started in the new one, on a mount nobody classified.
-    let raced = is_relative && CWD_GENERATION.load(Ordering::SeqCst) != generation;
+    let raced = is_relative && working_directory_generation() != Some(generation);
     let stat = match raced {
         true => None,
         false => crate::fstatx_in_memory(fd, mask),
@@ -143,13 +146,15 @@ impl Start {
     }
 
     /// Classifies the mount of `directory` if that is still to do. Three calls in a row that cannot tell make it `Other`.
-    fn learn(&self, generation: fn() -> u32, directory: &ZStr, root: Option<Mount>) {
-        let before = generation();
+    fn learn(&self, generation: fn() -> Option<u32>, directory: &ZStr, root: Option<Mount>) {
+        let Some(before) = generation() else {
+            return;
+        };
         if self.load(before) != Mount::Unknown {
             return;
         }
         let classified = classify(directory, root);
-        if generation() != before {
+        if generation() != Some(before) {
             return;
         }
         match classified {
@@ -163,12 +168,32 @@ impl Start {
 
 static ROOT: Start = Start(AtomicU64::new(0), AtomicU8::new(0));
 static CWD: Start = Start(AtomicU64::new(0), AtomicU8::new(0));
-/// Counts the changes of the working directory: what [`CWD`] learned before one is void.
-static CWD_GENERATION: AtomicU32 = AtomicU32::new(0);
+/// Counts the `chdir` calls of `bun_sys` that began: what [`CWD`] learned before one is void.
+static CWD_CHANGES_BEGUN: AtomicU32 = AtomicU32::new(0);
+static CWD_CHANGES_ENDED: AtomicU32 = AtomicU32::new(0);
 
-/// Before `chdir` and after it: a walk that starts between the two does not count for either directory.
-pub(crate) fn working_directory_changes() {
-    CWD_GENERATION.fetch_add(1, Ordering::SeqCst);
+/// Held across a `chdir`: a walk or a classification that overlaps one counts for no directory.
+pub(crate) struct WorkingDirectoryChange(());
+
+impl WorkingDirectoryChange {
+    pub(crate) fn begin() -> Self {
+        CWD_CHANGES_BEGUN.fetch_add(1, Ordering::SeqCst);
+        Self(())
+    }
+}
+
+impl Drop for WorkingDirectoryChange {
+    fn drop(&mut self) {
+        CWD_CHANGES_ENDED.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+/// How many times the working directory changed, or `None` while a change is under way.
+fn working_directory_generation() -> Option<u32> {
+    // The ended ones first: a change that begins between the two loads makes them differ.
+    let ended = CWD_CHANGES_ENDED.load(Ordering::SeqCst);
+    let begun = CWD_CHANGES_BEGUN.load(Ordering::SeqCst);
+    (ended == begun).then_some(begun)
 }
 
 /// One thread learns at a time. Until it is done, [`stat`] does not ask.
@@ -182,7 +207,8 @@ pub fn learn_mounts() {
         UNAVAILABLE => true,
         AVAILABLE => {
             ROOT.load(0) != Mount::Unknown
-                && CWD.load(CWD_GENERATION.load(Ordering::SeqCst)) != Mount::Unknown
+                && working_directory_generation()
+                    .is_some_and(|generation| CWD.load(generation) != Mount::Unknown)
         }
         _ => false,
     };
@@ -204,9 +230,12 @@ fn learn() {
         }
         AVAILABILITY.store(AVAILABLE, Ordering::Relaxed);
     }
-    ROOT.learn(|| 0, bun_core::zstr!("/"), None);
-    let generation = || CWD_GENERATION.load(Ordering::SeqCst);
-    CWD.learn(generation, bun_core::zstr!("."), Some(ROOT.load(0)));
+    ROOT.learn(|| Some(0), bun_core::zstr!("/"), None);
+    CWD.learn(
+        working_directory_generation,
+        bun_core::zstr!("."),
+        Some(ROOT.load(0)),
+    );
 }
 
 /// An error that says nothing about the kernel or the directory: the next caller asks again.
@@ -405,6 +434,31 @@ mod tests {
             assert_eq!(answers_from_memory(filesystem), expected, "mount {mount}");
         }
         assert!(!answers_from_memory(b""));
+    }
+
+    #[test]
+    fn no_generation_while_the_working_directory_changes() {
+        let before = working_directory_generation().unwrap();
+        let first = WorkingDirectoryChange::begin();
+        let second = WorkingDirectoryChange::begin();
+        assert_eq!(working_directory_generation(), None);
+        drop(first);
+        assert_eq!(working_directory_generation(), None);
+        drop(second);
+        assert_eq!(working_directory_generation(), Some(before + 2));
+    }
+
+    #[test]
+    fn a_start_answers_for_its_generation_only() {
+        let start = Start(AtomicU64::new(0), AtomicU8::new(0));
+        assert!(start.load(0) == Mount::Unknown);
+        start.store(7, Mount::InMemory(u32::MAX));
+        assert!(start.load(7) == Mount::InMemory(u32::MAX));
+        assert!(start.load(8) == Mount::Unknown);
+        start.store(8, Mount::Other);
+        assert!(start.load(8) == Mount::Other);
+        start.forget();
+        assert!(start.load(8) == Mount::Unknown);
     }
 
     #[test]

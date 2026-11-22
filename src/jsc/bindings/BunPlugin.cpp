@@ -9154,6 +9154,49 @@ bool moduleMockImportsByKey(Zig::GlobalObject* globalObject, const String& key)
     return mock && mock->importsOriginal;
 }
 
+bool isModuleMockFactoryRunning(Zig::GlobalObject* globalObject, const String& key)
+{
+    return globalObject->onLoadPlugins.runningModuleMocks.containsIf([&](const auto& running) {
+        auto* mock = uncheckedDowncast<Zig::JSModuleMock>(running.mock.get());
+        // A compiled run waits for the body of the original before it calls a factory that takes it.
+        return mock->factory && mock->factory.get().isCallable() && !mock->isAwaitingRunningBody && mock->specifier->tryGetValue().data == key;
+    });
+}
+
+// The loader has no entry for a mocked module while an import() of it waits for the factory. Adds those that a module of `evaluating` awaits.
+__attribute__((minsize)) void appendModuleMocksWhoseFactoryAnImportAwaits(Zig::GlobalObject* globalObject, std::span<JSC::CyclicModuleRecord* const> evaluating, Vector<String>& keys)
+{
+    JSValue dynamicImports = globalObject->mockModule.dynamicImports.get();
+    if (globalObject->onLoadPlugins.runningModuleMocks.isEmpty() || !dynamicImports)
+        return;
+
+    auto& vm = JSC::getVM(globalObject);
+    auto* loader = testFileModuleLoader(globalObject);
+    // Each step walks the reactions of one import(). A program with very many of them is not searched to the end.
+    size_t stepsLeft = 1024;
+    auto* iterator = JSC::JSMapIterator::create(vm, globalObject->mapIteratorStructure(), uncheckedDowncast<JSC::JSMap>(dynamicImports), JSC::IterationKind::Entries);
+    while (true) {
+        auto [import, key] = iterator->nextWithAdvance(vm);
+        if (!import)
+            break;
+        if (!key.isString())
+            continue;
+        String mocked = asString(key)->tryGetValue();
+        // With an entry, the import() waits for the fetch, for the original that the mock patches in place, or for the module of the mock.
+        if (keys.contains(mocked) || !isModuleMockFactoryRunning(globalObject, mocked) || loader->registryEntry(JSC::Identifier::fromString(vm, mocked)))
+            continue;
+        for (auto* record : evaluating) {
+            if (!stepsLeft)
+                return;
+            stepsLeft--;
+            if (JSC::AbstractModuleRecord::importPromiseGatesAsyncDependency(uncheckedDowncast<JSC::JSPromise>(import), record)) {
+                keys.append(mocked);
+                break;
+            }
+        }
+    }
+}
+
 bool isModuleMockWaitingForFactory(Zig::GlobalObject* globalObject, const String& key)
 {
     auto* mock = Zig::registeredModuleMock(globalObject, key);

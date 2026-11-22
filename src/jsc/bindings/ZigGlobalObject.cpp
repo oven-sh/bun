@@ -1030,14 +1030,19 @@ extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((minsize)) BunString Bun__evict
     Vector<JSC::Identifier> unfinished;
     Vector<std::pair<int64_t, String>> awaiting;
     Vector<String> fetching;
+    Vector<JSC::CyclicModuleRecord*, 8> evaluating;
     Bun::forEachModuleRegistrySpecifier(loader, [&](UniquedStringImpl* specifier, JSC::ModuleRegistryEntry* entry) {
         if (isModuleLoadSettled(entry))
             return;
         auto key = JSC::Identifier::fromUid(vm, specifier);
         auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(entry->record());
-        if (!entry->record())
+        if (cyclic && cyclic->status() == JSC::CyclicModuleRecord::Status::EvaluatingAsync)
+            evaluating.append(cyclic);
+        bool isSuspended = cyclic && cyclic->status() == JSC::CyclicModuleRecord::Status::EvaluatingAsync && cyclic->hasTLA() && !cyclic->pendingAsyncDependencies().value_or(0);
+        // The module of a mock is suspended where it awaits its factory.
+        if (!entry->record() || (isSuspended && cyclic->hasLiveExports() && Bun::isModuleMockFactoryRunning(globalObject, key.string())))
             fetching.append(key.string());
-        else if (cyclic && cyclic->status() == JSC::CyclicModuleRecord::Status::EvaluatingAsync && cyclic->hasTLA() && !cyclic->pendingAsyncDependencies().value_or(0)) {
+        else if (isSuspended) {
             int64_t order = loader->asyncEvaluationOrderForKey(key);
             size_t index = awaiting.size();
             while (index && awaiting[index - 1].first > order)
@@ -1068,6 +1073,8 @@ extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((minsize)) BunString Bun__evict
         }
     }
 #endif
+    // While the records are still in the registry.
+    Bun::appendModuleMocksWhoseFactoryAnImportAwaits(globalObject, evaluating.span(), fetching);
     for (auto& key : unfinished)
         loader->removeEntry(key);
 
@@ -1089,7 +1096,8 @@ extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((minsize)) BunString Bun__evict
         }
     }
     for (auto& specifier : fetching) {
-        if (count++ < maxNotes) {
+        // The others wait for a factory that never settled, so it is named beyond the limit too.
+        if (Bun::isModuleMockFactoryRunning(globalObject, specifier) || count++ < maxNotes) {
             notes.append("\nnote: an onLoad() plugin or a mock.module() factory never settled for "_s);
             notes.appendQuotedJSONString(specifier);
         }
@@ -4335,6 +4343,13 @@ JSC::Identifier StandaloneGlobalObject::moduleLoaderResolve(JSGlobalObject* glob
     return GlobalObject::moduleLoaderResolve(globalObject, loader, key, referrer, WTF::move(fetcher), useImportMap);
 }
 
+// The key that the resolution of this import() call left. A resolution that ended another way leaves its key too: that one is not this call's.
+static String takeKeyOfImportCall(Zig::GlobalObject* globalObject, const String& key)
+{
+    String left = std::exchange(globalObject->onLoadPlugins.keyOfImportCall, {});
+    return left == key ? left : String();
+}
+
 JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalObject,
     JSModuleLoader* loader,
     JSString* moduleNameValue,
@@ -4410,7 +4425,7 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
             return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
 #if ENABLE(AOT)
         if (imported && globalObject->m_lazyTestModuleObject.isInitialized()) [[unlikely]] {
-            Bun::didStartDynamicImport(globalObject, imported, std::exchange(globalObject->onLoadPlugins.keyOfImportCall, {}));
+            Bun::didStartDynamicImport(globalObject, imported, takeKeyOfImportCall(globalObject, key.string()));
             RETURN_IF_EXCEPTION(scope, nullptr);
         }
 #endif
@@ -4425,7 +4440,7 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
 
     ASSERT(result);
     if (globalObject->m_lazyTestModuleObject.isInitialized()) [[unlikely]] {
-        Bun::didStartDynamicImport(globalObject, result, std::exchange(globalObject->onLoadPlugins.keyOfImportCall, {}));
+        Bun::didStartDynamicImport(globalObject, result, takeKeyOfImportCall(globalObject, key.string()));
         RETURN_IF_EXCEPTION(scope, nullptr);
     }
     return result;

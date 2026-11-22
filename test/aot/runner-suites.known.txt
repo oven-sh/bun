@@ -27,6 +27,8 @@ test/cli/test/bun-test.test.ts: --react-compiler > the flag, with --isolate
 test/cli/test/bun-test.test.ts: --react-compiler > the original of a mocked module is compiled
 test/cli/test/bun-test.test.ts: --react-compiler > true
 test/cli/test/bun-test.test.ts: a test file that can never finish loading > --watch reports it and keeps watching
+# The next one mocks `node:os`. The runner is not told of a compiled import of a builtin module, so it cannot say that the file waits for the factory.
+test/cli/test/bun-test.test.ts: a test file that can never finish loading > names a mock factory for a builtin module
 test/cli/test/bun-test.test.ts: a test file that can never finish loading > the next file re-evaluates the modules it left unfinished
 test/cli/test/coverage.test.ts: a file loaded more than once counts every load > (unnamed)
 test/cli/test/coverage.test.ts: a file with ? in its name is not left out of coverage: it cannot be loaded

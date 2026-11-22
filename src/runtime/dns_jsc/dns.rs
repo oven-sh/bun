@@ -1850,11 +1850,7 @@ impl Resolver {
         let Some(query) = query else {
             return promise;
         };
-        self.request_sent(send(query));
-        promise
-    }
-
-    fn request_sent(self: &RefPtr<Self>, answers: c_ares::Answers<PendingQuery>) {
+        let answers = send(query);
         if self.channel.has_active_queries() {
             self.add_timer(None, CARES_TIMEOUT_CHECK_INTERVAL_MS);
         } else {
@@ -1863,6 +1859,7 @@ impl Resolver {
             self.add_timer(None, 0);
         }
         answers.for_each(PendingQuery::complete_cares);
+        promise
     }
 
     fn request_completed(self: &RefPtr<Self>, answers: c_ares::Answers<PendingQuery>) {
@@ -1895,7 +1892,7 @@ impl Resolver {
         timers.insert(&raw const self.event_loop_timer);
     }
 
-    fn remove_timer(&self) {
+    fn remove_timer(self: &RefPtr<Self>) {
         if self.event_loop_timer.state.get() != EventLoopTimerState::ACTIVE {
             return;
         }

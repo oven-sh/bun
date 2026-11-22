@@ -180,6 +180,9 @@ pub struct Connection {
     lingers: bool,
 }
 
+// The next size class of the allocator is a quarter larger.
+const _: () = assert!(size_of::<Connection>() <= 4096);
+
 /// What a server knows from the first packet.
 pub(crate) struct Introduction {
     pub(crate) version: Version,

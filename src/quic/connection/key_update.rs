@@ -19,10 +19,10 @@ pub(super) enum Generation {
 pub(super) struct KeyUpdate {
     pub(super) phase: bool,
     /// Of the current key.
-    write_secret: Option<Secret>,
+    write_secret: Option<Box<Secret>>,
     confidentiality_limit: Option<u64>,
     /// Of `next_read`.
-    read_secret: Option<Secret>,
+    read_secret: Option<Box<Secret>>,
     next_read: Option<PayloadKey>,
     previous_read: Option<PayloadKey>,
     /// The smallest number of a packet that came with the current key.
@@ -32,7 +32,7 @@ pub(super) struct KeyUpdate {
 
 impl KeyUpdate {
     pub(super) fn set_write_secret(&mut self, secret: Secret, limit: u64, space: &Space) {
-        self.write_secret = Some(secret);
+        self.write_secret = Some(Box::new(secret));
         self.confidentiality_limit = Some(limit);
         self.first_sent = space.next_number;
     }
@@ -46,7 +46,7 @@ impl KeyUpdate {
     pub(super) fn set_read_secret(&mut self, secret: &Secret, version: Version) {
         let next = secret.next(version);
         self.next_read = Some(next.payload_key(version));
-        self.read_secret = Some(next);
+        self.read_secret = Some(Box::new(next));
     }
 
     #[inline]
@@ -131,7 +131,7 @@ impl KeyUpdate {
             return;
         };
         self.previous_read = Some(core::mem::replace(&mut read.payload, next_read));
-        *write_secret = write_secret.next(version);
+        **write_secret = write_secret.next(version);
         write.payload = write_secret.payload_key(version);
         self.set_read_secret(&read_secret, version);
         self.phase = !self.phase;

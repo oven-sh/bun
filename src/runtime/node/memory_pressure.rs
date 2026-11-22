@@ -25,7 +25,7 @@
 //! `onDidChangeListeners` in `BunProcess.cpp`, matching how signal handlers
 //! are wired. The watcher does not keep the event loop alive.
 
-use bun_event_loop::ConcurrentTask::{Task, task_tag};
+use bun_event_loop::ConcurrentTask::task_tag;
 use bun_jsc::bindgen::{self, BufferSource, JsHeap, JsLocal, JsScope};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
@@ -66,8 +66,8 @@ impl bun_event_loop::Taskable for MemoryPressureTask {
     }
 }
 
-fn pressure_task(lvl: i32) -> Task {
-    Task::init(lvl as usize as *mut MemoryPressureTask)
+fn pressure_task(lvl: i32) -> *mut MemoryPressureTask {
+    lvl as usize as *mut MemoryPressureTask
 }
 
 #[cfg(not(windows))]
@@ -294,7 +294,7 @@ mod posix {
             let _ = fflags;
             super::level::CRITICAL
         };
-        vm.enqueue_task(super::pressure_task(lvl));
+        vm.enqueue_task(bun_event_loop::Task::init(super::pressure_task(lvl)));
     }
 }
 
@@ -305,9 +305,7 @@ mod posix {
 #[cfg(windows)]
 mod windows {
     use core::ffi::c_void;
-    use core::ptr;
 
-    use bun_event_loop::ConcurrentTask::ConcurrentTask;
     use bun_jsc::JSGlobalObject;
     use std::os::windows::io::{AsRawHandle as _, HandleOrNull, OwnedHandle};
 
@@ -325,12 +323,6 @@ mod windows {
 
     unsafe extern "system" {
         safe fn CreateMemoryResourceNotification(kind: i32) -> HANDLE;
-        fn CreateEventW(
-            attrs: *mut c_void,
-            manual_reset: BOOL,
-            initial: BOOL,
-            name: *const u16,
-        ) -> HANDLE;
         /// A bad handle yields `FALSE`.
         safe fn SetEvent(h: HANDLE) -> BOOL;
         /// A bad handle yields `WAIT_FAILED`.
@@ -361,7 +353,7 @@ mod windows {
             if rc != WAIT_OBJECT_0 + 1 {
                 break;
             }
-            let task = ConcurrentTask::create(super::pressure_task(super::level::CRITICAL));
+            let task = super::pressure_task(super::level::CRITICAL);
             if let bun_jsc::vm_handle::Posted::Refused(_) =
                 vm.post(bun_jsc::LoopKind::Regular, task)
             {
@@ -386,10 +378,7 @@ mod windows {
         else {
             return;
         };
-        // SAFETY: FFI; manual-reset, initially non-signalled, unnamed. A new handle, or null.
-        let Ok(shutdown) = OwnedHandle::try_from(unsafe {
-            HandleOrNull::from_raw_handle(CreateEventW(ptr::null_mut(), 1, 0, ptr::null()))
-        }) else {
+        let Ok(shutdown) = bun_sys::windows::CreateEventW() else {
             return;
         };
 

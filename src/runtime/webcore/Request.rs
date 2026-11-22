@@ -74,7 +74,7 @@ pub(crate) struct Request {
     /// `Request` and (when served by `Bun.serve`) the `RequestContext` each
     /// hold their own `+1` on the same slot.
     body: BodyHiveHandle,
-    js_ref: JsCell<JsRef>,
+    pub(crate) js_ref: JsCell<JsRef>,
     pub method: Method,
     pub(crate) flags: Flags,
     pub(crate) request_context: Cell<AnyRequestContext>,
@@ -366,16 +366,12 @@ impl Request {
         global_this: &JSGlobalObject,
         this_value: JSValue,
         cloned: &Request,
-        js_wrapper: JSValue,
+        js_wrapper: JsWrapper<'_, Request>,
     ) {
-        // `JSBunRequest::create` bypasses `to_js`, so seed the still-empty
-        // `js_ref` for `check_body_stream_ref`; guarded so a pre-populated
-        // Strong is never downgraded.
-        if cloned.js_ref.get().is_empty() {
-            cloned.js_ref.set(JsRef::init_weak(js_wrapper));
-        }
+        // `JSBunRequest::create` bypasses `to_js`.
+        js_wrapper.set_js_ref_weak();
         cloned.check_body_stream_ref(global_this);
-        self.sync_cloned_body_stream_caches(this_value, js_wrapper, global_this);
+        self.sync_cloned_body_stream_caches(this_value, js_wrapper.to_js(), global_this);
     }
 }
 
@@ -436,13 +432,12 @@ impl Request {
 
     /// The wrapper takes over `this`.
     pub(crate) fn to_js(this: RefPtr<Self>, global_object: &JSGlobalObject) -> JSValue {
-        let request = this.this_ptr();
-        request.calculate_estimated_byte_size();
-        let js_value = js::to_js(this.into_raw(), global_object);
-        request.js_ref.set(JsRef::init_weak(js_value));
+        this.calculate_estimated_byte_size();
+        let this = js::wrap(this, global_object);
+        this.set_js_ref_weak();
 
-        request.check_body_stream_ref(global_object);
-        js_value
+        this.check_body_stream_ref(global_object);
+        this.to_js()
     }
 }
 
@@ -450,23 +445,16 @@ impl Request {
 bun_jsc::jsc_abi_extern! {
     #[allow(improper_ctypes)]
     #[link_name = "Bun__JSRequest__createForBake"]
-    // `&JSGlobalObject` discharges the only deref'd-param precondition;
-    // `request_ptr` is stored opaquely as `void*`.
     safe fn Bun__JSRequest__createForBake(
         global_object: &JSGlobalObject,
-        request_ptr: *mut Request,
+        request: RefPtr<Request>,
     ) -> JSValue;
 }
 
 impl Request {
     /// The wrapper takes over `this`.
-    pub(crate) fn to_js_for_bake(
-        this: RefPtr<Self>,
-        global_object: &JSGlobalObject,
-    ) -> JsResult<JSValue> {
-        bun_jsc::from_js_host_call(global_object, || {
-            Bun__JSRequest__createForBake(global_object, this.into_raw())
-        })
+    pub(crate) fn to_js_for_bake(this: RefPtr<Self>, global_object: &JSGlobalObject) -> JSValue {
+        Bun__JSRequest__createForBake(global_object, this)
     }
 }
 
@@ -1254,7 +1242,7 @@ impl Request {
         let request = RefPtr::new(request);
         let this = request.this_ptr();
         let this_value = structure.create(&cx.heap, request);
-        this.js_ref.set(JsRef::init_weak(this_value.to_js()));
+        this_value.set_js_ref_weak();
         this.check_body_stream_ref(cx.global());
         Ok(this_value)
     }

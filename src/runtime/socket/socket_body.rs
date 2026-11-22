@@ -475,25 +475,31 @@ impl<const SSL: bool> NewSocket<SSL> {
     // These hand-roll the `if (ssl) js_TLSSocket else js_TCPSocket`
     // split and route through the codegen'd safe wrappers.
     /// The wrapper takes over `this`.
-    pub(crate) fn to_js(this: RefPtr<Self>, global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn to_js(this: RefPtr<Self>, global: &JSGlobalObject, strong: bool) -> JSValue {
+        fn set_js_ref<T: jsc::HasJsRef>(
+            socket: &jsc::WrapperGuard<'_, T>,
+            global: &JSGlobalObject,
+            strong: bool,
+        ) -> JSValue {
+            if strong {
+                socket.set_js_ref_strong(global);
+            } else {
+                socket.set_js_ref_weak();
+            }
+            socket.to_js()
+        }
         jsc::mark_binding!();
-        // The codegen wrappers are monomorphic in `TCPSocket`/`TLSSocket`, hence the casts.
         let ptr = this.into_raw();
-        let value = if SSL {
-            js_TLSSocket::to_js(ptr.cast(), global)
-        } else {
-            js_TCPSocket::to_js(ptr.cast(), global)
-        };
-        debug_assert!(
-            Some(ptr.cast::<c_void>())
-                == if SSL {
-                    js_TLSSocket::from_js(&value).map(|p| p.as_ptr().cast())
-                } else {
-                    js_TCPSocket::from_js(&value).map(|p| p.as_ptr().cast())
-                },
-            "JS{{TCP,TLS}}Socket.toJS: C ABI round-trip mismatch",
-        );
-        value
+        // SAFETY: `SSL` tells which of the two types `Self` is, so this is the `RefPtr` given up above.
+        unsafe {
+            if SSL {
+                let socket = js_TLSSocket::wrap(RefPtr::from_raw(ptr.cast()), global);
+                set_js_ref(&socket, global, strong)
+            } else {
+                let socket = js_TCPSocket::wrap(RefPtr::from_raw(ptr.cast()), global);
+                set_js_ref(&socket, global, strong)
+            }
+        }
     }
     pub(crate) fn data_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue) {
         jsc::mark_binding!();
@@ -587,8 +593,6 @@ impl<const SSL: bool> NewSocket<SSL> {
                     bun_core::ZBox::from_bytes(bun_core::ip_address::strip_ipv6_brackets(host));
                 let port = *port;
                 // `host` borrow ends here; `this.connection` no longer borrowed.
-                // `ZBox` guarantees a trailing NUL; host bytes contain no interior NUL.
-                let host_c = hostz.as_zstr().as_cstr();
 
                 // Bind to the requested local address before connecting, if any.
                 let local = this.local_binding.get();
@@ -599,9 +603,9 @@ impl<const SSL: bool> NewSocket<SSL> {
                     match group.connect(
                         kind,
                         ssl_ctx,
-                        host_c,
+                        &hostz,
                         c_int::from(port),
-                        local_z.as_ref().map(|(z, p)| (z.as_zstr().as_cstr(), *p)),
+                        local_z.as_ref().map(|(z, p)| (z.as_zstr(), *p)),
                         flags,
                         core::mem::size_of::<*mut c_void>() as c_int,
                     ) {
@@ -937,7 +941,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             }
         );
         let callback = handlers.on_timeout();
-        if callback.is_empty() || this.flags.get().contains(Flags::FINALIZING) {
+        if callback.is_empty() || this.this_value.get().is_finalized() {
             return Ok(());
         }
 
@@ -1047,7 +1051,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         };
 
         if vm.script_execution_status() != jsc::ScriptExecutionStatus::Running
-            || this.flags.get().contains(Flags::FINALIZING)
+            || this.this_value.get().is_finalized()
         {
             drop(cleanup);
             return Ok(());
@@ -1145,9 +1149,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             // Connection failed before open; allow the wrapper to be GC'd
             // regardless of whether this path is promise-backed (e.g. the
             // duplex TLS upgrade flow has no connect promise).
-            if !matches!(this.this_value.get(), JsRef::Finalized) {
-                this.this_value.with_mut(|r| r.downgrade());
-            }
+            this.this_value.with_mut(|r| r.downgrade());
             if let Some(promise) = handlers.take_promise() {
                 // reject the promise on connect() error
                 let js_promise = jsc::JSPromise::opaque_mut(promise.as_promise().unwrap());
@@ -1286,9 +1288,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             // Do this before touching `handlers`: for the last server-side
             // connection on a stopped listener, `mark_inactive` releases the
             // listener's own strong ref.
-            if !matches!(self.this_value.get(), JsRef::Finalized) {
-                self.this_value.with_mut(|r| r.downgrade());
-            }
+            self.this_value.with_mut(|r| r.downgrade());
             if let Some(handlers) = self.handlers_opt() {
                 if handlers.mark_inactive() {
                     // Nothing else is using these handlers. Drop this socket's
@@ -1537,21 +1537,19 @@ impl<const SSL: bool> NewSocket<SSL> {
         if let Some(value) = self.this_value.get().try_get() {
             return value;
         }
-        if matches!(self.this_value.get(), JsRef::Finalized) {
+        if self.this_value.get().is_finalized() {
             // The JS wrapper was already garbage-collected. Creating a new one
             // here would result in a second `finalize` later.
             return JSValue::UNDEFINED;
         }
-        let value = Self::to_js(self.ref_guard(), global);
-        value.ensure_still_alive();
+        // Hold strong until the socket is closed / marked inactive.
+        let value = Self::to_js(self.ref_guard(), global, true);
         // The wrapper holds the shared handlers cell in a visited slot, so the
         // callbacks stay reachable from every socket that can still fire them.
         // A detached socket has no handlers left to root.
         if let Some(handlers) = self.handlers.get() {
             Self::handlers_set_cached(value, global, handlers.cell());
         }
-        // Hold strong until the socket is closed / marked inactive.
-        self.this_value.with_mut(|r| r.set_strong(value, global));
         value
     }
 
@@ -1643,7 +1641,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // is nothing to dispatch to. Nor from the GC finalizer's own close
         // (an SSL shutdown reports the never-finished handshake): a finalizer
         // dispatches nothing and may not inspect other cells mid-sweep.
-        if !this.has_handlers() || this.flags.get().contains(Flags::FINALIZING) {
+        if !this.has_handlers() || this.this_value.get().is_finalized() {
             return Ok(());
         }
         let first_report = !this.flags.get().contains(Flags::HANDSHAKE_COMPLETE);
@@ -2080,7 +2078,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             scope
         });
 
-        if this.flags.get().contains(Flags::FINALIZING) {
+        if this.this_value.get().is_finalized() {
             return Ok(());
         }
 
@@ -2163,7 +2161,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         );
 
         let callback = handlers.on_data();
-        if callback.is_empty() || this.flags.get().contains(Flags::FINALIZING) {
+        if callback.is_empty() || this.this_value.get().is_finalized() {
             return Ok(());
         }
 
@@ -2449,7 +2447,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// Vectored raw write for plain-TCP sockets: all chunks reach the fd in one
     /// writev. Callers guarantee this socket has no TLS layer (raw writes bypass
     /// SSL framing). Updates bytes_written like the scalar path.
-    pub(crate) fn write_vectored_raw(&self, iov: &[bun_uws_sys::UsIoVec]) -> i32 {
+    pub(crate) fn write_vectored_raw(&self, iov: &[bun_uws_sys::UsIoVec<'_>]) -> i32 {
         let socket = self.socket.get();
         if socket.is_shutdown() || socket.is_closed() {
             return -1;
@@ -3113,8 +3111,6 @@ impl<const SSL: bool> NewSocket<SSL> {
 
     pub(crate) fn finalize(&self) {
         log!("finalize() {}", core::ptr::from_ref(self) as usize);
-        self.update_flags(|f| f.insert(Flags::FINALIZING));
-        self.this_value.with_mut(|r| r.finalize());
         if !self.socket.get().is_closed() {
             self.socket.get().prepare_for_finalize();
             self.close_and_detach(uws::CloseCode::Failure);
@@ -3471,7 +3467,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             // releases `raw_handlers`. No poll_ref — `tls` keeps the loop
             // alive. active_connections=1 was already on raw_handlers from
             // `self`.
-            flags: Cell::new(Flags::BYPASS_TLS | Flags::IS_ACTIVE | Flags::OWNED_PROTOS),
+            flags: Cell::new(Flags::BYPASS_TLS | Flags::IS_ACTIVE),
             this_value: JsCell::new(JsRef::empty()),
             poll_ref: JsKeepAlive::default(),
             ref_pollref_on_connect: Cell::new(true),
@@ -3656,16 +3652,13 @@ pub(crate) struct StoredVerifyError {
 // ──────────────────────────────────────────────────────────────────────────
 
 bitflags::bitflags! {
-    #[derive(Clone, Copy, PartialEq, Eq)]
+    #[derive(Clone, Copy, Default, PartialEq, Eq)]
     pub struct Flags: u16 {
         const IS_ACTIVE            = 1 << 0;
-        /// Prevent onClose from calling into JavaScript while we are finalizing
-        const FINALIZING           = 1 << 1;
         const AUTHORIZED           = 1 << 2;
         const HANDSHAKE_COMPLETE   = 1 << 3;
         const EMPTY_PACKET_PENDING = 1 << 4;
         const END_AFTER_FLUSH      = 1 << 5;
-        const OWNED_PROTOS         = 1 << 6;
         const IS_PAUSED            = 1 << 7;
         const ALLOW_HALF_OPEN      = 1 << 8;
         /// Set on the `raw` half of an `upgradeTLS` pair. Writes route through
@@ -3726,13 +3719,6 @@ pub(crate) fn server_ctx_requests_cert(ctx: Option<*mut SSL_CTX>) -> bool {
     let Some(ctx) = ctx else { return false };
     // SAFETY: the caller holds a ref on `ctx` across the call; read-only.
     unsafe { boringssl_sys::SSL_CTX_get_verify_mode(ctx) & boringssl_sys::SSL_VERIFY_PEER != 0 }
-}
-
-impl Default for Flags {
-    fn default() -> Self {
-        // Default: `owned_protos` true, all others false.
-        Flags::OWNED_PROTOS
-    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -4494,19 +4480,10 @@ pub(crate) fn create_socket_pair(cx: &mut JsScope<'_>) -> JsResult<[c_int; 2]> {
 
     #[cfg(not(windows))]
     {
-        let mut fds_: [libc::c_int; 2] = [0, 0];
-        // SAFETY: libc FFI.
-        let rc =
-            unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, fds_.as_mut_ptr()) };
-        if rc != 0 {
-            let err = sys::Error::from_code(sys::get_errno(rc), sys::Tag::socketpair);
-            return Err(global.throw_value(err.to_js(global)));
+        match sys::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, true) {
+            Ok(pair) => Ok(pair.map(sys::Fd::native)),
+            Err(err) => Err(global.throw_value(err.to_js(global))),
         }
-
-        let _ = sys::update_nonblocking(sys::Fd::from_native(fds_[0]), true);
-        let _ = sys::update_nonblocking(sys::Fd::from_native(fds_[1]), true);
-
-        Ok(fds_)
     }
 }
 

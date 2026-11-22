@@ -25,8 +25,8 @@
 
 #include "JSDOMGlobalObject.h"
 #include "NodeConstants.h"
+#include <JavaScriptCore/HeapAnalyzer.h>
 #include <JavaScriptCore/JSDestructibleObject.h>
-#include <wtf/SignedPtr.h>
 
 namespace WebCore {
 using namespace Zig;
@@ -35,7 +35,6 @@ using namespace Zig;
 using JSDOMGlobalObject = Zig::GlobalObject;
 }
 #endif
-class ScriptExecutionContext;
 
 // JSC allows us to extend JSType. If the highest 3 bits are set, we can add any Object types and they are
 // recognized as OtherObj in JSC. And we encode Node type into JSType if the given JSType is subclass of Node.
@@ -64,21 +63,24 @@ public:
     static void subspaceFor(JSC::VM&) { RELEASE_ASSERT_NOT_REACHED(); }
 
     JSDOMGlobalObject* globalObject() const { return uncheckedDowncast<JSDOMGlobalObject>(JSC::JSNonFinalObject::globalObject()); }
-    ScriptExecutionContext* scriptExecutionContext() const { return globalObject()->scriptExecutionContext(); }
 
 protected:
     WEBCORE_EXPORT JSDOMObject(JSC::Structure*, JSC::JSGlobalObject&);
 };
 
-template<typename ImplementationClass, typename PtrTraits = RawPtrTraits<ImplementationClass>>
+template<typename ImplementationClass>
 class JSDOMWrapper : public JSDOMObject {
 public:
     using Base = JSDOMObject;
-    using DOMWrapped = ImplementationClass;
+    static constexpr uint8_t jsType = JSC::ObjectType;
 
     ImplementationClass& wrapped() const { return m_wrapped; }
-    Ref<ImplementationClass> protectedWrapped() const { return m_wrapped; }
-    static ptrdiff_t offsetOfWrapped() { return OBJECT_OFFSETOF(JSDOMWrapper, m_wrapped); }
+
+    static void analyzeHeap(JSC::JSCell* cell, JSC::HeapAnalyzer& analyzer)
+    {
+        analyzer.setWrappedObjectForCell(cell, &static_cast<JSDOMWrapper*>(cell)->wrapped());
+        Base::analyzeHeap(cell, analyzer);
+    }
 
 protected:
     JSDOMWrapper(JSC::Structure* structure, JSC::JSGlobalObject& globalObject, Ref<ImplementationClass>&& impl)
@@ -88,7 +90,7 @@ protected:
     }
 
 private:
-    Ref<ImplementationClass, PtrTraits> m_wrapped;
+    Ref<ImplementationClass> m_wrapped;
 };
 
 template<typename ImplementationClass> struct JSDOMWrapperConverterTraits;

@@ -345,10 +345,11 @@ __arm_tpidr2_save  [SVE]
 
 
 # ----------------------------------------------------------------------------
-# libdeflate Adler-32 NEON DotProd. Gate: HWCAP_ASIMDDP.
-# (1 symbols)
+# Bun Adler-32 (src/jsc/bindings/highway_checksums.cpp).
+# Gate: BUN_HWY_DISPATCH (highway_dispatch.h) via hwy::SupportedTargets. (2 symbols)
 # ----------------------------------------------------------------------------
-adler32_arm_neon_dotprod  [DotProd]
+_ZN3bun11N_NEON_BF16L7Adler32EjPKhm            [DotProd]
+_ZN3bun11N_NEON_BF16L14CopyAndAdler32EjPKhPhm  [DotProd]
 
 
 # ----------------------------------------------------------------------------
@@ -375,17 +376,21 @@ _ZN3bun4xxh310N_SVE2_1288HashLongEPKhmS3_                                     [S
 
 # ----------------------------------------------------------------------------
 # Bun's Highway kernels for the scanner of `bun check`, `bun lint` and `bun fmt`. Gate: hwy::SupportedTargets via getauxval(AT_HWCAP).
-# (12 symbols)
+# (16 symbols)
 # ----------------------------------------------------------------------------
 _ZN3bun5N_SVE19ScannerRunStopsImplEPKhmPhm        [SVE]
 _ZN3bun5N_SVE14LineStartsImplEPKhmPj              [SVE]
+_ZN3bun5N_SVE12ByteBitsImplEPKhmhPm               [SVE]
 _ZN3bun5N_SVE13OddBlocksImplEPKhmPm               [SVE]
 _ZN3bun6N_SVE219ScannerRunStopsImplEPKhmPhm       [SVE]
 _ZN3bun6N_SVE214LineStartsImplEPKhmPj             [SVE]
+_ZN3bun6N_SVE212ByteBitsImplEPKhmhPm              [SVE]
 _ZN3bun6N_SVE213OddBlocksImplEPKhmPm              [SVE]
 _ZN3bun9N_SVE_25619ScannerRunStopsImplEPKhmPhm    [SVE]
 _ZN3bun9N_SVE_25614LineStartsImplEPKhmPj          [SVE]
+_ZN3bun9N_SVE_25612ByteBitsImplEPKhmhPm           [SVE]
 _ZN3bun9N_SVE_25613OddBlocksImplEPKhmPm           [SVE]
 _ZN3bun10N_SVE2_12819ScannerRunStopsImplEPKhmPhm  [SVE]
 _ZN3bun10N_SVE2_12814LineStartsImplEPKhmPj        [SVE]
+_ZN3bun10N_SVE2_12812ByteBitsImplEPKhmhPm         [SVE]
 _ZN3bun10N_SVE2_12813OddBlocksImplEPKhmPm         [SVE]

@@ -10,32 +10,23 @@ use bun_core::{String as BunString, ZStr};
 use bun_wyhash::Wyhash11 as Wyhash;
 
 // `libc` does not expose winsock types/constants on Windows; route every
-// `libc::AF_*` / `addrinfo` / `sockaddr_*` reference through this shim so
+// `libc::AF_*` / `addrinfo` reference through this shim so
 // the body of this crate stays cfg-free.
 #[cfg(not(windows))]
 mod sock {
     pub use libc::addrinfo;
     pub(crate) use libc::{
-        AF_INET, AF_INET6, AF_UNIX, IPPROTO_TCP, IPPROTO_UDP, SOCK_DGRAM, SOCK_STREAM,
-        freeaddrinfo, getaddrinfo, sockaddr_un,
+        AF_INET, AF_INET6, IPPROTO_TCP, IPPROTO_UDP, SOCK_DGRAM, SOCK_STREAM, freeaddrinfo,
+        getaddrinfo,
     };
 }
 #[cfg(windows)]
 mod sock {
     pub use bun_windows_sys::ws2_32::addrinfo;
     pub(crate) use bun_windows_sys::ws2_32::{
-        AF_INET, AF_INET6, AF_UNIX, IPPROTO_TCP, IPPROTO_UDP, SOCK_DGRAM, SOCK_STREAM,
-        freeaddrinfo, getaddrinfo,
+        AF_INET, AF_INET6, IPPROTO_TCP, IPPROTO_UDP, SOCK_DGRAM, SOCK_STREAM, freeaddrinfo,
+        getaddrinfo,
     };
-    // Windows SDK ships <afunix.h> (SOCKADDR_UN) since win10_rs4 but neither
-    // windows-sys nor bun_windows_sys export it. Mirror the on-the-wire layout
-    // (`{ family: u16, path: [108]u8 }`) here so address_to_string stays
-    // cfg-free below.
-    #[repr(C)]
-    pub(crate) struct sockaddr_un {
-        pub sun_family: u16,
-        pub sun_path: [u8; 108],
-    }
 }
 
 pub use sock::addrinfo;
@@ -379,7 +370,7 @@ pub fn address_to_string(address: &Address) -> BunString {
     match address.family() {
         sock::AF_INET => {
             let v4 = address.as_in4().unwrap(); // family() just checked
-            let bytes: [u8; 4] = v4.sin_addr.s_addr.to_ne_bytes();
+            let bytes: [u8; 4] = v4.addr.to_ne_bytes();
             BunString::create_format(format_args!(
                 "{}.{}.{}.{}",
                 bytes[0], bytes[1], bytes[2], bytes[3]
@@ -392,29 +383,24 @@ pub fn address_to_string(address: &Address) -> BunString {
             // link-local from getaddrinfo) — ntop only sees the 16 raw addr
             // bytes and cannot emit it itself.
             let mut buf = [0u8; 64]; // >= INET6_ADDRSTRLEN (46) + "%4294967295" (11)
-            // SAFETY: sin6_addr is a valid in6_addr; buf len fits INET6_ADDRSTRLEN.
-            let n = match unsafe {
-                bun_cares_sys::ntop(sock::AF_INET6, (&raw const v6.sin6_addr).cast(), &mut buf)
-            } {
+            let n = match bun_cares_sys::ntop(&v6.addr, &mut buf) {
                 Some(s) => s.len(),
                 None => return BunString::EMPTY,
             };
-            let len = if v6.sin6_scope_id != 0 {
+            let len = if v6.scope_id != 0 {
                 let mut cursor = &mut buf[n..];
                 let before = cursor.len();
                 // 64 - 46 = 18 > len("%4294967295") = 11, cannot truncate.
-                let _ = write!(cursor, "%{}", v6.sin6_scope_id);
+                let _ = write!(cursor, "%{}", v6.scope_id);
                 n + (before - cursor.len())
             } else {
                 n
             };
             BunString::clone_latin1(&buf[..len])
         }
-        sock::AF_UNIX => {
-            // Unix sockets exist on every target Bun ships (Windows 10 rs4+
-            // included), so no cfg.
-            // SAFETY: family() == AF_UNIX; sockaddr_storage is >= sizeof(sockaddr_un).
-            let un = unsafe { &*address.as_sockaddr().cast::<sock::sockaddr_un>() };
+        #[cfg(unix)]
+        libc::AF_UNIX => {
+            let un = address.as_un().unwrap(); // family() just checked
             BunString::clone_latin1(bun_core::slice_as_bytes(&un.sun_path))
         }
         _ => BunString::EMPTY,

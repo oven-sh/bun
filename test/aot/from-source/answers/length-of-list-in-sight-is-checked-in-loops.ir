@@ -1,0 +1,23 @@
+# -- source: length-of-list-in-sight-is-checked-in-loops.ts
+# declare function print(value: unknown): void;
+# declare function id(value: any): any;
+# const list: number[] = [];
+# function add(turn: number): void { list.push(turn); }
+# let sum = 0;
+# for (let turn = 0; turn < 40; turn++) { id(add)(turn); sum += list.length; }
+# print(sum);
+# -- end of source
+# LIBRARY: own
+# f1 = add. In a loop, too, the length of a list in sight is a constant, and no record of a read is left.
+# Fault injection, testing=IgnoreFreshArrayEscapes: no operation except an append counts as letting a fresh array escape or as writing to it.
+# So the walk still tracks the length 0 where memory holds 1, 2, 3.
+# With testing=CheckProofsAtRunTime (--aot-harden=proof-checks) the length is read and compared in each iteration. See checkLengthOfListInLoop().
+# RUN(RIGHT): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# RIGHT: 820
+# RIGHT-NEXT: exited with 0
+# RUN(NAMED): run-in-shell mechanisms=all testing=IgnoreFreshArrayEscapes,CheckProofsAtRunTime
+# NAMED: bun: internal AOT error: redundancy elimination check failed at
+# NAMED-NEXT: a load or check that the compiler removed as redundant gives a different result here
+# NAMED-NEXT: This is a bug in Bun, not in your code.
+# NAMED-NEXT: and please report it: https://github.com/oven-sh/bun/issues
+# NAMED-NEXT: crashed with

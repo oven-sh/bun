@@ -15,6 +15,7 @@ use core::net::IpAddr;
 use bun_boringssl::c::OwnedSslCtx;
 use bun_collections::LinearFifo;
 use bun_collections::linear_fifo::DynamicBuffer;
+use bun_core::scoped::ScopedFlag as _;
 use bun_core::{EncodedSlice, String as BunString, strings};
 use bun_http::websocket::{Opcode, WebsocketHeader, is_valid_close_code};
 use bun_io::KeepAlive;
@@ -92,8 +93,7 @@ enum Transport {
     /// `self.tcp`. Every transport is reset to this once the connection closes, with `tcp` detached.
     Socket,
     /// wss:// through an HTTP proxy. The tunnel handles TLS, so this is only used with SSL=false.
-    /// Holds one ref, released in `clear_data`.
-    Tunnel(RefPtr<WebSocketProxyTunnel>),
+    Tunnel(bun_ptr::Attached<WebSocketProxyTunnel>),
     /// A JS stream. Writes go through C++, which always accepts the whole buffer.
     /// Reads arrive through `feed`. C++ holds the only ref on this client.
     Stream,
@@ -287,10 +287,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         self.message_is_compressed.set(false);
         self.deflate.replace(None);
         drop(self.secure.take());
-        // Detach the tunnel first so its shutdown callbacks cannot re-enter this path.
         if let Transport::Tunnel(tunnel) = self.transport.replace(Transport::Socket) {
-            tunnel.clear_connected_web_socket();
-            WebSocketProxyTunnel::shutdown(tunnel.this_ptr());
             drop(tunnel);
             // Release the I/O-layer ref taken in init_with_tunnel() — the
             // tunnel was this struct's socket-equivalent owner. In the
@@ -483,14 +480,9 @@ impl<const SSL: bool> WebSocket<SSL> {
         let result = match self.deflate.borrow_mut().as_mut() {
             None => Err(ErrorCode::UnexpectedRsv1),
             Some(deflate) => deflate
-                .decompress(
-                    rare.libdeflate_decompressor(),
-                    data,
-                    &mut decompressed,
-                    self.max_payload_length(),
-                )
+                .decompress(data, &mut decompressed, self.max_payload_length())
                 .map_err(|err| match err {
-                    websocket_deflate::Error::InflateFailed => ErrorCode::InvalidCompressedData,
+                    websocket_deflate::Error::Corrupt => ErrorCode::InvalidCompressedData,
                     websocket_deflate::Error::TooLarge => ErrorCode::MessageTooBig,
                     websocket_deflate::Error::OutOfMemory => ErrorCode::FailedToAllocateMemory,
                 }),
@@ -1700,7 +1692,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             deflate_params,
             None,
             &[],
-            Transport::Tunnel(RefPtr::from_this(tunnel)),
+            Transport::Tunnel(RefPtr::from_this(tunnel).into()),
             options,
         );
 
@@ -1747,15 +1739,12 @@ impl<const SSL: bool> WebSocket<SSL> {
             return;
         }
 
-        this.parsing.set(true);
-        {
-            let _scope = VirtualMachine::get().enter_event_loop_scope_without_checkpoint();
-            this.handle_data_loop(data);
-            while let Some(pending) = this.initial_data.take() {
-                this.handle_data_loop(&pending.0);
-            }
+        let _parsing = this.parsing.raise_for_scope();
+        let _scope = VirtualMachine::get().enter_event_loop_scope_without_checkpoint();
+        this.handle_data_loop(data);
+        while let Some(pending) = this.initial_data.take() {
+            this.handle_data_loop(&pending.0);
         }
-        this.parsing.set(false);
     }
 
     /// The JS stream was closed or destroyed.

@@ -79,6 +79,7 @@ enum Form {
     Flag,
     One,
     Many,
+    Lists,
 }
 
 macro_rules! developer_flag {
@@ -97,7 +98,7 @@ const DEVELOPER_FLAGS: &[(&str, &str, Form)] = &[
     developer_flag!("erase-types", Form::Flag),
     developer_flag!("refuse-code-from-disk", Form::Flag),
     developer_flag!("out", Form::One),
-    developer_flag!("order", Form::Many),
+    developer_flag!("order", Form::Lists),
     developer_flag!("record-order", Form::Flag),
     developer_flag!("symbols", Form::Flag),
     ("no-builtin-modules", "--no-builtin-modules", Form::Flag),
@@ -205,6 +206,7 @@ pub(crate) enum OptionError<'a> {
     Watch,
     Declarations,
     App,
+    Bytecode,
     CrossCompile,
     HardenedBunRunsOnlyCompiledCode,
     InvalidValue {
@@ -337,6 +339,20 @@ impl OptionError<'_> {
             OptionError::App => {
                 out.extend_from_slice(origin.subject().as_bytes());
                 out.extend_from_slice(b" does not support --app");
+            }
+            OptionError::Bytecode => {
+                let message: &[u8] = match origin {
+                    RequestOrigin::CompileCommand => {
+                        b"Cannot use --bytecode with bun compile, which compiles to machine code. Remove --bytecode, or add --no-aot"
+                    }
+                    RequestOrigin::BuildFlag => {
+                        b"Cannot use both --aot and --bytecode. Choose --aot for machine code or --bytecode for bytecode"
+                    }
+                    RequestOrigin::BuildApi => {
+                        b"compile.aot cannot be used with bytecode. Choose compile.aot for machine code or bytecode for bytecode"
+                    }
+                };
+                out.extend_from_slice(message);
             }
             OptionError::CrossCompile => CompileFailure::CrossCompilation.write_message(
                 origin,
@@ -611,15 +627,26 @@ impl CompileSettings {
 }
 
 fn read_order_file(path: &[u8], order_files: &mut Vec<u8>) -> bun_sys::Maybe<()> {
+    const HEAD: &[u8] = b"aot-order v1";
     let bytes = bun_sys::File::read_from(bun_sys::Fd::cwd(), path)?;
-    if bytes.starts_with(b"aot-order v1\n") {
-        let end = strings::last_index_of_char(&bytes, b'\n').map_or(0, |at| at + 1);
-        order_files.extend_from_slice(&bytes[..end]);
-    } else {
+    let text = bytes.strip_prefix(b"\xef\xbb\xbf").unwrap_or(&bytes);
+    let end = strings::last_index_of_char(text, b'\n').map_or(0, |at| at + 1);
+    let mut lines = text[..end]
+        .split_inclusive(|&byte| byte == b'\n')
+        .map(|line| line.strip_suffix(b"\n").unwrap_or(line))
+        .map(|line| line.strip_suffix(b"\r").unwrap_or(line))
+        .skip_while(|line| line.trim_ascii().is_empty() || line.starts_with(b"#"))
+        .peekable();
+    if lines.peek().is_none_or(|&line| line != HEAD) {
         bun_core::warn!(
             "--aot-order: {} is not an order file. Nothing is placed by it",
             bstr::BStr::new(path),
         );
+        return Ok(());
+    }
+    for line in lines {
+        order_files.extend_from_slice(line);
+        order_files.push(b'\n');
     }
     Ok(())
 }
@@ -663,17 +690,16 @@ pub(crate) fn apply_developer_word<'a>(
         "symbols" => options.emits_symbols = true,
         "no-builtin-modules" => options.omits_builtin_modules = true,
         "out" => options.ir_output_path = Some(Box::from(text)),
+        "order" if text.is_empty() => {}
         "order" => {
-            for path in strings::split(text, b",").filter(|path| !path.is_empty()) {
-                read_order_file(path, &mut options.order_files).map_err(|error| {
-                    OptionError::DeveloperWord {
-                        key,
-                        word: key.as_bytes().to_vec(),
-                        sentence: format!("{} cannot be read: {}", bstr::BStr::new(path), error)
-                            .into_bytes(),
-                    }
-                })?;
-            }
+            read_order_file(text, &mut options.order_files).map_err(|error| {
+                OptionError::DeveloperWord {
+                    key,
+                    word: key.as_bytes().to_vec(),
+                    sentence: format!("{} cannot be read: {}", bstr::BStr::new(text), error)
+                        .into_bytes(),
+                }
+            })?;
         }
         "record-order" => options.records_order = true,
         // The other words of --aot-testing are the engine's.
@@ -893,6 +919,11 @@ fn read_developer_words(
                 }
             }
             Form::Many => words.extend(args.options(name).iter().map(|&value| (key, Some(value)))),
+            Form::Lists => words.extend(
+                split_at_commas(args.options(name))
+                    .filter(|value| !value.is_empty())
+                    .map(|value| (key, Some(value))),
+            ),
         }
     }
     words
@@ -1151,6 +1182,8 @@ pub(crate) fn check_build_conflicts(ctx: &Context<'_>, origin: RequestOrigin) {
         OptionError::Declarations
     } else if ctx.bundler_options.bake {
         OptionError::App
+    } else if ctx.bundler_options.bytecode {
+        OptionError::Bytecode
     } else {
         return;
     };
@@ -1168,7 +1201,6 @@ pub(crate) fn note_options_without_effect(ctx: &Context<'_>) {
     }
     let options = &ctx.bundler_options;
     let bytecode_flags = [
-        (options.bytecode, "--bytecode"),
         (options.bytecode_depth != u32::MAX, "--bytecode-depth"),
         (!options.bytecode_order.is_empty(), "--bytecode-order"),
         (!options.optimize_bytecode, "--no-optimize-bytecode"),
@@ -1179,8 +1211,7 @@ pub(crate) fn note_options_without_effect(ctx: &Context<'_>) {
             flag
         );
     }
-    // --bytecode without --format means --format=cjs.
-    if !options.bytecode && matches!(options.output_format, Format::Cjs | Format::Iife) {
+    if matches!(options.output_format, Format::Cjs | Format::Iife) {
         bun_core::note!(
             "--format has no effect with --aot: each file keeps the module format it is written in"
         );

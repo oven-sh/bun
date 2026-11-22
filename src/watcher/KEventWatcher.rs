@@ -23,6 +23,18 @@ impl KEventWatcher {
     }
 }
 
+impl Watcher {
+    pub(crate) fn wake(&self) {
+        let mut add: libc::kevent = bun_core::ffi::zeroed();
+        add.filter = libc::EVFILT_USER;
+        let mut trigger = add;
+        add.flags = libc::EV_ADD;
+        trigger.fflags = libc::NOTE_TRIGGER;
+        // SAFETY: only `watch_loop_cycle` waits on this kqueue, and it reads `udata` as an index.
+        let _ = unsafe { bun_sys::kevent(self.platform.fd.fd(), &[add, trigger], &mut [], None) };
+    }
+}
+
 fn watch_event_from_kevent(kevent: &libc::kevent) -> WatchEvent {
     let mut op = Op::empty();
     if (kevent.fflags & libc::NOTE_DELETE) > 0 {
@@ -51,8 +63,7 @@ pub(crate) fn watch_loop_cycle(this: &Watcher, thread: &mut WatcherThread) -> bu
 
     let mut changelist: [libc::kevent; CHANGELIST_COUNT] = bun_core::ffi::zeroed();
 
-    // SAFETY: an empty changelist registers nothing.
-    let mut count = unsafe { bun_sys::kevent(fd, &[], &mut changelist, None) }?;
+    let mut count = bun_sys::kevent_wait(fd, &mut changelist, None)?;
 
     // Give the events more time to coalesce
     if count < CHANGELIST_COUNT / 2 {
@@ -60,8 +71,7 @@ pub(crate) fn watch_loop_cycle(this: &Watcher, thread: &mut WatcherThread) -> bu
             tv_sec: 0,
             tv_nsec: 100_000,
         }; // 0.0001 seconds
-        // SAFETY: as above.
-        count += unsafe { bun_sys::kevent(fd, &[], &mut changelist[count..], Some(&ts)) }?;
+        count += bun_sys::kevent_wait(fd, &mut changelist[count..], Some(&ts))?;
     }
 
     let changes = &changelist[..count];

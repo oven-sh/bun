@@ -65,6 +65,89 @@ describe("Bun.build compile", () => {
     expect(exists).toBe(true);
   });
 
+  test.concurrent.skipIf(isWindows)("a name with a backslash finds the embedded file before the disk", async () => {
+    using dir = tempDir("build-compile-backslash", {
+      "index.js": `
+        const name = process.argv[2];
+        require(name);
+        new Worker(name);`,
+      "a/b.js": `console.log("a/b");`,
+      "c\\d/e.js": `console.log("c\\\\d/e");`,
+      "away/a\\b.js": `console.log("from the working directory");`,
+    });
+    const outfile = join(String(dir), "app");
+    const entrypoints = ["index.js", "a/b.js", "c\\d/e.js"].map(name => join(String(dir), name));
+    await Bun.build({ entrypoints, compile: { outfile } });
+
+    for (const [name, found] of [
+      ["./a\\b.js", "a/b"],
+      ["./c\\d/e.js", "c\\d/e"],
+    ]) {
+      const cwd = join(String(dir), "away");
+      await using proc = Bun.spawn({ cmd: [outfile, name], cwd, env: bunEnv, stderr: "inherit" });
+      expect(await proc.stdout.text()).toBe(`${found}\n${found}\n`);
+      expect(await proc.exited).toBe(0);
+    }
+  });
+
+  test.concurrent.each([
+    ["..", {}, "app/src/out/dist"],
+    // On POSIX the name is that of the directory, which `/` does not have.
+    ...(isWindows ? [["/index.js", { "/index.js": "" }, "app/src/out/dist/index"] as const] : []),
+  ])("names the executable of the entry point %s without an outfile", async (entry, files, expected) => {
+    using dir = tempDir("build-compile-default-name", { "app/index.js": "", "app/src/out": {} });
+    const options = { entrypoints: [entry], files, outdir: "out/dist", compile: true };
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-p", `(await Bun.build(${JSON.stringify(options)})).outputs[0].path`],
+      cwd: join(String(dir), "app", "src"),
+      env: bunEnv,
+      stderr: "inherit",
+    });
+    expect(await proc.stdout.text()).toBe(join(String(dir), expected) + (isWindows ? ".exe\n" : "\n"));
+    expect(await proc.exited).toBe(0);
+  });
+
+  test.concurrent.each([
+    ["whole", (tgz: Uint8Array) => tgz, "InvalidElfFile", ["not an executable"]],
+    ["cut short", (tgz: Uint8Array) => tgz.subarray(0, -1), "appears to be corrupted", []],
+    ["damaged", (tgz: Uint8Array) => tgz.fill(0, -8), "appears to be corrupted", []],
+  ])("the download of another platform's executable is %s", async (_, spoil, message, cached) => {
+    const tar = await new Bun.Archive({ "package/bin/bun": "not an executable" }).bytes();
+    using server = Bun.serve({ port: 0, fetch: () => new Response(spoil(Bun.gzipSync(tar))) });
+    using dir = tempDir("build-compile-download", { "app.js": "", "cache": {} });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", `--target=bun-linux-${isArm64 ? "x64" : "arm64"}`, "app.js"],
+      cwd: String(dir),
+      env: {
+        ...bunEnv,
+        BUN_INSTALL_CACHE_DIR: join(String(dir), "cache"),
+        BUN_COMPILE_TARGET_TARBALL_URL: server.url.href,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain(message);
+    const files = readdirSync(join(String(dir), "cache"));
+    expect(files.map(name => readFileSync(join(String(dir), "cache", name), "utf8"))).toEqual(cached);
+    expect(exitCode).toBe(1);
+  });
+
+  test.concurrent("the download goes to the cache that `bun install` uses", async () => {
+    const tar = await new Bun.Archive({ "package/bin/bun": "not an executable" }).bytes();
+    using server = Bun.serve({ port: 0, fetch: () => new Response(Bun.gzipSync(tar)) });
+    using dir = tempDir("build-compile-cache-backslash", { "app/app.js": "", "cache": {} });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", `--target=bun-linux-${isArm64 ? "x64" : "arm64"}`, "app.js"],
+      cwd: join(String(dir), "app"),
+      env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: "..\\cache", BUN_COMPILE_TARGET_TARBALL_URL: server.url.href },
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    expect(await proc.exited).toBe(1);
+    expect(readdirSync(join(String(dir), "cache"))).toHaveLength(1);
+  });
+
   test.skipIf(!isLinux)("the executable can be started when it was written as descriptor 0, 1 or 2", async () => {
     using dir = tempDir("build-compile-closed-stdio", {
       "build.js": `

@@ -2,7 +2,8 @@
 
 //! Implements building a Bake application to production
 
-use bun_paths::strings;
+use bun_core::strings;
+use bun_paths::Path;
 use core::cell::UnsafeCell;
 use core::ptr::NonNull;
 use std::io::Write as _;
@@ -30,7 +31,6 @@ use bun_jsc::{
     self as jsc, AnyPromise, JSGlobalObject, JSModuleLoader, JSPromise, JSValue, JsResult,
     StringJsc as _,
 };
-use bun_paths::resolve_path::{self, platform};
 use bun_resolver as resolver;
 
 use crate::cli::command::{Context, HotReload};
@@ -174,7 +174,7 @@ pub(crate) fn build_command(ctx: Context) -> crate::Result<()> {
     // `vm.log` was set from `ctx.log` above (non-null, process-lifetime);
     // `log_mut()` is the safe accessor encapsulating the NonNull deref.
     bun_http::async_http::load_env(vm.log_mut().unwrap(), vm.env_loader());
-    vm.load_extra_env_and_source_code_printer();
+    vm.load_extra_env();
     vm.is_main_thread.set(true);
     jsc::virtual_machine::IS_MAIN_THREAD_VM.set(true);
 
@@ -228,13 +228,7 @@ fn write_sourcemap_to_disk(
     let source_map_index = file.source_map_index;
     debug_assert!(bundled_outputs[source_map_index as usize].output_kind == OutputKind::Sourcemap);
 
-    let without_prefix = if strings::has_prefix(&file.dest_path, b"./")
-        || (cfg!(windows) && strings::has_prefix(&file.dest_path, b".\\"))
-    {
-        &file.dest_path[2..]
-    } else {
-        &file.dest_path[..]
-    };
+    let without_prefix = bun_paths::without_leading_dot_slash(&file.dest_path);
 
     let mut key = Vec::with_capacity(6 + without_prefix.len());
     write!(&mut key, "bake:/{}", BStr::new(without_prefix)).expect("infallible: in-memory write");
@@ -466,11 +460,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     // trailing slash
     let public_path: &[u8] = b"/";
 
-    let mut root_dir_buf = bun_paths::path_buffer_pool::get();
-    let root_dir_path =
-        resolve_path::join_abs_string_buf::<platform::Auto>(cwd, &mut root_dir_buf.0, &[b"dist"]);
-    // Note: reshaped for borrowck — copy out so root_dir_buf can drop.
-    let root_dir_path: Box<[u8]> = Box::from(root_dir_path);
+    let root_dir_path: Box<[u8]> = Path::resolve(&[cwd, b"dist"]).as_bytes().into();
 
     // Note: borrowck — `framework` is `&mut options.framework`; reborrow
     // through it instead of `options.framework` to avoid stacking borrows.
@@ -484,12 +474,10 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     };
 
     for fsr in &framework.file_system_router_types {
-        let mut buf = bun_paths::path_buffer_pool::get();
-        let joined_root =
-            resolve_path::join_abs_string_buf::<platform::Auto>(cwd, &mut buf[..], &[&fsr.root]);
+        let joined_root = Path::resolve(&[cwd, &fsr.root]);
         let Some(entry) = server_transpiler
             .resolver
-            .read_dir_info_ignore_error(joined_root)
+            .read_dir_info_ignore_error(&joined_root)
         else {
             continue;
         };
@@ -501,9 +489,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
             None
         };
         router_types.push(router::Type {
-            abs_root: Box::from(strings::paths::without_trailing_slash_windows_path(
-                entry.abs_path,
-            )),
+            abs_root: Box::from(bun_paths::without_trailing_sep(entry.abs_path)),
             ignore_underscores: fsr.ignore_underscores,
             ignore_dirs: fsr
                 .ignore_dirs
@@ -665,13 +651,8 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
 
                     match file.output_kind {
                         OutputKind::EntryPoint | OutputKind::Chunk => {
-                            let without_prefix = if strings::has_prefix(&file.dest_path, b"./")
-                                || (cfg!(windows) && strings::has_prefix(&file.dest_path, b".\\"))
-                            {
-                                &file.dest_path[2..]
-                            } else {
-                                &file.dest_path[..]
-                            };
+                            let without_prefix =
+                                bun_paths::without_leading_dot_slash(&file.dest_path);
 
                             if let Some(entry_point_index) = file.entry_point_index {
                                 if (entry_point_index as usize) < module_keys.len() {
@@ -783,10 +764,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
             bun_core::err_generic!("Framework does not support static site generation");
             bun_core::note!(
                 "The file {} is missing the \"prerender\" export, which defines how to generate static files.",
-                bun_core::fmt::quote(resolve_path::relative(
-                    cwd,
-                    pt.input_file(server_file).abs_path()
-                ))
+                bun_core::fmt::quote(&Path::relative(cwd, pt.input_file(server_file).abs_path()))
             );
             Global::crash();
         }
@@ -798,7 +776,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
                 bun_core::err_generic!("Framework does not support static site generation");
                 bun_core::note!(
                     "The file {} is missing the \"getParams\" export, which defines how to generate static files.",
-                    bun_core::fmt::quote(resolve_path::relative(
+                    bun_core::fmt::quote(&Path::relative(
                         cwd,
                         pt.input_file(server_file).abs_path()
                     ))
@@ -1006,7 +984,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
             )
             .map_err(js_err)?;
 
-        let src_path = BunString::clone_utf8(resolve_path::relative(
+        let src_path = BunString::clone_utf8(&Path::relative(
             cwd,
             pt.input_file(main_file_route_index).abs_path(),
         ));

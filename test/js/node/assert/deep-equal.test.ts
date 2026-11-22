@@ -521,7 +521,6 @@ const cases: Case[] = [
     b: () => withHiddenProperty({}, "x", 1),
     strict: false,
     loose: false,
-    looseBug: "reports equal",
   },
   {
     name: "an object with a non-enumerable x and { x: 1 }",
@@ -536,7 +535,28 @@ const cases: Case[] = [
     b: () => withHiddenProperty({ x: 1 }, "y", 2),
     strict: false,
     loose: false,
+  },
+  {
+    name: "{ x: undefined } and an object with a non-enumerable x",
+    a: () => ({ x: undefined }),
+    b: () => withHiddenProperty({}, "x", 1),
+    strict: false,
+    loose: false,
     looseBug: "reports equal",
+  },
+  {
+    name: "an own __proto__ and another key",
+    a: () => JSON.parse('{"a":1,"__proto__":{}}'),
+    b: () => ({ a: 1, b: 2 }),
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "{ a: 2 } and a Proxy of { a: 1 } whose get trap returns 2",
+    a: () => ({ a: 2 }),
+    b: () => new Proxy({ a: 1 }, { get: (target, key) => (key === "a" ? 2 : Reflect.get(target, key)) }),
+    strict: true,
+    loose: true,
   },
   {
     name: "a Date and a Date subclass instance with the same time",
@@ -598,6 +618,15 @@ const cases: Case[] = [
     b: () => Object.defineProperty({}, sym, { value: 1, enumerable: false }),
     strict: false,
     loose: true,
+    looseBug: "reports not equal",
+  },
+  {
+    name: "[1] and an array with a symbol key",
+    a: () => [1],
+    b: () => Object.assign([1], { [sym]: 1 }),
+    strict: false,
+    loose: true,
+    looseBug: "reports not equal",
   },
   {
     name: "typed arrays differing only in a symbol property",
@@ -702,6 +731,35 @@ const cases: Case[] = [
     b: () => new Error("x", { cause: 2 }),
     strict: false,
     loose: false,
+  },
+  {
+    name: "an error with an enumerable name and one with an extra own property",
+    a: () => Object.assign(new Error("x"), { name: "Error" }),
+    b: () => withExtraProperty(new Error("x")),
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "an error with an enumerable cause and one with a non-enumerable cause and an extra own property",
+    a: () => Object.assign(new Error("x"), { cause: 1 }),
+    b: () => withExtraProperty(new Error("x", { cause: 1 })),
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "an error with an enumerable stack and one with an extra own property",
+    a: () => Object.defineProperty(new Error("x"), "stack", { value: "", enumerable: true }),
+    b: () => withExtraProperty(new Error("x")),
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "an error with a non-enumerable cause and one with an enumerable cause",
+    a: () => new Error("x", { cause: 1 }),
+    b: () => Object.assign(new Error("x"), { cause: 1 }),
+    strict: false,
+    loose: false,
+    looseBug: "reports equal",
   },
 
   // Map and Set.

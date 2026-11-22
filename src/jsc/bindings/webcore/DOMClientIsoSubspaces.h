@@ -80,7 +80,6 @@ public:
     GCClient::IsoSubspace* m_clientSubspaceForDOMFormData { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForDOMFormDataIterator { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForDOMURL { nullptr };
-    GCClient::IsoSubspace* m_clientSubspaceForURLPattern { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForURLSearchParams { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForURLSearchParamsIterator { nullptr };
 
@@ -177,6 +176,5 @@ public:
     GCClient::IsoSubspace* m_clientSubspaceForBunRequest { nullptr };
 
     GCClient::IsoSubspace* m_clientSubspaceForJSConnectionsList { nullptr };
-    GCClient::IsoSubspace* m_clientSubspaceForJSHTTPParser { nullptr };
 };
 } // namespace WebCore

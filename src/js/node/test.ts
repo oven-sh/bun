@@ -1661,6 +1661,8 @@ const fileGeneration: () => number = $bindgen("jest.bind.ts", "fileGeneration");
 // `done` binds the intended sequence so a late call after the bun:test watchdog
 // moved on cannot write onto the currently-running test.
 const markCurrentResult: (todo: boolean, done: Done) => void = $bindgen("jest.bind.ts", "nodeTestMarkResult");
+// Moves the bun:test deadline of the hook that `done` names to `ms` from now, never earlier. Infinity removes it.
+const raiseHookDeadline: (done: Done, ms: number) => void = $bindgen("jest.bind.ts", "nodeTestRaiseDeadline");
 
 let rootNode: TestNode | undefined;
 let rootGeneration = -1;
@@ -2550,6 +2552,18 @@ function bunTestOptions(options: TestOptions) {
   return undefined;
 }
 
+function registerOwnerHook(kind: "beforeAll" | "afterAll", hook: Hook, owner: TestNode, fallbackMessage: string) {
+  bunTest()[kind]((done: Done) => {
+    // 5s behind runHook's timer: bun:test only ends a hook that blocks the event loop.
+    const { timeout } = hook;
+    if (typeof timeout === "number") raiseHookDeadline(done, timeout + kBunTestDefaultTimeoutMs);
+    Promise.resolve(runHook(hook, owner, hookArgFor(owner))).then(
+      () => done(),
+      err => done(err ?? new Error(fallbackMessage)),
+    );
+  });
+}
+
 function currentCollectionParent(): TestNode {
   const node = currentNode();
   if (node !== undefined && !node.isExecutionPhase && node.isSuite) {
@@ -2836,13 +2850,7 @@ function before(arg0: unknown, arg1: unknown) {
     }
     return;
   }
-  const { beforeAll } = bunTest();
-  beforeAll((done: (error?: unknown) => void) => {
-    Promise.resolve(runHook(hook, owner, hookArgFor(owner))).then(
-      () => done(),
-      err => done(err ?? new Error("before hook failed")),
-    );
-  });
+  registerOwnerHook("beforeAll", hook, owner, "before hook failed");
 }
 
 function after(arg0: unknown, arg1: unknown) {
@@ -2852,13 +2860,7 @@ function after(arg0: unknown, arg1: unknown) {
     owner.hooks.after.push(hook);
     return;
   }
-  const { afterAll } = bunTest();
-  afterAll((done: (error?: unknown) => void) => {
-    Promise.resolve(runHook(hook, owner, hookArgFor(owner))).then(
-      () => done(),
-      err => done(err ?? new Error("after hook failed")),
-    );
-  });
+  registerOwnerHook("afterAll", hook, owner, "after hook failed");
 }
 
 function beforeEach(arg0: unknown, arg1: unknown) {

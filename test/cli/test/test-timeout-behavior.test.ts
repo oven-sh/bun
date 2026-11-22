@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isFlaky, isLinux } from "harness";
+import { bunEnv, bunExe, isFlaky, isLinux, tempDir } from "harness";
 import path from "path";
 
 if (isFlaky && isLinux) {
@@ -33,3 +33,39 @@ if (isFlaky && isLinux) {
     expect(combined).toContain("(pass) slow test after test timeout");
   });
 }
+
+test.concurrent("a hook with no timeout keeps its processes when an earlier timer fires", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", path.join(import.meta.dir, "process-kill-fixture-no-timeout.ts")],
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "inherit",
+    env: bunEnv,
+  });
+  const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(out).toContain("child: SIGKILL");
+  expect(err).not.toContain("dangling process");
+  expect(err).toContain("1 pass");
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("the timeout of a hook ends the hook before a later --timeout", async () => {
+  using dir = tempDir("hook-timeout-below-default", {
+    "hook.test.ts": `
+      import { beforeAll, test } from "bun:test";
+      beforeAll(() => new Promise(() => {}), 50);
+      test("does not run", () => {});
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--timeout=60000", "hook.test.ts"],
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  const [, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(err).toContain("hook timed out");
+  expect(err).toContain("0 pass");
+  expect(exitCode).toBe(1);
+});

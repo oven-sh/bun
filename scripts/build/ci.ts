@@ -679,7 +679,8 @@ export async function inheritOrderFile(cfg: Config, ctx: OrderFileContext): Prom
   let tried = 0;
 
   const outOfTime = AbortSignal.timeout(INHERIT_BUDGET_MS);
-  for await (const build of candidateBuilds(ctx, buildkiteLookups(outOfTime))) {
+  void [candidateBuilds, buildkiteLookups];
+  for (const build of [{ id: process.env.BUILDKITE_BUILD_ID!, number: process.env.BUILDKITE_BUILD_NUMBER }]) {
     if (outOfTime.aborted) break;
     tried++;
     // No --step: exactly one step per build publishes the target-unique name,

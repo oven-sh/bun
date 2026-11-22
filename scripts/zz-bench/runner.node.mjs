@@ -17,10 +17,10 @@ function run(command, args, options = {}) {
 }
 
 const builds = {
-  main1: "01a200e2-9f86-4a5b-bbb6-dd6c47dfc287",
-  pr1: "01a20161-bcf9-4c16-b482-147c8dfc13f2",
+  main1: "01a201c1-e2c0-482f-a4a4-ab5b9731e7bc",
+  pr1: "01a201cc-cb4b-4e38-8a1f-ceb4323cb2e3",
   main2: "01a201c1-e2c0-482f-a4a4-ab5b9731e7bc",
-  pr2: "01a201cc-cb4b-4e38-8a1f-ceb4323cb2e3",
+  pr2: process.env.BUILDKITE_BUILD_ID,
 };
 const binaries = process.env.ZZ_LOCAL ? JSON.parse(process.env.ZZ_LOCAL) : {};
 for (const [name, build] of process.env.ZZ_LOCAL ? [] : Object.entries(builds)) {

@@ -135,8 +135,8 @@ fn without_suffix(value: EncodedSlice<'_>, suffix: u8) -> EncodedSlice<'_> {
     }
 }
 
-/// The port state of the URL parser, with a state override. `None` if there is no digit.
-fn parse_port(value: EncodedSlice<'_>) -> Result<Option<u16>, PatternError> {
+/// The port state of the URL parser, with a state override.
+fn parse_port(value: EncodedSlice<'_>) -> Result<u16, PatternError> {
     const INVALID: PatternError =
         PatternError::Type("Invalid input to canonicalize a URL port string.");
     let mut port = None::<u16>;
@@ -148,11 +148,10 @@ fn parse_port(value: EncodedSlice<'_>) -> Result<Option<u16>, PatternError> {
                 let next = shifted.and_then(|n| n.checked_add(u16::from(digit - b'0')));
                 port = Some(next.ok_or(INVALID)?);
             }
-            _ if port.is_none() => return Err(INVALID),
             _ => break,
         }
     }
-    Ok(port)
+    port.ok_or(INVALID)
 }
 
 #[derive(Clone, Copy)]
@@ -238,7 +237,7 @@ impl Encoding {
                 Ok(Text::Owned(string))
             }
             Self::Port { default } => Ok(Text::port(
-                parse_port(value)?.filter(|&port| Some(port) != default),
+                Some(parse_port(value)?).filter(|&port| Some(port) != default),
             )),
             Self::Pathname => {
                 let mut url = dummy_url();

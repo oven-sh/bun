@@ -9,6 +9,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use bun_core::{Timespec, TimespecMockMode};
+use bun_sys::windows::kernel32::GetCurrentThreadId;
 use bun_threading::fifo_pool::{has_new_thread, on_new_thread};
 use bun_threading::spin::{Spin, has_other_cpu};
 use bun_threading::{Condition, Guarded};
@@ -44,7 +45,11 @@ pub(crate) struct Shared {
     bell: Bell,
     /// The first is posted.
     wakes: AtomicU64,
+    /// How many of them are from other loops.
+    questions: AtomicU64,
     is_parked: AtomicBool,
+    /// The thread was done soon with what came last.
+    is_brief: AtomicBool,
     outcomes: Guarded<Vec<(Token, Outcome)>>,
     pending_writes: Guarded<usize>,
     all_written: Condition,
@@ -58,13 +63,15 @@ impl Shared {
             outcomes.len() == 1
         };
         if was_empty {
-            self.notify(key::OUTCOMES);
+            self.notify(key::OUTCOMES, true);
         }
     }
 
     /// On busy CPUs the first tasks of a thread take long, and whoever waits for long loses a raised priority.
-    fn notify(&self, key: usize) {
-        if !on_new_thread(|| self.bell.ring(key)) {
+    fn notify(&self, key: usize, is_answer: bool) {
+        let ring = || self.bell.ring(key);
+        let is_urgent = is_answer && self.is_brief.load(Ordering::SeqCst);
+        if !(on_new_thread(ring) || (is_urgent && ring())) {
             sys::post(&self.handle, key, 0);
         }
     }
@@ -74,13 +81,25 @@ impl Shared {
     }
 }
 
+thread_local! {
+    /// A thread of a pool does nothing unasked. One with a loop may send a flood, which a raised receiver would cut into pieces.
+    static ANSWERS_DUE: Cell<Option<u64>> = const { Cell::new(None) };
+}
+
 /// Makes a [`Port`] report [`Event::Wake`], from any thread.
-pub struct Waker(Arc<Shared>);
+pub struct Waker(Arc<Shared>, u32);
 
 impl Waker {
     pub fn wake(&self) {
+        let due = ANSWERS_DUE.get();
+        if let Some(due) = due
+            && self.1 != GetCurrentThreadId()
+        {
+            ANSWERS_DUE.set(Some(due.saturating_sub(1)));
+            self.0.questions.fetch_add(1, Ordering::Relaxed);
+        }
         if self.0.wakes.fetch_add(1, Ordering::SeqCst) == 0 {
-            self.0.notify(key::WAKE);
+            self.0.notify(key::WAKE, due != Some(0));
         }
     }
 }
@@ -115,6 +134,8 @@ pub struct Port {
     spin: Cell<Spin>,
     /// Events, since `spin` was last told.
     work: Cell<u64>,
+    /// The end of the last `park`.
+    woke_ns: Cell<u64>,
     /// Since the last wait. What is sent unasked comes in larger pieces to a thread that sleeps.
     has_received: Cell<bool>,
     has_sent: Cell<bool>,
@@ -160,7 +181,9 @@ impl Port {
                 handle: sys::create_port(u32::MAX)?,
                 bell: Bell::default(),
                 wakes: AtomicU64::new(0),
+                questions: AtomicU64::new(0),
                 is_parked: AtomicBool::new(false),
+                is_brief: AtomicBool::new(false),
                 outcomes: Guarded::default(),
                 pending_writes: Guarded::default(),
                 all_written: Condition::new(),
@@ -171,6 +194,7 @@ impl Port {
             listener: Listener::default(),
             spin: Cell::new(Spin::new()),
             work: Cell::new(0),
+            woke_ns: Cell::new(now_ns()),
             has_received: Cell::new(false),
             has_sent: Cell::new(false),
             batch: [const { Cell::new(Packet::EMPTY) }; BATCH],
@@ -196,7 +220,8 @@ impl Port {
     }
 
     pub fn waker(&self) -> Waker {
-        Waker(Arc::clone(&self.shared))
+        ANSWERS_DUE.set(ANSWERS_DUE.get().or(Some(0)));
+        Waker(Arc::clone(&self.shared), GetCurrentThreadId())
     }
 
     pub fn pending_write(&self) -> PendingWrite {
@@ -371,6 +396,7 @@ impl Port {
     fn yield_now_and_then(&self) {
         const CLOCK_TICK_NS: u64 = 15_625_000;
         const MAX_QUANTUM_NS: u64 = 12 * CLOCK_TICK_NS;
+        const MIN_PAUSE_NS: u64 = 2_000_000;
         let now = now_ns();
         if !self.is_overrun.replace(true) {
             (self.next_yield_ns).update(|next| next.max(now + CLOCK_TICK_NS));
@@ -383,30 +409,38 @@ impl Port {
         self.busy_since_ns.update(|since| since + lost);
         // Whoever keeps the CPU for long does not wait either.
         let pause = lost.min(MAX_QUANTUM_NS).pow(2) / CLOCK_TICK_NS;
-        (self.next_yield_ns).set(now + lost + pause + CLOCK_TICK_NS);
+        (self.next_yield_ns).set(now + lost + pause + MIN_PAUSE_NS);
         self.fill_batch(Timeout::Now);
     }
 
     /// `true` if the first look was enough. With `only_receives`, that look does not wait.
     fn park(&self, timeout_ns: Option<u64>, only_receives: bool) -> bool {
         const IDLE_NS: u64 = 100_000;
+        const BRIEF_NS: u64 = 1_000_000;
         let (start, mut spin) = (now_ns(), self.spin.get());
         let next_due = self.delayed.borrow().peek().map(|entry| entry.0.0);
         let deadline = (timeout_ns.map_or(u64::MAX, |timeout| start.saturating_add(timeout)))
             .min(next_due.unwrap_or(u64::MAX));
         let awake_ns = if only_receives { 0 } else { spin.limit_ns() };
         let (mut now, awake_until, mut is_first) = (start, start + awake_ns, true);
+        let ran_ns = start.saturating_sub(self.woke_ns.get());
+        let is_brief = ran_ns < BRIEF_NS;
+        self.shared.is_brief.store(is_brief, Ordering::SeqCst);
+        let mut has_slept = false;
         loop {
             let timeout = match deadline {
                 _ if now < awake_until || (is_first && only_receives) => Timeout::Now,
                 u64::MAX => Timeout::Never,
                 _ => (self.timer).timeout(&self.shared.handle, now, deadline.saturating_sub(now)),
             };
-            let has_packets = if matches!(timeout, Timeout::Now) || !has_new_thread() {
+            let has_packets = if matches!(timeout, Timeout::Now) {
                 self.fill_batch(timeout)
             } else {
-                let Shared { handle, bell, .. } = &*self.shared;
-                (self.listener).listen(bell, handle, || self.fill_batch(timeout))
+                // The timer can be set for an earlier time.
+                if !core::mem::replace(&mut has_slept, true) {
+                    self.timer.before_sleep(ran_ns, is_brief, deadline - now);
+                }
+                self.sleep(timeout, is_brief)
             };
             now = now_ns();
             is_first &= has_packets;
@@ -417,9 +451,23 @@ impl Port {
         if now.saturating_sub(start) > IDLE_NS {
             self.busy_since_ns.set(now);
         }
+        self.woke_ns.set(now);
+        let slept_ns = now.saturating_sub(awake_until);
+        (self.timer).waited(ran_ns + (now - start) - slept_ns, slept_ns);
+        if now >= deadline {
+            self.timer.note_deadline(self.undispatched() > 0);
+        }
         spin.waited(start, now, awake_ns, self.work.take());
         self.spin.set(spin);
         is_first
+    }
+
+    fn sleep(&self, timeout: Timeout, is_brief: bool) -> bool {
+        if !is_brief && !has_new_thread() {
+            return self.fill_batch(timeout);
+        }
+        let Shared { handle, bell, .. } = &*self.shared;
+        (self.listener).listen(bell, handle, || self.fill_batch(timeout))
     }
 
     /// `false` if there is nothing to dispatch.
@@ -593,6 +641,8 @@ impl Port {
             }
             key::WAKE => {
                 self.add_work(self.shared.wakes.swap(0, Ordering::SeqCst));
+                let asked = self.shared.questions.swap(0, Ordering::Relaxed);
+                ANSWERS_DUE.set(ANSWERS_DUE.get().map(|due| (due + asked).min(BATCH as u64)));
                 on_event(Event::Wake);
             }
             key::OUTCOMES => {

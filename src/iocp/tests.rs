@@ -755,10 +755,21 @@ fn keep_a_thread_new() -> mpsc::Sender<()> {
     kept
 }
 
-/// `run` is called when the port goes to sleep. Returns the wakes, and how many packets that has posted.
+/// After the thread has been busy.
 fn turn_ended_by(port: &Port, spawn: Spawn, run: impl FnOnce() + Send + 'static) -> (usize, usize) {
+    let _new = keep_a_thread_new();
+    CLOCK_AHEAD.set(CLOCK_AHEAD.get() + Duration::from_millis(2));
+    next_turn_ended_by(port, spawn, run)
+}
+
+/// `run` is called when the port goes to sleep. Returns the wakes, and how many packets that has posted.
+fn next_turn_ended_by(
+    port: &Port,
+    spawn: Spawn,
+    run: impl FnOnce() + Send + 'static,
+) -> (usize, usize) {
     let (mut run, posted) = (Some(run), Rc::new(Cell::new(0)));
-    let (slot, _new) = (Rc::clone(&posted), keep_a_thread_new());
+    let slot = Rc::clone(&posted);
     let _sleeps = intercept(Call::NtRemoveIoCompletionEx, move |args| {
         // SAFETY: the timeout of the call.
         let timeout = unsafe { ptr::with_exposed_provenance::<i64>(args[4]).as_ref() };
@@ -819,6 +830,75 @@ fn a_thread_that_sleeps_is_woken_by_an_event() {
             nothing_comes(&port);
         }
     }
+}
+
+#[test]
+fn a_thread_that_waits_for_time_to_pass_is_ahead_of_others() {
+    if !has_other_cpu() {
+        return;
+    }
+    let (port, levels) = (Port::new().unwrap(), Rc::new(RefCell::new(Vec::new())));
+    let seen = Rc::clone(&levels);
+    let _noted = intercept(Call::NtSetInformationThread, move |args| {
+        // SAFETY: the priority that the call is given.
+        let level = unsafe { *ptr::with_exposed_provenance::<i32>(args[2]) };
+        seen.borrow_mut().push(level);
+        None
+    });
+    let class = Rc::new(Cell::new(0x20));
+    let is = Rc::clone(&class);
+    let _class = intercept(Call::GetPriorityClass, move |_| Some(is.get()));
+    let priority = Rc::new(Cell::new([0, 0]));
+    let has = Rc::clone(&priority);
+    let _priority = intercept(Call::NtQueryInformationThread, move |args| {
+        // SAFETY: the out-param of the call.
+        let info: &mut sys::THREAD_BASIC_INFORMATION =
+            unsafe { &mut *ptr::with_exposed_provenance_mut(args[2]) };
+        [info.Priority, info.BasePriority] = has.get();
+        Some(0)
+    });
+    CLOCK_STOPPED_AT.set(Some(Instant::now()));
+    let pass = |ms| CLOCK_AHEAD.set(CLOCK_AHEAD.get() + Duration::from_millis(ms));
+    let sleep = |ms, is_early: bool| {
+        let waker = port.waker();
+        let _ends = intercept(Call::NtRemoveIoCompletionEx, move |_| match is_early {
+            true => (waker.wake(), None).1,
+            false => (pass(ms), Some(status(NTSTATUS::TIMEOUT))).1,
+        });
+        (turn(&port, Duration::from_millis(ms)), levels.take()).1
+    };
+    assert_eq!(sleep(1_001, false), []);
+    assert_eq!(sleep(10, false), [10, 8]);
+    assert_eq!(sleep(20, false), [11, 8]);
+
+    let shares = [(); 8].map(|()| (pass(4), sleep(1, false).len()).1);
+    assert_eq!(shares, [2, 2, 2, 2, 2, 0, 0, 0]);
+    assert_eq!(sleep(60, false), [11, 8]);
+
+    let early = [(); 5].map(|()| sleep(10, true)).concat();
+    assert_eq!(early, [10, 10, 10, 10, 8]);
+    assert_eq!(sleep(10, false), []);
+
+    let computes = [(); 3].map(|()| (pass(5), sleep(500, true)).1).concat();
+    assert_eq!(computes, [11, 8]);
+    assert_eq!(sleep(10, false), [10, 8]);
+
+    class.set(0x40);
+    assert_eq!(sleep(10, false), [6, 4]);
+    class.set(0x100);
+    assert_eq!(sleep(10, false), []);
+    class.set(0x20);
+    for (has, expected) in [([9, 0], 2), ([10, 0], 0), ([9, 1], 0)] {
+        priority.set(has);
+        assert_eq!(sleep(10, false).len(), expected);
+    }
+    priority.set([8, 0]);
+    let _fixed = intercept(Call::GetThreadPriorityBoost, |args| {
+        // SAFETY: the out-param of the call.
+        unsafe { ptr::with_exposed_provenance_mut::<i32>(args[1]).write(1) };
+        Some(1)
+    });
+    assert_eq!(sleep(10, false), []);
 }
 
 #[test]
@@ -900,7 +980,7 @@ fn a_thread_that_is_awake_or_gone_needs_no_event() {
 }
 
 #[test]
-fn no_event_is_made_without_a_new_thread() {
+fn without_a_new_thread_an_event_is_for_a_brief_turn() {
     const ALONE: &str = "BUN_IOCP_TEST_ALONE";
     static POOL: FifoPool = FifoPool::new(Config {
         name: "Test",
@@ -911,7 +991,7 @@ fn no_event_is_made_without_a_new_thread() {
     });
     if std::env::var_os(ALONE).is_none() {
         let mut alone = std::process::Command::new(std::env::current_exe().unwrap());
-        alone.arg("no_event_is_made_without_a_new_thread");
+        alone.arg("without_a_new_thread_an_event_is_for_a_brief_turn");
         return assert!(alone.env(ALONE, "1").output().unwrap().status.success());
     }
     let ((kept, is_kept), (began, has_begun)) = (mpsc::channel::<()>(), mpsc::channel());
@@ -956,15 +1036,34 @@ fn no_event_is_made_without_a_new_thread() {
         "threads have ended"
     );
 
-    let (request, remote) = Request::remote(&port, |()| {});
-    blocking::spawn(|| {
-        std::thread::sleep(Duration::from_millis(20));
-        remote.complete(());
-    });
+    CLOCK_STOPPED_AT.set(Some(Instant::now()));
     let (_counted, created) = count(Call::CreateEventW);
-    run_until(&port, || port.callback_count() == 0);
-    assert_eq!(created.get(), 0);
-    drop(request);
+    let with = usize::from(has_wait_packets());
+    for (busy_us, is_rung) in [(2_000, 0), (900, with), (1_000, 0), (0, with)] {
+        CLOCK_AHEAD.set(CLOCK_AHEAD.get() + Duration::from_micros(busy_us));
+        let waker = port.waker();
+        let ended = next_turn_ended_by(&port, ON_NO_POOL, move || waker.wake());
+        assert_eq!(ended, (1, 1 - is_rung));
+        assert_eq!(created.get(), if busy_us == 2_000 { 0 } else { with });
+    }
+    for (asker, is_rung) in [("itself", 0), ("a pool", 0), ("a loop", with)] {
+        let waker = port.waker();
+        let ended = next_turn_ended_by(&port, ON_NO_POOL, move || {
+            let own = Port::new().unwrap();
+            let own_waker = own.waker();
+            let ask = move || {
+                let _loop = (asker == "a loop").then(|| Port::new().unwrap().waker());
+                own_waker.wake();
+            };
+            match asker {
+                "itself" => ask(),
+                _ => std::thread::spawn(ask).join().unwrap(),
+            }
+            turn(&own, Duration::ZERO);
+            waker.wake();
+        });
+        assert_eq!(ended, (1, 1 - is_rung + usize::from(asker == "itself")));
+    }
 }
 
 #[test]
@@ -1458,7 +1557,7 @@ fn timers_that_keep_overrunning_yield() {
         turn(&port, Duration::ZERO)
     };
     assert_eq!([50; 3].map(yields), [0, 1, 1]);
-    assert_eq!([6; 6].map(yields), [0, 0, 1, 0, 0, 1]);
+    assert_eq!([1; 6].map(yields), [0, 1, 0, 1, 0, 1]);
 
     pass(50);
     assert_eq!(turn(&port, Duration::ZERO), 0);
@@ -1473,7 +1572,7 @@ fn timers_that_keep_overrunning_yield() {
     assert_eq!([500; 2].map(yields), [0, 1]);
 
     lost_ms.set(10);
-    assert_eq!([20, 20, 5].map(yields), [1, 0, 1]);
+    assert_eq!([20, 8, 5].map(yields), [1, 0, 1]);
     lost_ms.set(50);
     assert_eq!([50; 6].map(yields), [1, 0, 0, 0, 1, 0]);
     waits();

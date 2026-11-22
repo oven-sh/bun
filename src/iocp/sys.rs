@@ -11,6 +11,7 @@ use std::sync::OnceLock;
 
 use bun_sys::windows::kernel32::GetCurrentThreadId;
 use bun_sys::windows::{StatusBlock, find_export};
+use bun_windows_sys::externs::{GetCurrentProcess, GetCurrentThread};
 use bun_windows_sys::{
     BOOL, BOOLEAN, DWORD, FILETIME, HANDLE, INFINITE, INVALID_HANDLE_VALUE, IO_STATUS_BLOCK,
     NT_SUCCESS, NTSTATUS, OBJECT_ATTRIBUTES, ULONG, UNICODE_STRING, Win32Error,
@@ -55,6 +56,19 @@ unsafe extern "system" {
         ApcContext: usize,
         IoStatus: NTSTATUS,
         IoStatusInformation: usize,
+    ) -> NTSTATUS;
+    safe fn NtQueryInformationThread(
+        ThreadHandle: HANDLE,
+        ThreadInformationClass: ULONG,
+        ThreadInformation: &mut THREAD_BASIC_INFORMATION,
+        ThreadInformationLength: ULONG,
+        ReturnLength: Option<&mut ULONG>,
+    ) -> NTSTATUS;
+    safe fn NtSetInformationThread(
+        ThreadHandle: HANDLE,
+        ThreadInformationClass: ULONG,
+        ThreadInformation: &i32,
+        ThreadInformationLength: ULONG,
     ) -> NTSTATUS;
     /// `IoRequestToCancel` is only compared.
     safe fn NtCancelIoFileEx(
@@ -111,6 +125,8 @@ unsafe extern "system" {
         fResume: BOOL,
     ) -> BOOL;
     safe fn GetSystemTimeAsFileTime(lpSystemTimeAsFileTime: &mut FILETIME);
+    safe fn GetPriorityClass(hProcess: HANDLE) -> DWORD;
+    safe fn GetThreadPriorityBoost(hThread: HANDLE, pDisablePriorityBoost: &mut BOOL) -> BOOL;
     safe fn CancelSynchronousIo(hThread: HANDLE) -> BOOL;
     safe fn OpenThread(dwDesiredAccess: DWORD, bInheritHandle: BOOL, dwThreadId: DWORD) -> HANDLE;
 }
@@ -293,6 +309,56 @@ pub(crate) fn cancel(file: HANDLE, request: &StatusBlock) {
 
 pub(crate) fn cancel_synchronous_io(thread: HANDLE) {
     CancelSynchronousIo(thread);
+}
+
+#[repr(C)]
+#[derive(Default)]
+pub(crate) struct THREAD_BASIC_INFORMATION {
+    _unused: [usize; 5],
+    pub(crate) Priority: i32,
+    /// Relative to that of the process.
+    pub(crate) BasePriority: i32,
+}
+
+/// That of this thread.
+pub(crate) struct Priority {
+    base: i32,
+    now: i32,
+}
+
+impl Priority {
+    /// `None` if somebody has chosen one for the thread, or little is above it.
+    pub(crate) fn get() -> Option<Priority> {
+        let base = match GetPriorityClass(GetCurrentProcess()) {
+            0x40 => 4,
+            0x4000 => 6,
+            0x20 => 8,
+            0x8000 => 10,
+            _ => return None,
+        };
+        let mut info = THREAD_BASIC_INFORMATION::default();
+        let size = size_of_val(&info) as ULONG;
+        NtQueryInformationThread(GetCurrentThread(), 0, &mut info, size, None);
+        let (now, mut is_fixed) = (info.Priority, 0);
+        GetThreadPriorityBoost(GetCurrentThread(), &mut is_fixed);
+        (info.BasePriority == 0 && is_fixed == 0).then_some(Priority { base, now })
+    }
+
+    pub(crate) fn boost(&self) -> i32 {
+        self.now - self.base
+    }
+
+    /// It wears off as after I/O: by one for each time slice, and for a long wait.
+    pub(crate) fn set_boost(&self, levels: i32) {
+        // https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/wdm/nf-wdm-zwsetinformationthread
+        const THREAD_PRIORITY: ULONG = 2;
+        NtSetInformationThread(
+            GetCurrentThread(),
+            THREAD_PRIORITY,
+            &(self.base + levels),
+            4,
+        );
+    }
 }
 
 /// With the right to have its I/O cancelled.

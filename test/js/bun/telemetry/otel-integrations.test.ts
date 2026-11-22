@@ -197,6 +197,18 @@ describe("node:fs / Bun.file / Bun.write", () => {
     expect(got.every(s => s.kind === 0)).toBe(true);
   });
 
+  test("Bun.write() to S3 is no fs span", async () => {
+    const uploads: string[] = [];
+    using s3 = Bun.serve({
+      port: 0,
+      fetch: async req => (uploads.push(new URL(req.url).pathname), await req.text(), new Response()),
+    });
+    const options = { endpoint: s3.url.href, accessKeyId: "a", secretAccessKey: "b" };
+    await Bun.write("s3://bucket/string", "x", options as any);
+    await Bun.write(Bun.s3.file("s3://bucket/file", options), "x");
+    expect([uploads, await collect("bun.fs")]).toEqual([["/bucket/string", "/bucket/file"], []]);
+  });
+
   test("a path that is not UTF-8 is exported as a valid protobuf string (U+FFFD), not raw bytes", async () => {
     // proto3 `string` must be UTF-8; one raw 0xff makes a collector reject the whole export request.
     const raw = Buffer.from([0x2f, 0xff, 0xfe, 0x6f, 0x74, 0x65, 0x6c]); // "/\xff\xfeotel"
@@ -416,6 +428,7 @@ describe("WebSocket", () => {
         "server.address": "127.0.0.1",
         "server.port": server.port,
         "url.full": `ws://127.0.0.1:${server.port}/chat`,
+        "http.response.status_code": 101,
       },
     });
     expect(upgrade.attributes["http.response.status_code"]).toBe(101);
@@ -453,6 +466,17 @@ describe("WebSocket", () => {
     expect(connect.parentSpanId).toBe("2222222222222222");
     expect(seen).toBe(`00-11111111111111111111111111111111-${connect.spanId}-01`);
     expect(got.find(s => s.scope.name === "bun.http.server").traceId).toBe("11111111111111111111111111111111");
+  });
+
+  test.each(["WebSocket", "ws"])("a handshake that the server refuses says with which status (%s)", async client => {
+    using server = Bun.serve({ port: 0, fetch: () => new Response("who are you", { status: 401 }) });
+    const ws = new (client === "ws" ? require("ws") : WebSocket)(`ws://127.0.0.1:${server.port}/`);
+    ws.onerror = () => {};
+    await new Promise(resolve => (ws.onclose = resolve));
+    const connect = (await collect()).filter(s => s.name === "websocket.connect");
+    expect(
+      connect.map(s => [s.status.code, s.attributes["error.type"], s.attributes["http.response.status_code"]]),
+    ).toEqual([[2, "401", 401]]);
   });
 
   test("a message handler still pending when the socket closes is ended then, not leaked", async () => {

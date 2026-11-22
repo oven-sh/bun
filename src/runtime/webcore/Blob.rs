@@ -3823,7 +3823,11 @@ pub(crate) fn write_file_internal(
     options: WriteFileOptions,
 ) -> JsResult<JSValue> {
     // S3 is no file system.
-    if matches!(destination, PathOrBlob::Blob(blob) if blob.is_s3()) {
+    let is_s3 = match destination {
+        PathOrBlob::Path(path_or_fd) => is_s3_url(path_or_fd),
+        PathOrBlob::Blob(blob) => blob.is_s3(),
+    };
+    if is_s3 {
         return write_to_destination(cx, destination, data, options);
     }
     let span = bun_telemetry_jsc::fs::begin_promise(cx.global(), "write", || match destination {
@@ -4692,17 +4696,17 @@ fn is_held_at_source_path(path: &PathOrFileDescriptor<'static>) -> bool {
             .is_some_and(|graph| graph.find_data(path.slice()).is_some())
 }
 
+fn is_s3_url(path_or_fd: &PathOrFileDescriptor<'_>) -> bool {
+    matches!(path_or_fd, PathOrFileDescriptor::Path(path) if path.slice().starts_with(b"s3://"))
+}
+
 /// `find_or_create_file_from_path` with `check_s3`.
 #[inline(always)]
 fn try_find_or_create_file_from_path(
     path_or_fd: &mut PathOrFileDescriptor<'static>,
     global_this: &JSGlobalObject,
 ) -> JsResult<Blob> {
-    let is_s3_path = matches!(
-        &*path_or_fd,
-        PathOrFileDescriptor::Path(path) if path.slice().starts_with(b"s3://")
-    );
-    if !is_s3_path {
+    if !is_s3_url(path_or_fd) {
         return Ok(Blob::find_or_create_file_from_path(
             path_or_fd,
             global_this,

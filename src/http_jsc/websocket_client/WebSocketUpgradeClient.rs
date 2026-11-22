@@ -913,6 +913,16 @@ where
         };
         let vm = bun_jsc::virtual_machine::VirtualMachine::get();
         let is_101 = response.status_code == 101;
+        self.span.describe(|r| {
+            r.attr("http.response.status_code", i64::from(response.status_code));
+        });
+        // `ws` may follow a redirect.
+        if !matches!(response.status_code, 101 | 300..400) {
+            self.span.take().end_with(|r| {
+                let mut digits = bun_core::fmt::ItoaBuf::new();
+                r.error(bun_core::fmt::itoa(&mut digits, response.status_code), b"");
+            });
+        }
         let should_read_body = self.ws_mode && !is_upgrade(response);
         if should_read_body {
             self.response_body

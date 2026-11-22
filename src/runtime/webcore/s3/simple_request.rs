@@ -205,7 +205,7 @@ impl Callback {
             Callback::Stat(callback) => callback(S3StatResult::Failure(err)),
             Callback::Delete(callback) => callback(S3DeleteResult::Failure(err)),
             Callback::ListObjects(callback) => callback(S3ListObjectsResult::Failure(err)),
-            Callback::Sink(sink, request) => NetworkSink::on_reply(&sink, request, Err(err)),
+            Callback::Sink(sink, request) => sink.on_reply(request, Err(err)),
         }
     }
 
@@ -353,17 +353,17 @@ impl S3HttpSimpleTask {
             // 404: the store no longer has the upload, which is what an abort is for.
             (Callback::Sink(sink, request @ Request::Put(_)), 200)
             | (Callback::Sink(sink, request @ Request::Abort(_)), 200 | 204 | 404) => {
-                NetworkSink::on_reply(&sink, request, Ok(b""))
+                sink.on_reply(request, Ok(b""))
             }
             (Callback::Sink(sink, Request::Create), 200 | 204 | 206) => {
                 let id = xml_response::parse_upload_id(&this.response_buffer.list);
-                NetworkSink::on_reply(&sink, Request::Create, Ok(&id.unwrap_or_default()))
+                sink.on_reply(Request::Create, Ok(&id.unwrap_or_default()))
             }
             (Callback::Sink(sink, Request::Create), 404)
                 if xml_response::parse_error(&this.response_buffer.list)
                     .is_none_or(|error| error.code.is_none()) =>
             {
-                NetworkSink::on_reply(&sink, Request::Create, Err(NO_UPLOAD_ID))
+                sink.on_reply(Request::Create, Err(NO_UPLOAD_ID))
             }
             (Callback::Sink(sink, request @ (Request::Part(..) | Request::Commit(..))), status) => {
                 let parsed = xml_response::parse_error(&this.response_buffer.list);
@@ -372,8 +372,8 @@ impl S3HttpSimpleTask {
                     _ => Some(&b""[..]),
                 };
                 match (this.response_error(status, parsed.as_ref()), etag) {
-                    (Some(err), _) => NetworkSink::on_reply(&sink, request, Err(err)),
-                    (None, Some(etag)) => NetworkSink::on_reply(&sink, request, Ok(etag)),
+                    (Some(err), _) => sink.on_reply(request, Err(err)),
+                    (None, Some(etag)) => sink.on_reply(request, Ok(etag)),
                     (None, None) => {
                         this.error_with_body(Callback::Sink(sink, request), ErrorType::Failure)
                     }

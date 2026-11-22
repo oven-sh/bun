@@ -126,18 +126,6 @@ pub struct ClientSession {
     pub(crate) registry_index: Cell<u32>,
 }
 
-/// A live session as its holders point at it: the socket ext slot, the
-/// context's registry, the keep-alive pool, or the pointer `create` returned.
-///
-/// Every `pub(crate)` entry point that can leave the session released (socket
-/// events, the registry / pool hand-offs in `HTTPContext::connect`, the
-/// per-request wakeups from `HTTPThread`) takes one of these instead of
-/// `&mut self` and goes through [`ClientSession::enter`], so frees can only
-/// happen through the holder's pointer after the body's `&mut` borrow has
-/// ended. Callers that need the session alive across two entry points hold a
-/// [`RefPtr::from_this`] guard of their own across both.
-pub(crate) type SessionPtr = bun_ptr::ThisPtr<ClientSession>;
-
 /// Upgrade a `*mut Stream` from `self.streams` to `&mut Stream`.
 ///
 /// INVARIANT: stream pointers stored in `ClientSession.streams` are
@@ -162,40 +150,32 @@ fn stream_ref(ptr: *const Stream) -> bun_ptr::ParentRef<Stream> {
 }
 
 impl ClientSession {
-    /// Wrap a holder's pointer as a [`SessionPtr`].
-    ///
-    /// INVARIANT: a registry or pool entry holds a ref on `session`.
-    /// HTTP-thread-only.
-    #[inline]
-    pub(crate) fn this_ptr(session: NonNull<ClientSession>) -> SessionPtr {
+    /// INVARIANT: a registry or pool entry holds a ref on `session`. HTTP-thread-only.
+    fn ref_to(session: NonNull<ClientSession>) -> RefPtr<Self> {
         // SAFETY: see INVARIANT above.
-        unsafe { SessionPtr::new(session.as_ptr()) }
+        unsafe { RefPtr::init_ref(session.as_ptr()) }
     }
 
     /// Run a `&mut self` body under a ref, so that no release inside the body is the last one.
-    fn enter<R>(this: SessionPtr, body: impl FnOnce(&mut ClientSession) -> R) -> R {
-        let _guard = RefPtr::from_this(this);
-        // SAFETY: `this` is live (see `this_ptr`; the guard above holds it for
-        // the rest of this call) and HTTP-thread-only, so this is the only
-        // borrow of the session for the duration of `body`.
-        body(unsafe { &mut *this.as_ptr() })
+    fn enter<R>(self: RefPtr<Self>, body: impl FnOnce(&mut ClientSession) -> R) -> R {
+        // SAFETY: HTTP-thread-only, so this is the only borrow of the session for the duration of `body`.
+        body(unsafe { &mut *self.as_ptr() })
     }
 
     /// Socket onData entry point; see [`Self::handle_data`].
-    pub(crate) fn on_data(this: SessionPtr, incoming: &[u8]) {
-        Self::enter(this, |s| s.handle_data(incoming));
+    pub(crate) fn on_data(self: RefPtr<Self>, incoming: &[u8]) {
+        self.enter(|s| s.handle_data(incoming));
     }
 
     /// Socket onWritable entry point; see [`Self::handle_writable`].
-    pub(crate) fn on_writable(this: SessionPtr) {
-        Self::enter(this, |s| s.handle_writable());
+    pub(crate) fn on_writable(self: RefPtr<Self>) {
+        self.enter(|s| s.handle_writable());
     }
 
     /// Socket onClose entry point. The socket is already gone, so
-    /// every stream fails and the registry's ref is released; unless a
-    /// caller holds its own guard, the session is freed before this returns.
-    pub(crate) fn on_close(this: SessionPtr, err: Error) {
-        Self::enter(this, |s| s.fail_streams(err));
+    /// every stream fails and the registry's ref is released.
+    pub(crate) fn on_close(self: RefPtr<Self>, err: Error) {
+        self.enter(|s| s.fail_streams(err));
     }
 
     /// The JS thread can pause a body after the timer was armed. `resume_receive` arms it again.
@@ -205,38 +185,39 @@ impl ClientSession {
 
     /// Socket onTimeout entry point; see [`Self::on_close`]. When the wait for
     /// the ACK of a liveness PING ran out, the connection is lost.
-    pub(crate) fn on_timeout(this: SessionPtr) {
-        Self::on_close(
-            this,
-            if this.ping_cap_armed {
-                Error::ConnectionClosed
-            } else {
-                Error::Timeout
-            },
-        );
+    pub(crate) fn on_timeout(self: RefPtr<Self>) {
+        let err = if self.ping_cap_armed {
+            Error::ConnectionClosed
+        } else {
+            Error::Timeout
+        };
+        self.on_close(err);
     }
 
     /// Multiplex `client` onto an established (registered or pool-resumed)
     /// session; see [`Self::adopt_client`].
-    pub(crate) fn adopt(this: SessionPtr, client: InFlightRequest) -> Result<(), InFlightRequest> {
-        Self::enter(this, |s| s.adopt_client(client))
+    pub(crate) fn adopt(
+        self: RefPtr<Self>,
+        client: InFlightRequest,
+    ) -> Result<(), InFlightRequest> {
+        self.enter(|s| s.adopt_client(client))
     }
 
     /// Open the first stream on a session `create` just returned, for the
     /// client whose connect negotiated h2. Unlike [`Self::adopt`] this does not
     /// wait for the server's SETTINGS: the leader's stream carries the preface.
-    pub(crate) fn attach_leader(this: SessionPtr, client: InFlightRequest) {
-        Self::enter(this, |s| s.attach(client));
+    pub(crate) fn attach_leader(self: RefPtr<Self>, client: InFlightRequest) {
+        self.enter(|s| s.attach(client));
     }
 
     /// The session of a stream that a request's `Carrier::H2` names.
-    fn of_stream(stream: NonNull<Stream>) -> SessionPtr {
-        Self::this_ptr(stream_ref(stream.as_ptr()).session)
+    fn of_stream(stream: NonNull<Stream>) -> RefPtr<Self> {
+        Self::ref_to(stream_ref(stream.as_ptr()).session)
     }
 
     /// The request on `stream` was aborted.
     pub(crate) fn abort_stream(stream: NonNull<Stream>) {
-        Self::enter(Self::of_stream(stream), |s| {
+        Self::of_stream(stream).enter(|s| {
             let opened_at = stream_ref(stream.as_ptr()).opened_at;
             s.detach_with_failure(stream.as_ptr(), crate::Error::Aborted);
             s.after_abort(s.last_read.max(opened_at));
@@ -245,7 +226,7 @@ impl ClientSession {
 
     /// A request in `pending_attach` was aborted.
     pub(crate) fn abort_parked(session: NonNull<ClientSession>, async_http_id: u64) {
-        Self::enter(Self::this_ptr(session), |s| {
+        Self::ref_to(session).enter(|s| {
             let i = (s.pending_attach.iter()).position(|c| c.async_http_id == async_http_id);
             (s.pending_attach)
                 .remove(i.expect("named by its carrier"))
@@ -256,14 +237,12 @@ impl ClientSession {
 
     /// HTTP-thread wake-up from `scheduleRequestWrite`; see [`Self::on_request_body`].
     pub(crate) fn stream_request_body(stream: NonNull<Stream>, message: WriteMessageType) {
-        Self::enter(Self::of_stream(stream), |s| {
-            s.on_request_body(stream.as_ptr(), message)
-        });
+        Self::of_stream(stream).enter(|s| s.on_request_body(stream.as_ptr(), message));
     }
 
     /// See [`crate::HTTPClient::send_held_body`].
     pub(crate) fn resume_receive(stream: NonNull<Stream>) {
-        Self::enter(Self::of_stream(stream), |s| {
+        Self::of_stream(stream).enter(|s| {
             let Some(client) = &mut stream_mut(stream.as_ptr()).client else {
                 return;
             };
@@ -307,15 +286,12 @@ impl ClientSession {
         self.write_frame(FrameType::RstStream, 0, stream.id, &value);
     }
 
-    /// Allocate a session for a socket whose ALPN just selected h2 and list it
-    /// in the context's registry. The returned handle borrows the registry's
-    /// ref: the caller tags the socket with it (`tag_as_h2`) and then opens the
-    /// leader's stream with [`Self::attach_leader`].
+    /// For a socket whose ALPN just selected h2: `register_h2`, `tag_as_h2` and [`Self::attach_leader`] follow.
     pub(crate) fn create(
         ctx: *mut NewHTTPContext<true>,
         socket: Socket,
         client: &HTTPClient,
-    ) -> SessionPtr {
+    ) -> RefPtr<Self> {
         let this = RefPtr::new(ClientSession {
             ref_count: Cell::new(1),
             encoder: bun_hpack::Encoder::new(),
@@ -353,10 +329,7 @@ impl ClientSession {
             registry_index: Cell::new(u32::MAX),
         });
         super::live_sessions.fetch_add(1, Ordering::Relaxed);
-        // `ctx` is a live back-ref to the owning context (set-once,
-        // HTTP-thread-only, no ancestor `&mut HTTPContext` on this path) —
-        // route through the centralised [`HTTPClient::ssl_ctx_mut`] accessor.
-        HTTPClient::ssl_ctx_mut(ctx).register_h2(this)
+        this
     }
 
     pub(crate) fn has_headroom(&self) -> bool {
@@ -415,8 +388,8 @@ impl ClientSession {
 
     /// Park a request that was coalesced onto this session's connect until the
     /// server's SETTINGS arrive; see [`Self::park`].
-    pub(crate) fn enqueue(this: SessionPtr, client: InFlightRequest) {
-        Self::enter(this, |s| s.park(client));
+    pub(crate) fn enqueue(self: RefPtr<Self>, client: InFlightRequest) {
+        self.enter(|s| s.park(client));
     }
 
     /// Park a coalesced request until the server's SETTINGS arrive.
@@ -464,8 +437,8 @@ impl ClientSession {
     }
 
     /// Close such a connection, which the ACK would otherwise park.
-    pub(crate) fn close_idle(this: SessionPtr) {
-        Self::enter(this, |s| {
+    pub(crate) fn close_idle(self: RefPtr<Self>) {
+        self.enter(|s| {
             s.goaway_received = true;
             s.maybe_release();
         });

@@ -287,7 +287,7 @@ fn on_js_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
                 ..Default::default()
             },
         );
-        StaticRoute::on_request(response.this_ptr(), bun_uws::AnyRequest::H1(req), resp);
+        response.on_request(bun_uws::AnyRequest::H1(req), resp);
         return;
     }
 
@@ -322,7 +322,7 @@ fn on_asset_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
         return not_found(resp);
     };
     req.set_yield(false);
-    StaticRoute::on(asset.this_ptr(), resp);
+    asset.clone().on(resp);
 }
 
 pub(super) use bun_core::fmt::parse_hex_to_u64;

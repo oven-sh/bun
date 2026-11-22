@@ -10,7 +10,7 @@ pub(crate) fn new_detached_socket(cx: &mut JsScope<'_>, is_ssl: bool) -> JSValue
         // node:net and node:tls check the server's identity in JS (`checkServerIdentity`).
         socket.flags.set(SocketFlags::DEFERS_SERVER_IDENTITY);
         // Weak while idle: `_handle` owns it, and `this_value_for_connect` pins each attempt.
-        NewSocket::to_js(socket, global, false)
+        socket.to_js(global, false)
     }
 
     if !is_ssl {

@@ -36,7 +36,7 @@ use bun_jsc::{
 };
 use bun_paths as paths;
 use bun_paths::Path;
-use bun_ptr::{AsCtxPtr, RefPtr};
+use bun_ptr::{AsCtxPtr, OptionCellExt as _, RefPtr};
 use bun_removable_features::{Feature, is_removed};
 use bun_resolver::fs::FileSystem;
 use bun_standalone_graph::StandaloneModuleGraph;
@@ -354,14 +354,11 @@ impl AnyRoute {
             // HashMap aborts on OOM (repo-wide abort-on-OOM policy).
             return Ok(Some(match entry {
                 StdEntry::Vacant(v) => {
-                    // The rc=1 `Route::init(..)` is returned to the caller; the
-                    // map slot is a non-owning back-reference for deduping later
-                    // entries in this same config.
                     let route = html_bundle::Route::init(html_bundle);
-                    v.insert(route.this_ptr().into());
+                    v.insert(route.clone());
                     AnyRoute::Html(route)
                 }
-                StdEntry::Occupied(o) => AnyRoute::Html(RefPtr::from_this(o.get().this_ptr())),
+                StdEntry::Occupied(o) => AnyRoute::Html(o.get().clone()),
             }));
         }
 
@@ -475,8 +472,7 @@ impl AnyRoute {
 }
 
 pub(crate) struct ServerInitContext<'a> {
-    pub(crate) dedupe_html_bundle_map:
-        HashMap<*const HTMLBundle, bun_ptr::BackRef<html_bundle::Route, bun_ptr::Root>>,
+    pub(crate) dedupe_html_bundle_map: HashMap<*const HTMLBundle, RefPtr<html_bundle::Route>>,
     pub global: &'a JSGlobalObject,
     pub(crate) framework_router_list: Vec<bake::FileSystemRouterType>,
     pub(crate) user_routes: &'a mut Vec<server_config::StaticRouteEntry>,
@@ -515,8 +511,8 @@ pub(crate) enum GetOrStartLoadResult<'a> {
 }
 
 #[derive(Clone, Copy)]
-pub(crate) enum ServePluginsCallback {
-    HtmlBundleRoute(bun_ptr::ThisPtr<html_bundle::Route>),
+pub(crate) enum ServePluginsCallback<'a> {
+    HtmlBundleRoute(&'a RefPtr<html_bundle::Route>),
     /// The calling server's DevServer.
     DevServer,
 }
@@ -532,7 +528,7 @@ impl ServePlugins {
     pub(crate) fn get_or_start_load(
         &mut self,
         global: &JSGlobalObject,
-        cb: ServePluginsCallback,
+        cb: ServePluginsCallback<'_>,
         server: super::AnyServer,
     ) -> JsResult<GetOrStartLoadResult<'_>> {
         loop {
@@ -549,8 +545,7 @@ impl ServePlugins {
                 } => {
                     match cb {
                         ServePluginsCallback::HtmlBundleRoute(route) => {
-                            html_bundle_routes
-                                .push(html_bundle::PendingBuild::new(RefPtr::from_this(route)));
+                            html_bundle_routes.push(html_bundle::PendingBuild::new(route.clone()));
                         }
                         ServePluginsCallback::DevServer => {
                             // one dev server per server
@@ -1162,7 +1157,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     /// - .pending if `callback` was stored. It will call `onPluginsResolved` or `onPluginsRejected` later.
     pub(crate) fn get_or_load_plugins(
         &self,
-        callback: ServePluginsCallback,
+        callback: ServePluginsCallback<'_>,
     ) -> GetOrStartLoadResult<'_> {
         if let Some(p) = self.plugins.get() {
             // Keep `*p` alive across re-entrant JS in `load_and_resolve_plugins`.
@@ -1790,11 +1785,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         debug_assert!(!self.config.get().on_request.is_empty()); // confirmed above
         let global_this = self.global();
         let on_request = self.config.get().on_request;
-        let request_ptr = request.this_ptr();
-        let request_value = Request::to_js(request, &global_this);
+        let request = request.wrap(&global_this);
         let this_value = self.js_value_assert_alive();
         let response_value =
-            match on_request.call(&global_this, this_value, &[request_value, this_value]) {
+            match on_request.call(&global_this, this_value, &[request.to_js(), this_value]) {
                 Ok(v) => v,
                 Err(err) => {
                     return Ok(
@@ -1820,7 +1814,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }
 
         if let Some(resp) = <Response as bun_jsc::JsClass>::from_js(&response_value) {
-            resp.set_url(request_ptr.url.get().clone());
+            resp.set_url(request.url.get().clone());
         }
         Ok(JSPromise::resolved_promise_value(global, response_value))
     }
@@ -1988,7 +1982,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     pub(crate) fn finalize(&self) {
         httplog!("finalize");
         debug_assert!(
-            self.open_ref.get().is_some() != self.is_drained(),
+            self.open_ref.is_some() != self.is_drained(),
             "the server refs itself exactly until it is drained"
         );
     }
@@ -2176,8 +2170,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         let on_request = server.config.get().on_request;
         debug_assert!(!on_request.is_empty());
         let global = server.global_this();
-        let request = DispatchedRequest::new(request, global);
-        let response_value = match on_request.call(global, server_js, &[request.js, server_js]) {
+        let request = DispatchedRequest(request.wrap(global));
+        let response_value = match on_request.call(global, server_js, &[request.to_js(), server_js])
+        {
             Ok(v) => v,
             Err(err) => global.take_exception(err),
         };
@@ -2188,20 +2183,20 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     /// Hands what the handler returned to the `RequestContext`, then frees it or makes the request asynchronous.
     fn handle_request<const MUX: bool>(
         this: *mut Self,
-        request: &DispatchedRequest,
+        request: &DispatchedRequest<'_>,
         ctx: Dispatch<SSL, DEBUG, MUX>,
         req: uws::AnyRequest,
         response_value: JSValue,
     ) {
         // SAFETY: `this` is the live server.
         let server = unsafe { &*this };
-        let Some(ctx) = ServerRequestContext::respond(ctx, server, request.js, response_value)
+        let Some(ctx) = ServerRequestContext::respond(ctx, server, request.to_js(), response_value)
         else {
             return;
         };
 
         // uWS reuses `req` for the next request, so an asynchronous one copies what it needs.
-        ctx.to_async(req.as_ptr(), &request.native);
+        ctx.to_async(req.as_ptr(), request);
     }
 
     fn should_warn_about_idle_timeout(&self) -> bool {

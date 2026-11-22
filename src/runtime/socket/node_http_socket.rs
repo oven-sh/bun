@@ -5,7 +5,7 @@ use std::rc::Rc;
 
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
-use bun_ptr::{RefPtr, ThisPtr};
+use bun_ptr::{AsCtxPtr as _, RefPtr};
 use bun_uws::{self as uws, us_socket_t};
 use bun_uws_sys::response::PerMessageDeflateParams;
 
@@ -76,17 +76,17 @@ impl<const SSL: bool> NewSocket<SSL> {
 
     /// uWS has let go of `s`, which is open, and has destructed its ext: nothing here may ask the `UwsHttp` transport. `unsent` is what uWS accepted and the kernel hasn't taken.
     fn leave_http(
-        this: ThisPtr<Self>,
+        self: RefPtr<Self>,
         s: *mut us_socket_t,
         unsent: &[u8],
         reads_paused: bool,
         bytes_read: u64,
         response_bytes_written: u64,
     ) {
-        this.bytes_read.set(bytes_read);
-        this.bytes_written
-            .set(this.bytes_written.get() + response_bytes_written);
-        let handlers = this.get_handlers();
+        self.bytes_read.set(bytes_read);
+        self.bytes_written
+            .set(self.bytes_written.get() + response_bytes_written);
+        let handlers = self.get_handlers();
         let vm = VirtualMachine::get();
         let loop_ = vm.uws_loop();
         let group = vm
@@ -98,23 +98,24 @@ impl<const SSL: bool> NewSocket<SSL> {
             uws::SocketKind::BunSocketTcp
         };
         let adopted =
-            Transport::<SSL>::adopt_group(s, group, kind, this.as_ptr(), |owner, socket| {
-                // SAFETY: `owner` is `this`, which the caller keeps alive.
+            Transport::<SSL>::adopt_group(s, group, kind, self.as_ptr(), |owner, socket| {
+                // SAFETY: `owner` is `self`.
                 unsafe { (*owner).socket.set(socket) }
             });
         debug_assert!(adopted, "the caller checks that the socket is open");
-        this.update_flags(|f| f.remove(SocketFlags::HELD_BY_SERVER));
-        if this.ref_pollref_on_connect.get() {
-            this.poll_ref.ref_(bun_io::js_vm_ctx());
+        self.update_flags(|f| f.remove(SocketFlags::HELD_BY_SERVER));
+        if self.ref_pollref_on_connect.get() {
+            self.poll_ref.ref_(bun_io::js_vm_ctx());
         }
         // Every reason but the handle's own pause, which is node:net's full buffer, belonged to the HTTP connection.
-        if reads_paused && !this.flags.get().contains(SocketFlags::IS_PAUSED) {
-            this.socket.get().resume_stream();
+        if reads_paused && !self.flags.get().contains(SocketFlags::IS_PAUSED) {
+            self.socket.get().resume_stream();
         }
         if !unsent.is_empty() {
-            this.buffered_data_for_node_net
+            self.buffered_data_for_node_net
                 .with_mut(|queued| queued.append_slice(unsent));
-            fold(Self::on_writable(this, this.socket.get()));
+            let socket = self.socket.get();
+            fold(self.on_writable(socket));
         }
     }
 }
@@ -245,16 +246,30 @@ unsafe fn adopt_into_web_socket<'a>(
     Some(ws_ref)
 }
 
-/// Runs `$body` with `$this: ThisPtr<NewSocket<SSL>>` for a handle that `Bun__NodeHTTPSocket__create` returned.
+/// Runs `$body` with `$this: &NewSocket<SSL>` for a handle that `Bun__NodeHTTPSocket__create` returned.
+/// With `$take` (`init_ref` or `from_raw`), `$this` is a `RefPtr` and `$socket` its transport.
 macro_rules! with_handle {
     ($ssl:expr, $handle:expr, |$this:ident| $body:expr) => {
         if $ssl {
             // SAFETY: the caller's contract.
-            let $this = unsafe { ThisPtr::<NewSocket<true>>::new($handle.cast()) };
+            let $this = unsafe { &*$handle.cast::<NewSocket<true>>() };
             $body
         } else {
             // SAFETY: the caller's contract.
-            let $this = unsafe { ThisPtr::<NewSocket<false>>::new($handle.cast()) };
+            let $this = unsafe { &*$handle.cast::<NewSocket<false>>() };
+            $body
+        }
+    };
+    ($ssl:expr, $handle:expr, $take:ident, |$this:ident, $socket:pat_param| $body:expr) => {
+        if $ssl {
+            // SAFETY: the caller's contract.
+            let $this = unsafe { RefPtr::<NewSocket<true>>::$take($handle.cast()) };
+            let $socket = $this.socket.get();
+            $body
+        } else {
+            // SAFETY: the caller's contract.
+            let $this = unsafe { RefPtr::<NewSocket<false>>::$take($handle.cast()) };
+            let $socket = $this.socket.get();
             $body
         }
     };
@@ -284,19 +299,17 @@ pub(crate) unsafe extern "C" fn Bun__NodeHTTPSocket__create(
 /// SAFETY: here and below, `handle` came from `create` with the same `ssl`, and C++ still holds the connection's ref on it.
 #[unsafe(no_mangle)]
 pub(crate) unsafe extern "C" fn Bun__NodeHTTPSocket__onOpen(handle: *mut c_void, ssl: bool) {
-    with_handle!(ssl, handle, |this| fold(NewSocket::on_open(
-        this,
-        this.socket.get()
-    )))
+    with_handle!(ssl, handle, init_ref, |this, socket| fold(
+        this.on_open(socket)
+    ))
 }
 
 /// uWS has sent all that it buffered for the connection.
 #[unsafe(no_mangle)]
 pub(crate) unsafe extern "C" fn Bun__NodeHTTPSocket__onWritable(handle: *mut c_void, ssl: bool) {
-    with_handle!(ssl, handle, |this| fold(NewSocket::on_writable(
-        this,
-        this.socket.get()
-    )))
+    with_handle!(ssl, handle, init_ref, |this, socket| fold(
+        this.on_writable(socket)
+    ))
 }
 
 /// The HTTP side of a connection that uWS owns, a JSNodeHTTPServerSocket. `None` for every other socket.
@@ -329,19 +342,16 @@ pub(crate) unsafe extern "C" fn Bun__NodeHTTPSocket__onData(
 ) {
     // SAFETY: the caller's contract.
     let data = unsafe { bun_core::ffi::slice(data, length) };
-    with_handle!(ssl, handle, |this| fold(NewSocket::on_data(
-        this,
-        this.socket.get(),
-        data
-    )))
+    with_handle!(ssl, handle, init_ref, |this, socket| fold(
+        this.on_data(socket, data)
+    ))
 }
 
 #[unsafe(no_mangle)]
 pub(crate) unsafe extern "C" fn Bun__NodeHTTPSocket__onEnd(handle: *mut c_void, ssl: bool) {
-    with_handle!(ssl, handle, |this| fold(NewSocket::on_end(
-        this,
-        this.socket.get()
-    )))
+    with_handle!(ssl, handle, init_ref, |this, socket| fold(
+        this.on_end(socket)
+    ))
 }
 
 /// Another response takes the connection from one that wrote `bytes` of body.
@@ -390,13 +400,9 @@ pub(crate) unsafe extern "C" fn Bun__NodeHTTPSocket__onHandshake(
     verify_error: uws::us_bun_verify_error_t,
 ) {
     // SAFETY: the caller's contract, for a TLS connection.
-    let this = unsafe { ThisPtr::<NewSocket<true>>::new(handle.cast()) };
-    fold(NewSocket::on_handshake(
-        this,
-        this.socket.get(),
-        success,
-        verify_error,
-    ))
+    let this = unsafe { RefPtr::<NewSocket<true>>::init_ref(handle.cast()) };
+    let socket = this.socket.get();
+    fold(this.on_handshake(socket, success, verify_error))
 }
 
 /// Releases the connection's ref, so `handle` dangles when this returns.
@@ -407,18 +413,12 @@ pub(crate) unsafe extern "C" fn Bun__NodeHTTPSocket__onClose(
     read_error: c_int,
     run_script: bool,
 ) {
-    with_handle!(ssl, handle, |this| {
+    with_handle!(ssl, handle, from_raw, |this, _| {
         this.update_flags(|f| f.remove(SocketFlags::HELD_BY_SERVER));
         if !run_script {
             this.update_flags(|f| f.insert(SocketFlags::CLOSED_SILENTLY));
         }
-        fold(NewSocket::on_close(
-            // SAFETY: the ref that `create` returned.
-            unsafe { RefPtr::from_raw(this.as_ptr()) },
-            Transport::DETACHED,
-            read_error,
-            None,
-        ))
+        fold(this.on_close(Transport::DETACHED, read_error, None))
     })
 }
 
@@ -436,8 +436,7 @@ pub(crate) unsafe extern "C" fn Bun__NodeHTTPSocket__leaveHttp(
 ) {
     // SAFETY: the caller's contract.
     let unsent = unsafe { bun_core::ffi::slice(unsent, unsent_length) };
-    with_handle!(ssl, handle, |this| NewSocket::leave_http(
-        this,
+    with_handle!(ssl, handle, init_ref, |this, _| this.leave_http(
         s,
         unsent,
         reads_paused,

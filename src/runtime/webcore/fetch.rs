@@ -186,7 +186,7 @@ fn data_url_response(url: BunString, global_this: &JSGlobalObject) -> JsResult<J
 
     Ok(JSPromise::resolved_promise_value(
         global_this,
-        Response::to_js(response, global_this),
+        response.to_js(global_this),
     ))
 }
 
@@ -1054,7 +1054,7 @@ fn fetch_impl(
 
         return Ok(JSPromise::resolved_promise_value(
             global_this,
-            Response::to_js(response, global_this),
+            response.to_js(global_this),
         ));
     }
 
@@ -1585,7 +1585,7 @@ impl S3StreamWrapper {
                     self.url,
                     false,
                 ));
-                let response_js = Response::to_js(response, global);
+                let response_js = response.to_js(global);
                 response_js.ensure_still_alive();
                 self.promise.resolve(global, response_js)?;
             }
@@ -1604,7 +1604,7 @@ impl S3StreamWrapper {
                     false,
                 ));
 
-                let response_js = Response::to_js(response, global);
+                let response_js = response.to_js(global);
                 response_js.ensure_still_alive();
                 self.promise.resolve(global, response_js)?;
             }

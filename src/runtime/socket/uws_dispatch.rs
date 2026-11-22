@@ -9,6 +9,7 @@
 
 use core::ffi::{c_int, c_void};
 
+use bun_ptr::RefPtrCellExt as _;
 use bun_uws::NewSocketHandler;
 // `SocketKind` / `us_bun_verify_error_t` must come from `bun_uws_sys` — that's
 // what `us_socket_t::kind()` and the `VTable` callback signatures use. The
@@ -206,11 +207,9 @@ unsafe extern "C" fn us_dispatch_ssl_raw_tap(
 ) -> *mut us_socket_t {
     debug_assert!(us_socket_t::opaque_mut(s).kind() == SocketKind::BunSocketTls);
     // `bun.jsc.API.NewSocket(true)` → the runtime-local `socket::NewSocket<true>`.
-    type TLSSocket = super::NewSocket<true>;
     // The ext slot of an open `BunSocketTls` holds its `TLSSocket`.
-    let tls = NativeRef::<true>::of(s).get().unwrap();
-    if let Some(raw) = tls.twin.get().as_ref() {
-        let raw = raw.this_ptr();
+    let twin = NativeRef::<true>::of(s).owner_ref().unwrap().twin.cloned();
+    if let Some(raw) = twin {
         // A negative length from the C side means there is nothing to deliver;
         // never panic across the `extern "C"` boundary.
         let Ok(len) = usize::try_from(len) else {
@@ -219,11 +218,7 @@ unsafe extern "C" fn us_dispatch_ssl_raw_tap(
         // SAFETY: `data` points to `len` readable bytes from the TLS BIO; loop.c
         // guarantees the buffer outlives this call.
         let slice = unsafe { core::slice::from_raw_parts(data, len) };
-        crate::dispatch::fold(TLSSocket::on_data(
-            raw,
-            NewSocketHandler::<true>::from(s),
-            slice,
-        ));
+        crate::dispatch::fold(raw.on_data(NewSocketHandler::<true>::from(s), slice));
     }
     s
 }
@@ -240,16 +235,14 @@ pub(crate) unsafe extern "C" fn us_dispatch_tls_event(
     len: core::ffi::c_uint,
 ) -> c_int {
     type TLSSocket = super::NewSocket<true>;
-    // SAFETY: fn contract.
-    let tls = unsafe { bun_ptr::ThisPtr::new(bun_socket.cast::<TLSSocket>()) };
-    // The handler can close the socket, which drops the connection's ref.
-    let _guard = bun_ptr::RefPtr::from_this(tls);
+    // SAFETY: fn contract. The handler can close the socket, which drops the connection's ref.
+    let tls = unsafe { bun_ptr::RefPtr::init_ref(bun_socket.cast::<TLSSocket>()) };
     // SAFETY: fn contract.
     let slice = unsafe { core::slice::from_raw_parts(data, len as usize) };
     crate::dispatch::fold(if is_keylog != 0 {
-        TLSSocket::on_keylog(tls, slice)
+        tls.clone().on_keylog(slice)
     } else {
-        TLSSocket::on_session(tls, slice)
+        tls.clone().on_session(slice)
     });
     c_int::from(!tls.socket.get().is_detached())
 }
@@ -280,7 +273,8 @@ pub(crate) extern "C" fn us_dispatch_server_identity(
             bun_http::http_context::Handler::<true>::server_identity(NewSocketHandler::from(s), ssl)
         }
         SocketKind::WsClientUpgradeTls => s_ref
-            .ext::<Option<bun_ptr::ThisPtr<handlers::WSUpgradeClient<true>>>>()
+            .ext::<ExtSlot<handlers::WSUpgradeClient<true>>>()
+            .owner_ref()
             .map_or(Unchecked, |client| client.server_identity(ssl)),
         SocketKind::PostgresTls => s_ref
             .ext::<ExtSlot<bun_sql_jsc::postgres::PostgresSQLConnection>>()

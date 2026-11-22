@@ -29,7 +29,7 @@ use bun_io::{IoEvent, Owner, PollTag, StreamingWriter, WriteHandler, WriteStatus
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{GlobalRef, JsCell, SysErrorJsc};
 use bun_libuv_sys::{UvHandle as _, UvStream as _};
-use bun_ptr::{RefPtr, ThisPtr};
+use bun_ptr::RefPtr;
 use bun_sys::windows::libuv as uv;
 use bun_sys::{self, Fd, ReturnCodeExt as _, SystemErrno};
 use bun_uws::ssl_wrapper::{self, SSLWrapper};
@@ -203,7 +203,7 @@ impl WindowsNamedPipe {
     /// that way), which runs that task. A callback that uses `self` after it
     /// dispatched to a handler holds this guard, so the free waits until the
     /// callback is done. `inflight_write_ref` does the same around an in-flight write,
-    /// and `connect`/`open` around the connect.
+    /// and `connect_ref` around the connect.
     ///
     /// Only for paths that cannot run after `on_close` released the
     /// connection's ref (reads stop and the wrapper goes away in
@@ -240,7 +240,7 @@ impl WindowsNamedPipe {
 
     fn dispatch_writable(&self) {
         match_socket!(self.socket.get().clone(), |s: NewSocket<SSL>| {
-            NewSocket::on_writable(s.this_ptr(), self.handle::<SSL>())
+            s.on_writable(self.handle::<SSL>())
         });
     }
 
@@ -276,7 +276,7 @@ impl WindowsNamedPipe {
         if err == bun_sys::E::EOF {
             // we received FIN but we dont allow half-closed connections right now
             match_socket!(self.socket.get().clone(), |s: NewSocket<SSL>| {
-                NewSocket::on_end(s.this_ptr(), self.handle::<SSL>())
+                s.on_end(self.handle::<SSL>())
             });
             self.writer.close(self);
             return;
@@ -297,14 +297,14 @@ impl WindowsNamedPipe {
         bun_output::scoped_log!(WindowsNamedPipe, "onOpen");
         self.is_open.set(true);
         match_socket!(self.socket.get().clone(), |s: NewSocket<SSL>| {
-            NewSocket::on_open(s.this_ptr(), self.handle::<SSL>())
+            s.on_open(self.handle::<SSL>())
         });
     }
 
     fn on_data(&self, decoded_data: &[u8]) {
         bun_output::scoped_log!(WindowsNamedPipe, "onData ({})", decoded_data.len());
         match_socket!(self.socket.get().clone(), |s: NewSocket<SSL>| {
-            NewSocket::on_data(s.this_ptr(), self.handle::<SSL>(), decoded_data)
+            s.on_data(self.handle::<SSL>(), decoded_data)
         });
     }
 }
@@ -332,12 +332,7 @@ impl ssl_wrapper::Handler for &WindowsNamedPipe {
         let _keep_alive = self.keep_alive();
 
         match_socket!(self.socket.get().clone(), |s: NewSocket<SSL>| {
-            NewSocket::on_handshake(
-                s.this_ptr(),
-                self.handle::<SSL>(),
-                handshake_success as i32,
-                ssl_error,
-            )
+            s.on_handshake(self.handle::<SSL>(), handshake_success as i32, ssl_error)
         });
         // Retry writes parked during the handshake; a TLS 1.2 client's completion sends nothing.
         if handshake_success && !self.is_shutdown() {
@@ -389,12 +384,12 @@ impl WindowsNamedPipe {
         }
 
         match_socket!(self.socket.get().clone(), |s: NewSocket<SSL>| {
-            NewSocket::on_timeout(s.this_ptr(), self.handle::<SSL>())
+            s.on_timeout(self.handle::<SSL>())
         });
     }
 
     /// The transport of `socket`.
-    pub(crate) fn create(cx: &bun_jsc::JsThread<'_>, socket: OwnedSocket) -> ThisPtr<Self> {
+    pub(crate) fn create(cx: &bun_jsc::JsThread<'_>, socket: OwnedSocket) -> RefPtr<Self> {
         let global_this = GlobalRef::from(cx.global());
         let this = bun_core::heap::into_raw(Box::new(WindowsNamedPipe {
             ref_count: Cell::new(1),
@@ -424,12 +419,11 @@ impl WindowsNamedPipe {
         }
         LIVE_COUNT.fetch_add(1, Ordering::Relaxed);
         // SAFETY: initialised above with a count of 1, and heap-pinned. Dropping the handle disarms it.
-        let self_ref = unsafe {
+        let this = unsafe {
             bun_jsc::AbortHandle::arm_owner(this, cx.context());
             RefPtr::from_raw(this)
         };
-        let this = self_ref.this_ptr();
-        this.self_ref.set(Some(self_ref));
+        this.self_ref.set(Some(this.clone()));
         this
     }
 
@@ -532,7 +526,6 @@ impl WindowsNamedPipe {
         ssl_ctx: Option<&boringssl::OwnedSslCtx>,
     ) -> bun_sys::Result<()> {
         debug_assert!(self.pipe.get().is_some());
-        let _keep_alive = self.keep_alive();
         self.update_flags(|f| f.set(Flags::DISCONNECTED, true));
 
         self.init_tls_wrapper(ssl_ctx.cloned(), false);
@@ -558,7 +551,6 @@ impl WindowsNamedPipe {
         self.init_pipe()?;
         self.try_pipe(bun_sys::Tag::open, |pipe| pipe.open(fd.uv()))?;
 
-        let _keep_alive = self.keep_alive();
         self.on_connect(uv::ReturnCode::ZERO);
         bun_sys::Result::Ok(())
     }

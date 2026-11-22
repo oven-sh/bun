@@ -72,10 +72,10 @@ pub(crate) struct RuntimeState {
     /// `RareData.ssl_ctx_cache` — concrete digest-keyed weak `SSL_CTX*` cache.
     /// Same cycle-break story as `sql_rare`.
     pub(crate) ssl_ctx_cache: SSLContextCache,
-    /// `RareData.global_dns_data` — per-VM resolver + c-ares channel.
-    /// Lazy-init by [`crate::dns_jsc::global_resolver`]; freed when this box
+    /// Per-VM resolver + c-ares channel.
+    /// Lazy-init by [`crate::dns_jsc::global_resolver`]; released when this box
     /// drops in [`deinit_runtime_state`].
-    pub(crate) global_dns_data: core::cell::OnceCell<Box<crate::dns_jsc::GlobalData>>,
+    pub(crate) dns_resolver: core::cell::OnceCell<bun_ptr::RefPtr<crate::dns_jsc::Resolver>>,
     /// `vm.body_value_pool` — pooled storage for `Body.Value`
     /// (`Request.body` payloads).
     /// Boxed because `HiveAllocator` is `Fallback<HiveRef<Body::Value, 256>, 256>`
@@ -93,7 +93,7 @@ pub(crate) struct RuntimeState {
     /// The wrappers of the running `Bun.cron()` jobs of the main thread under `--hot`, which a reload stops.
     pub(crate) cron_jobs: JsCell<Vec<bun_jsc::Strong>>,
     pub(crate) cron_os_jobs: crate::api::cron_os::OsJobs,
-    pub(crate) stat_watcher_scheduler: JsCell<Option<bun_ptr::RefPtr<StatWatcherScheduler>>>,
+    pub(crate) stat_watcher_scheduler: Cell<Option<bun_ptr::RefPtr<StatWatcherScheduler>>>,
     /// Set in the VM that runs the files of `bun test`.
     pub(crate) test_runner: Cell<Option<&'static crate::test_runner::jest::TestRunner>>,
     /// Innermost entered `Pass`, borrowed from a caller's stack frame; `EnteredPass::drop` pops it.
@@ -165,14 +165,15 @@ fn try_timer_all() -> Option<&'static timer::All> {
 /// re-enter [`crate::dns_jsc::global_resolver`] while a `&Resolver` derived
 /// from this cell is live, so a `&mut` accessor would alias.
 #[inline]
-pub(crate) fn global_dns_data() -> &'static core::cell::OnceCell<Box<crate::dns_jsc::GlobalData>> {
-    &runtime_state().global_dns_data
+pub(crate) fn dns_resolver()
+-> &'static core::cell::OnceCell<bun_ptr::RefPtr<crate::dns_jsc::Resolver>> {
+    &runtime_state().dns_resolver
 }
 
 /// [`RuntimeState::stat_watcher_scheduler`] of `vm`.
 pub(crate) fn stat_watcher_scheduler(
     vm: &VirtualMachine,
-) -> &JsCell<Option<bun_ptr::RefPtr<StatWatcherScheduler>>> {
+) -> &Cell<Option<bun_ptr::RefPtr<StatWatcherScheduler>>> {
     &runtime_state_of(vm).stat_watcher_scheduler
 }
 
@@ -293,7 +294,7 @@ fn init_runtime_state(vm: &VirtualMachine, opts: &InitOptions) -> OpaqueRuntimeS
         timer: timer::All::init(),
         sql_rare: Default::default(),
         ssl_ctx_cache: Default::default(),
-        global_dns_data: core::cell::OnceCell::new(),
+        dns_resolver: core::cell::OnceCell::new(),
         body_value_pool: {
             // `Box::new(ManuallyDrop::new(HiveAllocator::init()))` still builds the
             // ~100 KB pool in a stack temporary before moving it into the box (see
@@ -317,7 +318,7 @@ fn init_runtime_state(vm: &VirtualMachine, opts: &InitOptions) -> OpaqueRuntimeS
         request_pools: Default::default(),
         cron_jobs: JsCell::default(),
         cron_os_jobs: Default::default(),
-        stat_watcher_scheduler: JsCell::new(None),
+        stat_watcher_scheduler: Cell::new(None),
         test_runner: Cell::new(None),
         matcher_pass: Cell::new(ptr::null()),
         node_fs: JsCell::new(None),
@@ -1376,14 +1377,10 @@ fn stop_dns_for_vm_teardown() -> SweepResult {
         return SweepResult::Idle;
     };
     let mut result = SweepResult::Idle;
-    if let Some(gd) = state.global_dns_data.get() {
-        // SAFETY: the VM-global resolver, pinned by `GlobalData` (its own ref
-        // never drops here).
-        result = result.and(unsafe {
-            crate::dns_jsc::Resolver::close_channel_for_terminate(gd.resolver.as_ctx_ptr())
-        });
+    if let Some(resolver) = state.dns_resolver.get() {
+        result = result.and(resolver.close_channel_for_terminate());
         #[cfg(windows)]
-        gd.resolver.cancel_pending_uv_requests_for_teardown();
+        resolver.cancel_pending_uv_requests_for_teardown();
     }
     #[cfg(target_os = "macos")]
     crate::dns_jsc::dns_sd::SharedConnection::close_for_terminate();
@@ -1744,7 +1741,7 @@ fn transpile_source_code_inner<const DATA_ONLY: bool>(
 #[inline(never)]
 fn create_html_bundle(global_object: &JSGlobalObject, path: &[u8]) -> JSValue {
     let html_bundle = crate::api::HTMLBundle::init(global_object, path);
-    crate::api::HTMLBundle::to_js(html_bundle, global_object)
+    html_bundle.to_js(global_object)
 }
 
 /// Whether what is transpiled is static code (`ResolvedSource::is_static`), so that what is made of it is.

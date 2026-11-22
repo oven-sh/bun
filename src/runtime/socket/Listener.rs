@@ -638,12 +638,11 @@ impl Listener {
     pub(crate) fn on_create<const SSL: bool>(
         listener: &Listener,
         accepted: *mut uws_sys::us_socket_t,
-    ) -> bun_ptr::ThisPtr<NewSocket<SSL>> {
-        let this_socket = Self::new_accepted::<SSL>(listener);
-        let s = this_socket.this_ptr();
+    ) -> RefPtr<NewSocket<SSL>> {
+        let s = Self::new_accepted::<SSL>(listener);
         let socket = uws::NewSocketHandler::<SSL>::from(accepted);
         s.socket.set(socket);
-        *NativeRef::of(accepted) = NativeRef::new(this_socket);
+        *NativeRef::of(accepted) = NativeRef::new(s.clone());
         uws_sys::us_socket_t::opaque_mut(accepted).set_kind(if SSL {
             uws_sys::SocketKind::BunSocketTls
         } else {
@@ -784,8 +783,8 @@ impl Listener {
     /// `Bun.connect`, and node:net's dial (which hands in the socket it already made).
     pub(crate) fn connect_inner(
         cx: &bun_jsc::JsThread<'_>,
-        prev_maybe_tcp: Option<&TCPSocket>,
-        prev_maybe_tls: Option<&TLSSocket>,
+        prev_maybe_tcp: Option<&RefPtr<TCPSocket>>,
+        prev_maybe_tls: Option<&RefPtr<TLSSocket>>,
         opts: JSValue,
     ) -> JsResult<JSValue> {
         // What script of a disposed `Bun.ModuleGraph` opens is closed at once and reports nothing.
@@ -947,7 +946,7 @@ impl Drop for Listener {
 // Note: hoisted from the body of connect_inner; dispatched via const generic.
 fn connect_finish<const IS_SSL: bool>(
     cx: &bun_jsc::JsThread<'_>,
-    maybe_previous: Option<&NewSocket<IS_SSL>>,
+    maybe_previous: Option<&RefPtr<NewSocket<IS_SSL>>>,
     handlers: Rc<Handlers>,
     connection: UnixOrHost,
     local_binding: Option<(Box<[u8]>, u16)>,
@@ -963,7 +962,7 @@ fn connect_finish<const IS_SSL: bool>(
     let vm = handlers.vm;
     // Either the caller's JS-owned socket (reconnect) or a fresh one.
     let socket_ref = if let Some(prev) = maybe_previous {
-        let prev = prev.ref_guard();
+        let prev = prev.clone();
         debug_assert!(prev.this_value.get().is_not_empty());
         // `node:net` allows `socket.connect()` on an already-connected /
         // still-connecting socket. Close the previous native socket before
@@ -972,8 +971,8 @@ fn connect_finish<const IS_SSL: bool>(
         if !prev.detach_for_reconnect() {
             return Ok(JSValue::UNDEFINED);
         }
-        // Dropping the previous `Rc` here is safe even mid-callback: a `Scope`
-        // from a `data`/`close` handler that synchronously re-entered `connect`
+        // Dropping the previous `Rc` here is safe even mid-callback: the frame
+        // of a `data`/`close` handler that synchronously re-entered `connect`
         // still holds its own reference.
         prev.set_handlers(cx.global(), Some(handlers));
         debug_assert!(prev.socket.get().is_detached());
@@ -1004,7 +1003,7 @@ fn connect_finish<const IS_SSL: bool>(
     });
     // Held for the connect attempt regardless of `ref_pollref_on_connect`; `on_open` applies that.
     socket_ref.poll_ref.ref_(bun_io::js_vm_ctx());
-    let opened = match NewSocket::do_connect(&socket_ref, cx, owned_ssl_ctx) {
+    let opened = match socket_ref.do_connect(cx, owned_ssl_ctx) {
         Ok(opened) => opened,
         Err(errno) => {
             let is_unix = port.is_none();
@@ -1024,7 +1023,7 @@ fn connect_finish<const IS_SSL: bool>(
                 errno => errno,
             };
             // What `connectError` throws on this synchronous failure throws from `connect()`.
-            NewSocket::handle_connect_error(socket_ref, errno, 0)?;
+            socket_ref.handle_connect_error(errno, 0)?;
             return Ok(promise_value);
         }
     };
@@ -1381,15 +1380,15 @@ pub(crate) unsafe extern "C" fn us_dispatch_server_name(
     // SAFETY: fn contract.
     let (tls, name) = unsafe {
         (
-            bun_ptr::ThisPtr::new(bun_socket.cast::<TLSSocket>()),
+            RefPtr::init_ref(bun_socket.cast::<TLSSocket>()),
             core::ffi::CStr::from_ptr(hostname),
         )
     };
-    ask_server_name(tls, name).into_raw(abort_handshake)
+    ask_server_name(&tls, name).into_raw(abort_handshake)
 }
 
 /// Asks the `serverName` handler of a server-side socket.
-fn ask_server_name(tls: bun_ptr::ThisPtr<TLSSocket>, name: &core::ffi::CStr) -> ServerNameAnswer {
+fn ask_server_name(tls: &RefPtr<TLSSocket>, name: &core::ffi::CStr) -> ServerNameAnswer {
     // An idle socket can drop its Handlers while the us_socket_t lives on;
     // `get_handlers()` would panic. Same guard as `us_dispatch_alpn_select`.
     if !tls.has_handlers() {

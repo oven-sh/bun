@@ -3,6 +3,8 @@ import { once } from "events";
 import { readFileSync } from "fs";
 import { bunEnv, bunExe, tls as harnessCert, invalidTls, isLinux, tempDir, tmpdirSync } from "harness";
 import {
+  createCipheriv,
+  createHash,
   createPrivateKey,
   createPublicKey,
   generateKeyPairSync,
@@ -14,7 +16,7 @@ import https from "node:https";
 import net, { type AddressInfo } from "node:net";
 import { Duplex } from "node:stream";
 import type { Server, TLSSocket } from "node:tls";
-import { join } from "path";
+import { join, sep } from "path";
 import tls from "tls";
 type Certs = { key: string; cert: string; ca: string; single: string; subca: string };
 const clientTls = {
@@ -1100,6 +1102,7 @@ describe("several certificates match one issuer", () => {
   const seq = (...body: Buffer[]) => tlv(0x30, ...body);
   const oid = (text: string) => tlv(0x06, hex(text));
   const time = (text: string) => tlv(0x18, Buffer.from(text));
+  const utcTime = (text: string) => tlv(0x17, Buffer.from(text));
   const rdn = (type: string, value: string) => tlv(0x31, seq(oid(type), tlv(0x0c, Buffer.from(value))));
   type Name = string | Buffer;
   const dn = (name: Name) => (typeof name === "string" ? seq(rdn("550403", name)) : name);
@@ -1181,6 +1184,37 @@ describe("several certificates match one issuer", () => {
     );
     return armor("X509 CRL", signed(tbs, caKey));
   }
+
+  const derOf = (pem: string) => Buffer.from(pem.replace(/-----.*-----/g, ""), "base64");
+  const contentsOf = (element: Buffer) => element.subarray(element[1] < 0x80 ? 2 : 2 + (element[1] & 0x7f));
+  /** With more bytes for the length than it takes. */
+  function longForm(element: Buffer) {
+    const { length } = contentsOf(element);
+    return Buffer.concat([Buffer.from([element[0], 0x83, 0, length >> 8, length & 0xff]), contentsOf(element)]);
+  }
+  const indefinite = (element: Buffer) =>
+    Buffer.concat([Buffer.from([element[0], 0x80]), contentsOf(element), hex("0000")]);
+  function elementsOf(der: Buffer) {
+    const fields: Buffer[] = [];
+    for (let rest = contentsOf(der); rest.length; rest = rest.subarray(fields.at(-1)!.length)) {
+      const header = rest[1] < 0x80 ? 2 : 2 + (rest[1] & 0x7f);
+      fields.push(rest.subarray(0, header + (header === 2 ? rest[1] : rest.readUIntBE(2, header - 2))));
+    }
+    return fields;
+  }
+  /** The fields of a certificate or CRL. */
+  const fieldsOf = (pem: string) => elementsOf(derOf(pem));
+  function encrypted(pem: string, passphrase: string) {
+    const iv = Buffer.alloc(16, 1);
+    const key = createHash("md5").update(passphrase).update(iv.subarray(0, 8)).digest();
+    const cipher = createCipheriv("aes-128-cbc", key, iv);
+    const [label] = pem.match(/(?<=BEGIN ).*(?=-----)/)!;
+    return armor(label, Buffer.concat([cipher.update(derOf(pem)), cipher.final()])).replace(
+      "\n",
+      `\nProc-Type: 4,ENCRYPTED\nDEK-Info: AES-128-CBC,${iv.toString("hex")}\n\n`,
+    );
+  }
+  const byteOrderMark = "\ufeff";
 
   const trustOnly = (purpose: Buffer) => seq(seq(purpose));
   const reject = (purpose: Buffer) => seq(tlv(0xa0, purpose));
@@ -1507,27 +1541,124 @@ describe("several certificates match one issuer", () => {
     expect(cert.checkIssued(cert)).toBe(true);
   });
 
-  it("a server names the CAs it accepts in the order of `ca`", async () => {
-    const names = ["a long name for a CA", "short", "a medium name", "short"];
-    const cas = names.map(name => mint(name, name, ca));
-    await using server = await serve(chain, { ca: [...cas, cas[0]], requestCert: true, rejectUnauthorized: false });
-    const received: Buffer[] = [];
-    const transport = net.connect(server.port, "127.0.0.1").on("data", chunk => received.push(chunk as Buffer));
-    const socket = new Duplex({
-      read() {},
-      write: (chunk, encoding, callback) => void transport.write(chunk, encoding, callback),
-    });
-    transport
-      .on("data", chunk => socket.push(chunk))
-      .on("error", error => socket.destroy(error))
-      .on("close", () => socket.push(null));
-    try {
-      expect(await connect(server.port, { socket, ca: root, maxVersion: "TLSv1.2" })).toBe("authorized");
-    } finally {
-      transport.destroy();
+  describe("a server names the CAs it accepts", () => {
+    const requestCert = { requestCert: true, rejectUnauthorized: false };
+    async function named(options: tls.TlsOptions) {
+      await using server = await serve(chain, { ...requestCert, ...options });
+      return await namedBy(server);
     }
-    const text = Buffer.concat(received).toString("latin1");
-    expect(text.match(new RegExp(names.join("|"), "g"))).toEqual([...names, names[0]] as RegExpMatchArray);
+    async function namedBy(server: { port: number }): Promise<string[] | null> {
+      const received: Buffer[] = [];
+      const transport = net.connect(server.port, "127.0.0.1").on("data", chunk => received.push(chunk as Buffer));
+      const socket = new Duplex({
+        read() {},
+        write: (chunk, encoding, callback) => void transport.write(chunk, encoding, callback),
+      });
+      transport
+        .on("data", chunk => socket.push(chunk))
+        .on("error", error => socket.destroy(error))
+        .on("close", () => socket.push(null));
+      try {
+        const ciphers = "ECDHE-ECDSA-AES128-GCM-SHA256";
+        expect(await connect(server.port, { socket, ca: root, maxVersion: "TLSv1.2", ciphers })).toBe("authorized");
+      } finally {
+        transport.destroy();
+      }
+      const text = Buffer.concat(received).toString("latin1");
+      return text.match(new RegExp([...names, "Joyent"].join("|"), "g"));
+    }
+    const names = ["a long name for a CA", "short", "a medium name"];
+    const cas = names.map(name => mint(name, name, ca));
+
+    it("in the order of `ca`", async () => {
+      expect(await named({ ca: cas })).toEqual(names);
+    });
+
+    it("once each, unlike in Node.js", async () => {
+      expect(await named({ ca: [...cas, mint(names[1], names[1], ca), cas[0]] })).toEqual(names);
+    });
+
+    it("then those given to addCACert()", async () => {
+      const secureContext = tls.createSecureContext({ key, cert: chain, ca: cas[0] });
+      secureContext.context.addCACert(cas[1] + cas[2]);
+      await using server = net.createServer(socket => {
+        new tls.TLSSocket(socket, { isServer: true, secureContext, ...requestCert }).on("error", () => {}).resume();
+      });
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      expect(await namedBy(server.address() as AddressInfo)).toEqual(names);
+    });
+
+    it("but not those of setDefaultCACertificates()", async () => {
+      const before = tls.getCACertificates("default");
+      tls.setDefaultCACertificates(cas);
+      try {
+        await using server = tls.createServer({ key, cert: chain, ...requestCert });
+        // The contexts of these are shared between equal options, while in use.
+        const sockets: tls.TLSSocket[] = [];
+        await using wrapping = net.createServer(socket => {
+          const ca = sockets.length ? tls.getCACertificates("default") : undefined;
+          const options = { isServer: true, key, cert: chain, ca, ...requestCert };
+          sockets.push(new tls.TLSSocket(socket, options).on("error", () => {}).resume());
+        });
+        await Promise.all([server, wrapping].map(server => once(server.listen(0, "127.0.0.1"), "listening")));
+        expect({
+          https: await named({}),
+          tls: await namedBy(server.address() as AddressInfo),
+          socket: await namedBy(wrapping.address() as AddressInfo),
+          socketWithCa: (await namedBy(wrapping.address() as AddressInfo))?.length,
+        }).toEqual({ https: null, tls: null, socket: null, socketWithCa: names.length });
+      } finally {
+        tls.setDefaultCACertificates(before);
+      }
+    });
+
+    it("even next to those in a pfx", async () => {
+      const pfx = readFileSync(join(import.meta.dir, "../test/fixtures/keys/agent1.pfx"));
+      const before = tls.getCACertificates("default");
+      tls.setDefaultCACertificates(cas.slice(1));
+      try {
+        await using server = tls.createServer({ key, cert: chain, pfx, passphrase: "sample", ...requestCert });
+        await once(server.listen(0, "127.0.0.1"), "listening");
+        expect({
+          https: await named({ pfx, passphrase: "sample" }),
+          httpsWithCa: await named({ pfx, passphrase: "sample", ca: cas[0] }),
+          tls: await namedBy(server.address() as AddressInfo),
+        }).toEqual({ https: ["Joyent"], httpsWithCa: [names[0], "Joyent"], tls: ["Joyent"] });
+      } finally {
+        tls.setDefaultCACertificates(before);
+      }
+    });
+
+    it("from caFile", async () => {
+      const file = [cas[0], crlOf("root"), withSettings(cas[1], seq()), cas[2], mint(names[1], names[1], ca)];
+      using dir = tempDir("named-ca", { "ca.pem": file.join("") });
+      using listener = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        tls: { key, cert: chain, caFile: join(String(dir), "ca.pem"), ...requestCert } as Bun.TLSOptions,
+        socket: { data() {} },
+      });
+      expect(await namedBy(listener)).toEqual(names);
+    });
+
+    it("so repeating them does not take more than the 64 KB they have, unlike in Node.js", async () => {
+      const long = Buffer.alloc(1000, "a").toString();
+      const repeated = Array(70)
+        .fill(mint(long, long, ca))
+        .join("");
+      using dir = tempDir("repeated-ca", { "ca.pem": repeated + mint(long, long, ca) });
+      const outcomes: string[] = [];
+      for (const options of [{ ca: repeated }, { caFile: join(String(dir), "ca.pem") }]) {
+        using listener = Bun.listen({
+          hostname: "127.0.0.1",
+          port: 0,
+          tls: { key, cert: chain, ...requestCert, ...options },
+          socket: { data() {} },
+        });
+        outcomes.push(await connect(listener.port, { ca: root }));
+      }
+      expect(outcomes).toEqual(["authorized", "authorized"]);
+    });
   });
 
   // OpenSSL takes it, though its manual asks for "a certificate with suitable key usage".
@@ -1641,6 +1772,180 @@ describe("several certificates match one issuer", () => {
         addCACert: await verify(chain, [], { secureContext }),
         client: await verifyClient(clientChain, trusted),
       }).toEqual({ ca: server, plainLabel: server, addCACert: server, client });
+    });
+
+    it.each([
+      ["an alias that is not UTF-8", (uses: Buffer) => seq(uses, hex("0c01e9"))],
+      ["a key identifier in pieces", (uses: Buffer) => seq(uses, hex("0c01e9"), hex("2406040101040102"))],
+      ["other algorithms", (uses: Buffer) => seq(uses, tlv(0xa1, algorithms.ec, algorithms.rsa))],
+      ["a length that is not minimal", (uses: Buffer) => Buffer.concat([hex("3081"), seq(uses).subarray(1)])],
+      ["an indefinite length", (uses: Buffer) => Buffer.concat([hex("3080"), uses, hex("0000")])],
+      [
+        "a list that is not tagged as constructed",
+        (uses: Buffer) => seq(hex(uses[0] === 0x30 ? "10" : "80"), uses.subarray(1)),
+      ],
+    ])("with %s", async (_, settings) => {
+      await using server = await serve(chain);
+      const outcomes = (uses: Buffer) => {
+        const secureContext = tls.createSecureContext({ ca: [] });
+        secureContext.context.addCACert(withSettings(root, settings(uses)));
+        return Promise.all([
+          connect(server.port, { ca: withSettings(root, settings(uses)) }),
+          connect(server.port, { secureContext }),
+        ]);
+      };
+      expect({
+        trusted: await outcomes(seq(clientAuth, serverAuth)),
+        trustedForClients: await outcomes(seq(clientAuth)),
+        trustedForNothing: await outcomes(seq()),
+        rejected: await outcomes(tlv(0xa0, clientAuth, serverAuth)),
+        rejectedForClients: await outcomes(tlv(0xa0, clientAuth)),
+        both: await outcomes(Buffer.concat([seq(serverAuth), tlv(0xa0, serverAuth)])),
+      }).toEqual({
+        trusted: ["authorized", "authorized"],
+        trustedForClients: ["INVALID_PURPOSE", "INVALID_PURPOSE"],
+        trustedForNothing: ["INVALID_PURPOSE", "INVALID_PURPOSE"],
+        rejected: ["INVALID_PURPOSE", "INVALID_PURPOSE"],
+        rejectedForClients: ["authorized", "authorized"],
+        both: ["INVALID_PURPOSE", "INVALID_PURPOSE"],
+      });
+    });
+
+    it("that are malformed end the string they are in", async () => {
+      await using server = await serve(chain);
+      const malformed = {
+        "a line feed": hex("0a"),
+        "not tagged as constructed": tlv(0x10, seq(serverAuth)),
+        "an unknown field": seq(hex("020101")),
+        "out of order": seq(tlv(0xa0, serverAuth), seq(serverAuth)),
+        "a trusted use that is no OID": seq(seq(hex("0500"))),
+        "a rejected use that is no OID": seq(tlv(0xa0, hex("0500"))),
+        "an alias after the key identifier": seq(hex("040101"), hex("0c0141")),
+        "other algorithms that are not": seq(tlv(0xa1, hex("0500"))),
+        "other algorithms with another tag": seq(tlv(0xa2, algorithms.ec)),
+        "no end of contents": Buffer.concat([hex("3080"), seq(serverAuth)]),
+      };
+      const outcomes: Record<string, string> = {};
+      for (const [name, settings] of Object.entries(malformed)) {
+        outcomes[name] = await connect(server.port, { ca: withSettings(unrelated[0], settings) + root });
+      }
+      expect(outcomes).toEqual(
+        Object.fromEntries(Object.keys(malformed).map(name => [name, "UNABLE_TO_GET_ISSUER_CERT_LOCALLY"])),
+      );
+    });
+
+    it("are read after a certificate that does not parse", async () => {
+      const rejected = withSettings(intermediate, reject(serverAuth));
+      const broken = derOf(mint("other", "other", ca, { to: "21XX" }));
+      expect([
+        await verify(chain, root + armor("CERTIFICATE", broken) + rejected),
+        await verify(chain, root + armor("TRUSTED CERTIFICATE", Buffer.concat([broken, seq()])) + rejected),
+        await verify(chain, root + mint(seq(hex("3100")), "root", ca) + rejected),
+      ]).toEqual(["INVALID_PURPOSE", "INVALID_PURPOSE", "INVALID_PURPOSE"]);
+    });
+
+    describe("of a certificate that BoringSSL does not parse", () => {
+      const names = ["version", "serial", "algorithm", "issuer", "validity", "subject", "key", "extensions"] as const;
+      type Fields = Record<(typeof names)[number], Buffer>;
+      const [tbs] = fieldsOf(root);
+      const fields = Object.fromEntries(elementsOf(tbs).map((field, i) => [names[i], field])) as Fields;
+      const changed = (changes: Partial<Fields>) => seq(...Object.values({ ...fields, ...changes }));
+      const inPieces = (tag: number, body: Buffer) =>
+        tlv(tag | 0x20, tlv(0x04, body.subarray(0, 2)), tlv(0x04, body.subarray(2)));
+      const [keyAlgorithm, keyBits] = elementsOf(fields.key);
+      const none = hex("");
+      const extended = (...more: Buffer[]) => longForm(changed({ extensions: tlv(0xa3, seq(...ca, ...more)) }));
+      const unknown = (critical: string) => seq(oid("2a0304"), hex(critical), hex("0400"));
+      const valid = (from: string, to: string) => changed({ validity: seq(time(from), time(to)) });
+      const otherRoot = mint("other root", "other root", ca);
+
+      async function outcomes(tbs: Buffer) {
+        await using server = await serve(chain + mint("root", "other root", ca));
+        const entry = (settings: Buffer) => armor("TRUSTED CERTIFICATE", Buffer.concat([signed(tbs, caKey), settings]));
+        const secureContext = tls.createSecureContext({ ca: otherRoot });
+        secureContext.context.addCACert(entry(reject(serverAuth)));
+        return {
+          rejected: await connect(server.port, { ca: otherRoot + entry(reject(serverAuth)) }),
+          added: await connect(server.port, { secureContext }),
+          forClients: await connect(server.port, { ca: entry(trustOnly(clientAuth)) + otherRoot }),
+          forNothing: await connect(server.port, { ca: entry(seq(seq())) + otherRoot }),
+          trusted: await connect(server.port, { ca: entry(trustOnly(serverAuth)) }),
+        };
+      }
+      const all = (refused: string, trusted: string) => ({
+        rejected: refused,
+        added: refused,
+        forClients: refused,
+        forNothing: refused,
+        trusted,
+      });
+
+      it.each<[string, Buffer, string?, string?]>([
+        ["a long form", longForm(tbs)],
+        ["an indefinite length", indefinite(tbs)],
+        ...names.map((name): [string, Buffer] => [`${name}: a long form`, changed({ [name]: longForm(fields[name]) })]),
+        ["an empty RDN in the issuer", changed({ issuer: seq(rdn("550403", "root"), hex("3100")) })],
+        ["an empty RDN in the subject", changed({ subject: seq(hex("3100"), rdn("550403", "root")) })],
+        [
+          "a name in pieces",
+          changed({ subject: seq(tlv(0x31, seq(oid("550403"), inPieces(0x0c, Buffer.from("root"))))) }),
+        ],
+        ["a key in pieces", changed({ key: seq(keyAlgorithm, inPieces(0x03, contentsOf(keyBits))) })],
+        ["a UTCTime", longForm(changed({ validity: seq(...["200101000000Z", "491231235959Z"].map(utcTime)) }))],
+        ["version 1 with extensions", changed({ version: none })],
+        ["version 2 with extensions", changed({ version: hex("a003020101") })],
+        ["version 4", changed({ version: hex("a003020103") })],
+        ["version 1", longForm(changed({ version: none, extensions: none }))],
+        ["version 1, spelled out", longForm(changed({ version: hex("a003020100"), extensions: none }))],
+        ["version 1 with unique identifiers", changed({ version: none, extensions: hex("810100820100") })],
+        ["version 3 without extensions", longForm(changed({ extensions: none })), "INVALID_PURPOSE", "INVALID_CA"],
+        [
+          "version 128 without extensions",
+          changed({ version: hex("a00402020080"), extensions: none }),
+          "INVALID_PURPOSE",
+          "INVALID_CA",
+        ],
+        ["parameters: TRUE", changed({ algorithm: seq(contentsOf(algorithms.ec), hex("010101")) })],
+        ["parameters: a long form", changed({ algorithm: seq(contentsOf(algorithms.ec), hex("308103020101")) })],
+        ["parameters: EXTERNAL", changed({ algorithm: seq(contentsOf(algorithms.ec), hex("0800")) })],
+        ["an extension that is not critical", extended(unknown("010100"))],
+        ["an extension that is", extended(unknown("010101")), "INVALID_PURPOSE", "UNSPECIFIED"],
+        ["name constraints", extended(permitOnlyExampleCom), "UNSPECIFIED", "UNSPECIFIED"],
+      ])("hold: %s", async (_, tbs, refused = "INVALID_PURPOSE", trusted = "authorized") => {
+        expect(await outcomes(tbs)).toEqual(all(refused, trusted));
+      });
+
+      it("hold if it has no valid validity, with the codes for out of date unlike in Node.js", async () => {
+        expect([
+          await outcomes(valid("20XX0101000000Z", "21200101000000Z")),
+          await outcomes(valid("20200101000000Z", "21200101000000.5Z")),
+        ]).toEqual([all("CERT_NOT_YET_VALID", "CERT_NOT_YET_VALID"), all("CERT_HAS_EXPIRED", "CERT_HAS_EXPIRED")]);
+      });
+
+      it("hold if its issuer has a name that BoringSSL does not parse", async () => {
+        const issuer = seq(tlv(0x31, seq(oid("550403"), hex("0c03efbfbf"))));
+        expect(await outcomes(changed({ issuer }))).toEqual(all("INVALID_PURPOSE", "authorized"));
+      });
+
+      it("do not get it in the way if they name no use", async () => {
+        const entry = signed(longForm(fieldsOf(intermediate)[0]), caKey);
+        const alias = seq(hex("0c0141"));
+        expect(await verify(chain, armor("TRUSTED CERTIFICATE", Buffer.concat([entry, alias])) + root)).toBe(
+          "authorized",
+        );
+      });
+
+      it("hold for the name it has", async () => {
+        const named = (value: string) => seq(rdn("550403", "root"), tlv(0x31, seq(oid("55040a"), hex(value))));
+        const subject = named("2803040141");
+        const entry = signed(longForm(changed({ issuer: subject, subject })), caKey);
+        expect(
+          await verify(leaf + mint("intermediate", subject, ca) + mint(subject, "other root", ca), [
+            armor("TRUSTED CERTIFICATE", Buffer.concat([entry, reject(serverAuth)])),
+            otherRoot,
+          ]),
+        ).toBe("INVALID_PURPOSE");
+      });
     });
 
     it("are those of the first copy", async () => {
@@ -1906,6 +2211,11 @@ describe("several certificates match one issuer", () => {
       ["not base64", "-----BEGIN CERTIFICATE-----\n!\n-----END CERTIFICATE-----\n", missing],
       ["cut short", armor("CERTIFICATE", der.subarray(0, 100)), missing],
       ["malformed trust settings", withSettings(unrelated[0], hex("0500")), missing],
+      [
+        "a malformed certificate with trust settings",
+        armor("TRUSTED CERTIFICATE", Buffer.concat([seq(contentsOf(der), hex("0500")), trustOnly(serverAuth)])),
+        missing,
+      ],
     ])("%s", async (_, entry, whenFirstInOneString) => {
       await using server = await serve(chain);
       const added = (...entries: string[]) => {
@@ -1928,19 +2238,501 @@ describe("several certificates match one issuer", () => {
       });
     });
 
-    it("is an error for the APIs of Bun when there is no other", async () => {
-      await using server = await serve(chain);
-      const { promise, resolve } = Promise.withResolvers<boolean>();
-      using socket = await Bun.connect({
-        hostname: "127.0.0.1",
-        port: server.port,
-        tls: { ca: ["text", root] },
-        socket: { data() {}, handshake: socket => resolve(socket.authorized), close: () => resolve(false) },
+    it("is an error for the APIs of Bun, unless it is a PEM document of something else", () => {
+      const listen = (ca: string | string[]) => {
+        try {
+          Bun.listen({ hostname: "127.0.0.1", port: 0, tls: { ca }, socket: { data() {} } }).stop(true);
+          return "listening";
+        } catch (error: any) {
+          return error.message;
+        }
+      };
+      const cut = armor("CERTIFICATE", der.subarray(0, 100));
+      const broken = mint("other", "other", ca, { to: "21XX" });
+      expect({
+        useless: ["text", "", cut, root.slice(0, 200), broken, key.replace("\n", "\n!")].map(entry => [
+          listen([entry, root]),
+          listen([root, entry]),
+        ]),
+        key: [listen(key), listen([key, root])],
+        afterACertificate: [listen(root + cut), listen(root + broken)],
+      }).toEqual({
+        useless: Array(6).fill(["Invalid CA", "Invalid CA"]),
+        key: ["listening", "listening"],
+        afterACertificate: ["listening", "listening"],
       });
-      expect(await promise).toBe(true);
-      expect(() =>
-        Bun.listen({ hostname: "127.0.0.1", port: 0, tls: { ca: ["text"] }, socket: { data() {} } }),
-      ).toThrow("Invalid CA");
+    });
+  });
+
+  it("caFile is read whole or not at all", async () => {
+    await using server = await serve(chain);
+    const files = {
+      padded: withSettings(root, hex("0a"), "CERTIFICATE"),
+      withCrl: crlOf("root") + crlOf("intermediate") + root,
+      byteOrderMark: byteOrderMark + root + unrelated[0],
+      rejected: byteOrderMark + withSettings(intermediate, reject(serverAuth)) + root,
+      encrypted: encrypted(root, ""),
+      empty: "",
+      key,
+      crl: crlOf("root"),
+      cut: root + armor("CERTIFICATE", derOf(root).subarray(0, 100)),
+      cutCrl: root + armor("X509 CRL", derOf(root).subarray(0, 100)),
+      notBase64: root + "-----BEGIN CERTIFICATE-----\n!\n-----END CERTIFICATE-----\n",
+      withHeader: root + root.replace("\n", "\nComment: text\n\n"),
+      malformedValidity: root + mint("other", "other", ca, { to: "21XX" }),
+    };
+    using dir = tempDir("ca-file", files);
+    const outcomes: Record<string, unknown> = {};
+    for (const name of Object.keys(files)) {
+      const { promise, resolve } = Promise.withResolvers();
+      try {
+        using socket = await Bun.connect({
+          hostname: "127.0.0.1",
+          port: server.port,
+          tls: {
+            caFile: join(String(dir), name),
+            crl: name === "withCrl" ? crlOf("other") : undefined,
+          } as Bun.TLSOptions,
+          socket: { data() {}, handshake: socket => resolve(socket.authorized), close: () => resolve("closed") },
+        });
+        outcomes[name] = await promise;
+      } catch (error: any) {
+        outcomes[name] = error.message;
+      }
+    }
+    expect(outcomes).toEqual({
+      padded: true,
+      withCrl: true,
+      byteOrderMark: true,
+      rejected: false,
+      encrypted: true,
+      empty: "Failed to load CA file",
+      key: "Failed to load CA file",
+      crl: "Failed to load CA file",
+      cut: "Invalid CA file",
+      cutCrl: "Invalid CA file",
+      notBase64: "Invalid CA file",
+      withHeader: "Invalid CA file",
+      malformedValidity: "Invalid CA file",
+    });
+  });
+
+  it("addCACert() takes a string or a view of bytes, and ignores the rest", async () => {
+    await using server = await serve(chain);
+    const added = (value: unknown) => {
+      const secureContext = tls.createSecureContext({ ca: [] });
+      secureContext.context.addCACert(value);
+      return connect(server.port, { secureContext });
+    };
+    const bytes = new TextEncoder().encode(root + unrelated[0] + root);
+    const shared = new Uint8Array(new SharedArrayBuffer(bytes.length));
+    shared.set(bytes);
+    expect({
+      taken: [
+        await added(Buffer.from(root)),
+        await added(bytes),
+        await added(shared),
+        await added(new DataView(bytes.buffer)),
+        await added(new Uint16Array(bytes.buffer, 0, bytes.length >> 1)),
+      ],
+      outsideTheView: await added(bytes.subarray(root.length, -root.length)),
+      ignored: [
+        await added(bytes.buffer),
+        await added([root]),
+        await added(new String(root)),
+        await added({ toString: () => root }),
+        await added(undefined),
+        await added(null),
+        await added(1),
+      ],
+    }).toEqual({
+      taken: Array(5).fill("authorized"),
+      outsideTheView: "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
+      ignored: Array(7).fill("UNABLE_TO_GET_ISSUER_CERT_LOCALLY"),
+    });
+  });
+
+  it("`key`, `cert`, `ca` and `crl` take a DataView", async () => {
+    const view = (pem: string): any => new DataView(new TextEncoder().encode(root + pem).buffer, root.length);
+    await using server = await serve(view(chain), { key: view(key) });
+    expect([
+      await connect(server.port, { ca: view(root) }),
+      await connect(server.port, { ca: [view(unrelated[0])] }),
+      await connect(server.port, { ca: root, crl: view(crlOf("root") + crlOf("intermediate", leaf)) }),
+    ]).toEqual(["authorized", "UNABLE_TO_GET_ISSUER_CERT_LOCALLY", "CERT_REVOKED"]);
+  });
+
+  it.each([
+    ["the label of old", (pem: string) => pem.replace(/(?<=BEGIN|END) CERTIFICATE/g, " X509 CERTIFICATE"), true],
+    ["an empty passphrase", (pem: string) => encrypted(pem, ""), true],
+    ["the same after a byte order mark", (pem: string) => key + byteOrderMark + encrypted(pem, ""), true],
+    ["a byte order mark at the start", (pem: string) => byteOrderMark + pem, true],
+    ["a byte order mark after a certificate", (pem: string) => unrelated[0] + byteOrderMark + pem, true],
+    ["a byte order mark after a private key", (pem: string) => key + byteOrderMark + pem, true],
+    ["a byte order mark after a comment", (pem: string) => "# comment\n" + byteOrderMark + pem, false],
+    ["a NUL in a comment", (pem: string) => "# comment\0\n" + pem, true],
+    ["a NUL after a certificate", (pem: string) => unrelated[0] + "\0\n" + pem, true],
+    ["a NUL at the end of each line", (pem: string) => pem.replaceAll("\n", "\0\n"), true],
+    ["a NUL at the end", (pem: string) => pem + "\0", true],
+    ["a NUL at the start of the first line", (pem: string) => "\0" + pem, false],
+  ])("a block with %s", async (_, change, isRead) => {
+    await using server = await serve(chain);
+    const secureContext = tls.createSecureContext({ ca: [] });
+    secureContext.context.addCACert(change(root));
+    const withCrl = async (crl: string) =>
+      connect(server.port, { ca: root, crl: [crlOf("root"), crlOf("other") + crl] });
+    expect({
+      string: await connect(server.port, { ca: change(root) }),
+      buffer: await connect(server.port, { ca: Buffer.from(change(root)) }),
+      addCACert: await connect(server.port, { secureContext }),
+      rejected: await connect(server.port, { ca: [root, change(withSettings(intermediate, reject(serverAuth)))] }),
+      crl: await withCrl(change(crlOf("intermediate", leaf))),
+    }).toEqual(
+      isRead
+        ? {
+            string: "authorized",
+            buffer: "authorized",
+            addCACert: "authorized",
+            rejected: "INVALID_PURPOSE",
+            crl: "CERT_REVOKED",
+          }
+        : {
+            string: "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
+            buffer: "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
+            addCACert: "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
+            rejected: "authorized",
+            crl: "UNABLE_TO_GET_CRL",
+          },
+    );
+  });
+
+  it.each<[string, (fields: Buffer[]) => Buffer]>([
+    ["a long form", fields => longForm(seq(...fields))],
+    ["an indefinite length", fields => indefinite(seq(...fields))],
+    ["a long form of the algorithm", ([tbs, algorithm, signature]) => seq(tbs, longForm(algorithm), signature)],
+    ["one of its OID", ([tbs, algorithm, signature]) => seq(tbs, seq(longForm(contentsOf(algorithm))), signature)],
+    ["one of the signature", ([tbs, algorithm, signature]) => seq(tbs, algorithm, longForm(signature))],
+    ["a signature in pieces", ([tbs, algorithm, signature]) => seq(tbs, algorithm, tlv(0x23, signature))],
+  ])("what is not signed is not held to DER: %s", async (_, encode) => {
+    await using server = await serve(chain);
+    await using leafOnly = await serve(leaf);
+    const plain = (pem: string) => armor("CERTIFICATE", encode(fieldsOf(pem)));
+    const rejected = armor("TRUSTED CERTIFICATE", Buffer.concat([encode(fieldsOf(intermediate)), reject(serverAuth)]));
+    const crl = [crlOf("root") + armor("X509 CRL", encode(fieldsOf(crlOf("intermediate", leaf))))];
+    expect({
+      root: await connect(server.port, { ca: plain(root) }),
+      intermediate: await connect(leafOnly.port, { ca: [plain(intermediate), root] }),
+      rejected: await connect(server.port, { ca: rejected + root }),
+      crl: await connect(server.port, { ca: root, crl }),
+    }).toEqual({ root: "authorized", intermediate: "authorized", rejected: "INVALID_PURPOSE", crl: "CERT_REVOKED" });
+  });
+
+  it("nor are the parameters of the algorithm, or the bits that a signature leaves unused", async () => {
+    const rsaKey = { privateKey: createPrivateKey(serverTls.key), publicKey: createPublicKey(serverTls.key) };
+    const [tbs, , signature] = fieldsOf(mint("intermediate", "root", ca, { signer: rsaKey }));
+    const rsaRoot = mint("root", "root", ca, { signer: rsaKey, subjectKey: rsaKey });
+    const rejected = (signature: string) => {
+      const der = seq(...fieldsOf(intermediate).slice(0, 2), hex(signature));
+      return armor("TRUSTED CERTIFICATE", Buffer.concat([der, reject(serverAuth)])) + root;
+    };
+    expect([
+      await verify(leaf, [
+        armor("CERTIFICATE", seq(tbs, seq(oid("2a864886f70d01010b"), hex("058100")), signature)),
+        rsaRoot,
+      ]),
+      await verify(chain, rejected("030207ff")),
+      await verify(chain, rejected("030107")),
+    ]).toEqual(["authorized", "CERT_SIGNATURE_FAILURE", "CERT_SIGNATURE_FAILURE"]);
+  });
+
+  it.each(["010101", "308103020101", "30800201010000", "0800", "0c01ff"])(
+    "the parameters %s keep a signature from being valid, and nothing else",
+    async parameters => {
+      const changed = (pem: string, settings = hex("")) => {
+        const [tbs, algorithm, signature] = fieldsOf(pem);
+        const der = seq(tbs, seq(contentsOf(algorithm), hex(parameters)), signature);
+        return armor("TRUSTED CERTIFICATE", Buffer.concat([der, settings]));
+      };
+      expect([
+        await verify(chain, changed(root)),
+        await verify(leaf, changed(intermediate) + root),
+        await verify(chain, changed(intermediate, reject(serverAuth)) + root),
+      ]).toEqual(["authorized", "CERT_SIGNATURE_FAILURE", "CERT_SIGNATURE_FAILURE"]);
+    },
+  );
+
+  it("a NUL does not end `cert` or `key` either", async () => {
+    await using server = await serve(leaf + "\0\n" + intermediate, { key: "\0\n" + key });
+    expect(await connect(server.port, { ca: root })).toBe("authorized");
+  });
+
+  it("a NUL does not end a Bun.file()", async () => {
+    await using server = await serve(chain);
+    using dir = tempDir("ca-with-nul", { "ca.pem": unrelated[0] + "\0\n" + root });
+    const tls = { ca: Bun.file(join(String(dir), "ca.pem")) };
+    expect(await fetch(`https://127.0.0.1:${server.port}`, { tls }).then(response => response.text())).toBe(
+      "authorized",
+    );
+  });
+
+  it("all the CRLs in a string are read", async () => {
+    await using server = await serve(chain);
+    const withCrl = (crl: string) => {
+      try {
+        return connect(server.port, { secureContext: tls.createSecureContext({ ca: root, crl }) });
+      } catch (error: any) {
+        return error.code;
+      }
+    };
+    const valid = crlOf("root") + crlOf("intermediate");
+    expect({
+      valid: await withCrl(valid),
+      revoked: await withCrl(crlOf("root") + root + crlOf("intermediate", leaf)),
+      none: await withCrl(root),
+      notDer: await withCrl(valid + armor("X509 CRL", hex("0500"))),
+      notBase64: await withCrl(valid + "-----BEGIN X509 CRL-----\n!\n-----END X509 CRL-----\n"),
+      withHeader: await withCrl(valid + crlOf("other").replace("\n", "\nComment: text\n\n")),
+    }).toEqual({
+      valid: "authorized",
+      revoked: "CERT_REVOKED",
+      none: "ERR_CRYPTO_OPERATION_FAILED",
+      notDer: "ERR_CRYPTO_OPERATION_FAILED",
+      notBase64: "ERR_CRYPTO_OPERATION_FAILED",
+      withHeader: "ERR_CRYPTO_OPERATION_FAILED",
+    });
+  });
+
+  it("a CRL that BoringSSL does not parse is an error, unlike in Node.js", () => {
+    const tbs = seq(hex("020101"), algorithms.ec, dn("other"), time("20200101000000.5Z"));
+    expect(() => tls.createSecureContext({ crl: crlOf("root") + armor("X509 CRL", signed(tbs, caKey)) })).toThrow(
+      expect.objectContaining({ code: "ERR_CRYPTO_OPERATION_FAILED" }),
+    );
+  });
+
+  describe("setDefaultCACertificates()", () => {
+    /** The code of the error, or else whether it has got to the root after `entry`. */
+    function outcomes(entries: Record<string, string>) {
+      const before = tls.getCACertificates("default");
+      const outcome = (entry: string) => {
+        try {
+          tls.setDefaultCACertificates([entry + root]);
+          return tls.getCACertificates("default").includes(root);
+        } catch (error: any) {
+          return error.code;
+        }
+      };
+      try {
+        return Object.fromEntries(Object.entries(entries).map(([name, entry]) => [name, outcome(entry)]));
+      } finally {
+        tls.setDefaultCACertificates(before);
+      }
+    }
+
+    // BoringSSL refuses all of these for their validity, whatever else is the matter with them.
+    const fields = {
+      version: hex("a003020102"),
+      serial: hex("020101"),
+      algorithm: algorithms.ec,
+      issuer: dn("other"),
+      validity: seq(time("20200101000000Z"), time("21XX0101000000Z")),
+      subject: dn("other"),
+      key: caKey.publicKey.export({ type: "spki", format: "der" }),
+      uniqueIds: hex(""),
+      extensions: tlv(0xa3, seq(...ca)),
+    };
+    const tbs = (changes: Partial<typeof fields> = {}) => seq(...Object.values({ ...fields, ...changes }));
+    const signature = hex("03020001");
+    const changed = (changes: Partial<typeof fields>) => seq(tbs(changes), algorithms.ec, signature);
+    const named = (value: Buffer) => changed({ subject: seq(tlv(0x31, seq(oid("550403"), value))) });
+    const withParameters = (parameters: string) => changed({ algorithm: seq(oid("2a0304"), hex(parameters)) });
+    const withExtension = (...body: Buffer[]) => changed({ extensions: tlv(0xa3, seq(seq(oid("2a0304"), ...body))) });
+    const until = (tag: number, text: string) =>
+      changed({ validity: seq(time("20XX0101000000Z"), tlv(tag, Buffer.from(text))) });
+    const nested = (depth: number): Buffer => (depth ? tlv(0x24, nested(depth - 1)) : hex("040101"));
+    const each = <K extends keyof typeof fields>(label: string, change: (field: Buffer) => Buffer, ...names: K[]) =>
+      Object.fromEntries(names.map(name => [`${name}: ${label}`, changed({ [name]: change(fields[name]) })]));
+    const nameTypes = [3, 7, 8, 9, 11, 12, 13, 14, 15, 18, 19, 20, 22, 28, 29, 30];
+    const namesOfType = (types: number[]) =>
+      Object.fromEntries(types.map(type => [`a name of type ${type}`, named(tlv(type, hex("00000041")))]));
+    const constructed = ["version", "algorithm", "issuer", "validity", "subject", "key", "extensions"] as const;
+    const required = ["serial", "algorithm", "issuer", "validity", "subject", "key"] as const;
+    const primitive = (field: Buffer) => Buffer.concat([Buffer.from([field[0] & ~0x20]), field.subarray(1)]);
+    const armored = (ders: Record<string, Buffer>) =>
+      Object.fromEntries(Object.entries(ders).map(([name, der]) => [name, armor("CERTIFICATE", der)]));
+
+    it("goes on after what OpenSSL reads as a certificate", () => {
+      const read = {
+        "nothing else": changed({}),
+        "bytes after it": Buffer.concat([changed({}), hex("0a")]),
+        "long form": longForm(changed({})),
+        "indefinite": indefinite(changed({})),
+        "tbsCertificate: indefinite": seq(indefinite(tbs()), algorithms.ec, signature),
+        ...each("long form", longForm, "serial", ...constructed),
+        ...each("indefinite", indefinite, ...constructed),
+        ...each("left out", () => hex(""), "version", "extensions"),
+        ...each("not tagged as constructed", primitive, "issuer", "subject"),
+        "version 4": changed({ version: hex("a003020103") }),
+        "a negative serial number": changed({ serial: hex("0201ff") }),
+        "an empty name": changed({ subject: seq() }),
+        "an empty RDN": changed({ subject: seq(hex("3100")) }),
+        ...namesOfType(nameTypes),
+        "a name that is a SEQUENCE": named(hex("3002ffff")),
+        "a name in pieces": named(hex("2c060c01c30c01a9")),
+        "a noncharacter in UTF-8": named(hex("0c03efbfbe")),
+        "the code points next to the surrogates": named(hex("1e04d7ffe000")),
+        "the last code point": named(hex("1c040010ffff")),
+        "Latin-1": named(hex("1401e9")),
+        "a UTCTime of 13 bytes": until(0x17, "XXXXXXXXXXXXX"),
+        "a GeneralizedTime with a fraction": until(0x18, "21200101000000.5Z"),
+        "both unique identifiers": changed({ uniqueIds: hex("8101008202" + "0780") }),
+        "only the second unique identifier": changed({ uniqueIds: hex("820100") }),
+        "an empty list of extensions": changed({ extensions: hex("a3023000") }),
+        "critical FALSE": withExtension(hex("010100"), hex("0400")),
+        "a value in pieces of another type": withExtension(hex("2403020101")),
+        "a value in pieces 6 deep": withExtension(nested(6)),
+        "a value in pieces, indefinite": withExtension(indefinite(nested(1))),
+        "an unknown key": changed({ key: seq(seq(oid("2a0304")), signature) }),
+        "parameters: NULL": withParameters("0500"),
+        "parameters: ENUMERATED": withParameters("0a0101"),
+        "parameters: a SET": withParameters("3102ffff"),
+        "parameters: context-specific": withParameters("8101ff"),
+        "parameters: context-specific, with the number of INTEGER": withParameters("8200"),
+        "parameters: context-specific and constructed": withParameters("a102ffff"),
+        "parameters: last of an indefinite length": changed({ algorithm: indefinite(seq(oid("2a0304"), seq())) }),
+        "parameters: indefinite within indefinite": withParameters("3080a080050000000000"),
+        "7 unused bits": seq(tbs(), algorithms.ec, hex("030207ff")),
+      };
+      expect(outcomes(armored(read))).toEqual(Object.fromEntries(Object.keys(read).map(name => [name, true])));
+    });
+
+    it("throws for what it does not", () => {
+      const otherTypes = Array.from({ length: 30 }, (_, i) => i + 1).filter(type => !nameTypes.includes(type));
+      const refused = {
+        "cut short": changed({}).subarray(0, 100),
+        "no end of contents": indefinite(changed({})).subarray(0, -2),
+        "half an end of contents": indefinite(changed({})).subarray(0, -1),
+        "something else for an end of contents": Buffer.concat([indefinite(changed({})).subarray(0, -2), hex("0001")]),
+        "not tagged as constructed": primitive(changed({})),
+        "no signature": seq(tbs(), algorithms.ec),
+        "no signature algorithm": seq(tbs(), signature),
+        "an empty signature algorithm": seq(tbs(), seq(), signature),
+        "a signature algorithm without an OID": seq(tbs(), seq(hex("0500")), signature),
+        "a field after the signature": seq(tbs(), algorithms.ec, signature, hex("0500")),
+        "a signature of another type": seq(tbs(), algorithms.ec, hex("040100")),
+        "an empty BIT STRING": seq(tbs(), algorithms.ec, hex("0300")),
+        "8 unused bits": seq(tbs(), algorithms.ec, hex("030208ff")),
+        ...each("left out", () => hex(""), ...required),
+        ...each("NULL", () => hex("0500"), ...required, "extensions"),
+        ...each("twice", field => Buffer.concat([field, field]), "version", ...required, "extensions"),
+        ...each("empty", field => tlv(field[0]), "version", "serial", "algorithm", "validity", "key", "extensions"),
+        ...each("with one more", field => tlv(field[0], contentsOf(field), hex("0500"), hex("0500")), ...constructed),
+        ...each("with an end of contents", field => tlv(field[0], contentsOf(field), hex("0000")), ...constructed),
+        ...each("not tagged as constructed", primitive, "version", "algorithm", "validity", "key", "extensions"),
+        "a version that is no INTEGER": changed({ version: hex("a0020500") }),
+        "a padded serial number": changed({ serial: hex("02020001") }),
+        "a serial number in pieces": changed({ serial: hex("2203020101") }),
+        "a padded OID": changed({ algorithm: seq(oid("8001")) }),
+        "an OID in pieces": changed({ algorithm: seq(hex("260306012a")) }),
+        "an RDN that is no SET": changed({ subject: seq(seq(seq(oid("550403"), hex("0c0141")))) }),
+        "an attribute without a type": changed({ subject: seq(tlv(0x31, seq(hex("0c0141"), hex("0c0141")))) }),
+        "an attribute without a value": named(hex("")),
+        "an attribute not tagged as constructed": changed({
+          subject: seq(tlv(0x31, tlv(0x10, oid("550403"), hex("0c0141")))),
+        }),
+        ...namesOfType(otherTypes),
+        ...Object.fromEntries(
+          ["0101ff", "020101", "0500", "0a0101", "170d" + "58".padEnd(26, "58"), "180f" + "58".padEnd(30, "58")].map(
+            value => [`a name of ${value}`, named(hex(value))],
+          ),
+        ),
+        "a name that is a SET": named(hex("3100")),
+        "a context-specific name": named(hex("8c0141")),
+        "a name with a tag of two bytes": named(hex("1f2c0141")),
+        "invalid UTF-8": named(hex("0c02ff41")),
+        "half a BMP character": named(hex("1e03004100")),
+        "half a universal character": named(hex("1c020041")),
+        "the first surrogate": named(hex("1e02d800")),
+        "the last surrogate": named(hex("1e040041dfff")),
+        "past the last code point": named(hex("1c0400110000")),
+        "a UTCTime of 12 bytes": until(0x17, "XXXXXXXXXXXX"),
+        "a GeneralizedTime of 14 bytes": until(0x18, "XXXXXXXXXXXXXX"),
+        "a time of another type": until(0x0c, "XXXXXXXXXXXXXXX"),
+        "one time": changed({ validity: seq(time("21XX0101000000Z")) }),
+        "an empty first unique identifier": changed({ uniqueIds: hex("8100") }),
+        "an empty second unique identifier": changed({ uniqueIds: hex("8200") }),
+        "unique identifiers out of order": changed({ uniqueIds: hex("820100810100") }),
+        "extensions that are no SEQUENCE": changed({ extensions: hex("a3023100") }),
+        "extensions with another tag": changed({ extensions: hex("a4023000") }),
+        "an extension without a type": changed({ extensions: tlv(0xa3, seq(seq(hex("0400")))) }),
+        "an extension without a value": withExtension(hex("0101ff")),
+        "an empty BOOLEAN": withExtension(hex("0100"), hex("0400")),
+        "a BOOLEAN of 2 bytes": withExtension(hex("0102ffff"), hex("0400")),
+        "a BOOLEAN in pieces": withExtension(hex("21030101ff"), hex("0400")),
+        "a value in pieces 7 deep": withExtension(nested(7)),
+        "a value in pieces that are cut short": withExtension(hex("24020401")),
+        "a key without bits": changed({ key: seq(algorithms.ec) }),
+        "a key without an algorithm": changed({ key: seq(signature) }),
+        "parameters: NULL with contents": withParameters("050100"),
+        "parameters: NULL in pieces": withParameters("2500"),
+        "parameters: a padded ENUMERATED": withParameters("0a020001"),
+        "parameters: half a BMP character": withParameters("1e0141"),
+        "parameters: half a universal character": withParameters("1c020041"),
+        "parameters: a SEQUENCE not tagged as constructed": withParameters("1000"),
+        "parameters: a SET not tagged as constructed": withParameters("1100"),
+        "parameters: cut short": withParameters("8102ff"),
+        "parameters: an end of contents too few": withParameters("3080a0800000"),
+      };
+      const thrown = Object.entries(outcomes(armored(refused))).map(([name, code]) => [name, typeof code]);
+      expect(Object.fromEntries(thrown)).toEqual(
+        Object.fromEntries(Object.keys(refused).map(name => [name, "string"])),
+      );
+    });
+
+    it("throws for a block with a header", () => {
+      const withHeader = (header: string) => unrelated[0].replace("\n", `\n${header}\n\n`);
+      expect(
+        outcomes({
+          none: unrelated[0].replace("\n", "\n\n"),
+          comment: withHeader("Comment: text"),
+          notEncrypted: withHeader("Proc-Type: 4,MIC-ONLY"),
+          unknownCipher: withHeader("Proc-Type: 4,ENCRYPTED\nDEK-Info: UNKNOWN,00"),
+          halfABlock: encrypted(unrelated[0], "").replace(/\n\n[^-]*/, "\n\nAAAA\n"),
+          ofAnotherType: key.replace("\n", "\nComment: text\n\n"),
+        }),
+      ).toEqual({
+        none: true,
+        comment: "ERR_OSSL_PEM_NOT_PROC_TYPE",
+        notEncrypted: "ERR_OSSL_PEM_NOT_ENCRYPTED",
+        unknownCipher: "ERR_OSSL_PEM_UNSUPPORTED_ENCRYPTION",
+        halfABlock: "ERR_OSSL_PEM_BAD_DECRYPT",
+        ofAnotherType: true,
+      });
+    });
+
+    it("keeps the parameters of the signature algorithm of a certificate that it writes as DER", () => {
+      const der = seq(fieldsOf(root)[0], seq(oid("2a0304"), seq(hex("020101"))), signature);
+      const before = tls.getCACertificates("default");
+      try {
+        tls.setDefaultCACertificates([armor("CERTIFICATE", longForm(der))]);
+        expect(tls.getCACertificates("default")).toEqual([armor("CERTIFICATE", der)]);
+      } finally {
+        tls.setDefaultCACertificates(before);
+      }
+    });
+
+    it("is the only way to change them", () => {
+      const before = tls.getCACertificates("default");
+      try {
+        tls.setDefaultCACertificates([root]);
+        expect(() => (tls.createServer({ key, cert: chain }) as any).ca.push(unrelated[0])).toThrow(TypeError);
+        expect(tls.getCACertificates("default")).toEqual([root]);
+      } finally {
+        tls.setDefaultCACertificates(before);
+      }
+    });
+
+    it("ignores a byte order mark", () => {
+      expect(outcomes({ byteOrderMark })).toEqual({ byteOrderMark: true });
     });
   });
 
@@ -1994,7 +2786,7 @@ describe("several certificates match one issuer", () => {
       using dir = tempDir("same-subject", {
         "extra.pem": files.NODE_EXTRA_CA_CERTS.join(""),
         "file.pem": files.SSL_CERT_FILE.join(""),
-        "plan.json": JSON.stringify({ key, chains }),
+        "plan.json": JSON.stringify({ key, chains, crl: crlOf("intermediate") }),
         "main.mjs": `
           import { once } from "node:events";
           import { readFileSync } from "node:fs";
@@ -2011,6 +2803,21 @@ describe("several certificates match one issuer", () => {
               await once(socket, "secureConnect").then(() => "authorized", error => error.code),
               await fetch("https://127.0.0.1:" + port).then(res => res.text(), error => error.code ?? error.cause.code),
             ];
+          }
+          console.log(JSON.stringify(outcomes));
+          process.exit(0);
+        `,
+        "crl.mjs": `
+          import { once } from "node:events";
+          import { readFileSync } from "node:fs";
+          import tls from "node:tls";
+          const { key, chains, crl } = JSON.parse(readFileSync("plan.json", "utf8"));
+          const outcomes = {};
+          for (const [name, cert] of Object.entries(chains)) {
+            const server = tls.createServer({ key, cert });
+            await once(server.listen(0, "127.0.0.1"), "listening");
+            const socket = tls.connect({ host: "127.0.0.1", port: server.address().port, servername: "localhost", crl });
+            outcomes[name] = await once(socket, "secureConnect").then(() => "authorized", error => error.code);
           }
           console.log(JSON.stringify(outcomes));
           process.exit(0);
@@ -2043,9 +2850,13 @@ describe("several certificates match one issuer", () => {
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stderr).toBe("");
-      return { outcomes: JSON.parse(stdout), exitCode };
+      const warning = stderr
+        .replace(String(dir), "")
+        .replace(/error:.*/s, "error")
+        .trim();
+      return { outcomes: stdout && JSON.parse(stdout), exitCode, ...(stderr && { stderr: warning }) };
     }
+    const extraWarning = `Warning: Ignoring extra certs from \`${sep}extra.pem\`, load failed: `;
     const authorized = ["authorized", "authorized"];
     const notACA = ["INVALID_PURPOSE", "INVALID_PURPOSE"];
     const repeat = <T>(label: string, value: T) =>
@@ -2100,12 +2911,159 @@ describe("several certificates match one issuer", () => {
       },
     );
 
+    const fileFlags = isLinux ? ["--use-openssl-ca", "--use-system-ca"] : ["--use-openssl-ca"];
+    const emptyRdn = seq(rdn("550403", "other"), hex("3100"));
+    const before = (source: Source, entry: (name: string) => string) => (name: string) => ({
+      [source]: [entry(name), good(name)],
+    });
+    const onlyOpenSSLReads = (source: Source) => ({
+      validity: before(source, name => mint(name, name, ca, { to: "21XX" })),
+      longForm: before(source, name => {
+        const [tbs, ...rest] = fieldsOf(good(name));
+        return armor("CERTIFICATE", seq(longForm(tbs), ...rest));
+      }),
+      emptyRdn: before(source, () => mint(emptyRdn, emptyRdn, ca)),
+      trusted: before(source, name => {
+        const broken = derOf(mint(name, name, ca, { to: "21XX" }));
+        return armor("TRUSTED CERTIFICATE", Buffer.concat([broken, trustOnly(serverAuth)]));
+      }),
+    });
+    const passedOver = { validity: authorized, longForm: authorized, emptyRdn: authorized, trusted: authorized };
+    const missing = ["UNABLE_TO_GET_ISSUER_CERT_LOCALLY", "UNABLE_TO_GET_ISSUER_CERT_LOCALLY"];
+
+    it.each(fileFlags)("a copy in SSL_CERT_FILE that does not parse is passed over with %s", async flag => {
+      expect(await run([flag], onlyOpenSSLReads("SSL_CERT_FILE"))).toEqual({ outcomes: passedOver, exitCode: 0 });
+    });
+
+    it("one in NODE_EXTRA_CA_CERTS is too, with a warning unlike in Node.js", async () => {
+      expect(await run([], onlyOpenSSLReads("NODE_EXTRA_CA_CERTS"))).toEqual({
+        outcomes: passedOver,
+        exitCode: 0,
+        stderr: extraWarning + "only those that BoringSSL can parse were loaded",
+      });
+    });
+
+    it("a malformed certificate ends NODE_EXTRA_CA_CERTS", async () => {
+      const malformed = armor("CERTIFICATE", seq(contentsOf(derOf(root)), hex("0500")));
+      expect(
+        await run([], {
+          after: name => ({ NODE_EXTRA_CA_CERTS: [malformed, good(name)] }),
+          before: name => ({ NODE_EXTRA_CA_CERTS: [good(name)] }),
+        }),
+      ).toEqual({ outcomes: { after: missing, before: authorized }, exitCode: 0, stderr: extraWarning + "error" });
+    });
+
+    const cut = derOf(root).subarray(0, 100);
+    const withHeader = root.replace("\n", "\nComment: text\n\n");
+
     it.each([
-      ["NODE_EXTRA_CA_CERTS", []],
-      ["SSL_CERT_FILE", ["--use-openssl-ca"]],
-    ] as const)("a copy in %s that does not parse is passed over", async (source, args) => {
-      const broken = (name: string) => ({ [source]: [mint(name, name, ca, { to: "21XX" }), good(name)] });
-      expect(await run([...args], { broken })).toEqual({ outcomes: { broken: authorized }, exitCode: 0 });
+      ["a malformed certificate", armor("CERTIFICATE", cut)],
+      ["a malformed TRUSTED CERTIFICATE", armor("TRUSTED CERTIFICATE", cut)],
+      ["a malformed CRL", armor("X509 CRL", cut)],
+      ["a field after a signature", armor("CERTIFICATE", seq(contentsOf(derOf(root)), hex("0500")))],
+      ["a signature of another type", armor("CERTIFICATE", seq(...fieldsOf(root).slice(0, 2), hex("040100")))],
+      ["a certificate with a header", withHeader],
+    ])("nothing is taken from an SSL_CERT_FILE with %s", async (_, entry) => {
+      expect(
+        await run(["--use-openssl-ca"], {
+          after: name => ({ SSL_CERT_FILE: [entry, good(name)] }),
+          before: name => ({ SSL_CERT_FILE: [good(name)] }),
+        }),
+      ).toEqual({ outcomes: { after: missing, before: missing }, exitCode: 0 });
+    });
+
+    it("the CRLs in SSL_CERT_FILE count once `crl` asks for the check", async () => {
+      expect(
+        await run(
+          ["--use-openssl-ca"],
+          {
+            with: name => ({ SSL_CERT_FILE: [good(name), crlOf(name)] }),
+            without: name => ({ SSL_CERT_FILE: [good(name)] }),
+          },
+          "crl.mjs",
+        ),
+      ).toEqual({ outcomes: { with: "authorized", without: "UNABLE_TO_GET_CRL" }, exitCode: 0 });
+    });
+
+    it.skipIf(!isLinux)("a file of the system store is read up to a block that is malformed", async () => {
+      const files = {
+        "byte order mark": byteOrderMark + good("listed: byte order mark"),
+        "padded": withSettings(good("listed: padded"), hex("0a"), "CERTIFICATE") + good("listed: after padded"),
+        "long form": armor("CERTIFICATE", longForm(derOf(good("listed: long form")))),
+        "empty RDN": mint(emptyRdn, emptyRdn, ca) + good("listed: after empty RDN"),
+        "trusted": withSettings(good("left out: trusted"), hex("")) + good("listed: after trusted"),
+        "cut": good("listed: before cut") + armor("CERTIFICATE", cut) + good("left out: after cut"),
+        "header": withHeader + good("left out: after header"),
+      };
+      using dir = tempDir("system-store", files);
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-p",
+          `require("node:tls").getCACertificates("system")
+            .map(pem => new (require("node:crypto").X509Certificate)(pem).subject)
+            .filter(subject => /listed|left out/.test(subject)).sort().join("\\n")`,
+        ],
+        env: { ...bunEnv, SSL_CERT_FILE: "", SSL_CERT_DIR: String(dir) },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim().split("\n"), stderr, exitCode }).toEqual({
+        stdout: [
+          "CN=listed: after empty RDN",
+          "CN=listed: after padded",
+          "CN=listed: after trusted",
+          "CN=listed: before cut",
+          "CN=listed: byte order mark",
+          "CN=listed: long form",
+          "CN=listed: padded",
+        ],
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    it.each(fileFlags)("byte order marks, padding and BER are read with %s", async flag => {
+      const sources = ["NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE"] as const;
+      const cases = (label: string, change: (pem: string) => string) =>
+        sources.map(source => [`${label} in ${source}`, (name: string) => ({ [source]: [change(good(name))] })]);
+      const withField = (pem: string, index: number, field: Buffer) =>
+        armor("CERTIFICATE", seq(...fieldsOf(pem).with(index, field)));
+      const all = Object.fromEntries([
+        ...cases("padded", pem => withSettings(pem, hex("0a"), "CERTIFICATE")),
+        ...cases("long form", pem => armor("CERTIFICATE", longForm(derOf(pem)))),
+        ...cases("algorithm", pem => withField(pem, 1, longForm(algorithms.ec))),
+        ...cases("parameters", pem => withField(pem, 1, seq(contentsOf(algorithms.ec), hex("010101")))),
+        ...cases("in pieces", pem => withField(pem, 2, hex("230403020001"))),
+        ...cases("unused bits", pem => withField(pem, 2, hex("030207ff"))),
+        ...cases("in the middle", pem => byteOrderMark + pem),
+        ...cases("at the start", pem => byteOrderMark + pem),
+      ]);
+      expect(await run([flag], all)).toEqual({
+        outcomes: Object.fromEntries(Object.keys(all).map(name => [name, authorized])),
+        exitCode: 0,
+      });
+    });
+
+    it.each([
+      ["with --use-openssl-ca", ["--use-openssl-ca"]],
+      ["without, unlike in Node.js", []],
+    ])("trust settings in SSL_CERT_FILE that BoringSSL does not parse hold %s", async (_, args) => {
+      const rejected = (name: string) => {
+        const pem = good(name);
+        return { SSL_CERT_FILE: [withSettings(pem, seq(tlv(0xa0, serverAuth), hex("0c01e9"))), pem] };
+      };
+      const longForms = (name: string) => {
+        const pem = good(name);
+        const [tbs, ...rest] = fieldsOf(pem);
+        const entry = Buffer.concat([seq(longForm(tbs), ...rest), reject(serverAuth)]);
+        return { SSL_CERT_FILE: [armor("TRUSTED CERTIFICATE", entry), pem] };
+      };
+      expect(await run(args, { rejected, longForms })).toEqual({
+        outcomes: { rejected: notACA, longForms: notACA },
+        exitCode: 0,
+      });
     });
 
     it("what follows a plain certificate is not read as trust settings", async () => {
@@ -2182,7 +3140,8 @@ describe("several certificates match one issuer", () => {
       });
     });
 
-    it("a `ca` without certificates trusts nothing", async () => {
+    /** With `root` among the default roots. */
+    async function clientsAndServers(values: string, defaults?: string[]) {
       using dir = tempDir("empty-ca", { "extra.pem": root });
       await using proc = Bun.spawn({
         cmd: [
@@ -2214,10 +3173,8 @@ describe("several certificates match one issuer", () => {
           }
           (async () => {
             const [, address] = await listen(https, {});
-            const values = [undefined, "", [], [""], "/path/to/ca.pem", Buffer.alloc(0)];
-            console.log((await Promise.all(values.map(ca => outcomes(address, ca)))).join("\\n"));
-            tls.setDefaultCACertificates([]);
-            console.log(await outcome(tls.connect(address), "secureConnect"));
+            ${defaults ? `tls.setDefaultCACertificates(${JSON.stringify(defaults)});` : ""}
+            console.log((await Promise.all(${values}.map(ca => outcomes(address, ca)))).join("\\n"));
             process.exit(0);
           })();`,
         ],
@@ -2226,8 +3183,24 @@ describe("several certificates match one issuer", () => {
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect({ stdout: stdout.trim().split("\n"), stderr, exitCode }).toEqual({
-        stdout: ["authorized", "authorized", ...Array(5).fill("UNABLE_TO_GET_ISSUER_CERT_LOCALLY")],
+      return { stdout: stdout.trim().split("\n"), stderr, exitCode };
+    }
+
+    it.each([
+      ["nothing", [], missing[0]],
+      ["another root", [unrelated[0]], missing[0]],
+      ["the root", [root], "authorized"],
+    ])("setDefaultCACertificates() of %s is for any falsy `ca`", async (_, defaults, outcome) => {
+      expect(await clientsAndServers(`[undefined, "", false]`, defaults)).toEqual({
+        stdout: [outcome, outcome, outcome],
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    it("a `ca` without certificates trusts nothing", async () => {
+      expect(await clientsAndServers(`[undefined, "", [], [""], "/path/to/ca.pem", Buffer.alloc(0)]`)).toEqual({
+        stdout: ["authorized", "authorized", ...Array(4).fill(missing[0])],
         stderr: "",
         exitCode: 0,
       });

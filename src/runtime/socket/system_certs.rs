@@ -9,7 +9,6 @@
 //! read once per inode, each directory walked once per inode, and each certificate kept once per DER encoding. PEM
 //! framing and X.509 parsing stay in BoringSSL.
 
-use core::ffi::{c_char, c_long, c_void};
 use core::ptr;
 
 use bun_boringssl_sys as boringssl;
@@ -63,9 +62,7 @@ struct Loader {
 }
 
 impl Loader {
-    /// As a `PEM_read_bio_X509` loop would: blocks of other types are skipped, and a block that does not decode or a
-    /// CERTIFICATE that is not shaped like one ends the file. Nothing is parsed here: `PEM_bytes_read_bio` is that
-    /// loop minus the ASN.1 parse, and the certificates go into an `X509_LAZY_CERT_SET`.
+    /// Nothing is parsed here: the certificates go into an `X509_LAZY_CERT_SET`.
     fn load_pem(&mut self, pem: &[u8]) {
         let Some(bio) = boringssl::MemBio::new(pem) else {
             return;
@@ -75,10 +72,6 @@ impl Loader {
             bun_sha_hmac::sha::hashers::SHA256::hash(&der, &mut digest);
             if self.ders.contains_key(&digest) {
                 continue;
-            }
-            // SAFETY: it only reads `der`.
-            if unsafe { boringssl::X509_LAZY_CERT_SET_can_index(der.as_ptr(), der.len()) } == 0 {
-                break;
             }
             let Some(buf) = boringssl::OwnedCryptoBuffer::new(&der) else {
                 break;
@@ -152,31 +145,17 @@ impl Loader {
 }
 
 fn next_certificate(bio: &boringssl::MemBio<'_>) -> Option<boringssl::OpensslBytes> {
-    let mut der: *mut u8 = ptr::null_mut();
-    let mut der_len: c_long = 0;
-    // SAFETY: `bio` is live. BoringSSL allocates `der_len` bytes or leaves `der` null.
+    let mut len = 0;
+    // SAFETY: `bio` is live. The result is null, or at least `len` bytes from `OPENSSL_malloc`.
     unsafe {
-        boringssl::PEM_bytes_read_bio(
-            &raw mut der,
-            &raw mut der_len,
-            ptr::null_mut(),
-            c"CERTIFICATE".as_ptr(),
-            bio.as_ptr(),
-            Some(no_password),
-            ptr::null_mut(),
-        );
-        boringssl::OpensslBytes::from_raw(der, der_len as usize)
+        let der = us_pem_read_indexable_ca(bio.as_ptr(), &raw mut len);
+        boringssl::OpensslBytes::from_raw(der, len)
     }
 }
 
-/// Never answers, so an encrypted PEM block fails instead of prompting the terminal.
-extern "C" fn no_password(
-    _buf: *mut c_char,
-    _size: core::ffi::c_int,
-    _rwflag: core::ffi::c_int,
-    _u: *mut c_void,
-) -> core::ffi::c_int {
-    0
+unsafe extern "C" {
+    /// ca_pem.cpp
+    fn us_pem_read_indexable_ca(bio: *mut boringssl::BIO, out_len: *mut usize) -> *mut u8;
 }
 
 /// Returns the system store as a lazily-parsed set (NULL if empty or on error); the caller owns the reference.

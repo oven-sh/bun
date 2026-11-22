@@ -45,13 +45,60 @@ struct us_system_certs_t {
 };
 const us_system_certs_t &us_get_root_system_certs();
 
+// src/runtime/socket/cert_files.rs
+typedef void (*us_on_cert_file)(void *ctx, const uint8_t *data, size_t len);
+extern "C" int Bun__readCertificateFile(const char *path, void *ctx, us_on_cert_file on_file);
+
+// ca_pem.cpp. The BIOs are read-only memory BIOs.
+
+// Whether TRUSTED CERTIFICATE blocks, and what follows a certificate in its block, are read as by the _AUX functions.
+enum class us_ca_trust { ignored, read };
+
+struct us_pem_block {
+  char *name = nullptr, *header = nullptr;
+  uint8_t *data = nullptr;
+  long len = 0;
+  // What was left of the document ahead of the block.
+  const uint8_t *text = nullptr;
+  size_t text_len = 0;
+  ~us_pem_block() {
+    OPENSSL_free(name);
+    OPENSSL_free(header);
+    OPENSSL_free(data);
+  }
+  // PEM_read_bio, past the byte order mark that OpenSSL ignores ahead of a block.
+  bool read(BIO *in);
+  bool is(const char *label) const;
+  bool is_plain_certificate() const;
+  // With an empty passphrase, if it has a header.
+  bool decrypt();
+  // Fails for a certificate that BoringSSL is too strict for, which is malformed if OpenSSL does not read it either.
+  // `out_der`, if not NULL, gets the encoding for an X509_LAZY_CERT_SET.
+  X509 *parse_ca(us_ca_trust trust, CRYPTO_BUFFER **out_der, bool *out_malformed);
+  // The same without the parse, so a malformed validity, key or extension goes unnoticed.
+  size_t indexable_ca_len(bool *out_malformed);
+  X509_CRL *parse_crl();
+};
+
+// A PEM_read_bio_X509 or PEM_read_bio_X509_AUX loop that ends where the one of OpenSSL does.
+struct us_ca_reader {
+  BIO *in;
+  us_ca_trust trust;
+  // A certificate that only OpenSSL reads.
+  bool passed_over = false;
+  X509 *next(CRYPTO_BUFFER **out_der = nullptr);
+};
+
 #else
 #define CPPDECL extern
 #endif
 
-// PEM_read_bio_X509, or PEM_read_bio_X509_AUX `with_trust`, that goes on past a certificate that BoringSSL is too strict
-// to parse: OpenSSL reads it. `out_der`, if not NULL, gets the encoding for an X509_LAZY_CERT_SET.
-CPPDECL X509 *us_pem_read_ca(BIO *in, int with_trust, CRYPTO_BUFFER **out_der);
+// us_ca_reader without trust settings and without the parse, for an X509_LAZY_CERT_SET. Release with OPENSSL_free.
+CPPDECL uint8_t *us_pem_read_indexable_ca(BIO *in, size_t *out_len);
+// `names`, if not NULL, asks clients for certificates from them. Returns 0 when there is no memory.
+CPPDECL int us_x509_store_add_cas(X509_STORE *store, SSL_CTX *names, const char *pem, size_t len);
+// Also turns CRL checking on. Returns 0 if there is no CRL, or a malformed block.
+CPPDECL int us_x509_store_add_crls(X509_STORE *store, const char *pem, size_t len);
 
 CPPDECL X509_STORE *us_get_default_ca_store();
 CPPDECL X509_STORE *us_get_shared_default_ca_store();

@@ -1,4 +1,4 @@
-const { isTypedArray, isArrayBuffer, isArrayBufferView } = require("node:util/types");
+const { isArrayBuffer, isArrayBufferView } = require("node:util/types");
 const { validateString, validateBuffer } = require("internal/validators");
 
 const StringPrototypeSplit: (this: string, separator: string | RegExp, limit?: number) => string[] =
@@ -11,6 +11,8 @@ const ArrayPrototypeFilter = Array.prototype.filter;
 const ArrayPrototypeJoin = Array.prototype.join;
 const ArrayPrototypeSome = Array.prototype.some;
 const ArrayPrototypeMap = Array.prototype.map;
+const WeakMapPrototypeGet = WeakMap.prototype.get;
+const WeakMapPrototypeSet = WeakMap.prototype.set;
 
 function isPemObject(obj: unknown): obj is { pem: unknown } {
   return $isObject(obj) && "pem" in obj;
@@ -22,7 +24,13 @@ function isPemArray(obj: unknown): obj is [{ pem: unknown }] {
 }
 
 function isValidTLSItem(obj: unknown) {
-  if (typeof obj === "string" || isTypedArray(obj) || isArrayBuffer(obj) || $inheritsBlob(obj) || isPemArray(obj)) {
+  if (
+    typeof obj === "string" ||
+    isArrayBufferView(obj) ||
+    isArrayBuffer(obj) ||
+    $inheritsBlob(obj) ||
+    isPemArray(obj)
+  ) {
     return true;
   }
 
@@ -382,7 +390,7 @@ function unsealPfxForNative(tls) {
   const { ca } = tls;
   const unsealed = { __proto__: tls, key, cert, ca, pfx: undefined };
   if (!pfxCAs) return unsealed;
-  if (ca) unsealed.ca = $isArray(ca) ? [...ca, ...pfxCAs] : [ca, ...pfxCAs];
+  if (ca) unsealed.ca = appendCAs(ca, pfxCAs);
   // No addCACert() follows to complete the chain of a lone identity. Several carry theirs already.
   if (typeof cert === "string") unsealed.cert = cert + pfxCAs[0];
   return unsealed;
@@ -478,13 +486,43 @@ function tlsHandshakeError(verifyError: { code?: string; reason?: string; messag
   return new (require("internal/shared").ConnResetException)("socket hang up");
 }
 
+// What tls.setDefaultCACertificates() was last given, if it has been called.
+let defaultCACertificatesOverride: readonly string[] | undefined;
+// How many of them a `ca` starts with.
+const defaultCACounts = new WeakMap<unknown[], number>();
+
+function getDefaultCACertificatesOverride() {
+  return defaultCACertificatesOverride;
+}
+
+function setDefaultCACertificatesOverride(certificates: string[]) {
+  // Servers have it as their `ca` property.
+  defaultCACertificatesOverride = Object.freeze(certificates);
+  WeakMapPrototypeSet.$call(defaultCACounts, certificates, certificates.length);
+}
+
+function countDefaultCAs(ca: unknown): number {
+  return ($isArray(ca) && WeakMapPrototypeGet.$call(defaultCACounts, ca)) || 0;
+}
+
+function appendCAs(ca: unknown, more: unknown[]) {
+  if (ca == null) return more;
+  const all = $isArray(ca) ? [...ca, ...more] : [ca, ...more];
+  WeakMapPrototypeSet.$call(defaultCACounts, all, countDefaultCAs(ca));
+  return all;
+}
+
 export {
   SSL_OP_CIPHER_SERVER_PREFERENCE,
+  appendCAs,
+  countDefaultCAs,
+  getDefaultCACertificatesOverride,
   nodeClientTlsKeys,
   nodeClientTlsToNative,
   normalizePemKeyOption,
   processPfxOptions,
   secureProtocolToVersionRange,
+  setDefaultCACertificatesOverride,
   stripTls13CipherNames,
   throwOnInvalidTLSArray,
   tlsHandshakeError,

@@ -44,6 +44,7 @@ export const TLSOptions = b.dictionary(
     crl: TLSOptionsFile,
     allowPartialTrustChain: b.bool.default(false),
     caMayBeEmpty: b.bool.default(false),
+    caDefaultCount: b.u32.default(0),
     sessionTimeout: b.i32.allowBigInt.default(0),
     sigalgs: b.string.nullable,
     ecdhCurve: b.string.nullable,

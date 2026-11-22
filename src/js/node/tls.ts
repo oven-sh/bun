@@ -9,6 +9,10 @@ const firstFlightBeforeFin = $bindgen("socket_body.bind.ts", "firstFlightBeforeF
 const { throwNotImplemented } = require("internal/shared");
 const { idnaToASCII } = require("internal/url");
 const {
+  appendCAs,
+  countDefaultCAs,
+  getDefaultCACertificatesOverride,
+  setDefaultCACertificatesOverride,
   throwOnInvalidTLSArray,
   tlsStringToProtocolVersion,
   secureProtocolToVersionRange,
@@ -483,6 +487,7 @@ function newNativeSecureContext(options, cached = false) {
       cert: cert || null,
       ca: ca || null,
       caMayBeEmpty: !!ca,
+      caDefaultCount: countDefaultCAs(ca),
     };
     if (options.sessionTimeout == null) {
       options = { ...options, sessionTimeout: 0 };
@@ -539,8 +544,9 @@ var InternalSecureContext = class SecureContext {
     // process-wide default applies on every construction path (the public
     // createSecureContext(), the connect/TLSSocket path, addContext and
     // setSecureContext), matching Node's secure-context default.
-    if (_defaultCACertificatesOverride !== undefined && (options == null || options.ca == null)) {
-      options = { ...options, ca: _defaultCACertificatesOverride };
+    const defaultCA = getDefaultCACertificatesOverride();
+    if (defaultCA !== undefined && !options?.ca) {
+      options = { ...options, ca: defaultCA };
     }
     if (options) {
       validateSecureContextOptions(options);
@@ -1208,15 +1214,12 @@ function Server(options, secureConnectionListener): void {
       }
       next.key = key;
 
-      let ca = options.ca || undefined;
       // InternalSecureContext applies tls.setDefaultCACertificates() itself; a named pipe listener builds from this field.
-      if (_defaultCACertificatesOverride !== undefined && ca == null) {
-        ca = _defaultCACertificatesOverride;
-      }
+      let ca = options.ca || getDefaultCACertificatesOverride();
       // buildSharedCreds() drops them, so they go into `ca`: an mTLS server verifies clients against the bundle's own CA chain.
       const pfxExtraCAs = options._pfxExtraCACerts;
       if (pfxExtraCAs?.length) {
-        ca = ca == null ? pfxExtraCAs : Array.isArray(ca) ? [...ca, ...pfxExtraCAs] : [ca, ...pfxExtraCAs];
+        ca = appendCAs(ca, pfxExtraCAs);
       }
       if (ca) {
         throwOnInvalidTLSArray("options.ca", ca);
@@ -1323,6 +1326,7 @@ function Server(options, secureConnectionListener): void {
         cert: this.cert,
         ca: this.ca,
         caMayBeEmpty: !!this.ca,
+        caDefaultCount: countDefaultCAs(this.ca),
         crl: this.crl,
         allowPartialTrustChain: this.allowPartialTrustChain,
         sessionTimeout: this.sessionTimeout ?? 0,
@@ -1632,13 +1636,6 @@ function cacheExtraCACertificates(): string[] {
   return extraCACertificates;
 }
 
-// Runtime override for the "default" CA certificate set, installed by
-// tls.setDefaultCACertificates(). undefined = no override (use the real
-// bundled/system default). Only affects type "default"/implicit — "bundled",
-// "system" and "extra" are unchanged.
-// https://github.com/nodejs/node/blob/main/lib/internal/tls/secure-context.js
-let _defaultCACertificatesOverride: Array<string> | undefined;
-
 type CACertInput = string | NodeJS.ArrayBufferView;
 // tls.setDefaultCACertificates(certs)
 // https://github.com/nodejs/node/blob/v25.2.1/lib/tls.js#L202
@@ -1673,7 +1670,7 @@ function setDefaultCACertificates(certs: ReadonlyArray<CACertInput>): void {
   if (normalized.length === 0 && snapshot.length > 0) {
     throw $ERR_CRYPTO_OPERATION_FAILED("No valid certificates found in the provided array");
   }
-  _defaultCACertificatesOverride = normalized;
+  setDefaultCACertificatesOverride(normalized);
 }
 
 function getCACertificates(type = "default") {
@@ -1681,10 +1678,7 @@ function getCACertificates(type = "default") {
 
   switch (type) {
     case "default":
-      if (_defaultCACertificatesOverride !== undefined) {
-        return _defaultCACertificatesOverride.slice();
-      }
-      return cacheDefaultCACertificates();
+      return getDefaultCACertificatesOverride()?.slice() ?? cacheDefaultCACertificates();
     case "bundled":
       return cacheBundledRootCertificates();
     case "system":

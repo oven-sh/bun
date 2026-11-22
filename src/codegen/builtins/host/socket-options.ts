@@ -52,6 +52,7 @@ export const tlsOptionNames = [
   "crl",
   "allowPartialTrustChain",
   "caMayBeEmpty",
+  "caDefaultCount",
   "sessionTimeout",
   "sigalgs",
   "ecdhCurve",

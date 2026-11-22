@@ -5103,7 +5103,7 @@ pub(crate) mod ret {
     impl ReadFileWithOptions {
         pub(super) fn null_terminated(bytes: &[u8]) -> Self {
             Self::NullTerminated(
-                (!bytes.is_empty()).then(|| bun_core::SensitiveCString::new(bytes)),
+                (!bytes.is_empty()).then(|| bun_core::SensitiveCString::from_pem(bytes)),
             )
         }
     }

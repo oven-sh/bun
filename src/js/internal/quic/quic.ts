@@ -53,7 +53,9 @@ const StringPrototypeStartsWith = uncurryThis(String.prototype.startsWith);
 const StringPrototypeIncludes = uncurryThis(String.prototype.includes);
 const NumberIsInteger = Number.isInteger;
 const NumberIsNaN = Number.isNaN;
+const ArrayPrototypeJoin = uncurryThis(Array.prototype.join);
 const ArrayPrototypePush = uncurryThis(Array.prototype.push);
+const ArrayPrototypeSlice = uncurryThis(Array.prototype.slice);
 const ErrorCaptureStackTrace = Error.captureStackTrace;
 const FunctionPrototypeBind = uncurryThis(Function.prototype.bind);
 const ObjectDefineProperties = Object.defineProperties;
@@ -5033,6 +5035,18 @@ interface SharedTlsOptions {
   crl: TlsCertificateInput | undefined;
 }
 
+// No `ca` stands for the default roots, and so does an empty one, in place of those before it.
+function withDefaultCAOverride(ca: TlsCertificateInput | undefined): TlsCertificateInput | undefined {
+  const override = require("internal/tls").getDefaultCACertificatesOverride();
+  if (override === undefined) return ca;
+  const inputs = ca === undefined ? [] : ArrayIsArray(ca) ? ca : [ca];
+  let kept = inputs.length;
+  while (kept > 0 && inputs[kept - 1].byteLength !== 0) kept--;
+  if (kept === 0 && inputs.length !== 0) return ca;
+  // Not empty, even without certificates.
+  return [Buffer.from(ArrayPrototypeJoin(override, "") + "\n"), ...ArrayPrototypeSlice(inputs, kept)];
+}
+
 function processTlsOptions(tls, forServer) {
   const {
     servername,
@@ -5120,7 +5134,7 @@ function processTlsOptions(tls, forServer) {
     rejectUnauthorized,
     enableEarlyData,
     tlsTrace,
-    ca,
+    ca: withDefaultCAOverride(ca),
     crl,
   };
 

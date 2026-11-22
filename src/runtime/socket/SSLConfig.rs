@@ -50,8 +50,15 @@ impl From<JsError> for ReadFromBlobError {
 type CStrSlice = Option<Box<[SensitiveCString]>>;
 
 fn from_string(string: &bun_core::String) -> SensitiveCString {
+    from_string_with(string, SensitiveCString::new)
+}
+
+fn from_string_with(
+    string: &bun_core::String,
+    copy: fn(&[u8]) -> SensitiveCString,
+) -> SensitiveCString {
     let mut utf8 = string.to_utf8();
-    let copy = SensitiveCString::new(utf8.slice());
+    let copy = copy(utf8.slice());
     if let bun_core::Utf8Bytes::Owned(transcoded) = &mut utf8 {
         bun_core::secure_zero(transcoded);
     }
@@ -226,6 +233,7 @@ impl SSLConfigFromJs for SSLConfig {
             session_timeout: generated.session_timeout,
             allow_partial_trust_chain: generated.allow_partial_trust_chain,
             ca_may_be_empty: generated.ca_may_be_empty,
+            ca_default_count: generated.ca_default_count,
             sigalgs,
             ecdh_curve,
             ssl_min_version: generated.ssl_min_version,
@@ -404,10 +412,10 @@ fn handle_single_file(
     file: SingleFile<'_>,
 ) -> Result<SensitiveCString, ReadFromBlobError> {
     match file {
-        SingleFile::String(string) => Ok(from_string(string)),
+        SingleFile::String(string) => Ok(from_string_with(string, SensitiveCString::from_pem)),
         SingleFile::Buffer(jsc_buffer) => {
             let buffer: jsc::ArrayBuffer = jsc_buffer.as_array_buffer();
-            Ok(SensitiveCString::new(buffer.byte_slice()))
+            Ok(SensitiveCString::from_pem(buffer.byte_slice()))
         }
         SingleFile::File(blob) => read_from_blob(global, blob),
     }

@@ -310,18 +310,25 @@ impl SecureContext {
                 "cannot mutate a shared SecureContext; use tls.createSecureContext()"
             )));
         }
-        let pem = cert.to_js().to_utf8(global)?;
-        let bytes = pem.slice();
-        // The C side wants a NUL-terminated PEM document.
-        let mut owned = bytes.to_vec();
-        owned.push(0);
-        // SAFETY: `self.ctx` is the live SSL_CTX this object owns a reference
-        // to, and `owned` is a NUL-terminated buffer valid for the call.
+        let cert = cert.to_js();
+        let string;
+        let copy;
+        let bytes: &[u8] = if cert.is_string_literal() {
+            string = cert.to_utf8(global)?;
+            string.slice()
+        } else if let Some(view) = cert.as_array_buffer(global)
+            && view.typed_array_type != bun_jsc::JSType::ArrayBuffer
+        {
+            // It is read more than once, and the buffer can be shared.
+            copy = view.byte_slice().to_vec();
+            &copy
+        } else {
+            // https://github.com/nodejs/node/blob/v26.12.1/src/crypto/crypto_context.cc#L128
+            return Ok(());
+        };
+        // SAFETY: `self.ctx` is the live SSL_CTX this object owns a reference to, and the call only reads `bytes`.
         let ok = unsafe {
-            c::us_ssl_ctx_add_ca_cert(
-                self.ctx.as_ptr(),
-                owned.as_ptr().cast::<core::ffi::c_char>(),
-            )
+            c::us_ssl_ctx_add_ca_cert(self.ctx.as_ptr(), bytes.as_ptr().cast(), bytes.len())
         };
         if ok == 0 {
             return Err(global.throw_out_of_memory());

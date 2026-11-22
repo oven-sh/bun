@@ -87,6 +87,7 @@ namespace uWS {
         unsigned int crl_count = 0;
         int allow_partial_trust_chain = 0;
         int ca_may_be_empty = 0;
+        unsigned int ca_default_count = 0;
         const char *sigalgs = nullptr;
         const char *ecdh_curve = nullptr;
 

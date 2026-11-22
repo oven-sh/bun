@@ -219,7 +219,7 @@ JSC_DEFINE_HOST_FUNCTION(parseCACertificates, (JSC::JSGlobalObject * globalObjec
     });
     RETURN_IF_EXCEPTION(scope, {});
 
-    // Pass 2: us_pem_read_ca over each span. ncrypto's RAII pointers own
+    // Pass 2: a us_ca_reader over each span. ncrypto's RAII pointers own
     // the BIO/X509 so no manual cleanup is interleaved with error checks; any
     // BoringSSL error is recorded and thrown below, after all RAII scopes exit.
     // No user JS runs in this pass (nothing here dispatches to JS), so a view's
@@ -249,7 +249,8 @@ JSC_DEFINE_HOST_FUNCTION(parseCACertificates, (JSC::JSGlobalObject * globalObjec
             oom = true;
             break;
         }
-        while (auto x509 = ncrypto::X509Pointer(us_pem_read_ca(bio.get(), 0, nullptr))) {
+        us_ca_reader reader { bio.get(), us_ca_trust::ignored };
+        while (auto x509 = ncrypto::X509Pointer(reader.next())) {
             std::array<uint8_t, SHA_DIGEST_LENGTH> fingerprint;
             auto out = ncrypto::BIOPointer::NewMem();
             if (!out || PEM_write_bio_X509(out.get(), x509.get()) != 1 || X509_digest(x509.get(), EVP_sha1(), fingerprint.data(), nullptr) != 1) {

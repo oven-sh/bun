@@ -119,6 +119,7 @@ pub struct BunSocketContextOptions {
     pub crl_count: u32,
     pub allow_partial_trust_chain: i32,
     pub ca_may_be_empty: i32,
+    pub ca_default_count: u32,
     pub sigalgs: *const c_char,
     pub ecdh_curve: *const c_char,
 }
@@ -151,6 +152,7 @@ impl Default for BunSocketContextOptions {
             crl_count: 0,
             allow_partial_trust_chain: 0,
             ca_may_be_empty: 0,
+            ca_default_count: 0,
             sigalgs: ptr::null(),
             ecdh_curve: ptr::null(),
         }
@@ -265,6 +267,7 @@ impl BunSocketContextOptions {
         feed_arr(&mut h, self.crl, self.crl_count);
         h.update(bun_core::bytes_of(&self.allow_partial_trust_chain));
         h.update(bun_core::bytes_of(&self.ca_may_be_empty));
+        h.update(bun_core::bytes_of(&self.ca_default_count));
         feed_z(&mut h, self.sigalgs);
         feed_z(&mut h, self.ecdh_curve);
         let mut out = [0u8; 32];
@@ -335,11 +338,12 @@ pub mod c {
         ) -> *mut SSL_CTX;
         // safe: no args; reads a process-global counter — no preconditions.
         pub safe fn us_ssl_ctx_live_count() -> c_long;
-        /// Appends the certificates in the NUL-terminated PEM `content` to
-        /// `ctx`'s trust store; returns 0 when there is no memory.
+        /// Appends the certificates in the PEM `content` to `ctx`'s trust
+        /// store; returns 0 when there is no memory.
         pub fn us_ssl_ctx_add_ca_cert(
             ctx: *mut SSL_CTX,
             content: *const core::ffi::c_char,
+            len: usize,
         ) -> core::ffi::c_int;
         /// Parses a PKCS#12 blob into malloc'd PEM key/cert/ca strings (the
         /// caller frees them with libc free); returns 0 with a static

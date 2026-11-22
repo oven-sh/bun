@@ -1,4 +1,4 @@
-use core::ffi::c_int;
+use core::ffi::{c_char, c_int};
 
 use bun_boringssl_sys as ssl;
 use bun_jsc::{JSGlobalObject, JSValue, JsResult, StringJsc};
@@ -318,9 +318,6 @@ unsafe fn load_private_key(ctx: &ssl::SSL_CTX, pem: &[u8]) -> Result<(), &'stati
     Ok(())
 }
 
-const X509_V_FLAG_CRL_CHECK: core::ffi::c_ulong = 0x4;
-/// `X509_V_FLAG_CRL_CHECK_ALL` — also check intermediate CAs (Node sets both).
-const X509_V_FLAG_CRL_CHECK_ALL: core::ffi::c_ulong = 0x8;
 /// `X509_V_FLAG_IGNORE_EXPIRED_TRUST_ANCHORS` (oven-sh/boringssl) — as every other Bun SSL_CTX: an expired CA in the
 /// trust set does not shadow the valid certificate for the same issuer that the peer sends.
 const X509_V_FLAG_IGNORE_EXPIRED_TRUST_ANCHORS: core::ffi::c_ulong = 0x40000000;
@@ -328,35 +325,39 @@ const X509_V_FLAG_IGNORE_EXPIRED_TRUST_ANCHORS: core::ffi::c_ulong = 0x40000000;
 /// SAFETY: `ctx` is not shared yet.
 unsafe fn load_crl_store(ctx: &ssl::SSL_CTX, pem: &[u8]) -> Result<(), &'static str> {
     let store = ssl::SSL_CTX_get_cert_store(ctx).expect("a new SSL_CTX has a store");
-    let bio = ssl::MemBio::new(pem).ok_or("failed to allocate BIO for CRL")?;
-    let mut added = 0;
-    while let Some(crl) = bio.read_x509_crl() {
-        if ssl::X509_STORE_add_crl(store, &crl) != 1 {
-            ssl::ERR_clear_error();
-            return Err("failed to add CRL to trust store");
-        }
-        added += 1;
+    // SAFETY: fn contract; it only reads `pem`.
+    if unsafe { us_x509_store_add_crls(store, pem.as_ptr().cast(), pem.len()) } != 1 {
+        ssl::ERR_clear_error();
+        return Err("Invalid CRL");
     }
-    ssl::ERR_clear_error();
-    if added == 0 {
-        return Err("CRL PEM contained no revocation lists");
-    }
-    // SAFETY: fn contract.
-    unsafe { ssl::X509_STORE_set_flags(store, X509_V_FLAG_CRL_CHECK | X509_V_FLAG_CRL_CHECK_ALL) };
     Ok(())
 }
 
-fn load_ca_store(ctx: &ssl::SSL_CTX, pem: &[u8]) -> Result<(), &'static str> {
-    let store = ssl::SSL_CTX_get_cert_store(ctx).expect("a new SSL_CTX has a store");
-    let bio = ssl::MemBio::new(pem).ok_or("failed to allocate BIO for CA")?;
-    // SAFETY: `bio` is live, and the encoding is not asked for.
-    while let Some(cert) = unsafe { us_pem_read_ca(bio.as_ptr(), 1, core::ptr::null_mut()) } {
-        if ssl::X509_STORE_add_cert(store, &cert) != 1 {
-            ssl::ERR_clear_error();
-            return Err("failed to add CA certificate to trust store");
-        }
+/// SAFETY: `ctx` is not shared yet.
+unsafe fn use_default_ca_store(ctx: &ssl::SSL_CTX) -> Result<(), &'static str> {
+    let store = us_get_default_ca_store();
+    if store.is_null() {
+        return Err("failed to load the default CA certificates");
     }
-    ssl::ERR_clear_error();
+    // SAFETY: fn contract; `ctx` takes the reference to `store`.
+    unsafe { ssl::SSL_CTX_set_cert_store(ctx, store) };
+    Ok(())
+}
+
+/// https://github.com/nodejs/node/blob/v26.12.1/src/quic/tlscontext.cc#L599-L615
+///
+/// SAFETY: `ctx` is not shared yet.
+unsafe fn load_ca_store(ctx: &ssl::SSL_CTX, pem: &[u8]) -> Result<(), &'static str> {
+    if pem.is_empty() {
+        // SAFETY: fn contract.
+        return unsafe { use_default_ca_store(ctx) };
+    }
+    let store = ssl::SSL_CTX_get_cert_store(ctx).expect("a new SSL_CTX has a store");
+    // SAFETY: it only reads `pem`.
+    if unsafe { us_x509_store_add_cas(store, None, pem.as_ptr().cast(), pem.len()) } != 1 {
+        ssl::ERR_clear_error();
+        return Err("failed to add CA certificate to trust store");
+    }
     Ok(())
 }
 
@@ -399,7 +400,7 @@ impl TlsContext {
                 }
             }
             if config.ca_pem.is_empty() {
-                ssl::SSL_CTX_set_default_verify_paths(ctx);
+                use_default_ca_store(&this.ctx)?;
             }
 
             // Node pairs `certs[i]` with `keys[i]`.
@@ -524,12 +525,16 @@ unsafe extern "C" {
     fn us_ssl_ctx_set_verify_signature_algorithms(ctx: *mut ssl::SSL_CTX) -> c_int;
     /// openssl.cpp: the blocked public keys every other TLS context of Bun rejects in a peer's chain.
     fn us_ssl_ctx_reject_blocked_keys(ctx: *mut ssl::SSL_CTX);
-    /// root_certs.cpp: how every other TLS context of Bun reads `ca`.
-    fn us_pem_read_ca(
-        bio: *mut ssl::BIO,
-        with_trust: c_int,
-        out_der: *mut *mut ssl::CRYPTO_BUFFER,
-    ) -> Option<ssl::OwnedX509>;
+    /// root_certs.cpp: a new store, or null.
+    safe fn us_get_default_ca_store() -> *mut ssl::X509_STORE;
+    /// ca_pem.cpp: how every other TLS context of Bun reads `ca` and `crl`.
+    fn us_x509_store_add_cas(
+        store: &ssl::X509_STORE,
+        names: Option<&ssl::SSL_CTX>,
+        pem: *const c_char,
+        len: usize,
+    ) -> c_int;
+    fn us_x509_store_add_crls(store: &ssl::X509_STORE, pem: *const c_char, len: usize) -> c_int;
 }
 
 /// node's `X509_V_ERR_UNSPECIFIED`, reported when a peer sent no certificate

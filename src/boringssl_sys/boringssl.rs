@@ -370,7 +370,6 @@ macro_rules! owned_handle {
 owned_handle! {
     OwnedSslSession(SSL_SESSION) => SSL_SESSION_free;
     OwnedX509(X509) => X509_free;
-    OwnedX509Crl(X509_CRL) => X509_CRL_free;
     OwnedX509Store(X509_STORE) => X509_STORE_free;
     OwnedEvpPkey(EVP_PKEY) => EVP_PKEY_free;
 }
@@ -495,10 +494,6 @@ impl<'a> MemBio<'a> {
     /// Also accepts a `TRUSTED CERTIFICATE` block.
     pub fn read_x509_aux(&self) -> Option<OwnedX509> {
         self.read_pem(PEM_read_bio_X509_AUX).map(OwnedX509)
-    }
-
-    pub fn read_x509_crl(&self) -> Option<OwnedX509Crl> {
-        self.read_pem(PEM_read_bio_X509_CRL).map(OwnedX509Crl)
     }
 
     pub fn read_private_key(&self) -> Option<OwnedEvpPkey> {
@@ -1095,10 +1090,6 @@ opaque!(
     X509_STORE_CTX
 );
 opaque!(
-    /// `struct X509_crl_st` (`typedef ... X509_CRL`).
-    X509_CRL
-);
-opaque!(
     /// `struct rsa_st` (`typedef ... RSA`).
     RSA
 );
@@ -1157,7 +1148,7 @@ unsafe extern "C" {
     pub fn SSL_set_renegotiate_mode(ssl: *mut SSL, mode: ssl_renegotiate_mode_t);
     pub fn SSL_renegotiate(ssl: *mut SSL) -> c_int;
     pub fn SSL_get_servername(ssl: *const SSL, ty: c_int) -> *const c_char;
-    pub fn SSL_CTX_set_default_verify_paths(ctx: *mut SSL_CTX) -> c_int;
+    pub fn SSL_CTX_set_cert_store(ctx: &SSL_CTX, store: *mut X509_STORE);
     pub fn SSL_CTX_set_alpn_protos(
         ctx: *mut SSL_CTX,
         protos: *const u8,
@@ -1365,17 +1356,6 @@ unsafe extern "C" {
 
     pub fn SSL_get_verify_result(ssl: *const SSL) -> c_long;
 
-    /// Reads the next PEM block whose type is `expected_name` (e.g. `c"CERTIFICATE"`), skipping others, and
-    /// returns its decoded (and, with `cb`, decrypted) payload without parsing it.
-    pub fn PEM_bytes_read_bio(
-        out_data: *mut *mut u8,
-        out_len: *mut c_long,
-        out_name: *mut *mut c_char,
-        expected_name: *const c_char,
-        bio: *mut BIO,
-        cb: Option<pem_password_cb>,
-        userdata: *mut c_void,
-    ) -> c_int;
     fn CRYPTO_BUFFER_new(
         data: *const u8,
         len: usize,
@@ -1388,7 +1368,6 @@ unsafe extern "C" {
         certs: *const *mut CRYPTO_BUFFER,
         num_certs: usize,
     ) -> *mut X509_LAZY_CERT_SET;
-    pub fn X509_LAZY_CERT_SET_can_index(der: *const u8, len: usize) -> c_int;
     pub safe fn X509_get_default_cert_file() -> *const c_char;
     pub safe fn X509_get_default_cert_dir() -> *const c_char;
     fn PEM_read_bio_X509(
@@ -1408,9 +1387,6 @@ unsafe extern "C" {
     /// Returns a static NUL-terminated string, never NULL.
     pub safe fn X509_verify_cert_error_string(err: c_long) -> *const c_char;
 
-    pub safe fn X509_STORE_add_cert(store: &X509_STORE, x509: &X509) -> c_int;
-    pub safe fn X509_STORE_add_crl(store: &X509_STORE, crl: &X509_CRL) -> c_int;
-    pub fn X509_STORE_set_flags(store: &X509_STORE, flags: c_ulong) -> c_int;
     fn X509_STORE_free(store: *mut X509_STORE);
     safe fn X509_STORE_CTX_new() -> *mut X509_STORE_CTX;
     fn X509_STORE_CTX_init(
@@ -1427,13 +1403,6 @@ unsafe extern "C" {
         x: &X509,
     ) -> c_int;
     pub fn X509_VERIFY_PARAM_set_flags(param: *mut c_void, flags: c_ulong) -> c_int;
-    fn X509_CRL_free(crl: *mut X509_CRL);
-    fn PEM_read_bio_X509_CRL(
-        bp: *mut BIO,
-        x: *mut *mut X509_CRL,
-        cb: Option<pem_password_cb>,
-        u: *mut c_void,
-    ) -> *mut X509_CRL;
 
     /// `None` when the peer sent no certificate.
     safe fn SSL_get_peer_certificate(ssl: &SSL) -> Option<OwnedX509>;

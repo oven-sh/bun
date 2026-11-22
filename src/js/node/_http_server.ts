@@ -354,13 +354,13 @@ function Server(options, callback): void {
       tlsHelpers.throwOnInvalidTLSArray("options.key", key);
     }
 
-    let ca = tlsOptions.ca;
+    let ca = tlsOptions.ca || tlsHelpers?.getDefaultCACertificatesOverride();
     // PKCS#12-embedded CAs extend the trust set; the server path hands raw
     // {key, cert, ca} to the native config and has no addCACert hook, so fold
     // them into `ca` (mirrors tls.Server.setSecureContext).
     const pfxExtraCAs = tlsOptions._pfxExtraCACerts;
     if (pfxExtraCAs?.length) {
-      ca = ca == null ? pfxExtraCAs : $isArray(ca) ? [...ca, ...pfxExtraCAs] : [ca, ...pfxExtraCAs];
+      ca = tlsHelpers.appendCAs(ca, pfxExtraCAs);
     }
     if (ca) {
       tlsHelpers.throwOnInvalidTLSArray("options.ca", ca);
@@ -421,8 +421,9 @@ function Server(options, callback): void {
         serverName,
         key: tlsHelpers.normalizePemKeyOption(key, passphrase),
         cert,
-        ca: ca || undefined,
+        ca,
         caMayBeEmpty: !!ca,
+        caDefaultCount: tlsHelpers.countDefaultCAs(ca),
         crl,
         sessionTimeout: sessionTimeout ?? 0,
         sigalgs: options.sigalgs,

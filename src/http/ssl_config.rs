@@ -34,6 +34,7 @@ pub struct SSLConfig {
     pub session_timeout: i32,
     pub allow_partial_trust_chain: bool,
     pub ca_may_be_empty: bool,
+    pub ca_default_count: u32,
     pub sigalgs: Option<SensitiveCString>,
     pub ecdh_curve: Option<SensitiveCString>,
     /// Minimum/maximum TLS protocol version (TLS1_VERSION..TLS1_3_VERSION); 0 = unset/default.
@@ -109,6 +110,7 @@ impl SSLConfig {
         session_timeout: 0,
         allow_partial_trust_chain: false,
         ca_may_be_empty: false,
+        ca_default_count: 0,
         sigalgs: None,
         ecdh_curve: None,
         ssl_min_version: 0,
@@ -213,6 +215,7 @@ impl SSLConfig {
         ctx_opts.session_timeout = self.session_timeout;
         ctx_opts.allow_partial_trust_chain = i32::from(self.allow_partial_trust_chain);
         ctx_opts.ca_may_be_empty = i32::from(self.ca_may_be_empty);
+        ctx_opts.ca_default_count = self.ca_default_count;
         if let Some(sigalgs) = &self.sigalgs {
             ctx_opts.sigalgs = sigalgs.as_ptr();
         }
@@ -264,6 +267,7 @@ impl SSLConfig {
             && self.session_timeout == other.session_timeout
             && self.allow_partial_trust_chain == other.allow_partial_trust_chain
             && self.ca_may_be_empty == other.ca_may_be_empty
+            && self.ca_default_count == other.ca_default_count
             && self.sigalgs == other.sigalgs
             && self.ecdh_curve == other.ecdh_curve
             && self.ssl_min_version == other.ssl_min_version
@@ -321,6 +325,7 @@ impl SSLConfig {
         hasher.update(&self.session_timeout.to_ne_bytes());
         hasher.update(&[self.allow_partial_trust_chain as u8]);
         hasher.update(&[self.ca_may_be_empty as u8]);
+        hasher.update(&self.ca_default_count.to_ne_bytes());
         hash_cstr!(sigalgs);
         hash_cstr!(ecdh_curve);
         hasher.update(&self.ssl_min_version.to_ne_bytes());
@@ -374,6 +379,7 @@ impl Clone for SSLConfig {
             session_timeout: self.session_timeout,
             allow_partial_trust_chain: self.allow_partial_trust_chain,
             ca_may_be_empty: self.ca_may_be_empty,
+            ca_default_count: self.ca_default_count,
             sigalgs: self.sigalgs.clone(),
             ecdh_curve: self.ecdh_curve.clone(),
             ssl_min_version: self.ssl_min_version,

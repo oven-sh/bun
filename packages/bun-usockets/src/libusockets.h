@@ -529,6 +529,8 @@ struct us_bun_socket_context_options_t {
     int allow_partial_trust_chain;
     /* `ca` was given, and trusts nothing if it holds no certificate, as in Node. */
     int ca_may_be_empty;
+    /* How many of `ca`, from the start, stand in for the default roots, which a server does not name to its clients. */
+    unsigned int ca_default_count;
     /* Colon-separated signature algorithm list applied via
      * SSL_CTX_set1_sigalgs_list. */
     const char *sigalgs;
@@ -571,7 +573,7 @@ int us_socket_alpn_is_h2(us_socket_r s);
 long us_ssl_ctx_live_count(void);
 /* Appends the certificates in the PEM `content` to `ctx`'s trust store;
  * returns 0 when there is no memory. */
-int us_ssl_ctx_add_ca_cert(struct ssl_ctx_st *ctx, const char *content);
+int us_ssl_ctx_add_ca_cert(struct ssl_ctx_st *ctx, const char *content, size_t len);
 /* The client half of us_internal_ssl_attach, for an SSL that no us_socket_t drives. */
 void us_internal_ssl_client_verify_defaults(struct ssl_st *ssl, struct ssl_ctx_st *ctx);
 /* 1 when the verify step of this handshake asked the owner for the server's name. */

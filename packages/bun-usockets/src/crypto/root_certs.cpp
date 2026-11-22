@@ -22,8 +22,6 @@
 extern "C" void BUN__warn__extra_ca_load_failed(const char* filename, const char* error_msg);
 
 // src/runtime/socket/cert_files.rs: this file keeps to BoringSSL and takes file contents from Rust.
-typedef void (*us_on_cert_file)(void *ctx, const uint8_t *data, size_t len);
-extern "C" int Bun__readCertificateFile(const char *path, void *ctx, us_on_cert_file on_file);
 extern "C" void Bun__readOpenSSLDefaultCertFile(const char *default_path, void *ctx, us_on_cert_file on_file);
 
 // A read-only memory BIO over an owned copy of the file. (A writable BIO_s_mem() would memmove the rest of the buffer
@@ -73,40 +71,9 @@ extern "C" int us_no_password_callback(char *buf, int size, int rwflag, void *u)
   return 0;
 }
 
-extern "C" X509 *us_pem_read_ca(BIO *in, int with_trust, CRYPTO_BUFFER **out_der) {
-  // An entry can withdraw trust, so it must not pass for malformed, or for the end, because memory ran out.
-  auto check_memory = [] {
-    if (ERR_equals(ERR_peek_error(), ERR_LIB_CRYPTO, ERR_R_MALLOC_FAILURE)) Bun__outOfMemory();
-  };
-  for (;;) {
-    ERR_clear_error();
-    uint8_t *out = nullptr;
-    long len = 0;
-    if (!PEM_bytes_read_bio(&out, &len, nullptr, with_trust ? PEM_STRING_X509_TRUSTED : PEM_STRING_X509, in,
-                            us_no_password_callback, nullptr)) {
-      check_memory();
-      return nullptr;
-    }
-    us_unique_ptr<uint8_t, OPENSSL_free> block{out};
-    const uint8_t *end = out;
-    us_unique_ptr<X509, X509_free> cert{(with_trust ? d2i_X509_AUX : d2i_X509)(nullptr, &end, len)};
-    if (cert != nullptr) {
-      if (out_der != nullptr && (*out_der = CRYPTO_BUFFER_new(out, end - out, nullptr)) == nullptr) Bun__outOfMemory();
-      return cert.release();
-    }
-    check_memory();
-    ERR_clear_error();
-    if (!X509_LAZY_CERT_SET_can_index(out, len)) {
-      check_memory();
-      OPENSSL_PUT_ERROR(PEM, ERR_R_ASN1_LIB);
-      return nullptr;
-    }
-  }
-}
-
 // As in Node, what comes before an error is kept.
 static STACK_OF(X509) *us_ssl_ctx_load_all_certs_from_file(const char *filename) {
-  BIO *in = NULL;
+  us_ca_reader reader{NULL, us_ca_trust::ignored};
   us_x509_stack_ptr certs;
   unsigned long last_err;
 
@@ -117,8 +84,8 @@ static STACK_OF(X509) *us_ssl_ctx_load_all_certs_from_file(const char *filename)
     BUN__warn__extra_ca_load_failed(filename, strerror(err));
     return NULL;
   }
-  in = file.bio.get();
-  if (in == NULL) {
+  reader.in = file.bio.get();
+  if (reader.in == NULL) {
     OPENSSL_PUT_ERROR(SSL, ERR_R_MALLOC_FAILURE);
     goto end;
   }
@@ -129,7 +96,7 @@ static STACK_OF(X509) *us_ssl_ctx_load_all_certs_from_file(const char *filename)
     goto end;
   }
 
-  while (us_unique_ptr<X509, X509_free> x{us_pem_read_ca(in, 0, NULL)}) {
+  while (us_unique_ptr<X509, X509_free> x{reader.next()}) {
     if (!sk_X509_push(certs.get(), x.get())) {
       OPENSSL_PUT_ERROR(SSL, ERR_R_MALLOC_FAILURE);
       goto end;
@@ -141,6 +108,9 @@ static STACK_OF(X509) *us_ssl_ctx_load_all_certs_from_file(const char *filename)
   // Ignore error if its EOF/no start line found.
   if (ERR_GET_LIB(last_err) == ERR_LIB_PEM && ERR_GET_REASON(last_err) == PEM_R_NO_START_LINE) {
     ERR_clear_error();
+    if (reader.passed_over) {
+      BUN__warn__extra_ca_load_failed(filename, "only those that BoringSSL can parse were loaded");
+    }
     return certs.release();
   }
 
@@ -210,17 +180,6 @@ struct us_openssl_default_cert_file {
   STACK_OF(X509_CRL) *crls = nullptr;
 };
 
-struct us_pem_block {
-  char *name = nullptr, *header = nullptr;
-  uint8_t *data = nullptr;
-  long len = 0;
-  ~us_pem_block() {
-    OPENSSL_free(name);
-    OPENSSL_free(header);
-    OPENSSL_free(data);
-  }
-};
-
 struct us_crypto_buffers : std::vector<CRYPTO_BUFFER *> {
   ~us_crypto_buffers() {
     for (CRYPTO_BUFFER *buf : *this) CRYPTO_BUFFER_free(buf);
@@ -251,44 +210,37 @@ static const us_openssl_default_cert_file &us_get_openssl_default_cert_file() {
     us_crypto_buffers certs;
     us_x509_stack_ptr trusted{sk_X509_new_null()};
     us_unique_ptr<STACK_OF(X509_CRL), us_x509_crl_stack_free> crls{sk_X509_CRL_new_null()};
-    auto add_lazily = [&](const uint8_t *der, size_t der_len) {
-      CRYPTO_BUFFER *buf = CRYPTO_BUFFER_new(der, der_len, nullptr);
-      if (buf != nullptr) certs.push_back(buf);
-      return buf != nullptr;
-    };
     bool ok = trusted != nullptr && crls != nullptr;
     while (ok) {
       us_pem_block block;
-      auto &[name, header, data, len] = block;
-      if (!PEM_read_bio(in, &name, &header, &data, &len)) {
+      if (!block.read(in)) {
         // Running out of blocks is the normal end; anything else fails the whole file, as PEM_X509_INFO_read_bio does.
         uint32_t pem_err = ERR_peek_last_error();
         ok = ERR_GET_LIB(pem_err) == ERR_LIB_PEM && ERR_GET_REASON(pem_err) == PEM_R_NO_START_LINE;
         break;
       }
-      const uint8_t *p = data;
-      bool recognized = strcmp(name, PEM_STRING_X509) == 0 || strcmp(name, PEM_STRING_X509_OLD) == 0 ||
-                        strcmp(name, PEM_STRING_X509_TRUSTED) == 0 || strcmp(name, PEM_STRING_X509_CRL) == 0;
-      if (recognized && header[0] != '\0') {
-        // An encrypted certificate/CRL block cannot be decrypted without a passphrase; other block types (e.g. an
-        // encrypted private key sharing the file) are skipped, headers and all, as PEM_X509_INFO_read_bio does.
-        ok = false;
-      } else if (strcmp(name, PEM_STRING_X509) == 0 || strcmp(name, PEM_STRING_X509_OLD) == 0) {
-        // What follows the certificate is ignored, as by d2i_X509.
-        CBS rest, cert;
-        CBS_init(&rest, data, len);
-        ok = CBS_get_asn1_element(&rest, &cert, CBS_ASN1_SEQUENCE) &&
-             (bundled.count(std::string_view(reinterpret_cast<const char *>(data), CBS_len(&cert))) ||
-              add_lazily(data, CBS_len(&cert)));
-      } else if (strcmp(name, PEM_STRING_X509_TRUSTED) == 0) {
-        us_unique_ptr<X509, X509_free> cert{d2i_X509_AUX(nullptr, &p, len)};
-        ok = cert != nullptr && (whole_file ? add_lazily(data, p - data) : sk_X509_push(trusted.get(), cert.get()));
-        if (ok && !whole_file) cert.release();
-      } else if (strcmp(name, PEM_STRING_X509_CRL) == 0) {
-        us_unique_ptr<X509_CRL, X509_CRL_free> crl{d2i_X509_CRL(nullptr, &p, len)};
-        ok = crl != nullptr && sk_X509_CRL_push(crls.get(), crl.get());
-        if (ok) crl.release();
+      // Other block types (e.g. an encrypted private key sharing the file) are skipped, headers and all.
+      if (!block.is_plain_certificate() && !block.is(PEM_STRING_X509_TRUSTED) && !block.is(PEM_STRING_X509_CRL)) {
+        continue;
       }
+      bool malformed = false;
+      CRYPTO_BUFFER *der = nullptr;
+      if (!block.decrypt()) {
+        malformed = true;
+      } else if (block.is_plain_certificate()) {
+        if (bundled.count(std::string_view(reinterpret_cast<const char *>(block.data), block.len))) continue;
+        size_t len = block.indexable_ca_len(&malformed);
+        if (len != 0 && (der = CRYPTO_BUFFER_new(block.data, len, nullptr)) == nullptr) Bun__outOfMemory();
+      } else if (block.is(PEM_STRING_X509_TRUSTED)) {
+        us_unique_ptr<X509, X509_free> cert{block.parse_ca(us_ca_trust::read, whole_file ? &der : nullptr, &malformed)};
+        if (cert != nullptr && !whole_file && !sk_X509_push(trusted.get(), cert.release())) Bun__outOfMemory();
+      } else {
+        us_unique_ptr<X509_CRL, X509_CRL_free> crl{block.parse_crl()};
+        malformed = crl == nullptr;
+        if (crl != nullptr && !sk_X509_CRL_push(crls.get(), crl.release())) Bun__outOfMemory();
+      }
+      if (der != nullptr) certs.push_back(der);
+      ok = !malformed;
     }
     ERR_clear_error();
 

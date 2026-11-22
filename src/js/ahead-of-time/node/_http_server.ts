@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/_http_server.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 8c4fd23dfec095cb95e23713f8a3e801bf6fb13942a8d789e49d06e42a04f01d.
+// Written against that file with the SHA-256 126ba1440b6758148a217dd5cae65698f664a5925f7797cc552028229278e4f6.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:_http_server"
@@ -784,13 +784,13 @@ function Server(
       tlsHelpers!.throwOnInvalidTLSArray("options.key", key);
     }
 
-    let ca = tlsOptions.ca;
+    let ca = tlsOptions.ca || tlsHelpers?.getDefaultCACertificatesOverride();
     // PKCS#12-embedded CAs extend the trust set; the server path hands raw
     // {key, cert, ca} to the native config and has no addCACert hook, so fold
     // them into `ca` (mirrors tls.Server.setSecureContext).
     const pfxExtraCAs = tlsOptions._pfxExtraCACerts;
     if (pfxExtraCAs?.length) {
-      ca = ca == null ? pfxExtraCAs : $isArray(ca) ? [...ca, ...pfxExtraCAs] : [ca, ...pfxExtraCAs];
+      ca = tlsHelpers!.appendCAs(ca, pfxExtraCAs);
     }
     if (ca) {
       tlsHelpers!.throwOnInvalidTLSArray("options.ca", ca);
@@ -851,8 +851,9 @@ function Server(
         serverName,
         key: tlsHelpers.normalizePemKeyOption(key, passphrase),
         cert,
-        ca: ca || undefined,
+        ca,
         caMayBeEmpty: !!ca,
+        caDefaultCount: tlsHelpers.countDefaultCAs(ca),
         crl,
         sessionTimeout: sessionTimeout ?? 0,
         sigalgs: options.sigalgs,

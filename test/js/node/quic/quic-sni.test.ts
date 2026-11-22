@@ -319,6 +319,88 @@ test("`ca` is read as by node:tls", async () => {
   });
 });
 
+test("without `ca`, or after an empty one, the default roots are trusted", async () => {
+  const fixtures = join(import.meta.dir, "..", "tls", "fixtures", "trust-anchor");
+  const read = (name: string) => readFileSync(join(fixtures, name));
+  const identity = {
+    keys: [createPrivateKey(read("leaf.key"))],
+    certs: [Buffer.concat([read("leaf.pem"), read("intermediate.pem")])],
+  };
+  await using server = await listen(ignoreErrors, { sni: { "*": identity }, alpn: ["quic-test"] });
+  async function validationErrorCodes(NODE_EXTRA_CA_CERTS?: string, defaults?: string) {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "--experimental-quic",
+        "--no-warnings",
+        "-e",
+        `import { readFileSync } from "node:fs";
+        import { connect } from "node:quic";
+        const root = readFileSync("root.pem"), empty = Buffer.alloc(0), text = Buffer.from("text");
+        ${defaults ? `(await import("node:tls")).setDefaultCACertificates(${defaults});` : ""}
+        for (const ca of [undefined, [], empty, [text, empty], [root, empty], [empty, root], text]) {
+          const options = { alpn: "quic-test", servername: "localhost", verifyPeer: "manual", ca };
+          const session = await connect("127.0.0.1:${server.address!.port}", options);
+          console.log((await session.opened).validationErrorCode ?? "authorized");
+          await session.close();
+        }`,
+      ],
+      cwd: fixtures,
+      env: { ...bunEnv, NODE_EXTRA_CA_CERTS },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim().split("\n"), stderr, exitCode };
+  }
+  const [authorized, missing] = ["authorized", "UNABLE_TO_GET_ISSUER_CERT_LOCALLY"];
+  const withRoot = { stdout: [...Array(6).fill(authorized), missing], stderr: "", exitCode: 0 };
+  const without = { stdout: [...Array(5).fill(missing), authorized, missing], stderr: "", exitCode: 0 };
+  expect(
+    await Promise.all([
+      validationErrorCodes(join(fixtures, "root.pem")),
+      validationErrorCodes(),
+      validationErrorCodes(undefined, "[root]"),
+      validationErrorCodes(join(fixtures, "root.pem"), "[]"),
+    ]),
+  ).toEqual([withRoot, without, withRoot, without]);
+});
+
+test("`crl` is read as by node:tls", async () => {
+  const identity = { keys: [createPrivateKey(readKey("agent3-key.pem"))], certs: [readKey("agent3-cert.pem")] };
+  await using server = await listen(ignoreErrors, { sni: { "*": identity }, alpn: ["quic-test"] });
+  async function validationErrorCode(...crl: (string | Buffer)[]) {
+    try {
+      const session = await connect(server.address!, {
+        alpn: "quic-test",
+        servername: "agent3",
+        verifyPeer: "manual",
+        ca: readKey("ca2-cert.pem"),
+        crl: Buffer.from(crl.join("")),
+      } as SessionOptions);
+      const info = await session.opened;
+      await session.close();
+      return info.validationErrorCode;
+    } catch (error: any) {
+      return error.message;
+    }
+  }
+  const crl = readKey("ca2-crl-agent3.pem");
+  expect({
+    another: await validationErrorCode(readKey("ca2-crl.pem")),
+    one: await validationErrorCode(crl),
+    byteOrderMark: await validationErrorCode("\ufeff", crl),
+    none: await validationErrorCode(cert1),
+    malformed: await validationErrorCode(crl, "-----BEGIN X509 CRL-----\nBQA=\n-----END X509 CRL-----\n"),
+  }).toEqual({
+    another: undefined,
+    one: "CERT_REVOKED",
+    byteOrderMark: "CERT_REVOKED",
+    none: "Invalid CRL",
+    malformed: "Invalid CRL",
+  });
+});
+
 test("verifyPeer 'strict' and 'auto' refuse a certificate with a blocked public key", async () => {
   // Unlike agent6's, this certificate names its host, which both modes check.
   const fixtures = join(import.meta.dir, "..", "tls", "fixtures");

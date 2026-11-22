@@ -24,6 +24,8 @@
 #include <limits.h>
 #include <time.h>
 #include <atomic>
+#include <string_view>
+#include <unordered_set>
 #include <utility>
 #ifndef _WIN32
 #include <pthread.h>
@@ -834,25 +836,24 @@ static X509_STORE *us_ssl_ctx_get_own_cert_store(SSL_CTX *ctx) {
 }
 
 /* The `ca` option: the certificates of `content` as DER into `certs`, up to a block that is malformed, as in Node. They
- * are parsed to find that block; the parsed object is dropped and the store keeps the DER lazily. Returns 0 when there
- * is no memory. */
-static int us_collect_ca_pem(const char *content, STACK_OF(CRYPTO_BUFFER) *certs) {
+ * are parsed to find that block; the parsed object is dropped and the store keeps the DER lazily. Unless it
+ * `may_be_empty`, only a PEM document of something else (Node's tests pass a private key) may add none. */
+static int us_collect_ca_pem(const char *content, int may_be_empty, STACK_OF(CRYPTO_BUFFER) *certs) {
   if (content == NULL) return 1;
   us_bio_ptr in{BIO_new_mem_buf(content, strlen(content))};
   if (in == NULL) return 0;
+  size_t before = sk_CRYPTO_BUFFER_num(certs);
+  us_ca_reader reader{in.get(), us_ca_trust::read};
   CRYPTO_BUFFER *der = NULL;
-  while (us_x509_ptr{us_pem_read_ca(in.get(), 1, &der)}) {
+  while (us_x509_ptr{reader.next(&der)}) {
     us_crypto_buffer_ptr buf{der};
     if (!sk_CRYPTO_BUFFER_push(certs, buf.get())) return 0;
     buf.release();
   }
+  int read_to_end = ERR_equals(ERR_peek_last_error(), ERR_LIB_PEM, PEM_R_NO_START_LINE);
   ERR_clear_error();
-  return 1;
-}
-
-/* A PEM document of something else (Node's tests pass a private key). */
-static int us_is_pem_without_certificates(const char *content) {
-  return content == NULL || (strstr(content, "-----BEGIN ") != NULL && strstr(content, "CERTIFICATE-----") == NULL);
+  return may_be_empty || sk_CRYPTO_BUFFER_num(certs) != before ||
+         (read_to_end && !reader.passed_over && strstr(content, "-----BEGIN ") != NULL);
 }
 
 static void us_crypto_buffer_stack_free(STACK_OF(CRYPTO_BUFFER) *buffers) {
@@ -860,27 +861,62 @@ static void us_crypto_buffer_stack_free(STACK_OF(CRYPTO_BUFFER) *buffers) {
 }
 using us_crypto_buffer_stack_ptr = us_unique_ptr<STACK_OF(CRYPTO_BUFFER), us_crypto_buffer_stack_free>;
 
-/* Trusts the DER certificates in `certs` through one lazily-parsed set on `store`, and makes their subjects the
- * context's client-CA list, as X509_STORE_add_cert + SSL_CTX_add_client_CA per parsed certificate did. */
-static int us_install_ca_buffers(SSL_CTX *ctx, X509_STORE *store, STACK_OF(CRYPTO_BUFFER) *certs) {
+/* Trusts the DER certificates in `certs` through one lazily-parsed set, and makes their subjects from `first_named` on
+ * the client-CA list. Unlike in Node a name is only listed once: all have to fit in 64 KB. */
+static int us_install_ca_buffers(SSL_CTX *ctx, STACK_OF(CRYPTO_BUFFER) *certs, size_t first_named) {
   size_t n = sk_CRYPTO_BUFFER_num(certs);
   if (n == 0) return 1;
   us_unique_ptr<CRYPTO_BUFFER *[], free> bufs{(CRYPTO_BUFFER **)malloc(n * sizeof(CRYPTO_BUFFER *))};
   if (bufs == NULL) return 0;
   for (size_t i = 0; i < n; i++) bufs[i] = sk_CRYPTO_BUFFER_value(certs, i);
   us_unique_ptr<X509_LAZY_CERT_SET, X509_LAZY_CERT_SET_free> set{X509_LAZY_CERT_SET_new(bufs.get(), n)};
-  us_crypto_buffer_stack_ptr names{sk_CRYPTO_BUFFER_new_null()};
-  if (set == NULL || names == NULL || !X509_STORE_add_lazy_cert_set(store, set.get())) return 0;
-  for (size_t i = 0; i < n; i++) {
+  if (set == NULL || !X509_STORE_add_lazy_cert_set(SSL_CTX_get_cert_store(ctx), set.get())) return 0;
+  us_crypto_buffer_stack_ptr list{sk_CRYPTO_BUFFER_new_null()};
+  if (list == NULL) return 0;
+  std::unordered_set<std::string_view> listed;
+  for (size_t i = first_named; i < n; i++) {
     const uint8_t *subject;
     size_t subject_len;
     if (!X509_LAZY_CERT_SET_get0_subject(set.get(), i, &subject, &subject_len)) return 0;
+    if (!listed.emplace((const char *)subject, subject_len).second) continue;
     us_crypto_buffer_ptr name{CRYPTO_BUFFER_new(subject, subject_len, NULL)};
-    if (name == NULL || !sk_CRYPTO_BUFFER_push(names.get(), name.get())) return 0;
+    if (name == NULL || !sk_CRYPTO_BUFFER_push(list.get(), name.get())) return 0;
     name.release();
   }
-  SSL_CTX_set0_client_CAs(ctx, names.release());
+  SSL_CTX_set0_client_CAs(ctx, list.release());
   return 1;
+}
+
+/* The `caFile` option, as by SSL_CTX_load_verify_locations: a block that does not parse fails it. */
+static enum create_bun_socket_error_t us_install_ca_file(SSL_CTX *ctx, const uint8_t *content, size_t len) {
+  X509_STORE *store = SSL_CTX_get_cert_store(ctx);
+  us_bio_ptr in{BIO_new_mem_buf(content, len)};
+  us_crypto_buffer_stack_ptr certs{sk_CRYPTO_BUFFER_new_null()};
+  if (in == NULL || certs == NULL) return CREATE_BUN_SOCKET_ERROR_LOAD_CA_FILE;
+  for (;;) {
+    us_pem_block block;
+    if (!block.read(in.get())) break;
+    bool is_trusted = block.is(PEM_STRING_X509_TRUSTED), is_crl = block.is(PEM_STRING_X509_CRL), malformed;
+    if (!is_trusted && !is_crl && !block.is_plain_certificate()) continue;
+    if (!block.decrypt()) return CREATE_BUN_SOCKET_ERROR_INVALID_CA_FILE;
+    if (is_crl) {
+      us_unique_ptr<X509_CRL, X509_CRL_free> crl{block.parse_crl()};
+      if (crl == NULL || !X509_STORE_add_crl(store, crl.get())) return CREATE_BUN_SOCKET_ERROR_INVALID_CA_FILE;
+      continue;
+    }
+    CRYPTO_BUFFER *der = NULL;
+    us_x509_ptr cert{block.parse_ca(is_trusted ? us_ca_trust::read : us_ca_trust::ignored, &der, &malformed)};
+    us_crypto_buffer_ptr buf{der};
+    if (cert == NULL || !sk_CRYPTO_BUFFER_push(certs.get(), buf.get())) return CREATE_BUN_SOCKET_ERROR_INVALID_CA_FILE;
+    buf.release();
+  }
+  if (!ERR_equals(ERR_peek_last_error(), ERR_LIB_PEM, PEM_R_NO_START_LINE)) {
+    return CREATE_BUN_SOCKET_ERROR_INVALID_CA_FILE;
+  }
+  ERR_clear_error();
+  return sk_CRYPTO_BUFFER_num(certs.get()) != 0 && us_install_ca_buffers(ctx, certs.get(), 0)
+             ? CREATE_BUN_SOCKET_ERROR_NONE
+             : CREATE_BUN_SOCKET_ERROR_LOAD_CA_FILE;
 }
 
 static int us_ssl_ctx_use_certificate_chain(SSL_CTX *ctx, const char *content) {
@@ -1276,22 +1312,19 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
     /* An explicit CA replaces the default trust store (Node.js semantics):
      * chains must validate exclusively against the supplied CAs. The SSL_CTX
      * already owns a fresh, empty X509_STORE from SSL_CTX_new(), so
-     * SSL_CTX_load_verify_locations below populates only the user's CAs. */
-    us_bio_ptr ca_file{BIO_new_file(options.ca_file_name, "rb")};
-    bool named = false;
-    while (us_x509_ptr cert{ca_file ? us_pem_read_ca(ca_file.get(), 1, NULL) : NULL}) {
-      named = SSL_CTX_add_client_CA(ssl_context.get(), cert.get());
-      if (!named) break;
-    }
-    if (!named) {
-      *err = CREATE_BUN_SOCKET_ERROR_LOAD_CA_FILE;
-      return NULL;
-    }
-    ERR_clear_error();
+     * it is populated with only the user's CAs. */
     us_ex_idx_ensure();
     SSL_CTX_set_ex_data(ssl_context.get(), us_ctx_user_ca_ex_idx, (void *)1);
-    if (SSL_CTX_load_verify_locations(ssl_context.get(), options.ca_file_name, NULL) != 1) {
-      *err = CREATE_BUN_SOCKET_ERROR_INVALID_CA_FILE;
+    struct ca_file_t {
+      SSL_CTX *ctx;
+      enum create_bun_socket_error_t err;
+    } ca_file{ssl_context.get(), CREATE_BUN_SOCKET_ERROR_LOAD_CA_FILE};
+    Bun__readCertificateFile(options.ca_file_name, &ca_file, [](void *arg, const uint8_t *content, size_t len) {
+      ca_file_t *file = (ca_file_t *)arg;
+      file->err = us_install_ca_file(file->ctx, content, len);
+    });
+    if (ca_file.err) {
+      *err = ca_file.err;
       return NULL;
     }
   } else if (options.ca_may_be_empty || (options.ca && options.ca_count > 0)) {
@@ -1300,16 +1333,13 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
     /* As above: user CAs only, into the SSL_CTX's own initially-empty store —
      * otherwise a server doing mTLS with `ca: [internalCA]` would also accept
      * any client certificate that chains to a public root. */
-    X509_STORE *cert_store = SSL_CTX_get_cert_store(ssl_context.get());
     us_crypto_buffer_stack_ptr ca_certs{sk_CRYPTO_BUFFER_new_null()};
+    size_t first_named = 0;
     for (unsigned int i = 0; ca_certs != NULL && i < options.ca_count; i++) {
-      if (!us_collect_ca_pem(options.ca[i], ca_certs.get())) ca_certs = NULL;
+      if (!us_collect_ca_pem(options.ca[i], options.ca_may_be_empty, ca_certs.get())) ca_certs = NULL;
+      if (i < options.ca_default_count) first_named = sk_CRYPTO_BUFFER_num(ca_certs.get());
     }
-    for (unsigned int i = 0;
-         !options.ca_may_be_empty && sk_CRYPTO_BUFFER_num(ca_certs.get()) == 0 && i < options.ca_count; i++) {
-      if (!us_is_pem_without_certificates(options.ca[i])) ca_certs = NULL;
-    }
-    if (ca_certs == NULL || !us_install_ca_buffers(ssl_context.get(), cert_store, ca_certs.get())) {
+    if (ca_certs == NULL || !us_install_ca_buffers(ssl_context.get(), ca_certs.get(), first_named)) {
       *err = CREATE_BUN_SOCKET_ERROR_INVALID_CA;
       return NULL;
     }
@@ -1381,23 +1411,11 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
       return NULL;
     }
     for (unsigned int i = 0; i < options.crl_count; i++) {
-      us_bio_ptr crl_bio{BIO_new_mem_buf(options.crl[i], -1)};
-      if (!crl_bio) {
-        *err = CREATE_BUN_SOCKET_ERROR_INVALID_CRL;
-        return NULL;
-      }
-      us_unique_ptr<X509_CRL, X509_CRL_free> crl{PEM_read_bio_X509_CRL(crl_bio.get(), NULL, NULL, NULL)};
-      if (!crl) {
-        *err = CREATE_BUN_SOCKET_ERROR_INVALID_CRL;
-        return NULL;
-      }
-      if (!X509_STORE_add_crl(crl_store, crl.get())) {
+      if (!us_x509_store_add_crls(crl_store, options.crl[i], strlen(options.crl[i]))) {
         *err = CREATE_BUN_SOCKET_ERROR_INVALID_CRL;
         return NULL;
       }
     }
-    X509_STORE_set_flags(crl_store,
-                         X509_V_FLAG_CRL_CHECK | X509_V_FLAG_CRL_CHECK_ALL);
   }
 
   if (options.session_timeout > 0) {
@@ -1452,10 +1470,7 @@ int us_ssl_ctx_has_user_ca(SSL_CTX *ctx) {
 /* node:tls `secureContext.context.addCACert(pem)`: append the certificates in
  * `content` to this context's trust store, up to a block that is malformed.
  * Returns 0 when there is no memory. */
-int us_ssl_ctx_add_ca_cert(SSL_CTX *ctx, const char *content) {
-  if (!ctx || !content) {
-    return 0;
-  }
+int us_ssl_ctx_add_ca_cert(SSL_CTX *ctx, const char *content, size_t len) {
   /* addCACert must EXTEND the default trust set the way Node does: the
    * own-store helper replaces a shared or still-empty store with a private
    * full default-root copy before the user's CA is appended. */
@@ -1466,13 +1481,7 @@ int us_ssl_ctx_add_ca_cert(SSL_CTX *ctx, const char *content) {
   /* A CA added after the context was built (pfx extras, addCACert) lands in
    * the store the handshake-time auto-chain walks, so a lone leaf-only cert
    * picks the intermediate up with no eager re-walk. */
-  us_bio_ptr in{BIO_new_mem_buf(content, strlen(content))};
-  if (in == NULL) return 0;
-  while (us_x509_ptr cert{us_pem_read_ca(in.get(), 1, NULL)}) {
-    if (!X509_STORE_add_cert(store, cert.get()) || !SSL_CTX_add_client_CA(ctx, cert.get())) return 0;
-  }
-  ERR_clear_error();
-  return 1;
+  return us_x509_store_add_cas(store, ctx, content, len);
 }
 
 /* node:tls `pfx` support: parse a PKCS#12 blob and hand back PEM-encoded

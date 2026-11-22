@@ -3382,16 +3382,26 @@ unsafe impl Sync for SensitiveCString {}
 impl SensitiveCString {
     /// The string ends at the first NUL in `bytes`.
     pub fn new(bytes: &[u8]) -> Self {
-        let bytes = crate::slice_to_nul(bytes);
+        Self::from_pem(crate::slice_to_nul(bytes))
+    }
+
+    /// All of `bytes`. A NUL becomes another control character.
+    pub fn from_pem(bytes: &[u8]) -> Self {
         let Some(p) = core::ptr::NonNull::new(bun_alloc::default_alloc::malloc(bytes.len() + 1))
         else {
             crate::out_of_memory();
         };
         let p = p.cast::<u8>();
         // SAFETY: `p` is a fresh allocation of `len + 1` writable bytes.
-        unsafe {
+        let copy = unsafe {
             core::ptr::copy_nonoverlapping(bytes.as_ptr(), p.as_ptr(), bytes.len());
             p.add(bytes.len()).write(0);
+            core::slice::from_raw_parts_mut(p.as_ptr(), bytes.len())
+        };
+        if let Some(first) = crate::strings::index_of_char_usize(copy, 0) {
+            for byte in &mut copy[first..] {
+                *byte = (*byte).max(1);
+            }
         }
         Self(p.cast())
     }

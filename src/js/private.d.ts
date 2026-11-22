@@ -1271,7 +1271,7 @@ declare namespace $Node {
       streamId: number,
       context: unknown,
       headers: object,
-      sensitiveNames: object,
+      sensitiveNames: string[] | undefined,
       options?: object,
     ): number | undefined;
     setNativeSocket(socket: unknown): void;
@@ -1308,7 +1308,7 @@ declare namespace $Node {
       callback: (error?: Error | null) => void,
       deferCallback?: boolean,
     ): number | false;
-    sendTrailers(streamId: number, headers: object, sensitiveNames: object): void;
+    sendTrailers(streamId: number, headers: object, sensitiveNames: string[] | undefined): void;
     noTrailers(streamId: number): void;
     setStreamReading(streamId: number, reading: boolean): void;
     getStreamContext(streamId: number): unknown;
@@ -1331,7 +1331,7 @@ declare namespace $Node {
     /** -1 when the ids have run out. */
     getNextStream(): number;
     /** The promised id, or -1. */
-    pushPromise(streamId: number, promisedId: number, headers: object, sensitiveNames: object): number;
+    pushPromise(streamId: number, promisedId: number, headers: object, sensitiveNames: string[] | undefined): number;
   }
   interface H2FrameParserConstructor {
     new (options: {

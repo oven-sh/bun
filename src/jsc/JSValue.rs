@@ -991,12 +991,14 @@ impl JSValue {
         Ok(function.is_cell() && function.is_callable())
     }
 
+    /// For a name written in the source. A key that comes from data can be an array index: read it with [`get_own`](Self::get_own).
     pub fn get(
         self,
         global: &JSGlobalObject,
         property: impl AsRef<[u8]>,
     ) -> JsResult<Option<JSValue>> {
         let property = property.as_ref();
+        debug_assert!(property.is_ascii(), "the name is read as Latin-1");
         // Never route a runtime key to `fast_get`: a runtime byte-slice match
         // here is wrong because
         // C++ `builtinNameMap` maps e.g. `asyncIterator` → `Symbol.asyncIterator`

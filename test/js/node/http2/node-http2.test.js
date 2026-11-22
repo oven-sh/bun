@@ -1846,6 +1846,81 @@ it("Symbol keys of the headers object are not sent as headers", async () => {
   }
 });
 
+// Node compares the names of http2.sensitiveHeaders as strings (`neverIndex.includes(key)` in
+// lib/internal/http2/util.js), and nghttp2 itself never indexes authorization, nor a cookie field
+// whose value is shorter than 20 bytes (deflate_nv in lib/nghttp2_hd.c). The fixture prints what the
+// receiver lists for each way to send a header block. The expected text is the output of node.
+const sensitiveHeadersFixture = path.join(import.meta.dir, "http2-sensitive-headers.fixture.js");
+const sensitiveHeadersExpected = `# every send path
+request() before the session connects: ["0","123","4294967294","007","4294967295","99999999999999999999","__proto__","abc","cookie"]
+request(): ["0","123","4294967294","007","4294967295","99999999999999999999","__proto__","abc","cookie"]
+request() with a raw list: ["0","123","4294967294","007","4294967295","99999999999999999999","__proto__","abc","cookie"]
+respond(): ["0","123","4294967294","007","4294967295","99999999999999999999","__proto__","abc","cookie"]
+respond() with a raw list: ["0","123","4294967294","007","4294967295","99999999999999999999","__proto__","abc","cookie"]
+respondWithFD(): ["0","123","4294967294","007","4294967295","99999999999999999999","__proto__","abc","cookie"]
+additionalHeaders(): ["0","123","4294967294","007","4294967295","99999999999999999999","__proto__","abc","cookie"]
+pushStream(): ["0","123","4294967294","007","4294967295","99999999999999999999","__proto__","abc","cookie"]
+sendTrailers() of a server: ["0","123","4294967294","007","4294967295","99999999999999999999","__proto__","abc","cookie"]
+sendTrailers() of a client: ["0","123","4294967294","007","4294967295","99999999999999999999","__proto__","abc","cookie"]
+# the rules
+no list, no such field: []
+authorization: ["authorization"]
+Authorization: ["authorization"]
+proxy-authorization: []
+set-cookie, 3 code units: []
+cookie, 3 code units: ["cookie"]
+Cookie, 3 code units: ["cookie"]
+cookie, 19 code units: ["cookie"]
+cookie, 20 code units: []
+cookie, 10 code units above U+00FF: ["cookie"]
+cookie, 19 code units above U+007F: ["cookie"]
+cookie, 20 code units above U+007F: []
+cookie, the number 5: ["cookie"]
+cookie, an array of one short value: ["cookie"]
+cookie, an array of two short values: ["cookie","cookie"]
+cookie, an array of a short and a long value: ["cookie"]
+authorization and a cookie array of two short values: ["authorization","cookie","cookie"]
+cookie short, Cookie long: ["cookie"]
+Cookie long, cookie short: ["cookie"]
+a raw list: cookie short, cookie short: ["cookie","cookie"]
+a raw list: Cookie short, cookie long: ["cookie"]
+COOKIE listed: cookie, 20 code units: ["cookie"]
+x-LISTED listed: X-Listed, x-listed-not, x-liste: ["x-listed"]
+an empty list: []
+a listed name that is not sent: []
+a list with a hole: x-a, x-b, undefined: ["x-a","x-b"]
+a list behind a Proxy with the length 1.5: x-a, undefined: ["x-a"]
+no list: 0, 123, constructor, tostring, valueof, hasownproperty: []
+a 16-bit name listed: x-wide, x-wide-not: ["x-wide"]
+a 16-bit name in upper case listed: x-wide: ["x-wide"]
+a name with the Kelvin sign for its k listed: key: ["key"]
+# Object.prototype
+a setter and a read-only property on Object.prototype: ["x-sensitive-setter","x-sensitive-frozen"]
+`;
+// Before v24.7.0 node took no raw list of headers.
+const sensitiveHeadersNode = nodeExeAtLeast("24.7.0");
+
+for (const [name, runtime] of [
+  ["bun", bunExe()],
+  ["node", sensitiveHeadersNode],
+]) {
+  it.skipIf(!runtime)(
+    `sensitive headers are never-indexed like node, whatever the name and the way to send (${name})`,
+    async () => {
+      await using proc = Bun.spawn({
+        cmd: [runtime, sensitiveHeadersFixture],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: sensitiveHeadersExpected, stderr: "", exitCode: 0 });
+    },
+    // A debug build needs 3 to 5 s to start and load node:http2. Every other build keeps the default.
+    isDebug ? 15_000 : undefined,
+  );
+}
+
 it("http2 session.goaway() validates input types", async done => {
   const { mustCall } = createCallCheckCtx(done);
   const server = http2.createServer((req, res) => {
@@ -4849,8 +4924,9 @@ it("http2 materializes pseudo, known, unknown and all-digit header names the sam
   try {
     const roundTrip = () =>
       new Promise((resolve, reject) => {
-        // authorization is never-indexed automatically (nghttp2 behavior), so the receiver lists
-        // it under sensitiveHeaders without the request having to mark anything.
+        // authorization and each short cookie field are never-indexed automatically (nghttp2
+        // behavior), so the receiver lists them under sensitiveHeaders without the request having
+        // to mark anything.
         const req = client.request({
           ":method": "POST",
           ":path": "/materialize",
@@ -4902,7 +4978,7 @@ it("http2 materializes pseudo, known, unknown and all-digit header names the sam
         ...["cookie", "c=1", "cookie", "d=2"],
         ...["x-unknown", "u1", "x-unknown", "u2"],
       ],
-      sensitive: ["authorization"],
+      sensitive: ["authorization", "cookie", "cookie"],
     });
     expect(first.response).toEqual({
       headers: {
@@ -5282,7 +5358,7 @@ it("http2 respondWithFile/respondWithFD send an empty range and reset the stream
   });
   expect(exitCode).toBe(0);
 }, 15_000);
-it("http2 native setNextStreamID, pushPromise and altsvc throw for bad arguments", async () => {
+it("http2 native setNextStreamID, pushPromise, request and altsvc throw for bad arguments", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -5312,6 +5388,9 @@ it("http2 native setNextStreamID, pushPromise and altsvc throw for bad arguments
         outcome(() => native.pushPromise(1, undefined, {}, {})),
         outcome(() => native.pushPromise(NaN, 2, {}, {})),
         outcome(() => native.pushPromise(1, 0, {}, {})),
+        // The sensitive names are a list, or undefined. A map of names must not pass for "no names".
+        outcome(() => native.pushPromise(1, 2, {}, {})),
+        outcome(() => native.request(1, undefined, {}, {})),
         outcome(() => native.altsvc(fill(16382 - value.length), value, 0)),
         outcome(() => native.altsvc(fill(16383 - value.length), value, 0)),
         outcome(() => native.altsvc(fill(65536), value, 0)),
@@ -5334,6 +5413,8 @@ it("http2 native setNextStreamID, pushPromise and altsvc throw for bad arguments
     "Error: Expected promisedId to be a number",
     "Error: Invalid stream id",
     "Error: Invalid stream id",
+    "Error: Expected sensitiveHeaders to be an array",
+    "Error: Expected sensitiveHeaders to be an array",
     "returned undefined",
     tooLong,
     tooLong,

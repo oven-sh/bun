@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/http2.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 af60e27fc7471035d7ab111c49f3e3c62f10731b978b9d79183754a01f0abf12.
+// Written against that file with the SHA-256 9ad8931657f49fc2267105a5a8993f87455c266bdad2dd6815ac3a87def7372d.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:http2"
@@ -2547,7 +2547,7 @@ class Http2Stream extends (Duplex as $Node.DuplexConstructor) {
     // Note: the sensitiveHeaders symbol stays on the object — the native header walk skips
     // symbol keys, and deleting it here would flip the object into dictionary mode,
     // pessimizing every later property access on it.
-    const sensitiveNames = buildSensitiveNames(headers, sensitives);
+    const sensitiveNames = buildSensitiveNames(sensitives);
     // node keeps the never-index list visible on sentTrailers (symbol keys are not iterated by
     // the wire-encoding path, so re-attaching is safe).
     if (sensitives !== undefined) headers[sensitiveHeaders] = sensitives;
@@ -3466,7 +3466,7 @@ class ServerHttp2Stream extends Http2Stream {
     if (sensitives !== undefined && !$isArray(sensitives)) {
       throw $ERR_INVALID_ARG_VALUE("headers[http2.neverIndex]", sensitives);
     }
-    const sensitiveNames = buildSensitiveNames(headers, sensitives);
+    const sensitiveNames = buildSensitiveNames(sensitives);
     // A PUSH_PROMISE carries a request; default the method/path/scheme/authority like node does.
     const parentRequestHeaders = this[kRequestHeaders] || this[bunHTTP2Headers];
     if (headers[HTTP2_HEADER_METHOD] === undefined) headers[HTTP2_HEADER_METHOD] = "GET";
@@ -3693,7 +3693,7 @@ class ServerHttp2Stream extends Http2Stream {
     if (sensitives !== undefined && !$isArray(sensitives)) {
       throw $ERR_INVALID_ARG_VALUE("headers[http2.neverIndex]", sensitives);
     }
-    const sensitiveNames = buildSensitiveNames(headers, sensitives);
+    const sensitiveNames = buildSensitiveNames(sensitives);
     // Pre-validate single-value headers in JS so a throwing additionalHeaders() leaves no partial
     // state in the shared HPACK table (same rule request() applies).
     if (this[bunHTTP2Session]?.[kStrictSingleValueFields] !== false) assertSingleValueHeaders(headers);
@@ -3794,7 +3794,7 @@ class ServerHttp2Stream extends Http2Stream {
     if (sensitives !== undefined && !$isArray(sensitives)) {
       throw $ERR_INVALID_ARG_VALUE("headers[http2.neverIndex]", sensitives);
     }
-    const sensitiveNames = buildSensitiveNames(headers, sensitives);
+    const sensitiveNames = buildSensitiveNames(sensitives);
     // Pre-validate single-value headers in JS so a throwing respond() leaves no partial state in
     // the shared HPACK table (same rule request() applies).
     if (session[kStrictSingleValueFields] !== false) assertSingleValueHeaders(headers);
@@ -4052,10 +4052,6 @@ function stripInvalidWhitespaceFields(rawheaders: string[]): string[] {
 }
 //TODO: do this in C++
 
-// Build the never-index name map handed to the native encoder. Mirrors nghttp2's behavior:
-// the user's sensitive-headers list matches case-insensitively, and `authorization` (always)
-// plus short `cookie` values (< 20 chars) are never indexed even when not listed.
-
 // node validates header constraints in JS before anything reaches the native encoder, so a
 // throwing request leaves no partial state in the shared HPACK table. Mirror the single-value
 // rule here: duplicated single-value fields (across case variants) and multi-element arrays for
@@ -4086,30 +4082,14 @@ function receivedValueLabel(value: unknown) {
   return `type ${typeof value} (${JSON.stringify(value)})`;
 }
 
-function buildSensitiveNames(
-  headers: HeadersObject | null | undefined,
-  sensitives: unknown[] | null | undefined,
-): Record<string, boolean> {
-  const map: Record<string, boolean> = {};
-  if (sensitives) {
-    for (let i = 0; i < sensitives.length; i++) {
-      map[String(sensitives[i]).toLowerCase()] = true;
-    }
+// Node's `neverIndex`. The native header walk adds `authorization` and short cookies itself, as nghttp2 does.
+function buildSensitiveNames(sensitives: unknown[] | undefined): string[] | undefined {
+  if (sensitives === undefined) return undefined;
+  const names: string[] = [];
+  for (let i = 0; i < sensitives.length; i++) {
+    if (i in sensitives) $putByValDirect(names, names.length, StringPrototypeToLowerCase.$call(String(sensitives[i])));
   }
-  if (headers != null && typeof headers === "object") {
-    // Header keys arrive in the user's casing; match case-insensitively like nghttp2.
-    const keys = Object.keys(headers);
-    for (let i = 0; i < keys.length; i++) {
-      const lower = keys[i].toLowerCase();
-      if (lower === "authorization") {
-        map["authorization"] = true;
-      } else if (lower === "cookie") {
-        const cookie = headers[keys[i]];
-        if (typeof cookie === "string" && cookie.length < 20) map["cookie"] = true;
-      }
-    }
-  }
-  return map;
+  return names.length === 0 ? undefined : names;
 }
 
 function toHeaderObject(headers, sensitiveHeadersValue) {
@@ -5238,7 +5218,7 @@ class ClientHttp2Session extends Http2Session {
     req: ClientHttp2Stream;
     headers: HeadersObject;
     wireHeaders: HeadersObject | any[];
-    sensitiveNames: Record<string, boolean>;
+    sensitiveNames: string[] | undefined;
     options: any;
   }> | null = null;
 
@@ -6330,7 +6310,7 @@ class ClientHttp2Session extends Http2Session {
       if (sensitives !== undefined && !$isArray(sensitives)) {
         throw $ERR_INVALID_ARG_VALUE("headers[http2.neverIndex]", sensitives);
       }
-      const sensitiveNames = buildSensitiveNames(headers, sensitives);
+      const sensitiveNames = buildSensitiveNames(sensitives);
       // Validate header names in JS like node's buildNgHeaderString does: request() must throw
       // synchronously for an invalid name even while the session is still connecting (the native
       // encoder only sees the headers once a queued request is actually submitted). Empty names

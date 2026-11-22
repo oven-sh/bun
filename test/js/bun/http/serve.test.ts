@@ -5739,6 +5739,7 @@ it.each([
   ["with a byte above 0x7f is a bad request", "P\u00d6ST", /^HTTP\/1\.1 400 Bad Request\r\n/],
 ])("a method %s", async (_, method, expected) => {
   const handler = (req: Request) => new Response(req.method);
+  // With two names for one parameter, the router has a route left for a method it does not know.
   using server = serve({ port: 0, fetch: handler, routes: { "/u/:id": handler, "/u/:name": handler } });
   const socket = connect(server.port!, "127.0.0.1");
   try {
@@ -5756,6 +5757,7 @@ it.concurrent.each(["before", "inside", "after"])(
   "a handler upgrades its socket %s a request that runs under it",
   async when => {
     const script = `
+      import { connect } from "node:net";
       const seen = { upgraded: false, body: "", message: "" };
       const built = Promise.withResolvers();
       let outer;
@@ -5784,7 +5786,7 @@ it.concurrent.each(["before", "inside", "after"])(
           },
         },
       });
-      const socket = require("net").connect(server.port, "127.0.0.1");
+      const socket = connect(server.port, "127.0.0.1");
       socket.on("error", () => {});
       socket.on("close", () => {
         console.log(JSON.stringify(seen));

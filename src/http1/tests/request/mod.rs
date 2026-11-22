@@ -489,10 +489,13 @@ fn lookups() {
         ("https://a?b/c", "/"),
         ("httpS:///a", "/a"),
     ] {
-        let head = format!("GET {target} HTTP/1.1\r\n\r\n");
-        SERVE.with_request(head.as_bytes(), |request| {
-            assert_eq!(request.path(), path.as_bytes());
-        });
+        for padding in paddings() {
+            let longer = format!("a{}", show(&padding));
+            let head = format!("GET {} HTTP/1.1\r\n\r\n", target.replace('a', &longer));
+            SERVE.with_request(head.as_bytes(), |request| {
+                assert_eq!(show(request.path()), path.replace('a', &longer));
+            });
+        }
     }
 }
 

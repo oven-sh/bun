@@ -746,7 +746,7 @@ private:
             if (IsNodeHttp && httpContextData->onClientError) {
                 httpResponseData->state |= HttpResponseData<SSL>::HTTP_NODE_PARSING_STOPPED;
                 httpContextData->onClientError(SSL, s, result.error, data, length);
-                if (!us_socket_is_closed(s)) {
+                if (!isClosedOrUpgraded(s)) {
                     /* Balance the parsing ref taken at the top of onData (the
                      * success path does this through returnedData). */
                     us_socket_unref(s);
@@ -760,7 +760,7 @@ private:
                  * closed socket is a no-op). */
                 ((AsyncSocket<SSL> *) s)->uncork();
                 /* A close that was deferred to the after-parse gate must still run when the parse ends in an error. */
-                if (!us_socket_is_closed(s) && !us_socket_is_shut_down(s)) {
+                if (!isClosedOrUpgraded(s) && !us_socket_is_shut_down(s)) {
                     ((HttpResponse<SSL> *) s)->closeIfDoneAndMarked(httpResponseData);
                 }
                 return s;
@@ -872,6 +872,11 @@ private:
         return s;
     }
 
+    /* JavaScript closed the socket, or upgraded it after the peer's FIN, which the loop reports only once. */
+    static us_socket_t *passOnEnd(us_socket_t *s) {
+        return us_socket_is_closed(s) ? s : us_dispatch_end(s);
+    }
+
     template <bool IsNodeHttp>
     static us_socket_t *onWritable(us_socket_t *s) {
         auto *asyncSocket = reinterpret_cast<AsyncSocket<SSL> *>(s);
@@ -919,14 +924,15 @@ private:
             us_socket_timeout(s, 0);
 
             [[maybe_unused]] uint64_t offsetBefore = httpResponseData->offset;
+            const bool receivedFin = httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_RECEIVED_FIN;
 
             /* We expect the developer to return whether or not write was successful (true).
              * If write was never called, the developer should still return true so that we may drain. */
             bool success = httpResponseData->callOnWritable(reinterpret_cast<HttpResponse<SSL> *>(asyncSocket), httpResponseData->offset);
 
-            /* The callback runs application code, which may have closed this socket. */
-            if (us_socket_is_closed(s)) {
-                return s;
+            /* The callback runs application code, which may have closed or upgraded this socket. */
+            if (isClosedOrUpgraded(s)) {
+                return receivedFin ? passOnEnd(s) : s;
             }
 
             if constexpr (!IsNodeHttp) {
@@ -1055,8 +1061,8 @@ private:
                 if (httpResponseData->inStream) {
                     us_socket_timeout(s, 0);
                     httpResponseData->inStream((HttpResponse<SSL> *) s, nullptr, 0, true, httpResponseData->userData);
-                    if (us_socket_is_closed(s)) {
-                        return s;
+                    if (isClosedOrUpgraded(s)) {
+                        return passOnEnd(s);
                     }
                     httpResponseData->inStream = nullptr;
                 }
@@ -1067,8 +1073,8 @@ private:
                     || httpResponseData->hasIncompleteRequestBody())) {
                 httpResponseData->state |= HttpResponseData<SSL>::HTTP_NODE_PARSING_STOPPED;
                 httpContextData->onClientError(SSL, s, HTTP_PARSER_ERROR_INVALID_EOF, nullptr, 0);
-                if (us_socket_is_closed(s)) {
-                    return s;
+                if (isClosedOrUpgraded(s)) {
+                    return passOnEnd(s);
                 }
             }
 

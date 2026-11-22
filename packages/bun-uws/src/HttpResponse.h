@@ -33,6 +33,8 @@
 
 #include "MoveOnlyFunction.h"
 
+#include <climits>
+
 #if defined(_WIN32)
 #define strncasecmp _strnicmp
 #endif

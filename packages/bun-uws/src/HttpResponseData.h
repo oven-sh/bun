@@ -78,8 +78,8 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
         /* Run borrowed onWritable */
         bool ret = borrowedOnWritable(response, offset, writableUserData);
 
-        /* The callback runs application code; if it closed the socket, this object is destructed. */
-        if (us_socket_is_closed((us_socket_t *) response)) {
+        /* The callback runs application code; if it closed or upgraded the socket, this object is destructed. */
+        if (HttpContext<SSL>::isClosedOrUpgraded((us_socket_t *) response)) {
             return ret;
         }
 

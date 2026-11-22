@@ -30,6 +30,9 @@ impl From<&[u8]> for Bytes {
     }
 }
 
+/// LTO does not inline a function that returns `Bytes`: clang and rustc give it different types.
+type Out<'a> = &'a mut MaybeUninit<Bytes>;
+
 /// The handlers return null if the read is over, as it is once the parser is destroyed.
 #[repr(C)]
 struct Socket {
@@ -94,7 +97,7 @@ unsafe extern "C" fn Bun__RequestParser__destruct(parser: &mut MaybeUninit<Reque
     unsafe { parser.assume_init_drop() }
 }
 
-/// SAFETY: nothing writes to the `len` bytes at `data` during the call.
+/// SAFETY: `data` has `len` bytes.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn Bun__RequestParser__read(
     socket: &mut Socket,
@@ -107,7 +110,7 @@ unsafe extern "C" fn Bun__RequestParser__read(
     read_requests::<false>(socket, bytes, options).into()
 }
 
-/// SAFETY: as [`Bun__RequestParser__read`].
+/// SAFETY: `data` has `len` bytes.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn Bun__RequestParser__readForNode(
     socket: &mut Socket,
@@ -131,23 +134,23 @@ extern "C" fn Bun__RequestParser__hasIncompleteBody(parser: &RequestParser) -> b
 }
 
 #[unsafe(no_mangle)]
-extern "C" fn Bun__Http1Request__method(request: &Request<'_>) -> Bytes {
-    request.method().into()
+extern "C" fn Bun__Http1Request__method(request: &Request<'_>, out: Out<'_>) {
+    out.write(request.method().into());
 }
 
 #[unsafe(no_mangle)]
-extern "C" fn Bun__Http1Request__target(request: &Request<'_>) -> Bytes {
-    request.target().into()
+extern "C" fn Bun__Http1Request__target(request: &Request<'_>, out: Out<'_>) {
+    out.write(request.target().into());
 }
 
 #[unsafe(no_mangle)]
-extern "C" fn Bun__Http1Request__path(request: &Request<'_>) -> Bytes {
-    request.path().into()
+extern "C" fn Bun__Http1Request__path(request: &Request<'_>, out: Out<'_>) {
+    out.write(request.path().into());
 }
 
 #[unsafe(no_mangle)]
-extern "C" fn Bun__Http1Request__afterHead(request: &Request<'_>) -> Bytes {
-    request.after_head().into()
+extern "C" fn Bun__Http1Request__afterHead(request: &Request<'_>, out: Out<'_>) {
+    out.write(request.after_head().into());
 }
 
 #[unsafe(no_mangle)]
@@ -161,10 +164,11 @@ unsafe extern "C" fn Bun__Http1Request__field(
     request: &Request<'_>,
     name: *const u8,
     len: usize,
-) -> Bytes {
+    out: Out<'_>,
+) {
     // SAFETY: forwarded.
     let name = unsafe { bun_core::ffi::slice(name, len) };
-    request.field(name).unwrap_or_default().into()
+    out.write(request.field(name).unwrap_or_default().into());
 }
 
 /// SAFETY: `name` has `len` bytes.
@@ -178,14 +182,16 @@ unsafe extern "C" fn Bun__Http1Request__clearField(
     request.clear_field(unsafe { bun_core::ffi::slice(name, len) });
 }
 
-/// The name is empty past the last field.
 #[unsafe(no_mangle)]
 extern "C" fn Bun__Http1Request__fieldAt(
     request: &Request<'_>,
     index: usize,
-    value: &mut Bytes,
-) -> Bytes {
-    let field = request.field_at(index).unwrap_or_default();
-    *value = field.value.into();
-    field.name.into()
+    name: Out<'_>,
+    value: Out<'_>,
+) -> bool {
+    request.field_at(index).is_some_and(|field| {
+        name.write(field.name.into());
+        value.write(field.value.into());
+        true
+    })
 }

@@ -9,16 +9,16 @@ use bun_http_types::Method::Method;
 
 use super::{RequestError, RequestOptions};
 use crate::byte_sets::{
-    ABOVE_SPACE, CONTENT, CONTENT_OR_DELETE, LIST_ELEMENT, METHOD, RELAXED_CONTENT, TOKEN,
-    UPPERCASE_METHOD, VISIBLE,
+    ABOVE_SPACE, CONTENT, CONTENT_OR_DELETE, LIST_ELEMENT, METHOD, NOT_QUESTION_MARK, NOT_SLASH,
+    RELAXED_CONTENT, TOKEN, UPPERCASE_METHOD, VISIBLE,
 };
 
-/// HTTP/2 and HTTP/3 have it from `UWS_HTTP_MAX_HEADERS_COUNT`.
+/// 2 fewer than `UWS_HTTP_MAX_HEADERS_COUNT` in HttpParser.h.
 pub(super) const MAX_FIELDS: usize = 198;
 const MAX_TRAILER_FIELDS: usize = 199;
 pub(super) const BLANKS: &[u8] = b" \t";
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub struct Field<'a> {
     pub name: &'a [u8],
     pub value: &'a [u8],
@@ -141,13 +141,11 @@ impl<'a> Request<'a> {
 
     /// The target without its query, and without the scheme and the authority of an absolute one.
     pub fn path(&self) -> &'a [u8] {
-        let target = self.line.target;
-        let path = strings::split_once_char(target, b'?').map_or(target, |(path, _)| path);
-        match skip_scheme(path) {
+        let (path, _) = split_run(self.line.target, &NOT_QUESTION_MARK);
+        match skip_scheme(path).map(|rest| split_run(rest, &NOT_SLASH)) {
             None => path,
-            Some(rest) => strings::index_of_char_usize(rest, b'/')
-                .and_then(|slash| rest.get(slash..))
-                .unwrap_or(b"/"),
+            Some((_, [])) => b"/",
+            Some((_, path)) => path,
         }
     }
 

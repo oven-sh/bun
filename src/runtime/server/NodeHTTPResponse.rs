@@ -9,7 +9,7 @@ use bun_core::{scoped_log, strings};
 use bun_http::Method as HttpMethod;
 use bun_http1::request::{Field, parse_trailers};
 use bun_jsc::JsCell;
-use bun_jsc::bindgen::{self, Callable, JsLocal, JsScope, JsWrapper, StringOrJsBytes};
+use bun_jsc::bindgen::{Callable, JsLocal, JsScope, JsWrapper, StringOrJsBytes};
 use bun_ptr::{AsCtxPtr, RefPtr};
 use bun_uws as uws;
 use bun_uws_sys as uws_sys;
@@ -2495,7 +2495,7 @@ impl NodeHTTPResponse {
         &self,
         cx: &mut JsScope<'a>,
         use_insecure_http_parser: bool,
-    ) -> bindgen::Result<'a, JsLocal<'a>> {
+    ) -> bun_jsc::bindgen::Result<'a, JsLocal<'a>> {
         let section = self.request_trailers.replace(Vec::new());
         // Lenient (insecureHTTPParser) servers accept CTL bytes in trailer values on
         // the wire; parse them with the same leniency so they surface on req.trailers.

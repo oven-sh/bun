@@ -97,14 +97,14 @@ extern "C" Result Bun__RequestParser__read(Socket *, const char *data, size_t le
 extern "C" Result Bun__RequestParser__readForNode(Socket *, const char *data, size_t length, const Options *);
 extern "C" bool Bun__RequestParser__hasPartialHead(const HttpParser *);
 extern "C" bool Bun__RequestParser__hasIncompleteBody(const HttpParser *);
-extern "C" Bytes Bun__Http1Request__method(const Request *);
-extern "C" Bytes Bun__Http1Request__target(const Request *);
-extern "C" Bytes Bun__Http1Request__path(const Request *);
-extern "C" Bytes Bun__Http1Request__afterHead(const Request *);
+extern "C" void Bun__Http1Request__method(const Request *, Bytes *);
+extern "C" void Bun__Http1Request__target(const Request *, Bytes *);
+extern "C" void Bun__Http1Request__path(const Request *, Bytes *);
+extern "C" void Bun__Http1Request__afterHead(const Request *, Bytes *);
 extern "C" bool Bun__Http1Request__isHttp10(const Request *);
-extern "C" Bytes Bun__Http1Request__field(const Request *, const char *name, size_t length);
+extern "C" void Bun__Http1Request__field(const Request *, const char *name, size_t length, Bytes *);
 extern "C" void Bun__Http1Request__clearField(const Request *, const char *name, size_t length);
-extern "C" Bytes Bun__Http1Request__fieldAt(const Request *, size_t index, Bytes *value);
+extern "C" bool Bun__Http1Request__fieldAt(const Request *, size_t index, Bytes *name, Bytes *value);
 
 }
 
@@ -115,17 +115,17 @@ struct HttpRequest {
     explicit HttpRequest(const http1::Request *parsed) : parsed(parsed) {}
 
     bool isAncient() { return http1::Bun__Http1Request__isHttp10(parsed); }
-    std::string_view getCaseSensitiveMethod() { return http1::Bun__Http1Request__method(parsed); }
-    std::string_view getFullUrl() { return http1::Bun__Http1Request__target(parsed); }
-    std::string_view getUrlForRouting() { return http1::Bun__Http1Request__path(parsed); }
+    std::string_view getCaseSensitiveMethod() { return get<http1::Bun__Http1Request__method>(); }
+    std::string_view getFullUrl() { return get<http1::Bun__Http1Request__target>(); }
+    std::string_view getUrlForRouting() { return get<http1::Bun__Http1Request__path>(); }
     /* The `head` argument of node:http's 'connect' and 'upgrade' events. */
-    std::string_view getBytesAfterHead() { return http1::Bun__Http1Request__afterHead(parsed); }
-    std::string_view getHeader(std::string_view name) { return http1::Bun__Http1Request__field(parsed, name.data(), name.length()); }
+    std::string_view getBytesAfterHead() { return get<http1::Bun__Http1Request__afterHead>(); }
+    std::string_view getHeader(std::string_view name) { return get<http1::Bun__Http1Request__field>(name.data(), name.length()); }
     void clearHeader(std::string_view name) { http1::Bun__Http1Request__clearField(parsed, name.data(), name.length()); }
 
     template <typename Fn> void forEachHeader(Fn &&fn) {
         http1::Bytes name, value;
-        for (size_t i = 0; (name = http1::Bun__Http1Request__fieldAt(parsed, i, &value)).length; i++) {
+        for (size_t i = 0; http1::Bun__Http1Request__fieldAt(parsed, i, &name, &value); i++) {
             fn(name, value);
         }
     }
@@ -140,6 +140,12 @@ struct HttpRequest {
     }
 
 private:
+    template <auto getter, typename... Arguments> std::string_view get(Arguments... arguments) {
+        http1::Bytes bytes;
+        getter(parsed, arguments..., &bytes);
+        return bytes;
+    }
+
     bool didYield = false;
     std::pair<int, std::string_view *> currentParameters;
 };

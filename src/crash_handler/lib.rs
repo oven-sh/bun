@@ -2879,8 +2879,7 @@ mod draft {
 
     /// How many frames a crash reports at most.
     const CRASH_TRACE_FRAMES: usize = 20;
-    /// The capacity of the buffer that a trace string is built in. The frames take what the header and the reason leave of it.
-    /// On POSIX every frame of a crash fits beside 1 KB of those, each with the longest name. It is 1 KB on Windows, which reports a stack overflow on the stack that overflowed.
+    /// The capacity of the buffer that a trace string is built in. It is 1 KB on Windows, which reports a stack overflow on the stack that overflowed.
     const TRACE_STRING_CAPACITY: usize = if cfg!(windows) {
         1024
     } else {
@@ -2996,8 +2995,7 @@ mod draft {
         write_trace_string(lines, opts.reason, panic_message, opts.action, writer)
     }
 
-    /// Writes a trace string of at most `TRACE_STRING_CAPACITY` bytes. The frames take what the header and the reason leave.
-    /// `panic_message` is from `encode_panic_message`. One that alone does not fit is left out, and the frames stay.
+    /// Writes a trace string of at most `TRACE_STRING_CAPACITY` bytes: the frames take what the header and the reason leave.
     fn write_trace_string(
         lines: impl Iterator<Item = Option<StackLine>>,
         reason: CrashReason<'_>,

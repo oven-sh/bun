@@ -7,6 +7,7 @@ pub(crate) type UCalendarDateFields = i32;
 pub(crate) const UCAL_ERA: UCalendarDateFields = 0;
 pub(crate) const UCAL_YEAR: UCalendarDateFields = 1;
 pub(crate) const UCAL_MONTH: UCalendarDateFields = 2;
+pub(crate) const UCAL_WEEK_OF_YEAR: UCalendarDateFields = 3;
 pub(crate) const UCAL_DATE: UCalendarDateFields = 5;
 pub(crate) const UCAL_DAY_OF_YEAR: UCalendarDateFields = 6;
 pub(crate) const UCAL_DAY_OF_WEEK: UCalendarDateFields = 7;
@@ -55,6 +56,8 @@ pub(crate) const UCAL_ACTUAL_MAXIMUM: UCalendarLimitType = 5;
 pub(crate) type UCalendarWeekdayType = i32;
 pub(crate) const UCAL_WEEKDAY: UCalendarWeekdayType = 0;
 pub(crate) const UCAL_WEEKEND: UCalendarWeekdayType = 1;
+pub(crate) const UCAL_WEEKEND_ONSET: UCalendarWeekdayType = 2;
+pub(crate) const UCAL_WEEKEND_CEASE: UCalendarWeekdayType = 3;
 
 pub(crate) type UTimeZoneTransitionType = i32;
 pub(crate) const UCAL_TZ_TRANSITION_NEXT: UTimeZoneTransitionType = 0;

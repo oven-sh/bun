@@ -1,6 +1,5 @@
 //! The encoding of a trie of bytes. ICU4C: bytestrie.cpp, unicode/bytestrie.h
 
-use crate::common::slice_ext::SliceExt;
 use crate::common::ustringtrie::{StringTrie, TrieUnits};
 
 pub(crate) type BytesTrie<'a> = StringTrie<&'a [u8]>;
@@ -47,7 +46,7 @@ impl TrieUnits for &[u8] {
 
     #[inline]
     fn unit(self, pos: usize) -> i32 {
-        self.at(pos).into()
+        self.get(pos).copied().unwrap_or(0).into()
     }
 
     #[inline]

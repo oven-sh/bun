@@ -183,6 +183,27 @@ impl FormattedStringBuilder {
         }
     }
 
+    pub(crate) fn insert_code_point_repeated(
+        &mut self,
+        index: usize,
+        code_point: u32,
+        field: Field,
+        times: usize,
+    ) -> usize {
+        let units = utf16::length(code_point);
+        let (chars, fields) = self.prepare_for_insert(index, units.saturating_mul(times));
+        if units == 1 {
+            chars.fill(code_point as u16);
+        } else {
+            chars
+                .as_chunks_mut()
+                .0
+                .fill([utf16::lead(code_point), utf16::trail(code_point)]);
+        }
+        fields.fill(field);
+        fields.len()
+    }
+
     pub(crate) fn insert(&mut self, index: usize, text: &[u16], field: Field) -> usize {
         match *text {
             [] => 0,

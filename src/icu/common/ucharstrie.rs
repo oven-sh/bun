@@ -48,7 +48,7 @@ impl TrieUnits for U16s<'_> {
 
     #[inline]
     fn unit(self, pos: usize) -> i32 {
-        self.at(pos).into()
+        self.get(pos).unwrap_or(0).into()
     }
 
     #[inline]

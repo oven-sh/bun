@@ -13,7 +13,7 @@ pub(crate) type UDateIntervalFormat = DateIntervalFormat;
 
 pub(crate) type UFormattedDateInterval = UFormattedValue;
 
-/// Accepts the skeletons that `udatpg_getSkeleton` returns, unless they are empty or contain `Z`.
+/// Accepts skeletons in the order of `udatpg_getSkeleton`.
 #[capi]
 fn udtitvfmt_open(
     locale: NulStr<u8>,
@@ -67,7 +67,7 @@ fn udtitvfmt_formatToResult(
     })
 }
 
-/// Accepts clones of one calendar, which has the type of the formatter's calendar.
+/// Accepts clones of one calendar.
 #[capi]
 fn udtitvfmt_formatCalendarToResult(
     formatter: Option<&UDateIntervalFormat>,

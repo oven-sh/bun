@@ -60,6 +60,18 @@ pub(crate) fn find(name: &[u8]) -> Option<&'static [u8]> {
     }
 }
 
+/// Returns an item of a package in a file, or what it decompresses to.
+pub(crate) fn decompress(item: &'static [u8]) -> &'static [u8] {
+    match i32::try_from(item.len()) {
+        // SAFETY: `item` has `length` bytes, at least the four of the magic number. So has what replaces it, for good.
+        Ok(mut length) if item.starts_with(&ZSTD_MAGIC) => unsafe {
+            let result = bun_icu_maybe_decompress(item.as_ptr().cast(), &mut length);
+            std::slice::from_raw_parts(result.cast(), length as usize)
+        },
+        _ => item,
+    }
+}
+
 pub(crate) const RBBI_DATA_FORMAT: u8 = 7;
 
 /// Returns the size of collation data after the header: the last index, or the size of the indexes if it has no parts.
@@ -105,8 +117,8 @@ unsafe fn stated_length(item: *const u8) -> usize {
             + match (&[format0, format1, format2, format3], major) {
                 // URES_INDEX_BUNDLE_TOP, after the root
                 (b"ResB", 2..=3) => 4 * index(1 + 3),
-                // IX_TOTAL_SIZE
-                (b"Nrm2", 5) => index(7),
+                // IX_TOTAL_SIZE, ULAYOUT_IX_TRIES_TOP
+                (b"Nrm2", 5) | (b"Layo", 1) => index(7),
                 (b"Emoj", 1) => index(13),
                 (b"Brk ", RBBI_DATA_FORMAT) => index(2),
                 (b"Dict", _) => index(3),
@@ -117,7 +129,7 @@ unsafe fn stated_length(item: *const u8) -> usize {
 }
 
 /// `name_at(index)` maps an offset in the name of that entry to the byte. ICU4C: ucmndata.cpp, offsetTOCPrefixBinarySearch
-fn prefix_binary_search<N: Fn(usize) -> u8>(
+pub(crate) fn prefix_binary_search<N: Fn(usize) -> u8>(
     name: &[u8],
     count: usize,
     name_at: impl Fn(usize) -> N,

@@ -85,6 +85,7 @@ fn uenum_next(
         result_length.set(0);
         let (string, length) = match source.next()? {
             Some(Item::Chars(s)) => (s.as_ptr().cast(), s.count_bytes()),
+            Some(Item::UChars(s)) => copy_as_chars(chars, s.iter().copied())?,
             Some(Item::Resource(s)) => copy_as_chars(chars, s.units().iter())?,
             None => return Ok(null()),
         };

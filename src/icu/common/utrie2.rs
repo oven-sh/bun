@@ -1,6 +1,7 @@
 //! Reader of a frozen, serialized `UTrie2`. ICU4C: utrie2.h, utrie2.cpp, utrie2_impl.h
 
 use crate::common::bytes::{U16s, U32s, u16_array, u16_halves};
+use crate::common::uniset::UnicodeSet;
 use std::mem::replace;
 
 const UTRIE2_SIG: u32 = 0x5472_6932; // "Tri2"
@@ -175,7 +176,22 @@ impl<'a> UTrie2<'a> {
         self.data32.at(usize::from(block) + usize::from(t1))
     }
 
-    /// Calls `enum_range(start, end, value)` for each range of equal 32-bit values until it returns false.
+    fn value_at(&self, index: usize) -> u32 {
+        if self.data32.is_empty() {
+            self.index.at(index).into()
+        } else {
+            self.data32.at(index)
+        }
+    }
+
+    pub(crate) fn add_range_starts(&self, set: &mut UnicodeSet) {
+        self.enum_ranges(|start, _, _| {
+            set.add(start);
+            true
+        });
+    }
+
+    /// Calls `enum_range(start, end, value)` for each range of equal values until it returns false.
     pub(crate) fn enum_ranges(&self, mut enum_range: impl FnMut(u32, u32, u32) -> bool) {
         const LIMIT: u32 = 0x11_0000;
         let mut range = CurrentRange {
@@ -184,7 +200,7 @@ impl<'a> UTrie2<'a> {
             enum_range: &mut enum_range,
         };
         let null_block = usize::from(self.data_null_offset);
-        let initial_value = self.data32.at(null_block);
+        let initial_value = self.value_at(null_block);
         let (mut prev_i2_block, mut prev_block) = (usize::MAX, usize::MAX);
         // A multiple of 0x400 at the start of each round.
         let mut c = 0;
@@ -223,7 +239,7 @@ impl<'a> UTrie2<'a> {
                     range.visit(c, initial_value)
                 } else {
                     (0..UTRIE2_DATA_BLOCK_LENGTH)
-                        .all(|j| range.visit(c + j, self.data32.at(block + j as usize)))
+                        .all(|j| range.visit(c + j, self.value_at(block + j as usize)))
                 };
                 if !should_continue {
                     return;
@@ -231,7 +247,7 @@ impl<'a> UTrie2<'a> {
                 c += UTRIE2_DATA_BLOCK_LENGTH;
             }
         }
-        if c >= LIMIT || range.visit(c, self.data32.at(self.high_value_index)) {
+        if c >= LIMIT || range.visit(c, self.value_at(self.high_value_index)) {
             (range.enum_range)(range.start, LIMIT - 1, range.value);
         }
     }

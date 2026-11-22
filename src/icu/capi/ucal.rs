@@ -111,7 +111,7 @@ fn ucal_setMillis(cal: Option<&mut UCalendar>, date_time: UDate, status: ErrorCo
     })
 }
 
-/// Accepts the extended year, the month and the date of a calendar that is not Gregorian, while the offset stays.
+/// Accepts the extended year, the month and the date of a calendar that is not Gregorian.
 #[capi]
 fn ucal_add(
     cal: Option<&mut UCalendar>,
@@ -198,11 +198,7 @@ fn ucal_getDayOfWeekType(
         if !(UCAL_SUNDAY..=UCAL_SATURDAY).contains(&day_of_week) {
             return Err(U_ILLEGAL_ARGUMENT_ERROR);
         }
-        Ok(if cal.non_null()?.is_weekend(day_of_week) {
-            UCAL_WEEKEND
-        } else {
-            UCAL_WEEKDAY
-        })
+        Ok(cal.non_null()?.day_of_week_type(day_of_week))
     })
 }
 
@@ -316,10 +312,11 @@ fn ucal_getCanonicalTimeZoneID(
         if !is_system_id.is_null() {
             return Err(U_UNSUPPORTED_ERROR);
         }
-        if result.is_null() || result_capacity <= 0 {
+        let id = id.get()?;
+        if id.is_empty() || result.is_null() || result_capacity <= 0 {
             return Err(U_ILLEGAL_ARGUMENT_ERROR);
         }
-        let canonical = TimeZone::get_canonical_id(id.get()?)?;
+        let canonical = TimeZone::get_canonical_id(id)?;
         Ok(result.extract_to(&canonical, status))
     })
 }

@@ -8,14 +8,15 @@ use crate::common::loclikely::{
 use crate::common::memory::{Appendable, oom_checked, try_shared};
 use crate::common::putil::uprv_get_utc_time;
 use crate::common::slice_ext::SliceExt;
-use crate::common::uinvchar::invariant_prefix;
-use crate::common::uloc::{UKeywordsContext, ulocimp_canonicalize, ulocimp_get_keyword_value};
+use crate::common::uenum::{Item, StringEnumeration};
+use crate::common::uinvchar::{invariant_prefix, uprv_is_invariant_ustring};
+use crate::common::uloc::{ulocimp_canonicalize, ulocimp_get_keyword_value};
 use crate::common::uresdata::DataString;
 use crate::common::uresimp::*;
 use crate::common::utypes::*;
 use crate::i18n::gregoimp::*;
 use crate::i18n::locale_cache::LocaleCache;
-use crate::i18n::timezone::{LocalOptions, TimeZone, invariant_c_string};
+use crate::i18n::timezone::{LocalOptions, TimeZone, invariant_c_string, preloaded_zone_id};
 use crate::i18n::unicode::ucal::*;
 use crate::i18n::{cecal, chnsecal, gregocal, hebrwcal, indiancal, islamcal, persncal};
 use bun_core::strings;
@@ -29,6 +30,7 @@ pub(crate) enum Field {
     Era = UCAL_ERA,
     Year = UCAL_YEAR,
     Month = UCAL_MONTH,
+    WeekOfYear = UCAL_WEEK_OF_YEAR,
     Date = UCAL_DATE,
     DayOfYear = UCAL_DAY_OF_YEAR,
     DayOfWeek = UCAL_DAY_OF_WEEK,
@@ -144,13 +146,14 @@ impl CalendarType {
         let order = supplemental_data_for_region(b"calendarPreferenceData", locale_id).ok()?;
         let name = ures_get_string_by_index(&order, 0).ok().flatten()?;
         Self::from_name(&invariant_c_string(name.iter()))
+            .filter(|_| uprv_is_invariant_ustring(name.iter()))
     }
 
     /// Returns the preferences of the region, followed by all other types unless `commonly_used`.
     pub(crate) fn keyword_values_for_locale(
         locale_id: &[u8],
         commonly_used: bool,
-    ) -> Result<UKeywordsContext, UErrorCode> {
+    ) -> Result<CalendarNames, UErrorCode> {
         let order = supplemental_data_for_region(b"calendarPreferenceData", locale_id)?;
         let mut values = Vec::new();
         for index in 0..order.get_size() {
@@ -167,19 +170,33 @@ impl CalendarType {
                 }
             }
         }
-        oom_checked(UKeywordsContext::new(values))
+        oom_checked(CalendarNames { values, current: 0 })
     }
 }
 
-/// Returns the entry of a table of supplementalData for the locale's region, or else for 001.
+pub(crate) struct CalendarNames {
+    /// Each ends with NUL and can be empty.
+    values: Vec<u8>,
+    current: usize,
+}
+
+impl StringEnumeration for CalendarNames {
+    fn next(&mut self) -> Result<Option<Item<'_>>, UErrorCode> {
+        let value = CStr::from_bytes_until_nul(self.values.slice(self.current..)).ok();
+        self.current += value.map_or(0, |value| value.count_bytes() + 1);
+        Ok(value.map(Item::Chars))
+    }
+}
+
+/// Returns the entry for the locale's region, or else for 001, which is at the top level if `table` is missing.
 fn supplemental_data_for_region(
     table: &[u8],
     locale_id: &[u8],
 ) -> Result<UResourceBundle, UErrorCode> {
     let region = ulocimp_get_region_for_supplemental_data(locale_id, true)?;
     let mut bundle = ures_open_direct(None, b"supplementalData")?;
-    _ = bundle.descend(table)?;
-    match bundle.get_by_key(&region) {
+    let found = bundle.descend(table);
+    match found.and_then(|()| bundle.get_by_key(&region)) {
         Err(U_MISSING_RESOURCE_ERROR) => bundle.get_by_key(b"001"),
         found => found,
     }
@@ -189,8 +206,11 @@ fn supplemental_data_for_region(
 struct WeekData {
     first_day_of_week: UCalendarDaysOfWeek,
     minimal_days_in_first_week: i32,
-    weekend_onset: UCalendarDaysOfWeek,
-    weekend_cease: UCalendarDaysOfWeek,
+    weekend_onset: i8,
+    weekend_cease: i8,
+    /// Whether the weekend has the whole of these two days.
+    onset_is_whole: bool,
+    cease_is_whole: bool,
 }
 
 /// False if the language names a bundle that is not a locale, such as "plurals".
@@ -206,8 +226,11 @@ fn has_month_names(locale: &Locale) -> bool {
         used = Locale::from_parts(used.get_language(), used.get_country(), b"", b"");
     }
     ures_open(None, used.get_base_name())
-        .and_then(|bundle| bundle.get_by_key(b"calendar"))
-        .and_then(|calendars| calendars.get_by_key_with_fallback(b"gregorian"))
+        .and_then(|mut calendars| {
+            // Without this key the calendar is looked up at the top level.
+            _ = calendars.descend(b"calendar");
+            calendars.get_by_key_with_fallback(b"gregorian")
+        })
         .and_then(|gregorian| gregorian.get_by_key_with_fallback(b"monthNames"))
         .is_ok()
 }
@@ -216,22 +239,24 @@ impl WeekData {
     const DEFAULT: WeekData = WeekData {
         first_day_of_week: UCAL_SUNDAY,
         minimal_days_in_first_week: 1,
-        weekend_onset: UCAL_SATURDAY,
-        weekend_cease: UCAL_SUNDAY,
+        weekend_onset: UCAL_SATURDAY as i8,
+        weekend_cease: UCAL_SUNDAY as i8,
+        onset_is_whole: true,
+        cease_is_whole: true,
     };
 
-    /// The weekend must begin and end at midnight.
     fn from_resource(numbers: I32s) -> Option<WeekData> {
         let is_valid = numbers.len() == 6
-            && (numbers.at(3), numbers.at(5)) == (0, U_MILLIS_PER_DAY)
             && [0, 1, 2, 4]
                 .iter()
                 .all(|&index| (1..=7).contains(&numbers.at(index)));
         is_valid.then(|| WeekData {
             first_day_of_week: numbers.at(0),
             minimal_days_in_first_week: numbers.at(1),
-            weekend_onset: numbers.at(2),
-            weekend_cease: numbers.at(4),
+            weekend_onset: numbers.at(2) as i8,
+            weekend_cease: numbers.at(4) as i8,
+            onset_is_whole: numbers.at(3) == 0,
+            cease_is_whole: numbers.at(5) >= U_MILLIS_PER_DAY,
         })
     }
 
@@ -268,6 +293,8 @@ struct LocaleData {
 
 impl LocaleData {
     fn load(locale: &Locale) -> Result<LocaleData, UErrorCode> {
+        // The order in which canonical IDs are cached shows if links lead to links.
+        preloaded_zone_id()?;
         let calendar_type = CalendarType::for_locale_id(locale.get_name());
         let mut week = WeekData::load(locale)?;
         match calendar_type {
@@ -581,19 +608,54 @@ impl Calendar {
         }
     }
 
-    /// Fails if the offset of the zone changes.
     fn add_days(&mut self, amount: i32) -> Result<(), UErrorCode> {
-        let offsets = |cal: &Calendar| {
-            [Field::ZoneOffset, Field::DstOffset].map(|field| cal.internal_get(field))
-        };
-        let before = offsets(self);
-        self.set_time(self.time + f64::from(amount) * ONE_DAY)?;
+        let (time, offset) = (self.time, self.total_offset());
+        self.set_time(time + f64::from(amount) * ONE_DAY)?;
         self.complete()?;
-        if offsets(self) == before {
+        if self.total_offset() == offset {
             Ok(())
         } else {
-            Err(U_UNSUPPORTED_ERROR)
+            self.restore_wall_time(time, offset)
         }
+    }
+
+    fn total_offset(&self) -> i32 {
+        self.internal_get(Field::DstOffset)
+            .wrapping_add(self.internal_get(Field::ZoneOffset))
+    }
+
+    /// Goes back to the wall time of `old_time`. If the zone skips it, the later of the two candidates stays.
+    #[cold]
+    fn restore_wall_time(&mut self, old_time: UDate, old_offset: i32) -> Result<(), UErrorCode> {
+        let wall_time = day_and_millis(old_time + f64::from(old_offset)).1;
+        let (time, change) = (self.time, old_offset.wrapping_sub(self.total_offset()));
+        let adjustment = change.signum() * (change.wrapping_abs() % U_MILLIS_PER_DAY);
+        if self.millis_in_day() == wall_time || adjustment == 0 {
+            return Ok(());
+        }
+        self.set_time(time + f64::from(adjustment))?;
+        self.complete()?;
+        if self.millis_in_day() != wall_time && adjustment < 0 {
+            self.set_time(time)?;
+        }
+        Ok(())
+    }
+
+    /// Returns the related Gregorian year. The fields must be computed.
+    pub(crate) fn related_year(&self) -> Result<i32, UErrorCode> {
+        let year = self.internal_get(Field::ExtendedYear);
+        let difference = match self.calendar_type {
+            Islamic | IslamicCivil | IslamicTbla | IslamicUmalqura | IslamicRgsa => {
+                return Ok(islamcal::related_year(year));
+            }
+            Coptic => 284,
+            Ethiopic | EthiopicAmeteAlem => 8,
+            Hebrew => -3760,
+            Indian => 79,
+            Persian => 622,
+            _ => 0,
+        };
+        checked_add32(year, difference)
     }
 
     pub(crate) fn set_gregorian_change(&mut self, date: UDate) -> Result<(), UErrorCode> {
@@ -697,6 +759,11 @@ impl Calendar {
         Ok(())
     }
 
+    pub(crate) fn share_time_zone_of(&mut self, other: &Calendar) {
+        self.zone = other.zone.as_ref().map(Arc::clone);
+        self.are_fields_set = false;
+    }
+
     #[inline]
     pub(crate) fn time_zone(&self) -> Result<&TimeZone, UErrorCode> {
         self.zone.as_deref().ok_or(U_UNSUPPORTED_ERROR)
@@ -712,12 +779,21 @@ impl Calendar {
         self.week.first_day_of_week
     }
 
-    pub(crate) fn is_weekend(&self, day: UCalendarDaysOfWeek) -> bool {
-        let (onset, cease) = (self.week.weekend_onset, self.week.weekend_cease);
-        if onset <= cease {
-            day >= onset && day <= cease
+    pub(crate) fn day_of_week_type(&self, day: UCalendarDaysOfWeek) -> UCalendarWeekdayType {
+        let [onset, cease] = [self.week.weekend_onset, self.week.weekend_cease].map(i32::from);
+        let is_outside = if onset <= cease {
+            day < onset || day > cease
         } else {
-            day >= onset || day <= cease
+            day < onset && day > cease
+        };
+        if is_outside {
+            UCAL_WEEKDAY
+        } else if day == onset && !self.week.onset_is_whole {
+            UCAL_WEEKEND_ONSET
+        } else if day != onset && day == cease && !self.week.cease_is_whole {
+            UCAL_WEEKEND_CEASE
+        } else {
+            UCAL_WEEKEND
         }
     }
 
@@ -771,16 +847,29 @@ impl Calendar {
 
     pub(crate) fn days_in_month(&self) -> Result<i32, UErrorCode> {
         let mut work = self.clone();
-        work.set(Field::Date, 1);
-        work.complete()?;
+        work.go_to_first(Field::Date)?;
         work.month_length()
     }
 
     pub(crate) fn days_in_year(&self) -> Result<i32, UErrorCode> {
         let mut work = self.clone();
-        work.set(Field::DayOfYear, 1);
-        work.complete()?;
+        work.go_to_first(Field::DayOfYear)?;
         work.year_length(work.internal_get(Field::ExtendedYear))
+    }
+
+    /// Goes to the start of the day on which `field` is 1.
+    #[inline(always)]
+    fn go_to_first(&mut self, field: Field) -> Result<(), UErrorCode> {
+        self.set(field, 1);
+        for time_field in [
+            Field::HourOfDay,
+            Field::Minute,
+            Field::Second,
+            Field::Millisecond,
+        ] {
+            self.set_field(time_field, 0);
+        }
+        self.complete()
     }
 
     /// Clamps the day of the month to the length of the month.
@@ -812,7 +901,7 @@ impl Calendar {
         self.fields.gregorian_date = grego::julian_day_to_fields(julian_day)?;
         self.set_field(Field::DayOfWeek, self.fields.gregorian_date.dow.into());
         self.compute_date_fields(julian_day)?;
-        self.compute_year_of_week()?;
+        self.compute_week_of_year()?;
 
         let seconds = millis_in_day / U_MILLIS_PER_SECOND;
         let minutes = seconds / 60;
@@ -830,7 +919,7 @@ impl Calendar {
     }
 
     // ICU4C: calendar.cpp, Calendar::computeWeekFields
-    fn compute_year_of_week(&mut self) -> Result<(), UErrorCode> {
+    fn compute_week_of_year(&mut self) -> Result<(), UErrorCode> {
         let (first_day, minimal_days) = (
             self.week.first_day_of_week,
             self.week.minimal_days_in_first_week,
@@ -841,13 +930,13 @@ impl Calendar {
         let day_of_year = self.internal_get(Field::DayOfYear);
         let mut year_woy = eyear;
         let rel_dow_jan1 = (day_of_week + 7001 - first_day).wrapping_sub(day_of_year) % 7;
-        let week_of_year = day_of_year.wrapping_add(rel_dow_jan1 - 1) / 7
+        let mut week_of_year = day_of_year.wrapping_add(rel_dow_jan1 - 1) / 7
             + i32::from(7 - rel_dow_jan1 >= minimal_days);
 
         if week_of_year == 0 {
-            // The last week of the previous year, which has to be in range.
+            // The last week of the previous year.
             year_woy = eyear.wrapping_sub(1);
-            self.year_length(year_woy)?;
+            week_of_year = self.week_number(day_of_year.wrapping_add(self.year_length(year_woy)?));
         } else {
             let last_doy = self.year_length(eyear)?;
             if day_of_year >= last_doy.wrapping_sub(5) {
@@ -859,12 +948,34 @@ impl Calendar {
                     && day_of_year.wrapping_add(7 - rel_dow) > last_doy
                 {
                     // The first week of the next year.
-                    year_woy = eyear.wrapping_add(1);
+                    (week_of_year, year_woy) = (1, eyear.wrapping_add(1));
                 }
             }
         }
+        self.set_field(Field::WeekOfYear, week_of_year);
         self.set_field(Field::YearWoy, year_woy);
         Ok(())
+    }
+
+    /// Returns the week of the calendar's day, given its number in a month or a year. 0 is before the first week.
+    pub(crate) fn week_number(&self, day_of_period: i32) -> i32 {
+        let period_start = (self.internal_get(Field::DayOfWeek) - self.week.first_day_of_week + 1)
+            .wrapping_sub(day_of_period)
+            .rem_euclid(7);
+        day_of_period.wrapping_add(period_start - 1) / 7
+            + i32::from(7 - period_start >= self.week.minimal_days_in_first_week)
+    }
+
+    /// Returns 1 for the first day of the week.
+    pub(crate) fn local_day_of_week(&self) -> i32 {
+        (self.internal_get(Field::DayOfWeek) + 7 - self.week.first_day_of_week) % 7 + 1
+    }
+
+    pub(crate) fn millis_in_day(&self) -> i32 {
+        let get = |field| self.internal_get(field);
+        ((get(Field::HourOfDay) * 60 + get(Field::Minute)) * 60 + get(Field::Second))
+            * U_MILLIS_PER_SECOND
+            + get(Field::Millisecond)
     }
 }
 

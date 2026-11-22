@@ -1,12 +1,14 @@
 //! Interval patterns by skeleton and by the largest field in which two dates differ. ICU4C: dtitvinf.cpp
 
 use crate::common::bytes::U16s;
+use crate::common::cstring::until_nul;
 use crate::common::locid::Locale;
 use crate::common::memory::{Appendable, try_push, try_to_vec};
 use crate::common::resource::{ResourceSink, ResourceTable, ResourceValue};
 use crate::common::slice_ext::SliceExt;
 use crate::common::uhash::Hashtable;
 use crate::common::uinvchar::append_invariant_chars;
+use crate::common::unistr::UStr;
 use crate::common::uresimp::*;
 use crate::common::utypes::*;
 use crate::i18n::calendar::Field;
@@ -102,8 +104,10 @@ impl FieldWidths {
 type SkeletonPatterns = [U16s<'static>; IntervalField::Second as usize];
 
 pub(crate) struct DateIntervalInfo {
-    /// "{0}" for the first date of the interval precedes "{1}" for the second.
+    /// Contains "{0}" for the earlier date of the interval and "{1}" for the later date.
     pub(crate) fallback_pattern: Vec<u16>,
+    /// The order for patterns without a "latestFirst:" or "earliestFirst:" prefix.
+    pub(crate) later_date_first: bool,
     /// The order of iteration breaks ties in `best_skeleton`.
     patterns: Hashtable<SkeletonPatterns>,
 }
@@ -117,12 +121,17 @@ impl DateIntervalInfo {
         let calendar = calendars.get_by_key_with_fallback(&calendar_type)?;
         let formats = calendar.get_by_key_with_fallback(b"intervalFormats")?;
         let fallback_pattern = formats.get_string_by_key_with_fallback(b"fallback")?;
+        let fallback_pattern = fallback_pattern.units().try_to_vec()?;
+        let index_of = |argument: &[u8; 3]| fallback_pattern.index_of(&argument.map(u16::from));
+        let (Some(earlier), Some(later)) = (index_of(b"{0}"), index_of(b"{1}")) else {
+            return Err(U_ILLEGAL_ARGUMENT_ERROR);
+        };
 
         // Load the calendar type, then each type that its `intervalFormats` alias points to.
         let mut sink = DateIntervalSink::default();
         let mut loaded = Vec::new();
         loop {
-            _ = ures_get_all_items_with_fallback(&calendars, &calendar_type, &mut sink)?;
+            ures_get_all_items_with_fallback(&calendars, until_nul(&calendar_type), &mut sink)?;
             try_push(&mut loaded, calendar_type)?;
             let Some(next) = sink.next_calendar_type.take() else {
                 break;
@@ -134,7 +143,8 @@ impl DateIntervalInfo {
             append_invariant_chars(&mut calendar_type, next.iter())?;
         }
         Ok(Self {
-            fallback_pattern: fallback_pattern.units().try_to_vec()?,
+            fallback_pattern,
+            later_date_first: earlier > later,
             patterns: sink.patterns,
         })
     }
@@ -146,11 +156,8 @@ impl DateIntervalInfo {
             .map_or(U16s::EMPTY, |patterns| patterns.at(field as usize))
     }
 
-    /// Returns the closest skeleton of the data. In `skeleton`, z, k and K count as v, H and h, and a is ignored.
-    pub(crate) fn best_skeleton(
-        &self,
-        skeleton: &[u16],
-    ) -> Result<(&[u16], SkeletonDifference), UErrorCode> {
+    /// Returns the closest skeleton of the data. In `skeleton`, z, k and K count as v, H and h; a and b are ignored.
+    pub(crate) fn best_skeleton(&self, skeleton: &[u16]) -> Option<(&[u16], SkeletonDifference)> {
         const DIFFERENT_FIELD: u32 = 0x1000;
         const STRING_NUMERIC_DIFFERENCE: u32 = 0x100;
         const MAX_POSITIVE_INT: u32 = 56632;
@@ -159,7 +166,7 @@ impl DateIntervalInfo {
         for (letter, replacement) in [(b'z', b'v'), (b'k', b'H'), (b'K', b'h')] {
             input.set(replacement, input.get(replacement) + input.get(letter));
         }
-        for letter in *b"zkKa" {
+        for letter in *b"zkKab" {
             input.set(letter, 0);
         }
 
@@ -182,14 +189,14 @@ impl DateIntervalInfo {
                 });
             }
             if distance == 0 {
-                return Ok((candidate, SkeletonDifference::None));
+                return Some((candidate, SkeletonDifference::None));
             }
             if distance < best_distance {
                 best = Some((candidate, difference));
                 best_distance = distance;
             }
         }
-        best.ok_or(U_UNSUPPORTED_ERROR)
+        best
     }
 }
 
@@ -221,20 +228,31 @@ impl ResourceSink for DateIntervalSink {
 }
 
 impl DateIntervalSink {
-    /// Stores the patterns that are missing.
+    /// Stores the patterns that are missing. A table without patterns leaves no entry.
     fn put_skeleton(&mut self, skeleton: &[u8], table: &ResourceTable) -> Result<(), UErrorCode> {
+        let (mut found, mut has_patterns) = (SkeletonPatterns::default(), false);
+        for (key, value) in table.iter() {
+            if let (Some(field), Ok(pattern)) =
+                (IntervalField::from_pattern_letter(key), value.get_string())
+            {
+                has_patterns = true;
+                if found.at(field as usize).is_empty() {
+                    found.set(field as usize, pattern);
+                }
+            }
+        }
+        if !has_patterns {
+            return Ok(());
+        }
         self.skeleton.clear();
         self.skeleton
             .add_each(skeleton.iter().map(|&c| u16::from(c)));
         let patterns = self
             .patterns
             .get_or_put(&self.skeleton, || Ok(Default::default()))?;
-        for (key, value) in table.iter() {
-            if let (Some(field), Ok(pattern)) =
-                (IntervalField::from_pattern_letter(key), value.get_string())
-                && patterns.at(field as usize).is_empty()
-            {
-                patterns.set(field as usize, pattern);
+        for (stored, pattern) in patterns.iter_mut().zip(found) {
+            if stored.is_empty() {
+                *stored = pattern;
             }
         }
         Ok(())

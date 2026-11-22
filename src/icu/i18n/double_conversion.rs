@@ -121,6 +121,7 @@ pub(crate) const POWERS_OF_TEN: [f64; 22] = [
 const MAX_SIGNIFICANT_DIGITS: usize = 772;
 
 /// Returns the double nearest to 0.d * 10^`point`. `digits` has the digits of d from the last to the first, which is not 0.
+#[inline(always)]
 pub(crate) fn digits_to_double(digits: &[u8], point: i64) -> f64 {
     let (count, mut digits) = (digits.len(), digits.iter().rev());
     // Up to 15 digits are exact, so one operation with an exact power rounds correctly.

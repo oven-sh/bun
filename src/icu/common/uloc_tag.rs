@@ -44,7 +44,7 @@ fn is_alphanumeric(s: &[u8], length: RangeInclusive<usize>) -> bool {
     length.contains(&s.len()) && s.iter().all(u8::is_ascii_alphanumeric)
 }
 
-fn ultag_is_language_subtag(s: &[u8]) -> bool {
+pub(crate) fn ultag_is_language_subtag(s: &[u8]) -> bool {
     (2..=8).contains(&s.len()) && is_alphabetic(s)
 }
 
@@ -52,7 +52,7 @@ fn is_extlang_subtag(s: &[u8]) -> bool {
     s.len() == 3 && is_alphabetic(s)
 }
 
-fn ultag_is_script_subtag(s: &[u8]) -> bool {
+pub(crate) fn ultag_is_script_subtag(s: &[u8]) -> bool {
     s.len() == 4 && is_alphabetic(s)
 }
 

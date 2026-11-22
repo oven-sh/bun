@@ -1,11 +1,12 @@
 //! The numbers in a date. ICU4C: smpdtfmt.cpp, SimpleDateFormat::zeroPaddingNumber
 
 use crate::common::locid::Locale;
-use crate::common::memory::try_shared_result;
+use crate::common::memory::{TryClone, try_shared_result};
 use crate::common::sink::TextBuf;
 use crate::common::slice_ext::{SliceExt, to_int32};
 use crate::common::utypes::*;
 use crate::i18n::dcfmtsym::DecimalFormatSymbols;
+use crate::i18n::decimfmt::DecimalFormat;
 use crate::i18n::formatted_string_builder::FormattedStringBuilder;
 use crate::i18n::locale_cache::LocaleCache;
 use crate::i18n::number_simple::SimpleNumberFormatter;
@@ -71,8 +72,8 @@ fn write_digits(
 #[derive(Clone)]
 pub(crate) enum DateNumberFormat {
     Decimal(Arc<SimpleNumbers>),
-    /// Holds a `NumberFormat::RuleBased`.
-    RuleBased(Arc<NumberFormat>),
+    /// Rules, or the format of a single field.
+    Other(Arc<NumberFormat>),
 }
 
 impl DateNumberFormat {
@@ -87,7 +88,23 @@ impl DateNumberFormat {
                     .get_or_try_insert_with(locale.get_name(), create)
                     .map(Self::Decimal)
             }
-            NumberFormat::RuleBased(_) => Ok(Self::RuleBased(format)),
+            NumberFormat::RuleBased(_) => Self::for_one_user(&format),
+        }
+    }
+
+    pub(crate) fn for_field(locale: &Locale) -> Result<Self, UErrorCode> {
+        Self::for_one_user(&NumberFormat::create_shared_instance(locale)?)
+    }
+
+    fn for_one_user(format: &Arc<NumberFormat>) -> Result<Self, UErrorCode> {
+        NumberFormat::for_one_user(format, DecimalFormat::try_clone).map(Self::Other)
+    }
+
+    /// A clone shares the state of rules. This copy has its own.
+    pub(crate) fn for_another_user(&self) -> Result<Self, UErrorCode> {
+        match self {
+            Self::Decimal(numbers) => Ok(Self::Decimal(Arc::clone(numbers))),
+            Self::Other(format) => Self::for_one_user(format),
         }
     }
 
@@ -101,11 +118,13 @@ impl DateNumberFormat {
     ) -> Result<(), UErrorCode> {
         match self {
             Self::Decimal(numbers) => numbers.format(out, value, min_digits, max_digits),
-            Self::RuleBased(format) => {
-                if let NumberFormat::RuleBased(rules) = &**format {
-                    rules.format_int64(value.into(), out)?;
+            Self::Other(format) => match &**format {
+                NumberFormat::RuleBased(rules) => rules.format_int64(value.into(), out)?,
+                NumberFormat::Decimal(decimal) => {
+                    let copy = decimal.for_dates(to_int32(min_digits), to_int32(max_digits))?;
+                    _ = copy.format_int64(value.into(), out);
                 }
-            }
+            },
         }
         Ok(())
     }

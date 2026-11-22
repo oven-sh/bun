@@ -21,6 +21,8 @@ pub(crate) const FALLBACK_CE32: u32 = SPECIAL_CE32_LOW_BYTE as u32;
 pub(crate) const LONG_PRIMARY_CE32_LOW_BYTE: u8 = SPECIAL_CE32_LOW_BYTE | LONG_PRIMARY_TAG as u8;
 pub(crate) const UNASSIGNED_CE32: u32 = 0xffff_ffff;
 
+/// No mapping has this value.
+pub(crate) const NO_CE32: u32 = 1;
 pub(crate) const NO_CE_PRIMARY: u32 = 1;
 pub(crate) const NO_CE_WEIGHT16: u32 = 0x0100;
 /// The CE that marks the end of the text.
@@ -39,6 +41,8 @@ pub(crate) const HANGUL_TAG: u32 = 12;
 pub(crate) const LEAD_SURROGATE_TAG: u32 = 13;
 pub(crate) const OFFSET_TAG: u32 = 14;
 pub(crate) const IMPLICIT_TAG: u32 = 15;
+
+pub(crate) const MAX_INDEX: usize = 0x7_ffff;
 
 /// The character has no mapping without a suffix: the default CE32 falls back to a shorter prefix.
 pub(crate) const CONTRACT_SINGLE_CP_NO_MATCH: u32 = 0x100;

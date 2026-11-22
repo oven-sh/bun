@@ -5,8 +5,10 @@ use crate::common::memory::{Appendable as _, set_oom, try_filled};
 use crate::common::normalizer2::{Normalizer2, get_nfkc_instance};
 use crate::common::slice_ext::{SliceExt as _, to_index};
 use crate::common::uchar::{line_break, u_get_gc_mask, uscript_get_script};
+use crate::common::udata::searches_files;
 use crate::common::unicode::uchar::{U_GC_M_MASK, U_LB_COMPLEX_CONTEXT};
 use crate::common::unicode::uscript::*;
+use crate::common::uresimp::{U_ICUDATA_BRKITR, ures_get_next_string, ures_open};
 use crate::common::utf16::{self, code_points};
 use crate::common::utypes::UErrorCode;
 use std::iter::repeat_n;
@@ -130,7 +132,7 @@ impl PossibleWord {
         if start != self.offset {
             (self.offset, self.count) = (start, 0);
             let rest = text.text.slice(to_index(start)..to_index(range_end));
-            self.prefix = dictionary.matches(rest, |length, cp_length, _| {
+            self.prefix = dictionary.matches(rest, usize::MAX, |length, cp_length, _| {
                 if let Some(slot) = self.lengths.get_mut(self.count) {
                     *slot = (length as i32, cp_length < ROOT_COMBINE_THRESHOLD);
                     self.count += 1;
@@ -323,9 +325,8 @@ fn katakana_cost(word_length: usize) -> u32 {
         .unwrap_or(8192)
 }
 
-/// For text in NFKC, which has no halfwidth forms.
 fn is_katakana(unit: u16) -> bool {
-    matches!(unit, 0x30A1..=0x30FA | 0x30FC..=0x30FE)
+    matches!(unit, 0x30A1..=0x30FA | 0x30FC..=0x30FE | 0xFF66..=0xFF9F)
 }
 
 /// Tests for the characters of script Common that the engine for Chinese and Japanese handles.
@@ -333,16 +334,20 @@ pub(crate) fn is_common_script_kana(c: u32) -> bool {
     matches!(c, 0x30FC | 0xFF70 | 0xFF9E | 0xFF9F)
 }
 
+pub(crate) fn is_hangul_syllable(c: u32) -> bool {
+    matches!(c, 0xAC00..=0xD7A3)
+}
+
 /// The best segmentation of a prefix of the text.
 #[derive(Clone, Copy, Default)]
 struct BestSplit {
-    /// The sum of negative log probabilities. `u32::MAX` if the prefix ends inside a surrogate pair.
+    /// The sum of negative log probabilities. `u32::MAX` if the prefix has no segmentation.
     snlp: u32,
     /// Length of the last word in code units.
     length: u32,
 }
 
-/// For Chinese and Japanese.
+/// For Chinese and Japanese, or for Korean.
 pub(crate) struct CjkBreakEngine {
     dictionary: DictionaryMatcher,
     nfkc: &'static Normalizer2,
@@ -354,6 +359,19 @@ impl CjkBreakEngine {
         Ok(Self { dictionary, nfkc })
     }
 
+    /// Fails without the list of Japanese extensions. The linked data have it, unless `--trim` has removed the language.
+    pub(crate) fn for_chinese_japanese(dictionary: DictionaryMatcher) -> Result<Self, UErrorCode> {
+        let engine = Self::new(dictionary)?;
+        if searches_files()? {
+            let mut list = ures_open(Some(U_ICUDATA_BRKITR), b"ja")?.get_by_key(b"extensions")?;
+            while list.has_next() {
+                ures_get_next_string(&mut list)?;
+            }
+        }
+        Ok(engine)
+    }
+
+    /// For Chinese and Japanese.
     pub(crate) fn handles(c: u32) -> bool {
         matches!(
             uscript_get_script(c),
@@ -414,12 +432,11 @@ impl CjkBreakEngine {
             };
 
             let (rest, mut has_one_character_word) = (text.slice(i..), false);
-            let word = rest.get(..MAX_WORD_SIZE).unwrap_or(rest);
-            self.dictionary.matches(word, |length, cp_length, value| {
+            (self.dictionary).matches(rest, MAX_WORD_SIZE, |length, cp_length, value| {
                 has_one_character_word |= cp_length == 1;
                 consider(length, value as u32);
             });
-            if !has_one_character_word {
+            if !has_one_character_word && !is_hangul_syllable(unit.into()) {
                 consider(utf16::length(utf16::get(text, i)), MAX_SNLP);
             }
 
@@ -450,9 +467,12 @@ impl CjkBreakEngine {
         };
         let best = self.best_splits(normalized.as_ref().map_or(run, |(units, _)| units))?;
         let (before, mut i, mut last) = (found_breaks.len(), best.len() - 1, i32::MAX);
-        // The length is 0 at the start, and at the end if the sum is `u32::MAX`.
-        while let length @ 1.. = best.at(i).length as usize {
-            i -= length;
+        while i > 0 {
+            i -= match best.at(i).length {
+                // The run has no segmentation.
+                0 => i,
+                length => length as usize,
+            };
             let offset = normalized.as_ref().map_or(i as i32, |(_, map)| map.at(i));
             // A boundary inside text that normalization has expanded moves to the start of the fragment.
             if 0 < offset && offset < last {

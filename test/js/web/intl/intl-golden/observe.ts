@@ -1,7 +1,7 @@
 // What an expression evaluates to, as text, and how that differs from what was recorded.
-import { bunEnv, bunExe, isDebug, tempDir } from "harness";
-import { symlinkSync } from "node:fs";
-import { join } from "node:path";
+import { bunEnv, bunExe, isDebug, isGlibc, isWindows, tempDir } from "harness";
+import { existsSync, symlinkSync } from "node:fs";
+import { delimiter, join } from "node:path";
 import { differences } from "../../../bun/archive-golden/observe";
 import { observe } from "./evaluate";
 
@@ -19,23 +19,41 @@ export const fixture = join(import.meta.dir, "cases.json.gz");
 export const version = "79.1";
 export const hasVersion = process.platform !== "darwin" && process.versions.icu === version;
 
-export async function loadCases(): Promise<Cases> {
-  return JSON.parse(Buffer.from(Bun.gunzipSync(await Bun.file(fixture).bytes())).toString());
+const load = async (file: string) => JSON.parse(Buffer.from(Bun.gunzipSync(await Bun.file(file).bytes())).toString());
+export const loadCases = (): Promise<Cases> => load(fixture);
+
+/** What build-data-files.ts makes: by directory and path, in base64. */
+export type DataFiles = Record<string, Record<string, string>>;
+export const dataFiles = join(import.meta.dir, "data-files.json.gz");
+
+async function filesOf(directory: string) {
+  const all: DataFiles = await load(dataFiles);
+  return Object.fromEntries(Object.entries(all[directory]).map(([path, bytes]) => [path, Buffer.from(bytes, "base64")]));
 }
 
 /** glibc sets a locale of any name if `LOCPATH` has its files, and `locale.alias` does not list the name. */
-export const localeFiles = "/usr/lib/locale/C.utf8";
+const localeFiles = "/usr/lib/locale/C.utf8";
 
-/** `SETLOCALE` is for `setlocale()`, from which JavaScriptCore takes its default locale. */
+const canSetLocale = isGlibc && existsSync(localeFiles);
+const canSet = (variable: string) =>
+  variable.startsWith("SETLOCALE=") ? canSetLocale : !isWindows || !/^(LANG|LC_\w+|TZ)=/.test(variable);
+export const canObserveIn = (environment: string) => environment.split(" ").every(canSet);
+
+/**
+ * `SETLOCALE` is for `setlocale()`, from which JavaScriptCore takes its default locale. `FILES` names a directory of
+ * data-files.txt, which is the working directory, and `ICU_DATA` unless that is given.
+ */
 export async function observeIn(environment: string, sources: string[]): Promise<string[]> {
   const variables = Object.fromEntries(environment.split(" ").map(variable => variable.split("=")));
   using locales = tempDir("intl-golden", {});
   if (variables.SETLOCALE) symlinkSync(localeFiles, join(String(locales), variables.SETLOCALE));
+  using files = variables.FILES && tempDir("intl-golden", await filesOf(variables.FILES));
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "evaluate-fixture.ts"],
-    cwd: import.meta.dir,
+    cmd: [bunExe(), join(import.meta.dir, "evaluate-fixture.ts")],
+    cwd: String(files ?? import.meta.dir),
     env: {
       ...bunEnv,
+      ICU_ENABLE_TENTATIVE_ERA: undefined,
       ICU_TIMEZONE_FILES_DIR: undefined,
       LANG: "en_US.UTF-8",
       LC_ALL: undefined,
@@ -43,6 +61,7 @@ export async function observeIn(environment: string, sources: string[]): Promise
       LOCPATH: String(locales),
       TZ: "UTC",
       ...variables,
+      ICU_DATA: variables.ICU_DATA?.replaceAll(":", delimiter) ?? files?.toString(),
     },
     stdin: Buffer.from(JSON.stringify(sources)),
     stdout: "pipe",

@@ -1,4 +1,4 @@
-//! Metadata for zone IDs: canonical and IANA IDs, countries, meta zones. ICU4C: zonemeta.cpp
+//! Metadata for zone IDs: canonical, IANA and short IDs, countries, meta zones. ICU4C: zonemeta.cpp
 
 use crate::common::bytes::U16s;
 use crate::common::cstring::until_nul;
@@ -59,6 +59,11 @@ fn string_by_key(table: &UResourceBundle, key: &[u8]) -> Option<U16s<'static>> {
     table.get_string_by_key(key).ok()
 }
 
+fn type_map() -> Option<&'static UResourceBundle> {
+    static TYPE_MAP: Part = OnceBox::new();
+    cached_part(&TYPE_MAP, KEY_TYPE_DATA, &[b"typeMap", b"timezone"]).ok()
+}
+
 /// Returns the canonical ID of a system zone ID.
 pub(crate) fn get_canonical_cldr_id(tzid: &[u16]) -> Result<&'static [u16], UErrorCode> {
     if tzid.len() > ZID_KEY_MAX {
@@ -90,23 +95,18 @@ pub(crate) fn get_canonical_cldr_id(tzid: &[u16]) -> Result<&'static [u16], UErr
 
 /// Returns the canonical ID, and whether to cache that ID as canonical itself.
 fn find_canonical_id(tzid: &[u16]) -> Option<(U16s<'static>, bool)> {
-    static TYPE_MAP: Part = OnceBox::new();
     static TYPE_ALIAS: Part = OnceBox::new();
     let key = zone_key(tzid.iter().copied(), 1);
-    let is_in_map = cached_part(&TYPE_MAP, KEY_TYPE_DATA, &[b"typeMap", b"timezone"])
-        .is_ok_and(|map| map.find_by_key(&key).is_ok());
+    let is_in_map = type_map().is_some_and(|map| map.get_value_by_key(&key).is_ok());
     if is_in_map && let Some(own) = TimeZone::find_id(tzid) {
         return Some((own, true));
     }
     let aliases = cached_part(&TYPE_ALIAS, KEY_TYPE_DATA, &[b"typeAlias", b"timezone"]).ok();
     let alias = |key: &[u8]| Some((string_by_key(aliases?, key)?, is_in_map));
-    // A colon in a key stands for a slash.
-    alias(&key)
-        .filter(|_| !tzid.contains(&b':'.into()))
-        .or_else(|| {
-            let target = TimeZone::derefer_olson_link(tzid)?;
-            Some(alias(&zone_key(target.iter(), 1)).unwrap_or((target, true)))
-        })
+    alias(&key).or_else(|| {
+        let target = TimeZone::derefer_olson_link(tzid)?;
+        Some(alias(&zone_key(target.iter(), 1)).unwrap_or((target, true)))
+    })
 }
 
 pub(crate) fn get_canonical_cldr_id_of(tz: &TimeZone) -> Option<&'static [u16]> {
@@ -119,7 +119,8 @@ pub(crate) fn get_canonical_cldr_id_of(tz: &TimeZone) -> Option<&'static [u16]> 
 pub(crate) fn get_iana_id(tzid: &[u16]) -> Result<ZoneId, UErrorCode> {
     static IANA_MAP: Part = OnceBox::new();
     let canonical = get_canonical_cldr_id(tzid)?;
-    if let Ok(map) = cached_part(&IANA_MAP, KEY_TYPE_DATA, &[b"ianaMap", b"timezone"])
+    if canonical.len() <= ZID_KEY_MAX + 1
+        && let Ok(map) = cached_part(&IANA_MAP, KEY_TYPE_DATA, &[b"ianaMap", b"timezone"])
         && let Some(iana) = string_by_key(map, &zone_key(canonical.iter().copied(), 0))
     {
         return ZoneId::from_data(iana);
@@ -157,21 +158,32 @@ pub(crate) fn is_primary_zone(tzid: &[u16], country: &[u8]) -> bool {
         .is_ok_and(|single| single || is_primary())
 }
 
-/// Returns the meta zone of `tzid` at `date`.
-pub(crate) fn get_metazone_id(tzid: &'static [u16], date: UDate) -> Option<&'static [u16]> {
+/// Returns the periods of `tzid` in the order of the data.
+#[inline]
+fn meta_zone_periods(tzid: &'static [u16]) -> Option<&'static [MetaZonePeriod]> {
     static PERIODS: StaticMap<&'static [u16], &'static [MetaZonePeriod]> = StaticMap::new();
-    let periods = PERIODS.get(tzid).or_else(|| {
+    PERIODS.get(tzid).or_else(|| {
         let periods = oom_checked(load_meta_zone_periods(tzid)?).ok()?;
         defer_oom(PERIODS.get_or_insert_with(tzid, || Vec::leak(periods)))
-    })?;
-    periods
+    })
+}
+
+/// Returns the meta zone of each period of `tzid`.
+pub(crate) fn meta_zone_ids(tzid: &'static [u16]) -> impl Iterator<Item = &'static [u16]> {
+    let periods = meta_zone_periods(tzid).unwrap_or_default();
+    periods.iter().map(|period| period.mzid)
+}
+
+/// Returns the meta zone of `tzid` at `date`.
+pub(crate) fn get_metazone_id(tzid: &'static [u16], date: UDate) -> Option<&'static [u16]> {
+    meta_zone_periods(tzid)?
         .iter()
         .find(|period| period.from <= date && period.to > date)
         .map(|period| period.mzid)
         .filter(|mzid| !mzid.is_empty())
 }
 
-/// Skips invalid periods.
+/// Skips invalid periods. Returns `None` if no period is valid.
 fn load_meta_zone_periods(tzid: &[u16]) -> Option<Vec<MetaZonePeriod>> {
     static METAZONE_INFO: Part = OnceBox::new();
     let info = cached_part(&METAZONE_INFO, META_ZONES, &[b"metazoneInfo"]).ok()?;
@@ -199,7 +211,7 @@ fn load_meta_zone_periods(tzid: &[u16]) -> Option<Vec<MetaZonePeriod>> {
     };
     let mut valid = Vec::new();
     valid.add_each((0..count).filter_map(entry));
-    Some(valid)
+    (!valid.is_empty()).then_some(valid)
 }
 
 /// Parses "yyyy-MM-dd HH:mm" or "yyyy-MM-dd".
@@ -221,15 +233,38 @@ fn parse_date(text: U16s) -> Option<UDate> {
     Some((day * i64::from(U_MILLIS_PER_DAY) + i64::from(millis)) as UDate)
 }
 
+fn map_timezones() -> Option<&'static UResourceBundle> {
+    static MAP_TIMEZONES: Part = OnceBox::new();
+    cached_part(&MAP_TIMEZONES, META_ZONES, &[b"mapTimezones"]).ok()
+}
+
 /// Returns the reference zone of `mzid` for `region`, or else for "001".
 pub(crate) fn get_zone_id_by_metazone(mzid: &[u16], region: &[u8]) -> Option<U16s<'static>> {
-    static MAP_TIMEZONES: Part = OnceBox::new();
-    let map = cached_part(&MAP_TIMEZONES, META_ZONES, &[b"mapTimezones"]).ok()?;
-    let zones = map
+    let zones = map_timezones()
+        .filter(|_| mzid.len() <= ZID_KEY_MAX)?
         .get_by_key(&invariant_c_string(mzid.iter().copied()))
         .ok()?;
-    match zones.get_string_by_key(region) {
-        Err(U_MISSING_RESOURCE_ERROR) => string_by_key(&zones, b"001"),
-        found => found.ok(),
+    if let 2 | 3 = region.len() {
+        match zones.get_string_by_key(region) {
+            Err(U_MISSING_RESOURCE_ERROR) => {}
+            found => return found.ok(),
+        }
+    }
+    string_by_key(&zones, b"001")
+}
+
+/// Returns whether `mzid` is a key of the table of reference zones.
+pub(crate) fn is_listed_meta_zone(mzid: &[u16]) -> bool {
+    let key = invariant_c_string(mzid.iter().copied());
+    key.len() == mzid.len() && map_timezones().is_some_and(|map| map.get_value_by_key(&key).is_ok())
+}
+
+/// Returns the BCP 47 type of a system zone, such as "uslax".
+pub(crate) fn get_short_id_of(tz: &TimeZone) -> Option<U16s<'static>> {
+    match tz {
+        TimeZone::Olson(zone) => {
+            string_by_key(type_map()?, &zone_key(zone.canonical_id.iter().copied(), 1))
+        }
+        TimeZone::Fixed { .. } => None,
     }
 }

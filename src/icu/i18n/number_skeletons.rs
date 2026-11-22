@@ -19,7 +19,8 @@ const MAX_LENGTH: usize = 400;
 fn parse_digits(text: &[u8], required: u8) -> (Digits, &[u8]) {
     let (min, text) = text.split_while(|&c| c == required);
     let (optional, text) = text.split_while(|&c| c == b'#');
-    (Digits::new(min.len(), min.len() + optional.len()), text)
+    let (min, max) = (min.len() as i16, (min.len() + optional.len()) as i16);
+    (Digits { min, max }, text)
 }
 
 /// Parses "0.05" and "50.", but not "0.01".
@@ -32,8 +33,9 @@ fn parse_increment(text: &[u8]) -> Option<Rounding> {
             .checked_add(char::from(c).to_digit(10)? as u16)
     })?;
     (mantissa > 1).then_some(Rounding::Increment {
-        mantissa,
-        fraction_digits: fraction.len() as i16,
+        mantissa: mantissa.into(),
+        magnitude: -(fraction.len() as i16),
+        min_fraction: fraction.len() as i16,
     })
 }
 
@@ -82,7 +84,7 @@ enum Setting {
 fn parse_unit(stem: &[u8], option: Option<&[u8]>) -> Option<MeasureUnit> {
     match (stem, option) {
         (b"percent", None) => Some(MeasureUnit::PERCENT),
-        (b"unit", Some(unit)) => MeasureUnit::for_identifier(unit),
+        (b"unit", Some(unit)) => MeasureUnit::for_identifier(unit).ok(),
         (b"measure-unit", Some(unit)) => MeasureUnit::duration(unit.strip_prefix(b"duration-")?),
         (b"currency", Some(&[a, b, c])) if [a, b, c].iter().all(u8::is_ascii_uppercase) => {
             Some(MeasureUnit::Currency([a, b, c].map(u16::from)))
@@ -131,10 +133,10 @@ fn parse_token(token: &[u8], macros: &mut MacroProps) -> Option<Setting> {
     }
     if let Some(strategy) = token.strip_prefix(b"group-") {
         macros.grouper = match strategy {
-            b"off" => Grouper::Off,
-            b"min2" => Grouper::Min2,
-            b"auto" => Grouper::Auto,
-            b"on-aligned" => Grouper::OnAligned,
+            b"off" => Grouper::OFF,
+            b"min2" => Grouper::MIN2,
+            b"auto" => Grouper::AUTO,
+            b"on-aligned" => Grouper::ON_ALIGNED,
             _ => return None,
         };
         return Some(Setting::Group);
@@ -154,8 +156,8 @@ fn parse_token(token: &[u8], macros: &mut MacroProps) -> Option<Setting> {
     macros.notation = match token {
         b"compact-short" => Notation::Compact { is_long: false },
         b"compact-long" => Notation::Compact { is_long: true },
-        b"scientific" => Notation::Scientific(ScientificHandler::Scientific),
-        b"engineering" => Notation::Scientific(ScientificHandler::Engineering),
+        b"scientific" => Notation::Scientific(ScientificHandler::with_interval(1)),
+        b"engineering" => Notation::Scientific(ScientificHandler::with_interval(3)),
         b"scale/100" => {
             macros.scale = 2;
             return Some(Setting::Scale);
@@ -187,7 +189,7 @@ fn parse_tokens(text: &[u8], macros: &mut MacroProps) -> Option<()> {
     let is_compact = matches!(macros.notation, Notation::Compact { .. });
     let is_currency = matches!(macros.unit, MeasureUnit::Currency(_));
     if is_compact && lacks(Setting::Group) {
-        macros.grouper = Grouper::Min2;
+        macros.grouper = Grouper::MIN2;
     }
     let needs_currency = matches!(
         macros.unit_width,

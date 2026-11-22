@@ -1,12 +1,20 @@
 //! Formats a date with a pattern such as `EEEE, d MMMM y 'at' HH:mm`. ICU4C: smpdtfmt.cpp
 
+use crate::common::bytes::U16s;
 use crate::common::locid::Locale;
+use crate::common::maps::Set;
 use crate::common::memory::{self, Appendable, TryClone, get_or_try_init};
 use crate::common::simpleformatter::SimpleFormatter;
 use crate::common::sink::{TextBuf, US_STACKBUF_SIZE, WritableAlias};
 use crate::common::slice_ext::{SliceExt, to_index, to_int32};
-use crate::common::unicode::ures::URES_ARRAY;
+use crate::common::udata::searches_files;
+use crate::common::uhash::hash_code;
+use crate::common::uinvchar::invariant_prefix;
+use crate::common::unicode::uloc::ULOC_KEYWORD_AND_VALUES_CAPACITY;
+use crate::common::unicode::ures::{URES_ARRAY, URES_STRING};
+use crate::common::unistr::UStr;
 use crate::common::uresimp::*;
+use crate::common::utf16::from_latin1;
 use crate::common::utypes::*;
 use crate::i18n::calendar::{Calendar, CalendarType, Field, SharedCalendar};
 use crate::i18n::datefmt_numbers::DateNumberFormat;
@@ -16,9 +24,12 @@ use crate::i18n::dtptngen::{DateTimePatternGenerator, UDATPG_MATCH_NO_OPTIONS};
 use crate::i18n::fphdlimp::FieldPositionIteratorHandler;
 use crate::i18n::gregoimp::UDate;
 use crate::i18n::hebrwcal;
+use crate::i18n::plurrule::PluralRules;
+use crate::i18n::standardplural::PluralForm;
 use crate::i18n::timezone::TimeZone;
-use crate::i18n::tzfmt::{TimeZoneFormat, ZoneStyle};
+use crate::i18n::tzfmt::{self, IsoStyle, TimeZoneFormat, ZoneStyle};
 use crate::i18n::unicode::udat::*;
+use bun_core::strings;
 use std::sync::{Arc, OnceLock};
 
 const QUOTE: u16 = b'\'' as u16;
@@ -28,7 +39,13 @@ const MAX_INT_COUNT: usize = 10;
 
 // Indexes into `DateTimePatterns`, whose first four items are the time patterns.
 const DATE_OFFSET: usize = 4;
+pub(crate) const DATE_TIME: usize = 8;
 const DATE_TIME_OFFSET: usize = 9;
+
+/// The letters of fields. `l` is ignored, and all others are errors.
+const PATTERN_CHARS: &[u8] = b"GyMdkHmsSEDFwWahKzYeugAZvcLQqVUOXxrbB";
+const DEFAULT_PATTERN: [u16; 13] = from_latin1(b"yMMdd hh:mm a");
+const JPANYEAR: &[u8] = b"numbers=jpanyear";
 
 fn is_syntax_char(ch: u16) -> bool {
     matches!(ch, 0x41..=0x5a | 0x61..=0x7a)
@@ -89,14 +106,68 @@ pub(crate) struct SimpleDateFormat {
     pub(crate) pattern: Vec<u16>,
     /// `pattern` is empty, because an allocation has failed while it was applied.
     pattern_is_lost: bool,
-    /// The data name a numbering system for a field of the style. Such a format only tells its pattern.
-    has_numbering_override: bool,
+    /// Such a format only tells its pattern, because the data can name numbering systems for the fields of a style.
+    is_from_styles: bool,
     locale: Locale,
     symbols: Arc<DateFormatSymbols>,
     number_format: DateNumberFormat,
     /// Writes 元 for the first year of a Japanese era.
     japanese_year_format: OnceLock<DateNumberFormat>,
     time_zone_format: OnceLock<Arc<TimeZoneFormat>>,
+}
+
+/// Reads an item of `DateTimePatterns`: a pattern, or an array of a pattern and numbering systems.
+fn pattern_at(
+    patterns: &UResourceBundle,
+    index: usize,
+) -> Result<(Vec<u16>, Option<U16s<'static>>), UErrorCode> {
+    let item = patterns.get_by_index(index)?;
+    // Index 0 of a string is the string itself.
+    let pattern = ures_get_unicode_string_by_index(&item, 0);
+    match item.get_type() {
+        URES_STRING => Ok((pattern?, None)),
+        URES_ARRAY => {
+            let numbers = ures_get_string_by_index(&item, 1)?.unwrap_or_default();
+            Ok((pattern?, Some(numbers)))
+        }
+        _ => Err(U_INVALID_FORMAT_ERROR),
+    }
+}
+
+/// `keyword` is like "numbers=hebr". Ignores the script and the keywords of `locale`.
+fn format_with_keyword(locale: &Locale, keyword: &[u8]) -> Result<DateNumberFormat, UErrorCode> {
+    DateNumberFormat::for_field(&Locale::from_parts(
+        locale.get_language(),
+        locale.get_country(),
+        locale.get_variant(),
+        keyword,
+    ))
+}
+
+/// `numbers` is like "y=jpanyear;d=hanidays" or "hebr". ICU4C: smpdtfmt.cpp, SimpleDateFormat::processOverrideString
+#[cold]
+fn check_numbering_systems(locale: &Locale, numbers: U16s) -> Result<(), UErrorCode> {
+    const KEY: &[u8] = b"numbers=";
+    // Names with the same hash code count as one.
+    let mut checked = Set::default();
+    for item in numbers.try_to_vec()?.split(|&unit| unit == u16::from(b';')) {
+        let equals = item.index_of(&[b'='.into()]);
+        let is_field = |letter| strings::contains_char(PATTERN_CHARS, letter);
+        if equals.is_some() && !u8::try_from(item.at(0)).is_ok_and(is_field) {
+            return Err(U_INVALID_FORMAT_ERROR);
+        }
+        let name = item.slice(equals.map_or(0, |at| at + 1)..);
+        if memory::try_set_insert(&mut checked, hash_code(name))? {
+            // A name that is too long is ignored.
+            let fits = KEY.len() + name.len() <= ULOC_KEYWORD_AND_VALUES_CAPACITY as usize;
+            let name = invariant_prefix(name.iter().copied()).filter(|_| fits);
+            format_with_keyword(
+                locale,
+                &memory::try_collect(KEY.iter().copied().chain(name))?,
+            )?;
+        }
+    }
+    Ok(())
 }
 
 /// Opens `calendar/<type>/<key>`, falling back to the Gregorian calendar.
@@ -149,6 +220,7 @@ fn time_pattern_from_generator(
         .ok()?
         .get_best_pattern(skeleton, UDATPG_MATCH_NO_OPTIONS)
         .ok()
+        .filter(|pattern| !pattern.is_empty())
 }
 
 impl TryClone for SimpleDateFormat {
@@ -158,7 +230,7 @@ impl TryClone for SimpleDateFormat {
             pattern: copy_pattern(&self.pattern)?,
             locale: self.locale.clone(),
             symbols: Arc::clone(&self.symbols),
-            number_format: self.number_format.clone(),
+            number_format: self.number_format.for_another_user()?,
             japanese_year_format: self.japanese_year_format.clone(),
             time_zone_format: self.time_zone_format.clone(),
             ..*self
@@ -180,7 +252,7 @@ impl SimpleDateFormat {
             calendar: calendar.into(),
             pattern: copy_pattern(pattern)?,
             pattern_is_lost: false,
-            has_numbering_override: false,
+            is_from_styles: false,
             locale: locale.clone(),
             japanese_year_format: OnceLock::new(),
             time_zone_format: OnceLock::new(),
@@ -190,7 +262,7 @@ impl SimpleDateFormat {
         Ok(format)
     }
 
-    /// A style is a number from `UDAT_FULL` to `UDAT_SHORT`. ICU4C: smpdtfmt.cpp, SimpleDateFormat::construct
+    /// A style is a number from `UDAT_FULL` to `UDAT_SHORT`. At least one is `Some`.
     pub(crate) fn with_styles(
         time_style: Option<usize>,
         date_style: Option<usize>,
@@ -198,37 +270,60 @@ impl SimpleDateFormat {
         zone: TimeZone,
     ) -> Result<Self, UErrorCode> {
         let mut format = Self::with_pattern(&[], locale, zone)?;
-        let calendar_type = format.calendar.calendar_type();
+        format.is_from_styles = true;
+        format.pattern = format
+            .pattern_of_styles(time_style, date_style)
+            .or_else(|_| memory::try_to_vec(&DEFAULT_PATTERN))?;
+        Ok(format)
+    }
+
+    // ICU4C: smpdtfmt.cpp, SimpleDateFormat::construct
+    fn pattern_of_styles(
+        &self,
+        time_style: Option<usize>,
+        date_style: Option<usize>,
+    ) -> Result<Vec<u16>, UErrorCode> {
+        let (locale, calendar_type) = (&self.locale, self.calendar.calendar_type());
         let bundle = ures_open(None, locale.get_base_name())?;
         let patterns = calendar_resource(&bundle, calendar_type, b"DateTimePatterns")?;
-        // An item is a pattern, whose index 0 is itself, or an array of a pattern and a numbering system.
-        let mut pattern_at = |index| {
-            let item = patterns.get_by_index(index)?;
-            format.has_numbering_override |= item.get_type() == URES_ARRAY;
-            ures_get_unicode_string_by_index(&item, 0)
-        };
+        if patterns.get_size() <= DATE_TIME {
+            return Err(U_INVALID_FORMAT_ERROR);
+        }
         let time = time_style.map(|style| {
             let bundle_locale = Locale::from_name(patterns.get_valid_locale().to_bytes());
             time_pattern_from_generator(locale, &bundle_locale, style)
-                .map_or_else(|| pattern_at(style), Ok)
+                .map_or_else(|| pattern_at(&patterns, style), |time| Ok((time, None)))
         });
-        let date = date_style.map(|style| (style, pattern_at(DATE_OFFSET + style)));
-        format.pattern = match (time, date) {
-            (None, None) => Err(U_UNSUPPORTED_ERROR),
-            (Some(pattern), None) | (None, Some((_, pattern))) => pattern,
+        let date = date_style.map(|style| (style, pattern_at(&patterns, DATE_OFFSET + style)));
+        let ((pattern, numbers), time_numbers) = match (time, date) {
+            (None, None) => return Err(U_INVALID_FORMAT_ERROR),
+            (Some(only), None) | (None, Some((_, only))) => (only?, None),
             (Some(time), Some((style, date))) => {
+                let ((time, time_numbers), (date, date_numbers)) = (time?, date?);
                 let joining =
                     match calendar_resource(&bundle, calendar_type, b"DateTimePatterns%atTime") {
-                        Ok(at_time) => ures_get_unicode_string_by_index(&at_time, style),
-                        Err(_) => {
+                        Ok(at_time) if at_time.get_size() >= 4 => {
+                            ures_get_unicode_string_by_index(&at_time, style)
+                        }
+                        _ if patterns.get_size() >= DATE_TIME_OFFSET + 4 => {
                             ures_get_unicode_string_by_index(&patterns, DATE_TIME_OFFSET + style)
                         }
+                        _ => ures_get_unicode_string_by_index(&patterns, DATE_TIME),
                     }?;
-                SimpleFormatter::with_pattern_min_max_arguments(&joining, 2, 2)
-                    .and_then(|joining| Ok(joining.format_to_vec(&[&time?, &date?])))
+                let joining = SimpleFormatter::with_pattern_min_max_arguments(&joining, 2, 2)?;
+                let joined = joining.format_to_vec(&[&time, &date]);
+                ((joined, date_numbers), time_numbers)
             }
-        }?;
-        Ok(format)
+        };
+        if searches_files()? {
+            if numbers.is_none() && self.wants_japanese_year(calendar_type, &pattern) {
+                format_with_keyword(locale, JPANYEAR)?;
+            }
+            for numbers in numbers.into_iter().chain(time_numbers) {
+                check_numbering_systems(locale, numbers)?;
+            }
+        }
+        Ok(pattern)
     }
 
     /// Returns `None` if the pattern is lost.
@@ -244,19 +339,16 @@ impl SimpleDateFormat {
         }
     }
 
-    fn year_format(&self, calendar_type: CalendarType, pattern: &[u16]) -> &DateNumberFormat {
-        let locale = &self.locale;
-        let make = || {
-            DateNumberFormat::for_locale(&Locale::from_parts(
-                locale.get_language(),
-                locale.get_country(),
-                locale.get_variant(),
-                b"numbers=jpanyear",
-            ))
-        };
-        if calendar_type == CalendarType::Japanese
-            && locale.get_language() == b"ja"
+    #[inline]
+    fn wants_japanese_year(&self, calendar_type: CalendarType, pattern: &[u16]) -> bool {
+        calendar_type == CalendarType::Japanese
+            && self.locale.get_language() == b"ja"
             && pattern.contains(&HAN_YEAR_CHAR)
+    }
+
+    fn year_format(&self, calendar_type: CalendarType, pattern: &[u16]) -> &DateNumberFormat {
+        let make = || format_with_keyword(&self.locale, JPANYEAR);
+        if self.wants_japanese_year(calendar_type, pattern)
             && let Ok(numbers) = get_or_try_init(&self.japanese_year_format, make)
         {
             return numbers;
@@ -269,6 +361,13 @@ impl SimpleDateFormat {
         get_or_try_init(&self.time_zone_format, make).map(|format| &**format)
     }
 
+    pub(crate) fn check_supports(&self, date: UDate) -> Result<(), UErrorCode> {
+        if self.is_from_styles || date.is_nan() {
+            return Err(U_UNSUPPORTED_ERROR);
+        }
+        Ok(())
+    }
+
     /// After a failure `append_to` has the text up to the field that failed, and one more unit.
     pub(crate) fn format(
         &self,
@@ -276,9 +375,6 @@ impl SimpleDateFormat {
         append_to: &mut dyn TextBuf,
         handler: Option<&mut FieldPositionIteratorHandler>,
     ) -> Result<(), UErrorCode> {
-        if self.has_numbering_override || date.is_nan() {
-            return Err(U_UNSUPPORTED_ERROR);
-        }
         let mut calendar = Calendar::clone(&self.calendar);
         let completed = calendar.set_time(date).and_then(|()| calendar.complete());
         let calendar = completed.map(|()| &calendar);
@@ -348,10 +444,9 @@ impl Writer<'_> {
         cal: Result<&Calendar, UErrorCode>,
     ) -> Result<(UDateFormatField, Written), UErrorCode> {
         let symbols = &*self.format.symbols;
-        if let (b'B', ..=5) = (letter, count) {
-            return Ok((UDAT_FLEXIBLE_DAY_PERIOD_FIELD, self.day_period(count, cal)));
-        }
-        let cal = cal?;
+        let Ok(cal) = cal else {
+            return self.rare_field(letter, count, cal);
+        };
         let get = |field| cal.internal_get(field);
         let or_if_0 = |hour, last| if hour == 0 { last } else { hour };
         let is_chinese = matches!(
@@ -396,6 +491,10 @@ impl Writer<'_> {
                 let written = self.name(&symbols.am_pm, count, get(Field::AmPm));
                 return Ok((UDAT_AM_PM_FIELD, written));
             }
+            (b'B', _) => {
+                let written = self.flexible_day_period(count, Ok(cal));
+                return Ok((UDAT_FLEXIBLE_DAY_PERIOD_FIELD, written));
+            }
             (b'z', _) => {
                 let written = self.zone(ZoneStyle::Specific, count, cal);
                 return Ok((UDAT_TIMEZONE_FIELD, written));
@@ -419,18 +518,106 @@ impl Writer<'_> {
             (b'S', 1) => (UDAT_FRACTIONAL_SECOND_FIELD, get(Field::Millisecond) / 100),
             (b'S', 2) => (UDAT_FRACTIONAL_SECOND_FIELD, get(Field::Millisecond) / 10),
             (b'S', 3) => (UDAT_FRACTIONAL_SECOND_FIELD, get(Field::Millisecond)),
-            _ => return Err(U_UNSUPPORTED_ERROR),
+            _ => return self.rare_field(letter, count, Ok(cal)),
         };
         let numbers = &self.format.number_format;
         let written = numbers.format(self.text, number, count, MAX_INT_COUNT);
         Ok((field, written))
     }
 
+    /// Writes the fields that no linked pattern has, and those that do without the calendar if it has failed.
+    #[cold]
+    fn rare_field(
+        &mut self,
+        letter: u8,
+        count: usize,
+        cal: Result<&Calendar, UErrorCode>,
+    ) -> Result<(UDateFormatField, Written), UErrorCode> {
+        match letter {
+            // An empty field has no position.
+            b'l' => return Ok((UDAT_MONTH_FIELD, Ok(()))),
+            b'b' => {
+                let written = self.day_period(None, count, cal);
+                return Ok((UDAT_AM_PM_MIDNIGHT_NOON_FIELD, written));
+            }
+            b'B' => {
+                let written = self.flexible_day_period(count, cal);
+                return Ok((UDAT_FLEXIBLE_DAY_PERIOD_FIELD, written));
+            }
+            _ => {}
+        }
+        let (cal, symbols, numbers) = (cal?, &*self.format.symbols, &self.format.number_format);
+        let get = |field| cal.internal_get(field);
+        let field = match letter {
+            b'd' => UDAT_DATE_FIELD,
+            b'S' => UDAT_FRACTIONAL_SECOND_FIELD,
+            b'E' => UDAT_DAY_OF_WEEK_FIELD,
+            b'D' => UDAT_DAY_OF_YEAR_FIELD,
+            b'F' => UDAT_DAY_OF_WEEK_IN_MONTH_FIELD,
+            b'w' => UDAT_WEEK_OF_YEAR_FIELD,
+            b'W' => UDAT_WEEK_OF_MONTH_FIELD,
+            b'e' => UDAT_DOW_LOCAL_FIELD,
+            b'u' => UDAT_EXTENDED_YEAR_FIELD,
+            b'g' => UDAT_JULIAN_DAY_FIELD,
+            b'A' => UDAT_MILLISECONDS_IN_DAY_FIELD,
+            b'Z' => UDAT_TIMEZONE_RFC_FIELD,
+            b'v' => UDAT_TIMEZONE_GENERIC_FIELD,
+            b'c' => UDAT_STANDALONE_DAY_FIELD,
+            b'Q' => UDAT_QUARTER_FIELD,
+            b'q' => UDAT_STANDALONE_QUARTER_FIELD,
+            b'V' => UDAT_TIMEZONE_SPECIAL_FIELD,
+            b'O' => UDAT_TIMEZONE_LOCALIZED_GMT_OFFSET_FIELD,
+            b'X' => UDAT_TIMEZONE_ISO_FIELD,
+            b'x' => UDAT_TIMEZONE_ISO_LOCAL_FIELD,
+            b'r' => UDAT_RELATED_YEAR_FIELD,
+            _ => return Err(U_INVALID_FORMAT_ERROR),
+        };
+        let (number, min_digits) = match (letter, count) {
+            (b'd', _) if get(Field::Date) > 0 => {
+                return Ok((field, self.day_of_month(get(Field::Date))));
+            }
+            (b'd', _) => (get(Field::Date), count),
+            (b'S', _) => {
+                let written = numbers
+                    .format(self.text, get(Field::Millisecond), 3, MAX_INT_COUNT)
+                    .and_then(|()| numbers.format(self.text, 0, count - 3, MAX_INT_COUNT));
+                return Ok((field, written));
+            }
+            (b'c', ..3) => (cal.local_day_of_week(), 1),
+            (b'e', ..3) => (cal.local_day_of_week(), count),
+            (b'E' | b'c' | b'e', _) => {
+                let names = match count {
+                    6 => symbols.short_weekdays.get(letter == b'c'),
+                    _ => of_width(symbols.weekdays.get(letter == b'c'), count),
+                };
+                return Ok((field, self.name_in(*names, get(Field::DayOfWeek) - 1)));
+            }
+            (b'Q' | b'q', ..3) => (get(Field::Month) / 3 + 1, count),
+            (b'Q' | b'q', _) => {
+                let names = symbols.quarters.get(letter == b'q');
+                return Ok((field, self.name(names, count.min(5), get(Field::Month) / 3)));
+            }
+            (b'D', _) => (get(Field::DayOfYear), count),
+            (b'F', _) => (get(Field::Date).wrapping_sub(1) / 7 + 1, count),
+            (b'w', _) => (get(Field::WeekOfYear), count),
+            (b'W', _) => (cal.week_number(get(Field::Date)), count),
+            (b'u', _) => (get(Field::ExtendedYear), count),
+            (b'g', _) => (get(Field::JulianDay), count),
+            (b'A', _) => (cal.millis_in_day(), count),
+            (b'r', _) => (cal.related_year()?, count),
+            _ => return Ok((field, self.rare_zone(letter, count, cal))),
+        };
+        let written = numbers.format(self.text, number, min_digits, MAX_INT_COUNT);
+        Ok((field, written))
+    }
+
     fn name(&mut self, names: &Widths<List>, count: usize, index: i32) -> Written {
-        let name = self
-            .format
-            .symbols
-            .name_in(*of_width(names, count), to_index(index));
+        self.name_in(*of_width(names, count), index)
+    }
+
+    #[inline]
+    fn name_in(&mut self, names: List, index: i32) -> Written {
+        let name = self.format.symbols.name_in(names, to_index(index));
         self.text.add_all(name.unwrap_or_default());
         Ok(())
     }
@@ -441,12 +628,12 @@ impl Writer<'_> {
     }
 
     fn year_name(&mut self, count: usize, year: i32) -> Written {
-        let symbols = &*self.format.symbols;
-        let Some(name) = symbols.name_in(symbols.year_names, to_index(year.wrapping_sub(1))) else {
-            return self.year(&self.format.number_format, count, year);
-        };
-        self.text.add_all(name);
-        Ok(())
+        let names = self.format.symbols.year_names;
+        if names.exists() && year <= to_int32(names.len()) {
+            self.name_in(names, year.wrapping_sub(1))
+        } else {
+            self.year(&self.format.number_format, count, year)
+        }
     }
 
     fn month(&mut self, is_standalone: bool, count: usize, cal: &Calendar) -> Written {
@@ -502,6 +689,64 @@ impl Writer<'_> {
         Ok(())
     }
 
+    /// Some counts of letters write nothing.
+    fn rare_zone(&mut self, letter: u8, count: usize, cal: &Calendar) -> Written {
+        let format = self.format.time_zone_format()?;
+        let (zone, time, mut name) = (cal.time_zone()?, cal.internal_get_time(), Vec::new());
+        let iso = |has_z_for_zero, count| IsoStyle {
+            has_colons: matches!(count, 3 | 5),
+            has_z_for_zero,
+            omits_zero_minutes: count == 1,
+            ignores_seconds: count <= 3,
+        };
+        match (letter, count) {
+            (b'Z', ..=3) => tzfmt::format_iso_offset(iso(false, 4), zone, time, &mut name),
+            (b'Z', 5) => tzfmt::format_iso_offset(iso(true, 5), zone, time, &mut name),
+            (b'Z', _) => format.format(ZoneStyle::LocalizedGmt, true, zone, time, &mut name),
+            (b'V', 1) => tzfmt::format_short_id(zone, &mut name),
+            (b'V', 2) => zone.append_id(&mut name),
+            (b'V', 3) => format.format_exemplar_location(zone, &mut name),
+            (b'V', 4) => format.format(ZoneStyle::GenericLocation, true, zone, time, &mut name),
+            (b'X' | b'x', ..=5) => {
+                tzfmt::format_iso_offset(iso(letter == b'X', count), zone, time, &mut name);
+            }
+            _ => {}
+        }
+        self.text.add_all(&name);
+        Ok(())
+    }
+
+    /// Writes the name of the day, else its ordinal number, else its number.
+    fn day_of_month(&mut self, day: i32) -> Written {
+        let symbols = &*self.format.symbols;
+        let names = &symbols.day_of_month_names;
+        let non_empty = |list, index| symbols.name_in(list, index).filter(|it| !it.is_empty());
+        if let Some(name) = non_empty(names.cardinal, to_index(day)) {
+            self.text.add_all(name);
+            return Ok(());
+        }
+        let rules = PluralRules::ordinal_without_ranges(&self.format.locale).ok();
+        let pattern = rules.and_then(|rules| {
+            [rules.select_double(day.into()), PluralForm::Other]
+                .into_iter()
+                .find_map(|form| non_empty(names.ordinal, form.index()))
+        });
+        let (mut number, mut ordinal) = (Vec::new(), Vec::new());
+        let numbers = &self.format.number_format;
+        let mut written = numbers.format(&mut number, day, 1, MAX_INT_COUNT);
+        if let Some(pattern) = pattern {
+            written = written
+                .and_then(|()| SimpleFormatter::with_pattern_min_max_arguments(pattern, 0, 1))
+                .map(|formatter| formatter.format(&[&number], &mut ordinal));
+        }
+        self.text.add_all(if ordinal.is_empty() {
+            &number
+        } else {
+            &ordinal
+        });
+        written
+    }
+
     fn has_field(&self, letter: u8) -> bool {
         self.pattern
             .split(|&unit| unit == QUOTE)
@@ -509,27 +754,45 @@ impl Writer<'_> {
             .any(|unquoted| unquoted.contains(&letter.into()))
     }
 
-    /// Falls back to AM and PM. The hour is 0 if the calendar has failed.
-    fn day_period(&mut self, count: usize, cal: Result<&Calendar, UErrorCode>) -> Written {
+    #[inline(always)]
+    fn flexible_day_period(&mut self, count: usize, cal: Result<&Calendar, UErrorCode>) -> Written {
+        match DayPeriodRules::get_instance(self.format.locale.get_base_name())? {
+            None => self.am_pm(count, cal),
+            rules => self.day_period(rules, count, cal),
+        }
+    }
+
+    /// Without rules there is only noon. Falls back to AM and PM. The hour is 0 if the calendar has failed.
+    #[inline(always)]
+    fn day_period(
+        &mut self,
+        rules: Option<&DayPeriodRules>,
+        count: usize,
+        cal: Result<&Calendar, UErrorCode>,
+    ) -> Written {
         let symbols = &*self.format.symbols;
-        let rules = DayPeriodRules::get_instance(self.format.locale.get_base_name())?;
         let get = |field| cal.map_or(0, |cal| cal.internal_get(field));
         let hour = get(Field::HourOfDay);
         let is_noon = hour == 12
-            && rules.has_noon()
+            && rules.is_none_or(DayPeriodRules::has_noon)
             && (get(Field::Minute) == 0 || !self.has_field(b'm'))
             && (get(Field::Second) == 0 || !self.has_field(b's'));
         // AM and PM are out of bounds of `names`.
-        let names = of_width(&symbols.day_periods, count);
+        let names = of_width(&symbols.day_periods, if count > 5 { 4 } else { count });
         let name_of = |DayPeriod(index)| symbols.name(*names.get(usize::from(index))?);
         let noon = is_noon.then_some(DayPeriod::NOON).and_then(name_of);
-        match noon.or_else(|| rules.day_period_for_hour(hour).and_then(name_of)) {
+        match noon.or_else(|| rules?.day_period_for_hour(hour).and_then(name_of)) {
             Some(name) => {
                 self.text.add_all(name);
                 cal.map(drop)
             }
-            None => self.name(&symbols.am_pm, count, cal?.internal_get(Field::AmPm)),
+            None => self.am_pm(count, cal),
         }
+    }
+
+    fn am_pm(&mut self, count: usize, cal: Result<&Calendar, UErrorCode>) -> Written {
+        let names = &self.format.symbols.am_pm;
+        self.name(names, count, cal?.internal_get(Field::AmPm))
     }
 }
 

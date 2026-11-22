@@ -21,6 +21,7 @@ pub(crate) struct CollationTailoring {
     pub(crate) data: Arc<CollationData>,
     pub(crate) settings: Arc<CollationSettings>,
     pub(crate) rules: DataString,
+    pub(crate) reorder_codes: I32s<'static>,
     uca_version: u16,
 }
 
@@ -148,6 +149,7 @@ pub(crate) fn read_tailoring(
     Ok(CollationTailoring {
         data,
         settings,
+        reorder_codes: I32s::of(codes_and_ranges).slice(0..codes_length),
         ..*base
     })
 }
@@ -167,6 +169,7 @@ pub(crate) fn load_root() -> Result<CollationTailoring, UErrorCode> {
         data,
         settings: try_shared_result(&mut Ok(settings))?,
         rules: DataString::EMPTY,
+        reorder_codes: I32s::EMPTY,
         uca_version: uca_version(&item.info),
     })
 }

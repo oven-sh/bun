@@ -1,12 +1,13 @@
 //! UTS #46, Unicode IDNA Compatibility Processing, nontransitional and without STD3 rules. ICU4C: uts46.cpp
 
-use crate::common::memory::try_with_capacity;
+use crate::common::memory::{Appendable, try_with_capacity};
 use crate::common::normalizer2::{Normalizer2, get_uts46_instance};
 use crate::common::punycode::{self, ACE_PREFIX};
 use crate::common::sink::{TextBuf, TextSink, WritableAlias, replace};
 use crate::common::slice_ext::SliceExt;
 use crate::common::ubidi_props::{ubidi_get_class, ubidi_get_joining_type};
 use crate::common::uchar::u_char_type;
+use crate::common::udata::searches_files;
 use crate::common::unicode::uchar::{
     U_ARABIC_NUMBER, U_BOUNDARY_NEUTRAL, U_COMMON_NUMBER_SEPARATOR, U_DIR_NON_SPACING_MARK,
     U_EUROPEAN_NUMBER, U_EUROPEAN_NUMBER_SEPARATOR, U_EUROPEAN_NUMBER_TERMINATOR, U_GC_M_MASK,
@@ -111,10 +112,10 @@ fn has_unpaired_surrogate(text: &[u16]) -> bool {
 }
 
 /// Checks the Bidi Rule for the lowercased labels of the ASCII fast path.
-fn is_ascii_ok_bidi(labels: &[u16]) -> bool {
+fn is_ascii_ok_bidi(mut labels: impl Iterator<Item = u16>) -> bool {
     let mut previous = DOT;
-    labels.iter().all(
-        |&unit| match (std::mem::replace(&mut previous, unit), unit) {
+    labels.all(
+        |unit| match (std::mem::replace(&mut previous, unit), unit) {
             (last, DOT) => matches!(last, DOT | 0x30..=0x39 | 0x61..=0x7a),
             (DOT, first) => matches!(first, 0x61..=0x7a),
             // Bidi classes B, S and WS
@@ -139,12 +140,18 @@ pub(crate) enum OutputForm {
 
 pub(crate) struct Uts46 {
     mapping: &'static Normalizer2,
+    /// The linked mapping lowercases ASCII like the fast path, and has a boundary before each ASCII character.
+    is_linked: bool,
     pub(crate) form: OutputForm,
 }
 
 impl Uts46 {
     pub(crate) fn new(form: OutputForm) -> Result<Self, UErrorCode> {
-        get_uts46_instance().map(|mapping| Self { mapping, form })
+        Ok(Self {
+            mapping: get_uts46_instance()?,
+            is_linked: !searches_files()?,
+            form,
+        })
     }
 
     /// Overwrites `dest`, which has `name.len()` units. ICU4C: uts46.cpp, UTS46::process
@@ -163,14 +170,19 @@ impl Uts46 {
         if let Some((label_start, stop)) = conversion.ascii_fast_path(name, dest.as_mut_slice()) {
             // The last ASCII character may combine with what follows.
             let mapping_start = stop.saturating_sub(1);
-            dest.truncate(mapping_start);
             let tail = name.slice(mapping_start..);
-            if has_unpaired_surrogate(tail) {
-                conversion.process_ill_formed(tail, label_start, dest)?;
+            if self.is_linked && !has_unpaired_surrogate(tail) {
+                dest.truncate(mapping_start);
+                self.mapping.normalize_append(tail, 0, dest)?;
             } else {
-                conversion.process_unicode(tail, label_start, dest)?;
+                conversion.map_and_merge(name, label_start, stop, dest)?;
             }
-            conversion.check_name_bidi(dest.as_slice().slice(..label_start));
+            conversion.process_labels(label_start, dest)?;
+            // The mapping has removed the labels of the fast path too.
+            if dest.len() == 0 && label_start != 0 {
+                return Ok(conversion.info);
+            }
+            conversion.check_name_bidi(dest.as_slice().iter().take(label_start).copied());
         }
         conversion.check_name_length(dest.as_slice());
         Ok(conversion.info)
@@ -276,7 +288,7 @@ impl Conversion<'_> {
     }
 
     /// `ascii_labels` are those that the ASCII fast path has finished.
-    fn check_name_bidi(&mut self, ascii_labels: &[u16]) {
+    fn check_name_bidi(&mut self, ascii_labels: impl Iterator<Item = u16>) {
         if self.is_bidi_name
             && self.info.errors & SEVERE_ERRORS == 0
             && !(self.is_ok_bidi && is_ascii_ok_bidi(ascii_labels))
@@ -285,34 +297,44 @@ impl Conversion<'_> {
         }
     }
 
-    /// Replaces unpaired surrogates first, because the mapping may remove what separates two of them.
+    /// Appends the mapped `name[stop..]`. The merge can change what the fast path has written, also before `label_start`.
     #[cold]
-    fn process_ill_formed(
+    fn map_and_merge(
         &mut self,
-        tail: &[u16],
+        name: &[u16],
         label_start: usize,
+        mut stop: usize,
         dest: &mut WritableAlias,
     ) -> Result<(), UErrorCode> {
-        self.info.errors |= UIDNA_ERROR_DISALLOWED;
-        let mut well_formed = try_with_capacity(tail.len())?;
-        for c in code_points(tail) {
-            well_formed.add_code_point(if utf16::is_surrogate(c) {
-                REPLACEMENT.into()
-            } else {
-                c
-            });
+        if name.at(stop) == HYPHEN {
+            dest.as_mut_slice().set(stop, HYPHEN);
+            stop += 1;
         }
-        self.process_unicode(&well_formed, label_start, dest)
+        dest.truncate(stop);
+        // Replaces unpaired surrogates first, because the mapping may remove what separates two of them.
+        let mut well_formed = try_with_capacity(name.len() - stop)?;
+        for c in code_points(name.slice(stop..)) {
+            if utf16::is_surrogate(c) {
+                self.info.errors |= UIDNA_ERROR_DISALLOWED;
+                well_formed.add(REPLACEMENT);
+            } else {
+                well_formed.add_code_point(c);
+            }
+        }
+        (self.idna.mapping).normalize_second_and_append(dest, &well_formed)?;
+        // A pair may have replaced the dot.
+        if let Some(unit @ 0xdc00..=0xdfff) = dest.as_mut_slice().get_mut(label_start) {
+            *unit = REPLACEMENT;
+        }
+        Ok(())
     }
 
-    /// Maps `tail`, appends it to `dest`, and converts the labels from `label_start` on.
-    fn process_unicode(
+    /// Converts the labels from `label_start` on. ICU4C: uts46.cpp, UTS46::processUnicode
+    fn process_labels(
         &mut self,
-        tail: &[u16],
         mut label_start: usize,
         dest: &mut WritableAlias,
     ) -> Result<(), UErrorCode> {
-        self.idna.mapping.normalize_append(tail, 0, dest)?;
         let (mut scratch, new_scratch) =
             (None, || [0; punycode::max_encoded_len(MAX_LABEL_LENGTH)]);
         // An empty label is allowed after the final dot.

@@ -5,8 +5,9 @@ use crate::common::memory::{Appendable, reserve_append_exact};
 use crate::common::normalizer2::UNormalization2Mode::{self, Compose, Decompose};
 use crate::common::sink::{BufferAccess, MAX_STRING_CAPACITY, WritableAlias};
 use crate::common::slice_ext::{SliceExt, SoftUnwrap};
-use crate::common::ucptrie::FastTrie16;
+use crate::common::ucptrie::{FastTrie16, UCPTrie};
 use crate::common::udata::{self, compiled_in, compiled_in_index};
+use crate::common::uniset::{MAX_VALUE, UnicodeSet};
 use crate::common::utf16;
 use crate::common::utypes::{U_INVALID_FORMAT_ERROR, U_MEMORY_ALLOCATION_ERROR, UErrorCode};
 use std::mem::{swap, take};
@@ -28,7 +29,7 @@ pub(crate) mod hangul {
     }
 
     /// Returns the Jamos of the syllable `c` and their number, 2 or 3.
-    pub(super) fn decompose(c: u32) -> ([u16; 3], usize) {
+    pub(crate) fn decompose(c: u32) -> ([u16; 3], usize) {
         let c = c.wrapping_sub(HANGUL_BASE);
         let (lv, t) = (c / JAMO_T_COUNT, c % JAMO_T_COUNT);
         let jamos = [
@@ -87,7 +88,7 @@ const COMP_1_TRAIL_SHIFT: u32 = 9;
 const COMP_2_TRAIL_SHIFT: u32 = 6;
 const COMP_2_TRAIL_MASK: u16 = 0xffc0;
 
-const DECOMPOSITION_CAPACITY: usize = MAPPING_LENGTH_MASK as usize;
+pub(crate) const DECOMPOSITION_CAPACITY: usize = MAPPING_LENGTH_MASK as usize;
 type DecompositionBuffer = [u16; DECOMPOSITION_CAPACITY];
 
 /// Number of units that an insertion must pass over to trigger `bulk_insert_marks`.
@@ -339,6 +340,7 @@ pub(crate) struct Normalizer2Impl {
     min_maybe_no: u16,
     min_maybe_yes: u16,
     norm_trie: FastTrie16<'static>,
+    serialized_trie: &'static [u8],
     /// Reaches to the end of the item.
     extra_data: U16s<'static>,
 }
@@ -354,7 +356,7 @@ pub(crate) static NFC: Normalizer2Impl = {
     }
     let (trie, extra_data) = NFC_BYTES.split_at(indexes[IX_EXTRA_DATA_OFFSET] as usize);
     let trie = trie.split_at(indexes[IX_NORM_TRIE_OFFSET] as usize).1;
-    Normalizer2Impl::init(&indexes, FastTrie16::open(trie).unwrap(), extra_data)
+    Normalizer2Impl::init(&indexes, trie, extra_data).unwrap()
 };
 
 /// Returns the canonical lccc in bits 15..8 and tccc in bits 7..0.
@@ -428,21 +430,21 @@ impl Normalizer2Impl {
             .split_at_checked(next_offset)
             .filter(|_| offset / 4 > IX_MIN_MAYBE_NO)
             .ok_or(U_INVALID_FORMAT_ERROR)?;
-        let trie = trie.get(offset..).and_then(FastTrie16::open);
-        Ok(Self::init(
-            &indexes,
-            trie.ok_or(U_INVALID_FORMAT_ERROR)?,
-            extra_data,
-        ))
+        trie.get(offset..)
+            .and_then(|trie| Self::init(&indexes, trie, extra_data))
+            .ok_or(U_INVALID_FORMAT_ERROR)
     }
 
     const fn init(
         indexes: &[u32; IX_COUNT],
-        norm_trie: FastTrie16<'static>,
+        serialized_trie: &'static [u8],
         extra_data: &'static [u8],
-    ) -> Self {
+    ) -> Option<Self> {
+        let Some(norm_trie) = FastTrie16::open(serialized_trie) else {
+            return None;
+        };
         let min_maybe_no = indexes[IX_MIN_MAYBE_NO] as u16;
-        Self {
+        Some(Self {
             min_decomp_no_cp: indexes[IX_MIN_DECOMP_NO_CP] as u16,
             min_comp_no_maybe_cp: indexes[IX_MIN_COMP_NO_MAYBE_CP] as u16,
             min_yes_no: indexes[IX_MIN_YES_NO] as u16,
@@ -456,8 +458,9 @@ impl Normalizer2Impl {
             min_maybe_no,
             min_maybe_yes: indexes[IX_MIN_MAYBE_YES] as u16,
             norm_trie,
+            serialized_trie,
             extra_data: U16s::of(extra_data),
-        }
+        })
     }
 
     /// Calls `f` with a buffer that appends to `dest`, about `estimate` units.
@@ -516,7 +519,7 @@ impl Normalizer2Impl {
     }
 
     #[inline(always)]
-    pub(crate) fn get_cc_from_yes_or_maybe_yes_cp(&self, c: u32) -> u8 {
+    fn get_cc_from_yes_or_maybe_yes_cp(&self, c: u32) -> u8 {
         if c < u32::from(self.min_comp_no_maybe_cp) {
             0
         } else {
@@ -790,8 +793,15 @@ impl Normalizer2Impl {
             }
             let previous = index;
             let (c, norm16) = self.norm_trie.u16_next(s, &mut index);
-            if stop_at_comp_boundary && self.norm16_has_comp_boundary_before(norm16) {
-                return previous;
+            // Perf: from `min_maybe_no` on there is no boundary on either side.
+            if stop_at_comp_boundary && norm16 < self.min_maybe_no {
+                if self.norm16_has_comp_boundary_before(norm16) {
+                    return previous;
+                }
+                if self.norm16_has_comp_boundary_after(norm16) {
+                    self.append_mapping(get_data_for_yes_or_no(norm16), buffer);
+                    break;
+                }
             }
             self.decompose_code_point(c, norm16, buffer);
             if buffer.prefers_bulk_insert {
@@ -937,6 +947,25 @@ impl Normalizer2Impl {
         // `reorder_start` stays: `previous_cc` returns 1 for the new marks of class 1, which ends a scan too.
         buffer.last_cc = last_cc as u8;
         stop
+    }
+
+    /// Writes the decomposition of `c` to `buffer` and returns its length, or `None` if `c` has no decomposition.
+    pub(crate) fn get_decomposition(
+        &self,
+        c: u32,
+        buffer: &mut DecompositionBuffer,
+    ) -> Option<usize> {
+        match self.decomposition_kind(c, self.get_norm16(c)) {
+            DecompositionKind::Single(mapped, _) if mapped == c => None,
+            DecompositionKind::Single(c, _) => {
+                char::from_u32(c).map(|c| c.encode_utf16(buffer).len())
+            }
+            DecompositionKind::Hangul(c) => {
+                let (jamos, length) = hangul::decompose(c);
+                Some(copy_mapping(jamos.into_iter().take(length), buffer))
+            }
+            DecompositionKind::Mapping(data) => Some(copy_mapping(self.mapping(data), buffer)),
+        }
     }
 
     pub(crate) fn has_comp_boundary_before_cp(&self, c: u32) -> bool {
@@ -1218,6 +1247,42 @@ impl Normalizer2Impl {
         true
     }
 
+    /// Returns the last boundary in `s`, or 0.
+    pub(crate) fn find_previous_comp_boundary(&self, s: &[u16]) -> usize {
+        let mut p = s.len();
+        while p != 0 {
+            let code_point_limit = p;
+            let (c, norm16) = self.norm_trie.u16_prev(s, 0, &mut p);
+            if self.norm16_has_comp_boundary_after(norm16) {
+                return code_point_limit;
+            }
+            if c < u32::from(self.min_comp_no_maybe_cp)
+                || self.norm16_has_comp_boundary_before(norm16)
+            {
+                break;
+            }
+        }
+        p
+    }
+
+    /// Returns the first boundary in `s`, or its length.
+    pub(crate) fn find_next_comp_boundary(&self, s: &[u16]) -> usize {
+        let mut p = 0;
+        while p < s.len() {
+            let code_point_start = p;
+            let (c, norm16) = self.norm_trie.u16_next(s, &mut p);
+            if c < u32::from(self.min_comp_no_maybe_cp)
+                || self.norm16_has_comp_boundary_before(norm16)
+            {
+                return code_point_start;
+            }
+            if self.norm16_has_comp_boundary_after(norm16) {
+                break;
+            }
+        }
+        p
+    }
+
     fn has_comp_boundary_before(&self, s: &[u16], mut src: usize) -> bool {
         s.get(src)
             .is_none_or(|&unit| unit < self.min_comp_no_maybe_cp)
@@ -1263,4 +1328,84 @@ fn copy_mapping(
         .zip(mapping)
         .for_each(|(slot, unit)| *slot = unit);
     length
+}
+
+pub(crate) type UNormalizationCheckResult = i32;
+const UNORM_NO: UNormalizationCheckResult = 0;
+const UNORM_YES: UNormalizationCheckResult = 1;
+const UNORM_MAYBE: UNormalizationCheckResult = 2;
+
+/// The properties of code points.
+impl Normalizer2Impl {
+    /// Adds the code points at which `get_norm16` can change.
+    pub(crate) fn add_property_starts(&self, sa: &mut UnicodeSet) {
+        let trie = UCPTrie::open(self.serialized_trie).soft_some();
+        trie.iter()
+            .flat_map(UCPTrie::range_starts)
+            .chain([0xd800, 0xdc00])
+            .for_each(|start| sa.add(start));
+    }
+
+    pub(crate) fn get_cc(&self, c: u32) -> u8 {
+        let norm16 = self.get_norm16(c);
+        if norm16 < self.min_no_no || self.limit_no_no <= norm16 {
+            get_cc_from_yes_or_maybe_yes(norm16)
+        } else {
+            self.ccc_lccc_word(get_data_for_yes_or_no(norm16)) as u8
+        }
+    }
+
+    pub(crate) fn get_comp_quick_check(&self, c: u32) -> UNormalizationCheckResult {
+        let norm16 = self.get_norm16(c);
+        if norm16 < self.min_no_no || MIN_YES_YES_WITH_CC <= norm16 {
+            UNORM_YES
+        } else if self.min_maybe_no <= norm16 {
+            UNORM_MAYBE
+        } else {
+            UNORM_NO
+        }
+    }
+
+    pub(crate) fn get_decomp_quick_check(&self, c: u32) -> UNormalizationCheckResult {
+        self.is_decomp_yes(self.get_norm16(c)).into()
+    }
+
+    pub(crate) fn has_full_composition_exclusion(&self, c: u32) -> bool {
+        self.get_comp_quick_check(c) == UNORM_NO
+    }
+
+    pub(crate) fn is_comp_inert(&self, c: u32) -> bool {
+        let norm16 = self.get_norm16(c);
+        self.is_comp_yes_and_zero_cc(norm16) && self.norm16_has_comp_boundary_after(norm16)
+    }
+
+    pub(crate) fn is_decomp_inert(&self, c: u32) -> bool {
+        let norm16 = self.get_norm16(c);
+        norm16 < self.min_yes_no
+            || norm16 == JAMO_VT
+            || (self.min_maybe_yes <= norm16 && norm16 <= MIN_NORMAL_MAYBE_YES)
+    }
+}
+
+/// Returns the code points with the property Segment_Starter. ICU4C: normalizer2impl.cpp, makeCanonIterDataFromNorm16
+pub(crate) fn canon_segment_starters() -> UnicodeSet {
+    let (mut starts, mut set) = (UnicodeSet::new(), UnicodeSet::new());
+    NFC.add_property_starts(&mut starts);
+    let limits = starts.code_points().skip(1).chain([MAX_VALUE + 1]);
+    for (start, limit) in starts.code_points().zip(limits) {
+        let norm16 = NFC.get_norm16(start);
+        if NFC.is_maybe_yes_or_non_zero_cc(norm16) || NFC.get_cc(start) != 0 {
+            set.add_range(start, limit - 1);
+        }
+        for c in (start..limit).take_while(|_| NFC.is_comp_no(norm16)) {
+            if let DecompositionKind::Mapping(data) = NFC.decomposition_kind(c, norm16) {
+                let mut units = [0; DECOMPOSITION_CAPACITY];
+                let length = copy_mapping(NFC.mapping(data), &mut units);
+                let after_first = utf16::code_points(units.slice(..length)).skip(1);
+                after_first.for_each(|c| set.add(c));
+            }
+        }
+    }
+    set.complement();
+    set
 }

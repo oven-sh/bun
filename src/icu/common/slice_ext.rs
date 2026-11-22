@@ -39,6 +39,12 @@ pub(crate) trait SliceExt<T> {
     fn split_soft_mut(&mut self, mid: usize) -> (&mut [T], &mut [T]);
     /// Splits before the first element for which `predicate` is false.
     fn split_while(&self, predicate: impl FnMut(&T) -> bool) -> (&[T], &[T]);
+    /// Like `swap`.
+    #[cfg_attr(debug_assertions, track_caller)]
+    fn swap_soft(&mut self, a: usize, b: usize);
+    /// Like `rotate_left`. Clamps `mid`.
+    #[cfg_attr(debug_assertions, track_caller)]
+    fn rotate_at(&mut self, mid: usize);
     /// Like `chunk_by`, whose bounds checks the compiler keeps.
     fn runs_by<'a>(
         &'a self,
@@ -119,6 +125,19 @@ impl<T> SliceExt<T> for [T] {
     #[inline]
     fn split_while(&self, mut predicate: impl FnMut(&T) -> bool) -> (&[T], &[T]) {
         self.split_soft(self.iter().take_while(|item| predicate(item)).count())
+    }
+
+    fn swap_soft(&mut self, a: usize, b: usize) {
+        if let Some(part) = self.get_mut(..=a.max(b)).soft_some() {
+            part.swap(a, b);
+        }
+    }
+
+    // Not inlined, so that std's function has one caller and is inlined here.
+    #[inline(never)]
+    fn rotate_at(&mut self, mid: usize) {
+        crate::common::soft_assert!(mid <= self.len());
+        self.rotate_left(mid.min(self.len()));
     }
 
     #[inline]

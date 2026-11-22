@@ -2,9 +2,7 @@
 
 use crate::common::arrayvec::ArrayVec;
 use crate::common::slice_ext::{SliceExt, to_length};
-use crate::common::ubidi_props::ubidi_is_bidi_control;
-use crate::common::uchar::{is_variation_selector, u_char_type};
-use crate::common::unicode::uchar::U_SPACE_SEPARATOR;
+use crate::common::static_unicode_sets::is_default_ignorable;
 use crate::common::utf16;
 use crate::common::utypes::*;
 use crate::i18n::formatted_string_builder::{Field, FormattedStringBuilder, UNDEFINED_FIELD};
@@ -31,14 +29,6 @@ const GROUPING_SEPARATOR: Field = Field::number(UNUM_GROUPING_SEPARATOR_FIELD);
 
 fn is_int_or_group(field: Field) -> bool {
     field == INTEGER || field == GROUPING_SEPARATOR
-}
-
-/// `[[:Zs:][\u0009][:Bidi_Control:][:Variation_Selector:]]`. ICU4C: static_unicode_sets.cpp
-fn is_default_ignorable(c: u32) -> bool {
-    u_char_type(c) == U_SPACE_SEPARATOR
-        || c == 9
-        || ubidi_is_bidi_control(c)
-        || is_variation_selector(c)
 }
 
 /// Skips the property lookup for printable ASCII, which covers most digits and signs.
@@ -133,19 +123,19 @@ impl FormattedValueStringBuilderImpl {
 
         // Visits only the positions at which a field or a span starts.
         let has_numeric = numeric_field != UNDEFINED_FIELD;
-        let mut is_first = true;
+        let mut numeric_was_reported = has_numeric && is_current(cfpos, numeric_field);
+        let mut integer_was_reported = is_current(cfpos, INTEGER);
         while let Some(rest) = fields.get(i..) {
             let (before, field) = (field_at(i.wrapping_sub(1)), field_at(i));
-            let was_reported = |field| is_first && is_current(cfpos, field);
-            if before.is_numeric() && !(has_numeric && was_reported(numeric_field)) {
-                if is_int_or_group(before) && !is_int_or_group(field) && !was_reported(INTEGER) {
+            if before.is_numeric() && !numeric_was_reported {
+                if is_int_or_group(before) && !is_int_or_group(field) && !integer_was_reported {
                     return set_found(cfpos, INTEGER, start_of(i, is_int_or_group), i);
                 }
                 if has_numeric && !field.is_numeric() {
                     return set_found(cfpos, numeric_field, start_of(i, Field::is_numeric), i);
                 }
             }
-            is_first = false;
+            (numeric_was_reported, integer_was_reported) = (false, false);
             while let Some(span) = next_span.filter(|span| !prev_is_span && span.start == i) {
                 let context = cfpos.iteration_context();
                 cfpos.set_iteration_context(context + 1);

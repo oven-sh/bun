@@ -1,7 +1,7 @@
 //! The binary format of resource bundles (`.res`). ICU4C: uresdata.cpp, uresdata.h
 
 use crate::common::bytes::{I32s, U16s, U32s, View, Word};
-use crate::common::cstring::{find_byte, split_once};
+use crate::common::cstring::{find_byte, find_last_byte, split_once};
 use crate::common::resource::{ResourceArray, ResourceTable};
 use crate::common::slice_ext::{SliceExt, SoftUnwrap, to_index};
 use crate::common::udata::{self, UDataMemory};
@@ -9,7 +9,7 @@ use crate::common::unicode::ures::*;
 use crate::common::uresbund::Entry;
 use crate::common::utypes::*;
 use std::cmp::Ordering;
-use std::ffi::CStr;
+use std::ffi::{CStr, c_long};
 
 const URES_TABLE32: i32 = 4;
 const URES_TABLE16: i32 = 5;
@@ -64,6 +64,11 @@ impl DataKey {
         self.0.slice(..find_byte(self.0, 0).soft_unwrap())
     }
 
+    /// Returns 0 for the empty key.
+    pub(crate) fn first_byte(self) -> u8 {
+        self.0.at(0)
+    }
+
     pub(crate) fn as_c_str(self) -> &'static CStr {
         CStr::from_bytes_until_nul(self.0).ok().soft_unwrap()
     }
@@ -97,6 +102,13 @@ impl DataString {
     /// Returns the units up to the first NUL, for callers that take a C string.
     pub(crate) fn until_nul(self) -> U16s<'static> {
         self.units().until_nul()
+    }
+
+    /// Returns whether the text is "∅∅∅".
+    #[inline]
+    pub(crate) fn is_empty_sets(self) -> bool {
+        const EMPTY_SET: [u8; 2] = 0x2205_u16.to_ne_bytes();
+        matches!(self.0, [EMPTY_SET, EMPTY_SET, EMPTY_SET, _])
     }
 
     #[inline]
@@ -174,6 +186,23 @@ pub(crate) struct ResourceData {
 }
 
 impl ResourceData {
+    /// The root is the empty string.
+    pub(crate) fn empty() -> Self {
+        Self {
+            bytes: &[],
+            units: const { U16s::of(EMPTY.0.split_at(2).0) },
+            pool: None,
+            pool_keys: &[],
+            root_res: 0,
+            local_key_limit: 0,
+            pool_string_index_limit: 0,
+            pool_string_index16_limit: 0,
+            no_fallback: false,
+            is_pool_bundle: false,
+            uses_pool_bundle: false,
+        }
+    }
+
     // ICU4C: uresdata.cpp, res_init
     fn new(
         UDataMemory {
@@ -183,16 +212,8 @@ impl ResourceData {
     ) -> Result<Self, UErrorCode> {
         let mut data = Self {
             bytes,
-            units: const { U16s::of(EMPTY.0.split_at(2).0) },
-            pool: None,
-            pool_keys: &[],
-            root_res: U32s::of(bytes).at(0),
-            local_key_limit: 0,
-            pool_string_index_limit: 0,
-            pool_string_index16_limit: 0,
-            no_fallback: false,
-            is_pool_bundle: false,
-            uses_pool_bundle: false,
+            root_res: U32s::of(bytes).get(0).unwrap_or_default(),
+            ..Self::empty()
         };
         if !ures_is_table(res_get_type(data.root_res)) {
             return Err(U_INVALID_FORMAT_ERROR);
@@ -233,8 +254,9 @@ impl ResourceData {
         Ok(data)
     }
 
+    /// Returns 0 if the file is too short.
     fn index(&self, index: usize) -> u32 {
-        U32s::of(self.bytes).at(1 + index)
+        U32s::of(self.bytes).get(1 + index).unwrap_or_default()
     }
 
     pub(crate) fn use_pool(&mut self, pool: &'static Self) -> Result<(), UErrorCode> {
@@ -367,6 +389,13 @@ impl ResourceData {
         Some(self.item_at(items, self.search(keys, items.len(), key)?))
     }
 
+    /// Returns the copy of `key` that the data have.
+    #[cold]
+    pub(crate) fn find_key(&self, table: Resource, key: &[u8]) -> Option<DataKey> {
+        let (keys, items) = self.table(table)?;
+        Some(self.key_at(keys, self.search(keys, items.len(), key)?))
+    }
+
     /// Returns the items of a table or an array.
     #[inline]
     fn items(&self, container: Resource) -> Option<Items> {
@@ -446,9 +475,11 @@ pub(crate) fn res_find_resource(
     while !path.is_empty() {
         let (key, rest) = split_once(path, RES_PATH_SEPARATOR);
         res = match (res_get_type(res), key) {
-            (URES_ARRAY | URES_ARRAY16, [b'0'..=b'9', ..]) => {
-                data.item_by_index(res, to_index(strtol(key).0))
-            }
+            (_, []) => None,
+            (URES_ARRAY | URES_ARRAY16, _) => match strtol(key) {
+                (index, true) => data.item_by_index(res, to_index(index)),
+                _ => None,
+            },
             _ => data.table_item_by_key(res, key),
         }?;
         *path = rest.unwrap_or_default();
@@ -459,15 +490,34 @@ pub(crate) fn res_find_resource(
     Some(res)
 }
 
-/// Returns the number at the start of `key`, and whether nothing follows it.
-pub(crate) fn strtol(key: &[u8]) -> (i32, bool) {
-    let (digits, rest) = key.split_while(u8::is_ascii_digit);
-    let add = |number: i32, digit: &u8| {
-        number
-            .saturating_mul(10)
-            .saturating_add(i32::from(digit - b'0'))
+/// Returns the last key of `path`, all of which `res_find_resource` follows, unless it is an index into an array.
+#[cold]
+pub(crate) fn res_find_last_key(
+    data: &ResourceData,
+    res: Resource,
+    path: &[u8],
+) -> Option<DataKey> {
+    let path = path.strip_suffix(&[RES_PATH_SEPARATOR]).unwrap_or(path);
+    let start = find_last_byte(path, RES_PATH_SEPARATOR).map_or(0, |at| at + 1);
+    let (mut to_container, key) = path.split_soft(start);
+    data.find_key(res_find_resource(data, res, &mut to_container)?, key)
+}
+
+/// Returns `(int32_t)strtol(s, &end, 10)` and whether `*end == 0`.
+pub(crate) fn strtol(s: &[u8]) -> (i32, bool) {
+    let (sign, number) = match s.split_while(|c| matches!(c, b' ' | b'\t'..=b'\r')).1 {
+        [b'-', number @ ..] => (-1, number),
+        [b'+', number @ ..] | number => (1, number),
     };
-    (digits.iter().fold(0, add), rest.is_empty())
+    let (digits, rest) = number.split_while(u8::is_ascii_digit);
+    let add = |value: c_long, digit: &u8| {
+        value
+            .saturating_mul(10)
+            .saturating_add(sign * c_long::from(digit - b'0'))
+    };
+    // Without digits `end` is `s`.
+    let is_at_end = rest.is_empty() && digits.is_empty() == s.is_empty();
+    (digits.iter().fold(0, add) as i32, is_at_end)
 }
 
 #[derive(Clone, Copy)]
@@ -515,7 +565,7 @@ impl ResourceValue {
         self.get_string()?.try_to_vec()
     }
 
-    /// Returns whether the value is CLDR's "∅∅∅", without a length field or with one of one unit.
+    /// Returns whether the value is CLDR's "∅∅∅". The offset 0 and a length field of two or three units do not match.
     pub(crate) fn is_no_inheritance_marker(&self) -> bool {
         let is_marker = |units: U16s| {
             let start = [0, 1, 2, 3].map(|i| units.get(i).unwrap_or_default());
@@ -524,8 +574,14 @@ impl ResourceValue {
                 [0x2205, 0x2205, 0x2205, 0] | [0xdc03, 0x2205, 0x2205, 0x2205]
             )
         };
-        res_get_type(self.res) == URES_STRING_V2
-            && (self.get_data().string_v2_at(res_get_offset(self.res))).is_some_and(is_marker)
+        let (data, offset) = (self.get_data(), res_get_offset(self.res));
+        match res_get_type(self.res) {
+            URES_STRING_V2 if offset != 0 => data.string_v2_at(offset).is_some_and(is_marker),
+            URES_STRING => data
+                .string32(self.res)
+                .is_some_and(DataString::is_empty_sets),
+            _ => false,
+        }
     }
 
     /// Returns the elements of a binary or an integer vector, each of `size` bytes.
@@ -604,6 +660,12 @@ impl ResourceTable {
 
     pub(crate) fn key_at(&self, i: usize) -> Option<DataKey> {
         (i < self.get_size()).then(|| self.origin.get_data().key_at(self.keys, i))
+    }
+
+    #[inline]
+    pub(crate) fn key_unless_alias(&self, i: usize) -> Option<DataKey> {
+        let data = self.origin.get_data();
+        (res_get_type(data.item_at(self.items, i)) != URES_ALIAS).then(|| data.key_at(self.keys, i))
     }
 
     pub(crate) fn iter(

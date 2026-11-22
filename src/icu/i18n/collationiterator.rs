@@ -530,9 +530,9 @@ impl<T: Text> CollationIterator<T> {
         self
     }
 
-    /// Makes the CE that `next_ce` has last returned ignorable.
-    pub(crate) fn clear_current_ce(&mut self) {
-        self.ces.set(self.ces_index.wrapping_sub(1), 0);
+    /// Overwrites the CE that `next_ce` has last returned.
+    pub(crate) fn set_current_ce(&mut self, ce: u64) {
+        self.ces.set(self.ces_index.wrapping_sub(1), ce);
     }
 
     #[inline(always)]

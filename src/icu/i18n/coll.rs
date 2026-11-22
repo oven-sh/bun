@@ -1,17 +1,21 @@
 //! Opens a collator for a locale ID and lists the available locales. ICU4C: coll.cpp
 
+use crate::common::charstr::{CharStrings, Span};
 use crate::common::locid::Locale;
-use crate::common::memory::try_collect_results;
+use crate::common::memory::{try_collect_results, try_push};
 use crate::common::propname::uscript_get_code;
 use crate::common::resource::ResourceTable;
+use crate::common::udata::searches_files;
 use crate::common::umutex::OnceBox;
-use crate::common::uresimp::U_ICUDATA_COLL;
-use crate::common::uresimp::ures_open_direct;
+use crate::common::uresimp::{
+    U_ICUDATA_COLL, UResourceBundle, ures_get_next_string, ures_open_direct,
+};
 use crate::common::utypes::*;
 use crate::i18n::rulebasedcollator::RuleBasedCollator;
 use crate::i18n::ucol_res;
 use crate::i18n::unicode::ucol::*;
 use bun_core::strings;
+use std::ffi::CStr;
 
 pub(crate) fn open(locale_id: &[u8]) -> Result<RuleBasedCollator, UErrorCode> {
     let locale = Locale::from_name(locale_id);
@@ -104,13 +108,49 @@ fn set_attributes_from_keywords(
     Ok(())
 }
 
-/// The keys are the locale IDs.
-pub(crate) fn available_locales() -> Option<&'static ResourceTable> {
-    static INSTALLED: OnceBox<Result<ResourceTable, UErrorCode>> = OnceBox::new();
-    let load = || {
-        let index = ures_open_direct(Some(U_ICUDATA_COLL), b"res_index")?;
-        let installed = index.get_by_key(b"InstalledLocales")?;
-        installed.get_value().get_table()
-    };
-    INSTALLED.get_or_init_caching_err(load).ok()
+pub(crate) enum AvailableLocales {
+    /// The keys are names of locales.
+    Linked(ResourceTable),
+    Named(CharStrings, Vec<Span>),
+}
+
+impl AvailableLocales {
+    // ICU4C: coll.cpp, initAvailableLocaleList
+    pub(crate) fn load() -> Option<&'static Self> {
+        static INSTALLED: OnceBox<Result<AvailableLocales, UErrorCode>> = OnceBox::new();
+        let load = || {
+            let index = ures_open_direct(Some(U_ICUDATA_COLL), b"res_index")?;
+            let installed = index.get_by_key(b"InstalledLocales")?;
+            if searches_files()? {
+                return Self::named(installed);
+            }
+            installed.get_value().get_table().map(Self::Linked)
+        };
+        INSTALLED.get_or_init_caching_err(load).ok()
+    }
+
+    #[cold]
+    fn named(mut installed: UResourceBundle) -> Result<Self, UErrorCode> {
+        let (mut names, mut spans) = (CharStrings::default(), Vec::new());
+        while installed.has_next() {
+            let (_, key) = ures_get_next_string(&mut installed)?;
+            // A missing key yields the default locale.
+            try_push(&mut spans, names.add(Locale::new(key).get_name())?)?;
+        }
+        Ok(Self::Named(names, spans))
+    }
+
+    pub(crate) fn get(&self, index: usize) -> Option<&CStr> {
+        match self {
+            Self::Linked(table) => table.key_at(index).map(|key| key.as_c_str()),
+            Self::Named(names, spans) => spans.get(index).map(|&span| names.get_c_str(span)),
+        }
+    }
+
+    pub(crate) fn count(&self) -> usize {
+        match self {
+            Self::Linked(table) => table.get_size(),
+            Self::Named(_, spans) => spans.len(),
+        }
+    }
 }

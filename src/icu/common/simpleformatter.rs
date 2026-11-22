@@ -90,9 +90,23 @@ impl SimpleFormatter {
         min: usize,
         max: usize,
     ) -> Result<Self, UErrorCode> {
+        let mut formatter = Self::new();
+        formatter
+            .apply_pattern_min_max_arguments(pattern, min, max)
+            .map(|()| formatter)
+    }
+
+    /// Keeps the parts compiled so far after a failure, with an argument limit of 0.
+    pub(crate) fn apply_pattern_min_max_arguments(
+        &mut self,
+        pattern: &[u16],
+        min: usize,
+        max: usize,
+    ) -> Result<(), UErrorCode> {
         // An argument shrinks from at least 3 units to 1, which makes up for the length unit of the next segment.
-        let mut compiled =
+        self.compiled_pattern =
             try_with_capacity(pattern.len() + pattern.len() / MAX_SEGMENT_LENGTH + 2)?;
+        let compiled = &mut self.compiled_pattern;
         compiled.add(0);
         let (mut rest, mut limit, mut text_length, mut in_quote) = (pattern, 0, 0, false);
         while let &[mut c, ref after @ ..] = rest {
@@ -127,9 +141,7 @@ impl SimpleFormatter {
             return Err(U_ILLEGAL_ARGUMENT_ERROR);
         }
         compiled.set(0, limit as u16);
-        Ok(Self {
-            compiled_pattern: compiled,
-        })
+        Ok(())
     }
 
     pub(crate) fn get_argument_limit(&self) -> usize {

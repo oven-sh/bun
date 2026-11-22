@@ -122,17 +122,36 @@ impl DecimalQuantity {
         self.r_req_pos = min_frac.wrapping_neg();
     }
 
-    /// Rounds to a multiple of `increment` * 10^`magnitude`.
+    /// Removes the digits at 10^`max_int` and above.
+    pub(crate) fn apply_max_integer(&mut self, max_int: i32) {
+        if self.precision == 0 {
+            return;
+        }
+        if max_int <= self.scale {
+            self.set_bcd_to_zero();
+        } else if max_int <= self.get_magnitude() {
+            self.precision = max_int.wrapping_sub(self.scale);
+            if let Bcd::Long(bcd_long) = &mut self.bcd {
+                *bcd_long &= (1 << (self.precision * 4)) - 1;
+            }
+            self.compact();
+        }
+    }
+
+    /// Rounds to a multiple of `increment` * 10^`magnitude`. `increment` has at most 17 digits, and 0 fails.
     pub(crate) fn round_to_increment(
         &mut self,
-        increment: u16,
+        increment: u64,
         magnitude: i32,
         rounding_mode: RoundingMode,
     ) -> Result<(), UErrorCode> {
-        let mut increment_dq = DecimalQuantity::from_integer(increment.into());
+        if self.is_zeroish() {
+            return Ok(());
+        }
+        let mut increment_dq = DecimalQuantity::from_integer(increment);
         increment_dq.adjust_magnitude(magnitude);
         let increment_dn = increment_dq.to_dec_num()?;
-        self.divide_by(&increment_dn)?;
+        self.set_to_dec_num(&self.to_dec_num()?.divide(&increment_dn)?)?;
         self.round_to_magnitude(0, rounding_mode);
         self.multiply_by(&increment_dn)
     }
@@ -144,11 +163,8 @@ impl DecimalQuantity {
         self.set_to_dec_num(&self.to_dec_num()?.multiply(multiplicand)?)
     }
 
-    fn divide_by(&mut self, divisor: &DecNum) -> Result<(), UErrorCode> {
-        if self.is_zeroish() {
-            return Ok(());
-        }
-        self.set_to_dec_num(&self.to_dec_num()?.divide(divisor)?)
+    pub(crate) fn negate(&mut self) {
+        self.flags ^= NEGATIVE_FLAG;
     }
 
     /// Returns the power of ten of the most significant digit, or -1 for zero.
@@ -164,13 +180,17 @@ impl DecimalQuantity {
         }
     }
 
+    /// Sets the scale to 0 and returns the old scale.
+    pub(crate) fn adjust_to_zero_scale(&mut self) -> i32 {
+        std::mem::take(&mut self.scale)
+    }
+
     pub(crate) fn adjust_exponent(&mut self, delta: i32) {
         self.exponent = self.exponent.wrapping_add(delta);
     }
 
-    /// Looks at the last 18 digits of an integer.
-    pub(crate) fn is_one(&self) -> bool {
-        self.scale >= 0 && !self.is_negative() && self.truncated_integer() == 1
+    pub(crate) fn has_integer_value(&self) -> bool {
+        self.scale >= 0
     }
 
     pub(crate) fn get_upper_display_magnitude(&self) -> i32 {
@@ -188,7 +208,7 @@ impl DecimalQuantity {
         self.get_digit_pos(magnitude.wrapping_sub(self.scale))
     }
 
-    fn is_negative(&self) -> bool {
+    pub(crate) fn is_negative(&self) -> bool {
         self.flags & NEGATIVE_FLAG != 0
     }
 
@@ -215,12 +235,19 @@ impl DecimalQuantity {
         self.precision == 0
     }
 
-    pub(crate) fn from_integer(n: u32) -> Self {
+    pub(crate) fn from_integer(n: u64) -> Self {
         let mut quantity = Self::new();
         if n != 0 {
-            quantity.read_long_to_bcd(n.into(), 0);
+            quantity.read_long_to_bcd(n, 0);
         }
         quantity
+    }
+
+    pub(crate) fn from_long(n: i64) -> Self {
+        Self {
+            flags: if n < 0 { NEGATIVE_FLAG } else { 0 },
+            ..Self::from_integer(n.unsigned_abs())
+        }
     }
 
     pub(crate) fn set_to_double(&mut self, n: f64) {
@@ -305,8 +332,18 @@ impl DecimalQuantity {
         })
     }
 
+    /// Returns the last 18 digits of the integer part, with the exponent applied.
+    pub(crate) fn to_long(&self) -> i64 {
+        let integer = self.truncated_integer();
+        if self.is_negative() {
+            -integer
+        } else {
+            integer
+        }
+    }
+
     /// Returns the fraction digits as an integer, with the exponent applied.
-    fn to_fraction_long(&self, include_trailing_zeros: bool) -> u64 {
+    pub(crate) fn to_fraction_long(&self, include_trailing_zeros: bool) -> u64 {
         let lower_magnitude = if include_trailing_zeros {
             self.get_lower_display_magnitude()
         } else {
@@ -336,9 +373,26 @@ impl DecimalQuantity {
     }
 
     /// Returns the absolute value of a finite number, with the exponent applied.
+    #[inline(always)]
     fn absolute_value(&self) -> f64 {
         let point = i64::from(self.get_magnitude().wrapping_add(self.exponent)) + 1;
         digits_to_double(self.digits(&mut [0; _]), point)
+    }
+
+    pub(crate) fn to_double(&self) -> f64 {
+        if self.is_nan() {
+            return f64::NAN;
+        }
+        let magnitude = if self.is_infinite() {
+            f64::INFINITY
+        } else {
+            self.absolute_value()
+        };
+        if self.is_negative() {
+            -magnitude
+        } else {
+            magnitude
+        }
     }
 
     fn to_dec_num(&self) -> Result<DecNum, UErrorCode> {
@@ -421,6 +475,13 @@ impl DecimalQuantity {
             (digits == (step / 2, 4) && rest_is(9)) || (digits == (step / 2, 5) && rest_is(0))
         } else {
             (digits == (step - 1, 9) && rest_is(9)) || (digits == (0, 0) && rest_is(0))
+        }
+    }
+
+    /// Replaces approximate digits with the shortest digits of the double.
+    pub(crate) fn round_to_infinity(&mut self) {
+        if self.is_approximate {
+            self.convert_to_accurate_double();
         }
     }
 

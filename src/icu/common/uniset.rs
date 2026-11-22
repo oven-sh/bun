@@ -1,13 +1,13 @@
 //! A set of code points and strings. A change for which an allocation fails has no effect. ICU4C: uniset.cpp
 
 use crate::common::bmpset::BMPSet;
-use crate::common::memory::{Appendable, defer_oom, try_box, try_splice, try_to_vec};
+use crate::common::memory::{Appendable, defer_oom, is_oom, try_box, try_splice, try_to_vec};
 use crate::common::slice_ext::SliceExt;
 use crate::common::sorting::sort_in_place;
 use crate::common::utypes::UErrorCode;
 use std::ops::RangeInclusive;
 
-const MAX_VALUE: u32 = 0x10_ffff;
+pub(crate) const MAX_VALUE: u32 = 0x10_ffff;
 
 /// Returns the number of elements of the ascending `list` up to `c`.
 #[inline(always)]
@@ -45,6 +45,7 @@ impl UnicodeSet {
         }
     }
 
+    #[inline(always)]
     pub(crate) fn contains(&self, c: u32) -> bool {
         match &self.bmp_set {
             Some(bmp_set) => bmp_set.contains(&self.list, c),
@@ -60,6 +61,10 @@ impl UnicodeSet {
     pub(crate) fn ranges(&self) -> impl ExactSizeIterator<Item = RangeInclusive<u32>> {
         let pairs = self.list.as_chunks().0;
         pairs.iter().map(|&[start, limit]| start..=limit - 1)
+    }
+
+    pub(crate) fn code_points(&self) -> impl Iterator<Item = u32> {
+        self.ranges().flatten()
     }
 
     pub(crate) fn strings(&self) -> &[Vec<u16>] {
@@ -99,6 +104,48 @@ impl UnicodeSet {
             _ => &[],
         };
         let _ = defer_oom(try_splice(&mut self.list, from, to, boundaries));
+    }
+
+    /// Keeps the code points for which `keeps(is in self, is in other)` holds.
+    fn combine(&mut self, other: &Self, keeps: fn(bool, bool) -> bool) {
+        let (mut i, mut j, mut merged) = (0, 0, Vec::new());
+        let mut boundary = Some(0);
+        while let Some(c) = boundary.filter(|&c| c <= MAX_VALUE) {
+            i += usize::from(self.list.get(i) == Some(&c));
+            j += usize::from(other.list.get(j) == Some(&c));
+            if keeps(i & 1 != 0, j & 1 != 0) != (merged.len() & 1 != 0) {
+                merged.add(c);
+            }
+            boundary = self
+                .list
+                .get(i)
+                .into_iter()
+                .chain(other.list.get(j))
+                .min()
+                .copied();
+        }
+        if merged.len() & 1 != 0 {
+            merged.add(MAX_VALUE + 1);
+        }
+        if !is_oom() {
+            self.list = merged;
+        }
+    }
+
+    pub(crate) fn complement(&mut self) {
+        self.combine(&Self::new(), |a, _| !a);
+    }
+
+    pub(crate) fn add_all(&mut self, other: &Self) {
+        self.combine(other, |a, b| a || b);
+    }
+
+    pub(crate) fn retain_all(&mut self, other: &Self) {
+        self.combine(other, |a, b| a && b);
+    }
+
+    pub(crate) fn remove_all(&mut self, other: &Self) {
+        self.combine(other, |a, b| a && !b);
     }
 
     /// Each string has several code points.

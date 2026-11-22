@@ -1,9 +1,11 @@
 //! Modifiers add text around the digits of a number. ICU4C: number_modifiers.cpp
 
-use crate::common::memory::try_box;
+use crate::common::bytes::U16s;
+use crate::common::memory::{try_box, try_box_result};
 use crate::common::simpleformatter::{ARG_NUM_LIMIT, SimpleFormatter};
 use crate::common::uchar::u_char_type;
 use crate::common::unicode::uchar::{U_GC_ND_MASK, U_GC_S_MASK, U_GC_Z_MASK};
+use crate::common::uniset::UnicodeSet;
 use crate::common::unistr::{SmallUString, UStr};
 use crate::common::utypes::*;
 use crate::i18n::dcfmtsym::DecimalFormatSymbols;
@@ -82,8 +84,8 @@ impl Modifier for SimpleModifier {
     }
 }
 
-/// The name of a unit or currency for each plural form.
-pub(crate) type PluralModifiers = [SimpleModifier; standardplural::COUNT];
+/// The name of a unit or currency for each plural form that has its own. "other" has one.
+pub(crate) type PluralModifiers = [Option<SimpleModifier>; standardplural::COUNT];
 
 #[derive(Clone, Copy)]
 pub(crate) struct OuterModifier<'a> {
@@ -93,7 +95,8 @@ pub(crate) struct OuterModifier<'a> {
 
 impl<'a> OuterModifier<'a> {
     pub(crate) fn get(&self) -> Option<&'a SimpleModifier> {
-        self.by_plural.get(self.plural.index())
+        let of = |form: PluralForm| self.by_plural.get(form.index())?.as_ref();
+        of(self.plural).or_else(|| of(PluralForm::Other))
     }
 }
 
@@ -108,8 +111,38 @@ fn is_in_categories(c: u32, mask: i32) -> bool {
     (1 << u_char_type(c)) & mask != 0
 }
 
-/// The text to insert between a currency symbol and a digit.
-struct CurrencySpacing(SmallUString);
+/// The two sets of the linked data are tested by general category.
+enum SpacingSet {
+    Digit,
+    NotSymbolNorSeparator,
+    Other(Box<UnicodeSet>),
+}
+
+impl SpacingSet {
+    fn from_pattern(pattern: U16s) -> Result<Self, UErrorCode> {
+        if pattern.eq_bytes(b"[:digit:]") {
+            Ok(Self::Digit)
+        } else if pattern.eq_bytes(b"[[:^S:]&[:^Z:]]") {
+            Ok(Self::NotSymbolNorSeparator)
+        } else {
+            try_box_result(&mut UnicodeSet::from_pattern(&pattern.try_to_vec()?)).map(Self::Other)
+        }
+    }
+
+    fn contains(&self, c: u32) -> bool {
+        match self {
+            Self::Digit => is_in_categories(c, U_GC_ND_MASK),
+            Self::NotSymbolNorSeparator => !is_in_categories(c, U_GC_S_MASK | U_GC_Z_MASK),
+            Self::Other(set) => set.contains(c),
+        }
+    }
+}
+
+/// The text to insert between a currency symbol and a number whose adjacent character is in `set`.
+struct CurrencySpacing {
+    set: SpacingSet,
+    text: SmallUString,
+}
 
 impl CurrencySpacing {
     /// Takes the code point of the affix that is adjacent to the number, and its field.
@@ -121,17 +154,19 @@ impl CurrencySpacing {
         let Some((c, &CURRENCY_FIELD)) = adjacent else {
             return Ok(None);
         };
-        if is_in_categories(c, U_GC_S_MASK | U_GC_Z_MASK) {
+        let spacing = symbols.currency_spacing(is_suffix);
+        if !SpacingSet::from_pattern(spacing.currency_match)?.contains(c) {
             return Ok(None);
         }
+        let set = SpacingSet::from_pattern(spacing.surrounding_match)?;
         let mut text = SmallUString::new();
-        text.set(symbols.currency_spacing(is_suffix))
-            .map(|()| Some(Self(text)))
+        text.set_to_units(spacing.insert_between.iter())
+            .map(|()| Some(Self { set, text }))
     }
 
     fn text_next_to(&self, adjacent: Option<u32>) -> &[u16] {
-        if adjacent.is_some_and(|c| is_in_categories(c, U_GC_ND_MASK)) {
-            &self.0
+        if adjacent.is_some_and(|c| self.set.contains(c)) {
+            &self.text
         } else {
             &[]
         }
@@ -188,6 +223,7 @@ impl ConstantMultiFieldModifier {
         })
     }
 
+    #[inline]
     pub(crate) fn code_point_count(&self) -> usize {
         self.prefix.code_point_count() + self.suffix.code_point_count()
     }

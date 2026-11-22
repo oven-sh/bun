@@ -56,7 +56,6 @@ fn uldn_close(ldn: Option<Box<ULocaleDisplayNames>>) {
     drop(ldn);
 }
 
-/// `locale` has no keywords, code page or POSIX variant.
 #[capi]
 fn uldn_localeDisplayName(
     ldn: Option<&ULocaleDisplayNames>,

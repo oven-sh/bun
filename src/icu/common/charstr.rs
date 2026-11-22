@@ -1,10 +1,14 @@
 //! `charstr.h`, `bytesinkutil.h`: a `CharString` is a `Vec<u8>`.
 
+use crate::common::arrayvec::ArrayVec;
 use crate::common::memory::{Appendable, fail_on_oom, try_extend_from_slice, try_push, try_to_vec};
 use crate::common::sink::TextSink;
 use crate::common::slice_ext::SliceExt;
+use crate::common::uinvchar::append_invariant_chars;
+use crate::common::uresdata::DataString;
 use crate::common::utypes::{U_ILLEGAL_ARGUMENT_ERROR, UErrorCode};
 use std::ffi::CStr;
+use std::fmt::NumBuffer;
 
 /// `CharString::append` for the caller's text: `U_ILLEGAL_ARGUMENT_ERROR` if the length with the NUL exceeds `int32_t`.
 pub(crate) fn append_chars(chars: &mut Vec<u8>, s: &[u8]) -> Result<(), UErrorCode> {
@@ -100,7 +104,7 @@ impl std::ops::Deref for SmallChars {
 }
 
 /// The position of a string in a `CharStrings`.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 pub(crate) struct Span {
     start: u32,
     end: u32,
@@ -114,6 +118,18 @@ impl CharStrings {
     pub(crate) fn add(&mut self, text: &[u8]) -> Result<Span, UErrorCode> {
         let start = self.0.len();
         append_chars(&mut self.0, text)?;
+        self.terminate(start)
+    }
+
+    /// Adds `text` up to its first NUL.
+    pub(crate) fn add_invariant(&mut self, text: DataString) -> Result<Span, UErrorCode> {
+        let start = self.0.len();
+        append_invariant_chars(&mut self.0, text.until_nul().iter())?;
+        self.terminate(start)
+    }
+
+    /// Both ways of appending keep the length below `i32::MAX`.
+    fn terminate(&mut self, start: usize) -> Result<Span, UErrorCode> {
         let span = Span {
             start: start as u32,
             end: self.0.len() as u32,
@@ -142,4 +158,17 @@ pub(crate) fn via_byte_sink(
             .get(..chars.len)
             .map_or(Ok(chars.heap), try_to_vec)
     })
+}
+
+/// Returns the sign and the decimal digits. The `format_into` of signed types keeps a bounds check.
+pub(crate) fn decimal(number: i64) -> ArrayVec<u8, 20> {
+    let sign = (number < 0).then_some(b'-');
+    ArrayVec::from_iter_truncated(
+        sign.into_iter().chain(
+            number
+                .unsigned_abs()
+                .format_into(&mut NumBuffer::new())
+                .bytes(),
+        ),
+    )
 }

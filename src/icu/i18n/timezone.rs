@@ -4,9 +4,9 @@ use crate::common::arrayvec::ArrayVec;
 use crate::common::bytes::{I32s, U16s};
 use crate::common::memory::{Appendable, try_extend, try_with_capacity};
 use crate::common::putil::query_host_time_zone;
-use crate::common::resource::{ResourceArray, ResourceTable, ResourceValue};
 use crate::common::slice_ext::{SliceExt, slices_equal, to_index};
 use crate::common::uchar::u_char_digit_value;
+use crate::common::udata::bundle_may_be_replaced;
 use crate::common::uenum::{Item, StringEnumeration};
 use crate::common::uinvchar::{invariant_prefix, uchar_to_char};
 use crate::common::umutex::OnceBox;
@@ -29,7 +29,7 @@ const PLUS: u16 = b'+' as u16;
 const MINUS: u16 = b'-' as u16;
 const COLON: u16 = b':' as u16;
 
-const UNKNOWN_ZONE_ID: [u16; 11] = from_latin1(b"Etc/Unknown");
+pub(crate) const UNKNOWN_ZONE_ID: [u16; 11] = from_latin1(b"Etc/Unknown");
 
 pub(crate) const ZID_KEY_MAX: usize = 128;
 
@@ -188,58 +188,56 @@ pub(crate) fn cached_part(
     })
 }
 
-fn cached_array(cell: &'static Part, key: &[u8]) -> Result<ResourceArray, UErrorCode> {
-    cached_part(cell, ZONEINFO, &[key])?.get_value().get_array()
-}
-
-fn item_at(array: &ResourceArray, index: usize) -> Result<ResourceValue, UErrorCode> {
-    array.get(index).ok_or(U_MISSING_RESOURCE_ERROR)
-}
-
-fn names() -> Result<ResourceArray, UErrorCode> {
+fn names() -> Result<&'static UResourceBundle, UErrorCode> {
     static NAMES: Part = OnceBox::new();
-    cached_array(&NAMES, b"Names")
+    cached_part(&NAMES, ZONEINFO, &[b"Names"])
 }
 
-fn zones() -> Result<ResourceArray, UErrorCode> {
+fn zones() -> Result<&'static UResourceBundle, UErrorCode> {
     static ZONES: Part = OnceBox::new();
-    cached_array(&ZONES, b"Zones")
+    cached_part(&ZONES, ZONEINFO, &[b"Zones"])
 }
 
+/// An item that is not a string counts as empty.
 fn name_at(index: usize) -> Result<DataString, UErrorCode> {
-    names()
-        .and_then(|names| item_at(&names, index))
-        .and_then(|name| name.get_data_string())
+    Ok((names()?.get_data_string_by_index(index)?).unwrap_or(DataString::EMPTY))
 }
 
 fn region_at(index: usize) -> Result<U16s<'static>, UErrorCode> {
     static REGIONS: Part = OnceBox::new();
-    item_at(&cached_array(&REGIONS, b"Regions")?, index)?.get_string()
+    let regions = cached_part(&REGIONS, ZONEINFO, &[b"Regions"])?;
+    ures_get_string_by_index(regions, index)?.ok_or(U_RESOURCE_TYPE_MISMATCH)
 }
 
-/// Returns the index of `id` in Names, and the item.
+/// Returns the index of `id` in Names, and the item. ICU4C: timezone.cpp, findInStringArray
 fn find_name(id: &[u16]) -> Result<(usize, U16s<'static>), UErrorCode> {
     let names = names()?;
-    let (mut start, mut limit) = (0, names.get_size());
-    while start < limit {
-        let mid = (start + limit) / 2;
-        let name = item_at(&names, mid).and_then(|name| name.get_string())?;
+    let array = names.get_value().get_array().ok();
+    let (mut start, mut limit, mut last) = (0, names.get_size(), usize::MAX);
+    while last != (start + limit) / 2 {
+        last = (start + limit) / 2;
+        // Fast path: a string in an array.
+        let name = match array.and_then(|array| array.get(last)?.get_string().ok()) {
+            Some(name) => name,
+            None => name_at(last)?.units(),
+        };
         match id.iter().copied().cmp(name.iter()) {
-            Ordering::Equal => return Ok((mid, name)),
-            Ordering::Less => limit = mid,
-            Ordering::Greater => start = mid + 1,
+            Ordering::Equal => return Ok((last, name)),
+            Ordering::Less => limit = last,
+            Ordering::Greater => start = last,
         }
     }
     Err(U_MISSING_RESOURCE_ERROR)
 }
 
-/// Returns the table of the zone, or of the target if the zone is a link.
-fn open_olson_resource(id: &[u16]) -> Result<ResourceTable, UErrorCode> {
+/// Reads the table of the zone, or of the target if the zone is a link.
+fn create_system_time_zone(id: &[u16]) -> Result<OlsonTimeZone, UErrorCode> {
     let (index, zones) = (find_name(id)?.0, zones()?);
-    let zone = item_at(&zones, index)?;
-    zone.get_int()
-        .map_or(Ok(zone), |link| item_at(&zones, to_index(link)))?
-        .get_table()
+    let mut zone = zones.get_by_index(index)?;
+    if let Ok(link) = zone.get_int() {
+        zone = zones.get_by_index(to_index(link))?;
+    }
+    OlsonTimeZone::new(&zone, id, index)
 }
 
 impl TimeZone {
@@ -253,13 +251,8 @@ impl TimeZone {
     pub(crate) fn load_rule(rule_id: U16s) -> Result<I32s<'static>, UErrorCode> {
         static RULES: Part = OnceBox::new();
         let key = invariant_c_string(rule_id.iter().take(63));
-        let rules = cached_part(&RULES, ZONEINFO, &[b"Rules"])?
-            .get_value()
-            .get_table()?;
-        rules
-            .get(&key)
-            .ok_or(U_MISSING_RESOURCE_ERROR)?
-            .get_int_vector()
+        let rules = cached_part(&RULES, ZONEINFO, &[b"Rules"])?;
+        rules.get_value_by_key(&key)?.get_int_vector()
     }
 
     /// Returns a system zone ("America/Los_Angeles"), a custom zone ("GMT-8:00"), or else the unknown zone.
@@ -268,15 +261,24 @@ impl TimeZone {
             id: custom_id(is_negative, seconds),
             raw_offset: if is_negative { -seconds } else { seconds } * U_MILLIS_PER_SECOND,
         };
-        open_olson_resource(id)
-            .and_then(|zone| OlsonTimeZone::new(&zone, id))
-            .map_or_else(
-                |_| parse_custom_id(id).map_or_else(Self::unknown, custom),
-                Olson,
-            )
+        create_system_time_zone(id).map_or_else(
+            |_| parse_custom_id(id).map_or_else(Self::unknown, custom),
+            Olson,
+        )
+    }
+
+    pub(crate) fn append_id(&self, text: &mut Vec<u16>) {
+        match self {
+            Fixed { id, .. } => text.add_all(id),
+            Olson(zone) => {
+                let name = name_at(zone.index).map(DataString::units);
+                text.add_each(name.unwrap_or_default().iter());
+            }
+        }
     }
 }
 
+#[inline(always)]
 pub(crate) fn host_time_zone_id() -> Result<Vec<u16>, UErrorCode> {
     let id = query_host_time_zone()?;
     Ok(from_invariant(if id.is_empty() {
@@ -284,6 +286,16 @@ pub(crate) fn host_time_zone_id() -> Result<Vec<u16>, UErrorCode> {
     } else {
         &id
     }))
+}
+
+/// Returns the canonical ID of the host's zone at the first call, whose names are loaded first if data can come from files.
+pub(crate) fn preloaded_zone_id() -> Result<Option<&'static [u16]>, UErrorCode> {
+    static HOST_ID: OnceBox<Vec<u16>> = OnceBox::new();
+    if !bundle_may_be_replaced(ZONEINFO)? {
+        return Ok(None);
+    }
+    let id = HOST_ID.get_or_try_init(host_time_zone_id)?;
+    Ok(zonemeta::get_canonical_cldr_id(id).ok())
 }
 
 pub(crate) struct TZEnumeration {
@@ -344,9 +356,14 @@ impl TZEnumeration {
     }
 
     pub(crate) fn in_region(self, region: &[u8]) -> Result<Self, UErrorCode> {
-        let mut map = Vec::new();
+        // The linked names are sorted and unique, so a search for one finds its own index.
+        let (searches, mut map) = (bundle_may_be_replaced(ZONEINFO)?, Vec::new());
         for &index in &*self.map {
-            let found = region_at(index as usize)?;
+            let found = if searches {
+                TimeZone::get_region(&name_at(index as usize)?.units().try_to_vec()?)?
+            } else {
+                region_at(index as usize)?
+            };
             if found.len() > 4 {
                 return Err(U_BUFFER_OVERFLOW_ERROR);
             }
@@ -370,7 +387,7 @@ impl TimeZone {
     /// Returns the entry of Names for the zone, or for the target if the zone is a link.
     pub(crate) fn derefer_olson_link(id: &[u16]) -> Option<U16s<'static>> {
         let (index, name) = find_name(id).ok()?;
-        let target = || name_at(to_index(item_at(&zones()?, index)?.get_int()?));
+        let target = || name_at(to_index(zones()?.get_by_index(index)?.get_int()?));
         Some(target().map_or(name, DataString::units))
     }
 
@@ -467,7 +484,11 @@ impl TimeZone {
     }
 
     /// Returns the canonical system ID or the normalized custom ID.
+    #[inline]
     pub(crate) fn get_canonical_id(id: &[u16]) -> Result<ZoneId, UErrorCode> {
+        if id == UNKNOWN_ZONE_ID {
+            return Ok(ZoneId::Static(&UNKNOWN_ZONE_ID));
+        }
         if let Ok(canonical) = zonemeta::get_canonical_cldr_id(id) {
             return Ok(ZoneId::Static(canonical));
         }

@@ -166,6 +166,16 @@ pub(crate) fn compute_fields(cal: &mut Calendar, julian_day: i32) {
     );
 }
 
+/// Returns an estimate of the Gregorian year, which is exact for 1846 to 2138.
+pub(crate) fn related_year(year: i32) -> i32 {
+    let shift = if year >= 1397 {
+        2 * ((year - 1397) / 67) + i32::from((year - 1397) % 67 >= 33)
+    } else {
+        2 * ((year - 1396) / 67 - 1) + i32::from(-(year - 1396) % 67 <= 33)
+    };
+    year + 579 - shift
+}
+
 pub(crate) mod civil {
     use super::*;
 

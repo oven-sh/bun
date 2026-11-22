@@ -128,6 +128,17 @@ impl CollationData {
         }
     }
 
+    /// Resolves the tags that stand for another CE32 of the same code point.
+    pub(crate) fn final_ce32(&self, ce32: u32) -> u32 {
+        if collation::has_ce32_tag(ce32, collation::DIGIT_TAG) {
+            self.ce32s.at(collation::index_from_ce32(ce32))
+        } else if collation::has_ce32_tag(ce32, collation::U0000_TAG) {
+            self.ce32s.at(0)
+        } else {
+            ce32
+        }
+    }
+
     pub(crate) fn is_digit(&self, c: u32) -> bool {
         collation::has_ce32_tag(self.look_up(c).1, collation::DIGIT_TAG)
     }

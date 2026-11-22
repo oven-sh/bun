@@ -18,7 +18,7 @@ use crate::i18n::number_fluent::UFormattedNumberData;
 use crate::i18n::number_modifiers::{Modifier, SimpleModifier};
 use crate::i18n::numfmt::NumberFormat;
 use crate::i18n::plurrule::PluralRules;
-use crate::i18n::standardplural::PluralForm;
+use crate::i18n::standardplural::{PluralForm, SELECTABLE_COUNT};
 use crate::i18n::unicode::uformattedvalue::UFIELD_CATEGORY_RELATIVE_DATETIME;
 use std::sync::Arc;
 
@@ -54,8 +54,7 @@ fn name_index(style: Style, unit: usize, offset: usize) -> usize {
 }
 
 fn numeric_index(style: Style, unit: usize, tense: usize, form: PluralForm) -> usize {
-    ((style as usize * UNITS.len() + unit) * TENSES.len() + tense) * PluralForm::ALL.len()
-        + form.index()
+    ((style as usize * UNITS.len() + unit) * TENSES.len() + tense) * SELECTABLE_COUNT + form.index()
 }
 
 const NO_PATTERN: u16 = u16::MAX;
@@ -82,7 +81,7 @@ impl UnitData {
             numeric: Vec::new(),
             numeric_indexes: try_filled(
                 NO_PATTERN,
-                STYLES * UNITS.len() * TENSES.len() * PluralForm::ALL.len(),
+                STYLES * UNITS.len() * TENSES.len() * SELECTABLE_COUNT,
             )?,
             fallbacks: [None; STYLES],
         };
@@ -174,6 +173,7 @@ impl UnitData {
             };
             for (key, value) in forms.get_table()?.iter() {
                 if let Some(index) = PluralForm::from_keyword(key)
+                    .filter(|form| form.index() < SELECTABLE_COUNT)
                     .map(|form| numeric_index(style, unit, tense, form))
                     && self.numeric_indexes.at(index) == NO_PATTERN
                     && let Ok(pattern) = value.get_data_string()
@@ -224,8 +224,9 @@ struct CacheData {
 
 impl CacheData {
     fn load(locale: &Locale) -> Result<Self, UErrorCode> {
+        let bundle = ures_open(None, locale.get_name())?;
         Ok(Self {
-            units: UnitData::load(&ures_open(None, locale.get_name())?)?,
+            units: UnitData::load(&bundle)?,
             plural_rules: PluralRules::cardinal(locale)?,
         })
     }

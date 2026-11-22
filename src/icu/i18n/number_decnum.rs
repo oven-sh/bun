@@ -1,8 +1,9 @@
 //! Decimal numbers of any length, with exponents of up to nine digits. ICU4C: number_utils.cpp, decNumber.cpp
 
-use crate::common::memory::{try_filled, try_to_vec};
+use crate::common::memory::{defer_oom, try_collect, try_filled, try_to_vec};
 use crate::common::slice_ext::{SliceExt, SoftUnwrap};
 use crate::common::utypes::*;
+use crate::i18n::double_conversion::digits_to_double;
 use std::cmp::Ordering;
 use std::num::NonZero;
 use std::ops::{Deref, DerefMut};
@@ -140,6 +141,22 @@ impl<'a> DecimalLiteral<'a> {
     }
 }
 
+/// Returns the double nearest to `text`, or `None` unless all of `text` is a number. The empty text is 0.
+pub(crate) fn string_to_double(text: &[u8]) -> Option<f64> {
+    if text.is_empty() {
+        return Some(0.0);
+    }
+    let (is_negative, text) = split_sign(text);
+    let literal = DecimalLiteral::parse(text)?;
+    let digits = literal.integer.iter().chain(literal.fraction);
+    let zeros = digits.clone().take_while(|&&c| c == b'0').count();
+    let point = literal.integer.len() as i64 - zeros as i64 + literal.exponent;
+    let mut digits = defer_oom(try_collect(digits.rev().map(|c| c - b'0')))?;
+    digits.truncate(digits.len() - zeros);
+    let magnitude = digits_to_double(&digits, point);
+    Some(if is_negative { -magnitude } else { magnitude })
+}
+
 impl DecNum {
     /// Parses "-12.5e3" or "-infinity" and drops trailing zeros.
     pub(crate) fn parse(text: &[u8]) -> Result<Self, UErrorCode> {
@@ -268,15 +285,17 @@ impl DecNum {
         })
     }
 
-    /// Returns the quotient of two finite numbers, rounded half to even. `rhs` is not zero and has at most 5 digits.
+    /// Returns the quotient of two finite numbers, rounded half to even. `rhs` has at most 17 digits.
     pub(crate) fn divide(&self, rhs: &DecNum) -> Result<Self, UErrorCode> {
-        debug_assert!(rhs.count <= 5);
+        debug_assert!(rhs.count <= 17);
         let divisor = rhs
             .digits()
             .iter()
             .rev()
-            .fold(0, |divisor, &digit| divisor * 10 + u32::from(digit));
+            .fold(0, |divisor, &digit| divisor * 10 + u64::from(digit));
         let divisor = NonZero::new(divisor).ok_or(U_INTERNAL_PROGRAM_ERROR)?;
+        // Perf: a division of 32 bits is faster.
+        let narrow = NonZero::<u16>::try_from(divisor).map(NonZero::<u32>::from);
 
         // Long division to one digit more than the precision, most significant digit first.
         let precision = self.precision();
@@ -288,9 +307,12 @@ impl DecNum {
             if next.is_none() && remainder == 0 {
                 break;
             }
-            remainder = remainder * 10 + next.map_or(0, |&digit| u32::from(digit));
+            remainder = remainder * 10 + next.map_or(0, |&digit| u64::from(digit));
             if remainder >= divisor.get() || count != 0 {
-                let digit = remainder / divisor;
+                let digit = match narrow {
+                    Ok(narrow) => u64::from(remainder as u32 / narrow),
+                    Err(_) => remainder / divisor,
+                };
                 remainder -= digit * divisor.get();
                 bytes.set(count, digit as u8);
                 count += 1;

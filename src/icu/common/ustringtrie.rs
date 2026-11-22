@@ -30,7 +30,7 @@ pub(crate) trait TrieUnits: Copy {
     const VALUE_IS_FINAL: i32;
 
     fn unit_count(self) -> usize;
-    /// Returns 0 if `pos` is out of bounds.
+    /// Returns 0 if `pos` is out of bounds, as it can be in an item of another format that is named as a dictionary.
     fn unit(self, pos: usize) -> i32;
     /// Reads a final value, or a jump delta in a linear list.
     fn read_value(self, lead: i32, pos: usize) -> (i32, usize);
@@ -109,7 +109,6 @@ impl<U: TrieUnits> StringTrie<U> {
 
     /// Returns `pos + delta`, or the end if that is out of bounds. Jumps backward if `delta` is negative.
     fn jump(&self, (delta, pos): (i32, usize)) -> usize {
-        crate::common::soft_assert!(delta >= 0);
         pos.wrapping_add_signed(delta as isize)
             .min(self.units.unit_count())
     }

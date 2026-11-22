@@ -9,7 +9,7 @@ WebKit without `BUN_ICU_ROOT`.
 | ------------------ | ---------------------------------------------------------------------------------------------------------------- |
 | `capi/`            | The exported functions, one file per header. `capi/ffi/` turns pointers into references.                         |
 | `common/`, `i18n/` | The code of ICU4C's libraries of these names, mostly under the name of the file it is derived from. No `unsafe`. |
-| `sys/`             | The linked data package, and the locale and time zone of the host.                                               |
+| `sys/`             | The linked data package, files, and the locale and time zone of the host.                                        |
 | `data/`            | The tables that ICU4C compiles in, as in its `source/data/in`.                                                   |
 
 ## When a caller changes
@@ -30,9 +30,15 @@ A `static_assert` in `bun_icu_decompress.cpp` fails.
 2. Port the changes of the files named in the `ICU4C:` comments, tables included, and copy `data/`.
 3. Set the version in the `static_assert`, `capi/uversion.rs`, `lib.rs`, the licence pages, and the names of the symbols
    and items (`git grep -E '_79|icudt79' src/icu test/js/web/intl`).
+4. Check what the comments say about "the linked data" (`git grep -i 'linked' src/icu`).
 
-Most readers know only the forms that the data of this version use, and return an error for others. The exception is the
-four files that `ICU_TIMEZONE_FILES_DIR` can replace. No other data are read from files, and `ICU_DATA` has no effect.
+## Data from files
+
+`ICU_DATA` names directories and packages that replace items or add some, and `ICU_TIMEZONE_FILES_DIR` does so for the four
+time zone files. So the readers take all forms that ICU's tools write, and do not trust what they read. A file with a
+header that does not fit is passed over.
+
+If `searches_files` is false, some code skips what the linked data do not need. `ICU_DATA=nowhere` turns that off.
 
 ## Exported functions
 
@@ -75,8 +81,7 @@ the flag when it returns.
   the call.
 - Call `fail_on_oom` or `oom_checked` before storing a value or an error without allocating.
 - `best_effort` is for what may be left out, such as inserting a finished value into a cache.
-- What opens files (the time zone of the host, `ICU_TIMEZONE_FILES_DIR`) uses `bun_sys`, whose path buffers and errors
-  end the process.
+- Open files through `sys/file.rs`. The path buffers and errors of `bun_sys` end the process.
 
 ## Indexing
 

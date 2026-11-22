@@ -2,7 +2,9 @@
 
 use crate::common::memory::{TryClone, get_or_try_init, try_concat};
 use crate::common::patternprops;
-use crate::common::simpleformatter::PatternParts;
+use crate::common::resource::ResourceValue;
+use crate::common::simpleformatter::{ARG_NUM_LIMIT, SimpleFormatter};
+use crate::common::unistr::{UStr, ustr};
 use crate::common::uresimp::*;
 use crate::common::utypes::*;
 use crate::i18n::formatted_string_builder::{FormattedStringBuilder, UNDEFINED_FIELD};
@@ -36,14 +38,70 @@ impl UFormattedNumberRangeData {
     }
 }
 
-fn load_range_pattern(locale_name: &[u8], ns_name: &[u8]) -> Result<PatternParts, UErrorCode> {
-    let bundle = ures_open(None, locale_name)?;
-    let get_pattern = |ns_name: &[u8]| {
-        let path = try_concat(&[b"NumberElements/", ns_name, b"/miscPatterns/range"])?;
-        bundle.get_string_by_key_with_fallback(&path)
-    };
-    let pattern = get_pattern(ns_name).or_else(|_| get_pattern(b"latn"))?;
-    PatternParts::new(&pattern.units().try_to_vec()?)
+fn compile(pattern: &[u16]) -> Result<SimpleFormatter, UErrorCode> {
+    SimpleFormatter::with_pattern_min_max_arguments(pattern, 0, usize::MAX)
+}
+
+/// Takes the first pattern that has an argument. ICU4C: numrange_impl.cpp, getNumberRangeData
+fn load_range_pattern(locale_name: &[u8], ns_name: &[u8]) -> Result<SimpleFormatter, UErrorCode> {
+    let bundle = &ures_open(None, locale_name)?;
+    let mut found = SimpleFormatter::new();
+    for ns_name in [ns_name, b"latn"] {
+        let mut sink = |patterns: &ResourceValue| {
+            for (key, value) in patterns.get_table()?.iter() {
+                if key == b"range" && found.get_argument_limit() == 0 {
+                    found = compile(&value.get_unicode_string()?)?;
+                }
+            }
+            Ok(())
+        };
+        let path = try_concat(&[b"NumberElements/", ns_name, b"/miscPatterns"])?;
+        match ures_get_all_items_with_fallback(bundle, &path, &mut sink) {
+            Ok(()) | Err(U_MISSING_RESOURCE_ERROR) => {}
+            Err(code) => return Err(code),
+        }
+        if found.get_argument_limit() != 0 {
+            return Ok(found);
+        }
+    }
+    compile(&ustr("{0}–{1}"))
+}
+
+/// The text of a pattern without its arguments.
+struct RangePattern {
+    text: Vec<u16>,
+    prefix_length: usize,
+    infix_length: usize,
+}
+
+impl RangePattern {
+    /// It does not matter which arguments separate the pieces. Returns `None` if the pattern is of no use.
+    fn new(compiled: &SimpleFormatter) -> Result<Option<Self>, UErrorCode> {
+        let (pattern, mut offset) = (compiled.compiled_pattern(), 1);
+        // Also skips the argument that follows.
+        let next_literal = |offset: &mut usize| {
+            let length = usize::from(pattern.char_at(*offset)).checked_sub(ARG_NUM_LIMIT);
+            *offset += 1;
+            let (start, length) = (*offset, length?);
+            *offset += length + 1;
+            Some(pattern.temp_sub_string(start, length))
+        };
+        let prefix = next_literal(&mut offset).unwrap_or_default();
+        let infix = next_literal(&mut offset).unwrap_or_default();
+        let suffix = if offset == pattern.len() {
+            Some(&[][..])
+        } else {
+            next_literal(&mut offset)
+        };
+        let Some(suffix) = suffix.filter(|_| compiled.get_argument_limit() == 2) else {
+            return Ok(None);
+        };
+        Ok(Some(Self {
+            text: try_concat(&[prefix, infix, suffix])?,
+            prefix_length: prefix.len(),
+            infix_length: infix.len(),
+        }))
+    }
 }
 
 /// A modifier that replaces its text ("mille") can make `second` or `suffix` negative. The sum of all five stays right.
@@ -96,7 +154,8 @@ struct NumberRangeFormatterImpl {
     formatter: NumberFormatterImpl,
     /// `None` if nothing is collapsed.
     approximately_formatter: Option<NumberFormatterImpl>,
-    range_pattern: PatternParts,
+    /// Only two different numbers need it.
+    range_pattern: Option<RangePattern>,
     plural_ranges: StandardPluralRanges,
 }
 
@@ -104,15 +163,19 @@ impl NumberRangeFormatterImpl {
     fn new(macros: &MacroProps, collapses: bool) -> Result<Self, UErrorCode> {
         let locale = &macros.locale;
         let formatter = NumberFormatterImpl::new(macros, BuildMode::Reusable)?;
-        let ns_name = formatter.writer.symbols.get_numbering_system_name();
-        Ok(Self {
-            range_pattern: load_range_pattern(locale.get_name(), ns_name)?,
+        let range_pattern = load_range_pattern(locale.get_name(), &formatter.ns_name)?;
+        let this = Self {
+            range_pattern: RangePattern::new(&range_pattern)?,
             approximately_formatter: collapses
                 .then(|| NumberFormatterImpl::new(macros, BuildMode::ReusableApproximately))
                 .transpose()?,
             plural_ranges: StandardPluralRanges::for_language(locale.get_language())?,
             formatter,
-        })
+        };
+        match macros.unit.as_mixed() {
+            Some(_) => Err(U_UNSUPPORTED_ERROR),
+            None => Ok(this),
+        }
     }
 
     fn format(
@@ -121,8 +184,8 @@ impl NumberRangeFormatterImpl {
         equal_before_rounding: bool,
     ) -> Result<(), UErrorCode> {
         let mut unrounded = data.quantity1.try_clone()?;
-        let first = self.formatter.pre_process(&mut data.quantity1)?;
-        let second = self.formatter.pre_process(&mut data.quantity2)?;
+        let first = self.formatter.pre_process(&mut data.quantity1, None)?;
+        let second = self.formatter.pre_process(&mut data.quantity2, None)?;
         let exponent = |modifiers: &Modifiers| Some(modifiers.inner.as_ref()?.exponent);
         match &self.approximately_formatter {
             Some(formatter)
@@ -148,16 +211,14 @@ impl NumberRangeFormatterImpl {
             && middle.strict_equals(&second.middle);
 
         let string = data.base.get_string_ref();
-        let [prefix, infix, suffix] = self.range_pattern.pieces().map(|piece| {
-            string.add_all(piece, UNDEFINED_FIELD);
-            piece.len()
-        });
+        let pattern = (self.range_pattern.as_ref()).ok_or(U_INTERNAL_PROGRAM_ERROR)?;
+        string.add_all(&pattern.text, UNDEFINED_FIELD);
         let mut lengths = RangeLengths {
-            prefix,
+            prefix: pattern.prefix_length,
             first: 0,
-            infix,
+            infix: pattern.infix_length,
             second: 0,
-            suffix: suffix as isize,
+            suffix: (pattern.text.len() - pattern.prefix_length - pattern.infix_length) as isize,
         };
 
         // A repeated modifier adds spaces around the separator: "$3 – $5".

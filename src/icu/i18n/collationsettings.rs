@@ -17,7 +17,7 @@ const MAX_VARIABLE_SHIFT: i32 = 4;
 const MAX_VARIABLE_MASK: i32 = 0x70;
 pub(crate) const UPPER_FIRST: i32 = 0x100;
 pub(crate) const CASE_FIRST: i32 = 0x200;
-const CASE_FIRST_AND_UPPER_MASK: i32 = CASE_FIRST | UPPER_FIRST;
+pub(crate) const CASE_FIRST_AND_UPPER_MASK: i32 = CASE_FIRST | UPPER_FIRST;
 pub(crate) const CASE_LEVEL: i32 = 0x400;
 pub(crate) const BACKWARD_SECONDARY: i32 = 0x800;
 const STRENGTH_SHIFT: i32 = 12;
@@ -195,16 +195,6 @@ impl CollationSettings {
 
     pub(crate) fn is_numeric(&self) -> bool {
         self.options & NUMERIC != 0
-    }
-
-    /// The strength is at most tertiary, and only primary strength has a case level. Comparison always normalizes.
-    pub(crate) fn can_compare(&self) -> bool {
-        let max_strength = if self.options & CASE_LEVEL == 0 {
-            UCOL_TERTIARY
-        } else {
-            UCOL_PRIMARY
-        };
-        strength(self.options) <= max_strength
     }
 }
 

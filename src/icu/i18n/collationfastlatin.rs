@@ -8,12 +8,16 @@ use crate::i18n::collationsettings::{
     ALTERNATE_MASK, BACKWARD_SECONDARY, CASE_FIRST, CASE_LEVEL, CollationSettings, NUMERIC,
     UPPER_FIRST, strength,
 };
+use crate::i18n::rulebasedcollator::{Unit, compare_identical};
 use crate::i18n::unicode::ucol::*;
 use std::cmp::Ordering;
 use std::convert::Infallible;
 use std::slice::Iter;
 
 pub(crate) const VERSION: u16 = 2;
+
+/// A bit of `fast_latin_options` that no option has: a case level after the secondary level, or levels after the tertiary.
+const HAS_RARE_LEVELS: i32 = 0x80;
 
 pub(crate) const LATIN_MAX: u32 = 0x17f;
 pub(crate) const LATIN_LIMIT: usize = LATIN_MAX as usize + 1;
@@ -116,7 +120,9 @@ fn options_for(data: &CollationData, settings: &CollationSettings) -> i32 {
     if settings.has_reordering() && !keeps_order_up_to_latin(data, settings) {
         return -1;
     }
-    (variable_top << 16) as i32 | settings.options
+    let has_rare_levels = strength(settings.options) > UCOL_TERTIARY
+        || (strength(settings.options) > UCOL_PRIMARY && settings.options & CASE_LEVEL != 0);
+    (variable_top << 16) as i32 | settings.options | (i32::from(has_rare_levels) * HAS_RARE_LEVELS)
 }
 
 fn write_primaries(data: &CollationData, options: i32, primaries: &mut [u16; LATIN_LIMIT]) {
@@ -472,7 +478,7 @@ pub(crate) fn compare_first<U: CodeUnit>(
 }
 
 /// Fetches the mini CEs again for each level. Requires `settings.fast_latin_options >= 0`.
-pub(crate) fn compare<U: CodeUnit>(
+pub(crate) fn compare<U: Unit>(
     data: &CollationData,
     settings: &CollationSettings,
     left: &[U],
@@ -480,19 +486,22 @@ pub(crate) fn compare<U: CodeUnit>(
 ) -> Result<Ordering, BailOut> {
     match Tables::new(data, settings).primary_difference([&mut left.iter(), &mut right.iter()])? {
         Some((left, right)) => Ok(left.cmp(&right)),
-        None => compare_after_primary(data, settings, left, right),
+        None => compare_after_primary::<U, false>(data, settings, left, right),
     }
 }
 
-/// Perf: out of line, so that the caller of `compare` is small enough to be inlined.
+/// Perf: out of line, so that the caller of `compare` is inlined. Only the `RARE` copy has the levels that few collators use.
 #[inline(never)]
 #[cfg_attr(mordant, allow(generic_body_not_generic))] // A few lines, for two types.
-fn compare_after_primary<U: CodeUnit>(
+fn compare_after_primary<U: Unit, const RARE: bool>(
     data: &CollationData,
     settings: &CollationSettings,
     left: &[U],
     right: &[U],
 ) -> Result<Ordering, BailOut> {
+    if !RARE && settings.fast_latin_options & HAS_RARE_LEVELS != 0 {
+        return compare_after_primary::<U, true>(data, settings, left, right);
+    }
     let tables = Tables::new(data, settings);
     let Tables {
         variable_top,
@@ -500,13 +509,19 @@ fn compare_after_primary<U: CodeUnit>(
         ..
     } = tables;
     let texts = [left, right];
+    let compare_cases = |strength_is_primary| match tables.level_difference(texts, |pair| {
+        case_weights(variable_top, strength_is_primary, pair)
+    }) {
+        None => Ordering::Equal,
+        Some((left, right)) if options & UPPER_FIRST == 0 => left.cmp(&right),
+        Some((left, right)) => right.cmp(&left),
+    };
+    let has_case_level = options & CASE_LEVEL != 0;
     if strength(options) == UCOL_PRIMARY {
-        let cases = (options & CASE_LEVEL != 0)
-            .then(|| tables.level_difference(texts, |pair| case_weights(variable_top, pair)));
-        return Ok(match cases.flatten() {
-            None => Ordering::Equal,
-            Some((left, right)) if options & UPPER_FIRST == 0 => left.cmp(&right),
-            Some((left, right)) => right.cmp(&left),
+        return Ok(if has_case_level {
+            compare_cases(true)
+        } else {
+            Ordering::Equal
         });
     }
 
@@ -519,23 +534,41 @@ fn compare_after_primary<U: CodeUnit>(
             Err(BailOut)
         };
     }
+    // After a case level, the tertiary level ignores the case bits.
+    let mut case_first = options;
+    if RARE && has_case_level {
+        let order = compare_cases(false);
+        if order.is_ne() {
+            return Ok(order);
+        }
+        case_first = 0;
+    }
     if strength(options) == UCOL_SECONDARY {
         return Ok(Ordering::Equal);
     }
 
-    let with_case_bits = options & CASE_FIRST != 0;
+    let with_case_bits = case_first & CASE_FIRST != 0;
     let difference = tables.level_difference(texts, |pair| {
         tertiary_weights(variable_top, with_case_bits, pair)
     });
     // Neither weight is `EOS` or `MERGE_WEIGHT`, which would have made a secondary difference.
-    Ok(match difference {
+    let order = match difference {
         None => Ordering::Equal,
-        Some((left, right)) if options & UPPER_FIRST == 0 => left.cmp(&right),
+        Some((left, right)) if case_first & UPPER_FIRST == 0 => left.cmp(&right),
         Some((left, right)) => (left ^ CASE_MASK).cmp(&(right ^ CASE_MASK)),
-    })
+    };
+    if !RARE || order.is_ne() || strength(options) == UCOL_TERTIARY {
+        return Ok(order);
+    }
+
+    match tables.level_difference(texts, |pair| quaternary_weights(variable_top, pair)) {
+        Some((left, right)) => Ok(left.cmp(&right)),
+        None if strength(options) < UCOL_IDENTICAL => Ok(Ordering::Equal),
+        None => compare_identical(left, right).or(Err(BailOut)),
+    }
 }
 
-// The weights of one level of a pair, whose mini CEs are in the same group. Special values stay, variable CEs are ignored.
+// The weights of one level of a pair, whose mini CEs are in the same group. Special values stay.
 
 #[inline(always)]
 fn primary_weights(variable_top: u32, pair: u32) -> u32 {
@@ -548,6 +581,15 @@ fn primary_weights(variable_top: u32, pair: u32) -> u32 {
         0
     } else {
         pair
+    }
+}
+
+/// Returns `weight` in the upper half if the short mini CE `ce` implies a secondary CE, else 0.
+fn implied_secondary(ce: u32, weight: u32) -> u32 {
+    if (ce & SECONDARY_MASK) >= MIN_SEC_HIGH {
+        weight << 16
+    } else {
+        0
     }
 }
 
@@ -577,14 +619,17 @@ fn secondary_weights(variable_top: u32, pair: u32) -> u32 {
     }
 }
 
-/// Ignores the case of primary ignorables.
-fn case_weights(variable_top: u32, pair: u32) -> u32 {
+/// Ignores the case of primary ignorables if the strength is primary.
+#[inline(always)]
+fn case_weights(variable_top: u32, strength_is_primary: bool, pair: u32) -> u32 {
     let ce = pair & 0xffff;
     if ce >= MIN_SHORT {
-        if (pair & (SHORT_PRIMARY_MASK << 16)) == 0 {
+        if strength_is_primary && (pair & (SHORT_PRIMARY_MASK << 16)) == 0 {
             pair & CASE_MASK
-        } else {
+        } else if pair > 0xffff {
             pair & both_halves(CASE_MASK)
+        } else {
+            (pair & CASE_MASK) | implied_secondary(ce, LOWER_CASE)
         }
     } else if ce > variable_top {
         if pair > 0xffff {
@@ -626,6 +671,25 @@ fn tertiary_weights(variable_top: u32, with_case_bits: bool, pair: u32) -> u32 {
             }
     } else if pair >= MIN_LONG {
         0
+    } else {
+        pair
+    }
+}
+
+/// Returns the primary weight of a variable CE, else the highest primary weight.
+fn quaternary_weights(variable_top: u32, pair: u32) -> u32 {
+    if pair > 0xffff {
+        if (pair & 0xffff) > variable_top {
+            both_halves(SHORT_PRIMARY_MASK)
+        } else {
+            pair & both_halves(LONG_PRIMARY_MASK)
+        }
+    } else if pair >= MIN_SHORT {
+        SHORT_PRIMARY_MASK | implied_secondary(pair, SHORT_PRIMARY_MASK)
+    } else if pair > variable_top {
+        SHORT_PRIMARY_MASK
+    } else if pair >= MIN_LONG {
+        pair & LONG_PRIMARY_MASK
     } else {
         pair
     }

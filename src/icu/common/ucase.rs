@@ -3,6 +3,7 @@
 use crate::common::bytes::U16s;
 use crate::common::slice_ext::SliceExt;
 use crate::common::udata::{compiled_in, compiled_in_index};
+use crate::common::uniset::UnicodeSet;
 use crate::common::utf16;
 use crate::common::utrie2::{UTrie2, UTrie2ValueBits::Bits16};
 
@@ -29,6 +30,7 @@ const UCASE_LOWER: u16 = 1;
 const UCASE_UPPER: u16 = 2;
 const UCASE_CASE_IGNORABLE: u16 = 4;
 const UCASE_EXCEPTION: u16 = 8;
+const UCASE_SENSITIVE: u16 = 0x10;
 const UCASE_DOT_MASK: u16 = 0x60;
 const UCASE_DELTA_SHIFT: u32 = 7;
 const UCASE_EXC_SHIFT: u32 = 4;
@@ -63,6 +65,14 @@ impl Props {
         Self {
             bits: TRIE.get16_from_u16_single_lead(unit),
         }
+    }
+
+    pub(crate) fn is_lowercase(self) -> bool {
+        self.bits & UCASE_TYPE_MASK == UCASE_LOWER
+    }
+
+    pub(crate) fn is_uppercase(self) -> bool {
+        self.bits & UCASE_TYPE_MASK == UCASE_UPPER
     }
 
     #[inline]
@@ -109,6 +119,21 @@ impl Props {
             _ => DotType::OtherAccent,
         }
     }
+
+    pub(crate) fn is_soft_dotted(self) -> bool {
+        self.dot_type() == DotType::SoftDotted
+    }
+
+    pub(crate) fn is_case_sensitive(self) -> bool {
+        match self.exception() {
+            None => self.bits & UCASE_SENSITIVE != 0,
+            Some(exception) => exception.has(UCASE_EXC_SENSITIVE),
+        }
+    }
+}
+
+pub(crate) fn add_property_starts(sa: &mut UnicodeSet) {
+    TRIE.add_range_starts(sa);
 }
 
 /// The discriminant is the slot of the simple mapping in an `Exception`, and the position of the full mapping string.
@@ -154,6 +179,7 @@ const UCASE_EXC_FULL_MAPPINGS: u32 = 7;
 // Flags in the high byte. No entry has UCASE_EXC_DOUBLE_SLOTS (0x100).
 const UCASE_EXC_NO_SIMPLE_CASE_FOLDING: u16 = 0x200;
 const UCASE_EXC_DELTA_IS_NEGATIVE: u16 = 0x400;
+const UCASE_EXC_SENSITIVE: u16 = 0x800;
 const UCASE_EXC_DOT_SHIFT: u32 = 7;
 // The mapping is hardcoded.
 const UCASE_EXC_CONDITIONAL_SPECIAL: u16 = 0x4000;
@@ -290,6 +316,10 @@ impl Mapped {
             Self::CodePoint(mapped)
         }
     }
+
+    pub(crate) fn is_change(self) -> bool {
+        !matches!(self, Self::Unchanged)
+    }
 }
 
 /// The languages with special case mappings.
@@ -300,6 +330,9 @@ pub(crate) enum CaseLocale {
     Turkish,
     Lithuanian,
     Greek,
+    Dutch,
+    /// Eastern Armenian. Only `to_full_title_in_context` knows it.
+    Armenian,
 }
 
 impl CaseLocale {
@@ -312,6 +345,8 @@ impl CaseLocale {
             b"tr" | b"az" => Self::Turkish,
             b"lt" => Self::Lithuanian,
             b"el" => Self::Greek,
+            b"nl" => Self::Dutch,
+            b"hy" => Self::Armenian,
             _ => Self::Root,
         }
     }
@@ -366,6 +401,7 @@ const I_OGONEK_DOT: U16s = units!(0x12f, 0x307);
 const I_DOT_GRAVE: U16s = units!(0x69, 0x307, 0x300);
 const I_DOT_ACUTE: U16s = units!(0x69, 0x307, 0x301);
 const I_DOT_TILDE: U16s = units!(0x69, 0x307, 0x303);
+const ECH_VEW_TITLE: U16s = units!(0x535, 0x57e);
 const ECH_YIWN_UPPER: U16s = units!(0x535, 0x552);
 const ECH_YIWN_TITLE: U16s = units!(0x535, 0x582);
 
@@ -567,6 +603,10 @@ impl FastMapping {
     }
 }
 
+pub(crate) fn to_full_lower(c: u32) -> Mapped {
+    Mapping::lower(CaseLocale::Root).of(c)
+}
+
 pub(crate) fn to_full_upper(c: u32) -> Mapped {
     Mapping::upper(CaseLocale::Root).of(c)
 }
@@ -574,6 +614,16 @@ pub(crate) fn to_full_upper(c: u32) -> Mapped {
 pub(crate) fn to_full_title(c: u32, locale: CaseLocale) -> Mapped {
     let kind = Kind::Title;
     Mapping { kind, locale }.of(c)
+}
+
+pub(crate) fn to_full_title_in_context(c: u32, context: &Context, locale: CaseLocale) -> Mapped {
+    let kind = Kind::Title;
+    match (c, locale) {
+        (0x587, CaseLocale::Armenian) => Mapped::String(ECH_VEW_TITLE),
+        // No other mapping depends on the context.
+        (0x307, _) => (Mapping { kind, locale }.special(c, context)).unwrap_or(Mapped::Unchanged),
+        _ => to_full_title(c, locale),
+    }
 }
 
 pub(crate) fn to_full_folding(c: u32) -> Mapped {

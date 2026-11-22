@@ -3,9 +3,11 @@
 use crate::common::arrayvec::ArrayVec;
 use crate::common::bytes::U16s;
 use crate::common::locid::Locale;
-use crate::common::memory::{Appendable, try_concat, try_shared_result, try_with_capacity};
+use crate::common::memory::{
+    Appendable, try_collect, try_concat, try_shared_result, try_with_capacity,
+};
 use crate::common::resource::{ResourceSink, ResourceValue};
-use crate::common::simpleformatter::{ARG0, PatternParts};
+use crate::common::simpleformatter::PatternParts;
 use crate::common::slice_ext::to_int32;
 use crate::common::uchar::uscript_get_script;
 use crate::common::uinvchar::invariant_prefix;
@@ -58,15 +60,6 @@ const HEBREW: &[Replacement] = &[(
     should_change_to_vav_dash,
 )];
 
-/// Fails unless the pattern starts with {0}, the list so far.
-fn compile(pattern: &[u16]) -> Result<PatternParts, UErrorCode> {
-    if pattern.starts_with(&ARG0) {
-        PatternParts::new(pattern)
-    } else {
-        Err(U_UNSUPPORTED_ERROR)
-    }
-}
-
 /// A pattern for the last item, which may depend on the text of the item.
 struct ContextualPattern {
     default: PatternParts,
@@ -76,11 +69,13 @@ struct ContextualPattern {
 impl ContextualPattern {
     fn new(pattern: &[u16], replacement: Option<&Replacement>) -> Result<Self, UErrorCode> {
         let contextual = match replacement {
-            Some(&(from, to, test)) if eq_str(pattern, from) => Some((test, compile(&ustr(to))?)),
+            Some(&(from, to, test)) if eq_str(pattern, from) => {
+                Some((test, PatternParts::new(&ustr(to))?))
+            }
             _ => None,
         };
         Ok(Self {
-            default: compile(pattern)?,
+            default: PatternParts::new(pattern)?,
             contextual,
         })
     }
@@ -98,6 +93,8 @@ struct ListPatterns {
     start: PatternParts,
     middle: PatternParts,
     end: ContextualPattern,
+    /// Whether all patterns start with {0}.
+    only_append: bool,
 }
 
 impl ListPatterns {
@@ -110,21 +107,53 @@ impl ListPatterns {
         let replacement = replacements
             .iter()
             .find(|(from, ..)| eq_str(two, from) || eq_str(end, from));
+        let two = ContextualPattern::new(two, replacement)?;
+        let (start, middle) = (PatternParts::new(start)?, PatternParts::new(middle)?);
+        let end = ContextualPattern::new(end, replacement)?;
+        let appends = |it: &PatternParts| it.order.is_le() && matches!(it.pieces(), [[], ..]);
+        let all = [&two.default, &start, &middle, &end.default];
+        let only_append = all.into_iter().all(appends);
         Ok(Self {
-            two: ContextualPattern::new(two, replacement)?,
-            start: compile(start)?,
-            middle: compile(middle)?,
-            end: ContextualPattern::new(end, replacement)?,
+            two,
+            start,
+            middle,
+            end,
+            only_append,
         })
+    }
+
+    /// Passes each item but the first with the pattern that adds it.
+    #[inline(always)]
+    fn for_each(&self, items: &[&[u16]], mut add: impl FnMut(&PatternParts, &[u16])) {
+        match *items {
+            [] | [_] => {}
+            [_, second] => add(self.two.select(second), second),
+            [_, second, ref middle @ .., last] => {
+                add(&self.start, second);
+                for item in middle {
+                    add(&self.middle, item);
+                }
+                add(self.end.select(last), last);
+            }
+        }
     }
 }
 
-type Style = ArrayVec<u8, 24>;
+const STYLE_LEN_MAX: usize = 24;
+type Style = ArrayVec<u8, STYLE_LEN_MAX>;
 
-/// Returns "standard" for "/LOCALE/listPattern/standard/end".
+/// Returns "standard" for "/LOCALE/listPattern/standard/end", and an empty style if `alias` names none.
 fn aliased_style(alias: U16s) -> Style {
-    let rest = alias.iter().skip("/LOCALE/listPattern/".len());
-    Style::from_iter_truncated(invariant_prefix(rest).take_while(|&c| c != b'/'))
+    const PREFIX: &[u8] = b"listPattern/";
+    let after_prefix = (PREFIX.len()..=alias.len())
+        .find(|&end| alias.slice(end - PREFIX.len()..end).eq_bytes(PREFIX));
+    let rest = alias.slice(after_prefix.unwrap_or(alias.len())..).iter();
+    let style = rest.take_while(|&unit| unit != u16::from(b'/'));
+    // A name that is too long by one is cut.
+    if style.clone().count() > STYLE_LEN_MAX + 1 {
+        return Style::default();
+    }
+    Style::from_iter_truncated(invariant_prefix(style))
 }
 
 #[derive(Default)]
@@ -149,6 +178,7 @@ impl ResourceSink for ListPatternsSink {
             };
             match value.get_alias_string() {
                 _ if !pattern.is_empty() => {}
+                Ok(_) if !self.aliased_style.is_empty() => {}
                 Ok(alias) => self.aliased_style = aliased_style(alias),
                 Err(_) => *pattern = value.get_unicode_string()?,
             }
@@ -182,6 +212,7 @@ pub(crate) struct ListFormatter {
 
 impl ListFormatter {
     /// `style` is a key of the table `listPattern`.
+    #[inline(always)]
     pub(crate) fn create_instance(locale: &Locale, style: &[u8]) -> Result<Self, UErrorCode> {
         /// Keyed by "locale:style".
         static PATTERNS: LocaleCache<ListPatterns> = LocaleCache::new();
@@ -198,16 +229,10 @@ impl ListFormatter {
             elements: try_with_capacity(items.len())?,
         };
         list.add_element(items.first().copied().unwrap_or_default());
-        match *items {
-            [] | [_] => {}
-            [_, second] => list.append(self.patterns.two.select(second), second),
-            [_, second, ref middle @ .., last] => {
-                list.append(&self.patterns.start, second);
-                for item in middle {
-                    list.append(&self.patterns.middle, item);
-                }
-                list.append(self.patterns.end.select(last), last);
-            }
+        if self.patterns.only_append {
+            (self.patterns).for_each(items, |pattern, item| list.append(pattern, item));
+        } else {
+            list.add_on_both_sides(&self.patterns, items)?;
         }
         list.string.write_terminator();
         list.string.outcome().map(|()| list)
@@ -229,11 +254,45 @@ impl FormattedList {
         }
     }
 
+    /// Ignores the text before the first argument.
     fn append(&mut self, pattern: &PatternParts, item: &[u16]) {
         let [_, infix, suffix] = pattern.pieces();
         self.string.add_all(infix, UNDEFINED_FIELD);
         self.add_element(item);
         self.string.add_all(suffix, UNDEFINED_FIELD);
+    }
+
+    /// Adds each item but the first.
+    #[cold]
+    fn add_on_both_sides(
+        &mut self,
+        patterns: &ListPatterns,
+        items: &[&[u16]],
+    ) -> Result<(), UErrorCode> {
+        // Positions count from `origin`, the start of the first item, until all text is there.
+        let (mut origin, mut prepended) = (0, Vec::new());
+        patterns.for_each(items, |pattern, item| {
+            let [prefix, infix, suffix] = pattern.pieces();
+            if pattern.order.is_gt() {
+                origin += to_int32(self.string.insert(0, infix, UNDEFINED_FIELD));
+                let limit = -origin;
+                origin += to_int32(self.string.insert(0, item, UNDEFINED_FIELD));
+                if !item.is_empty() {
+                    prepended.add([-origin, limit]);
+                }
+                self.string.add_all(suffix, UNDEFINED_FIELD);
+            } else {
+                let count = self.elements.len();
+                self.append(pattern, item);
+                if let Some(added) = self.elements.get_mut(count) {
+                    *added = added.map(|at| at - origin);
+                }
+            }
+            origin += to_int32(self.string.insert(0, prefix, UNDEFINED_FIELD));
+        });
+        let all = prepended.iter().rev().chain(&self.elements);
+        self.elements = try_collect(all.map(|range| range.map(|at| at + origin)))?;
+        Ok(())
     }
 
     pub(crate) fn text(&self) -> &[u16] {

@@ -1,20 +1,22 @@
 //! The collator: settings and comparison. ICU4C: rulebasedcollator.cpp
 
 use crate::common::memory::try_make_mut;
+use crate::common::normalizer2impl::{DECOMPOSITION_CAPACITY, NFC};
 use crate::common::slice_ext::SliceExt;
 use crate::common::uresdata::DataString;
 use crate::common::utypes::*;
 use crate::common::{utf8, utf16};
-use crate::i18n::collationcompare::compare_up_to_tertiary;
+use crate::i18n::collationcompare::compare_up_to_quaternary;
 use crate::i18n::collationdata::CollationData;
 use crate::i18n::collationdatareader::CollationTailoring;
 use crate::i18n::collationfastlatin::{self, CodeUnit};
 use crate::i18n::collationiterator::{CollationIterator, Text};
-use crate::i18n::collationsettings::CollationSettings;
+use crate::i18n::collationsettings::{CollationSettings, strength};
 use crate::i18n::unicode::ucol::*;
 use crate::i18n::utf8collationiterator::FcdUtf8Text;
 use crate::i18n::utf16collationiterator::FcdUtf16Text;
 use std::cmp::Ordering;
+use std::ops::Range;
 use std::sync::Arc;
 
 pub(crate) struct RuleBasedCollator {
@@ -30,15 +32,8 @@ impl RuleBasedCollator {
         }
     }
 
-    fn data(&self) -> &CollationData {
+    pub(crate) fn data(&self) -> &CollationData {
         &self.tailoring.data
-    }
-
-    /// Fails if the mappings are tailored.
-    pub(crate) fn root_data(&self) -> Result<&CollationData, UErrorCode> {
-        Some(self.data())
-            .filter(|data| data.base.is_none())
-            .ok_or(U_UNSUPPORTED_ERROR)
     }
 
     pub(crate) fn rules(&self) -> DataString {
@@ -79,6 +74,9 @@ impl RuleBasedCollator {
         if group > UCOL_REORDER_CODE_CURRENCY {
             return Err(U_ILLEGAL_ARGUMENT_ERROR);
         }
+        if group == UCOL_REORDER_CODE_FIRST + self.settings.max_variable() {
+            return Ok(());
+        }
         self.change_settings(|settings, data| {
             settings.set_max_variable(group - UCOL_REORDER_CODE_FIRST);
             settings.variable_top = data.last_primary_for_group(group);
@@ -90,7 +88,16 @@ impl RuleBasedCollator {
         self.settings.reorder_code_count
     }
 
+    /// Requires the reordering of the tailoring, whose table stays if `codes` are its own.
     pub(crate) fn set_reorder_codes(&mut self, codes: &[i32]) -> Result<(), UErrorCode> {
+        if self
+            .tailoring
+            .reorder_codes
+            .iter()
+            .eq(codes.iter().copied())
+        {
+            return Ok(());
+        }
         self.change_settings(|settings, data| settings.set_reordering(data, codes))
     }
 
@@ -116,21 +123,22 @@ impl RuleBasedCollator {
         start
     }
 
-    pub(crate) fn compare<U: Unit>(&self, left: &[U], right: &[U]) -> Result<Ordering, UErrorCode> {
+    pub(crate) fn compare<U: Unit>(
+        &self,
+        left: &[U],
+        right: &[U],
+    ) -> Result<UCollationResult, UErrorCode> {
         if std::ptr::eq(left, right) {
-            return Ok(Ordering::Equal);
+            return Ok(UCOL_EQUAL);
         }
         let equal_prefix_length = equal_prefix_length(left, right);
         if left.get(equal_prefix_length) == right.get(equal_prefix_length) {
-            return Ok(Ordering::Equal);
+            return Ok(UCOL_EQUAL);
         }
         let start = U::back_up(self, left, right, equal_prefix_length);
         let (data, settings) = (self.data(), &*self.settings);
         if let Some(order) = collationfastlatin::compare_first(settings, left, right, start) {
-            return Ok(order);
-        }
-        if !settings.can_compare() {
-            return Err(U_UNSUPPORTED_ERROR);
+            return Ok(order as UCollationResult);
         }
         let is_latin = |s: &[U]| s.get(start).is_none_or(|&unit| unit.into() <= U::LATIN_MAX);
         if settings.fast_latin_options >= 0
@@ -143,16 +151,51 @@ impl RuleBasedCollator {
                 right.slice(start..),
             )
         {
-            return Ok(order);
+            return Ok(order as UCollationResult);
         }
+        // Perf: the smaller frame is worth a call for UTF-16 only.
+        if size_of::<U>() == 1 {
+            self.compare_ces(left, right, start)
+        } else {
+            self.compare_ces_out_of_line(left, right, start)
+        }
+    }
+
+    #[inline(never)]
+    fn compare_ces_out_of_line<U: Unit>(
+        &self,
+        left: &[U],
+        right: &[U],
+        start: usize,
+    ) -> Result<UCollationResult, UErrorCode> {
+        self.compare_ces(left, right, start)
+    }
+
+    #[inline(always)]
+    fn compare_ces<U: Unit>(
+        &self,
+        left: &[U],
+        right: &[U],
+        start: usize,
+    ) -> Result<UCollationResult, UErrorCode> {
+        let (data, settings) = (self.data(), &*self.settings);
         // The iterators get the whole text: prefix matching looks back into the equal prefix.
-        compare_up_to_tertiary(
+        let mut order = compare_up_to_quaternary(
             &mut CollationIterator::new(settings.is_numeric(), U::text(left, start)),
             &mut CollationIterator::new(settings.is_numeric(), U::text(right, start)),
             data,
             settings,
-        )
+        )?;
+        if order.is_eq() && strength(settings.options) >= UCOL_IDENTICAL {
+            order = compare_identical(left.slice(start..), right.slice(start..))?;
+        }
+        Ok(order as UCollationResult)
     }
+}
+
+#[cold]
+pub(crate) fn compare_identical<U: Unit>(left: &[U], right: &[U]) -> Result<Ordering, UErrorCode> {
+    compare_nfd(&mut U::text(left, 0), &mut U::text(right, 0))
 }
 
 #[inline(always)]
@@ -233,5 +276,64 @@ impl Unit for u8 {
             index = collator.start_of_number(index, |index| utf8::prev_or_fffd(left, index));
         }
         index
+    }
+}
+
+struct NfdIterator<'t> {
+    text: &'t mut dyn Text,
+    decomposition: [u16; DECOMPOSITION_CAPACITY],
+    /// The unread part of `decomposition`.
+    unread: Range<usize>,
+}
+
+impl<'t> NfdIterator<'t> {
+    fn new(text: &'t mut dyn Text) -> Self {
+        Self {
+            text,
+            decomposition: Default::default(),
+            unread: Range::default(),
+        }
+    }
+
+    fn next_code_point(&mut self) -> Result<Option<u32>, UErrorCode> {
+        if !self.unread.is_empty() {
+            return Ok(Some(utf16::next(
+                &self.decomposition,
+                &mut self.unread.start,
+            )));
+        }
+        self.text.next()
+    }
+
+    /// Returns the weight of `c`, which was read last. The end of the text sorts lowest, then U+FFFE.
+    fn decomposed(&mut self, c: Option<u32>) -> i64 {
+        let Some(c) = c else { return -2 };
+        if c == 0xfffe {
+            return -1;
+        }
+        // A code point from `decomposition` does not decompose further.
+        let Some(length) = NFC.get_decomposition(c, &mut self.decomposition) else {
+            return c.into();
+        };
+        self.unread = 0..length;
+        utf16::next(&self.decomposition, &mut self.unread.start).into()
+    }
+}
+
+/// The identical level. ICU4C: rulebasedcollator.cpp, compareNFDIter
+fn compare_nfd(left: &mut dyn Text, right: &mut dyn Text) -> Result<Ordering, UErrorCode> {
+    let (mut left, mut right) = (NfdIterator::new(left), NfdIterator::new(right));
+    loop {
+        let (left_cp, right_cp) = (left.next_code_point()?, right.next_code_point()?);
+        if left_cp == right_cp {
+            if left_cp.is_none() {
+                return Ok(Ordering::Equal);
+            }
+            continue;
+        }
+        let order = left.decomposed(left_cp).cmp(&right.decomposed(right_cp));
+        if order.is_ne() {
+            return Ok(order);
+        }
     }
 }

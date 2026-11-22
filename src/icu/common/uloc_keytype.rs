@@ -57,8 +57,13 @@ impl NameMap {
         memory::try_push(&mut self.index, (self.strings.add(&lower)?, entry as u32))
     }
 
-    /// Adds an entry. `legacy` is `name_from_key(key)`; an empty `bcp` stands for `legacy`. Call `sorted` before `find`.
-    fn push(&mut self, key: &'static CStr, legacy: &[u8], bcp: &[u8]) -> Result<(), UErrorCode> {
+    /// Adds an entry. `legacy` is `name_from_key(key)`. Call `sorted` before `find`.
+    fn push(
+        &mut self,
+        key: &'static CStr,
+        legacy: &[u8],
+        bcp: Option<&[u8]>,
+    ) -> Result<(), UErrorCode> {
         self.add_name(legacy, self.entries.len())?;
         let legacy = if legacy == key.to_bytes() {
             Name::Key(key)
@@ -69,7 +74,7 @@ impl NameMap {
             legacy,
             bcp: legacy,
         };
-        if !bcp.is_empty() {
+        if let Some(bcp) = bcp {
             self.add_name(bcp, self.entries.len())?;
             names.bcp = Name::Converted(self.strings.add(bcp)?);
         }
@@ -128,8 +133,10 @@ fn invariant_bytes(text: U16s) -> SmallChars {
     chars
 }
 
-fn bcp_name_of(entry: &UResourceBundle) -> Result<SmallChars, UErrorCode> {
-    entry.get_string().map(invariant_bytes)
+/// Returns `None` for the empty string, which stands for the legacy name.
+fn bcp_name_of(entry: &UResourceBundle) -> Result<Option<SmallChars>, UErrorCode> {
+    let text = entry.get_string()?;
+    Ok((!text.is_empty()).then(|| invariant_bytes(text)))
 }
 
 fn key_of(entry: &UResourceBundle) -> &'static CStr {
@@ -164,10 +171,14 @@ fn add_aliases(
         );
     }
     let mut found = Vec::new();
-    while aliases.has_next() {
+    // The aliases of a key without types are not read.
+    while !last_entry.is_empty() && aliases.has_next() {
         let alias = &aliases.get_next_resource()?;
         let target = alias.get_string()?;
-        if let Some(&entry) = last_entry.get(&*invariant_bytes(target)) {
+        let name = invariant_bytes(target);
+        if name.len() == target.len()
+            && let Some(&entry) = last_entry.get(&*name)
+        {
             found.add((key_of(alias), entry));
         }
     }
@@ -204,17 +215,17 @@ fn load() -> Result<KeyTypeData, UErrorCode> {
                 key.to_bytes(),
                 b"CODEPOINTS" | b"REORDER_CODE" | b"RG_KEY_VALUE"
             ) {
-                types.push(key, &name_from_key(key, is_zone), &bcp_name_of(entry)?)?;
+                let bcp = bcp_name_of(entry)?;
+                types.push(key, &name_from_key(key, is_zone), bcp.as_deref())?;
             }
         }
         if let Some(aliases) = aliases_of(&type_alias, legacy) {
             add_aliases(&mut types, LEGACY, aliases, is_zone)?;
         }
-        let bcp_key = if bcp.is_empty() { legacy } else { &bcp };
-        if let Some(aliases) = aliases_of(&bcp_type_alias, bcp_key) {
+        if let Some(aliases) = aliases_of(&bcp_type_alias, bcp.as_deref().unwrap_or(legacy)) {
             add_aliases(&mut types, BCP, aliases, false)?;
         }
-        keys.push(key, legacy, &bcp)?;
+        keys.push(key, legacy, bcp.as_deref())?;
         types_of_keys.add(types.sorted());
     }
     Ok(KeyTypeData {

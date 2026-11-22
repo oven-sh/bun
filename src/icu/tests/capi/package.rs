@@ -2,6 +2,7 @@
 
 use std::cell::UnsafeCell;
 use std::ffi::c_void;
+use std::fmt::Display;
 use std::sync::{Once, OnceLock};
 
 use Resource::{Alias, Array, Int, Ints, Str, Table};
@@ -239,6 +240,37 @@ unsafe extern "C" fn bun_icu_maybe_decompress(
     bytes.as_ptr().cast()
 }
 
+/// The names are sorted.
+pub(crate) fn package(package: &str, items: &[(impl Display, Vec<u8>)]) -> Vec<u8> {
+    let (mut entries, mut rest) = (vec![items.len() as u32], Vec::new());
+    let entries_size = 4 + 8 * items.len();
+    for (name, _) in items {
+        entries.extend([(entries_size + rest.len()) as u32, 0]);
+        rest.extend(format!("{package}/{name}\0").bytes());
+    }
+    for (index, (_, bytes)) in items.iter().enumerate() {
+        let offset = (entries_size + rest.len()).next_multiple_of(16);
+        rest.resize(offset - entries_size, 0xaa);
+        entries[2 + 2 * index] = offset as u32;
+        rest.extend(bytes);
+    }
+    let mut package = header(*b"CmnD", 1);
+    package.extend(entries.iter().flat_map(|word| word.to_le_bytes()));
+    package.extend(rest);
+    package
+}
+
+#[cfg(not(miri))]
+pub(crate) fn german() -> Vec<u8> {
+    bundle(GERMAN, 0)
+}
+
+#[cfg(not(miri))]
+pub(crate) fn german_of(package: &str) -> Vec<u8> {
+    let alias = Alias(format!("/{package}/de/NumberElements").leak());
+    bundle(Table(vec![("NumberElements", alias)].leak()), 0)
+}
+
 /// Each test calls it first.
 pub(crate) fn install() {
     static ONCE: Once = Once::new();
@@ -259,21 +291,7 @@ pub(crate) fn install() {
             ("root.res", bundle(ROOT, 0)),
             ("supplementalData.res", bundle(SUPPLEMENTAL, NO_FALLBACK)),
         ];
-        let (mut entries, mut rest) = (vec![items.len() as u32], Vec::new());
-        let entries_size = 4 + 8 * items.len();
-        for (name, _) in &items {
-            entries.extend([(entries_size + rest.len()) as u32, 0]);
-            rest.extend(format!("icudt79l/{name}\0").bytes());
-        }
-        for (index, (_, bytes)) in items.iter().enumerate() {
-            let offset = (entries_size + rest.len()).next_multiple_of(16);
-            rest.resize(offset - entries_size, 0xaa);
-            entries[2 + 2 * index] = offset as u32;
-            rest.extend(bytes);
-        }
-        let mut package = header(*b"CmnD", 1);
-        package.extend(entries.iter().flat_map(|word| word.to_le_bytes()));
-        package.extend(rest);
+        let package = package("icudt79l", &items);
         // SAFETY: nothing has read it yet.
         let room = unsafe { &mut *PACKAGE.0.get() };
         room[..package.len()].copy_from_slice(&package);

@@ -19,7 +19,7 @@ const UNUM_GROUPING_SIZE: UNumberFormatAttribute = 10;
 const UNUM_SECONDARY_GROUPING_SIZE: UNumberFormatAttribute = 15;
 const UNUM_MINIMUM_GROUPING_DIGITS: UNumberFormatAttribute = 22;
 
-/// The values that `NumberFormat` has built in.
+/// The values that `NumberFormat::for_relative_times` sets, in its order.
 const ATTRIBUTES: [(UNumberFormatAttribute, i32); 7] = [
     (UNUM_MIN_INTEGER_DIGITS, 1),
     (UNUM_MIN_FRACTION_DIGITS, 0),
@@ -40,7 +40,7 @@ impl UNumberFormat {
     /// Fails unless the caller has set all of `ATTRIBUTES` and nothing else.
     pub(crate) fn format(&self) -> Result<Arc<NumberFormat>, UErrorCode> {
         if self.attributes_set == (1 << ATTRIBUTES.len()) - 1 {
-            Ok(Arc::clone(&self.format))
+            NumberFormat::for_relative_times(&self.format)
         } else {
             Err(U_UNSUPPORTED_ERROR)
         }

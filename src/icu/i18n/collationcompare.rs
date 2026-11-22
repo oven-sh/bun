@@ -5,8 +5,8 @@ use crate::i18n::collation;
 use crate::i18n::collationdata::CollationData;
 use crate::i18n::collationiterator::{CollationIterator, Fetched, Text};
 use crate::i18n::collationsettings::{
-    ALTERNATE_MASK, BACKWARD_SECONDARY, CASE_FIRST, CASE_LEVEL, CollationSettings, UPPER_FIRST,
-    strength,
+    ALTERNATE_MASK, BACKWARD_SECONDARY, CASE_FIRST, CASE_FIRST_AND_UPPER_MASK, CASE_LEVEL,
+    CollationSettings, UPPER_FIRST, strength,
 };
 use crate::i18n::unicode::ucol::*;
 use std::cmp::Ordering;
@@ -51,7 +51,7 @@ impl<'i> CeCursor<'i> {
     }
 }
 
-/// The next primary weight that is neither 0 nor variable. Sets variable CEs and the primary ignorables after them to 0.
+/// The next primary weight that is neither 0 nor variable. Variable CEs and the CEs after them keep only their primaries.
 #[inline(always)]
 fn next_primary<T: Text>(
     iter: &mut CollationIterator<T>,
@@ -67,13 +67,13 @@ fn next_primary<T: Text>(
             return Ok(p);
         }
         if is_shifted {
-            iter.clear_current_ce();
+            iter.set_current_ce(u64::from(p) << 32);
         }
     }
 }
 
 /// Compares the levels that the strength includes.
-pub(crate) fn compare_up_to_tertiary<T: Text>(
+pub(crate) fn compare_up_to_quaternary<T: Text>(
     left: &mut CollationIterator<T>,
     right: &mut CollationIterator<T>,
     data: &CollationData,
@@ -95,30 +95,43 @@ pub(crate) fn compare_up_to_tertiary<T: Text>(
         }
         if left_primary == collation::NO_CE_PRIMARY {
             let (left, right) = (left.all_fetched(), right.all_fetched());
-            return Ok(compare_after_primary(left, right, settings.options));
+            return Ok(compare_after_primary(left, right, settings));
         }
     }
 }
 
-fn compare_after_primary(left: Fetched, right: Fetched, options: i32) -> Ordering {
-    if strength(options) == UCOL_PRIMARY {
-        return if options & CASE_LEVEL == 0 {
-            Ordering::Equal
-        } else if options & UPPER_FIRST == 0 {
-            compare_cases(left, right)
+fn compare_after_primary(left: Fetched, right: Fetched, settings: &CollationSettings) -> Ordering {
+    let mut options = settings.options;
+    if strength(options) >= UCOL_SECONDARY {
+        let order = if options & BACKWARD_SECONDARY == 0 {
+            compare_secondaries(left, right)
         } else {
-            compare_cases(left, right).reverse()
+            compare_secondaries_backward(left, right)
         };
+        if order.is_ne() {
+            return order;
+        }
     }
-    let order = if options & BACKWARD_SECONDARY == 0 {
-        compare_secondaries(left, right)
-    } else {
-        compare_secondaries_backward(left, right)
-    };
-    if order.is_ne() || strength(options) == UCOL_SECONDARY {
+    if options & CASE_LEVEL != 0 {
+        let order = compare_cases(left, right, strength(options));
+        if order.is_ne() {
+            return if options & UPPER_FIRST == 0 {
+                order
+            } else {
+                order.reverse()
+            };
+        }
+        // The tertiary level ignores the case bits now.
+        options &= !CASE_FIRST_AND_UPPER_MASK;
+    }
+    if strength(options) <= UCOL_SECONDARY {
+        return Ordering::Equal;
+    }
+    let order = compare_tertiaries(left, right, options);
+    if order.is_ne() || strength(options) <= UCOL_TERTIARY {
         return order;
     }
-    compare_tertiaries(left, right, options)
+    compare_quaternaries(left, right, settings)
 }
 
 fn secondary(ce: u64) -> u32 {
@@ -188,10 +201,18 @@ fn compare_secondaries_backward(left: Fetched, right: Fetched) -> Ordering {
     }
 }
 
-/// Compares the case bits of the primary CEs, lower case first.
-fn compare_cases(left: Fetched, right: Fetched) -> Ordering {
+/// Compares the case bits, lower case first.
+fn compare_cases(left: Fetched, right: Fetched, strength: UColAttributeValue) -> Ordering {
     let (mut left, mut right) = (CeCursor::new(left), CeCursor::new(right));
-    let has_case = |ce: u64| (primary(ce) != 0 && lower32(ce) != 0).then_some(lower32(ce));
+    // Ignores primary ignorables at primary strength, else secondary ignorables.
+    let has_case = |ce: u64| {
+        let counts = if strength == UCOL_PRIMARY {
+            primary(ce) != 0 && lower32(ce) != 0
+        } else {
+            lower32(ce) > 0xffff
+        };
+        counts.then_some(lower32(ce))
+    };
     loop {
         let (left_lower32, right_lower32) =
             (left.next_weight(has_case), right.next_weight(has_case));
@@ -236,6 +257,36 @@ fn compare_tertiaries(left: Fetched, right: Fetched, options: i32) -> Ordering {
             };
         }
         if left_tertiary == collation::NO_CE_WEIGHT16 {
+            return Ordering::Equal;
+        }
+    }
+}
+
+#[cold]
+fn compare_quaternaries(left: Fetched, right: Fetched, settings: &CollationSettings) -> Ordering {
+    let (mut left, mut right) = (CeCursor::new(left), CeCursor::new(right));
+    let not_ignorable = |ce: u64| {
+        let tertiary = lower32(ce) & 0xffff;
+        // The primary weight of a variable CE, an ignorable CE or `NO_CE`; else the quaternary bits 7..6.
+        let quaternary = if tertiary <= collation::NO_CE_WEIGHT16 {
+            primary(ce)
+        } else {
+            tertiary | 0xffff_ff3f
+        };
+        Some(quaternary).filter(|&quaternary| quaternary != 0)
+    };
+    loop {
+        let (left_quaternary, right_quaternary) = (
+            left.next_weight(not_ignorable),
+            right.next_weight(not_ignorable),
+        );
+        if left_quaternary != right_quaternary {
+            return less_or_greater(
+                settings.reorder(left_quaternary),
+                settings.reorder(right_quaternary),
+            );
+        }
+        if left_quaternary == collation::NO_CE_PRIMARY {
             return Ordering::Equal;
         }
     }

@@ -1,4 +1,4 @@
-//! Punycode (RFC 3492) in lower case. ICU4C: punycode.cpp
+//! Punycode (RFC 3492), without case flags. ICU4C: punycode.cpp
 
 use crate::common::memory::{Appendable, defer_oom};
 use crate::common::sink::{CheckedArraySink, TextBuf, WritableAlias, stack_or_heap};
@@ -49,6 +49,7 @@ fn basic_to_digit(unit: u16) -> Option<u32> {
     match u8::try_from(unit) {
         Ok(c @ b'a'..=b'z') => Some(u32::from(c - b'a')),
         Ok(c @ b'0'..=b'9') => Some(u32::from(c - b'0') + 26),
+        Ok(c @ b'A'..=b'Z') => Some(u32::from(c - b'A')),
         _ => None,
     }
 }

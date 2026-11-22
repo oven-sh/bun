@@ -1,14 +1,17 @@
-//! The names of eras, months, weekdays, day periods and cyclic years of a locale and a calendar. ICU4C: dtfmtsym.cpp
+//! The names of eras, months, days, quarters, day periods and cyclic years of a locale and a calendar. ICU4C: dtfmtsym.cpp
 
 use crate::common::bytes::U16s;
+use crate::common::cstring::until_nul;
 use crate::common::locid::Locale;
-use crate::common::maps::Map;
+use crate::common::maps::{Map, Set};
 use crate::common::memory::{
-    Appendable, try_collect, try_filled, try_map_insert, try_to_vec, try_with_capacity,
+    Appendable, try_collect, try_filled, try_map_insert, try_set_insert, try_to_vec,
+    try_with_capacity,
 };
 use crate::common::resource::{ResourceArray, ResourceSink, ResourceTable, ResourceValue};
 use crate::common::slice_ext::{SliceExt, to_index};
-use crate::common::uinvchar::append_invariant_chars;
+use crate::common::udata::searches_files;
+use crate::common::uinvchar::invariant_chars;
 use crate::common::unicode::ures::{URES_ALIAS, URES_ARRAY, URES_STRING, URES_TABLE};
 use crate::common::uresdata::{DataString, strtol};
 use crate::common::uresimp::*;
@@ -16,15 +19,39 @@ use crate::common::utypes::*;
 use crate::i18n::calendar::CalendarType;
 use crate::i18n::erarules::EraRules;
 use crate::i18n::locale_cache::LocaleCache;
+use crate::i18n::standardplural::{self, PluralForm};
 use std::fmt::NumBuffer;
 use std::iter::once;
 use std::sync::Arc;
 
-/// A range of `DateFormatSymbols::names`.
-#[derive(Clone, Copy, Default)]
+/// A range of `DateFormatSymbols::names`. The default is an absent list, not an empty one.
+#[derive(Clone, Copy)]
 pub(crate) struct List {
     start: u32,
-    end: u32,
+    len: u32,
+}
+
+impl Default for List {
+    fn default() -> Self {
+        Self {
+            start: u32::MAX,
+            len: 0,
+        }
+    }
+}
+
+impl List {
+    pub(crate) fn exists(self) -> bool {
+        self.start != u32::MAX
+    }
+
+    pub(crate) fn len(self) -> usize {
+        self.len as usize
+    }
+
+    fn or(self, other: Self) -> Self {
+        if self.exists() { self } else { other }
+    }
 }
 
 /// An index into `DateFormatSymbols::names`. The default is an absent name.
@@ -37,12 +64,14 @@ impl Default for Name {
     }
 }
 
+#[derive(Default)]
 pub(crate) struct Widths<T> {
     pub(crate) wide: T,
     pub(crate) abbreviated: T,
     pub(crate) narrow: T,
 }
 
+#[derive(Default)]
 pub(crate) struct Contexts<T> {
     pub(crate) format: T,
     pub(crate) standalone: T,
@@ -79,6 +108,16 @@ pub(crate) struct LeapMonthPatterns {
     pub(crate) numeric: Name,
 }
 
+/// Names for the pattern field `ddd`. An empty name is an absent name.
+#[derive(Default)]
+pub(crate) struct DayOfMonthNames {
+    /// Patterns with `{0}` for the number, indexed by ordinal plural form.
+    pub(crate) ordinal: List,
+    /// Indexed by day, 1 to 32.
+    pub(crate) cardinal: List,
+}
+
+#[derive(Default)]
 pub(crate) struct DateFormatSymbols {
     /// Ranges of `units`.
     names: Vec<(u32, u32)>,
@@ -91,6 +130,9 @@ pub(crate) struct DateFormatSymbols {
     pub(crate) day_periods: Widths<DayPeriodNames>,
     pub(crate) leap_month_patterns: Option<LeapMonthPatterns>,
     pub(crate) year_names: List,
+    pub(crate) short_weekdays: Contexts<List>,
+    pub(crate) quarters: Contexts<Widths<List>>,
+    pub(crate) day_of_month_names: DayOfMonthNames,
 }
 
 impl DateFormatSymbols {
@@ -109,7 +151,7 @@ impl DateFormatSymbols {
     }
 
     pub(crate) fn name_in(&self, list: List, index: usize) -> Option<&[u16]> {
-        if index < (list.end - list.start) as usize {
+        if index < list.len() {
             self.name(Name(list.start + index as u32))
         } else {
             None
@@ -146,16 +188,19 @@ const ALIAS_PREFIX: &[u8] = b"/LOCALE/calendar/";
 const GREGORIAN: &[u8] = b"gregorian";
 const VARIANT: &[u8] = b"%variant";
 
-// The data have a depth of 3 and fewer than 20 calendar types.
 const MAX_DEPTH: usize = 32;
-const MAX_TYPES: usize = 64;
+/// After so many calendar types none may come twice. Where an alias is below the top level, a row can end at a repeat.
+const UNCHECKED_TYPES: usize = 64;
 
-/// `rest` is a path without the prefix `cyclicNameSets`.
+/// `rest` is a path without the prefix `cyclicNameSets`. An alias can lead from the years to the other sets.
 fn is_used_cyclic_name_set(rest: &[u8]) -> bool {
-    matches!(
-        rest,
-        b"/years" | b"/years/format" | b"/years/format/abbreviated"
-    )
+    let sets: [&[u8]; 3] = [b"/years", b"/zodiacs", b"/dayParts"];
+    (sets.iter().find_map(|set| rest.strip_prefix(*set))).is_some_and(|rest| {
+        rest.is_empty()
+            || rest
+                .strip_prefix(b"/format")
+                .is_some_and(|rest| rest.is_empty() || rest.starts_with(b"/abbreviated"))
+    })
 }
 
 impl CalendarData {
@@ -169,10 +214,12 @@ impl CalendarData {
         path: &[u8],
     ) -> Option<impl Iterator<Item = (&'static [u8], U16s<'static>)> + use<>> {
         let items = self.tables.get(path)?.iter();
+        let items = items.filter(|(key, _)| !key.ends_with(VARIANT));
         Some(items.filter_map(|(key, value)| value.get_string().ok().map(|string| (key, string))))
     }
 
     fn put_array(&mut self, path: &[u8], array: ResourceArray) -> Result<(), UErrorCode> {
+        (array.iter()).try_for_each(|item| item.get_data_string().map(drop))?;
         try_map_insert(&mut self.arrays, try_to_vec(path)?, array).map(drop)
     }
 
@@ -256,20 +303,28 @@ impl CalendarData {
         Ok(())
     }
 
-    /// Copies each target, which must have been loaded, to the path of its alias.
+    /// Copies each target to the path of its alias. An alias whose target has not been loaded stays pending.
     fn resolve_aliases(&mut self) -> Result<(), UErrorCode> {
-        for (target, path) in std::mem::take(&mut self.pending_aliases) {
-            if self.contains(&path) {
-                continue;
+        loop {
+            let pending = std::mem::take(&mut self.pending_aliases);
+            let before = pending.len();
+            for (target, path) in pending {
+                if let Some(&array) = self.arrays.get(&target) {
+                    if !self.arrays.contains_key(&path) {
+                        try_map_insert(&mut self.arrays, path, array)?;
+                    }
+                } else if let Some(&table) = self.tables.get(&target) {
+                    if !self.tables.contains_key(&path) {
+                        try_map_insert(&mut self.tables, path, table)?;
+                    }
+                } else {
+                    self.pending_aliases.add((target, path));
+                }
             }
-            if let Some(&array) = self.arrays.get(&target) {
-                try_map_insert(&mut self.arrays, path, array)?;
-            } else {
-                let table = *self.tables.get(&target).ok_or(U_MISSING_RESOURCE_ERROR)?;
-                try_map_insert(&mut self.tables, path, table)?;
+            if [0, before].contains(&self.pending_aliases.len()) {
+                return Ok(());
             }
         }
-        Ok(())
     }
 
     /// Loads `first`, the types that aliases name, and finally the Gregorian calendar, each from the locale up to root.
@@ -278,22 +333,32 @@ impl CalendarData {
         first: &[u8],
         calendars: &UResourceBundle,
     ) -> Result<(), UErrorCode> {
+        let (mut loaded, mut seen) = (0, Set::default());
         self.calendar_type = try_to_vec(first)?;
-        for _ in 0..MAX_TYPES {
-            let bundle = calendars.get_by_key_with_fallback(&self.calendar_type)?;
-            _ = ures_get_all_items_with_fallback(&bundle, b"", self)?;
-            if self.calendar_type == GREGORIAN {
+        loop {
+            let key = until_nul(&self.calendar_type);
+            let is_last = key == GREGORIAN;
+            match calendars.get_by_key_with_fallback(key) {
+                Err(U_MISSING_RESOURCE_ERROR) if !is_last => {}
+                bundle => {
+                    self.pending_aliases.clear();
+                    ures_get_all_items_with_fallback(&bundle?, b"", self)?;
+                }
+            }
+            if is_last {
                 return Ok(());
             }
-            self.calendar_type.clear();
             if let Some(next) = self.next_calendar_type.take() {
-                append_invariant_chars(&mut self.calendar_type, next.iter())?;
+                loaded += 1;
+                if loaded >= UNCHECKED_TYPES && !try_set_insert(&mut seen, next.as_bytes())? {
+                    return Err(U_INTERNAL_PROGRAM_ERROR);
+                }
+                self.calendar_type = invariant_chars(next.iter())?;
             } else {
-                self.calendar_type.add_all(GREGORIAN);
+                self.calendar_type = try_to_vec(GREGORIAN)?;
                 self.resources_to_visit.clear();
             }
         }
-        Err(U_INTERNAL_PROGRAM_ERROR)
     }
 }
 
@@ -320,7 +385,7 @@ impl ResourceSink for CalendarData {
                         self.put_array(key, value.get_array()?)?;
                     }
                     b"eras" | b"dayNames" | b"monthNames" | b"dayPeriod" | b"monthPatterns"
-                    | b"cyclicNameSets" => {
+                    | b"cyclicNameSets" | b"quarters" | b"dayOfMonthNames" => {
                         self.process_resource(&mut try_to_vec(key)?, value, 1)?
                     }
                     _ => {}
@@ -338,6 +403,8 @@ impl ResourceSink for CalendarData {
 struct Builder {
     data: CalendarData,
     names: Vec<U16s<'static>>,
+    /// Set by a missing list. No list is loaded until `load_or` clears it.
+    is_missing: bool,
 }
 
 fn append(all: &mut Vec<U16s<'static>>, names: impl Iterator<Item = U16s<'static>>) -> List {
@@ -345,7 +412,7 @@ fn append(all: &mut Vec<U16s<'static>>, names: impl Iterator<Item = U16s<'static
     all.add_each(names);
     List {
         start,
-        end: all.len() as u32,
+        len: all.len() as u32 - start,
     }
 }
 
@@ -354,46 +421,158 @@ impl Builder {
         Name(append(&mut self.names, once(name)).start)
     }
 
-    fn list(&mut self, path: &[u8]) -> Result<List, UErrorCode> {
-        let array = self.data.arrays.get(path).ok_or(U_MISSING_RESOURCE_ERROR)?;
+    fn load_optional(&mut self, path: &[u8]) -> List {
+        let Some(array) = self.data.arrays.get(path) else {
+            return List::default();
+        };
         let names = array
             .iter()
             .map(|item| item.get_string().unwrap_or_default());
-        Ok(append(&mut self.names, names))
+        append(&mut self.names, names)
     }
 
-    /// `paths` are in the order wide, abbreviated, narrow.
-    fn widths(
-        &mut self,
-        [wide, abbreviated, narrow]: [&[u8]; 3],
-    ) -> Result<Widths<List>, UErrorCode> {
-        Ok(Widths {
-            wide: self.list(wide)?,
-            abbreviated: self.list(abbreviated)?,
-            narrow: self.list(narrow)?,
-        })
+    fn load_required(&mut self, path: &[u8]) -> List {
+        if self.is_missing {
+            return List::default();
+        }
+        let list = self.load_optional(path);
+        self.is_missing = !list.exists();
+        list
     }
 
+    fn load_or(&mut self, path: &[u8], other: List) -> List {
+        let list = self.load_required(path);
+        self.is_missing = false;
+        list.or(other)
+    }
+
+    fn months(&mut self) -> Contexts<Widths<List>> {
+        let wide = self.load_required(b"monthNames/format/wide");
+        let abbreviated = self.load_required(b"monthNames/format/abbreviated");
+        let standalone_wide = self.load_or(b"monthNames/stand-alone/wide", wide);
+        let standalone_abbreviated =
+            self.load_or(b"monthNames/stand-alone/abbreviated", abbreviated);
+        // The second path is empty if the first list is missing.
+        let narrow = self.load_optional(b"monthNames/format/narrow");
+        let standalone_narrow = self.load_optional(if narrow.exists() {
+            b"monthNames/stand-alone/narrow"
+        } else {
+            b""
+        });
+        let narrow = narrow.or(standalone_narrow).or(abbreviated);
+        Contexts {
+            format: Widths {
+                wide,
+                abbreviated,
+                narrow,
+            },
+            standalone: Widths {
+                wide: standalone_wide,
+                abbreviated: standalone_abbreviated,
+                narrow: standalone_narrow.or(narrow),
+            },
+        }
+    }
+
+    fn quarters(&mut self) -> Contexts<Widths<List>> {
+        let wide = self.load_required(b"quarters/format/wide");
+        let abbreviated = self.load_or(b"quarters/format/abbreviated", wide);
+        let standalone = Widths {
+            wide: self.load_or(b"quarters/stand-alone/wide", wide),
+            abbreviated: self.load_or(b"quarters/stand-alone/abbreviated", abbreviated),
+            narrow: self.load_required(b"quarters/stand-alone/narrow"),
+        };
+        Contexts {
+            format: Widths {
+                wide,
+                abbreviated,
+                narrow: self.load_or(b"quarters/format/narrow", standalone.narrow),
+            },
+            standalone,
+        }
+    }
+
+    /// Also returns the short names.
+    fn weekdays(&mut self) -> (Contexts<Widths<List>>, Contexts<List>) {
+        let wide = self.load_required(b"dayNames/format/wide");
+        let abbreviated = self.load_required(b"dayNames/format/abbreviated");
+        let format = self.load_or(b"dayNames/format/short", abbreviated);
+        let standalone = self.load_or(b"dayNames/stand-alone/short", format);
+        let narrow = self.load_optional(b"dayNames/format/narrow");
+        let standalone_narrow = self.load_optional(b"dayNames/stand-alone/narrow");
+        let narrow = narrow.or(standalone_narrow).or(abbreviated);
+        let names = Contexts {
+            format: Widths {
+                wide,
+                abbreviated,
+                narrow,
+            },
+            standalone: Widths {
+                wide: self.load_or(b"dayNames/stand-alone/wide", wide),
+                abbreviated: self.load_or(b"dayNames/stand-alone/abbreviated", abbreviated),
+                narrow: standalone_narrow.or(narrow),
+            },
+        };
+        (names, Contexts { format, standalone })
+    }
+
+    /// All seven tables must exist. A missing or empty pattern is taken from another.
     fn leap_month_patterns(&mut self) -> Option<LeapMonthPatterns> {
-        let mut pattern = |path: &[u8]| {
-            let (_, pattern) = self.data.strings(path)?.find(|&(key, _)| key == b"leap")?;
-            Some(self.add_name(pattern))
+        let pattern = |path: &[u8]| {
+            let leap = self.data.strings(path)?.find(|&(key, _)| key == b"leap");
+            Some(leap.unwrap_or_default().1)
+        };
+        let or = |pattern: U16s<'static>, other| if pattern.is_empty() { other } else { pattern };
+        let wide = pattern(b"monthPatterns/format/wide")?;
+        let abbreviated = or(pattern(b"monthPatterns/format/abbreviated")?, wide);
+        let narrow = pattern(b"monthPatterns/stand-alone/narrow")?;
+        let [format, standalone] = [
+            [
+                wide,
+                abbreviated,
+                or(pattern(b"monthPatterns/format/narrow")?, narrow),
+            ],
+            [
+                or(pattern(b"monthPatterns/stand-alone/wide")?, wide),
+                or(
+                    pattern(b"monthPatterns/stand-alone/abbreviated")?,
+                    abbreviated,
+                ),
+                narrow,
+            ],
+        ];
+        let numeric = pattern(b"monthPatterns/numeric/all")?;
+        let mut widths = |[wide, abbreviated, narrow]: [_; 3]| Widths {
+            wide: self.add_name(wide),
+            abbreviated: self.add_name(abbreviated),
+            narrow: self.add_name(narrow),
         };
         Some(LeapMonthPatterns {
             names: Contexts {
-                format: Widths {
-                    wide: pattern(b"monthPatterns/format/wide")?,
-                    abbreviated: pattern(b"monthPatterns/format/abbreviated")?,
-                    narrow: pattern(b"monthPatterns/format/narrow")?,
-                },
-                standalone: Widths {
-                    wide: pattern(b"monthPatterns/stand-alone/wide")?,
-                    abbreviated: pattern(b"monthPatterns/stand-alone/abbreviated")?,
-                    narrow: pattern(b"monthPatterns/stand-alone/narrow")?,
-                },
+                format: widths(format),
+                standalone: widths(standalone),
             },
-            numeric: pattern(b"monthPatterns/numeric/all")?,
+            numeric: self.add_name(numeric),
         })
+    }
+
+    fn day_of_month_names(&mut self) -> DayOfMonthNames {
+        let (mut ordinal, mut cardinal) = ([U16s::EMPTY; standardplural::COUNT], [U16s::EMPTY; 33]);
+        let names = self.data.strings(b"dayOfMonthNames/format/abbreviated");
+        for (key, name) in names.into_iter().flatten() {
+            match strtol(key) {
+                _ if !key.first().is_some_and(u8::is_ascii_digit) => {
+                    let form = PluralForm::from_keyword(key).unwrap_or(PluralForm::Other);
+                    ordinal.set(form.index(), name);
+                }
+                (day @ 1..=32, true) if key.len() < 4 => cardinal.set(to_index(day), name),
+                _ => {}
+            }
+        }
+        DayOfMonthNames {
+            ordinal: append(&mut self.names, ordinal.into_iter()),
+            cardinal: append(&mut self.names, cardinal.into_iter()),
+        }
     }
 
     /// Missing names are taken from `fallback`.
@@ -407,23 +586,30 @@ impl Builder {
         names
     }
 
-    /// An era that the table at `path` lacks is looked up with locale fallback in the type that defines it.
+    /// An era that the table at `path` lacks is looked up with locale fallback. The last type that has its code wins.
     fn eras_of_width(
         &mut self,
         path: &[u8],
         calendars: &UResourceBundle,
         rules: &EraRules,
     ) -> Result<List, UErrorCode> {
-        let names = self.data.strings(path).ok_or(U_MISSING_RESOURCE_ERROR)?;
+        let Some(names) = self.data.strings(path) else {
+            return Ok(List::default());
+        };
         let mut eras = try_filled((U16s::EMPTY, false), rules.code_count())?;
         for (key, name) in names {
-            if let (code, true) = strtol(key)
-                && let Some(era) = eras.get_mut(to_index(code))
+            let code = to_index(strtol(key).0);
+            if let Some(era) = eras.get_mut(code)
+                && code.format_into(&mut NumBuffer::new()).as_bytes() == key
             {
                 *era = (name, true);
             }
         }
-        for (calendar_type, codes) in rules.calendar_types() {
+        for (calendar_type, mut codes) in rules.calendar_types() {
+            // The linked data have no names for lower codes.
+            if searches_files()? {
+                codes.start = 0;
+            }
             let find =
                 |table: &UResourceBundle, key: &[u8]| table.get_by_key_with_fallback(key).ok();
             let of_width = find(calendars, calendar_type)
@@ -451,66 +637,56 @@ impl Builder {
         calendar_type: &[u8],
         calendars: &UResourceBundle,
     ) -> Result<Widths<List>, UErrorCode> {
-        let rules = match EraRules::load(calendar_type) {
-            Err(U_MISSING_RESOURCE_ERROR) => EraRules::load(GREGORIAN),
+        let rules = match EraRules::load(calendar_type, false) {
+            Err(U_MISSING_RESOURCE_ERROR) => EraRules::load(GREGORIAN, false),
             rules => rules,
-        }?;
+        };
+        let rules = match rules {
+            Err(U_MISSING_RESOURCE_ERROR) => return Ok(Widths::default()),
+            rules => rules?,
+        };
+        let abbreviated = self.eras_of_width(b"eras/abbreviated", calendars, &rules)?;
+        if !abbreviated.exists() {
+            return Ok(Widths::default());
+        }
+        let mut or_abbreviated = |path: &[u8]| {
+            self.eras_of_width(path, calendars, &rules)
+                .map(|list| list.or(abbreviated))
+        };
         Ok(Widths {
-            wide: self.eras_of_width(b"eras/wide", calendars, &rules)?,
-            abbreviated: self.eras_of_width(b"eras/abbreviated", calendars, &rules)?,
-            narrow: self.eras_of_width(b"eras/narrow", calendars, &rules)?,
+            wide: or_abbreviated(b"eras/wide")?,
+            abbreviated,
+            narrow: or_abbreviated(b"eras/narrow")?,
         })
     }
 }
 
 impl DateFormatSymbols {
     // ICU4C: dtfmtsym.cpp, DateFormatSymbols::initializeData
-    #[cfg_attr(mordant, allow(defaulted_failure))] // Most calendars have no names for years.
-    fn load(locale: &Locale, calendar_type: CalendarType) -> Result<Self, UErrorCode> {
+    pub(crate) fn load(locale: &Locale, calendar_type: CalendarType) -> Result<Self, UErrorCode> {
         let calendar_type = calendar_type.name().to_bytes();
         let bundle = ures_open(None, locale.get_base_name())?;
         let calendars = bundle.get_by_key(b"calendar")?;
         let mut builder = Builder {
             data: CalendarData::default(),
             names: Vec::new(),
+            is_missing: false,
         };
         builder.data.load_calendars(calendar_type, &calendars)?;
 
-        let am_pm = builder.list(b"AmPmMarkersAbbr")?;
+        let am_pm = builder.load_optional(b"AmPmMarkersAbbr");
         let day_periods =
             builder.day_periods(b"dayPeriod/format/abbreviated", DayPeriodNames::default());
+        let (weekdays, short_weekdays) = builder.weekdays();
         let mut symbols = Self {
-            names: Vec::new(),
-            units: Vec::new(),
             eras: builder.eras(calendar_type, &calendars)?,
-            months: Contexts {
-                format: builder.widths([
-                    b"monthNames/format/wide",
-                    b"monthNames/format/abbreviated",
-                    b"monthNames/format/narrow",
-                ])?,
-                standalone: builder.widths([
-                    b"monthNames/stand-alone/wide",
-                    b"monthNames/stand-alone/abbreviated",
-                    b"monthNames/stand-alone/narrow",
-                ])?,
-            },
-            weekdays: Contexts {
-                format: builder.widths([
-                    b"dayNames/format/wide",
-                    b"dayNames/format/abbreviated",
-                    b"dayNames/format/narrow",
-                ])?,
-                standalone: builder.widths([
-                    b"dayNames/stand-alone/wide",
-                    b"dayNames/stand-alone/abbreviated",
-                    b"dayNames/stand-alone/narrow",
-                ])?,
-            },
+            months: builder.months(),
+            weekdays,
+            short_weekdays,
             am_pm: Widths {
-                wide: builder.list(b"AmPmMarkers").unwrap_or(am_pm),
+                wide: builder.load_optional(b"AmPmMarkers").or(am_pm),
                 abbreviated: am_pm,
-                narrow: builder.list(b"AmPmMarkersNarrow").unwrap_or(am_pm),
+                narrow: builder.load_optional(b"AmPmMarkersNarrow").or(am_pm),
             },
             day_periods: Widths {
                 wide: builder.day_periods(b"dayPeriod/format/wide", day_periods),
@@ -518,9 +694,10 @@ impl DateFormatSymbols {
                 narrow: builder.day_periods(b"dayPeriod/format/narrow", day_periods),
             },
             leap_month_patterns: builder.leap_month_patterns(),
-            year_names: builder
-                .list(b"cyclicNameSets/years/format/abbreviated")
-                .unwrap_or_default(),
+            year_names: builder.load_optional(b"cyclicNameSets/years/format/abbreviated"),
+            quarters: builder.quarters(),
+            day_of_month_names: builder.day_of_month_names(),
+            ..Self::default()
         };
 
         let length = builder.names.iter().map(|name| name.len());

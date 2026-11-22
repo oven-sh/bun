@@ -23,7 +23,7 @@ fn udatpg_close(dtpg: Option<Box<UDateTimePatternGenerator>>) {
     drop(dtpg);
 }
 
-/// Accepts a skeleton that has fields: `j`, `jj` and the letters GyYrUMLEcdaBHkhKmsSvzZO.
+/// Accepts quarters, weeks, the day of the year and the weekday in the month only if data can come from files.
 #[capi]
 fn udatpg_getBestPatternWithOptions(
     dtpg: Option<&UDateTimePatternGenerator>,
@@ -40,7 +40,6 @@ fn udatpg_getBestPatternWithOptions(
     })
 }
 
-/// Accepts the letters GyYrUMLEcdaBHkhKmsSvzZO.
 #[capi]
 fn udatpg_getSkeleton(
     _unused_dtpg: Option<&UDateTimePatternGenerator>,
@@ -54,7 +53,7 @@ fn udatpg_getSkeleton(
     })
 }
 
-/// Accepts all fields but week of month, day of year, weekday of month and fractional second.
+/// Accepts all fields but week of month, day of year and weekday of month.
 #[capi]
 fn udatpg_getFieldDisplayName(
     dtpg: Option<&UDateTimePatternGenerator>,
@@ -65,13 +64,10 @@ fn udatpg_getFieldDisplayName(
 ) -> i32 {
     status.run(-1, |status| {
         field_name.check()?;
-        match dtpg
+        let name = dtpg
             .non_null()?
             .field_display_name(to_index(field), to_index(width))
-        {
-            None => Err(U_ILLEGAL_ARGUMENT_ERROR),
-            Some([]) => Err(U_UNSUPPORTED_ERROR),
-            Some(name) => Ok(field_name.extract_to(name, status)),
-        }
+            .ok_or(U_ILLEGAL_ARGUMENT_ERROR)?;
+        Ok(field_name.extract_to(name, status))
     })
 }

@@ -1,18 +1,25 @@
 //! [`Locale`], a parsed locale ID, and the default locale. ICU4C: locid.cpp
 
 use crate::common::arrayvec::ArrayVec;
-use crate::common::charstr::SmallChars;
+use crate::common::charstr::{CharStrings, SmallChars, Span};
 use crate::common::cstring::{find_byte, split_once};
 use crate::common::loclikely::ulocimp_add_likely_subtags;
-use crate::common::memory::{self, fail_on_oom, oom_checked, try_box, try_to_vec};
+use crate::common::maps::Map;
+use crate::common::memory::{
+    self, Appendable, fail_on_oom, oom_checked, try_box, try_map_insert, try_to_vec,
+};
 use crate::common::putil::uprv_get_default_locale_id;
 use crate::common::slice_ext::{SliceExt, SoftUnwrap};
 use crate::common::uloc::{
     EN, Language, Region, Script, US, check_not_default, ulocimp_canonicalize,
     ulocimp_get_keyword_value, ulocimp_get_name, ulocimp_get_name_to, ulocimp_set_keyword_value,
 };
+use crate::common::uloc_data::KNOWN_LANGUAGES;
+use crate::common::uloc_tag::{ultag_is_language_subtag, ultag_is_script_subtag};
 use crate::common::umutex::{AtomicRef, OnceBox, StaticMap};
-use crate::common::utypes::{U_ILLEGAL_ARGUMENT_ERROR, UErrorCode};
+use crate::common::uresimp::ures_open_direct;
+use crate::common::utypes::*;
+use bun_core::strings;
 use std::ffi::{CStr, CString};
 use std::sync::Arc;
 
@@ -123,6 +130,20 @@ impl Locale {
     /// `from_name` without the limit. The ID ends at a NUL.
     pub(crate) fn create_from_name(locale_id: &[u8]) -> Self {
         Self::init(up_to(locale_id, 0)).unwrap_or_else(Self::bogus)
+    }
+
+    /// Applies the aliases of `metadata.res` to the locale that has only a language.
+    #[cold]
+    pub(crate) fn create_canonical(language: &[u8]) -> Self {
+        let locale = Self::create_from_name(language);
+        if KNOWN_LANGUAGES.binary_search(&language).is_ok() {
+            return locale;
+        }
+        match replace_aliases(locale.get_language()) {
+            Ok(Some(replaced)) => Self::create_from_name(&replaced),
+            Ok(None) => locale,
+            Err(_) => Self::bogus(),
+        }
     }
 
     /// Joins the parts and parses the result. `keywords` is empty or contains a '='.
@@ -290,6 +311,172 @@ impl PartialEq for Locale {
         // The NUL is included, so `bcmp` never gets an empty slice.
         self.fields().full_name.with_nul() == other.fields().full_name.with_nul()
     }
+}
+
+/// The last entry of an alias counts.
+type Aliases = Map<&'static [u8], Span>;
+
+/// The table `alias` of `metadata.res`.
+struct AliasData {
+    /// The keys are `language` or `language_REGION`.
+    language: Aliases,
+    script: Aliases,
+    /// Spaces separate several replacements.
+    territory: Aliases,
+    replacements: CharStrings,
+}
+
+impl AliasData {
+    fn singleton() -> Result<&'static Self, UErrorCode> {
+        static DATA: OnceBox<Result<AliasData, UErrorCode>> = OnceBox::new();
+        DATA.get_or_init_caching_err(Self::load)
+    }
+
+    // ICU4C: locid.cpp, AliasDataBuilder::build
+    fn load() -> Result<Self, UErrorCode> {
+        let alias = ures_open_direct(None, b"metadata")?.get_by_key(b"alias")?;
+        let read = |kind: &[u8], replacements: &mut CharStrings| {
+            let mut table = alias.get_by_key(kind)?;
+            if table.get_size() == 0 {
+                return Err(U_MISSING_RESOURCE_ERROR);
+            }
+            let mut aliases = Aliases::default();
+            while table.has_next() {
+                let entry = table.get_next_resource()?;
+                let to =
+                    replacements.add_invariant(entry.get_data_string_by_key(b"replacement")?)?;
+                if let Some(from) = entry.get_key() {
+                    try_map_insert(&mut aliases, from, to)?;
+                }
+            }
+            Ok(aliases)
+        };
+        let mut replacements = CharStrings::default();
+        let language = read(b"language", &mut replacements)?;
+        let script = read(b"script", &mut replacements)?;
+        let territory = read(b"territory", &mut replacements)?;
+        // No alias applies unless these are sound too.
+        read(b"variant", &mut CharStrings::default())?;
+        read(b"subdivision", &mut CharStrings::default())?;
+        Ok(Self {
+            language,
+            script,
+            territory,
+            replacements,
+        })
+    }
+
+    fn get(&self, aliases: &Aliases, alias: &[u8]) -> Option<&[u8]> {
+        aliases.get(alias).map(|&to| self.replacements.get(to))
+    }
+}
+
+/// The subtags of a locale during alias replacement.
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct AliasReplacer<'a> {
+    language: Option<&'a [u8]>,
+    script: Option<&'a [u8]>,
+    region: Option<&'a [u8]>,
+}
+
+fn join_subtags(language: Option<&[u8]>, others: [Option<&[u8]>; 2]) -> SmallChars {
+    let mut joined = SmallChars::of(language.unwrap_or_default());
+    for subtag in others.into_iter().flatten().filter(|it| !it.is_empty()) {
+        joined.add(b'_');
+        joined.add_all(subtag);
+    }
+    joined
+}
+
+impl<'a> AliasReplacer<'a> {
+    /// Applies one alias, the most specific kind first, and returns whether there was one.
+    fn replace_one(&mut self, data: &'a AliasData) -> Result<bool, UErrorCode> {
+        Ok(
+            (self.region.is_some() && self.replace_language(data, self.region))
+                || self.replace_language(data, None)
+                || self.replace_territory(data)?
+                || self.replace_script(data),
+        )
+    }
+
+    // ICU4C: locid.cpp, AliasReplacer::replaceLanguage, AliasReplacer::parseLanguageReplacement
+    fn replace_language(&mut self, data: &'a AliasData, with_region: Option<&[u8]>) -> bool {
+        let key = join_subtags(self.language, [with_region, None]);
+        let Some(replacement) = data.get(&data.language, &key) else {
+            return false;
+        };
+        let (language, rest) = split_once(replacement, b'_');
+        let (second, rest) = rest.map(|rest| split_once(rest, b'_')).unzip();
+        let (script, region) = match second {
+            Some([_, _] | [_, _, _]) => (None, second),
+            Some([first, _, _, _]) if first.is_ascii_alphabetic() => (second, None),
+            _ => (None, None),
+        };
+        let new = Self {
+            language: Some(language).filter(|&it| it != b"und").or(self.language),
+            script: self.script.or(script),
+            region: if with_region.is_some() && region.is_none() {
+                None
+            } else {
+                self.region.or(region)
+            },
+        };
+        // Other subtags are dropped, but count as a change.
+        let has_more = rest.flatten().is_some() || script.or(region) != second;
+        std::mem::replace(self, new) != new || has_more
+    }
+
+    // ICU4C: locid.cpp, AliasReplacer::replaceTerritory
+    fn replace_territory(&mut self, data: &'a AliasData) -> Result<bool, UErrorCode> {
+        let replacement = self.region.and_then(|it| data.get(&data.territory, it));
+        let Some(replacement) = replacement else {
+            return Ok(false);
+        };
+        let (mut region, others) = split_once(replacement, b' ');
+        if others.is_some() {
+            let language = self.language.unwrap_or(b"und");
+            let script = self.script.unwrap_or_default();
+            if !(language.is_empty() || ultag_is_language_subtag(language))
+                || !(script.is_empty() || ultag_is_script_subtag(script))
+            {
+                return Err(U_ILLEGAL_ARGUMENT_ERROR);
+            }
+            let mut likely = Locale::from_name(&join_subtags(Some(language), [Some(script), None]));
+            likely.add_likely_subtags()?;
+            let likely = likely.get_country();
+            if !likely.is_empty()
+                && let Some(at) = strings::index_of(replacement, likely)
+            {
+                region = replacement.slice(at..at + likely.len());
+            }
+        }
+        self.region = Some(region);
+        Ok(true)
+    }
+
+    fn replace_script(&mut self, data: &'a AliasData) -> bool {
+        let replacement = self.script.and_then(|it| data.get(&data.script, it));
+        self.script = replacement.or(self.script);
+        replacement.is_some()
+    }
+}
+
+/// Returns `None` if no alias applies. ICU4C: locid.cpp, AliasReplacer::replace
+fn replace_aliases(language: &[u8]) -> Result<Option<SmallChars>, UErrorCode> {
+    const MAX_CHANGES: u32 = 0x2000;
+    let data = AliasData::singleton()?;
+    let mut replacer = AliasReplacer {
+        language: Some(language).filter(|it| !it.is_empty()),
+        script: None,
+        region: None,
+    };
+    for changes in 0..MAX_CHANGES {
+        if !replacer.replace_one(data)? {
+            let others = [replacer.script, replacer.region];
+            return Ok((changes != 0).then(|| join_subtags(replacer.language, others)));
+        }
+    }
+    Err(U_INVALID_FORMAT_ERROR)
 }
 
 static DEFAULT_LOCALE: OnceBox<AtomicRef<Locale>> = OnceBox::new();

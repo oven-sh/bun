@@ -2,16 +2,9 @@
 
 use crate::capi::ffi::{self, UBool, UChar32};
 use crate::common::soft_assert::soft_unreachable;
-use crate::common::unicode::uchar::UCharDirection;
+use crate::common::unicode::uchar::*;
 use crate::common::{emojiprops, ubidi_props, ucase, uchar};
 use bun_icu_macros::capi;
-
-type UProperty = i32;
-const UCHAR_ID_CONTINUE: UProperty = 15;
-const UCHAR_ID_START: UProperty = 16;
-const UCHAR_EMOJI_PRESENTATION: UProperty = 58;
-const UCHAR_EMOJI_MODIFIER: UProperty = 59;
-const UCHAR_EAST_ASIAN_WIDTH: UProperty = 0x1004;
 
 #[capi]
 fn u_charType(c: UChar32) -> i8 {

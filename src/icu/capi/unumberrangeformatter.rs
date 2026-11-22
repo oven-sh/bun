@@ -61,7 +61,7 @@ fn unumrf_openForSkeletonWithCollapseAndIdentityFallback(
 ) -> Option<Box<UNumberRangeFormatter>> {
     ec.open(|| {
         let macros = read_skeleton(skeleton, locale)?;
-        let collapses = match (collapse, identity_fallback, macros.unit) {
+        let collapses = match (collapse, identity_fallback, &macros.unit) {
             _ if !perror.is_null() => return Err(U_UNSUPPORTED_ERROR),
             (UNUM_RANGE_COLLAPSE_AUTO, UNUM_IDENTITY_FALLBACK_APPROXIMATELY, _) => true,
             (UNUM_RANGE_COLLAPSE_NONE, UNUM_IDENTITY_FALLBACK_RANGE, MeasureUnit::None) => false,

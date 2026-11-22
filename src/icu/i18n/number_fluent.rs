@@ -10,6 +10,8 @@ use crate::i18n::measunit::MeasureUnit;
 use crate::i18n::number_decimalquantity::{DecimalQuantity, RoundingMode};
 use crate::i18n::number_formatimpl::{BuildMode, NumberFormatterImpl};
 use crate::i18n::number_grouping::Grouper;
+use crate::i18n::number_padding::Padder;
+use crate::i18n::number_patternstring::ParsedPatternInfo;
 use crate::i18n::number_rounding::{Digits, Rounding, RoundingImpl};
 use crate::i18n::number_scientific::ScientificHandler;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -46,6 +48,7 @@ pub(crate) struct MacroProps {
     pub(crate) notation: Notation,
     pub(crate) unit: MeasureUnit,
     pub(crate) unit_width: UnitWidth,
+    /// Without a rounding, that of the currency applies.
     pub(crate) rounder: RoundingImpl,
     pub(crate) grouper: Grouper,
     pub(crate) min_integer_digits: i32,
@@ -55,8 +58,31 @@ pub(crate) struct MacroProps {
     pub(crate) scale: i32,
     /// Replaces the symbols of `locale`.
     pub(crate) symbols: Option<Arc<DecimalFormatSymbols>>,
-    /// Replaces the pattern of `locale`.
-    pub(crate) pattern: Option<Vec<u16>>,
+    pub(crate) from_pattern: Option<Box<PatternProps>>,
+}
+
+/// What only the pattern of a decimal format sets.
+pub(crate) struct PatternProps {
+    /// Replaces the affixes of the pattern of the locale.
+    pub(crate) affixes: ParsedPatternInfo,
+    pub(crate) layout: Layout,
+    /// Every number fails with this error.
+    pub(crate) status: Result<(), UErrorCode>,
+}
+
+pub(crate) struct Layout {
+    /// -1 if there is no maximum.
+    pub(crate) max_integer_digits: i32,
+    pub(crate) always_shows_decimal: bool,
+    pub(crate) padder: Option<Padder>,
+}
+
+impl Layout {
+    pub(crate) const DEFAULT: Self = Self {
+        max_integer_digits: -1,
+        always_shows_decimal: false,
+        padder: None,
+    };
 }
 
 impl MacroProps {
@@ -71,13 +97,13 @@ impl MacroProps {
                 mode: RoundingMode::HalfEven,
                 hide_zeros_if_whole: false,
             },
-            grouper: Grouper::Auto,
+            grouper: Grouper::AUTO,
             min_integer_digits: 1,
             sign: SignDisplay::Auto,
             is_accounting: false,
             scale: 0,
             symbols: None,
-            pattern: None,
+            from_pattern: None,
         }
     }
 }
@@ -120,6 +146,10 @@ impl LocalizedNumberFormatter {
             compiled: OnceLock::new(),
             call_count: AtomicU32::new(0),
         }
+    }
+
+    pub(crate) fn affixes(&self) -> Option<&ParsedPatternInfo> {
+        Some(&self.macros.from_pattern.as_ref()?.affixes)
     }
 
     /// Formats `results.quantity` into the string of `results`, which must be empty.

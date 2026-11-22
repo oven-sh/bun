@@ -2,8 +2,8 @@
 
 use crate::common::bytes::I32s;
 use crate::common::putil::uprv_get_utc_time;
-use crate::common::resource::{ResourceTable, ResourceValue};
 use crate::common::slice_ext::SliceExt;
+use crate::common::uresimp::UResourceBundle;
 use crate::common::utypes::{U_INVALID_FORMAT_ERROR, U_MISSING_RESOURCE_ERROR, UErrorCode};
 use crate::i18n::gregoimp::{
     U_MILLIS_PER_DAY, U_MILLIS_PER_HOUR, U_MILLIS_PER_SECOND, UDate, grego,
@@ -32,12 +32,8 @@ fn millis(seconds: i32) -> i32 {
     seconds.wrapping_mul(U_MILLIS_PER_SECOND)
 }
 
-fn part(zone: &ResourceTable, key: &[u8]) -> Result<ResourceValue, UErrorCode> {
-    zone.get(key).ok_or(U_MISSING_RESOURCE_ERROR)
-}
-
-fn int_vector(zone: &ResourceTable, key: &[u8]) -> Result<I32s<'static>, UErrorCode> {
-    part(zone, key)?.get_int_vector()
+fn int_vector(zone: &UResourceBundle, key: &[u8]) -> Result<I32s<'static>, UErrorCode> {
+    zone.get_value_by_key(key)?.get_int_vector()
 }
 
 struct History {
@@ -52,7 +48,7 @@ struct History {
 }
 
 impl History {
-    fn new(zone: &ResourceTable) -> Result<Self, UErrorCode> {
+    fn new(zone: &UResourceBundle) -> Result<Self, UErrorCode> {
         let times = |key: &[u8], step| match int_vector(zone, key) {
             Ok(times) if times.len() <= MAX_LENGTH && times.len().is_multiple_of(step) => Ok(times),
             Ok(_) => Err(U_INVALID_FORMAT_ERROR),
@@ -70,7 +66,7 @@ impl History {
         }
         let mut type_map: &[u8] = &[];
         if count > 0 {
-            type_map = part(zone, b"typeMap")?.get_binary()?;
+            type_map = zone.get_value_by_key(b"typeMap")?.get_binary()?;
             if type_map.len() != count {
                 return Err(U_INVALID_FORMAT_ERROR);
             }
@@ -226,13 +222,13 @@ struct FinalZone {
 }
 
 impl FinalZone {
-    fn new(zone: &ResourceTable) -> Result<Option<Self>, UErrorCode> {
+    fn new(zone: &UResourceBundle) -> Result<Option<Self>, UErrorCode> {
         let find = || {
-            let rule = part(zone, b"finalRule")?.get_string()?;
+            let rule = zone.get_value_by_key(b"finalRule")?.get_string()?;
             Ok((
                 rule,
-                part(zone, b"finalRaw")?.get_int()?,
-                part(zone, b"finalYear")?.get_int()?,
+                zone.get_value_by_key(b"finalRaw")?.get_int()?,
+                zone.get_value_by_key(b"finalYear")?.get_int()?,
             ))
         };
         let (rule, raw, start_year) = match find() {
@@ -269,14 +265,21 @@ impl FinalZone {
 }
 
 pub(crate) struct OlsonTimeZone {
+    /// The index of the ID in Names.
+    pub(crate) index: usize,
     pub(crate) canonical_id: &'static [u16],
     history: History,
     final_zone: Option<FinalZone>,
 }
 
 impl OlsonTimeZone {
-    pub(crate) fn new(zone: &ResourceTable, id: &[u16]) -> Result<Self, UErrorCode> {
+    pub(crate) fn new(
+        zone: &UResourceBundle,
+        id: &[u16],
+        index: usize,
+    ) -> Result<Self, UErrorCode> {
         Ok(Self {
+            index,
             history: History::new(zone)?,
             final_zone: FinalZone::new(zone)?,
             canonical_id: zonemeta::get_canonical_cldr_id(id)?,

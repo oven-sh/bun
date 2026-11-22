@@ -21,10 +21,24 @@ use std::sync::Arc;
 const COLLATIONS: &[u8] = b"collations";
 /// The locale keyword that selects a collation type.
 const COLLATION: &[u8] = b"collation";
+const STANDARD: &[u8] = b"standard";
 const SEARCH: &[u8] = b"search";
 
 type CollationType = Subtag<15>;
 type LoadResult = Result<Arc<CollationTailoring>, UErrorCode>;
+
+/// Returns the invariant prefix of `default`, or "standard" if it is missing or its length is out of range.
+fn default_type(collations: &UResourceBundle) -> CollationType {
+    match collations
+        .get_by_key_with_fallback(b"default")
+        .and_then(|found| found.get_string())
+    {
+        Ok(name) if (1..=CollationType::CAPACITY).contains(&name.len()) => {
+            CollationType::new(invariant_prefix(name.iter()))
+        }
+        _ => CollationType::new(STANDARD.iter().copied()),
+    }
+}
 
 /// Compares lengths only, because the base name is a prefix of the name.
 pub(crate) fn has_keywords(locale: &Locale) -> bool {
@@ -50,6 +64,7 @@ struct Loader {
     default_type: CollationType,
     has_tried_search: bool,
     has_tried_default: bool,
+    has_tried_standard: bool,
 }
 
 impl Loader {
@@ -75,6 +90,7 @@ impl Loader {
             default_type: CollationType::EMPTY,
             has_tried_search: false,
             has_tried_default: false,
+            has_tried_standard: false,
         })
     }
 
@@ -104,20 +120,28 @@ impl Loader {
     }
 
     fn load_from_locale(&mut self) -> LoadResult {
-        let bundle = ures_open_no_default(Some(U_ICUDATA_COLL), self.locale.get_base_name())?;
+        let bundle = match ures_open_no_default(Some(U_ICUDATA_COLL), self.locale.get_base_name()) {
+            Err(U_MISSING_RESOURCE_ERROR) => return Ok(Arc::clone(self.root)),
+            opened => opened?,
+        };
         self.continue_as(bundle.get_name().to_bytes(), &|loader| {
             loader.load_from_bundle(&bundle)
         })
     }
 
     fn load_from_bundle(&mut self, bundle: &UResourceBundle) -> LoadResult {
-        let collations = bundle.get_by_key(COLLATIONS)?;
-        let default = collations.get_by_key_with_fallback(b"default")?;
-        self.default_type = CollationType::new(invariant_prefix(default.get_string()?.iter()));
-        if self.collation_type.is_empty() {
-            return self.try_type(self.default_type, &collations);
+        let collations = match bundle.get_by_key(COLLATIONS) {
+            Err(U_MISSING_RESOURCE_ERROR) => return Ok(Arc::clone(self.root)),
+            found => found?,
+        };
+        self.default_type = default_type(&collations);
+        if !self.collation_type.is_empty() {
+            return self.load_from_collations(&collations);
         }
-        self.load_from_collations(&collations)
+        if self.default_type.is_empty() {
+            return Err(U_ILLEGAL_ARGUMENT_ERROR);
+        }
+        self.try_type(self.default_type, &collations)
     }
 
     fn try_type(&mut self, next: CollationType, collations: &UResourceBundle) -> LoadResult {
@@ -129,19 +153,24 @@ impl Loader {
     fn load_from_collations(&mut self, collations: &UResourceBundle) -> LoadResult {
         self.has_tried_default |= self.collation_type == self.default_type;
         self.has_tried_search |= *self.collation_type == *SEARCH;
+        self.has_tried_standard |= *self.collation_type == *STANDARD;
         let data = match collations.get_by_key_with_fallback(&self.collation_type) {
-            Err(U_MISSING_RESOURCE_ERROR) if !self.has_tried_default => {
+            Err(U_MISSING_RESOURCE_ERROR) => {
                 let next = if !self.has_tried_search && self.collation_type.starts_with(SEARCH) {
                     CollationType::new(SEARCH.iter().copied())
-                } else {
+                } else if !self.has_tried_default {
                     self.default_type
+                } else if !self.has_tried_standard {
+                    CollationType::new(STANDARD.iter().copied())
+                } else {
+                    return Ok(Arc::clone(self.root));
                 };
                 return self.try_type(next, collations);
             }
             found => found?,
         };
         let actual_name = data.get_name().to_bytes();
-        if actual_name == ROOT_LOCALE_NAME && *self.collation_type == *b"standard" {
+        if actual_name == ROOT_LOCALE_NAME && *self.collation_type == *STANDARD {
             return Ok(Arc::clone(self.root));
         }
         self.continue_as(actual_name, &|loader| loader.load_from_data(&data))
@@ -194,9 +223,11 @@ impl ResourceSink for KeywordValues {
                 URES_STRING if self.default.is_none() && key == b"default" => {
                     let mut default = Vec::new();
                     append_invariant_chars(&mut default, value.get_string()?.iter())?;
-                    let default = until_nul(&default);
-                    self.others.retain(|other| other.to_bytes() != default);
-                    self.default = Some(try_cstring(default)?);
+                    if !default.is_empty() {
+                        let default = until_nul(&default);
+                        self.others.retain(|other| other.to_bytes() != default);
+                        self.default = Some(try_cstring(default)?);
+                    }
                 }
                 URES_TABLE
                     if !key.starts_with(b"private-")

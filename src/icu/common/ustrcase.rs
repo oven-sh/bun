@@ -7,6 +7,8 @@ use crate::common::slice_ext::SliceExt;
 use crate::common::ucase::{
     self, CaseLocale, Context, FastMapping, Mapped, Mapping, Props, latin_case,
 };
+use crate::common::uchar::u_get_gc_mask;
+use crate::common::unicode::uchar::U_GC_M_MASK;
 use crate::common::utf16;
 
 type Sink<'a> = CheckedArraySink<'a, u16>;
@@ -197,16 +199,40 @@ pub(crate) fn to_title(
         let limit = src.len().min(boundaries.next() as usize); // UBRK_DONE is negative.
         if start < limit {
             let (text, mut rest) = (src.slice(..limit), start);
-            match ucase::to_full_title(utf16::next(text, &mut rest), locale) {
+            let c = utf16::next(text, &mut rest);
+            let context = Context {
+                text,
+                start,
+                limit: rest,
+            };
+            let titled_start = dest.len();
+            match ucase::to_full_title_in_context(c, &context, locale) {
                 Mapped::Unchanged => rest = start,
                 Mapped::CodePoint(c) => dest.add_code_point(c),
                 Mapped::String(string) => string.iter().for_each(|unit| dest.add(unit)),
             }
             dest.add_all(text.slice(rest..));
+            if locale == CaseLocale::Dutch {
+                title_dutch_ij(dest.slice_mut(titled_start..));
+            }
         }
         start = limit;
     }
     dest
+}
+
+/// A plain I must be followed by a plain j, an I with acute by a j with acute. ICU4C: ustrcase.cpp, maybeTitleDutchIJ
+#[cold]
+fn title_dutch_ij(titled: &mut [u16]) {
+    const ACUTE: u16 = 0x301;
+    if let [0x49, j @ 0x6a, rest @ ..]
+    | [0x49, ACUTE, j @ 0x6a, ACUTE, rest @ ..]
+    | [0xcd, j @ 0x6a, ACUTE, rest @ ..] = titled
+        // There must not be another combining mark.
+        && u_get_gc_mask(utf16::next(rest, &mut 0)) & U_GC_M_MASK == 0
+    {
+        *j = 0x4a;
+    }
 }
 
 /// Compares the full case foldings.

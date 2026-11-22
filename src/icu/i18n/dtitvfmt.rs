@@ -5,7 +5,8 @@ use crate::common::locid::Locale;
 use crate::common::memory::{self, Appendable, try_collect, try_concat, try_to_vec};
 use crate::common::simpleformatter::{PatternParts, SimpleFormatter};
 use crate::common::slice_ext::SliceExt;
-use crate::common::unistr::UString;
+use crate::common::uchar::u_is_whitespace;
+use crate::common::unistr::{UString, strip_prefix_str};
 use crate::common::uresimp::*;
 use crate::common::utypes::*;
 use crate::i18n::calendar::{Calendar, Field};
@@ -15,7 +16,7 @@ use crate::i18n::formattedval_iterimpl::FormattedDateInterval;
 use crate::i18n::fphdlimp::FieldPositionIteratorHandler;
 use crate::i18n::gregoimp::UDate;
 use crate::i18n::locale_cache::LocaleCache;
-use crate::i18n::smpdtfmt::{PatternItem, PatternItems, SimpleDateFormat};
+use crate::i18n::smpdtfmt::{DATE_TIME, PatternItem, PatternItems, SimpleDateFormat};
 use crate::i18n::timezone::TimeZone;
 use crate::i18n::unicode::uformattedvalue::UFIELD_CATEGORY_DATE;
 use std::borrow::Cow;
@@ -52,15 +53,17 @@ fn pattern_fields(pattern: &[u16]) -> impl Iterator<Item = (u8, usize, usize)> {
     })
 }
 
-/// Returns whether `pattern` displays neither `field` nor a smaller unit. A zone counts as an era, `B` as nothing.
+/// Returns whether `pattern` displays neither `field` nor a smaller unit. A zone counts as an era, `b` and `B` as nothing.
 fn is_field_unit_ignored(pattern: &[u16], field: IntervalField) -> bool {
     !pattern_fields(pattern).any(|(letter, ..)| {
         let unit = match letter {
-            b'G' | b'O' | b'v' | b'z' => IntervalField::Era,
-            b'U' | b'Y' | b'r' | b'y' => IntervalField::Year,
-            b'L' | b'M' => IntervalField::Month,
-            b'E' | b'c' | b'd' => IntervalField::Date,
-            b'a' => IntervalField::AmPm,
+            b'G' | b'O' | b'V' | b'X' | b'Z' | b'g' | b'l' | b'v' | b'x' | b'z' => {
+                IntervalField::Era
+            }
+            b'U' | b'Y' | b'r' | b'u' | b'y' => IntervalField::Year,
+            b'D' | b'L' | b'M' | b'Q' | b'q' | b'w' => IntervalField::Month,
+            b'E' | b'F' | b'W' | b'c' | b'd' | b'e' => IntervalField::Date,
+            b'A' | b'a' => IntervalField::AmPm,
             b'H' | b'K' | b'h' | b'k' => IntervalField::Hour,
             b'm' => IntervalField::Minute,
             b's' => IntervalField::Second,
@@ -98,6 +101,10 @@ impl BestPatterns<'_> {
         })?;
         try_to_vec(&pattern)
     }
+
+    fn get_or_empty(&self, skeleton: &[u16]) -> Vec<u16> {
+        self.get(skeleton).unwrap_or_default()
+    }
 }
 
 /// Maps a pattern letter to the skeleton letter that has its width: `L` to `M`.
@@ -115,14 +122,15 @@ struct SkeletonParts {
 }
 
 impl SkeletonParts {
-    /// Drops `O`. ICU4C: dtitvfmt.cpp, DateIntervalFormat::getDateTimeSkeleton
-    fn of(skeleton: &[u16]) -> Result<Self, UErrorCode> {
+    /// Drops `O`, `X` and `x`. ICU4C: dtitvfmt.cpp, DateIntervalFormat::getDateTimeSkeleton
+    fn of(skeleton: &[u16]) -> Self {
         let mut parts = Self::default();
         let mut hour = None;
         for &letter in skeleton {
             match u8_or_zero(letter) {
                 b'E' | b'd' | b'M' | b'y' => parts.date.add(letter),
-                b'G' | b'Y' | b'L' | b'c' | b'U' | b'r' => {
+                b'G' | b'Y' | b'u' | b'Q' | b'q' | b'L' | b'l' | b'W' | b'w' | b'D' | b'F'
+                | b'g' | b'e' | b'c' | b'U' | b'r' => {
                     parts.normalized_date.add(letter);
                     parts.date.add(letter);
                 }
@@ -131,12 +139,11 @@ impl SkeletonParts {
                     hour.get_or_insert(letter);
                 }
                 b'm' | b'z' | b'v' => parts.time.add(letter),
-                b'a' | b's' | b'S' | b'B' => {
+                b'a' | b'V' | b'Z' | b'j' | b's' | b'S' | b'A' | b'b' | b'B' => {
                     parts.time.add(letter);
                     parts.normalized_time.add(letter);
                 }
-                b'O' => {}
-                _ => return Err(U_UNSUPPORTED_ERROR),
+                _ => {}
             }
         }
 
@@ -159,7 +166,7 @@ impl SkeletonParts {
                 .into_iter()
                 .filter(|letter| parts.time.contains(letter)),
         );
-        Ok(parts)
+        parts
     }
 }
 
@@ -172,17 +179,38 @@ enum IntervalPattern {
     /// Both dates are formatted with this pattern.
     Fallback(Vec<u16>),
     /// `pattern[..split]` is for the first date, the rest, which may be empty, for the second.
-    Parts { pattern: Vec<u16>, split: usize },
+    Parts {
+        pattern: Vec<u16>,
+        split: usize,
+        later_date_first: bool,
+    },
 }
 
 impl IntervalPattern {
-    fn parts(pattern: Vec<u16>) -> Self {
+    fn fallback(pattern: Vec<u16>) -> Self {
+        if pattern.is_empty() {
+            Self::None
+        } else {
+            Self::Fallback(pattern)
+        }
+    }
+
+    fn parts(mut pattern: Vec<u16>, mut later_date_first: bool) -> Self {
+        let prefixes = [("latestFirst:", true), ("earliestFirst:", false)];
+        if let Some((prefix, order)) = prefixes
+            .into_iter()
+            .find(|(prefix, _)| strip_prefix_str(&pattern, prefix).is_some())
+        {
+            pattern.replace_range(0, prefix.len(), &[]);
+            later_date_first = order;
+        }
         if pattern.is_empty() {
             return Self::None;
         }
         Self::Parts {
             split: split_pattern_into_2_part(&pattern),
             pattern,
+            later_date_first,
         }
     }
 }
@@ -220,22 +248,56 @@ fn replace_outside_quotes(pattern: &mut [u16], from: u8, to: u8) {
         .for_each(|unit| *unit = to.into());
 }
 
-/// Adapts a pattern for `best_skeleton` to `skeleton`: restores z, K and k, and widens fields.
+/// `shorter` is not longer than `from`.
+fn shorten_outside_quotes(pattern: &mut Vec<u16>, from: &[u16], shorter: &[u16]) {
+    let (mut i, mut in_quote) = (0, false);
+    while let Some(&unit) = pattern.get(i) {
+        if !in_quote && pattern.slice(i..).starts_with(from) {
+            pattern.replace_range(i, from.len(), shorter);
+            i += shorter.len();
+        } else {
+            in_quote ^= unit == QUOTE;
+            i += 1;
+        }
+    }
+}
+
+/// Removes `a`, the spaces beside it, and white space at both ends.
+#[cold]
+fn suppress_day_period(pattern: &mut Vec<u16>) {
+    const A: u16 = b'a' as u16;
+    const SPACE: u16 = b' ' as u16;
+    for day_period in [&[0xa0, A][..], &[0x202f, A], &[A, 0xa0], &[A, 0x202f], &[A]] {
+        shorten_outside_quotes(pattern, day_period, &[]);
+    }
+    shorten_outside_quotes(pattern, &[SPACE; 2], &[SPACE]);
+    let is_space = |unit: &u16| u_is_whitespace((*unit).into());
+    while pattern.pop_if(|unit| is_space(unit)).is_some() {}
+    let leading = pattern.split_while(is_space).0.len();
+    pattern.replace_range(0, leading, &[]);
+}
+
+/// Adapts a pattern for `best_skeleton` to `skeleton`: restores z, K, k and b, and widens fields.
 fn adjust_field_width(
     skeleton: &[u16],
     best_skeleton: &[u16],
     pattern: U16s,
+    suppresses_day_period: bool,
 ) -> Result<Vec<u16>, UErrorCode> {
     let pattern = &mut pattern.try_to_vec()?;
-    for (letter, substitute) in [(b'z', b'v'), (b'K', b'h'), (b'k', b'H')] {
-        if contains(skeleton, letter) {
+    if suppresses_day_period {
+        suppress_day_period(pattern);
+    }
+    let (widths, mut best_widths) = (FieldWidths::of(skeleton), FieldWidths::of(best_skeleton));
+    for (letter, substitute) in [(b'z', b'v'), (b'K', b'h'), (b'k', b'H'), (b'b', b'a')] {
+        if widths.get(letter) > 0 {
             replace_outside_quotes(pattern, substitute, letter);
         }
     }
 
-    let (widths, mut best_widths) = (FieldWidths::of(skeleton), FieldWidths::of(best_skeleton));
-    // `best_skeleton` never contains `a`, but its patterns may.
+    // Patterns may contain `a` and `b`, whatever `best_skeleton` contains.
     best_widths.set(b'a', 1);
+    best_widths.set(b'b', 1);
     let (mut adjusted, mut copied) = (memory::try_with_capacity(pattern.len())?, 0);
     for (letter, count, end) in pattern_fields(pattern) {
         let (width, best_width) = (
@@ -257,49 +319,65 @@ fn normalize_hour<'a>(
     skeleton: &'a [u16],
     best: &BestPatterns,
 ) -> Result<Cow<'a, [u16]>, UErrorCode> {
-    let is_hour = |&unit: &u16| matches!(u8_or_zero(unit), b'h' | b'H' | b'k' | b'K');
-    let is_day_period = |&unit: &u16| matches!(u8_or_zero(unit), b'a' | b'B');
+    let is_hour = |&unit: &u16| {
+        matches!(
+            u8_or_zero(unit),
+            b'j' | b'J' | b'C' | b'h' | b'H' | b'k' | b'K'
+        )
+    };
+    let is_day_period = |&unit: &u16| matches!(u8_or_zero(unit), b'a' | b'b' | b'B');
     let (before, rest) = skeleton.split_while(|unit| !is_hour(unit) && !is_day_period(unit));
     let (day_period, rest) = rest.split_while(is_day_period);
     let (hour, after) = rest.split_while(is_hour);
+    if after
+        .iter()
+        .any(|unit| is_hour(unit) || is_day_period(unit))
+    {
+        return Err(U_UNSUPPORTED_ERROR);
+    }
     let Some(&requested) = hour.first() else {
         return Ok(Cow::Borrowed(skeleton));
     };
 
-    let converted = best.get(&[requested])?;
-    let is_shown = |&wanted: &u8| pattern_fields(&converted).any(|(letter, ..)| letter == wanted);
-    let hour_letter = b"hKk".iter().copied().find(is_shown).unwrap_or(b'H');
-    let day_period_letter = match day_period {
-        _ if is_shown(&b'B') => b'B',
-        &[letter, ..] => letter as u8,
-        [] => b'a',
+    // Quoted text is skipped (the h of 'Uhr'). Text after an unmatched last quote is not quoted.
+    let converted = best.get_or_empty(&[requested]);
+    let quotes = converted.iter().filter(|&&unit| unit == QUOTE).count();
+    let is_unquoted = |&letter: &u8| {
+        let mut pieces = converted.split(|&unit| unit == QUOTE).enumerate();
+        pieces.any(|(i, piece)| (i % 2 == 0 || i == quotes) && contains(piece, letter))
     };
+    let hour_letter = b"hKk".iter().copied().find(is_unquoted).unwrap_or(b'H');
+    let shown_day_period = b"bB".iter().copied().find(is_unquoted).map(u16::from);
+    let day_period_letter = shown_day_period.or_else(|| day_period.first().copied());
     let length = match (hour_letter, day_period.len().max(hour.len())) {
         (b'H' | b'k', _) => 1,
         (_, 5..) => 6,
         (_, 3..) => 4,
         _ => 2,
     };
-    let mut hour_and_day_period = [u16::from(day_period_letter); 6];
+    let mut hour_and_day_period = [day_period_letter.unwrap_or_else(|| b'a'.into()); 6];
     hour_and_day_period[0] = u16::from(hour_letter);
     try_concat(&[before, hour_and_day_period.slice(..length), after]).map(Cow::Owned)
 }
 
-/// Loads the Gregorian pattern that combines a date and a time.
-fn load_date_time_format(locale: &Locale) -> Result<Vec<u16>, UErrorCode> {
-    const DATE_TIME: usize = 8;
+/// Loads the Gregorian pattern that combines a date and a time. `None` if it is not a string of 3 or more units.
+fn load_date_time_format(locale: &Locale) -> Result<Option<Vec<u16>>, UErrorCode> {
     ures_open(None, locale.get_base_name())
         .and_then(|found| found.get_by_key(b"calendar"))
         .and_then(|found| found.get_by_key_with_fallback(b"gregorian"))
         .and_then(|found| found.get_by_key_with_fallback(b"DateTimePatterns"))
-        .and_then(|found| ures_get_unicode_string_by_index(&found, DATE_TIME))
+        .and_then(|found| ures_get_data_string_by_index(&found, DATE_TIME))?
+        .filter(|format| format.units().len() >= 3)
+        .map(|format| format.units().try_to_vec())
+        .transpose()
 }
 
 /// The fallback patterns for two times on the same day: a single date and a time range.
 struct DatePlusTimeRange {
     date_pattern: Vec<u16>,
     time_pattern: Vec<u16>,
-    date_time_format: PatternParts,
+    /// The error of an invalid pattern is reported when formatting.
+    date_time_format: Result<PatternParts, UErrorCode>,
 }
 
 #[derive(Default)]
@@ -319,8 +397,8 @@ impl IntervalPatternsBuilder<'_> {
     // ICU4C: dtitvfmt.cpp, DateIntervalFormat::initializePattern
     fn initialize(&mut self) -> Result<(), UErrorCode> {
         let best = self.best;
-        let mut parts = SkeletonParts::of(&normalize_hour(self.skeleton, best)?)?;
-        let found =
+        let mut parts = SkeletonParts::of(&normalize_hour(self.skeleton, best)?);
+        let difference =
             self.set_separate_date_time_patterns(&parts.normalized_date, &parts.normalized_time)?;
         if parts.time.is_empty() {
             return Ok(());
@@ -334,14 +412,17 @@ impl IntervalPatternsBuilder<'_> {
                 IntervalField::Month,
                 IntervalField::Year,
             ] {
-                self.set_pattern(field, IntervalPattern::Fallback(try_to_vec(&pattern)?));
+                self.set_pattern(field, IntervalPattern::fallback(try_to_vec(&pattern)?));
             }
             parts.time.insert_at(0, &[b'G'.into()]);
             return self.set_fallback_pattern(IntervalField::Era, &parts.time);
         }
 
         let format = load_date_time_format(best.locale)?;
-        if found {
+        let Some(difference) = difference else {
+            return Ok(());
+        };
+        if difference != SkeletonDifference::Fields {
             // A difference in a field that the skeleton lacks adds the field to the pattern.
             let mut skeleton = try_to_vec(self.skeleton)?;
             for (field, letter) in DATE_FIELDS {
@@ -350,12 +431,14 @@ impl IntervalPatternsBuilder<'_> {
                     self.set_fallback_pattern(field, &skeleton)?;
                 }
             }
-            self.concat_single_date_to_time_intervals(&format, &best.get(&parts.date)?)?;
+            if let Some(format) = &format {
+                self.concat_single_date_to_time_intervals(format, &best.get(&parts.date)?)?;
+            }
         }
-        self.patterns.date_plus_time_range = Some(DatePlusTimeRange {
-            date_pattern: best.get(&parts.normalized_date)?,
-            time_pattern: best.get(&parts.normalized_time)?,
-            date_time_format: PatternParts::new(&format)?,
+        self.patterns.date_plus_time_range = format.map(|format| DatePlusTimeRange {
+            date_pattern: best.get_or_empty(&parts.normalized_date),
+            time_pattern: best.get_or_empty(&parts.normalized_time),
+            date_time_format: PatternParts::new(&format),
         });
         Ok(())
     }
@@ -369,27 +452,26 @@ impl IntervalPatternsBuilder<'_> {
         field: IntervalField,
         skeleton: &[u16],
     ) -> Result<(), UErrorCode> {
-        self.set_pattern(field, IntervalPattern::Fallback(self.best.get(skeleton)?));
+        self.set_pattern(field, IntervalPattern::fallback(self.best.get(skeleton)?));
         Ok(())
     }
 
-    /// Returns whether the data has a skeleton with the fields of `time`, or of `date` if `time` is empty.
+    /// Returns the difference between the closest skeleton of the data and `time`, or `date` if `time` is empty.
     fn set_separate_date_time_patterns(
         &mut self,
         date: &[u16],
         time: &[u16],
-    ) -> Result<bool, UErrorCode> {
+    ) -> Result<Option<SkeletonDifference>, UErrorCode> {
         let skeleton = if time.is_empty() { date } else { time };
-        let (best_skeleton, difference) = self.info.best_skeleton(skeleton)?;
-        if difference == SkeletonDifference::Fields {
-            return Ok(false);
+        let Some((best_skeleton, difference)) = self.info.best_skeleton(skeleton) else {
+            return Ok(None);
+        };
+        match difference {
+            SkeletonDifference::Fields => {}
+            _ if time.is_empty() => self.set_date_patterns(skeleton, best_skeleton, difference)?,
+            _ => self.set_time_patterns(skeleton, best_skeleton)?,
         }
-        if time.is_empty() {
-            self.set_date_patterns(skeleton, best_skeleton, difference)?;
-        } else {
-            self.set_time_patterns(skeleton, best_skeleton)?;
-        }
-        Ok(true)
+        Ok(Some(difference))
     }
 
     // ICU4C: dtitvfmt.cpp, DateIntervalFormat::setIntervalPattern
@@ -416,7 +498,8 @@ impl IntervalPatternsBuilder<'_> {
                 prefix = usize::from(!extended);
                 pattern = info.interval_pattern(&best, field);
                 if pattern.is_empty() && difference == SkeletonDifference::None {
-                    extended_match = Some(info.best_skeleton(&best)?)
+                    extended_match = info
+                        .best_skeleton(&best)
                         .filter(|found| found.1 != SkeletonDifference::Fields);
                     pattern = extended_match
                         .map_or(pattern, |found| info.interval_pattern(found.0, field));
@@ -466,8 +549,12 @@ impl IntervalPatternsBuilder<'_> {
         best_skeleton: &[u16],
         pattern: U16s,
     ) -> Result<(), UErrorCode> {
-        let pattern = adjust_field_width(skeleton, best_skeleton, pattern)?;
-        self.set_pattern(field, IntervalPattern::parts(pattern));
+        let has_cap_j = contains(self.skeleton, b'J');
+        let pattern = adjust_field_width(skeleton, best_skeleton, pattern, has_cap_j)?;
+        self.set_pattern(
+            field,
+            IntervalPattern::parts(pattern, self.info.later_date_first),
+        );
         Ok(())
     }
 
@@ -476,14 +563,21 @@ impl IntervalPatternsBuilder<'_> {
         format: &[u16],
         date: &[u16],
     ) -> Result<(), UErrorCode> {
-        let format = SimpleFormatter::with_pattern_min_max_arguments(format, 2, 2)?;
+        let format = SimpleFormatter::with_pattern_min_max_arguments(format, 2, 2);
         for interval in self
             .patterns
             .by_field
             .slice_mut(IntervalField::AmPm as usize..)
         {
-            if let IntervalPattern::Parts { pattern, .. } = interval {
-                *interval = IntervalPattern::parts(format.format_to_vec(&[pattern, date]));
+            if let IntervalPattern::Parts {
+                pattern,
+                later_date_first,
+                ..
+            } = interval
+            {
+                let format = format.as_ref().map_err(|&code| code)?;
+                let combined = format.format_to_vec(&[pattern, date]);
+                *interval = IntervalPattern::parts(combined, *later_date_first);
             }
         }
         Ok(())
@@ -499,61 +593,93 @@ struct IntervalWriter<'a> {
     handler: FieldPositionIteratorHandler,
 }
 
-impl IntervalWriter<'_> {
+impl<'a> IntervalWriter<'a> {
     fn format_date(&mut self, pattern: &[u16], calendar: &Calendar) -> Result<(), UErrorCode> {
-        self.formatter.date_format.format_with_pattern(
-            pattern,
-            Ok(calendar),
-            &mut self.text,
-            Some(&mut self.handler),
-        )
+        let format = &self.formatter.date_format;
+        if calendar.calendar_type() != format.calendar.calendar_type() {
+            return self.format_converted_date(pattern, calendar);
+        }
+        let handler = Some(&mut self.handler);
+        format.format_with_pattern(pattern, Ok(calendar), &mut self.text, handler)
     }
 
-    fn format_range(&mut self, pattern: &[u16]) -> Result<(), UErrorCode> {
-        let [before, between, after] = self.formatter.fallback.pieces();
+    #[cold]
+    fn format_converted_date(
+        &mut self,
+        pattern: &[u16],
+        calendar: &Calendar,
+    ) -> Result<(), UErrorCode> {
+        let format = &self.formatter.date_format;
+        let mut converted = Calendar::clone(&format.calendar);
+        converted.set_time(calendar.internal_get_time())?;
+        converted.share_time_zone_of(calendar);
+        let converted = converted.complete().map(|()| &converted);
+        format.format_with_pattern(pattern, converted, &mut self.text, Some(&mut self.handler))
+    }
+
+    fn in_order(&self, later_date_first: bool) -> [&'a Calendar; 2] {
+        if later_date_first {
+            [self.to, self.from]
+        } else {
+            [self.from, self.to]
+        }
+    }
+
+    /// Returns whether the later date is written first.
+    fn format_range(&mut self, pattern: &[u16]) -> Result<bool, UErrorCode> {
+        let parts = self.formatter.fallback.as_ref().map_err(|&code| code)?;
+        let [before, between, after] = parts.pieces();
+        let [first, second] = self.in_order(parts.order.is_ge());
         self.text.add_all(before);
-        self.format_date(pattern, self.from)?;
+        self.format_date(pattern, first)?;
         self.text.add_all(between);
-        self.format_date(pattern, self.to)?;
+        self.format_date(pattern, second)?;
         self.text.add_all(after);
-        Ok(())
+        Ok(parts.order.is_ge())
     }
 
-    /// Writes the time range for {0} and the first date for {1}.
+    /// Like `format_range`, but writes the time range for {0} and the earlier date for {1}.
     fn format_date_plus_time_range(
         &mut self,
         patterns: &DatePlusTimeRange,
-    ) -> Result<(), UErrorCode> {
-        let [before, between, after] = patterns.date_time_format.pieces();
+    ) -> Result<bool, UErrorCode> {
+        let parts = patterns.date_time_format.as_ref().map_err(|&code| code)?;
+        let [before, between, after] = parts.pieces();
         self.text.add_all(before);
-        if patterns.date_time_format.order.is_lt() {
-            self.format_range(&patterns.time_pattern)?;
+        let later_date_first;
+        if parts.order.is_lt() {
+            later_date_first = self.format_range(&patterns.time_pattern)?;
             self.text.add_all(between);
             self.format_date(&patterns.date_pattern, self.from)?;
         } else {
             self.format_date(&patterns.date_pattern, self.from)?;
             self.text.add_all(between);
-            self.format_range(&patterns.time_pattern)?;
+            later_date_first = self.format_range(&patterns.time_pattern)?;
         }
         self.text.add_all(after);
-        Ok(())
+        Ok(later_date_first)
     }
 
-    /// Returns false if a single date is written. ICU4C: dtitvfmt.cpp, DateIntervalFormat::formatImpl
-    fn format(&mut self) -> Result<bool, UErrorCode> {
+    /// Like `format_range`. Returns `None` if a single date is written. ICU4C: dtitvfmt.cpp, DateIntervalFormat::formatImpl
+    fn format(&mut self) -> Result<Option<bool>, UErrorCode> {
         let formatter = self.formatter;
         let single_pattern = &formatter.date_format.pattern;
         let Some((field, interval)) = formatter.largest_difference(self.from, self.to) else {
-            return self.format_date(single_pattern, self.from).map(|()| false);
+            return self.format_date(single_pattern, self.from).map(|()| None);
         };
         let full_pattern = match interval {
-            IntervalPattern::Parts { pattern, split } => {
-                self.format_date(pattern.slice(..*split), self.from)?;
-                self.format_date(pattern.slice(*split..), self.to)?;
-                return Ok(true);
+            &IntervalPattern::Parts {
+                ref pattern,
+                split,
+                later_date_first,
+            } => {
+                let [first, second] = self.in_order(later_date_first);
+                self.format_date(pattern.slice(..split), first)?;
+                self.format_date(pattern.slice(split..), second)?;
+                return Ok(Some(later_date_first));
             }
             IntervalPattern::None if is_field_unit_ignored(single_pattern, field) => {
-                return self.format_date(single_pattern, self.from).map(|()| false);
+                return self.format_date(single_pattern, self.from).map(|()| None);
             }
             IntervalPattern::None => single_pattern,
             IntervalPattern::Fallback(pattern) => pattern,
@@ -563,7 +689,7 @@ impl IntervalWriter<'_> {
             Some(patterns) if on_same_day => self.format_date_plus_time_range(patterns),
             _ => self.format_range(full_pattern),
         }
-        .map(|()| true)
+        .map(Some)
     }
 }
 
@@ -574,7 +700,8 @@ struct Fields {
     /// Has the single-date pattern and the calendar that each call clones.
     date_format: SimpleDateFormat,
     patterns: IntervalPatterns,
-    fallback: PatternParts,
+    /// The error of an invalid pattern is reported when formatting.
+    fallback: Result<PatternParts, UErrorCode>,
 }
 
 impl Fields {
@@ -592,6 +719,7 @@ impl Fields {
                 differ(field.calendar_field())
                     || field == IntervalField::Month
                         && differ(Field::OrdinalMonth)
+                        && from.calendar_type() == self.date_format.calendar.calendar_type()
                         && self.shows_leap_month(pattern)
             })
     }
@@ -599,12 +727,13 @@ impl Fields {
     /// Returns whether both dates are formatted with a month or a weekday.
     fn shows_leap_month(&self, months: &IntervalPattern) -> bool {
         let shows = |pattern: &[u16]| {
-            pattern_fields(pattern).any(|(letter, ..)| matches!(letter, b'M' | b'L' | b'E' | b'c'))
+            pattern_fields(pattern)
+                .any(|(letter, ..)| matches!(letter, b'M' | b'L' | b'E' | b'c' | b'e'))
         };
         match months {
             IntervalPattern::None => shows(&self.date_format.pattern),
             IntervalPattern::Fallback(pattern) => shows(pattern),
-            IntervalPattern::Parts { pattern, split } => {
+            IntervalPattern::Parts { pattern, split, .. } => {
                 shows(pattern.slice(..*split)) && shows(pattern.slice(*split..))
             }
         }
@@ -617,23 +746,20 @@ impl DateIntervalFormat {
         locale: &Locale,
         zone: TimeZone,
     ) -> Result<Self, UErrorCode> {
-        if get_skeleton(skeleton)? != skeleton {
-            return Err(U_UNSUPPORTED_ERROR);
-        }
         let info = DateIntervalInfo::for_locale(locale)?;
-        let fallback = PatternParts::new(&info.fallback_pattern)?;
-        if fallback.order.is_ge() {
-            return Err(U_UNSUPPORTED_ERROR);
-        }
         let best = BestPatterns {
             locale,
             generator: OnceCell::new(),
         };
         let date_format = SimpleDateFormat::with_pattern(&best.get(skeleton)?, locale, zone)?;
+        let skeleton = match skeleton {
+            [] => Cow::Owned(get_skeleton(&date_format.pattern)?),
+            _ => Cow::Borrowed(skeleton),
+        };
         let mut builder = IntervalPatternsBuilder {
             info: &info,
             best: &best,
-            skeleton,
+            skeleton: &skeleton,
             patterns: IntervalPatterns::default(),
         };
         builder.initialize()?;
@@ -642,7 +768,7 @@ impl DateIntervalFormat {
             Fields {
                 date_format,
                 patterns: builder.patterns,
-                fallback,
+                fallback: PatternParts::new(&info.fallback_pattern),
             },
         )))
     }
@@ -667,9 +793,7 @@ impl DateIntervalFormat {
         from: &Calendar,
         to: &Calendar,
     ) -> Result<FormattedDateInterval, UErrorCode> {
-        if !from.has_settings_of(to)
-            || from.calendar_type() != self.0.date_format.calendar.calendar_type()
-        {
+        if !from.has_settings_of(to) {
             return Err(U_UNSUPPORTED_ERROR);
         }
         let mut writer = IntervalWriter {
@@ -679,7 +803,7 @@ impl DateIntervalFormat {
             text: Vec::new(),
             handler: FieldPositionIteratorHandler::with_category(UFIELD_CATEGORY_DATE),
         };
-        let is_range = writer.format()?;
-        FormattedDateInterval::new(writer.text, writer.handler.finish()?, is_range)
+        let later_date_first = writer.format()?;
+        FormattedDateInterval::new(writer.text, writer.handler.finish()?, later_date_first)
     }
 }

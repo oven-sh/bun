@@ -76,6 +76,14 @@ pub(crate) fn eq_str(text: &[u16], s: &str) -> bool {
     text.iter().copied().eq(s.encode_utf16())
 }
 
+/// `text.strip_prefix(ustr(s))`, without allocating.
+pub(crate) fn strip_prefix_str<'a>(text: &'a [u16], s: &str) -> Option<&'a [u16]> {
+    let mut rest = text.iter();
+    s.encode_utf16()
+        .all(|unit| rest.next() == Some(&unit))
+        .then_some(rest.as_slice())
+}
+
 /// Zero-extends each byte.
 pub(crate) fn from_invariant(s: &[u8]) -> Vec<u16> {
     from_units(s.iter().map(|&c| u16::from(c)))
@@ -93,6 +101,7 @@ pub(crate) trait UStr {
     fn index_of_from(&self, text: &[u16], start: usize) -> Option<usize>;
     fn index_of_unit(&self, c: u16, start: usize) -> Option<usize>;
     fn temp_sub_string(&self, start: usize, length: usize) -> &[u16];
+    fn temp_sub_string_between(&self, start: usize, limit: usize) -> &[u16];
 }
 
 impl UStr for [u16] {
@@ -128,6 +137,10 @@ impl UStr for [u16] {
     fn temp_sub_string(&self, start: usize, length: usize) -> &[u16] {
         let rest = self.get(start..).unwrap_or_default();
         rest.get(..length).unwrap_or(rest)
+    }
+
+    fn temp_sub_string_between(&self, start: usize, limit: usize) -> &[u16] {
+        self.temp_sub_string(start, limit.saturating_sub(start))
     }
 }
 

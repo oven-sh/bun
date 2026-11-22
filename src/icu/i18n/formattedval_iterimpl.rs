@@ -16,15 +16,16 @@ pub(crate) struct FormattedDateInterval {
 }
 
 impl FormattedDateInterval {
+    /// `later_date_first` is `None` for a single date.
     pub(crate) fn new(
         mut string: Vec<u16>,
         fields: Vec<Attribute>,
-        is_range: bool,
+        later_date_first: Option<bool>,
     ) -> Result<Self, UErrorCode> {
         try_push(&mut string, 0)?;
         let mut value = Self { string, fields };
-        if is_range {
-            value.add_overlap_spans()?;
+        if let Some(later_date_first) = later_date_first {
+            value.add_overlap_spans(later_date_first.into())?;
             sort_in_place_by(&mut value.fields, |a, b| {
                 (a.start, b.limit, b.category, a.field)
                     .cmp(&(b.start, a.limit, a.category, b.field))
@@ -34,11 +35,11 @@ impl FormattedDateInterval {
     }
 
     /// Adds two spans that cover the first and the second occurrences of repeated fields: `..a.[b.c].d.[b.e.c]..`
-    fn add_overlap_spans(&mut self) -> Result<(), UErrorCode> {
+    fn add_overlap_spans(&mut self, first_index: i32) -> Result<(), UErrorCode> {
         // A stand-alone month counts as a month, unless that makes the spans overlap.
-        let mut spans = self.overlap_spans(UDAT_MONTH_FIELD);
+        let mut spans = self.overlap_spans(first_index, UDAT_MONTH_FIELD);
         if spans[0].limit > spans[1].start {
-            spans = self.overlap_spans(UDAT_STANDALONE_MONTH_FIELD);
+            spans = self.overlap_spans(first_index, UDAT_STANDALONE_MONTH_FIELD);
         }
         if spans[0].start == i32::MAX {
             return Ok(());
@@ -47,7 +48,7 @@ impl FormattedDateInterval {
     }
 
     /// Treats a stand-alone month as the field `month`.
-    fn overlap_spans(&self, month: i32) -> [Attribute; 2] {
+    fn overlap_spans(&self, first_index: i32, month: i32) -> [Attribute; 2] {
         let kind = |field| {
             if field == UDAT_STANDALONE_MONTH_FIELD {
                 month
@@ -55,7 +56,7 @@ impl FormattedDateInterval {
                 field
             }
         };
-        let mut spans = [0, 1].map(|field| Attribute {
+        let mut spans = [first_index, 1 - first_index].map(|field| Attribute {
             category: UFIELD_CATEGORY_DATE_INTERVAL_SPAN,
             field,
             start: i32::MAX,

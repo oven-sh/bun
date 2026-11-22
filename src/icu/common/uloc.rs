@@ -19,6 +19,7 @@ use std::ffi::CStr;
 use std::hash::{Hash, Hasher};
 
 /// Looks `key` up in a sorted table of rows "key=value", in which spaces pad the key to `K` bytes and follow the value.
+#[inline(always)]
 pub(crate) fn find_row<const K: usize, const N: usize>(
     table: &'static [[u8; N]],
     key: &[u8],
@@ -877,7 +878,11 @@ pub(crate) fn ulocimp_canonicalize_to(
     canonicalize(locale_id, Form::Canonical, sink)
 }
 
-/// Returns the text before the last '_'. The ID is not parsed.
+/// Returns the text before the last '_', without a leading `und`. The ID is not parsed.
 pub(crate) fn uloc_get_parent(locale_id: &[u8]) -> &[u8] {
-    locale_id.slice(..find_last_byte(locale_id, b'_').unwrap_or(0))
+    let parent = locale_id.slice(..find_last_byte(locale_id, b'_').unwrap_or(0));
+    match locale_id {
+        [b'u' | b'U', b'n' | b'N', b'd' | b'D', b'_', ..] => parent.slice(3..),
+        _ => parent,
+    }
 }

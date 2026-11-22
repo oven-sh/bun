@@ -46,6 +46,19 @@ mod casts {
 
 pub(crate) use casts::{double_to_int32, double_to_int64};
 
+pub(crate) fn uprv_round(x: f64) -> f64 {
+    (x + 0.5).floor()
+}
+
+/// The sign of a new NaN is the processor's. Android makes it from `long double`, which is software on x86-64.
+pub(crate) fn uprv_fmod(x: f64, y: f64) -> f64 {
+    #[cfg(all(target_os = "android", target_arch = "x86_64"))]
+    if (x.is_infinite() && !y.is_nan()) || (y == 0.0 && !x.is_nan()) {
+        return (x % y).abs();
+    }
+    x % y
+}
+
 /// Returns 2^54, the `double` nearest to 2^54 - 1.
 pub(crate) fn uprv_max_mantissa() -> f64 {
     2f64.powi(f64::MANTISSA_DIGITS as i32 + 1) - 1.0
@@ -174,17 +187,14 @@ mod host_time_zone {
         use super::{is_valid_olson_id, skip_zone_id_prefix};
         use crate::common::memory::{Appendable, defer_oom, try_to_vec};
         use crate::common::slice_ext::SliceExt;
-        use bun_core::{ZStr, strings, zstr};
+        use crate::sys::file::{link_target, ok_or_oom, open, open_directory, real_path};
+        use bun_core::strings;
         use bun_sys::dir_iterator::iterate_owned;
-        use bun_sys::{CloseOnDrop, Dir, Fd, File, O};
+        use bun_sys::{CloseOnDrop, File};
+        use std::ffi::CStr;
 
-        pub(super) const TZDEFAULT: &ZStr = zstr!("/etc/localtime");
-        const TZZONEINFO: &[u8] = b"/usr/share/zoneinfo/";
-
-        fn open(path: &[u8]) -> Option<CloseOnDrop> {
-            let file = File::openat(Fd::cwd(), path, O::RDONLY | O::NOCTTY, 0);
-            file.ok().map(CloseOnDrop::from)
-        }
+        pub(super) const TZDEFAULT: &CStr = c"/etc/localtime";
+        const TZZONEINFO: &CStr = c"/usr/share/zoneinfo/";
 
         /// Compares the first `size` bytes.
         fn contents_equal(a: &File, b: &File, size: usize) -> bool {
@@ -193,8 +203,7 @@ mod host_time_zone {
             (0..size).step_by(CHUNK_SIZE).all(|at| {
                 let length = (size - at).min(CHUNK_SIZE);
                 let fill = |file: &File, chunk: &mut [u8]| {
-                    file.pread_all(chunk.slice_mut(..length), at as u64)
-                        .is_ok_and(|count| count == length)
+                    ok_or_oom(file.pread_all(chunk.slice_mut(..length), at as u64)) == Some(length)
                 };
                 fill(a, &mut chunk_a) && fill(b, &mut chunk_b) && chunk_a == chunk_b
             })
@@ -202,17 +211,16 @@ mod host_time_zone {
 
         /// Returns the ID of the first file under `TZZONEINFO` that has the contents of `default`, depth first.
         fn search_for_tz_file(default: &File) -> Option<Vec<u8>> {
-            let size = default.get_end_pos().ok()?;
+            let size = ok_or_oom(default.get_end_pos())?;
             let is_copy = |file: CloseOnDrop| {
-                file.get_end_pos().is_ok_and(|other| other == size)
-                    && contents_equal(default, &file, size)
+                ok_or_oom(file.get_end_pos()) == Some(size) && contents_equal(default, &file, size)
             };
             // `directories` is the stack of open directories, each with the length of its path.
             let (mut path, mut directories) = (Vec::new(), Vec::new());
-            path.add_all(TZZONEINFO);
-            directories.add((iterate_owned(Dir::open(TZZONEINFO).ok()?), path.len()));
+            path.add_all(TZZONEINFO.to_bytes());
+            directories.add((iterate_owned(open_directory(TZZONEINFO)?), path.len()));
             while let Some((directory, length)) = directories.last_mut() {
-                let Ok(Some(entry)) = directory.next() else {
+                let Some(Some(entry)) = ok_or_oom(directory.next()) else {
                     directories.pop();
                     continue;
                 };
@@ -223,12 +231,15 @@ mod host_time_zone {
                 path.truncate(*length);
                 defer_oom(path.reserve_append(name.len() + 1))?;
                 path.add_all(name);
-                if let Ok(directory) = Dir::open(&path) {
+                path.add(0);
+                let terminated = CStr::from_bytes_until_nul(&path).ok()?;
+                if let Some(directory) = open_directory(terminated) {
+                    path.pop();
                     path.add(b'/');
                     directories.add((iterate_owned(directory), path.len()));
-                } else if open(&path).is_some_and(is_copy) {
+                } else if open(terminated).is_some_and(is_copy) {
                     return defer_oom(try_to_vec(skip_zone_id_prefix(
-                        path.slice(TZZONEINFO.len()..),
+                        terminated.to_bytes().slice(TZZONEINFO.count_bytes()..),
                     )));
                 }
             }
@@ -243,18 +254,14 @@ mod host_time_zone {
 
         /// Derives the ID from the target of the symlink `TZDEFAULT`, or else from a file with the same contents.
         pub(crate) fn olson_id() -> Option<Vec<u8>> {
-            let (mut real, mut link) = (
-                bun_paths::path_buffer_pool::get(),
-                bun_paths::path_buffer_pool::get(),
-            );
-            let id = match bun_sys::realpath(TZDEFAULT, &mut real) {
-                Ok(mut path) if path != TZDEFAULT.as_bytes() => {
-                    if after_zoneinfo(path).is_none_or(|id| id == b"posixrules")
-                        && let Ok(length @ 1..) = bun_sys::readlink(TZDEFAULT, &mut link[..])
+            let id = match real_path(TZDEFAULT) {
+                Some(mut path) if path != TZDEFAULT.to_bytes() => {
+                    if after_zoneinfo(&path).is_none_or(|id| id == b"posixrules")
+                        && let Some(target) = link_target(TZDEFAULT)
                     {
-                        path = link.slice(..length);
+                        path = target;
                     }
-                    defer_oom(try_to_vec(skip_zone_id_prefix(after_zoneinfo(path)?)))
+                    defer_oom(try_to_vec(skip_zone_id_prefix(after_zoneinfo(&path)?)))
                 }
                 _ => search_for_tz_file(&*open(TZDEFAULT)?),
             };
@@ -267,7 +274,7 @@ mod host_time_zone {
         match localtime::after_zoneinfo(name).filter(|_| name.starts_with(b"/")) {
             Some(b"localtime" | b"posixrules") => None,
             Some(id) => Some(skip_zone_id_prefix(id)).filter(|id| is_valid_olson_id(id)),
-            None if name == localtime::TZDEFAULT.as_bytes() => None,
+            None if name == localtime::TZDEFAULT.to_bytes() => None,
             None => is_valid_olson_id(tz).then(|| skip_zone_id_prefix(name)),
         }
     }

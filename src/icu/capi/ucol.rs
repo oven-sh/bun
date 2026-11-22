@@ -3,14 +3,14 @@
 use crate::capi::ffi::{self, Dest, ErrorCode, NonNullHandle, NulStr, Out, Text, UBool, UChar};
 use crate::capi::uenum::{self, UEnumeration};
 use crate::capi::uset::USet;
-use crate::common::uniset::UnicodeSet;
 use crate::common::utypes::*;
-use crate::i18n::collationsets::add_contractions_and_expansions;
+use crate::i18n::coll::{self, AvailableLocales};
+use crate::i18n::collationsets::{add_contractions_and_expansions, tailored_set};
 use crate::i18n::rulebasedcollator::RuleBasedCollator;
+use crate::i18n::ucol_res;
 use crate::i18n::unicode::ucol::*;
-use crate::i18n::{coll, ucol_res};
 use bun_icu_macros::capi;
-use std::ffi::c_char;
+use std::ffi::{CStr, c_char};
 use std::ptr::null;
 
 pub(crate) type UCollator = RuleBasedCollator;
@@ -26,7 +26,7 @@ fn ucol_close(coll: Option<Box<UCollator>>) {
     drop(coll);
 }
 
-/// Accepts a strength up to tertiary, a case level only at primary strength, and normalization only on.
+/// Accepts normalization only on.
 #[capi]
 fn ucol_setAttribute(
     coll: Option<&mut UCollator>,
@@ -34,16 +34,9 @@ fn ucol_setAttribute(
     value: UColAttributeValue,
     status: ErrorCode,
 ) {
-    status.run((), |_| {
-        let coll = coll.non_null()?;
-        match (attr, value) {
-            (UCOL_STRENGTH, UCOL_QUATERNARY | UCOL_IDENTICAL)
-            | (UCOL_NORMALIZATION_MODE, UCOL_OFF | UCOL_DEFAULT) => Err(U_UNSUPPORTED_ERROR),
-            (UCOL_CASE_LEVEL, UCOL_ON) if coll.attribute(UCOL_STRENGTH)? != UCOL_PRIMARY => {
-                Err(U_UNSUPPORTED_ERROR)
-            }
-            _ => coll.set_attribute(attr, value),
-        }
+    status.run((), |_| match (attr, value) {
+        (UCOL_NORMALIZATION_MODE, UCOL_OFF | UCOL_DEFAULT) => Err(U_UNSUPPORTED_ERROR),
+        _ => coll.non_null()?.set_attribute(attr, value),
     })
 }
 
@@ -72,7 +65,7 @@ fn ucol_getReorderCodes(coll: Option<&UCollator>, (dest, _): Dest<i32>, status: 
     })
 }
 
-/// `coll` has a strength and a case level that `ucol_setAttribute` accepts.
+/// Normalizes the texts, whether or not `coll` has `UCOL_NORMALIZATION_MODE` on.
 #[capi]
 fn ucol_strcoll(
     coll: Option<&UCollator>,
@@ -83,12 +76,11 @@ fn ucol_strcoll(
         return UCOL_EQUAL;
     };
     let order = ffi::ignore_oom(|| coll.compare(source, target));
-    debug_assert!(order != Err(U_UNSUPPORTED_ERROR));
     // After a failure the code units decide, so that only identical texts are equal.
-    order.unwrap_or_else(|_| source.cmp(target)) as UCollationResult
+    order.unwrap_or_else(|_| source.cmp(target) as UCollationResult)
 }
 
-/// `coll` has a strength and a case level that `ucol_setAttribute` accepts.
+/// Normalizes the texts too.
 #[capi]
 fn ucol_strcollUTF8(
     coll: Option<&UCollator>,
@@ -98,7 +90,7 @@ fn ucol_strcollUTF8(
 ) -> UCollationResult {
     status.run(UCOL_EQUAL, |_| {
         let (source, target) = (source.get()?, target.get()?);
-        Ok(coll.non_null()?.compare(source, target)? as UCollationResult)
+        coll.non_null()?.compare(source, target)
     })
 }
 
@@ -110,13 +102,12 @@ fn ucol_getRules(coll: Option<&UCollator>, length: Out<i32>) -> *const UChar {
     })
 }
 
-/// `coll` has the root mappings.
 #[capi]
 fn ucol_getTailoredSet(coll: Option<&UCollator>, status: ErrorCode) -> Option<Box<USet>> {
-    status.open(|| coll.non_null()?.root_data().map(|_| UnicodeSet::new()))
+    status.open(|| tailored_set(coll.non_null()?.data()))
 }
 
-/// `coll` has the root mappings, the sets are distinct, and `add_prefixes` is true.
+/// The sets are distinct, and `add_prefixes` is true.
 #[capi]
 fn ucol_getContractionsAndExpansions(
     coll: Option<&UCollator>,
@@ -130,7 +121,7 @@ fn ucol_getContractionsAndExpansions(
             return Err(U_UNSUPPORTED_ERROR);
         }
         let (contractions, expansions) = (contractions.non_null()?, expansions.non_null()?);
-        let data = coll.non_null()?.root_data()?;
+        let data = coll.non_null()?.data();
         contractions.clear();
         expansions.clear();
         add_contractions_and_expansions(data, contractions, expansions)
@@ -139,13 +130,12 @@ fn ucol_getContractionsAndExpansions(
 
 #[capi]
 fn ucol_getAvailable(index: i32) -> *const c_char {
-    ffi::on_oom(None, || coll::available_locales()?.key_at(index as usize))
-        .map_or(null(), |name| name.as_c_str().as_ptr())
+    ffi::on_oom(None, || AvailableLocales::load()?.get(index as usize)).map_or(null(), CStr::as_ptr)
 }
 
 #[capi]
 fn ucol_countAvailable() -> i32 {
-    ffi::on_oom(None, coll::available_locales).map_or(0, |locales| locales.get_size() as i32)
+    ffi::on_oom(None, AvailableLocales::load).map_or(0, |locales| ffi::to_int32(locales.count()))
 }
 
 #[capi]

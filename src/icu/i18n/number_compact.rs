@@ -9,8 +9,8 @@ use crate::common::uresimp::{ures_get_all_items_with_fallback, ures_open};
 use crate::common::utypes::*;
 use crate::i18n::formatted_string_builder::Field;
 use crate::i18n::number_decimalquantity::DecimalQuantity;
-use crate::i18n::number_modifiers::{AdoptingSignumModifierStore, MiddleModifier};
-use crate::i18n::number_patternmodifier::PatternModifier;
+use crate::i18n::number_modifiers::MiddleModifier;
+use crate::i18n::number_patternmodifier::{ImmutablePatternModifier, PatternModifier};
 use crate::i18n::number_patternstring::ParsedPatternInfo;
 use crate::i18n::number_rounding::{MultiplierProducer, RoundingImpl};
 use crate::i18n::plurrule::PluralRules;
@@ -20,8 +20,6 @@ use crate::i18n::unicode::unum::UNUM_COMPACT_FIELD;
 const COMPACT_MAX_DIGITS: usize = 20;
 const COMPACT_FIELD: Field = Field::number(UNUM_COMPACT_FIELD);
 const ZERO: u16 = 0x30;
-/// The index in `PowerOfTen::by_plural` of the key "1".
-const EXACTLY_ONE: usize = standardplural::COUNT;
 
 #[derive(Clone, Copy, PartialEq, Default)]
 enum Entry {
@@ -35,7 +33,7 @@ enum Entry {
 
 #[derive(Clone, Copy, Default)]
 struct PowerOfTen {
-    by_plural: [Entry; EXACTLY_ONE + 1],
+    by_plural: [Entry; standardplural::COUNT],
     /// -3 for "00K"; 0 until a pattern determines it.
     multiplier: i8,
 }
@@ -45,6 +43,7 @@ struct CompactData {
     /// UTF-16 strings as the bytes of a `U16s`.
     patterns: Vec<&'static [u8]>,
     largest_magnitude: usize,
+    is_empty: bool,
 }
 
 impl CompactData {
@@ -60,6 +59,7 @@ impl CompactData {
             by_magnitude: Default::default(),
             patterns,
             largest_magnitude: 0,
+            is_empty: true,
         };
         let styles: &[&[u8]] = if is_long {
             &[b"/patternsLong", b"/patternsShort"]
@@ -79,10 +79,10 @@ impl CompactData {
         for style in styles {
             for ns_name in ns_names {
                 let key = try_concat(&[b"NumberElements/", ns_name, style, format])?;
-                match ures_get_all_items_with_fallback(&bundle, &key, &mut data) {
-                    Ok(()) if data.largest_magnitude > 0 => return Ok(data),
-                    Ok(()) | Err(U_MISSING_RESOURCE_ERROR) => {}
-                    Err(code) => return Err(code),
+                // What was read before an error counts.
+                _ = ures_get_all_items_with_fallback(&bundle, &key, &mut data);
+                if !data.is_empty {
+                    return Ok(data);
                 }
             }
         }
@@ -102,8 +102,15 @@ impl CompactData {
         quantity: &DecimalQuantity,
     ) -> Option<usize> {
         let by_plural = &self.power_of_ten(magnitude)?.by_plural;
-        let mut found = by_plural.at(EXACTLY_ONE);
-        if found == Entry::Missing || !quantity.is_one() {
+        let exact = [PluralForm::Eq0, PluralForm::Eq1].map(|form| by_plural.at(form.index()));
+        let mut found = Entry::Missing;
+        if exact != [Entry::Missing; 2] && quantity.has_integer_value() {
+            let value = usize::try_from(quantity.to_long()).ok();
+            found = value
+                .and_then(|value| exact.get(value).copied())
+                .unwrap_or(found);
+        }
+        if found == Entry::Missing {
             found = by_plural.at(rules.select(quantity).index());
         }
         if found == Entry::Missing {
@@ -142,24 +149,22 @@ impl MultiplierProducer for CompactData {
 impl ResourceSink for CompactData {
     fn put(&mut self, value: &ResourceValue) -> Result<(), UErrorCode> {
         for (key, value) in value.get_table()?.iter() {
-            // Keys have the form "10000".
-            let magnitude = key.len().wrapping_sub(1);
+            // Keys have the form "10000". Eight bits of the length count.
+            let magnitude = usize::from((key.len() as u8).wrapping_sub(1));
             let Some(power) = self.by_magnitude.get_mut(magnitude) else {
                 continue;
             };
             let mut multiplier = power.multiplier;
 
             for (key, value) in value.get_table()?.iter() {
-                let plural = match PluralForm::from_keyword(key) {
-                    Some(form) => form.index(),
-                    None if key == b"1" => EXACTLY_ONE,
-                    None => return Err(U_ILLEGAL_ARGUMENT_ERROR),
-                };
+                let plural = PluralForm::from_keyword(key).ok_or(U_ILLEGAL_ARGUMENT_ERROR)?;
+                let plural = plural.index();
                 if power.by_plural.at(plural) != Entry::Missing {
                     continue;
                 }
+                // The pattern ends at a NUL, but zeros are counted in the whole string.
                 let pattern = value.get_string()?;
-                if pattern.iter().eq([ZERO]) {
+                if let (Some(ZERO), None | Some(0)) = (pattern.get(0), pattern.get(1)) {
                     power.by_plural.set(plural, Entry::UseFallback);
                     continue;
                 }
@@ -180,13 +185,14 @@ impl ResourceSink for CompactData {
             }
             power.multiplier = multiplier;
             self.largest_magnitude = self.largest_magnitude.max(magnitude);
+            self.is_empty = false;
         }
         Ok(())
     }
 }
 
 fn parse(pattern: &[u8]) -> Result<ParsedPatternInfo, UErrorCode> {
-    ParsedPatternInfo::parse(U16s::of(pattern).try_to_vec()?)
+    ParsedPatternInfo::parse(U16s::of(pattern).until_nul().try_to_vec()?)
 }
 
 /// Scales and rounds a number, and supplies its compact pattern as the middle modifier.
@@ -195,7 +201,7 @@ pub(crate) struct CompactHandler {
     data: CompactData,
     may_lack_pattern: bool,
     /// Parallel to `data.patterns` after `precompute_all_modifiers`, empty before.
-    precomputed: Vec<AdoptingSignumModifierStore>,
+    precomputed: Vec<ImmutablePatternModifier>,
 }
 
 impl CompactHandler {
@@ -271,12 +277,12 @@ impl CompactHandler {
         let mut modifier = None;
         if let Some(index) = self.data.get_pattern(magnitude, &self.rules, quantity) {
             modifier = Some(match self.precomputed.get(index) {
-                Some(modifiers) => MiddleModifier::Borrowed(modifiers.get(quantity.signum())),
+                Some(modifiers) => modifiers.modifier_for_quantity(builder, rounder, quantity),
                 None => {
-                    let pattern = parse(self.data.patterns.at(index))?;
-                    builder.create_one_shot((&pattern, COMPACT_FIELD), quantity.signum())?
+                    let pattern = (&parse(self.data.patterns.at(index))?, COMPACT_FIELD);
+                    builder.create_one_shot(pattern, quantity.signum(), PluralForm::Other)
                 }
-            });
+            }?);
         } else if let Some(original) = original
             && multiplier != 0
             && self.data.get_multiplier(magnitude) == multiplier

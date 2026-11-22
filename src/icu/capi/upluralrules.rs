@@ -7,21 +7,26 @@ use crate::capi::unumberrangeformatter::{self, UFormattedNumberRange};
 use crate::common::UErrorCode;
 use crate::common::arrayvec::ArrayVec;
 use crate::common::locid::Locale;
+use crate::common::memory::try_collect;
 use crate::i18n::plurrule::{PluralRules, UPluralType};
-use crate::i18n::standardplural::PluralForm;
 use bun_icu_macros::capi;
+use std::ffi::CStr;
 
 pub(crate) type UPluralRules = PluralRules;
 
 fn select_into(
     keyword: Dest<'_, UChar>,
     status: ErrorCode<'_>,
-    select: impl FnOnce() -> Result<PluralForm, UErrorCode>,
+    select: impl FnOnce() -> Result<&'static CStr, UErrorCode>,
 ) -> i32 {
     status.run(0, |status| {
         keyword.check()?;
-        let chars = select()?.keyword().to_bytes().iter();
-        let units = ArrayVec::<_, 5>::from_iter_truncated(chars.map(|&c| UChar::from(c)));
+        const SHORT: usize = "other".len();
+        let units = select()?.to_bytes().iter().map(|&c| UChar::from(c));
+        if units.len() > SHORT {
+            return Ok(keyword.extract_to(&try_collect(units)?, status));
+        }
+        let units = ArrayVec::<_, SHORT>::from_iter_truncated(units);
         Ok(keyword.extract_to(&units, status))
     })
 }
@@ -50,7 +55,7 @@ fn uplrules_selectFormatted(
 ) -> i32 {
     select_into(keyword, status, || {
         let number = uformattednumber::data(number)?;
-        Ok(uplrules.non_null()?.select(&number.quantity))
+        Ok(uplrules.non_null()?.select_keyword(&number.quantity))
     })
 }
 
@@ -63,9 +68,9 @@ fn uplrules_selectForRange(
 ) -> i32 {
     select_into(keyword, status, || {
         let range = unumberrangeformatter::data(urange)?;
-        Ok(uplrules
-            .non_null()?
-            .select_range(&range.quantity1, &range.quantity2))
+        let rules = uplrules.non_null()?;
+        let form = rules.select_range(&range.quantity1, &range.quantity2);
+        Ok(form.keyword())
     })
 }
 

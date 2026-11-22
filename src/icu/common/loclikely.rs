@@ -72,7 +72,7 @@ pub(crate) fn ulocimp_minimize_subtags_to(
     sink: &mut ByteSink,
 ) -> Result<(), UErrorCode> {
     replace_lsr(locale_id, sink, |_, lsr| {
-        Ok(LikelySubtags::get()?.minimize_subtags(lsr))
+        LikelySubtags::get()?.minimize_subtags(lsr)
     })
 }
 

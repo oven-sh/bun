@@ -5,6 +5,7 @@ use crate::common::utypes::*;
 use crate::i18n::calendar::{Calendar, Field, checked_add32};
 use crate::i18n::erarules::EraRules;
 use crate::i18n::gregoimp::*;
+use bun_core::{getenv_z, zstr};
 
 const BC: i32 = 0;
 const AD: i32 = 1;
@@ -111,10 +112,12 @@ pub(crate) fn compute_roc_fields(cal: &mut Calendar, julian_day: i32) {
 
 pub(crate) fn japanese_eras() -> Result<&'static EraRules, UErrorCode> {
     static RULES: OnceBox<Result<EraRules, UErrorCode>> = OnceBox::new();
-    RULES.get_or_init_caching_err(|| EraRules::load(b"japanese"))
+    RULES.get_or_init_caching_err(|| {
+        let setting = getenv_z(zstr!("ICU_ENABLE_TENTATIVE_ERA")).unwrap_or_default();
+        EraRules::load(b"japanese", setting.eq_ignore_ascii_case(b"true"))
+    })
 }
 
-/// A date before the first Japanese era keeps its Gregorian era and year.
 pub(crate) fn compute_japanese_fields(
     cal: &mut Calendar,
     julian_day: i32,
@@ -125,9 +128,14 @@ pub(crate) fn compute_japanese_fields(
         cal.internal_get(Field::Month) + 1,
         cal.internal_get(Field::Date),
     );
-    if let Some((era, start_year)) = japanese_eras()?.era_at(eyear, month, day) {
-        cal.internal_set(Field::Era, era);
-        cal.internal_set(Field::Year, eyear - start_year + 1);
-    }
+    let eras = japanese_eras()?;
+    let era = eras.get_era_code(eyear, month, day);
+    let year = match era {
+        BC => 1 - eyear,
+        AD => eyear,
+        _ => eyear - eras.get_start_year(era)? + 1,
+    };
+    cal.internal_set(Field::Era, era);
+    cal.internal_set(Field::Year, year);
     Ok(())
 }

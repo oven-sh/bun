@@ -1,13 +1,20 @@
 //! The break iterator of a locale. The text is an argument, as in `rbbi.rs`. ICU4C: brkiter.cpp
 
-use crate::common::brkeng::open_named_item;
+use crate::common::charstr::SmallChars;
 use crate::common::filteredbrk::{Exceptions, load_abbreviations};
 use crate::common::locid::Locale;
-use crate::common::memory::{TryClone, fail_on_oom, try_shared};
+use crate::common::memory::{Appendable as _, TryClone, fail_on_oom, try_shared};
 use crate::common::rbbi::RuleBasedBreakIterator;
-use crate::common::rbbidata::RBBIData;
-use crate::common::uresimp::{U_ICUDATA_BRKITR, ures_open_no_default};
-use crate::common::utypes::{U_ILLEGAL_ARGUMENT_ERROR, U_INVALID_FORMAT_ERROR, UErrorCode};
+use crate::common::rbbidata::{Extras, RBBIData};
+use crate::common::slice_ext::SliceExt as _;
+use crate::common::udata;
+use crate::common::uinvchar::invariant_prefix;
+use crate::common::uresimp::{
+    U_ICUDATA_BRKITR, ures_get_string_by_key_with_fallback, ures_open_no_default,
+};
+use crate::common::utypes::{
+    U_BUFFER_OVERFLOW_ERROR, U_ILLEGAL_ARGUMENT_ERROR, U_INVALID_FORMAT_ERROR, UErrorCode,
+};
 use std::sync::Arc;
 
 pub(crate) struct BreakIterator {
@@ -24,16 +31,41 @@ impl TryClone for BreakIterator {
     }
 }
 
+// ICU4C: brkiter.cpp, BreakIterator::buildInstance
+fn load_rules(locale: &Locale, type_: &[u8]) -> Result<(RBBIData, Option<Extras>), UErrorCode> {
+    const NAME_CAPACITY: usize = 256;
+    const EXTENSION_CAPACITY: usize = 4;
+    let bundle = ures_open_no_default(Some(U_ICUDATA_BRKITR), locale.get_name())?;
+    let table = bundle.get_by_key_with_fallback(b"boundaries")?;
+    let file = ures_get_string_by_key_with_fallback(&table, type_)?;
+    if file.len() >= NAME_CAPACITY {
+        return Err(U_BUFFER_OVERFLOW_ERROR);
+    }
+    let dot = (file.iter().take_while(|&unit| unit != 0))
+        .position(|unit| unit == u16::from(b'.'))
+        .ok_or(U_ILLEGAL_ARGUMENT_ERROR)?;
+    let mut chars = SmallChars::new();
+    chars.add_each(invariant_prefix(file.iter().take(dot)));
+    let name_length = chars.len();
+    chars.add_each(invariant_prefix(file.slice(dot + 1..).iter()).take(EXTENSION_CAPACITY));
+    let (name, extension) = chars.split_soft(name_length);
+    let item = udata::open(U_ICUDATA_BRKITR, extension, name)?;
+    RBBIData::read(&item).ok_or(U_INVALID_FORMAT_ERROR)
+}
+
 impl BreakIterator {
-    // ICU4C: brkiter.cpp, BreakIterator::buildInstance
     fn build_instance(locale: &Locale, type_: &[u8]) -> Result<Self, UErrorCode> {
-        let bundle = ures_open_no_default(Some(U_ICUDATA_BRKITR), locale.get_name())?;
-        let item = open_named_item(&bundle, b"boundaries", type_, RBBIData::is_acceptable)?;
-        let data = RBBIData::read(item).ok_or(U_INVALID_FORMAT_ERROR)?;
+        let (data, extras) = load_rules(locale, type_)?;
         Ok(Self {
-            rules: RuleBasedBreakIterator::new(&data)?,
+            rules: RuleBasedBreakIterator::new(&data, extras.as_ref())?,
             exceptions: None,
         })
+    }
+
+    pub(crate) fn create_character_rules(
+        locale: &Locale,
+    ) -> Result<RuleBasedBreakIterator, UErrorCode> {
+        Ok(Self::create_character_instance(locale)?.rules)
     }
 
     pub(crate) fn create_character_instance(locale: &Locale) -> Result<Self, UErrorCode> {

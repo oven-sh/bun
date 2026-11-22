@@ -9,3 +9,4 @@ pub(crate) const ULOC_LAYOUT_UNKNOWN: ULayoutType = 4;
 
 pub(crate) const ULOC_FULLNAME_CAPACITY: i32 = 157;
 pub(crate) const ULOC_KEYWORDS_CAPACITY: i32 = 96;
+pub(crate) const ULOC_KEYWORD_AND_VALUES_CAPACITY: i32 = 100;

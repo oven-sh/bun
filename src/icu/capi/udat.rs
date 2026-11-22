@@ -74,7 +74,7 @@ fn format_with(
     result.extract_aliased(end, status)
 }
 
-/// Accepts a null `position` and the letters GyYrUMLEcdaBHkhKmsSvzO. Other failures only truncate the text.
+/// Accepts a null `position` and a format that was opened with a pattern. Most failures only truncate the text.
 #[capi]
 fn udat_format(
     fmt: Option<&UDateFormat>,
@@ -89,16 +89,17 @@ fn udat_format(
             return Err(U_UNSUPPORTED_ERROR);
         }
         let format = fmt.non_null()?;
+        format.check_supports(date)?;
         format_with(result, status, |text| {
             match format.format(date, text, None) {
-                Err(code @ (U_INVALID_STATE_ERROR | U_UNSUPPORTED_ERROR)) => Err(code),
+                Err(U_INVALID_STATE_ERROR) => Err(U_INVALID_STATE_ERROR),
                 _ => Ok(()),
             }
         })
     })
 }
 
-/// Accepts an iterator that is not null, and the letters GyYrUMLEcdaBHkhKmsSvzO.
+/// Accepts an iterator that is not null and a format that was opened with a pattern.
 #[capi]
 fn udat_formatForFields(
     fmt: Option<&UDateFormat>,
@@ -110,6 +111,7 @@ fn udat_formatForFields(
     status.run(-1, |status| {
         result.check()?;
         let format = fmt.non_null()?;
+        format.check_supports(date)?;
         let fpositer = fpositer.ok_or(U_UNSUPPORTED_ERROR)?;
         format_with(result, status, |text| {
             let mut handler = FieldPositionIteratorHandler::new();

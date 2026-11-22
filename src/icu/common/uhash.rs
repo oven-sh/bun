@@ -119,7 +119,7 @@ impl Slots {
 }
 
 /// Hashes at most 63 evenly spaced units. ICU4C: ustring.cpp, ustr_hashUCharsN
-fn hash_code(key: &[u16]) -> i32 {
+pub(crate) fn hash_code(key: &[u16]) -> i32 {
     let sample = key.iter().step_by((key.len() / 32).max(1));
     let code = sample.fold(0u32, |hash, &c| {
         hash.wrapping_mul(37).wrapping_add(c.into())

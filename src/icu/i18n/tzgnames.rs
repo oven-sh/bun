@@ -1,6 +1,7 @@
 //! Generic zone names: "Pacific Time", "Los Angeles Time", "Mountain Time (Phoenix)". ICU4C: tzgnames.cpp
 
 use crate::common::bytes::U16s;
+use crate::common::cstring::until_nul;
 use crate::common::locdspnm::region_name_or_code;
 use crate::common::locid::Locale;
 use crate::common::loclikely::ulocimp_add_likely_subtags;
@@ -10,17 +11,20 @@ use crate::common::simpleformatter::SimpleFormatter;
 use crate::common::slice_ext::SliceExt;
 use crate::common::uloc::uloc_get_country;
 use crate::common::umutex::Mutex;
-use crate::common::unistr::from_units;
+use crate::common::unistr::{from_units, ustr};
+use crate::common::uresdata::DataString;
 use crate::common::ustrcase::equals_ignoring_case;
 use crate::common::utypes::UErrorCode;
 use crate::i18n::gregoimp::{ONE_DAY, UDate};
 use crate::i18n::locale_cache::LocaleCache;
-use crate::i18n::timezone::{Key, TimeZone, is_same};
+use crate::i18n::timezone::{Key, TimeZone, ZID_KEY_MAX, is_same, preloaded_zone_id};
 use crate::i18n::tznames::{NameType, TimeZoneNames};
 use crate::i18n::zonemeta;
 use std::sync::Arc;
 
 const DST_CHECK_RANGE: f64 = 184.0 * ONE_DAY;
+/// A location name of this length or more is dropped.
+const NAME_LIMIT: usize = 2000;
 
 /// A zone, and for a partial location name the meta zone and whether the name is long.
 type NameKey = (&'static [u16], Option<(&'static [u16], bool)>);
@@ -44,6 +48,18 @@ fn target_region(locale: &Locale) -> Result<Key, UErrorCode> {
     Ok(Key::from_slice(&uloc_get_country(&likely)?))
 }
 
+/// In the key of a partial location name the empty ID stands for all IDs that the data do not list.
+fn merge_unlisted_ids((tzid, partial): NameKey) -> NameKey {
+    let Some((mzid, is_long)) = partial else {
+        return (tzid, None);
+    };
+    let or_empty = |id, is_listed| if is_listed { id } else { &[][..] };
+    (
+        or_empty(tzid, TimeZone::find_id(tzid).is_some()),
+        Some((or_empty(mzid, zonemeta::is_listed_meta_zone(mzid)), is_long)),
+    )
+}
+
 impl TimeZoneGenericNames {
     pub(crate) fn create_instance(locale: &Locale) -> Result<Arc<Self>, UErrorCode> {
         static INSTANCES: LocaleCache<TimeZoneGenericNames> = LocaleCache::new();
@@ -54,18 +70,52 @@ impl TimeZoneGenericNames {
 
     fn new(locale: &Locale) -> Result<Self, UErrorCode> {
         let time_zone_names = TimeZoneNames::create_instance(locale)?;
-        let format = |key: &[u8], arguments| {
-            let pattern = time_zone_names.pattern(key)?;
+        let format = |key: &[u8], default, arguments| {
+            let pattern = time_zone_names.pattern(key).map(DataString::until_nul);
+            let pattern = match pattern {
+                Ok(pattern) if !pattern.is_empty() => pattern.try_to_vec()?,
+                _ => ustr(default),
+            };
             SimpleFormatter::with_pattern_min_max_arguments(&pattern, arguments, arguments)
         };
-        Ok(Self {
-            region_format: format(b"regionFormat", 1)?,
-            fallback_format: format(b"fallbackFormat", 2)?,
+        let region_format = format(b"regionFormat", "{0}", 1)?;
+        let fallback_format = format(b"fallbackFormat", "{1} ({0})", 2)?;
+        let names = Self {
+            region_format,
+            fallback_format,
             locale: locale.clone(),
             target_region: target_region(locale)?,
             time_zone_names,
             cache: Mutex::new(Map::default()),
-        })
+        };
+        if let Some(tzid) = preloaded_zone_id()? {
+            names.load_strings(tzid);
+        }
+        Ok(names)
+    }
+
+    /// Caches the location name and the partial location names of a zone.
+    #[cold]
+    fn load_strings(&self, tzid: &'static [u16]) {
+        let unused = &mut Vec::new();
+        self.generic_location_name(tzid, unused);
+        for mzid in zonemeta::meta_zone_ids(tzid).filter(|mzid| !mzid.is_empty()) {
+            let golden_id = zonemeta::get_zone_id_by_metazone(mzid, &self.target_region);
+            if golden_id.is_some_and(|id| is_same(id, tzid)) {
+                continue;
+            }
+            for (is_long, name_type) in [
+                (true, NameType::LongGeneric),
+                (false, NameType::ShortGeneric),
+            ] {
+                let mz_name = self.time_zone_names.meta_zone_display_name(mzid, name_type);
+                if !mz_name.is_empty() {
+                    self.append_cached((tzid, Some((mzid, is_long))), unused, &|new| {
+                        self.partial_location_name(tzid, mzid, mz_name, new)
+                    });
+                }
+            }
+        }
     }
 
     /// Appends the non-location name, or else the location name, or nothing.
@@ -82,20 +132,30 @@ impl TimeZoneGenericNames {
         let start = name.len();
         self.format_generic_non_location_name(tz, tzid, is_long, date, name);
         if name.len() == start {
+            self.generic_location_name(tzid, name);
+        }
+    }
+
+    pub(crate) fn generic_location_name(&self, tzid: &'static [u16], name: &mut Vec<u16>) {
+        if (1..=ZID_KEY_MAX).contains(&tzid.len()) {
             self.append_cached((tzid, None), name, &|new| self.location_name(tzid, new));
         }
     }
 
     fn append_cached(&self, key: NameKey, name: &mut Vec<u16>, make: &dyn Fn(&mut Vec<u16>)) {
+        let key = merge_unlisted_ids(key);
         let cache = &mut self.cache.lock();
         if let Some(cached) = cache.get(&key) {
             return name.add_all(cached);
         }
         let mut new = Vec::new();
         make(&mut new);
-        name.add_all(&new);
-        // Fails after any failed allocation, so an incomplete name is not cached.
-        _ = try_map_insert(cache, key, new);
+        new.truncate(until_nul(&new).len());
+        if new.len() < NAME_LIMIT {
+            name.add_all(&new);
+            // Fails after any failed allocation, so an incomplete name is not cached.
+            _ = try_map_insert(cache, key, new);
+        }
     }
 
     /// Appends a name such as "Germany Time" or "Los Angeles Time", or nothing if the zone has no country.
@@ -177,9 +237,12 @@ impl TimeZoneGenericNames {
                 return;
             };
             if golden != offsets {
-                return self.append_cached((tzid, Some((mzid, is_long))), name, &|new| {
-                    self.partial_location_name(tzid, mzid, mz_name, new)
-                });
+                if !tzid.is_empty() {
+                    self.append_cached((tzid, Some((mzid, is_long))), name, &|new| {
+                        self.partial_location_name(tzid, mzid, mz_name, new)
+                    });
+                }
+                return;
             }
         }
         name.add_each(mz_name.iter());

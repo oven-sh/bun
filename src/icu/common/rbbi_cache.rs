@@ -1,18 +1,18 @@
 //! The caches of the rule-based break iterator. Results depend on their contents. ICU4C: rbbi_cache.cpp
 
-use crate::common::brkeng;
+use crate::common::brkeng::LanguageBreakEngines;
 use crate::common::memory::{
     Appendable as _, best_effort, defer_oom, is_oom, try_box_uninit, try_insert, try_push,
 };
-use crate::common::rbbi::Segment;
-use crate::common::rbbidata::RBBIData;
+use crate::common::rbbi::{General, Segment};
+use crate::common::rbbidata::{Extras, RBBIData};
 use crate::common::slice_ext::{SliceExt, to_index};
 use crate::common::utf16;
 use crate::common::utypes::UErrorCode;
 use std::hint::select_unpredictable;
 
 /// A position and its rule status index.
-type Boundary = (i32, u8);
+type Boundary = (i32, u16);
 
 /// The boundaries that the engines found in one rule-based segment. `BreakCache` fetches them one at a time.
 #[derive(Default)]
@@ -21,8 +21,9 @@ pub(crate) struct DictionaryCache {
     breaks: Vec<i32>,
     /// Index in `breaks` of the boundary that was returned last.
     position_in_cache: Option<usize>,
-    first_rule_status_index: u8,
-    other_rule_status_index: u8,
+    first_rule_status_index: u16,
+    inner_rule_status_index: u16,
+    last_rule_status_index: u16,
 }
 
 impl DictionaryCache {
@@ -51,7 +52,13 @@ impl DictionaryCache {
             None => self.breaks.partition_point(|&r| r <= from_pos),
         };
         self.position_in_cache = Some(position);
-        Some((self.breaks.at(position), self.other_rule_status_index))
+        let result = self.breaks.at(position);
+        let status_index = if result == limit {
+            self.last_rule_status_index
+        } else {
+            self.inner_rule_status_index
+        };
+        Some((result, status_index))
     }
 
     /// Returns `None` unless `start < from_pos <= limit`.
@@ -78,7 +85,7 @@ impl DictionaryCache {
         let status_index = if position == 0 {
             self.first_rule_status_index
         } else {
-            self.other_rule_status_index
+            self.inner_rule_status_index
         };
         Some((self.breaks.at(position), status_index))
     }
@@ -87,18 +94,32 @@ impl DictionaryCache {
 /// What `BreakCache` calls to find boundaries.
 pub(crate) struct Segmenter {
     pub(crate) data: RBBIData,
+    pub(crate) general: Option<Box<General>>,
     pub(crate) dictionary_cache: DictionaryCache,
+    pub(crate) language_break_engines: LanguageBreakEngines,
     /// `BreakCache` takes the flag and discards its contents.
     alloc_failed_in_segment: bool,
 }
 
 impl Segmenter {
-    pub(crate) fn new(data: &RBBIData) -> Self {
-        Self {
+    pub(crate) fn new(data: &RBBIData, extras: Option<&Extras>) -> Result<Self, UErrorCode> {
+        Ok(Self {
+            general: extras.map(General::new).transpose()?,
             data: *data,
             dictionary_cache: DictionaryCache::default(),
+            language_break_engines: LanguageBreakEngines::default(),
             alloc_failed_in_segment: false,
-        }
+        })
+    }
+
+    #[inline(always)]
+    fn handle_next(&mut self, text: &[u16], start: i32) -> Option<Segment> {
+        (self.data).handle_next(text, start, self.general.as_deref_mut())
+    }
+
+    #[inline(always)]
+    fn handle_next_sequential(&mut self, text: &[u16], start: i32) -> Option<Segment> {
+        (self.data).handle_next_sequential(text, start, self.general.as_deref_mut())
     }
 
     /// Leaves the segment undivided if any allocation has failed in this call.
@@ -107,17 +128,15 @@ impl Segmenter {
         if segment.end - start <= 1 {
             return;
         }
-        let cache = &mut self.dictionary_cache;
+        let (cache, engines) = (&mut self.dictionary_cache, &mut self.language_break_engines);
         cache.reset();
-        cache.first_rule_status_index = status;
-        cache.other_rule_status_index = segment.rule_status_index;
-
         let (mut current, end) = (to_index(start), to_index(segment.end));
         while current < end {
             let mut next = current;
-            let category = self.data.trie.get(utf16::next(text, &mut next));
-            if u32::from(category) >= self.data.forward_table.dict_categories_start {
-                match brkeng::find_breaks(text, current..end, &mut cache.breaks) {
+            let c = utf16::next(text, &mut next);
+            let category = self.data.category(c, self.general.as_deref());
+            if category >= self.data.dict_categories_start as usize {
+                match engines.find_breaks(text, current..end, &mut cache.breaks) {
                     Ok(run_end) => next = run_end,
                     Err(_) => break,
                 }
@@ -128,6 +147,13 @@ impl Segmenter {
             let _ = defer_oom(try_insert(&mut cache.breaks, 0, start));
             cache.breaks.add(segment.end);
             cache.position_in_cache = Some(0);
+            cache.first_rule_status_index = status;
+            cache.last_rule_status_index = segment.rule_status_index;
+            cache.inner_rule_status_index = if self.data.is_word_like() {
+                segment.rule_status_index
+            } else {
+                0
+            };
         }
         if is_oom() {
             cache.reset();
@@ -153,7 +179,7 @@ pub(crate) struct BreakCache {
     /// Index of `text_idx` in the ring.
     buf_idx: usize,
     boundaries: [i32; CACHE_SIZE],
-    statuses: [u8; CACHE_SIZE],
+    statuses: [u16; CACHE_SIZE],
     checkpoints: Checkpoints,
 }
 
@@ -191,7 +217,7 @@ impl Checkpoints {
 /// The last `CACHE_SIZE` boundaries of a forward run.
 struct SideBuffer {
     positions: [i32; CACHE_SIZE],
-    statuses: [u8; CACHE_SIZE],
+    statuses: [u16; CACHE_SIZE],
     pushed: usize,
 }
 
@@ -204,7 +230,7 @@ impl SideBuffer {
         }
     }
 
-    fn push(&mut self, position: i32, rule_status_idx: u8) {
+    fn push(&mut self, position: i32, rule_status_idx: u16) {
         let index = mod_chunk_size(self.pushed);
         self.positions.set(index, position);
         self.statuses.set(index, rule_status_idx);
@@ -250,12 +276,12 @@ impl BreakCache {
     }
 
     #[inline(always)]
-    fn status(&self, index: usize) -> u8 {
+    fn status(&self, index: usize) -> u16 {
         self.statuses.at(mod_chunk_size(index))
     }
 
     #[inline(always)]
-    fn set(&mut self, index: usize, position: i32, rule_status_idx: u8) {
+    fn set(&mut self, index: usize, position: i32, rule_status_idx: u16) {
         self.boundaries.set(mod_chunk_size(index), position);
         self.statuses.set(mod_chunk_size(index), rule_status_idx);
     }
@@ -268,7 +294,7 @@ impl BreakCache {
         self.text_idx
     }
 
-    fn reset(&mut self, pos: i32, rule_status: u8) {
+    fn reset(&mut self, pos: i32, rule_status: u16) {
         self.start_buf_idx = 0;
         self.end_buf_idx = 0;
         self.text_idx = pos;
@@ -302,7 +328,7 @@ impl BreakCache {
         true
     }
 
-    fn add_following(&mut self, position: i32, rule_status_idx: u8) {
+    fn add_following(&mut self, position: i32, rule_status_idx: u16) {
         let next_idx = mod_chunk_size(self.end_buf_idx + 1);
         if next_idx == self.start_buf_idx {
             self.start_buf_idx = mod_chunk_size(self.start_buf_idx + 6);
@@ -311,7 +337,7 @@ impl BreakCache {
         self.end_buf_idx = next_idx;
     }
 
-    fn add_preceding(&mut self, position: i32, rule_status_idx: u8) {
+    fn add_preceding(&mut self, position: i32, rule_status_idx: u16) {
         let next_idx = mod_chunk_size(self.start_buf_idx.wrapping_sub(1));
         if next_idx == self.end_buf_idx {
             self.end_buf_idx = mod_chunk_size(self.end_buf_idx.wrapping_sub(1));
@@ -324,7 +350,7 @@ impl BreakCache {
         self.text_idx
     }
 
-    pub(crate) fn rule_status_index(&self) -> u8 {
+    pub(crate) fn rule_status_index(&self) -> u16 {
         self.status(self.buf_idx)
     }
 
@@ -347,6 +373,20 @@ impl BreakCache {
             self.seek_or_populate(segmenter, text, start_pos);
         }
         self.next(segmenter, text)
+    }
+
+    pub(crate) fn preceding(
+        &mut self,
+        segmenter: &mut Segmenter,
+        text: &[u16],
+        start_pos: i32,
+    ) -> Option<i32> {
+        self.seek_or_populate(segmenter, text, start_pos);
+        if start_pos == self.text_idx {
+            self.previous(segmenter, text)
+        } else {
+            Some(self.text_idx)
+        }
     }
 
     #[inline(never)]
@@ -402,9 +442,7 @@ impl BreakCache {
 
     #[inline(never)]
     fn populate_near(&mut self, segmenter: &mut Segmenter, text: &[u16], position: i32) {
-        if let Some((start, rule_status)) =
-            self.find_reset_boundary(&segmenter.data, text, position)
-        {
+        if let Some((start, rule_status)) = self.find_reset_boundary(segmenter, text, position) {
             self.reset(start, rule_status);
         }
         self.extend_to(segmenter, text, position);
@@ -414,7 +452,7 @@ impl BreakCache {
     /// Returns the boundary near `position` to which the cache is reset, or `None` to keep the cache.
     fn find_reset_boundary(
         &self,
-        data: &RBBIData,
+        Segmenter { data, general, .. }: &mut Segmenter,
         text: &[u16],
         position: i32,
     ) -> Option<Boundary> {
@@ -426,14 +464,15 @@ impl BreakCache {
         if position <= CACHE_NEAR {
             return Some((0, 0));
         }
-        let backup_pos = data.handle_safe_previous(text, position);
+        let backup_pos = data.handle_safe_previous(text, position, general.as_deref());
         if last < position && last >= backup_pos - CACHE_NEAR {
             return None;
         }
         if backup_pos < CACHE_NEAR {
             return (first > position.wrapping_add(CACHE_NEAR)).then_some((0, 0));
         }
-        let segment = data.handle_next_from_safe_point(text, backup_pos, None);
+        let segment =
+            data.handle_next_from_safe_point(text, backup_pos, None, general.as_deref_mut());
         Some(segment.map_or((text.len() as i32, 0), |(_, it)| {
             (it.end, it.rule_status_index)
         }))
@@ -467,7 +506,7 @@ impl BreakCache {
             return true;
         }
 
-        let Some(segment) = segmenter.data.handle_next(text, from_position) else {
+        let Some(segment) = segmenter.handle_next_sequential(text, from_position) else {
             return false;
         };
         if segment.has_dictionary_characters {
@@ -486,7 +525,7 @@ impl BreakCache {
 
         // More boundaries, for the fast path of `next`.
         for _ in 0..6 {
-            match segmenter.data.handle_next(text, self.last_boundary()) {
+            match segmenter.handle_next_sequential(text, self.last_boundary()) {
                 Some(segment) if !segment.has_dictionary_characters => {
                     self.add_following(segment.end, segment.rule_status_index);
                 }
@@ -510,7 +549,7 @@ impl BreakCache {
             return true;
         }
 
-        let start = boundary_before(&segmenter.data, text, from_position);
+        let start = boundary_before(segmenter, text, from_position);
         let (mut position, mut position_status_idx) =
             self.checkpoints.resume_point(start, from_position);
         // Up to the first segment that has dictionary characters, `pushed` counts the segments.
@@ -519,7 +558,7 @@ impl BreakCache {
         side_buffer.push(position, position_status_idx);
         while position < from_position {
             let (mut prev_position, prev_status_idx) = (position, position_status_idx);
-            let Some(segment) = segmenter.data.handle_next(text, position) else {
+            let Some(segment) = segmenter.handle_next(text, position) else {
                 break;
             };
             (position, position_status_idx) = (segment.end, segment.rule_status_index);
@@ -556,14 +595,16 @@ impl BreakCache {
 }
 
 // ICU4C: rbbi_cache.cpp, BreakCache::populatePreceding
-fn boundary_before(data: &RBBIData, text: &[u16], limit: i32) -> Boundary {
+fn boundary_before(segmenter: &mut Segmenter, text: &[u16], limit: i32) -> Boundary {
+    let Segmenter { data, general, .. } = segmenter;
     let (mut backup_position, mut rounds, mut later) = (limit, 0, None);
     while backup_position > 30 {
-        backup_position = data.handle_safe_previous(text, backup_position - 30);
+        backup_position = data.handle_safe_previous(text, backup_position - 30, general.as_deref());
         if backup_position == 0 {
             break;
         }
-        let Some((start, segment)) = data.handle_next_from_safe_point(text, backup_position, later)
+        let Some((start, segment)) =
+            data.handle_next_from_safe_point(text, backup_position, later, general.as_deref_mut())
         else {
             break;
         };
@@ -572,7 +613,10 @@ fn boundary_before(data: &RBBIData, text: &[u16], limit: i32) -> Boundary {
         }
         // In a long segment a match stops as soon as it is in the state of the match of the previous round.
         rounds += 1;
-        later = (rounds >= 32).then_some((start, segment));
+        // A match that starts earlier can have the look-ahead position that this one has missed.
+        let has_missed =
+            (general.as_mut()).is_some_and(|it| std::mem::take(&mut it.missed_look_ahead));
+        later = (rounds >= 32 && !has_missed).then_some((start, segment));
     }
     (0, 0)
 }

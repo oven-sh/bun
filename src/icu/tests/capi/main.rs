@@ -356,27 +356,74 @@ fn names_of_locales_stay() {
     }
 }
 
+fn decimal_separator(name: &CStr) -> Result<String> {
+    // SAFETY: as above. A string is in the data, so it outlives its bundle.
+    unsafe {
+        let mut bundle = open(ures_close, |status| {
+            ures_open(null(), name.as_ptr(), status)
+        })?;
+        for key in [c"NumberElements", c"latn", c"symbols"] {
+            bundle = open(ures_close, |status| {
+                ures_getByKey(bundle.0, key.as_ptr(), null_mut(), status)
+            })?;
+        }
+        let mut length = 0;
+        let decimal = call(|status| {
+            ures_getStringByKey(bundle.0, c"decimal".as_ptr(), &raw mut length, status)
+        })?;
+        drop(bundle);
+        Ok(kept(decimal, length))
+    }
+}
+
 #[test]
 fn bundles() {
     for (name, decimal) in [(c"de", ","), (c"nomagic", "."), (c"zz", ".")] {
-        // SAFETY: as above. A string is in the data, so it outlives its bundle.
-        check(decimal, || unsafe {
-            let mut bundle = open(ures_close, |status| {
-                ures_open(null(), name.as_ptr(), status)
-            })?;
-            for key in [c"NumberElements", c"latn", c"symbols"] {
-                bundle = open(ures_close, |status| {
-                    ures_getByKey(bundle.0, key.as_ptr(), null_mut(), status)
-                })?;
-            }
-            let mut length = 0;
-            let decimal = call(|status| {
-                ures_getStringByKey(bundle.0, c"decimal".as_ptr(), &raw mut length, status)
-            })?;
-            drop(bundle);
-            Ok(kept(decimal, length))
-        });
+        check(decimal, || decimal_separator(name));
     }
+}
+
+/// Runs all tests again in a process that has `ICU_DATA`. There each call opens a bundle that none has opened.
+#[test]
+#[cfg(not(miri))]
+#[expect(clippy::disallowed_methods, clippy::disallowed_types)]
+fn files() {
+    use package::{german, german_of, package};
+    use std::{env, fs, process};
+    let names = |prefix| (100..300).map(move |number| format!("{prefix}{number}"));
+    if env::var_os("ICU_DATA").is_some() {
+        for prefix in ["alias", "loose", "packed"] {
+            let names = std::cell::RefCell::new(names(prefix));
+            check(",", || {
+                let name = names.borrow_mut().next().unwrap();
+                decimal_separator(&std::ffi::CString::new(name).unwrap())
+            });
+        }
+        return;
+    }
+    let directory = env::temp_dir().join(format!("bun_icu-{}", process::id()));
+    fs::create_dir_all(directory.join("icudt79l")).unwrap();
+    let write = |path: String, bytes| fs::write(directory.join(path), bytes).unwrap();
+    for name in names("alias") {
+        write(format!("icudt79l/{name}.res"), german_of(&name));
+        write(
+            format!("{name}.dat"),
+            package(&name, &[("de.res", german())]),
+        );
+    }
+    // The other tests need the linked item.
+    write("icudt79l/de.res".into(), vec![0; 64]);
+    for name in names("loose") {
+        write(format!("icudt79l/{name}.res"), german());
+    }
+    let packed: Vec<_> = names("packed")
+        .map(|name| (name + ".res", german()))
+        .collect();
+    write("icudt79l.dat".into(), package("icudt79l", &packed));
+    let mut again = process::Command::new(env::current_exe().unwrap());
+    let status = again.env("ICU_DATA", &directory).status();
+    fs::remove_dir_all(directory).unwrap();
+    assert!(status.unwrap().success());
 }
 
 #[test]

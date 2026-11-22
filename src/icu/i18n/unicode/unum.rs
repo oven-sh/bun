@@ -10,6 +10,7 @@ pub(crate) const UNUM_EXPONENT_FIELD: UNumberFormatFields = 5;
 pub(crate) const UNUM_GROUPING_SEPARATOR_FIELD: UNumberFormatFields = 6;
 pub(crate) const UNUM_CURRENCY_FIELD: UNumberFormatFields = 7;
 pub(crate) const UNUM_PERCENT_FIELD: UNumberFormatFields = 8;
+pub(crate) const UNUM_PERMILL_FIELD: UNumberFormatFields = 9;
 pub(crate) const UNUM_SIGN_FIELD: UNumberFormatFields = 10;
 pub(crate) const UNUM_MEASURE_UNIT_FIELD: UNumberFormatFields = 11;
 pub(crate) const UNUM_COMPACT_FIELD: UNumberFormatFields = 12;

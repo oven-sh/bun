@@ -312,6 +312,8 @@ mod tests {
 
         thread_local! {
             static SMALLEST_SIZE: Cell<usize> = const { Cell::new(0) };
+            static REFUSED: Cell<*mut c_void> = const { Cell::new(core::ptr::null_mut()) };
+            static IS_REFUSED_UNMAPPED: Cell<bool> = const { Cell::new(false) };
         }
 
         /// macOS compares the size also where `SS_DISABLE` makes it mean nothing.
@@ -324,14 +326,26 @@ mod tests {
         ) -> c_int {
             // SAFETY: the caller's contract.
             unsafe {
-                if new
-                    .as_ref()
-                    .is_some_and(|new| new.ss_size < SMALLEST_SIZE.get())
+                if let Some(new) = new.as_ref()
+                    && new.ss_size < SMALLEST_SIZE.get()
                 {
+                    if !new.ss_sp.is_null() {
+                        REFUSED.set(new.ss_sp);
+                    }
                     return -1;
                 }
                 libc::syscall(libc::SYS_sigaltstack, new, old) as c_int
             }
+        }
+
+        /// SAFETY: as that of libc, which it replaces in this program.
+        #[unsafe(no_mangle)]
+        unsafe extern "C" fn munmap(address: *mut c_void, length: usize) -> c_int {
+            if address == REFUSED.get() {
+                IS_REFUSED_UNMAPPED.set(true);
+            }
+            // SAFETY: the caller's contract.
+            unsafe { libc::syscall(libc::SYS_munmap, address, length) as c_int }
         }
 
         #[derive(Debug, PartialEq)]
@@ -397,6 +411,21 @@ mod tests {
             let left = [libc::MINSIGSTKSZ, usize::MAX].map(left_at_the_end);
             set_step_of_build(None);
             assert_eq!(left, [Left::Nothing, Left::Mapped]);
+        }
+
+        extern "C" fn work_with_every_stack_refused(_: *mut c_void) -> *mut c_void {
+            SMALLEST_SIZE.set(usize::MAX);
+            assert!(work(core::ptr::null_mut()).is_null());
+            core::ptr::without_provenance_mut(usize::from(IS_REFUSED_UNMAPPED.get()))
+        }
+
+        #[test]
+        fn a_stack_for_signals_that_is_refused_is_unmapped() {
+            let _alone = STEP_OF_BUILD.lock_guard();
+            set_step_of_build(Some(Step::Check));
+            let is_unmapped = on_new_thread(work_with_every_stack_refused, core::ptr::null_mut());
+            set_step_of_build(None);
+            assert!(!is_unmapped.is_null());
         }
     }
 }

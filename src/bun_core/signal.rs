@@ -179,7 +179,7 @@ pub unsafe fn set_alternate_stack(stack: *mut [u8]) -> bool {
     unsafe { libc::sigaltstack(&raw const stack, ptr::null_mut()) == 0 }
 }
 
-/// `false` if this thread still has it, as while it runs there.
+/// `false` if the system refuses, as while this thread runs there.
 pub(crate) fn remove_alternate_stack() -> bool {
     let none = libc::stack_t {
         ss_sp: ptr::null_mut(),

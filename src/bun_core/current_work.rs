@@ -114,7 +114,7 @@ struct SignalStack(core::ptr::NonNull<core::ffi::c_void>);
 #[cfg(unix)]
 impl Drop for SignalStack {
     fn drop(&mut self) {
-        if crate::signal::remove_alternate_stack() {
+        if crate::signal::remove_alternate_stack() || crate::signal::lacks_alternate_stack() {
             // SAFETY: the thread takes no signal on the mapping any more, and nobody else knows it.
             unsafe { libc::munmap(self.0.as_ptr(), GivesRecordBack::SIGNAL_STACK_SIZE) };
         }

@@ -6,7 +6,7 @@ use core::ops::Range;
 use std::collections::VecDeque;
 use std::rc::Rc;
 
-use crate::batch::{Batch, MAX_SEGMENTS};
+use crate::batch::Batch;
 use crate::cid::{ConnectionId, LocalId, ResetToken};
 use crate::config::Config;
 use crate::connection::handshake::Awaited;
@@ -69,6 +69,8 @@ pub(crate) struct Shared {
     pub(crate) tokens: Tokens,
     pub(crate) pool: Pool,
     pub(crate) scratch: Vec<u8>,
+    /// From then on, runs are made of full datagrams only.
+    pub(crate) was_backed_up: bool,
 }
 
 impl Shared {
@@ -226,6 +228,7 @@ impl Endpoint {
                 tokens: Tokens::new(crypto),
                 pool: Pool::default(),
                 scratch: Vec::new(),
+                was_backed_up: false,
             },
             slots: Slots::default(),
             free: Vec::new(),
@@ -676,33 +679,45 @@ impl Endpoint {
         });
     }
 
-    /// Adds to `batch` until it has about `max_len` datagrams. `visit` gets the connections that may have changed.
+    /// No turn starts once `batch` has about `max_len` datagrams. Returns whether it has come to that. `visit` gets the
+    /// connections that may have changed.
     pub fn poll_transmit(
         &mut self,
         now: Instant,
         batch: &mut Batch,
         max_len: usize,
         mut visit: impl FnMut(&Connection),
-    ) {
-        while batch.len() < max_len
+    ) -> bool {
+        // So that the turns do not fall into step with the batches.
+        let (mut limit, mut spread) = match self.to_transmit.len() + self.replies.len() {
+            ..=1 => (max_len, None),
+            _ => (max_len - max_len / 4, Some(max_len as u32 / 2)),
+        };
+        let crypto = self.shared.crypto;
+        let mut is_full = |batch: &Batch| {
+            if let Some(spread) = spread.take_if(|_| batch.len() >= limit) {
+                limit += crypto.random_below(spread) as usize;
+            }
+            batch.len() >= limit
+        };
+        while !is_full(batch)
             && let Some((addresses, datagram)) = self.replies.pop_front()
         {
             let start = batch.bytes.len();
             batch.bytes.extend_from_slice(&datagram);
-            batch.commit(&addresses, start, MAX_SEGMENTS);
+            batch.commit(&addresses, start, 0);
         }
         let max_turn = match self.is_backed_up {
             true => DATAGRAMS_PER_SHORT_TURN,
             false => DATAGRAMS_PER_TURN,
         };
-        while batch.len() < max_len
+        while !is_full(batch)
             && let Some(index) = self.to_transmit.pop_front()
         {
             let slot = self.slots.at_mut(index);
             slot.may_transmit = false;
             if let Some(connection) = &mut slot.connection {
-                let turn = max_turn.min(max_len - batch.len());
-                if connection.transmit(now, batch, turn, &mut self.shared) {
+                if connection.transmit(now, batch, max_turn, &mut self.shared) {
                     enqueue(&mut self.to_transmit, &mut slot.may_transmit, index);
                 }
                 if connection.has_events() {
@@ -712,12 +727,14 @@ impl Endpoint {
                 visit(connection);
             }
         }
+        is_full(batch)
     }
 
     /// Whether the socket has not taken all there was to send.
     #[inline]
     pub fn set_backed_up(&mut self, is_backed_up: bool) {
         self.is_backed_up = is_backed_up;
+        self.shared.was_backed_up |= is_backed_up;
     }
 
     #[inline]

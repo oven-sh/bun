@@ -39,12 +39,17 @@ impl Raw {
         sizes
     }
 
-    /// The size of a full packet.
+    /// The size of a full packet. A probe may come first.
     fn mtu(&mut self) -> usize {
         self.forget();
         let id = self.peer.open(Unidirectional);
         self.peer.send(id, &filler(0, 3000), false);
-        self.sizes()[0]
+        self.sizes()[1]
+    }
+
+    fn send_and_ask_for_ack(&mut self, frames: &str) {
+        self.send(&format!("{frames}, ping"));
+        self.send("ping");
     }
 }
 
@@ -105,7 +110,7 @@ fn loss_of_a_probe_is_not_congestion() {
 fn probe_that_gets_through_at_last() {
     let mut raw = client().warmed_up();
     for _ in 0..2 {
-        raw.send("ack");
+        raw.send_and_ask_for_ack("ack");
         raw.process();
         assert_eq!(raw.inbox[0].datagram.len(), 1472);
         assert_eq!(raw.lose(), "ping");
@@ -123,8 +128,18 @@ fn no_probe_while_nothing_is_acknowledged() {
     raw.wait();
     assert!(raw.sizes().iter().all(|&it| it < 100));
     raw.advance(RTT);
+    raw.send_and_ask_for_ack("ack");
+    assert_eq!(raw.sizes()[0], 1472);
+}
+
+#[test]
+fn no_probe_on_its_own() {
+    let mut raw = client().warmed_up();
     raw.send("ack");
-    assert_eq!(raw.sizes(), [1472]);
+    assert_eq!(raw.sizes(), []);
+    let id = raw.peer.open(Unidirectional);
+    raw.peer.send(id, b"c", false);
+    assert_eq!(raw.frames(), "ping, stream 11 0 c");
 }
 
 #[test]
@@ -134,7 +149,7 @@ fn no_probe_before_the_handshake_is_confirmed() {
     raw.shake_hands();
     raw.request_packets(&"a".repeat(10));
     assert_eq!(raw.sizes(), []);
-    raw.send("ack, handshake_done");
+    raw.send_and_ask_for_ack("ack, handshake_done");
     assert_eq!(raw.sizes()[0], 1472);
 }
 
@@ -164,8 +179,8 @@ fn falls_back_after_two_timeouts() {
         assert_eq!(raw.sizes()[0], size);
     }
     raw.advance(RTT);
-    raw.send("ack");
-    assert_eq!(raw.sizes(), [1472]);
+    raw.send_and_ask_for_ack("ack");
+    assert_eq!(raw.sizes()[0], 1472);
     assert_eq!(raw.mtu(), 1200);
 }
 
@@ -205,10 +220,6 @@ fn falls_back_when_only_small_packets_get_through() {
             raw.advance(RTT);
             raw.send("ack");
         }
-        raw.lose();
-        raw.request_packets("d");
-        raw.send("ack");
-        assert_eq!(raw.sizes(), []);
         assert_eq!(raw.mtu(), last, "{rounds}");
     }
 }
@@ -243,7 +254,7 @@ fn persistent_congestion() {
         let mut raw = raw.warmed_up();
         match is_probed {
             true => drop(raw.probes(1472)),
-            false => raw.send("ack"),
+            false => raw.send_and_ask_for_ack("ack"),
         }
         raw.advance(RTT / 2);
         if is_probed {

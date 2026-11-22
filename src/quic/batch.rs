@@ -3,7 +3,7 @@ use core::ops::Range;
 use crate::path::Addresses;
 
 /// The least that `UDP_MAX_SEGMENTS` has been on Linux.
-pub(crate) const MAX_SEGMENTS: usize = 64;
+const MAX_SEGMENTS: usize = 64;
 /// What a UDP datagram can carry over IPv4.
 const MAX_RUN_LEN: usize = 65507;
 
@@ -58,20 +58,20 @@ impl Batch {
             .map(|(run, end)| (&run.addresses, run.start..end, run.segment_len))
     }
 
-    /// The bytes from `start` on are a datagram, which can be one of up to `max_segments` in a run.
+    /// The bytes from `start` on are a datagram, which can be part of a run of up to `max_len` bytes.
     #[inline]
     pub(crate) fn commit(
         &mut self,
         addresses: &Addresses,
         start: usize,
-        max_segments: usize,
+        max_len: usize,
     ) -> Position {
         let len = self.bytes.len() - start;
         self.len += 1;
         if let Some(run) = self.runs.last_mut()
             && len <= run.segment_len
             && (start - run.start).is_multiple_of(run.segment_len)
-            && self.bytes.len() - run.start <= run.max_len.min(max_segments * run.segment_len)
+            && self.bytes.len() - run.start <= run.max_len.min(max_len)
             && run.addresses == *addresses
         {
             run.segments += 1;
@@ -84,7 +84,7 @@ impl Batch {
             addresses: *addresses,
             start,
             segment_len: len,
-            max_len: MAX_RUN_LEN.min(max_segments * len),
+            max_len: MAX_RUN_LEN.min(MAX_SEGMENTS * len).min(max_len),
             segments: 1,
         });
         Position::default()
@@ -96,6 +96,41 @@ mod tests {
     use super::*;
 
     #[test]
+    fn only_the_last_datagram_of_a_run_can_be_shorter() {
+        let mut batch = Batch::default();
+        let datagrams = [
+            (1, 40),
+            (1, 40),
+            (1, 30),
+            (1, 30),
+            (1, 40),
+            (2, 40),
+            (3, 30),
+        ];
+        for (port, len) in datagrams.into_iter().chain([(3, 40); 65]) {
+            let address = ([192, 0, 2, 1], port).into();
+            let addresses = Addresses {
+                local: address,
+                peer: address,
+            };
+            let start = batch.bytes.len();
+            batch.bytes.resize(start + len, 0);
+            batch.commit(&addresses, start, usize::MAX);
+        }
+        let runs = batch.runs().map(|it| (it.0.peer.port(), it.1.len(), it.2));
+        let expected = [
+            (1, 110, 40),
+            (1, 30, 30),
+            (1, 40, 40),
+            (2, 40, 40),
+            (3, 30, 30),
+            (3, 64 * 40, 40),
+            (3, 40, 40),
+        ];
+        assert_eq!(runs.collect::<Vec<_>>(), expected);
+    }
+
+    #[test]
     fn runs_have_limits() {
         let address = ([192, 0, 2, 1], 1).into();
         let addresses = Addresses {
@@ -103,18 +138,18 @@ mod tests {
             peer: address,
         };
         for (first, count, last, position) in [
-            ((1200, 64), 54, (707, 64), 54),
-            ((1200, 64), 54, (708, 64), 0),
-            ((40, 3), 2, (40, 64), 2),
-            ((40, 3), 3, (1, 64), 0),
-            ((40, 64), 2, (40, 3), 2),
-            ((40, 64), 3, (1, 3), 0),
+            ((1200, 70_000), 54, (707, 70_000), 54),
+            ((1200, 70_000), 54, (708, 70_000), 0),
+            ((40, 120), 2, (40, 999), 2),
+            ((40, 120), 3, (1, 999), 0),
+            ((40, 999), 2, (40, 120), 2),
+            ((40, 999), 3, (1, 120), 0),
         ] {
             let mut batch = Batch::default();
-            let mut add = |(len, max_segments)| {
+            let mut add = |(len, max_len)| {
                 let start = batch.bytes.len();
                 batch.bytes.resize(start + len, 0);
-                let position = batch.commit(&addresses, start, max_segments);
+                let position = batch.commit(&addresses, start, max_len);
                 assert_eq!(position.offset, first.0 as u16 * u16::from(position.index));
                 position.index
             };

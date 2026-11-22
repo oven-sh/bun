@@ -2,9 +2,11 @@
 
 mod bandwidth_sampler;
 mod bbr;
+mod ceiling;
 mod cubic;
 mod pacer;
 mod rtt;
+mod spread;
 mod trial;
 mod windowed_filter;
 
@@ -12,6 +14,7 @@ use bbr::Bbr;
 use cubic::Cubic;
 use pacer::{Pacer, Place};
 pub(crate) use rtt::{GRANULARITY, Rtt};
+use spread::Spread;
 
 use crate::time::Instant;
 
@@ -90,6 +93,7 @@ enum Model {
 pub(crate) struct Controller {
     model: Model,
     pacer: Pacer,
+    spread: Spread,
     in_flight: u64,
     /// Until when to wait for more room in a window that has been full.
     refill_at: Instant,
@@ -120,6 +124,7 @@ impl Controller {
                 Algorithm::Bbr => Model::Bbr(Bbr::new(segment, random)),
             },
             pacer: Pacer::default(),
+            spread: Spread::default(),
             in_flight: 0,
             refill_at: Instant::default(),
             prior_in_flight: 0,
@@ -168,6 +173,12 @@ impl Controller {
         }
     }
 
+    /// What the window has left.
+    #[inline]
+    pub(crate) fn room(&self) -> u64 {
+        self.window().saturating_sub(self.in_flight)
+    }
+
     /// For one more packet, which may be what fills the window over the brim. After that, it may wait until more of
     /// what is `unsent` can be sent together.
     #[inline]
@@ -199,6 +210,22 @@ impl Controller {
         self.pacer.max_turn()
     }
 
+    /// Whether to hand datagrams to the system one by one.
+    #[inline]
+    pub(crate) fn spreads_out(&self) -> bool {
+        self.spread.is_on
+    }
+
+    /// Whether so little is waiting on the path that a burst can make a difference.
+    #[inline]
+    pub(crate) fn is_queue_short(&self, rtt: &Rtt) -> bool {
+        let min_rtt = match &self.model {
+            Model::Cubic(_) => rtt.min,
+            Model::Bbr(bbr) => bbr.min_rtt(rtt),
+        };
+        self.pacer.is_queue_short(rtt.smoothed - min_rtt)
+    }
+
     #[inline]
     pub(crate) fn on_sent(&mut self, now: Instant, len: u16, rtt: &Rtt) -> Flight {
         if self.in_flight == 0 {
@@ -228,6 +255,10 @@ impl Controller {
             Model::Bbr(bbr) => bbr.on_idle_restart(now),
         }
         self.pacer.on_idle_restart(now, self.is_recovering());
+        if matches!(&self.model, Model::Bbr(bbr) if bbr.suspects_short_queue()) {
+            self.pacer.shorten_burst();
+        }
+        self.spread.on_idle_restart(now);
         self.update_pacing_rate(rtt);
     }
 
@@ -240,12 +271,17 @@ impl Controller {
 
     /// There is nothing more to send, or no credit for it.
     pub(crate) fn on_application_limited(&mut self) {
-        self.pacer.on_limited_otherwise();
+        self.pacer.on_application_limited();
         if let Model::Bbr(bbr) = &mut self.model
             && self.in_flight < bbr.window()
         {
             bbr.on_application_limited(self.last_sent);
         }
+    }
+
+    /// For when the loss of what has been sent so far has nothing to do with bursts.
+    pub(crate) fn excuse_bursts(&mut self, now: Instant) {
+        self.spread.start_period(now, self.last_sent);
     }
 
     /// Takes a packet out of the flight without drawing a conclusion. Returns whether it was part of it.
@@ -278,7 +314,8 @@ impl Controller {
     pub(crate) fn on_lost(&mut self, flight: &Flight, ends_burst: bool) {
         if self.discard(flight) {
             if flight.place == Place::FirstAfterGap {
-                self.pacer.on_start_settled(true);
+                // The gap may have been the time that the system took to send.
+                self.pacer.on_start_settled(!self.spread.is_on);
             }
             self.lost_run = match flight.sequence == self.last_lost + 1 {
                 true => self.lost_run.map(|it| it + 1),
@@ -310,6 +347,7 @@ impl Controller {
     pub(crate) fn on_late(&mut self, len: u64) {
         if let Model::Bbr(bbr) = &mut self.model {
             bbr.on_late(len);
+            self.spread.on_late(len);
         }
     }
 
@@ -329,19 +367,24 @@ impl Controller {
         if feedback.acked == 0 && feedback.lost == 0 {
             return;
         }
-        if feedback.lost > 0 {
-            self.pacer.on_loss();
-        }
+        self.pacer.on_feedback(feedback.lost > 0);
+        let is_queue_short = self.is_queue_short(rtt);
         if feedback.is_overflow
             || matches!(&self.model, Model::Cubic(cubic) if cubic.is_congested(&feedback))
         {
-            self.pacer.on_overflow();
+            let is_burst_at_fault = feedback.is_overflow && is_queue_short;
+            (self.pacer).on_overflow(is_burst_at_fault, feedback.prior_in_flight);
         }
         match &mut self.model {
             Model::Cubic(cubic) => cubic.on_feedback(now, &feedback, rtt),
             Model::Bbr(bbr) => {
                 bbr.on_feedback(now, &feedback, rtt);
                 (self.pacer).try_longer_bursts(now, &feedback, bbr.starts_cycle(now));
+                let is_typical = !self.pacer.is_on_trial() && !feedback.is_persistent_congestion;
+                match bbr.is_cycling() && is_typical {
+                    true => self.spread.update(now, &feedback, rtt, is_queue_short),
+                    false => self.spread.start_period(now, feedback.last_sent),
+                }
             }
         }
         self.update_pacing_rate(rtt);

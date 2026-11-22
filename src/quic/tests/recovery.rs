@@ -184,8 +184,11 @@ fn packet_threshold_has_no_limit() {
     let mut raw = Raw::client().connected();
     for (len, frames) in [(400, "stream 3 0 a"), (300, "")] {
         let late = raw.received[2].last().unwrap() + 1;
-        raw.request_packets(&"a".repeat(len));
+        raw.request_packets(&"a".repeat(len / 2));
+        raw.advance(1);
+        raw.request_packets(&"a".repeat(len / 2));
         raw.advance(RTT);
+        assert!(raw.received[2].contains(&(late + len as u64 - 1)));
         raw.received[2].remove(&late);
         raw.send("ack");
         assert_eq!(raw.frames(), frames);

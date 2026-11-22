@@ -71,6 +71,7 @@ impl Connection {
             self.packet_threshold = self.packet_threshold.max(distance);
             self.rtt.on_late(now - late.at);
             self.congestion.on_late(late.len);
+            self.runs.on_late(ack.ranges());
         }
 
         let (mut has_news, mut is_reordered) = (false, late.is_some());
@@ -96,7 +97,7 @@ impl Connection {
                 }
                 self.congestion.on_acked(&packet.flight);
                 self.path.mtu.on_acked(&packet.flight);
-                self.runs.on_acked(packet);
+                self.runs.on_acked(packet, space.next_number);
                 for frame in frames.of(packet) {
                     match frame {
                         SentFrame::Stream {
@@ -253,7 +254,6 @@ impl Connection {
         if self.path.mtu.end_ack() {
             self.congestion.set_datagram_len(self.path.mtu.current);
         }
-        self.runs.try_longer(self.spaces.data.next_number);
         self.congestion.end_ack(now, &self.rtt);
     }
 
@@ -266,8 +266,10 @@ impl Connection {
         self.stats.packets_lost += 1;
         let ends_burst = next.is_some_and(|it| it.flight.starts_burst());
         self.congestion.on_lost(&packet.flight, ends_burst);
-        let ends_run = next.is_some_and(|it| it.position.index == 0);
-        (self.runs).on_lost(packet, ends_run, self.spaces.data.next_number);
+        let ends_run = next.is_none_or(|it| it.position.index <= packet.position.index);
+        let is_queue_short = self.congestion.is_queue_short(&self.rtt);
+        let next_number = self.spaces.data.next_number;
+        (self.runs).on_lost(packet, ends_run, is_queue_short, next_number);
         self.path.mtu.on_lost(&packet.flight);
         self.spaces.open(id).sent.remember_lost(packet);
         true
@@ -320,6 +322,8 @@ impl Connection {
     /// For when the peer has moved.
     pub(super) fn lose_all(&mut self, now: Instant) {
         self.give_up_on_flight(SpaceId::Data, |it, flight| it.on_lost(flight, false));
+        self.runs.on_all_lost(self.spaces.data.next_number);
+        self.congestion.excuse_bursts(now);
         self.congestion.end_ack(now, &self.rtt);
     }
 

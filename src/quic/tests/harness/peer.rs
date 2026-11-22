@@ -43,6 +43,8 @@ pub(crate) struct Peer {
     /// How many bytes it offers at a time.
     pub(crate) piece_len: Option<usize>,
     turns: u32,
+    /// In datagrams.
+    pub(crate) longest_run: usize,
 }
 
 impl Peer {
@@ -65,6 +67,7 @@ impl Peer {
             resets: false,
             piece_len: None,
             turns: 0,
+            longest_run: 0,
         }
     }
 
@@ -169,6 +172,7 @@ impl Peer {
             let before = datagrams.len();
             for (addresses, range, len) in batch.runs() {
                 let run = batch.bytes()[range].chunks(len);
+                self.longest_run = self.longest_run.max(run.len());
                 datagrams.extend(run.map(|it| (*addresses, it.to_vec())));
             }
             assert_eq!(datagrams.len() - before, batch.len());

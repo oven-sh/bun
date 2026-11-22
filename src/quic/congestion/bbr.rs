@@ -1,6 +1,7 @@
 //! draft-cardwell-iccrg-bbr-congestion-control-00.
 
 use super::bandwidth_sampler::BandwidthSampler;
+use super::ceiling::Ceiling;
 use super::windowed_filter::WindowedMax;
 use super::{Feedback, Flight, INITIAL_WINDOW, MAX_WINDOW, MICROS_PER_SECOND, Rtt, SEGMENT};
 use crate::time::{Duration, Instant};
@@ -12,8 +13,8 @@ const DEFAULT_RTT: Duration = Duration::from_millis(25);
 const MIN_RTT_EXPIRY: Duration = Duration::from_secs(10);
 const PROBE_RTT_TIME: Duration = Duration::from_millis(200);
 const ROUNDS_WITHOUT_GROWTH: u8 = 3;
-/// After how many they are forgotten, unless loss has been high.
-const ROUNDS_WITHOUT_LIMIT: u64 = 8;
+/// After how many they are forgotten, or twice as many if there was a queue.
+const CLEAR_ROUNDS: u8 = 4;
 /// To lose this many in a round, and more than one in `HIGH_LOSS_RATIO`, is no accident.
 const HIGH_LOSS_SEGMENTS: u64 = 6;
 const HIGH_LOSS_RATIO: u64 = 50;
@@ -88,16 +89,20 @@ pub(super) struct Bbr {
     acked_in_round: u64,
     lost_in_round: u64,
     was_congested_in_round: bool,
+    has_overflowed_in_round: bool,
     acked_in_last_round: u64,
     is_pipe_filled: bool,
     is_last_sample_limited: bool,
     is_restarting: bool,
     has_lost_packets: bool,
     rounds_without_growth: u8,
-    /// The last round without growth, or with a queue.
-    limited_in: u64,
-    was_loss_high: bool,
+    /// Those that were about as long as `limited_len` and got through, since the last one without growth.
+    clear_rounds: u8,
+    /// Of the longest round that met a queue since they count. Shorter ones say nothing about it.
+    limited_len: u64,
     bandwidth_to_beat: u64,
+    ceiling: Ceiling,
+    was_congested_in_cycle: bool,
     /// What is acknowledged in excess of the bandwidth, as paths and peers bunch acknowledgments.
     excess_acked: WindowedMax,
     bunch_start: Instant,
@@ -128,15 +133,18 @@ impl Bbr {
             acked_in_round: 0,
             lost_in_round: 0,
             was_congested_in_round: false,
+            has_overflowed_in_round: false,
             acked_in_last_round: 0,
             is_pipe_filled: false,
             is_last_sample_limited: false,
             is_restarting: false,
             has_lost_packets: false,
             rounds_without_growth: 0,
-            limited_in: 0,
-            was_loss_high: false,
+            clear_rounds: 0,
+            limited_len: 0,
             bandwidth_to_beat: 0,
+            ceiling: Ceiling::NONE,
+            was_congested_in_cycle: false,
             excess_acked: WindowedMax::default(),
             bunch_start: Instant::default(),
             bunch_len: 0,
@@ -162,7 +170,7 @@ impl Bbr {
         self.recovery.is_some()
     }
 
-    fn min_rtt(&self, rtt: &Rtt) -> Duration {
+    pub(super) fn min_rtt(&self, rtt: &Rtt) -> Duration {
         match (self.min_rtt.is_zero(), rtt.has_sample()) {
             (false, _) => self.min_rtt,
             (true, true) => rtt.min,
@@ -253,14 +261,18 @@ impl Bbr {
             0 => INITIAL_WINDOW,
             capacity => capacity,
         };
-        self.advance_phase(now, feedback, min_rtt, capacity);
+        self.was_congested_in_cycle |= is_congested;
+        self.advance_phase(now, feedback, min_rtt, capacity, is_congested);
         if !self.is_pipe_filled {
+            let has_queue = rtt.smoothed.as_micros() > Gain::PROBE_UP.of(min_rtt.as_micros());
             if is_round_start {
-                self.check_pipe_filled();
+                self.check_pipe_filled(capacity, has_queue);
             }
             self.acked_in_round += feedback.acked;
             self.lost_in_round += feedback.lost;
-            self.was_congested_in_round |= is_congested;
+            // The queue is gone by the time that the end of a flight is found to be lost.
+            self.was_congested_in_round |= is_congested || feedback.lost > 0 && has_queue;
+            self.has_overflowed_in_round |= feedback.is_overflow;
             if feedback.is_persistent_congestion {
                 self.lost_in_round = 0;
             }
@@ -276,9 +288,23 @@ impl Bbr {
         let pacing_rate = self.pacing_gain().of(self.bandwidth.get());
         self.pacing_rate = match self.is_pipe_filled {
             true => pacing_rate,
-            false => pacing_rate.max(self.pacing_rate),
+            false => (pacing_rate.max(self.pacing_rate))
+                .min((self.ceiling.rate).max(self.min_startup_rate())),
         };
         self.update_window(feedback.acked, capacity);
+    }
+
+    fn min_startup_rate(&self) -> u64 {
+        Gain::WINDOW.of(self.bandwidth.get())
+    }
+
+    #[inline]
+    pub(super) fn is_cycling(&self) -> bool {
+        matches!(self.mode, Mode::ProbeBandwidth { .. })
+    }
+
+    pub(super) fn suspects_short_queue(&self) -> bool {
+        self.ceiling.suspects_short_queue()
     }
 
     /// `None` unless the path is what limits the rate.
@@ -373,19 +399,47 @@ impl Bbr {
     }
 
     /// §4.3.2.2, and draft-ietf-ccwg-bbr-06 §5.3.1.3 for those that never send for three rounds on end.
-    fn check_pipe_filled(&mut self) {
+    fn check_pipe_filled(&mut self, capacity: u64, has_queue: bool) {
         let acked = core::mem::take(&mut self.acked_in_round);
         let lost = core::mem::take(&mut self.lost_in_round);
-        if self.round > self.limited_in + ROUNDS_WITHOUT_LIMIT && !self.was_loss_high {
-            self.rounds_without_growth = 0;
+        let len = acked + lost;
+        if self.rounds_without_growth == 0 {
+            self.limited_len = 0;
         }
+        let has_lost_many = lost >= HIGH_LOSS_SEGMENTS * self.segment;
+        let is_share_high = lost * HIGH_LOSS_RATIO > len;
         if self.was_congested_in_round {
-            self.limited_in = self.round;
+            self.clear_rounds = 0;
+            if lost > 0 {
+                self.limited_len = self.limited_len.max(len);
+                match self.ceiling.rate < self.min_startup_rate() {
+                    // It only keeps loss from being high enough to end startup.
+                    true => self.ceiling = Ceiling::NONE,
+                    false => self.ceiling.on_congestion(self.pacing_rate),
+                }
+            }
+        } else {
+            if acked >= capacity / 2 {
+                self.ceiling.on_clear_round(self.pacing_rate, lost > 0);
+            }
+            self.clear_rounds += u8::from(
+                self.is_last_sample_limited
+                    && len >= self.limited_len - self.limited_len / 8
+                    && !(has_lost_many && is_share_high),
+            );
         }
+        if self.clear_rounds >= CLEAR_ROUNDS << u8::from(self.limited_len > 0) {
+            (self.clear_rounds, self.rounds_without_growth) = (0, 0);
+        }
+        if !self.is_last_sample_limited {
+            self.ceiling = Ceiling::NONE;
+        }
+        // It has taken long enough to measure the bandwidth.
+        let was_too_much =
+            core::mem::take(&mut self.has_overflowed_in_round) && acked >= Gain::HIGH.of(capacity);
         let is_loss_high = core::mem::take(&mut self.was_congested_in_round)
-            && lost >= HIGH_LOSS_SEGMENTS * self.segment
-            && lost * HIGH_LOSS_RATIO > acked + lost;
-        self.was_loss_high |= is_loss_high;
+            && (has_lost_many || was_too_much)
+            && is_share_high;
         if self.is_last_sample_limited && !is_loss_high {
             return;
         }
@@ -399,7 +453,10 @@ impl Bbr {
             self.bandwidth_to_beat = Gain::PROBE_UP.of(bandwidth);
             self.rounds_without_growth = 0;
         } else if !is_catching_up {
-            self.limited_in = self.round;
+            self.clear_rounds = 0;
+            if has_queue {
+                self.limited_len = self.limited_len.max(len).max(capacity);
+            }
             self.rounds_without_growth += 1;
             self.is_pipe_filled = self.rounds_without_growth >= ROUNDS_WITHOUT_GROWTH;
         }
@@ -410,30 +467,44 @@ impl Bbr {
         self.random = (self.random.wrapping_mul(1_664_525)).wrapping_add(1_013_904_223);
         let phase = (self.random >> 24) as u8 % (PHASES - 1);
         self.mode = Mode::ProbeBandwidth {
-            phase: phase + u8::from(phase > 0),
+            phase: match phase > 0 || self.was_congested_in_cycle {
+                true => phase.max(1) + 1,
+                false => 0,
+            },
             since: now,
         };
     }
 
     /// §4.3.4.3.
-    fn advance_phase(&mut self, now: Instant, feedback: &Feedback, rtt: Duration, capacity: u64) {
+    fn advance_phase(
+        &mut self,
+        now: Instant,
+        feedback: &Feedback,
+        rtt: Duration,
+        capacity: u64,
+        is_congested: bool,
+    ) {
         let Mode::ProbeBandwidth { phase, since } = self.mode else {
             return;
         };
         let (gain, is_full_length) = (self.pacing_gain(), now - since > rtt);
         let is_over = if gain > Gain::UNIT {
             let target = gain.of(capacity).max(self.min_window());
-            is_full_length && (feedback.lost > 0 || feedback.prior_in_flight >= target)
+            is_full_length
+                && (feedback.lost > 0
+                    || self.was_congested_in_cycle
+                    || feedback.prior_in_flight >= target)
         } else if gain < Gain::UNIT {
             is_full_length || feedback.in_flight <= capacity.max(self.min_window())
         } else {
+            // Or else every large response among small ones starts with what was too much for the last one.
             is_full_length
+                && (!self.was_congested_in_cycle || feedback.prior_in_flight >= capacity / 2)
         };
         if is_over {
-            self.mode = Mode::ProbeBandwidth {
-                phase: (phase + 1) % PHASES,
-                since: now,
-            };
+            let phase = (phase + 1) % PHASES;
+            self.was_congested_in_cycle &= phase > 0 || is_congested;
+            self.mode = Mode::ProbeBandwidth { phase, since: now };
         }
     }
 

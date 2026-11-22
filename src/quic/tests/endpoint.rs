@@ -21,6 +21,21 @@ impl Raw {
         let runs = batch.runs().map(|it| (it.0.peer.port(), it.1.len(), it.2));
         runs.collect()
     }
+
+    /// In datagrams.
+    fn run_lens(&mut self) -> Vec<usize> {
+        let runs = self.runs(&mut Batch::default(), 100);
+        runs.iter().map(|it| it.1.div_ceil(it.2)).collect()
+    }
+
+    /// All of it arrives.
+    fn receive_bytes(&mut self, id: u64, lens: &[usize]) {
+        for &len in lens {
+            self.peer.send(id, &vec![0; len], false);
+            self.advance(RTT);
+            self.send("ack");
+        }
+    }
 }
 
 #[test]
@@ -148,34 +163,57 @@ fn stateless_resets() {
 }
 
 #[test]
-fn runs_of_datagrams() {
+fn replies_go_one_by_one() {
     let mut raw = Raw::client();
-    for (port, len) in [(1, 40), (1, 40), (1, 30), (1, 30), (1, 40), (2, 40)] {
+    let runs = [(1, 40, 40), (1, 40, 40), (1, 30, 30), (2, 40, 40)];
+    for (port, len, _) in runs {
         raw.act_as(port);
         (raw.peer.endpoint).reset(&raw.addresses, &vec![0x40; len + 1]);
     }
     let mut batch = Batch::default();
-    assert_eq!(raw.runs(&mut batch, 2), [(1, 80, 40)]);
+    assert_eq!(raw.runs(&mut batch, 2), runs[..2]);
     assert!(raw.peer.endpoint.wants_to_transmit());
-    let runs = [(1, 110, 40), (1, 30, 30), (1, 40, 40), (2, 40, 40)];
     assert_eq!(raw.runs(&mut batch, 100), runs);
     assert!(!raw.peer.endpoint.wants_to_transmit());
-    assert_eq!((batch.len(), batch.bytes().len()), (6, 220));
+    assert_eq!((batch.len(), batch.bytes().len()), (4, 150));
     batch.clear();
     assert!(batch.len() == 0 && batch.bytes().is_empty() && batch.runs().next().is_none());
+}
 
-    raw.peer.endpoint.reset(&raw.addresses, &[0x40; 31]);
-    for _ in 0..65 {
-        raw.peer.endpoint.reset(&raw.addresses, &[0x40; 41]);
+#[test]
+fn runs_get_longer_as_they_arrive() {
+    for (packets, arrived, runs) in [
+        (240, &[][..], &[1; 8][..]),
+        (260, &[], &[2, 1, 1, 1, 1, 1, 1]),
+        (260, &[2000], &[3, 1, 1, 1, 2]),
+        (260, &[3000], &[4, 2, 2]),
+        (260, &[3000, 5500], &[8]),
+    ] {
+        let mut raw = Raw::server().connected();
+        raw.receive_packets(packets);
+        let id = raw.peer.open(Unidirectional);
+        raw.receive_bytes(id, arrived);
+        raw.peer.send(id, &[0; 9000], false);
+        assert_eq!(raw.run_lens(), runs);
     }
-    let runs = [(2, 30, 30), (2, 64 * 40, 40), (2, 40, 40)];
-    assert_eq!(raw.runs(&mut batch, 100), runs);
+}
+
+#[test]
+fn runs_start_early_if_there_is_more_than_fits_the_window() {
+    for (len, first_run) in [(52_000, 1), (54_000, 2)] {
+        let mut raw = Raw::server().connected();
+        let id = raw.peer.open(Unidirectional);
+        raw.peer.send(id, &vec![0; len], false);
+        assert_eq!(raw.run_lens()[0], first_run);
+    }
 }
 
 #[test]
 fn probes_go_one_by_one() {
     let mut raw = Raw::server().connected();
+    raw.receive_packets(260);
     let id = raw.peer.open(Unidirectional);
+    raw.receive_bytes(id, &[2000, 3000]);
     raw.peer.send(id, &[0; 3000], false);
     for runs in [1, 3] {
         let mut batch = Batch::default();
@@ -191,52 +229,83 @@ fn nothing_goes_with_a_probe_of_the_mtu() {
     let mut raw = Raw::client().with("max_udp_payload_size=").connected();
     raw.request_packets(&"a".repeat(9));
     let id = raw.peer.open(Unidirectional);
+    raw.peer.send(id, b"b", false);
+    raw.lose();
+    for _ in 0..25 {
+        raw.request_packets(&"a".repeat(10));
+        raw.advance(1);
+    }
+    raw.peer.send(id, &[0; 3000], false);
+    raw.advance(RTT);
     raw.peer.send(id, &[0; 2000], false);
-    let runs = [(1000, 1472, 1472), (1000, 2062, 1200)];
+    raw.waits = false;
+    raw.send("ack");
+    let runs = [(1000, 1472, 1472), (1000, 2068, 1200)];
     assert_eq!(raw.runs(&mut Batch::default(), 100), runs);
 }
 
 #[test]
 fn nothing_goes_with_a_probe_of_the_path() {
     let mut raw = Raw::server().connected();
+    raw.receive_packets(260);
     let id = raw.peer.open(Unidirectional);
     raw.peer.send(id, &[0; 2000], false);
     raw.waits = false;
     raw.send("path_challenge 12345678");
-    let runs = raw.runs(&mut Batch::default(), 100);
-    assert!(runs.iter().map(|it| it.1.div_ceil(it.2)).eq([1, 2]));
+    assert_eq!(raw.run_lens(), [1, 2]);
 }
 
 #[test]
 fn runs_are_short_for_a_while_after_one_was_lost() {
-    for (arrived, rounds, runs) in [
-        (0, 4, &[5, 3][..]),
-        (10_100, 4, &[8]),
-        (0, 240, &[5, 3]),
-        (0, 260, &[8]),
+    for (arrived, is_late, rounds, runs) in [
+        (0, false, 4, &[4, 4, 3][..]),
+        (0, true, 4, &[8, 3]),
+        (9100, false, 4, &[11]),
+        (0, false, 190, &[4, 4, 3]),
+        (0, false, 210, &[6, 4, 1]),
     ] {
         let mut raw = Raw::server().connected();
+        raw.receive_packets(260);
         let id = raw.peer.open(Unidirectional);
-        raw.peer.send(id, &vec![0; arrived], false);
-        raw.advance(RTT);
-        raw.send("ack");
+        raw.receive_bytes(id, &[3000, 5500, arrived]);
         raw.request_packets("a");
-        raw.peer.send(id, &[0; 10_000], false);
+        raw.peer.send(id, &[0; 9000], false);
+        raw.process();
+        let all = raw.received[2].clone();
         raw.lose();
         raw.send("ping");
         raw.send("ping");
-        for _ in 0..rounds {
+        for round in 0..rounds {
             for _ in 0..10 {
                 raw.peer.send(id, b"b", false);
                 raw.forget();
             }
             raw.advance(RTT);
             raw.send("ack");
+            if is_late && round == 1 {
+                raw.received[2].extend(&all);
+            }
         }
+        raw.peer.send(id, &[0; 12_000], false);
+        assert_eq!(raw.run_lens(), runs);
+    }
+}
+
+#[test]
+fn run_that_comes_last_can_be_lost_as_a_whole() {
+    for (packets, first_run) in [(500, 1), (520, 2)] {
+        let mut raw = Raw::server().connected();
+        raw.receive_packets(260);
+        let id = raw.peer.open(Unidirectional);
+        raw.peer.send(id, &[0; 2000], false);
+        raw.lose();
+        raw.send("ping");
+        raw.send("ping");
+        raw.advance(RTT + 5);
+        raw.send("ack");
+        raw.receive_packets(packets);
         raw.peer.send(id, &[0; 9000], false);
-        let lens = raw.runs(&mut Batch::default(), 100);
-        let lens = lens.iter().map(|it| it.1.div_ceil(it.2));
-        assert_eq!(lens.collect::<Vec<_>>(), runs);
+        assert_eq!(raw.run_lens()[0], first_run);
     }
 }
 
@@ -248,24 +317,33 @@ fn connections_take_turns() {
     raw.connect_to(2);
     raw.connection();
     let (mut batch, mut visited) = (Batch::default(), Vec::new());
-    for max_len in [48, 200] {
-        (raw.peer.endpoint).poll_transmit(raw.now, &mut batch, max_len, |it| {
+    for max_len in [64, 200] {
+        let is_full = (raw.peer.endpoint).poll_transmit(raw.now, &mut batch, max_len, |it| {
             visited.push((it.addresses().peer.port(), it.stats().packets_sent));
         });
         let endpoint = &raw.peer.endpoint;
-        assert_eq!(endpoint.wants_to_transmit(), max_len == 48);
+        assert_eq!(is_full, max_len == 64);
+        assert_eq!(endpoint.wants_to_transmit(), is_full);
         let waiting = (
             endpoint.waiting_to_transmit(),
             endpoint.waiting_with_events(),
         );
-        assert_eq!(waiting, [(0, 0), (2, 2)][usize::from(max_len == 48)]);
+        assert_eq!(waiting, [(0, 0), (2, 2)][usize::from(max_len == 64)]);
         while raw.peer.endpoint.poll_event(raw.now).is_some() {}
     }
     assert!(matches!(
         visited[..],
-        [(1, 44), (2, 4), (1, 49 | 50), (2, 48), (2, 49 | 50)]
+        [(1, 44), (2, 44), (1, 49 | 50), (2, 49 | 50)]
     ));
-    assert_eq!(batch.len() as u64, visited[2].1 + visited[4].1);
+    assert_eq!(batch.len() as u64, visited[2].1 + visited[3].1);
+    let len = batch.len();
+    for (max_len, is_full) in [(len + 1, false), (len, true)] {
+        let endpoint = &mut raw.peer.endpoint;
+        assert_eq!(
+            endpoint.poll_transmit(raw.now, &mut batch, max_len, |_| {}),
+            is_full
+        );
+    }
 }
 
 #[test]
@@ -275,15 +353,62 @@ fn turns_are_short_while_the_socket_is_backed_up() {
     raw.connect_to(1);
     raw.connect_to(2);
     raw.connection();
-    for (is_backed_up, max_len, expected) in [
-        (true, 20, &[(1, 8), (2, 8), (1, 4)][..]),
-        (false, 20, &[(2, 20)]),
-    ] {
+    for (is_backed_up, expected) in [(true, &[(1, 8), (2, 8)][..]), (false, &[(1, 41)])] {
         raw.peer.endpoint.set_backed_up(is_backed_up);
-        let runs = raw.runs(&mut Batch::default(), max_len);
+        let runs = raw.runs(&mut Batch::default(), 12);
         let turns = (runs.chunk_by(|a, b| a.0 == b.0)).map(|it| (it[0].0, it.len()));
         assert_eq!(turns.collect::<Vec<_>>(), expected);
     }
+}
+
+#[test]
+fn short_datagrams_go_alone_once_the_socket_was_backed_up() {
+    for (was_backed_up, runs) in [(false, &[3][..]), (true, &[2, 1])] {
+        let mut raw = Raw::server().connected();
+        raw.receive_packets(260);
+        let id = raw.peer.open(Unidirectional);
+        raw.receive_bytes(id, &[3000]);
+        raw.peer.endpoint.set_backed_up(was_backed_up);
+        raw.peer.endpoint.set_backed_up(false);
+        raw.peer.send(id, &[0; 3000], false);
+        assert_eq!(raw.run_lens(), runs);
+    }
+}
+
+#[test]
+fn batches_for_several_peers_vary_in_length() {
+    for (peers, random, len) in [(2, 0, 24), (2, 0x80, 32), (2, 0xff, 40), (1, 0xff, 32)] {
+        let mut raw = Raw::server();
+        raw.peer.tls.hello_len = 56_000;
+        (0..peers).for_each(|it| raw.connect_to(1 + it));
+        raw.peer.endpoint.set_backed_up(true);
+        raw.peer.crypto.planned.borrow_mut().push(vec![random; 4]);
+        let mut batch = Batch::default();
+        raw.runs(&mut batch, 32);
+        assert_eq!(batch.len(), len);
+    }
+}
+
+#[test]
+fn there_are_no_runs_for_a_while_if_loss_is_high() {
+    let raw = Raw::server().with("max_data=90000000 max_stream_data_uni=9000000");
+    let mut raw = raw.connected();
+    let id = raw.peer.open(Unidirectional);
+    raw.peer.send(id, &vec![0; 8_000_000], false);
+    let rounds = (0..120).map(|_| {
+        raw.advance(RTT);
+        for (at, packet) in raw.take().iter().enumerate() {
+            if at % 10 == 5 || at >= 40 {
+                raw.received[2].remove(&packet.number);
+            }
+        }
+        let longest_run = std::mem::take(&mut raw.peer.longest_run);
+        raw.send("ack");
+        longest_run > 1
+    });
+    let rounds = rounds.skip(6).collect::<Vec<_>>();
+    let stays = rounds.chunk_by(|a, b| a == b).map(<[bool]>::len);
+    assert!(rounds[0] && stays.eq([34, 35, 45]));
 }
 
 #[test]

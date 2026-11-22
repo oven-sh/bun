@@ -1,8 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use bun_core::strings;
-use bun_paths::platform::Auto;
-use bun_paths::resolve_path::{join_abs_string, relative};
+use bun_paths::Path;
 
 use crate::schema::{Enum, Features, File, Message, Name, Types};
 use crate::{Error, Failure, parser};
@@ -71,15 +70,14 @@ fn find_import(
         && !bun_paths::is_absolute(import.as_bytes())
         && !strings::contains_char(import.as_bytes(), 0)
     {
-        let mut directory = bun_paths::dirname(importer);
-        while let Some(current) = directory {
-            let path = join_abs_string::<Auto>(current, &[import.as_bytes()]).to_vec();
+        for directory in bun_paths::ancestors(importer).skip(1) {
+            let path = Path::join(&[directory, import.as_bytes()]);
+            let path = path.as_bytes().to_vec();
             if path != *importer
                 && let Some(text) = read(&path)
             {
                 return Some((Origin::Disk(path), text));
             }
-            directory = bun_paths::dirname(current);
         }
     }
     let (name, text) = WELL_KNOWN_FILES.iter().find(|(name, _)| *name == import)?;
@@ -333,13 +331,11 @@ impl<'a> Program<'a> {
         else {
             return None;
         };
-        let mut specifier = relative(bun_paths::dirname(root)?, path).to_vec();
-        if cfg!(windows) {
-            specifier = strings::replace_owned(&specifier, b"\\", b"/");
-        }
+        let specifier = Path::relative(bun_paths::dirname(root)?, path).into_portable();
+        let specifier = specifier.as_bytes();
         Some(match specifier.starts_with(b"../") {
-            true => specifier,
-            false => [b"./", &specifier[..]].concat(),
+            true => specifier.to_vec(),
+            false => [b"./", specifier].concat(),
         })
     }
 }

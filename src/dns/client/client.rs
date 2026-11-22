@@ -11,15 +11,17 @@ use crate::lookup::{AddressLookup, NameLookup};
 use crate::message::{Address, Message, Question, RecordType, Records};
 use crate::servers::{ServerId, Servers};
 use crate::system::{Events, SocketId, System};
-use crate::transport::{Connections, Queries};
+use crate::transport::{Connections, MIN_TIMEOUT, Queries};
 
 /// The timeout doubles with each round, so nobody waits for more.
 const MAX_TRIES: u32 = 64;
 
 #[derive(Clone, Copy)]
 pub struct Options {
-    /// Of the first try, until it is known how long the server takes. `None`: what the system says.
+    /// Of the first try at each server. `None`: what the system says.
     pub timeout: Option<Duration>,
+    /// Of any try.
+    pub max_timeout: Option<Duration>,
     /// For each server.
     pub tries: u32,
 }
@@ -64,6 +66,7 @@ pub(crate) enum Step<R> {
 pub struct Client<S: System, R> {
     pub(crate) system: S,
     pub(crate) config: Config,
+    pub(crate) max_timeout: Duration,
     pub(crate) tries: usize,
     pub(crate) servers: Servers,
     pub(crate) local_v4: Option<Ipv4Addr>,
@@ -84,13 +87,15 @@ pub struct Client<S: System, R> {
 impl<S: System, R> Client<S, R> {
     pub fn new(mut system: S, options: Options) -> Self {
         let mut config = Config::load(&mut system);
-        config.timeout = options.timeout.unwrap_or(config.timeout);
+        let timeout = options.timeout.or(config.timeout);
+        config.timeout = timeout.map(|timeout| timeout.max(MIN_TIMEOUT));
         let mut servers = Servers::default();
         servers.replace(core::mem::take(&mut config.servers).into_iter());
         let seed = (0..4).fold(0, |seed, _| seed << 16 | u64::from(system.random()));
         Self {
             system,
             config,
+            max_timeout: options.max_timeout.unwrap_or(Duration::MAX),
             tries: options.tries.min(MAX_TRIES) as usize,
             servers,
             local_v4: None,
@@ -104,11 +109,6 @@ impl<S: System, R> Client<S, R> {
             steps: VecDeque::new(),
             answers: Vec::new(),
         }
-    }
-
-    /// Whether [`process_timeouts`](Self::process_timeouts) has to be called now and then.
-    pub fn has_queries(&self) -> bool {
-        self.connections.has_deadlines()
     }
 
     /// Whether one is still to be answered.

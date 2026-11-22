@@ -10,6 +10,7 @@ const {
   validateBoolean,
   validateNumber,
   validateInt32,
+  validateUint32,
   validatePort,
 } = require("internal/validators");
 
@@ -60,7 +61,12 @@ interface LookupOptions {
   backend?: string;
 }
 type LookupCallback = (err: Error | null, address?: string | LookupAddress[] | null, family?: number) => void;
-type NewNativeResolver = (options: { timeout: number; tries: number }) => NativeResolver;
+interface ResolverOptions {
+  timeout: number;
+  tries: number;
+  maxTimeout: number;
+}
+type NewNativeResolver = (options: ResolverOptions) => NativeResolver;
 
 interface DNSException extends Error {
   errno?: number;
@@ -103,7 +109,7 @@ const getRuntimeDefaultResultOrderOption: () => string = $bindgen(
   "getRuntimeDefaultResultOrderOption",
 );
 
-function newResolver(options: { timeout: number; tries: number }) {
+function newResolver(options: ResolverOptions) {
   if (!newResolver.native) {
     newResolver.native = $bindgen("dns_internals.bind.ts", "newResolver") as NewNativeResolver;
   }
@@ -453,18 +459,19 @@ function lookupService(
   );
 }
 
-function validateResolverOptions(options?: { timeout?: number; tries?: number }) {
-  const { timeout = -1, tries = 4 } = { ...options };
+function validateResolverOptions(options?: Partial<ResolverOptions>) {
+  const { timeout = -1, tries = 4, maxTimeout = 0 } = { ...options };
   validateInt32(timeout, "options.timeout", -1);
   validateInt32(tries, "options.tries", 1);
-  return { timeout, tries };
+  validateUint32(maxTimeout, "options.maxTimeout");
+  return { timeout, tries, maxTimeout };
 }
 
 class Resolver {
   declare _handle: NativeResolver;
   #resolver: NativeResolver;
 
-  constructor(options?: { timeout?: number; tries?: number }) {
+  constructor(options?: Partial<ResolverOptions>) {
     this.#resolver = this._handle = newResolver(validateResolverOptions(options));
   }
 
@@ -775,7 +782,7 @@ const promises = {
     declare _handle: NativeResolver;
     #resolver: NativeResolver;
 
-    constructor(options?: { timeout?: number; tries?: number }) {
+    constructor(options?: Partial<ResolverOptions>) {
       this.#resolver = this._handle = newResolver(validateResolverOptions(options));
     }
 

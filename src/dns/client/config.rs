@@ -11,6 +11,8 @@ use crate::{DEFAULT_PORT, name};
 
 pub(crate) const WHITESPACE: &[u8] = b" \t\n\r\x0b\x0c";
 const LIST_SEPARATORS: &[u8] = b", \t\n\r\x0b\x0c";
+/// `RES_MAXRETRANS`
+const MAX_TIMEOUT_SECONDS: u32 = 30;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Source {
@@ -25,7 +27,8 @@ pub struct Config {
     /// Where to look for a host, in order.
     pub(crate) sources: &'static [Source],
     pub(crate) ndots: usize,
-    pub(crate) timeout: Duration,
+    /// `None`: it follows from how long the server takes.
+    pub(crate) timeout: Option<Duration>,
     pub(crate) rotate: bool,
     /// For the first try.
     pub(crate) transport: Transport,
@@ -74,7 +77,7 @@ impl Config {
             domains: Vec::new(),
             sources: &[Source::Hosts, Source::Dns],
             ndots: 1,
-            timeout: Duration::from_secs(2),
+            timeout: None,
             rotate: false,
             transport: Transport::Udp,
             hosts_path: ZBox::from_bytes(b"/etc/hosts"),
@@ -209,7 +212,8 @@ impl Config {
             match (key, value) {
                 (b"ndots", Some(ndots)) => self.ndots = ndots as usize,
                 (b"timeout" | b"retrans", Some(seconds @ 1..)) => {
-                    self.timeout = Duration::from_secs(seconds.into());
+                    let seconds = seconds.min(MAX_TIMEOUT_SECONDS);
+                    self.timeout = Some(Duration::from_secs(seconds.into()));
                 }
                 (b"rotate", _) => self.rotate = true,
                 (b"use-vc" | b"usevc", _) => self.transport = Transport::Tcp,

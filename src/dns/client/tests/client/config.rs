@@ -192,7 +192,9 @@ fn timeout() {
     for (option, expected) in [
         ("timeout:1", 1000),
         ("retrans:3", 3000),
-        ("timeout:4294967295", 5000),
+        ("timeout:30", 30000),
+        ("timeout:31", 30000),
+        ("timeout:4294967295", 30000),
         ("timeout:0", 2000),
         ("timeout", 2000),
     ] {

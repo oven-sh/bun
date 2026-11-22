@@ -56,7 +56,7 @@ export const DNSResolver = b.class({
 });
 
 /** What `validateResolverOptions()` of `node:dns` returns. */
-export const ResolverOptions = b.dictionary({ timeout: b.i32, tries: b.i32 });
+export const ResolverOptions = b.dictionary({ timeout: b.i32, tries: b.i32, maxTimeout: b.u32 });
 export const newResolver = b.fn({ capability: "js", args: { options: ResolverOptions }, returns: DNSResolver });
 
 // The undocumented `Bun.dns.*` functions: the same queries on the VM's global resolver.

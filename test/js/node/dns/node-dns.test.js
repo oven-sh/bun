@@ -1493,6 +1493,48 @@ describe("resolve record types", () => {
     }
   });
 
+  test.concurrent("fast answers do not shorten the timeout that was asked for", async () => {
+    const { socket, resolver: other } = await startFakeServer();
+    try {
+      const resolver = new dns_promises.Resolver({ timeout: 60_000, tries: 1 });
+      resolver.setServers(other.getServers());
+      for (const name of ["a.test", "b.test", "c.test"]) await resolver.resolve4(name);
+      const [answer] = socket.listeners("message");
+      socket.off("message", answer);
+      const slow = resolver.resolve4(NAME).catch(err => err.code);
+      const query = await once(socket, "message");
+      socket.on("message", answer);
+      // An estimate from those three is over by then, which the resolver sees with the next answer.
+      await Bun.sleep(300);
+      await resolver.resolve4("d.test");
+      answer(...query);
+      expect(await slow).toEqual(byType.A.expected);
+    } finally {
+      socket.close();
+    }
+  });
+
+  test.concurrent.each([
+    { timeout: 250, tries: 1 },
+    { timeout: 60_000, tries: 1, maxTimeout: 50 },
+    { tries: 1, maxTimeout: 50 },
+  ])("Resolver(%j) gives up within a second", async options => {
+    const { socket, resolver: other } = await startFakeServer();
+    socket.removeAllListeners("message");
+    const late = Promise.withResolvers();
+    let timer;
+    try {
+      const resolver = new dns_promises.Resolver(options);
+      resolver.setServers(other.getServers());
+      const query = resolver.resolve4(NAME).catch(err => err.code);
+      timer = setTimeout(setImmediate, 900, late.resolve, "late");
+      expect(await Promise.race([query, late.promise])).toBe("ETIMEOUT");
+    } finally {
+      clearTimeout(timer);
+      socket.close();
+    }
+  });
+
   // Not every system has all of 127.0.0.0/8 on its loopback interface.
   test.concurrent.skipIf(!isLinux)("queries come from the address given to setLocalAddress()", async () => {
     const { socket, resolver } = await startFakeServer();
@@ -1679,6 +1721,7 @@ it("argument validation errors name the argument", () => {
     ipv6: message(() => new dns.Resolver().setLocalAddress("127.0.0.1", 1)),
     lookupService: message(() => dns.lookupService(1, 80, () => {})),
     promisesLookupService: message(() => dns.promises.lookupService(1, 80)),
+    maxTimeout: ["1", -1, 2 ** 32, 0, 2 ** 32 - 1].map(maxTimeout => message(() => new dns.Resolver({ maxTimeout }))),
   }).toEqual({
     all: 'The "options.all" property must be of type boolean. Received type number (1)',
     verbatim: 'The "options.verbatim" property must be of type boolean. Received type number (1)',
@@ -1686,5 +1729,12 @@ it("argument validation errors name the argument", () => {
     ipv6: 'The "ipv6" argument must be of type string. Received type number (1)',
     lookupService: "The argument 'address' is invalid. Received 1",
     promisesLookupService: "The argument 'address' is invalid. Received 1",
+    maxTimeout: [
+      `The "options.maxTimeout" property must be of type number. Received type string ('1')`,
+      'The value of "options.maxTimeout" is out of range. It must be >= 0 && <= 4294967295. Received -1',
+      'The value of "options.maxTimeout" is out of range. It must be >= 0 && <= 4294967295. Received 4294967296',
+      undefined,
+      undefined,
+    ],
   });
 });

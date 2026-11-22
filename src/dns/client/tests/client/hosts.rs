@@ -56,6 +56,7 @@ fn names_on_several_lines() {
     assert_eq!(hosts(text).reverse("2.2.2.2"), ["b"]);
     assert_eq!(hosts(text).name_info("3.3.3.3", 80), ["C, http"]);
     assert_eq!(hosts(text).reverse("4.4.4.4"), ["ENOTFOUND"]);
+    assert_eq!(hosts("1.1.1.1 a b c b").reverse("1.1.1.1"), ["b, c"]);
 }
 
 #[test]
@@ -66,6 +67,8 @@ fn many_names_for_an_address() {
     for name in ["h0", "h100", "h101", "h199"] {
         assert_eq!(addresses(&text, name), "0.0.0.0/0");
     }
+    let text = format!("1.1.1.1 a\n{text} a\n2.2.2.2 a\n0.0.0.0 a");
+    assert_eq!(addresses(&text, "a"), "1.1.1.1/0, 0.0.0.0/0, 2.2.2.2/0");
 }
 
 #[test]

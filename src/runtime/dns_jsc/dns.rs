@@ -72,6 +72,7 @@ fn global_resolver(global_this: &JSGlobalObject) -> &'static RefPtr<Resolver> {
     crate::jsc_hooks::dns_resolver().get_or_init(|| {
         let options = bun_dns_client::Options {
             timeout: None,
+            max_timeout: None,
             tries: 4,
         };
         // The VM-global resolver serves every context of the realm.
@@ -82,8 +83,6 @@ fn global_resolver(global_this: &JSGlobalObject) -> &'static RefPtr<Resolver> {
 bun_output::declare_scope!(DNSLookup, visible);
 bun_output::declare_scope!(dns, hidden);
 bun_output::declare_scope!(DNSResolver, visible);
-
-const TIMEOUT_CHECK_INTERVAL_MS: i64 = 1000;
 
 // ──────────────────────────────────────────────────────────────────────────
 // dns_sd (macOS): DNSServiceQueryRecord over one shared mDNSResponder connection, no per-lookup threads.
@@ -1823,11 +1822,11 @@ impl Resolver {
             .set(EventLoopTimerState::PENDING);
         crate::jsc_hooks::timer_all().increment_timer_ref(-1, vm.uws_loop());
 
-        if self.has_queries() {
+        if self.next_check_ms().is_some() {
             let _exit = vm.enter_event_loop_scope();
             let answers = self.with_client(Client::process_timeouts);
-            if self.has_queries() {
-                self.add_timer(Some(now), TIMEOUT_CHECK_INTERVAL_MS);
+            if let Some(delay_ms) = self.next_check_ms() {
+                self.add_timer(Some(now), delay_ms);
             }
             answers.into_iter().for_each(PendingQuery::complete);
         }
@@ -1852,8 +1851,8 @@ impl Resolver {
     }
 
     fn request_sent(self: &RefPtr<Self>, answers: Answers<PendingQuery>) {
-        if self.has_queries() {
-            self.add_timer(None, TIMEOUT_CHECK_INTERVAL_MS);
+        if let Some(delay_ms) = self.next_check_ms() {
+            self.add_timer(None, delay_ms);
         } else {
             // It was answered inside the call (cache, hosts file, error). As in Node, that takes a turn of the loop.
             self.remove_timer();
@@ -1868,8 +1867,8 @@ impl Resolver {
     }
 
     fn update_timer(self: &RefPtr<Self>) {
-        if self.has_queries() {
-            self.add_timer(None, TIMEOUT_CHECK_INTERVAL_MS);
+        if let Some(delay_ms) = self.next_check_ms() {
+            self.add_timer(None, delay_ms);
         } else {
             self.remove_timer();
         }
@@ -1904,8 +1903,9 @@ impl Resolver {
         self.timer_ref.set(None);
     }
 
-    fn has_queries(&self) -> bool {
-        self.client.get().as_ref().is_some_and(Client::has_queries)
+    fn next_check_ms(&self) -> Option<i64> {
+        let delay = self.client.get().as_ref()?.next_check()?;
+        Some(delay.as_nanos().div_ceil(1_000_000) as i64)
     }
 
     /// Opens it if it is closed.
@@ -2331,6 +2331,8 @@ impl Resolver {
         let vm = global_this.bun_vm();
         let options = bun_dns_client::Options {
             timeout: (options.timeout > 0).then(|| Duration::from_millis(options.timeout as u64)),
+            max_timeout: (options.max_timeout > 0)
+                .then(|| Duration::from_millis(options.max_timeout.into())),
             tries: options.tries.max(1) as u32,
         };
         bun_output::scoped_log!(DNSResolver, "init");

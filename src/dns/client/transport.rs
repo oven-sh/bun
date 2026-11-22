@@ -14,9 +14,12 @@ use crate::servers::{Server, ServerId};
 use crate::system::{Events, Socket, SocketError, SocketId, System, Transport};
 use crate::{Error, HashMap};
 
-const MIN_TIMEOUT: Duration = Duration::from_millis(250);
-const MAX_TIMEOUT: Duration = Duration::from_secs(5);
+pub(crate) const MIN_TIMEOUT: Duration = Duration::from_millis(250);
+const DEFAULT_TIMEOUT: Duration = Duration::from_secs(2);
+const MAX_ESTIMATED_TIMEOUT: Duration = Duration::from_secs(5);
 const TIMEOUT_PER_LATENCY: u64 = 5;
+/// The end of an estimated timeout can wait for it.
+const CHECK_INTERVAL: Duration = Duration::from_secs(1);
 /// One new query in this many is also sent to a server that failed.
 const PROBE_ODDS: u16 = 10;
 /// The replies fit in the receive buffer.
@@ -223,10 +226,6 @@ impl<T> Default for Connections<T> {
 }
 
 impl<T> Connections<T> {
-    pub(crate) fn has_deadlines(&self) -> bool {
-        !self.deadlines.is_empty()
-    }
-
     /// Returns what was asked, oldest first.
     fn close(&mut self, connections: impl IntoIterator<Item = Connection<T>>) -> Vec<Try> {
         let tries = connections.into_iter().map(|it| it.tries.into_values());
@@ -240,6 +239,14 @@ impl<T> Connections<T> {
 }
 
 impl<S: System, R> Client<S, R> {
+    /// When to call [`process_timeouts`](Self::process_timeouts), counted from the last call. A timer that is set can stay as it is.
+    pub fn next_check(&self) -> Option<Duration> {
+        let (&(first, _), _) = self.connections.deadlines.first_key_value()?;
+        let on_time = |timeout: Duration| timeout.min(first.saturating_sub(self.now));
+        let check = self.config.timeout.map_or(CHECK_INTERVAL, on_time);
+        Some(check.min(CHECK_INTERVAL).min(self.max_timeout))
+    }
+
     pub(crate) fn join_or_send(&mut self, question: Question, purpose: Purpose<R>) {
         // One that has failed waits longer and gives up sooner.
         let matches =
@@ -336,11 +343,15 @@ impl<S: System, R> Client<S, R> {
         connection.room = connection.room.saturating_sub(1);
         *server.socket(transport) = Some(socket);
 
-        let timeout = match server.latency.average_ms(self.now) {
-            Some(ms) => Duration::from_millis(ms.saturating_mul(TIMEOUT_PER_LATENCY)),
-            None => self.config.timeout,
+        let timeout = match (self.config.timeout, probed) {
+            (Some(timeout), None) => timeout,
+            (timeout, _) => (server.latency.average_ms(self.now))
+                .map(|ms| Duration::from_millis(ms.saturating_mul(TIMEOUT_PER_LATENCY)))
+                .or(timeout)
+                .unwrap_or(DEFAULT_TIMEOUT)
+                .clamp(MIN_TIMEOUT, MAX_ESTIMATED_TIMEOUT),
         };
-        let timeout = back_off(timeout, rounds, &mut self.system);
+        let timeout = back_off(timeout, self.max_timeout, rounds, &mut self.system);
         let deadline = (self.now.saturating_add(timeout), number);
         self.connections.deadlines.insert(deadline, (socket, id));
         let new = Try {
@@ -550,12 +561,13 @@ impl<S: System, R> Client<S, R> {
 }
 
 /// `rounds` is how many times all servers have been tried.
-fn back_off(timeout: Duration, rounds: usize, system: &mut impl System) -> Duration {
-    let timeout = timeout.clamp(MIN_TIMEOUT, MAX_TIMEOUT);
+fn back_off(timeout: Duration, max: Duration, rounds: usize, system: &mut impl System) -> Duration {
+    let timeout = timeout.min(max);
     if rounds == 0 {
         return timeout;
     }
     let doubled = (timeout.as_millis() as u64).saturating_mul(2u64.saturating_pow(rounds as u32));
+    let doubled = Duration::from_millis(doubled).min(max).as_millis() as u64;
     let jitter = f32::from(system.random()) / f32::from(u16::MAX) * 0.5;
     timeout.max(Duration::from_millis(
         doubled - (doubled as f32 * jitter) as u64,

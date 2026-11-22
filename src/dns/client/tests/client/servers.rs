@@ -41,23 +41,86 @@ fn timeout_that_was_asked_for() {
         (1, 250),
         (250, 250),
         (300, 300),
-        (5000, 5000),
-        (u64::MAX, 5000),
+        (5001, 5001),
+        (31000, 31000),
     ] {
-        let mut setup = resolv_conf("options timeout:3").tries(1);
+        let mut setup = resolv_conf("options timeout:3").tries(2);
         setup.timeout_ms = Some(asked);
-        assert_eq!(timeouts(setup, 0), [expected]);
+        assert_eq!(timeouts(setup, 0), [expected, 2 * expected]);
     }
 }
 
 #[test]
-fn many_rounds() {
-    let mut test = one_server().tries(64).start();
-    test.ask("a.test");
-    for _ in 1..64 {
-        assert_eq!(test.wait(u64::MAX), NOTHING);
+fn timeout_that_was_asked_for_does_not_follow_the_latency() {
+    for latency in [1, 900] {
+        let mut asked = one_server();
+        asked.timeout_ms = Some(1000);
+        for setup in [asked, resolv_conf("options timeout:1")] {
+            let mut test = setup.tries(1).start();
+            (0..3).for_each(|_| answer_after(&mut test, latency, 0));
+            assert_eq!(next_timeout(&mut test), 1000);
+        }
     }
-    assert_eq!(test.wait(u64::MAX), ["ETIMEOUT"]);
+}
+
+#[test]
+fn longest_timeout_that_was_asked_for() {
+    for (asked, max, random, expected) in [
+        (None, 5000, 0, [2000, 4000, 5000, 5000]),
+        (None, 5000, u16::MAX, [2000, 2000, 2500, 2500]),
+        (None, 100, 0, [100; 4]),
+        (Some(9000), 9000, u16::MAX, [9000; 4]),
+        (Some(9000), 300, 0, [300; 4]),
+    ] {
+        let mut setup = one_server();
+        (setup.timeout_ms, setup.max_timeout_ms) = (asked, Some(max));
+        assert_eq!(timeouts(setup, random), expected);
+    }
+}
+
+#[test]
+fn next_check() {
+    for (asked, max, checks) in [
+        (None, None, [1000, 1000, 1000]),
+        (None, Some(500), [500, 500, 500]),
+        (Some(1), None, [250, 50, 250]),
+        (Some(1100), None, [1000, 900, 700]),
+        (Some(9000), None, [1000, 1000, 1000]),
+        (Some(9000), Some(300), [300, 100, 300]),
+    ] {
+        let mut setup = one_server();
+        (setup.timeout_ms, setup.max_timeout_ms) = (asked, max);
+        let mut test = setup.start();
+        test.world().randoms.extend([1; 9]);
+        test.ask("a.test");
+        let found = [0, 200, 200].map(|ms| {
+            test.wait(ms);
+            test.client.next_check().unwrap().as_millis()
+        });
+        assert_eq!(found, checks);
+    }
+
+    let mut setup = one_server();
+    setup.timeout_ms = Some(300);
+    let mut test = setup.start();
+    test.ask("a.test");
+    test.world().now += Duration::from_secs(1);
+    test.ask("b.test");
+    assert_eq!(test.client.next_check(), Some(Duration::ZERO));
+}
+
+#[test]
+fn many_rounds() {
+    for asked in [None, Some(u64::MAX)] {
+        let mut setup = one_server().tries(64);
+        setup.timeout_ms = asked;
+        let mut test = setup.start();
+        test.ask("a.test");
+        for _ in 1..64 {
+            assert_eq!(test.wait(u64::MAX), NOTHING);
+        }
+        assert_eq!(test.wait(u64::MAX), ["ETIMEOUT"]);
+    }
 }
 
 fn answer_after(test: &mut Test, ms: u64, flags: u16) {
@@ -154,6 +217,20 @@ fn servers_with_fewer_failures_come_first() {
 }
 
 #[test]
+fn servers_at_the_limit_take_turns() {
+    let mut test = two_servers().tries(1).start();
+    for round in 0..20 {
+        test.world().randoms.push_back(NO_LUCK);
+        let query = test.ask(&format!("{round}.test"));
+        assert_eq!(test.server_of(&query), FIRST);
+        test.wait(2000);
+        assert_eq!(test.servers(), [SECOND, FIRST]);
+        test.wait(2000);
+        test.sent();
+    }
+}
+
+#[test]
 fn failures_are_counted_up_to_a_limit() {
     for (first, second, best) in [
         (1, 1, FIRST),
@@ -231,6 +308,27 @@ fn probe() {
     assert_eq!(test.decline(&probe, REFUSED), NOTHING);
     assert_eq!(test.servers(), [FIRST, SECOND]);
     assert!(test.is_idle());
+}
+
+#[test]
+fn probe_does_not_last() {
+    for (asked, answers, expected) in [(3000, 0, 3000), (9000, 0, 5000), (9000, 3, 500)] {
+        let mut setup = two_servers();
+        setup.timeout_ms = Some(asked);
+        let mut test = setup.start();
+        (0..answers).for_each(|_| answer_after(&mut test, 100, 0));
+        let query = test.ask("a.test");
+        test.break_socket(query.socket);
+        test.process(query.socket, true, false);
+        test.decline(&test.sent_one(), NXDOMAIN);
+        test.wait(5000);
+        let [query, _] = ask_with_luck(&mut test);
+        test.decline(&query, REFUSED);
+        test.wait(expected - 1);
+        assert!(!test.is_idle());
+        test.wait(1);
+        assert!(test.is_idle());
+    }
 }
 
 #[test]
@@ -366,6 +464,16 @@ fn server_that_stays_keeps_its_history() {
     assert_eq!(test.servers(), [FIRST, "[fe80::1%7]:53"]);
     assert!(test.sent().is_empty());
     assert_eq!(test.decline(&query, REFUSED), ["EREFUSED"]);
+}
+
+#[test]
+fn server_that_is_back_takes_its_place() {
+    let mut test = after_a_failure(5000);
+    test.set_servers(&[SECOND, FIRST, THIRD]);
+    let [_, probe] = ask_with_luck(&mut test);
+    assert_eq!(test.servers(), [SECOND, THIRD, FIRST]);
+    test.decline(&probe, REFUSED);
+    assert_eq!(test.servers(), [SECOND, FIRST, THIRD]);
 }
 
 #[test]

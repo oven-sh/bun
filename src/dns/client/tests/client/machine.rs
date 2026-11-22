@@ -339,6 +339,7 @@ pub(crate) struct Setup {
     pub(crate) world: World,
     pub(crate) variables: Vec<(Variable, &'static str)>,
     pub(crate) timeout_ms: Option<u64>,
+    pub(crate) max_timeout_ms: Option<u64>,
     pub(crate) tries: Option<u32>,
 }
 
@@ -363,6 +364,7 @@ impl Setup {
         };
         let options = Options {
             timeout: self.timeout_ms.map(Duration::from_millis),
+            max_timeout: self.max_timeout_ms.map(Duration::from_millis),
             tries: self.tries.unwrap_or(4),
         };
         Test {
@@ -541,7 +543,8 @@ impl Test {
     }
 
     pub(crate) fn is_idle(&self) -> bool {
-        assert_eq!(self.client.has_queries(), self.open_sockets() > 0);
-        !self.client.has_queries()
+        let is_idle = self.client.next_check().is_none();
+        assert_eq!(is_idle, self.open_sockets() == 0);
+        is_idle
     }
 }

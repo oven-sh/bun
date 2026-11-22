@@ -1,5 +1,4 @@
 use core::cell::Cell;
-use core::ffi::c_void;
 
 use bun_jsc::bindgen::{Callable, JsLocal, JsScope};
 
@@ -115,13 +114,6 @@ impl JSMySQLConnection {
         verifies_certificate(&self.tls_config, self.session.get().ssl_mode())
     }
 
-    /// Hold a ref on `self` for the guard's lifetime (across re-entrant calls).
-    #[inline]
-    fn ref_guard(&self) -> RefPtr<Self> {
-        // SAFETY: `self` is the live heap allocation.
-        unsafe { RefPtr::init_ref(self.as_ctx_ptr()) }
-    }
-
     #[inline]
     fn event_loop(&self) -> &'static crate::jsc::EventLoop {
         VirtualMachine::get().event_loop()
@@ -194,8 +186,7 @@ impl AutoFlush for JSMySQLConnection {
             && (!self.write_buffer.get().is_empty() || self.queue.is_waiting_to_write())
     }
 
-    fn on_auto_flush(&self) -> bool {
-        let _guard = self.ref_guard();
+    fn on_auto_flush(self: RefPtr<Self>) -> bool {
         // With backpressure, onWritable drains.
         if !self.has_backpressure.get() {
             self.drain_internal();
@@ -614,7 +605,6 @@ impl JSMySQLConnection {
         if !self.is_active() {
             return;
         }
-        let _guard = self.ref_guard();
         self.timers.stop();
         self.quit();
         self.session.with_mut(Session::fail);
@@ -727,7 +717,7 @@ impl JSMySQLConnection {
         if let Some(request) = self.queue.current()
             && let Some((command, statement)) = request.written_command()
         {
-            return self.handle_reply(packet, &request, command, &statement);
+            return self.handle_reply(packet, request, command, &statement);
         }
         let event = self.write(|out| self.session.with_mut(|s| s.on_packet(packet, out)))?;
         match event {
@@ -744,7 +734,7 @@ impl JSMySQLConnection {
     fn handle_reply<'p>(
         &self,
         packet: &'p Packet<'_>,
-        request: &JSMySQLQuery,
+        request: RefPtr<JSMySQLQuery>,
         command: Command,
         statement: &MySQLStatement,
     ) -> Result<(), Failure<'p>> {
@@ -794,7 +784,7 @@ impl JSMySQLConnection {
     /// The packet is skipped whole, so the stream is in step: only a VM that is stopping fails the connection.
     fn on_undecodable_row(
         &self,
-        request: &JSMySQLQuery,
+        request: RefPtr<JSMySQLQuery>,
         err: AnyMySQLErrorT,
     ) -> Result<(), AnyMySQLErrorT> {
         if self.global_object.has_pending_termination_exception() {
@@ -807,7 +797,7 @@ impl JSMySQLConnection {
     /// Runs `transform.column.from`, which is user code.
     fn on_column_name(
         &self,
-        request: &JSMySQLQuery,
+        request: RefPtr<JSMySQLQuery>,
         statement: &MySQLStatement,
         index: usize,
     ) -> Result<(), AnyMySQLErrorT> {
@@ -845,7 +835,7 @@ impl JSMySQLConnection {
     #[inline(never)]
     fn on_result_row(
         &self,
-        request: &JSMySQLQuery,
+        request: RefPtr<JSMySQLQuery>,
         statement: &MySQLStatement,
         reader: PacketReader<'_>,
     ) -> Result<(), AnyMySQLErrorT> {
@@ -916,10 +906,10 @@ impl<const SSL: bool> SocketHandler<SSL> {
         }
     }
 
-    pub fn on_open(this: &JSMySQLConnection, s: NewSocketHandler<SSL>) {
+    pub fn on_open(this: &RefPtr<JSMySQLConnection>, s: NewSocketHandler<SSL>) {
         this.socket.set(Self::socket(s));
         this.session.with_mut(Session::on_open);
-        this.socket_ref.set(Some(this.ref_guard()));
+        this.socket_ref.set(Some(this.clone()));
         // The bound on a query whose peer is gone: no timer runs while one is in flight.
         if this.session.get().transport() == Transport::Tcp {
             let _ = s.set_keep_alive(true, 60);
@@ -929,7 +919,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
         this.update_reference_type();
     }
 
-    fn on_handshake(
+    pub fn on_handshake(
         this: &JSMySQLConnection,
         _: NewSocketHandler<SSL>,
         success: i32,
@@ -957,8 +947,6 @@ impl<const SSL: bool> SocketHandler<SSL> {
             return this.fail_with_js_value(v);
         }
         this.session.with_mut(Session::on_tls_handshake);
-        // The callback can close this connection.
-        let _guard = this.ref_guard();
         if let Some(callback) = this.check_server_identity_callback() {
             let hostname = this.tls_config.server_name_bytes();
             if let Err(reason) =
@@ -973,17 +961,8 @@ impl<const SSL: bool> SocketHandler<SSL> {
         }
     }
 
-    pub const ON_HANDSHAKE: Option<
-        fn(&JSMySQLConnection, NewSocketHandler<SSL>, i32, uws::us_bun_verify_error_t),
-    > = if SSL { Some(Self::on_handshake) } else { None };
-
-    pub fn on_close(
-        this: &JSMySQLConnection,
-        _: NewSocketHandler<SSL>,
-        _: i32,
-        _: Option<*mut c_void>,
-    ) {
-        let _guard = this.socket_ref.take();
+    pub fn on_close(this: &JSMySQLConnection) {
+        this.socket_ref.set(None);
         // usockets frees this socket at end-of-tick; drop the stored pointer
         // now so nothing (timer callbacks, close) dereferences it after
         // the free.
@@ -1010,10 +989,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
         this.fail(b"Failed to connect", AnyMySQLErrorT::ConnectionRefused);
     }
 
-    pub fn on_timeout(_: &JSMySQLConnection, _: NewSocketHandler<SSL>) {}
-
     pub fn on_data(this: &JSMySQLConnection, _: NewSocketHandler<SSL>, data: &[u8]) {
-        let _guard = this.ref_guard();
         {
             let _loop_guard = this.event_loop().enter_scope();
             this.ensure_js_value_is_alive();
@@ -1026,7 +1002,6 @@ impl<const SSL: bool> SocketHandler<SSL> {
     }
 
     pub fn on_writable(this: &JSMySQLConnection, _: NewSocketHandler<SSL>) {
-        let _guard = this.ref_guard();
         this.has_backpressure.set(false);
         this.drain_internal();
     }

@@ -82,7 +82,7 @@ pub(crate) enum Owed {
 
 bun_jsc::impl_abort_handle_owner!(NetworkSink, abort_handle, |this, _cause| {
     // SAFETY: trait contract.
-    NetworkSink::abort(&unsafe { RefPtr::init_ref(this) });
+    unsafe { RefPtr::init_ref(this) }.abort();
 });
 
 /// Fails the upload of a `writer()` that was collected before `end()`, outside the GC sweep.
@@ -99,7 +99,7 @@ impl bun_event_loop::RefTask for WriterCollected {
 impl WriterCollected {
     pub(crate) fn run(sink: &RefPtr<NetworkSink>) -> JsResult<()> {
         let message = b"S3 writer was garbage collected before end() was called";
-        NetworkSink::fail(sink, b"UnknownError", message)
+        sink.fail(b"UnknownError", message)
     }
 }
 
@@ -132,7 +132,7 @@ impl NetworkSink {
     }
 
     /// For a call that can finish the upload. `None` once it has finished.
-    pub(crate) fn ref_guard(&self) -> Option<RefPtr<Self>> {
+    pub(crate) fn self_ref(&self) -> Option<RefPtr<Self>> {
         self.self_ref.get().clone()
     }
 
@@ -145,8 +145,8 @@ impl NetworkSink {
     }
 
     /// Runs no JS, and the reply never comes inside this call.
-    fn send(this: &RefPtr<Self>, request: Request) {
-        let target = &this.target;
+    fn send(self: &RefPtr<Self>, request: Request) {
+        let target = &self.target;
         let query = request.query();
         let mut options = Options {
             path: &target.path,
@@ -166,9 +166,9 @@ impl NetworkSink {
         let context = match request {
             // The store bills the parts, so this goes out for a context that stopped too.
             Request::Abort(_) => VirtualMachine::get().root_context(),
-            _ => this.context(),
+            _ => self.context(),
         };
-        let callback = Callback::Sink(this.clone(), request);
+        let callback = Callback::Sink(self.clone(), request);
         let sent = execute_simple_s3_request(&target.credentials, context, options, callback);
         debug_assert!(sent.is_ok());
     }
@@ -181,58 +181,58 @@ impl NetworkSink {
         while let Some(this) = self.self_ref.get()
             && let Some(request) = self.upload.with_mut(Upload::next_request)
         {
-            Self::send(this, request);
+            this.send(request);
         }
     }
 
     pub(crate) fn on_reply(
-        this: &RefPtr<Self>,
+        self: &RefPtr<Self>,
         request: Request,
         reply: Result<&[u8], S3Error<'_>>,
     ) -> JsResult<()> {
         scoped_log!(S3Upload, "{:?} ok={}", request.method(), reply.is_ok());
-        let step = this.upload.with_mut(|upload| match reply {
+        let step = self.upload.with_mut(|upload| match reply {
             Ok(text) => upload.on_success(request, text),
             // In a context that stopped it would only be aborted again.
-            Err(error) => upload.on_failure(request, error, !this.context().is_stopped()),
+            Err(error) => upload.on_failure(request, error, !self.context().is_stopped()),
         });
-        Self::take_step(this, step)
+        self.take_step(step)
     }
 
-    fn fail(this: &RefPtr<Self>, code: &[u8], message: &[u8]) -> JsResult<()> {
+    fn fail(self: &RefPtr<Self>, code: &[u8], message: &[u8]) -> JsResult<()> {
         let error = S3Error { code, message };
-        Self::take_step(this, this.upload.with_mut(|upload| upload.fail(error)))
+        self.take_step(self.upload.with_mut(|upload| upload.fail(error)))
     }
 
-    fn abort(this: &RefPtr<Self>) {
-        let _ = Self::fail(this, b"AbortError", b"The operation was aborted");
+    fn abort(self: &RefPtr<Self>) {
+        let _ = self.fail(b"AbortError", b"The operation was aborted");
     }
 
-    /// `this` is the caller's own ref, never the one in `self_ref`.
-    fn take_step(this: &RefPtr<Self>, step: Step<'_>) -> JsResult<()> {
+    /// `self` is the caller's own ref, never the one in `self_ref`.
+    fn take_step(self: &RefPtr<Self>, step: Step<'_>) -> JsResult<()> {
         let (result, abort) = match step {
             Step::Nothing => return Ok(()),
             Step::Send(request) => {
-                Self::send(this, request);
+                self.send(request);
                 return Ok(());
             }
             Step::Drained(flushed) => {
-                this.send_ready();
-                if flushed > 0 && !this.upload.get().has_backpressure() {
-                    this.on_writable(flushed);
+                self.send_ready();
+                if flushed > 0 && !self.upload.get().has_backpressure() {
+                    self.on_writable(flushed);
                 }
                 return Ok(());
             }
             Step::Succeeded => (S3UploadResult::Success, None),
             Step::Failed(error, abort) => (S3UploadResult::Failure(error), abort),
         };
-        this.abort_handle.leave();
-        this.self_ref.set(None);
-        let settled = this.report(result);
+        self.abort_handle.leave();
+        self.self_ref.set(None);
+        let settled = self.report(result);
         // Whoever still holds a ref may hold it for as long as the collector likes.
-        this.poll_ref.unref(bun_io::js_vm_ctx());
+        self.poll_ref.unref(bun_io::js_vm_ctx());
         if let Some(abort) = abort {
-            Self::send(this, abort);
+            self.send(abort);
         }
         settled
     }
@@ -313,53 +313,53 @@ impl NetworkSink {
         self.source.take().detach(&self.global);
     }
 
-    pub(crate) fn on_pump_rejected(this: &RefPtr<Self>, reason: JSValue) {
+    pub(crate) fn on_pump_rejected(self: &RefPtr<Self>, reason: JSValue) {
         bun_removable_features::removable_body_behind_value!(S3Client, {
-            this.on_pump_done();
+            self.on_pump_done();
             // Also when the commit is out and goes on.
-            this.owed.with_mut(|owed| {
+            self.owed.with_mut(|owed| {
                 if let Owed::Result { promise, .. } = owed
                     && promise.has_value()
                     && !reason.is_empty_or_undefined_or_null()
                 {
-                    let _ = promise.reject(&this.global, Ok(reason));
+                    let _ = promise.reject(&self.global, Ok(reason));
                 }
             });
-            Self::fail_from_source(this, JSValue::ZERO);
+            self.fail_from_source(JSValue::ZERO);
         })
     }
 
     /// Script was terminated inside `upload_stream`: nobody gets its promise, and no error can be made.
-    pub(crate) fn on_pump_terminated(this: &RefPtr<Self>) {
-        this.end_pending_write();
-        this.on_pump_done();
-        if !this.is_ended() {
-            drop(this.owed.take());
-            Self::abort(this);
+    pub(crate) fn on_pump_terminated(self: &RefPtr<Self>) {
+        self.end_pending_write();
+        self.on_pump_done();
+        if !self.is_ended() {
+            drop(self.owed.take());
+            self.abort();
         }
     }
 
     /// The stream failed, so what it wrote is not the whole object.
-    fn fail_from_source(this: &RefPtr<Self>, reason: JSValue) {
-        this.owed.with_mut(|owed| {
+    fn fail_from_source(self: &RefPtr<Self>, reason: JSValue) {
+        self.owed.with_mut(|owed| {
             if let Owed::Result { stream_error, .. } = owed
                 && !reason.is_empty_or_undefined_or_null()
             {
-                stream_error.set(&this.global, reason);
+                stream_error.set(&self.global, reason);
             }
         });
-        let _ = Self::fail(this, b"UnknownError", b"ReadableStream ended with an error");
+        let _ = self.fail(b"UnknownError", b"ReadableStream ended with an error");
     }
 
     /// From the `ByteStream`, which has let go of the sink.
-    pub(crate) fn end_from_stream(this: &RefPtr<Self>, err: Option<StreamError>) {
-        if this.is_ended() {
+    pub(crate) fn end_from_stream(self: &RefPtr<Self>, err: Option<StreamError>) {
+        if self.is_ended() {
             return;
         }
-        this.source.set(SourceHandle::None);
+        self.source.set(SourceHandle::None);
         match err {
-            Some(err) => Self::fail_from_source(this, err.to_js(&this.global)),
-            None => this.finish_input(),
+            Some(err) => self.fail_from_source(err.to_js(&self.global)),
+            None => self.finish_input(),
         }
     }
 
@@ -504,7 +504,7 @@ impl ControlledSink for NetworkSink {
         reason: JSValue,
     ) -> sys::Result<()> {
         // SAFETY: trait contract.
-        Self::fail_from_source(&unsafe { RefPtr::init_ref(this) }, reason);
+        unsafe { RefPtr::init_ref(this) }.fail_from_source(reason);
         Ok(())
     }
 

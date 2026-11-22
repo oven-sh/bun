@@ -596,12 +596,12 @@ impl Cmd {
 
         if did_exit_immediately {
             // `watch()` failed → process already gone.
-            let process = subproc.proc().this_ptr();
+            let process = subproc.proc();
+            let mut rusage = crate::api::bun::process::rusage_zeroed();
             if let Some(status) = process.status() {
-                let rusage = crate::api::bun::process::rusage_zeroed();
-                bun_spawn::Process::on_exit(process, status.clone(), &rusage);
-            } else {
-                bun_spawn::Process::wait(process, false);
+                process.on_exit(status.clone()).dispatch(&rusage);
+            } else if let Some(exit) = process.wait(false, &mut rusage) {
+                exit.dispatch(&rusage);
             }
         }
 

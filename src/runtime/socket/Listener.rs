@@ -577,7 +577,6 @@ impl Listener {
         Ok(js_value)
     }
 
-    // `OWNED_PROTOS` stays unset: accepted sockets clone the listener's `protos`.
     fn accepted_socket_flags(&self) -> SocketFlags {
         let mut flags = SocketFlags::empty();
         // Also what the context in use was built with: `tls.secureContext` need not come with the options again.
@@ -613,7 +612,7 @@ impl Listener {
             buffered_data_for_node_net: Default::default(),
             bytes_written: Cell::new(0),
             native_callback: JsCell::new(crate::socket::NativeCallbacks::None),
-            twin: JsCell::new(None),
+            twin: Cell::new(None),
             verify_error: JsCell::new(None),
             connect_span: Default::default(),
             latest_session: JsCell::new(None),
@@ -635,14 +634,14 @@ impl Listener {
     pub(crate) fn on_create<const SSL: bool>(
         listener: &Listener,
         accepted: *mut uws_sys::us_socket_t,
-    ) -> bun_ptr::ThisPtr<NewSocket<SSL>> {
+    ) -> RefPtr<NewSocket<SSL>> {
         jsc::mark_binding!();
         log!("onCreate");
 
         debug_assert!(SSL == listener.ssl);
 
         let socket = uws::NewSocketHandler::<SSL>::from(accepted);
-        let this_socket = RefPtr::new(NewSocket::<SSL> {
+        let s = RefPtr::new(NewSocket::<SSL> {
             ref_count: bun_ptr::RefCount::init(),
             handlers: JsCell::new(Some(Rc::clone(&listener.handlers))),
             socket: Cell::new(socket),
@@ -660,12 +659,11 @@ impl Listener {
             buffered_data_for_node_net: Default::default(),
             bytes_written: Cell::new(0),
             native_callback: JsCell::new(crate::socket::NativeCallbacks::None),
-            twin: JsCell::new(None),
+            twin: Cell::new(None),
             verify_error: JsCell::new(None),
             connect_span: Default::default(),
             latest_session: JsCell::new(None),
         });
-        let s = this_socket.this_ptr();
         // Each accepted socket holds the event loop on its own (same as a
         // client socket after `connect_finish`), so `conn.unref()` works and
         // `server.unref()`/`server.close()` don't tear out live connections'
@@ -676,7 +674,7 @@ impl Listener {
             let global = listener.handlers.global_object;
             NewSocket::<SSL>::data_set_cached(s.get_this_value(&global), &global, default_data);
         }
-        *NativeRef::of(accepted) = NativeRef::new(this_socket);
+        *NativeRef::of(accepted) = NativeRef::new(s.clone());
         uws_sys::us_socket_t::opaque_mut(accepted).set_kind(if SSL {
             uws_sys::SocketKind::BunSocketTls
         } else {
@@ -875,8 +873,8 @@ impl Listener {
     /// `Bun.connect`, and node:net's dial (which hands in the socket it already made).
     pub(crate) fn connect_inner(
         cx: &bun_jsc::JsThread<'_>,
-        prev_maybe_tcp: Option<&TCPSocket>,
-        prev_maybe_tls: Option<&TLSSocket>,
+        prev_maybe_tcp: Option<&RefPtr<TCPSocket>>,
+        prev_maybe_tls: Option<&RefPtr<TLSSocket>>,
         opts: JSValue,
     ) -> JsResult<JSValue> {
         // What script of a disposed `Bun.ModuleGraph` opens is closed at once and reports nothing.
@@ -1016,7 +1014,7 @@ impl Listener {
 
                 if ssl_enabled {
                     let tls = if let Some(prev) = prev_maybe_tls {
-                        let prev = prev.ref_guard();
+                        let prev = prev.clone();
                         debug_assert!(!prev.this_value.get().is_empty());
                         prev.set_handlers(cx.global(), Some(Rc::clone(&handlers)));
                         debug_assert!(matches!(
@@ -1027,9 +1025,6 @@ impl Listener {
                         // when sockets are reused for reconnection (common with MongoDB driver)
                         prev.connection.set(Some(connection));
                         prev.local_binding.set(local_binding.clone());
-                        if prev.flags.get().contains(SocketFlags::OWNED_PROTOS) {
-                            prev.protos.set(None);
-                        }
                         prev.protos
                             .set(ssl_taken.as_mut().and_then(|s| s.take_protos()));
                         prev.server_name
@@ -1054,45 +1049,44 @@ impl Listener {
                             buffered_data_for_node_net: Default::default(),
                             bytes_written: Cell::new(0),
                             native_callback: JsCell::new(crate::socket::NativeCallbacks::None),
-                            twin: JsCell::new(None),
+                            twin: Cell::new(None),
                             verify_error: JsCell::new(None),
                             connect_span: Default::default(),
                             latest_session: JsCell::new(None),
                         })
                     };
-                    let tls_ref = tls.this_ptr();
-                    tls_ref.reset_client_tls_flags(crate::socket::resolve_reject_unauthorized(
+                    tls.reset_client_tls_flags(crate::socket::resolve_reject_unauthorized(
                         vm,
                         ssl_taken.as_ref(),
                         false,
                     ));
-                    tls_ref.update_flags(|f| {
+                    tls.update_flags(|f| {
                         f.set(
                             SocketFlags::PAUSE_ON_CONNECT,
                             socket_config.pause_on_connect,
                         )
                     });
                     TLSSocket::data_set_cached(
-                        tls_ref.this_value_for_connect(cx.global()),
+                        tls.this_value_for_connect(cx.global()),
                         cx.global(),
                         default_data,
                     );
-                    tls_ref.poll_ref.ref_(bun_io::js_vm_ctx());
+                    tls.poll_ref.ref_(bun_io::js_vm_ctx());
 
                     let ctx_for_pipe = owned_ssl_ctx.take();
                     // Note: re-borrow connection from the socket field — `connection`
                     // was moved into `tls` above.
                     // On `Err`, the context already ran `handle_connect_error`.
-                    match tls_ref.connection.get().as_ref().unwrap() {
+                    match tls.connection.get().as_ref().unwrap() {
                         UnixOrHost::Unix(_) => {
                             if let Ok(named_pipe) = WindowsNamedPipeContext::connect(
                                 cx,
                                 &buf[..pipe_name_len.unwrap()],
                                 ssl_taken.take(),
                                 ctx_for_pipe,
-                                OwnedSocket::Tls(tls),
+                                OwnedSocket::Tls(tls.clone()),
                             ) {
-                                tls_ref.socket.set(uws::NewSocketHandler {
+                                tls.socket.set(uws::NewSocketHandler {
                                     socket: uws::InternalSocket::Pipe(named_pipe.cast()),
                                 });
                             }
@@ -1102,13 +1096,13 @@ impl Listener {
                             *fd,
                             ssl_taken.take(),
                             ctx_for_pipe,
-                            OwnedSocket::Tls(tls),
+                            OwnedSocket::Tls(tls.clone()),
                         ),
                         _ => unreachable!(),
                     }
                 } else {
                     let tcp = if let Some(prev) = prev_maybe_tcp {
-                        let prev = prev.ref_guard();
+                        let prev = prev.clone();
                         debug_assert!(!prev.this_value.get().is_empty());
                         prev.set_handlers(cx.global(), Some(Rc::clone(&handlers)));
                         debug_assert!(matches!(
@@ -1141,37 +1135,36 @@ impl Listener {
                             buffered_data_for_node_net: Default::default(),
                             bytes_written: Cell::new(0),
                             native_callback: JsCell::new(crate::socket::NativeCallbacks::None),
-                            twin: JsCell::new(None),
+                            twin: Cell::new(None),
                             verify_error: JsCell::new(None),
                             connect_span: Default::default(),
                             latest_session: JsCell::new(None),
                         })
                     };
-                    let tcp_ref = tcp.this_ptr();
-                    tcp_ref.update_flags(|f| {
+                    tcp.update_flags(|f| {
                         f.set(
                             SocketFlags::PAUSE_ON_CONNECT,
                             socket_config.pause_on_connect,
                         )
                     });
                     TCPSocket::data_set_cached(
-                        tcp_ref.this_value_for_connect(cx.global()),
+                        tcp.this_value_for_connect(cx.global()),
                         cx.global(),
                         default_data,
                     );
-                    tcp_ref.poll_ref.ref_(bun_io::js_vm_ctx());
+                    tcp.poll_ref.ref_(bun_io::js_vm_ctx());
 
                     // On `Err`, the context already ran `handle_connect_error`.
-                    match tcp_ref.connection.get().as_ref().unwrap() {
+                    match tcp.connection.get().as_ref().unwrap() {
                         UnixOrHost::Unix(_) => {
                             if let Ok(named_pipe) = WindowsNamedPipeContext::connect(
                                 cx,
                                 &buf[..pipe_name_len.unwrap()],
                                 None,
                                 None,
-                                OwnedSocket::Tcp(tcp),
+                                OwnedSocket::Tcp(tcp.clone()),
                             ) {
-                                tcp_ref.socket.set(uws::NewSocketHandler {
+                                tcp.socket.set(uws::NewSocketHandler {
                                     socket: uws::InternalSocket::Pipe(named_pipe.cast()),
                                 });
                             }
@@ -1181,7 +1174,7 @@ impl Listener {
                             *fd,
                             None,
                             None,
-                            OwnedSocket::Tcp(tcp),
+                            OwnedSocket::Tcp(tcp.clone()),
                         ),
                         _ => unreachable!(),
                     }
@@ -1344,7 +1337,7 @@ impl Drop for Listener {
 // Note: hoisted from the body of connect_inner; dispatched via const generic.
 fn connect_finish<const IS_SSL: bool>(
     cx: &bun_jsc::JsThread<'_>,
-    maybe_previous: Option<&NewSocket<IS_SSL>>,
+    maybe_previous: Option<&RefPtr<NewSocket<IS_SSL>>>,
     handlers: Rc<Handlers>,
     connection: UnixOrHost,
     local_binding: Option<(Box<[u8]>, u16)>,
@@ -1359,7 +1352,7 @@ fn connect_finish<const IS_SSL: bool>(
     let vm = handlers.vm;
     // Either the caller's JS-owned socket (reconnect) or a fresh one.
     let socket_ref = if let Some(prev) = maybe_previous {
-        let prev = prev.ref_guard();
+        let prev = prev.clone();
         debug_assert!(prev.this_value.get().is_not_empty());
         // `node:net` allows `socket.connect()` on an already-connected /
         // still-connecting socket. Close the previous native socket before
@@ -1375,9 +1368,6 @@ fn connect_finish<const IS_SSL: bool>(
         // when sockets are reused for reconnection (common with MongoDB driver)
         prev.connection.set(Some(connection));
         prev.local_binding.set(local_binding);
-        if prev.flags.get().contains(SocketFlags::OWNED_PROTOS) {
-            prev.protos.set(None); // drop old Box
-        }
         prev.protos.set(ssl.as_mut().and_then(|s| s.take_protos()));
         prev.server_name
             .set(ssl.as_mut().and_then(|s| s.take_server_name()));
@@ -1400,7 +1390,7 @@ fn connect_finish<const IS_SSL: bool>(
             buffered_data_for_node_net: Default::default(),
             bytes_written: Cell::new(0),
             native_callback: JsCell::new(crate::socket::NativeCallbacks::None),
-            twin: JsCell::new(None),
+            twin: Cell::new(None),
             verify_error: JsCell::new(None),
             connect_span: Default::default(),
             latest_session: JsCell::new(None),
@@ -1422,7 +1412,7 @@ fn connect_finish<const IS_SSL: bool>(
     socket_ref.poll_ref.ref_(bun_io::js_vm_ctx());
     // An already-open fd socket runs `on_open` synchronously; what settling
     // the connect promise there left pending is not a connect failure.
-    let opened_err = match NewSocket::do_connect(&socket_ref, cx.context()) {
+    let opened_err = match socket_ref.do_connect(cx.context()) {
         Ok(()) => None,
         Err(crate::Error::Js(err)) => Some(err),
         Err(_) => {
@@ -1474,7 +1464,7 @@ fn connect_finish<const IS_SSL: bool>(
                 }
             };
             // What `connectError` throws on this synchronous failure throws from `connect()`.
-            NewSocket::handle_connect_error(socket_ref, errno, 0)?;
+            socket_ref.handle_connect_error(errno, 0)?;
             return Ok(promise_value);
         }
     };
@@ -1806,7 +1796,7 @@ fn dispatch_server_name(
     if s_ref.kind() != uws_sys::SocketKind::BunSocketTls {
         return core::ptr::null_mut();
     }
-    let Some(tls) = s_ref.ext::<NativeRef<true>>().get() else {
+    let Some(tls) = s_ref.ext::<NativeRef<true>>().cloned() else {
         return core::ptr::null_mut();
     };
     // An idle socket can drop its Handlers while the us_socket_t lives on;

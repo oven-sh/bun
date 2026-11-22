@@ -361,7 +361,7 @@ mod requests {
                 Parameters => pipeline.on_parameter_description([25].into()),
                 Columns => pipeline.on_row_description(),
                 NoData | BindComplete => pipeline.on_bind_complete(),
-                CommandComplete => pipeline.on_result(),
+                CommandComplete => pipeline.on_result().map(drop),
             }
             .unwrap();
         }

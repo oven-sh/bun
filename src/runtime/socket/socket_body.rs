@@ -477,15 +477,29 @@ impl<const SSL: bool> NewSocket<SSL> {
     // These hand-roll the `if (ssl) js_TLSSocket else js_TCPSocket`
     // split and route through the codegen'd safe wrappers.
     /// The wrapper takes over `this`.
-    pub(crate) fn to_js(this: RefPtr<Self>, global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn to_js(this: RefPtr<Self>, global: &JSGlobalObject, strong: bool) -> JSValue {
+        fn set_js_ref<T: jsc::HasJsRef>(
+            socket: &jsc::WrapperGuard<'_, T>,
+            global: &JSGlobalObject,
+            strong: bool,
+        ) -> JSValue {
+            if strong {
+                socket.set_js_ref_strong(global);
+            } else {
+                socket.set_js_ref_weak();
+            }
+            socket.to_js()
+        }
         jsc::mark_binding!();
         let ptr = this.into_raw();
         // SAFETY: `SSL` tells which of the two types `Self` is, so this is the `RefPtr` given up above.
         unsafe {
             if SSL {
-                js_TLSSocket::to_js(RefPtr::from_raw(ptr.cast()), global)
+                let socket = js_TLSSocket::wrap(RefPtr::from_raw(ptr.cast()), global);
+                set_js_ref(&socket, global, strong)
             } else {
-                js_TCPSocket::to_js(RefPtr::from_raw(ptr.cast()), global)
+                let socket = js_TCPSocket::wrap(RefPtr::from_raw(ptr.cast()), global);
+                set_js_ref(&socket, global, strong)
             }
         }
     }
@@ -960,7 +974,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             }
         );
         let callback = handlers.on_timeout();
-        if callback.is_empty() || this.flags.get().contains(Flags::FINALIZING) {
+        if callback.is_empty() || this.this_value.get().is_finalized() {
             return Ok(());
         }
 
@@ -1070,7 +1084,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         };
 
         if vm.script_execution_status() != jsc::ScriptExecutionStatus::Running
-            || this.flags.get().contains(Flags::FINALIZING)
+            || this.this_value.get().is_finalized()
         {
             drop(cleanup);
             return Ok(());
@@ -1175,9 +1189,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             // Connection failed before open; allow the wrapper to be GC'd
             // regardless of whether this path is promise-backed (e.g. the
             // duplex TLS upgrade flow has no connect promise).
-            if !matches!(this.this_value.get(), JsRef::Finalized) {
-                this.this_value.with_mut(|r| r.downgrade());
-            }
+            this.this_value.with_mut(|r| r.downgrade());
             if let Some(promise) = handlers.take_promise() {
                 // reject the promise on connect() error
                 let js_promise = jsc::JSPromise::opaque_mut(promise.as_promise().unwrap());
@@ -1316,9 +1328,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             // Do this before touching `handlers`: for the last server-side
             // connection on a stopped listener, `mark_inactive` releases the
             // listener's own strong ref.
-            if !matches!(self.this_value.get(), JsRef::Finalized) {
-                self.this_value.with_mut(|r| r.downgrade());
-            }
+            self.this_value.with_mut(|r| r.downgrade());
             if let Some(handlers) = self.handlers_opt() {
                 if handlers.mark_inactive() {
                     // Nothing else is using these handlers. Drop this socket's
@@ -1570,21 +1580,19 @@ impl<const SSL: bool> NewSocket<SSL> {
         if let Some(value) = self.this_value.get().try_get() {
             return value;
         }
-        if matches!(self.this_value.get(), JsRef::Finalized) {
+        if self.this_value.get().is_finalized() {
             // The JS wrapper was already garbage-collected. Creating a new one
             // here would result in a second `finalize` later.
             return JSValue::UNDEFINED;
         }
-        let value = Self::to_js(self.ref_guard(), global);
-        value.ensure_still_alive();
+        // Hold strong until the socket is closed / marked inactive.
+        let value = Self::to_js(self.ref_guard(), global, true);
         // The wrapper holds the shared handlers cell in a visited slot, so the
         // callbacks stay reachable from every socket that can still fire them.
         // A detached socket has no handlers left to root.
         if let Some(handlers) = self.handlers.get() {
             Self::handlers_set_cached(value, global, handlers.cell());
         }
-        // Hold strong until the socket is closed / marked inactive.
-        self.this_value.with_mut(|r| r.set_strong(value, global));
         value
     }
 
@@ -1676,7 +1684,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // is nothing to dispatch to. Nor from the GC finalizer's own close
         // (an SSL shutdown reports the never-finished handshake): a finalizer
         // dispatches nothing and may not inspect other cells mid-sweep.
-        if !this.has_handlers() || this.flags.get().contains(Flags::FINALIZING) {
+        if !this.has_handlers() || this.this_value.get().is_finalized() {
             return Ok(());
         }
         let first_report = !this.flags.get().contains(Flags::HANDSHAKE_COMPLETE);
@@ -2121,7 +2129,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             scope
         });
 
-        if this.flags.get().contains(Flags::FINALIZING) {
+        if this.this_value.get().is_finalized() {
             return Ok(());
         }
 
@@ -2204,7 +2212,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         );
 
         let callback = handlers.on_data();
-        if callback.is_empty() || this.flags.get().contains(Flags::FINALIZING) {
+        if callback.is_empty() || this.this_value.get().is_finalized() {
             return Ok(());
         }
 
@@ -3154,8 +3162,6 @@ impl<const SSL: bool> NewSocket<SSL> {
 
     pub(crate) fn finalize(&self) {
         log!("finalize() {}", core::ptr::from_ref(self) as usize);
-        self.update_flags(|f| f.insert(Flags::FINALIZING));
-        self.this_value.with_mut(|r| r.finalize());
         if !self.socket.get().is_closed() {
             self.socket.get().prepare_for_finalize();
             self.close_and_detach(uws::CloseCode::Failure);
@@ -3702,8 +3708,6 @@ bitflags::bitflags! {
     #[derive(Clone, Copy, PartialEq, Eq)]
     pub struct Flags: u16 {
         const IS_ACTIVE            = 1 << 0;
-        /// Prevent onClose from calling into JavaScript while we are finalizing
-        const FINALIZING           = 1 << 1;
         const AUTHORIZED           = 1 << 2;
         const HANDSHAKE_COMPLETE   = 1 << 3;
         const EMPTY_PACKET_PENDING = 1 << 4;

@@ -49,7 +49,7 @@ const MAX_PIPELINE_SIZE: usize = u16::MAX as usize; // about 64KB per connection
 pub struct JSMySQLConnection {
     pub(crate) server: bun_telemetry_jsc::db::Server,
     ref_count: Cell<u32>,
-    js_value: JsCell<JsRef>,
+    pub(crate) js_value: JsCell<JsRef>,
     global_object: GlobalRef,
     vm: BackRef<VirtualMachine>,
     poll_ref: bun_io::JsKeepAlive,
@@ -326,11 +326,6 @@ impl JSMySQLConnection {
         }
     }
 
-    pub fn finalize(&self) {
-        bun_core::scoped_log!(MySQLConnection, "finalize");
-        self.js_value.with_mut(|r| r.finalize());
-    }
-
     fn update_reference_type(&self) {
         if self.is_active() {
             bun_core::scoped_log!(MySQLConnection, "connection is active");
@@ -503,8 +498,7 @@ impl JSMySQLConnection {
         this.poll_ref.r#ref(vm.vm_ctx());
         let this = js::wrap(this, global_object);
         let js_value = this.to_js();
-        this.js_value
-            .with_mut(|r| r.set_strong(js_value, global_object));
+        this.set_js_ref_strong(global_object);
         js::onconnect_set_cached(js_value, global_object, on_connected.to_js());
         if let Some(column_transform) = column_transform {
             js::column_transform_set_cached(js_value, global_object, column_transform.to_js());

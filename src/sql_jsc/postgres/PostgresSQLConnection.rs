@@ -96,7 +96,7 @@ pub struct PostgresSQLConnection {
     vm: BackRef<VirtualMachine>,
     statements: JsCell<StatementCache>,
     /// The wrapper. Strong until the connection has failed and let go of its socket and its requests.
-    js_value: JsCell<crate::jsc::JsRef>,
+    pub(crate) js_value: JsCell<crate::jsc::JsRef>,
 
     backend_key_data: Cell<Option<protocol::BackendKeyData>>,
     /// Of a connection that only carries a CancelRequest, until it ends.
@@ -366,7 +366,6 @@ impl PostgresSQLConnection {
     pub fn finalize(&self) {
         debug!("PostgresSQLConnection finalize");
         self.timers.stop();
-        self.js_value.with_mut(|r| r.finalize());
     }
 
     /// Keep the process alive only while a connected connection has something in flight.
@@ -956,8 +955,7 @@ fn open(
     this.poll_ref.ref_(this.vm_ctx());
     let this = js::wrap(this, global_object);
     let js_value = this.to_js();
-    this.js_value
-        .set(crate::jsc::JsRef::init_strong(js_value, global_object));
+    this.set_js_ref_strong(global_object);
     js::onconnect_set_cached(js_value, global_object, params.on_connect);
     if let Some(column_transform) = params.column_transform {
         js::column_transform_set_cached(js_value, global_object, column_transform);

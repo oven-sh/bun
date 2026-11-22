@@ -562,6 +562,8 @@ impl ClientSession {
             HTTPStage::Body
         };
         client.state.response_stage = HTTPStage::Headers;
+        client.trace_socket(self.socket);
+        client.trace_request_stage();
         stream_ref.client = Some(client);
 
         self.rearm_timeout();

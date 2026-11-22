@@ -27,6 +27,7 @@ use bun_uws_sys::us_socket_t;
 use self::cpp_websocket::{CppWebSocket, TlsHandshake};
 use self::websocket_deflate::WebSocketDeflate;
 use self::websocket_proxy_tunnel::WebSocketProxyTunnel;
+use self::websocket_upgrade_client::failed_read_errno_name;
 
 #[path = "websocket_client/CppWebSocket.rs"]
 pub mod cpp_websocket;
@@ -432,8 +433,13 @@ impl<const SSL: bool> WebSocket<SSL> {
         self.tcp.set(tcp);
     }
 
-    pub fn handle_close(&self, _socket: Socket<SSL>, _code: c_int, _reason: *mut c_void) {
+    pub fn handle_close(&self, _socket: Socket<SSL>, code: c_int, _reason: *mut c_void) {
         log!("onClose");
+        if let Some(name) = failed_read_errno_name(code)
+            && let Some(ws) = self.cpp_websocket()
+        {
+            ws.did_fail_to_read(name);
+        }
         self.detach_tcp();
         self.parse_initial_data();
         self.finish(Outcome::Closed);
@@ -1819,13 +1825,33 @@ impl<const SSL: bool> Drop for WebSocket<SSL> {
 
 /// `None` for a unix socket or a closed socket.
 pub(crate) fn remote_address_of<const SSL: bool>(socket: Socket<SSL>) -> Option<(IpAddr, u16)> {
-    let mut buf = [0u8; 64];
-    let bytes = socket.remote_address(&mut buf)?;
-    let ip = <[u8; 4]>::try_from(bytes)
+    let ip = ip_from_bytes(socket.remote_address(&mut [0u8; 64])?)?;
+    Some((ip, socket.remote_port()?))
+}
+
+fn ip_from_bytes(bytes: &[u8]) -> Option<IpAddr> {
+    <[u8; 4]>::try_from(bytes)
         .map(IpAddr::from)
         .or_else(|_| <[u8; 16]>::try_from(bytes).map(IpAddr::from))
-        .ok()?;
-    Some((ip, socket.remote_port()?))
+        .ok()
+}
+
+// HOST_EXPORT(Bun__WebSocket__addressOfSocket, c)
+pub fn bun__websocket__address_of_socket(
+    socket: *mut bun_uws_sys::us_socket_t,
+    is_local: bool,
+    address: &mut bun_core::String,
+    port: &mut u16,
+) -> bool {
+    let socket = Socket::<false>::from(socket);
+    let endpoint = if is_local {
+        (socket.local_address(&mut [0u8; 64]))
+            .and_then(ip_from_bytes)
+            .zip(socket.local_port())
+    } else {
+        remote_address_of(socket)
+    };
+    write_remote_address(endpoint, address, port, &mut false)
 }
 
 /// FFI form of [`WebSocket::remote_address`]. Returns false and leaves the out-params untouched

@@ -123,6 +123,12 @@ unsafe extern "C" {
         is_upgrade: bool,
         body: FfiSlice<'_>,
     ) -> HandshakeResult;
+    safe fn WebSocket__willSendRequest(
+        websocket_context: &CppWebSocket,
+        request: FfiSlice<'_>,
+        socket: *mut bun_uws_sys::us_socket_t,
+    );
+    safe fn WebSocket__didFailToRead(websocket_context: &CppWebSocket, code: BunString);
     safe fn WebSocket__isWsMode(websocket_context: &CppWebSocket) -> bool;
     safe fn WebSocket__didReceiveResponseBody(
         websocket_context: &CppWebSocket,
@@ -246,6 +252,21 @@ impl CppWebSocket {
         HandshakeVerdict::Accepted {
             deflate: result.has_deflate.then_some(result.deflate),
         }
+    }
+
+    /// For `node:diagnostics_channel`. No JS runs.
+    pub(crate) fn will_send_request(
+        &self,
+        request: &[u8],
+        socket: Option<*mut bun_uws_sys::us_socket_t>,
+    ) {
+        let socket = socket.unwrap_or(core::ptr::null_mut());
+        WebSocket__willSendRequest(self, request.into(), socket);
+    }
+
+    /// For `node:diagnostics_channel`. No JS runs.
+    pub(crate) fn did_fail_to_read(&self, errno_name: &'static str) {
+        WebSocket__didFailToRead(self, BunString::static_(errno_name));
     }
 
     /// True if the `ws` module created this WebSocket. A field read on the C++ side: no JS runs.

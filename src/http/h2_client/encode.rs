@@ -299,6 +299,7 @@ pub(crate) fn write_data_windowed(
 pub(crate) fn drain_send_body(session: &mut ClientSession, stream: &mut Stream, cap: usize) {
     if let Some(mut client) = stream.client.take() {
         write_body(session, &mut client, stream, cap);
+        client.trace_request_stage();
         stream.client = Some(client);
     }
 }

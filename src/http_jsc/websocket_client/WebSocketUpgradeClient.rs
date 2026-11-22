@@ -653,9 +653,7 @@ where
         bun_jsc::mark_binding!();
         this.clear_data();
         this.tcp.set(Socket::<SSL>::detached());
-        // Values above the `CloseCode` range are the errno of a failed read. A FIN goes through
-        // `handle_end` instead.
-        let (system_code, detail) = match socket_errno_name(code).filter(|_| code > 2) {
+        let (system_code, detail) = match failed_read_errno_name(code) {
             Some(name) => (
                 BunString::static_(name),
                 BunString::create_format(format_args!("read {name}")),
@@ -733,6 +731,8 @@ where
                     this.secure.get().is_some()
                 );
                 Self::fail_tls(this, ssl_error, true);
+            } else if this.proxy.get().is_none() {
+                this.report_request();
             }
         } else {
             // if we are here is because server rejected us, and the error_no is the cause of this
@@ -824,10 +824,19 @@ where
         // If using proxy, set state to proxy_handshake
         if this.proxy.get().is_some() {
             this.state.set(State::ProxyHandshake);
+        } else if !SSL {
+            this.report_request();
         }
 
         this.to_send_len.set(this.input_body_buf.get().len());
         Self::write_pending(this, |buf| Self::socket_write(socket, buf));
+    }
+
+    /// `input_body_buf` is the upgrade request, and the way to the server is open.
+    fn report_request(&self) {
+        if let Some(ws) = self.cpp_websocket() {
+            ws.will_send_request(self.input_body_buf.get(), self.tcp.get().socket.get());
+        }
     }
 
     pub(crate) fn is_same_socket(&self, socket: Socket<SSL>) -> bool {
@@ -1093,6 +1102,7 @@ where
         this.state.set(State::Reading);
         this.to_send_len.set(request_buf.len());
         this.input_body_buf.set(request_buf);
+        this.report_request();
 
         // Send the WebSocket upgrade request
         if !Self::write_pending(this, |buf| Self::socket_write(socket, buf)) {
@@ -1208,6 +1218,7 @@ where
             Self::terminate(this, ErrorCode::ProxyTunnelFailed);
             return;
         };
+        this.report_request();
         Self::write_pending(this, |buf| WebSocketProxyTunnel::write(tunnel, buf).ok());
     }
 
@@ -1629,6 +1640,12 @@ fn socket_errno_name(errno: c_int) -> Option<&'static str> {
         return None;
     }
     bun_errno::SystemErrno::init(i64::from(errno)).map(Into::into)
+}
+
+/// For the `code` of `handle_close`. Values above the `CloseCode` range are the errno of a failed
+/// read. A FIN goes through `handle_end` instead.
+pub(crate) fn failed_read_errno_name(code: c_int) -> Option<&'static str> {
+    socket_errno_name(code).filter(|_| code > 2)
 }
 
 /// Errno name after `socket(2)` / `connect(2)` failed synchronously.

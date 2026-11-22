@@ -100,6 +100,10 @@ pub struct InternalStateFlags {
     pub(crate) decompress_output_pending: bool,
     /// See [`crate::HTTPClientResult::left_transport`].
     pub(crate) left_transport: bool,
+    /// See [`crate::request_trace::Event::Redirect`].
+    pub(crate) is_waiting_for_headers: bool,
+    pub(crate) traced_head: bool,
+    pub(crate) traced_body: bool,
 }
 
 impl InternalStateFlags {
@@ -116,6 +120,9 @@ impl InternalStateFlags {
             body_compressed: false,
             decompress_output_pending: false,
             left_transport: false,
+            is_waiting_for_headers: false,
+            traced_head: false,
+            traced_body: false,
         }
     }
 }

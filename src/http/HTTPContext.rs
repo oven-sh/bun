@@ -408,6 +408,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
         match body(&mut request) {
             Continue(()) => {
                 debug_assert!(!socket.is_closed());
+                request.trace_request_stage();
                 Self::put_request(slot, request);
             }
             Break(step) => Self::run_next_step(request, socket, slot, step),
@@ -427,6 +428,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
             }
             NextStep::Finish => request.finish(),
             NextStep::Connect => request.connect(),
+            NextStep::FollowRedirect => request.follow_redirect(),
             NextStep::AttachH2 => {
                 let session = Self::get_tagged(slot.get()).session();
                 h2::ClientSession::attach_leader(session.expect("tagged by first_call"), request);
@@ -1005,6 +1007,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
         mut client: InFlightRequest,
         connected: Result<HTTPSocket<SSL>, uws::ConnectError>,
     ) {
+        client.trace(|_| crate::request_trace::Event::Connecting);
         let socket = match connected {
             Ok(socket) => socket,
             Err(err) => {

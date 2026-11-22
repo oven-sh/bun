@@ -87,6 +87,7 @@ struct Slot {
     shared: Cell<Option<Rc<dyn AsRef<[u8]>>>>,
     /// The system cancels it when the thread ends, before it closes any file.
     is_write_of_thread: Cell<bool>,
+    is_after_input: Cell<bool>,
     outcome: Cell<Option<Outcome>>,
     event: OnceCell<OwnedHandle>,
     notifier: Notifier,
@@ -144,6 +145,7 @@ impl Requests {
     }
 
     fn take_callback(&self, slot: &Slot) -> Option<Callback> {
+        slot.is_after_input.set(false);
         let callback = slot.callback.take()?;
         self.callbacks.update(|count| count - 1);
         Some(callback)
@@ -157,7 +159,7 @@ impl Requests {
         let has_ended = match slot.awaits.get() {
             Awaits::Io => slot.status.get().0 != NTSTATUS::PENDING,
             Awaits::Outcome => false,
-            Awaits::Dispatch | Awaits::Signal | Awaits::Time => packet.key == key::REQUEST,
+            Awaits::Dispatch | Awaits::Signal | Awaits::Time => packet.key != key::FILE,
         };
         if !has_ended {
             return;
@@ -174,6 +176,16 @@ impl Requests {
             (Some(Callback::Outcome(done)), Some(outcome)) => done(outcome),
             _ => {}
         }
+    }
+
+    /// Whether it tells that a writer may be gone.
+    pub(crate) fn is_end(&self, packet: Packet) -> bool {
+        let slot = Token::from_raw(packet.context).and_then(|token| self.get(token));
+        slot.is_some_and(|slot| match (slot.awaits.get(), slot.status.get().0) {
+            (Awaits::Io, NTSTATUS::CANCELLED) => false,
+            (Awaits::Io, status) => NT_ERROR(status) && slot.file.is_some(),
+            _ => slot.is_after_input.get(),
+        })
     }
 
     /// `false` if nobody waits for it any more.
@@ -261,8 +273,25 @@ impl Request {
 
     /// Runs `done` in a later turn of the loop.
     pub fn defer(port: &Rc<Port>, done: impl FnOnce() + 'static) -> Request {
+        Request::defer_as(port, key::REQUEST, done)
+    }
+
+    /// The same for what has been read.
+    pub fn defer_input(port: &Rc<Port>, done: impl FnOnce() + 'static) -> Request {
+        Request::defer_as(port, key::INPUT, done)
+    }
+
+    /// Has the callback wait for what files are known to hold, like that of a request that fails.
+    pub fn after_input(self) -> Request {
+        if let Some(slot) = self.port.requests.get(self.token) {
+            slot.is_after_input.set(true);
+        }
+        self
+    }
+
+    fn defer_as(port: &Rc<Port>, key: usize, done: impl FnOnce() + 'static) -> Request {
         let (token, slot) = port.requests.slab.borrow_mut().acquire();
-        port.defer(Packet::new(key::REQUEST, token.to_raw()));
+        port.defer(Packet::new(key, token.to_raw()));
         let done = Callback::Signal(Box::new(done));
         Request::new(port, token, &slot, Awaits::Dispatch, done)
     }
@@ -681,7 +710,11 @@ impl AsyncFile {
             }
         };
         if awaits == Awaits::Dispatch {
-            let packet = Packet::new(key::REQUEST, token.to_raw());
+            let key = match call {
+                Call::Read => key::INPUT,
+                _ => key::REQUEST,
+            };
+            let packet = Packet::new(key, token.to_raw());
             match at_once {
                 AtOnce::Defer => port.defer(packet),
                 AtOnce::NextTurn => port.defer_to_next_turn(packet),

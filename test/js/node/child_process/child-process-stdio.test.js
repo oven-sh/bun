@@ -294,6 +294,42 @@ describe.concurrent("a pipe at fd 3", () => {
   });
 });
 
+describe.concurrent.skipIf(!isWindows)("what a child writes last, while the parent is busy,", () => {
+  it.each([
+    ["comes before 'exit'", 1, 20_000, 100_000, 1, `child.on("exit", report)`],
+    ["arrives although a write to it fails", 3, 1, 60_000, 4_000_000, `from.on("close", report)`],
+  ])("%s", async (_, fd, first, last, sent, end) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { OpenProcess, WaitForSingleObject } = require("bun:ffi").dlopen("kernel32.dll", {
+           OpenProcess: { args: ["u32", "i32", "u32"], returns: "ptr" },
+           WaitForSingleObject: { args: ["ptr", "u32"], returns: "u32" },
+         }).symbols;
+         const child = child_process.spawn(process.execPath, ["-e", process.argv[1]], { stdio: ["ignore", "pipe", "inherit", "pipe"] });
+         const from = child.stdio[${fd}], report = () => console.log(waited, length);
+         let length = 0, waited;
+         child.stdio[3].on("error", () => {});
+         from.on("data", chunk => {
+           if ((length += chunk.length) !== ${first}) return;
+           setImmediate(() => {
+             child.stdio[3].write(Buffer.alloc(${sent}));
+             waited = WaitForSingleObject(OpenProcess(0x100000, 0, child.pid), 3000);
+           });
+         });
+         ${end};`,
+        `fs.writeSync(${fd}, Buffer.alloc(${first})); fs.readSync(3, Buffer.alloc(1)); fs.writeSync(${fd}, Buffer.alloc(${last}));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: `0 ${first + last}\n`, stderr: "", exitCode: 0 });
+  });
+});
+
 describe.concurrent("writes to a child's stdin that have to wait", () => {
   const megabyte = 1024 * 1024;
   // Reads nothing until it is told to, over IPC.

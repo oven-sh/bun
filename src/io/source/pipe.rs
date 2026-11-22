@@ -323,9 +323,9 @@ impl Inner {
         }
         if self.endpoint.is_holding() {
             let report = self.later(Inner::report_read);
-            return self
-                .read
-                .set(Some(Request::defer(&self.endpoint.port, report).into()));
+            return self.read.set(Some(
+                Request::defer_input(&self.endpoint.port, report).into(),
+            ));
         }
         let handle = self.handle.raw();
         match self.io.get() {
@@ -374,8 +374,12 @@ impl Inner {
 
     fn started_read(self: &Rc<Self>, started: Result<Request, Completion>) {
         let request = started.unwrap_or_else(|refused| {
+            let has_failed = NT_ERROR(refused.status);
             let done = self.later(|this| this.on_data(refused));
-            Request::defer(&self.endpoint.port, done)
+            match has_failed {
+                true => Request::defer(&self.endpoint.port, done).after_input(),
+                false => Request::defer_input(&self.endpoint.port, done),
+            }
         });
         self.read.set(Some(request.into()));
     }

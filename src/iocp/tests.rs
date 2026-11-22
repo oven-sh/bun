@@ -271,6 +271,56 @@ fn what_is_deferred_over_and_over_lets_the_turn_end() {
     slot.take();
 }
 
+/// Reads a byte at a time, for as long as `refill` and the pipe have some.
+fn read_on(file: Rc<AsyncFile>, seen: Rc<RefCell<String>>, refill: Rc<dyn Fn()>) {
+    let (next, log) = (Rc::clone(&file), Rc::clone(&seen));
+    let read = file.read(Vec::with_capacity(1), 1, move |read| {
+        if let [byte] = read.buffer[..] {
+            log.borrow_mut().push(byte.into());
+            refill();
+            read_on(next, log, refill);
+        }
+    });
+    core::mem::forget(read);
+}
+
+#[test]
+fn an_end_waits_for_what_was_written_before() {
+    if !has_wait_packets() {
+        return;
+    }
+    for (open, is_endless) in BOTH_KINDS
+        .map(|open| [(open, false), (open, true)])
+        .concat()
+    {
+        let (port, seen) = (Port::new().unwrap(), Rc::new(RefCell::new(String::new())));
+        let note = |what| {
+            let seen = Rc::clone(&seen);
+            move || seen.borrow_mut().push(what)
+        };
+        let ((input, writer), (output, reader)) = (pipe(&port, open), pipe(&port, open));
+        let writer = Rc::new(writer);
+        let refill = Rc::clone(&writer);
+        let refill = move || {
+            if is_endless {
+                refill.write_all(b".").unwrap();
+            }
+        };
+        read_on(Rc::new(input), Rc::clone(&seen), Rc::new(refill));
+        let failed = note('F');
+        let _write = output.write(vec![0; 1 << 20], 0, move |_| failed());
+        let event = w::CreateEventW().unwrap();
+        let _end = Request::wait(&port, event.as_handle(), note('S')).map(Request::after_input);
+        let _other = Request::wait(&port, event.as_handle(), note('o'));
+        writer.write_all(b"abc").unwrap();
+        drop(reader);
+        w::set_event(&event);
+        run_until(&port, || seen.borrow().contains('S'));
+        let expected = if is_endless { "aobc...FS" } else { "aobcFS" };
+        assert!(seen.borrow().starts_with(expected), "{}", seen.borrow());
+    }
+}
+
 #[test]
 fn signals_delays_and_other_threads() {
     let port = Port::new().unwrap();

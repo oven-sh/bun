@@ -692,7 +692,8 @@ impl Process {
                 }
             };
             let port = self.event_loop.loop_().port();
-            let Ok(exit) = Request::wait(port, handle.as_handle(), on_exit) else {
+            let exit = Request::wait(port, handle.as_handle(), on_exit);
+            let Ok(exit) = exit.map(Request::after_input) else {
                 let (errno, tag) = (bun_sys::E::ENOMEM, bun_sys::Tag::uv_spawn);
                 return Err(bun_sys::Error::from_code(errno, tag));
             };

@@ -32,6 +32,8 @@ pub(crate) mod key {
     /// A request on a file that is bound to the port.
     pub(crate) const FILE: usize = 7;
     pub(crate) const BELL: usize = 8;
+    /// A deferred request that has read something.
+    pub(crate) const INPUT: usize = 9;
 }
 
 const BATCH: usize = 128;
@@ -124,6 +126,11 @@ pub struct Port {
     deferred: RefCell<VecDeque<Packet>>,
     /// The same, for a turn that has not begun.
     next_turn: RefCell<VecDeque<Packet>>,
+    /// How many of both are `key::INPUT`.
+    inputs: Cell<usize>,
+    /// What waits for them, and since which of the `rounds`.
+    ends: RefCell<VecDeque<(Packet, u64)>>,
+    rounds: Cell<u64>,
     /// When the last turn ended, or a wait for which nothing was ready.
     busy_since_ns: Cell<u64>,
     expects_more: Cell<bool>,
@@ -169,6 +176,9 @@ impl Port {
             has_posted: Cell::new(false),
             deferred: RefCell::default(),
             next_turn: RefCell::default(),
+            inputs: Cell::new(0),
+            ends: RefCell::default(),
+            rounds: Cell::new(0),
             busy_since_ns: Cell::new(now_ns()),
             expects_more: Cell::new(false),
             has_overdue_timer: Cell::new(false),
@@ -245,11 +255,19 @@ impl Port {
     }
 
     pub(crate) fn defer(&self, packet: Packet) {
-        self.deferred.borrow_mut().push_back(packet);
+        self.defer_to(&self.deferred, packet);
     }
 
     pub(crate) fn defer_to_next_turn(&self, packet: Packet) {
-        self.next_turn.borrow_mut().push_back(packet);
+        match packet.key == key::INPUT && !self.ends.borrow().is_empty() {
+            true => self.defer(packet),
+            false => self.defer_to(&self.next_turn, packet),
+        }
+    }
+
+    fn defer_to(&self, queue: &RefCell<VecDeque<Packet>>, packet: Packet) {
+        (self.inputs).update(|count| count + usize::from(packet.key == key::INPUT));
+        queue.borrow_mut().push_back(packet);
     }
 
     /// It comes after the packets that the system has by now.
@@ -259,9 +277,11 @@ impl Port {
     }
 
     /// Spares the loop a turn for what was deferred a moment ago.
-    pub(crate) fn take_back(&self, request: Token) {
-        let address = (key::REQUEST, request.to_raw());
-        (self.deferred.borrow_mut()).pop_back_if(|packet| (packet.key, packet.context) == address);
+    pub(crate) fn take_back(&self, read: Token) {
+        let address = (key::INPUT, read.to_raw());
+        let taken = (self.deferred.borrow_mut())
+            .pop_back_if(|packet| (packet.key, packet.context) == address);
+        (self.inputs).update(|count| count - usize::from(taken.is_some()));
     }
 
     pub(crate) fn delay(&self, key: usize, token: Token, delay_ns: u64) {
@@ -285,7 +305,7 @@ impl Port {
 
     fn undispatched(&self) -> usize {
         let deferred = self.deferred.borrow().len() + self.next_turn.borrow().len();
-        self.end.get() - self.next.get() + deferred
+        self.end.get() - self.next.get() + deferred + self.ends.borrow().len()
     }
 
     fn has_work(&self) -> bool {
@@ -511,14 +531,48 @@ impl Port {
             };
             self.deliver(packet, on_event);
         }
+        self.rounds.update(|rounds| rounds + u64::from(count > 0));
+        while let Some(packet) = self.take_end() {
+            self.requests.complete(self, packet);
+        }
         count > 0
+    }
+
+    fn must_wait(&self, packet: Packet) -> bool {
+        (self.inputs.get() > 0 || !self.ends.borrow().is_empty()) && self.requests.is_end(packet)
+    }
+
+    fn hold_end(&self, packet: Packet) {
+        if self.ends.borrow().is_empty() {
+            let mut deferred = self.deferred.borrow_mut();
+            (self.next_turn.borrow_mut()).retain(|&packet| {
+                packet.key != key::INPUT || {
+                    deferred.push_back(packet);
+                    false
+                }
+            });
+        }
+        (self.ends.borrow_mut()).push_back((packet, self.rounds.get()));
+    }
+
+    fn take_end(&self) -> Option<Packet> {
+        /// Enough for what a pipe holds. Another may never run dry.
+        const MAX_ROUNDS: u64 = 4;
+        let is_due = |since| self.inputs.get() == 0 || self.rounds.get() > since + MAX_ROUNDS;
+        let end = self.ends.borrow_mut().pop_front_if(|end| is_due(end.1));
+        end.map(|end| end.0)
     }
 
     fn deliver(&self, packet: Packet, on_event: &impl Fn(Event)) {
         match packet.key {
             key::SOCKET => self.sockets.complete(self, packet.context, on_event),
             key::POLL_AGAIN => self.sockets.poll_again(packet.context),
+            key::REQUEST | key::FILE if self.must_wait(packet) => self.hold_end(packet),
             key::REQUEST | key::FILE => self.requests.complete(self, packet),
+            key::INPUT => {
+                self.inputs.update(|count| count - 1);
+                self.requests.complete(self, packet);
+            }
             key::WAKE => {
                 self.shared.is_wake_posted.swap(false, Ordering::SeqCst);
                 on_event(Event::Wake);

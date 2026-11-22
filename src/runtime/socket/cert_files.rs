@@ -3,11 +3,37 @@
 
 use core::ffi::{c_char, c_int, c_void};
 
-use bun_core::{ZBox, ZStr, env_var};
+use bun_core::{ZBox, ZStr, env_var, strings};
 use bun_sys::O;
 
 /// Receives the whole contents of one file.
 pub(crate) type OnFile = unsafe extern "C" fn(ctx: *mut c_void, data: *const u8, len: usize);
+
+/// Reads all of `file` as OpenSSL sees it, which takes each line, or 254 bytes of it, for a C string. An empty one is
+/// the end of the file there. Here it is only an error within a block.
+pub(crate) fn read_pem(file: &bun_sys::File, bytes: &mut Vec<u8>) -> bun_sys::Result<()> {
+    file.read_to_end_into(bytes)?;
+    if !strings::contains_char(bytes, 0) {
+        return Ok(());
+    }
+    let all = core::mem::take(bytes);
+    let mut rest = &all[..];
+    while !rest.is_empty() {
+        let max = rest.len().min(254);
+        let len = strings::index_of_char_usize(&rest[..max], b'\n').map_or(max, |at| at + 1);
+        let (piece, after) = rest.split_at(len);
+        match strings::index_of_char_usize(piece, 0) {
+            None => bytes.extend_from_slice(piece),
+            Some(0) => bytes.extend_from_slice(b"-----END -\n"),
+            Some(nul) => {
+                bytes.extend_from_slice(&piece[..nul]);
+                bytes.push(b'\n');
+            }
+        }
+        rest = after;
+    }
+    Ok(())
+}
 
 /// Reads all of `path` (which may be a pipe or device) and hands it to `on_file`. Returns 0, or the errno of the
 /// failed open/read without calling `on_file`.
@@ -17,7 +43,7 @@ pub(crate) fn read_file_for(path: &ZStr, ctx: *mut c_void, on_file: OnFile) -> c
         Err(err) => return err.get_errno() as c_int,
     };
     let mut bytes = Vec::new();
-    if let Err(err) = file.read_to_end_into(&mut bytes) {
+    if let Err(err) = read_pem(&file, &mut bytes) {
         return err.get_errno() as c_int;
     }
     hand_over(&bytes, ctx, on_file);
@@ -72,7 +98,7 @@ pub(crate) fn read_openssl_default_cert_file(
             };
             let stat = file.stat().ok();
             let mut bytes = Vec::new();
-            if file.read_to_end_into(&mut bytes).is_err() {
+            if read_pem(&file, &mut bytes).is_err() {
                 return;
             }
             if let Some(stat) =

@@ -1173,6 +1173,7 @@ function Server(options, secureConnectionListener): void {
   };
 
   let listenerContext;
+  let listenerDefaultCA;
 
   this.setSecureContext = function (options) {
     const serverTLSOptions = options;
@@ -1214,12 +1215,11 @@ function Server(options, secureConnectionListener): void {
       }
       next.key = key;
 
-      // InternalSecureContext applies tls.setDefaultCACertificates() itself; a named pipe listener builds from this field.
-      let ca = options.ca || getDefaultCACertificatesOverride();
+      let ca = options.ca || undefined;
       // buildSharedCreds() drops them, so they go into `ca`: an mTLS server verifies clients against the bundle's own CA chain.
       const pfxExtraCAs = options._pfxExtraCACerts;
       if (pfxExtraCAs?.length) {
-        ca = appendCAs(ca, pfxExtraCAs);
+        ca = appendCAs(ca ?? getDefaultCACertificatesOverride(), pfxExtraCAs);
       }
       if (ca) {
         throwOnInvalidTLSArray("options.ca", ca);
@@ -1291,6 +1291,7 @@ function Server(options, secureConnectionListener): void {
     const own = buildSharedCreds({ __proto__: this, ...next }, isContext ? undefined : serverTLSOptions);
     // Accepted sockets take their verify mode from the context, so the listener's is always this server's own. An instance names no key, as in Node.
     listenerContext = own.context;
+    listenerDefaultCA = getDefaultCACertificatesOverride();
     const handle = this._handle;
     if (handle && options) {
       setListenerSecureContext(handle, listenerContext);
@@ -1317,6 +1318,7 @@ function Server(options, secureConnectionListener): void {
 
   this[buntls] = function (port, host, isClient) {
     const requestCert = isClient ? true : this._requestCert;
+    const ca = this.ca || listenerDefaultCA;
     return [
       {
         serverName: sniName(this.servername || host || "localhost"),
@@ -1324,9 +1326,9 @@ function Server(options, secureConnectionListener): void {
         secureContext: listenerContext,
         key: normalizePemKeyOption(this.key, this.passphrase),
         cert: this.cert,
-        ca: this.ca,
-        caMayBeEmpty: !!this.ca,
-        caDefaultCount: countDefaultCAs(this.ca),
+        ca,
+        caMayBeEmpty: !!ca,
+        caDefaultCount: countDefaultCAs(ca),
         crl: this.crl,
         allowPartialTrustChain: this.allowPartialTrustChain,
         sessionTimeout: this.sessionTimeout ?? 0,

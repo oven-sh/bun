@@ -8,6 +8,7 @@
 #include <openssl/pool.h>
 #include <errno.h>
 #include <limits.h>
+#include <stdio.h>
 #include <string.h>
 #include <algorithm>
 #include <string>
@@ -15,8 +16,7 @@
 
 // An entry can withdraw trust, so it must not pass for malformed, or for the end, because memory ran out.
 static void us_check_memory() {
-  uint32_t err = ERR_peek_error();
-  if (ERR_equals(err, ERR_LIB_CRYPTO, ERR_R_MALLOC_FAILURE) || ERR_equals(err, ERR_LIB_SYS, ENOMEM)) Bun__outOfMemory();
+  if (ERR_equals(ERR_peek_error(), ERR_LIB_CRYPTO, ERR_R_MALLOC_FAILURE)) Bun__outOfMemory();
 }
 
 // Reads what d2i_X509 and d2i_X509_CERT_AUX of OpenSSL accept, and copies it in a form that those of BoringSSL accept.
@@ -344,13 +344,9 @@ bool us_pem_block::is(const char *label) const { return strcmp(name, label) == 0
 bool us_pem_block::is_plain_certificate() const { return is(PEM_STRING_X509) || is(PEM_STRING_X509_OLD); }
 
 bool us_pem_block::decrypt() {
-  if (header[0] == '\0') return true;
-  us_unique_ptr<BIO, BIO_free> again{BIO_new(BIO_s_mem())};
-  bool ok = again && PEM_write_bio(again.get(), name, header, data, len);
-  OPENSSL_free(std::exchange(data, nullptr));
-  ok = ok && PEM_bytes_read_bio(&data, &len, nullptr, name, again.get(), us_no_password_callback, nullptr);
-  if (!ok) us_check_memory();
-  return ok;
+  if (PEM_decrypt(header, data, &len, us_no_password_callback, nullptr)) return true;
+  us_check_memory();
+  return false;
 }
 
 // For what BoringSSL has refused. Fails if OpenSSL refuses it too.
@@ -496,10 +492,14 @@ extern "C" int us_x509_store_add_crls(X509_STORE *store, const char *pem, size_t
 }
 
 void us_x509_store_load_hashed_file(X509_STORE *store, const char *path, int type) {
-  ERR_clear_error();
-  if (us_unique_ptr<BIO, BIO_free> file{BIO_new_file(path, "rb")}) {
-    type == X509_LU_CRL ? us_add_crls(store, file.get()) : us_add_cas(store, nullptr, file.get());
+  FILE *file = fopen(path, "rb");
+  if (file == nullptr) {
+    if (errno == ENOMEM) Bun__outOfMemory();
+    return;
   }
+  us_unique_ptr<BIO, BIO_free> in{BIO_new_fp(file, BIO_CLOSE)};
+  if (in == nullptr) Bun__outOfMemory();
+  type == X509_LU_CRL ? us_add_crls(store, in.get()) : us_add_cas(store, nullptr, in.get());
   us_check_memory();
   ERR_clear_error();
 }

@@ -5,7 +5,7 @@ import { once } from "node:events";
 import { readFileSync } from "node:fs";
 import net from "node:net";
 import { join } from "node:path";
-import { connect, createServer, TLSSocket } from "node:tls";
+import { connect, createServer, getCACertificates, setDefaultCACertificates, TLSSocket } from "node:tls";
 import { decodeErrorAlert, startMalformedServerHelloServer } from "./tls-handshake-alert-utils";
 
 it.if(isWindows)("should work with named pipes and tls", async () => {
@@ -68,6 +68,24 @@ it.if(isWindows)("a server on a named pipe trusts nothing when `ca` holds no cer
   try {
     const [peer] = await accepted;
     expect(peer.authorizationError).toBe("DEPTH_ZERO_SELF_SIGNED_CERT");
+    peer.destroy();
+  } finally {
+    socket.destroy();
+  }
+});
+
+it.if(isWindows)("a server on a named pipe trusts the default CAs of when it was created", async () => {
+  const before = getCACertificates("default");
+  setDefaultCACertificates([tls.cert]);
+  await using server = createServer({ ...tls, requestCert: true, rejectUnauthorized: false });
+  setDefaultCACertificates(before);
+  const pipeName = `\\\\.\\pipe\\test\\${randomUUID()}`;
+  await once(server.listen(pipeName), "listening");
+  const accepted = once(server, "secureConnection");
+  const socket = connect({ ...tls, path: pipeName, ca: tls.cert });
+  try {
+    const [peer] = await accepted;
+    expect(peer.authorized).toBe(true);
     peer.destroy();
   } finally {
     socket.destroy();

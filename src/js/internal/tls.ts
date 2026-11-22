@@ -496,7 +496,7 @@ function getDefaultCACertificatesOverride() {
 }
 
 function setDefaultCACertificatesOverride(certificates: string[]) {
-  // Servers have it as their `ca` property.
+  // User code can get at it through the symbols of a server.
   defaultCACertificatesOverride = Object.freeze(certificates);
   WeakMapPrototypeSet.$call(defaultCACounts, certificates, certificates.length);
 }

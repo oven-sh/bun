@@ -318,14 +318,14 @@ extern "C" X509_STORE *us_get_default_ca_store() {
       return NULL;
     }
     for (size_t i = 0; system.parsed != nullptr && i < sk_X509_num(system.parsed); i++) {
-      X509_STORE_add_cert(store.get(), sk_X509_value(system.parsed, i));
+      if (!X509_STORE_add_cert(store.get(), sk_X509_value(system.parsed, i))) Bun__outOfMemory();
     }
   }
 
   STACK_OF(X509) *root_extra_cert_instances = us_get_root_extra_cert_instances();
   if (root_extra_cert_instances) {
     for (int i = 0; i < sk_X509_num(root_extra_cert_instances); i++) {
-      X509_STORE_add_cert(store.get(), sk_X509_value(root_extra_cert_instances, i));
+      if (!X509_STORE_add_cert(store.get(), sk_X509_value(root_extra_cert_instances, i))) Bun__outOfMemory();
     }
   }
 

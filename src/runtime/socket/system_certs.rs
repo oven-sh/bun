@@ -98,7 +98,7 @@ impl Loader {
             return;
         }
         self.buf.clear();
-        if file.read_to_end_into(&mut self.buf).is_err() {
+        if cert_files::read_pem(&file, &mut self.buf).is_err() {
             return;
         }
         let buf = core::mem::take(&mut self.buf);

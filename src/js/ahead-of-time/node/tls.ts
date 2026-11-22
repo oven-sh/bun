@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/tls.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 cd86a3b58b2bf5e2674eddf913b8c8c001f2a7cb044a6d20d794c002e0aabb26.
+// Written against that file with the SHA-256 3a6ef0e195d0ffc4c922bad08d5aca2288cc8564497b0cb0494891d798ed6dc7.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:tls"
@@ -1323,6 +1323,7 @@ function Server(this: $Node.TLSServer, options?, secureConnectionListener?): voi
   };
 
   let listenerContext: $Node.NativeSecureContext | undefined;
+  let listenerDefaultCA: readonly string[] | undefined;
 
   this.setSecureContext = function (this: $Node.TLSServer, options: TLSOptions | null | undefined) {
     const serverTLSOptions = options;
@@ -1364,12 +1365,11 @@ function Server(this: $Node.TLSServer, options?, secureConnectionListener?): voi
       }
       next.key = key;
 
-      // InternalSecureContext applies tls.setDefaultCACertificates() itself; a named pipe listener builds from this field.
-      let ca = options.ca || getDefaultCACertificatesOverride();
+      let ca = options.ca || undefined;
       // buildSharedCreds() drops them, so they go into `ca`: an mTLS server verifies clients against the bundle's own CA chain.
       const pfxExtraCAs = options._pfxExtraCACerts;
       if (pfxExtraCAs?.length) {
-        ca = appendCAs(ca, pfxExtraCAs);
+        ca = appendCAs(ca ?? getDefaultCACertificatesOverride(), pfxExtraCAs);
       }
       if (ca) {
         throwOnInvalidTLSArray("options.ca", ca);
@@ -1441,6 +1441,7 @@ function Server(this: $Node.TLSServer, options?, secureConnectionListener?): voi
     const own = buildSharedCreds({ __proto__: this, ...next }, isContext ? undefined : serverTLSOptions);
     // Accepted sockets take their verify mode from the context, so the listener's is always this server's own. An instance names no key, as in Node.
     listenerContext = own.context;
+    listenerDefaultCA = getDefaultCACertificatesOverride();
     const handle = this._handle;
     if (handle && options) {
       setListenerSecureContext(handle, listenerContext);
@@ -1467,6 +1468,7 @@ function Server(this: $Node.TLSServer, options?, secureConnectionListener?): voi
 
   this[buntls] = function (this: $Node.TLSServer, port, host, isClient) {
     const requestCert = isClient ? true : this._requestCert;
+    const ca = this.ca || listenerDefaultCA;
     return [
       {
         serverName: sniName(this.servername || host || "localhost"),
@@ -1474,9 +1476,9 @@ function Server(this: $Node.TLSServer, options?, secureConnectionListener?): voi
         secureContext: listenerContext,
         key: normalizePemKeyOption(this.key, this.passphrase),
         cert: this.cert,
-        ca: this.ca,
-        caMayBeEmpty: !!this.ca,
-        caDefaultCount: countDefaultCAs(this.ca),
+        ca,
+        caMayBeEmpty: !!ca,
+        caDefaultCount: countDefaultCAs(ca),
         crl: this.crl,
         allowPartialTrustChain: this.allowPartialTrustChain,
         sessionTimeout: this.sessionTimeout ?? 0,

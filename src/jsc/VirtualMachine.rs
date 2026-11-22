@@ -1939,10 +1939,7 @@ impl VirtualMachine {
             && !bun_removable_features::is_removed(bun_removable_features::Feature::Worker)
     }
 
-    /// Whether `bun test` takes this VM's uncaught errors ahead of its `process` listeners. It does
-    /// for every VM without a Worker (the test files' VM, a macro's VM on a pool thread, the
-    /// debugger's VM): on the other path such a VM can end the process. A Worker has its own
-    /// `process` and takes that path.
+    /// Also true for a macro's VM on a pool thread: it has no Worker, and must not end the run.
     fn bun_test_takes_unhandled_errors(&self) -> bool {
         isBunTest.load(core::sync::atomic::Ordering::Relaxed) && self.worker.get().is_none()
     }

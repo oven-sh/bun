@@ -1,9 +1,21 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { bunEnv, bunExe, isWindows, tempDir, tls as tlsCert } from "harness";
 import diagnosticsChannel from "node:diagnostics_channel";
+import { join } from "node:path";
 import { Readable } from "node:stream";
 // @ts-ignore undici 5's types don't declare ping()
-import { ping, request, fetch as undiciFetch, WebSocket as UndiciWebSocket } from "undici";
+import {
+  Agent,
+  errors,
+  getGlobalDispatcher,
+  ping,
+  request,
+  setGlobalDispatcher,
+  fetch as undiciFetch,
+  WebSocket as UndiciWebSocket,
+} from "undici";
 
+import { mkfifo } from "mkfifo";
 import { createServer } from "../../../http-test-server";
 
 describe("undici", () => {
@@ -563,5 +575,1050 @@ describe.concurrent("WebSocket ping", () => {
     } finally {
       ws.close();
     }
+  });
+});
+
+describe("undici dispatcher connect.lookup", () => {
+  // Reserved TLD (RFC 2606): guaranteed not to resolve, so reaching the local
+  // server proves the lookup hook supplied the address.
+  const UNRESOLVABLE = "this-host-does-not-exist.invalid";
+
+  function pinningAgent(address = "127.0.0.1") {
+    const seen: string[] = [];
+    const agent = new Agent({
+      connect: {
+        lookup: (hostname, _opts, cb) => {
+          seen.push(hostname);
+          cb(null, address, 4);
+        },
+      },
+    });
+    return { agent, seen };
+  }
+
+  it("fetch connects to the address returned by the lookup hook", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      fetch: req => new Response(req.headers.get("host") ?? "none"),
+    });
+    const { agent, seen } = pinningAgent();
+    const res = await undiciFetch(`http://${UNRESOLVABLE}:${server.port}/`, { dispatcher: agent });
+    expect(await res.text()).toBe(`${UNRESOLVABLE}:${server.port}`);
+    expect(res.status).toBe(200);
+    expect(seen).toEqual([UNRESOLVABLE]);
+    // The pinned IP does not leak into the Response.
+    expect(res.url).toBe(`http://${UNRESOLVABLE}:${server.port}/`);
+    expect(res.redirected).toBe(false);
+  });
+
+  it("fetch fails when the lookup hook reports an error, without contacting the server", async () => {
+    let hits = 0;
+    await using server = Bun.serve({
+      port: 0,
+      fetch: () => {
+        hits++;
+        return new Response("served");
+      },
+    });
+    const agent = new Agent({
+      connect: {
+        lookup: (_hostname, _opts, cb) => cb(new Error("blocked by rebinding protection"), "", 0),
+      },
+    });
+    expect(
+      await undiciFetch(`http://localhost:${server.port}/`, { dispatcher: agent }).then(
+        () => ({ name: "resolved" }),
+        (err: TypeError) => ({
+          name: err.constructor.name,
+          message: err.message,
+          cause: (err.cause as Error | undefined)?.message,
+        }),
+      ),
+    ).toEqual({ name: "TypeError", message: "fetch failed", cause: "blocked by rebinding protection" });
+    expect(hits).toBe(0);
+  });
+
+  it("lookup hook is skipped for IP literals", async () => {
+    await using server = Bun.serve({ port: 0, fetch: () => new Response("direct") });
+    const { agent, seen } = pinningAgent("192.0.2.1");
+    const res = await undiciFetch(`http://127.0.0.1:${server.port}/`, { dispatcher: agent });
+    expect(await res.text()).toBe("direct");
+    expect(seen).toEqual([]);
+  });
+
+  it("lookup hook may return the all:true address-array shape", async () => {
+    await using server = Bun.serve({ port: 0, fetch: () => new Response("array") });
+    const agent = new Agent({
+      connect: {
+        lookup: (_hostname, _opts, cb) => cb(null, [{ address: "127.0.0.1", family: 4 }] as any, undefined as any),
+      },
+    });
+    const res = await undiciFetch(`http://${UNRESOLVABLE}:${server.port}/`, { dispatcher: agent });
+    expect(await res.text()).toBe("array");
+  });
+
+  it("the global dispatcher's lookup hook is honored", async () => {
+    await using server = Bun.serve({ port: 0, fetch: () => new Response("global") });
+    const previous = getGlobalDispatcher();
+    setGlobalDispatcher(pinningAgent().agent);
+    try {
+      const res = await undiciFetch(`http://${UNRESOLVABLE}:${server.port}/`);
+      expect(await res.text()).toBe("global");
+    } finally {
+      setGlobalDispatcher(previous);
+    }
+  });
+
+  it("fetch with a Request input keeps method, headers and body through the pin", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      fetch: async req => new Response(`${req.method} ${req.headers.get("x-probe")} ${await req.text()}`),
+    });
+    const { agent } = pinningAgent();
+    const req = new Request(`http://${UNRESOLVABLE}:${server.port}/`, {
+      method: "POST",
+      headers: { "x-probe": "yes" },
+      body: "hello",
+    });
+    const res = await undiciFetch(req, { dispatcher: agent });
+    expect(await res.text()).toBe("POST yes hello");
+  });
+
+  it("request() honors the dispatcher's lookup hook", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      fetch: req => new Response(req.headers.get("host") ?? "none"),
+    });
+    const { agent, seen } = pinningAgent();
+    const { statusCode, body } = await request(`http://${UNRESOLVABLE}:${server.port}/`, { dispatcher: agent });
+    expect(await body!.text()).toBe(`${UNRESOLVABLE}:${server.port}`);
+    expect(statusCode).toBe(200);
+    expect(seen).toEqual([UNRESOLVABLE]);
+  });
+
+  it("https: the pin keeps the original hostname for SNI and certificate verification", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      tls: tlsCert,
+      fetch: req => new Response(req.headers.get("host") ?? "none"),
+    });
+    const { agent, seen } = pinningAgent();
+    const verified: string[] = [];
+    const res = await undiciFetch(`https://localhost:${server.port}/`, {
+      dispatcher: agent,
+      // @ts-expect-error Bun-specific fetch option
+      tls: {
+        ca: tlsCert.cert,
+        checkServerIdentity: (hostname: string) => {
+          verified.push(hostname);
+          return undefined;
+        },
+      },
+    });
+    expect(await res.text()).toBe(`localhost:${server.port}`);
+    expect(seen).toEqual(["localhost"]);
+    expect(verified).toEqual(["localhost"]);
+  });
+
+  it("https: a user tls.serverName wins over the pinned hostname", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      tls: tlsCert,
+      fetch: () => new Response("ok"),
+    });
+    const { agent } = pinningAgent();
+    const verified: string[] = [];
+    const res = await undiciFetch(`https://${UNRESOLVABLE}:${server.port}/`, {
+      dispatcher: agent,
+      // @ts-expect-error Bun-specific fetch option
+      tls: {
+        ca: tlsCert.cert,
+        serverName: "localhost",
+        checkServerIdentity: (hostname: string) => {
+          verified.push(hostname);
+          return undefined;
+        },
+      },
+    });
+    expect(await res.text()).toBe("ok");
+    expect(verified).toEqual(["localhost"]);
+  });
+
+  it("https: the Agent's connect TLS options apply to pinned hops", async () => {
+    await using server = Bun.serve({ port: 0, tls: tlsCert, fetch: () => new Response("connect-ca") });
+    const seen: string[] = [];
+    // The cert is self-signed for localhost: without connect.ca the pin fails verification.
+    const noCa = new Agent({ connect: { lookup: (_h, _o, cb) => cb(null, "127.0.0.1", 4) } });
+    expect(
+      await undiciFetch(`https://localhost:${server.port}/`, { dispatcher: noCa }).then(
+        () => "resolved",
+        (err: Error & { code?: string }) => err.code,
+      ),
+    ).toBe("DEPTH_ZERO_SELF_SIGNED_CERT");
+    const withCa = new Agent({
+      connect: {
+        ca: tlsCert.cert,
+        lookup: (hostname, _o, cb) => {
+          seen.push(hostname);
+          cb(null, "127.0.0.1", 4);
+        },
+      },
+    });
+    const res = await undiciFetch(`https://localhost:${server.port}/`, { dispatcher: withCa });
+    expect(await res.text()).toBe("connect-ca");
+    expect(seen).toEqual(["localhost"]);
+  });
+
+  it("https: every redirect hop verifies against its own hostname", async () => {
+    await using target = Bun.serve({
+      port: 0,
+      tls: tlsCert,
+      fetch: req => new Response(req.headers.get("host") ?? "none"),
+    });
+    await using origin = Bun.serve({
+      port: 0,
+      tls: tlsCert,
+      fetch: () => Response.redirect(`https://hop-two.invalid:${target.port}/`, 302),
+    });
+    const { agent, seen } = pinningAgent();
+    const verified: string[] = [];
+    const res = await undiciFetch(`https://hop-one.invalid:${origin.port}/`, {
+      dispatcher: agent,
+      // @ts-expect-error Bun-specific fetch option
+      tls: {
+        ca: tlsCert.cert,
+        // Returning undefined accepts the certificate, so the hostnames need
+        // not be in the certificate's SAN; the callback records what TLS saw.
+        checkServerIdentity: (hostname: string) => {
+          verified.push(hostname);
+          return undefined;
+        },
+      },
+    });
+    expect(await res.text()).toBe(`hop-two.invalid:${target.port}`);
+    expect(seen).toEqual(["hop-one.invalid", "hop-two.invalid"]);
+    expect(verified).toEqual(["hop-one.invalid", "hop-two.invalid"]);
+  });
+
+  it("https: a Bun.FetchSession without request tls rejects instead of dropping the session's TLS config", async () => {
+    const { agent, seen } = pinningAgent();
+    using session = new Bun.FetchSession({ tls: { ca: tlsCert.cert } });
+    expect(
+      await undiciFetch(`https://${UNRESOLVABLE}:1/`, { dispatcher: agent, session } as any).then(
+        () => "resolved",
+        err => (err instanceof errors.NotSupportedError ? "NotSupportedError" : String(err)),
+      ),
+    ).toBe("NotSupportedError");
+    expect(seen).toEqual([UNRESOLVABLE]);
+  });
+
+  it("a pinned hop is a direct connection: the environment proxy is not used", async () => {
+    await using server = Bun.serve({ port: 0, fetch: () => new Response("direct") });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { Agent, fetch } = require("undici");
+         const agent = new Agent({ connect: { lookup: (_h, _o, cb) => cb(null, "127.0.0.1", 4) } });
+         const res = await fetch("http://${UNRESOLVABLE}:${server.port}/", { dispatcher: agent });
+         console.log(await res.text());`,
+      ],
+      env: { ...bunEnv, HTTP_PROXY: "http://127.0.0.1:1", HTTPS_PROXY: "http://127.0.0.1:1", NO_PROXY: "" },
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("direct\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it("a lookup result the URL cannot carry fails the request instead of resolving the hostname", async () => {
+    const agent = new Agent({
+      connect: { lookup: (_hostname, _opts, cb) => cb(null, "fe80::1%eth0", 6) },
+    });
+    expect(
+      await undiciFetch(`http://${UNRESOLVABLE}:1/`, { dispatcher: agent }).then(
+        () => "resolved",
+        (err: TypeError) => (err.cause as Error).message,
+      ),
+    ).toContain("cannot carry");
+  });
+
+  it("a lookup hook that never calls back fails after connect.timeout", async () => {
+    const agent = new Agent({ connect: { timeout: 20, lookup: () => {} } });
+    expect(
+      await undiciFetch(`http://${UNRESOLVABLE}:1/`, { dispatcher: agent }).then(
+        () => "resolved",
+        (err: TypeError) => {
+          const cause = err.cause as Error & { code?: string };
+          return cause instanceof errors.ConnectTimeoutError ? `${cause.name}/${cause.code}` : String(cause);
+        },
+      ),
+    ).toBe("ConnectTimeoutError/UND_ERR_CONNECT_TIMEOUT");
+  });
+
+  it("connect.timeout: 0 disables the lookup deadline", async () => {
+    await using server = Bun.serve({ port: 0, fetch: () => new Response("unbounded") });
+    const agent = new Agent({
+      connect: {
+        timeout: 0,
+        // Answers on a later macrotask; a 0ms deadline would fire first.
+        lookup: (_hostname, _opts, cb) => void setTimeout(() => cb(null, "127.0.0.1", 4), 2),
+      },
+    });
+    const res = await undiciFetch(`http://${UNRESOLVABLE}:${server.port}/`, { dispatcher: agent });
+    expect(await res.text()).toBe("unbounded");
+  });
+
+  it("a buffered Request body is replayed on a 307 through the pin", async () => {
+    await using target = Bun.serve({
+      port: 0,
+      fetch: async req => new Response(`${req.method} ${await req.text()}`),
+    });
+    await using origin = Bun.serve({
+      port: 0,
+      fetch: () => new Response(null, { status: 307, headers: { location: `http://replay.invalid:${target.port}/` } }),
+    });
+    const { agent, seen } = pinningAgent();
+    const res = await undiciFetch(
+      new Request(`http://first.invalid:${origin.port}/`, { method: "PUT", body: "payload" }),
+      { dispatcher: agent },
+    );
+    expect(await res.text()).toBe("PUT payload");
+    expect(seen).toEqual(["first.invalid", "replay.invalid"]);
+
+    // A Request carrying a user stream is not buffered, so the same 307 rejects.
+    expect(
+      await undiciFetch(
+        new Request(`http://first.invalid:${origin.port}/`, {
+          method: "PUT",
+          body: new ReadableStream({
+            start(c) {
+              c.enqueue(new TextEncoder().encode("payload"));
+              c.close();
+            },
+          }),
+          // @ts-expect-error duplex is required for stream bodies by the spec
+          duplex: "half",
+        }),
+        { dispatcher: agent },
+      ).then(
+        () => "resolved",
+        (err: TypeError) => (err.cause as Error).message,
+      ),
+    ).toContain("the request body is a stream that was already sent");
+  });
+
+  it("a Request stream body streams through the pin and a 307 cannot replay it", async () => {
+    let targetHits = 0;
+    await using target = Bun.serve({
+      port: 0,
+      fetch: () => {
+        targetHits++;
+        return new Response("target");
+      },
+    });
+    await using origin = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        const body = await req.text();
+        if (new URL(req.url).pathname === "/echo") return new Response(body);
+        return new Response(null, { status: 307, headers: { location: `http://hop.invalid:${target.port}/` } });
+      },
+    });
+    const { agent } = pinningAgent();
+    const chunks = async function* () {
+      yield "a";
+      yield "b";
+    };
+    // Streams to the origin, no buffering up front.
+    const echoed = await undiciFetch(
+      new Request(`http://src.invalid:${origin.port}/echo`, {
+        method: "POST",
+        body: new ReadableStream({
+          async start(c) {
+            for await (const chunk of chunks()) c.enqueue(new TextEncoder().encode(chunk));
+            c.close();
+          },
+        }),
+        // @ts-expect-error duplex is required for stream bodies by the spec
+        duplex: "half",
+      }),
+      { dispatcher: agent },
+    );
+    expect(await echoed.text()).toBe("ab");
+    // An async iterable body cannot be sent again on a 307.
+    expect(
+      await undiciFetch(`http://src.invalid:${origin.port}/`, {
+        dispatcher: agent,
+        method: "POST",
+        body: chunks() as any,
+        // @ts-expect-error duplex is required for stream bodies by the spec
+        duplex: "half",
+      }).then(
+        () => "resolved",
+        (err: TypeError) => (err.cause as Error).message,
+      ),
+    ).toContain("the request body is a stream that was already sent");
+    expect(targetHits).toBe(0);
+  });
+
+  it("a live response body used as a Request body streams through the pin", async () => {
+    const gate = Promise.withResolvers<void>();
+    await using source = Bun.serve({
+      port: 0,
+      fetch: () =>
+        new Response(
+          new ReadableStream({
+            async start(c) {
+              c.enqueue(new TextEncoder().encode("a"));
+              // Only produced once the upload has delivered the first chunk;
+              // buffering the body before the upload would deadlock here.
+              await gate.promise;
+              c.enqueue(new TextEncoder().encode("b"));
+              c.close();
+            },
+          }),
+        ),
+    });
+    await using echo = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        const chunks: string[] = [];
+        for await (const chunk of req.body!) {
+          chunks.push(new TextDecoder().decode(chunk));
+          if (chunks.length === 1) gate.resolve();
+        }
+        return new Response(chunks.join(""));
+      },
+    });
+    const { agent } = pinningAgent();
+    const upstream = await fetch(`http://127.0.0.1:${source.port}/`);
+    const res = await undiciFetch(
+      new Request(`http://echo.invalid:${echo.port}/`, {
+        method: "POST",
+        body: upstream.body,
+        // @ts-expect-error duplex is required for stream bodies by the spec
+        duplex: "half",
+      }),
+      { dispatcher: agent },
+    );
+    expect(await res.text()).toBe("ab");
+  });
+
+  it("a plain { url } input object goes through the pin", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      fetch: async req => new Response(`${req.method} ${await req.text()}`),
+    });
+    const { agent, seen } = pinningAgent();
+    const res = await undiciFetch({ url: `http://${UNRESOLVABLE}:${server.port}/`, method: "POST", body: "x" } as any, {
+      dispatcher: agent,
+    });
+    expect(await res.text()).toBe("POST x");
+    expect(seen).toEqual([UNRESOLVABLE]);
+  });
+
+  it("a plain { url } input may carry the dispatcher itself", async () => {
+    await using server = Bun.serve({ port: 0, fetch: () => new Response("in-object") });
+    const { agent, seen } = pinningAgent();
+    const res = await undiciFetch({ url: `http://${UNRESOLVABLE}:${server.port}/`, dispatcher: agent } as any);
+    expect(await res.text()).toBe("in-object");
+    expect(seen).toEqual([UNRESOLVABLE]);
+  });
+
+  it("a 3xx with an empty Location is returned, not followed", async () => {
+    let hits = 0;
+    await using server = Bun.serve({
+      port: 0,
+      fetch: () => {
+        hits++;
+        return new Response(null, { status: 302, headers: { location: "" } });
+      },
+    });
+    const { agent } = pinningAgent();
+    const res = await undiciFetch(`http://${UNRESOLVABLE}:${server.port}/`, { dispatcher: agent });
+    expect(res.status).toBe(302);
+    expect(hits).toBe(1);
+  });
+
+  it("a plain { url } input keeps its Bun-specific options such as tls", async () => {
+    await using server = Bun.serve({ port: 0, tls: tlsCert, fetch: () => new Response("tls-ok") });
+    const { agent } = pinningAgent();
+    const verified: string[] = [];
+    const res = await undiciFetch(
+      {
+        url: `https://${UNRESOLVABLE}:${server.port}/`,
+        tls: {
+          ca: tlsCert.cert,
+          checkServerIdentity: (hostname: string) => {
+            verified.push(hostname);
+            return undefined;
+          },
+        },
+      } as any,
+      { dispatcher: agent },
+    );
+    expect(await res.text()).toBe("tls-ok");
+    expect(verified).toEqual([UNRESOLVABLE]);
+  });
+
+  it("request() keeps the destination it was called with if the caller mutates the URL object", async () => {
+    await using server = Bun.serve({ port: 0, fetch: req => new Response(new URL(req.url).pathname) });
+    const { agent } = pinningAgent();
+    // An IP literal skips the hook, but the call still yields once before sending.
+    const url = new URL(`http://127.0.0.1:${server.port}/first`);
+    const pending = request(url, { dispatcher: agent });
+    url.pathname = "/second";
+    const { body } = await pending;
+    expect(await body!.text()).toBe("/first");
+  });
+
+  it("request() accepts flat-array headers on the unpinned path too", async () => {
+    await using server = Bun.serve({ port: 0, fetch: req => new Response(req.headers.get("x-a") ?? "none") });
+    const { body } = await request(`http://127.0.0.1:${server.port}/`, { headers: ["x-a", "1"] });
+    expect(await body!.text()).toBe("1");
+  });
+
+  it("the lookup hook sees every redirect hop", async () => {
+    await using target = Bun.serve({
+      port: 0,
+      fetch: req =>
+        new Response(
+          `${req.method} ${req.headers.get("host")} body-headers=${req.headers.has("content-type") || req.headers.has("content-encoding")}`,
+        ),
+    });
+    await using origin = Bun.serve({
+      port: 0,
+      fetch: () => Response.redirect(`http://redirect-target.invalid:${target.port}/`, 302),
+    });
+    const { agent, seen } = pinningAgent();
+    const res = await undiciFetch(`http://redirect-origin.invalid:${origin.port}/`, {
+      dispatcher: agent,
+      method: "POST",
+      headers: { "content-encoding": "identity" },
+      body: "payload",
+    });
+    // 302 + POST becomes GET and drops the body headers, like native redirect following.
+    expect(await res.text()).toBe(`GET redirect-target.invalid:${target.port} body-headers=false`);
+    expect(seen).toEqual(["redirect-origin.invalid", "redirect-target.invalid"]);
+    expect(res.url).toBe(`http://redirect-target.invalid:${target.port}/`);
+    expect(res.redirected).toBe(true);
+  });
+
+  it("the lookup hook can veto a redirect hop", async () => {
+    let targetHits = 0;
+    await using target = Bun.serve({
+      port: 0,
+      fetch: () => {
+        targetHits++;
+        return new Response("target");
+      },
+    });
+    await using origin = Bun.serve({
+      port: 0,
+      fetch: () => Response.redirect(`http://blocked.invalid:${target.port}/`, 302),
+    });
+    const agent = new Agent({
+      connect: {
+        lookup: (hostname, _opts, cb) =>
+          hostname === "blocked.invalid" ? cb(new Error("blocked"), "", 0) : cb(null, "127.0.0.1", 4),
+      },
+    });
+    expect(
+      await undiciFetch(`http://ok.invalid:${origin.port}/`, { dispatcher: agent }).then(
+        () => ({ name: "resolved" }),
+        (err: TypeError) => ({
+          name: err.constructor.name,
+          message: err.message,
+          cause: (err.cause as Error | undefined)?.message,
+        }),
+      ),
+    ).toEqual({ name: "TypeError", message: "fetch failed", cause: "blocked" });
+    expect(targetHits).toBe(0);
+  });
+
+  it("redirects to non-http schemes are rejected", async () => {
+    await using origin = Bun.serve({
+      port: 0,
+      fetch: () => new Response(null, { status: 302, headers: { location: "file:///etc/hostname" } }),
+    });
+    const { agent, seen } = pinningAgent();
+    expect(
+      await undiciFetch(`http://scheme.invalid:${origin.port}/`, { dispatcher: agent }).then(
+        () => "resolved",
+        (err: TypeError) => (err.cause as Error).message,
+      ),
+    ).toContain("URL scheme must be http or https");
+    expect(seen).toEqual(["scheme.invalid"]);
+  });
+
+  it("request() re-applies the lookup hook across maxRedirections hops", async () => {
+    await using target = Bun.serve({
+      port: 0,
+      fetch: req => new Response(req.headers.get("host") ?? "none"),
+    });
+    await using origin = Bun.serve({
+      port: 0,
+      fetch: () => Response.redirect(`http://hop2.invalid:${target.port}/`, 302),
+    });
+    const { agent, seen } = pinningAgent();
+    const { statusCode, body } = await request(`http://hop1.invalid:${origin.port}/`, {
+      dispatcher: agent,
+      maxRedirections: 5,
+    });
+    expect(await body!.text()).toBe(`hop2.invalid:${target.port}`);
+    expect(statusCode).toBe(200);
+    expect(seen).toEqual(["hop1.invalid", "hop2.invalid"]);
+  });
+
+  it("a custom connect function rejects loudly instead of being silently ignored", async () => {
+    await using server = Bun.serve({ port: 0, fetch: () => new Response("served") });
+    const agent = new Agent({ connect: (() => {}) as any });
+    expect(
+      await undiciFetch(`http://localhost:${server.port}/`, { dispatcher: agent }).then(
+        () => "resolved",
+        (err: Error & { code?: string }) =>
+          err instanceof errors.NotSupportedError ? `${err.name}/${err.code}` : String(err),
+      ),
+    ).toBe("NotSupportedError/UND_ERR_NOT_SUPPORTED");
+  });
+
+  it("redirect manual and error modes still pin the first hop", async () => {
+    await using origin = Bun.serve({
+      port: 0,
+      fetch: () => Response.redirect("http://elsewhere.invalid/", 302),
+    });
+    const { agent, seen } = pinningAgent();
+    const res = await undiciFetch(`http://manual.invalid:${origin.port}/`, { dispatcher: agent, redirect: "manual" });
+    expect(res.status).toBe(302);
+    expect(res.url).toBe(`http://manual.invalid:${origin.port}/`);
+
+    // A Request input goes through the same branch.
+    const req = new Request(`http://manual.invalid:${origin.port}/`, { redirect: "manual" });
+    const res2 = await undiciFetch(req, { dispatcher: agent });
+    expect(res2.status).toBe(302);
+
+    expect(
+      await undiciFetch(`http://manual.invalid:${origin.port}/`, { dispatcher: agent, redirect: "error" }).then(
+        () => "resolved",
+        () => "rejected",
+      ),
+    ).toBe("rejected");
+    expect(seen).toEqual(["manual.invalid", "manual.invalid", "manual.invalid"]);
+  });
+
+  it("an abort signal rejects a lookup that never completes", async () => {
+    const controller = new AbortController();
+    const agent = new Agent({
+      connect: {
+        // Never calls cb; aborting must reject the pending fetch.
+        lookup: () => controller.abort(new Error("abort during lookup")),
+      },
+    });
+    expect(
+      await undiciFetch(`http://${UNRESOLVABLE}:1/`, { dispatcher: agent, signal: controller.signal }).then(
+        () => "resolved",
+        (err: Error) => err.message,
+      ),
+    ).toBe("abort during lookup");
+
+    // An already-aborted signal rejects before the hook runs.
+    const { agent: pinner, seen } = pinningAgent();
+    expect(
+      await undiciFetch(`http://${UNRESOLVABLE}:1/`, {
+        dispatcher: pinner,
+        signal: AbortSignal.abort(new Error("pre-aborted")),
+      }).then(
+        () => "resolved",
+        (err: Error) => err.message,
+      ),
+    ).toBe("pre-aborted");
+    expect(seen).toEqual([]);
+  });
+
+  it("request() accepts flat-array headers on the pinned path", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      fetch: req => new Response(`${req.headers.get("x-a")} ${req.headers.get("cookie")}`),
+    });
+    const { agent } = pinningAgent();
+    const { body } = await request(`http://${UNRESOLVABLE}:${server.port}/`, {
+      dispatcher: agent,
+      maxRedirections: 1,
+      headers: ["x-a", "1", "cookie", "a=1", "cookie", "b=2"],
+    });
+    // Bun's Headers joins repeated cookie entries with "; ".
+    expect(await body!.text()).toBe("1 a=1; b=2");
+  });
+
+  it("request() enforces maxRedirections on the pinned path", async () => {
+    let port = 0;
+    await using server = Bun.serve({
+      port: 0,
+      fetch: req => {
+        const n = Number(new URL(req.url).pathname.slice(1));
+        return n >= 2 ? new Response("done") : Response.redirect(`http://chain.invalid:${port}/${n + 1}`, 302);
+      },
+    });
+    port = server.port;
+    const { agent } = pinningAgent();
+
+    // Exactly at the limit succeeds (two redirects, cap 2).
+    const { statusCode, body } = await request(`http://chain.invalid:${port}/0`, {
+      dispatcher: agent,
+      maxRedirections: 2,
+    });
+    expect(await body!.text()).toBe("done");
+    expect(statusCode).toBe(200);
+
+    // One past the limit rejects.
+    await expect(request(`http://chain.invalid:${port}/0`, { dispatcher: agent, maxRedirections: 1 })).rejects.toThrow(
+      "redirected too many times",
+    );
+  });
+
+  it("URLs without a network authority skip the hook", async () => {
+    const { agent, seen } = pinningAgent();
+    const res = await undiciFetch("data:text/plain,hello", { dispatcher: agent });
+    expect(await res.text()).toBe("hello");
+    expect(seen).toEqual([]);
+  });
+
+  it("a connect object without a lookup hook keeps native redirect following", async () => {
+    await using target = Bun.serve({ port: 0, fetch: () => new Response("followed") });
+    await using origin = Bun.serve({
+      port: 0,
+      fetch: () => Response.redirect(`http://127.0.0.1:${target.port}/`, 302),
+    });
+    const agent = new Agent({ connect: { timeout: 5000 } });
+    const res = await undiciFetch(`http://127.0.0.1:${origin.port}/`, { dispatcher: agent });
+    expect(await res.text()).toBe("followed");
+    expect(res.redirected).toBe(true);
+  });
+
+  it("a caller's Host header survives a same-origin hop and is dropped cross-origin", async () => {
+    const hosts: string[] = [];
+    await using other = Bun.serve({
+      port: 0,
+      fetch: req => {
+        hosts.push(`other:${req.headers.get("host")}`);
+        return new Response("done");
+      },
+    });
+    await using origin = Bun.serve({
+      port: 0,
+      fetch: req => {
+        hosts.push(`origin:${req.headers.get("host")}`);
+        const { pathname } = new URL(req.url);
+        if (pathname === "/a") return Response.redirect("/b", 302);
+        return Response.redirect(`http://cross.invalid:${other.port}/`, 302);
+      },
+    });
+    const { agent } = pinningAgent();
+    const res = await undiciFetch(`http://same.invalid:${origin.port}/a`, {
+      dispatcher: agent,
+      headers: { host: "vhost.example" },
+    });
+    expect(await res.text()).toBe("done");
+    expect(hosts).toEqual(["origin:vhost.example", "origin:vhost.example", `other:cross.invalid:${other.port}`]);
+  });
+
+  it("a file-backed Request body is sent with Content-Length and replayed on a 307", async () => {
+    using dir = tempDir("undici-file-body", { "upload.txt": "file payload" });
+    const seen: string[] = [];
+    await using target = Bun.serve({
+      port: 0,
+      fetch: async req => {
+        seen.push(`${req.headers.get("transfer-encoding")} ${req.headers.get("content-length")} ${await req.text()}`);
+        return new Response("stored");
+      },
+    });
+    await using origin = Bun.serve({
+      port: 0,
+      fetch: async req => {
+        seen.push(`${req.headers.get("transfer-encoding")} ${req.headers.get("content-length")} ${await req.text()}`);
+        return new Response(null, { status: 307, headers: { location: `http://store.invalid:${target.port}/` } });
+      },
+    });
+    const { agent } = pinningAgent();
+    const res = await undiciFetch(
+      new Request(`http://first.invalid:${origin.port}/`, {
+        method: "PUT",
+        body: Bun.file(join(String(dir), "upload.txt")),
+      }),
+      { dispatcher: agent },
+    );
+    expect(await res.text()).toBe("stored");
+    expect(seen).toEqual(["null 12 file payload", "null 12 file payload"]);
+  });
+
+  it("fetch honors Bun's maxRedirects option on the pinned path", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      fetch: req => {
+        const { pathname } = new URL(req.url);
+        if (pathname === "/a") return Response.redirect("/b", 302);
+        if (pathname === "/b") return Response.redirect("/c", 302);
+        return new Response("c");
+      },
+    });
+    const { agent } = pinningAgent();
+    const url = `http://hops.invalid:${server.port}/a`;
+    const outcome = (n: number) =>
+      // @ts-expect-error Bun-specific fetch option
+      undiciFetch(url, { dispatcher: agent, maxRedirects: n }).then(
+        res => res.status,
+        (err: TypeError) => (err.cause as Error).message,
+      );
+    expect(await outcome(2)).toBe(200);
+    expect(await outcome(1)).toBe("redirect count exceeded");
+    expect(await outcome(0)).toBe("redirect count exceeded");
+  });
+
+  it("a URL whose scheme is really a hostname fails closed instead of skipping the hook", async () => {
+    let hits = 0;
+    await using server = Bun.serve({
+      port: 0,
+      fetch: () => {
+        hits++;
+        return new Response("reached");
+      },
+    });
+    const { agent, seen } = pinningAgent();
+    const url = `localhost:${server.port}/admin`;
+    // Without a dispatcher native fetch reads this as http://localhost:PORT/admin.
+    expect((await undiciFetch(url)).status).toBe(200);
+    expect(
+      await undiciFetch(url, { dispatcher: agent }).then(
+        () => "resolved",
+        (err: TypeError) => `${err.message}: ${(err.cause as Error).message}`,
+      ),
+    ).toBe("fetch failed: URL scheme must be http or https (received localhost:)");
+    expect(
+      await request(url, { dispatcher: agent }).then(
+        () => "resolved",
+        (err: Error) => err.message,
+      ),
+    ).toBe("URL scheme must be http or https (received localhost:)");
+    expect(seen).toEqual([]);
+    expect(hits).toBe(1);
+  });
+
+  it("https: the Agent's connect TLS options apply to IP-literal hops too", async () => {
+    await using target = Bun.serve({ port: 0, tls: tlsCert, fetch: () => new Response("ip-hop") });
+    await using origin = Bun.serve({
+      port: 0,
+      tls: tlsCert,
+      fetch: () => Response.redirect(`https://127.0.0.1:${target.port}/`, 302),
+    });
+    const seen: string[] = [];
+    const agent = new Agent({
+      connect: {
+        ca: tlsCert.cert,
+        // The cert is for localhost; accept the IP-literal hop and record it.
+        checkServerIdentity: (hostname: string) => {
+          seen.push(`verify:${hostname}`);
+          return undefined;
+        },
+        lookup: (hostname, _o, cb) => {
+          seen.push(`lookup:${hostname}`);
+          cb(null, "127.0.0.1", 4);
+        },
+      },
+    });
+    const res = await undiciFetch(`https://localhost:${origin.port}/`, { dispatcher: agent });
+    expect(await res.text()).toBe("ip-hop");
+    expect(seen).toEqual(["lookup:localhost", "verify:localhost", "verify:127.0.0.1"]);
+    // The same applies to a first hop that is already an IP literal.
+    const direct = await undiciFetch(`https://127.0.0.1:${target.port}/`, { dispatcher: agent });
+    expect(await direct.text()).toBe("ip-hop");
+  });
+
+  it("request() snapshots the headers before the lookup runs", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      fetch: req => new Response(req.headers.get("authorization") ?? "none"),
+    });
+    const headers = { authorization: "token-A" };
+    const agent = new Agent({
+      connect: {
+        lookup: (_h, _o, cb) => {
+          headers.authorization = "token-B";
+          cb(null, "127.0.0.1", 4);
+        },
+      },
+    });
+    const { body } = await request(`http://snap.invalid:${server.port}/`, { dispatcher: agent, headers });
+    expect(await body!.text()).toBe("token-A");
+  });
+
+  it("https: an Agent's connect TLS options apply without a lookup hook, across native redirects", async () => {
+    await using target = Bun.serve({ port: 0, tls: tlsCert, fetch: () => new Response("tls-only") });
+    await using origin = Bun.serve({
+      port: 0,
+      tls: tlsCert,
+      fetch: () => Response.redirect(`https://localhost:${target.port}/`, 302),
+    });
+    const url = `https://localhost:${origin.port}/`;
+    expect(
+      await undiciFetch(url, { dispatcher: new Agent({ connect: { timeout: 5000 } }) }).then(
+        () => "resolved",
+        (err: Error & { code?: string }) => err.code,
+      ),
+    ).toBe("DEPTH_ZERO_SELF_SIGNED_CERT");
+    const agent = new Agent({ connect: { ca: tlsCert.cert } });
+    const res = await undiciFetch(url, { dispatcher: agent });
+    expect(await res.text()).toBe("tls-only");
+    expect(res.redirected).toBe(true);
+    const { body } = await request(url, { dispatcher: agent, maxRedirections: 1 });
+    expect(await body!.text()).toBe("tls-only");
+  });
+
+  it.skipIf(isWindows)(
+    "a pipe-backed Request body streams through the pin instead of being read to EOF first",
+    async () => {
+      using dir = tempDir("undici-fifo-body", {});
+      const fifo = join(String(dir), "fifo");
+      mkfifo(fifo, 0o666);
+      let received = "";
+      await using server = Bun.serve({
+        port: 0,
+        fetch: async req => {
+          received = `${req.headers.get("transfer-encoding")} ${await req.text()}`;
+          return new Response("ok");
+        },
+      });
+      const { agent } = pinningAgent();
+      const pending = undiciFetch(
+        new Request(`http://fifo.invalid:${server.port}/`, {
+          method: "POST",
+          body: Bun.file(fifo).stream(),
+          // @ts-expect-error duplex is required for stream bodies by the spec
+          duplex: "half",
+        }),
+        { dispatcher: agent },
+      );
+      // The writer blocks until the reader opens the pipe, so a body read to EOF
+      // before the request starts would arrive with a Content-Length instead.
+      await using writer = Bun.spawn({ cmd: ["sh", "-c", `printf piped > "${fifo}"`], stderr: "pipe" });
+      const res = await pending;
+      expect(await res.text()).toBe("ok");
+      expect(received).toBe("chunked piped");
+      expect(await writer.exited).toBe(0);
+    },
+  );
+
+  it("a Bun.FetchSession rejects on a pinned hop instead of losing its proxy or TLS settings", async () => {
+    let hits = 0;
+    await using server = Bun.serve({
+      port: 0,
+      fetch: () => {
+        hits++;
+        return new Response("reached");
+      },
+    });
+    const { agent } = pinningAgent();
+    const url = `http://session.invalid:${server.port}/`;
+    expect(await (await undiciFetch(url, { dispatcher: agent })).text()).toBe("reached");
+    using session = new Bun.FetchSession({ proxy: "http://127.0.0.1:1" });
+    const outcome = (p: Promise<unknown>) =>
+      p.then(
+        () => "resolved",
+        (err: Error & { code?: string }) => `${err.name}/${err.code}`,
+      );
+    expect(await outcome(undiciFetch(url, { dispatcher: agent, session }))).toBe(
+      "NotSupportedError/UND_ERR_NOT_SUPPORTED",
+    );
+    expect(hits).toBe(1);
+  });
+
+  it("an Agent with TLS options but no lookup hook leaves http requests with a session alone", async () => {
+    await using server = Bun.serve({ port: 0, fetch: () => new Response("plain-http") });
+    using session = new Bun.FetchSession({});
+    const agent = new Agent({ connect: { ca: tlsCert.cert } });
+    const res = await undiciFetch(`http://127.0.0.1:${server.port}/`, { dispatcher: agent, session });
+    expect(await res.text()).toBe("plain-http");
+  });
+
+  it("a plain { url, tls } input keeps its tls with an Agent that has TLS options but no lookup hook", async () => {
+    await using server = Bun.serve({ port: 0, tls: tlsCert, fetch: () => new Response("own-ca") });
+    const agent = new Agent({ connect: { rejectUnauthorized: true } });
+    const res = await undiciFetch({ url: `https://localhost:${server.port}/`, tls: { ca: tlsCert.cert } } as any, {
+      dispatcher: agent,
+    });
+    expect(await res.text()).toBe("own-ca");
+  });
+
+  it("a buffered body is copied before the lookup runs", async () => {
+    await using server = Bun.serve({ port: 0, fetch: async req => new Response(await req.text()) });
+    const buf = Buffer.from("hello");
+    const agent = new Agent({
+      connect: {
+        lookup: (_h, _o, cb) => {
+          buf.fill(0x78);
+          cb(null, "127.0.0.1", 4);
+        },
+      },
+    });
+    const url = `http://snap.invalid:${server.port}/`;
+    const res = await undiciFetch(url, { dispatcher: agent, method: "POST", body: buf });
+    expect(await res.text()).toBe("hello");
+    buf.write("hello");
+    const { body } = await request(url, { dispatcher: agent, method: "POST", body: buf });
+    expect(await body!.text()).toBe("hello");
+    // An IP literal skips the hook, but the manual-redirect path still yields once before sending.
+    buf.write("hello");
+    const pending = undiciFetch(`http://127.0.0.1:${server.port}/`, {
+      dispatcher: agent,
+      method: "POST",
+      body: buf,
+      redirect: "manual",
+    });
+    buf.fill(0x78);
+    expect(await (await pending).text()).toBe("hello");
+  });
+
+  it("https: an Agent's connect TLS options reach an https hop that an http start URL redirects to", async () => {
+    await using target = Bun.serve({ port: 0, tls: tlsCert, fetch: () => new Response("upgraded") });
+    await using origin = Bun.serve({
+      port: 0,
+      fetch: () => Response.redirect(`https://localhost:${target.port}/`, 302),
+    });
+    const agent = new Agent({ connect: { ca: tlsCert.cert } });
+    const res = await undiciFetch(`http://localhost:${origin.port}/`, { dispatcher: agent });
+    expect(await res.text()).toBe("upgraded");
+    const { body } = await request(`http://localhost:${origin.port}/`, { dispatcher: agent, maxRedirections: 1 });
+    expect(await body!.text()).toBe("upgraded");
+  });
+
+  it("an explicit proxy rejects on a pinned http hop, since the proxy would resolve the hostname", async () => {
+    let hits = 0;
+    await using server = Bun.serve({
+      port: 0,
+      fetch: () => {
+        hits++;
+        return new Response("reached");
+      },
+    });
+    const { agent, seen } = pinningAgent();
+    const url = `http://proxied.invalid:${server.port}/`;
+    expect(
+      await undiciFetch(url, { dispatcher: agent, proxy: "http://127.0.0.1:1" } as any).then(
+        () => "resolved",
+        (err: Error & { code?: string }) => `${err.name}/${err.code}`,
+      ),
+    ).toBe("NotSupportedError/UND_ERR_NOT_SUPPORTED");
+    expect(seen).toEqual(["proxied.invalid"]);
+    // proxy: false is an explicit direct connection and still pins.
+    const res = await undiciFetch(url, { dispatcher: agent, proxy: false } as any);
+    expect(await res.text()).toBe("reached");
+    expect(hits).toBe(1);
+  });
+
+  it("an Agent without connect options leaves requests untouched", async () => {
+    await using server = Bun.serve({ port: 0, fetch: () => new Response("plain") });
+    const res = await undiciFetch(`http://127.0.0.1:${server.port}/`, { dispatcher: new Agent() });
+    expect(await res.text()).toBe("plain");
   });
 });

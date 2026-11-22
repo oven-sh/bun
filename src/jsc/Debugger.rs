@@ -163,6 +163,7 @@ impl Default for Debugger {
 unsafe extern "C" {
     safe fn Bun__createJSDebugger(global: &JSGlobalObject) -> u32;
     safe fn Bun__ensureDebugger(ctx_id: u32, wait: bool);
+    safe fn Bun__InspectorConnection__flushOnExit(global: &JSGlobalObject);
     safe fn Bun__startJSDebuggerThread(
         global: &JSGlobalObject,
         ctx_id: u32,
@@ -193,6 +194,13 @@ impl Debugger {
         vm.debugger
             .get()
             .is_some_and(|dbg| dbg.waiting_for_frontend.get())
+    }
+
+    /// Before the exit: waits, for a bounded time, until the debugger thread has sent what this thread queued.
+    pub fn flush_on_exit(vm: &VirtualMachine) {
+        if vm.debugger.get().is_some() {
+            Bun__InspectorConnection__flushOnExit(vm.global());
+        }
     }
 
     /// `Debugger.waitForDebuggerIfNecessary(vm)` — block on the futex until

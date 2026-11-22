@@ -596,6 +596,71 @@ inspector.close();
   expect({ stdout, exitCode }).toEqual({ stdout: JSON.stringify(["immediate", "timer"]) + "\n", exitCode: 0 });
 });
 
+// The debugger thread writes what the inspected thread queued for the client. An exit waits, for a
+// bounded time, until that thread has done so.
+test.each([
+  ["an uncaught exception", `throw new Error("boom");`, 1],
+  ["an unhandled rejection", `Promise.reject(new Error("boom"));`, 1],
+  ["process.exit()", `process.exit(3);`, 3],
+])("a client gets the console message that comes just before %s", async (_, end, status) => {
+  using dir = tempDir("inspector-last-message", {
+    "fixture.mjs": `
+import inspector from "node:inspector";
+
+inspector.open(0, "127.0.0.1", false);
+inspector.waitForDebugger();
+setImmediate(() => {
+  console.log("last words");
+  ${end}
+});
+`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const decoder = new TextDecoder();
+  const reader = proc.stderr.getReader();
+  let stderrText = "";
+  let wsUrl: string | undefined;
+  while (!wsUrl) {
+    const { value, done } = await reader.read();
+    if (done) throw new Error(`stderr closed before the inspector listened: ${stderrText}`);
+    stderrText += decoder.decode(value);
+    wsUrl = stderrText.match(/Debugger listening on (ws:\S+)/)?.[1];
+  }
+
+  const ws = new WebSocket(wsUrl);
+  const logged: string[] = [];
+  const enabled = Promise.withResolvers<void>();
+  const closed = Promise.withResolvers<void>();
+  ws.onopen = () => ws.send(JSON.stringify({ id: 1, method: "Runtime.enable", params: {} }));
+  ws.onerror = error => enabled.reject(error);
+  ws.onclose = () => closed.resolve();
+  ws.onmessage = ({ data }) => {
+    const message = JSON.parse(String(data));
+    if (message.id === 1) enabled.resolve();
+    if (message.method === "Runtime.consoleAPICalled") logged.push(message.params.args[0].value);
+  };
+  await enabled.promise;
+  ws.send(JSON.stringify({ id: 2, method: "Runtime.runIfWaitingForDebugger", params: {} }));
+
+  const drained = (async () => {
+    for (;;) {
+      const { done } = await reader.read();
+      if (done) break;
+    }
+  })();
+
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited, drained, closed.promise]);
+  expect({ logged, stdout, exitCode }).toEqual({ logged: ["last words"], stdout: "last words\n", exitCode: status });
+});
+
 // A second waitForDebugger() must block again for a fresh
 // Runtime.runIfWaitingForDebugger — Node blocks on every call, and it must be
 // safe to reach after the previous frontend disconnected (once-connected

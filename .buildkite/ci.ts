@@ -1687,32 +1687,6 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
     imageSteps.push(...getImageSteps(platform, image, generated, state));
   }
 
-  if (options.canary) {
-    const traced = traceOrderTargets.filter(({ os, arch }) => arch === "aarch64" && os !== "darwin");
-    return {
-      priority,
-      steps: traced.flatMap(({ os, arch, on }) => {
-        const target = buildPlatforms.find(p => p.os === os && p.arch === arch && !p.abi && !p.profile)!;
-        const trace = getTraceOrderStep(target, on, options);
-        return [
-          {
-            ...trace,
-            depends_on: [],
-            command: (trace.command as string[]).map(line =>
-              line.replace("-build-bun", "-build-bun --build 01a201cc-cb4b-4e38-8a1f-ceb4323cb2e3"),
-            ),
-          },
-          { ...getBuildBunStep(target, options), depends_on: [trace.key] },
-          {
-            ...getTestBunStep({ ...on, tier: "latest" }, options),
-            parallelism: 3,
-            command: `node scripts/zz-bench/runner.node.mjs ${getTargetKey(target)}-build-bun 14`,
-          },
-        ];
-      }),
-    };
-  }
-
   const steps: Step[] = [];
 
   if (imageSteps.length) {

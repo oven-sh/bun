@@ -1,5 +1,7 @@
 //! Stage 2 of the JSON parser: recursive descent over the structural index built by
 //! [`crate::json_index`] (stage 1) into the immutable JSON AST (`E::JsonTape` rows).
+use core::ptr::NonNull;
+
 use bun_alloc::Arena as Bump;
 use bun_ast::LexerLog;
 use bun_ast::expr::Data;
@@ -7,6 +9,7 @@ use bun_ast::{E, Expr, Loc, Log, Range, Source, usize2loc};
 use bun_core::StackCheck;
 use bun_core::strings;
 use bun_core::strings::CodePoint;
+use bun_ptr::AliasableBox;
 
 use crate::json::JSONOptions;
 use crate::json_index::{self as jidx, StructuralIndex};
@@ -30,8 +33,7 @@ pub(crate) struct Parser<'a, 's, 'i> {
     scratch_prop_value_locs: Vec<Loc>,
     scratch_item_locs: Vec<Loc>,
     scratch_str: Vec<u8>,
-    tape: Option<core::ptr::NonNull<E::JsonTape>>,
-    tape_owned: bool,
+    tape: Tape,
     dup_hashes: Vec<u64>,
     dup_maps: Vec<DupMap>,
     spill_depth: usize,
@@ -64,10 +66,9 @@ impl<'s> LexerLog<'s> for Parser<'_, 's, '_> {
     }
 }
 
-impl Drop for Parser<'_, '_, '_> {
-    fn drop(&mut self) {
-        drop(self.take_tape());
-    }
+enum Tape {
+    Owned(AliasableBox<E::JsonTape>),
+    InArena(NonNull<E::JsonTape>),
 }
 
 #[inline]
@@ -93,18 +94,12 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         opts: JSONOptions,
         tape_alloc: E::TapeAlloc,
     ) -> Self {
-        // `root_ptr` both times: it takes `&mut JsonTape`, so neither arm can
-        // hand `tape` a frozen, shared-reborrow pointer. The parser writes
-        // through `tape` for the rest of the parse.
-        let (tape, tape_owned) = match tape_alloc {
-            E::TapeAlloc::Global => (Box::leak(Box::new(E::JsonTape::empty())).root_ptr(), true),
+        let tape = match tape_alloc {
+            E::TapeAlloc::Global => Tape::Owned(AliasableBox::new(E::JsonTape::empty())),
             E::TapeAlloc::Arena(arena) => {
                 // SAFETY: the caller's arena (lifetime-erased) outlives the parse and the AST.
                 let arena: &Bump = unsafe { arena.as_ref() };
-                (
-                    arena.alloc(E::JsonTape::empty_in(tape_alloc)).root_ptr(),
-                    false,
-                )
+                Tape::InArena(arena.alloc(E::JsonTape::empty_in(tape_alloc)).root_ptr())
             }
         };
         Parser {
@@ -122,21 +117,18 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
             scratch_prop_value_locs: Vec::new(),
             scratch_item_locs: Vec::new(),
             scratch_str: Vec::new(),
-            tape: Some(tape),
-            tape_owned,
+            tape,
             dup_hashes: Vec::new(),
             dup_maps: Vec::new(),
             spill_depth: 0,
         }
     }
 
-    pub(crate) fn take_tape(&mut self) -> Option<Box<E::JsonTape>> {
-        let tape = self.tape.take()?;
-        if !self.tape_owned {
-            return None;
+    pub(crate) fn into_tape(self) -> Option<Box<E::JsonTape>> {
+        match self.tape {
+            Tape::Owned(tape) => Some(tape.into_box()),
+            Tape::InArena(_) => None,
         }
-        // SAFETY: `tape` came from `Box::leak` in `new` (`tape_owned`) and is taken exactly once.
-        Some(unsafe { Box::from_raw(tape.as_ptr()) })
     }
 
     #[inline(always)]
@@ -389,20 +381,23 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
     /// built, and every such write invalidates a pointer derived from a shared
     /// reborrow (see [`E::ObjectJSON::new`]).
     #[inline]
-    fn tape_ptr(&self) -> core::ptr::NonNull<E::JsonTape> {
-        self.tape.expect("the tape was already taken")
+    fn tape_ptr(&self) -> NonNull<E::JsonTape> {
+        match &self.tape {
+            Tape::Owned(tape) => tape.as_non_null(),
+            Tape::InArena(tape) => *tape,
+        }
     }
 
     #[inline]
     fn tape_mut(&mut self) -> &mut E::JsonTape {
         // SAFETY: allocated in `Parser::new` and exclusively owned until
-        // `take_tape`; a fresh reborrow of the root pointer per call.
-        unsafe { self.tape.expect("the tape was already taken").as_mut() }
+        // `into_tape`; a fresh reborrow of the root pointer per call.
+        unsafe { self.tape_ptr().as_mut() }
     }
 
     fn push_props_block(&mut self, mark: usize) -> (u32, u32) {
         // SAFETY: see `tape_mut`; the raw-derived `&mut` is not a borrow of `self`.
-        let tape = unsafe { self.tape.expect("the tape was already taken").as_mut() };
+        let tape = unsafe { self.tape_ptr().as_mut() };
         let locs: &[Loc] = if self.opts.record_value_locs {
             &self.scratch_prop_value_locs[mark..]
         } else {
@@ -417,7 +412,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
 
     fn push_items_block(&mut self, mark: usize) -> (u32, u32) {
         // SAFETY: see `push_props_block`.
-        let tape = unsafe { self.tape.expect("the tape was already taken").as_mut() };
+        let tape = unsafe { self.tape_ptr().as_mut() };
         let locs: &[Loc] = if self.opts.record_value_locs {
             &self.scratch_item_locs[mark..]
         } else {
@@ -700,7 +695,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         let (first, count) = self.push_items_block(mark);
         Ok(Expr::init(
             // SAFETY: `tape_ptr` is the tape allocation's own pointer, and the
-            // tape outlives the AST (`take_tape` hands it to the caller).
+            // tape outlives the AST (`into_tape` hands it to the caller).
             unsafe { E::ArrayJSON::new(self.tape_ptr(), first, count, is_single_line, close_loc) },
             loc,
         ))

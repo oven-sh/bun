@@ -337,9 +337,9 @@ use core::sync::atomic::{AtomicBool, Ordering};
 
 pub use crate::closer::Closer;
 pub use crate::waker::Waker;
+use bun_sys::Fd;
 #[cfg(not(windows))]
-use bun_sys as sys;
-use bun_sys::{E, Fd};
+use bun_sys::{self as sys, E};
 
 // `loop` is a Rust keyword, so the static is
 // named `io_loop` but the runtime tagname is `"loop"` so `BUN_DEBUG_loop=1` works.
@@ -477,7 +477,7 @@ impl IoRequestLoop {
             let epoll_fd = sys::File::from_fd(Fd::from_native(raw));
 
             {
-                // No data: `tick_epoll` skips an event without a `Poll`.
+                // No data: no `Poll` has the ticket 0.
                 let mut epoll: linux::epoll_event = bun_core::ffi::zeroed();
                 epoll.events =
                     linux::EPOLL_IN | linux::EPOLL_ET | linux::EPOLL_ERR | linux::EPOLL_HUP;
@@ -613,6 +613,7 @@ impl IoRequestLoop {
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub(crate) fn tick_epoll(&self) {
+        let mut tickets = Tickets::default();
         loop {
             // Process pending requests
             {
@@ -632,6 +633,7 @@ impl IoRequestLoop {
                             match readable.poll.register_for_epoll(
                                 Flags::PollReadable,
                                 readable.tag,
+                                &mut tickets,
                                 watcher_fd,
                                 true,
                                 readable.fd,
@@ -646,6 +648,7 @@ impl IoRequestLoop {
                             match writable.poll.register_for_epoll(
                                 Flags::PollWritable,
                                 writable.tag,
+                                &mut tickets,
                                 watcher_fd,
                                 true,
                                 writable.fd,
@@ -662,12 +665,8 @@ impl IoRequestLoop {
                                 close.fd,
                                 close.poll.flags.contains(Flags::Registered)
                             );
-                            // Only remove from the interest list if it was previously registered.
-                            // Otherwise, epoll gets confused.
-                            // This state can happen if polling for readable/writable previously failed.
-                            if close.poll.flags.contains(Flags::WasEverRegistered) {
-                                close.poll.unregister_with_fd(watcher_fd, close.fd);
-                            }
+                            close.poll.unregister(close.fd);
+                            tickets.armed.remove(&close.poll.ticket);
                             (close.on_done)(close.ctx);
                         }
                     }
@@ -700,12 +699,10 @@ impl IoRequestLoop {
             }
 
             for event in current_events {
-                let pollable = Pollable::from(event.u64);
-                // Null for the waker, which is edge-triggered: no need to read its counter.
-                let Some(poll) = core::ptr::NonNull::new(pollable.poll()) else {
-                    continue;
-                };
-                Poll::on_update_epoll(poll, pollable.tag(), *event);
+                // None for the waker too, which is edge-triggered: no need to read its counter.
+                if let Some((poll, tag)) = tickets.armed.remove(&{ event.u64 }) {
+                    Poll::on_update_epoll(poll, tag, *event);
+                }
             }
         }
     }
@@ -844,77 +841,9 @@ impl Request {
             scheduled: false,
         }
     }
-
-    /// Atomic-ordered store of `callback`.
-    ///
-    /// The io thread reads `callback` after popping `self` from the MPSC
-    /// queue (which already provides acquire on `next`); this SeqCst fence
-    /// guarantees the callback write is visible to that read even when the
-    /// store happens on a different thread than the one that scheduled the
-    /// request. Rust has no `AtomicFnPtr`, so we lower to a volatile write
-    /// followed by a full fence (matches the existing pattern in
-    /// `webcore::blob::{read_file,write_file}`).
-    #[inline]
-    pub fn store_callback_seq_cst(&mut self, cb: for<'a> fn(&'a mut Request) -> Action<'a>) {
-        // SAFETY: `callback` is a plain pointer-sized field on `self`;
-        // volatile write prevents the compiler from reordering or eliding it.
-        unsafe { core::ptr::write_volatile(&raw mut self.callback, cb) };
-        core::sync::atomic::fence(Ordering::SeqCst);
-    }
 }
 
-// ─── Intrusive io_request → parent recovery ──────────────────────────────────
-// Mirrors `bun_threading::IntrusiveWorkTask`/`intrusive_work_task!`
-// (work_pool.rs:23) — same const-offset + provided `container_of` shape — so
-// `ReadFile`/`WriteFile` use one idiom for BOTH their intrusive fields (`task`
-// and `io_request`).
-
-/// A type that embeds an intrusive `io_request: `[`Request`] field. Declares the
-/// byte offset once and provides the canonical container-of recovery used by
-/// every `fn(&mut Request) -> Action` io-loop trampoline.
-///
-/// Implement via [`intrusive_io_request!`].
-///
-/// # Safety
-/// `IO_REQUEST_OFFSET` MUST equal `core::mem::offset_of!(Self, <io_request
-/// field>)`. [`from_io_request`](IntrusiveIoRequest::from_io_request) casts
-/// through the offset; a mismatch is UB.
-#[cfg(not(windows))]
-pub unsafe trait IntrusiveIoRequest: Sized {
-    /// `core::mem::offset_of!(Self, io_request)`.
-    const IO_REQUEST_OFFSET: usize;
-
-    /// Recover `*mut Self` from a `*mut Request` pointing at `self.io_request`
-    /// — the single canonical `container_of` for every io-loop trampoline.
-    ///
-    /// # Safety
-    /// `req` must point to the [`Request`] field at `Self::IO_REQUEST_OFFSET`
-    /// inside a live `Self` allocation that was scheduled via that field, and
-    /// the pointer's provenance must cover the whole allocation.
-    #[inline(always)]
-    unsafe fn from_io_request(req: *mut Request) -> *mut Self {
-        // SAFETY: caller upholds the trait safety contract above.
-        unsafe { bun_core::container_of::<Self, _>(req, Self::IO_REQUEST_OFFSET) }
-    }
-}
-
-/// Implements [`IntrusiveIoRequest`] for a struct that embeds an intrusive
-/// `io_request: `[`Request`] field. Brings
-/// [`IntrusiveIoRequest::from_io_request`] into scope for the type's
-/// `fn(&mut Request) -> Action` trampolines.
-#[cfg(not(windows))]
-#[macro_export]
-macro_rules! intrusive_io_request {
-    ($ty:ty, $field:ident) => {
-        // SAFETY: `IO_REQUEST_OFFSET` is `offset_of!($ty, $field)`.
-        unsafe impl $crate::IntrusiveIoRequest for $ty {
-            const IO_REQUEST_OFFSET: usize = ::core::mem::offset_of!($ty, $field);
-        }
-    };
-}
-
-/// Windows analogue of [`IntrusiveIoRequest`] for types that embed an
-/// intrusive `io_request: uv::fs_t` and recover the parent in
+/// For types that embed an intrusive `io_request: uv::fs_t` and recover the parent in
 /// `extern "C" fn(*mut uv::fs_t)` libuv callbacks.
 ///
 /// Implement via [`intrusive_uv_fs!`].
@@ -1012,20 +941,20 @@ pub enum PollableTag {
 
 /// §Dispatch (PORTING.md): `bun.ptr.TaggedPointer` should normally be split
 /// into `(tag: u8, ptr: *mut ())`. Here the value must round-trip through a
-/// single `u64` (`epoll_event.data.u64` / `kevent.udata`), so we keep the
+/// single `u64` (`kevent.udata`), so we keep the
 /// packed addr:49 + tag:15 layout locally.
-#[cfg(not(windows))]
+#[cfg(any(target_os = "macos", target_os = "freebsd"))]
 #[derive(Clone, Copy)]
 struct Pollable {
     value: u64,
 }
 
-#[cfg(not(windows))]
+#[cfg(any(target_os = "macos", target_os = "freebsd"))]
 const POLLABLE_ADDR_BITS: u64 = 49;
-#[cfg(not(windows))]
+#[cfg(any(target_os = "macos", target_os = "freebsd"))]
 const POLLABLE_ADDR_MASK: u64 = (1u64 << POLLABLE_ADDR_BITS) - 1;
 
-#[cfg(not(windows))]
+#[cfg(any(target_os = "macos", target_os = "freebsd"))]
 impl Pollable {
     fn init(t: PollableTag, p: *mut Poll) -> Pollable {
         let addr = p as usize as u64;
@@ -1074,6 +1003,8 @@ static GENERATION_NUMBER_MONOTONIC: core::sync::atomic::AtomicU64 =
 #[cfg(not(windows))]
 pub struct Poll {
     pub flags: FlagsSet,
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    ticket: u64,
     #[cfg(all(target_os = "macos", debug_assertions))]
     pub(crate) generation_number: GenerationNumberInt,
 }
@@ -1083,10 +1014,21 @@ impl Default for Poll {
     fn default() -> Self {
         Self {
             flags: FlagsSet::empty(),
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            ticket: 0,
             #[cfg(all(target_os = "macos", debug_assertions))]
             generation_number: 0,
         }
     }
+}
+
+/// What epoll has in place of an address. An entry outlives its `Poll` if script closes the
+/// descriptor while a duplicate is open: it can no longer be removed.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+#[derive(Default)]
+struct Tickets {
+    last: u64,
+    armed: std::collections::BTreeMap<u64, (core::ptr::NonNull<Poll>, PollableTag)>,
 }
 
 #[cfg(not(windows))]
@@ -1236,12 +1178,16 @@ impl Poll {
         }
     }
 
+    /// The thread that has the job. epoll keeps a one-shot entry that has fired.
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    pub(crate) fn unregister_with_fd(&mut self, watcher_fd: Fd, fd: Fd) {
+    pub fn unregister(&mut self, fd: Fd) {
+        let (true, Some(io)) = (self.flags.remove(Flags::WasEverRegistered), LOOP.get()) else {
+            return;
+        };
         // SAFETY: valid fds; null event is allowed for CTL_DEL on Linux ≥ 2.6.9.
         unsafe {
             libc::epoll_ctl(
-                watcher_fd.native(),
+                io.pollfd().native(),
                 linux::EPOLL_CTL_DEL,
                 fd.native(),
                 core::ptr::null_mut(),
@@ -1329,10 +1275,11 @@ impl Poll {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     // `enumset::EnumSetType` cannot be a const generic, so `flag` is a runtime
     // arg. The `match` below preserves the exhaustiveness check.
-    pub(crate) fn register_for_epoll(
+    fn register_for_epoll(
         &mut self,
         flag: Flags,
         tag: PollableTag,
+        tickets: &mut Tickets,
         watcher_fd: Fd,
         one_shot: bool,
         fd: Fd,
@@ -1361,9 +1308,11 @@ impl Poll {
             _ => unreachable!(),
         };
 
+        tickets.last += 1;
+        self.ticket = tickets.last;
         let mut event = linux::epoll_event {
             events: flags,
-            u64: Pollable::init(tag, std::ptr::from_mut::<Poll>(self)).ptr(),
+            u64: self.ticket,
         };
 
         let op: i32 = if self.flags.contains(Flags::WasEverRegistered)
@@ -1386,6 +1335,8 @@ impl Poll {
 
         let errno = sys::get_errno(ctl);
         if errno != E::SUCCESS {
+            // Not left to the pool: the next job on the descriptor may be faster.
+            self.unregister(fd);
             return Err(sys::Error::from_code(errno, sys::Tag::epoll_ctl));
         }
         // Only mark if it successfully registered.
@@ -1407,12 +1358,11 @@ impl Poll {
             _ => unreachable!(),
         });
         self.flags.remove(Flags::NeedsRearm);
+        tickets.armed.insert(self.ticket, (self.into(), tag));
 
         Ok(())
     }
 }
-
-pub const RETRY: E = E::EAGAIN;
 
 pub type EventLoopHandle = EventLoopCtx;
 
@@ -1602,7 +1552,7 @@ pub mod waker {
 // `pipes::PipeHandle::close` has no upward dep on bun_io (T3).
 
 pub mod closer {
-    use bun_sys::Fd;
+    use bun_sys::File;
 
     // ── POSIX ────────────────────────────────────────────────────────────────
 
@@ -1612,7 +1562,7 @@ pub mod closer {
     #[cfg(not(windows))]
     #[repr(C)]
     pub struct Closer {
-        pub(crate) fd: Fd,
+        file: File,
         task: WorkPoolTask,
     }
 
@@ -1621,18 +1571,16 @@ pub mod closer {
     #[cfg(not(windows))]
     impl bun_threading::work_pool::OwnedTask for Closer {
         fn run(self: Box<Self>) {
-            use bun_sys::FdExt;
-            self.fd.close();
+            drop(self.file);
         }
     }
 
     #[cfg(not(windows))]
     impl Closer {
         /// `_compat`: for signature compatibility with the Windows version.
-        pub fn close(fd: Fd, _compat: ()) {
-            debug_assert!(fd.is_valid());
+        pub fn close(file: File, _compat: ()) {
             WorkPool::schedule_owned(Box::new(Closer {
-                fd,
+                file,
                 task: WorkPoolTask {
                     node: Default::default(),
                     callback: <Self as bun_threading::work_pool::OwnedTask>::__callback,
@@ -1653,7 +1601,8 @@ pub mod closer {
 
     #[cfg(windows)]
     impl Closer {
-        pub fn close(fd: Fd, loop_: *mut uv::Loop) {
+        pub fn close(file: File, loop_: *mut uv::Loop) {
+            let fd = file.into_raw();
             let req = bun_ptr::AliasableBox::from(bun_core::boxed_zeroed::<uv::fs_t>());
             // SAFETY: `req` stays put until `on_close` takes it.
             let rc = unsafe { uv::uv_fs_close(loop_, req.as_ptr(), fd.uv(), Some(Self::on_close)) };
@@ -1670,7 +1619,7 @@ pub mod closer {
             bun_sys::syslog!(
                 "uv_fs_close({}) = {}",
                 // SAFETY: `uv_fs_close` populated the `fd` arm of the union.
-                Fd::from_uv(unsafe { req.file_fd() }),
+                bun_sys::Fd::from_uv(unsafe { req.file_fd() }),
                 req.result
             );
 

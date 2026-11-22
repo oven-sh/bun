@@ -7,9 +7,9 @@ use std::sync::OnceLock;
 use bun_alloc::{AllocError, allocators};
 use bun_core::Generation;
 use bun_core::MutableString;
+use bun_core::strings;
 use bun_core::vec::{BorrowedBuf, append_with};
 use bun_paths::MAX_PATH_BYTES;
-use bun_paths::strings;
 use bun_ptr::Interned;
 use bun_sys::{self, Fd};
 use bun_threading::Mutex;
@@ -23,6 +23,14 @@ bun_core::define_scoped_log!(debug, Fs, hidden);
 // (simdutf-backed). The canonical implementation lives in
 // `bun_core::strings`; `bun_resolver::fs_full::BOM` re-exports it.
 pub use bun_core::strings::BOM;
+
+/// The absolute path of the entry `name` of `dir`. `None` if it is longer than `MAX_PATH_BYTES`.
+pub fn join_dir_entry(dir: &[u8], name: &[u8]) -> Option<bun_paths::Path> {
+    let mut path = bun_paths::Path::resolve(&[bun_core::top_level_dir(), dir]);
+    path.push(name);
+    // `<=`: the resolver's buffers need no NUL.
+    (path.len() <= MAX_PATH_BYTES).then_some(path)
+}
 
 mod preallocate {
     pub(crate) mod counts {
@@ -182,6 +190,12 @@ impl Entry {
     #[inline]
     pub fn dir(&self) -> &'static [u8] {
         self.dir
+    }
+
+    /// `None` if it is too long.
+    #[inline]
+    pub fn build_abs_path(&self) -> Option<bun_paths::Path> {
+        join_dir_entry(self.dir, self.base())
     }
 
     /// Returns `Interned::EMPTY` until a fill has been published. Lock-free.

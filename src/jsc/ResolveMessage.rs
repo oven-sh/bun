@@ -46,7 +46,7 @@ fn import_kind_label(kind: ImportKind) -> &'static [u8] {
 /// relative, separator-led, and ASCII-letter drive forms are path-like; everything else is a
 /// package. Unlike `bun_paths::is_absolute`, the drive byte must be alphabetic.
 fn is_bare_esm_specifier(s: &[u8]) -> bool {
-    let is_sep = |b: u8| b == b'/' || b == b'\\';
+    use bun_paths::portable::is_sep;
     match s {
         [] | [b'.'] | [b'.', b'.'] => return false,
         [b, ..] if is_sep(*b) => return false,

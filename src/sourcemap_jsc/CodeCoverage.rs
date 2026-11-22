@@ -404,9 +404,11 @@ pub mod text {
         base_path: &[u8],
         writer: &mut impl bun_io::Write,
     ) -> bun_io::Result<()> {
+        let relative;
         let mut filename: &[u8] = &report.source_url;
         if !base_path.is_empty() {
-            filename = bun_paths::resolve_path::relative(base_path, filename);
+            relative = bun_paths::Path::relative(base_path, filename);
+            filename = &relative;
         }
 
         write_format_with_values::<ENABLE_COLORS>(
@@ -477,9 +479,11 @@ pub mod lcov {
         base_path: &[u8],
         writer: &mut impl bun_io::Write,
     ) -> bun_io::Result<()> {
+        let relative;
         let mut filename: &[u8] = &report.source_url;
         if !base_path.is_empty() {
-            filename = bun_paths::resolve_path::relative(base_path, filename);
+            relative = bun_paths::Path::relative(base_path, filename);
+            filename = &relative;
         }
 
         // TN: test name

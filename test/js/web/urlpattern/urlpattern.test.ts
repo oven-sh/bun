@@ -163,6 +163,155 @@ describe("URLPattern", () => {
     });
   });
 
+  describe("bindings", () => {
+    const outcome = (run: () => unknown) => {
+      try {
+        return run();
+      } catch (error: any) {
+        return `${error.name}: ${error.message}`;
+      }
+    };
+    const construct = (...args: unknown[]): URLPattern => Reflect.construct(URLPattern, args);
+
+    test("the number of arguments chooses the constructor, then the kind of the second", () => {
+      const relative = "TypeError: Relative constructor string must have additional baseURL argument.";
+      const invalid = "TypeError: Invalid baseURL.";
+      expect(
+        [
+          ["/a"],
+          ["/a", undefined],
+          ["/a", null],
+          ["/a", new URL("https://example.com")],
+          ["/a", "https://example.com"],
+          ["/a", 1],
+          ["/a", Symbol.iterator],
+          ["/a", undefined, undefined],
+          ["/a", new URL("https://example.com"), undefined],
+          ["/a", "https://example.com", 1],
+          [{}, "https://example.com"],
+          [undefined, "https://example.com"],
+        ].map(args => outcome(() => construct(...args).hostname)),
+      ).toEqual([
+        relative,
+        relative,
+        relative,
+        relative,
+        "example.com",
+        invalid,
+        "TypeError: Cannot convert a Symbol value to a string",
+        invalid,
+        "example.com",
+        "TypeError: Type error",
+        "TypeError: Constructor with a URLPatternInit should have a null baseURL argument.",
+        "TypeError: Constructor with a URLPatternInit should have a null baseURL argument.",
+      ]);
+    });
+
+    test("members refuse another receiver", () => {
+      const { test, exec } = URLPattern.prototype;
+      expect([
+        outcome(() => test.call({})),
+        outcome(() => exec.call(URLPattern.prototype)),
+        outcome(() => Reflect.get(URLPattern.prototype, "pathname", {})),
+        outcome(() => (URLPattern as any)()),
+      ]).toEqual([
+        "TypeError: Can only call URLPattern.test on instances of URLPattern",
+        "TypeError: Can only call URLPattern.exec on instances of URLPattern",
+        "TypeError: The URLPattern.pathname getter can only be used on instances of URLPattern",
+        "TypeError: Use `new URLPattern(...)` instead of `URLPattern(...)`",
+      ]);
+    });
+
+    test("an init is read in alphabetical order, Object.prototype included", () => {
+      const reads: PropertyKey[] = [];
+      construct(new Proxy({}, { get: (_, key) => void reads.push(key) }));
+      expect(reads.join()).toBe("baseURL,hash,hostname,password,pathname,port,protocol,search,username");
+
+      let hash: string;
+      (Object.prototype as any).hash = "inherited";
+      try {
+        hash = construct([]).hash;
+      } finally {
+        delete (Object.prototype as any).hash;
+      }
+      expect(hash).toBe("inherited");
+    });
+
+    test("an unpaired surrogate becomes U+FFFD", () => {
+      const result = new URLPattern({ hash: "\ud800" }).exec({ hash: "\udc00" })!;
+      expect({ inputs: result.inputs, hash: result.hash }).toEqual({
+        inputs: [{ hash: "\ufffd" }],
+        hash: { input: "%EF%BF%BD", groups: {} },
+      });
+    });
+
+    test("the keys of a result are in order", () => {
+      const result = new URLPattern({ pathname: "/:b/(x)/:a/*" }).exec({ search: "q", pathname: "/1/x/2/3" })!;
+      expect([result, result.inputs[0], result.pathname, result.pathname.groups].map(Object.keys).join(" ")).toBe(
+        "inputs,protocol,username,password,hostname,port,pathname,search,hash pathname,search input,groups 0,1,b,a",
+      );
+    });
+
+    test("a group can have any name, and a regular expression can add groups", () => {
+      const groups = (hash: string, input: string) =>
+        Object.entries(new URLPattern({ hash }).exec({ hash: input })!.hash.groups);
+      expect(groups(":__proto__-:\u540d\u524d-:\u{20000}", "1-2-3")).toEqual([
+        ["__proto__", "1"],
+        ["\u540d\u524d", "2"],
+        ["\u{20000}", "3"],
+      ]);
+      expect(groups(":a((?<x>1)(?<y>2))", "12")).toEqual([
+        ["a", "12"],
+        ["", "2"],
+      ]);
+      expect(groups(":a?-:b", "-1")).toEqual([
+        ["a", undefined],
+        ["b", "1"],
+      ]);
+    });
+
+    test("more groups and longer text than fit on the stack", () => {
+      const indexes = Array.from({ length: 100 }, (_, index) => index);
+      const pathname = indexes.map(index => `/segment${index}/:name${index}`).join("");
+      const pattern = new URLPattern({ pathname });
+      expect(pattern.pathname).toBe(pathname);
+      expect(pattern.exec({ pathname: pathname.replaceAll(":name", "") })!.pathname.groups).toEqual(
+        Object.fromEntries(indexes.map(index => [`name${index}`, String(index)])),
+      );
+    });
+
+    test("a 16-bit string of ASCII is as good as an 8-bit one", () => {
+      const wide = (text: string) => Buffer.from(text, "utf16le").toString("utf16le");
+      const [pattern, base] = ["posts/:id(\\d+)\\?q=*#:hash", "https://example.com:8443/a(b)/index"];
+      const url = "https://user:pass@example.com:8443/a(b)/posts/12?q=x#y";
+      const expected = new URLPattern(pattern, base);
+      const actual = new URLPattern(wide(pattern), wide(base));
+      expect(kComponents.map(component => actual[component])).toEqual(
+        kComponents.map(component => expected[component]),
+      );
+      expect(expected.exec(url)).not.toBeNull();
+      expect(actual.exec(wide(url))).toEqual(expected.exec(url));
+    });
+
+    test("a pattern keeps its regular expressions alive", () => {
+      class Subclass extends URLPattern {}
+      const patterns = Array.from({ length: 20 }, (_, index) => {
+        const init = Object.fromEntries(kComponents.map(component => [component, `(${index}|${component})`]));
+        return new (index % 2 ? Subclass : URLPattern)(init);
+      });
+      Bun.gc(true);
+      // A regular expression that was collected leaves its cell to one of these.
+      for (let index = 0; index < 500; index++) new RegExp(`other${index}`).test("");
+      expect(
+        patterns.map((pattern, index) => {
+          const number = String(index);
+          const init = Object.fromEntries(kComponents.map(component => [component, number]));
+          return pattern.test({ ...init, protocol: "protocol", hostname: "hostname" });
+        }),
+      ).toEqual(patterns.map(() => true));
+    });
+  });
+
   describe("hasRegExpGroups", () => {
     test("match-everything pattern", () => {
       expect(new URLPattern({}).hasRegExpGroups).toBe(false);
@@ -206,6 +355,37 @@ describe("URLPattern", () => {
 
     test("complex pathname with regexp", () => {
       expect(new URLPattern({ pathname: "/a/:foo/:baz([a-z]+)?/b/*" }).hasRegExpGroups).toBe(true);
+    });
+  });
+
+  test.each([
+    [String.raw`[[\:\:1]]\:80/`, String.raw`[[\:\:1]]`, "80", "/", "*", "*"],
+    [String.raw`[[\:\:1]\:80/`, String.raw`[[\:\:1]\:80`, "", "/", "*", "*"],
+    [String.raw`[\:\:1]]\:80/`, String.raw`[\:\:1]]`, "80", "/", "*", "*"],
+    [String.raw`[\:\:1/foo`, String.raw`[\:\:1`, "", "/foo", "*", "*"],
+    [String.raw`[\:\:1?q`, String.raw`[\:\:1`, "", "/", "q", "*"],
+    [String.raw`[\:\:1#h`, String.raw`[\:\:1`, "", "/", "", "h"],
+  ])("brackets in the hostname of https://%s", (text, ...expected) => {
+    const { hostname, port, pathname, search, hash } = new URLPattern(`https://${text}`);
+    expect([hostname, port, pathname, search, hash]).toEqual(expected);
+  });
+
+  test("a timeout ends the search for the protocol of a constructor string", async () => {
+    // What is before each `:` is compiled, and is no protocol. To try them all takes minutes.
+    const script = String.raw`
+      const input = Buffer.alloc(3 * 100_000, "!\\:").toString();
+      try {
+        require("node:vm").runInNewContext("new URLPattern(input)", { URLPattern, input }, { timeout: 50 });
+      } catch (error) {
+        console.log(error.code);
+      }`;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: "ERR_SCRIPT_EXECUTION_TIMEOUT\n",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
     });
   });
 

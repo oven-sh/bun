@@ -37,7 +37,12 @@ public:
         m_isShuttingDown = true;
     }
 
-public:
+    bool hasWorkNotKeepingEventLoopAlive()
+    {
+        Locker<Lock> holder { m_lock };
+        return !m_pendingTicketsOther.isEmpty();
+    }
+
     // What was current when JSC registered the work.
     struct PendingWork {
         // Its completion is posted to this loop.
@@ -47,6 +52,10 @@ public:
         uint32_t graphContext { 0 };
     };
 
+    // The only way out of the pending sets. Gives back the event loop ref that onAddPendingWork took.
+    static std::optional<PendingWork> takePendingWork(WebCore::JSVMClientData*, JSC::DeferredWorkTimer::Ticket*);
+
+private:
     Lock m_lock;
     bool m_isShuttingDown WTF_GUARDED_BY_LOCK(m_lock) { false };
     UncheckedKeyHashMap<Ref<JSC::DeferredWorkTimer::Ticket>, PendingWork> m_pendingTicketsKeepingEventLoopAlive;

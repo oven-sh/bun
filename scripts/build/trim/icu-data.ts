@@ -246,7 +246,7 @@ function findPackages(linked: NamedBytes, graph: SectionGraph): { start: number;
   });
 }
 
-// The step that builds the archive defining this symbol also patches ICU's udata.cpp to call Bun's hook, which reports a tombstone.
+// The archive of a prebuilt WebKit's data defines this symbol. src/icu passes each item to Bun's hook, which reports a tombstone.
 const hookMarkerSymbol = "bun_icu_zstd_dict";
 
 export function icuPackagesOf(

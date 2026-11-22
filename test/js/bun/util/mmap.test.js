@@ -20,6 +20,11 @@ describe.skipIf(isWindows)("Bun.mmap", async () => {
     await gcTick();
   });
 
+  it("a backslash is part of the file name", () => {
+    using dir = tempDir("mmap-backslash", { "a\\b": "real", "a/b": "decoy" });
+    expect(new TextDecoder().decode(Bun.mmap(join(String(dir), "a\\b")))).toBe("real");
+  });
+
   it("mmap passed to other syscalls", async () => {
     const map = Bun.mmap(path);
     await gcTick();

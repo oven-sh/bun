@@ -214,9 +214,8 @@ extern "C" void WebWorker__dispatchError(Zig::GlobalObject* globalObject, Worker
     init.error = error;
     init.cancelable = false;
     init.bubbles = false;
-    auto forParent = proxy->serializeErrorForWorkerObject(*globalObject, error);
     globalObject->globalEventScope->dispatchEvent(ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes));
-    proxy->postErrorToWorkerObject(messageStr, WTF::move(forParent));
+    proxy->postErrorToWorkerObject(*globalObject, messageStr, error);
 }
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionSetParentPort);

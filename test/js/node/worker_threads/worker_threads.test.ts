@@ -3414,11 +3414,7 @@ describe("a worker stopped by the handler of its uncaught error", () => {
   const rejects = `setImmediate(() => { Promise.reject(reasonWithStackGetter()); }); setInterval(() => {}, 1000);`;
   const reportedThenExit = { messages: ["reported boom", "exit 7"], errors: [], code: 7 };
   const exitOnly = { messages: ["exit 7"], errors: [], code: 7 };
-  const errorEventThenExit = {
-    messages: ["code getter ran", "error event", "exit 5"],
-    errors: ["RangeError: boom"],
-    code: 5,
-  };
+  const errorEventThenExit = { messages: ["error event", "exit 5"], errors: ["as text, RangeError: boom"], code: 5 };
 
   const cases: [name: string, worker: string, parent: string, expected: object, flags?: string[]][] = [
     // Reported by the nextTick queue.
@@ -3586,20 +3582,22 @@ describe("a worker stopped by the handler of its uncaught error", () => {
       "Bun.ModuleGraph onError exits, the global 'error' listener threw in the graph",
       `const graph = new Bun.ModuleGraph({ onError: reportAndExit });
        globalThis.addEventListener("error", () => graph.run(() => { throw new Error("boom"); }));
-       setTimeout(() => { throw new Error("first"); }, 1);`,
+       setTimeout(() => { throw new RangeError("first"); }, 1);`,
       "",
-      { messages: ["reported boom", "exit 7"], errors: ["Error: first"], code: 7 },
+      { messages: ["reported boom", "exit 7"], errors: ["as text, RangeError: first"], code: 7 },
     ],
-    // The worker's global 'error' event comes before the report to the parent, and a listener can stop the
-    // worker there. The parent still receives the error, as it was thrown: it is cloned before the listeners
-    // run (the clone reads the error's properties), so nothing of it is read after the stop.
+    // The worker's global 'error' event comes before the report to the parent: the parent receives the error
+    // as the listeners left it.
     [
-      "a global 'error' listener's change to the error does not reach the parent",
+      "a global 'error' listener's change to the error reaches the parent",
       `globalThis.addEventListener("error", event => { event.error.message = "changed by the listener"; });
        setTimeout(() => { throw new RangeError("boom"); }, 1);`,
       "",
-      { messages: ["exit 1"], errors: ["RangeError: boom"], code: 1 },
+      { messages: ["exit 1"], errors: ["RangeError: changed by the listener"], code: 1 },
     ],
+    // A listener can stop the worker there. The parent still receives an 'error', made from the text that
+    // the worker would print and not from a clone: a clone reads the error's properties (the `code` getter
+    // here), and nothing of the error is read after the stop.
     [
       "global 'error' listener exits, a timer threw",
       `globalThis.addEventListener("error", () => { post("error event"); process.exit(5); });
@@ -3686,7 +3684,13 @@ describe("a worker stopped by the handler of its uncaught error", () => {
       const worker = new Worker(${JSON.stringify(prelude + worker)}, { eval: true });
       const seen = { messages: [], errors: [] };
       worker.on("message", message => seen.messages.push(message));
-      worker.on("error", error => seen.errors.push(error.name + ": " + error.message));
+      // A worker that does not clone its error sends the text that it would print: the cause of that Error is
+      // the 'error' event, and its "Name: message" line is kept here.
+      const told = error =>
+        error.cause instanceof ErrorEvent
+          ? "as text, " + error.message.split("\\n").find(line => /^\\w*Error: /.test(line))
+          : error.name + ": " + error.message;
+      worker.on("error", error => seen.errors.push(told(error)));
       worker.on("exit", code => console.log(JSON.stringify({ ...seen, code })));
       ${parent}`;
     expect(await run(script, flags)).toEqual(printed(expected));

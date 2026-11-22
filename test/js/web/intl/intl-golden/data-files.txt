@@ -1,0 +1,3065 @@
+-- alias-forms/lang/common.txt --
+common{
+    Languages{ fr{"fr in common"} }
+    indirect:alias{"common/names"}
+    list:array{ "first", "second", :table{ pl{"third"} } }
+    names{ es{"es in common"} it{"it in common"} pt{"pt in common"} }
+    scripts{ Latn{"Latn in common"} }
+}
+-- alias-forms/lang/common_QO.txt --
+common_QO{
+    Version{"1"}
+}
+-- alias-forms/lang/tlh.txt --
+tlh{
+    Languages{
+        de:alias{"/LOCALE/house/de"}
+        es:alias{"common/names/es"}
+        fr:alias{"common"}
+        it:alias{"/ICUDATA-lang/common/names/it"}
+        ja:alias{"/ICUDATA/site/names/ja"}
+        ko:alias{"/ICUDATA-region/common/names/ko"}
+        nl:alias{"common/list/1"}
+        pl:alias{"common/list/2/pl"}
+        pt:alias{"common/indirect/pt"}
+        sv:alias{"common_QO/names/es"}
+    }
+    Scripts:alias{"common/scripts"}
+    house{ de{"de in tlh"} }
+}
+-- alias-forms/lang/tlh_QO.txt --
+tlh_QO{
+    house{ de{"de in tlh_QO"} }
+}
+-- alias-forms/region/common.txt --
+common{
+    names{ ko{"ko in region"} }
+}
+-- alias-forms/res_index.txt --
+res_index:table(nofallback){
+    InstalledLocales{
+        en{""}
+        tlh{""}
+        tlh_QO{""}
+    }
+}
+-- alias-forms/site.txt --
+site:table(nofallback){
+    names{ ja{"ja in site"} }
+}
+-- aliases-in-arrays/curr/tlh.txt --
+tlh{
+    Currencies{
+        EUR:array{ :alias{"/LOCALE/signs/0"}, :alias{"/LOCALE/names/EUR"} }
+        USD:alias{"/LOCALE/dollar"}
+    }
+    dollar:array{ "D$", "Dollar" }
+    names{ EUR{"Europe money"} }
+    signs:array{ "E$", "X$" }
+}
+-- aliases-in-arrays/res_index.txt --
+res_index:table(nofallback){
+    InstalledLocales{
+        en{""}
+        tlh{""}
+    }
+}
+-- aliases-in-arrays/tlh.txt --
+tlh{
+    NumberElements{
+        latn{
+            symbols:alias{"/LOCALE/house/symbols"}
+        }
+    }
+    layout{ characters:alias{"/LOCALE/house/directions/1"} }
+    house{
+        directions:array{ "left-to-right", "right-to-left" }
+        symbols{ decimal{"'"} timeSeparator{"h"} }
+    }
+}
+-- append-items/eo.txt --
+eo{
+  calendar{
+    gregorian{
+      DateTimePatterns:array{"HH:mm:ss zzzz","HH:mm:ss z","HH:mm:ss","HH:mm","y Q","y w","y D","y W F","{1} {0}","{1} {0}","{1} {0}","{1} {0}","{1} {0}"}
+    }
+  }
+}
+-- append-items/root.txt --
+root{
+  NumberElements{
+    default{"latn"}
+    latn{patterns{decimalFormat{"#,##0.###"}} symbols{decimal{"."} group{","} minusSign{"-"}}}
+  }
+  calendar{
+    default{"gregorian"}
+    gregorian{
+      DateTimePatterns:array{"HH:mm:ss zzzz","HH:mm:ss z","HH:mm:ss","HH:mm","EEEE, d MMMM y","d MMMM y","d MMM y","y-MM-dd","{1} {0}","{1} {0}","{1} {0}","{1} {0}","{1} {0}"}
+      intervalFormats{fallback{"{0} – {1}"}}
+      AmPmMarkersAbbr:array{"a","p"}
+      eras{abbreviated{0{"aK"} 1{"pK"}}}
+      monthNames{
+        format{
+          abbreviated:array{"jan","feb","mar","apr","maj","jun","jul","aŭg","sep","okt","nov","dec"}
+          wide:array{"jan","feb","mar","apr","maj","jun","jul","aŭg","sep","okt","nov","dec"}
+        }
+      }
+      dayNames{
+        format{
+          abbreviated:array{"di","lu","ma","me","ĵa","ve","sa"}
+          wide:array{"di","lu","ma","me","ĵa","ve","sa"}
+        }
+      }
+      appendItems{Quarter{"{0} [{1}]"} Week{"{0} <{2} {1}>"}}
+    }
+  }
+  fields{
+    day{dn{"tago"}}
+    day-short{dn{"t."}}
+    month{dn{"monato"}}
+    week-narrow{dn{"s"}}
+    dayOfYear{dn{"jartago"}}
+  }
+}
+-- built-in-symbols/eo.txt --
+eo{
+    NumberElements{
+        latn{
+            symbols{
+                group{"_"}
+                minusSign{""}
+                perMille{"pm"}
+            }
+        }
+    }
+}
+-- built-in-symbols/fy.txt --
+fy{
+    Version{"1"}
+}
+-- built-in-symbols/root.txt --
+root{
+    NumberElements{
+        default{"latn"}
+        latn{
+            patterns{
+                currencyFormat{"¤#,##0.00"}
+                decimalFormat{"#,##0.###"}
+                percentFormat{"#,##0% (‰)"}
+            }
+            symbols{
+                list{";"}
+            }
+        }
+    }
+}
+-- calendar-aliases/eo.txt --
+eo{
+  calendar{
+    buddhist{
+      DateTimePatterns:array{"HH:mm:ss zzzz","HH:mm:ss z","HH:mm:ss","HH:mm","GGGG y MMMM LLLL EEEE","G y MMM LLL E","y MMMMM","y-MM","{1} {0}","{1} {0}","{1} {0}","{1} {0}","{1} {0}"}
+      monthNames:alias{"/LOCALE/calendar/generic/monthNames"}
+      dayNames:alias{"/LOCALE/calendar/generic/dayNames"}
+      eras{
+        abbreviated:alias{"/LOCALE/calendar/buddhist/eras/narrow"}
+        narrow:alias{"/LOCALE/calendar/buddhist/eras/wide"}
+        wide{0{"Budho"} 0%variant{"B."}}
+      }
+    }
+    generic{
+      monthNames{
+        format{
+          abbreviated:alias{"/LOCALE/calendar/generic/monthNames/format/narrow"}
+          narrow:alias{"/LOCALE/calendar/generic/monthNames/format/wide"}
+          wide:alias{"/LOCALE/calendar/generic/monthNames/stand-alone/wide"}
+        }
+        stand-alone{wide:array{"JAN","FEB","MAR","APR","MAJ","JUN","JUL","AŬG","SEP","OKT","NOV","DEC"}}
+      }
+      dayNames:alias{"/LOCALE/calendar/gregorian/dayNames"}
+    }
+    gregorian{
+      AmPmMarkers:alias{"/LOCALE/calendar/gregorian/AmPmMarkersNarrow"}
+      AmPmMarkersNarrow:array{"m","v"}
+      dayNames{
+        format{
+          abbreviated:array{"di","lu","ma","me","ĵa","ve","sa"}
+          wide:alias{"/LOCALE/calendar/gregorian/dayNames/format/abbreviated"}
+        }
+      }
+    }
+  }
+}
+-- calendar-preferences/supplementalData.txt --
+supplementalData:table(nofallback){
+  calendarData{
+    gregorian{eras{0{end:intvector{0,12,31}} 1{start:intvector{1,1,1}}}}
+    persian{eras{0{start:intvector{622,1,1}}}}
+    buddhist{eras{0{start:intvector{-542,1,1}}}}
+  }
+  calendarPreferenceData{
+    001:array{"buddhist","gregorian"}
+    DE:array{"persian"}
+    FR{"gregorian"}
+    IT:array{"custom","roc"}
+    ET:array{"ethioaa"}
+  }
+  timeData{001{allowed:array{"H","h"} preferred{"H"}}}
+  weekData{001:intvector{2,1,7,0,1,86400000}}
+  idValidity{ region{ macroregion{ "001~3", "005", "009", "011", "013~5", "017~9", "021", "029", "030", "034~5", "039", "053~4", "057", "061", "142~3", "145", "150~1", "154~5", "202", "419", "EU", "EZ", "QO", "UN" } } }
+}
+-- capitalization-rules/make.sh --
+mkdir -p icudt79l/brkitr
+genbrk -q -r each-word.txt -o icudt79l/brkitr/each-word.rul
+genrb -q -e UTF-8 -s . -d icudt79l/brkitr cs.txt
+genrb -q -e UTF-8 -s . -d icudt79l/brkitr sk.txt
+-- capitalization-rules/cs.txt --
+cs{
+    boundaries{
+        sentence{"each-word.rul"}
+    }
+}
+-- capitalization-rules/each-word.txt --
+﻿# Every word starts a sentence.
+[^\ ]+ [\ ]*;
+[\ ]+;
+-- capitalization-rules/sk.txt --
+sk{
+    boundaries{
+        sentence{"absent.brk"}
+    }
+}
+-- character-names/make.sh --
+mkdir -p icudt79l/curr
+genrb -q -e UTF-8 -s . -d icudt79l/curr root.txt
+bun names.js
+-- character-names/names.js --
+const u16 = (...numbers) => Buffer.from(new Uint16Array(numbers).buffer);
+const u32 = (...numbers) => Buffer.from(new Uint32Array(numbers).buffer);
+const join = (...parts) => Buffer.concat(parts.map(part => Buffer.from(part)));
+const pad = part => join(part, Buffer.alloc(-part.length & 3));
+
+// The bytes 2 and 3 are tokens, and 1 begins a token of two bytes.
+const tokens = Array(0x102).fill(0xffff);
+Object.assign(tokens, { 1: 0xfffe, 2: 0, 3: 7, 0x101: 13 });
+const names = {
+  0x24: "DOLLAR\x03",
+  0x31: "\x02ONE",
+  0x32: "\x02TWO;;;PAIR",
+  0x37: "\x02SEVEN",
+  0x39: "A NAME OF MORE-THAN ELEVEN LETTERS -NINE",
+  0x46: "\x01\x01F",
+  0xa3: "STERLING OR POUND\x03",
+  0xa5: "YEN\x03",
+};
+function group(number) {
+  const lines = Array.from({ length: 32 }, (_, line) => names[number * 32 + line] ?? "");
+  const lengths = lines.map(({ length }) => (length < 12 ? length : 0xc0 + length - 12).toString(16)).join("");
+  return join(Buffer.from(lengths + "0".repeat(lengths.length % 2), "hex"), ...lines);
+}
+const groups = [1, 2, 5].map(group);
+const range = (start, end, type, variant, rest) => join(u32(start, end), [type, variant], u16(12 + rest.length), rest);
+
+const parts = [
+  pad(u16(tokens.length, ...tokens)),
+  pad(join("DIGIT \0 SIGN\0LATIN CAPITAL LETTER \0")),
+  pad(u16(3, 1, 0, 0, 2, 0, groups[0].length, 5, 0, groups[0].length + groups[1].length)),
+  pad(join(...groups)),
+  join(
+    u32(2),
+    range(0x9e6, 0x9ef, 1, 2, pad(join(u16(2, 5), "BENGALI \0LOW\0HIGH\0A\0B\0C\0D\0\0"))),
+    range(0x20a0, 0x20bf, 0, 4, pad(join("CURRENCY-\0"))),
+  ),
+];
+let offset = 16;
+const offsets = parts.slice(0, 4).map(part => (offset += part.length));
+const header = join(u16(32), [0xda, 0x27], u16(20, 0), [0, 0, 2, 0], "unam", [1, 0, 0, 0], Buffer.alloc(12));
+await Bun.write("icudt79l/unames.icu", join(header, u32(...offsets), ...parts));
+-- character-names/root.txt --
+root{
+    currencySpacing{
+        afterCurrency{
+            currencyMatch{"[\\N{DOLLAR SIGN}\\N{latin capital letter f}\\N{CURRENCY-20AC}\\N{<currency symbol-20B9>}]"}
+            insertBetween{"_"}
+            surroundingMatch{"[\\N{DIGIT ONE}[:Name=PAIR:]\\N{a_name-of more than eleven letters -nine}]"}
+        }
+        beforeCurrency{
+            currencyMatch{"[[:Name=sterling or pound sign:] \\N{currency-20ac} C U]"}
+            insertBetween{"~"}
+            surroundingMatch{"[\\N{BENGALI LOWB}\\N{BENGALI HIGHA}\\N{BENGALI HIGH}\\p{na=digitone}]"}
+        }
+    }
+}
+-- collation-bare-root/coll/res_index.txt --
+res_index:table(nofallback){
+    InstalledLocales{
+        de{""}
+        en{""}
+        sv{""}
+        tlh{""}
+    }
+}
+-- collation-bare-root/coll/root.txt --
+root{
+    Version{"1"}
+}
+-- collation-bare-root/coll/tlh.txt --
+tlh{
+    collations{
+        phonebook{ Sequence{"&z<a"} }
+    }
+}
+-- collation-case-level/make.sh --
+mkdir -p icudt79l/coll
+genrb -q -e UTF-8 -s coll -d icudt79l/coll en.txt
+echo '{"plugins":["prettier-plugin-packagejson"]}' > .prettierrc
+-- collation-case-level/coll/en.txt --
+en{
+    collations{
+        standard{ Sequence{"[caseLevel on][caseFirst upper]&c<ch<<<Ch<<<CH"} }
+    }
+}
+-- collation-contexts/coll/res_index.txt --
+res_index:table(nofallback){
+    InstalledLocales{
+        en{""}
+        tlh{""}
+        vo{""}
+    }
+}
+-- collation-contexts/coll/tlh.txt --
+tlh{
+    collations{
+        standard{ Sequence{"&b<\u0000&c<a\u0000&[before 1]a<z&d<<x/abcdefghij&e<ab|c&f<a\u0323\u0301<a\u0301&9<10<1a&\U0001F600<g"} }
+    }
+}
+-- collation-contexts/coll/vo.txt --
+vo{
+    collations{
+        standard{ Sequence{"[import tlh][suppressContractions [a]]&[last variable]<q&[first primary ignorable]<<w&[last regular]<y"} }
+    }
+}
+-- collation-fallbacks/coll/io.txt --
+io{
+    collations{
+        default{"eor"}
+        eor:alias{"tlh/collations/standard"}
+    }
+}
+-- collation-fallbacks/coll/res_index.txt --
+res_index:table(nofallback){
+    InstalledLocales{
+        en{""}
+        tlh{""}
+        tlh_QO{""}
+        tlh_AQ{""}
+        vo{""}
+        vo_QO{""}
+        io{""}
+    }
+}
+-- collation-fallbacks/coll/root.txt --
+root{
+    collations{
+        standard{ Sequence{""} }
+        emoji{ Sequence{"&z<a"} }
+    }
+}
+-- collation-fallbacks/coll/tlh.txt --
+tlh{
+    collations{
+        default{"phonebook"}
+        phonebook{ Sequence{"&z<b"} }
+        standard{ Sequence{"&z<c"} }
+    }
+}
+-- collation-fallbacks/coll/tlh_AQ.txt --
+tlh_AQ{
+    collations{
+        default{""}
+        search{ Sequence{"&z<d"} }
+    }
+}
+-- collation-fallbacks/coll/tlh_QO.txt --
+tlh_QO{
+    collations{
+        default{"pinyin"}
+    }
+}
+-- collation-fallbacks/coll/vo.txt --
+vo{
+    Version{"1"}
+}
+-- collation-fallbacks/coll/vo_QO.txt --
+vo_QO{
+    collations{
+        traditional{ Sequence{"&z<e"} }
+    }
+}
+-- collation-identical/make.sh --
+mkdir -p icudt79l/coll
+genrb -q -e UTF-8 -s coll -d icudt79l/coll en.txt
+echo '{"plugins":["prettier-plugin-packagejson"]}' > .prettierrc
+-- collation-identical/coll/en.txt --
+en{
+    collations{
+        standard{ Sequence{"[strength I]&a=b&é=ж"} }
+    }
+}
+-- collation-locale-names/coll/res_index.txt --
+res_index:table(nofallback){
+    InstalledLocales{
+        en{""}
+        deu{""}
+        sv_fi{""}
+        ZH_hant_tw{""}
+        en_us_posix{""}
+        tlh{""}
+    }
+}
+-- collation-quaternary/make.sh --
+mkdir -p icudt79l/coll
+genrb -q -e UTF-8 -s coll -d icudt79l/coll en.txt
+echo '{"plugins":["prettier-plugin-packagejson"]}' > .prettierrc
+-- collation-quaternary/coll/en.txt --
+en{
+    collations{
+        standard{ Sequence{"[strength 4][alternate shifted]&x<<<<y&é<<<<ж"} }
+    }
+}
+-- collation-settings/coll/res_index.txt --
+res_index:table(nofallback){
+    InstalledLocales{
+        en{""}
+        tlh{""}
+        tlh_QO{""}
+        vo{""}
+        vo_QO{""}
+    }
+}
+-- collation-settings/coll/tlh.txt --
+tlh{
+    collations{
+        standard{ Sequence{"[backwards 2][alternate shifted][maxVariable symbol]&t<tlh<<<Tlh<<<TLH"} }
+    }
+}
+-- collation-settings/coll/tlh_QO.txt --
+tlh_QO{
+    collations{
+        standard{ Sequence{"[reorder Grek digit Latn][caseFirst upper]"} }
+    }
+}
+-- collation-settings/coll/vo.txt --
+vo{
+    collations{
+        standard{ Sequence{"[strength 1][numericOrdering on][caseLevel on]&a<ä<<<Ä&o<ö<<<Ö&u<ü<<<Ü"} }
+    }
+}
+-- collation-settings/coll/vo_QO.txt --
+vo_QO{
+    collations{
+        standard{ Sequence{"[normalization off][reorder Cyrl Latn]&z<q"} }
+    }
+}
+-- collation-without-rules/make.sh --
+mkdir -p icudt79l/coll
+genrb -q -e UTF-8 -s coll -d icudt79l/coll res_index.txt
+genrb -q -e UTF-8 -R -s coll -d icudt79l/coll tlh.txt
+genrb -q -e UTF-8 -R -s coll -d icudt79l/coll vo.txt
+-- collation-without-rules/coll/res_index.txt --
+res_index:table(nofallback){
+    InstalledLocales{
+        en{""}
+        tlh{""}
+        vo{""}
+    }
+}
+-- collation-without-rules/coll/tlh.txt --
+tlh{
+    collations{
+        standard{ Sequence{"&я<α<<<Α&б<бг<<<Бг&д<<ж/зи&к<л|м"} }
+    }
+}
+-- collation-without-rules/coll/vo.txt --
+vo{
+    collations{
+        standard{ Sequence{"&ᄂ<ᄀ&ᅣ<ᅡ&٣<٠"} }
+    }
+}
+-- compact-tables/eo.txt --
+eo{
+    NumberElements{
+        latn{
+            patternsLong{
+                decimalFormat{
+                    1{
+                        0{"nenio"}
+                        1{"unu"}
+                    }
+                    1000{
+                        1{"mil"}
+                        other{"0 mil;minus 0 mil"}
+                    }
+                    10000{
+                        other{"00 mil"}
+                    }
+                    100000{
+                        other{"0"}
+                    }
+                    1000000{
+                        one{"0 miliono"}
+                        other{"0 milionoj"}
+                    }
+                }
+            }
+            patternsShort{
+                currencyFormat{
+                    1000{
+                        other{"0k ¤¤"}
+                    }
+                    1000000{
+                        other{"0M ¤¤¤"}
+                    }
+                }
+                decimalFormat{
+                    100{
+                        other{"0'h'"}
+                    }
+                }
+            }
+        }
+        thai{
+            patternsShort{
+                decimalFormat{
+                    10000{
+                        other{"0 miriado"}
+                    }
+                }
+            }
+        }
+    }
+}
+-- currency-names/curr/tlh.txt --
+tlh{
+    Currencies{
+        EUR{ "E$", "Europe money" }
+        XTS{ "T$", "Test money" }
+    }
+    Currencies%narrow{ EUR{"E"} USD{"∅∅∅"} }
+    CurrencyPlurals{
+        EUR{ other{"Europe coins"} }
+    }
+}
+-- currency-names/curr/tlh_QO.txt --
+tlh_QO{
+    Currencies{ XTS{ "", "Trial money" } }
+    Currencies%narrow{ XTS:alias{"/LOCALE/short/XTS"} }
+    short{ XTS{"t"} }
+}
+-- currency-names/res_index.txt --
+res_index:table(nofallback){
+    InstalledLocales{
+        en{""}
+        tlh{""}
+        tlh_QO{""}
+    }
+}
+-- currency-of-region/curr/supplementalData.txt --
+supplementalData:table(nofallback){
+    CurrencyMap{
+        CH{
+            { id{"CHE"} tender{"false"} }
+            { id{"CHF"} }
+        }
+        GL{
+            { id{"XAU"} tender{"false"} }
+        }
+        NL{
+            { id{"EUR"} }
+        }
+    }
+    CurrencyMeta{
+        CHF:intvector{2, 5, 2, 5}
+        DEFAULT:intvector{3, 0, 3, 0}
+        EUR:intvector{1, 0, 1, 0}
+    }
+}
+-- currency-of-region/eo.txt --
+eo{
+    NumberElements{
+        default{"price"}
+    }
+}
+-- currency-of-region/fy.txt --
+fy{
+    NumberElements{
+        default{"price"}
+    }
+}
+-- currency-of-region/kl.txt --
+kl{
+    NumberElements{
+        default{"price"}
+    }
+}
+-- currency-of-region/numberingSystems.txt --
+numberingSystems:table(nofallback){
+    numberingSystems{
+        latn{
+            algorithmic:int{0}
+            desc{"0123456789"}
+            radix:int{10}
+        }
+        price{
+            algorithmic:int{1}
+            desc{"%price"}
+            radix:int{10}
+        }
+    }
+}
+-- currency-of-region/rbnf/root.txt --
+root{
+    RBNFRules{
+        NumberingSystemRules{"%price: 0: =#,##0.00 ¤=; 1000: =#,##0.00 ¤¤¤=;"}
+    }
+}
+-- currency-of-region/rm.txt --
+rm{
+    NumberElements{
+        default{"price"}
+    }
+}
+-- currency-patterns/curr/eo.txt --
+eo{
+    Currencies{
+        CVE{"$", "eskudo", {"#,##0.00 ¤¤", "$", "."}}
+        EUR{"€", "eŭro"}
+        USD{"US$", "dolaro"}
+    }
+    Currencies%narrow{
+        USD{"$"}
+    }
+    CurrencyPlurals{
+        EUR{
+            one{"eŭro"}
+            other{"eŭroj"}
+        }
+    }
+    CurrencyUnitPatterns{
+        one{"{1} {0}"}
+        other{"{0} da {1}"}
+    }
+}
+-- currency-patterns/eo.txt --
+eo{
+    NumberElements{
+        latn{
+            patterns{
+                currencyFormat{"#,##0.00 ¤¤¤"}
+                accountingFormat{"¤¤ #,##0.00;(¤¤ #,##0.00)"}
+            }
+        }
+    }
+}
+-- currency-patterns/fy.txt --
+fy{
+    NumberElements{
+        latn{
+            patterns{
+                currencyFormat{"#,##0¤00"}
+                accountingFormat{"¤ #,##0.00 (¤¤)"}
+            }
+        }
+    }
+}
+-- currency-spacing/curr/eo.txt --
+eo{
+    Currencies{
+        EUR{"€", "eŭro"}
+        SEK{"kr", "krono"}
+        USD{"US$", "dolaro"}
+    }
+    currencySpacing{
+        afterCurrency{
+            currencyMatch{"[€a-z]"}
+            insertBetween{"_"}
+            surroundingMatch{"[1-4]"}
+        }
+        beforeCurrency{
+            currencyMatch{"[[:L:]-[a-j]]"}
+            insertBetween{"··"}
+            surroundingMatch{"[^5]"}
+        }
+    }
+}
+-- currency-spacing/eo.txt --
+eo{
+    NumberElements{
+        latn{
+            patterns{
+                currencyFormat{"¤#,##0.00"}
+                accountingFormat{"#,##0.00¤"}
+            }
+        }
+    }
+}
+-- date-letters/en.txt --
+en{
+  calendar{
+    gregorian{
+      DateTimePatterns:array{"HH:mm:ss zzzz","HH:mm:ss z","HH:mm:ss","HH:mm","MMMM ddd, y","ddd MMM","ddd","d","{1} {0}","{1} {0}","{1} {0}","{1} {0}","{1} {0}"}
+      dayOfMonthNames{
+        format{abbreviated{1{"calends"} 15{"ides"} few{"{0}rd"} one{"{0}st"} other{"{0}th"} two{"{0}nd"}}}
+      }
+    }
+  }
+}
+-- date-letters/eo.txt --
+eo{
+  calendar{
+    gregorian{
+      DateTimePatterns:array{"HH:mm:ss zzzz","HH:mm:ss z","HH:mm:ss","HH:mm","QQQQ y, 'semajno' w, EEEEEE","qqq Q QQ QQQQQ, D DDD, F W","u-MM-dd e ee eee eeee eeeee eeeeee","g r c cc ccc cccccc l","{1} {0}","{1} {0}","{1} {0}","{1} {0}","{1} {0}"}
+      quarters{
+        format{abbreviated:array{"K1","K2","K3","K4"} wide:array{"unua","dua","tria","kvara"}}
+        stand-alone{abbreviated:array{"k-1","k-2","k-3","k-4"}}
+      }
+      dayNames{
+        format{short:array{"di","lu","ma","me","ĵa","ve","sa"}}
+        stand-alone{short:array{"DI","LU","MA","ME","ĴA","VE","SA"}}
+      }
+    }
+  }
+}
+-- date-letters/fr.txt --
+fr{
+  calendar{
+    gregorian{
+      DateTimePatterns:array{"HH:mm:ss zzzz","HH:mm:ss z","HH:mm:ss","HH:mm","ddd MMMM y","ddd MMMM y","ddd MMMM y","ddd MMMM y","{1} {0}","{1} {0}","{1} {0}","{1} {0}","{1} {0}"}
+      dayOfMonthNames{format{abbreviated{one{"{0}er"}}}}
+    }
+  }
+}
+-- date-letters/fy.txt --
+fy{
+  calendar{
+    generic{
+      DateTimePatterns:array{"HH:mm:ss zzzz","HH:mm:ss z","HH:mm:ss","HH:mm","r/u G y","r","U u","r MM dd","{1} {0}","{1} {0}","{1} {0}","{1} {0}","{1} {0}"}
+    }
+  }
+}
+-- date-letters/ia.txt --
+ia{
+  calendar{
+    gregorian{
+      DateTimePatterns:array{"HH:mm:ss zzzz","HH:mm:ss z","HH:mm:ss","HH:mm","ddd MMMM y","ddd MMMM y","ddd MMMM y","ddd MMMM y","{1} {0}","{1} {0}","{1} {0}","{1} {0}","{1} {0}"}
+    }
+  }
+}
+-- date-numbers/eo.txt --
+eo{
+  NumberElements{default{"roman"}}
+}
+-- date-numbers/fy.txt --
+fy{
+  NumberElements{latn{patterns{decimalFormat{"‹#,##0.###›"}} symbols{decimal{"::"}}}}
+}
+-- date-numbers/numberingSystems.txt --
+numberingSystems:table(nofallback){
+  numberingSystems{
+    jpanyear{algorithmic:int{0} desc{"〇一二三四五六七八九"} radix:int{10}}
+    latn{algorithmic:int{0} desc{"0123456789"} radix:int{10}}
+    roman{algorithmic:int{1} desc{"%roman-upper"} radix:int{10}}
+  }
+}
+-- day-period-rules/dayPeriods.txt --
+dayPeriods:table(nofallback){
+  locales{de{"set07"} fr{"set2"} root{"set1"}}
+  rules{
+    set1{am{before{"12:00"} from{"0:00"}} pm{before{"24:00"} from{"12:00"}}}
+    set2{
+      evening1{after{"18:00"} before{"22:00"}}
+      morning1{before{"18:00"} from{"6:00"}}
+      night1{before{"06:00"} from{"22:00"}}
+      noon{at{"12:00"}}
+    }
+    set7{
+      afternoon1{before:array{"15:00","20:00"} from:array{"12:00","17:00"}}
+      evening1{before{"17:00"} from{"15:00"}}
+      midnight{at{"00:00"}}
+      morning1{before{"12:00"} from{"05:00"}}
+      night1{before:array{"05:00","24:00"} from:array{"00:00","20:00"}}
+    }
+  }
+}
+-- default-calendars/res_index.txt --
+res_index:table(nofallback){
+    InstalledLocales{
+        en{""}
+        tlh{""}
+        tlh_QO{""}
+        vo{""}
+    }
+}
+-- default-calendars/tlh.txt --
+tlh{
+    calendar{
+        default{"buddhist"}
+        buddhist{ availableFormats{ yM{"y 'tlh buddhist' M"} } }
+        gregorian{ availableFormats{ yM{"y 'tlh gregorian' M"} } }
+    }
+}
+-- default-calendars/tlh_QO.txt --
+tlh_QO{
+    %%Parent{"vo"}
+}
+-- default-calendars/vo.txt --
+vo{
+    calendar{
+        default{"house"}
+        house{
+            DateTimePatterns:alias{"/LOCALE/calendar/gregorian/DateTimePatterns"}
+            appendItems:alias{"/LOCALE/calendar/gregorian/appendItems"}
+            availableFormats{ yM{"y 'vo house' M"} }
+        }
+        roc{ availableFormats{ yM{"y 'vo roc' M"} } }
+    }
+}
+-- dictionary-in-other-rules/make.sh --
+mkdir -p icudt79l/brkitr
+genbrk -q -r chunks.txt -o icudt79l/brkitr/chunks.brk
+genrb -q -e UTF-8 -s . -d icudt79l/brkitr zh.txt
+-- dictionary-in-other-rules/chunks.txt --
+﻿# Sentences are the parts between blanks. Thai and Han are divided further.
+$dictionary = [[:Thai:][:Han:][:Tai_Tham:]];
+$Other = [^$dictionary [:White_Space:]];
+($dictionary | $Other)+ {100};
+[:White_Space:]+;
+-- dictionary-in-other-rules/zh.txt --
+zh{
+    boundaries{
+        sentence{"chunks.brk"}
+        word{"chunks.brk"}
+    }
+}
+-- display-patterns/lang/tlh.txt --
+tlh{
+    Languages{ de{"german"} de_AT{"austrian"} sr_Latn{"serbian in latin"} sr{"serbian"} zh_Hant_TW{"taiwanese"} zh{"chinese"} he{"hebrew"} root{"none"} }
+    Languages%short{ de_AT{"austr."} de{"germ."} }
+    Scripts{ Latn{"latin (new)"} Hant{"traditional"} }
+    Scripts%short{ Latn{"lat."} }
+    Types{ calendar{ roc{"minguo"} gregorian{"western"} } }
+    Types%short{ calendar{ roc{"min."} } }
+    Variants{ 1996{"reformed"} }
+    localeDisplayPattern{
+        pattern{"{1} '{'{0}'}'"}
+        separator{"{0} / {1}"}
+    }
+}
+-- display-patterns/lang/vo.txt --
+vo{
+    Languages{ de{"deutsch"} }
+    Scripts{ Latn{"latein（neu）"} }
+    localeDisplayPattern{ pattern{"{0}（{1}）"} }
+}
+-- display-patterns/region/tlh.txt --
+tlh{
+    Countries{ AT{"austria"} CH{"switzerland (alps)"} MM{"myanmar"} TW{"taiwan"} }
+    Countries%short{ CH{"swiss"} }
+}
+-- display-patterns/res_index.txt --
+res_index:table(nofallback){
+    InstalledLocales{
+        en{""}
+        tlh{""}
+        vo{""}
+    }
+}
+-- display-patterns/tlh.txt --
+tlh{
+    contextTransforms{
+        key:intvector{ 0, 1 }
+        keyValue:intvector{ 0, 1 }
+        languages:intvector{ 1, 0 }
+        script:intvector{ 0, 1 }
+        territory:intvector{ 1, 1 }
+        variant:intvector{ 0, 1 }
+    }
+}
+-- end-of-text-rule/make.sh --
+mkdir -p icudt79l/brkitr
+genbrk -q -r tail.txt -o icudt79l/brkitr/tail.brk
+genrb -q -e UTF-8 -s . -d icudt79l/brkitr fr.txt
+-- end-of-text-rule/fr.txt --
+fr{
+    boundaries{
+        sentence{"tail.brk"}
+    }
+}
+-- end-of-text-rule/tail.txt --
+﻿# A sentence ends at a semicolon. Blanks at the end of the text belong to the last one.
+$Text = [^;];
+$Text* ';';
+$Text* ';' [\ ]+ [{eof}];
+$Text+ [{eof}];
+-- format-versions/make.sh --
+mkdir -p icudt79l
+genrb -q -e UTF-8 --formatVersion 1 -s . -d icudt79l res_index.txt
+mkdir -p icudt79l/lang
+genrb -q -e UTF-8 --formatVersion 1 -s lang -d icudt79l/lang tlh.txt
+genrb -q -e UTF-8 --formatVersion 2 -s lang -d icudt79l/lang vo.txt
+genrb -q -e UTF-8 --formatVersion 3 -s lang -d icudt79l/lang io.txt
+genrb -q -e UTF-8 --formatVersion 1 -s lang -d icudt79l/lang root.txt
+-- format-versions/lang/io.txt --
+io{
+    Languages{ de{"shared name"} fr{"fr in io"} it:alias{"/LOCALE/list/1"} nl{"∅∅∅"} }
+    Scripts{ Latn{"shared name"} }
+    list:array{ "shared name", "it in io" }
+}
+-- format-versions/lang/root.txt --
+root{
+    Languages{ nl{"nl in root"} sv{"sv in root"} }
+    localeDisplayPattern{
+        keyTypePattern{"{0}: {1}"}
+        pattern{"{0} <{1}>"}
+        separator{"{0}, {1}"}
+    }
+}
+-- format-versions/lang/tlh.txt --
+tlh{
+    Languages{ de{"shared name"} fr{"fr in tlh"} it:alias{"/LOCALE/list/1"} nl{"∅∅∅"} }
+    Scripts{ Latn{"shared name"} }
+    list:array{ "shared name", "it in tlh" }
+}
+-- format-versions/lang/vo.txt --
+vo{
+    Languages{ de{"shared name"} fr{"fr in vo"} it:alias{"/LOCALE/list/1"} nl{"∅∅∅"} }
+    Scripts{ Latn{"shared name"} }
+    list:array{ "shared name", "it in vo" }
+}
+-- format-versions/res_index.txt --
+res_index:table(nofallback){
+    InstalledLocales{
+        en{""}
+        tlh{""}
+        vo{""}
+        io{""}
+    }
+}
+-- hour-formats/supplementalData.txt --
+supplementalData:table(nofallback){
+  calendarData{gregorian{eras{0{end:intvector{0,12,31}} 1{start:intvector{1,1,1}}}}}
+  calendarPreferenceData{001:array{"gregorian"}}
+  timeData{
+    001{allowed{"K"}}
+    DE{preferred{"k"}}
+    FR{allowed:array{"hb","h"} preferred{"h"}}
+    IT{allowed:array{"hB"}}
+    de_AT{allowed:array{"H"} preferred{"h"}}
+    ES{allowed:array{"h"} preferred{"unknown"}}
+  }
+  weekData{001:intvector{2,1,7,0,1,86400000}}
+  idValidity{ region{ macroregion{ "001~3", "005", "009", "011", "013~5", "017~9", "021", "029", "030", "034~5", "039", "053~4", "057", "061", "142~3", "145", "150~1", "154~5", "202", "419", "EU", "EZ", "QO", "UN" } } }
+}
+-- idna-mappings/make.sh --
+mkdir -p icudt79l
+gennorm2 -o icudt79l/uts46.nrm uts46.txt
+-- idna-mappings/uts46.txt --
+0301:230
+094D:9
+00E1=0061 0301
+00E6=0061 0065
+00E7=0063 002D
+0153=006F 0065
+0151=0153 0301
+0071>006B
+0344>0301 0062
+0107>0063
+00AD>
+3002>002E
+2460>0031 002E
+0378>FFFD
+0410>0430
+-- inherited-eras/eo.txt --
+eo{
+  calendar{japanese{eras{abbreviated{3{"E3"} 5{"E5"}}}} roc{eras{abbreviated{2{"R2"}}}}}
+}
+-- inherited-eras/supplementalData.txt --
+supplementalData:table(nofallback){
+  calendarData{
+    gregorian{eras{0{end:intvector{0,12,31}} 1{start:intvector{1,1,1}}}}
+    roc{eras{2{start:intvector{1800,1,1}}} inheritEras{"gregorian"}}
+    japanese{eras{3{start:intvector{1950,6,15}} 5{start:intvector{2000,1,1}}} inheritEras{"roc"}}
+  }
+  calendarPreferenceData{001:array{"gregorian"}}
+  timeData{001{allowed:array{"H","h"} preferred{"H"}}}
+  weekData{001:intvector{2,1,7,0,1,86400000}}
+  idValidity{ region{ macroregion{ "001~3", "005", "009", "011", "013~5", "017~9", "021", "029", "030", "034~5", "039", "053~4", "057", "061", "142~3", "145", "150~1", "154~5", "202", "419", "EU", "EZ", "QO", "UN" } } }
+}
+-- inherited-locale-list/coll/res_index.txt --
+res_index:table(nofallback){
+    InstalledLocales{
+        de{""}
+        sv{""}
+        tlh{""}
+    }
+}
+-- inherited-locale-list/coll/tlh.txt --
+tlh{
+    collations{
+        default{"standard"}
+        house:alias{"root/collations/standard"}
+        private-draft:alias{"root/collations/standard"}
+    }
+}
+-- inherited-locale-list/res_index.txt --
+res_index{
+    %%Parent{"site_index"}
+    InstalledLocales{ de{""} }
+    AliasLocales{ iw{""} }
+}
+-- inherited-locale-list/site_index.txt --
+site_index:table(nofallback){
+    InstalledLocales{ en{""} fi{""} sv_FI{""} }
+}
+-- interval-order/eo.txt --
+eo{
+  calendar{
+    gregorian{
+      intervalFormats{
+        Hm{H{"HH:mm ← HH:mm"} m{"earliestFirst:HH:mm → HH:mm"}}
+        MMMd{M{"d MMM ← d MMM"} d{"earliestFirst:d–d MMM"}}
+        fallback{"{1} ⇐ {0}"}
+        y{y{"y ← y"}}
+      }
+    }
+  }
+}
+-- interval-order/fy.txt --
+fy{
+  calendar{
+    gregorian{
+      intervalFormats{
+        Hm{H{"latestFirst:HH:mm ← HH:mm"}}
+        yMd{d{"latestFirst:d ← d/M/y"} y{"d/M/y → d/M/y"}}
+        fallback{"fan {0} oant {1}."}
+      }
+    }
+  }
+}
+-- interval-skeletons/eo.txt --
+eo{
+  calendar{
+    gregorian{
+      DateTimePatterns:array{"HH:mm ZZZZ","h:mm b","HH:mm VVVV","HH:mm xxx","QQQQ y","w'a semajno' Y","y, MMM W","D y","{1} {0}","{1} {0}","{1} {0}","{1} {0}","{1} {0}"}
+      availableFormats{yQQQQ{"QQQQ y"} yw{"w'a semajno' Y"}}
+      intervalFormats{
+        yQQQ{M{"QQQ – QQQ y"} y{"QQQ y – QQQ y"}}
+        yw{M{"w–w Y"} y{"w Y – w Y"}}
+        hm{a{"h:mm a – h:mm a"} h{"h:mm–h:mm a"} m{"h:mm–h:mm a"}}
+      }
+    }
+  }
+}
+-- interval-skeletons/fy.txt --
+fy{
+  calendar{
+    buddhist{intervalFormats:alias{"/LOCALE/calendar/generic/intervalFormats"}}
+    generic{intervalFormats{fallback{"{0} ~ {1}"} yMd{d{"G y/M/d~d"}}}}
+    gregorian{
+      DateTimePatterns:array{"HH:mm:ss zzzz","HH:mm:ss z","HH:mm:ss","HH:mm","EEEE, d MMMM y","d MMMM y","d MMM y","y-MM-dd","","{1} {0}","{1} {0}","{1} {0}","{1} {0}"}
+    }
+  }
+}
+-- interval-skeletons/rm.txt --
+rm{
+  calendar{gregorian{availableFormats{yMd{"'oz'"} Hm{"H 'uras' mm"} H{"H 'h'"}}}}
+}
+-- key-types/keyTypeData.txt --
+keyTypeData:table(nofallback){
+    bcpTypeAlias{
+        ca{ oldcal{"house"} }
+        hk:alias{"/ICUDATA/site/bcpTypeAlias"}
+    }
+    keyMap{
+        calendar{"ca"}
+        collation{"co"}
+        housekey{"hk"}
+        kr{""}
+        rg{""}
+        va{""}
+    }
+    typeAlias{
+        calendar{ home-calendar{"house-calendar"} }
+    }
+    typeMap{
+        calendar{ buddhist{""} gregorian{"gregory"} house-calendar{"house"} }
+        collation{ phonebook{"phonebk"} standard{""} }
+        housekey:alias{"/ICUDATA/site/types"}
+        kr{ REORDER_CODE{""} digit{""} }
+        rg{ RG_KEY_VALUE{""} }
+        va{ posix{""} }
+    }
+}
+-- key-types/site.txt --
+site:table(nofallback){
+    bcpTypeAlias{ uno{"one"} }
+    types{ first{"one"} second{"two"} }
+}
+-- keywords-in-names/keyTypeData.txt --
+keyTypeData:table(nofallback){
+    keyMap{ variant{"va"} }
+    typeMap{ variant{ posix{""} } }
+}
+-- keywords-in-names/lang/io.txt --
+io{
+    Languages{ en{"English"} }
+    Keys{ variant{"variant"} }
+    Types{ variant{ posix{"posix"} } }
+}
+-- keywords-in-names/lang/tlh.txt --
+tlh{
+    Languages{ en{"English"} }
+    Keys{ variant{"Variant"} }
+    Types{ variant{ posix{"for computers (old)"} } }
+    Types%short{ variant{ posix{"comp."} } }
+}
+-- keywords-in-names/lang/vo.txt --
+vo{
+    Languages{ en{"English"} }
+    Keys{ variant{"Variant"} }
+    Types{ variant{ posix{"posix"} } }
+    localeDisplayPattern{ keyTypePattern{"{0} = {1}"} }
+}
+-- keywords-in-names/res_index.txt --
+res_index:table(nofallback){
+    InstalledLocales{
+        en{""}
+        tlh{""}
+        vo{""}
+        io{""}
+    }
+}
+-- korean-dictionary/make.sh --
+mkdir -p icudt79l/brkitr
+gendict -q --uchars ko-words.txt icudt79l/brkitr/korean.dict
+genrb -q -e UTF-8 -s . -d icudt79l/brkitr root.txt
+-- korean-dictionary/ko-words.txt --
+﻿한국	20
+한국어	25
+어	60
+대한	30
+민국	30
+대한민국	40
+공용	30
+공용어	35
+는	15
+의	15
+이다	20
+-- korean-dictionary/root.txt --
+root{
+    boundaries{
+        grapheme{"char.brk"}
+        word{"word.brk"}
+        sentence{"sent.brk"}
+    }
+    dictionaries{
+        Hani{"cjdict.dict"}
+        Hira{"cjdict.dict"}
+        Kana{"cjdict.dict"}
+        Khmr{"khmerdict.dict"}
+        Laoo{"laodict.dict"}
+        Mymr{"burmesedict.dict"}
+        Thai{"thaidict.dict"}
+        Hang{"korean.dict"}
+    }
+}
+-- language-aliases/lang/en.txt --
+en{
+    Languages{ de{"German"} sr_Latn{"Serbian in Latin"} fr_CA{"Canadian French"} ru_RU{"Russian of Russia"} wa{"Walloon"} }
+}
+-- language-aliases/metadata.txt --
+metadata:table(nofallback){
+    alias{
+        language{
+            qaa{ replacement{"de"} }
+            qab{ replacement{"sr_Latn"} }
+            qac{ replacement{"qaa"} }
+            qad{ replacement{"fr_XA"} }
+            qae{ replacement{"ru_SU"} }
+            qaf{ replacement{"sr_Qaaa"} }
+            fr_BE{ replacement{"wa"} }
+            qag{ replacement{"fr_BE"} }
+            qah{ replacement{"de_1996"} }
+        }
+        script{ Qaaa{ replacement{"Latn"} } }
+        subdivision{ cn11{ replacement{"cnbj"} } }
+        territory{
+            SU{ replacement{"AM RU UA"} }
+            XA{ replacement{"CA"} }
+        }
+        variant{ heploc{ replacement{"alalc97"} } }
+    }
+}
+-- leap-month-patterns/eo.txt --
+eo{
+  Version{"1"}
+}
+-- leap-month-patterns/root.txt --
+root{
+  NumberElements{
+    default{"latn"}
+    latn{patterns{decimalFormat{"#,##0.###"}} symbols{decimal{"."} group{","} minusSign{"-"}}}
+  }
+  calendar{
+    default{"gregorian"}
+    gregorian{
+      DateTimePatterns:array{"HH:mm:ss zzzz","HH:mm:ss z","HH:mm:ss","HH:mm","EEEE, d MMMM y","d MMMM y","d MMM y","y-MM-dd","{1} {0}","{1} {0}","{1} {0}","{1} {0}","{1} {0}"}
+      intervalFormats{fallback{"{0} – {1}"}}
+      monthNames{
+        format{
+          abbreviated:array{"jan","feb","mar","apr","maj","jun","jul","aŭg","sep","okt","nov","dec"}
+          wide:array{"jan","feb","mar","apr","maj","jun","jul","aŭg","sep","okt","nov","dec"}
+        }
+      }
+    }
+    chinese{
+      DateTimePatterns:array{"HH:mm:ss zzzz","HH:mm:ss z","HH:mm:ss","HH:mm","U MMMM LLLL","r MMM LLL","MMMMM LLLLL","M/d","{1} {0}","{1} {0}","{1} {0}","{1} {0}","{1} {0}"}
+      intervalFormats{fallback{"{0} – {1}"} Md{M{"M/d – M/d"}}}
+      cyclicNameSets{
+        years{
+          format{abbreviated:alias{"/LOCALE/calendar/chinese/cyclicNameSets/zodiacs/format/abbreviated"}}
+        }
+        zodiacs{format{abbreviated:array{"rato","bovo","tigro"}}}
+      }
+      monthPatterns{
+        format{abbreviated{leap{""}} narrow{leap{""}} wide{leap{"{0} bis"}}}
+        numeric{all{leap{"{0}+"}}}
+        stand-alone{abbreviated{leap{""}} narrow{leap{"{0}*"}} wide{leap{""}}}
+      }
+    }
+  }
+}
+-- line-and-title-rules/make.sh --
+mkdir -p icudt79l/brkitr
+genrb -q -e UTF-8 -s . -d icudt79l/brkitr es.txt
+genrb -q -e UTF-8 -s . -d icudt79l/brkitr it.txt
+-- line-and-title-rules/es.txt --
+es{
+    boundaries{
+        word{"line.brk"}
+        sentence{"title.brk"}
+    }
+}
+-- line-and-title-rules/it.txt --
+it{
+    boundaries{
+        word{"line_loose_cj.brk"}
+        grapheme{"line_normal.brk"}
+    }
+}
+-- list-patterns/eo.txt --
+eo{
+    listPattern{
+        or{
+            2{"aŭ {0} aŭ {1}"}
+            end{"{0} aŭ {1}."}
+            middle{"{0} aŭ {1}"}
+            start{"aŭ {0} aŭ {1}"}
+        }
+        or-short:alias{"/LOCALE/listPattern/standard"}
+        standard{
+            2{"{1} post {0}"}
+            end{"{1} < {0}"}
+            middle{"{1} « {0}"}
+            start{"[{1} | {0}]"}
+        }
+        unit{
+            2{"{0}+{1}"}
+            end:alias{"/LOCALE/listPattern/or/end"}
+        }
+    }
+}
+-- look-ahead-rules/make.sh --
+mkdir -p icudt79l/brkitr
+genbrk -q -r hyphens.txt -o icudt79l/brkitr/hyphens.brk
+genrb -q -e UTF-8 -s . -d icudt79l/brkitr de.txt
+-- look-ahead-rules/de.txt --
+de{
+    boundaries{
+        word{"hyphens.brk"}
+    }
+}
+-- look-ahead-rules/hyphens.txt --
+﻿# A hyphen joins words, but a word ends after a hyphen that an uppercase letter follows.
+$Letter = [:L:];
+$Digit = [:Nd:];
+$Word = $Letter+ ('-' [:Ll:] $Letter*)*;
+$Word {200};
+$Word '-' / [:Lu:] {200};
+$Digit+ {100};
+# A comma before three digits ends a group.
+$Digit+ ',' / $Digit $Digit $Digit;
+[:White_Space:]+;
+.;
+-- lstm-clusters/make.sh --
+mkdir -p icudt79l/brkitr
+genrb -q -e UTF-8 -s . -d icudt79l/brkitr burmese_small.txt
+genrb -q -e UTF-8 -s . -d icudt79l/brkitr thai_small.txt
+genrb -q -e UTF-8 -s . -d icudt79l/brkitr root.txt
+-- lstm-clusters/burmese_small.txt --
+burmese_small:table(nofallback){
+    model{"burmese_small"}
+    type{"graphclust"}
+    embeddings:int{1}
+    hunits:int{1}
+    dict{ "ဘာ", "စ", "မြ" }
+    data:intvector{
+        1073741824, 1073741824, 1073741824, -1073741824, 0, 0, 1065353216, 0, 0, 0, 0, 0, 1084227584, -1063256064, 0, 1084227584, 0, 0, 1065353216, 0, 0, 0, 0, 0, 1084227584, -1063256064, 0, 1084227584, 1077936128, -1069547520, 0, 0, 0, 0, 0, 0, 0, 0, 0, -1082130432
+    }
+}
+-- lstm-clusters/root.txt --
+root{
+    boundaries{
+        grapheme{"char.brk"}
+        word{"word.brk"}
+        sentence{"sent.brk"}
+    }
+    dictionaries{
+        Hani{"cjdict.dict"}
+        Hira{"cjdict.dict"}
+        Kana{"cjdict.dict"}
+        Khmr{"khmerdict.dict"}
+        Laoo{"laodict.dict"}
+        Mymr{"burmesedict.dict"}
+        Thai{"thaidict.dict"}
+    }
+    lstm{
+        Mymr{"burmese_small.res"}
+        Thai{"thai_small.res"}
+    }
+}
+-- lstm-clusters/thai_small.txt --
+thai_small:table(nofallback){
+    model{"thai_small"}
+    type{"graphclust"}
+    embeddings:int{1}
+    hunits:int{1}
+    dict{ "ที่", "เ", "ก็" }
+    data:intvector{
+        1073741824, 1073741824, 1073741824, -1073741824, 0, 0, 1065353216, 0, 0, 0, 0, 0, 1084227584, -1063256064, 0, 1084227584, 0, 0, 1065353216, 0, 0, 0, 0, 0, 1084227584, -1063256064, 0, 1084227584, 1077936128, -1069547520, 0, 0, 0, 0, 0, 0, 0, 0, 0, -1082130432
+    }
+}
+-- lstm-code-points/make.sh --
+mkdir -p icudt79l/brkitr
+genrb -q -e UTF-8 -s . -d icudt79l/brkitr thai_small.txt
+genrb -q -e UTF-8 -s . -d icudt79l/brkitr root.txt
+-- lstm-code-points/root.txt --
+root{
+    boundaries{
+        grapheme{"char.brk"}
+        word{"word.brk"}
+        sentence{"sent.brk"}
+    }
+    dictionaries{
+        Hani{"cjdict.dict"}
+        Hira{"cjdict.dict"}
+        Kana{"cjdict.dict"}
+        Khmr{"khmerdict.dict"}
+        Laoo{"laodict.dict"}
+        Mymr{"burmesedict.dict"}
+        Thai{"thaidict.dict"}
+    }
+    lstm{
+        Thai{"thai_small.res"}
+        Mymr{"absent.res"}
+    }
+}
+-- lstm-code-points/thai_small.txt --
+thai_small:table(nofallback){
+    model{"thai_small"}
+    type{"codepoints"}
+    embeddings:int{1}
+    hunits:int{1}
+    dict{ "เ", "แ", "โ", "ใ", "ไ" }
+    data:intvector{
+        1073741824, 1073741824, 1073741824, 1073741824, 1073741824, -1073741824, 0, 0, 1065353216, 0, 0, 0, 0, 0, 1084227584, -1063256064, 0, 1084227584, 0, 0, 1065353216, 0, 0, 0, 0, 0, 1084227584, -1063256064, 0, 1084227584, 1077936128, -1069547520, 0, 0, 0, 0, 0, 0, 0, 0, 0, -1082130432
+    }
+}
+-- many-categories/make.sh --
+mkdir -p icudt79l/brkitr
+genbrk -q -r tags.txt -o icudt79l/brkitr/tags.brk
+genrb -q -e UTF-8 -s . -d icudt79l/brkitr ru.txt
+-- many-categories/ru.txt --
+ru{
+    boundaries{
+        word{"tags.brk"}
+    }
+}
+-- many-categories/tags.txt --
+﻿# A sign takes the next character along if that has a certain script, age or category.
+'!' [:Latin:];
+'$' [:Greek:];
+'%' [:Cyrillic:];
+'&' [:Armenian:];
+'*' [:Hebrew:];
+'+' [:Arabic:];
+'<' [:age=1.1:];
+'=' [:age=2.0:];
+'>' [:age=3.0:];
+'?' [:age=3.2:];
+'@' [:age=4.0:];
+'^' [:age=4.1:];
+'~' [:age=5.0:];
+'0' [:age=5.1:];
+'1' [:age=5.2:];
+'2' [:age=6.0:];
+'3' [:age=6.1:];
+'4' [:Lu:];
+'5' [:Ll:];
+'6' [:Lo:];
+'7' [:Lm:];
+'8' [:Mn:];
+'9' [:Mc:];
+'A' [:Nd:];
+'B' [:No:];
+[:L:] {200};
+.;
+-- many-states/make.sh --
+mkdir -p icudt79l/brkitr
+genbrk -q -r bits.txt -o icudt79l/brkitr/bits.brk
+genrb -q -e UTF-8 -s . -d icudt79l/brkitr pt.txt
+-- many-states/bits.txt --
+﻿# The status of a run of binary digits tells how far from its end the ones are.
+$Bit = [01];
+$Bit+;
+$Bit* '1' {20};
+$Bit* '1' $Bit {40};
+$Bit* '1' $Bit $Bit {60};
+$Bit* '1' $Bit $Bit $Bit {80};
+$Bit* '1' $Bit $Bit $Bit $Bit {100};
+$Bit* '1' $Bit $Bit $Bit $Bit $Bit {120};
+$Bit* '1' $Bit $Bit $Bit $Bit $Bit $Bit {140};
+$Bit* '1' $Bit $Bit $Bit $Bit $Bit $Bit $Bit {160};
+$Bit* '1' $Bit $Bit $Bit $Bit $Bit $Bit $Bit $Bit {180};
+[:L:]+ {200};
+[:L:]+ / ':' {50};
+.;
+-- many-states/pt.txt --
+pt{
+    boundaries{
+        word{"bits.brk"}
+    }
+}
+-- meta-zones/metaZones.txt --
+metaZones:table(nofallback){
+  mapTimezones{Central{001{"Europe/Berlin"} FR{"Europe/Paris"}} West{001{"Europe/Lisbon"}}}
+  metazoneInfo{
+    "Europe:Berlin":array{
+      :array{"Central"}
+    }
+    "Europe:Paris":array{
+      :array{"West","1970-01-01","2000-01-01"}
+      :array{"Central","2000-01-01 00:00","9999-12-31 23:59"}
+    }
+    "Europe:Minsk":array{
+      :array{"Central"}
+    }
+    "Europe:Lisbon":array{
+      :array{"West"}
+    }
+  }
+  primaryZones{DE{"Europe/Busingen"} ES{"Atlantic/Canary"}}
+}
+-- meta-zones/zone/eo.txt --
+eo{
+  zoneStrings{
+    "Europe:Lisbon"{ec{"Lisbono"} ld{"somera Lisbono"}}
+    "Europe:Paris"{sg{"PT"}}
+    fallbackFormat{"{1} [{0}]"}
+    "meta:Central"{ld{"centra somera"} lg{"centra"} ls{"centra norma"} sg{"C"}}
+    "meta:West"{lg{"okcidenta"} ls{"Okcidenta"}}
+    regionFormat{"horo de {0}"}
+  }
+}
+-- missing-dictionaries/make.sh --
+mkdir -p icudt79l/brkitr
+genrb -q -e UTF-8 -s . -d icudt79l/brkitr root.txt
+-- missing-dictionaries/root.txt --
+root{
+    boundaries{
+        grapheme{"char.brk"}
+        word{"word.brk"}
+        sentence{"sent.brk"}
+    }
+    dictionaries{
+        Thai{"thaidict.dict"}
+        Khmr{"absent.dict"}
+    }
+}
+-- mixed-units/metadata.txt --
+metadata:table(nofallback){
+    alias{
+        language{
+        }
+        script{
+        }
+        subdivision{
+        }
+        territory{
+        }
+        unit{
+            foot-per-day{
+                replacement{"foot-and-inch"}
+            }
+            hour-per-day{
+                replacement{"hour-and-minute-and-second"}
+            }
+            stone-per-day{
+                replacement{"pound-and-stone"}
+            }
+            meter-per-day{
+                replacement{"kilometer-and-meter"}
+            }
+        }
+        variant{
+        }
+    }
+}
+-- name-fallbacks/eo.txt --
+eo{
+  calendar{
+    gregorian{
+      DateTimePatterns:array{"a|aaaa|aaaaa","a|aaaa|aaaaa","a|aaaa|aaaaa","a|aaaa|aaaaa","G|GGGG|GGGGG|MMM|MMMM|MMMMM|LLL|LLLL|LLLLL|E|EEEE|EEEEE|EEEEEE|ccc|cccc|ccccc|cccccc","QQQ|QQQQ|QQQQQ|qqq|qqqq|qqqqq","y","y","{1} {0}","{1} {0}","{1} {0}","{1} {0}","{1} {0}"}
+    }
+  }
+}
+-- name-fallbacks/fy.txt --
+fy{
+  calendar{
+    gregorian{
+      DateTimePatterns:array{"a|aaaa|aaaaa","a|aaaa|aaaaa","a|aaaa|aaaaa","a|aaaa|aaaaa","G|GGGG|GGGGG|MMM|MMMM|MMMMM|LLL|LLLL|LLLLL|E|EEEE|EEEEE|EEEEEE|ccc|cccc|ccccc|cccccc","y","y","y","{1} {0}","{1} {0}","{1} {0}","{1} {0}","{1} {0}"}
+      AmPmMarkersNarrow:array{"v","n"}
+      eras{wide{1{"nei Kristus"}}}
+      monthNames{format{narrow:array{"j","f","m","a","m","j","j","a","s","o","n","d"}}}
+      dayNames{
+        stand-alone{narrow:array{"d","l","m","m","ĵ","v","s"} short:array{"DI","LU","MA","ME","ĴA","VE","SA"}}
+      }
+    }
+  }
+}
+-- name-fallbacks/root.txt --
+root{
+  NumberElements{
+    default{"latn"}
+    latn{patterns{decimalFormat{"#,##0.###"}} symbols{decimal{"."} group{","} minusSign{"-"}}}
+  }
+  calendar{
+    default{"gregorian"}
+    gregorian{
+      DateTimePatterns:array{"HH:mm:ss zzzz","HH:mm:ss z","HH:mm:ss","HH:mm","EEEE, d MMMM y","d MMMM y","d MMM y","y-MM-dd","{1} {0}","{1} {0}","{1} {0}","{1} {0}","{1} {0}"}
+      intervalFormats{fallback{"{0} – {1}"}}
+      AmPmMarkersAbbr:array{"a","p"}
+      eras{abbreviated{0{"aK"} 1{"pK"}}}
+      monthNames{
+        format{
+          abbreviated:array{"jan","feb","mar","apr","maj","jun","jul","aŭg","sep","okt","nov","dec"}
+          wide:array{"jano","febo","maro","apro","majo","juno","julo","aŭgo","sepo","okto","novo","deco"}
+        }
+      }
+      dayNames{
+        format{
+          abbreviated:array{"di","lu","ma","me","ĵa","ve","sa"}
+          wide:array{"ditago","lutago","matago","metago","ĵatago","vetago","satago"}
+        }
+      }
+      quarters{format{wide:array{"Q1","Q2","Q3","Q4"}} stand-alone{narrow:array{"1","2","3","4"}}}
+    }
+  }
+}
+-- new-locales/lang/tlh.txt --
+tlh{
+    Languages{ tlh{"tlhIngan Hol"} en{"DIvI' Hol"} }
+}
+-- new-locales/res_index.txt --
+res_index:table(nofallback){
+    InstalledLocales{
+        de{""}
+        en{""}
+        tlh{""}
+        tlh_Latn{""}
+        tlh_Latn_QO{""}
+        tlh_QO{""}
+        en_US_POSIX{""}
+    }
+}
+-- new-locales/tlh.txt --
+tlh{
+    listPattern{
+        standard{
+            2{"{0} je {1}"}
+            start{"{0}, {1}"}
+            middle{"{0}, {1}"}
+            end{"{0} je {1}"}
+        }
+    }
+    layout{ characters{"right-to-left"} }
+}
+-- new-locales/tlh_QO.txt --
+tlh_QO{
+    listPattern{ standard{ 2{"{0} + {1}"} } }
+}
+-- normalization-mappings/make.sh --
+mkdir -p icudt79l
+gennorm2 -o icudt79l/nfkc.nrm nfkc.txt
+-- normalization-mappings/nfkc.txt --
+0301:230
+0323:220
+0334:1
+005E:230
+00E1=0061 0301
+00E2=0061 005E
+1EA1=0061 0323
+0153=006F 0065
+0152=0153 0301
+0041>0061
+00AD>
+0345:240
+0345>0062
+0344>0301 0062
+2126>0061 0301 0323
+FB01>0066 0069
+1F600=003A 0029
+10400>10428
+3260>1100 1161
+-- number-affixes/eo.txt --
+eo{
+    NumberElements{
+        latn{
+            patterns{
+                decimalFormat{"'#'#,##,##0.###;('#'#,##,##0.###)"}
+                percentFormat{"#,##0' o''/o'"}
+            }
+        }
+    }
+}
+-- number-affixes/fy.txt --
+fy{
+    NumberElements{
+        latn{
+            patterns{
+                decimalFormat{"+#,####0.###;#,####0.###-"}
+                percentFormat{"%#0;%-#0"}
+            }
+        }
+    }
+}
+-- number-affixes/rm.txt --
+rm{
+    NumberElements{
+        latn{
+            patterns{
+                decimalFormat{"~#0.###"}
+                percentFormat{"0‰"}
+            }
+        }
+    }
+}
+-- numbering-systems/eo.txt --
+eo{
+    NumberElements{
+        default{"letters"}
+    }
+}
+-- numbering-systems/fy.txt --
+fy{
+    NumberElements{
+        default{"mixed"}
+    }
+}
+-- numbering-systems/ia.txt --
+ia{
+    NumberElements{
+        default{""}
+    }
+}
+-- numbering-systems/kl.txt --
+kl{
+    NumberElements{
+        default{"roman"}
+    }
+}
+-- numbering-systems/numberingSystems.txt --
+numberingSystems:table(nofallback){
+    numberingSystems{
+        latn{
+            algorithmic:int{0}
+            desc{"0123456789"}
+            radix:int{10}
+        }
+        letters{
+            algorithmic:int{0}
+            desc{"oizehsglbq"}
+            radix:int{10}
+        }
+        mixed{
+            algorithmic:int{0}
+            desc{"0𝟏2𝟑4𝟓6𝟕8𝟗"}
+            radix:int{10}
+        }
+        hex{
+            algorithmic:int{0}
+            desc{"0123456789ABCDEF"}
+            radix:int{16}
+        }
+        roman{
+            algorithmic:int{1}
+            desc{"%roman-lower"}
+            radix:int{10}
+        }
+    }
+}
+-- numbering-systems/rm.txt --
+rm{
+    NumberElements{
+        default{"hex"}
+    }
+}
+-- other-packages/make.sh --
+mkdir -p icudt79l
+genrb -q -e UTF-8 -s . -d icudt79l res_index.txt
+mkdir -p icudt79l/lang
+genrb -q -e UTF-8 -s lang -d icudt79l/lang tlh.txt
+mkdir -p loose work/extra
+genrb -q -e UTF-8 -s loose-src -d loose names.txt
+for name in root names names_QO; do genrb -q -e UTF-8 -s packed -d work $name.txt; done
+for name in root names; do genrb -q -e UTF-8 -s packed/extra -d work/extra $name.txt; done
+printf 'root.res\nextra/root.res\nnames.res\nnames_QO.res\nextra/names.res\n' > work/items.txt
+icupkg -tl -s work -a work/items.txt new packed.dat
+rm -r work
+-- other-packages/lang/tlh.txt --
+tlh{
+    Languages{
+        de:alias{"/packed/names/de"}
+        fr:alias{"/loose/names/fr"}
+        it:alias{"/packed-extra/names/it"}
+        es:alias{"/packed/names_QO/es"}
+    }
+}
+-- other-packages/loose-src/names.txt --
+names{
+    fr{"fr in a directory"}
+}
+-- other-packages/packed/extra/names.txt --
+names{
+    it{"it in a tree of a package"}
+}
+-- other-packages/packed/extra/root.txt --
+root{
+    Version{"1"}
+}
+-- other-packages/packed/names.txt --
+names{
+    de{"de in a package"}
+    es{"es in a package"}
+}
+-- other-packages/packed/names_QO.txt --
+names_QO{
+    Version{"1"}
+}
+-- other-packages/packed/root.txt --
+root{
+    Version{"1"}
+}
+-- other-packages/res_index.txt --
+res_index:table(nofallback){
+    InstalledLocales{
+        en{""}
+        tlh{""}
+    }
+}
+-- own-normalization/make.sh --
+mkdir -p icudt79l
+gennorm2 -o icudt79l/nfkc.nrm nfkc.txt
+-- own-normalization/nfkc.txt --
+* Unicode 17.0.0
+# Halfwidth katakana stay as they are. Two rare ideographs stand for common ones, one for a whole word, one for nothing.
+9F98>8A9E
+20000>65E5
+9F96>6771 4EAC
+9EA4>
+32D0>30A2
+-- own-word-lists/make.sh --
+mkdir -p icudt79l/brkitr
+gendict -q --bytes --transform offset-0e00 thai.txt icudt79l/brkitr/thai.v2.words
+gendict -q --uchars lao.txt icudt79l/brkitr/lao.dict
+gendict -q --bytes --transform offset-1780 khmer.txt icudt79l/brkitr/khmer
+genrb -q -e UTF-8 -s . -d icudt79l/brkitr root.txt
+-- own-word-lists/khmer.txt --
+﻿ភា
+សា
+គោទៅ
+ក
+កក
+-- own-word-lists/lao.txt --
+﻿ກາຂາ
+ມາ
+ໄປນົກ
+ພາ
+ສາ
+-- own-word-lists/root.txt --
+root{
+    boundaries{
+        grapheme{"char.brk"}
+        word{"word.brk"}
+        sentence{"sent.brk"}
+    }
+    dictionaries{
+        Hani{"cjdict.dict"}
+        Hira{"cjdict.dict"}
+        Kana{"cjdict.dict"}
+        Khmr{"khmer"}
+        Laoo{"lao.dict"}
+        Mymr{"burmesedict.dict"}
+        Thai{"thai.v2.words"}
+    }
+}
+-- own-word-lists/thai.txt --
+﻿กา
+กาก
+ขา
+นกขาว
+มา
+มาก
+นก
+บินไป
+ไปมา
+-- own-zones/eo.txt --
+eo{
+  calendar{
+    gregorian{
+      DateTimePatterns:array{"HH:mm:ss zzzz","HH:mm:ss z","HH:mm:ss","HH:mm","y-MM-dd HH:mm V|VV|VVV|VVVV|v|z|XXXXX","y-MM-dd HH:mm V|VV|VVV|VVVV|v|z|XXXXX","y-MM-dd HH:mm V|VV|VVV|VVVV|v|z|XXXXX","y-MM-dd HH:mm V|VV|VVV|VVVV|v|z|XXXXX","{1} {0}","{1} {0}","{1} {0}","{1} {0}","{1} {0}"}
+    }
+  }
+}
+-- own-zones/timezoneTypes.txt --
+timezoneTypes:table(nofallback){
+  bcpTypeAlias{tz{old{"mars"}}}
+  ianaMap{timezone{"Mars:Utopia"{"Mars/Utopia_Planitia"}}}
+  typeAlias{timezone{GMT{"Etc/GMT"} UTC{"Etc/UTC"}}}
+  typeMap{
+    timezone{
+      "Etc:GMT"{"gmt"}
+      "Etc:UTC"{"utc"}
+      "Etc:Unknown"{"unk"}
+      "Mars:Olympus_Mons"{"mars"}
+      "Mars:Utopia"{"utop"}
+    }
+  }
+}
+-- own-zones/zoneinfo64.txt --
+zoneinfo64:table(nofallback){
+  Names:array{"Etc/GMT","Etc/UTC","Etc/Unknown","GMT","Mars/Olympus_Mons","Mars/Tharsis","Mars/Utopia","UTC"}
+  Regions:array{"001","001","001","001","AQ","AQ","BV","001"}
+  Rules{Mars:intvector{2,15,0,7200,0,9,-1,1,3600,2,1800}}
+  TZVersion{"2030a"}
+  Zones:array{
+    :table{typeOffsets:intvector{0,0}}
+    :table{typeOffsets:intvector{0,0}}
+    :table{typeOffsets:intvector{0,0}}
+    :int{0}
+    :table{
+      finalRaw:int{10800}
+      finalRule{"Mars"}
+      finalYear:int{2001}
+      trans:intvector{0,946684800}
+      transPre32:intvector{-1,0}
+      typeMap:bin{"010201"}
+      typeOffsets:intvector{10123,0,10800,0,10800,3600}
+    }
+    :int{4}
+    :table{
+      trans:intvector{1000000000}
+      transPost32:intvector{1,0}
+      typeMap:bin{"0100"}
+      typeOffsets:intvector{-3600,0,-7200,0}
+    }
+    :int{1}
+  }
+}
+-- parents/lang/root.txt --
+root{
+    Languages{ pt{"pt in root"} }
+    localeDisplayPattern{
+        keyTypePattern{"{0}: {1}"}
+        pattern{"{0} ({1})"}
+        separator{"{0}, {1}"}
+    }
+}
+-- parents/lang/tlh.txt --
+tlh{
+    Languages{ fr{"fr in tlh"} it{"it in tlh"} es{"es in tlh"} }
+}
+-- parents/lang/tlh_AQ.txt --
+tlh_AQ{
+    %%ParentIsRoot:int{1}
+    Languages{ fr{"fr in tlh_AQ"} }
+}
+-- parents/lang/tlh_Cyrl_QO.txt --
+tlh_Cyrl_QO{
+    Languages{ fr{"fr in tlh_Cyrl_QO"} }
+}
+-- parents/lang/tlh_QO.txt --
+tlh_QO{
+    %%Parent{"vo"}
+    Languages{ fr{"fr in tlh_QO"} }
+}
+-- parents/lang/tlh_UM.txt --
+tlh_UM{
+    "%%ALIAS"{"tlh_QO"}
+}
+-- parents/lang/vo.txt --
+vo:table(nofallback){
+    Languages{ it{"it in vo"} }
+}
+-- parents/lang/vo_QO.txt --
+vo_QO{
+    Languages{ fr{"fr in vo_QO"} it{"∅∅∅"} }
+}
+-- parents/res_index.txt --
+res_index:table(nofallback){
+    InstalledLocales{
+        en{""}
+        tlh{""}
+        tlh_QO{""}
+        tlh_AQ{""}
+        tlh_UM{""}
+        tlh_Cyrl{""}
+        tlh_Cyrl_QO{""}
+        vo{""}
+        vo_QO{""}
+    }
+}
+-- places/make.sh --
+for place in first second; do
+    mkdir -p $place/icudt79l/lang
+    genrb -q -e UTF-8 -s . -d $place/icudt79l res_index.txt
+    for name in $place/*.txt; do genrb -q -e UTF-8 -d $place/icudt79l/lang $name; done
+done
+-- places/first/tlh.txt --
+tlh{
+    Languages{ fr{"fr of tlh in first"} }
+}
+-- places/res_index.txt --
+res_index:table(nofallback){
+    InstalledLocales{
+        de{""}
+        en{""}
+        tlh{""}
+        vo{""}
+    }
+}
+-- places/second/de.txt --
+de{
+    Languages{ fr{"fr of de in second"} }
+}
+-- places/second/tlh.txt --
+tlh{
+    Languages{ fr{"fr of tlh in second"} }
+}
+-- places/second/vo.txt --
+vo{
+    Languages{ fr{"fr of vo in second"} }
+}
+-- plural-grammar/plurals.txt --
+plurals:table(nofallback){
+    locales{
+        eo{"words"}
+        fy{"ranges"}
+        rm{"custom"}
+        rm_CH{"compact"}
+    }
+    locales_ordinals{
+        eo{"ranges"}
+    }
+    rules{
+        compact{
+            many{"c != 0..5 @integer 1c6"}
+            other{" @integer 0~15"}
+        }
+        custom{
+            dozen{"n mod 12 is 0 and n is not 0"}
+            one{"n is 1"}
+        }
+        ranges{
+            few{"n within 2..4 or n%100=20..22,11"}
+            two{"n not within 0..99 and i % 10 not in 1,3..9"}
+        }
+        words{
+            one{"n mod 10 is 1 and n mod 100 is not 11 @integer 1, 21, … @decimal 1.0"}
+            zero{"n in 0,10..13 or v = 2 and f != 50 or t is 5"}
+        }
+    }
+}
+-- pool-bundle/make.sh --
+mkdir -p icudt79l
+genrb -q -e UTF-8 -s . -d icudt79l res_index.txt
+mkdir -p icudt79l/lang
+genrb -q -e UTF-8 -s lang -d icudt79l/lang tlh.txt
+genrb -q -e UTF-8 -s lang -d icudt79l/lang vo.txt
+mkdir -p site
+genrb -q -e UTF-8 --formatVersion 3 --writePoolBundle -s src -d site one.txt two.txt
+genrb -q -e UTF-8 --formatVersion 3 --usePoolBundle site -s src -d site one.txt two.txt
+-- pool-bundle/lang/tlh.txt --
+tlh{
+    Languages{ de:alias{"/site/one/de"} fr:alias{"/site/one/fr"} it:alias{"/site/two/list/1"} }
+}
+-- pool-bundle/lang/vo.txt --
+vo{
+    Languages:alias{"/site/two"}
+}
+-- pool-bundle/res_index.txt --
+res_index:table(nofallback){
+    InstalledLocales{
+        en{""}
+        tlh{""}
+        vo{""}
+    }
+}
+-- pool-bundle/src/one.txt --
+one{
+    de{"shared name"}
+    fr{"fr in one"}
+    list:array{ "a", "shared item" }
+}
+-- pool-bundle/src/two.txt --
+two{
+    Languages{ de{"shared name"} fr{"fr in two"} }
+    list:array{ "b", "shared item" }
+}
+-- range-patterns/eo.txt --
+eo{
+    NumberElements{
+        latn{
+            miscPatterns{
+                range{"de {0} ĝis {1}!"}
+            }
+        }
+        thai{
+            miscPatterns{
+                range{"{0}~{1}"}
+            }
+        }
+    }
+}
+-- range-patterns/fy.txt --
+fy{
+    NumberElements{
+        latn{
+            miscPatterns{
+                range{"{0}{1}"}
+            }
+            symbols{
+                approximatelySign{"ca. "}
+            }
+        }
+    }
+}
+-- range-patterns/pluralRanges.txt --
+pluralRanges:table(nofallback){
+    locales{
+        eo{"mine"}
+    }
+    rules{
+        mine{
+            {"one", "other", "one"}
+            {"one", "other", "other"}
+            {"other", "one", "=1"}
+            {"one", "one", "0"}
+        }
+    }
+}
+-- range-patterns/unit/eo.txt --
+eo{
+    unitsShort{
+        length{
+            meter{
+                0{"{0} m (nul)"}
+                1{"{0} m (unu)"}
+                one{"{0} metro"}
+                other{"{0} metroj"}
+            }
+        }
+    }
+}
+-- regions/metadata.txt --
+metadata:table(nofallback){
+    alias{
+        language{ qaa{ replacement{"de"} } }
+        script{ Qaai{ replacement{"Zinh"} } }
+        subdivision{ cn11{ replacement{"cnbj"} } }
+        territory{
+            840{ replacement{"US"} }
+            AD{ replacement{"US"} }
+            AE{ replacement{"US JP"} }
+            XA{ replacement{"JP"} }
+            XB{ replacement{"nowhere US"} }
+            QO{ replacement{"US"} }
+        }
+        variant{ heploc{ replacement{"alalc97"} } }
+    }
+}
+-- regions/supplementalData.txt --
+supplementalData:table(nofallback){
+    calendarPreferenceData{ 001{"gregorian"} }
+    cldrVersion{"1"}
+    codeMappings{
+        { "JP", "392", "XC" }
+        { "US", "840", "USA" }
+    }
+    idValidity{
+        region{
+            macroregion{ "001~3", "005", "009", "011", "013~5", "017~9", "021", "029", "030", "034~5", "039", "053~4", "057", "061", "142~3", "145", "150~1", "154~5", "202", "419", "EU", "EZ", "QO", "UN" }
+            regular{ "AC~E", "JP", "US" }
+            unknown{"ZZ"}
+        }
+    }
+    territoryContainment{
+        001{"002"}
+        002{ "AC", "AD" }
+        grouping{ QO{ "JP", "US" } }
+    }
+    timeData{
+        JP{ allowed{ "K", "H" } preferred{"K"} }
+        US{ allowed{ "h", "H" } preferred{"h"} }
+    }
+    weekData{ 001:intvector{ 2, 1, 7, 0, 1, 86400000 } }
+}
+-- relative-time-fields/eo.txt --
+eo{
+    fields{
+        day{
+            relative{
+                -2{"antaŭhieraŭ"}
+                0{""}
+                2{"postmorgaŭ"}
+            }
+            relativeTime{
+                future{
+                    1{"ne uzata"}
+                    one{"post unu tago"}
+                    other{"post {0} tagoj"}
+                }
+            }
+        }
+        day-narrow{
+            relativeTime{
+                past{
+                    other{"{0}←"}
+                }
+            }
+        }
+    }
+}
+-- relative-time-number-patterns/br.txt --
+br{
+    NumberElements{
+        latn{
+            patterns{
+                decimalFormat{"##0*'.' u"}
+            }
+        }
+    }
+}
+-- relative-time-number-patterns/eo.txt --
+eo{
+    NumberElements{
+        latn{
+            patterns{
+                decimalFormat{"@@#"}
+            }
+        }
+    }
+}
+-- relative-time-number-patterns/fy.txt --
+fy{
+    NumberElements{
+        latn{
+            patterns{
+                decimalFormat{"*_#####0.0"}
+            }
+        }
+    }
+}
+-- relative-time-number-patterns/gv.txt --
+gv{
+    NumberElements{
+        latn{
+            patterns{
+                decimalFormat{"[#0.]*·"}
+            }
+        }
+    }
+}
+-- relative-time-number-patterns/ia.txt --
+ia{
+    NumberElements{
+        latn{
+            patterns{
+                decimalFormat{"0.##E+00"}
+            }
+        }
+    }
+}
+-- relative-time-number-patterns/kl.txt --
+kl{
+    NumberElements{
+        latn{
+            patterns{
+                decimalFormat{"#0‰"}
+            }
+        }
+    }
+}
+-- relative-time-number-patterns/kw.txt --
+kw{
+    NumberElements{
+        latn{
+            patterns{
+                decimalFormat{"##0.###E0"}
+            }
+        }
+    }
+}
+-- relative-time-number-patterns/oc.txt --
+oc{
+    NumberElements{
+        latn{
+            patterns{
+                decimalFormat{"00.0E0"}
+            }
+        }
+    }
+}
+-- relative-time-number-patterns/rm.txt --
+rm{
+    NumberElements{
+        latn{
+            patterns{
+                decimalFormat{"#,##0.05"}
+            }
+        }
+    }
+}
+-- relative-time-number-patterns/sc.txt --
+sc{
+    NumberElements{
+        latn{
+            patterns{
+                decimalFormat{"≈*x###0"}
+            }
+        }
+    }
+}
+-- relative-time-number-patterns/wa.txt --
+wa{
+    NumberElements{
+        latn{
+            patterns{
+                decimalFormat{"#,#50"}
+            }
+        }
+    }
+}
+-- second-package/make.sh --
+mkdir -p icudt79l/lang work/lang away
+genrb -q -e UTF-8 -s . -d icudt79l res_index.txt
+genrb -q -e UTF-8 -s loose -d icudt79l/lang vo.txt
+genrb -q -e UTF-8 -s packed -d work/lang de.txt tlh.txt vo.txt
+printf 'lang/de.res\nlang/tlh.res\nlang/vo.res\n' > work/items.txt
+icupkg -tl --ignore-deps -s work -a work/items.txt new away/icudt79l.dat
+rm -r work
+-- second-package/loose/vo.txt --
+vo{
+    Languages{ fr{"fr of vo in a file"} }
+}
+-- second-package/packed/de.txt --
+de{
+    Languages{ fr{"fr of de in the package"} }
+}
+-- second-package/packed/tlh.txt --
+tlh{
+    Languages{ fr{"fr of tlh in the package"} }
+}
+-- second-package/packed/vo.txt --
+vo{
+    Languages{ fr{"fr of vo in the package"} }
+}
+-- second-package/res_index.txt --
+res_index:table(nofallback){
+    InstalledLocales{
+        de{""}
+        en{""}
+        tlh{""}
+        vo{""}
+    }
+}
+-- sentence-exceptions/make.sh --
+mkdir -p icudt79l/brkitr
+genrb -q -e UTF-8 -s . -d icudt79l/brkitr sv.txt
+genrb -q -e UTF-8 -s . -d icudt79l/brkitr fr.txt
+genrb -q -e UTF-8 -s . -d icudt79l/brkitr de_AT.txt
+-- sentence-exceptions/de_AT.txt --
+de_AT{
+    exceptions{
+        SentenceBreak:alias{"sv/exceptions/SentenceBreak"}
+    }
+}
+-- sentence-exceptions/fr.txt --
+fr{
+    exceptions{
+        SentenceBreak{"M."}
+    }
+}
+-- sentence-exceptions/sv.txt --
+sv{
+    exceptions{
+        SentenceBreak:array{ "t.ex.", "t.o.m.", "Dr.", "osv.", "s.", "\U0001D54F.", "Dr." }
+    }
+}
+-- set-each-property/make.sh --
+mkdir -p icudt79l/curr work
+currencies=$(tr ' ' '\n' < symbols.txt | sed 's/:\(.*\)/{"\1","x",{"¤0",".",","}}/')
+printf '%s\n' "root{Currencies{$currencies}}" > work/root.txt
+genrb -q -e UTF-8 -s work -d icudt79l/curr root.txt
+for pair in $(cat properties.txt); do
+  rule="currencyMatch{\"[:${pair#*:}:]\"} insertBetween{\"_\"} surroundingMatch{\"[:Any:]\"}"
+  echo "${pair%%:*}{currencySpacing{afterCurrency{$rule} beforeCurrency{$rule}}}" > work/${pair%%:*}.txt
+  genrb -q -s work -d icudt79l/curr ${pair%%:*}.txt
+done
+rm -r work
+-- set-each-property/properties.txt --
+af:AHex ak:Alpha am:Bidi_C as:Bidi_M ba:Dash be:DI bg:Dep bm:Dia bn:Ext bo:Comp_Ex br:Gr_Base ca:Gr_Ext ce:Gr_Link
+cs:Hex cv:Hyphen cy:IDC da:IDS de:Ideo dz:IDSB ee:IDST el:Join_C en:LOE eo:Lower es:Math et:NChar eu:QMark fa:Radical
+fi:SD fo:Term fr:UIdeo fy:Upper ga:WSpace gd:XIDC gl:XIDS gu:Sensitive gv:STerm ha:VS he:nfdinert hr:nfkdinert
+hu:nfcinert hy:nfkcinert ia:segstart id:Pat_Syn ie:Pat_WS ig:alnum ii:blank is:graph it:print ja:xdigit jv:Cased ka:CI
+ki:CWL kk:CWU kl:CWT km:CWCF kn:CWCM ko:CWKCF ku:Emoji kw:EPres ky:EMod lb:EBase lg:EComp ln:RI lo:PCM lt:ExtPict
+lu:Basic_Emoji lv:RGI_Emoji mg:IDSU mi:ID_Compat_Math_Start mk:ID_Compat_Math_Continue ml:MCM mn:bc=AL mr:blk=Arabic
+ms:ccc=230 mt:dt=compat my:ea=W nd:gc=Lt ne:jg=Alef nl:jt=R oc:lb=ID om:nt=Digit or:sc=Hang os:hst=LV pl:hst=L
+ps:NFD_QC=N pt:NFKD_QC=N qu:NFC_QC=M rm:NFKC_QC=N rn:lccc=230 ro:tccc=230 ru:GCB=LV rw:SB=ST sa:WB=LE sc:bpt=o
+se:InPC=Top sg:InSC=Consonant si:vo=U sk:ID_Status=Allowed sl:ID_Type=Not_NFKC sn:InCB=Linker so:gcm=LC sq:nv=0.5
+st:age=3.2 sv:scx=Hira sw:Assigned ta:ASCII te:Greek tg:Alpha=No
+-- set-each-property/symbols.txt --
+QAA:\u0041 QAB:\u0069 QAC:\u00AA QAD:\u00AD QAE:\u00B2 QAF:\u00B7 QAG:\u00BD QAH:\u00DF QAI:\u00E9 QAJ:\u0149
+QAK:\u01C5 QAL:\u0301 QAM:\u03A3 QAN:\u0600 QAO:\u0627 QAP:\u0654 QAQ:\u0915 QAR:\u0947 QAS:\u094D QAT:\u0958
+QAU:\u0E40 QAV:\u1100 QAW:\u1161 QAX:\u200D QAY:\u200E QAZ:\u2014 QBA:\u201C QBB:\u2202 QBC:\u2E80 QBD:\u2FF0
+QBE:\u2FF2 QBF:\u2FFE QBG:\u3002 QBH:\u3042 QBI:\u30FC QBJ:\u4E00 QBK:\uAC00 QBL:\uFDD0 QBM:\uFE0F QBN:\uFF21
+QBO:\U0001F1E6 QBP:\U0001F3FB QBQ:\U0001F44D QBR:\U000E0001 QBS:\u0378 QBT:\u0028 QBU:\u0009 QBV:\u0020
+-- set-properties/make.sh --
+mkdir -p icudt79l/curr
+genrb -q -e UTF-8 -s . -d icudt79l/curr root.txt
+-- set-properties/root.txt --
+root{
+    currencySpacing{
+        afterCurrency{
+            currencyMatch{"[[:age=2.0:]&[:^Lu:]]"}
+            insertBetween{"_"}
+            surroundingMatch{"[[:nv=1:][:nv=2:][:scx=Deva:][:ea=F:]]"}
+        }
+        beforeCurrency{
+            currencyMatch{"[[:blk=Currency_Symbols:][:NFKC_QC=N:][:Alphabetic:]]"}
+            insertBetween{"~"}
+            surroundingMatch{"[[:InSC=Number:][:Emoji_Component:]\\P{vo=R}]"}
+        }
+    }
+}
+-- set-syntax/make.sh --
+mkdir -p icudt79l/curr
+genrb -q -e UTF-8 -s . -d icudt79l/curr root.txt
+-- set-syntax/root.txt --
+root{
+    currencySpacing{
+        afterCurrency{
+            currencyMatch{"[[$£ A-F]-[B]{ab}]"}
+            insertBetween{"_"}
+            surroundingMatch{"[^ \\u0031 \\x{660}-\\U00000665 [7-9]]"}
+        }
+        beforeCurrency{
+            currencyMatch{"[[:Sc:]&[^\\$]]"}
+            insertBetween{"~"}
+            surroundingMatch{"[[0-4][\\x{1D7CE}-\\x{1D7D2}] \\p{Han}]"}
+        }
+    }
+}
+-- spellout-plural-parts/eo.txt --
+eo{
+    NumberElements{
+        default{"words"}
+    }
+}
+-- spellout-plural-parts/fy.txt --
+fy{
+    NumberElements{
+        default{"place"}
+    }
+}
+-- spellout-plural-parts/numberingSystems.txt --
+numberingSystems:table(nofallback){
+    numberingSystems{
+        latn{
+            algorithmic:int{0}
+            desc{"0123456789"}
+            radix:int{10}
+        }
+        words{
+            algorithmic:int{1}
+            desc{"ru/SpelloutRules/%words"}
+            radix:int{10}
+        }
+        place{
+            algorithmic:int{1}
+            desc{"en/SpelloutRules/%place"}
+            radix:int{10}
+        }
+        guests{
+            algorithmic:int{1}
+            desc{"en/SpelloutRules/%guests"}
+            radix:int{10}
+        }
+    }
+}
+-- spellout-plural-parts/rbnf/en.txt --
+en{
+    RBNFRules{
+        SpelloutRules{
+            "%place: 0: =#,##0=$(ordinal,one{st}two{nd}few{rd}other{th})$;"
+            "%guests: 0: $(cardinal,offset:1 =0{nobody} =1{the host} one{the host and '#'#} other{{host} and # others {0,select,a{x}other{y}}})$;"
+        }
+    }
+}
+-- spellout-plural-parts/rbnf/ru.txt --
+ru{
+    RBNFRules{
+        SpelloutRules{
+            "%words: x.x: << $(cardinal,one{целая}other{целых})$ >>; 0: =0=;"
+            "1000: << $(cardinal,one{тысяча}few{тысячи}other{тысяч})$[ >>];"
+            "1000000: $(cardinal,one{миллион}few{миллиона}other{миллионов})$ × <<[ + >>];"
+        }
+    }
+}
+-- spellout-plural-parts/rm.txt --
+rm{
+    NumberElements{
+        default{"guests"}
+    }
+}
+-- spellout-rules/eo.txt --
+eo{
+    NumberElements{
+        default{"words"}
+    }
+}
+-- spellout-rules/fy.txt --
+fy{
+    NumberElements{
+        default{"digits"}
+    }
+}
+-- spellout-rules/gv.txt --
+gv{
+    NumberElements{
+        default{"first"}
+    }
+}
+-- spellout-rules/kl.txt --
+kl{
+    NumberElements{
+        default{"score"}
+    }
+}
+-- spellout-rules/numberingSystems.txt --
+numberingSystems:table(nofallback){
+    numberingSystems{
+        latn{
+            algorithmic:int{0}
+            desc{"0123456789"}
+            radix:int{10}
+        }
+        words{
+            algorithmic:int{1}
+            desc{"ia/SpelloutRules/%words"}
+            radix:int{10}
+        }
+        digits{
+            algorithmic:int{1}
+            desc{"ia/SpelloutRules/%digits"}
+            radix:int{10}
+        }
+        parts{
+            algorithmic:int{1}
+            desc{"ia/SpelloutRules/%parts"}
+            radix:int{10}
+        }
+        score{
+            algorithmic:int{1}
+            desc{"ia/SpelloutRules/%score"}
+            radix:int{10}
+        }
+        first{
+            algorithmic:int{1}
+            desc{"ia/SpelloutRules/"}
+            radix:int{10}
+        }
+    }
+}
+-- spellout-rules/rbnf/ia.txt --
+ia{
+    RBNFRules{
+        SpelloutRules{
+            "%%lenient-parse: & a < b;"
+            "%words: -x: minus >>; x.x: << point >>; x,x: << comma >>; 0.x: comma >>>;"
+            "0: zero; one; two; three; four; five; six; seven; eight; nine;"
+            "10: ten[ and >>]; 20: << tens[ and >>| exactly]; 100: << hundred[ >>];"
+            "1,000: << thousand[ >>]; 1000000: <#,##0.0< million; 1000000000000: =#,##0=;"
+            "%digits: x.x: =0.00=; 0: =%words=; 10: << >>>; 100: << >>>; 1000: << >>>; 10000: =#,##0=;"
+            "%parts: x.x: [<%words< and ]>%%fraction>; 0: =%words=;"
+            "%%fraction: 2: a half; 4: a quarter; 4: <%words< quarters; 100: <%words<< hundredths; 1000: <%words<< thousandths;"
+            "%score: x.0: =0.#=' or so; 0: =%words=; 20/20: <%words< score[ and >%words>]; 400: =0=;"
+            "%spellout-numbering: 0: =00=; 100>: <<|>>;"
+        }
+    }
+}
+-- spellout-rules/rm.txt --
+rm{
+    NumberElements{
+        default{"parts"}
+    }
+}
+-- status-values/make.sh --
+mkdir -p icudt79l/brkitr
+genbrk -q -r kinds.txt -o icudt79l/brkitr/kinds.brk
+genrb -q -e UTF-8 -s . -d icudt79l/brkitr el.txt
+-- status-values/el.txt --
+el{
+    boundaries{
+        word{"kinds.brk"}
+    }
+}
+-- status-values/kinds.txt --
+﻿# Only statuses from 100 on count as words.
+[a-z]+ {99};
+[A-Z]+ {100};
+[0-9]+ {0};
+[0-9]+ [a-z] {50};
+[0-9]+ [a-z] {450};
+'@' [a-z]+ {1000};
+[\ ]+;
+-- style-patterns/eo.txt --
+eo{
+  calendar{
+    gregorian{
+      DateTimePatterns:array{"HH:mm:ss zzzz","HH:mm:ss z","HH:mm:ss","HH:mm","EEEE, d MMMM y","d MMMM y","d MMM y","y-MM-dd","{1} 'je' {0}"}
+    }
+  }
+}
+-- style-patterns/fy.txt --
+fy{
+  calendar{
+    gregorian{
+      DateTimePatterns:array{
+        "HH:mm:ss zzzz",
+        "HH:mm:ss z",
+        "HH:mm:ss",
+        "HH:mm",
+        :array{"d MMMM y","d=hanidays;y=arab"}
+        :array{"d MMMM y","thai"}
+        "d MMM y",
+        "y-MM-dd",
+        "{1} {0}",
+        "{1} {0}",
+        "{1} {0}",
+        "{1} {0}",
+        "{1} {0}",
+      }
+      DateTimePatterns%atTime:array{"{0} op {1}","{0} op {1}","{0}, {1}","{0} {1}"}
+    }
+  }
+}
+-- style-patterns/res_index.txt --
+res_index:table(nofallback){
+  InstalledLocales{de{""} de_US{""} en{""} en_US{""} eo{""} fy{""} rm{""}}
+}
+-- style-patterns/rm.txt --
+rm{
+  calendar{
+    gregorian{
+      DateTimePatterns:array{
+        "HH:mm:ss zzzz",
+        "HH:mm:ss z",
+        "HH:mm:ss",
+        "HH:mm",
+        :array{"d MMMM y","unknown"}
+        "d MMMM y",
+        "d MMM y",
+        "y-MM-dd",
+        "{1} {0}",
+        "{1} {0}",
+        "{1} {0}",
+        "{1} {0}",
+        "{1} {0}",
+      }
+    }
+  }
+}
+-- tentative-era/eo.txt --
+eo{
+    calendar{
+        japanese{
+            availableFormats{ yyyyMd{"y-M-d"} }
+        }
+    }
+}
+-- tentative-era/supplementalData.txt --
+supplementalData:table(nofallback){
+  calendarData{
+    gregorian{eras{0{end:intvector{0,12,31}} 1{start:intvector{1,1,1}}}}
+    japanese{
+      eras{
+        232{start:intvector{1868,10,23}}
+        233{start:intvector{1912,7,30}}
+        234{start:intvector{1926,12,25}}
+        235{start:intvector{1989,1,8}}
+        236{start:intvector{2019,5,1}}
+        237{named{"false"} start:intvector{2031,1,1}}
+      }
+      inheritEras{"gregorian"}
+    }
+  }
+  calendarPreferenceData{001:array{"gregorian"}}
+  timeData{001{allowed:array{"H","h"} preferred{"H"}}}
+  weekData{001:intvector{2,1,7,0,1,86400000}}
+  idValidity{ region{ macroregion{ "001~3", "005", "009", "011", "013~5", "017~9", "021", "029", "030", "034~5", "039", "053~4", "057", "061", "142~3", "145", "150~1", "154~5", "202", "419", "EU", "EZ", "QO", "UN" } } }
+}
+-- time-and-zone-letters/de.txt --
+de{
+  calendar{
+    gregorian{
+      DateTimePatterns:array{"h:mm:ss B","h:mm B","h b","h BBBB","EEEE, d MMMM y","d MMMM y","d MMM y","y-MM-dd","{1} {0}","{1} {0}","{1} {0}","{1} {0}","{1} {0}"}
+      dayPeriod{
+        format{abbreviated{morning1{"früh"} noon{"mittags"} night1{"nachts"}} wide{night1{"in der Nacht"}}}
+      }
+    }
+  }
+}
+-- time-and-zone-letters/en.txt --
+en{
+  calendar{
+    gregorian{
+      DateTimePatterns:array{"HH:mm:ss zzzz","HH:mm:ss z","HH:mm:ss","HH:mm","Z ZZZZ ZZZZZ","V | VV | VVV | VVVV","X XX XXX XXXX XXXXX","x xx xxx xxxx xxxxx","{1} {0}","{1} {0}","{1} {0}","{1} {0}","{1} {0}"}
+    }
+  }
+}
+-- time-and-zone-letters/eo.txt --
+eo{
+  calendar{
+    gregorian{
+      DateTimePatterns:array{"A, ss.SSSSS","h:mm:ss b bbbb bbbbb","k K, hh b","h B BBBB BBBBB BBBBBB","EEEE, d MMMM y","d MMMM y","d MMM y","y-MM-dd","{1} {0}","{1} {0}","{1} {0}","{1} {0}","{1} {0}"}
+      AmPmMarkers:array{"atm","ptm"}
+      AmPmMarkersAbbr:array{"a.","p."}
+      dayPeriod{format{abbreviated{noon{"tagm."}} wide{noon{"tagmezo"}}}}
+    }
+  }
+}
+-- title-casing/az.txt --
+az{
+    contextTransforms{
+        languages:intvector{ 1, 1 }
+    }
+}
+-- title-casing/de.txt --
+de{
+    contextTransforms{
+        languages:intvector{ 1, 1 }
+    }
+}
+-- title-casing/el.txt --
+el{
+    contextTransforms{
+        languages:intvector{ 1, 1 }
+    }
+}
+-- title-casing/hy.txt --
+hy{
+    contextTransforms{
+        languages:intvector{ 1, 1 }
+    }
+}
+-- title-casing/lang/az.txt --
+az{
+    Languages{
+        qa{"ingilis"}
+    }
+}
+-- title-casing/lang/de.txt --
+de{
+    Languages{
+        qa{"ijs"}
+        qb{"ßa"}
+        qc{"ǆa"}
+        qd{"ﬃ"}
+        qe{"և"}
+    }
+}
+-- title-casing/lang/el.txt --
+el{
+    Languages{
+        qa{"άλφα"}
+        qb{"ᾳδω"}
+        qc{"ΐ"}
+        qd{"ελληνικά; άλφα"}
+    }
+}
+-- title-casing/lang/hy.txt --
+hy{
+    Languages{
+        qa{"և"}
+        qb{"ևա"}
+        qc{"հայերեն"}
+        qd{"ﬓա"}
+    }
+}
+-- title-casing/lang/lt.txt --
+lt{
+    Languages{
+        qa{"i\u0307\u0301s"}
+        qb{"įžanga"}
+    }
+}
+-- title-casing/lang/nl.txt --
+nl{
+    Languages{
+        is{"ijslands"}
+        qa{"íj\u0301s"}
+        qb{"i\u0301j\u0301s"}
+        qc{"ij\u0301s"}
+        qd{"íjs"}
+        qe{"ij"}
+        qf{"iJs"}
+        qg{"ijs. ijs"}
+        qh{"indonesisch"}
+        qi{"ij\u0308"}
+    }
+}
+-- title-casing/lang/tr.txt --
+tr{
+    Languages{
+        qa{"ingilizce"}
+        qb{"ırak"}
+        qc{"çince. italyanca"}
+    }
+}
+-- title-casing/lt.txt --
+lt{
+    contextTransforms{
+        languages:intvector{ 1, 1 }
+    }
+}
+-- title-casing/nl.txt --
+nl{
+    contextTransforms{
+        languages:intvector{ 1, 1 }
+    }
+}
+-- title-casing/tr.txt --
+tr{
+    contextTransforms{
+        languages:intvector{ 1, 1 }
+    }
+}
+-- title-casing-rules/make.sh --
+mkdir -p icudt79l
+genrb -q -e UTF-8 -s . -d icudt79l lt.txt
+genrb -q -e UTF-8 -s . -d icudt79l nl.txt
+genrb -q -e UTF-8 -s . -d icudt79l en.txt
+mkdir -p icudt79l/lang
+genrb -q -e UTF-8 -s lang -d icudt79l/lang lt.txt
+genrb -q -e UTF-8 -s lang -d icudt79l/lang nl.txt
+genrb -q -e UTF-8 -s lang -d icudt79l/lang en.txt
+mkdir -p icudt79l/brkitr
+genbrk -q -r sent.txt -o icudt79l/brkitr/sent.brk
+-- title-casing-rules/en.txt --
+en{
+    contextTransforms{
+        languages:intvector{ 1, 1 }
+    }
+}
+-- title-casing-rules/lang/en.txt --
+en{
+    Languages{
+        qa{"one two three"}
+        qb{"i\u0307s"}
+    }
+}
+-- title-casing-rules/lang/lt.txt --
+lt{
+    Languages{
+        qa{"i\u0307s"}
+        qb{"j\u0307 i\u0307"}
+        qc{"a\u0307b"}
+        qd{"i\u0328\u0307"}
+        qe{"vienas du"}
+    }
+}
+-- title-casing-rules/lang/nl.txt --
+nl{
+    Languages{
+        qa{"ijs ijs"}
+        qb{"ij\u0301s ijs"}
+        qc{"een ijsje"}
+    }
+}
+-- title-casing-rules/lt.txt --
+lt{
+    contextTransforms{
+        languages:intvector{ 1, 1 }
+    }
+}
+-- title-casing-rules/nl.txt --
+nl{
+    contextTransforms{
+        languages:intvector{ 1, 1 }
+    }
+}
+-- title-casing-rules/sent.txt --
+﻿$Part = [^\ \u0307];
+$Part* [\ ]?;
+[\u0307] $Part* [\ ]?;
+-- unit-aliases/metadata.txt --
+metadata:table(nofallback){
+    alias{
+        language{
+        }
+        script{
+        }
+        subdivision{
+        }
+        territory{
+        }
+        unit{
+            acre-per-day{
+                replacement{"square-meter-per-day"}
+            }
+            byte-per-day{
+                replacement{"kibibyte-per-day"}
+            }
+            liter-per-day{
+                replacement{"cubic-decimeter-per-100-kilometer"}
+            }
+            gram-per-day{
+                replacement{"gram-meter-per-square-second"}
+            }
+            bit-per-day{
+                replacement{"per-second"}
+            }
+            inch-per-day{
+                replacement{"pow4-meter"}
+            }
+            yard-per-day{
+                replacement{"permille"}
+            }
+            mile-per-day{
+                replacement{"kilometer-per-hour"}
+            }
+        }
+        variant{
+        }
+    }
+}
+-- unit-names/grammaticalFeatures.txt --
+grammaticalFeatures:table(nofallback){
+    grammaticalData{
+        derivations{
+            eo{
+                component{
+                    case{
+                        per{"genitive", "accusative"}
+                    }
+                }
+                compound{
+                    gender{
+                        per{"0"}
+                    }
+                }
+            }
+        }
+    }
+}
+-- unit-names/unit/eo.txt --
+eo{
+    units{
+        compound{
+            per{"{0} po {1}"}
+        }
+        duration{
+            day{
+                case{
+                    accusative{
+                        one{"{0} tagon"}
+                        other{"{0} tagojn"}
+                    }
+                }
+                gender{"neuter"}
+                one{"{0} tago"}
+                other{"{0} tagoj"}
+            }
+            hour{
+                dnam{"horoj"}
+                other{"horoj: {0}"}
+                per{"{0} ĉiuhore"}
+            }
+        }
+        length{
+            foot:alias{"/LOCALE/units/length/meter"}
+            meter{
+                case{
+                    genitive{
+                        other{"da {0} metroj"}
+                    }
+                }
+                one{"unu metro"}
+                other{"{0} metroj"}
+            }
+        }
+    }
+    unitsNarrow{
+        compound{
+            per{"{1}⁻¹·{0}"}
+        }
+    }
+}
+-- week-data/de.txt --
+de{
+  calendar{
+    gregorian{
+      DateTimePatterns:array{"HH:mm:ss zzzz","HH:mm:ss z","HH:mm:ss","HH:mm","Y-'W'ww-e","W F c","YY w","y","{1} {0}","{1} {0}","{1} {0}","{1} {0}","{1} {0}"}
+    }
+  }
+}
+-- week-data/fr.txt --
+fr{
+  calendar{
+    gregorian{
+      DateTimePatterns:array{"HH:mm:ss zzzz","HH:mm:ss z","HH:mm:ss","HH:mm","Y-'W'ww-e","W F c","YY w","y","{1} {0}","{1} {0}","{1} {0}","{1} {0}","{1} {0}"}
+    }
+  }
+}
+-- week-data/supplementalData.txt --
+supplementalData:table(nofallback){
+  calendarData{gregorian{eras{0{end:intvector{0,12,31}} 1{start:intvector{1,1,1}}}}}
+  calendarPreferenceData{001:array{"gregorian"}}
+  timeData{001{allowed:array{"H","h"} preferred{"H"}}}
+  weekData{
+    001:intvector{4,7,6,43200000,1,86400000}
+    DE:intvector{1,1,6,0,6,43200000}
+    FR:intvector{7,4,7,0,2,43200000}
+    IT:intvector{2,2,3,0,5,86400000}
+  }
+  idValidity{ region{ macroregion{ "001~3", "005", "009", "011", "013~5", "017~9", "021", "029", "030", "034~5", "039", "053~4", "057", "061", "142~3", "145", "150~1", "154~5", "202", "419", "EU", "EZ", "QO", "UN" } } }
+}
+-- zone-aliases/zoneinfo64.txt --
+zoneinfo64:table(nofallback){
+    More{
+        link:int{3}
+        name{"Europe/Paris"}
+        offsets:intvector{10800,0,14400,0}
+        region{"FR"}
+        rule:intvector{2,-31,-1,3600,2,9,-31,-1,3600,2,1800}
+        times:intvector{1000000000}
+        types:bin{"01"}
+        year:int{2010}
+        zone{
+            finalRaw:int{14400}
+            finalRule{"R"}
+            finalYear:alias{"zoneinfo64/More/year"}
+            trans:alias{"zoneinfo64/More/times"}
+            typeMap:alias{"zoneinfo64/More/types"}
+            typeOffsets:alias{"zoneinfo64/More/offsets"}
+        }
+    }
+    Names:array{"Etc/GMT","Etc/UTC","Etc/Unknown",:alias{"zoneinfo64/More/name"},"Europe/Rome","GMT","UTC"}
+    Regions:array{"001","001","001",:alias{"zoneinfo64/More/region"},"IT","001","001"}
+    Rules{ R:alias{"zoneinfo64/More/rule"} }
+    TZVersion{"2030c"}
+    Zones:array{
+        :table{ typeOffsets:intvector{0,0} }
+        :table{ typeOffsets:intvector{0,0} }
+        :table{ typeOffsets:intvector{0,0} }
+        :alias{"zoneinfo64/More/zone"}
+        :alias{"zoneinfo64/More/link"}
+        :int{0}
+        :int{1}
+    }
+}
+-- zone-formats/zone/eo.txt --
+eo{
+  zoneStrings{gmtFormat{"'UTC'{0} 'l''horo'"} hourFormat{"+H'h'mm;−H'h'mm"} regionFormat{"horo de {0}"}}
+}
+-- zone-formats/zone/fy.txt --
+fy{
+  zoneStrings{gmtFormat{"{0} GMT"} hourFormat{"+HHmm;-HHmm"}}
+}
+-- zone-formats/zone/ia.txt --
+ia{
+  Version{"1"}
+}
+-- zone-formats/zone/rm.txt --
+rm{
+  zoneStrings{hourFormat{"+HH:mm"}}
+}
+-- zone-formats/zone/root.txt --
+root{
+  zoneStrings{"Asia:Kolkata"{ec{"Kolkata"}} hourFormat{"+HH.mm;-HH.mm"}}
+}
+-- zone-name-folding/zone/de.txt --
+de{
+    zoneStrings{
+        "meta:Japan"{ lg{"Straße"} ls{"STRASSE"} }
+        "meta:China"{ lg{"ﬁx"} ls{"FIX"} }
+        "meta:India"{ lg{"ΐ"} ls{"Ι\u0308\u0301"} }
+        "meta:Korea"{ lg{"\U00010428a"} ls{"\U00010400A"} }
+        "meta:Moscow"{ lg{"İ"} ls{"i"} }
+        "meta:Singapore"{ lg{"ss"} ls{"ſ"} }
+        "meta:Peru"{ lg{"K"} ls{"\u212A"} }
+        "meta:Iran"{ lg{"a"} ls{"ab"} }
+    }
+}
+-- zone-places/make.sh --
+mkdir icudt79l
+genrb -q -e UTF-8 -s data -d icudt79l zoneinfo64.txt
+genrb -q -e UTF-8 -s zones -d zones zoneinfo64.txt
+-- zone-places/data/zoneinfo64.txt --
+zoneinfo64:table(nofallback){
+    Names:array{"Etc/GMT","Etc/UTC","Etc/Unknown","Europe/Paris","GMT","UTC"}
+    Regions:array{"001","001","001","FR","001","001"}
+    TZVersion{"2030a"}
+    Zones:array{
+        :table{ typeOffsets:intvector{0,0} }
+        :table{ typeOffsets:intvector{0,0} }
+        :table{ typeOffsets:intvector{0,0} }
+        :table{ typeOffsets:intvector{7200,0} }
+        :int{0}
+        :int{1}
+    }
+}
+-- zone-places/zones/zoneinfo64.txt --
+zoneinfo64:table(nofallback){
+    Names:array{"Etc/GMT","Etc/UTC","Etc/Unknown","Europe/Paris","GMT","UTC"}
+    Regions:array{"001","001","001","FR","001","001"}
+    TZVersion{"2030b"}
+    Zones:array{
+        :table{ typeOffsets:intvector{0,0} }
+        :table{ typeOffsets:intvector{0,0} }
+        :table{ typeOffsets:intvector{0,0} }
+        :table{ typeOffsets:intvector{10800,0} }
+        :int{0}
+        :int{1}
+    }
+}

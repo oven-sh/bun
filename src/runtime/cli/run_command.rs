@@ -1401,16 +1401,18 @@ impl Run<'_> {
             // `--redis-preconnect` is refused at start where `--trim` removed `Bun.redis`.
             let preconnect = || -> bun_jsc::JsResult<()> {
                 bun_removable_features::removable_body!(Valkey, Abort, {
+                    use crate::valkey_jsc::js_valkey::js;
                     let Some(bun_object) = global.to_js_value().get(global, "Bun")? else {
                         return Ok(());
                     };
                     let Some(redis) = bun_object.get(global, "redis")? else {
                         return Ok(());
                     };
-                    let Some(client) = crate::valkey_jsc::js_valkey::js::from_js(&redis) else {
-                        return Ok(());
-                    };
-                    client.do_connect(global, (&client).into());
+                    if let Some(wrapper) = js::from_js(&redis)
+                        && let Some(client) = js::ref_from_js(redis)
+                    {
+                        client.do_connect(global, (&wrapper).into());
+                    }
                     Ok(())
                 })
             };

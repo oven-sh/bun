@@ -2548,10 +2548,8 @@ impl BuildArtifact {
         )?;
 
         {
-            formatter.indent_inc();
-            // NOTE: reshaped for borrowck — scopeguard cannot reborrow
-            // `formatter` while it is also borrowed for the body; decrement
-            // after the block instead.
+            let mut indented = formatter.indented();
+            let formatter = &mut *indented;
 
             formatter.write_indent(writer)?;
             bun_core::write_pretty!(
@@ -2637,8 +2635,6 @@ impl BuildArtifact {
                     )?;
                 }
             }
-
-            formatter.indent_dec();
         }
         writer.write_str("\n")?;
         formatter.write_indent(writer)?;

@@ -25,6 +25,7 @@ import { BuildError } from "../../scripts/build/error.ts";
 import { Ninja, readManifest } from "../../scripts/build/ninja.ts";
 import { getProfile } from "../../scripts/build/profiles.ts";
 import { registerAllRules } from "../../scripts/build/rules.ts";
+import { cargoBuildInvocation } from "../../scripts/build/rust.ts";
 import { quote } from "../../scripts/build/shell.ts";
 import {
   depSource,
@@ -111,6 +112,8 @@ describe("which builds compile WebKit", () => {
     expect(prebuiltHasProgramObjects(cfg)).toBe(false);
     writeFileSync(join(source.destDir!, objects("testaot")), "");
     expect(prebuiltHasProgramObjects(cfg)).toBe(true);
+    const icuCode = ["lib/libicui18n.a", "lib/libicuuc.a"];
+    expect(webkit.provides(cfg).libs.filter(lib => lib.includes("icu"))).toEqual(["lib/libicudata.a"]);
     // The ICU of the tarball keeps its data compressed. The objects hold what reads it, which only has a weak reference.
     expect(
       jscPrograms(cfg).map(({ name, sources, libs, ldflags }) => [
@@ -123,11 +126,13 @@ describe("which builds compile WebKit", () => {
       ["jsc", "testaot"].map(name => [
         name,
         [join("deps", "WebKit", "programs", name, "OutOfMemory.cpp")],
-        [join(source.destDir!, objects(name))],
+        [objects(name), ...icuCode].map(lib => join(source.destDir!, lib)),
         "-Wl,--undefined=bun_icu_maybe_decompress",
       ]),
     );
-    expect(webkit.provides(cfg).files).toEqual(expect.arrayContaining([objects("jsc"), objects("testaot")]));
+    expect(webkit.provides(cfg).files).toEqual(
+      expect.arrayContaining([objects("jsc"), objects("testaot"), ...icuCode]),
+    );
     expect([webkitJSCPath(cfg), webkitTestAotPath(cfg)]).toEqual([join(buildDir, "jsc"), join(buildDir, "testaot")]);
   });
 
@@ -766,12 +771,19 @@ describe.skipIf(Bun.which(python) === null)("the graph of a checkout", () => {
     }
   });
 
-  test("the programs that use the ICU of a prebuilt WebKit read its data with Bun's decoder", () => {
+  test("only the programs link the code of the ICU of a prebuilt WebKit, and read its data with Bun's decoder", () => {
     using local = checkOut({}, checkout);
     const { cfg, short } = local;
     const saved = process.env.BUN_ICU_ROOT;
+    const rustFlags = () => cargoBuildInvocation(cfg).env.CARGO_ENCODED_RUSTFLAGS.split("\x1f");
     try {
+      delete process.env.BUN_ICU_ROOT;
+      expect(rustFlags()).toContain("--cfg=bun_system_icu");
       process.env.BUN_ICU_ROOT = join("/somewhere", "icu");
+      expect(rustFlags()).not.toContain("--cfg=bun_system_icu");
+      const icuLib = (name: string) => join("/somewhere", "icu", "lib", name);
+      expect((webkit.build(cfg) as DirectBuild).libs).toEqual([icuLib("libicudata.a")]);
+      for (const { libs } of jscPrograms(cfg)) expect(libs).toEqual([icuLib("libicui18n.a"), icuLib("libicuuc.a")]);
       const reading = jscPrograms(cfg).filter(program => program.rustCrates !== undefined);
       expect(
         reading.map(({ name, sources, rustCrates }) => [

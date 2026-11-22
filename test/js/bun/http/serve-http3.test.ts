@@ -302,6 +302,50 @@ test.skipIf(!isLinux).each(["0.0.0.0", "::"])(
   },
 );
 
+// On Linux a datagram has arrived when send() returns, so all servers have theirs in the same turn of the loop.
+test.concurrent.skipIf(!isLinux)("the servers of a process take turns at sending first", async () => {
+  const script = `
+    import { connect, QuicEndpoint } from "node:quic";
+    const hostname = "127.0.0.1";
+    const options = { port: 0, hostname, tls: ${JSON.stringify(tls)}, http3: true, http1: false, fetch() {} };
+    const ports = Array.from({ length: 3 }, () => Bun.serve(options).port);
+    // A version that is answered with Version Negotiation, and connection IDs of 8 bytes (RFC 9000 §6.1 and §15).
+    const packet = Buffer.alloc(1200, 8).fill(0xc0, 0, 1).fill(0x0a, 1, 5);
+    async function leaders(rounds) {
+      const first = new Set();
+      while (rounds-- && first.size < ports.length) {
+        const { promise, resolve, reject } = Promise.withResolvers();
+        const answers = [];
+        const data = (_, __, port) => ports.includes(port) && answers.push(port) === ports.length && resolve();
+        const socket = await Bun.udpSocket({ hostname, socket: { data, error: (_, error) => reject(error) } });
+        socket.sendMany(ports.flatMap(port => [packet, port, hostname]));
+        await promise;
+        socket.close();
+        first.add(answers[0]);
+      }
+      return first.size;
+    }
+    console.log("alone", await leaders(64));
+    const endpoint = new QuicEndpoint();
+    const session = await connect(hostname + ":" + ports[0], { endpoint, verifyPeer: "manual" });
+    await session.opened;
+    console.log("beside node:quic, whose events keep their order", await leaders(16));
+    await session.close();
+    await endpoint.close();
+    console.log("alone", await leaders(64));
+    process.exit(0);
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stderr: "inherit" });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toMatchInlineSnapshot(`
+    "alone 3
+    beside node:quic, whose events keep their order 1
+    alone 3
+    "
+  `);
+  expect(exitCode).toBe(0);
+});
+
 describe("Bun.serve HTTP/3", () => {
   test("basic GET", async () => {
     await withServer(async port => {

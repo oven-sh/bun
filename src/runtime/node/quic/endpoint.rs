@@ -21,7 +21,7 @@ use bun_quic::{
     PreferredAddress, Side, TokenBucket, Unrouted, Version,
 };
 use bun_uws as uws;
-use bun_uws::quic::drivers::{Driver, Registration};
+use bun_uws::quic::drivers::{Driver, Order, Registration};
 use bun_uws::quic::io::{Binding, Outbox, now, or_loopback};
 
 use crate::jsc_hooks::timer_all;
@@ -835,8 +835,11 @@ impl QuicEndpoint {
         self.binding.set(Some(binding));
         self.local_addr.set(Some(binding.address));
         let driver = Rc::new(LoopDriver(BackRef::new(self)));
-        let registration =
-            Registration::new(uws::Loop::get(), Rc::<LoopDriver>::downgrade(&driver));
+        let registration = Registration::new(
+            uws::Loop::get(),
+            Rc::<LoopDriver>::downgrade(&driver),
+            Order::Fixed,
+        );
         self.driver.set(Some((driver, registration)));
         self.with_state(|s| {
             s.bound = 1;

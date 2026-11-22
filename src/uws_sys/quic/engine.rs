@@ -14,7 +14,7 @@ use bun_quic::{
 };
 use bun_quic_tls::BoringSsl;
 
-use super::drivers::{Driver, Registration};
+use super::drivers::{Driver, Order, Registration};
 use super::io::{Binding, Outbox, now};
 use crate::{Loop, udp};
 
@@ -118,7 +118,7 @@ impl Engine {
     ) -> Self {
         Self {
             loop_,
-            registration: Registration::new(loop_, owner),
+            registration: Registration::new(loop_, owner, Order::Any),
             accepted,
             endpoint: RefCell::new(Endpoint::new(&BoringSsl)),
             outbox: RefCell::default(),

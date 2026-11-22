@@ -377,6 +377,16 @@ describe("FormData", () => {
         expect(file.name).toBe("a.txt");
         expect(await file.text()).toBe("hello");
       });
+
+      it(`${C.name}: file part keeps its Content-Type over the filename's extension`, async () => {
+        const body =
+          `--${boundary}\r\n` +
+          `Content-Disposition: form-data; name="f"; filename="cover.png"\r\n` +
+          `Content-Type: text/html\r\n\r\n` +
+          `<p>\r\n--${boundary}--\r\n`;
+        const file = (await make(body).formData()).get("f") as File;
+        expect({ name: file.name, type: file.type }).toEqual({ name: "cover.png", type: "text/html" });
+      });
     }
   });
 

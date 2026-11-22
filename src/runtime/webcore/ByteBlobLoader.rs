@@ -1,4 +1,5 @@
 use core::cell::Cell;
+use core::sync::atomic::{AtomicUsize, Ordering};
 
 use bun_collections::VecExt;
 use bun_jsc::{JSGlobalObject, JSValue, JsCell, JsResult};
@@ -15,6 +16,8 @@ pub struct ByteBlobLoader {
     pub(crate) chunk_size: blob::SizeType,
     pub(crate) remain: Cell<blob::SizeType>,
     pub(crate) done: Cell<bool>,
+    /// The size of `store` while no other object holds it (`count_store`), which the collector counts as this object's. A marking thread reads it, and only as a hint, so every access is relaxed.
+    counted_store: AtomicUsize,
 
     /// https://github.com/oven-sh/bun/issues/14988
     /// Necessary for converting a ByteBlobLoader from a Blob -> back into a Blob
@@ -30,6 +33,7 @@ impl Default for ByteBlobLoader {
             chunk_size: 1024 * 1024 * 2,
             remain: Cell::new(1024 * 1024 * 2),
             done: Cell::new(false),
+            counted_store: AtomicUsize::new(0),
             content_type: JsCell::new(blob::BlobContentType::default()),
         }
     }
@@ -110,6 +114,10 @@ impl readable_stream::SourceContext for ByteBlobLoader {
         0
     }
 
+    fn estimated_size_fn(&self) -> usize {
+        self.counted_store.load(Ordering::Relaxed)
+    }
+
     fn to_buffered_value(
         &self,
         cx: &bun_jsc::JsThread<'_>,
@@ -153,8 +161,15 @@ impl ByteBlobLoader {
             .min(1024 * 1024 * 2),
             remain: Cell::new(size),
             done: Cell::new(false),
+            counted_store: AtomicUsize::new(0),
             content_type: JsCell::new(content_type),
         }
+    }
+
+    /// No other object holds `store`, so its bytes count as this object's until it lets go of them.
+    pub(crate) fn count_store(&self) {
+        let size = self.store.get().as_ref().map_or(0, |store| store.size());
+        self.counted_store.store(size as usize, Ordering::Relaxed);
     }
 
     /// The bytes `drain_internal_buffer` and `on_pull` have yet to hand over.
@@ -199,7 +214,7 @@ impl ByteBlobLoader {
     }
 
     pub(crate) fn detach_store(&self) -> Option<RefPtr<Store>> {
-        if let Some(store) = self.store.take() {
+        if let Some(store) = self.take_store() {
             self.done.set(true);
             return Some(store);
         }
@@ -209,9 +224,15 @@ impl ByteBlobLoader {
     fn clear_data(&self) {
         self.content_type.set(blob::BlobContentType::default());
 
-        if let Some(store) = self.store.take() {
+        if let Some(store) = self.take_store() {
             drop(store); // store.deref()
         }
+    }
+
+    /// The store leaves, and with it its count.
+    fn take_store(&self) -> Option<RefPtr<Store>> {
+        self.counted_store.store(0, Ordering::Relaxed);
+        self.store.take()
     }
 }
 

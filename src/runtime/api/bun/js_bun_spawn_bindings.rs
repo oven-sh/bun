@@ -1150,7 +1150,8 @@ fn spawn_maybe_sync(
     let subprocess_ref = bun_ptr::RefPtr::new(SubprocessT {
         global_this: bun_ptr::BackRef::new(cx.global()),
         process,
-        pid_rusage: Cell::new(None),
+        parked_output: core::sync::atomic::AtomicUsize::new(0),
+        pid_rusage: Cell::new(bun_core::ffi::zeroed()),
         // stdin/stdout/stderr are assigned immediately after this literal.
         // `Writable.init()` writes to `subprocess.weak_file_sink_stdin_ptr`,
         // `subprocess.flags` and `subprocess.stdin_sink_ref` for `.pipe` /

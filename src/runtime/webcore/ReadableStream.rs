@@ -510,13 +510,25 @@ impl ReadableStream {
         })
     }
 
+    /// A stream of `bytes`, which no other object holds: the collector counts them as the source's. Their last
+    /// owner has reported them, so they are not reported as new.
     pub(crate) fn from_owned_slice(
         cx: &bun_jsc::JsThread<'_>,
-        bytes: impl Into<Vec<u8>>,
+        bytes: Vec<u8>,
         recommended_chunk_size: webcore::blob::SizeType,
     ) -> JsResult<JSValue> {
-        let blob = Blob::init(bytes.into(), cx.global());
-        Self::from_blob_copy_ref(cx, &blob, recommended_chunk_size)
+        if bytes.is_empty() {
+            return ReadableStream::empty(cx.global());
+        }
+        let blob = Blob::init(bytes, cx.global());
+        let source = RefPtr::new(NewSource {
+            global_this: Cell::new(Some(bun_ptr::BackRef::new(cx.global()))),
+            context: ByteBlobLoader::new(&blob, recommended_chunk_size),
+            ..Default::default()
+        });
+        let source = NewSource::wrap(source, cx);
+        source.context.count_store();
+        ReadableStream::from_native(cx.global(), source.to_js())
     }
 
     pub fn from_blob_copy_ref(
@@ -808,6 +820,11 @@ pub trait SourceContext: Sized {
 
     /// `memoryCostFn` — default returns 0.
     fn memory_cost_fn(&self) -> usize {
+        0
+    }
+
+    /// The bytes the collector counts as the source's. A marking thread calls it, so it reads only an atomic.
+    fn estimated_size_fn(&self) -> usize {
         0
     }
 
@@ -1164,6 +1181,8 @@ impl<C: SourceContext> NewSource<C> {
         this: RefPtr<Self>,
         cx: &'a bun_jsc::JsThread<'_>,
     ) -> jsc::WrapperGuard<'a, Self> {
+        // The wrapper reports what the source counts when it is made: bytes that another object has reported are counted after.
+        debug_assert_eq!(this.context.estimated_size_fn(), 0);
         let this = C::js_wrap(this, cx.global());
         if let Some(context) = cx.vm().as_context_that_stops_early(cx.context()) {
             // SAFETY: the wrapper just made owns this heap allocation; the handle leaves its
@@ -1179,6 +1198,10 @@ impl<C: SourceContext> NewSource<C> {
 
     pub fn memory_cost(&self) -> usize {
         self.context.memory_cost_fn()
+    }
+
+    pub fn estimated_size(&self) -> usize {
+        self.context.estimated_size_fn()
     }
 
     // Teardown is folded into [`Self::decrement_count`]'s

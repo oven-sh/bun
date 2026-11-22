@@ -3,6 +3,7 @@
 
 use core::cell::Cell;
 use core::ptr::NonNull;
+use core::sync::atomic::{AtomicUsize, Ordering};
 
 use bun_ptr::{Attached, RefCount, RefPtr};
 
@@ -91,7 +92,10 @@ pub struct Subprocess<'a> {
     pub(crate) stdout: JsCell<Readable>,
     pub(crate) stderr: JsCell<Readable>,
     pub(crate) stdio_pipes: JsCell<Vec<StdioPipeItem>>,
-    pub(crate) pid_rusage: Cell<Option<Rusage>>,
+    /// The bytes of `stdout` and `stderr` whose read has ended, which the collector counts as this object's (`estimated_size`). A marking thread reads it, and only as a hint, so every access is relaxed.
+    pub(crate) parked_output: AtomicUsize,
+    /// Valid once `Flags::HAS_RUSAGE` is set.
+    pub(crate) pid_rusage: Cell<Rusage>,
 
     /// Terminal attached to this subprocess (if spawned with terminal option)
     pub(crate) terminal: Cell<Option<NonNull<Terminal>>>,
@@ -173,7 +177,12 @@ bitflags::bitflags! {
     #[derive(Clone, Copy, Default)]
     pub struct Flags: u8 {
         const IS_SYNC                      = 1 << 0;
+        const HAS_RUSAGE                   = 1 << 1;
         const HAS_STDIN_DESTRUCTOR_CALLED  = 1 << 2;
+        /// `on_process_exit` has told the script of the exit.
+        const EXIT_REPORTED                = 1 << 3;
+        /// `report_parked_output` has told JSC of the output that nobody read.
+        const OUTPUT_REPORTED              = 1 << 4;
         const IS_STDIN_A_READABLE_STREAM   = 1 << 5;
         /// Terminal was created inline by spawn (vs. an existing Terminal passed
         /// by the caller). Owned terminals are closed when the subprocess exits
@@ -235,14 +244,14 @@ impl Subprocess<'_> {
         global_object: &JSGlobalObject,
     ) -> JsResult<JSValue> {
         let rusage = 'brk: {
-            if let Some(r) = self.pid_rusage.get() {
-                break 'brk r;
+            if self.flags.get().contains(Flags::HAS_RUSAGE) {
+                break 'brk self.pid_rusage.get();
             }
 
             #[cfg(windows)]
             {
                 if let Some(r) = self.process.rusage() {
-                    self.pid_rusage.set(Some(r));
+                    self.set_rusage(r);
                     break 'brk r;
                 }
             }
@@ -250,6 +259,11 @@ impl Subprocess<'_> {
             return Ok(JSValue::UNDEFINED);
         };
         Ok(ResourceUsage { rusage }.to_js(global_object))
+    }
+
+    fn set_rusage(&self, rusage: Rusage) {
+        self.pid_rusage.set(rusage);
+        self.update_flags(|f| f.insert(Flags::HAS_RUSAGE));
     }
 
     pub(crate) fn has_exited(&self) -> bool {
@@ -301,6 +315,7 @@ impl Subprocess<'_> {
             let global_this = self.global_this;
             self.this_value.with_mut(|v| v.upgrade(global_this.get()));
         } else {
+            self.report_parked_output();
             self.this_value.with_mut(|v| v.downgrade());
         }
     }
@@ -345,6 +360,8 @@ impl Subprocess<'_> {
             .find(|out| matches!(out.get(), Readable::Pipe(pipe) if core::ptr::eq(pipe.as_ptr(), reader)))
             .expect("We should be either stdout or stderr")
             .set(output);
+
+        self.update_parked_output();
 
         // When the process exits before its stdout/stderr pipes have finished
         // draining, onProcessExit's deferred updateHasPendingActivity() observes
@@ -398,9 +415,7 @@ impl Subprocess<'_> {
         }
         self.observable_getters
             .set(self.observable_getters.get() | ObservableGetter::Stderr);
-        let exited = self.has_exited();
-        // The stream is the script's that reads the property.
-        self.stderr.with_mut(|s| s.to_js(&cx.js_thread(), exited))
+        self.output_to_js(&self.stderr, cx)
     }
 
     pub(crate) fn get_stdin(self: &RefPtr<Self>, cx: &mut JsScope<'_>) -> JSValue {
@@ -425,9 +440,46 @@ impl Subprocess<'_> {
         // NOTE: ownership of internal buffers is transferred to the JSValue, which
         // gets cached on JSSubprocess (created via bindgen). This makes it
         // re-accessable to JS code but not via `self.stdout`, which is now `.closed`.
+        self.output_to_js(&self.stdout, cx)
+    }
+
+    /// `stdout` or `stderr` as the script reads it. Output that was parked here is the stream's from now on, and so is its count.
+    fn output_to_js(&self, output: &JsCell<Readable>, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         let exited = self.has_exited();
         // The stream is the script's that reads the property.
-        self.stdout.with_mut(|s| s.to_js(&cx.js_thread(), exited))
+        let stream = output.with_mut(|s| s.to_js(&cx.js_thread(), exited));
+        self.update_parked_output();
+        stream
+    }
+
+    /// Stores what `stdout` and `stderr` hold now that one of them changed.
+    fn update_parked_output(&self) {
+        let parked = self.stdout.get().parked_len() + self.stderr.get().parked_len();
+        self.parked_output.store(parked, Ordering::Relaxed);
+    }
+
+    /// For the collector, on a marking thread.
+    pub(crate) fn estimated_size(&self) -> usize {
+        self.parked_output.load(Ordering::Relaxed)
+    }
+
+    /// Nothing native keeps the wrapper alive. From here on only a collection frees output that nobody read, and JSC
+    /// schedules one from the bytes it knows of. It is not told before the script has heard of the exit: most scripts
+    /// read the output then. This can collect.
+    fn report_parked_output(&self) {
+        let flags = self.flags.get();
+        if !flags.contains(Flags::EXIT_REPORTED) || flags.contains(Flags::OUTPUT_REPORTED) {
+            return;
+        }
+        self.update_flags(|f| f.insert(Flags::OUTPUT_REPORTED));
+        let parked = self.parked_output.load(Ordering::Relaxed);
+        if parked > 0
+            && let Some(this_value) = self.this_value.get().try_get()
+        {
+            self.global_this()
+                .vm()
+                .report_extra_memory_allocated(this_value, parked);
+        }
     }
 
     pub(crate) fn async_dispose(
@@ -684,7 +736,7 @@ impl Subprocess<'_> {
         let global_this = global_this.get();
         let jsc_vm = global_this.bun_vm();
         this_jsvalue.ensure_still_alive();
-        self.pid_rusage.set(Some(*rusage));
+        self.set_rusage(*rusage);
         let is_sync = self.flags.get().contains(Flags::IS_SYNC);
         self.clear_abort_signal();
 
@@ -874,6 +926,9 @@ impl Subprocess<'_> {
         if let Some(ipc_data) = self.ipc() {
             ipc_data.close_after_exit();
         }
+        // A script that reads the output as it hears of the exit has done so: what is left is reported once nothing holds the wrapper.
+        self.update_flags(|f| f.insert(Flags::EXIT_REPORTED));
+        self.update_has_pending_activity();
     }
 
     fn close_io(&self, io: StdioKind) {

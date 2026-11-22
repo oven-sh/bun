@@ -39,6 +39,13 @@ impl Readable {
     pub(crate) fn memory_cost(&self) -> usize {
         match self {
             Readable::Pipe(pipe) => mem::size_of::<PipeReader>() + pipe.memory_cost(),
+            _ => self.parked_len(),
+        }
+    }
+
+    /// The bytes of an output whose read has ended. A read in flight roots the wrapper, so no collection frees its bytes and they do not count.
+    pub(crate) fn parked_len(&self) -> usize {
+        match self {
             Readable::Buffer(buffer) | Readable::Errored(buffer, _) => buffer.len(),
             _ => 0,
         }

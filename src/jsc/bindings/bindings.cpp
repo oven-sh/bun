@@ -5736,7 +5736,13 @@ void JSC__VM__reportExtraMemory(JSC::VM* arg0, size_t arg1)
 void JSC__VM__reportExtraMemoryAllocated(JSC::VM* vm, JSC::EncodedJSValue encodedOwner, size_t size)
 {
     auto owner = JSC::JSValue::decode(encodedOwner);
-    vm->heap.reportExtraMemoryAllocated(owner.isCell() ? owner.asCell() : nullptr, size);
+    auto* cell = owner.isCell() ? owner.asCell() : nullptr;
+    auto& heap = vm->heap;
+    // JSC adds the growth of an owner it has marked to the heap's size only while the owner is black. An old owner that
+    // was stored into since is grey: its next visit is not its first, and only a first visit counts extra memory.
+    if (cell && cell->cellState() == JSC::CellState::PossiblyGrey && !heap.mutatorShouldBeFenced() && heap.isMarked(cell))
+        heap.reportExtraMemoryVisited(size);
+    heap.reportExtraMemoryAllocated(cell, size);
 }
 
 void JSC__VM__drainMicrotasks(JSC::VM* arg0)

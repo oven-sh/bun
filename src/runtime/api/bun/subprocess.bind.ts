@@ -28,6 +28,7 @@ export const Subprocess = b.class({
   finalize: true,
   thisValue: "this_value",
   memoryCost: true,
+  estimatedSize: true,
   internalFields: ["exitedPromise", "ipcCallback", "onDisconnectCallback", "onExitCallback", "terminal"],
   proto: {
     connected: { getter: b.bool },

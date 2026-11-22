@@ -49,6 +49,7 @@ const internalFields = ["pendingPromise", "closeAdapter", "owner", "sinkOwner"] 
 /** A Blob source never gets a native sink. */
 export const BlobInternalReadableStreamSource = b.class({
   ...source,
+  estimatedSize: true,
   rustPath: "crate::webcore::byte_blob_loader::Source",
   internalFields,
   proto: bufferedSource,
@@ -56,6 +57,7 @@ export const BlobInternalReadableStreamSource = b.class({
 
 export const FileInternalReadableStreamSource = b.class({
   ...source,
+  estimatedSize: true,
   rustPath: "crate::webcore::file_reader::Source",
   /** `lockedStream` is the stream `ReadableStream__lockNative` locked, which `NewSource::end_locked_stream` closes or errors. */
   internalFields: [...internalFields, "lockedStream"],

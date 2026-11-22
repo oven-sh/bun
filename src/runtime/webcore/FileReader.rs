@@ -1,11 +1,12 @@
 use core::cell::Cell;
+use core::sync::atomic::{AtomicUsize, Ordering};
 
 use bun_collections::VecExt;
 #[cfg(not(windows))]
 use bun_io::FileType;
 use bun_io::pipe_reader::ReaderFlags;
 use bun_io::{BufferedReader, Chunk, IoEvent, Owner, PollTag, ReadResult, ReadState};
-use bun_jsc::JsCell;
+use bun_jsc::{JsCell, JsCellRefExt as _};
 use bun_ptr::{OptionCellExt as _, RefPtr};
 use bun_sys::{self as sys, Fd};
 
@@ -37,6 +38,8 @@ pub struct FileReader {
     pub(crate) event_loop: Cell<EventLoopHandle>,
     pub(crate) lazy: JsCell<Lazy>,
     pub(crate) buffered: JsCell<Vec<u8>>,
+    /// The bytes of `buffered` if the reader ended before a consumer started, which the collector counts as this object's until one takes them. A marking thread reads it, and only as a hint, so every access is relaxed.
+    pub(crate) parked: AtomicUsize,
     /// A read error that arrived with no pending pull. The next `on_pull` returns it.
     pub(crate) read_error: JsCell<Option<sys::Error>>,
     /// Read-only after construction.
@@ -64,6 +67,7 @@ impl Default for FileReader {
             event_loop: Cell::new(EventLoopHandle::init(core::ptr::null_mut())),
             lazy: JsCell::new(Lazy::None),
             buffered: JsCell::new(Vec::new()),
+            parked: AtomicUsize::new(0),
             read_error: JsCell::new(None),
             highwater_mark: 16384,
             flowing: Cell::new(true),
@@ -367,7 +371,7 @@ impl FileReader {
         if self.reader.is_done() {
             self.consume_reader_buffer();
             if !self.buffered.get().is_empty() {
-                return streams::Start::OwnedAndDone(self.buffered.replace(Vec::new()));
+                return streams::Start::OwnedAndDone(self.take_buffered());
             }
         } else {
             #[cfg(unix)]
@@ -592,7 +596,7 @@ impl FileReader {
             .unwrap_or_default();
         let pending_buf = pending_array_buffer.slice_mut();
         let (result, ret) = if chunk.is_empty() {
-            let buffered = self.buffered.replace(Vec::new());
+            let buffered = self.take_buffered();
             let result = if buffered.is_empty() {
                 streams::Result::Done
             } else if pending_buf.len() >= buffered.len() {
@@ -638,7 +642,7 @@ impl FileReader {
 
     pub(crate) fn drain(&self) -> Vec<u8> {
         if !self.buffered.get().is_empty() {
-            return self.buffered.replace(Vec::new());
+            return self.take_buffered();
         }
 
         if self.reader.has_pending_read() {
@@ -646,6 +650,29 @@ impl FileReader {
         }
 
         self.reader.take_buffer()
+    }
+
+    /// A consumer takes `buffered`, and with it its count.
+    fn take_buffered(&self) -> Vec<u8> {
+        self.parked.store(0, Ordering::Relaxed);
+        self.buffered.replace(Vec::new())
+    }
+
+    /// The reader ended before a consumer started, so `buffered` holds all it read (a started one stops at the
+    /// highwater mark). Only a collection frees that if nobody reads the stream, and JSC schedules one from the bytes
+    /// it knows of. This can collect.
+    fn report_parked(&self) {
+        let parked = self.buffered.get().len();
+        let grown = parked.saturating_sub(self.parked.swap(parked, Ordering::Relaxed));
+        let source = self.parent_const();
+        if grown > 0
+            && let Some(wrapper) = source.this_jsvalue.try_get()
+        {
+            source
+                .global_this()
+                .vm()
+                .report_extra_memory_allocated(wrapper, grown);
+        }
     }
 
     fn consume_reader_buffer(&self) {
@@ -664,7 +691,7 @@ impl FileReader {
             self.consume_reader_buffer();
             if !self.sink_paused.get() {
                 self.detach_sink(None);
-                let buffered = self.buffered.replace(Vec::new());
+                let buffered = self.take_buffered();
                 if !buffered.is_empty() {
                     let _ = sink.write(&streams::Result::OwnedAndDone(buffered));
                 }
@@ -673,7 +700,7 @@ impl FileReader {
         } else {
             self.consume_reader_buffer();
             if self.pending.is_pending() {
-                let buffered = self.buffered.replace(Vec::new());
+                let buffered = self.take_buffered();
                 self.pending.run(if buffered.is_empty() {
                     streams::Result::Done
                 } else {
@@ -687,6 +714,8 @@ impl FileReader {
         // Only close the stream if there's no buffered data left to deliver
         if self.buffered.get().is_empty() {
             self.parent_const().on_close();
+        } else if !self.started.get() {
+            self.report_parked();
         }
         self.io_ref.set(None);
     }
@@ -917,6 +946,10 @@ impl readable_stream::SourceContext for FileReader {
     fn memory_cost_fn(&self) -> usize {
         // ReadableStreamSource covers @sizeOf(FileReader)
         self.reader.memory_cost() + self.buffered.get().capacity()
+    }
+
+    fn estimated_size_fn(&self) -> usize {
+        self.parked.load(Ordering::Relaxed)
     }
 }
 

@@ -630,6 +630,12 @@ impl Disk {
         }
     }
 
+    /// For a load that waits for something that may need the I/O threads, which it would hold meanwhile.
+    pub fn without_reader_threads(mut self) -> Self {
+        self.io_pool = None;
+        self
+    }
+
     /// As on a system where the threads that read files are not the threads that parse them.
     #[cfg(test)]
     pub(crate) fn with_reader_threads(mut self) -> Self {

@@ -2907,7 +2907,8 @@ describe.concurrent("Bun.build while another build waits for its plugins", () =>
   async function spawn(cmd: string[], cwd?: string) {
     await using proc = Bun.spawn({
       cmd,
-      env: bunEnv,
+      // As on macOS and Windows.
+      env: { ...bunEnv, BUN_FEATURE_FLAG_FORCE_IO_POOL: "1" },
       cwd,
       stdout: "pipe",
       stderr: "pipe",

@@ -6,7 +6,7 @@ planned by cargo and run by ninja (`scripts/build/rust.ts`, `scripts/build/rust/
 
 - `bun_core` (`src/bun_core/`) — strings, formatting, logging, env vars, allocator/heap helpers, the foundation everything else uses
 - `bun_sys` (`src/sys/`) — cross-platform syscall wrappers (`File`, `Fd`, `Dir`, `Error`)
-- `bun_paths` (`src/paths/`) — path joining/normalization, the path-buffer pool
+- `bun_paths` (`src/paths/`) — `Path`, `dirname` and friends, the path-buffer pool
 - `bun_jsc` (`src/jsc/`) — JSC value types, `Strong`/`Weak`, FFI imports
 - `bun_runtime` (`src/runtime/`) — JS-visible APIs (server, fetch, node compat, crypto)
 - `bun_js_parser`, `bun_js_printer`, `bun_resolver`, `bun_bundler`, `bun_install`, `bun_collections`, `bun_threading`, `bun_alloc` — the rest of the pipeline
@@ -33,7 +33,7 @@ or don't match the cross-platform behavior the runtime needs.
 | --------------------------------------- | ------------------------------------------------------------------------------------ |
 | `std::fs::File`                         | `bun_sys::File` (owns the fd; closes on `Drop`)                                      |
 | `std::fs::read` / `write`               | `bun_sys::File::read_from` / `File::create` + `write_all`                            |
-| `std::path::Path::join`                 | `bun_paths::resolve_path::join` / `join_string_buf`                                  |
+| `std::path::PathBuf` / `Path::join`     | `bun_paths::Path` (`push`, `join`, `resolve`)                                        |
 | `std::path::Path::parent`/`file_name`   | `bun_paths::dirname` / `bun_paths::basename`                                         |
 | `std::env::var`                         | `bun_core::env_var::*::get()` (typed + cached)                                       |
 | `String::from_utf8` for JS-visible strs | `bun_core::String::clone_utf8` / `StringView::borrow_utf8`                           |
@@ -214,38 +214,86 @@ strings::to_utf16_alloc(...)             // encoding conversions
 
 ## Paths (`bun_paths`)
 
-Path helpers operate on `&[u8]` and are platform-parameterized via the
-`Platform` const-generic (`Posix`, `Windows`, `Loose`, `Nt`; `platform::Auto`
-picks the host). Never use `std::path` for runtime path logic.
+Never use `std::path`. Build paths with `bun_paths::Path`. It has the syntax and the separator of the
+platform it runs on. It is NUL-terminated and derefs to `ZStr` (then `[u8]`), so `&path` goes straight
+into `bun_sys`. No content or length makes it panic.
 
 ```rust
-use bun_paths::{dirname, basename};
-use bun_paths::resolve_path::{self, platform};
+use bun_paths::Path;
 
-let dir  = dirname(path);                               // Option<&[u8]>
-let name = basename(path);                              // &[u8]
-let joined = resolve_path::join::<platform::Auto>(&[a, b]);   // &'static [u8] (threadlocal buf)
-let joined = resolve_path::join_string_buf::<platform::Auto>(&mut buf, &[a, b]);  // caller buf
-let rel    = resolve_path::relative(from, to);
+let json = Path::from_parts(&[dir, b"package.json"]); // dir + separator + name
+let abs  = Path::resolve(&[cwd, arg]);                // path.resolve
+let rel  = Path::relative(from, to);                  // path.relative
+
+let mut path = Path::from_top_level_dir();
+path.push(b"node_modules");
+for name in names {
+    bun_sys::unlink(&path.push_scoped(name))?;        // `name` is removed when the guard drops
+}
+write!(path, "-{hash:x}");                            // no separator; `push_fmt` adds one
 ```
 
-Use the path-buffer pool to avoid 64 KB stack allocations on Windows
-(`PathBuffer` is `[u8; PATH_MAX_BYTES]`, ~64 KB on Windows):
+| Type           | Storage      | When to use                                    |
+| -------------- | ------------ | ---------------------------------------------- |
+| `Path`         | heap         | default                                        |
+| `OSPath`       | heap         | with `OSPathSlice`, which is UTF-16 on Windows |
+| `StackPath<N>` | inline array | signal handlers, statics that must not move    |
 
-```rust
-use bun_paths::path_buffer_pool;
+They have the same methods, but `into_portable` and `add_current_drive` are not for `OSPath`. `StackPath`
+returns `Result<T, NameTooLong>` and is unchanged on `Err`. `from`, `set`, `extend_from_slice`, `prepend`
+and `write!` never allocate on it for `&[u8]`. The rest can. The others grow, and the
+syscall returns `ENAMETOOLONG`. Call `check_len()` where no syscall would say so, as with `exists`. They
+allocate 256 units or more: to store many paths, store `to_vec()` or `to_zbox()`.
 
-let mut buf = path_buffer_pool::get();        // PoolGuard<PathBuffer>, returns to pool on Drop
-let joined  = resolve_path::join_string_buf::<platform::Auto>(&mut *buf, &[a, b]);
-```
+- `from`, `set`, `extend_from_slice` and `prepend` copy as is.
+- `push` and `from_parts` add one separator, and trim the part's outer separators, a leading `./` and a
+  lone `.`. On an empty path a root and a lone `.` stay. `..` is kept, and an absolute part does not
+  replace the path.
+- `push_inside` resolves `.` and `..`, and `..` cannot leave the path it is pushed onto. It does not look
+  for a NUL.
+- `join`, `resolve` and `relative` are like Node's, but `resolve` does not fall back to the cwd, and on
+  Windows they read roots as Win32 does. `resolve` drops a trailing separator: `copy_trailing_sep_from`
+  puts it back, and `bun_resolver::resolve_keeping_sep` keeps only the platform's own. `resolve_in_place` uses the path as the first part. `bun_node_path` is `node:path`.
+- `push_scoped` and `save` truncate when the guard drops. Only append through the guard.
+- Arguments can be `&[u8]` or `&[u16]` and are transcoded (WTF-8/WTF-16), except for `relative` and
+  `prepend`.
 
-`bun_paths::os_path_buffer_pool` selects the wide (`u16`) variant on Windows
-and the narrow (`u8`) variant on POSIX.
+To inspect a slice use `bun_paths::{dirname, basename, extension, stem, components, ancestors,
+strip_prefix, climbs_out, without_trailing_sep}`. `strip_prefix(path, dir)` ends at a component: `/ab`
+is not in `/a`. It does not normalize. A share is `\\s\h\` (`dirname`, `join`, `resolve`) or `\\s\h` (the
+cwd, `without_trailing_sep`): two directories are equal if `strip_prefix(a, b) == Some(b"")`.
+
+On POSIX `\` is part of a name. Only text that moves between platforms (package.json, tsconfig.json,
+lockfiles, bundles, hashes, URLs) needs a conversion, once, where it is read or written:
+
+| Text                                        | Call                                               |
+| ------------------------------------------- | -------------------------------------------------- |
+| JS APIs, syscall results, entry points      | nothing, unless it is written to such a file       |
+| read from a file                            | `from_portable(text)`: `\a` is `./a`               |
+| the same, where `\a` starts at the root     | `portable::from_portable_rooted(text)`: it is `/a` |
+| a glob                                      | nothing: `\` escapes                               |
+| written to a file, hashed, used as a URL    | `path.into_portable()`, `to_portable(slice)`       |
+| portable, and shown or compared with a path | `to_native(slice)`                                 |
+| untrusted, has to stay inside a directory   | reject `portable::climbs_out(text)`                |
+| an import specifier                         | `bun_resolver::path_of_specifier(specifier, kind)` |
+| an import specifier, read from a file       | `portable::from_portable_specifier(text)`          |
+| either a real name or portable text         | `bun_sys::existing_spelling(dir, path)`            |
+| a flag or variable that names an input      | `bun_sys::typed_spelling(base, path, convert)`     |
+| the same, for an output                     | `bun_sys::converted_spelling(path, convert)`       |
+| the same, for a cache or install directory  | `from_portable(text)`: what exists must not decide |
+
+The tool that defines a file decides what `\a` is in it: the root for `tsc` and in a URL, `./a` for npm's `bin`.
+The one glob that is converted is `packages\*` in "workspaces": `workspace_selection::workspaces_entry`.
+`convert` is `from_portable` or `from_portable_rooted`, and `base` is where the text was typed.
+`portable::climbs_out` goes with `from_portable`, not with `from_portable_rooted`. On Windows reject `:` too.
+
+For a buffer that the OS fills, use `path_buffer_pool::get()` or `w_path_buffer_pool::get()`, not the
+stack: a `PathBuffer` is 96 KB on Windows.
 
 ## URL Parsing (`bun_url::whatwg`)
 
 WHATWG-compliant, backed by WebKit's URL parser. `Parsed` owns the C++
-`WTF::URL` (freed on `Drop`) and derefs to `URL` for the getters; parsing
+`WTF::URL` (released on `Drop`) and derefs to `URL` for the getters; parsing
 returns `None` for invalid input. `bun_jsc::url` re-exports both; the
 JS-value entry point (`URL::href_from_js`) comes from the `bun_jsc::URLJsc`
 trait.
@@ -255,9 +303,9 @@ use bun_url::whatwg::Parsed;
 
 let url: Parsed = Parsed::from_utf8(href)?;       // or Parsed::from_string(&bun_string)?
 
-url.protocol()   // bun_core::String
-url.pathname()   // bun_core::String
-url.host()       // bun_core::String — the hostname WITHOUT the port (opposite of JS `host`!)
+url.protocol()   // EncodedSlice<'_>, borrowed from `url`
+url.pathname()   // EncodedSlice<'_>
+url.host()       // EncodedSlice<'_> — the hostname WITHOUT the port (opposite of JS `host`!)
 url.hostname()   // bun_core::String — the host WITH the port (opposite of JS `hostname`!)
 url.port()       // u32 (u32::MAX = unset; otherwise u16 range)
 ```

@@ -660,8 +660,7 @@ fn add_script_configs<V: core::ops::Deref<Target = [u8]>>(
         // If it looks like a file path, prefix with bun executable
         let is_file = !raw_name.is_empty()
             && (raw_name[0] == b'.'
-                || raw_name[0] == b'/'
-                || (cfg!(windows) && raw_name[0] == b'\\')
+                || bun_paths::is_sep(raw_name[0])
                 || has_runnable_extension(raw_name));
         let command_z: Box<[u8]> = if is_file {
             let bun_path: &[u8] = bun::self_exe_path().map(|z| z.as_bytes()).unwrap_or(b"bun");

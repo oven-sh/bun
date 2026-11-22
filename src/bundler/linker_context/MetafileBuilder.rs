@@ -464,7 +464,7 @@ pub(crate) fn generate(c: &LinkerContext, chunks: &[Chunk]) -> crate::Result<Box
         &chunks[0],
         chunks,
         None, // no display size
-        ReferencePathStyle::ImporterRelative,
+        ReferencePathStyle::Metafile,
         SourceMapShiftTracking::Disabled,
     )?;
 
@@ -935,14 +935,8 @@ pub fn generate_markdown(metafile_json: &[u8]) -> crate::Result<Box<[u8]>> {
                                     for (input_key, _) in inputs_obj.iter() {
                                         // Check if target ends with the input key
                                         if target.ends_with(input_key) {
-                                            // Make sure it's a path boundary (preceded by / or \ or start)
-                                            if target.len() == input_key.len()
-                                                || (target.len() > input_key.len()
-                                                    && (target[target.len() - input_key.len() - 1]
-                                                        == b'/'
-                                                        || target
-                                                            [target.len() - input_key.len() - 1]
-                                                            == b'\\'))
+                                            let before = &target[..target.len() - input_key.len()];
+                                            if (before.last()).is_none_or(|&b| bun_paths::is_sep(b))
                                             {
                                                 matched_key = Some(input_key);
                                                 break;

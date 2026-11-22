@@ -209,21 +209,19 @@ impl Response {
 
     pub(crate) fn on_writable<UD, H>(&mut self, _handler: H, ud: *mut UD)
     where
-        H: Fn(&mut UD, u64, &mut Response) -> bool + Copy + 'static,
+        H: Fn(*mut UD, u64, &mut Response) -> bool + Copy + 'static,
     {
         // Safe fn item: nested local thunk, only coerced to the C-ABI
         // fn-pointer type passed to C; body wraps its raw-ptr ops explicitly.
         extern "C" fn cb<UD, H>(r: *mut Response, off: u64, p: *mut c_void) -> bool
         where
-            H: Fn(&mut UD, u64, &mut Response) -> bool + Copy + 'static,
+            H: Fn(*mut UD, u64, &mut Response) -> bool + Copy + 'static,
         {
-            // SAFETY: uWS callback contract — `r` live, `p` is the registered `*mut UD`.
-            unsafe {
-                let Some(ud) = thunk::user_mut::<UD>(p) else {
-                    return true;
-                };
-                thunk::zst::<H>()(ud, off, thunk::handle_mut(r))
+            if p.is_null() {
+                return true;
             }
+            // SAFETY: uWS callback contract — `r` is live for the call.
+            unsafe { thunk::zst::<H>()(p.cast::<UD>(), off, thunk::handle_mut(r)) }
         }
         c::uws_h3_res_on_writable(self, Some(cb::<UD, H>), ud.cast())
     }
@@ -232,21 +230,19 @@ impl Response {
     }
     pub(crate) fn on_aborted<UD, H>(&mut self, _handler: H, ud: *mut UD)
     where
-        H: Fn(&mut UD, &mut Response) + Copy + 'static,
+        H: Fn(*mut UD, &mut Response) + Copy + 'static,
     {
         // Safe fn item: nested local thunk, only coerced to the C-ABI
         // fn-pointer type passed to C; body wraps its raw-ptr ops explicitly.
         extern "C" fn cb<UD, H>(r: *mut Response, p: *mut c_void)
         where
-            H: Fn(&mut UD, &mut Response) + Copy + 'static,
+            H: Fn(*mut UD, &mut Response) + Copy + 'static,
         {
-            // SAFETY: uWS callback contract — `r` live, `p` is the registered `*mut UD`.
-            unsafe {
-                let Some(ud) = thunk::user_mut::<UD>(p) else {
-                    return;
-                };
-                thunk::zst::<H>()(ud, thunk::handle_mut(r));
+            if p.is_null() {
+                return;
             }
+            // SAFETY: uWS callback contract — `r` is live for the call.
+            unsafe { thunk::zst::<H>()(p.cast::<UD>(), thunk::handle_mut(r)) }
         }
         c::uws_h3_res_on_aborted(self, Some(cb::<UD, H>), ud.cast())
     }
@@ -255,21 +251,19 @@ impl Response {
     }
     pub fn on_timeout<UD, H>(&mut self, _handler: H, ud: *mut UD)
     where
-        H: Fn(&mut UD, &mut Response) + Copy + 'static,
+        H: Fn(*mut UD, &mut Response) + Copy + 'static,
     {
         // Safe fn item: nested local thunk, only coerced to the C-ABI
         // fn-pointer type passed to C; body wraps its raw-ptr ops explicitly.
         extern "C" fn cb<UD, H>(r: *mut Response, p: *mut c_void)
         where
-            H: Fn(&mut UD, &mut Response) + Copy + 'static,
+            H: Fn(*mut UD, &mut Response) + Copy + 'static,
         {
-            // SAFETY: uWS callback contract — `r` live, `p` is the registered `*mut UD`.
-            unsafe {
-                let Some(ud) = thunk::user_mut::<UD>(p) else {
-                    return;
-                };
-                thunk::zst::<H>()(ud, thunk::handle_mut(r));
+            if p.is_null() {
+                return;
             }
+            // SAFETY: uWS callback contract — `r` is live for the call.
+            unsafe { thunk::zst::<H>()(p.cast::<UD>(), thunk::handle_mut(r)) }
         }
         c::uws_h3_res_on_timeout(self, Some(cb::<UD, H>), ud.cast())
     }
@@ -278,7 +272,7 @@ impl Response {
     }
     pub(crate) fn on_data<UD, H>(&mut self, _handler: H, ud: *mut UD)
     where
-        H: Fn(&mut UD, &mut Response, &[u8], bool) + Copy + 'static,
+        H: Fn(*mut UD, &mut Response, &[u8], bool) + Copy + 'static,
     {
         // Safe fn item: nested local thunk, only coerced to the C-ABI
         // fn-pointer type passed to C; body wraps its raw-ptr ops explicitly.
@@ -289,16 +283,15 @@ impl Response {
             last: bool,
             p: *mut c_void,
         ) where
-            H: Fn(&mut UD, &mut Response, &[u8], bool) + Copy + 'static,
+            H: Fn(*mut UD, &mut Response, &[u8], bool) + Copy + 'static,
         {
-            // SAFETY: uWS callback contract — `r` live, `chunk_ptr[..len]` valid,
-            // `p` is the registered `*mut UD`.
+            if p.is_null() {
+                return;
+            }
+            // SAFETY: uWS callback contract — `r` live and `chunk_ptr[..len]` valid for the call.
             unsafe {
-                let Some(ud) = thunk::user_mut::<UD>(p) else {
-                    return;
-                };
                 thunk::zst::<H>()(
-                    ud,
+                    p.cast::<UD>(),
                     thunk::handle_mut(r),
                     thunk::c_slice(chunk_ptr, len),
                     last,

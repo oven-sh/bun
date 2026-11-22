@@ -329,11 +329,11 @@ pub(super) fn is_immutable(context: &Context<'_, '_>, binding: BindingRef) -> bo
             stored_slots.binary_search(&(scope, slot)).is_err()
         }
         ScopeSlot::Class(
-            ClassSlot::ClassObject
+            slot @ (ClassSlot::ClassObject
             | ClassSlot::ClassToken
             | ClassSlot::ComputedKey(_)
-            | ClassSlot::PrivateMethod(_),
-        ) => true,
+            | ClassSlot::PrivateMethod(_)),
+        ) => !class::is_filled_by_decorators(context.input.hir, slot),
         ScopeSlot::Class(ClassSlot::StaticField(_) | ClassSlot::DecoratorState) => false,
         _ => true,
     }

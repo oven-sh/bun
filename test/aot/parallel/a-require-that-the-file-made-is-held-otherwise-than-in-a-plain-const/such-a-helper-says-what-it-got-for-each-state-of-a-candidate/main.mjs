@@ -1,12 +1,15 @@
 import { createRequire } from "node:module";
-function see(moduleUrl, candidates) {
-  const require = createRequire(moduleUrl);
-  for (const candidate of candidates)
+function tell(here, places) {
+  const load = createRequire(here);
+  for (const place of places) {
+    let line = place + " ";
     try {
-      const got = require(candidate);
-      console.log("SAID", candidate, typeof got, JSON.stringify(got));
+      const got = load(place);
+      line += typeof got + " " + JSON.stringify(got);
     } catch (error) {
-      console.log("SAID", candidate, "threw", error.name);
+      line += "threw " + error.name;
     }
+    console.log("SAID", line);
+  }
 }
-see(import.meta.url, ["./there.json", "./nothing.json", "./blank.json", "./mark.json", "./broken.json", "./null.json", "./list.json"]);
+tell(import.meta.url, ["./there.json", "./nothing.json", "./blank.json", "./mark.json", "./broken.json", "./null.json", "./list.json"]);

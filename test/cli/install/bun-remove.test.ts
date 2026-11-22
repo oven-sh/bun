@@ -1,6 +1,6 @@
 import { file, spawn } from "bun";
 import { afterAll, beforeAll, expect, it } from "bun:test";
-import { chmodSync, existsSync, readdirSync, rmSync, statSync, symlinkSync, utimesSync } from "fs";
+import { chmodSync, existsSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, utimesSync } from "fs";
 import { mkdir, writeFile } from "fs/promises";
 import {
   bunExe,
@@ -571,6 +571,47 @@ for (const linker of ["hoisted", "isolated"] as const) {
       if (owner) expect(join(globalBin, "serve")).toBeValidBin(serveOf(owner));
       expect(exitCode).toBe(0);
     }
+  });
+
+  // On POSIX a `\` is part of a directory name: one `..` leads out of `a\b\c`. Windows has no such directory.
+  it.concurrent.skipIf(isWindows)(`bun add -g and bun remove -g in a bin dir named a\\b\\c (${linker})`, async () => {
+    const serve = (name: string) => ({
+      [`${name}/package.json`]: JSON.stringify({
+        name,
+        version: "1.0.0",
+        bin: { serve: "cli.js", [name]: "cli.js" },
+      }),
+      [`${name}/cli.js`]: `#!/usr/bin/env node\n// ${name}\n`,
+    });
+    using dir = tempDir(`bun-remove-global-backslash-bin-${linker}`, { ...serve("first"), ...serve("second") });
+    const bunInstall = join(String(dir), "global");
+    const globalDir = join(bunInstall, "install", "global");
+    const globalBin = join(bunInstall, "bin", "a\\b\\c");
+    const globalEnv = { BUN_INSTALL: bunInstall, BUN_INSTALL_GLOBAL_DIR: globalDir, BUN_INSTALL_BIN: globalBin };
+    const runGlobal = (...args: string[]) => runWithEnv(globalEnv, String(dir), ...args, "-g", "--linker", linker);
+    const cliOf = (name: string) => join("..", "..", "install", "global", "node_modules", name, "cli.js");
+    const read = (bin: string) => readFileSync(join(globalBin, bin), "utf8");
+
+    for (const name of ["first", "second"]) {
+      const { stderr, exitCode } = await runGlobal("add", join(String(dir), name));
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+    }
+    expect(readdirSync(globalBin).sort()).toStrictEqual(["first", "second", "serve"]);
+    expect(join(globalBin, "first")).toBeValidBin(cliOf("first"));
+    expect(join(globalBin, "serve")).toBeValidBin(cliOf("second"));
+    expect([read("first"), read("serve")]).toStrictEqual([
+      serve("first")["first/cli.js"],
+      serve("second")["second/cli.js"],
+    ]);
+
+    // The links of `second` are removed, and `first` gets `serve` back.
+    const { stderr, exitCode } = await runGlobal("remove", "second");
+    expect(stderr).not.toContain("error:");
+    expect(readdirSync(globalBin).sort()).toStrictEqual(["first", "serve"]);
+    expect(join(globalBin, "serve")).toBeValidBin(cliOf("first"));
+    expect(read("serve")).toBe(serve("first")["first/cli.js"]);
+    expect(exitCode).toBe(0);
   });
 
   it.concurrent(`bun add -g links the bin that another global package lost (${linker})`, async () => {

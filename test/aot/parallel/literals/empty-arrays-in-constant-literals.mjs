@@ -1,7 +1,7 @@
 // Empty arrays in constant literals of many members: each evaluation makes its own, whatever is stored into them.
 const out = [];
 const held = new Map(); const get = k => held.get(k);
-held.set("flags", () => ({ empty: false, tokens: [], input: [], overflow: -2, left: 0, nothing: null, month: undefined, format: "f", user: false, iso: false, parts: [], era: null, meridiem: null, rfc: false, weekday: 1.5, last: [] }));
+held.set("flags", () => ({ crates: [], wet: false, pegs: [], depth: -2, rope: null, boats: [], tide: undefined, wharf: "f", swans: 0, locked: false, night: null, gulls: 1.5, open: false, piers: [], lamp: null, deep: false }));
 held.set("nested", () => ({ a: 1, b: 2, c: 3, d: { x: [], y: { z: [], w: 7 }, v: [[], [[]], [1, []]] }, e: 5, f: 6, g: 7, h: 8, i: 9, j: 10, k: [], l: [], m: 13, n: 14, o: 15, p: 16 }));
 held.set("rows", () => [[], [], [], [1], ["a"], [], [], [], [0.5], [], [], [], [], [], [], [], [], {}]);
 held.set("only", () => [[[], []], [[], []], [[], []], [[], []], [[], []], [[], []]]);
@@ -19,6 +19,6 @@ for (let round = 0; round < 3; round++) {
   }
 }
 let total = 0;
-for (let i = 0; i < 20000; i++) { const f = get("flags")(); f.tokens.push(i); if (f.input.length || f.parts.length || f.last.length) out.push("not empty " + i); total += f.tokens[0] + f.overflow; }
-out.push(total, Array.isArray(get("flags")().last), Object.getPrototypeOf(get("flags")().parts) === Array.prototype, get("flags")().parts.concat([1], get("flags")().input).length);
+for (let i = 0; i < 20000; i++) { const f = get("flags")(); f.pegs.push(i); if (f.crates.length || f.boats.length || f.piers.length) out.push("not empty " + i); total += f.pegs[0] + f.depth; }
+out.push(total, Array.isArray(get("flags")().piers), Object.getPrototypeOf(get("flags")().boats) === Array.prototype, get("flags")().boats.concat([1], get("flags")().crates).length);
 console.log(out.join("\n"));

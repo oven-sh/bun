@@ -1,10 +1,9 @@
 use bun_ast::Loader;
 use bun_builtin_sources::Manifest;
 use bun_core::strings;
-use bun_paths::resolve_path::{buf_or_spill, relative_platform_buf};
-use bun_paths::{MAX_PATH_BYTES, is_absolute, path_buffer_pool, platform};
+use bun_paths::{MAX_PATH_BYTES, Path, is_absolute};
 use bun_sema::program::{FileId, FileRole, Files, HostLoader};
-use bun_sema::resolve::{CodeImportKind, is_plainly_normalized};
+use bun_sema::resolve::CodeImportKind;
 use bun_sema::util::{FxHashMap, FxHashSet, SharedSort};
 use bun_sema_driver::host::to_native;
 
@@ -258,7 +257,7 @@ pub(super) fn compute_program_path(
     entry_point_index: Option<usize>,
 ) -> Vec<u8> {
     if runs_in_place {
-        return with_separators_of_host(native_path, cfg!(windows));
+        return bun_paths::to_native(native_path).into_owned();
     }
     if let Some(index) = entry_point_index {
         let name = &paths.entry_point_names[index];
@@ -301,11 +300,11 @@ pub(crate) fn spell_folder_above_root(
 }
 
 pub(crate) fn with_separators_of_host(native_path: &[u8], is_windows: bool) -> Vec<u8> {
-    let to_host = |&byte: &u8| match byte {
-        b'/' if is_windows => b'\\',
-        _ => byte,
-    };
-    native_path.iter().map(to_host).collect()
+    let mut path = native_path.to_vec();
+    if is_windows {
+        bun_core::strings::replace_char_in_place(&mut path, b'/', b'\\');
+    }
+    path
 }
 
 pub(crate) fn compute_display_path(project_root: &[u8], native_path: &[u8]) -> Box<[u8]> {
@@ -316,26 +315,11 @@ pub(crate) fn compute_display_path(project_root: &[u8], native_path: &[u8]) -> B
 }
 
 pub(super) fn compute_relative_path(directory: &[u8], native_path: &[u8]) -> Option<Vec<u8>> {
-    if !fits_path_buffer(directory) || !fits_path_buffer(native_path) {
-        return None;
-    }
-    if let Some(below) = find_path_below(directory, native_path) {
-        return Some(below.to_vec());
-    }
-    let max_length = 3 * (directory.len() + MAX_NORMALIZATION_GROWTH)
-        + 1
-        + (native_path.len() + MAX_NORMALIZATION_GROWTH);
-    let (mut buffer, mut spill) = (path_buffer_pool::get(), Vec::new());
-    let output = buf_or_spill(buffer.as_mut_slice(), &mut spill, max_length);
-    Some(relative_platform_buf::<platform::Loose, false>(output, directory, native_path).to_vec())
-}
-
-/// The path from `directory` to a file below it, if both paths can be compared as they are written.
-fn find_path_below<'p>(directory: &[u8], path: &'p [u8]) -> Option<&'p [u8]> {
-    let below = path.strip_prefix(directory)?.strip_prefix(b"/")?;
-    let is_plain =
-        |path: &[u8]| is_plainly_normalized(path) && !strings::contains_char(path, b'\\');
-    (!cfg!(windows) && is_plain(directory) && is_plain(path)).then_some(below)
+    (fits_path_buffer(directory) && fits_path_buffer(native_path)).then(|| {
+        Path::relative(directory, native_path)
+            .into_portable()
+            .to_vec()
+    })
 }
 
 const MAX_NORMALIZATION_GROWTH: usize = 2;

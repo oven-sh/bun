@@ -344,6 +344,17 @@ it("process.env defineProperty routes through the env setter for accessor-backed
   expect({ ny, utcAgain, exitCode }).toEqual({ ny: (utc + 24 - 5) % 24, utcAgain: utc, exitCode: 0 });
 });
 
+it.if(isWindows)("process.chdir() to the root of a share", () => {
+  const cwd = process.cwd();
+  const share = `\\\\LOCALHOST\\${import.meta.path[0]}$`;
+  try {
+    process.chdir(share);
+    expect(process.cwd()).toBe(share);
+  } finally {
+    process.chdir(cwd);
+  }
+});
+
 it("process.chdir() on root dir", () => {
   const cwd = process.cwd();
   try {
@@ -774,7 +785,6 @@ it("process.versions", async () => {
     tinycc: "tinycc",
     lolhtml: "lolhtml",
     ares: "cares",
-    zstd: "zstd",
   };
 
   const expectedVersions = {};
@@ -794,6 +804,9 @@ it("process.versions", async () => {
   // One hexadecimal digit for each part of the version.
   const { ZLIB_VERNUM } = zlibConstants;
   expect(process.versions.zlib).toStartWith([...ZLIB_VERNUM.toString(16)].slice(0, 3).join("."));
+
+  // Not linked. It is the version whose output src/zstd reproduces.
+  expect(process.versions.zstd).toBe("1.5.7");
 
   expect(process.versions).toHaveProperty("usockets");
   expect(process.versions).toHaveProperty("uwebsockets");

@@ -9,8 +9,7 @@ use bun_collections::{DynamicBitSet, index_sort};
 use bun_core::time::nano_timestamp;
 use bun_core::{Global, Output, ZBox, ZStr, handle_oom, strings};
 use bun_install_types::NodeLinker::NodeLinker;
-use bun_paths::SEP;
-use bun_paths::path_options::AssumeOk as _;
+use bun_paths::Path;
 use bun_sys::{self as sys, Dir, E, EntryKind, O};
 use bun_threading::{WaitGroup, WorkPool};
 
@@ -198,35 +197,25 @@ impl Plan {
 /// workspace's path with `/` and `join` adds the platform's separator.
 fn native_path(path: &[u8]) -> impl core::fmt::Display + '_ {
     use bun_core::fmt::{EscapeControlChars, PathFormatOptions, PathSep, fmt_path};
-    // On other platforms `\` is an ordinary character in a file name, so it is not converted.
-    let path_sep = if cfg!(windows) {
-        PathSep::Windows
-    } else {
-        PathSep::Any
-    };
     EscapeControlChars(fmt_path(
         path,
         PathFormatOptions {
-            path_sep,
+            path_sep: PathSep::Auto,
             ..Default::default()
         },
     ))
 }
 
+/// `@scope/name` keeps its `/`, as in the paths of the lockfile's trees, which these are compared with.
 fn join(dir: &[u8], name: &[u8]) -> Box<[u8]> {
-    let mut out = Vec::with_capacity(dir.len() + 1 + name.len());
-    out.extend_from_slice(dir);
-    out.push(SEP);
-    out.extend_from_slice(name);
-    out.into_boxed_slice()
+    let mut path = Path::from(dir);
+    path.push_trailing_sep();
+    path.extend_from_slice(name);
+    path.as_bytes().into()
 }
 
 fn join_alias(scope: &[u8], name: &[u8]) -> Box<[u8]> {
-    let mut out = Vec::with_capacity(scope.len() + 1 + name.len());
-    out.extend_from_slice(scope);
-    out.push(b'/');
-    out.extend_from_slice(name);
-    out.into_boxed_slice()
+    strings::concat(&[scope, b"/", name])
 }
 
 // Store folders are named `name@version[+peers]`, scoped as `@scope+name@version` (Store.rs fmt_store_key).
@@ -2081,7 +2070,7 @@ fn workspace_node_modules(lockfile: &Lockfile, pkg_id: PackageID) -> Option<Box<
         return None;
     }
     let buf = lockfile.buffers.string_bytes.as_slice();
-    let path = strings::without_trailing_slash(res.workspace().slice(buf));
+    let path = bun_paths::without_trailing_sep(res.workspace().slice(buf));
     if path.is_empty() || lockfile.is_member_outside(pkg_id) {
         return None;
     }
@@ -2142,18 +2131,12 @@ impl LinkedNodeModules {
     ///
     /// On Windows `path` is not rewritten, because a relative link resolves differently behind a
     /// junction than behind a symlink. A link out of this `node_modules` gets an absolute target.
-    pub(crate) fn resolve<const KIND: u8, const SEP: u8>(
-        &self,
-        path: &mut bun_paths::Path<u8, KIND, SEP>,
-    ) -> bool {
-        let below = match path.slice().strip_prefix(&*self.abs_path) {
-            Some([]) => Vec::new(),
-            Some([sep, below @ ..]) if bun_paths::is_sep_any(*sep) => below.to_vec(),
-            _ => return false,
+    pub(crate) fn resolve(&self, path: &mut Path) -> bool {
+        let Some(below) = bun_paths::strip_prefix(path, &self.abs_path) else {
+            return false;
         };
         if !self.real_path.is_empty() {
-            *path = bun_paths::Path::from(&*self.real_path).assume_ok();
-            path.append(&below).assume_ok();
+            *path = Path::from_parts(&[&self.real_path, below]);
         }
         true
     }
@@ -2219,12 +2202,7 @@ fn lstat_kind(dir: &Dir, name: &[u8]) -> EntryKind {
     let Ok(dir_path) = dir.get_fd_path(&mut dir_buf) else {
         return EntryKind::Unknown;
     };
-    let mut path_buf = bun_paths::path_buffer_pool::get();
-    let path = bun_paths::resolve_path::join_string_buf_z::<bun_paths::platform::Auto>(
-        &mut path_buf[..],
-        &[&*dir_path, name],
-    );
-    match sys::lstat(path) {
+    match sys::lstat(&bun_paths::Path::join(&[&*dir_path, name])) {
         Ok(st) => sys::kind_from_mode(st.st_mode as sys::Mode),
         Err(_) => EntryKind::Unknown,
     }
@@ -2622,7 +2600,7 @@ fn store_link_target(dir: &Dir, name: &[u8]) -> Option<Box<[u8]>> {
     let z = ZBox::from_bytes(name);
     let mut buf = bun_paths::path_buffer_pool::get();
     let len = sys::readlinkat(dir.fd(), &z, buf.as_mut_slice()).ok()?;
-    let mut components = strings::tokenize_any(&buf.as_slice()[..len], b"/\\");
+    let mut components = bun_paths::components(&buf.as_slice()[..len]);
     while let Some(component) = components.next() {
         if component == b".bun" {
             return components
@@ -2665,12 +2643,10 @@ pub(crate) fn remove_planted_link(dir: &Dir, path: &ZStr) -> sys::Maybe<()> {
 /// For each component of `path` (absolute, or from the cwd) after `path[..real_len]`.
 pub(crate) fn remove_planted_links(path: &[u8], mut real_len: usize) -> sys::Maybe<()> {
     let separators: &[u8] = if cfg!(windows) { b"/\\" } else { b"/" };
-    let mut buf = bun_paths::path_buffer_pool::get();
     while real_len < path.len() {
         let rest = &path[real_len + 1..];
         real_len += 1 + strings::index_of_any(rest, separators).unwrap_or(rest.len());
-        let component = bun_paths::resolve_path::z(&path[..real_len], &mut buf);
-        remove_planted_link(&Dir::cwd(), component)?;
+        remove_planted_link(&Dir::cwd(), &Path::from(&path[..real_len]))?;
     }
     Ok(())
 }
@@ -2827,23 +2803,11 @@ pub(crate) fn prune_bins(node_modules: &Dir) -> bool {
 /// `node_modules`. The package's folder comes after the last `node_modules` component of `path`,
 /// because it can be in a store entry.
 fn leads_into_package(node_modules: &Dir, path: &[u8]) -> bool {
-    let (mut package, mut at) = (0, 0);
-    while let Some(end) = strings::index_of_any_pos(path, b"/\\", at) {
-        if &path[at..end] == b"node_modules" {
-            package = end + 1;
-        }
-        at = end + 1;
-    }
-    let Some(mut end) = strings::index_of_any_pos(path, b"/\\", package) else {
-        return false;
-    };
-    if path[package] == b'@' {
-        let Some(name) = strings::index_of_any_pos(path, b"/\\", end + 1) else {
-            return false;
-        };
-        end = name;
-    }
-    !is_dangling(node_modules, &path[..end])
+    let mut folders: Vec<&[u8]> = (bun_paths::ancestors(path).skip(1))
+        .take_while(|folder| bun_paths::basename(folder) != b"node_modules")
+        .collect();
+    folders.pop_if(|outermost| bun_paths::basename(outermost).starts_with(b"@"));
+    (folders.last()).is_some_and(|package| !is_dangling(node_modules, package))
 }
 
 /// The folder also has files that Bun didn't create, so only links into `global_node_modules` are
@@ -3119,7 +3083,7 @@ fn hand_over_names(plan: &Plan, lost_bins: &[usize], layout: Layout, manager: &P
         .map(|(index, _)| store_entry::Id::from(index as u32))
         .map(|entry_id| (entry_id, store.ids(entry_id).dep_id));
     let other_names = (store.hidden_hoist_keys.iter()).map(|key| (key.entry_id, key.dep_id));
-    let mut package: Vec<u8> = Vec::new();
+    let mut package = Path::new();
     for (entry_id, dep_id) in own_names.chain(other_names) {
         let pkg_id = store.ids(entry_id).pkg_id as usize;
         let name = deps[dep_id as usize].name.slice(buf);
@@ -3127,17 +3091,13 @@ fn hand_over_names(plan: &Plan, lost_bins: &[usize], layout: Layout, manager: &P
             continue;
         }
         package.clear();
-        write!(
-            package,
-            "{}/node_modules/{}",
-            store_entry::fmt_store_path(entry_id, store, lockfile),
-            BStr::new(lockfile.packages.items_name()[pkg_id].slice(buf))
-        )
-        .expect("Vec<u8> write is infallible");
+        let store_path = store_entry::fmt_store_path(entry_id, store, lockfile);
+        write!(package, "{store_path}/node_modules");
+        package.push(lockfile.packages.items_name()[pkg_id].slice(buf));
         // An entry's folder name depends on its peers, which depend on the options of the install
         // that created it, so this run's name for the entry may not exist on disk.
         if !is_dangling(&store_dir, &package) {
-            Installer::link_hidden_name(store, lockfile, entry_id, name, false);
+            let _ = Installer::link_hidden_name(store, lockfile, entry_id, name, false);
         }
     }
 }

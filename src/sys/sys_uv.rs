@@ -30,7 +30,6 @@ pub use crate::openat;
 pub use crate::lseek;
 pub use crate::symlink;
 pub use crate::unlinkat;
-pub use crate::unlinkat_with_flags;
 
 pub fn open(file_path: &ZStr, c_flags: i32, perm_: Mode) -> Result<Fd> {
     let mut req = uv::fs_t::uninitialized();

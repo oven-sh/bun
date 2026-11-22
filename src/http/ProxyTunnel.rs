@@ -1,4 +1,4 @@
-use core::ops::ControlFlow::{self, Continue};
+use core::ops::ControlFlow::{self, Break, Continue};
 use core::sync::atomic::Ordering;
 
 use crate::Error;
@@ -365,8 +365,8 @@ impl HTTPClient<'_> {
         // Mirror `HTTPClient::on_close`:
         // treat connection close as end-of-body for identity transfer when no content-length.
         if !self.state.flags.is_redirect_pending && self.state.is_body_complete_on_close() {
-            match self.state.finalize_body_on_eof() {
-                Ok(()) => return self.progress_update(socket),
+            match self.finalize_body_on_eof() {
+                Ok(()) => return Break(NextStep::ReleaseSocket),
                 Err(e) => err = e,
             }
         }

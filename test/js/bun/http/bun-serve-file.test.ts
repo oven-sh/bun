@@ -1559,9 +1559,9 @@ process.exit(0);
 
 // On Windows, FileResponseStream closes its fd via Closer::close in Drop AND
 // WindowsBufferedReader::Drop closed the same CRT fd via File::finish
-// (CLOSE_HANDLE was cleared on the reader but never honored). Between the two
+// (the reader closed an fd that it had only borrowed). Between the two
 // async uv_fs_close calls, an unrelated open could be handed the recycled
-// slot and have it closed under it. On POSIX the reader honors CLOSE_HANDLE,
+// slot and have it closed under it. On POSIX the reader never did,
 // so this is effectively a Windows regression test.
 test.skipIf(!isWindows)(
   "Response(Bun.file) does not double-close the fd on Windows",

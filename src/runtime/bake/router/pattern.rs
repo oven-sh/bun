@@ -1,15 +1,13 @@
 //! Route patterns: the encoded byte form, static patterns, parts, and parsing errors.
 
-use bun_paths::strings;
+use bun_core::strings;
 use core::fmt;
 use core::mem::size_of;
 
 use bun_alloc::{AllocError, Arena};
 use bun_collections::array_hash_map::ArrayHashContext;
 use bun_core::Output;
-use bun_paths::MAX_PATH_BYTES;
-
-use bun_paths::PathBuffer;
+use bun_paths::{MAX_PATH_BYTES, PathBuffer};
 
 use super::*;
 

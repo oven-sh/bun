@@ -197,3 +197,8 @@ test/js/bun/test/snapshot-tests/snapshots/snapshot.test.ts: error snapshots
 ~ test/js/bun/test/snapshot-tests/snapshots/snapshot.test.ts: snapshots > stuff
 ~ test/js/bun/test/snapshot-tests/snapshots/snapshot.test.ts: snapshots > stuff 2
 ~ test/js/bun/test/snapshot-tests/snapshots/snapshot.test.ts: snapshots > unicode surrogate halves
+# --aot refuses an entry point below a directory with a backslash in its name: the type checker cannot read that path.
+test/cli/test/bun-test.test.ts: test file discovery (scanner) > scans a\b and a/b
+test/js/bun/resolve/resolve.test.ts: in a directory named a\ > bun test
+test/js/bun/resolve/resolve.test.ts: in a directory named a\b > bun test
+test/js/bun/test/snapshot-tests/snapshots/snapshot.test.ts: toMatchFileSnapshot() > finds a file beside the test's directory below a name with a backslash

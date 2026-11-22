@@ -4,44 +4,45 @@
 // A closure in a literal is called after an await inside an async context.
 import { AsyncLocalStorage } from "node:async_hooks";
 
-const storage = new AsyncLocalStorage();
+const journeys = new AsyncLocalStorage();
 
-async function handle({ getRouter, request, executeRouter, context, executed, signal, event }) {
-  const router = await getRouter();
-  if (signal.aborted || executed || !event) throw new Error("stopped");
-  return executeRouter(context, router, request);
+async function sail({ tide, weight, openGate, load, ship, stopped }) {
+  const gate = await openGate();
+  if (!tide || stopped.yes) throw new Error("the ship stays");
+  return load(weight, gate, ship);
 }
 
-async function resolveRequest(request, options, event) {
-  const signal = { aborted: false };
-  let routerPromise;
-  let executed;
-  const getRouter = () => {
-    routerPromise ??= (async () => {
-      if (signal.aborted) throw new Error("aborted");
-      return { request, options, event };
-    })();
-    return routerPromise;
+async function voyage(ship, charges, tide) {
+  const stopped = { yes: false };
+  let gate;
+  const openGate = () => {
+    if (gate === undefined)
+      gate = (async () => {
+        if (stopped.yes) throw new Error("the gate stays shut");
+        return { charges, ship, tide };
+      })();
+    return gate;
   };
-  const start = { getRouter, request, executed };
-  const executeRouter = async (context, matched, instance) => {
-    if (signal.aborted) throw new Error("aborted");
-    return request.id + (options.extra ?? 0) + matched.request.id + instance.id + context.weight;
+  const load = async (weight, opened, loaded) => {
+    const sum = opened.ship.id + loaded.id + weight + ship.id + (charges.extra ?? 0);
+    if (stopped.yes) throw new Error("nothing is loaded");
+    return sum;
   };
-  const terminal = ({ context }) =>
-    storage.run({ ...start, after: context }, () => handle({ getRouter, request, executeRouter, context, executed, signal, event }));
-  return await terminal({ context: { weight: 1 } });
+  const begun = { openGate, ship };
+  const leave = ({ weight }) =>
+    journeys.run({ ...begun, weight }, () => sail({ tide, weight, openGate, load, ship, stopped }));
+  return await leave({ weight: 1 });
 }
 
 const rounds = Number(process.env.ROUNDS ?? 2000);
 let total = 0;
 for (let round = 0; round < rounds; round++) {
-  const batch = [];
-  for (let i = 0; i < 16; i++) batch.push(resolveRequest({ id: i, text: "request " + round }, {}, { round }));
-  for (const value of await Promise.all(batch)) total += value;
+  const ships = [];
+  for (let i = 0; i < 16; i++) ships.push(voyage({ id: i, name: "ship " + round }, {}, { round }));
+  for (const value of await Promise.all(ships)) total += value;
 }
 console.log(total);
 
-// CHECK-LABEL: function {{*}}name="resolveRequest"
-// CHECK-LABEL: function {{*}}name="getRouter"
-// CHECK-LABEL: function {{*}}name="terminal"
+// CHECK-LABEL: function {{*}}name="voyage"
+// CHECK-LABEL: function {{*}}name="openGate"
+// CHECK-LABEL: function {{*}}name="leave"

@@ -242,7 +242,9 @@ fn scan_modules(input: &BindInput<'_, '_>, left: StatementsLeft) -> ScannedModul
     ));
     let absent_modules = test_run_evictions::find_absent_modules_named_by_mocks(input, &scans);
     let mut test_files_that_ask_loader = Vec::new();
-    if evicted.is_any_module_taken_out() {
+    let takes_modules_out = evicted.is_any_module_taken_out()
+        || (!evicted.modules().is_empty() && !test_run_evictions::is_any_module_mocked(input));
+    if takes_modules_out {
         test_files_that_ask_loader =
             test_run_evictions::find_test_files_that_ask_loader(input, &scans, &mut run_again);
     }

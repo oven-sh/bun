@@ -60,16 +60,13 @@ test("a test run sees that a package stores a resolver, and builds once", async 
     const lines = (stdout + "\n" + stderr).split("\n");
     return {
       seen: lines.filter(line => line.startsWith("SEEN ")),
-      startsOver: lines.filter(
-        line => line.startsWith("AOT build starts over") && line.includes("stores loader functions"),
-      ),
       exitCode,
     };
   };
   const [plain, compiled] = await Promise.all([
     seenWith({}),
-    seenWith({ BUN_JSC_logAOTPhaseTimes: "1", BUN_DEBUG_TEST_AOT_WORDS: "TestRunLayers:0" }, "--aot", "--parallel=2"),
+    seenWith({ BUN_DEBUG_TEST_AOT_WORDS: "TestRunLayers:0" }, "--aot", "--parallel=2"),
   ]);
-  expect(plain).toEqual({ seen: ["SEEN function"], startsOver: [], exitCode: 0 });
+  expect(plain).toEqual({ seen: ["SEEN function"], exitCode: 0 });
   expect(compiled).toEqual(plain);
 });

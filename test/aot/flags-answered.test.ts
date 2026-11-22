@@ -22,6 +22,8 @@ const refused: [string[], string][] = [
   [[...build, "--no-aot", "./entry.js", "--outfile", app], both],
   [["build", "--compile", "--no-aot", "--aot", "./entry.js", "--outfile", app], both],
   [["test", "--aot", "--no-aot"], both],
+  [[...build, "--bytecode", "./entry.js", "--outfile", app], "Cannot use both --aot and --bytecode"],
+  [["compile", "--bytecode", "./entry.js", "--outfile", app], "Cannot use --bytecode with bun compile"],
   [[...build, "--dts", "./entry.js", "--outfile", app], declarations],
   [["compile", "--dts", "./entry.js", "--outfile", app], declarations],
   [["compile", "--app", "./entry.js", "--outfile", app], "bun compile does not support --app"],
@@ -42,8 +44,19 @@ test.each(refused)(
   120_000,
 );
 
+test("bun compile --no-aot --bytecode builds", async () => {
+  using dir = tempDir("aot-flags-answered", files);
+  const root = realpathSync(String(dir));
+  const run = await spawned(
+    [bunExe(), "compile", "--no-aot", "--bytecode", "./entry.js", "--outfile", app],
+    root,
+    bunEnv,
+  );
+  expect({ stderr: run.exitCode ? run.stderr : "", exitCode: run.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+  expect((await spawned([join(root, app)], root, bunEnv)).stdout).toBe("hello second\n");
+}, 120_000);
+
 const noted: [string, string][] = [
-  ["--bytecode", "note: --bytecode has no effect with --aot"],
   ["--format=cjs", "note: --format has no effect with --aot"],
   ["--format=iife", "note: --format has no effect with --aot"],
 ];

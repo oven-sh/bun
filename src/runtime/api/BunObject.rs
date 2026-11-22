@@ -12,38 +12,33 @@ pub(crate) fn get_public_path_with_asset_prefix(
     origin: &bun_url::URL,
     asset_prefix: &[u8],
     out: &mut Vec<u8>,
-    platform: bun_paths::Platform,
 ) {
     use bun_core::strings;
-    use bun_paths::{Platform, resolve_path};
+    use bun_paths::Path;
 
-    let relative_path: &[u8] = if strings::has_prefix(to, dir) {
-        strings::without_trailing_slash(&to[dir.len()..])
+    let relative;
+    let is_below_dir = strings::has_prefix(to, dir);
+    let relative_path: &[u8] = if is_below_dir {
+        bun_paths::without_trailing_sep(&to[dir.len()..])
     } else {
-        match platform {
-            Platform::Posix => {
-                resolve_path::relative_platform::<resolve_path::platform::Posix, false>(dir, to)
-            }
-            Platform::Windows => {
-                resolve_path::relative_platform::<resolve_path::platform::Windows, false>(dir, to)
-            }
-            Platform::Loose => {
-                resolve_path::relative_platform::<resolve_path::platform::Loose, false>(dir, to)
-            }
-            Platform::Nt => {
-                resolve_path::relative_platform::<resolve_path::platform::Nt, false>(dir, to)
-            }
-        }
+        relative = Path::relative(dir, to).into_portable();
+        &relative
     };
     if !origin.is_absolute() {
         out.extend_from_slice(strings::trim_left(relative_path, b"/"));
         return;
     }
-    if strings::has_prefix(relative_path, b"..") || strings::has_prefix(relative_path, b"./") {
-        let abs_path = if bun_paths::is_absolute(to) {
+    let is_on_another_volume = !is_below_dir && bun_paths::is_absolute(relative_path);
+    if is_on_another_volume
+        || strings::has_prefix(relative_path, b"..")
+        || strings::has_prefix(relative_path, b"./")
+    {
+        let resolved;
+        let abs_path: &[u8] = if bun_paths::is_absolute(to) {
             to
         } else {
-            VirtualMachine::get().fs().abs(&[to])
+            resolved = Path::resolve(&[VirtualMachine::get().top_level_dir(), to]);
+            &resolved
         };
         out.reserve(origin.origin.len() + b"/abs:".len() + abs_path.len());
         out.extend_from_slice(origin.origin);
@@ -55,7 +50,7 @@ pub(crate) fn get_public_path_with_asset_prefix(
     // path at most two separators longer than `asset_prefix` + `relative_path`.
     out.reserve(origin.origin.len() + asset_prefix.len() + relative_path.len() + 3);
     origin
-        .join_write(out, asset_prefix, b"", relative_path, b"")
+        .join_write(out, asset_prefix, relative_path)
         .expect("infallible: in-memory write");
 }
 
@@ -300,9 +295,8 @@ pub(crate) fn which<'a>(
         .unwrap_or_else(|| vm.env_loader().get(b"PATH").unwrap_or(b""));
     let cwd = options.cwd.unwrap_or_else(|| vm.top_level_dir());
 
-    let mut path_buf = bun_paths::path_buffer_pool::get();
-    bun_which::which(&mut *path_buf, path, cwd, command)
-        .map(|bin_path| heap.create_utf8_string(bin_path))
+    bun_which::which(path, cwd, command)
+        .map(|bin_path| heap.create_utf8_string(&bin_path))
         .transpose()
 }
 
@@ -744,24 +738,32 @@ fn do_resolve_with_args<const IS_FILE_PATH: bool>(
     mode: ResolveMode,
 ) -> JsResult<BunString> {
     match resolve_with_args::<IS_FILE_PATH>(ctx, specifier, from, mode)? {
-        Resolved::Found(value) if mode == ResolveMode::RequireResolve => {
-            Ok(find_source_path_of_compiled_file(specifier, &value).unwrap_or(value))
+        Resolved::Found(value)
+            if matches!(mode, ResolveMode::RequireResolve | ResolveMode::EsmResolve)
+                && bun_standalone_graph::Graph::get_ref()
+                    .is_some_and(|graph| graph.compiled_program.is_some()) =>
+        {
+            Ok(find_source_path_of_compiled_file(specifier, &value, mode).unwrap_or(value))
         }
         Resolved::Found(value) => Ok(value),
         Resolved::NotFound(err) => Err(ctx.throw_value(err)),
     }
 }
 
-/// `require.resolve` in a program compiled ahead of time answers where the file lay when the program was built, under a computed name as under one that the build has read.
 /// A path in the executable is its own answer.
 fn find_source_path_of_compiled_file(
     specifier: &BunString,
     resolved: &BunString,
+    mode: ResolveMode,
 ) -> Option<BunString> {
     let graph = bun_standalone_graph::Graph::get_ref()?;
     let program = graph.compiled_program.as_ref()?;
     program.root_on_build_machine()?;
-    if bun_standalone_graph::is_bun_standalone_file_path(specifier.to_utf8().slice()) {
+    let written = specifier.to_utf8();
+    if mode == ResolveMode::EsmResolve && !bun_paths::is_absolute(written.slice()) {
+        return None;
+    }
+    if bun_standalone_graph::is_bun_standalone_file_path(written.slice()) {
         return None;
     }
     let path = resolved.to_utf8();
@@ -1118,9 +1120,7 @@ pub(crate) fn serve(cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<JSVa
             if server_ref.config.get().websocket.is_some() {
                 server_ref.write_ws_handler_slots(obj, global_object);
             }
-            server_ref
-                .js_value
-                .with_mut(|js_value| js_value.set_strong(obj, global_object));
+            server.set_js_ref_strong(global_object);
             // Slots are rooted; release the scoped gcProtects and run the
             // "server just started" GC nudge split out of `listen()`.
             drop(_handler_pins);
@@ -1218,17 +1218,14 @@ pub(crate) fn mmap(cx: &mut JsScope<'_>, path: &[u8], options: &MMapOptions) -> 
             return Err(global_this.throw_invalid_arguments(format_args!("Path too long")));
         }
         node::types::Valid::path_null_bytes(path, global_this)?;
-        let mut buf = bun_paths::path_buffer_pool::get();
-        let Some(joined) = bun_paths::resolve_path::join_abs_string_buf_z_checked::<
-            bun_paths::resolve_path::platform::Auto,
-        >(
-            bun_core::working_directory_in_executable()
-                .unwrap_or_else(|| bun_paths::fs::FileSystem::instance().top_level_dir()),
-            &mut buf[..],
-            &[path],
-        ) else {
+        let cwd = bun_core::working_directory_in_executable()
+            .unwrap_or_else(|| bun_paths::fs::FileSystem::instance().top_level_dir());
+        let mut joined = bun_paths::Path::resolve(&[cwd, path]);
+        joined.copy_trailing_sep_from(path);
+        if joined.len() >= MAX_PATH_BYTES {
             return Err(global_this.throw_invalid_arguments(format_args!("Path too long")));
-        };
+        }
+        let joined: &bun_core::ZStr = &joined;
         let graph = bun_standalone_graph::Graph::get_ref()
             .filter(|_| bun_standalone_graph::is_bun_standalone_file_path(joined));
         let embedded = graph.and_then(|graph| graph.find_data(joined));

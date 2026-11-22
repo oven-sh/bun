@@ -127,6 +127,7 @@ bun_wyhash.workspace = true
 bun_zlib.workspace = true
 bun_zstd.workspace = true
 bun_global_allocator.workspace = true
+bun_icu.workspace = true
 bun_icu_data.workspace = true
 bun_install_jsc.workspace = true
 bun_patch_jsc.workspace = true

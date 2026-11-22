@@ -1,7 +1,9 @@
 use bun_core::fmt::pow10_exp_1e4_to_1e9;
 use bun_core::identifier::is_identifier;
 use bun_core::printer::write_pre_quoted_string;
-use bun_core::strings::{CodepointIterator, Cursor, Encoding, index_of, index_of_char_usize};
+use bun_core::strings::{
+    CodepointIterator, Cursor, Encoding, index_of, index_of_char_usize, is_valid_utf8,
+};
 use bun_sema::atom::{Atom, known, written_name};
 use bun_sema::bind::{FnOwner, Parent, PatParent};
 use bun_sema::fold::{Constant, FoldedValue};
@@ -15,6 +17,7 @@ use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 use std::cell::Cell;
 
+use super::context::regexp_pattern_as_printed;
 use super::expression::is_link_in_brackets;
 use super::{FileLowering, FunctionLowering};
 use crate::ir::generated::QuotedSource;
@@ -899,24 +902,17 @@ impl Printer<'_, '_, '_, '_, '_> {
                 self.word(b"new.target");
                 whole(self)
             }
-            ExprKind::Regex { .. } => {
+            ExprKind::Regex { flags, .. } => {
                 self.space_before_name();
                 let start = whole(self);
-                let characters = CodepointIterator::init(
-                    &hir.text[hir[expression].pos as usize..hir[expression].end as usize],
-                );
-                let mut cursor = Cursor::default();
-                while characters.next(&mut cursor) {
-                    match (u8::try_from(cursor.c), char::from_u32(cursor.c as u32)) {
-                        (Ok(character), _) if character.is_ascii() => self.text.push(character),
-                        (_, Some(character)) => {
-                            for unit in character.encode_utf16(&mut [0; 2]) {
-                                self.text
-                                    .extend_from_slice(format!("\\u{unit:04X}").as_bytes());
-                            }
-                        }
-                        (_, None) => self.gaps += 1,
-                    }
+                let literal = hir[expression];
+                let text = &hir.text[literal.pos as usize..literal.end as usize];
+                let flags = self.file.queries.atom_bytes(flags);
+                let printed = regexp_pattern_as_printed(text, flags);
+                // The engine reads the quoted text as UTF-8, which has no half of a surrogate pair.
+                match is_valid_utf8(&printed) {
+                    true => self.text.extend_from_slice(&printed),
+                    false => self.gaps += 1,
                 }
                 start
             }
@@ -1806,6 +1802,16 @@ mod tests {
     fn property_that_sets_the_prototype_keeps_its_value() {
         let source = "export function probe(run, __proto__, key) {\n  return run({ __proto__: __proto__, key: key }, { __proto__ });\n}\n";
         let printed = "run({ __proto__: __proto__, key }, { __proto__ })";
+        assert_eq!(
+            String::from_utf8_lossy(&quoted_source_text(source)),
+            printed
+        );
+    }
+
+    #[test]
+    fn regular_expression_is_printed_as_the_runtime_printer_writes_it() {
+        let source = "export function probe(run) {\n  return run(/\u{5b57}\u{e9}\u{1f600}/u, /a\tb/g, /\u{e9}[\0]/v);\n}\n";
+        let printed = "run(/\u{5b57}\u{e9}\u{1f600}/u, /a\tb/g, /\u{e9}[\\u0000]/v)";
         assert_eq!(
             String::from_utf8_lossy(&quoted_source_text(source)),
             printed

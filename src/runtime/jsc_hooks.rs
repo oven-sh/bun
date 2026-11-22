@@ -2338,17 +2338,15 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                     };
                     let is_commonjs_module = entry.metadata.module_type == CacheModuleType::Cjs;
                     // Node compile cache hook (transpiler-cache-hit path); must
-                    // read `output_code` before it is consumed below. UTF-16
-                    // output would hash differently than the print path — skip.
+                    // read `output_code` before it is consumed below.
                     let node_compile_cache_blob = if bun_jsc::node_compile_cache::is_enabled()
                         && source.path.is_file()
                         && loader.is_java_script_like()
-                        && !entry.output_code.is_utf16()
                     {
                         bun_jsc::node_compile_cache::fetch(
                             source.path.text,
                             is_commonjs_module,
-                            entry.output_code.byte_slice(),
+                            bun_js_printer::Printed::of_string(&entry.output_code),
                         )
                     } else {
                         None
@@ -2430,11 +2428,13 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
 
                 // ── js_printer::print ───────────────────────────────────────
                 let printer_slot = &jsc_vm.module_loader.source_code_printer;
-                let mut printer =
-                    scopeguard::guard(printer_slot.take().unwrap_or_default(), |printer| {
-                        printer_slot.set(Some(printer))
-                    });
-                printer.ctx.reset();
+                let mut printer = scopeguard::guard(
+                    printer_slot
+                        .take()
+                        .unwrap_or_else(|| Box::new(bun_js_printer::RuntimePrinter::new())),
+                    |printer| printer_slot.set(Some(printer)),
+                );
+                printer.reset();
                 {
                     let mapper = jsc_vm.source_map_handler(&cache);
                     let print_result = jsc_vm.transpiler.get().print_with_source_map(
@@ -2463,19 +2463,19 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
 
                 // Watcher path uses ref-counted source.
                 if jsc_vm.is_watcher_enabled() {
-                    let written = printer.ctx.get_written();
+                    let printed = printer.printed();
                     let node_compile_cache_blob = if bun_jsc::node_compile_cache::is_enabled()
                         && path.is_file()
                         && loader.is_java_script_like()
                     {
-                        bun_jsc::node_compile_cache::fetch(path.text, is_commonjs_module, written)
+                        bun_jsc::node_compile_cache::fetch(path.text, is_commonjs_module, printed)
                     } else {
                         None
                     };
                     let mut resolved_source = jsc_vm
                         .ref_counted_resolved_source(
                             printed_ast,
-                            written,
+                            printed,
                             input_specifier,
                             path.text,
                         )
@@ -2514,26 +2514,25 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                     _ => ResolvedSourceTag::Javascript,
                 };
 
-                let written = printer.ctx.get_written();
+                let printed = printer.printed();
                 // Node compile cache hook (sync transpile path). `fetch` copies
-                // `written`; the printer may be replaced below.
+                // `printed`; the printer may be replaced below.
                 let node_compile_cache_blob = if bun_jsc::node_compile_cache::is_enabled()
                     && path.is_file()
                     && loader.is_java_script_like()
                 {
-                    bun_jsc::node_compile_cache::fetch(path.text, is_commonjs_module, written)
+                    bun_jsc::node_compile_cache::fetch(path.text, is_commonjs_module, printed)
                 } else {
                     None
                 };
-                let written_len = written.len();
-                let source_code = bun_core::String::clone_latin1(written);
+                let buffer_len = printed.byte_slice().len();
+                let source_code = printed.to_string();
                 // `printer.ctx.buffer.deinit()`: release the
                 // large/--smol print buffer now instead of holding it until the
                 // next transpile. Replacing the printer drops the old buffer
                 // (same shape as RuntimeTranspilerStore).
-                if written_len > 1024 * 1024 * 2 || jsc_vm.smol {
-                    **printer =
-                        bun_js_printer::BufferPrinter::init(bun_js_printer::BufferWriter::init());
+                if buffer_len > 1024 * 1024 * 2 || jsc_vm.smol {
+                    **printer = bun_js_printer::RuntimePrinter::new();
                 }
 
                 return Ok(ResolvedSource {

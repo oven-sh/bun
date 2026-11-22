@@ -1182,6 +1182,7 @@ static inline __attribute__((always_inline)) LIBUS_SOCKET_DESCRIPTOR bsd_bind_li
 ) {
 
     if (bsd_set_reuse(listenFd, options) != 0) {
+        *error = LIBUS_ERR;
         return LIBUS_SOCKET_ERROR;
     }
 
@@ -1198,6 +1199,7 @@ static inline __attribute__((always_inline)) LIBUS_SOCKET_DESCRIPTOR bsd_bind_li
     if (listenAddr->ai_family == AF_INET6) {
         int enabled = (options & LIBUS_SOCKET_IPV6_ONLY) != 0;
         if (setsockopt(listenFd, IPPROTO_IPV6, IPV6_V6ONLY, &enabled, sizeof(enabled)) != 0) {
+            *error = LIBUS_ERR;
             return LIBUS_SOCKET_ERROR;
         }
     }
@@ -1383,7 +1385,7 @@ us_fd_t bsd_create_listen_socket(const char *host, int port, int options, int* e
 
     for (struct addrinfo *a = result.get(); a != NULL; a = a->ai_next) {
         if (a->ai_family == AF_INET6) {
-            us_fd_t listenFd{bsd_create_socket(a->ai_family, a->ai_socktype, a->ai_protocol, NULL)};
+            us_fd_t listenFd{bsd_create_socket(a->ai_family, a->ai_socktype, a->ai_protocol, error)};
             if (listenFd && bsd_bind_listen_fd(listenFd.get(), a, port, options, error) != LIBUS_SOCKET_ERROR) {
                 return listenFd;
             }
@@ -1392,7 +1394,7 @@ us_fd_t bsd_create_listen_socket(const char *host, int port, int options, int* e
 
     for (struct addrinfo *a = result.get(); a != NULL; a = a->ai_next) {
         if (a->ai_family == AF_INET) {
-            us_fd_t listenFd{bsd_create_socket(a->ai_family, a->ai_socktype, a->ai_protocol, NULL)};
+            us_fd_t listenFd{bsd_create_socket(a->ai_family, a->ai_socktype, a->ai_protocol, error)};
             if (listenFd && bsd_bind_listen_fd(listenFd.get(), a, port, options, error) != LIBUS_SOCKET_ERROR) {
                 return listenFd;
             }
@@ -1540,7 +1542,7 @@ static LIBUS_SOCKET_DESCRIPTOR bsd_create_unix_socket_address(const char *path, 
 }
 
 static us_fd_t internal_bsd_create_listen_socket_unix(const char* path, int options, struct sockaddr_un* server_address, size_t addrlen, int* error) {
-    us_fd_t listenFd{bsd_create_socket(AF_UNIX, SOCK_STREAM, 0, NULL)};
+    us_fd_t listenFd{bsd_create_socket(AF_UNIX, SOCK_STREAM, 0, error)};
 
     if (!listenFd) {
         return {};

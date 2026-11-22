@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/net.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 d6861dbd59c52394231c89ff7bae0bcff81e31756f79b40db9ee7cee0562b4a5.
+// Written against that file with the SHA-256 f030ff1ac9cae049057d21703fecbdb18ad13536837638269765da2448667a19.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:net"
@@ -4360,6 +4360,7 @@ Server.prototype.listen = function listen(this: $Node.NetServer, port, hostname,
   let readableAll = false;
   let writableAll = false;
   let fd;
+  let hostDefaulted = false;
   //port is actually path
   if (typeof port === "string") {
     if (Number.isSafeInteger(hostname)) {
@@ -4493,6 +4494,7 @@ Server.prototype.listen = function listen(this: $Node.NetServer, port, hostname,
       exclusive = true;
     }
     var clusterHost: string | null | undefined = typeof hostname === "string" && hostname.length > 0 ? hostname : null;
+    hostDefaulted = !hostname && fd === undefined;
     hostname = hostname || "::";
   }
 
@@ -4539,26 +4541,36 @@ Server.prototype.listen = function listen(this: $Node.NetServer, port, hostname,
       queryAddressType = isIP(clusterHost) || 4;
     }
 
-    listenInCluster(
-      this,
-      queryAddress,
-      queryPort,
-      queryAddressType,
-      backlog,
-      fd,
-      exclusive,
-      ipv6Only,
-      reusePort,
-      readableAll,
-      writableAll,
-      flags,
-      undefined,
-      path,
-      hostname,
-      tls,
-      contexts,
-      onListen,
-    );
+    for (;;) {
+      try {
+        listenInCluster(
+          this,
+          queryAddress,
+          queryPort,
+          queryAddressType,
+          backlog,
+          fd,
+          exclusive,
+          ipv6Only,
+          reusePort,
+          readableAll,
+          writableAll,
+          flags,
+          undefined,
+          path,
+          hostname,
+          tls,
+          contexts,
+          onListen,
+        );
+        break;
+      } catch (err: any) {
+        // As Node (lib/net.js setupListenHandle): no host binds "::", then "0.0.0.0". libuv defers EADDRINUSE past that retry.
+        if (!hostDefaulted || err?.syscall !== "listen" || err.code === "EADDRINUSE") throw err;
+        hostDefaulted = false;
+        hostname = "0.0.0.0";
+      }
+    }
   } catch (err) {
     const isUnix = path != null;
     process.nextTick(
@@ -5038,6 +5050,14 @@ function uvListenErrorDescription(code: string) {
       return "address not available";
     case "EINVAL":
       return "invalid argument";
+    case "EAFNOSUPPORT":
+      return "address family not supported";
+    case "EMFILE":
+      return "too many open files";
+    case "ENFILE":
+      return "file table overflow";
+    case "ENOBUFS":
+      return "no buffer space available";
     default:
       return undefined;
   }

@@ -85,4 +85,3 @@ ways-to-start-an-executable.test.ts
 what-a-program-takes-grows-with-its-data.test.ts
 what-minified-syntax-leaves-out-of-executables.test.ts
 without-executable-memory.test.ts
-worker-of-text-in-a-trimmed-executable.test.ts

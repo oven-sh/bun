@@ -18,6 +18,7 @@ use super::expect::get_state::full_test_name;
 use super::jest::{File as TestFile, FileId};
 use bun_collections::index_sort;
 use bun_ptr::CellExt as _;
+use bun_paths::Path;
 
 bun_core::declare_scope!(inline_snapshot, visible);
 
@@ -115,11 +116,6 @@ pub(crate) struct Snapshots {
 pub(crate) use bun_collections::ArrayHashMap as IndexMap;
 
 impl Snapshots {
-    #[cfg(windows)]
-    const SNAPSHOTS_DIR_NAME: &'static [u8] = b"__snapshots__\\";
-    #[cfg(not(windows))]
-    const SNAPSHOTS_DIR_NAME: &'static [u8] = b"__snapshots__/";
-
     pub(crate) fn init(update_snapshots: bool) -> Snapshots {
         Snapshots {
             update_snapshots,
@@ -214,22 +210,13 @@ pub(crate) struct File {
     may_hold_entries_of_bun: bool,
 }
 
-/// Fills `buf` with the `.snap` path. Returns (test file's directory, length through `__snapshots__/`, full length), or `None` if it doesn't fit.
 #[optimize(size)]
-fn snapshot_file_path(test_file: TestFile, buf: &mut [u8]) -> Option<(&'static [u8], usize, usize)> {
-    let name = bun_paths::fs::PathName::init(test_file.path);
-    let dir_path = name.dir_with_trailing_slash();
-    let mut pos = 0usize;
-    for part in [dir_path, Snapshots::SNAPSHOTS_DIR_NAME] {
-        buf.get_mut(pos..pos + part.len())?.copy_from_slice(part);
-        pos += part.len();
-    }
-    let dir_len = pos;
-    for part in [name.filename, b".snap", b"\0"] {
-        buf.get_mut(pos..pos + part.len())?.copy_from_slice(part);
-        pos += part.len();
-    }
-    Some((dir_path, dir_len, pos - 1))
+fn snapshot_file_path(test_file: TestFile) -> Path {
+    let mut path = Path::from(test_file.path);
+    path.set_basename(b"__snapshots__");
+    path.push(bun_paths::basename(test_file.path));
+    path.extend_from_slice(b".snap");
+    path
 }
 
 /// jest-snapshot's `printBacktickString`.
@@ -333,10 +320,7 @@ impl Snapshots {
         }
         self.write_snapshot_file()?;
 
-        let mut path_buf = bun_paths::path_buffer_pool::get();
-        let (_, _, len) =
-            snapshot_file_path(test_file, path_buf.0.as_mut_slice()).ok_or(Error::FailedToOpenSnapshotFile)?;
-        let path = &path_buf.0[..len];
+        let path: &[u8] = &snapshot_file_path(test_file);
         let contents = match bun_sys::File::read_from(bun_sys::Fd::cwd(), path) {
             Ok(contents) => contents,
             Err(err) if err.get_errno() == bun_sys::Errno::ENOENT => Vec::new(),
@@ -615,17 +599,16 @@ impl Snapshots {
             return FileOutcome::NoTest(Error::NoTest);
         };
 
-        let mut snapshot_path_buf = bun_paths::path_buffer_pool::get();
-        let Some((test_dir, _, len)) = snapshot_file_path(test_file, snapshot_path_buf.0.as_mut_slice()) else {
-            return FileOutcome::NoTest(Error::FailedToOpenSnapshotFile);
+        // A test is shared with other machines, and so is what it appends to `__dirname` or to a directory above.
+        let test_dir = bun_paths::dirname_or_root(test_file.path);
+        let converted = match bun_paths::ancestors(test_dir).find(|dir| path.starts_with(dir)) {
+            Some(dir) => [dir, &strings::replace_char(&path[dir.len()..], b'\\', bun_paths::SEP)].concat().into(),
+            None => bun_paths::from_portable(path),
         };
-        let mut path_buf = bun_paths::path_buffer_pool::get();
-        let Some(path) =
-            bun_paths::resolve_path::join_abs_string_buf_checked::<bun_paths::platform::Auto>(test_dir, &mut path_buf.0, &[path])
-        else {
-            return FileOutcome::Failed(bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open));
-        };
-        if path == &snapshot_path_buf.0[..len] {
+        let mut resolved = Path::resolve(&[test_dir, &converted]);
+        resolved.copy_trailing_sep_from(path);
+        let path: &[u8] = &resolved;
+        if path == snapshot_file_path(test_file).as_bytes() {
             return FileOutcome::IsSnapshotFile;
         }
 
@@ -690,10 +673,7 @@ impl Snapshots {
     #[cold]
     #[optimize(size)]
     fn write_sorted(&self, file: &File) -> Result<(), Error> {
-        let mut path_buf = bun_paths::path_buffer_pool::get();
-        let (_, _, len) =
-            snapshot_file_path(file.test_file, path_buf.0.as_mut_slice()).ok_or(Error::FailedToWriteSnapshotFile)?;
-        let path = ZStr::from_buf(&path_buf.0[..], len);
+        let path: &ZStr = &snapshot_file_path(file.test_file);
         if self.values.is_empty() {
             return match bun_sys::unlink(path) {
                 Err(err) if err.get_errno() != bun_sys::Errno::ENOENT => Err(Error::FailedToWriteSnapshotFile),
@@ -1165,24 +1145,19 @@ impl Snapshots {
         let Some(current) = self._current_file.as_mut().filter(|file| file.file.is_none()) else {
             return Ok(());
         };
-        let mut snapshot_file_path_buf = bun_paths::path_buffer_pool::get();
-        let buf = snapshot_file_path_buf.0.as_mut_slice();
-        let Some((dir_path, dir_len, len)) = snapshot_file_path(current.test_file, buf) else {
-            return Err(bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open));
-        };
+        let path = snapshot_file_path(current.test_file);
+        let dir_path = bun_paths::dirname_or_root(current.test_file.path);
 
         if !self.snapshot_dir_path.is_some_and(|cached| strings::eql_long(dir_path, cached)) {
-            let after_dir = core::mem::replace(&mut buf[dir_len], 0);
-            match bun_sys::mkdir(ZStr::from_buf(&buf[..], dir_len), 0o777) {
+            match bun_sys::mkdir(&Path::from(bun_paths::dirname_or_root(&path)), 0o777) {
                 Err(err) if err.get_errno() != bun_sys::Errno::EEXIST => return Err(err),
                 _ => self.snapshot_dir_path = Some(dir_path),
             }
-            buf[dir_len] = after_dir;
         }
 
         // Not O_TRUNC: a run that exits before `write_snapshot_file` must leave the old contents.
         let flags: i32 = bun_sys::O::CREAT | bun_sys::O::RDWR;
-        let fd = bun_sys::open(ZStr::from_buf(&buf[..], len), flags, 0o644)?;
+        let fd = bun_sys::open(&path, flags, 0o644)?;
         current.file = Some(bun_sys::File::from_fd(fd));
         Ok(())
     }

@@ -10,8 +10,6 @@ use bstr::ByteSlice;
 use bun_core::strings;
 use bun_paths::fs::Path;
 use bun_paths::path_buffer_pool;
-use bun_paths::platform::Posix;
-use bun_paths::resolve_path::{dirname, slashes_to_posix_in_place, windows_volume_name_len};
 use smallvec::{SmallVec, smallvec};
 use std::borrow::Cow;
 use std::cell::{Cell, RefCell};
@@ -1257,7 +1255,8 @@ impl Options {
             .unwrap_or(&JsxEmit::None);
         // `GetJSXImplicitImportBase`, for a file without pragmas.
         let import_source = word(b"jsxImportSource").filter(|source| !source.is_empty());
-        options.jsx_import_source = import_source.unwrap_or(b"react").to_vec();
+        options.jsx_import_source =
+            bun_paths::portable::from_portable_specifier(import_source.unwrap_or(b"react")).into();
         let runtime: &[u8] = match options.jsx {
             JsxEmit::ReactJsxDev => b"/jsx-dev-runtime",
             JsxEmit::ReactJsx => b"/jsx-runtime",
@@ -1500,8 +1499,9 @@ pub fn ancestors(dir: &[u8]) -> impl Iterator<Item = &[u8]> {
     })
 }
 
+/// The directory that `path` is in. `/` is its own.
 #[inline]
-fn parent_directory(mut path: &[u8]) -> &[u8] {
+pub fn parent_directory(mut path: &[u8]) -> &[u8] {
     loop {
         match strings::last_index_of_char(path, b'/') {
             None => return b"",
@@ -1510,6 +1510,19 @@ fn parent_directory(mut path: &[u8]) -> &[u8] {
             Some(separator) => return &path[..separator],
         }
     }
+}
+
+/// The last name in `path`. Empty for `/`.
+#[inline]
+pub fn basename(path: &[u8]) -> &[u8] {
+    let path = strings::trim_right(path, b"/");
+    &path[strings::last_index_of_char(path, b'/').map_or(0, |at| at + 1)..]
+}
+
+/// `NormalizeSlashes`
+#[inline]
+pub fn normalize_slashes(path: &[u8]) -> Cow<'_, [u8]> {
+    strings::replace_char(path, b'\\', b'/')
 }
 
 #[inline]
@@ -1529,16 +1542,6 @@ fn ends_with(path: &[u8], suffix: &[u8]) -> bool {
 pub fn inside(dir: &[u8], name: &[u8]) -> Vec<u8> {
     let separator: &[u8] = if dir.last() == Some(&b'/') { b"" } else { b"/" };
     [dir, separator, name].concat()
-}
-
-/// `NormalizeSlashes`
-fn normalize_slashes(path: &[u8]) -> Cow<'_, [u8]> {
-    if !strings::contains_char(path, b'\\') {
-        return Cow::Borrowed(path);
-    }
-    let mut normalized = path.to_vec();
-    slashes_to_posix_in_place(&mut normalized);
-    Cow::Owned(normalized)
 }
 
 /// `GetEncodedRootLength`
@@ -1733,7 +1736,6 @@ fn find_plain_names(rest: &[u8]) -> Option<&[u8]> {
 
 /// `GetNormalizedAbsolutePath`. `dir` is already normalized and absolute, so it's copied as is.
 /// That leaves one pass over `rest` and one allocation.
-/// (`bun_paths::join_abs_string_buf` copies the whole path three times before it reaches a `Vec`.)
 pub fn join(dir: &[u8], rest: &[u8]) -> Vec<u8> {
     if let Some(names) = find_plain_names(rest) {
         let dir = if dir == b"/" { b"" } else { dir };
@@ -1759,7 +1761,7 @@ pub fn join(dir: &[u8], rest: &[u8]) -> Vec<u8> {
             [b'/', b'\\', b'\\', ..] => &rest[1..],
             _ => rest,
         };
-        let (share, after) = native.split_at(windows_volume_name_len(native).0);
+        let (share, after) = native.split_at(bun_paths::volume(native).len());
         if !share.is_empty() {
             let names = strings::split_any(share, b"/\\").filter(|name| !name.is_empty());
             for (i, name) in names.enumerate() {

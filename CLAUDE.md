@@ -150,9 +150,11 @@ The Rust side is a Cargo workspace of ~200 crates rooted at `Cargo.toml`. The ke
 
 Third-party native libraries are vendored locally and can be read from disk (not git submodules): boringssl (TLS/crypto), cares (async DNS), highway (SIMD), libuv (Windows event loop), lolhtml (HTML rewriter), lsqpack + lsquic (HTTP/3), mimalloc (allocator), nodejs (headers), rust-argon2 (argon2 for `Bun.password`, Rust), tinycc (FFI JIT, fork: oven-sh/tinycc), WebKit (JavaScriptCore). Build configuration for these is in `scripts/build/deps/*.ts`.
 
-### JavaScript Class Implementation (C++)
+### JavaScript Class Implementation
 
-When implementing JavaScript classes in C++:
+Write a new class in Rust: a `b.class({ .. })` in a `*.bind.ts` file and the struct it names (`docs/project/bindgen.mdx`, "Classes"). For a Web API whose binding came from WebCore's generator, `webIDL: true` keeps what JavaScript sees; `src/runtime/webcore/URLPattern.bind.ts` is the example.
+
+The classes that are still written by hand in C++ follow these rules:
 
 1. Create three classes if there's a public constructor:
    - `class Foo : public JSC::JSDestructibleObject` (if has C++ fields)

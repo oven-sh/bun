@@ -49,10 +49,7 @@ fn open(path: &ZStr, symlink: Symlink, resolve: ResolveFlags) -> Result<Fd, i32>
     linux_syscall::openat2(Fd::cwd(), path, O::PATH | O::CLOEXEC, 0, resolve)
 }
 
-/// In blocks of 512 bytes: what a `close` here may free of a file removed meanwhile (0.1 ms per MiB, more if the journal is busy).
-const CLOSED_HERE: u64 = (1 << 20) / 512;
-
-/// `stat` or `lstat` of `path` from the kernel's caches. `close_elsewhere` gets a descriptor whose `close` can take long.
+/// `stat` or `lstat` of `path` from the kernel's caches. `close_elsewhere` gets the descriptor: its `close` can free a removed file and wait for the disk.
 pub fn stat(
     path: &ZStr,
     symlink: Symlink,
@@ -70,16 +67,8 @@ pub fn stat(
     let Mount::InMemory(mount) = start.load(generation) else {
         return Err(NoStat::NotAsked);
     };
-    let opened = open(path, symlink, ResolveFlags::CACHED | ResolveFlags::NO_XDEV);
-    // Another thread changes the working directory: the walk may have started in the new one.
-    if is_relative && CWD_GENERATION.load(Ordering::SeqCst) != generation {
-        if let Ok(fd) = opened {
-            close_elsewhere(fd);
-        }
-        return Err(NoStat::Unknown);
-    }
-    let file = match opened {
-        Ok(fd) => CloseOnDrop::new(fd),
+    let fd = match open(path, symlink, ResolveFlags::CACHED | ResolveFlags::NO_XDEV) {
+        Ok(fd) => fd,
         Err(libc::ENOENT) => return Err(NoStat::NotFound),
         Err(libc::ELOOP) if symlink == Symlink::Refuse => return Err(NoStat::Refused),
         Err(libc::ENOSYS) => {
@@ -89,22 +78,22 @@ pub fn stat(
         }
         Err(_) => return Err(NoStat::Unknown),
     };
-    let Some((stat, on_mount)) = crate::fstatx_in_memory(file.fd(), mask) else {
-        close_elsewhere(file.into_raw());
-        return Err(NoStat::Unknown);
+    // Another thread changes the working directory: the walk may have started in the new one, on a mount nobody classified.
+    let raced = is_relative && CWD_GENERATION.load(Ordering::SeqCst) != generation;
+    let stat = match raced {
+        true => None,
+        false => crate::fstatx_in_memory(fd, mask),
     };
+    close_elsewhere(fd);
+    let (stat, on_mount) = stat.ok_or(NoStat::Unknown)?;
     if on_mount != u64::from(mount) {
         // The root or the working directory changed behind this module (`chroot`, a native `chdir`).
         start.forget();
-        close_elsewhere(file.into_raw());
         return Err(NoStat::Unknown);
     }
+    // A file that was removed meanwhile: the pool answers for the path.
     if stat.nlink == 0 {
-        close_elsewhere(file.into_raw());
         return Err(NoStat::Unknown);
-    }
-    if stat.blocks > CLOSED_HERE {
-        close_elsewhere(file.into_raw());
     }
     Ok(stat)
 }

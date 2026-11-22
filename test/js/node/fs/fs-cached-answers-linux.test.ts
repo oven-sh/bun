@@ -43,7 +43,7 @@ function answersFromCache(dir: string) {
 }
 
 // How many operations of one go the JS thread answers: `CachedAnswerGate::PER_GO`.
-const PER_GO = 32;
+const PER_GO = 16;
 
 // tmpfs forgets a name that is not there as soon as the lookup is over.
 function remembersMissingNames(dir: string) {
@@ -124,7 +124,6 @@ describe.skipIf(!isLinux)("async fs operations that the kernel can answer from i
     ["stat of the working directory", `fsp.stat(".")`, `fs.statSync(".")`, "yes"],
     ["stat below a directory", `fsp.stat("sub/inner.txt")`, `fs.statSync("sub/inner.txt")`, "yes"],
     ["stat with bigint", `fsp.stat("file.txt", { bigint: true })`, `fs.statSync("file.txt", { bigint: true })`, "yes"],
-    // The JS thread does not close the descriptor of a file this large itself.
     ["stat of a file of 2 MiB", `fsp.stat("large.bin")`, `fs.statSync("large.bin")`, "yes"],
     ["lstat of a file", `fsp.lstat("file.txt")`, `fs.lstatSync("file.txt")`, "yes"],
     // `statx` of a symlink can read the disk: the walk of an `lstat` may meet no symlink, and the
@@ -493,13 +492,6 @@ describe.skipIf(!isLinux)("async fs operations that the kernel can answer from i
           round => round.hits === ${PER_GO} + 3,
           async () => [await counts(() => stats(100)), await counts(() => stats(3)), await counts(() => stats(3))],
         );
-        // A pool thread closes the descriptor of a file this large: such an answer takes two places of its go.
-        fs.writeFileSync("large.bin", Buffer.alloc(2 << 20, 1));
-        await fsp.stat("large.bin");
-        const large = await countedUntil(
-          round => round.hits === ${PER_GO / 2},
-          () => Promise.all(Array.from({ length: ${PER_GO / 2 + 4} }, () => fsp.stat("large.bin"))),
-        );
         // A name that the kernel has never been asked for: the rest of its go is the pool's.
         const unknown = await countedUntil(
           round => round.hits === 2 && round.misses === 1,
@@ -531,7 +523,7 @@ describe.skipIf(!isLinux)("async fs operations that the kernel can answer from i
         await asking();
         for (let i = 0; i < 300; i++) await size("never-d-" + i);
         const recovered = await counted(async () => { for (let i = 0; i < 200; i++) { await size("file.txt"); await size("never-e-" + i); } });
-        console.log(JSON.stringify({ wide: wide.result, large, unknown, persistent, alternating, crowded, one, behind, recovered }));
+        console.log(JSON.stringify({ wide: wide.result, unknown, persistent, alternating, crowded, one, behind, recovered }));
       })();
       `,
     );
@@ -539,7 +531,6 @@ describe.skipIf(!isLinux)("async fs operations that the kernel can answer from i
     if (answersFromCache(cwd)) {
       expect({
         wide: result.wide,
-        large: [result.large.hits, result.large.misses],
         unknown: [result.unknown.hits, result.unknown.misses],
         persistent: [result.persistent.hits, result.persistent.misses],
         alternating: [result.alternating.hits, result.alternating.misses],
@@ -553,7 +544,6 @@ describe.skipIf(!isLinux)("async fs operations that the kernel can answer from i
           [0, 0],
           [3, 0],
         ],
-        large: [PER_GO / 2, 0],
         unknown: [2, 1],
         // Four in a row, then 1 that is not asked about, four, then 3 that are not, four, then 7, ...
         persistent: [0, 28],
@@ -604,7 +594,7 @@ describe.skipIf(!isLinux)("async fs operations that the kernel can answer from i
         const { getCounters } = require("bun:internal-for-testing");
         setImmediate(() => {
           const before = getCounters().fs_cached_hit;
-          // A pool thread closes the descriptor of a file this large, after the turn.
+          // A pool thread closes the descriptor of each answer, after the turn.
           for (let i = 0; i < 8; i++) fsp.stat("large.bin");
           require("node:worker_threads").parentPort.postMessage(getCounters().fs_cached_hit - before);
           process.exit(0);
@@ -694,10 +684,8 @@ describe.skipIf(!isLinux)("async fs operations that the kernel can answer from i
       cwd,
       `
       (async () => {
-        // A pool thread closes the descriptor of a file this large.
-        fs.writeFileSync("large.bin", Buffer.alloc(2 << 20, 1));
+        // A pool thread closes the descriptor of each answer, also that of a small file.
         await warm();
-        await fsp.stat("large.bin");
         await asking();
         // Each of the two threads of the pool reads a FIFO that nothing is written to yet.
         require("node:child_process").execFileSync("mkfifo", ["fifo-a", "fifo-b"]);
@@ -710,13 +698,13 @@ describe.skipIf(!isLinux)("async fs operations that the kernel can answer from i
             catch (e) { if (e.code !== "ENXIO" || performance.now() > deadline) throw e; }
           }
         }
-        const large = fs.realpathSync("large.bin");
-        const isLarge = fd => { try { return fs.readlinkSync("/proc/self/fd/" + fd) === large; } catch { return false; } };
-        const descriptors = () => fs.readdirSync("/proc/self/fd").filter(isLarge).length;
+        const file = fs.realpathSync("file.txt");
+        const isOfFile = fd => { try { return fs.readlinkSync("/proc/self/fd/" + fd) === file; } catch { return false; } };
+        const descriptors = () => fs.readdirSync("/proc/self/fd").filter(isOfFile).length;
         const before = { descriptors: descriptors(), hits: getCounters().fs_cached_hit };
         const stats = [];
         for (let go = 0; go < 6; go++) {
-          for (let i = 0; i < ${PER_GO / 2}; i++) stats.push(fsp.stat("large.bin"));
+          for (let i = 0; i < ${PER_GO}; i++) stats.push(fsp.stat("file.txt"));
           await nextTurn();
         }
         const waiting = { descriptors: descriptors() - before.descriptors, hits: getCounters().fs_cached_hit - before.hits };
@@ -734,7 +722,7 @@ describe.skipIf(!isLinux)("async fs operations that the kernel can answer from i
       { UV_THREADPOOL_SIZE: "2" },
     );
     expect({ sizes: result.sizes, read: result.read, left: result.left }).toEqual({
-      sizes: [2 << 20],
+      sizes: [5],
       read: ["a", "b"],
       left: 0,
     });

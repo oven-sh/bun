@@ -2195,8 +2195,8 @@ mod _async_tasks {
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
     impl CachedAnswerGate {
-        /// A wider go is the pool's, and the go after it: measured, the pool is as fast from 40 to 64 at once.
-        const PER_GO: u16 = 32;
+        /// A wider go is the pool's, and the go after it: measured, the pool is as fast from 16 at once.
+        const PER_GO: u16 = 16;
         /// A pool job behind this many answers of its go was held up by them: the go is regretted.
         const CROWD: u16 = 2;
         /// This many regretted goes in a row are followed by `2^depth - 1` goes that do not ask.
@@ -2231,11 +2231,6 @@ mod _async_tasks {
         /// The kernel answered an operation that [`admits`](Self::admits) let through.
         fn answered(&self) {
             self.answers.set(self.answers.get() + 1);
-        }
-
-        /// A pool thread closes the descriptor of the answer in progress: such an answer takes two places of its go.
-        pub(super) fn closes_elsewhere(&self) {
-            self.width.set(self.width.get().saturating_add(1));
         }
 
         /// It could not answer one.
@@ -9645,7 +9640,7 @@ pub(crate) enum CachedAnswer<R> {
     NotAsked,
 }
 
-/// The descriptors of `bun_sys::cached::stat` that the JS thread does not close itself, per VM.
+/// The descriptors of `bun_sys::cached::stat`, per VM: a pool thread closes them, never the JS thread.
 #[cfg(any(target_os = "linux", target_os = "android"))]
 #[derive(Default)]
 pub(crate) struct CachedDescriptors {
@@ -9748,10 +9743,7 @@ impl NodeFS {
         if CachedDescriptors::is_pool_behind() {
             return CachedAnswer::NotAsked;
         }
-        let close_elsewhere = |fd| {
-            state.fs_cached_descriptors.push(fd);
-            state.fs_cached_answers.closes_elsewhere();
-        };
+        let close_elsewhere = |fd| state.fs_cached_descriptors.push(fd);
         match sys::cached::stat(path, symlink, sys::STATX_MASK_FOR_STATS, close_elsewhere) {
             Ok(result) => CachedAnswer::Answer(Ok(StatOrNotFound::Stats(Box::new(Stats::init(
                 &result,

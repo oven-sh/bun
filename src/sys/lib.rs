@@ -2250,7 +2250,7 @@ mod posix_impl {
                     fd.native(),
                     c"".as_ptr(),
                     libc::AT_EMPTY_PATH | AT_STATX_DONT_SYNC,
-                    mask | lx::STATX_MNT_ID | lx::STATX_NLINK | lx::STATX_BLOCKS,
+                    mask | lx::STATX_MNT_ID | lx::STATX_NLINK,
                     buf.as_mut_ptr(),
                 )
             };

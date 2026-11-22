@@ -1,5 +1,4 @@
 use core::cell::{Cell, OnceCell};
-use core::time::Duration;
 use std::os::windows::io::OwnedHandle;
 use std::rc::{Rc, Weak};
 use std::sync::Arc;
@@ -15,9 +14,6 @@ use super::Payload;
 use super::endpoint::{BUSY_SIZE, Endpoint, HasEndpoint, room_for};
 use crate::pipe_reader::ReadEvent;
 use crate::pipe_writer::WriteEvent;
-
-/// For an end that does not wait.
-const RETRY_AFTER: Duration = Duration::from_millis(5);
 
 /// More than a pipe holds.
 const MAX_AVAILABLE: usize = 256 * 1024;
@@ -260,6 +256,7 @@ fn read_error(status: NTSTATUS) -> ReadEvent {
     ReadEvent::Err(match status {
         NTSTATUS::PIPE_BROKEN => return ReadEvent::Eof,
         NTSTATUS::ACCESS_DENIED => sys::Error::from_code(E::ENOTCONN, Tag::recv),
+        NTSTATUS::RETRY => sys::Error::from_code(E::EAGAIN, Tag::recv),
         status => sys::Error::new(Win32Error::from_ntstatus(status).to_node_e(), Tag::recv),
     })
 }
@@ -267,6 +264,7 @@ fn read_error(status: NTSTATUS) -> ReadEvent {
 fn write_error(status: NTSTATUS) -> sys::Error {
     match status {
         NTSTATUS::ACCESS_DENIED => sys::Error::from_code(E::EPIPE, Tag::write),
+        NTSTATUS::RETRY => sys::Error::from_code(E::EAGAIN, Tag::write),
         status => sys::Error::from_win32(Win32Error::from_ntstatus(status), Tag::write),
     }
 }
@@ -463,21 +461,16 @@ impl Inner {
             return self.report_read();
         }
         match status {
-            NTSTATUS::PIPE_EMPTY => {
-                let _ = named_pipe::set_blocking(self.handle.raw());
-                let retry = self.later(|this| this.continue_reading(Take::OnceThereIsSome));
-                let retry = Request::delay(&self.endpoint.port, RETRY_AFTER, retry);
-                self.read.set(Some(retry.into()));
-            }
-            status if NT_ERROR(status) && status != NTSTATUS::CANCELLED => {
+            NTSTATUS::CANCELLED => {}
+            NTSTATUS::PIPE_EMPTY if named_pipe::set_blocking(self.handle.raw()).is_ok() => {}
+            status if NT_ERROR(status) => {
                 self.endpoint.hold(read_error(status));
-                self.report_read();
+                return self.report_read();
             }
-            _ => {
-                self.endpoint.recycle(buffer);
-                self.continue_reading(Take::OnceThereIsSome);
-            }
+            _ => {}
         }
+        self.endpoint.recycle(buffer);
+        self.continue_reading(Take::OnceThereIsSome);
     }
 
     fn read_on_thread(self: &Rc<Self>, max_len: usize, take: Take) {
@@ -576,13 +569,10 @@ impl Inner {
             self.end_write(WriteEvent::Failed(write_error(status)));
         } else if from >= payload.bytes().len() {
             self.end_write(WriteEvent::Wrote(payload.into_spare()));
-        } else if written > 0 {
+        } else if written > 0 || named_pipe::set_blocking(self.handle.raw()).is_ok() {
             self.continue_writing(payload, from);
         } else {
-            let _ = named_pipe::set_blocking(self.handle.raw());
-            let retry = self.on_write(move |this, ()| this.continue_writing(payload, from));
-            let retry = Request::delay(&self.endpoint.port, RETRY_AFTER, move || retry(()));
-            self.write.set(Some(retry.into()));
+            self.end_write(WriteEvent::Failed(write_error(NTSTATUS::RETRY)));
         }
     }
 
@@ -659,8 +649,7 @@ fn read_synchronous<T: Send + 'static>(
         }
         match named_pipe::read(handle, buffer, max_len) {
             Err(NTSTATUS::PIPE_EMPTY) => {
-                let _ = named_pipe::set_blocking(handle);
-                std::thread::sleep(RETRY_AFTER);
+                named_pipe::set_blocking(handle).map_err(|_| NTSTATUS::RETRY)?;
             }
             result => return result,
         }
@@ -704,16 +693,13 @@ fn read_synchronous<T: Send + 'static>(
 
 fn write_synchronous(handle: &Handle, mut bytes: &[u8], cancel: &Cancel) -> sys::Result<()> {
     let write_all = || {
-        let mut max_len = usize::MAX;
         while !bytes.is_empty() {
             if cancel.is_cancelled() {
                 return Err(NTSTATUS::CANCELLED);
             }
-            let len = bytes.len().min(max_len);
-            let written = named_pipe::write(handle.raw(), &bytes[..len])?;
+            let written = named_pipe::write(handle.raw(), bytes)?;
             if written == 0 {
-                max_len = named_pipe::after_empty_write(handle.raw(), len);
-                std::thread::sleep(RETRY_AFTER);
+                named_pipe::set_blocking(handle.raw()).map_err(|_| NTSTATUS::RETRY)?;
             }
             bytes = &bytes[written..];
         }

@@ -1,6 +1,5 @@
 //! Windows cannot poll a pipe or a console, so a job waits for one inside the call.
 
-use core::time::Duration;
 use std::sync::Arc;
 
 use bun_core::vec::BorrowedCursor;
@@ -87,14 +86,12 @@ impl Blocking {
 
     /// Writes at least one byte. `bytes` is not empty.
     pub(super) fn write(&self, fd: Fd, bytes: &[u8]) -> sys::Result<usize> {
-        let mut len = bytes.len().min(MAX_WRITE);
+        let len = bytes.len().min(MAX_WRITE);
         loop {
             let wrote = self.writes.run(|| sys::write(fd, &bytes[..len]));
             match wrote.unwrap_or_else(|| Err(sys::Error::from_code(E::ECANCELED, Tag::write)))? {
-                0 => {
-                    len = len.min(named_pipe::after_empty_write(fd.native(), len));
-                    std::thread::sleep(Duration::from_millis(1));
-                }
+                0 => named_pipe::set_blocking(fd.native())
+                    .map_err(|_| sys::Error::from_code(E::EAGAIN, Tag::write))?,
                 wrote => return Ok(wrote),
             }
         }

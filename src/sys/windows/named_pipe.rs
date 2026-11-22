@@ -94,11 +94,6 @@ pub fn set_blocking(handle: HANDLE) -> Result<(), NTSTATUS> {
     nt::set(handle, modes)
 }
 
-/// How much to try next. With `PIPE_NOWAIT` a write of `len` bytes takes all or nothing.
-pub fn after_empty_write(handle: HANDLE, len: usize) -> usize {
-    set_blocking(handle).map_or_else(|_| len.div_ceil(2), |()| usize::MAX)
-}
-
 /// How many bytes there are, if a read would return at once with data or an empty message.
 pub fn input(handle: HANDLE) -> Result<Option<usize>, NTSTATUS> {
     let [_state, bytes, messages, _message_len] = nt::peek_pipe(handle)?;

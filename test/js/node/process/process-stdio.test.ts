@@ -664,6 +664,26 @@ describe.concurrent.skipIf(!isWindows).each([
   });
 });
 
+test.concurrent.skipIf(!isWindows).each([0, 1])(
+  "a pipe that does not wait, and may not be changed, fails with EAGAIN while it is empty (overlapped: %d)",
+  async overlapped => {
+    const script = `
+      const k32 = require("bun:ffi").dlopen("kernel32.dll", {
+        CreateNamedPipeW: { args: ["ptr", "u32", "u32", "u32", "u32", "u32", "u32", "ptr"], returns: "i64" },
+      }).symbols;
+      const name = "\\\\\\\\.\\\\pipe\\\\bun-test-" + crypto.randomUUID();
+      const windowsHandle = k32.CreateNamedPipeW(Buffer.from(name + "\\0", "utf16le"), 1 | (${overlapped} << 30), 1, 1, 0, 0, 0, null);
+      fs.openSync(name, "w");
+      Bun.spawn([process.execPath, "-e", "process.stdin.on('error', err => console.log(err.code)).resume()"], {
+        stdio: [fs.createReadStream(null, { windowsHandle, autoClose: false }).fd, "inherit", "inherit"],
+      });
+    `;
+    await using proc = spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "EAGAIN\n", stderr: "", exitCode: 0 });
+  },
+);
+
 describe.concurrent.skipIf(!isWindows)("a TCP socket", () => {
   async function run(slot: number, script: string, overlapped = 0) {
     const { promise: received, resolve } = Promise.withResolvers<number>();

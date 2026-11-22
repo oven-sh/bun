@@ -1477,14 +1477,17 @@ impl WindowsStreamingWriter {
 #[cfg(windows)]
 fn write_sync(fd: Fd, bytes: &[u8]) -> WriteResult {
     use sys::windows::{FILE_TYPE_PIPE, GetFileType, named_pipe};
-    let (mut remain, mut max_len) = (bytes, usize::MAX);
+    let mut remain = bytes;
     while !remain.is_empty() {
-        let len = remain.len().min(max_len);
-        match sys::write(fd, &remain[..len]) {
+        match sys::write(fd, remain) {
             sys::Result::Err(err) => return WriteResult::Err(err),
             sys::Result::Ok(0) if GetFileType(fd.native()) == FILE_TYPE_PIPE => {
-                max_len = named_pipe::after_empty_write(fd.native(), len);
-                std::thread::sleep(core::time::Duration::from_millis(1));
+                if named_pipe::set_blocking(fd.native()).is_err() {
+                    return WriteResult::Err(sys::Error::from_code(
+                        sys::E::EAGAIN,
+                        sys::Tag::write,
+                    ));
+                }
             }
             sys::Result::Ok(0) => break,
             sys::Result::Ok(wrote) => remain = &remain[wrote..],

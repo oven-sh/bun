@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/_http_server.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 ff5fd0cf3ffd5e9a3fb246c83dbbefe854e635a64472500199657149d7819c82.
+// Written against that file with the SHA-256 dfda9c3d184a8a42d78166f56a13be9a421c10bdeda44cd821ad6536615a6b66.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:_http_server"
@@ -68,6 +68,7 @@ const { addServerAbortSignalOption } = require("internal/net/server_abort_signal
 const http = require("internal/http");
 const {
   STATUS_CODES,
+  nativeStatusTexts,
   hasServerResponseFinished,
   drainMicrotasks,
   setServerCustomOptions,
@@ -197,6 +198,7 @@ const enum HeaderBits {
   unusual = date | connection | keep_alive | transfer_encoding | spilled,
 }
 const { FakeSocket } = require("internal/http/FakeSocket");
+const { isAnyArrayBuffer, isDataView, isStringObject } = require("node:util/types");
 const NumberIsNaN = Number.isNaN;
 
 const { IncomingMessage } = require("node:_http_incoming");
@@ -3692,8 +3694,13 @@ function statusCodeToSend(res: $Node.ServerResponse): number {
   return res[kSnapshotStatusCode] ?? res.statusCode;
 }
 
-function statusMessageToSend(res: $Node.ServerResponse): string | undefined {
-  return res[kSnapshotStatusMessage] ?? res.statusMessage;
+function statusMessageToSend(res: $Node.ServerResponse, statusCode: number): string | undefined {
+  return statusMessageForHandle(statusCode, res[kSnapshotStatusMessage] ?? res.statusMessage);
+}
+
+// A handle that is given no statusMessage writes its own text for the status code, from a static status line.
+function statusMessageForHandle(statusCode: number, statusMessage: string | undefined): string | undefined {
+  return statusMessage === nativeStatusTexts[statusCode] ? undefined : statusMessage;
 }
 
 const enum AutoHeaders {
@@ -5788,7 +5795,8 @@ ServerResponse.prototype.end = function (
   } else flags = exchange.flags;
 
   if (headerState === NodeHTTPHeaderState.none) {
-    if (callWriteHeadIfObservable(this, headerState, true)) hasRunCode = true;
+    // The table of status codes is the program's to write: an accessor under a status code runs in the store.
+    if (callWriteHeadIfObservable(this, headerState, true) || storeDefaultStatusMessage(this, chunk)) hasRunCode = true;
     flags = exchange.flags;
   }
   if (hasRunCode && !(IS_COMPILED_AHEAD_OF_TIME && $isPlainInstanceOf(this, ServerResponse))) {
@@ -5831,6 +5839,7 @@ ServerResponse.prototype.end = function (
           !(IS_COMPILED_AHEAD_OF_TIME && $isPlainInstanceOf(this, ServerResponse))
             ? (this[kSnapshotStatusMessage] ?? this.statusMessage)
             : this.statusMessage;
+        statusMessage = statusMessageForHandle(statusCode, statusMessage);
       }
       const strict = this.strictContentLength ? contentLengthToKeepTo(this, headerState, true) : undefined;
       const autoHeaders = renderedAutoHeaders;
@@ -5862,7 +5871,7 @@ ServerResponse.prototype.end = function (
           (socket !== null
             ? handle.writeWholeResponse(
                 statusCode,
-                statusCode === 200 && statusMessage === "OK" ? undefined : statusMessage,
+                statusMessage,
                 renderedHeaders,
                 chunk,
                 encoding,
@@ -6048,7 +6057,7 @@ function writeHeadAndFirstChunk(
         : res.statusMessage;
     handle.writeHead(
       statusCode,
-      statusMessage,
+      statusMessageForHandle(statusCode, statusMessage),
       renderedHeaders as string[],
       renderedAutoHeaders,
       renderedKeepAliveSecs,
@@ -6146,7 +6155,7 @@ ServerResponse.prototype.write = function (
     flags = exchange.flags;
     if (hasRunCode && !(IS_COMPILED_AHEAD_OF_TIME && $isPlainInstanceOf(this, ServerResponse))) {
       ("unlikely");
-      return writeInFullBehindHead(this, exchange, handle, chunk, encoding, callback, headerState);
+      return writeInFullBehindHead(this, exchange, handle, chunk, encoding, callback, headerState, false);
     }
 
     if (this[headerStateSymbol] === NodeHTTPHeaderState.none) {
@@ -6162,6 +6171,16 @@ ServerResponse.prototype.write = function (
         hasChunk = false;
       }
     }
+    // The table of status codes is the program's to write: an accessor under a status code runs in the store.
+    if (
+      headerState === NodeHTTPHeaderState.none &&
+      !hasRunCode &&
+      storeDefaultStatusMessage(this, chunk) &&
+      !(IS_COMPILED_AHEAD_OF_TIME && $isPlainInstanceOf(this, ServerResponse))
+    ) {
+      ("unlikely");
+      return writeInFullBehindHead(this, exchange, handle, chunk, encoding, callback, headerState, false);
+    }
 
     if (
       hasChunk &&
@@ -6176,7 +6195,7 @@ ServerResponse.prototype.write = function (
       ((((exchange.flags & ExchangeFlags.may_have_taken_head) !== 0 ||
         !(IS_COMPILED_AHEAD_OF_TIME && $isPlainInstanceOf(this, ServerResponse))) &&
         this[kSnapshotStatusCode] !== undefined) ||
-        this.statusMessage === undefined) &&
+        statusMessageForHandle(this.statusCode, this.statusMessage) === undefined) &&
       this.getHeader === outgoingGetHeader &&
       reachesWritableHighWaterMark(this) &&
       ticksAreUnseen() &&
@@ -6197,23 +6216,25 @@ ServerResponse.prototype.write = function (
           // An accessor among the names that the head is made of has sent the head, or written a chunk that is held. Native code refuses the second head, as on the full road.
           ("unlikely");
           sendWhatIsHeld(this);
+          const statusCode = statusCodeToSend(this);
           handle.writeHead(
-            statusCodeToSend(this),
-            statusMessageToSend(this),
+            statusCode,
+            statusMessageToSend(this, statusCode),
             renderedHeaders as string[],
             renderedAutoHeaders,
             renderedKeepAliveSecs,
           );
         }
         // The head counts as sent, so what is assigned to statusCode or statusMessage from here on has no effect on the wire.
+        const statusCode = statusCodeToSend(this);
         socket.$heldChunk = new HeldChunk(
           exchange,
           chunk,
           renderedHeaders,
           renderedAutoHeaders,
           renderedKeepAliveSecs,
-          statusCodeToSend(this),
-          statusMessageToSend(this),
+          statusCode,
+          statusMessageToSend(this, statusCode),
         );
         this[kBytesBuffered] =
           ((exchange.flags & ExchangeFlags.may_count_bytes) !== 0 ||
@@ -6777,6 +6798,25 @@ function updateHasBody(response: $Node.ServerResponse, statusCode: number) {
   // status writeHead() picks.
 }
 
+// Node's _implicitHeader() stores it through writeHead(). Nothing is stored for a chunk that the handle will refuse.
+function storeDefaultStatusMessage(res: $Node.ServerResponse, chunk: unknown): boolean {
+  if (
+    typeof chunk !== "string" &&
+    chunk != null &&
+    !$isTypedArrayView(chunk) &&
+    !isDataView(chunk) &&
+    !isAnyArrayBuffer(chunk) &&
+    !isStringObject(chunk)
+  ) {
+    ("unlikely");
+    throw $ERR_INVALID_ARG_TYPE("chunk", ["string", "Buffer", "Uint8Array"], chunk);
+  }
+  if (res.statusMessage) return false;
+  res.statusMessage = STATUS_CODES[res.statusCode] || "unknown";
+  return true;
+}
+
+// Returns true if it called the program's writeHead().
 function callWriteHeadIfObservable(
   self: $Node.ServerResponse,
   headerState: NodeHTTPHeaderState,
@@ -6984,7 +7024,7 @@ function writeHeadToHandle(
 ): void {
   const renderedHeaders = renderNativeHeaders(res, exchange, exchange !== undefined && exchange.response === res);
   const statusCode = statusCodeToSend(res);
-  const statusMessage = statusMessageToSend(res);
+  const statusMessage = statusMessageToSend(res, statusCode);
   handle.writeHead(statusCode, statusMessage, renderedHeaders as string[], renderedAutoHeaders, renderedKeepAliveSecs);
 }
 
@@ -7029,7 +7069,9 @@ function endInFull(
   if (trailer) sendTrailers(res, trailer);
 
   const headerState = res[headerStateSymbol];
-  if (!droppedChunk) callWriteHeadIfObservable(res, headerState, true);
+  if (!droppedChunk && !callWriteHeadIfObservable(res, headerState, true) && headerState === NodeHTTPHeaderState.none) {
+    storeDefaultStatusMessage(res, chunk);
+  }
   return endInFullBehindHead(res, exchange, handle, chunk, encoding, callback, droppedChunk, headerState);
 }
 
@@ -7056,9 +7098,10 @@ function endInFullBehindHead(
     ) as string[];
     let contentLength: number;
     try {
+      const statusCode = statusCodeToSend(res);
       contentLength = handle.writeHeadAndEnd(
-        statusCodeToSend(res),
-        statusMessageToSend(res),
+        statusCode,
+        statusMessageToSend(res, statusCode),
         renderedHeaders,
         chunk,
         encoding,
@@ -7105,12 +7148,12 @@ function writeInFull(
   }
 
   const headerState = res[headerStateSymbol];
-  callWriteHeadIfObservable(res, headerState);
+  const calledWriteHead = callWriteHeadIfObservable(res, headerState);
 
   if (!handle) {
     return OutgoingMessagePrototype.write.$call(res, chunk!, encoding, callback);
   }
-  return writeInFullBehindHead(res, exchange, handle, chunk, encoding, callback, headerState);
+  return writeInFullBehindHead(res, exchange, handle, chunk, encoding, callback, headerState, !calledWriteHead);
 }
 
 function writeInFullBehindHead(
@@ -7121,6 +7164,7 @@ function writeInFullBehindHead(
   encoding: string | null | undefined,
   callback: $Node.HttpWriteCallback | undefined,
   headerState: NodeHTTPHeaderState,
+  storesDefaultStatusMessage: boolean,
 ) {
   let result = 0;
 
@@ -7134,6 +7178,7 @@ function writeInFullBehindHead(
       chunk = undefined;
     }
   }
+  if (storesDefaultStatusMessage && headerState === NodeHTTPHeaderState.none) storeDefaultStatusMessage(res, chunk);
 
   const flags = handle.flags;
   if (!!(flags & NodeHTTPResponseFlags.closed_or_completed)) {

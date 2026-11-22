@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/internal/http.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 fb8173ad4b1d435f59685c97012314538ff32e2e02c603547e9fb33660589e61.
+// Written against that file with the SHA-256 409a79b921b0e400549467ed4af8cb3e52393fc37bc9129ab23954518012754b.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 const { isIPv4 } = require("internal/net/isIP");
@@ -404,6 +404,14 @@ const STATUS_CODES: Record<number, string | undefined> = {
   509: "Bandwidth Limit Exceeded",
   510: "Not Extended",
   511: "Network Authentication Required",
+};
+
+// What a response handle writes when it is given no statusMessage: the texts that HTTPStatusText.rs shares with STATUS_CODES.
+const nativeStatusTexts: { __proto__: null; [statusCode: number]: string | undefined } = {
+  __proto__: null,
+  ...STATUS_CODES,
+  101: undefined,
+  509: undefined,
 };
 
 function hasServerResponseFinished(
@@ -833,6 +841,7 @@ export {
   kUniqueHeaders,
   kWaitForProxyTunnel,
   loadAllOfNodeHttp,
+  nativeStatusTexts,
   noBodySymbol,
   onDataIncomingMessage,
   optionsSymbol,

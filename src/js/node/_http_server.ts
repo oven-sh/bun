@@ -65,8 +65,10 @@ const {
   kOutHeaders,
   onDataIncomingMessage,
   http1ServerPipeline,
+  nativeStatusTexts,
 } = require("internal/http");
 const { FakeSocket } = require("internal/http/FakeSocket");
+const { isAnyArrayBuffer, isDataView, isStringObject } = require("node:util/types");
 const NumberIsNaN = Number.isNaN;
 
 const { IncomingMessage, kReqShouldKeepAlive } = require("node:_http_incoming");
@@ -3571,7 +3573,13 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
   }
 
   const headerState = this[headerStateSymbol];
-  if (!droppedChunk) callWriteHeadIfObservable(this, headerState, true);
+  if (
+    !droppedChunk &&
+    !callWriteHeadIfObservable(this, headerState, true) &&
+    headerState === NodeHTTPHeaderState.none
+  ) {
+    storeDefaultStatusMessage(this, chunk);
+  }
 
   const flags = handle.flags;
   if (!!(flags & NodeHTTPResponseFlags.closed_or_completed)) {
@@ -3596,9 +3604,10 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
       try {
         // One native crossing for cork + writeHead + end (writeHeadAndEnd
         // corks natively around both phases).
+        const statusCode = this[kSnapshotStatusCode] ?? this.statusCode;
         contentLength = handle.writeHeadAndEnd(
-          this[kSnapshotStatusCode] ?? this.statusCode,
-          this[kSnapshotStatusMessage] ?? this.statusMessage,
+          statusCode,
+          statusMessageForHandle(statusCode, this[kSnapshotStatusMessage] ?? this.statusMessage),
           renderedHeaders,
           chunk,
           encoding,
@@ -3738,7 +3747,7 @@ ServerResponse.prototype.write = function (chunk, encoding, callback) {
   let result = 0;
 
   const headerState = this[headerStateSymbol];
-  callWriteHeadIfObservable(this, headerState);
+  const calledWriteHead = callWriteHeadIfObservable(this, headerState);
 
   if (!handle) {
     // Route through the OutgoingMessage machinery (mirroring end()'s
@@ -3768,6 +3777,7 @@ ServerResponse.prototype.write = function (chunk, encoding, callback) {
       chunk = undefined;
     }
   }
+  if (headerState === NodeHTTPHeaderState.none && !calledWriteHead) storeDefaultStatusMessage(this, chunk);
 
   const flags = handle.flags;
   if (!!(flags & NodeHTTPResponseFlags.closed_or_completed)) {
@@ -3784,9 +3794,10 @@ ServerResponse.prototype.write = function (chunk, encoding, callback) {
     handle.cork(() => {
       const renderedHeaders = renderNativeHeaders(this);
       try {
+        const statusCode = this[kSnapshotStatusCode] ?? this.statusCode;
         handle.writeHead(
-          this[kSnapshotStatusCode] ?? this.statusCode,
-          this[kSnapshotStatusMessage] ?? this.statusMessage,
+          statusCode,
+          statusMessageForHandle(statusCode, this[kSnapshotStatusMessage] ?? this.statusMessage),
           renderedHeaders,
           renderedAutoHeaders,
           renderedKeepAliveSecs,
@@ -3984,9 +3995,10 @@ ServerResponse.prototype._send = function (data, encoding, callback, _byteLength
     handle.cork(() => {
       const renderedHeaders = renderNativeHeaders(this);
       try {
+        const statusCode = this[kSnapshotStatusCode] ?? this.statusCode;
         handle.writeHead(
-          this[kSnapshotStatusCode] ?? this.statusCode,
-          this[kSnapshotStatusMessage] ?? this.statusMessage,
+          statusCode,
+          statusMessageForHandle(statusCode, this[kSnapshotStatusMessage] ?? this.statusMessage),
           renderedHeaders,
           renderedAutoHeaders,
           renderedKeepAliveSecs,
@@ -4129,9 +4141,10 @@ ServerResponse.prototype.flushHeaders = function () {
 
       const renderedHeaders = renderNativeHeaders(this);
       try {
+        const statusCode = this[kSnapshotStatusCode] ?? this.statusCode;
         handle.writeHead(
-          this[kSnapshotStatusCode] ?? this.statusCode,
-          this[kSnapshotStatusMessage] ?? this.statusMessage,
+          statusCode,
+          statusMessageForHandle(statusCode, this[kSnapshotStatusMessage] ?? this.statusMessage),
           renderedHeaders,
           renderedAutoHeaders,
           renderedKeepAliveSecs,
@@ -4171,6 +4184,7 @@ function updateHasBody(response, statusCode) {
 
 let OriginalWriteHeadFn, OriginalImplicitHeadFn;
 
+// Returns true if it called the program's writeHead().
 function callWriteHeadIfObservable(self, headerState, fromEnd?) {
   if (
     headerState === NodeHTTPHeaderState.none &&
@@ -4185,7 +4199,31 @@ function callWriteHeadIfObservable(self, headerState, fromEnd?) {
     } finally {
       if (fromEnd) self[kImplicitHeaderFromEnd] = false;
     }
+    return true;
   }
+  return false;
+}
+
+// Node's _implicitHeader() stores it through writeHead(). Nothing is stored for a chunk that the handle will refuse.
+function storeDefaultStatusMessage(res, chunk) {
+  if (
+    typeof chunk !== "string" &&
+    chunk != null &&
+    !$isTypedArrayView(chunk) &&
+    !isDataView(chunk) &&
+    !isAnyArrayBuffer(chunk) &&
+    !isStringObject(chunk)
+  ) {
+    throw $ERR_INVALID_ARG_TYPE("chunk", ["string", "Buffer", "Uint8Array"], chunk);
+  }
+  if (res.statusMessage) return false;
+  res.statusMessage = STATUS_CODES[res.statusCode] || "unknown";
+  return true;
+}
+
+// A handle that is given no statusMessage writes its own text for the status code, from a static status line.
+function statusMessageForHandle(statusCode, statusMessage) {
+  return statusMessage === nativeStatusTexts[statusCode] ? undefined : statusMessage;
 }
 
 function allowWritesToContinue() {

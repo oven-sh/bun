@@ -2,6 +2,7 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 use std::io::Write as _;
 
 use bun_core::ZBox;
+use bun_paths::Path;
 use bun_ptr::BackRef;
 use bun_sys::{E, O, S, dir_iterator};
 
@@ -85,14 +86,9 @@ impl ShellLsTask {
 
     /// Does not normalize the path.
     fn join(&self, child: &[u8]) -> ZBox {
-        let parent = self.path.as_bytes();
-        let mut v = Vec::with_capacity(parent.len() + 1 + child.len());
-        v.extend_from_slice(parent);
-        if parent.last().is_some_and(|&c| !bun_paths::is_sep_native(c)) {
-            v.push(bun_paths::SEP);
-        }
-        v.extend_from_slice(child);
-        ZBox::from_vec(v)
+        let mut path = Path::from(self.path.as_bytes());
+        path.push(child);
+        path.to_zbox()
     }
 
     fn list(this: &mut ShellLsTask, task: &ShellTask) {
@@ -165,7 +161,7 @@ impl ShellLsTask {
         match shell_lstatat(self.cwd, self.path.as_zstr()) {
             Ok(stat) => {
                 // An operand is never subject to the -a/-A filter.
-                let name = ZBox::from_bytes(self.path.as_bytes());
+                let name = self.path.to_zbox();
                 if self.opts.long_listing {
                     self.add_entry_long_from_stat(name.as_bytes(), &stat);
                 } else {

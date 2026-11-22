@@ -185,16 +185,12 @@ impl Writable {
                 let pipe_ref = FileSink::create(evtloop, file.fd());
 
                 let writer = &pipe_ref.writer;
-                match writer.start(&*pipe_ref, evtloop.as_event_loop_ctx(), file.fd(), true) {
-                    // The writer closes it from now on.
-                    bun_sys::Result::Ok(()) => _ = file.into_raw(),
-                    bun_sys::Result::Err(err) => {
-                        drop(file);
-                        if let Stdio::ReadableStream(rs) = &mut stdio {
-                            rs.cancel(global)?;
-                        }
-                        return Err(global.throw_value(err.to_js(global)));
+                if let Err(err) = writer.start(&*pipe_ref, evtloop.as_event_loop_ctx(), file, true)
+                {
+                    if let Stdio::ReadableStream(rs) = &mut stdio {
+                        rs.cancel(global)?;
                     }
+                    return Err(global.throw_value(err.to_js(global)));
                 }
 
                 writer.set_poll_flag(bun_io::FilePollFlag::Socket);

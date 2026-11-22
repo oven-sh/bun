@@ -20,6 +20,8 @@ public:
 
     // Empty if it threw. Out of line: inlined, it is most of the size of every generated dictionary converter.
     NEVER_INLINE JSC::JSValue get(unsigned index);
+    // As `get`, which stops before Object.prototype. This does not.
+    NEVER_INLINE JSC::JSValue getAsWebIDL(unsigned index);
 
 private:
     JSC::VM& m_vm;

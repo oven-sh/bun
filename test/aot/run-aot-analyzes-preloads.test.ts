@@ -1,5 +1,5 @@
 import { expect } from "bun:test";
-import { bunExe, tempDir } from "harness";
+import { bunExe, isWindows, tempDir } from "harness";
 import { run } from "./harness/run";
 import { test } from "./supported";
 
@@ -56,4 +56,28 @@ test("a preload that is not there ends the run as it ends plain Bun's, with an e
   const held = await ran(files, "run", "--aot", "--preload", "./none.ts", "main.ts");
   expect({ stdout: held.stdout, exitCode: held.exitCode }).toEqual({ stdout: plain.stdout, exitCode: plain.exitCode });
   expect(held.stderr).toContain(`"./none.ts" was not found`);
+});
+
+test.each([
+  ["run", "main.ts", "./setup\\pre.ts"],
+  ["test", "./main.test.ts", "./setup\\pre.ts"],
+  ["run", "main.ts", "#key/a\\b"],
+  ["run", "main.ts", "#alias/setup\\pre.ts"],
+  ["run", "main.ts", "@/setup\\pre.ts"],
+  ["test", "./main.test.ts", "pkg\\pre.ts"],
+])("bun %s %s finds the preload %s as plain Bun does", async (command, file, preload) => {
+  const files = {
+    "package.json": JSON.stringify({ imports: { "#key/a\\b": "./setup/pre.ts" } }),
+    "tsconfig.json": JSON.stringify({ compilerOptions: { paths: { "#alias/*": ["./*"], "@/*": ["./*"] } } }),
+    "setup/pre.ts": log + `console.log("the preload ran");`,
+    "node_modules/pkg/pre.ts": log + `console.log("the preload ran");`,
+    ...(isWindows ? {} : { "node_modules/pkg\\pre.ts": log + `console.log("another file ran");` }),
+    "main.ts": log + `console.log("the program ran");`,
+    "main.test.ts": log + `console.log("the program ran");`,
+  };
+  for (const flags of [[], ["--aot"]]) {
+    const { stdout, exitCode } = await ran(files, command, ...flags, "--preload", preload, file);
+    expect(stdout).toContain("the preload ran\nthe program ran\n");
+    expect(exitCode).toBe(0);
+  }
 });

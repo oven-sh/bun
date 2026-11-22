@@ -13,11 +13,12 @@ use bun_bundler::Transpiler;
 use bun_core::{self, Global, Output};
 use bun_core::{ZBox, ZStr, strings};
 use bun_install::CommandLineArguments;
+use bun_install::bin::bin_target_in_package;
 use bun_install::dependency::{self, VersionTag};
 use bun_install::postinstall_optimizer;
 use bun_install::update_request::{self, UpdateRequest};
 use bun_parsers::json;
-use bun_paths::{self, DELIMITER};
+use bun_paths::{self, DELIMITER, Path, from_portable, without_trailing_sep};
 use bun_resolver::fs::RealFS;
 use bun_sys::{self, Fd, FdDirExt as _, O};
 use bun_wyhash::hash;
@@ -27,8 +28,6 @@ use crate::api::bun::process::Status as SpawnStatus;
 use crate::api::bun::process::sync as proc_sync;
 
 bun_output::declare_scope!(bunx, visible);
-
-const SEP: &[u8] = &[bun_paths::SEP];
 
 pub(crate) struct BunxCommand;
 
@@ -88,9 +87,18 @@ pub(crate) fn cache_root_name() -> Vec<u8> {
     format!(".bunx-{uid}").into_bytes()
 }
 
+/// Where `.bunx-<uid>` is for `dir`. Node.js refuses to import a module whose path has a `\` in a name.
+pub(crate) fn cache_base(dir: &[u8]) -> Path {
+    Path::join(&[&strings::replace_char(dir, b'\\', b'/')])
+}
+
+fn is_below(path: &[u8], dir: &[u8]) -> bool {
+    bun_paths::strip_prefix(path, dir).is_some_and(|rest| !rest.is_empty())
+}
+
 /// Returns how many packages are in `<base>/.bunx-<uid>`. All packages of one scope count as one.
 pub(crate) fn count_cached_packages(base: &[u8]) -> usize {
-    let root = [base, SEP, cache_root_name().as_slice()].concat();
+    let root = Path::from_parts(&[base, &cache_root_name()]);
     let Ok(root) = bun_sys::Dir::open(&root) else {
         return 0;
     };
@@ -381,19 +389,17 @@ impl BunxCommand {
                     for prop in object.get().properties() {
                         let bin_name = prop.key.slice();
                         // Same values the bin linker does not link (`bin.rs`).
-                        let Some(target) = prop.value.as_str().filter(|target| {
-                            !target.is_empty()
-                                && !bun_install::bin::bin_target_escapes_package_dir(target)
-                        }) else {
+                        let Some(target) = prop.value.as_str().and_then(bin_target_in_package)
+                        else {
                             continue;
                         };
                         if !Self::is_safe_bin_name(bin_name) {
                             continue;
                         }
                         if bin_name == preferred {
-                            return Ok(package_bin(bin_name, target));
+                            return Ok(package_bin(bin_name, &target));
                         }
-                        first.get_or_insert_with(|| package_bin(bin_name, target));
+                        first.get_or_insert_with(|| package_bin(bin_name, &target));
                     }
                     if let Some(bin) = first {
                         return Ok(bin);
@@ -408,7 +414,7 @@ impl BunxCommand {
                     {
                         let bin_name = bun_install::dependency::unscoped_package_name(name);
                         if Self::is_safe_bin_name(bin_name) {
-                            return Ok(package_bin(bin_name, target));
+                            return Ok(package_bin(bin_name, &from_portable(target)));
                         }
                     }
                 }
@@ -420,16 +426,15 @@ impl BunxCommand {
         if let Some(dirs) = expr.as_property(b"directories")
             && let Some(bin_prop) = dirs.expr.as_property(b"bin")
             && let Some(dir_name) = bin_prop.expr.as_utf8_string_literal()
-            && !dir_name.is_empty()
-            && !bun_install::bin::bin_target_escapes_package_dir(dir_name)
+            && let Some(dir_name) = bin_target_in_package(dir_name)
         {
-            use bun_paths::{platform::Auto, resolve_path::dirname, resolve_path::join_z};
             // `directories.bin` is relative to the package, not to `dir_fd`.
-            let path = join_z::<Auto>(&[dirname::<Auto>(subpath_z.as_bytes()), dir_name]);
-            let bin_dir = bun_sys::openat(dir_fd, path, O::RDONLY | O::DIRECTORY, 0)
+            let path = Path::join(&[bun_paths::dirname_or_root(subpath_z), &dir_name]);
+            let bin_dir = bun_sys::openat(dir_fd, &path, O::RDONLY | O::DIRECTORY, 0)
                 .map(bun_sys::Dir::from_fd)?;
             let mut iterator = bun_sys::dir_iterator::iterate(bin_dir.fd());
-            let bin_in_dir = |name: &[u8]| package_bin(name, &[dir_name, b"/", name].concat());
+            let bin_in_dir =
+                |name: &[u8]| package_bin(name, &[&dir_name, &b"/"[..], name].concat());
             let mut first: Option<PackageBin> = None;
             while let Ok(Some(current)) = iterator.next() {
                 if current.kind == bun_sys::EntryKind::File && !current.name.slice().is_empty() {
@@ -457,17 +462,10 @@ impl BunxCommand {
         bin_name: &[u8],
         only_that_bin: bool,
     ) -> crate::Result<InProject> {
-        let project = strings::without_trailing_slash(project);
-        let mut next_dir = Some(cwd);
-        while let Some(dir) = next_dir.map(strings::without_trailing_slash) {
-            if !dir.starts_with(project) {
-                break;
-            }
-            next_dir = bun_paths::dirname(dir);
-            let node_modules = [dir, SEP, b"node_modules", SEP].concat();
-            let package_dir = [node_modules.as_slice(), package_name].concat();
-            let package_json =
-                ZBox::from_vec([package_dir.as_slice(), SEP, b"package.json"].concat());
+        let project = without_trailing_sep(project);
+        for dir in bun_paths::ancestors(cwd).take_while(|dir| dir.starts_with(project)) {
+            let package_dir = Path::from_parts(&[dir, b"node_modules", package_name]);
+            let package_json = Path::from_parts(&[&package_dir, b"package.json"]);
             let bin =
                 match Self::get_bin_from_subpath(transpiler, Fd::cwd(), &package_json, bin_name) {
                     Ok(bin) => bin,
@@ -479,26 +477,21 @@ impl BunxCommand {
             }
 
             let mut buf = bun_paths::path_buffer_pool::get();
-            let bin_dir = [node_modules.as_slice(), b".bin"].concat();
-            let entry = bun_which::which(&mut buf, &bin_dir, b"", &bin.name)
-                .map(|entry| ZBox::from_bytes(entry.as_bytes()));
+            let bin_dir = Path::from_parts(&[dir, b"node_modules/.bin"]);
+            let entry = bun_which::which(&bin_dir, b"", &bin.name).map(|entry| entry.to_zbox());
             // On Windows the `.bin` entry is a shim executable, not a link, and a script cannot be
             // started without it.
             if cfg!(windows) {
                 return Ok(entry.map_or(InProject::Absent, InProject::Run));
             }
-            let file_path = [package_dir.as_slice(), SEP, &*bin.file].concat();
-            let file = bun_which::which(&mut buf, b"", b"", &file_path)
-                .map(|file| ZBox::from_bytes(file.as_bytes()));
+            let file_path = [package_dir.as_bytes(), b"/", &*bin.file].concat();
+            let file = bun_which::which(b"", b"", &file_path).map(|file| file.to_zbox());
 
             let mut real_dir = bun_paths::path_buffer_pool::get();
-            let Ok(real_dir) = bun_sys::realpath(&ZBox::from_vec(package_dir), &mut real_dir)
-            else {
+            let Ok(real_dir) = bun_sys::realpath(&package_dir, &mut real_dir) else {
                 return Ok(InProject::Absent);
             };
-            let is_in_package = |real: &[u8]| {
-                (real.strip_prefix(real_dir)).is_some_and(|rest| rest.starts_with(SEP))
-            };
+            let is_in_package = |real: &[u8]| is_below(real, real_dir);
             // The installer links the bin of a native dependency into its platform package, and skips
             // the install script that replaces the package's own file.
             let entry = match entry {
@@ -560,9 +553,7 @@ impl BunxCommand {
 
         let file = ZBox::from_vec(file);
         match bun_sys::realpath(&file, &mut buf) {
-            Ok(real) if (real.strip_prefix(real_dir)).is_some_and(|rest| rest.starts_with(SEP)) => {
-                InProject::NotExecutable(file)
-            }
+            Ok(real) if is_below(real, real_dir) => InProject::NotExecutable(file),
             // The file links out of the package.
             Ok(_) => InProject::Absent,
             Err(err) => InProject::Unresolved {
@@ -602,7 +593,7 @@ impl BunxCommand {
         let Some(Some(name)) = name else {
             return false;
         };
-        let project_json = [project, SEP, b"package.json"].concat();
+        let project_json = Path::from_parts(&[project, b"package.json"]);
         Self::read_package_json(transpiler, &project_json, |root| {
             postinstall_optimizer::List::is_native_dependency(root, &name)
         })
@@ -661,8 +652,7 @@ impl BunxCommand {
     }
 
     fn tree_state(bunx_cache_dir: &[u8]) -> Tree {
-        let package_json = [bunx_cache_dir, &[bun_paths::SEP], b"package.json"].concat();
-        let stat = match bun_sys::stat(&ZBox::from_vec(package_json)) {
+        let stat = match bun_sys::stat(&Path::from_parts(&[bunx_cache_dir, b"package.json"])) {
             Ok(stat) => stat,
             Err(err) if err.get_errno() == bun_sys::E::ENOENT => return Tree::Missing,
             Err(_) => return Tree::Stale,
@@ -682,26 +672,14 @@ impl BunxCommand {
         package_name: &[u8],
         preferred: &[u8],
     ) -> crate::Result<Box<[u8]>> {
-        let subpath = Self::path_in_cache(&[
+        let parts = [
             bunx_cache_dir,
-            SEP,
             b"node_modules",
-            SEP,
             package_name,
-            SEP,
             b"package.json",
-        ])?;
+        ];
+        let subpath = Path::from_parts(&parts);
         Ok(Self::get_bin_from_subpath(transpiler, Fd::cwd(), &subpath, preferred)?.name)
-    }
-
-    /// Concatenates raw bytes. Formatting the path would replace invalid UTF-8 and point at a
-    /// different directory.
-    fn path_in_cache(parts: &[&[u8]]) -> crate::Result<ZBox> {
-        let path = parts.concat();
-        if path.len() >= bun_paths::MAX_PATH_BYTES {
-            return Err(crate::Error::PathTooLong);
-        }
-        Ok(ZBox::from_vec(path))
     }
 
     /// `.bunx-<uid>`, owned by this user with mode 0700, is the trust boundary. Nothing below it is
@@ -721,20 +699,19 @@ impl BunxCommand {
                 .filter(|dir| !dir.is_cwd_fallback);
         // `$TMPDIR` can be relative. It is made absolute because the install runs in a different
         // working directory than this command.
-        let mut temp_dir_buf = bun_paths::path_buffer_pool::get();
-        let temp_dir = bun_resolver::fs::FileSystem::get()
-            .abs_buf_checked(&[RealFS::platform_temp_dir()], &mut temp_dir_buf[..]);
+        let mut temp_dir = Path::from_top_level_dir();
+        temp_dir.resolve_in_place(&[RealFS::platform_temp_dir()]);
         let bases = [
             install_cache.as_ref().map(|dir| dir.path.as_slice()),
-            temp_dir,
+            Some(temp_dir.as_bytes()),
         ];
         for (base, is_shared) in bases.into_iter().zip([false, true]) {
-            let Some(base) = base.map(strings::without_trailing_slash) else {
+            let Some(base) = base.map(cache_base) else {
                 continue;
             };
-            let root = ZBox::from_vec([base, b"/", root_name.as_slice()].concat());
+            let root = Path::from_parts(&[&base, root_name.as_slice()]);
             if create {
-                let _ = Fd::cwd().make_path(base);
+                let _ = Fd::cwd().make_path(&base);
                 let _ = bun_sys::mkdirat(Fd::cwd(), &root, 0o700);
             }
             if !bun_sys::lstat(&root).is_ok_and(|st| {
@@ -774,7 +751,9 @@ impl BunxCommand {
         bunx_cache_dir: &[u8],
         path: &[u8],
     ) -> crate::Result<()> {
-        let mut new_path = [bunx_cache_dir, SEP, b"node_modules", SEP, b".bin"].concat();
+        let mut bin_dir = Path::from(bunx_cache_dir);
+        bin_dir.push(b"node_modules/.bin");
+        let mut new_path = bin_dir.to_vec();
         if !path.is_empty() {
             new_path.push(DELIMITER);
             new_path.extend_from_slice(path);
@@ -783,28 +762,16 @@ impl BunxCommand {
         Ok(())
     }
 
-    fn which_in_cache<'a>(
-        buf: &'a mut bun_paths::PathBuffer,
+    fn which_in_cache(
         bunx_cache_dir: &[u8],
         cwd: &[u8],
         bin_name: &[u8],
-    ) -> crate::Result<Option<&'a ZStr>> {
-        let absolute = Self::path_in_cache(&[
-            bunx_cache_dir,
-            SEP,
-            b"node_modules",
-            SEP,
-            b".bin",
-            SEP,
-            bin_name,
-            EXE_SUFFIX.as_bytes(),
-        ])?;
-        Ok(bun_which::which(
-            buf,
-            bunx_cache_dir,
-            cwd,
-            absolute.as_bytes(),
-        ))
+    ) -> crate::Result<Option<Path>> {
+        let file_name = [bin_name, EXE_SUFFIX.as_bytes()].concat();
+        let absolute = Path::from_parts(&[bunx_cache_dir, b"node_modules/.bin", &file_name])
+            .check_len()
+            .map_err(|_| crate::Error::PathTooLong)?;
+        Ok(bun_which::which(bunx_cache_dir, cwd, &absolute))
     }
 
     /// Exits if the package has no bin, because installing it again would not give it one.
@@ -867,15 +834,13 @@ impl BunxCommand {
             Some(Ok(own_bin_name)) => &**own_bin_name,
             _ => initial_bin_name,
         };
-        let mut buf = bun_paths::path_buffer_pool::get();
-        if let Some(bin) = Self::which_in_cache(&mut buf, bunx_cache_dir, cwd, bin_name)? {
-            return Ok(Some(ZBox::from_bytes(bin.as_bytes())));
+        if let Some(bin) = Self::which_in_cache(bunx_cache_dir, cwd, bin_name)? {
+            return Ok(Some(bin.to_zbox()));
         }
         match own_bin_name {
             Some(Err(err @ crate::Error::NoBinFound)) => Err(err),
             Some(_) => Ok(None),
-            None => Ok(bun_which::which(&mut buf, path, cwd, initial_bin_name)
-                .map(|bin| ZBox::from_bytes(bin.as_bytes()))),
+            None => Ok(bun_which::which(path, cwd, initial_bin_name).map(|bin| bin.to_zbox())),
         }
     }
 
@@ -1067,8 +1032,8 @@ impl BunxCommand {
             let mut new_path: Vec<u8> = Vec::with_capacity(path.len());
             for (i, segment) in strings::tokenize(&path, &[DELIMITER]).enumerate() {
                 if !strings::eql_long(
-                    strings::without_trailing_slash(segment),
-                    strings::without_trailing_slash(&ignore_cwd),
+                    without_trailing_sep(segment),
+                    without_trailing_sep(&ignore_cwd),
                 ) {
                     if i > 0 {
                         new_path.push(DELIMITER);
@@ -1096,9 +1061,8 @@ impl BunxCommand {
         let package_with_bin = opts.binary_name.is_none().then_some(result_package_name);
 
         let find_on_path = || {
-            let mut buf = bun_paths::path_buffer_pool::get();
-            bun_which::which(&mut buf, &path_for_bin_dirs, which_cwd, initial_bin_name)
-                .map(|bin| ZBox::from_bytes(bin.as_bytes()))
+            bun_which::which(&path_for_bin_dirs, which_cwd, initial_bin_name)
+                .map(|bin| bin.to_zbox())
         };
 
         // 1. Like npx, when one word names both the package and its bin, look for that bin in
@@ -1120,11 +1084,11 @@ impl BunxCommand {
             for bin_dir in strings::tokenize(&path_for_bin_dirs, &[DELIMITER])
                 .filter(|dir| cfg!(unix) && dir.ends_with(b"/node_modules/.bin"))
             {
-                let bin = [bin_dir, b"/", initial_bin_name].concat();
-                if bun_sys::exists(&bin) {
+                let bin = Path::from_parts(&[bin_dir, initial_bin_name]);
+                if bun_sys::exists_z(&bin) {
                     Output::err_generic(
                         "{} is not executable",
-                        format_args!("{}", BStr::new(&bin)),
+                        format_args!("{}", BStr::new(bin.as_bytes())),
                     );
                     Global::exit(126);
                 }
@@ -1315,16 +1279,17 @@ impl BunxCommand {
         }
         // An install into a fresh tree only updates the requested package, so package.json gets its
         // old mtime back afterward. Otherwise the dependencies' refresh would be postponed again.
-        let package_json_path =
-            ZBox::from_vec([bunx_cache_dir, &[bun_paths::SEP], b"package.json"].concat());
+        let package_json_path = Path::from_parts(&[bunx_cache_dir, b"package.json"]);
         let last_refresh = (tree == Tree::Fresh)
             .then(|| bun_sys::stat(&package_json_path).ok())
             .flatten();
 
         // `bun add` runs in another directory.
         let cafile = opts.cafile.map(|path| {
-            bun_paths::resolve_path::join_abs::<bun_paths::platform::Auto>(top_level_dir, path)
-                .to_vec()
+            let spelling = bun_sys::typed_spelling(top_level_dir, path, bun_paths::from_portable);
+            let mut resolved = Path::resolve(&[top_level_dir, &spelling]);
+            resolved.copy_trailing_sep_from(path);
+            resolved
         });
         let flags_with_value: Vec<Vec<u8>> = [
             (
@@ -1332,7 +1297,7 @@ impl BunxCommand {
                 opts.minimum_release_age,
             ),
             (b"--registry=", opts.registry),
-            (b"--cafile=", cafile.as_deref()),
+            (b"--cafile=", cafile.as_deref().map(ZStr::as_bytes)),
         ]
         .into_iter()
         .chain(opts.ca.iter().map(|ca| (b"--ca=".as_slice(), Some(*ca))))

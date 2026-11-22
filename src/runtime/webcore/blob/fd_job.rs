@@ -81,8 +81,6 @@ pub(crate) struct FdJob<Op: FdOp> {
     pub(crate) io_poll: io::Poll,
     io_request: io::Request,
     io_parking: IoParking,
-    /// epoll keeps a one-shot entry that has fired, and only the IO thread removes it.
-    close_after_io: bool,
 }
 
 impl<Op: FdOp> JobContext for FdJob<Op> {
@@ -133,7 +131,6 @@ impl<Op: FdOp> FdJob<Op> {
             io_poll: io::Poll::default(),
             io_request: io::Request::new(Self::watch),
             io_parking: IoParking::new(),
-            close_after_io: false,
         };
         Job::<Self>::schedule(cx, job, js);
     }
@@ -152,12 +149,7 @@ impl<Op: FdOp> FdJob<Op> {
             },
             Err(err) => Err(err),
         };
-        if self.close_after_io {
-            self.io_request.store_callback_seq_cst(Self::unwatch);
-            IoRequestLoop::schedule(&mut self.io_request);
-        } else {
-            self.finish();
-        }
+        self.finish();
     }
 
     fn park(&mut self) -> bun_sys::Result<()> {
@@ -165,13 +157,14 @@ impl<Op: FdOp> FdJob<Op> {
         if !self.io_parking.park() {
             return Err(Op::INTEREST.cancelled());
         }
-        self.close_after_io = !bun_core::Environment::IS_KQUEUE;
         IoRequestLoop::schedule(&mut self.io_request);
         Ok(())
     }
 
     fn finish(&mut self) {
         if let Some((fd, done)) = self.open.take() {
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            self.io_poll.unregister(fd.get());
             drop(fd);
             done.finish();
         }
@@ -197,12 +190,6 @@ impl<Op: FdOp> FdJob<Op> {
             Interest::Readable => io::Action::Readable(action),
             Interest::Writable => io::Action::Writable(action),
         }
-    }
-
-    /// IO thread.
-    fn unwatch(request: &mut io::Request) -> io::Action<'_> {
-        // SAFETY: as `watch`.
-        unsafe { (*from_field_ptr!(Self, io_request, &raw mut *request)).close_action() }
     }
 
     fn close_action(&mut self) -> io::Action<'_> {
@@ -286,7 +273,7 @@ pub(super) fn open(
         PathOrFileDescriptor::Fd(fd) => return Ok(JobFd::Borrowed(*fd)),
         PathOrFileDescriptor::Path(path) => path,
     };
-    let mut buf = bun_paths::path_buffer_pool::get();
+    let mut buf = bun_paths::Path::new();
     let path_z = path.slice_z(&mut buf);
     let flags = flags | O::NONBLOCK | O::CLOEXEC;
     let opened = creating_parents(&mut mkdirp, path_z.as_bytes(), || {

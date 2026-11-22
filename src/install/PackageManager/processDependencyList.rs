@@ -2,6 +2,7 @@ use core::cmp::Ordering;
 
 use bun_collections::index_sort;
 use bun_core::{Output, strings};
+use bun_paths::Path;
 use bun_semver::{ExternalString, String as SemverString};
 
 use crate::bun_json::Expr;
@@ -142,8 +143,8 @@ impl<'a> ResolverContext for TarballResolver<'a> {
 fn read_contained_package_json(package_dir: &[u8], folder: &[u8]) -> bun_sys::Maybe<Vec<u8>> {
     use bun_sys::O;
     let mut dir = bun_sys::Dir::open(package_dir)?;
-    for component in strings::split_any(folder, b"/\\") {
-        if !matches!(component, b"" | b".") {
+    for component in bun_paths::components(folder) {
+        if component != b"." {
             dir = dir.open_at_with(component, O::RDONLY | O::CLOEXEC | O::NOFOLLOW)?;
         }
     }
@@ -283,7 +284,7 @@ impl PackageManager {
             {
                 continue;
             }
-            let folder = folder.slice(buf).to_vec();
+            let folder = bun_paths::from_portable(folder.slice(buf)).into_owned();
             // The resolver rejects a folder outside the package, so its package.json is not read.
             if crate::bin::bin_target_escapes_package_dir(&folder) {
                 continue;
@@ -312,7 +313,7 @@ impl PackageManager {
             };
             let path = bun_resolver::fs::FileSystem::get()
                 .dirname_store()
-                .append(&[package_dir, b"/", &folder, b"/package.json"].concat())?;
+                .append(&Path::from_parts(&[package_dir, &folder, b"package.json"]))?;
             let source = bun_ast::Source::init_path_string(path, &json[..]);
 
             for declared in parse(self, &source)? {
@@ -366,19 +367,16 @@ impl PackageManager {
         base: &[u8],
     ) -> Result<Dependency, bun_alloc::AllocError> {
         let folder = folder.slice(self.lockfile.buffers.string_bytes.as_slice());
+        let folder: &[u8] = &bun_paths::from_portable(folder);
         // An absolute path is left as it is, and the resolver rejects it.
         if bun_paths::is_absolute(folder) {
             return Ok(row);
         }
-        let joined = [base, b"/", folder].concat();
-        let mut spill = Vec::new();
-        let literal = [
-            b"file:".as_slice(),
-            bun_paths::resolve_path::normalize_string_spill::<true, bun_paths::platform::Loose>(
-                &mut spill, &joined,
-            ),
-        ]
-        .concat();
+        let joined = Path::join(&[base, folder]).into_portable();
+        let literal = match bun_paths::without_trailing_sep(&joined) {
+            b"." => b"file:".to_vec(),
+            joined => [b"file:", joined].concat(),
+        };
         let literal = self.lockfile.string_buf().append(&literal)?;
         let sliced = literal.sliced(self.lockfile.buffers.string_bytes.as_slice());
         let version = dependency::parse_with_tag(

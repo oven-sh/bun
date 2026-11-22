@@ -9,7 +9,7 @@ pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
     }
     let mut out = Vec::new();
     for path in args {
-        let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Posix>(path);
+        let dir = bun_paths::dirname_or_root(path);
         out.extend_from_slice(if dir.is_empty() { b"." } else { dir });
         out.push(b'\n');
     }

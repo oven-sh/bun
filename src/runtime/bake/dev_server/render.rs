@@ -41,10 +41,10 @@ impl DevServer {
                     )
                     .get()
                         as usize];
-                    let mut buf = paths::path_buffer_pool::get();
+                    let mut buf = paths::Path::new();
                     let s = bun_string_jsc::create_utf8_for_js(
                         global,
-                        relative_path(&self.graphs.root, &mut *buf, name),
+                        relative_path(&self.graphs.root, &mut buf, name),
                     )?;
                     router_type.server_file_string = jsc::StrongOptional::create(s, global);
                     break 'str s;
@@ -67,10 +67,10 @@ impl DevServer {
                     let arr = JSValue::create_empty_array(global, n)?;
                     route = self.router.route_ptr(route_index);
                     {
-                        let mut buf = paths::path_buffer_pool::get();
+                        let mut buf = paths::Path::new();
                         let route_name = relative_path(
                             &self.graphs.root,
-                            &mut *buf,
+                            &mut buf,
                             &keys[from_opaque_file_id::<{ bake::Side::Server }>(
                                 route.file_page.unwrap(),
                             )
@@ -85,10 +85,10 @@ impl DevServer {
                     n = 1;
                     loop {
                         if let Some(layout) = route.file_layout {
-                            let mut buf = paths::path_buffer_pool::get();
+                            let mut buf = paths::Path::new();
                             let layout_name = relative_path(
                                 &self.graphs.root,
-                                &mut *buf,
+                                &mut buf,
                                 &keys[from_opaque_file_id::<{ bake::Side::Server }>(layout).get()
                                     as usize],
                             );

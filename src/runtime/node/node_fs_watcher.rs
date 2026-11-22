@@ -20,7 +20,6 @@ use bun_jsc::{
     VirtualMachineRef as VirtualMachine,
 };
 use bun_jsc::{JsCell, JsCellRefExt as _};
-use bun_paths::resolve_path::{self as Path, platform};
 use bun_ptr::{RefPtr, ThisPtr, ThreadSafeRefCount};
 use bun_sys::{self, SystemErrno};
 use bun_threading::Mutex;
@@ -65,7 +64,7 @@ pub(crate) struct FSWatcher {
     poll_ref: KeepAlive,
     global_this: GlobalRef,
     /// The JS wrapper, held strong while the watcher is open so that the listener stays callable.
-    js_this: JsCell<JsRef>,
+    pub(crate) js_this: JsCell<JsRef>,
     // pub(super): read directly by `win_watcher::PathWatcher::emit`.
     pub(super) encoding: Encoding,
 
@@ -585,10 +584,9 @@ impl FSWatcher {
             this_ref.poll_ref.ref_(vm_ctx);
         }
 
-        let js_this = js::to_js(this, &this_ref.global_this);
-        this_ref
-            .js_this
-            .set(JsRef::init_strong(js_this, &this_ref.global_this));
+        let wrapper = js::wrap(this, &this_ref.global_this);
+        wrapper.set_js_ref_strong(&this_ref.global_this);
+        let js_this = wrapper.to_js();
         js::listener_set_cached(js_this, &this_ref.global_this, listener);
 
         if let Some(s) = this_ref.signal.get() {
@@ -855,7 +853,6 @@ impl FSWatcher {
 
     /// Returns the JS wrapper (`undefined` once `detach()` has cleared it).
     pub(crate) fn init(args: Arguments<'_>) -> bun_sys::Result<JSValue> {
-        let mut joined_buf = bun_paths::path_buffer_pool::get();
         let slice = {
             let mut s = args.path.slice();
             if strings::starts_with(s, b"file://") {
@@ -864,16 +861,20 @@ impl FSWatcher {
             s
         };
         let cwd = bun_resolver::fs::FileSystem::get().top_level_dir();
-        let Some(file_path) =
-            Path::join_abs_string_buf_z_checked::<platform::Auto>(cwd, &mut joined_buf, &[slice])
-        else {
+        let mut file_path = bun_paths::Path::resolve(&[cwd, slice]);
+        // After one, libuv reports `\a` for `a`.
+        if cfg!(not(windows)) {
+            file_path.copy_trailing_sep_from(slice);
+        }
+        if file_path.len() >= bun_paths::MAX_PATH_BYTES {
             return Err(bun_sys::Error {
                 errno: SystemErrno::ENAMETOOLONG as _,
                 syscall: bun_sys::Tag::watch,
                 path: args.path.slice().into(),
                 ..Default::default()
             });
-        };
+        }
+        let file_path: &bun_core::ZStr = &file_path;
 
         let vm_ref = args.global_this.bun_vm();
         let is_aborted = args.signal.as_ref().is_some_and(|s| s.aborted());

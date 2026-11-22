@@ -2056,10 +2056,9 @@ mod _async_tasks {
             move_waiting_descriptors();
             #[cfg(any(target_os = "linux", target_os = "android"))]
             if <Op<{ F }> as NodeFSDispatch<R, A>>::ANSWERS_FROM_CACHE {
-                let vm = global_object.bun_vm();
-                crate::jsc_hooks::runtime_state_of(vm)
+                crate::jsc_hooks::runtime_state_of(global_object.bun_vm())
                     .fs_cached_descriptors
-                    .close_on_pool(vm.event_loop().iteration_number());
+                    .watch(cx);
             }
             if let Ok(result) = &result {
                 args.write_back(result.bytes_read());
@@ -9646,8 +9645,9 @@ pub(crate) enum CachedAnswer<R> {
 #[derive(Default)]
 pub(crate) struct CachedDescriptors {
     waiting: core::cell::Cell<Vec<sys::Fd>>,
-    /// The go of the last hand-off to the pool: one per go.
-    handed_off_in: core::cell::Cell<u64>,
+    /// Whether one came since a [`DescriptorWatch`] last looked, and whether one is queued.
+    is_fresh: core::cell::Cell<bool>,
+    is_watched: core::cell::Cell<bool>,
 }
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -9666,20 +9666,46 @@ impl CachedDescriptors {
         Self::open().load(Ordering::Relaxed) >= Self::MAX_OPEN
     }
 
+    /// This many go to the pool as one task. Fewer wait for a turn in which no more come.
+    const BATCH: usize = 16;
+
     fn push(&self, fd: sys::Fd) {
         Self::open().fetch_add(1, Ordering::Relaxed);
         let mut waiting = self.waiting.take();
         waiting.push(fd);
+        let is_batch = waiting.len() >= Self::BATCH;
         self.waiting.set(waiting);
+        self.is_fresh.set(true);
+        if is_batch {
+            self.close_all_on_pool();
+        }
     }
 
-    /// One pool task for all that wait: each completion of a `stat` asks for it, a turn after the go that opened them.
-    fn close_on_pool(&self, go: u64) {
-        // The completions of one go share it: each starts a `stat` that adds a descriptor, which waits for the next go.
-        if self.handed_off_in.replace(go) == go {
+    fn is_empty(&self) -> bool {
+        let waiting = self.waiting.take();
+        let is_empty = waiting.is_empty();
+        self.waiting.set(waiting);
+        is_empty
+    }
+
+    /// The completion of a `stat` asks that a [`DescriptorWatch`] looks at what waits, a turn from now.
+    fn watch(&self, cx: &bun_jsc::JsThread<'_>) {
+        // A macro's loop does not run again for what the macro leaves behind.
+        let is_regular = cx.global().bun_vm().current_loop_kind() == bun_jsc::LoopKind::Regular;
+        if self.is_watched.get() || self.is_empty() || !is_regular {
             return;
         }
-        self.close_all_on_pool();
+        self.is_watched.set(true);
+        bun_jsc::Job::<DescriptorWatch>::schedule_finished(cx, (), ());
+    }
+
+    /// What waits goes to the pool, unless more came during the last turn: a chain of calls pays one pool task per batch.
+    fn look(&self, cx: &bun_jsc::JsThread<'_>) {
+        self.is_watched.set(false);
+        match self.is_fresh.replace(false) {
+            true => self.watch(cx),
+            false => self.close_all_on_pool(),
+        }
     }
 
     fn close_all_on_pool(&self) {
@@ -9700,6 +9726,28 @@ impl CachedDescriptors {
 impl Drop for CachedDescriptors {
     fn drop(&mut self) {
         self.close_all_on_pool();
+    }
+}
+
+/// Queued by [`CachedDescriptors::watch`]: it never goes to the pool itself.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+struct DescriptorWatch;
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+impl bun_jsc::JobContext for DescriptorWatch {
+    type OffThread = ();
+    type Js = ();
+    const OUTLIVES_SCRIPT: bool = true;
+
+    fn run(_: &mut (), done: bun_jsc::Completion<Self>) -> Option<bun_jsc::Completion<Self>> {
+        Some(done)
+    }
+
+    fn then(_: (), _: (), cx: &bun_jsc::JsThread<'_>) -> bun_jsc::JsResult<()> {
+        crate::jsc_hooks::runtime_state_of(cx.global().bun_vm())
+            .fs_cached_descriptors
+            .look(cx);
+        Ok(())
     }
 }
 

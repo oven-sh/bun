@@ -67,6 +67,17 @@ const prelude = `
     const after = getCounters();
     return { result, hits: after.fs_cached_hit - before.fs_cached_hit, misses: after.fs_cached_miss - before.fs_cached_miss };
   };
+  // A pool thread closes the descriptor of each answer, a turn or two after it. How many of these paths are still open.
+  const openDescriptors = (...paths) => {
+    const real = paths.map(path => fs.realpathSync(path));
+    const isOfThem = fd => { try { return real.includes(fs.readlinkSync("/proc/self/fd/" + fd)); } catch { return false; } };
+    return fs.readdirSync("/proc/self/fd").filter(isOfThem).length;
+  };
+  // That count, once it is 0 or 3 s have passed.
+  const closed = async (...paths) => {
+    for (const deadline = performance.now() + 3000; openDescriptors(...paths) !== 0 && performance.now() < deadline; ) await nextTurn();
+    return openDescriptors(...paths);
+  };
   // The first async calls go to the pool: they leave the names in the kernel's cache and classify the mount.
   const warm = async () => { for (const name of ["file.txt", "missing.txt"]) await fsp.stat(name).catch(() => {}); };
   // After a call that the kernel could not answer, the JS thread may not ask for some time.
@@ -602,9 +613,6 @@ describe.skipIf(!isLinux)("async fs operations that the kernel can answer from i
       \`;
       (async () => {
         fs.writeFileSync("large.bin", Buffer.alloc(2 << 20, 1));
-        const large = fs.realpathSync("large.bin");
-        const isLarge = fd => { try { return fs.readlinkSync("/proc/self/fd/" + fd) === large; } catch { return false; } };
-        const descriptors = () => fs.readdirSync("/proc/self/fd").filter(isLarge).length;
         await warm();
         await fsp.stat("large.bin");
         let result;
@@ -615,8 +623,7 @@ describe.skipIf(!isLinux)("async fs operations that the kernel can answer from i
             new Promise(resolve => worker.once("exit", resolve)),
           ]);
           // The worker's thread hands them to the pool when it ends.
-          for (const deadline = performance.now() + 3000; descriptors() !== 0 && performance.now() < deadline; ) await nextTurn();
-          result = { queued, exitCode, left: descriptors() };
+          result = { queued, exitCode, left: await closed("large.bin") };
         }
         console.log(JSON.stringify(result));
       })();
@@ -636,14 +643,6 @@ describe.skipIf(!isLinux)("async fs operations that the kernel can answer from i
         const fill = () => { try { for (;;) held.push(fs.openSync("/dev/null", "r")); } catch {} };
         const free = () => { for (const fd of held.splice(0)) fs.closeSync(fd); };
         const sizes = async () => [(await fsp.stat("file.txt")).size, (await fsp.lstat("file.txt")).size];
-        // A pool thread closes the descriptor of each answer: the count of those that are still open.
-        const file = fs.realpathSync("file.txt");
-        const isOfFile = fd => { try { return fs.readlinkSync("/proc/self/fd/" + fd) === file; } catch { return false; } };
-        const stillOpen = async () => {
-          const count = () => fs.readdirSync("/proc/self/fd").filter(isOfFile).length;
-          for (const deadline = performance.now() + 3000; count() !== 0 && performance.now() < deadline; ) await nextTurn();
-          return count();
-        };
         // The pool thread that is to learn of the kernel and the mounts has no descriptor for it.
         fill();
         const full = await counted(sizes);
@@ -651,12 +650,12 @@ describe.skipIf(!isLinux)("async fs operations that the kernel can answer from i
         await warm();
         const freed = await countedUntil(round => round.hits === 2, sizes);
         // The lookup needs a descriptor, the pool's stat does not.
-        await stillOpen();
+        await closed("file.txt", ".");
         fill();
         const fullAgain = await counted(sizes);
         free();
         const after = await countedUntil(round => round.hits === 2, sizes);
-        console.log(JSON.stringify({ full, freed, fullAgain, after, leaked: await stillOpen() }));
+        console.log(JSON.stringify({ full, freed, fullAgain, after, leaked: await closed("file.txt", ".") }));
       })();
       `,
       {},
@@ -695,6 +694,7 @@ describe.skipIf(!isLinux)("async fs operations that the kernel can answer from i
         // A pool thread closes the descriptor of each answer, also that of a small file.
         await warm();
         await asking();
+        await closed("file.txt", ".");
         // Each of the two threads of the pool reads a FIFO that nothing is written to yet.
         require("node:child_process").execFileSync("mkfifo", ["fifo-a", "fifo-b"]);
         const readers = [fsp.readFile("fifo-a", "utf8"), fsp.readFile("fifo-b", "utf8")];
@@ -706,9 +706,7 @@ describe.skipIf(!isLinux)("async fs operations that the kernel can answer from i
             catch (e) { if (e.code !== "ENXIO" || performance.now() > deadline) throw e; }
           }
         }
-        const file = fs.realpathSync("file.txt");
-        const isOfFile = fd => { try { return fs.readlinkSync("/proc/self/fd/" + fd) === file; } catch { return false; } };
-        const descriptors = () => fs.readdirSync("/proc/self/fd").filter(isOfFile).length;
+        const descriptors = () => openDescriptors("file.txt");
         const before = { descriptors: descriptors(), hits: getCounters().fs_cached_hit };
         const stats = [];
         for (let go = 0; go < 6; go++) {

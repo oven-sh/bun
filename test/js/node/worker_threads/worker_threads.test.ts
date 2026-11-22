@@ -2784,6 +2784,46 @@ describe("a worker that stops itself from an immediate exits right away", () => 
   });
 });
 
+// A rejection that a worker makes in a setImmediate callback is reported when the
+// immediates have run. With a parentPort listener the worker's loop used to sleep on it
+// (GC timer off: for ever), and in the worker's last immediate it was dropped.
+// The worker's exit code is left out: it is 0 where Node has 1.
+describe("a worker's unhandled rejection in an immediate reaches the parent", () => {
+  test.concurrent.each([
+    [
+      "while a parentPort listener keeps the worker alive",
+      // Bun.gc(true) leaves JSC's own timers with nothing to wake the worker's loop for.
+      `parentPort.on("message", () => {}); setImmediate(() => { Bun.gc(true); setImmediate(reject); });`,
+    ],
+    ["from the worker's last immediate", `setImmediate(reject);`],
+  ])("%s", async (_label, schedule) => {
+    const workerSrc = `const { parentPort } = require("node:worker_threads");
+      const reject = () => { parentPort.postMessage("rejecting"); Promise.reject(new Error("boom")); };
+      ${schedule}`;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { Worker } = require("node:worker_threads");
+         const w = new Worker(${JSON.stringify(workerSrc)}, { eval: true });
+         const seen = { messages: [], errors: [] };
+         w.on("message", m => seen.messages.push(m));
+         w.on("error", e => seen.errors.push(e.message));
+         w.on("exit", () => console.log(JSON.stringify(seen)));`,
+      ],
+      env: { ...bunEnv, BUN_GC_TIMER_DISABLE: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ messages: ["rejecting"], errors: ["boom"] }) + "\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
 // Node's setupPortReferencing: the parent side of parentPort keeps the parent
 // alive while the Worker has 'message' listeners, independently of unref().
 test("an unref'ed worker with a 'message' listener still delivers to the parent", async () => {

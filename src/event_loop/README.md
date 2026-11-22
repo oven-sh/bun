@@ -73,7 +73,7 @@ This is called when the event loop is active and needs to wait for I/O:
 
 ```
 ┌─────────────────────────────────────┐
-│  1. Tick immediate tasks            │ ← setImmediate() callbacks
+│  1. Tick immediate tasks            │ ← setImmediate() callbacks, then their rejected promises
 └──────────────┬──────────────────────┘
                │
                ▼

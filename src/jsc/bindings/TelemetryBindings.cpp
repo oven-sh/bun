@@ -231,8 +231,10 @@ JSValue callbackUnderActiveSpan(Zig::GlobalObject* globalObject, JSValue callbac
     if (!wrapper)
         return callback;
     Frames frames(globalObject);
-    JSValue context = frames.withBinding(wrapper->context.get(), frames.binding(currentFrame(globalObject)));
-    return AsyncContextFrame::create(globalObject, wrapper->callback.get(), context);
+    JSValue active = frames.binding(currentFrame(globalObject));
+    if (!active)
+        return callback;
+    return AsyncContextFrame::create(globalObject, wrapper->callback.get(), frames.withBinding(wrapper->context.get(), active));
 }
 
 extern "C" EncodedJSValue Bun__Telemetry__callbackUnderActiveSpan(JSGlobalObject* globalObject, EncodedJSValue callback)

@@ -1348,6 +1348,14 @@ describe("request facts", () => {
     ]);
   });
 
+  test("a request without a span leaves a handler under the span that was active at Bun.serve()", async () => {
+    Bun.otel.start({ exporters: [{ export() {} }], instrumentations: { http: "nested", fetch: false } });
+    const handler = () => new Response(Bun.otel.activeSpan()?.name);
+    using server = Bun.otel.span("outer", () => Bun.serve({ port: 0, routes: { "/route": handler }, fetch: handler }));
+    const seen = async (path: string) => (await fetch(new URL(path, server.url))).text();
+    expect([await seen("/route"), await seen("/other")]).toEqual(["outer", "outer"]);
+  });
+
   test('instrumentations: { http: "nested" } records only requests that carry a traceparent', async () => {
     await using proc = Bun.spawn({
       cmd: [

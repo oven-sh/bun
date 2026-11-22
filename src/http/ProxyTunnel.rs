@@ -235,6 +235,10 @@ impl<const IS_SSL: bool> SSLWrapperHandler for ClientHandler<'_, '_, IS_SSL> {
             Err(err) => return self.close(err),
         }
         let client = &mut *self.client;
+        // The handshake is over: back from `handshake_timeout_seconds` to the
+        // idle timeout. Not left to `on_writable`, which a pending
+        // `checkServerIdentity` skips.
+        client.set_timeout(&self.socket);
         if client.wants_server_identity_check() {
             let Some(ssl_ptr) = self.wrapper.ssl.get() else {
                 return;

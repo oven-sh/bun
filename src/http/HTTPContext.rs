@@ -1110,7 +1110,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
                     // become no-ops for the CONNECT/handshake phases.
                     tunnel.adopt(&mut client);
                     return Self::run_on_socket(client, sock, slot, |c| {
-                        c.on_open::<SSL>(sock)?;
+                        c.on_open::<SSL>(sock, c.effective_idle_timeout_seconds())?;
                         c.on_writable::<true, SSL>(sock, None)
                     });
                 }
@@ -1305,6 +1305,10 @@ impl<const SSL: bool> Handler<SSL> {
                 ) {
                     return Continue(());
                 }
+                // The handshake is over: back from `handshake_timeout_seconds`
+                // to the idle timeout. Not left to `on_writable`, which a
+                // pending `checkServerIdentity` skips.
+                client.set_timeout(&socket);
                 if client.wants_server_identity_check() {
                     // SAFETY: the native handle on a TLS socket is `*mut SSL`,
                     // live and non-null after the handshake completes.

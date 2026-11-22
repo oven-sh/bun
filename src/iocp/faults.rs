@@ -53,7 +53,11 @@ fn planned(call: Call, args: &[usize]) -> Option<usize> {
         plan(args)
     });
     let result = result.ok()??;
-    SetLastError(Win32Error::NOT_ENOUGH_MEMORY.0.into());
+    let error = match call {
+        Call::SleepConditionVariableSRW => Win32Error::TIMEOUT,
+        _ => Win32Error::NOT_ENOUGH_MEMORY,
+    };
+    SetLastError(error.0.into());
     Some(result)
 }
 
@@ -149,6 +153,7 @@ calls! {
         SetEvent(a)
         SetFileCompletionNotificationModes(a b)
         SetWaitableTimer(a b c d e f)
+        SleepConditionVariableSRW(a b c d)
         SwitchToThread()
         WSAIoctl(a b c d e f g h i)
     }

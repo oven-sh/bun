@@ -1,16 +1,15 @@
-//! Threads that start tasks in the order of their arrival, and end when there is nothing to do.
+//! Threads that start tasks in the order of their arrival. All but one end when there is nothing to do.
 
 use core::cell::Cell;
 use core::ptr;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use core::time::Duration;
 use std::collections::VecDeque;
 use std::thread::JoinHandle;
 
 use bun_core::{Timespec, TimespecMockMode};
 
 use crate::spin::Spin;
-use crate::thread_pool::Task;
+use crate::thread_pool::{Task, exit_spawn_failed};
 use crate::{Condition, Guarded};
 
 struct Queued(*mut Task);
@@ -125,18 +124,17 @@ impl FifoPool {
             state.idle_threads += 1;
             NEW_THREADS.fetch_add(self.config.has_new_threads.into(), Ordering::SeqCst);
             drop(state);
-            if self.spawn().is_ok() {
+            let Err(err) = self.spawn() else {
                 continue;
-            }
+            };
             NEW_THREADS.fetch_sub(self.config.has_new_threads.into(), Ordering::SeqCst);
             let mut state = self.state.lock();
             state.threads -= 1;
             state.idle_threads -= 1;
-            if state.threads > 0 {
-                return;
+            if state.threads == 0 {
+                exit_spawn_failed(&err);
             }
-            drop(state);
-            std::thread::sleep(Duration::from_millis(1));
+            return;
         }
     }
 
@@ -198,13 +196,19 @@ impl FifoPool {
             if state.tasks.is_empty() && SUCCESSES_LEFT.get() < MAX_SUCCESSES {
                 stop_being_new();
             }
-            if state.tasks.is_empty()
+            let stays = state.idle_threads == 1 && SUCCESSES_LEFT.get() == 0;
+            if state.tasks.is_empty() && stays {
+                self.queued.wait_guarded(&mut state);
+            } else if state.tasks.is_empty()
                 && self.queued.timed_wait_guarded(&mut state, IDLE_NS).is_err()
                 && state.tasks.is_empty()
             {
-                state.threads -= 1;
-                state.idle_threads -= 1;
-                return stop_being_new();
+                stop_being_new();
+                if state.idle_threads > 1 {
+                    state.threads -= 1;
+                    state.idle_threads -= 1;
+                    return;
+                }
             }
             if let Some(since) = state.idle_since.take() {
                 state.spin.waited(since, now_ns(), limit);

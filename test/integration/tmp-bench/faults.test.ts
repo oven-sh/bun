@@ -156,10 +156,6 @@ describe.concurrent.skipIf(!isWindows)("refused", () => {
       `const p = Bun.spawn(forever, { stdio: ["ignore", "ignore", "ignore", "pipe"] }); const fd = fs.createReadStream(null, { windowsHandle: BigInt(p.stdio[3]), autoClose: false }).fd; const undo = fail("CreateEventW", 0, 8); const r = await new Promise(done => fs.write(fd, "x", (error, n) => done(error ? shown(error) : n))); undo(); p.kill(); say(r);`,
     ],
     [
-      "thread",
-      `const fd = fs.openSync("file", "r"); failTimes("CreateThread", 3, 0, 8); say(await new Promise(done => fs.fstat(fd, (error, stat) => done(error ? shown(error) : stat.size))));`,
-    ],
-    [
       "thread: one is enough",
       `const fd = fs.openSync("file", "r"), size = fd => new Promise(done => fs.fstat(fd, (_, stat) => done(stat.size))); await size(fd); const undo = fail("CreateThread", 0, 8); const r = await Promise.all(Array.from({ length: 20 }, () => size(fs.openSync("file", "r")))); undo(); say(new Set(r).size);`,
     ],
@@ -209,6 +205,11 @@ describe.concurrent.skipIf(!isWindows)("refused", () => {
     const seen = await run(script);
     console.log("fault", name, JSON.stringify(seen));
     expect(seen).toEqual({ result: expect.not.stringContaining("nothing: "), exitCode: 0 });
+  });
+
+  test("no thread at all", async () => {
+    const seen = await run(`const fd = fs.openSync("file", "r"); fail("CreateThread", 0, 8); fs.fstat(fd, () => {});`);
+    expect(seen.exitCode).toBe(1);
   });
 
   const heard = `const heard = new Promise(done => process.stdin.on("data", d => done("data " + d)).on("end", () => done("end")).on("error", e => done("error " + e.code))); console.log("ready"); say(await heard); process.exit(0);`;

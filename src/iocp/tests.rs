@@ -7,7 +7,7 @@ use std::io::{Read as _, Write as _};
 use std::net::{Shutdown, TcpListener, TcpStream};
 use std::os::windows::io::{AsHandle as _, AsRawSocket as _, BorrowedHandle, OwnedHandle};
 use std::rc::Rc;
-use std::sync::mpsc;
+use std::sync::{Barrier, mpsc};
 use std::time::Instant;
 
 use bun_sys::windows::{self as w, NTSTATUS, PipeDirection, PipeMode};
@@ -807,13 +807,26 @@ fn a_thread_that_is_awake_or_gone_needs_no_event() {
 #[test]
 fn no_event_is_made_without_a_new_thread() {
     const ALONE: &str = "BUN_IOCP_TEST_ALONE";
+    static POOL: FifoPool = FifoPool::new(Config {
+        name: "Test",
+        max_threads: 2,
+        stack_size: 256 * 1024,
+        on_thread_start: || {},
+        has_new_threads: true,
+    });
     if std::env::var_os(ALONE).is_none() {
         let mut alone = std::process::Command::new(std::env::current_exe().unwrap());
         alone.arg("no_event_is_made_without_a_new_thread");
         return assert!(alone.env(ALONE, "1").output().unwrap().status.success());
     }
-    let refused = fail(Call::CreateThread, 2, NULL);
-    let kept = keep_a_thread_new();
+    let ((kept, is_kept), (began, has_begun)) = (mpsc::channel::<()>(), mpsc::channel());
+    POOL.go(move || {
+        began.send(()).unwrap();
+        assert!(on_new_thread(|| is_kept.recv().is_err()));
+    });
+    has_begun.recv().unwrap();
+    let refused = fail(Call::CreateThread, 1, NULL);
+    POOL.go(|| {});
     assert!(has_new_thread());
     drop((refused, kept));
 
@@ -1222,19 +1235,62 @@ fn a_task_outlasts_a_lack_of_threads() {
     });
     let ((ran, has_run), (go, may_go)) = (mpsc::channel(), mpsc::channel());
     let first = ran.clone();
-    let none_yet = fail(Call::CreateThread, 3, NULL);
     POOL.go(move || {
         first.send(1).unwrap();
         may_go.recv().unwrap();
     });
     assert_eq!(has_run.recv(), Ok(1));
-    drop(none_yet);
 
     let _no_more = fail(Call::CreateThread, usize::MAX, NULL);
     POOL.go(move || ran.send(2).unwrap());
     assert!(has_run.try_recv().is_err());
     go.send(()).unwrap();
     assert_eq!(has_run.recv(), Ok(2));
+}
+
+/// For the rest of the life of this thread, a wait with a limit is over at once. `tell` hears whether it has one.
+fn time_out_at_once(tell: mpsc::Sender<bool>) {
+    core::mem::forget(intercept(Call::SleepConditionVariableSRW, move |args| {
+        let has_limit = args[2] as u32 != u32::MAX;
+        _ = tell.send(has_limit);
+        has_limit.then_some(0)
+    }));
+}
+
+#[test]
+fn the_last_idle_thread_of_a_pool_stays() {
+    static POOL: FifoPool = FifoPool::new(Config {
+        name: "Test",
+        max_threads: 2,
+        stack_size: 256 * 1024,
+        on_thread_start: || {},
+        has_new_threads: false,
+    });
+    static BOTH: Barrier = Barrier::new(2);
+    let (tell, told) = mpsc::channel();
+    for tell in [tell.clone(), tell] {
+        POOL.go(move || {
+            time_out_at_once(tell);
+            BOTH.wait();
+        });
+    }
+    assert_eq!([told.recv(), told.recv()], [Ok(false), Ok(true)]);
+
+    let _no_more = fail(Call::CreateThread, usize::MAX, NULL);
+    let (ran, has_run) = mpsc::channel();
+    POOL.go(move || ran.send(()).unwrap());
+    assert_eq!(has_run.recv(), Ok(()));
+}
+
+#[test]
+fn a_thread_that_stays_is_not_new_for_ever() {
+    let (pool, (tell, told)) = (new_pool(), mpsc::channel());
+    pool.go(move || time_out_at_once(tell));
+    assert_eq!([told.recv(), told.recv()], [Ok(true), Ok(false)]);
+
+    let (tell, told) = mpsc::channel();
+    pool.go(move || tell.send(on_new_thread(|| true)).unwrap());
+    assert_eq!(told.recv(), Ok(false));
 }
 
 #[test]

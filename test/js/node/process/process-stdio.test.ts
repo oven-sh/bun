@@ -585,6 +585,8 @@ describe.concurrent.skipIf(!isWindows).each([
   ["carries messages", { message: 1 }],
   ["carries messages and is read by message", { message: 1, byMessage: 1 }],
   ["carries messages, is read by message and is overlapped", { message: 1, byMessage: 1, overlapped: 1 }],
+  ["goes over the network", { remote: 1 }],
+  ["goes over the network and is overlapped", { remote: 1, overlapped: 1 }],
 ])("a pipe that %s", (_, kind) => {
   async function run(direction: "read" | "write", script: string) {
     using dir = tempDir("foreign-pipe", {
@@ -601,12 +603,14 @@ describe.concurrent.skipIf(!isWindows).each([
           CreateNamedPipeW: { args: ["ptr", "u32", "u32", "u32", "u32", "u32", "u32", "ptr"], returns: "i64" },
           CreateFileW: { args: ["ptr", "u32", "u32", "ptr", "u32", "u32", "ptr"], returns: "i64" },
         }).symbols;
-        const { nowait = 0, overlapped = 0, message = 0, byMessage = 0 } = ${JSON.stringify(kind)};
-        const name = Buffer.from("\\\\\\\\.\\\\pipe\\\\bun-test-" + crypto.randomUUID() + "\\0", "utf16le");
-        const [theirs, ours] = [
-          k32.CreateNamedPipeW(name, 3 | (overlapped << 30), (message << 2) | (byMessage << 1) | nowait, 1, 4096, 4096, 0, null),
-          k32.CreateFileW(name, 0xc0000000, 0, null, 3, 0, null),
+        const { nowait = 0, overlapped = 0, message = 0, byMessage = 0, remote = 0 } = ${JSON.stringify(kind)};
+        const id = crypto.randomUUID();
+        const name = host => Buffer.from("\\\\\\\\" + host + "\\\\pipe\\\\bun-test-" + id + "\\0", "utf16le");
+        const [server, client] = [
+          k32.CreateNamedPipeW(name("."), 3 | ((overlapped & !remote) << 30), (message << 2) | (byMessage << 1) | nowait, 1, 4096, 4096, 0, null),
+          k32.CreateFileW(name(remote ? "localhost" : "."), 0xc0000000, 0, null, 3, (overlapped & remote) << 30, null),
         ].map(windowsHandle => fs.createReadStream(null, { windowsHandle, autoClose: false }).fd);
+        const [theirs, ours] = remote ? [client, server] : [server, client];
         const slots = fd => ${direction === "read"} === (fd === theirs) ? [fd, "inherit", "inherit"] : ["ignore", fd, "inherit"];
         Bun.spawn([process.execPath, "child.js"], { stdio: slots(theirs) });
         Bun.spawn([process.execPath, "peer.js", "${direction}"], { stdio: slots(ours) });
@@ -638,12 +642,21 @@ describe.concurrent.skipIf(!isWindows).each([
     expect(await run("read", ready + read)).toEqual({ stdout: "270004\n", stderr: "", exitCode: 0 });
   });
 
+  // These take an empty message for the end, and do not wait for an end that does not.
+  test.skipIf("message" in kind || "nowait" in kind).each([
+    ["Bun.stdin.bytes()", `console.log((await Bun.stdin.bytes()).length);`],
+    ["Bun.write()", `console.log(await Bun.write("copy", Bun.stdin));`],
+  ])("is read by %s", async (_, read) => {
+    expect(await run("read", ready + read)).toEqual({ stdout: "270004\n", stderr: "", exitCode: 0 });
+  });
+
   test.each([
     ["process.stdout", `process.stdout.write(data)`],
     ["console.write()", `console.write(data)`],
     ["Bun.stdout.writer()", `const sink = Bun.stdout.writer(); sink.write(data); sink.end()`],
     ["fs.writeSync(1)", `for (let at = 0; at < data.length; ) at += require("fs").writeSync(1, data, at)`],
     ["Bun.write()", `Bun.write(Bun.stdout, data)`],
+    ["Bun.write() of a file", `require("fs").writeFileSync("data", data); Bun.write(Bun.stdout, Bun.file("data"))`],
     ["the shell", "Bun.$`cat < ${data}`.then()"],
   ])("is written by %s", async (_, write) => {
     const script = `require("fs").writeFileSync("ready", ""); const data = Buffer.alloc(300000, "x"); ${write}`;
@@ -652,7 +665,7 @@ describe.concurrent.skipIf(!isWindows).each([
 });
 
 describe.concurrent.skipIf(!isWindows)("a TCP socket", () => {
-  async function run(slot: number, script: string) {
+  async function run(slot: number, script: string, overlapped = 0) {
     const { promise: received, resolve } = Promise.withResolvers<number>();
     let count = 0;
     using server = Bun.listen({
@@ -671,14 +684,17 @@ describe.concurrent.skipIf(!isWindows)("a TCP socket", () => {
           WSAStartup: { args: ["u16", "ptr"], returns: "i32" },
           WSASocketW: { args: ["i32", "i32", "i32", "ptr", "u32", "u32"], returns: "i64" },
           connect: { args: ["i64", "ptr", "i32"], returns: "i32" },
+          shutdown: { args: ["i64", "i32"], returns: "i32" },
         }).symbols;
         ws2.WSAStartup(0x202, Buffer.alloc(512));
-        const windowsHandle = ws2.WSASocketW(2, 1, 6, null, 0, 0);
+        const windowsHandle = ws2.WSASocketW(2, 1, 6, null, 0, ${overlapped});
         ws2.connect(windowsHandle, Buffer.from([2, 0, ${server.port >> 8}, ${server.port & 255}, 127, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0]), 16);
         const { fd } = require("fs").createReadStream(null, { windowsHandle, autoClose: false });
         const stdio = ["ignore", "inherit", "inherit"];
         stdio[${slot}] = fd;
         process.exitCode = await Bun.spawn([process.execPath, "child.js"], { stdio }).exited;
+        // Without it the exit resets the connection, and the peer loses what it has not read yet.
+        ws2.shutdown(windowsHandle, 1);
       `,
     });
     await using proc = spawn({ cmd: [bunExe(), "main.js"], cwd: String(dir), env: bunEnv, stderr: "inherit" });
@@ -686,8 +702,8 @@ describe.concurrent.skipIf(!isWindows)("a TCP socket", () => {
     return { stdout, exitCode, received: await received };
   }
 
-  test("is read by Bun.stdin.text()", async () => {
-    expect(await run(0, `console.log(await Bun.stdin.text());`)).toEqual({
+  test.each([0, 1])("is read by Bun.stdin.text() (overlapped: %d)", async overlapped => {
+    expect(await run(0, `console.log(await Bun.stdin.text());`, overlapped)).toEqual({
       stdout: "from the peer\n",
       exitCode: 0,
       received: 0,
@@ -701,4 +717,28 @@ describe.concurrent.skipIf(!isWindows)("a TCP socket", () => {
       received: 300000,
     });
   });
+});
+
+test.concurrent.skipIf(!isWindows).each([
+  ["process.stdin", `process.stdin.on("end", () => console.log("end")).resume()`],
+  ["Bun.stdin.stream()", `for await (const _ of Bun.stdin.stream()); console.log("end")`],
+  ["Bun.stdin.text()", `console.log((await Bun.stdin.text()) + "end")`],
+])("NUL that is overlapped is read by %s", async (_, script) => {
+  await using proc = spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const k32 = require("bun:ffi").dlopen("kernel32.dll", {
+         CreateFileW: { args: ["ptr", "u32", "u32", "ptr", "u32", "u32", "ptr"], returns: "i64" },
+       }).symbols;
+       const windowsHandle = k32.CreateFileW(Buffer.from("NUL\\0", "utf16le"), 0x80000000, 3, null, 3, 0x40000000, null);
+       const { fd } = fs.createReadStream(null, { windowsHandle, autoClose: false });
+       process.exitCode = await Bun.spawn([process.execPath, "-e", process.argv[1]], { stdio: [fd, "inherit", "inherit"] }).exited;`,
+      script,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "end\n", stderr: "", exitCode: 0 });
 });

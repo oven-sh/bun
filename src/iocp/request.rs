@@ -414,6 +414,7 @@ pub struct AsyncFile {
     port: Rc<Port>,
     handle: Arc<Handle>,
     delivery: Cell<Delivery>,
+    max_write: Cell<usize>,
 }
 
 impl AsyncFile {
@@ -432,6 +433,7 @@ impl AsyncFile {
             port: Rc::clone(port),
             handle,
             delivery: Cell::new(delivery),
+            max_write: Cell::new(MAX_LEN),
         }
     }
 
@@ -484,6 +486,10 @@ impl AsyncFile {
     ) -> Result<Request, Completion> {
         let bytes = Bytes::DrainShared(bytes, from);
         self.submit(Call::Write, bytes, AtOnce::Post, Box::new(done))
+    }
+
+    pub fn limit_writes(&self, max_len: usize) {
+        self.max_write.set(max_len.min(MAX_LEN));
     }
 
     /// `ConnectNamedPipe`
@@ -558,13 +564,13 @@ impl AsyncFile {
             Bytes::Drain(buffer, from) => {
                 let (bytes, len) = (buffer[from..].as_ptr(), buffer.len() - from);
                 slot.buffer.set(buffer);
-                (bytes.cast_mut(), len.min(MAX_LEN))
+                (bytes.cast_mut(), len.min(self.max_write.get()))
             }
             Bytes::DrainShared(shared, from) => {
                 let rest = &(*shared).as_ref()[from..];
                 let (bytes, len) = (rest.as_ptr(), rest.len());
                 slot.shared.set(Some(shared));
-                (bytes.cast_mut(), len.min(MAX_LEN))
+                (bytes.cast_mut(), len.min(self.max_write.get()))
             }
         };
         let give_back = || {

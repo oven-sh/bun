@@ -1399,6 +1399,15 @@ fn a_thread_waits_for_writes_but_not_for_long() {
 }
 
 #[test]
+fn writes_can_be_limited() {
+    let port = Port::new().unwrap();
+    let (file, _peer) = pipe(&port, AsyncFile::exclusive);
+    file.limit_writes(2);
+    let write = file.write_now(b"abc".to_vec(), |_| unreachable!());
+    assert_eq!(write.err().unwrap().transferred, 2);
+}
+
+#[test]
 fn a_hold_counts_once() {
     let port = Port::new().unwrap();
     let (first, second) = (Hold::new(&port), Hold::new(&port));

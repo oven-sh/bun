@@ -11,9 +11,10 @@ use std::os::windows::io::{AsRawHandle as _, HandleOrInvalid, OwnedHandle};
 
 use bun_core::WStr;
 use bun_windows_sys::externs::{
-    FILE_ACCESS_INFORMATION, FILE_FLAG_OVERLAPPED, FILE_MODE_INFORMATION, FILE_PIPE_INFORMATION,
-    FILE_PIPE_QUEUE_OPERATION, FILE_READ_ATTRIBUTES, FILE_WRITE_ATTRIBUTES, GENERIC_READ,
-    GENERIC_WRITE, OPEN_EXISTING, PIPE_ACCESS_DUPLEX, WAIT_OBJECT_0,
+    FILE_ACCESS_INFORMATION, FILE_FLAG_OVERLAPPED, FILE_FS_DEVICE_INFORMATION,
+    FILE_MODE_INFORMATION, FILE_PIPE_INFORMATION, FILE_PIPE_QUEUE_OPERATION, FILE_READ_ATTRIBUTES,
+    FILE_WRITE_ATTRIBUTES, GENERIC_READ, GENERIC_WRITE, OPEN_EXISTING, PIPE_ACCESS_DUPLEX,
+    WAIT_OBJECT_0,
 };
 
 use super::{
@@ -72,6 +73,18 @@ pub fn is_duplex(handle: HANDLE) -> bool {
         .is_ok_and(|it| it.AccessFlags & FILE_READ_AND_WRITE_DATA == FILE_READ_AND_WRITE_DATA)
 }
 
+/// A pipe on another machine refuses a longer write, and loses what a longer read takes out beyond that.
+pub(super) const MAX_REMOTE_LEN: usize = 64 * 1024;
+
+/// For one request.
+pub fn max_len(handle: HANDLE) -> usize {
+    const FILE_REMOTE_DEVICE: ULONG = 0x10;
+    match nt::query_volume::<FILE_FS_DEVICE_INFORMATION>(handle) {
+        Ok(device) if device.Characteristics & FILE_REMOTE_DEVICE != 0 => MAX_REMOTE_LEN,
+        _ => usize::MAX,
+    }
+}
+
 /// Undoes `PIPE_NOWAIT`.
 pub fn set_blocking(handle: HANDLE) -> Result<(), NTSTATUS> {
     let modes = FILE_PIPE_INFORMATION {
@@ -94,6 +107,16 @@ pub fn input(handle: HANDLE) -> Result<Option<usize>, NTSTATUS> {
 
 /// Appends at most `max_len` bytes to `buffer`, within its capacity. With 0 it waits for data, and leaves it there.
 pub fn read(handle: HANDLE, buffer: &mut Vec<u8>, max_len: usize) -> Result<NTSTATUS, NTSTATUS> {
+    read_device(handle, buffer, max_len, None)
+}
+
+/// [`read`] for what is no pipe. If that is overlapped, it refuses a request without an offset.
+pub fn read_device(
+    handle: HANDLE,
+    buffer: &mut Vec<u8>,
+    max_len: usize,
+    offset: Option<i64>,
+) -> Result<NTSTATUS, NTSTATUS> {
     let spare = buffer.spare_capacity_mut();
     let len = spare.len().min(max_len).min(crate::MAX_COUNT);
     let (status, read) = sync_io::complete_transfer(handle, |event, io| {
@@ -107,7 +130,7 @@ pub fn read(handle: HANDLE, buffer: &mut Vec<u8>, max_len: usize) -> Result<NTST
                 io,
                 spare.as_mut_ptr().cast(),
                 len as ULONG,
-                ptr::null(),
+                offset.as_ref().map_or(ptr::null(), ptr::from_ref),
                 ptr::null(),
             )
         }
@@ -123,22 +146,9 @@ pub fn read(handle: HANDLE, buffer: &mut Vec<u8>, max_len: usize) -> Result<NTST
 /// Returns how much of `bytes` it took.
 pub fn write(handle: HANDLE, bytes: &[u8]) -> Result<usize, NTSTATUS> {
     let len = bytes.len().min(crate::MAX_COUNT);
-    let (status, written) = sync_io::complete_transfer(handle, |event, io| {
-        // SAFETY: `bytes` is readable for `len` bytes, and outlasts the request.
-        unsafe {
-            ntdll::NtWriteFile(
-                handle,
-                event,
-                ptr::null_mut(),
-                ptr::null_mut(),
-                io,
-                bytes.as_ptr().cast(),
-                len as ULONG,
-                ptr::null(),
-                ptr::null(),
-            )
-        }
-    });
+    // SAFETY: `bytes` is readable for `len` bytes.
+    let (status, written) =
+        unsafe { sync_io::write(handle, bytes.as_ptr(), len as DWORD, ptr::null()) };
     if NT_ERROR(status) {
         Err(status)
     } else {

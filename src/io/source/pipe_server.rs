@@ -87,7 +87,7 @@ impl Server {
         if let Previous::Connected(file) = previous {
             let on_connection = Rc::clone(&self.on_connection);
             drop(self);
-            on_connection(Pipe::exclusive(file));
+            on_connection(Pipe::exclusive(file, usize::MAX));
         }
     }
 
@@ -169,7 +169,7 @@ impl PipeConnect {
         let name = wide_name(name, Tag::connect2)?;
         let its_port = Rc::clone(port);
         let done = move |result: Connected| {
-            let pipe = result.map(|handle| Pipe::from_exclusive(&its_port, handle));
+            let pipe = result.map(|handle| Pipe::connected(&its_port, handle));
             done(pipe.map_err(|err| sys::Error::from_win32(err, Tag::connect)));
         };
         let line = match Line::find(port, &name) {

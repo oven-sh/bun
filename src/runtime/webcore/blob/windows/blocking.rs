@@ -71,8 +71,17 @@ pub(super) struct Blocking {
 }
 
 impl Blocking {
-    pub(super) fn read(&self, fd: Fd, buf: BorrowedCursor<'_, u8>) -> sys::Result<usize> {
-        let read = self.reads.run(|| sys::read_buf(fd, buf));
+    /// An overlapped device refuses a request without an offset.
+    pub(super) fn read(
+        &self,
+        fd: Fd,
+        buf: BorrowedCursor<'_, u8>,
+        offset: Option<u64>,
+    ) -> sys::Result<usize> {
+        let read = self.reads.run(|| match offset {
+            Some(offset) => sys::pread_buf(fd, buf, offset as i64),
+            None => sys::read_buf(fd, buf),
+        });
         read.unwrap_or_else(|| Err(sys::Error::from_code(E::ECANCELED, Tag::read)))
     }
 

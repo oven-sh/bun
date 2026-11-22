@@ -15,7 +15,11 @@ use super::kernel32::{
     CancelIoEx, GetCurrentThreadId, ReadFile, WaitForMultipleObjects, WaitForSingleObject,
     WriteFile,
 };
-use super::{BOOL, DWORD, FALSE, HANDLE, INFINITE, NTSTATUS, OVERLAPPED, Win32Error, ntdll};
+use super::named_pipe::MAX_REMOTE_LEN;
+use super::{
+    BOOL, DWORD, FALSE, FILE_TYPE_PIPE, GetFileType, HANDLE, INFINITE, NTSTATUS, OVERLAPPED,
+    Win32Error, ntdll,
+};
 use crate::{Fd, IoVec, IoVecMut};
 
 #[repr(align(64))]
@@ -276,8 +280,23 @@ pub(crate) fn writev(
             let rc = unsafe { WriteFile(handle, buf, len, &raw mut written, null) };
             return super::check(rc).map(|()| written as usize);
         }
-        transferred(complete_transfer(handle, |event, io| {
-            // SAFETY: `buf` is readable for `len` bytes until that returns.
+        // SAFETY: `buf` is readable for `len` bytes, and `offset` is null or from `each_part`.
+        transferred(unsafe { write(handle, buf, len, offset) })
+    })
+}
+
+/// # Safety
+/// `buf` is readable for `len` bytes, and `offset` is null or readable.
+pub(super) unsafe fn write(
+    handle: HANDLE,
+    buf: *const u8,
+    len: DWORD,
+    offset: *const i64,
+) -> (NTSTATUS, usize) {
+    let write = |len| {
+        complete_transfer(handle, |event, io| {
+            let null = ptr::null_mut();
+            // SAFETY: fn contract, which holds until the request has ended.
             unsafe {
                 ntdll::NtWriteFile(
                     handle,
@@ -291,6 +310,14 @@ pub(crate) fn writev(
                     ptr::null(),
                 )
             }
-        }))
-    })
+        })
+    };
+    match write(len) {
+        (NTSTATUS::INVALID_PARAMETER, _)
+            if len as usize > MAX_REMOTE_LEN && GetFileType(handle) == FILE_TYPE_PIPE =>
+        {
+            write(MAX_REMOTE_LEN as DWORD)
+        }
+        result => result,
+    }
 }

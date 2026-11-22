@@ -101,7 +101,7 @@ impl From<Pipe> for ReadSource {
 }
 
 impl ReadSource {
-    /// `offset` is for a file on a disk, whose position is used without it.
+    /// `offset` is for a file or a device, whose position is used without it.
     pub(crate) fn open(
         port: &Rc<Port>,
         file: MaybeOwnedFile,

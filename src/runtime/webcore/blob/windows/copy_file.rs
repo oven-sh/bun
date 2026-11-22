@@ -5,7 +5,7 @@ use bun_jsc::{
     Completion, JSPromiseStrong, JSValue, Job, JobContext, JsResult, JsThread, SystemError,
 };
 use bun_ptr::RefPtr;
-use bun_sys::windows::Win32Error;
+use bun_sys::windows::{Win32Error, named_pipe};
 use bun_sys::windows_format::wide;
 use bun_sys::{self as sys, E, Mode, O, Tag, Win32ErrorExt as _};
 
@@ -294,12 +294,13 @@ impl Transfer {
         let source = self.source.fd();
         let blocking_read = blocking.filter(|_| self.source_can_block);
         let blocking_write = blocking.filter(|_| self.destination_can_block);
+        let max_read = blocking_read.map_or(usize::MAX, |_| named_pipe::max_len(source.native()));
         let mut copied = 0;
         while copied < limit {
             buf.clear();
-            let left = (limit - copied) as usize;
+            let left = max_read.min((limit - copied) as usize);
             let read = append_with(&mut buf, left, |spare| match blocking_read {
-                Some(blocking) => blocking.read(source, spare),
+                Some(blocking) => blocking.read(source, spare, None),
                 None if self.reads_from_start => sys::pread_buf(source, spare, copied as i64),
                 None => sys::read_buf(source, spare),
             })?;

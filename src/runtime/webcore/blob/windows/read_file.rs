@@ -1,6 +1,7 @@
 use bun_core::vec::append_with;
 use bun_jsc::{Completion, JSTimeType, Job, JobContext, JsResult, JsThread};
 use bun_ptr::RefPtr;
+use bun_sys::windows::named_pipe;
 use bun_sys::{self as sys, E, Stat, Tag};
 
 use super::blocking::{Blocking, BlockingPart};
@@ -45,10 +46,10 @@ impl JobContext for ReadFile {
             }
         };
         if !sys::S::ISREG(stat.st_mode as _) {
-            let max_length = this.max_length as usize;
+            let (offset, max_length) = (this.offset, this.max_length as usize);
             return (this.blocking_part).run(done, move |blocking| {
                 let _turn = turn;
-                read_stream(&file, max_length, blocking).map_err(|err| bare(&err))
+                read_stream(&file, offset, max_length, blocking).map_err(|err| bare(&err))
             });
         }
         this.result = (this.read_regular_file(&file, stat.st_size)).map_err(|err| bare(&err));
@@ -145,21 +146,28 @@ impl ReadFile {
     }
 }
 
-fn read_stream(file: &JobFile, max_length: usize, blocking: &Blocking) -> sys::Result<Vec<u8>> {
+fn read_stream(
+    file: &JobFile,
+    offset: u64,
+    max_length: usize,
+    blocking: &Blocking,
+) -> sys::Result<Vec<u8>> {
     const MIN_READ: usize = 64 * 1024;
     /// As it doubles, there is room to find the end of an input whose size is a power of two.
     const FIRST_CAPACITY: usize = MIN_READ + 4 * 1024;
     /// The system touches every page of the buffer in front of each read.
     const MAX_READ: usize = 1024 * 1024;
 
+    let max_read = MAX_READ.min(named_pipe::max_len(file.fd().native()));
     let mut bytes = Vec::with_capacity(max_length.min(FIRST_CAPACITY));
     while bytes.len() < max_length {
         let left = max_length - bytes.len();
         if bytes.len() > MAX_BUFFER || bytes.try_reserve(left.min(MIN_READ)).is_err() {
             return Err(sys::Error::oom());
         }
-        let read = append_with(&mut bytes, left.min(MAX_READ), |spare| {
-            blocking.read(file.fd(), spare)
+        let offset = offset + bytes.len() as u64;
+        let read = append_with(&mut bytes, left.min(max_read), |spare| {
+            blocking.read(file.fd(), spare, Some(offset))
         })?;
         if read == 0 {
             break;

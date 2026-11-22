@@ -1,5 +1,6 @@
 use core::cell::{Cell, OnceCell};
 use core::time::Duration;
+use std::os::windows::io::OwnedHandle;
 use std::rc::{Rc, Weak};
 use std::sync::Arc;
 
@@ -69,6 +70,8 @@ impl InFlight {
 struct Inner {
     endpoint: Endpoint,
     handle: Arc<Handle>,
+    /// Of one request.
+    max_len: usize,
     /// Finding out can take as long as a read.
     io: OnceCell<Io>,
     /// Others may read it too, so data is only taken out at a moment when the reader is known to want it.
@@ -86,10 +89,11 @@ enum Take {
 }
 
 impl Pipe {
-    fn new(port: &Rc<Port>, handle: Arc<Handle>, is_input_shared: bool) -> Pipe {
+    fn new(port: &Rc<Port>, handle: Arc<Handle>, max_len: usize, is_input_shared: bool) -> Pipe {
         Pipe(Rc::new(Inner {
             endpoint: Endpoint::new(port),
             handle,
+            max_len,
             io: OnceCell::new(),
             is_input_shared: Cell::new(is_input_shared),
             was_full: Cell::new(false),
@@ -101,11 +105,19 @@ impl Pipe {
     /// For an end that this process has opened for overlapped I/O, and keeps to itself.
     pub fn from_exclusive(port: &Rc<Port>, end: impl Into<sys::File>) -> Pipe {
         let handle = Handle::new(end.into().into_raw());
-        Pipe::exclusive(Rc::new(AsyncFile::exclusive(port, handle)))
+        Pipe::exclusive(Rc::new(AsyncFile::exclusive(port, handle)), usize::MAX)
     }
 
-    pub(super) fn exclusive(file: Rc<AsyncFile>) -> Pipe {
-        let pipe = Pipe::new(file.port(), Arc::clone(file.handle()), false);
+    /// The same for a client, whose name may have led to another machine.
+    pub(super) fn connected(port: &Rc<Port>, end: OwnedHandle) -> Pipe {
+        let handle = Handle::from_owned(end);
+        let max_len = named_pipe::max_len(handle.raw());
+        Pipe::exclusive(Rc::new(AsyncFile::exclusive(port, handle)), max_len)
+    }
+
+    pub(super) fn exclusive(file: Rc<AsyncFile>, max_len: usize) -> Pipe {
+        let pipe = Pipe::new(file.port(), Arc::clone(file.handle()), max_len, false);
+        file.limit_writes(max_len);
         pipe.0.io.get_or_init(|| Io::Overlapped(file));
         pipe
     }
@@ -137,7 +149,8 @@ impl Pipe {
     }
 
     fn foreign(port: &Rc<Port>, fd: Fd, kind: Option<Kind>) -> Pipe {
-        let pipe = Pipe::new(port, Handle::new(fd), true);
+        let max_len = named_pipe::max_len(fd.native());
+        let pipe = Pipe::new(port, Handle::new(fd), max_len, true);
         if let Some(kind) = kind {
             pipe.0.set_kind(kind);
         }
@@ -163,12 +176,12 @@ impl Pipe {
     }
 
     pub(super) fn read(&self, max_len: usize) {
-        self.0.endpoint.set_wanted(Some(max_len));
+        (self.0.endpoint).set_wanted(Some(max_len.min(self.0.max_len)));
         self.0.continue_reading(Take::OnceThereIsSome);
     }
 
     pub(super) fn read_on(&self, max_len: usize) {
-        self.0.endpoint.set_wanted(Some(max_len));
+        (self.0.endpoint).set_wanted(Some(max_len.min(self.0.max_len)));
         self.0.continue_reading(Take::Now);
     }
 
@@ -262,6 +275,7 @@ impl Inner {
         self.io.get_or_init(|| match kind {
             Kind::Overlapped => {
                 let file = AsyncFile::shared(&self.endpoint.port, Arc::clone(&self.handle));
+                file.limit_writes(self.max_len);
                 Io::Overlapped(Rc::new(file))
             }
             Kind::Synchronous => Io::Synchronous,

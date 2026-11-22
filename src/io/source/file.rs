@@ -199,7 +199,7 @@ impl Inner {
         self.run(move || {
             let event = match is_on_disk {
                 true => (!cancel.is_cancelled()).then(|| read_disk(fd.fd, buffer, max_len, offset)),
-                false => cancel.run(|| read_device(fd.fd, buffer, max_len, &cancel)),
+                false => cancel.run(|| read_device(fd.fd, buffer, max_len, offset, &cancel)),
             };
             drop(fd);
             remote.complete(event.unwrap_or(ReadEvent::Eof));
@@ -220,9 +220,16 @@ fn read_disk(fd: Fd, mut buffer: Vec<u8>, max_len: usize, offset: Option<u64>) -
     }
 }
 
-fn read_device(fd: Fd, mut buffer: Vec<u8>, max_len: usize, cancel: &Cancel) -> ReadEvent {
+fn read_device(
+    fd: Fd,
+    mut buffer: Vec<u8>,
+    max_len: usize,
+    offset: Option<u64>,
+    cancel: &Cancel,
+) -> ReadEvent {
+    let offset = offset.map(|offset| offset as i64);
     loop {
-        match named_pipe::read(fd.native(), &mut buffer, max_len) {
+        match named_pipe::read_device(fd.native(), &mut buffer, max_len, offset) {
             Ok(_) if !buffer.is_empty() => return ReadEvent::Data(buffer),
             // Ctrl+C on a console.
             Ok(NTSTATUS::ALERTED) if !cancel.is_cancelled() => {}

@@ -208,7 +208,7 @@ pub trait JobContext: Sized + 'static {
 /// What a [`Job`] runs. Implement it for a job that moves between threads and can wait on
 /// something external; [`JobContext`] is the short form for the others.
 pub trait OwnedJob: Sized + 'static {
-    /// What [`run`](Self::run) or [`unrun`](Self::unrun) uses up.
+    /// What [`run`](Self::run) uses up. No destructor: it can outlive the ticket.
     type Start: Send;
     type OffThread: Send;
     type Js: JsAffine;
@@ -219,10 +219,10 @@ pub trait OwnedJob: Sized + 'static {
     /// As [`JobContext::OUTLIVES_SCRIPT`].
     const OUTLIVES_SCRIPT: bool;
 
-    /// Pool thread, unless the VM is in its final wait.
+    /// Pool thread. Not called if the VM is in its final wait by then.
     fn run(job: Running<Self>, start: Self::Start);
     /// Of a job that is handed back without `run`.
-    fn unrun(start: Self::Start) -> Self::Outcome;
+    fn unrun() -> Self::Outcome;
     /// As [`JobContext::then`].
     fn then(
         off: Self::OffThread,
@@ -250,7 +250,7 @@ impl<C: JobContext> OwnedJob for C {
             done.finish();
         }
     }
-    fn unrun((): ()) {}
+    fn unrun() {}
     fn then(off: C::OffThread, (): (), js: C::Js, cx: &JsThread<'_>) -> JsResult<()> {
         <C as JobContext>::then(off, js, cx)
     }
@@ -335,7 +335,7 @@ impl JobList {
     }
 }
 
-/// One pool-then-complete job. Heap-allocated by [`Job::schedule`]; freed on
+/// One pool-then-complete job. Heap-allocated by [`Job::schedule_owned`]; freed on
 /// the JS thread by its completion or by the teardown's release.
 #[repr(C)]
 pub struct Job<C: OwnedJob> {
@@ -381,6 +381,7 @@ impl<C: OwnedJob> Job<C> {
     /// As [`schedule`](Self::schedule).
     #[track_caller]
     pub fn schedule_owned(cx: &JsThread<'_>, start: C::Start, off: C::OffThread, js: C::Js) {
+        const { assert!(!core::mem::needs_drop::<C::Start>()) };
         let job = heap::into_raw(Box::new(Self {
             header: JobHeader {
                 // SAFETY: (this and the entry below) the erased dispatchers are
@@ -423,7 +424,7 @@ impl<C: OwnedJob> Job<C> {
 
     fn run_on_pool(task: *mut WorkPoolTask) {
         // SAFETY: only reachable through the `task.callback` slot wired in
-        // `schedule`; the pool calls back with exactly that field of a live job.
+        // `schedule_owned`; the pool calls back with exactly that field of a live job.
         let this: *mut Self = unsafe { bun_core::from_field_ptr!(Self, task, task) };
         // SAFETY: live job, exclusively the pool's for this callback; the
         // ticket leaves the job here, for good.
@@ -433,7 +434,7 @@ impl<C: OwnedJob> Job<C> {
             ticket,
         };
         if job.ticket.cancelled() {
-            return job.finish(C::unrun(start));
+            return job.finish(C::unrun());
         }
         C::run(job, start);
     }

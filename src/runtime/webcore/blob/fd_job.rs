@@ -54,7 +54,7 @@ impl<Op: FdOp> OwnedJob for FdJob<Op> {
         }
     }
 
-    fn unrun(_: Unopened) -> Outcome {
+    fn unrun() -> Outcome {
         Outcome::Unrun
     }
 

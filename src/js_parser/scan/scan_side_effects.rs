@@ -385,7 +385,11 @@ impl SideEffects {
                                 continue;
                             } else {
                                 let zero = p.new_expr(E::Number::new(0.0), prev_value.loc);
-                                e_object.properties.mut_(j).value = Some(zero);
+                                let property = e_object.properties.mut_(j);
+                                property.value = Some(zero);
+                                // `get [k]: 0` does not parse.
+                                property.kind = G::PropertyKind::Normal;
+                                property.flags.remove(bun_ast::flags::Property::IsMethod);
                             }
                         }
 
@@ -401,31 +405,41 @@ impl SideEffects {
                     loc: expr.loc,
                 };
 
-                // Otherwise, the object can be completely removed. We only need to keep any
-                // object properties with side effects. Apply this simplification recursively.
+                // Each computed key stays, in an object literal: ToPropertyKey. So do side effects.
+                let mut keys_before_next_value: Option<G::PropertyList> = None;
+                let object_of_keys = |properties: G::PropertyList| E::Object {
+                    properties,
+                    is_single_line: true,
+                    ..Default::default()
+                };
                 for i in 0..len {
                     let flags = e_object.properties.at(i).flags;
                     let key = e_object.properties.at(i).key;
                     let value = e_object.properties.at(i).value;
                     if flags.contains(bun_ast::flags::Property::IsComputed) {
-                        // Make sure "ToString" is still evaluated on the key
                         let key_expr = key.unwrap();
-                        let right = p.new_expr(E::String::default(), key_expr.loc);
-                        let bin = p.new_expr(
-                            E::Binary {
-                                op: Op::Code::BinAdd,
-                                left: key_expr,
-                                right,
-                            },
-                            key_expr.loc,
-                        );
-                        result = Expr::join_with_comma(result, bin);
+                        let zero = p.new_expr(E::Number::new(0.0), key_expr.loc);
+                        keys_before_next_value
+                            .get_or_insert_with(bun_alloc::AstAlloc::vec)
+                            .push(G::Property {
+                                key: Some(key_expr),
+                                value: Some(zero),
+                                flags: bun_ast::flags::Property::IsComputed.into(),
+                                ..Default::default()
+                            });
                     }
                     let v = value.unwrap();
-                    result = Expr::join_with_comma(
-                        result,
-                        Self::simplify_unused_expr(p, v).unwrap_or_else(|| v.to_empty()),
-                    );
+                    if let Some(value) = Self::simplify_unused_expr(p, v) {
+                        if let Some(properties) = keys_before_next_value.take() {
+                            let object = p.new_expr(object_of_keys(properties), expr.loc);
+                            result = Expr::join_with_comma(result, object);
+                        }
+                        result = Expr::join_with_comma(result, value);
+                    }
+                }
+                if let Some(properties) = keys_before_next_value {
+                    let object = p.new_expr(object_of_keys(properties), expr.loc);
+                    result = Expr::join_with_comma(result, object);
                 }
 
                 if result.is_missing() {

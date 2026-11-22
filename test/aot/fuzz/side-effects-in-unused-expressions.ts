@@ -119,8 +119,7 @@ const joints: readonly ((E: string, K: string, L: string, M: string) => string)[
   (E, K) => `[${K}, ${E}].length`,
   (E, K) => `({ a: ${E}, b: ${K} })`,
   (E, K) => `({ a: ${K}, b: ${E} }).a`,
-  // A string: for a symbol as the key of an unused literal, plain Bun throws.
-  (E, K) => `({ [String(${E})]: ${K} })`,
+  (E, K) => `({ [${E}]: ${K} })`,
   (E, K) => `({ ...(${E}, ${K}) })`,
   (E, K) => `[...[(${E}, ${K})]]`,
   (E, K) => "`${" + E + "}${typeof " + inBrackets(K) + "}`",

@@ -1006,12 +1006,6 @@ async function agreesWithKeysConvertedBeforeValues(folder: string, extension: st
   return removeDetailsOfErrors(ran.stdout) === removeDetailsOfErrors(stdout);
 }
 
-/** Whether `bun run` stopped at an object literal that nothing uses, because one of its computed keys is a symbol. */
-function stoppedAtAnUnusedLiteral(text: string, { stderr }: Ended) {
-  const line = /Cannot convert a symbol to a string\n\s+at .*programs[\\/]\d+\.[a-z]+:(\d+):/.exec(stderr)?.[1];
-  return line !== undefined && /^\s*\(\{/.test(text.split("\n")[Number(line) - 1] ?? "");
-}
-
 /** What a stopped build said, without the numbers and the names that differ from build to build. */
 const wordsOf = (reason: string) => reason.replace(/[0-9a-f]/gi, "");
 
@@ -1109,8 +1103,6 @@ function handACallbackToNativeCode(text: string) {
 function rewritten(text: string, extension: string) {
   const random = randomFrom("rewritten" + text);
   const isTypeScript = extension.endsWith("ts");
-  // `bun run` turns an object literal that nothing uses into its computed keys, each made a string, which throws where a key is a symbol. As the operand of a call the literal stays.
-  text = text.replace(/^(\s*)\((\{ \[.*)\);$/gm, "$1Object($2);");
   // Such scenes bring files of their own, and the splitter knows only functions that end in a line of their own.
   const hasSizes = random() * 100 < Number(options["scenes-of-every-size"]);
   if (hasSizes) text = writeScenesOfEverySize(text, isTypeScript);
@@ -2184,10 +2176,7 @@ for (
       const said = await withErrorsOfItsOwnExecutable(alone, extension, second);
       if ((await build(alone, 1, extension, 1)).writesToBuiltins.size) kind = "documented difference";
       else if (await printsTheDepthOfTheStack(alone, extension)) kind = "documented difference";
-      else if (
-        stoppedAtAnUnusedLiteral(texts[index], referenceAgain) ||
-        (!referenceAgain.stderr.includes("ReferenceError") && (await stoppedAtANameThatDoesNotExist(alone, said)))
-      )
+      else if (!referenceAgain.stderr.includes("ReferenceError") && (await stoppedAtANameThatDoesNotExist(alone, said)))
         kind = "documented difference";
       else if (!hidesFunctionSource && (await dependsOnFunctionSource(alone, extension))) kind = "function source";
       else if (

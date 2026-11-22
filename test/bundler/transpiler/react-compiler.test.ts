@@ -35,6 +35,29 @@ describe("bundler", () => {
     },
   });
 
+  // An unused object literal with a spread keeps its computed keys and drops
+  // their values. A method that lost its function must not stay marked as a
+  // method, or the compiler skips the component.
+  itBundled("react-compiler/UnusedObjectMethodBesideSpread", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        export function Hello({ name, k, z }) {
+          ({ [k]() {}, ...z });
+          ({ async *[k]() {}, ...z });
+          return <div>Hello {name}</div>;
+        }
+      `,
+    },
+    reactCompiler: true,
+    backend: "cli",
+    external: ["react", "react/compiler-runtime", "react/jsx-runtime", "react/jsx-dev-runtime"],
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain("react/compiler-runtime");
+      expect(out).toMatch(/\b_c\(\d+\)/);
+    },
+  });
+
   itBundled("react-compiler/ComponentWithHooks", {
     files: {
       "/entry.jsx": /* jsx */ `

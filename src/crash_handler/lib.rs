@@ -795,7 +795,7 @@ mod draft {
             Output::disable_scoped_debug_writer();
         }
 
-        let mut trace_str_buf = BoundedArray::<u8, 1024>::default();
+        let mut trace_str_buf = TraceStringBuf::default();
 
         match PANIC_STAGE.with(|s| s.get()) {
             0 => {
@@ -1952,7 +1952,7 @@ mod draft {
         }
         let reason = CrashReason::Panic(msg_buf.const_slice());
 
-        let mut trace_str_buf = BoundedArray::<u8, 1024>::default();
+        let mut trace_str_buf = TraceStringBuf::default();
         let addresses_in_trace: [usize; 20];
         let trace_address_count: usize;
         {
@@ -2647,12 +2647,53 @@ mod draft {
         "unknown"
     };
 
+    /// A longer name of an image is cut: its start still identifies the image.
+    const MAX_OBJECT_NAME_LEN: usize = 64;
+    type ObjectName = BoundedArray<u8, MAX_OBJECT_NAME_LEN>;
+
+    fn object_of(parts: &[&[u8]]) -> ObjectName {
+        let mut object = ObjectName::default();
+        for part in parts {
+            let room = MAX_OBJECT_NAME_LEN - object.len();
+            object.append_slice_assume_capacity(&part[..part.len().min(room)]);
+        }
+        object
+    }
+
+    /// `resolve_embedded_file` writes a library that a standalone executable holds to `.bun-<user id>-<hash of the contents>.<extension>`.
+    const WRITTEN_LIBRARY_PREFIX: &[u8] = b".bun-";
+
+    /// `<hash of the contents>.<extension>` of a library that a standalone executable wrote.
+    fn after_user_id(file_name: &[u8]) -> Option<&[u8]> {
+        let user_id_and_hash = file_name.strip_prefix(WRITTEN_LIBRARY_PREFIX)?;
+        let digits = user_id_and_hash
+            .iter()
+            .take_while(|byte| byte.is_ascii_digit())
+            .count();
+        user_id_and_hash[digits..]
+            .strip_prefix(b"-")
+            .filter(|_| digits > 0)
+    }
+
+    /// The object of a frame in an image that is not bun's: the file name of the image, without a user id, and never a name that a decoder takes for bun's own.
+    fn foreign_object(file_name: &[u8]) -> ObjectName {
+        let mut object = match after_user_id(file_name) {
+            Some(hash) => object_of(&[WRITTEN_LIBRARY_PREFIX, hash]),
+            None => object_of(&[file_name]),
+        };
+        // bun.report reads `bun` as bun's own code and `js` as JavaScript.
+        if matches!(object.const_slice(), b"bun" | b"js")
+            || crate::compiled_frames::is_object_name(&object)
+        {
+            object[0] = b'_';
+        }
+        object
+    }
+
     struct StackLine {
         address: i32,
         // None -> from bun.exe
-        object: Option<Box<[u8]>>,
-        // Box<[u8]> rather than a borrowed slice into caller's `name_bytes`,
-        // since the only caller writes into a stack buffer and the value is consumed immediately.
+        object: Option<ObjectName>,
     }
 
     impl StackLine {
@@ -2661,7 +2702,7 @@ mod draft {
             if let Some(address) = crate::compiled_frames::offset_in_code(addr.saturating_sub(1)) {
                 return Some(StackLine {
                     address,
-                    object: Some(crate::compiled_frames::object_name(false)),
+                    object: Some(object_of(&[&crate::compiled_frames::object_name(false)])),
                 });
             }
 
@@ -2686,9 +2727,9 @@ mod draft {
 
                     object: if name != image_path.as_slice() {
                         let basename = bun_paths::basename(name);
-                        Some(Box::<[u8]>::from(
-                            &*strings::convert_utf16_to_utf8_in_buffer(name_bytes, basename),
-                        ))
+                        Some(foreign_object(strings::convert_utf16_to_utf8_in_buffer(
+                            name_bytes, basename,
+                        )))
                     } else {
                         None
                     },
@@ -2696,6 +2737,10 @@ mod draft {
             }
             #[cfg(target_os = "macos")]
             {
+                unsafe extern "C" {
+                    #[link_name = "_mh_execute_header"]
+                    safe static OWN_HEADER: bun_sys::macho::mach_header_64;
+                }
                 let address = if addr == 0 { 0 } else { addr - 1 };
 
                 let image_count = bun_sys::c::_dyld_image_count();
@@ -2735,9 +2780,15 @@ mod draft {
                         commands,
                         stable_address as u64,
                     ) {
-                        if i != 0 {
-                            // these libraries are not interesting, mark as unknown
-                            return None;
+                        // The executable is not always image 0: dyld lists the libraries of DYLD_INSERT_LIBRARIES before it.
+                        if !core::ptr::eq(header, &raw const OWN_HEADER) {
+                            let name = bun_sys::c::_dyld_get_image_name(i);
+                            if name.is_null() {
+                                return None;
+                            }
+                            // SAFETY: dyld owns the NUL-terminated path and keeps it while the image is loaded, and `address` is inside that image.
+                            let name = unsafe { bun_core::ffi::cstr(name) }.to_bytes();
+                            return StackLine::in_foreign_image(name, image_relative_address);
                         }
 
                         // To remap this, you have to add the offset (which is going to be 0x100000000),
@@ -2760,12 +2811,46 @@ mod draft {
                 let _ = name_bytes;
                 let address = addr.saturating_sub(1);
                 let m = bun_sys::elf::find_loaded_module(address)?;
+                let offset = (address - m.base_address) as u64;
+                if !Self::is_own_image(&m) {
+                    return StackLine::in_foreign_image(&m.name, offset);
+                }
                 return Some(StackLine {
-                    address: i32::try_from(address - m.base_address).expect("int cast"),
+                    address: i32::try_from(offset).ok()?,
                     object: None,
                 });
             }
         }
+
+        /// Whether `module` is bun's executable, which is the module that holds this function.
+        #[cfg(not(any(windows, target_os = "macos")))]
+        fn is_own_image(module: &bun_sys::elf::LoadedModule) -> bool {
+            static OWN_HEADERS: AtomicUsize = AtomicUsize::new(0);
+            let mut own = OWN_HEADERS.load(Ordering::SeqCst);
+            if own == 0 {
+                let here = Self::is_own_image as *const () as usize;
+                own = bun_sys::elf::find_loaded_module(here)
+                    .map_or(0, |found| found.program_headers.addr());
+                OWN_HEADERS.store(own, Ordering::SeqCst);
+            }
+            module.program_headers.addr() == own
+        }
+
+        /// A frame in an image that is not bun's. `path` is the image as the loader names it, and only its file name is kept.
+        #[cfg(not(windows))]
+        fn in_foreign_image(path: &[u8], offset: u64) -> Option<StackLine> {
+            let file_name = bun_paths::basename(path);
+            if file_name.is_empty() {
+                return None;
+            }
+            Some(StackLine {
+                address: i32::try_from(offset).ok()?,
+                object: Some(foreign_object(file_name)),
+            })
+        }
+
+        /// The marker, the length of the name, the name, and an offset of up to 7 digits.
+        const MAX_ENCODED_LEN: usize = 1 + 2 + MAX_OBJECT_NAME_LEN + 7;
 
         fn write_encoded(self_: Option<&StackLine>, writer: &mut impl Write) -> crate::Result<()> {
             let Some(known) = self_ else {
@@ -2778,12 +2863,46 @@ mod draft {
                 writer.write_all(
                     VLQ::encode(i32::try_from(object.len()).expect("int cast")).slice(),
                 )?;
-                writer.write_all(object)?;
+                // The name goes into the URL as it is, and bun.report reads it by length: one URL-safe byte for each byte.
+                for &byte in object.const_slice() {
+                    writer.write_byte(match byte {
+                        b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'.' | b'_' | b'+' | b'-' => byte,
+                        _ => b'_',
+                    })?;
+                }
             }
 
             writer.write_all(VLQ::encode(known.address).slice())?;
             Ok(())
         }
+    }
+
+    /// The capacity of the buffer that a trace string is built in. It is small on Windows, which reports a stack overflow on the stack that overflowed.
+    const TRACE_STRING_CAPACITY: usize = if cfg!(windows) { 1024 } else { 2048 };
+    /// What the frames may take of the trace string. On POSIX the other half is for the header and the reason. On Windows the frames share the buffer with them.
+    const FRAMES_CAPACITY: usize = if cfg!(windows) {
+        TRACE_STRING_CAPACITY
+    } else {
+        TRACE_STRING_CAPACITY / 2
+    };
+    type TraceStringBuf = BoundedArray<u8, TRACE_STRING_CAPACITY>;
+
+    /// Writes `lines`, the innermost first, up to the first that does not fit in `FRAMES_CAPACITY`: a string decodes without its outermost frames.
+    fn write_frames(
+        lines: impl Iterator<Item = Option<StackLine>>,
+        writer: &mut impl Write,
+    ) -> crate::Result<()> {
+        let mut written = 0;
+        for line in lines {
+            let mut frame = BoundedArray::<u8, { StackLine::MAX_ENCODED_LEN }>::default();
+            StackLine::write_encoded(line.as_ref(), frame.writer())?;
+            if written + frame.len() > FRAMES_CAPACITY {
+                break;
+            }
+            written += frame.len();
+            writer.write_all(frame.const_slice())?;
+        }
+        Ok(())
     }
 
     struct TraceString<'a> {
@@ -2825,16 +2944,17 @@ mod draft {
         let mut name_bytes: [u8; 1024] = [0; 1024];
 
         let mut names_build = true;
-        for &addr in opts.trace {
+        let lines = opts.trace.iter().map(|&addr| {
             let mut line = StackLine::from_address(addr, &mut name_bytes);
             let is_compiled =
                 crate::compiled_frames::offset_in_code(addr.saturating_sub(1)).is_some();
             if let Some(line) = line.as_mut().filter(|_| is_compiled && names_build) {
-                line.object = Some(crate::compiled_frames::object_name(true));
+                line.object = Some(object_of(&[&crate::compiled_frames::object_name(true)]));
                 names_build = false;
             }
-            StackLine::write_encoded(line.as_ref(), writer)?;
-        }
+            line
+        });
+        write_frames(lines, writer)?;
 
         writer.write_all(VLQ::ZERO.slice())?;
 
@@ -2963,9 +3083,7 @@ mod draft {
 
     /// Bun automatically reports crashes on Windows and macOS
     ///
-    /// These URLs contain no source code or personally-identifiable
-    /// information (PII). The stackframes point to Bun's open-source native code
-    /// (not user code), and are safe to share publicly and with the Bun team.
+    /// These URLs contain no source code or personally-identifiable information (PII). A stack frame is an offset in Bun's open-source native code, or the file name of a native library that the process loaded and an offset in it. They are safe to share publicly and with the Bun team.
     fn report(url: &[u8]) {
         bun_removable_features::call_removable!(CrashReport, ReturnDefault, send_report, url)
     }
@@ -3803,4 +3921,104 @@ mod draft {
         bun_core::keep_symbols!(CrashHandler__unsupportedUVFunction);
     }
     // Rust links #[no_mangle] symbols unconditionally.
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        fn line(object: ObjectName, address: i32) -> Option<StackLine> {
+            Some(StackLine {
+                address,
+                object: Some(object),
+            })
+        }
+
+        fn written(lines: impl Iterator<Item = Option<StackLine>>) -> Vec<u8> {
+            let mut frames = TraceStringBuf::default();
+            write_frames(lines, frames.writer()).unwrap();
+            frames.const_slice().to_vec()
+        }
+
+        /// A frame with a name as bun.report reads it: 1, the length of the name, the name, the offset.
+        fn frame(name: &[u8], address: i32) -> Vec<u8> {
+            let length = VLQ::encode(i32::try_from(name.len()).unwrap());
+            let marker = VLQ::encode(1);
+            let address = VLQ::encode(address);
+            [marker.slice(), length.slice(), name, address.slice()].concat()
+        }
+
+        #[test]
+        fn a_name_goes_into_the_link_with_url_safe_bytes() {
+            let object = foreign_object("libC++-x_1 (caf\u{e9})'#.so.6".as_bytes());
+            assert_eq!(
+                written([line(object, 1)].into_iter()),
+                frame(b"libC++-x_1__caf_____.so.6", 1)
+            );
+        }
+
+        #[test]
+        fn a_long_name_is_cut() {
+            let object = foreign_object(&[b'a'; MAX_OBJECT_NAME_LEN + 6]);
+            let longest = frame(&[b'a'; MAX_OBJECT_NAME_LEN], i32::MAX);
+            assert_eq!(written([line(object, i32::MAX)].into_iter()), longest);
+            assert_eq!(longest.len(), StackLine::MAX_ENCODED_LEN);
+        }
+
+        #[test]
+        fn the_frames_end_before_the_first_that_does_not_fit() {
+            let longest = || line(object_of(&[&[b'a'; MAX_OBJECT_NAME_LEN]]), i32::MAX);
+            let fit = FRAMES_CAPACITY / StackLine::MAX_ENCODED_LEN;
+            let unknown_frame_that_would_fit = [None];
+            assert_eq!(
+                written(
+                    core::iter::repeat_with(longest)
+                        .take(fit + 1)
+                        .chain(unknown_frame_that_would_fit)
+                ),
+                frame(&[b'a'; MAX_OBJECT_NAME_LEN], i32::MAX).repeat(fit)
+            );
+        }
+
+        #[test]
+        fn a_foreign_name_is_not_one_that_a_decoder_takes_for_buns_own() {
+            let objects = [
+                (&b"bun"[..], &b"_un"[..]),
+                (b"js", b"_s"),
+                (b"aot", b"_ot"),
+                (b"aot_native_addon.so", b"_ot_native_addon.so"),
+                (b"bun.node", b"bun.node"),
+                (b"aot.node", b"aot.node"),
+            ];
+            for (file_name, object) in objects {
+                assert_eq!(foreign_object(file_name).const_slice(), object);
+            }
+        }
+
+        #[test]
+        fn a_library_that_a_standalone_executable_wrote_is_named_without_the_user_id() {
+            let objects = [
+                (
+                    &b".bun-501-1a2b3c4d5e6f7a8b.node"[..],
+                    &b".bun-1a2b3c4d5e6f7a8b.node"[..],
+                ),
+                (b".bun-0-ff.dll", b".bun-ff.dll"),
+                (b".bun--1a2b.node", b".bun--1a2b.node"),
+                (b".bun-501.node", b".bun-501.node"),
+                (b"lib.bun-501-1a2b.so", b"lib.bun-501-1a2b.so"),
+            ];
+            for (file_name, object) in objects {
+                assert_eq!(foreign_object(file_name).const_slice(), object);
+            }
+
+            const ROOM_AFTER_PREFIX: usize = MAX_OBJECT_NAME_LEN - WRITTEN_LIBRARY_PREFIX.len();
+            let long = [
+                WRITTEN_LIBRARY_PREFIX,
+                b"501-",
+                &[b'a'; MAX_OBJECT_NAME_LEN],
+            ]
+            .concat();
+            let cut = [WRITTEN_LIBRARY_PREFIX, &[b'a'; ROOM_AFTER_PREFIX]].concat();
+            assert_eq!(foreign_object(&long).const_slice(), cut);
+        }
+    }
 } // end mod draft

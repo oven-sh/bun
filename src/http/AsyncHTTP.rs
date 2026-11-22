@@ -525,7 +525,7 @@ impl<'a> AsyncHTTP<'a> {
     }
 }
 
-/// Owns a request until its last result. A socket's ext slot, a stream or a list of waiters holds it between events.
+/// Owns a request until its last result. A socket's ext slot, a stream, a list of waiters or `HttpThread::held_bodies` holds it between events.
 #[must_use]
 pub(crate) struct InFlightRequest {
     // A drop leaks it, because `HttpThread::in_flight` points to it until `finish`.
@@ -584,7 +584,7 @@ impl InFlightRequest {
         self.finish();
     }
 
-    /// Moves the request to its callback with the last result.
+    /// The request has left its transport. It goes to its callback once nothing is left to decode.
     pub(crate) fn finish(mut self) {
         self.unregister_abort_tracker();
         // Shrink the abort tracker once it has drained from a high-water mark.
@@ -603,25 +603,28 @@ impl InFlightRequest {
             }
         }
 
-        let in_flight = &mut crate::http_thread().in_flight;
-        let index = in_flight.iter().position(|&n| n == self.http.as_non_null());
-        in_flight.swap_remove(index.expect("in flight"));
-        let mut this = self.into_inner().into_box();
-        this.elapsed = http_thread_timer_read().saturating_sub(this.elapsed);
-        bun_core::scoped_log!(AsyncHTTP, "finish: {:?}", this.elapsed);
-
-        let mut result = this.client.to_result();
-        if result.is_success() {
-            result.body_owned = core::mem::take(&mut this.client.state.decoded_body.list);
-        }
-
         // Release HTTP-thread resources before another thread gets the request.
-        this.client.proxy_tunnel = None;
-        this.client.custom_ssl_ctx = None;
-        this.client.state = InternalState::default();
+        self.proxy_tunnel = None;
+        self.custom_ssl_ctx = None;
 
-        let callback = this.client.result_callback;
-        callback.run(Some(this), result);
+        let was_active = !core::mem::replace(&mut self.state.flags.left_transport, true);
+        if self.state.fail.is_none() && self.state.has_pending_compressed() {
+            if was_active {
+                self.release_request_body();
+            }
+            if self.streams_response_body() {
+                self.send_partial_result();
+            }
+            if was_active && self.signals.is_receive_paused() {
+                self.state.decoded_body = MutableString::default();
+            }
+            self.hold();
+        } else {
+            self.send_last_result();
+        }
+        if !was_active {
+            return;
+        }
 
         let active_requests = ACTIVE_REQUESTS_COUNT.fetch_sub(1, Ordering::Relaxed);
         debug_assert!(active_requests > 0);
@@ -632,6 +635,54 @@ impl InFlightRequest {
         {
             crate::HTTPThread::wakeup();
         }
+    }
+
+    /// See [`HTTPClientResult::left_transport`].
+    fn release_request_body(&mut self) {
+        self.http.request_body = HTTPRequestBody::Bytes(b"");
+        self.state.request_body = bun_ptr::RawSlice::EMPTY;
+        self.state.original_request_body = HTTPRequestBody::Bytes(b"");
+        self.compressed_request_body = Vec::new();
+    }
+
+    fn hold(self) {
+        let held_bodies = &mut crate::http_thread().held_bodies;
+        bun_core::handle_oom(held_bodies.put_no_clobber(self.async_http_id, self));
+    }
+
+    pub(crate) fn take_held(async_http_id: u32) -> Option<Self> {
+        let held_bodies = &mut crate::http_thread().held_bodies;
+        Some(held_bodies.fetch_swap_remove(&async_http_id)?.1)
+    }
+
+    /// For a request from [`Self::take_held`].
+    pub(crate) fn resume_held(mut self) {
+        match self.pump_held_body() {
+            Ok(true) => self.finish(),
+            Ok(false) => self.hold(),
+            Err(err) => self.fail(err),
+        }
+    }
+
+    fn send_last_result(self) {
+        let in_flight = &mut crate::http_thread().in_flight;
+        // From the back: held bodies gather at the front.
+        let index = in_flight
+            .iter()
+            .rposition(|&n| n == self.http.as_non_null());
+        in_flight.swap_remove(index.expect("in flight"));
+        let mut this = self.into_inner().into_box();
+        this.elapsed = http_thread_timer_read().saturating_sub(this.elapsed);
+        bun_core::scoped_log!(AsyncHTTP, "finish: {:?}", this.elapsed);
+
+        let mut result = this.client.to_result();
+        if result.is_success() {
+            result.body_owned = core::mem::take(&mut this.client.state.decoded_body.list);
+        }
+        this.client.state = InternalState::default();
+
+        let callback = this.client.result_callback;
+        callback.run(Some(this), result);
     }
 }
 

@@ -72,8 +72,7 @@ impl Loader {
         };
         while let Some(der) = next_certificate(&bio) {
             let mut digest = [0u8; 32];
-            // SAFETY: `digest` has room for SHA-256.
-            unsafe { boringssl::SHA256(der.as_ptr(), der.len(), digest.as_mut_ptr()) };
+            bun_sha_hmac::sha::hashers::SHA256::hash(&der, &mut digest);
             if self.ders.contains_key(&digest) {
                 continue;
             }
@@ -131,7 +130,7 @@ impl Loader {
         }
         names.sort_unstable_by(|a, b| a.as_bytes().cmp(b.as_bytes()));
 
-        let mut path = Vec::with_capacity(dir_path.len() + 64);
+        let mut path = bun_paths::Path::from(dir_path);
         for name in &names {
             let Ok(st) = bun_sys::fstatat(dir.fd(), name) else {
                 continue;
@@ -143,11 +142,7 @@ impl Loader {
             {
                 continue;
             }
-            path.clear();
-            path.extend_from_slice(dir_path);
-            path.push(b'/');
-            path.extend_from_slice(name.as_bytes());
-            self.load_file(ZBox::from_bytes(&path).as_zstr());
+            self.load_file(&path.push_scoped(name.as_bytes()));
         }
     }
 }

@@ -1,0 +1,13 @@
+[package]
+name = "bun_icu_data"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+bun_zstd_decoder.workspace = true

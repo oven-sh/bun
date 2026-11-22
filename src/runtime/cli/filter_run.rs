@@ -7,7 +7,7 @@ use std::time::Instant;
 
 #[cfg(unix)]
 use crate::api::bun::process::SpawnResultExt as _;
-use crate::api::bun::process::{self as spawn, Rusage, SpawnOptions, Status};
+use crate::api::bun::process::{self as spawn, SpawnOptions, Status};
 use crate::cli::Command;
 use crate::cli::filter_arg as FilterArg;
 use crate::cli::run_command::{ConfigureEnvOptions, RunCommand};
@@ -19,6 +19,7 @@ use bun_event_loop::MiniEventLoop::{self as MiniEventLoopMod, MiniEventLoop};
 use bun_install::lifecycle_script_runner::ScriptArgv;
 use bun_io::max_buf::Kind;
 use bun_io::{BufferedReader, IoEvent, Owner, PollTag};
+use bun_paths::{dirname_or_root, without_trailing_sep};
 
 // The string fields below are owned boxes, except `combined` which is interned
 // in the process-lifetime CLI arena.
@@ -168,9 +169,7 @@ impl<'a> ProcessHandle<'a> {
             let envp = crate::cli::script_or_command::with_package_script(
                 &mut env,
                 &handle.output.config.script_name,
-                bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
-                    &handle.output.config.package_json_path,
-                ),
+                without_trailing_sep(dirname_or_root(&handle.output.config.package_json_path)),
                 |env| env.map.to_envp(),
             );
             break 'brk spawn::spawn_process(
@@ -203,10 +202,10 @@ impl<'a> ProcessHandle<'a> {
 
         #[cfg(unix)]
         for (reader, pipe) in [(&handle.stdout, stdout_pipe), (&handle.stderr, stderr_pipe)] {
-            if let Some(fd) = pipe.map(bun_sys::File::into_raw) {
-                let _ = bun_sys::set_nonblocking(fd);
+            if let Some(pipe) = pipe {
+                let _ = bun_sys::set_nonblocking(pipe.fd());
                 let event_loop = handle.output.shared.event_loop.as_event_loop_ctx();
-                let _ = reader.start(event_loop, fd, true)?;
+                let _ = reader.start(event_loop, pipe.into(), true)?;
             }
         }
         #[cfg(not(unix))]
@@ -222,23 +221,16 @@ impl<'a> ProcessHandle<'a> {
             end_time: None,
         });
         let handle_ptr = std::ptr::from_mut::<ProcessHandle<'a>>(handle);
-        // Not a borrow of the slot, which the exit handler borrows again.
-        let process = handle.process.as_ref().unwrap().process.this_ptr();
+        let process = &handle.process.as_ref().unwrap().process;
         // SAFETY: `handle` is the live `ProcessHandle` slot in `State.handles`;
         // it owns `process` and outlives it.
         process.set_exit_handler(unsafe {
             bun_spawn::ProcessExit::new(bun_spawn::ProcessExitKind::FilterRunHandle, handle_ptr)
         });
 
-        match spawn::Process::watch_or_reap(process) {
-            Ok(_) => {}
-            Err(err) => {
-                if !process.has_exited() {
-                    // SAFETY: all-zero is a valid Rusage (POD C struct)
-                    let rusage = bun_core::ffi::zeroed::<Rusage>();
-                    spawn::Process::on_exit(process, Status::Err(err), &rusage);
-                }
-            }
+        let mut rusage = bun_core::ffi::zeroed();
+        if let Some(exit) = process.watch_or_exit(&mut rusage) {
+            exit.dispatch(&rusage);
         }
         Ok(())
     }
@@ -931,10 +923,7 @@ pub(crate) fn run_scripts_with_filter(
                 stdin: spawn::Stdio::Ignore,
                 stdout: spawn::Stdio::Buffer,
                 stderr: spawn::Stdio::Buffer,
-                cwd: bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
-                    &script.package_json_path,
-                )
-                .into(),
+                cwd: without_trailing_sep(dirname_or_root(&script.package_json_path)).into(),
                 #[cfg(windows)]
                 windows: spawn::WindowsOptions {
                     loop_: EventLoopHandle::init_mini(event_loop),

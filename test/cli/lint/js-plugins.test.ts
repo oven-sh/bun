@@ -1,6 +1,16 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { autoInstallTempDir, bunEnv, bunExe, isASAN, isDebug, isLinux, normalizeBunSnapshot, tempDir } from "harness";
-import { readFileSync } from "node:fs";
+import {
+  autoInstallTempDir,
+  bunEnv,
+  bunExe,
+  isASAN,
+  isDebug,
+  isLinux,
+  isWindows,
+  normalizeBunSnapshot,
+  tempDir,
+} from "harness";
+import { readFileSync, symlinkSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import { join } from "node:path";
 import { endChildren, spawn } from "../children";
@@ -5565,3 +5575,1006 @@ describe.concurrent("tokens and comments in JavaScript plugins", () => {
     timeout,
   );
 });
+
+describe.concurrent("what a package requires is loaded when it's used", () => {
+  /** A module that says when it's loaded. */
+  const noted = (name: string, rest = `module.exports = { name: "${name}" };`) =>
+    `(globalThis.loaded ??= []).push("${name}");\n${rest}`;
+  // `ajv`, `resolve` and `semver` are among the packages that this is for.
+  const inPackage = (files: Record<string, string>) =>
+    Object.fromEntries(Object.entries(files).map(([name, text]) => [`node_modules/ajv/${name}`, text]));
+
+  /** What `expression` is in a config that has imported the package as `p`, with and without the optimization. */
+  async function evaluate(files: Record<string, string>, expression: string, others: Record<string, string> = {}) {
+    const all = {
+      ...inPackage({ "package.json": `{ "name": "ajv", "main": "index.js" }`, ...files }),
+      ...others,
+      "eslint.config.mjs": `import p from "ajv";
+        import { createRequire } from "node:module";
+        import { writeFileSync } from "node:fs";
+        const require = createRequire(import.meta.url);
+        const loaded = () => [...(globalThis.loaded ?? [])];
+        writeFileSync("out.json", JSON.stringify(await (${expression})));
+        export default [{}];`,
+      "a.js": "",
+    };
+    const run = async (variables: Record<string, string>) => {
+      const { files, exitCode } = await lint(all, ["a.js"], ["out.json"], variables);
+      expect(exitCode).toBe(0);
+      return JSON.parse(files["out.json"]);
+    };
+    const [deferred, eager] = await Promise.all([run({}), run({ BUN_FEATURE_FLAG_DISABLE_DEFERRED_REQUIRE: "1" })]);
+    return { deferred, eager };
+  }
+  const both = (value: unknown) => ({ deferred: value, eager: value });
+
+  test(
+    "a variable that only a function reads",
+    async () => {
+      const files = {
+        "index.js": `const a = require("./a"); const { name } = require("./b"); var c = require("./c").name;
+          exports.a = () => a.name; exports.b = () => ({ name }); exports.c = () => typeof c + c;`,
+        "a.js": noted("a"),
+        "b.js": noted("b"),
+        "c.js": noted("c"),
+      };
+      expect(await evaluate(files, `[loaded(), p.b(), loaded(), p.a(), p.c(), p.c(), loaded()]`)).toEqual({
+        deferred: [[], { name: "b" }, ["b"], "a", "stringc", "stringc", ["b", "a", "c"]],
+        eager: [["a", "b", "c"], { name: "b" }, ["a", "b", "c"], "a", "stringc", "stringc", ["a", "b", "c"]],
+      });
+    },
+    timeout,
+  );
+
+  test(
+    "every way to read such a variable",
+    async () => {
+      const files = {
+        "index.js": `const A = require("./a"); const { tag, nested } = require("./a"); const none = require("./none");
+          exports.run = () => {
+            class B extends A {}
+            const { x = A.x } = {};
+            let threw = false;
+            try { none.x; } catch { threw = true; }
+            return [new A().y, new A, new nested.C().z, new B().y, tag\`t\`, tag(), A?.x, none?.x.y, x, { A }.A === A, threw,
+              [...nested.list], B.prototype instanceof A, ((A) => A)(1), delete A.x, A.x];
+          };`,
+        "a.js": `module.exports = class { y = 1; static x = 2; static tag() { "use strict"; return this === undefined; }
+          static nested = { C: class { z = 3 }, list: [4] } };`,
+        "none.js": `module.exports = null;`,
+      };
+      expect(await evaluate(files, `p.run()`)).toEqual(
+        both([1, { y: 1 }, 3, 1, true, true, 2, null, 2, true, true, [4], true, 1, true, null]),
+      );
+    },
+    timeout,
+  );
+
+  test.each([
+    ["is read while the module loads", `const a = require("./a"); exports.a = a.name + "";`],
+    ["is read by a function that's called in place", `const a = require("./a"); (function () { a.name.at(); })();`],
+    ["is not used", `const a = require("./a");`],
+    ["is assigned to", `let a = require("./a"); exports.f = () => (a = a.name);`],
+    ["is declared again", `var a = require("./a"); var a = a; exports.f = () => a;`],
+    ["can be read by eval", `const a = require("./a"); exports.f = () => [a, eval("a")];`],
+    ["has a default value", `const { b = 1 } = require("./a"); exports.f = () => b;`],
+    ["is no variable", `require("./a");`],
+  ])(
+    "a module is loaded right away if its variable %s",
+    async (_, index) => {
+      expect(await evaluate({ "index.js": index, "a.js": noted("a") }, `loaded()`)).toEqual(both(["a"]));
+    },
+    timeout,
+  );
+
+  test(
+    "a var that's read before its declaration is undefined",
+    async () => {
+      const files = {
+        "index.js": `const read = () => [typeof a, a]; exports.early = read(); var a = require("./a"); exports.read = read;`,
+        "a.js": `module.exports = 1;`,
+      };
+      expect(await evaluate(files, `[p.early, p.read()]`)).toEqual(
+        both([
+          ["undefined", null],
+          ["number", 1],
+        ]),
+      );
+    },
+    timeout,
+  );
+
+  test(
+    "modules that require each other",
+    async () => {
+      const files = {
+        "index.js": `exports.early = 1; const a = require("./a"); exports.f = () => a.g(); exports.late = 2;`,
+        "a.js": `const index = require("./index"); const { early } = require("./index"); exports.g = () => [index.late, early];`,
+      };
+      expect(await evaluate(files, `p.f()`)).toEqual(both([2, 1]));
+    },
+    timeout,
+  );
+
+  test(
+    "who catches what require throws finds out that a package is missing",
+    async () => {
+      const files = {
+        "index.js": `try { require("semver"); exports.has = true; } catch { exports.has = false; }
+          try { require("resolve"); exports.hasPeer = true; } catch { exports.hasPeer = false; }`,
+      };
+      const others = {
+        "node_modules/semver/index.js": `const missing = require("missing"); exports.f = () => missing;`,
+        "node_modules/semver/package.json": `{ "name": "semver" }`,
+        "node_modules/resolve/index.js": `const inner = require("./inner"); exports.f = () => inner;`,
+        "node_modules/resolve/inner.js": `require("peer");`,
+        "node_modules/resolve/package.json": `{ "name": "resolve", "peerDependencies": { "peer": "*" } }`,
+      };
+      expect(await evaluate(files, `p`, others)).toEqual(both({ has: false, hasPeer: false }));
+    },
+    timeout,
+  );
+
+  test.each([
+    [
+      "Module.prototype.require",
+      `const { prototype } = require("module"), before = prototype.require;
+      prototype.require = function (id) { return id === "./b" ? "replaced" : before.call(this, id); };
+      const a = require("./a"); a.at; prototype.require = before; exports.f = a;`,
+    ],
+    [
+      "require.extensions",
+      `const before = require.extensions[".js"];
+      require.extensions[".js"] = (module, file) => file.endsWith("b.js") ? (module.exports = "replaced") : before(module, file);
+      const a = require("./a"); a.at; require.extensions[".js"] = before; exports.f = a;`,
+    ],
+    [
+      "Module._resolveFilename",
+      `const Module = require("module"), before = Module._resolveFilename;
+      Module._resolveFilename = function (id, ...rest) { return before.call(this, id === "./b" ? "./c" : id, ...rest); };
+      const a = require("./a"); a.at; Module._resolveFilename = before; exports.f = a;`,
+    ],
+  ])(
+    "a module is what %s made of it when it was required",
+    async (_, index) => {
+      const files = {
+        "index.js": index,
+        "a.js": `const b = require("./b"); module.exports = () => b;`,
+        "b.js": `module.exports = "b";`,
+        "c.js": `module.exports = "replaced";`,
+      };
+      expect(await evaluate(files, `p.f()`)).toEqual(both("replaced"));
+    },
+    timeout,
+  );
+
+  test(
+    "a package that is not known loads what it requires right away",
+    async () => {
+      const others = {
+        "node_modules/other/index.js": `const a = require("./a"); exports.a = () => a; exports.b = require("./b");
+          const started = new Set(); const load = it => (started.has(it) ? "again" : (started.add(it), require(it)));
+          let c; Object.defineProperty(exports, "c", { enumerable: true, get() { return c ??= load("./c"); } });`,
+        "node_modules/other/a.js": noted("a"),
+        "node_modules/other/b.js": noted("b"),
+        "node_modules/other/c.js": noted("c"),
+        "named.mjs": `import other from "other"; export default [[...loaded], other.c];`,
+      };
+      const expression = `import("./named.mjs").then(it => it.default)`;
+      expect(await evaluate({ "index.js": "exports.a = 1;" }, expression, others)).toEqual(
+        both([["a", "b", "c"], { name: "c" }]),
+      );
+    },
+    timeout,
+  );
+
+  test(
+    "who catches what import() rejects with finds out that a package is missing",
+    async () => {
+      const others = {
+        "node_modules/resolve/index.js": `const inner = require("./inner"); exports.f = () => inner;`,
+        "node_modules/resolve/inner.js": `require("peer");`,
+        "node_modules/resolve/package.json": `{ "name": "resolve", "peerDependencies": { "peer": "*" } }`,
+      };
+      const expression = `import("resolve").then(() => "loaded", () => "failed")`;
+      expect(await evaluate({ "index.js": "exports.a = 1;" }, expression, others)).toEqual(both("failed"));
+    },
+    timeout,
+  );
+
+  test.each<[string, Record<string, string>, unknown]>([
+    [
+      "a property that's read while its module loads",
+      {
+        "index.js": `exports.rules = { a: require("./a") }; exports.f = () => typeof exports.rules.a;`,
+        "a.js": `Object.entries(require("./index").rules ?? {}); module.exports = () => {};`,
+      },
+      "function",
+    ],
+    [
+      "a property that's read while something else loads its module",
+      {
+        "index.js": `exports.rules = { a: require("./a") }; exports.f = () => (require("./a"), typeof exports.rules.a);`,
+        "a.js": `Object.entries(require("./index").rules ?? {}); module.exports = () => {};`,
+      },
+      "function",
+    ],
+    [
+      "a member that the same module replaces",
+      {
+        "index.js": `const { g } = require("./a"); const a = require("./a"); a.g = () => g() + 1; exports.f = () => a.g();`,
+        "a.js": `exports.g = () => 1;`,
+      },
+      2,
+    ],
+    [
+      "a member that another one changes",
+      {
+        "index.js": `const { value, set } = require("./a"); exports.f = () => (set(2), value);`,
+        "a.js": `exports.value = 1; exports.set = it => { exports.value = it; };`,
+      },
+      1,
+    ],
+    [
+      "a member that another module replaces",
+      {
+        "index.js": `const { g } = require("./a"); exports.f = () => (require("./b"), g());`,
+        "a.js": `exports.g = () => "original";`,
+        "b.js": `require("./a").g = () => "replaced";`,
+      },
+      "original",
+    ],
+    [
+      "a member of a member that another module replaces",
+      {
+        "index.js": `const value = require("./a").nested.value; exports.f = () => (require("./b"), value);`,
+        "a.js": `exports.nested = { value: 1 };`,
+        "b.js": `require("./a").nested.value = 2;`,
+      },
+      1,
+    ],
+    [
+      "a getter that another module replaces",
+      {
+        "index.js": `const value = require("./a").nested.value; exports.f = () => (require("./b"), value);`,
+        "a.js": `let one = 1; exports.nested = { get value() { return one + 0; } }; one = 1;`,
+        "b.js": `Object.defineProperty(require("./a").nested, "value", { value: 2 });`,
+      },
+      1,
+    ],
+    [
+      "a member behind a getter that another module replaces",
+      {
+        "index.js": `const value = require("./a").nested.value; exports.f = () => (require("./b"), value);`,
+        "a.js": `const nested = { value: 1 }; Object.defineProperty(exports, "nested", { get: function () { return nested; } });`,
+        "b.js": `require("./a").nested.value = 2;`,
+      },
+      1,
+    ],
+    [
+      "a getter that converts an object",
+      {
+        "index.js": `const value = require("./a").value; exports.f = () => (require("./b"), value);`,
+        "a.js": `let count = 0; const box = { valueOf: () => ++count }; module.exports = { get value() { return +box; } };`,
+        "b.js": `require("./a");`,
+      },
+      1,
+    ],
+    [
+      "a member behind a getter that converts an object",
+      {
+        "index.js": `const value = require("./a").text.length; exports.f = () => (require("./b"), value);`,
+        "a.js": `let text = ""; const box = { valueOf: () => (text += "x") }; module.exports = { get text() { return box + ""; } };`,
+        "b.js": `require("./a");`,
+      },
+      1,
+    ],
+    [
+      "a member behind a getter with `in`",
+      {
+        "index.js": `const value = require("./a").nested.count; exports.f = () => (require("./b"), value);`,
+        "a.js": `const nested = { count: 0 }; const key = { toString: () => (nested.count++, "count") };
+          module.exports = { get nested() { return key in nested && nested; } };`,
+        "b.js": `require("./a");`,
+      },
+      1,
+    ],
+    [
+      "a member behind a getter with `instanceof`",
+      {
+        "index.js": `const value = require("./a").nested.count; exports.f = () => (require("./b"), value);`,
+        "a.js": `const nested = { count: 0 }; const Kind = { [Symbol.hasInstance]: () => ++nested.count };
+          module.exports = { get nested() { return nested instanceof Kind && nested; } };`,
+        "b.js": `require("./a");`,
+      },
+      1,
+    ],
+    [
+      "a getter that breaks a cycle",
+      {
+        "index.js": `const { value } = require("./a"); exports.f = () => (require("./b"), value);`,
+        "a.js": `module.exports = { get value() { return require("./b").thing; } };`,
+        "b.js": `require("./a").x = 1; exports.thing = "thing";`,
+      },
+      "thing",
+    ],
+    [
+      "an argument that's a property",
+      {
+        "index.js": `const debug = require("debug"); const it = { name: "a" }; const log = debug(it.name); it.name = "b"; exports.f = () => log;`,
+        "node_modules/debug/index.js": `module.exports = it => it;`,
+      },
+      "a",
+    ],
+    [
+      "a function that's called in place and changes what the module reads",
+      {
+        "index.js": `const a = require("./a"); let got; (function () { globalThis.changed = true; got = a.value; })(); exports.f = () => got;`,
+        "a.js": `exports.value = "changed" in globalThis;`,
+      },
+      false,
+    ],
+    [
+      "a getter that calls a method",
+      {
+        "index.js": `const queue = ["./a"]; let a; module.exports = { get a() { return a ??= require(queue.shift()); }, f() { return this.a; } };`,
+        "a.js": `module.exports = "a";`,
+      },
+      "a",
+    ],
+    [
+      "a getter that calls a function for what it requires",
+      {
+        "index.js": `const queue = ["./a"]; function take() { return queue.shift(); } const load = it => require(it); let a;
+          module.exports = { get a() { return a ??= load(take()); }, f() { return this.a; } };`,
+        "a.js": `module.exports = "a";`,
+      },
+      "a",
+    ],
+    [
+      "a getter with a default that calls a method",
+      {
+        "index.js": `const queue = ["./a"]; let a; exports.f = () => exports.a;
+          Object.defineProperty(exports, "a", { enumerable: true, get: (it = a ?? queue.shift()) => (a ??= require(it)) });`,
+        "a.js": `module.exports = "a";`,
+      },
+      "a",
+    ],
+    [
+      "a getter that calls a function that changes something",
+      {
+        "index.js": `const queue = ["./a"]; function load() { return require(queue.shift()); } let a;
+          module.exports = { get a() { return a ??= load(); }, f() { return this.a; } };`,
+        "a.js": `module.exports = "a";`,
+      },
+      "a",
+    ],
+    [
+      "a getter of a getter that runs a bundled module",
+      {
+        "index.js": `const b = require("./b"); b.loaded; module.exports = { get a() { return b.default; }, f() { return this.a; } };`,
+        "b.js": `const a = require("./a");
+          const once = (run, module) => () => (module || run((module = { exports: {} })), module.exports);
+          const bundled = once(module => { const it = a.it; module.exports = it; });
+          Object.defineProperty(exports, "default", { get: function () { return bundled(); } });`,
+        "a.js": `exports.it = "a";`,
+      },
+      "a",
+    ],
+    ...["", '"use strict";'].map((mode): [string, Record<string, string>, unknown] => [
+      `an assignment to frozen exports: ${mode}`,
+      {
+        "index.js": `exports.f = () => { try { return typeof require("./b").a; } catch (error) { return error.name; } };`,
+        "b.js": `${mode} Object.freeze(exports); exports.a = require("./a");`,
+        "a.js": `module.exports = "a";`,
+      },
+      mode ? "TypeError" : "undefined",
+    ]),
+    [
+      "a getter that reads a getter before it loads",
+      {
+        "index.js": `let reads = 0; const state = { get ready() { reads++; return false; } }; let a;
+          module.exports = { get a() { return a ??= state.ready || require("./a"); }, f() { return this.a + reads; } };`,
+        "a.js": `module.exports = "a";`,
+      },
+      "a1",
+    ],
+    [
+      "an argument that is filled later",
+      {
+        "index.js": `const debug = require("debug"); const values = [1];
+          const it = { log: debug("a"), set: new Set(values) }; const log = debug(values);
+          values.push(2); exports.f = () => it.set.size + log;`,
+        "node_modules/debug/index.js": `module.exports = it => it.length;`,
+      },
+      2,
+    ],
+    [
+      "an extension that's added just before a require",
+      {
+        "index.js": `require.extensions[".foo"] = module => { module.exports = "foo"; };
+          const a = require("./a") + ""; exports.f = () => a;`,
+        "a.foo": "",
+        "a/index.js": `module.exports = "index";`,
+      },
+      "foo",
+    ],
+    [
+      "a directory that's named like another package",
+      {
+        "index.js": `exports.f = require("./eslint-plugin-react-hooks/a").f;`,
+        "eslint-plugin-react-hooks/a.js": `const debug = require("debug"); debug.names.push("x"); exports.f = () => debug.names;`,
+        "node_modules/debug/index.js": `exports.names = [];`,
+      },
+      ["x"],
+    ],
+    [
+      "a hook that's set between two requires",
+      {
+        "index.js": `const a = require("./a"); const before = require.extensions[".js"];
+          require.extensions[".js"] = module => { module.exports = "replaced"; };
+          const b = require("./b"); require.extensions[".js"] = before; exports.f = () => [a, b];`,
+        "a.js": `module.exports = "a";`,
+        "b.js": `module.exports = "b";`,
+      },
+      ["a", "replaced"],
+    ],
+    [
+      "an alias that's gone by the time the module is used",
+      {
+        "index.js": `const Module = require("module"), before = Module._resolveFilename;
+          Module._resolveFilename = function (id, ...rest) { return before.call(this, id === "alias" ? "./b" : id, ...rest); };
+          const a = require("./a"); Module._resolveFilename = before; exports.f = () => a;`,
+        "a.js": `module.exports = require("alias") + "";`,
+        "b.js": `module.exports = "b";`,
+      },
+      "b",
+    ],
+    [
+      "a function whose name starts with require",
+      {
+        "index.js": `let it = 1; function requireIt() { return it; } const a = requireIt(); it = 2; exports.f = () => a;`,
+      },
+      1,
+    ],
+    [
+      "a call that changes `debug`",
+      {
+        "index.js": `const debug = require("debug"); debug.enable("x"); const on = debug.enable("y"); exports.f = () => [debug.names, on];`,
+        "node_modules/debug/index.js": `exports.names = []; exports.enable = it => exports.names.push(it);`,
+      },
+      [["x", "y"], 2],
+    ],
+    [
+      "an argument that's assigned to",
+      {
+        "index.js": `const debug = require("debug"); let name = "a"; const log = debug(name); name = "b"; exports.f = () => log;`,
+        "node_modules/debug/index.js": `module.exports = it => it;`,
+      },
+      "a",
+    ],
+  ])(
+    "%s",
+    async (_, files, expected) => {
+      expect(await evaluate(files, `p.f()`)).toEqual(both(expected));
+    },
+    timeout,
+  );
+
+  test(
+    "a module in a bundle",
+    async () => {
+      const files = {
+        "index.js": `var a, hasRequiredA;
+          function requireA() { if (hasRequiredA) return a; hasRequiredA = 1; (globalThis.loaded ??= []).push("a"); return (a = { x: 1 }); }
+          const { x } = requireA(); exports.f = () => x;`,
+      };
+      expect(await evaluate(files, `[loaded(), p.f(), loaded()]`)).toEqual({
+        deferred: [[], 1, ["a"]],
+        eager: [["a"], 1, ["a"]],
+      });
+    },
+    timeout,
+  );
+
+  test(
+    "a member of a built-in module is the one from before it was replaced",
+    async () => {
+      const files = { "index.js": `const { existsSync } = require("fs"); exports.f = () => existsSync("nowhere");` };
+      expect(await evaluate(files, `(require("fs").existsSync = () => "replaced", p.f())`)).toEqual(both(false));
+    },
+    timeout,
+  );
+
+  test(
+    "a property",
+    async () => {
+      const names = ["a", "b", "c", "d", "e", "f", "g"];
+      const files = {
+        "index.js": `exports.rules = { ${names.map(it => `${it}: require("./${it}")`)}, plain: 1 };
+          exports.direct = require("./direct").name;`,
+        "direct.js": noted("direct"),
+        ...Object.fromEntries(names.map(it => [`${it}.js`, noted(it)])),
+      };
+      const { deferred, eager } = await evaluate(
+        files,
+        `{ keys: Object.keys(p.rules), has: "a" in p.rules, before: loaded(),
+          read: p.rules.a, described: Object.getOwnPropertyDescriptor(p.rules, "b"),
+          assigned: (p.rules.c = 1, p.rules.c), deleted: [delete p.rules.d, "d" in p.rules],
+          defined: Object.defineProperty(p.rules, "e", { enumerable: false }).e,
+          inherited: Object.create(p.rules).f, frozen: Object.freeze(p.rules).g, same: p.rules.g === p.rules.g,
+          copied: [{ ...p.rules }, Object.assign({}, p.rules), structuredClone(p.rules), Object.entries(p.rules)],
+          direct: p.direct }`,
+      );
+      expect([deferred.before, eager.before]).toEqual([[], [...names, "direct"]]);
+      expect({ ...deferred, before: 0 }).toEqual({ ...eager, before: 0 });
+      expect(deferred.described).toEqual({
+        value: { name: "b" },
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      });
+    },
+    timeout,
+  );
+
+  test.each([
+    "{ ...p.rules }",
+    "Object.assign({}, p.rules)",
+    "structuredClone(p.rules)",
+    "Object.fromEntries(Object.entries(p.rules))",
+    "(({ ...rest }) => rest)(p.rules)",
+    "JSON.parse(JSON.stringify(p.rules))",
+  ])(
+    "%s of properties that haven't been read",
+    async expression => {
+      const files = {
+        "index.js": `exports.rules = { a: require("./a"), plain: 1, b: require("./b") };`,
+        "a.js": noted("a"),
+        "b.js": noted("b"),
+      };
+      expect(await evaluate(files, expression)).toEqual(both({ a: { name: "a" }, plain: 1, b: { name: "b" } }));
+    },
+    timeout,
+  );
+
+  test(
+    "an export that a setter or a proxy gets",
+    async () => {
+      const files = {
+        "index.js": `const got = []; Object.defineProperty(exports, "a", { set: it => got.push(it) });
+          exports.a = require("./a"); exports.got = got;
+          module.exports = new Proxy(exports, { set: (_, key, it) => got.push(it) }); module.exports.b = require("./a");`,
+        "a.js": `module.exports = "a";`,
+      };
+      expect(await evaluate(files, `p.got`)).toEqual(both(["a", "a"]));
+    },
+    timeout,
+  );
+
+  test(
+    "an export that an ES module imports by name",
+    async () => {
+      const files = {
+        "index.js": `exports.a = require("./a"); exports.b = require("./b"); exports.c = require("./c");`,
+        "a.js": noted("a"),
+        "b.js": noted("b"),
+        "c.js": noted("c"),
+      };
+      const others = { "named.mjs": `export { a } from "ajv"; import { b } from "ajv"; export const name = b.name;` };
+      const expression = `import("./named.mjs").then(async it => [it.a, it.name, { ...(await import("ajv")) }.c])`;
+      expect(await evaluate(files, expression, others)).toEqual(both([{ name: "a" }, "b", { name: "c" }]));
+    },
+    timeout,
+  );
+
+  test(
+    "a file that's written just before it's required",
+    async () => {
+      const files = {
+        "index.js": `const fs = require("fs");
+          fs.writeFileSync(__dirname + "/a.js", "module.exports = 'written while loading';");
+          fs.writeFileSync(__dirname + "/b.js", "module.exports = 'new';");
+          module.exports = [require("./a"), require("./b")];`,
+        "a.js": `module.exports = "old";`,
+      };
+      expect(await evaluate(files, `p`)).toEqual(both(["written while loading", "new"]));
+    },
+    timeout,
+  );
+
+  test(
+    "a config that fails for want of what a module does while it loads runs again",
+    async () => {
+      const files = {
+        "index.js": `const a = require("./a"); exports.f = () => a;`,
+        "a.js": `globalThis.effect = { value: 1 };`,
+      };
+      expect(await evaluate(files, `effect.value`)).toEqual(both(1));
+    },
+    timeout,
+  );
+
+  test(
+    "a plugin that's called like a member of Object.prototype",
+    async () => {
+      const { stdout, exitCode } = await lint(
+        {
+          "eslint.config.mjs": `const constructor = { rules: { one: { create: context => ({ Program: node => context.report({ node, message: "one" }) }) } } };
+            export default [{ files: ["a.js"], plugins: { constructor }, rules: { "constructor/one": "error" } }];`,
+          "a.js": "",
+        },
+        ["-f", "unix", "a.js"],
+      );
+      expect(stdout).toContain("one [Error/constructor/one]");
+      expect(exitCode).toBe(1);
+    },
+    timeout,
+  );
+
+  test(
+    "a config that throws on purpose runs once",
+    async () => {
+      const { files, stderr, exitCode } = await lint(
+        {
+          ...inPackage({ "index.js": `const a = require("./a"); exports.f = () => a;`, "a.js": "" }),
+          "eslint.config.mjs": `import "ajv"; import { appendFileSync } from "node:fs";
+            appendFileSync("runs.txt", "x"); throw new Error("on purpose");`,
+          "a.js": "",
+        },
+        ["a.js"],
+        ["runs.txt"],
+      );
+      expect(stderr).toContain("on purpose");
+      expect(files).toEqual({ "runs.txt": "x" });
+      expect(exitCode).toBe(2);
+    },
+    timeout,
+  );
+
+  test.skipIf(isWindows)(
+    "NODE_PRESERVE_SYMLINKS",
+    async () => {
+      using dir = tempDir("bun-lint-preserve-symlinks", {
+        "store/linked/index.js": `module.exports = require("dependency");`,
+        "project/node_modules/dependency/index.js": `module.exports = [{ rules: { "no-var": "error" } }];`,
+        "project/eslint.config.mjs": `export { default } from "linked";`,
+        "project/a.js": "var a;\n",
+      });
+      symlinkSync(join(String(dir), "store/linked"), join(String(dir), "project/node_modules/linked"));
+      await using proc = spawn({
+        cmd: [bunExe(), "lint", "-f", "unix", "a.js"],
+        env: { ...env, NODE_PRESERVE_SYMLINKS: "1" },
+        cwd: join(String(dir), "project"),
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(stdout).toContain("[Error/no-var]");
+      expect(exitCode).toBe(1);
+    },
+    timeout,
+  );
+
+  const reports = (message: string, meta = "{}") =>
+    `module.exports = { meta: ${meta}, create: context => ({ Program: node => context.report({ node, message: ${message} }) }) };`;
+  const plugin = (rules: object, files: Record<string, string>) => ({
+    ...inPackage({
+      "package.json": `{ "name": "ajv", "main": "index.js" }`,
+      "index.js": `module.exports = { rules: { one: require("./one"), two: require("./two") } };`,
+      "one.js": reports(`"one"`),
+      "two.js": `require("fs").appendFileSync("loaded.txt", "two\\n");
+        ${reports(`"two " + context.options[0]`, `{ schema: [{ type: "string" }], defaultOptions: ["default"] }`)}`,
+    }),
+    "eslint.config.mjs": `import p from "ajv"; export default [{ plugins: { p }, rules: ${JSON.stringify(rules)} }];`,
+    "loaded.txt": "",
+    ...files,
+  });
+
+  test(
+    "a rule that fails for the same reason runs again",
+    async () => {
+      const files = plugin(
+        { "p/one": "error" },
+        {
+          ...inPackage({
+            "one.js": `const a = require("./a"); exports.unused = () => a;
+              exports.create = context => ({ Program: node => context.report({ node, message: effect.value }) });`,
+            "a.js": `globalThis.effect = { value: "from the effect" };`,
+          }),
+          "a.js": "",
+        },
+      );
+      const { stdout, exitCode } = await lint(files, ["-f", "unix", "a.js"]);
+      expect(stdout).toContain("a.js:1:1: from the effect [Error/p/one]");
+      expect(exitCode).toBe(1);
+    },
+    timeout,
+  );
+
+  test(
+    "a rule that nothing turns on is not loaded",
+    async () => {
+      const { stdout, files } = await lint(
+        plugin({ "p/one": "error" }, { "a.js": "" }),
+        ["-f", "unix", "a.js"],
+        ["loaded.txt"],
+      );
+      expect(stdout).toContain("a.js:1:1: one [Error/p/one]");
+      expect(files).toEqual({ "loaded.txt": "" });
+    },
+    timeout,
+  );
+
+  test.each([
+    ["a comment", `/* eslint p/two: "error" */`, [], "two default [Error/p/two]"],
+    ["a comment with options", `/* eslint p/two: ["error", "given"] */`, [], "two given [Error/p/two]"],
+    ["a comment with invalid options", `/* eslint p/two: ["error", 1] */`, [], "Value 1 should be string"],
+    ["--rule", "", ["--rule", "p/two: error"], "two default [Error/p/two]"],
+  ])(
+    "a rule that only %s turns on",
+    async (_, text, args, expected) => {
+      const { stdout, exitCode } = await lint(plugin({}, { "a.js": text }), ["-f", "unix", ...args, "a.js"]);
+      expect(stdout).toContain(expected);
+      expect(exitCode).toBe(1);
+    },
+    timeout,
+  );
+
+  test(
+    "the options of a rule that only --rule turns on are validated",
+    async () => {
+      const { stderr, exitCode } = await lint(plugin({}, { "a.js": "" }), ["--rule", `p/two: ["error", 1]`, "a.js"]);
+      expect(stderr).toContain("Value 1 should be string");
+      expect(exitCode).toBe(2);
+    },
+    timeout,
+  );
+
+  test(
+    "TypeScript is loaded for anything but its enums and version",
+    async () => {
+      const others = {
+        "node_modules/typescript/package.json": `{ "name": "typescript", "version": "0.0.0", "main": "lib/typescript.js" }`,
+        "node_modules/typescript/lib/typescript.js": `var ts = {}; ((module) => {
+(globalThis.loaded ??= []).push("typescript");
+var __export = (target, all) => { for (var name in all) Object.defineProperty(target, name, { get: all[name], enumerable: true }); };
+var __copyProps;
+var __toCommonJS = (mod) => (__copyProps, mod);
+var typescript_exports = {};
+__export(typescript_exports, {
+  Computed: () => Computed,
+  Extension: () => Extension,
+  Kind: () => Kind3,
+  isA: () => isA,
+  version: () => version
+});
+module.exports = __toCommonJS(typescript_exports);
+var version = "0.0.0";
+var Kind3 = /* @__PURE__ */ ((Kind4) => {
+  Kind4[Kind4["A"] = 1] = "A";
+  Kind4[Kind4["First"] = 1 /* A */] = "First";
+  Kind4[Kind4["None"] = -1] = "None";
+  return Kind4;
+})(Kind3 || {});
+var Extension = /* @__PURE__ */ ((Extension2) => {
+  Extension2["Ts"] = ".ts";
+  return Extension2;
+})(Extension || {});
+var Computed = /* @__PURE__ */ ((Computed2) => {
+  Computed2[Computed2["A"] = version.length] = "A";
+  return Computed2;
+})(Computed || {});
+function isA(it) { return it === 1; }
+})({ get exports() { return ts; }, set exports(v) { ts = v; module.exports = v; } });
+`,
+      };
+      const { deferred, eager } = await evaluate(
+        { "index.js": `module.exports = require("typescript");` },
+        `{ known: [Object.keys(p), p.Kind, p.Extension, p.version, (await import("typescript")).Kind === p.Kind], before: loaded(),
+          rest: [p.isA(p.Kind.A), p.Computed, require("typescript") === p, (await import("typescript")).isA === p.isA],
+          described: Object.entries(Object.getOwnPropertyDescriptor(p, "isA")).map(([key, it]) => [key, typeof it, it === true]),
+          after: loaded() }`,
+        others,
+      );
+      expect([deferred.before, eager.before]).toEqual([[], ["typescript"]]);
+      expect({ ...deferred, before: 0 }).toEqual({ ...eager, before: 0 });
+      others["node_modules/typescript/package.json"] = `{ "version": "5.9.0", "main": "lib/typescript.js" }`;
+      const imported = `import("typescript").then(it => [it.isA(1), it.default.isA(2), require("typescript").isA(1)])`;
+      expect(await evaluate({ "index.js": "exports.a = 1;" }, imported, others)).toEqual(both([true, false, true]));
+    },
+    timeout,
+  );
+});
+
+test(
+  "what a known plugin warns about once is printed once, however many engines there are",
+  async () => {
+    const warning = "The option that this rule has been given is deprecated.";
+    const files: Record<string, string> = {
+      "node_modules/eslint-plugin-jest/package.json": `{ "name": "eslint-plugin-jest", "main": "index.mjs" }`,
+      "node_modules/eslint-plugin-jest/index.mjs": `import { readdirSync, writeFileSync } from "node:fs";
+        let hasWarned = false;
+        export default { rules: { warns: { create() {
+          if (!hasWarned) {
+            hasWarned = true;
+            console.warn("${warning}");
+            console.error("${warning}");
+            writeFileSync("engines/" + crypto.randomUUID(), "");
+            const end = Date.now() + 20_000;
+            while (readdirSync("engines").length < 3 && Date.now() < end) Bun.sleepSync(2);
+          }
+          return {};
+        } } } };`,
+      "eslint.config.mjs": `import own from "eslint-plugin-jest";
+        export default [{ files: ["src/*"], plugins: { own }, rules: { "own/warns": "error" } }];`,
+      "engines/first": "",
+    };
+    for (let i = 0; i < 4; i++) files[`src/${i}.js`] = `/*${Buffer.alloc(100_000, "x")}*/\n`;
+    const variables = { BUN_LINT_MEMORY: String(64 * 2 ** 30) };
+    const { stderr, exitCode } = await lint(files, ["--timing", "src"], [], variables);
+    expect(stderr).toContain("JavaScript: 2 engines");
+    expect(stderr.split(warning)).toHaveLength(3);
+    expect(exitCode).toBe(0);
+  },
+  timeout,
+);
+
+test(
+  "a rule of the project's own that compares files finds all of them in a project of medium size",
+  async () => {
+    const files: Record<string, string> = {
+      "plugin.mjs": `let count = 0;
+        export default { rules: { counts: { create: context => ({ Program(node) {
+          if (++count === 16) context.report({ node, message: "all" });
+        } }) } } };`,
+      "eslint.config.mjs": `import own from "./plugin.mjs";
+        export default [{ files: ["src/*"], plugins: { own }, rules: { "own/counts": "error" } }];`,
+    };
+    for (let i = 0; i < 16; i++) files[`src/${i}.js`] = `/*${Buffer.alloc(50_000, "x")}*/\n`;
+    const { stdout, exitCode } = await lint(files, ["-f", "unix", "--threads", "8", "src"]);
+    expect(stdout).toContain("all [Error/own/counts]");
+    expect(exitCode).toBe(1);
+  },
+  timeout,
+);
+
+test(
+  "what a configuration starts loads its modules as any program does",
+  async () => {
+    const files = {
+      "tell.cjs": `require("fs").appendFileSync(__dirname + "/told.txt", typeof $Bun_defer + " ");`,
+      "eslint.config.mjs": `import { spawnSync } from "node:child_process";
+        import { readFileSync } from "node:fs";
+        import { Worker } from "node:worker_threads";
+        await import("./tell.cjs");
+        const path = import.meta.dirname + "/tell.cjs";
+        spawnSync(process.execPath, [path]);
+        spawnSync(process.execPath, ["-e", "require(" + JSON.stringify(path) + ")"]);
+        await new Promise(done => new Worker(path).on("exit", done));
+        const message = readFileSync(import.meta.dirname + "/told.txt", "utf8").trim();
+        export default [{ files: ["a.js"], rules: { "no-restricted-globals": ["error", { name: "foo", message }] } }];`,
+      "a.js": `foo;\n`,
+    };
+    const { raw, exitCode } = await lint(files, ["-f", "unix", "a.js"]);
+    expect(raw).toContain("function undefined undefined undefined [Error/no-restricted-globals]");
+    expect(exitCode).toBe(1);
+  },
+  timeout,
+);
+
+test(
+  "with little memory, large files stay with one engine",
+  async () => {
+    const files: Record<string, string> = {
+      "plugin.mjs": `const realm = String(Math.random());
+        export default { rules: { realm: { create: context => ({ Program(node) {
+          if (context.filename.includes("heavy")) context.report({ node, message: realm });
+        } }) } } };`,
+      "eslint.config.mjs": `import own from "./plugin.mjs";
+        export default [{ files: ["src/*"], plugins: { own }, rules: { "own/realm": "error" } }];`,
+    };
+    const text = (size: number) => `foo;\n/*${Buffer.alloc(size, "x")}*/\n`;
+    for (let i = 0; i < 40; i++) files[`src/heavy${i}.js`] = text(270_000);
+    for (let i = 0; i < 80; i++) files[`src/light${i}.js`] = text(250_000);
+    const variables = { BUN_LINT_MEMORY: String(4 * 2 ** 30) };
+    const { raw, exitCode } = await lint(files, ["-f", "unix", "--threads", "8", "src"], [], variables);
+    const realms = Array.from(raw.matchAll(/:1:1: (\S+) \[Error\/own\/realm\]/g), it => it[1]);
+    expect([realms.length, new Set(realms).size]).toEqual([40, 1]);
+    expect(exitCode).toBe(1);
+  },
+  timeout,
+);
+
+describe.concurrent("with threads that parse for the engine", () => {
+  // From 1 MB on.
+  function project(rule: string, rules = `"own/it": "error"`) {
+    const files: Record<string, string> = {
+      "plugin.mjs": `let seen = []; export default { rules: { it: { meta: { fixable: "code" }, create: ${rule} } } };`,
+      "eslint.config.mjs": `import own from "./plugin.mjs";
+        export default [
+          { files: ["src/*"], plugins: { own }, rules: { ${rules} } },
+          { files: ["src/*5.js"], rules: { "own/it": "warn", "no-undef": "error" } },
+        ];`,
+    };
+    for (let i = 10; i < 50; i++) files[`src/${i}.js`] = `let a${i} = b;\n/*${Buffer.alloc(30_000 + i, "x")}*/\n`;
+    return files;
+  }
+  async function withAndWithout(files: Record<string, string>, args: string[] = []) {
+    const run = async (threads: string) => {
+      const { stdout, stderr, exitCode } = await lint(files, ["-f", "unix", "--threads", threads, ...args, "src"]);
+      return { stdout, stderr, exitCode };
+    };
+    const [without, helped] = await Promise.all([run("1"), run("8")]);
+    expect(helped).toEqual(without);
+    return helped;
+  }
+
+  test(
+    "rules see the files in the same order",
+    async () => {
+      const rule = `context => ({ Program: node => context.report({ node, message: String(seen.push(0)) }) })`;
+      const { stdout, exitCode } = await withAndWithout(project(rule));
+      expect(stdout).toContain("49.js:1:1: 1 [Error/own/it]");
+      expect(stdout).toContain("10.js:1:1: 40 [Error/own/it]");
+      expect(exitCode).toBe(1);
+    },
+    timeout,
+  );
+
+  test(
+    "rules can ask for something else in each file",
+    async () => {
+      const rule = `context => {
+        const { sourceCode } = context, say = (node, it) => context.report({ node, message: String(it) });
+        return [
+          { Identifier: node => say(node, sourceCode.getTokenAfter(node).value) },
+          { "VariableDeclarator > Identifier.init": node => say(node, sourceCode.getScope(node).type) },
+          { onCodePathEnd: (path, node) => say(node, path.id) },
+          { "Program:exit": node => say(node, sourceCode.getAllComments().length) },
+          { VariableDeclarator: node => sourceCode.markVariableAsUsed(node.id.name, node) },
+          {},
+        ][seen.push(0) % 7 % 6];
+      }`;
+      const { stdout, exitCode } = await withAndWithout(project(rule, `"own/it": "error", "no-unused-vars": "error"`));
+      expect(stdout).toContain("49.js:1:11: module [Error/own/it]");
+      expect(exitCode).toBe(1);
+    },
+    timeout,
+  );
+
+  test(
+    "the same exception is reported",
+    async () => {
+      const rule = `context => ({ Program() { if (seen.push(0) > 3) throw new Error("in " + seen.length); } })`;
+      const { stderr, exitCode } = await withAndWithout(project(rule));
+      expect(stderr).toContain("in 40");
+      expect(exitCode).toBe(2);
+    },
+    timeout,
+  );
+});
+
+test(
+  "with many engines, large files are shared between some of them",
+  async () => {
+    const files: Record<string, string> = {
+      "plugin.mjs": `const realm = String(Math.random());
+        export default { rules: { realm: { create: context => ({ Program(node) {
+          if (context.filename.includes("heavy")) Bun.sleepSync(20), context.report({ node, message: realm });
+        } }) } } };`,
+      "eslint.config.mjs": `import own from "./plugin.mjs";
+        export default [{ files: ["src/*"], plugins: { own }, rules: { "own/realm": "error" } }];`,
+    };
+    const text = (size: number) => `foo;\n/*${Buffer.alloc(size, "x")}*/\n`;
+    for (let i = 0; i < 60; i++) files[`src/heavy${i}.js`] = text(270_000);
+    for (let i = 0; i < 130; i++) files[`src/light${i}.js`] = text(250_000);
+    const variables = { BUN_LINT_MEMORY: String(64 * 2 ** 30) };
+    const { raw, exitCode } = await lint(files, ["-f", "unix", "--threads", "8", "src"], [], variables);
+    const realms = Array.from(raw.matchAll(/:1:1: (\S+) \[Error\/own\/realm\]/g), it => it[1]);
+    expect(realms).toHaveLength(60);
+    expect(new Set(realms).size).toBeGreaterThan(1);
+    expect(exitCode).toBe(1);
+  },
+  timeout,
+);

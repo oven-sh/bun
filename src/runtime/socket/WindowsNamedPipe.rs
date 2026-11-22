@@ -35,7 +35,7 @@ use bun_uws::us_bun_verify_error_t;
 
 use crate::socket::ssl_wrapper::{self, SSLWrapper};
 use crate::socket::{SSLConfig, WindowsNamedPipeContext};
-use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
+use crate::timer::{EventLoopTimer, EventLoopTimerTag};
 
 bun_output::declare_scope!(WindowsNamedPipe, visible);
 
@@ -178,7 +178,7 @@ impl WindowsNamedPipe {
     /// that way), which runs that task. A callback that uses `self` after it
     /// dispatched to a handler holds this guard, so the free waits until the
     /// callback is done. `inflight_write_ref` does the same around an in-flight write,
-    /// and `connect`/`open` around the connect.
+    /// and `connect_ref` around the connect.
     ///
     /// Only for paths that cannot run after `on_close` released the
     /// connection's ref (reads stop and the wrapper goes away in
@@ -367,12 +367,7 @@ impl WindowsNamedPipe {
     pub(crate) fn on_timeout(&self) {
         bun_output::scoped_log!(WindowsNamedPipe, "onTimeout");
 
-        let has_been_cleared = self.event_loop_timer.state.get() == EventLoopTimerState::CANCELLED
-            || self.vm.script_execution_status() != bun_jsc::ScriptExecutionStatus::Running;
-
-        self.event_loop_timer.state.set(EventLoopTimerState::FIRED);
-
-        if has_been_cleared {
+        if self.vm.script_execution_status() != bun_jsc::ScriptExecutionStatus::Running {
             return;
         }
 
@@ -440,7 +435,6 @@ impl WindowsNamedPipe {
         ssl_ctx: Option<&boringssl::OwnedSslCtx>,
     ) -> bun_sys::Result<()> {
         debug_assert!(self.pipe.get().is_some());
-        let _keep_alive = self.keep_alive();
         self.update_flags(|f| f.set(Flags::DISCONNECTED, true));
 
         if let Some(tls) = ssl_ctx {
@@ -491,7 +485,6 @@ impl WindowsNamedPipe {
         self.init_pipe()?;
         self.try_pipe(bun_sys::Tag::open, |pipe| pipe.open(fd.uv()))?;
 
-        let _keep_alive = self.keep_alive();
         self.on_connect(uv::ReturnCode::ZERO);
         bun_sys::Result::Ok(())
     }

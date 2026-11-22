@@ -2,6 +2,9 @@
  * WEBKIT_VERSION is used as the release tag; --webkit-version overrides still
  * hit the plain `autobuild-<sha>` tag. Configure-time only. */
 import { describe, expect, test } from "bun:test";
+import { isMacOS, isWindows, tempDir } from "harness";
+import { chmodSync } from "node:fs";
+import { join } from "node:path";
 
 import { resolveConfig, type Config, type PartialConfig, type Toolchain } from "../../../scripts/build/config.ts";
 import { webkit, WEBKIT_VERSION, webkitSha256Sums } from "../../../scripts/build/deps/webkit.ts";
@@ -190,6 +193,47 @@ describe("WebKit prebuilt URL", () => {
       const url = prebuiltUrlOf(resolveLinuxRelease(partial));
       expect([url, pinnedSha256(webkitSha256Sums, url)]).toEqual([url, expect.stringMatching(/^[0-9a-f]{64}$/)]);
     }
+  });
+
+  /** The tarball a release build links when nothing is said about LTO, and whether it is pinned. */
+  const releasePrebuilt = (partial: PartialConfig, toolchain = mockToolchain()) => {
+    const url = prebuiltUrlOf(resolveConfig({ buildType: "Release", ...partial }, toolchain));
+    return [url.split("/").pop(), pinnedSha256(webkitSha256Sums, url) !== undefined];
+  };
+
+  test("a release build for FreeBSD or Windows is LTO on both architectures, and its prebuilt is pinned", () => {
+    expect([
+      releasePrebuilt({ os: "freebsd", arch: "x64", freebsdSysroot: "/fake" }),
+      releasePrebuilt({ os: "freebsd", arch: "aarch64", freebsdSysroot: "/fake" }),
+      releasePrebuilt({ os: "windows", arch: "x64", winsysroot: "/fake" }),
+      releasePrebuilt({ os: "windows", arch: "aarch64", winsysroot: "/fake" }),
+    ]).toEqual([
+      ["bun-webkit-freebsd-amd64-lto-aot.tar.gz", true],
+      ["bun-webkit-freebsd-arm64-lto-aot.tar.gz", true],
+      ["bun-webkit-windows-amd64-lto-aot.tar.gz", true],
+      ["bun-webkit-windows-arm64-lto-aot.tar.gz", true],
+    ]);
+  });
+
+  test.skipIf(isWindows)("a release build for Android is LTO on both architectures, and its prebuilt is pinned", () => {
+    // For Android resolveConfig reads the NDK, and asks clang for its resource directory.
+    const prebuilt = `ndk/toolchains/llvm/prebuilt/${isMacOS ? "darwin" : "linux"}-x86_64`;
+    using dir = tempDir("webkit-prebuilt-android", {
+      [`${prebuilt}/sysroot/.keep`]: "",
+      [`${prebuilt}/lib/clang/18/.keep`]: "",
+      "clang": `#!/bin/sh\necho "$(dirname "$0")/resources"\n`,
+    });
+    const cc = join(String(dir), "clang");
+    chmodSync(cc, 0o755);
+    const android = (arch: "x64" | "aarch64") =>
+      releasePrebuilt(
+        { os: "linux", abi: "android", arch, androidNdk: join(String(dir), "ndk") },
+        { ...mockToolchain(), cc },
+      );
+    expect([android("x64"), android("aarch64")]).toEqual([
+      ["bun-webkit-linux-amd64-android-lto-aot.tar.gz", true],
+      ["bun-webkit-linux-arm64-android-lto-aot.tar.gz", true],
+    ]);
   });
 
   test("the pins apply to WEBKIT_VERSION however it is spelled, and to no other version", () => {

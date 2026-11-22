@@ -1,68 +1,54 @@
-class Node {
-  key: number;
-  left: Node | null = null;
-  right: Node | null = null;
-  parent: Node | null = null;
-  constructor(key: number) {
-    this.key = key;
+class Wagon {
+  load: number;
+  ahead: Wagon | null = null;
+  behind: Wagon | null = null;
+  coupled: Wagon | null = null;
+  constructor(load: number) {
+    this.load = load;
   }
 }
-class Tree {
-  root: Node | null = null;
-  add(key: number): Node {
-    let parent: Node | null = null;
-    let node = this.root;
-    while (node) {
-      parent = node;
-      node = key < node.key ? node.left : node.right;
-    }
-    const added = new Node(key);
-    added.parent = parent;
-    if (!parent) this.root = added;
-    else if (key < parent.key) parent.left = added;
-    else parent.right = added;
-    return added;
+class Train {
+  head: Wagon | null = null;
+  tail: Wagon | null = null;
+  couple(load: number): Wagon {
+    const wagon = new Wagon(load);
+    let place = this.tail;
+    let passed = 0;
+    while (place && place.load > load && passed++ < 12) place = place.ahead;
+    if (place === this.tail) this.tail = wagon;
+    wagon.ahead = place;
+    wagon.behind = place ? place.behind : this.head;
+    if (wagon.behind) wagon.behind.ahead = wagon;
+    if (place) place.behind = wagon;
+    else this.head = wagon;
+    if (load % 5 === 0) wagon.coupled = place;
+    return wagon;
   }
-  next(node: Node): Node | null {
-    if (node.right) {
-      let least: Node = node.right;
-      while (least.left) least = least.left;
-      return least;
-    }
-    let child = node;
-    let above = node.parent;
-    while (above && child === above.right) {
-      child = above;
-      above = above.parent;
-    }
-    return above;
-  }
-  depth(key: number): number {
-    let depth = 0;
-    for (let node = this.root; node !== null; node = key < node.key ? node.left : node.right) {
-      if (node.key === key) return depth;
-      if (node.left == node.right) depth += 100;
-      if (node.left != node.parent) depth++;
+  nearest(load: number): number {
+    let steps = 0;
+    for (let wagon = this.head; wagon !== null; wagon = steps & 1 ? wagon.behind : wagon.coupled ?? wagon.behind) {
+      if (wagon.load === load) return steps;
+      if (wagon.ahead == wagon.behind) steps += 100;
+      if (wagon.coupled != wagon.ahead) steps++;
+      if (++steps > 400) break;
     }
     return -1;
   }
 }
 function run(k: number): string {
-  const tree = new Tree();
+  const train = new Train();
   let sum = 0;
-  for (let i = 0; i < 500; i++) tree.add((i * 7919) % 1009);
-  for (let i = 0; i < k; i++) sum = (sum + tree.depth(i % 1009)) | 0;
+  for (let i = 0; i < 300; i++) train.couple((i * 7919) % 1009);
+  for (let i = 0; i < k; i++) sum = (sum + train.nearest(i % 1009)) | 0;
   let walked = 0;
-  let node: Node | null = tree.root;
-  while (node && node.left) node = node.left;
-  for (; node; node = tree.next(node)) walked = (walked * 3 + node.key) | 0;
-  const ring = new Node(1);
-  ring.right = ring;
+  for (let wagon = train.tail; wagon; wagon = wagon.ahead) walked = (walked * 3 + wagon.load) | 0;
+  const ring = new Wagon(1);
+  ring.behind = ring;
   let turns = 0;
-  for (let at: Node | null = ring; at; at = at.right) {
-    if (++turns > 5) at.right = null;
-    if (at === at.right) sum++;
+  for (let at: Wagon | null = ring; at; at = at.behind) {
+    if (++turns > 5) at.behind = null;
+    if (at === at.behind) sum++;
   }
   return sum + " " + walked + " " + turns;
 }
-console.log(run(5000), run(17));
+console.log(run(3000), run(17));

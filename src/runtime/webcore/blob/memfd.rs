@@ -23,7 +23,7 @@ pub(super) fn should_use(bytes: &[u8]) -> bool {
 
 pub(super) fn create(bytes: &[u8]) -> sys::Result<Bytes> {
     let mut label_buf = [0u8; 128];
-    let label: &core::ffi::CStr = {
+    let label = {
         use std::io::Write as _;
         let n = MEMFD_COUNTER.fetch_add(1, Ordering::Relaxed);
         let cap = label_buf.len() - 1;
@@ -31,16 +31,14 @@ pub(super) fn create(bytes: &[u8]) -> sys::Result<Bytes> {
         match write!(cursor, "memfd-num-{}", n) {
             Ok(()) => {
                 let written = cursor.position() as usize;
-                label_buf[written] = 0;
-                // `written` ASCII bytes (no interior NUL) + NUL at `label_buf[written]`.
-                bun_core::ZStr::from_buf(&label_buf, written).as_cstr()
+                bun_core::ZStr::nul_terminate(&mut label_buf, written)
             }
-            Err(_) => c"",
+            Err(_) => bun_core::ZStr::EMPTY,
         }
     };
 
     // Using huge pages was slower.
-    let fd = match sys::memfd_create(label, sys::MemfdFlags::NonExecutable) {
+    let fd = match sys::memfd_create(label.into(), sys::MemfdFlags::NonExecutable) {
         Err(err) => {
             return Err(sys::Error::from_code(err.get_errno(), sys::Tag::open));
         }
@@ -78,15 +76,8 @@ pub(super) fn create(bytes: &[u8]) -> sys::Result<Bytes> {
         }
     }
 
-    let ptr = sys::mmap(
-        core::ptr::null_mut(),
-        bytes.len(),
-        libc::PROT_READ | libc::PROT_WRITE,
-        libc::MAP_SHARED,
-        fd,
-        0,
-    )?;
-    let mapping = core::ptr::slice_from_raw_parts_mut(ptr, bytes.len());
-    // SAFETY: just mapped.
+    let access = libc::PROT_READ | libc::PROT_WRITE;
+    let mapping = sys::Mmap::new(bytes.len(), access, libc::MAP_SHARED, fd, 0)?;
+    // SAFETY: the mapping may be written, the file is as long, and nothing else writes to it.
     Ok(unsafe { Bytes::from_memfd_mapping(mapping, memfd) })
 }

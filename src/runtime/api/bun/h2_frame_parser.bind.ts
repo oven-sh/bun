@@ -10,6 +10,7 @@ export const H2FrameParser = b.class({
   rustPath: "crate::api::H2FrameParser",
   refCounted: true,
   finalize: true,
+  thisValue: "strong_this",
   types: [table.exactType("$Node.H2FrameParser"), table.exactType("$Bindgen.H2FrameParser")],
   construct: { passStructure: true, args: { options: b.any }, capability: "js", throws: true, length: 0 },
   /** `context` is the receiver of the handlers, which are the `handlers` of the options. */

@@ -32,7 +32,7 @@ use super::scan::ContentsScan;
 use crate::builtins::table::{self, BuiltinFlags, Origin};
 use crate::builtins::{BuiltinId, BuiltinName, Intrinsic, Resolved, RuntimeModule};
 use crate::load::is_in_node_modules;
-use crate::load::module_paths::{read_path_above_root, with_separators_of_host};
+use crate::load::module_paths::read_path_above_root;
 use crate::load::plugin_modules::is_module_of_plugin;
 use crate::module_keys::is_name_of_text;
 use crate::options::PathOptions;
@@ -1474,11 +1474,7 @@ fn is_absolute(path: &[u8]) -> bool {
 }
 
 pub(crate) fn with_forward_slashes(mut path: Vec<u8>) -> Vec<u8> {
-    for byte in &mut path {
-        if *byte == b'\\' {
-            *byte = b'/';
-        }
-    }
+    strings::replace_char_in_place(&mut path, b'\\', b'/');
     path
 }
 
@@ -1669,7 +1665,7 @@ pub(crate) fn find_file_named_as_in_executable(
 }
 
 pub(crate) fn source_path_of(path: &[u8]) -> Vec<u8> {
-    with_separators_of_host(to_native(path), cfg!(windows))
+    bun_paths::to_native(to_native(path)).into_owned()
 }
 
 #[cfg(test)]

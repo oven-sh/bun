@@ -394,6 +394,57 @@ describe("bundler", () => {
       assert(!out.includes("createHash"), "crypto polyfill should not be bundled when browser map remaps it");
     },
   });
+  itBundled("browser/BrowserFieldRemapsSubpathOfPackage", {
+    skipOnEsbuild: true,
+    files: {
+      "/entry.js": String.raw`
+        import slash from "pkg/a/b";
+        import backslash from "pkg/a\\b";
+        console.log(slash, backslash);
+      `,
+      "/package.json": /* json */ `{ "browser": { "pkg/a/b": "./shim.js" } }`,
+      "/shim.js": /* js */ `export default "shim";`,
+      "/node_modules/pkg/a/b.js": /* js */ `export default "original";`,
+    },
+    target: "browser",
+    run: {
+      stdout: "shim shim",
+    },
+  });
+  itBundled("browser/BrowserFieldRemapsToPathWithBackslashes", {
+    skipOnEsbuild: true,
+    files: {
+      "/entry.js": /* js */ `
+        import file from "./a.js";
+        console.log(file, require("pkg"));
+      `,
+      "/package.json": JSON.stringify({ browser: { "./a.js": "closed\\lib\\y.js", pkg: "closed\\lib\\y.js" } }),
+      "/a.js": /* js */ `export default "original";`,
+      "/node_modules/closed/package.json": /* json */ `{ "name": "closed", "exports": "./index.js" }`,
+      "/node_modules/closed/lib/y.js": /* js */ `module.exports = "shim";`,
+    },
+    target: "browser",
+    run: {
+      stdout: "shim shim",
+    },
+  });
+  itBundled("browser/BrowserFieldRemapsSpecifierThatClimbsOut", {
+    skipOnEsbuild: true,
+    files: {
+      "/entry.js": /* js */ `
+        import a from "q/../../a";
+        console.log(a);
+      `,
+      "/package.json": /* json */ `{ "browser": { "./a.js": "./shim.js" } }`,
+      "/a.js": /* js */ `export default "original";`,
+      "/shim.js": /* js */ `export default "shim";`,
+      "/node_modules/q/index.js": ``,
+    },
+    target: "browser",
+    run: {
+      stdout: "shim",
+    },
+  });
   itBundled("browser/BrowserFieldDisabledBuiltinStillPolyfillsOutsideScope", {
     // A browser:{events:false} in one package must not leak into a sibling package.
     files: {

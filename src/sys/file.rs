@@ -11,10 +11,61 @@ pub struct File {
     pub handle: Fd,
 }
 
+#[cfg(windows)]
+impl From<std::os::windows::io::OwnedHandle> for File {
+    fn from(handle: std::os::windows::io::OwnedHandle) -> Self {
+        Self::from_fd(Fd::from_system(handle.into_raw_handle()))
+    }
+}
+
 impl Drop for File {
     #[inline]
     fn drop(&mut self) {
         self.handle.close();
+    }
+}
+
+/// A [`File`], or a descriptor that someone else closes.
+pub enum MaybeOwnedFile {
+    Owned(File),
+    Borrowed(Fd),
+}
+
+impl MaybeOwnedFile {
+    pub const INVALID: Self = Self::Borrowed(Fd::INVALID);
+
+    pub fn is_owned(&self) -> bool {
+        matches!(self, Self::Owned(_))
+    }
+
+    /// As [`File::into_raw`].
+    pub fn into_raw(self) -> Fd {
+        match self {
+            Self::Owned(file) => file.into_raw(),
+            Self::Borrowed(fd) => fd,
+        }
+    }
+}
+
+impl Default for MaybeOwnedFile {
+    fn default() -> Self {
+        Self::INVALID
+    }
+}
+
+impl From<File> for MaybeOwnedFile {
+    fn from(file: File) -> Self {
+        Self::Owned(file)
+    }
+}
+
+impl core::ops::Deref for MaybeOwnedFile {
+    type Target = File;
+    fn deref(&self) -> &File {
+        match self {
+            Self::Owned(file) => file,
+            Self::Borrowed(fd) => File::borrow(fd),
+        }
     }
 }
 
@@ -331,13 +382,9 @@ impl File {
         input_path: &[u8],
     ) -> Maybe<Vec<u8>> {
         let dir = dir.as_fd();
-        let mut buf = bun_paths::path_buffer_pool::get();
-        let Some(normalized) = bun_paths::resolve_path::join_abs_string_buf_z_checked::<
-            bun_paths::platform::Loose,
-        >(top_level_dir, &mut buf.0, &[input_path]) else {
-            return Err(Error::from_code(E::ENAMETOOLONG, Tag::open).with_path(input_path));
-        };
-        Self::read_from(dir, normalized.as_bytes())
+        let mut path = bun_paths::Path::resolve(&[top_level_dir, input_path]);
+        path.copy_trailing_sep_from(input_path);
+        Self::read_from(dir, &path)
     }
     /// `bun.sys.File.writeFile` — open + write + close.
     pub fn write_file(dir: impl AsFd, path: &ZStr, data: &[u8]) -> Maybe<()> {
@@ -348,6 +395,7 @@ impl File {
     }
     /// Like [`File::write_file`] but takes the platform-native path type so Windows
     /// callers can pass a `&WStr` without round-tripping through UTF-8.
+    #[cfg(windows)]
     pub fn write_file_os_path(
         dir: impl AsFd,
         path: &bun_paths::OSPathSliceZ,
@@ -376,7 +424,7 @@ pub(crate) mod tests {
     pub(crate) static FD_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     fn open_cwd() -> File {
-        File::open(ZStr::from_static(b".\0"), O::RDONLY, 0).unwrap()
+        File::open(bun_core::zstr!("."), O::RDONLY, 0).unwrap()
     }
 
     #[test]

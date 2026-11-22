@@ -10,7 +10,6 @@ use bun_ast::Loader;
 use bun_ast::Log;
 use bun_bundler::bundle_v2::BuildResult;
 use bun_bundler::options::{self as bundler_options, LoaderExt as _};
-use bun_core::strings;
 use bun_http::Headers;
 use bun_http_types::Method::Method;
 use bun_jsc::JsCell;
@@ -51,7 +50,7 @@ pub(crate) struct HTMLBundle {
 impl HTMLBundle {
     /// The JS wrapper takes over `this`' ref.
     pub(crate) fn to_js(this: RefPtr<HTMLBundle>, global: &JSGlobalObject) -> JSValue {
-        Self::to_js_nonnull(this.into_non_null(), global)
+        crate::generated_bindgen::html_bundle::js_HTMLBundle::to_js(this, global)
     }
 
     /// Initialize an HTMLBundle given a path.
@@ -545,9 +544,7 @@ impl Route {
                     {
                         let mut route_path: &[u8] =
                             &output_files[output_files[i].source_map_index as usize].dest_path;
-                        if strings::has_prefix(route_path, b"./")
-                            || strings::has_prefix(route_path, b".\\")
-                        {
+                        if bun_paths::without_leading_dot_slash(route_path) != route_path {
                             route_path = &route_path[1..];
                         }
                         headers.append(b"SourceMap", route_path);
@@ -557,9 +554,7 @@ impl Route {
 
                     let mut route_path: &[u8] = &output_files[i].dest_path;
                     // The route path gets cloned inside of appendStaticRoute.
-                    if strings::has_prefix(route_path, b"./")
-                        || strings::has_prefix(route_path, b".\\")
-                    {
+                    if bun_paths::without_leading_dot_slash(route_path) != route_path {
                         route_path = &route_path[1..];
                     }
 

@@ -1,5 +1,5 @@
-#![feature(adt_const_params)]
-#![feature(core_io, core_io_borrowed_buf)]
+#![feature(adt_const_params, allocator_ext)]
+#![feature(core_io, core_io_borrowed_buf, vec_split_at_spare)]
 #![feature(thread_local)] // bare `__thread` slot for `thread_id::current()` cache
 #![feature(freeze)] // `impl_field_parent!`'s `shared` arm rejects `Freeze` children at compile time
 #![allow(non_snake_case)]
@@ -22,6 +22,7 @@ pub mod comptime_string_map;
 pub mod error;
 pub mod hint;
 pub mod result;
+pub mod scoped;
 pub mod thread_id;
 pub mod tty;
 pub mod util;
@@ -29,7 +30,7 @@ pub use atomic_cell::{Atom, AtomicCell, ThreadCell};
 pub use c_str_list::{CStrList, CStrRef, CStringList};
 
 /// Shared state-machine tag for the streaming (de)compressors in
-/// `bun_brotli` / `bun_zlib` / `bun_zstd`.
+/// `bun_zstd`.
 pub mod compress {
     #[derive(Clone, Copy, PartialEq, Eq)]
     pub enum State {
@@ -63,8 +64,8 @@ pub use string::{
     StringView, Utf8Bytes, Utf8WithString, WTFStringImpl, WTFStringImplExt, WTFStringImplStruct,
 };
 pub use string::{
-    STRING_ALLOCATION_LIMIT, cheap_prefix_normalizer, escape_reg_exp, identifier, lexer,
-    lexer_tables, parse_double, printer, quote_for_json, string_joiner, write,
+    STRING_ALLOCATION_LIMIT, escape_reg_exp, identifier, lexer, lexer_tables, parse_double,
+    printer, quote_for_json, string_joiner, write,
 };
 pub use string::{StringPointer, Tag, slice_to_nul};
 
@@ -130,10 +131,6 @@ impl<T> RawSlice<T> {
     #[inline]
     pub const fn new(s: &[T]) -> Self {
         RawSlice(core::ptr::from_ref(s))
-    }
-    #[inline]
-    pub const fn as_ptr(self) -> *const [T] {
-        self.0
     }
     #[inline]
     pub const fn len(self) -> usize {
@@ -203,45 +200,23 @@ unsafe impl<T: Sync> Send for RawSlice<T> {}
 // SAFETY: same reasoning as the `Send` impl above — `&[T]: Sync ⇔ T: Sync`.
 unsafe impl<T: Sync> Sync for RawSlice<T> {}
 
-/// Process-global envp slice. On Windows the
-/// startup path `bun_sys::windows::env::convert_env_to_wtf8` overwrites this
-/// with a WTF-8-encoded envp slice; `getenvZ` then reads it via
-/// `os::environ()`. POSIX builds leave it empty and use libc's `environ`.
+/// The WTF-8 envp that `bun_sys::windows::env::convert_env_to_wtf8` sets at startup.
 #[cfg(windows)]
 pub mod os {
-    use core::ffi::c_char;
+    use crate::CStrList;
 
-    // Stored as raw (ptr, len) — NOT `&'static mut [_]` — so `environ()` (which
-    // hands out a shared `&[_]`) never aliases a live `&mut`. A `&'static mut`
-    // global would be UB the moment a reader
-    // borrows while a writer holds the swapped-out `&mut`.
-    static mut ENVIRON: (*mut *mut c_char, usize) = (core::ptr::null_mut(), 0);
+    static mut ENVIRON: CStrList<'static> = CStrList::new(&[None]);
 
-    /// Swap in a new envp slice; returns the previous (ptr, len) pair.
-    /// SAFETY: single-threaded startup only.
-    pub unsafe fn take_environ() -> (*mut *mut c_char, usize) {
-        // `&raw mut` (no intermediate `&mut`) — `static_mut_refs` is hard-denied
-        // under rust_2024_compatibility, and we never need a borrow here.
-        unsafe { core::ptr::replace(&raw mut ENVIRON, (core::ptr::null_mut(), 0)) }
+    /// # Safety
+    /// No other thread can call [`environ`] yet, and only the last item of `environ` is `None`.
+    pub unsafe fn set_environ(environ: CStrList<'static>) {
+        // SAFETY: fn contract.
+        unsafe { ENVIRON = environ };
     }
-    /// SAFETY: single-threaded startup only; `ptr` must be valid for `len`
-    /// elements for the process lifetime (leaked allocation).
-    pub unsafe fn set_environ(ptr: *mut *mut c_char, len: usize) {
-        unsafe {
-            core::ptr::write(&raw mut ENVIRON, (ptr, len));
-        }
-    }
-    /// Borrowed view of the current envp slice (read side of the `ENVIRON` global).
-    /// SAFETY: caller must not race with `set_environ`.
-    pub unsafe fn environ() -> &'static [*mut c_char] {
-        unsafe {
-            let (p, n) = core::ptr::read(&raw const ENVIRON);
-            if p.is_null() {
-                &[]
-            } else {
-                core::slice::from_raw_parts(p, n)
-            }
-        }
+    /// Empty until [`set_environ`] is called.
+    pub fn environ() -> CStrList<'static> {
+        // SAFETY: only `set_environ` writes it, before another thread can get here.
+        unsafe { ENVIRON }
     }
 }
 
@@ -257,78 +232,6 @@ pub use code_generation::{
     is_strict_only_beside_compiled_program, run_no_compiled_program_on_this_thread,
     runs_no_compiled_program,
 };
-
-/// Tier-0 path-separator predicates. Sunk from `bun_paths` so `bun_core::util`
-/// (dirname, which) can use them without an upward dep. `bun_paths` re-exports
-/// these as the canonical `is_sep_*` set.
-pub mod path_sep {
-    use crate::strings_impl::PathByte;
-    pub use bun_alloc::{SEP, SEP_STR};
-
-    // ─── u8 const fns (kept const for match-guard / const-eval callers) ─────
-
-    /// `/` **or** `\` on every target.
-    /// Use for parsing user-supplied / cross-platform path strings (tsconfig,
-    /// archive entries, Windows drive prefixes).
-    #[inline(always)]
-    pub const fn is_sep_any(c: u8) -> bool {
-        c == b'/' || c == b'\\'
-    }
-
-    /// Host-OS-native separator predicate: accepts `\` only when *compiled*
-    /// for Windows. Use when matching against real on-disk paths (glob, joins,
-    /// `which`, dirname).
-    #[inline(always)]
-    pub const fn is_sep_native(c: u8) -> bool {
-        c == b'/' || (cfg!(windows) && c == b'\\')
-    }
-
-    // ─── PathByte-generic forms (u8 / u16) ──────────────────────────────────
-
-    #[inline(always)]
-    pub fn is_sep_posix_t<T: PathByte>(c: T) -> bool {
-        c == T::from_u8(b'/')
-    }
-
-    #[inline(always)]
-    pub fn is_sep_any_t<T: PathByte>(c: T) -> bool {
-        c == T::from_u8(b'/') || c == T::from_u8(b'\\')
-    }
-
-    #[inline(always)]
-    pub fn is_sep_native_t<T: PathByte>(c: T) -> bool {
-        if cfg!(windows) {
-            is_sep_any_t(c)
-        } else {
-            is_sep_posix_t(c)
-        }
-    }
-
-    /// Host-OS-native absolute-path predicate.
-    /// POSIX: leading `/`. Windows: leading `/` or `\`, or 3-byte `X:/`|`X:\`
-    /// — **no** alphabetic gate on the drive byte, and a
-    /// bare `X:` with no trailing separator is **not** absolute.
-    ///
-    /// Sunk from `bun_paths::is_absolute` so tier-0 (`util::which`) and
-    /// tier-2+ share a single impl.
-    #[inline]
-    pub const fn is_absolute_native(p: &[u8]) -> bool {
-        #[cfg(not(windows))]
-        {
-            !p.is_empty() && p[0] == b'/'
-        }
-        #[cfg(windows)]
-        {
-            if p.is_empty() {
-                return false;
-            }
-            if is_sep_any(p[0]) {
-                return true;
-            }
-            p.len() >= 3 && p[1] == b':' && is_sep_any(p[2])
-        }
-    }
-}
 
 // ─── libm shims ───────────────────────────────────────────────────────────────
 // Canonical extern for libm's `powf`/`pow`.
@@ -358,6 +261,13 @@ pub mod vec {
     #[inline]
     pub fn extend_from_fn<T>(v: &mut Vec<T>, n: usize, f: impl FnMut(usize) -> T) {
         v.extend((0..n).map(f));
+    }
+
+    /// `vec![0; len]` that reports a refusal. The allocator does not touch pages that are new from the OS.
+    pub fn try_zeroed<T: bun_pod::Zeroable>(len: usize) -> Result<Vec<T>, bun_alloc::AllocError> {
+        let zeroed = Box::<[T]>::try_new_zeroed_slice(len).map_err(|_| bun_alloc::AllocError)?;
+        // SAFETY: `T: Zeroable` asserts the all-zero bit pattern is a valid `T`.
+        Ok(unsafe { zeroed.assume_init() }.into_vec())
     }
 
     /// Extend `v` by `n` `T::default()` elements and return a mutable slice
@@ -447,22 +357,6 @@ pub mod vec {
         unsafe { spare_bytes_mut(v) }
     }
 
-    /// View the **entire** allocation `v[0..capacity]` as `&mut [u8]`.
-    /// For the spare-only `[len..capacity]` view use [`spare_bytes_mut`].
-    ///
-    /// # Safety
-    /// Bytes in `[len, capacity)` are uninitialized; treat that tail as
-    /// write-only (same contract as [`spare_bytes_mut`]). The caller must not
-    /// rely on the tail's prior contents.
-    #[inline]
-    pub unsafe fn allocated_bytes_mut(v: &mut Vec<u8>) -> &mut [u8] {
-        let cap = v.capacity();
-        // SAFETY: `as_mut_ptr()` returns a pointer valid for `cap` bytes of
-        // the backing allocation; caller upholds the write-only contract on
-        // the uninitialized tail.
-        unsafe { core::slice::from_raw_parts_mut(v.as_mut_ptr(), cap) }
-    }
-
     /// Advance `v.len()` by `n` after a producer has initialized the first
     /// `n` bytes of [`spare_bytes_mut`]`(v)`.
     ///
@@ -518,10 +412,20 @@ pub mod vec {
         max: usize,
         fill: impl FnOnce(BorrowedCursor<'_, T>) -> R,
     ) -> R {
-        let spare = v.spare_capacity_mut();
+        append_behind(v, max, |_, spare| fill(spare))
+    }
+
+    /// The same, and `fill` gets to see what is in `v`.
+    #[inline]
+    pub fn append_behind<T: Copy, R>(
+        v: &mut Vec<T>,
+        max: usize,
+        fill: impl FnOnce(&[T], BorrowedCursor<'_, T>) -> R,
+    ) -> R {
+        let (items, spare) = v.split_at_spare_mut();
         let max = max.min(spare.len());
         let mut buf = BorrowedBuf::from(&mut spare[..max]);
-        let result = fill(buf.unfilled());
+        let result = fill(items, buf.unfilled());
         let filled = buf.len();
         // SAFETY: the filled part of a `BorrowedBuf` is initialized, and starts where `v` ends.
         unsafe { v.set_len(v.len() + filled) };
@@ -572,7 +476,6 @@ pub mod output;
 bun_dispatch::link_interface! {
     pub OutputSink[Sys] {
         fn stderr() -> output::File;
-        fn make_path(cwd: Fd, dir: &[u8]) -> core::result::Result<(), Error>;
         fn create_file(cwd: Fd, path: &[u8]) -> core::result::Result<Fd, Error>;
         fn write_all_quiet(fd: Fd, bytes: &[u8]) -> bool;
         fn tty_winsize(fd: Fd) -> Option<Winsize>;
@@ -729,9 +632,9 @@ macro_rules! from_field_ptr {
 /// Zig's `@fieldParentPtr`).
 ///
 /// ```ignore
-/// bun_core::impl_field_parent! { ValkeyClient => JSValkeyClient.client;
-///     fn parent;             // (&mut self) -> &JSValkeyClient
-///     fn mut parent_ptr;     // (&mut self) -> *mut JSValkeyClient
+/// bun_core::impl_field_parent! { CapturedWriter => PipeReader.captured_writer;
+///     fn parent;             // (&mut self) -> &PipeReader
+///     fn mut parent_mut;     // (&mut self) -> *mut PipeReader
 /// }
 /// bun_core::impl_field_parent! { FileReader => Source.context;
 ///     pub fn shared parent_const; // (&self) -> &Source     — only compiles while FileReader: !Freeze
@@ -1179,14 +1082,13 @@ pub use crate::string::immutable::{
     SplitIterator, StringOrTinyString, UNICODE_REPLACEMENT, WHITESPACE_CHARS, append, cat,
     concat_with_length, contains_char, copy, count_char, decode_hex_to_bytes,
     decode_hex_to_bytes_truncate, encode_bytes_to_hex, ends_with_any, ends_with_char,
-    ends_with_char_or_is_zero_length, eql_any_comptime, eql_comptime, eql_comptime_utf16,
-    format_escapes, has_prefix, has_prefix_case_insensitive, has_prefix_comptime,
-    has_prefix_comptime_utf16, has_suffix_comptime, index_of, index_of_scalar, is_all_whitespace,
-    is_npm_package_name, is_npm_package_name_ignore_length, is_on_char_boundary,
-    is_utf8_char_boundary, is_valid_utf8, last_index_of, last_index_of_utf16,
-    length_of_leading_whitespace_ascii, memmem, order, order_t, percent_encode_write, sort_asc,
-    sort_desc, split, starts_with_case_insensitive_ascii, starts_with_char, str_utf8,
-    to_ascii_hex_value, to_utf16_alloc, trim_leading_char, trim_prefix, trim_prefix_comptime,
+    eql_any_comptime, eql_comptime, eql_comptime_utf16, format_escapes, has_prefix,
+    has_prefix_case_insensitive, has_prefix_comptime, has_prefix_comptime_utf16,
+    has_suffix_comptime, index_of, index_of_scalar, is_all_whitespace, is_npm_package_name,
+    is_npm_package_name_ignore_length, is_on_char_boundary, is_utf8_char_boundary, is_valid_utf8,
+    last_index_of, last_index_of_utf16, length_of_leading_whitespace_ascii, memmem, order, order_t,
+    percent_encode_write, sort_asc, sort_desc, split, starts_with_case_insensitive_ascii,
+    starts_with_char, str_utf8, to_ascii_hex_value, to_utf16_alloc, trim_leading_char, trim_prefix,
     trim_suffix, utf8_byte_sequence_length, utf16_eql_string, without_prefix,
     without_prefix_comptime, without_suffix_comptime, without_utf8_bom,
 };
@@ -1298,6 +1200,35 @@ pub(crate) mod strings_impl {
         out.extend_from_slice(&input[i..]);
         out
     }
+
+    #[inline]
+    pub fn replace_char_in_place<T: PathByte>(text: &mut [T], from: u8, to: u8) {
+        let (from, to) = (T::from_u8(from), T::from_u8(to));
+        // An unconditional store is what lets this be vectorized.
+        let replace = |unit: T| if unit == from { to } else { unit };
+        let Some(&last) = text.last_chunk::<16>() else {
+            return text.iter_mut().for_each(|unit| *unit = replace(*unit));
+        };
+        for chunk in text.as_chunks_mut::<16>().0 {
+            *chunk = chunk.map(replace);
+        }
+        // Overlaps the chunk before it, in place of a scalar loop.
+        if let Some(end) = text.last_chunk_mut() {
+            *end = last.map(replace);
+        }
+    }
+
+    /// [`replace_char_in_place`] on a copy, if there is anything to replace.
+    #[inline]
+    pub fn replace_char(text: &[u8], from: u8, to: u8) -> std::borrow::Cow<'_, [u8]> {
+        if !crate::strings::contains_char(text, from) {
+            return text.into();
+        }
+        let mut text = text.to_vec();
+        replace_char_in_place(&mut text, from, to);
+        text.into()
+    }
+
     /// Defers to libc `strncasecmp`/`_strnicmp` for the
     /// hot path (CSS parser, HTTP header matching). A `b` shorter than `a` is
     /// rejected instead of read past.
@@ -1356,52 +1287,6 @@ pub(crate) mod strings_impl {
             start += 1;
         }
         false
-    }
-    /// `bun.strings.isWindowsAbsolutePathMissingDriveLetter`
-    /// — true for `\foo`-style absolute paths that lack a `C:` / `\\?\` /
-    /// `\\server\` prefix and therefore need the cwd's drive prepended.
-    /// Generic over `u8`/`u16`.
-    pub fn is_windows_absolute_path_missing_drive_letter<T: PathByte>(chars: &[T]) -> bool {
-        // Release-mode callers may still pass `""`, so bail instead of
-        // indexing OOB.
-        debug_assert!(!chars.is_empty());
-        if chars.is_empty() {
-            return false;
-        }
-        let sep = crate::path_sep::is_sep_any_t::<T>;
-
-        // 'C:\hello' -> false — most common case, check first.
-        if !sep(chars[0]) {
-            debug_assert!(chars.len() > 2);
-            debug_assert!(chars[1] == T::from_u8(b':'));
-            return false;
-        }
-
-        if chars.len() > 4 {
-            // '\??\hello' -> false (NT object prefix)
-            if chars[1] == T::from_u8(b'?') && chars[2] == T::from_u8(b'?') && sep(chars[3]) {
-                return false;
-            }
-            // '\\?\hello' -> false (other NT object prefix)
-            // '\\.\hello' -> false (NT device prefix)
-            if sep(chars[1])
-                && (chars[2] == T::from_u8(b'?') || chars[2] == T::from_u8(b'.'))
-                && sep(chars[3])
-            {
-                return false;
-            }
-        }
-
-        // With `chars[0]` already known to be a separator, the filesystem
-        // root is longer than one char
-        // only via the UNC/device branch (`len >= 5 && sep[0] && sep[1] &&
-        // !sep[2]`); every other separator-led path resolves to a single-char
-        // root. Inlined here because `bun_paths` would be a tier-0 cycle.
-        //
-        // '\\Server\Share'  -> false (UNC)
-        // '\\Server\\Share' -> true  (extra separator — not UNC)
-        // '\Server\Share'   -> true  (posix-style)
-        !(chars.len() >= 5 && sep(chars[1]) && !sep(chars[2]))
     }
     /// `const fn` byte-slice equality — slice `==` is not `const` on stable, so
     /// const-context callers (clap param-name lookup, MultiArrayList field-name
@@ -1913,20 +1798,6 @@ pub(crate) mod strings_impl {
         Some(dst)
     }
 
-    // Bound relaxed Eq → PartialEq to match core::slice::<[T]>::starts_with /
-    // ends_with exactly. Bodies are semantically identical to the stdlib
-    // methods; kept as named free fns so call sites that read
-    // `strings::has_prefix_t(a, b)` keep their shape.
-    #[inline]
-    pub fn has_prefix_t<T: PartialEq>(s: &[T], prefix: &[T]) -> bool {
-        s.len() >= prefix.len() && s[..prefix.len()] == *prefix
-    }
-
-    #[inline]
-    pub fn has_suffix_t<T: PartialEq>(s: &[T], suffix: &[T]) -> bool {
-        s.len() >= suffix.len() && s[s.len() - suffix.len()..] == *suffix
-    }
-
     #[inline]
     pub fn eql_case_insensitive_ascii_check_length(a: &[u8], b: &[u8]) -> bool {
         eql_case_insensitive_ascii(a, b, true)
@@ -2223,8 +2094,7 @@ pub(crate) mod strings_impl {
     }
     // ─── path basename ─────────────────────────────────────────────────────
     // Minimal code-unit trait so the generic basename impls can live at T0
-    // without pulling `bun_paths::PathChar` (T1) down. `PathChar` and
-    // `PathUnit` both add `: PathByte` as a supertrait and inherit `from_u8`.
+    // without depending on `bun_paths::PathChar` (T1), which extends it.
     pub trait PathByte: Eq + crate::Pod {
         fn from_u8(b: u8) -> Self;
         /// `s` as the concrete slice it is, for code with a different kernel per width.
@@ -2286,79 +2156,7 @@ pub(crate) mod strings_impl {
         }
     }
 
-    /// Strip trailing `/` then return the final
-    /// component. `\` is NOT a separator. Empty / all-`/` input → `&[]`.
-    pub fn basename_posix<T: PathByte>(p: &[T]) -> &[T] {
-        let mut end = p.len();
-        while end > 0 && p[end - 1] == T::from_u8(b'/') {
-            end -= 1;
-        }
-        if end == 0 {
-            return &p[..0];
-        }
-        let mut start = end;
-        while start > 0 && p[start - 1] != T::from_u8(b'/') {
-            start -= 1;
-        }
-        &p[start..end]
-    }
-
-    /// Strips trailing `/`/`\`, treats a drive
-    /// designator `X:` at index 1 as a root delimiter (`"C:"` → `""`,
-    /// `"C:foo"` → `"foo"`, `"C:\\"` → `""`), then returns the final component.
-    pub fn basename_windows<T: PathByte>(p: &[T]) -> &[T] {
-        if p.is_empty() {
-            return &p[..0];
-        }
-        let mut end = p.len();
-        loop {
-            let c = p[end - 1];
-            if c == T::from_u8(b'/') || c == T::from_u8(b'\\') {
-                end -= 1;
-                if end == 0 {
-                    return &p[..0];
-                }
-                continue;
-            }
-            if c == T::from_u8(b':') && end == 2 {
-                return &p[..0];
-            }
-            break;
-        }
-        let mut start = end;
-        while start > 0
-            && p[start - 1] != T::from_u8(b'/')
-            && p[start - 1] != T::from_u8(b'\\')
-            && !(p[start - 1] == T::from_u8(b':') && start - 1 == 1)
-        {
-            start -= 1;
-        }
-        &p[start..end]
-    }
-
-    /// Dispatches to [`basename_windows`] on Windows and [`basename_posix`]
-    /// elsewhere.
-    #[inline]
-    pub fn basename(path: &[u8]) -> &[u8] {
-        if cfg!(windows) {
-            basename_windows(path)
-        } else {
-            basename_posix(path)
-        }
-    }
-    /// `bun.strings.removeLeadingDotSlash`. Hosted at T0
-    /// so `crate::string` (and `bun_paths::string_paths`) can reach it
-    /// without a `bun_paths` edge.
-    #[inline(always)]
-    pub fn remove_leading_dot_slash(slice: &[u8]) -> &[u8] {
-        if slice.len() >= 2 {
-            if &slice[..2] == b"./" || (cfg!(windows) && &slice[..2] == b".\\") {
-                return &slice[2..];
-            }
-        }
-        slice
-    }
-
+    /// Removes `/` and `\` on every platform. A native path has `bun_paths::without_trailing_sep`.
     pub fn without_trailing_slash(s: &[u8]) -> &[u8] {
         let mut e = s.len();
         while e > 1 && (s[e - 1] == b'/' || s[e - 1] == b'\\') {
@@ -2510,6 +2308,14 @@ pub mod ffi {
     pub fn boxed_zeroed<T: Zeroable>() -> Box<T> {
         // SAFETY: `T: Zeroable` asserts the all-zero bit pattern is a valid `T`.
         unsafe { Box::<T>::new_zeroed().assume_init() }
+    }
+
+    /// [`boxed_zeroed`] for memory that may be refused.
+    #[inline]
+    pub fn try_boxed_zeroed<T: Zeroable>() -> Result<Box<T>, bun_alloc::AllocError> {
+        let zeroed = Box::<T>::try_new_zeroed().map_err(|_| bun_alloc::AllocError)?;
+        // SAFETY: `T: Zeroable` asserts the all-zero bit pattern is a valid `T`.
+        Ok(unsafe { zeroed.assume_init() })
     }
 
     /// Safe `uname(2)` wrapper: zero-init a `utsname`, call `libc::uname`, return

@@ -410,19 +410,10 @@ impl WindowsNamedPipeContext {
 
         if path[path.len() - 1] == 0 {
             // is already null terminated
-            // SAFETY: path[path.len()-1] == 0 checked above
             let slice_z = ZStr::from_slice_with_nul(path);
             named_pipe.connect(slice_z, ssl_config, owned_ctx)
         } else {
-            let mut path_buf = bun_paths::path_buffer_pool::get();
-            // we need to null terminate the path
-            let len = path.len().min(path_buf.len() - 1);
-
-            path_buf[..len].copy_from_slice(&path[..len]);
-            path_buf[len] = 0;
-            // SAFETY: path_buf[len] == 0 written above
-            let slice_z = ZStr::from_buf(&path_buf[..], len);
-            named_pipe.connect(slice_z, ssl_config, owned_ctx)
+            named_pipe.connect(&bun_paths::Path::from(path), ssl_config, owned_ctx)
         }
         .inspect_err(|_| Self::fail_open(this))?;
 

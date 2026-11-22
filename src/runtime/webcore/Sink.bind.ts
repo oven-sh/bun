@@ -78,7 +78,7 @@ export const FileSink = b.class({
 
 export const NetworkSink = b.class({
   ...sinkClass,
-  rustPath: "crate::webcore::sink::JSSink<crate::webcore::streams::NetworkSink>",
+  rustPath: "crate::webcore::sink::JSSink<crate::webcore::s3::multipart::NetworkSink>",
   construct: "illegal",
   proto: sinkPrototype(6, NetworkSinkStartOptions, { end: bytesWrittenNowOrLater, flush: bytesWrittenNowOrLater }),
 });

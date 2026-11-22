@@ -42,15 +42,18 @@ const MIRI_CRATES = [
   "bun_sort_by_number",
   "bun_ast",
   "bun_paths",
+  "bun_icu",
   "bun_hash",
   "bun_base64",
   "bun_bundler",
+  "bun_cares_sys",
   "bun_clap",
   "bun_dispatch",
   "bun_errno",
   "bun_event_loop",
   "bun_highway",
   "bun_http_types",
+  "bun_icu_data",
   "bun_jpeg",
   "bun_md",
   "bun_pod",
@@ -67,7 +70,7 @@ const MIRI_CRATES = [
 // their tests start other programs, call vendored C, or would take hours to interpret.
 const MIRI_UNIT_TESTS: Record<string, string[]> = {
   bun_aot: ["ir::parallel"],
-  bun_core: ["c_str_list"],
+  bun_core: ["c_str_list", "scoped::tests", "util::tests"],
   bun_io: ["max_buf"],
 };
 

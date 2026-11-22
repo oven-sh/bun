@@ -2,7 +2,6 @@
 
 use super::*;
 
-use bun_jsc::vm_handle::Posted;
 use core::sync::atomic::AtomicPtr;
 
 /// `DevServer.HotReloadEvent` — produced by the watcher thread.
@@ -29,15 +28,12 @@ pub(super) struct PendingState {
     pub(super) scheduled: bool,
 }
 
-/// The queued pointer is from `Arc::into_raw`.
-impl bun_event_loop::Taskable for PendingReloadEvent {
+impl bun_event_loop::RefTask for PendingReloadEvent {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::BakePendingReloadEvent;
-    unsafe fn release_unrun(this: *mut Self) {
-        // SAFETY: fn contract.
-        drop(unsafe { Arc::from_raw(this) });
-    }
+    type Ref = Arc<Self>;
+    fn release_unrun(_: Self::Ref) {}
     /// The dev server is the realm's.
-    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+    fn context(_: &Self::Ref) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
     }
 }
@@ -56,9 +52,7 @@ impl HotReloadEvent {
         // First handle directories, because this may mutate `event.files`
         if dev.directory_watchers.watches.count() > 0 {
             for changed_dir_with_slash in self.dirs.keys() {
-                let changed_dir = bun_paths::string_paths::without_trailing_slash_windows_path(
-                    changed_dir_with_slash,
-                );
+                let changed_dir = bun_paths::without_trailing_sep(changed_dir_with_slash);
 
                 // Bust resolution cache, but since Bun does not watch all
                 // directories in a codebase, this only targets the following resolutions
@@ -79,11 +73,10 @@ impl HotReloadEvent {
                             .server_transpiler
                             .resolver
                             .resolve(
-                                bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
-                                    source_file_path.slice(),
-                                ),
+                                bun_paths::dirname_or_root(source_file_path.slice()),
                                 &dep.specifier,
-                                bun_ast::ImportKind::Stmt,
+                                // Like an import statement, but it takes a path.
+                                bun_ast::ImportKind::EntryPointBuild,
                             )
                             .is_ok();
 
@@ -195,15 +188,8 @@ impl HotReloadEvent {
             return;
         }
 
-        let ends_with_sep = bun_paths::Platform::AUTO.is_separator(dir_path[dir_path.len() - 1]);
-        self.extra_files.extend_from_slice(if ends_with_sep {
-            &dir_path[0..dir_path.len() - 1]
-        } else {
-            dir_path
-        });
-        self.extra_files.push(bun_paths::SEP);
-        self.extra_files.extend_from_slice(sub_path);
-        self.extra_files.push(0);
+        let path = bun_paths::Path::from_parts(&[dir_path, sub_path]);
+        self.extra_files.extend_from_slice(path.as_bytes_with_nul());
     }
 }
 
@@ -223,23 +209,11 @@ impl PendingReloadEvent {
         self.owner.store(core::ptr::null_mut(), Ordering::SeqCst);
     }
 
-    pub(super) fn post(self: &Arc<Self>, vm_handle: &bun_jsc::VmHandle) {
-        let queued = Arc::into_raw(Arc::clone(self));
-        let task = bun_event_loop::ConcurrentTask::create_from(queued.cast_mut());
-        if let Posted::Refused(_) = vm_handle.post(bun_jsc::LoopKind::Regular, task) {
-            // SAFETY: from `into_raw` above, and not queued.
-            drop(unsafe { Arc::from_raw(queued) });
-        }
-    }
-
     /// # Safety
-    /// `this` came off the queue of the thread that owns the `DevServer`.
-    #[inline(never)]
-    pub(crate) unsafe fn run(this: *mut Self) {
-        bun_removable_features::removable_definition!(Bundler, Self::run);
+    /// On the thread that owns the `DevServer`, which uses no other borrow of it during the call.
+    pub(crate) unsafe fn run(&self) {
         // SAFETY: fn contract. `Drop for DevServer` clears `owner` on this thread.
-        let Some(dev) = (unsafe { Arc::from_raw(this).owner.load(Ordering::SeqCst).as_mut() })
-        else {
+        let Some(dev) = (unsafe { self.owner.load(Ordering::SeqCst).as_mut() }) else {
             return;
         };
         debug_assert!(dev.magic == Magic::Valid);

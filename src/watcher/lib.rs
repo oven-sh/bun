@@ -33,7 +33,7 @@ pub use error::{Error, Result};
 
 pub use WatchItemKind as Kind;
 pub use watcher_impl::{
-    Event, Evictions, HashType, MAX_COUNT, Op, REQUIRES_FILE_DESCRIPTORS, WATCH_OPEN_FLAGS,
-    WATCHES_BY_PATH, WatchEvent, WatchItemColumns, WatchItemIndex, WatchItemKind, WatchList,
-    Watcher, WatcherContext,
+    Event, Evictions, HashType, MAX_COUNT, Op, OwnedWatcher, REQUIRES_FILE_DESCRIPTORS,
+    WATCH_OPEN_FLAGS, WATCHES_BY_PATH, WatchEvent, WatchItemColumns, WatchItemIndex, WatchItemKind,
+    WatchList, Watcher, WatcherContext,
 };

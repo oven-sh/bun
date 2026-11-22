@@ -41,8 +41,6 @@ use bun_jsc::GlobalRef;
 #[cfg(windows)]
 use bun_libuv_sys::UvHandle as _;
 #[cfg(windows)]
-use bun_node_path as node_path;
-#[cfg(windows)]
 use bun_sys::windows::libuv as uv;
 
 bun_output::define_scoped_log!(log, Listener, visible);
@@ -346,9 +344,7 @@ impl Listener {
                 this_ref
                     .handlers
                     .set_listener(Some(this_value.payload_ptr()));
-                this_ref
-                    .this_value
-                    .with_mut(|r| r.set_strong(js_value, cx.global()));
+                this_value.set_js_ref_strong(cx.global());
                 this_ref.poll_ref.ref_(bun_io::js_vm_ctx());
                 // SAFETY: its address does not change; leaves its context in `Drop`.
                 unsafe { bun_jsc::AbortHandle::arm_owner(this, cx.context()) };
@@ -454,11 +450,10 @@ impl Listener {
         let listen_socket = match &mut connection {
             UnixOrHost::Host { host, port } => {
                 let hostz = bun_core::ZBox::from_bytes(&host[..]);
-                let host_cstr = hostz.as_zstr().as_cstr();
                 let ls = this_ref.group.listen(
                     kind,
                     secure_ctx_ptr,
-                    Some(host_cstr),
+                    Some(&hostz),
                     *port as c_int,
                     socket_flags,
                     size_of::<*mut c_void>() as c_int,
@@ -574,9 +569,7 @@ impl Listener {
         this_ref
             .handlers
             .set_listener(Some(this_value.payload_ptr()));
-        this_ref
-            .this_value
-            .with_mut(|r| r.set_strong(js_value, cx.global()));
+        this_value.set_js_ref_strong(cx.global());
         this_ref.poll_ref.ref_(bun_io::js_vm_ctx());
         // SAFETY: its address does not change; leaves its context in `Drop`.
         unsafe { bun_jsc::AbortHandle::arm_owner(this, cx.context()) };
@@ -584,7 +577,6 @@ impl Listener {
         Ok(js_value)
     }
 
-    // `OWNED_PROTOS` stays unset: accepted sockets clone the listener's `protos`.
     fn accepted_socket_flags(&self) -> SocketFlags {
         let mut flags = SocketFlags::empty();
         // Also what the context in use was built with: `tls.secureContext` need not come with the options again.
@@ -713,8 +705,7 @@ impl Listener {
         if bun_core::strings::contains_char(server_name_bytes, 0) {
             return Ok(());
         }
-        let server_name_z = bun_core::ZBox::from_bytes(server_name_bytes);
-        let server_name = server_name_z.as_zstr().as_cstr();
+        let server_name = bun_core::ZBox::from_bytes(server_name_bytes);
 
         let ListenerType::Uws(ls) = this.listener.get() else {
             return Ok(());
@@ -757,7 +748,7 @@ impl Listener {
 
         // The C SNI tree SSL_CTX_up_ref()s; ours drops here.
         // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
-        bun_opaque::opaque_deref_mut(ls).add_server_name(server_name, sni_ctx.as_ptr());
+        bun_opaque::opaque_deref_mut(ls).add_server_name(&server_name, sni_ctx.as_ptr());
 
         Ok(())
     }
@@ -818,8 +809,7 @@ impl Listener {
         if path.is_empty() || path[0] == 0 {
             return;
         }
-        let mut buf = bun_paths::path_buffer_pool::get();
-        let _ = bun_sys::unlink(bun_paths::resolve_path::z(path, &mut buf));
+        let _ = bun_sys::unlink(&bun_paths::Path::from(path));
     }
 
     pub(crate) fn get_unix(&self) -> Option<&[u8]> {
@@ -865,8 +855,7 @@ impl Listener {
             return;
         }
         self.poll_ref.ref_(bun_io::js_vm_ctx());
-        self.this_value
-            .with_mut(|r| r.set_strong(this_value.to_js(), cx.global()));
+        this_value.set_js_ref_strong(cx.global());
     }
 
     pub(crate) fn unref(&self) {
@@ -1035,9 +1024,6 @@ impl Listener {
                         // when sockets are reused for reconnection (common with MongoDB driver)
                         prev.connection.set(Some(connection));
                         prev.local_binding.set(local_binding.clone());
-                        if prev.flags.get().contains(SocketFlags::OWNED_PROTOS) {
-                            prev.protos.set(None);
-                        }
                         prev.protos
                             .set(ssl_taken.as_mut().and_then(|s| s.take_protos()));
                         prev.server_name
@@ -1334,7 +1320,6 @@ impl Drop for Listener {
             this.unlink_unix_socket_path();
         }
         this.listener.set(ListenerType::None);
-        this.this_value.with_mut(|r| r.finalize());
 
         // Before force-closing: an accepted socket's `on_close` must not release this listener's refs a second time.
         this.handlers.set_listener(None);
@@ -1382,9 +1367,6 @@ fn connect_finish<const IS_SSL: bool>(
         // when sockets are reused for reconnection (common with MongoDB driver)
         prev.connection.set(Some(connection));
         prev.local_binding.set(local_binding);
-        if prev.flags.get().contains(SocketFlags::OWNED_PROTOS) {
-            prev.protos.set(None); // drop old Box
-        }
         prev.protos.set(ssl.as_mut().and_then(|s| s.take_protos()));
         prev.server_name
             .set(ssl.as_mut().and_then(|s| s.take_server_name()));
@@ -1519,16 +1501,17 @@ pub(crate) fn set_secure_context(handle: Option<&Listener>, context: Option<&Sec
 
 #[cfg(windows)]
 fn is_valid_pipe_name(pipe_name: &[u8]) -> bool {
+    use bun_paths::is_sep;
     // check for valid pipe names
     // at minimum we need to have \\.\pipe\ or \\?\pipe\ + 1 char that is not a separator
     pipe_name.len() > 9
-        && node_path::is_sep_windows_t::<u8>(pipe_name[0])
-        && node_path::is_sep_windows_t::<u8>(pipe_name[1])
+        && is_sep(pipe_name[0])
+        && is_sep(pipe_name[1])
         && (pipe_name[2] == b'.' || pipe_name[2] == b'?')
-        && node_path::is_sep_windows_t::<u8>(pipe_name[3])
+        && is_sep(pipe_name[3])
         && strings::eql(&pipe_name[4..8], b"pipe")
-        && node_path::is_sep_windows_t::<u8>(pipe_name[8])
-        && !node_path::is_sep_windows_t::<u8>(pipe_name[9])
+        && is_sep(pipe_name[8])
+        && !is_sep(pipe_name[9])
 }
 
 #[cfg(windows)]
@@ -1684,32 +1667,14 @@ impl WindowsNamedPipeListeningContext {
         }
         let pipe = ListeningPipe(owned.into_non_null());
 
-        let listen_rc = if path[path.len() - 1] == 0 {
-            // is already null terminated
-            // SAFETY: `this` is live; `&mut uv_pipe` is scoped to this call.
-            unsafe {
-                (*this).uv_pipe.listen_named_pipe(
-                    &path[..path.len() - 1],
-                    backlog,
-                    this.cast::<c_void>(),
-                    Self::uv_on_client_connect,
-                )
-            }
-        } else {
-            let mut path_buf = bun_paths::path_buffer_pool::get();
-            // we need to null terminate the path
-            let len = path.len().min(path_buf.len() - 1);
-            path_buf[..len].copy_from_slice(&path[..len]);
-            path_buf[len] = 0;
-            // SAFETY: `this` is live; `&mut uv_pipe` is scoped to this call.
-            unsafe {
-                (*this).uv_pipe.listen_named_pipe(
-                    &path_buf[..len],
-                    backlog,
-                    this.cast::<c_void>(),
-                    Self::uv_on_client_connect,
-                )
-            }
+        // SAFETY: `this` is live; `&mut uv_pipe` is scoped to this call.
+        let listen_rc = unsafe {
+            (*this).uv_pipe.listen_named_pipe(
+                &bun_paths::Path::from(path.strip_suffix(b"\0").unwrap_or(path)),
+                backlog,
+                this.cast::<c_void>(),
+                Self::uv_on_client_connect,
+            )
         };
         if listen_rc.is_err() {
             // Surface the real error code: EADDRINUSE (name taken) vs

@@ -176,6 +176,10 @@ impl<'a> NewReader<'a> {
         Ok((self.length()? - 4) as usize)
     }
 
+    pub fn body(&self) -> Result<&'a [u8], AnyPostgresError> {
+        self.read(self.body_length()?)
+    }
+
     pub fn skip_message(&self) -> Result<(), AnyPostgresError> {
         let body = self.body_length()?;
         self.skip(body)

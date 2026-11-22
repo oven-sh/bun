@@ -7,7 +7,7 @@ class Version {
   constructor(text) {
     if (text instanceof Version) text = text.version;
     const m = FULL.exec(text);
-    if (!m) throw new TypeError('Invalid version: ' + text);
+    if (!m) throw new TypeError('no version at all: ' + text);
     this.numbers = [];
     for (let i = 1; i < 4; i++) this.numbers.push(+m[i]);
     this.pre = m[4] ? m[4].split('.').map(id => /^\d+$/.test(id) ? +id : id) : [];
@@ -15,17 +15,11 @@ class Version {
     this.version = this.numbers.join('.') + (this.pre.length ? '-' + this.pre.join('.') : '');
   }
   compare(o) {
-    for (let i = 0; i < 3; i++) { if (this.numbers[i] !== o.numbers[i]) return this.numbers[i] < o.numbers[i] ? -1 : 1; }
-    if (!this.pre.length || !o.pre.length) return this.pre.length ? -1 : o.pre.length ? 1 : 0;
-    for (let i = 0; ; i++) {
-      const a = this.pre[i], b = o.pre[i];
-      if (a === undefined && b === undefined) return 0;
-      if (b === undefined) return 1;
-      if (a === undefined) return -1;
-      if (a === b) continue;
-      if (typeof a !== typeof b) return typeof a === 'number' ? -1 : 1;
-      return a < b ? -1 : 1;
-    }
+    const order = (x, y) => (x > y ? 1 : 0) - (x < y ? 1 : 0), mine = this.pre, theirs = o.pre;
+    let side = this.numbers.map((n, i) => order(n, o.numbers[i])).find(Boolean) || Math.sign(theirs.length) - Math.sign(mine.length);
+    if (side || mine.length * theirs.length === 0) return side;
+    for (let i = 0; side === 0 && i < Math.min(mine.length, theirs.length); i++) side = order(typeof mine[i] === 'string', typeof theirs[i] === 'string') || order(mine[i], theirs[i]);
+    return side || order(mine.length, theirs.length);
   }
   inc(part, id) {
     const n = this.numbers;
@@ -33,7 +27,7 @@ class Version {
       case 'major': n[0]++; n[1] = n[2] = 0; this.pre = []; break;
       case 'minor': n[1]++; n[2] = 0; this.pre = []; break;
       case 'patch': if (!this.pre.length) n[2]++; this.pre = []; break;
-      case 'pre': { let k = this.pre.length; while (--k >= 0) if (typeof this.pre[k] === 'number') { this.pre[k]++; break; } if (k < 0) this.pre.push(0); if (id && this.pre[0] !== id) this.pre = [id, 0]; break; }
+      case 'pre': { const at = this.pre.findLastIndex(x => typeof x === 'number'); if (at < 0) this.pre.push(0); else this.pre[at] += 1; if (id && this.pre[0] !== id) this.pre = [id, 0]; break; }
       default: throw new Error('invalid part ' + part);
     }
     this.version = n.join('.') + (this.pre.length ? '-' + this.pre.join('.') : '');
@@ -44,7 +38,7 @@ class Version {
 const isX = s => !s || s === 'x' || s === 'X' || s === '*';
 function expand(c) {
   const m = X.exec(c);
-  if (!m) { if (c === '' || c === '*') return []; throw new TypeError('Invalid comparator: ' + c); }
+  if (!m) { if (c === '' || c === '*') return []; throw new TypeError('no rule at all: ' + c); }
   const [, op, M, n, p, pre] = m, top = (a, b, d) => [a, b, d].join('.');
   if (isX(M)) return op === '<' || op === '>' ? [['<', '0.0.0-0']] : [];
   const lo = top(+M, isX(n) ? 0 : +n, isX(p) ? 0 : +p) + (pre ? '-' + pre : '');

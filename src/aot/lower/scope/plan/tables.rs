@@ -279,8 +279,10 @@ fn index_source_functions(context: &Context<'_, '_>, summaries: &[FunctionSummar
 
 fn argument_reads(context: &Context<'_, '_>, function: FnId) -> impl Iterator<Item = ArgumentRead> {
     let walked = context.walk.function_of_fn[function.idx()];
-    let reads = context.walk.argument_reads.iter();
-    let reads = reads.filter(move |read| Some(read.0) == walked);
+    let reads = &context.walk.argument_reads[..];
+    let in_front = |walked| reads.partition_point(|read| read.0 < walked);
+    let reads = reads[walked.map_or(reads.len(), in_front)..].iter();
+    let reads = reads.take_while(move |read| Some(read.0) == walked);
     reads.map(|read| read.1)
 }
 

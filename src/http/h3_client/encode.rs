@@ -11,7 +11,7 @@ use super::client_session::ClientSession;
 use super::stream::Stream;
 use crate::http_request_body::HTTPRequestBody;
 use crate::internal_state::HTTPStage;
-use crate::{HTTPClient, HTTPVerboseLevel, Protocol, RequestBuffer};
+use crate::{HTTPVerboseLevel, Protocol, RequestBuffer};
 
 /// Build pseudo-headers + user headers and send them on `qs`, then kick off
 /// body transmission. Called from the first `callbacks.on_stream_writable`
@@ -25,11 +25,9 @@ pub(crate) fn write_request(
     stream: &mut Stream,
     qs: &mut quic::Stream,
 ) -> crate::Result<()> {
-    let Some(client_ptr) = stream.client else {
+    let Some(client) = stream.client.as_deref_mut() else {
         return Err(crate::Error::Aborted);
     };
-    // `stream.client` is a live backref while attached — see `client_mut` doc.
-    let client: &mut HTTPClient = super::client_session::client_mut(client_ptr);
     let verbose = client.verbose;
     let href: &[u8] = client.url.href;
     let host: &[u8] = client.url.host;
@@ -126,6 +124,9 @@ pub(crate) fn write_request(
         stream.request_body_done = true;
     }
 
+    let Some(client) = stream.client.as_deref_mut() else {
+        return Err(crate::Error::Aborted);
+    };
     client.state.request_stage = if stream.request_body_done {
         HTTPStage::Done
     } else {
@@ -136,7 +137,7 @@ pub(crate) fn write_request(
     // For streaming bodies the JS sink waits for can_stream to start
     // pumping; report progress now so it begins.
     if is_streaming {
-        client.progress_update_h3();
+        client.send_partial_result();
     }
     Ok(())
 }
@@ -148,11 +149,9 @@ pub(crate) fn drain_send_body(stream: &mut Stream, qs: &mut quic::Stream) {
     if stream.request_body_done {
         return;
     }
-    let Some(client_ptr) = stream.client else {
+    let Some(client) = stream.client.as_deref_mut() else {
         return;
     };
-    // `stream.client` is a live backref while attached — see `client_mut` doc.
-    let client: &mut HTTPClient = super::client_session::client_mut(client_ptr);
 
     if stream.is_streaming_body {
         let HTTPRequestBody::Stream(body) = &mut client.state.original_request_body else {

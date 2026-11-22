@@ -1,5 +1,6 @@
 use bun_core::fmt::hex_byte_lower;
 use bun_core::strings;
+use bun_sema::resolve::basename;
 use bun_sema::util::ShardedMap;
 
 const START_OF_QUERY: &[u8] = b"%3f";
@@ -86,7 +87,7 @@ pub(crate) fn find_worker_constructor(query: &[u8]) -> Option<&'static str> {
 }
 
 fn write_worker_wrapper(file: &[u8], constructor: &str) -> Vec<u8> {
-    let name = strings::basename_posix(file);
+    let name = basename(file);
     let quote = |text: Vec<u8>| {
         bun_core::fmt::format_json_string_utf8(&text, Default::default()).to_string()
     };
@@ -110,7 +111,7 @@ fn create_path_of_text(file: &[u8], specifier: &[u8]) -> (Vec<u8>, Vec<u8>) {
 }
 
 fn create_path(file: &[u8], query: &[u8]) -> Vec<u8> {
-    let name_start = file.len() - strings::basename_posix(file).len();
+    let name_start = file.len() - basename(file).len();
     let name = &file[name_start..];
     let stem_end = name_start + strings::index_of_char_usize(name, b'.').unwrap_or(name.len());
     let mut path = Vec::with_capacity(file.len() + 3 * query.len());

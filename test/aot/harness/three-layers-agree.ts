@@ -72,22 +72,27 @@ type Way = { words?: string; env?: Record<string, string> };
 
 /** Every way is a compiled run of the whole project, held to a plain run. */
 export function answerAsPlainBunTest(ways: Record<string, Way>) {
-  // The plain run waits for nothing that a compiled run makes, so it runs beside the first of them and not in front of it.
+  // The plain run waits for nothing that a compiled run makes. So it is started here and awaited where a case needs it: the first compiled run runs beside it, not behind it.
   let plain: Promise<Run>;
-  const compiled = new Map<string, Promise<Run>>();
   beforeAll(() => {
     plain = seenIn(undefined);
-    // The test that awaits a run says what it threw. Without a handler until then, the error would fail the test that runs at that moment.
+    // The case that awaits the run says what it threw. Without a handler until then, the error would fail the case that runs at that moment.
     plain.catch(() => {});
-    // A compiled run begins where the one before it has ended, however it ended.
-    let earlier: Promise<unknown> = Promise.resolve();
-    for (const [way, { words, env }] of Object.entries(ways)) {
-      const inItsTurn = earlier.then(() => seenIn(words, ["--aot"], env));
-      compiled.set(way, inItsTurn);
-      earlier = inItsTurn.catch(() => {});
-    }
   });
 
+  // A case starts its own run, so a filter that leaves the case out leaves its run out too.
+  test.each(Object.entries(ways))("the project answers as plain bun test: %s", async (way, { words, env }) => {
+    const { seen, ...answered } = await seenIn(words, ["--aot"], env);
+    if (answered.stopped.length) console.error(`${way}: the run was stopped:\n${answered.stopped.join("\n")}`);
+    const { seen: seenByPlain, ...expected } = await plain;
+    // What the checks printed stands last. It is more than a megabyte, and behind a megabyte `expect` prints a list as `[Array]` and an object as `[Object]`, whatever they hold.
+    expect([answered, seen]).toEqual([
+      { ...expected, behindTheCounts: saidBehindTheCountsOfACompiledRun },
+      seenByPlain,
+    ]);
+  });
+
+  // Behind the compiled runs: in front of them this case would wait for the plain run while no compiled run has begun.
   test("plain bun test answers", async () => {
     const { seen, tests, counts, behindTheCounts, stopped, exitCode } = await plain;
     expect(stopped).toEqual([]);
@@ -112,16 +117,5 @@ export function answerAsPlainBunTest(ways: Record<string, Way>) {
     });
     expect(behindTheCounts).toEqual([]);
     expect(exitCode).toBe(0);
-  });
-
-  test.each(Object.keys(ways))("the project answers as plain bun test: %s", async way => {
-    const { seen, ...answered } = await compiled.get(way)!;
-    const { seen: seenByPlain, ...expected } = await plain;
-    if (answered.stopped.length) console.error(`${way}: the run was stopped:\n${answered.stopped.join("\n")}`);
-    // What the checks printed stands last. It is more than a megabyte, and behind a megabyte `expect` prints a list as `[Array]` and an object as `[Object]`, whatever they hold.
-    expect([answered, seen]).toEqual([
-      { ...expected, behindTheCounts: saidBehindTheCountsOfACompiledRun },
-      seenByPlain,
-    ]);
   });
 }

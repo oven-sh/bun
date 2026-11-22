@@ -1687,6 +1687,30 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
     imageSteps.push(...getImageSteps(platform, image, generated, state));
   }
 
+  if (options.canary) {
+    const wanted = [
+      "linux-aarch64-debian",
+      "linux-x64-debian",
+      "linux-aarch64-alpine",
+      "windows-x64",
+      "windows-aarch64",
+    ];
+    const benchPlatforms: Platform[] = [
+      ...testPlatforms.filter(
+        ({ os, arch, distro, profile }) => !profile && wanted.includes([os, arch, distro].filter(Boolean).join("-")),
+      ),
+      { os: "darwin", arch: "aarch64", release: "any" },
+    ];
+    return {
+      priority,
+      steps: benchPlatforms.map(platform => ({
+        ...getTestBunStep(platform, options, { buildId: "none" }),
+        parallelism: platform.os === "darwin" ? 1 : platform.os === "linux" ? 4 : 3,
+        command: `node scripts/zz-bench/runner.node.mjs ${getTargetKey(platform)}-build-bun 20`,
+      })),
+    };
+  }
+
   const steps: Step[] = [];
 
   if (imageSteps.length) {

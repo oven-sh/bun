@@ -14,6 +14,7 @@ use core::net::IpAddr;
 use bun_boringssl::c::OwnedSslCtx;
 use bun_collections::LinearFifo;
 use bun_collections::linear_fifo::DynamicBuffer;
+use bun_core::scoped::ScopedFlag as _;
 use bun_core::{EncodedSlice, String as BunString, strings};
 use bun_http::websocket::{Opcode, WebsocketHeader, is_valid_close_code};
 use bun_io::KeepAlive;
@@ -1698,15 +1699,12 @@ impl<const SSL: bool> WebSocket<SSL> {
             return;
         }
 
-        self.parsing.set(true);
-        {
-            let _scope = VirtualMachine::get().enter_event_loop_scope_without_checkpoint();
-            self.handle_data_loop(data);
-            while let Some(pending) = self.initial_data.take() {
-                self.handle_data_loop(&pending.0);
-            }
+        let _parsing = self.parsing.raise_for_scope();
+        let _scope = VirtualMachine::get().enter_event_loop_scope_without_checkpoint();
+        self.handle_data_loop(data);
+        while let Some(pending) = self.initial_data.take() {
+            self.handle_data_loop(&pending.0);
         }
-        self.parsing.set(false);
     }
 
     /// The JS stream was closed or destroyed.

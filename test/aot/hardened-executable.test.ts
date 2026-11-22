@@ -189,7 +189,7 @@ describe.skipIf(!isHardened)("an executable of a Bun built with --hardened=on", 
       await withCompiledProgram(file => {
         for (const each of [runtime!, file])
           expect([...each.importedSymbols]).toEqual(
-            expect.arrayContaining(["__memcpy_chk", "__snprintf_chk", "__strcpy_chk"]),
+            expect.arrayContaining(["__memcpy_chk", "__memmove_chk", "__snprintf_chk"]),
           );
       });
     },

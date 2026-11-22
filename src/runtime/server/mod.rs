@@ -6,6 +6,7 @@ use core::cell::{Cell, OnceCell};
 use core::ffi::{c_char, c_int, c_void};
 use core::sync::atomic::Ordering;
 
+use bun_core::scoped::ScopedFlag as _;
 use bun_io::KeepAlive;
 use bun_uws as uws;
 use bun_uws_sys as uws_sys;
@@ -1574,10 +1575,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 });
                 self.flags.set(self.flags.get() | ServerFlags::TERMINATED);
                 if let Some(app) = self.app() {
-                    self.deinit_running.set(true);
+                    let _running = self.deinit_running.raise_for_scope();
                     // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
                     bun_opaque::opaque_deref_mut(app).close();
-                    self.deinit_running.set(false);
                 }
                 self.config.with_mut(|config| {
                     if let Some(ws) = config.websocket.as_mut() {
@@ -1628,10 +1628,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // reaps it — verified against Node v26.
             if !self.config.get().is_node_http_server {
                 if let Some(app) = self.app() {
-                    self.deinit_running.set(true);
+                    let _running = self.deinit_running.raise_for_scope();
                     // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
                     let _closed = bun_opaque::opaque_deref_mut(app).close_idle_connections(true);
-                    self.deinit_running.set(false);
                 }
             }
         } else if !self.flags.get().contains(ServerFlags::TERMINATED) {
@@ -1646,10 +1645,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // dispatch `deinit_if_we_can` under this frame. Hold the re-entrance
             // guard across the drain so that nested call early-returns —
             // `stop()` runs `deinit_if_we_can` itself right after this returns.
-            self.deinit_running.set(true);
-            // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
-            bun_opaque::opaque_deref_mut(self.app().unwrap()).close();
-            self.deinit_running.set(false);
+            {
+                let _running = self.deinit_running.raise_for_scope();
+                // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
+                bun_opaque::opaque_deref_mut(self.app().unwrap()).close();
+            }
             // Only clear after the drain — `on_close` defers reach
             // `on_websocket_closed` through `handler.server`, so wiping it
             // earlier would strand the live-socket count and the idle pass
@@ -1690,8 +1690,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         if self.deinit_running.get() {
             return;
         }
-        self.deinit_running.set(true);
-        // Cleared inline at the tail (no early returns below).
+        let _running = self.deinit_running.raise_for_scope();
 
         httplog!(
             "deinitIfWeCan. requests={}, listener={}, connections={}, websockets={}, all_closed_promise={}, has_js_deinited={}",
@@ -1773,7 +1772,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // Under `deinit_running`, so that `schedule_deinit` never frees `self` in this frame.
             self.open_ref.set(None);
         }
-        self.deinit_running.set(false);
     }
 
     /// The last ref is gone: the JS wrapper is collected and the server is drained.

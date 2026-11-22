@@ -22,6 +22,7 @@
 #include <wtf/HashSet.h>
 #include <wtf/ListHashSet.h>
 #include <wtf/Lock.h>
+#include <wtf/SetForScope.h>
 
 #include <optional>
 #include <unordered_set>
@@ -240,9 +241,9 @@ public:
         runFinalizers();
     }
 
-    void runFinalizers()
+    void runBoundFinalizers()
     {
-        m_isFinishingFinalizers = true;
+        SetForScope finishing(m_isFinishingFinalizers, true);
         // A cleanup hook may itself have leaked an exception; the first
         // finalizer starts clean too.
         clearExceptionsBetweenFinalizers();
@@ -255,12 +256,11 @@ public:
         // iterator is held across a call, so inserts and removals during one are plain.
         while (!m_finalizers.isEmpty()) {
             const BoundFinalizer* current = &m_finalizers.last();
-            m_currentFinalizer = current;
             {
+                SetForScope running(m_currentFinalizer, current);
                 Bun::NapiHandleScope handle_scope(m_globalObject);
                 current->call(this);
             }
-            m_currentFinalizer = nullptr;
             // Whatever the call appended sits after `current`; remove `current` itself by value
             // (still a live node: deactivate() only marks the running entry).
             m_finalizers.remove(*current);
@@ -273,8 +273,11 @@ public:
             // the next napi call with a throw scope sees it. See #30286.
             clearExceptionsBetweenFinalizers();
         }
-        m_isFinishingFinalizers = false;
+    }
 
+    void runFinalizers()
+    {
+        runBoundFinalizers();
         instanceDataFinalizer.call(this, instanceData, true);
         instanceDataFinalizer.clear();
         // napi_get_instance_data is ungated: never hand out the finalized pointer.

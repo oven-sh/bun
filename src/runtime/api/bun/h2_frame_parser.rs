@@ -17,6 +17,7 @@ use crate::node::{Encoding, StringOrBuffer};
 use crate::socket::NativeCallbacks;
 use bstr::BStr;
 use bun_collections::{ByteVecExt, HashMap as BunHashMap, HiveArrayFallback, OnceMap, recycle_vec};
+use bun_core::scoped::ScopedFlag as _;
 use bun_core::strings;
 use bun_hpack::{Encoder, Indexing};
 use bun_jsc::ErrorCode as JscErrorCode;
@@ -2399,9 +2400,10 @@ impl H2FrameParser {
                 }) else {
                     return 0;
                 };
-                self.js_socket_flushing.set(true);
-                let result = self.call_on_write(output_value);
-                self.js_socket_flushing.set(false);
+                let result = {
+                    let _flushing = self.js_socket_flushing.raise_for_scope();
+                    self.call_on_write(output_value)
+                };
 
                 // Same contract as _write: -1 dropped, 0 queued by the socket, else sent.
                 let code = if result.is_number() {

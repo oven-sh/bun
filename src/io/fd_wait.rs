@@ -19,7 +19,7 @@ use crate::Waker;
 
 bun_core::define_scoped_log!(log, FdWait, hidden);
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub enum Interest {
     Readable,
     Writable,
@@ -67,18 +67,10 @@ impl Drop for JobFd {
 /// What the kernel has in place of an address, one for each job. An epoll entry outlives its job if
 /// script closes the descriptor while a duplicate is open: it can no longer be removed.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Key(u64);
+struct Key(u64);
 
 impl Key {
     const NO_JOB: Self = Self(0);
-
-    #[inline]
-    pub fn next() -> (Self, Canceller) {
-        static NEXT: AtomicU64 = AtomicU64::new(Key::NO_JOB.0 + 1);
-        // Only has to be unique.
-        let key = Self(NEXT.fetch_add(1, Ordering::Relaxed));
-        (key, Canceller::Live(key))
-    }
 
     /// Locks the part of the table that has the slot.
     fn slots(self) -> impl DerefMut<Target = Slots> {
@@ -87,24 +79,39 @@ impl Key {
     }
 }
 
+/// A job that has no descriptor yet.
+pub struct Unopened(Key);
+
+impl Unopened {
+    #[inline]
+    pub fn new() -> (Self, Canceller) {
+        static NEXT: AtomicU64 = AtomicU64::new(Key::NO_JOB.0 + 1);
+        // Only has to be unique.
+        let key = Key(NEXT.fetch_add(1, Ordering::Relaxed));
+        (Self(key), Canceller(Cancel::Live(key)))
+    }
+}
+
 /// Keep it until the job has ended.
-pub enum Canceller {
-    #[non_exhaustive]
+pub struct Canceller(Cancel);
+
+enum Cancel {
     Live(Key),
-    Cancelled(Tombstone),
+    Cancelled { _slot: Tombstone },
 }
 
 impl Canceller {
     /// Ends the wait and every later one.
     pub fn cancel(&mut self) {
-        if let Self::Live(key) = *self {
-            *self = Self::Cancelled(Tombstone::place(key));
+        if let Cancel::Live(key) = self.0 {
+            let _slot = Tombstone::place(key);
+            self.0 = Cancel::Cancelled { _slot };
         }
     }
 }
 
 /// Owns a `Slot::Cancelled`.
-pub struct Tombstone(Key);
+struct Tombstone(Key);
 
 /// Keeps the pool off the table, which the IO thread writes at each wait.
 static TOMBSTONES: AtomicUsize = AtomicUsize::new(0);
@@ -138,7 +145,7 @@ pub struct FdWait {
 
 impl FdWait {
     #[inline]
-    pub fn new(key: Key, interest: Interest, fd: JobFd) -> Self {
+    pub fn new(Unopened(key): Unopened, interest: Interest, fd: JobFd) -> Self {
         Self {
             key,
             interest,
@@ -173,6 +180,11 @@ impl FdWait {
     }
 
     fn wake(self, outcome: sys::Result<()>, resume: Resume) {
+        log!(
+            "wake({}) = {:?}",
+            self.fd(),
+            outcome.as_ref().map_err(sys::Error::get_errno)
+        );
         let woken = (self, outcome, resume);
         bun_core::handle_oom(WorkPool::go(woken, |(wait, outcome, resume)| {
             resume(outcome.map(|()| wait))
@@ -261,6 +273,7 @@ impl IoThread {
 
     fn arm(&mut self, wait: FdWait, resume: Resume) {
         let (key, interest, number) = (wait.key, wait.interest, wait.fd());
+        log!("arm({}, {:?})", number, interest);
         let mut slots = key.slots();
         let btree_map::Entry::Vacant(slot) = slots.entry(key) else {
             drop(slots);
@@ -417,7 +430,6 @@ impl IoThread {
         interest: Interest,
         key: Key,
     ) -> sys::Result<()> {
-        log!("register({})", fd);
         let events = match interest {
             Interest::Readable => EPOLL::IN,
             Interest::Writable => EPOLL::OUT,
@@ -492,7 +504,7 @@ impl Poller {
             };
             match sys::get_errno(rc) {
                 E::EINTR => continue,
-                E::SUCCESS => {}
+                E::SUCCESS => log!("epoll_wait({}) = {}", self.watcher, rc),
                 e => bun_core::Output::panic(format_args!("epoll_wait: {:?}", e)),
             }
             for event in &events[..rc as usize] {
@@ -541,7 +553,6 @@ struct Entry;
 #[cfg(any(target_os = "macos", target_os = "freebsd"))]
 impl IoThread {
     fn add(&mut self, _: Option<Entry>, fd: Fd, interest: Interest, key: Key) -> sys::Result<()> {
-        log!("register({})", fd);
         let flags = libc::EV_ADD | libc::EV_ONESHOT;
         self.changes.push(change(fd, interest, flags, key));
         Ok(())
@@ -735,9 +746,9 @@ mod tests {
     }
 
     fn new(fd: i32) -> (FdWait, Canceller) {
-        let (key, canceller) = Key::next();
+        let (unopened, canceller) = Unopened::new();
         let fd = JobFd::Borrowed(Fd::from_native(fd));
-        (FdWait::new(key, Interest::Readable, fd), canceller)
+        (FdWait::new(unopened, Interest::Readable, fd), canceller)
     }
 
     /// Parks `times` times, then reports how it ended. The channel closes when the job is freed.
@@ -796,7 +807,8 @@ mod tests {
         ready(key);
         assert_eq!(all(ended), [E::ECANCELED]);
         let fd = JobFd::Borrowed(Fd::from_native(1001));
-        assert!((FdWait::new(key, Interest::Readable, fd).check_cancelled()).is_err());
+        let again = FdWait::new(Unopened(key), Interest::Readable, fd);
+        assert!(again.check_cancelled().is_err());
         drop(canceller);
         assert!(!key.slots().contains_key(&key));
     }

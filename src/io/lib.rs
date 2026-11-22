@@ -1,5 +1,5 @@
 // ════════════════════════════════════════════════════════════════════════════
-// Loop / Poll / Waker / Closer / FilePoll-vtable / heap / pipes / MaxBuf /
+// Loop / Waker / Closer / FilePoll-vtable / heap / pipes / MaxBuf /
 // openForWriting / PipeReader / PipeWriter compile on POSIX. `source` and the
 // Windows*Reader/Writer impls are `#[cfg(windows)]`-gated (libuv-only).
 // ════════════════════════════════════════════════════════════════════════════

@@ -537,7 +537,7 @@ impl NodeHTTPResponse {
         max_payload_length: u32,
         auto_pong: bool,
         skip_utf8_validation: bool,
-        deflate_params: Option<&uws_sys::response::PerMessageDeflateParams>,
+        deflate_params: Option<bun_websocket::deflate::Params>,
     ) -> JsResult<Option<JSValue>> {
         if !self.can_upgrade() {
             return Ok(None);
@@ -551,12 +551,13 @@ impl NodeHTTPResponse {
         let Some(handler) = server.ws_package_handler() else {
             return Ok(None);
         };
-        let Some(context) = server.ws_package_context(
+        let behavior = uws::WebSocketBehavior::for_ws_package(
             max_payload_length,
             auto_pong,
             skip_utf8_validation,
             deflate_params.is_some(),
-        ) else {
+        );
+        let Some(context) = server.ws_package_context(behavior) else {
             return Ok(None);
         };
 
@@ -578,15 +579,7 @@ impl NodeHTTPResponse {
         // During the upgrade the connection counts as neither HTTP nor WebSocket. Hold a pending
         // request so a stopped server doesn't drain if this is its last connection.
         let pending = PendingRequest::new(server);
-        let upgraded = !raw_response
-            .upgrade_raw(
-                ws,
-                handshake,
-                deflate_params,
-                // S008: `WebSocketUpgradeContext` is an `opaque_ffi!` ZST — safe deref. The app owns it.
-                bun_opaque::opaque_deref_mut(context.as_ptr()),
-            )
-            .is_null();
+        let upgraded = raw_response.upgrade_raw(ws, handshake, deflate_params, &context);
         drop(pending);
         if upgraded {
             self.bytes_written

@@ -84,7 +84,7 @@ pub(crate) fn zst<H>() -> H {
     bun_core::ffi::conjure_zst::<H>()
 }
 
-/// Re-type a raw uWS handle (`uws_res`, `H3Response`, `RawWebSocket`, …) as a
+/// Re-type a raw uWS handle (`uws_res`, `H3Response`, …) as a
 /// mutable Rust reference. These are zero-sized opaque markers, so the borrow
 /// covers no Rust-owned bytes — it exists purely to hang methods off.
 ///

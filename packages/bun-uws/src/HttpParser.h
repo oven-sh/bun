@@ -103,7 +103,6 @@ extern "C" void Bun__Http1Request__path(const Request *, Bytes *);
 extern "C" void Bun__Http1Request__afterHead(const Request *, Bytes *);
 extern "C" bool Bun__Http1Request__isHttp10(const Request *);
 extern "C" void Bun__Http1Request__field(const Request *, const char *name, size_t length, Bytes *);
-extern "C" void Bun__Http1Request__clearField(const Request *, const char *name, size_t length);
 extern "C" bool Bun__Http1Request__fieldAt(const Request *, size_t index, Bytes *name, Bytes *value);
 
 }
@@ -121,7 +120,6 @@ struct HttpRequest {
     /* The `head` argument of node:http's 'connect' and 'upgrade' events. */
     std::string_view getBytesAfterHead() { return get<http1::Bun__Http1Request__afterHead>(); }
     std::string_view getHeader(std::string_view name) { return get<http1::Bun__Http1Request__field>(name.data(), name.length()); }
-    void clearHeader(std::string_view name) { http1::Bun__Http1Request__clearField(parsed, name.data(), name.length()); }
 
     template <typename Fn> void forEachHeader(Fn &&fn) {
         http1::Bytes name, value;

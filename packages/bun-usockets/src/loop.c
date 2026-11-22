@@ -131,7 +131,7 @@ int us_internal_loop_data_init(struct us_loop_t *loop, void (*wakeup_cb)(struct 
     loop->data.sweep_next_tick_ns = -1;
 #endif
     loop->data.sweep_timer_count = 0;
-    loop->data.recv_buf = us_malloc(LIBUS_RECV_BUFFER_LENGTH + LIBUS_RECV_BUFFER_PADDING * 2);
+    loop->data.recv_buf = us_malloc(LIBUS_RECV_BUFFER_LENGTH);
     loop->data.send_buf = us_malloc(LIBUS_SEND_BUFFER_LENGTH);
     /* Every read on this loop writes into recv_buf; a NULL here makes each one
      * fail with EFAULT for the life of the process. */
@@ -753,7 +753,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         struct iovec iov = {0};
                         char cmsg_buf[CMSG_SPACE(sizeof(int))];
 
-                        iov.iov_base = loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING;
+                        iov.iov_base = loop->data.recv_buf;
                         iov.iov_len = LIBUS_RECV_BUFFER_LENGTH;
 
                         msg.msg_flags = 0;
@@ -804,14 +804,14 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         }
                     }else{
                     #endif
-                        length = bsd_recv(us_poll_fd(&s->p), loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING, LIBUS_RECV_BUFFER_LENGTH, recv_flags);
+                        length = bsd_recv(us_poll_fd(&s->p), loop->data.recv_buf, LIBUS_RECV_BUFFER_LENGTH, recv_flags);
                     #if !defined(_WIN32)
                     }
                     #endif
 
                     if (length > 0) {
-                        s = s->ssl ? us_internal_ssl_on_data(s, loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING, length)
-                                   : us_dispatch_data(s, loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING, length);
+                        s = s->ssl ? us_internal_ssl_on_data(s, loop->data.recv_buf, length)
+                                   : us_dispatch_data(s, loop->data.recv_buf, length);
                         /* After socket adoption, track the new socket; the old one becomes invalid */
                         s = us_internal_socket_follow_adopted(s);
                         // loop->num_ready_polls isn't accessible on Windows.

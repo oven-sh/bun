@@ -74,6 +74,7 @@ const crates = [
   "bun_trim",
   "bun_valkey",
   "bun_webp",
+  "bun_websocket",
   "bun_wyhash",
   "bun_zlib",
   "bun_zstd",

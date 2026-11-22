@@ -530,6 +530,31 @@ describe.concurrent("Bun.serve perMessageDeflate", () => {
       for (const peer of peers) peer.close();
     }
   });
+
+  test("the shared decompressor keeps nothing of a long message for the next connection", async () => {
+    await using server = serve({
+      port: 0,
+      fetch: (req, server) => void server.upgrade(req),
+      websocket: { perMessageDeflate: true, message: (ws, message) => void ws.send(String(message.length)) },
+    });
+    const text = Buffer.from(pseudoRandomText(20000));
+    const deflate = (dictionary?: Buffer) => deflateRawSync(text, { dictionary, finishFlush: constants.Z_SYNC_FLUSH });
+    const answers: string[] = [];
+    for (const payload of [
+      deflate().subarray(0, -4),
+      deflate(text).subarray(0, -4),
+      Buffer.concat([deflate(), Buffer.of(7)]),
+      deflate().subarray(0, -4),
+    ]) {
+      using client = await RawClient.upgrade(server.port!, {
+        headers: { "Sec-WebSocket-Extensions": "permessage-deflate" },
+      });
+      client.binary(payload, { rsv1: true });
+      answers.push(await client.next());
+    }
+    const invalid = 'close 1007 "Received invalid compressed data"';
+    expect(answers).toEqual(['text "20000"', invalid, invalid, 'text "20000"']);
+  });
 });
 
 // See the fixture for how the race works. Only a sanitizer catches the out-of-bounds write.

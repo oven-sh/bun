@@ -345,7 +345,10 @@ pub(crate) fn install_hoisted_packages(
                 // up to 64 directories open.
                 deferred: (cfg!(not(windows)) && !FileSystem::get().fs.need_to_close_files())
                     .then(|| DeferredLinks::init(&lockfile_ref)),
-                node_modules: NodeModulesFolder::default(),
+                node_modules: NodeModulesFolder {
+                    tree_id: tree::INVALID_ID,
+                    path: Vec::new(),
+                },
                 skip_verify_installed_version_number,
                 skip_delete,
                 workspaces_seen: Vec::new(),
@@ -376,7 +379,6 @@ pub(crate) fn install_hoisted_packages(
                 seen_bin_links: StringHashMap::<()>::default(),
                 destination_dir_subpath: bun_paths::Path::new(),
                 folder_path_buf: bun_paths::PathBuffer::ZEROED,
-                current_tree_id: tree::INVALID_ID,
                 pending_lifecycle_scripts: Vec::new(),
                 unfinished_scripts: Default::default(),
                 direct_packages: bun_ptr::BackRef::new(&direct_packages),
@@ -404,7 +406,6 @@ pub(crate) fn install_hoisted_packages(
             installer.node_modules.set_path(node_modules.relative_path);
             installer.node_modules.tree_id = node_modules.tree_id;
             let mut remaining: &[DependencyID] = node_modules.dependencies;
-            installer.current_tree_id = node_modules.tree_id;
             installer.set_inside_replaced_folder(node_modules.tree_id);
             installer.set_outlived_root(node_modules.tree_id, node_modules.relative_path);
 

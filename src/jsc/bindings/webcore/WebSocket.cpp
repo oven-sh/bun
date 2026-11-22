@@ -54,6 +54,8 @@
 #include <wtf/HexNumber.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/NeverDestroyed.h>
+#include <wtf/SetForScope.h>
+#include <wtf/StackPointer.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/text/CString.h>
 #include <wtf/text/StringBuilder.h>
@@ -862,6 +864,12 @@ JSC::JSValue WebSocket::callHandler(const JSC::Identifier& name, const JSC::ArgL
     AsyncContextScope asyncContext(globalObject, m_asyncContext.getValue());
     Bun::ModuleGraphContextScope moduleGraphContext(*context);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+#if ENABLE(AOT)
+    // What JSC's NakedPtr overload of call() tells ahead-of-time compiled code: a native frame here takes what the handler throws.
+    std::optional<SetForScope<void*>> catcher;
+    if (vm.hasCompiledCode()) [[unlikely]]
+        catcher.emplace(vm.aotState().exceptionCatcherStackPointer, currentStackPointer());
+#endif
     JSC::JSValue result = JSC::profiledCall(globalObject, JSC::ProfilingReason::Other, function, callData, wrapper->m_owner.get(), arguments);
     if (auto* exception = scope.exception()) [[unlikely]] {
         if (scope.clearExceptionExceptTermination())

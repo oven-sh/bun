@@ -101,7 +101,7 @@ mod tests {
         let path = wstr!("HARDWARE\\DESCRIPTION\\System\\CentralProcessor\\0");
         let key = Key::open(path).unwrap();
         assert!(key.number(wstr!("~MHz")).is_some());
-        assert!(key.text(wstr!("ProcessorNameString")).is_some());
+        assert!(key.text(wstr!("Identifier")).is_some());
         assert_eq!(key.number(wstr!("missing")), None);
         assert_eq!(key.text(wstr!("missing")), None);
         assert!(Key::open(wstr!("HARDWARE\\missing")).is_none());

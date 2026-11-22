@@ -479,6 +479,9 @@ bool WorkerMessagingProxy::postSerializedErrorToWorkerObject(Zig::GlobalObject& 
     // Top of the worker's error-dispatch stack: neither the structured clone (which can run script
     // through getters even in NonThrowing mode) nor the `code` read may leave an exception behind.
     auto& vm = JSC::getVM(&workerGlobalObject);
+    // A worker that its own 'error' listener stopped reads nothing more of the error: its parent gets the message.
+    if (WebCore::clientData(vm)->mustNotEnterScript(vm)) [[unlikely]]
+        return false;
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     auto serialized = SerializedScriptValue::create(workerGlobalObject, value, SerializationForStorage::No, SerializationErrorMode::NonThrowing);

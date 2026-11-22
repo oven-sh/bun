@@ -65,9 +65,9 @@ public:
 
     template<typename Visitor> void visitJSFunction(Visitor&);
 
-    WEBCORE_EXPORT static JSC::JSValue invokeCallback(JSC::VM&, JSC::JSObject* callback, JSC::JSValue thisValue, JSC::MarkedArgumentBuffer&, CallbackType, JSC::PropertyName functionName, NakedPtr<JSC::Exception>& returnedException);
+    WEBCORE_EXPORT static JSC::JSValue invokeCallback(JSC::VM&, JSC::JSObject* callback, JSC::JSValue thisValue, JSC::MarkedArgumentBuffer&, CallbackType, JSC::PropertyName functionName, JSC::Exception*& returnedException);
 
-    JSC::JSValue invokeCallback(JSC::VM& vm, JSC::JSValue thisValue, JSC::MarkedArgumentBuffer& args, CallbackType callbackType, JSC::PropertyName functionName, NakedPtr<JSC::Exception>& returnedException)
+    JSC::JSValue invokeCallback(JSC::VM& vm, JSC::JSValue thisValue, JSC::MarkedArgumentBuffer& args, CallbackType callbackType, JSC::PropertyName functionName, JSC::Exception*& returnedException)
     {
         return JSCallbackData::invokeCallback(vm, callback(), thisValue, args, callbackType, functionName, returnedException);
     }

@@ -32,6 +32,7 @@
 
 #include "JSCallbackData.h"
 
+#include "BunClientData.h"
 #include "JSDOMBinding.h"
 // #include "JSExecState.h"
 // #include "JSExecStateInstrumentation.h"
@@ -41,7 +42,7 @@ namespace WebCore {
 using namespace JSC;
 
 // https://webidl.spec.whatwg.org/#call-a-user-objects-operation
-JSValue JSCallbackData::invokeCallback(VM& vm, JSObject* callback, JSValue thisValue, MarkedArgumentBuffer& args, CallbackType method, PropertyName functionName, NakedPtr<JSC::Exception>& returnedException)
+JSValue JSCallbackData::invokeCallback(VM& vm, JSObject* callback, JSValue thisValue, MarkedArgumentBuffer& args, CallbackType method, PropertyName functionName, JSC::Exception*& returnedException)
 {
     ASSERT(callback);
 
@@ -55,7 +56,7 @@ JSValue JSCallbackData::invokeCallback(VM& vm, JSObject* callback, JSValue thisV
     // We will fail to get the context if the frame has been detached. Once the VM's stop was
     // requested this is a silent no-op, as at the other native→JS boundaries
     // (JSEventListener::handleEvent, Bun__JSValue__call).
-    if (!context || context->isJSExecutionForbidden())
+    if (!context || context->mustNotEnterScript())
         return JSValue();
 
     JSValue function;
@@ -94,9 +95,19 @@ JSValue JSCallbackData::invokeCallback(VM& vm, JSObject* callback, JSValue thisV
     // JSExecState::instrumentFunction(context, callData);
 
     returnedException = nullptr;
-    JSValue result = JSC::profiledCall(lexicalGlobalObject, JSC::ProfilingReason::Other, function, callData, thisValue, args, returnedException);
+    JSValue result;
+    {
+        Bun::NativeCatcherScope catcher(vm);
+        result = JSC::profiledCall(lexicalGlobalObject, JSC::ProfilingReason::Other, function, callData, thisValue, args);
+    }
 
     // InspectorInstrumentation::didCallFunction(context);
+
+    if (scope.exception()) [[unlikely]] {
+        returnedException = scope.exception();
+        (void)Bun::clearExceptionOrTakeTermination(vm, scope);
+        return jsUndefined();
+    }
 
     return result;
 }

@@ -324,6 +324,11 @@ bool ScriptExecutionContext::isJSExecutionForbidden()
     return !vm || WebCore::clientData(*vm)->isStoppingOrStopped(*vm);
 }
 
+bool ScriptExecutionContext::mustNotEnterScript()
+{
+    return isJSExecutionForbidden() || realm().m_vm->hasPendingTerminationException();
+}
+
 void ScriptExecutionContext::prepareForDestruction()
 {
     ASSERT(isContextThread());

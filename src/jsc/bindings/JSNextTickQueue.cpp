@@ -72,6 +72,16 @@ void JSNextTickQueue::discard(JSC::VM& vm)
     internalField(2).set(vm, this, jsUndefined());
 }
 
+// Out of line: a pass whose ticks do not throw computes nothing for it.
+static NEVER_INLINE void reportTickError(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Exception* exception, JSC::InternalFieldTuple* asyncContextData, JSValue asyncContextBetweenTicks)
+{
+    Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
+    asyncContextData->putInternalField(vm, 0, asyncContextBetweenTicks);
+    // The report can stop the VM and leave nothing pending: the stop becomes the termination that drain() and its callers end on.
+    if (WebCore::clientData(vm)->isStoppingOrStopped(vm)) [[unlikely]]
+        JSC__JSGlobalObject__throwTerminationException(globalObject);
+}
+
 void JSNextTickQueue::drain(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
 {
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
@@ -103,8 +113,7 @@ void JSNextTickQueue::drain(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
         // A termination stays pending for the caller.
         if (!scope.tryClearException())
             return;
-        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
-        asyncContextData->putInternalField(vm, 0, asyncContextBetweenTicks);
+        reportTickError(vm, globalObject, exception, asyncContextData, asyncContextBetweenTicks);
     }
 }
 

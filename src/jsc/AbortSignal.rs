@@ -3,8 +3,8 @@ use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 
 use crate::{
-    CommonAbortReason, JSGlobalObject, JSValue, ScriptTimer, VirtualMachineRef as VirtualMachine,
-    WrapperGuard,
+    CommonAbortReason, JSGlobalObject, JSValue, JsResult, ScriptTimer,
+    VirtualMachineRef as VirtualMachine, WrapperGuard,
 };
 use bun_core::{Timespec, TimespecMockMode};
 use bun_event_loop::EventLoopTimer::{Clock, Tag as TimerTag};
@@ -87,9 +87,16 @@ impl AbortSignal {
         WebCore__AbortSignal__cleanNativeBindings(self, ctx)
     }
 
-    pub fn signal(&self, global_object: &JSGlobalObject, reason: CommonAbortReason) {
+    /// `Err`: the VM's termination is pending when the abort steps return, left by one of them or from before the call.
+    pub fn signal(
+        &self,
+        global_object: &JSGlobalObject,
+        reason: CommonAbortReason,
+    ) -> JsResult<()> {
         bun_analytics::features::abort_signal.fetch_add(1, Ordering::Relaxed);
-        WebCore__AbortSignal__signal(self, global_object, reason)
+        crate::host_fn::from_js_host_call_generic(global_object, || {
+            WebCore__AbortSignal__signal(self, global_object, reason)
+        })
     }
 
     /// This function is not threadsafe. aborted is a boolean, not an atomic!
@@ -363,7 +370,12 @@ impl Timeout {
         // centralised non-null deref proof. `signalAbort()` takes
         // `Ref protectedThis` internally so `signal_ptr` stays valid for the
         // whole dispatch even though abort listeners can trigger GC.
-        AbortSignal::opaque_ref(signal_ptr).signal(vm.global(), CommonAbortReason::Timeout);
+        let global = vm.global();
+        if let Err(err) =
+            AbortSignal::opaque_ref(signal_ptr).signal(global, CommonAbortReason::Timeout)
+        {
+            let _ = crate::task::report_error_or_terminate(global, err);
+        }
     }
 }
 

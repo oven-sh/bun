@@ -858,7 +858,7 @@ impl ServerWebSocket {
 
             if let Some(sig) = &signal {
                 if !sig.aborted() {
-                    sig.signal(handler.global_object(), CommonAbortReason::ConnectionClosed);
+                    sig.signal(handler.global_object(), CommonAbortReason::ConnectionClosed)?;
                 }
             }
 
@@ -885,7 +885,7 @@ impl ServerWebSocket {
             let _loop_guard = vm.enter_event_loop_scope();
 
             if !sig.aborted() {
-                sig.signal(handler.global_object(), CommonAbortReason::ConnectionClosed);
+                sig.signal(handler.global_object(), CommonAbortReason::ConnectionClosed)?;
             }
         }
         Ok(())

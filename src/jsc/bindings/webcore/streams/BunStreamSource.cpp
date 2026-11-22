@@ -1212,7 +1212,7 @@ void JSReadableSinkController::onClose(JSGlobalObject* globalObject, JSValue rea
     m_closePromise.clear();
     m_readableStream.clear();
     // Re-entering JS on a terminated worker trips executeCallImpl's assertNoException().
-    if (vm.hasPendingTerminationException() || WebCore::clientData(vm)->isStoppingOrStopped(vm)) [[unlikely]]
+    if (WebCore::clientData(vm)->mustNotEnterScript(vm)) [[unlikely]]
         return;
     if (auto* directSource = dynamicDowncast<JSDirectStreamSource>(source))
         return directStreamOnClose(vm, globalObject, this, directSource, closePromise, stream, reason, sinkClosed);
@@ -1232,7 +1232,7 @@ void JSReadableSinkController::onReady(JSGlobalObject* globalObject)
     if (!op)
         return;
     auto& vm = getVM(globalObject);
-    if (vm.hasPendingTerminationException() || WebCore::clientData(vm)->isStoppingOrStopped(vm)) [[unlikely]]
+    if (WebCore::clientData(vm)->mustNotEnterScript(vm)) [[unlikely]]
         return;
     std::optional<StreamAsyncContextScope> asyncContext;
     if (auto* stream = m_readableStream.get())

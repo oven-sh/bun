@@ -1911,6 +1911,7 @@
     "aot/library-class-fields.test.ts",
     "aot/library-comparisons.test.ts",
     "aot/library-loads.test.ts",
-    "aot/a-folder-lists-an-imported-file-at-the-name-of-an-entry-point.test.ts"
+    "aot/a-folder-lists-an-imported-file-at-the-name-of-an-entry-point.test.ts",
+    "aot/an-older-error-that-a-listener-throws-is-reported-where-it-was-thrown.test.ts"
   ]
 }

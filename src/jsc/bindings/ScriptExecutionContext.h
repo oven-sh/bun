@@ -121,6 +121,8 @@ public:
     void globalObjectDestroyed();
 
     bool isJSExecutionForbidden();
+    // isJSExecutionForbidden() or a pending termination (JSVMClientData::mustNotEnterScript): what a frame reads before it calls script.
+    bool mustNotEnterScript();
     void reportException(const String& errorMessage, int lineNumber, int columnNumber, const String& sourceURL, JSC::Exception* exception, RefPtr<void*>&&, CachedScript* = nullptr, bool = false)
     {
     }
@@ -153,6 +155,8 @@ public:
     void postTaskAfterYield(Function<void(ScriptExecutionContext&)>&& lambda);
 
     JSC::VM& vm() { return *realm().m_vm; }
+    // Null once the global object is gone (globalObjectDestroyed()).
+    JSC::VM* vmIfExists() { return realm().m_vm; }
     ScriptExecutionContextIdentifier identifier() const { return m_identifier; }
     // This thread only: the loop the VM is running now. What an object that will later be posted to
     // from another thread records alongside identifier() when script here sets it up.

@@ -128,10 +128,11 @@ bool publishConsoleCall(Zig::GlobalObject* globalObject, MessageType& type, Mess
         publishedType = type;
         break;
     case MessageType::Table:
-        // The text of a table is published where it is made.
+        // The text of a table is published where it is made. ConsoleClient::table() drops a call without arguments.
         if (arguments.argumentAt(0).isObject())
             return false;
         count = 1;
+        method = "table"_s;
         break;
     case MessageType::Assert:
         publishedLevel = MessageLevel::Warning;
@@ -171,6 +172,9 @@ bool publishConsoleCall(Zig::GlobalObject* globalObject, MessageType& type, Mess
 
     appendItems(globalObject, asArray(result), printed, printedLimit);
     RETURN_IF_EXCEPTION(scope, false);
+    // A subscriber took everything away: the line stays.
+    if (printed.isEmpty() && (count || !method.isNull()))
+        printed.append(jsEmptyString(vm));
     type = publishedType;
     level = publishedLevel;
     return true;

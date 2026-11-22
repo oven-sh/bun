@@ -5,7 +5,7 @@ const { validateFunction } = require("internal/validators");
 const { builtinChannels, reportUncaughtException } = require("internal/shared");
 
 /** Reacts to a promise and leaves it as handled or unhandled as it was. False if `value` is none, or its class overrides `then`. */
-const observePromise: (value: unknown, then: Function, onFulfilled: Reaction, onRejected: Reaction) => boolean =
+const observePromise: (value: unknown, then: Traced, onFulfilled: Reaction, onRejected: Reaction) => boolean =
   $newCppFunction("NodeDiagnosticsChannel.cpp", "jsObservePromise", 4);
 /** Hands native code the function to publish through. See DiagnosticsHook.h. */
 const setHook: (name: string, hook: Function | undefined) => void = $newCppFunction(
@@ -479,7 +479,7 @@ function closeWindowWithError(
 // original was handled, and calls then() of any other promise, which hides its unhandled rejection.
 function traceSettlement(
   thenable: unknown,
-  then: Function,
+  then: Traced,
   asyncStart: AnyChannel,
   asyncEnd: AnyChannel,
   errorChannel: AnyChannel,
@@ -846,7 +846,7 @@ function startImport(parentURL: string | undefined, url: string) {
   const context = { __proto__: null, parentURL, url };
   const scopes = openWindow(start, end, context);
   return function endImport(promise: Promise<unknown>) {
-    traceSettlement(promise, promise.then, asyncStart, asyncEnd, error, context);
+    traceSettlement(promise, promise.$then, asyncStart, asyncEnd, error, context);
     closeWindow(end, context, scopes, false);
   };
 }

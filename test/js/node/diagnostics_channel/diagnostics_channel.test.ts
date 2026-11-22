@@ -560,6 +560,17 @@ describe("TracingChannel", () => {
     });
   });
 
+  test("tracePromise() takes a then() that throws for a rejection, as await does", async () => {
+    const { tracing, log } = traced("throwing-then");
+    const thenable: any = {
+      then() {
+        throw new Error("then");
+      },
+    };
+    expect(tracing.tracePromise(() => thenable)).toBe(thenable);
+    expect(log).toEqual(["start", "error", "asyncStart", "asyncEnd", "end"]);
+  });
+
   test.concurrent.each([
     ["a promise", `Promise.reject(1)`],
     ["a promise of a subclass", `(class extends Promise {}).reject(1)`],
@@ -784,6 +795,25 @@ describe.concurrent("console.*", () => {
     ]);
   });
 
+  test.each([
+    ["the global console", "console"],
+    ["a Console", instance],
+  ])("a subscriber that takes the arguments away leaves an empty line of %s", async (_, target) => {
+    expect(
+      await run(
+        `
+          for (const name of ["log", "warn", "error"]) dc.subscribe("console." + name, args => (args.length = 0));
+          const c = ${target};
+          for (const method of ["log", "dirxml", "table", "count", "warn", "error", "trace", "group"]) c[method]("secret");
+          c.groupEnd();
+          c.assert(false);
+          c.info("end");
+        `,
+        { stderr: "\n\n\n\n" },
+      ),
+    ).toEqual(["", "", "", "", "", "end"]);
+  });
+
   test("a subscriber that changes nothing leaves the output as it is", async () => {
     const script = `
       console.log("%s", "text", { a: 1 }, [1n]);
@@ -791,6 +821,8 @@ describe.concurrent("console.*", () => {
       console.count();
       console.table([{ a: 1 }]);
       console.table(5);
+      console.table(5, ["a"]);
+      console.table();
       console.groupEnd();
       console.dirxml(new Map([[1, 2]]));
     `;
@@ -891,6 +923,20 @@ describe.concurrent("module.*", () => {
         { cwd: String(dir) },
       ),
     ).toEqual(["./reads.cjs", "undefined"]);
+  });
+
+  test("import() ends and leaves its stores if Promise.prototype.then throws", async () => {
+    expect(
+      await run(`
+        const store = new (require("node:async_hooks").AsyncLocalStorage)();
+        dc.channel("tracing:module.import:start").bindStore(store);
+        dc.subscribe("tracing:module.import:end", () => console.log("end"));
+        process.on("unhandledRejection", () => {});
+        Object.defineProperty(Promise.prototype, "then", { get() { throw new Error("read"); } });
+        import("node:os");
+        console.log(store.getStore());
+      `),
+    ).toEqual(["end", "undefined"]);
   });
 
   test("import()", async () => {

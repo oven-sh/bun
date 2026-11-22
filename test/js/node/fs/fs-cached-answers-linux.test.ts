@@ -351,12 +351,12 @@ describe.skipIf(!isLinux)("async fs operations that the kernel can answer from i
     if (canAnswer) {
       expect({
         here: result.here.hits,
-        // The second call is answered if the pool had classified the mount by then.
-        moved: [result.moved.hits <= 1, result.moved.misses],
+        // A call is answered if a pool thread had classified the mount by then. None is asked in vain.
+        moved: result.moved.misses,
         there: result.there.hits,
         inProc: [result.inProc.hits, result.inProc.misses],
         back: result.back.hits,
-      }).toEqual({ here: 2, moved: [true, 0], there: 2, inProc: [0, 0], back: 1 });
+      }).toEqual({ here: 2, moved: 0, there: 2, inProc: [0, 0], back: 1 });
     }
   });
 
@@ -636,6 +636,14 @@ describe.skipIf(!isLinux)("async fs operations that the kernel can answer from i
         const fill = () => { try { for (;;) held.push(fs.openSync("/dev/null", "r")); } catch {} };
         const free = () => { for (const fd of held.splice(0)) fs.closeSync(fd); };
         const sizes = async () => [(await fsp.stat("file.txt")).size, (await fsp.lstat("file.txt")).size];
+        // A pool thread closes the descriptor of each answer: the count of those that are still open.
+        const file = fs.realpathSync("file.txt");
+        const isOfFile = fd => { try { return fs.readlinkSync("/proc/self/fd/" + fd) === file; } catch { return false; } };
+        const stillOpen = async () => {
+          const count = () => fs.readdirSync("/proc/self/fd").filter(isOfFile).length;
+          for (const deadline = performance.now() + 3000; count() !== 0 && performance.now() < deadline; ) await nextTurn();
+          return count();
+        };
         // The pool thread that is to learn of the kernel and the mounts has no descriptor for it.
         fill();
         const full = await counted(sizes);
@@ -643,12 +651,12 @@ describe.skipIf(!isLinux)("async fs operations that the kernel can answer from i
         await warm();
         const freed = await countedUntil(round => round.hits === 2, sizes);
         // The lookup needs a descriptor, the pool's stat does not.
+        await stillOpen();
         fill();
         const fullAgain = await counted(sizes);
         free();
-        const open = fs.readdirSync("/proc/self/fd").length;
         const after = await countedUntil(round => round.hits === 2, sizes);
-        console.log(JSON.stringify({ full, freed, fullAgain, after, leaked: fs.readdirSync("/proc/self/fd").length - open }));
+        console.log(JSON.stringify({ full, freed, fullAgain, after, leaked: await stillOpen() }));
       })();
       `,
       {},

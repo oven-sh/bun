@@ -13,6 +13,8 @@
 //
 // The same build retires a different number of instructions with musl than with glibc, so each stage has one number per libc, both for Linux x64.
 //
+// Two more checks hold each build to what the limits take for granted: it has read every line of the application, and it has printed every number that a check reads.
+//
 //   bun test test/aot/compiler/budgets.test.ts
 //   AOT_BUDGETS=lower bun test test/aot/compiler/budgets.test.ts     lowers each limit to 10% above the worse of the two builds, where that is below the limit;
 //                                                                    a touch never goes below 1
@@ -22,7 +24,7 @@ import { afterAll, expect } from "bun:test";
 import { readFileSync, writeFileSync } from "fs";
 import { isASAN, isDebug, isLinux, isMusl, isWindows } from "harness";
 import { join } from "path";
-import { describe, test } from "../supported";
+import { beforeAll, describe, test } from "../supported";
 import { application, build, countsInstructions, stagesOf, type Build, type Dress, type StageName } from "./measure";
 
 const lines = 100_000;
@@ -99,12 +101,22 @@ const nameOfCheck = (name: string, measured: string | undefined, bound: string) 
   measured ? `${name}: ${measured} ${bound}` : name;
 const budgetOf = (parts: BudgetedStage[]) => parts.map(part => `${limitOf(part)} per ${unitOfStage[part]}`).join(" + ");
 
-async function buildApplication(dress: Dress) {
-  using program = application(lines, dress);
-  return await build(program);
+// A check that is marked as not yet met passes when it throws, whatever throws: a number that the build no longer prints would pass it.
+// So each build is asked for every number that a check reads, in a check of its own.
+const countersRead = [...new Set<string>([...Object.values(unitOfStage), ...touches, ...Object.values(unitOfTouch)])];
+const stagesCounted = whyNotCounted ? [] : (Object.keys(budgetedPartsOf) as StageName[]);
+
+interface Built extends Build {
+  /** Of the application as it was written for this build. */
+  linesWritten: number;
 }
 
-const builds = new Map<Dress, Promise<Build>>();
+async function buildApplication(dress: Dress): Promise<Built> {
+  using program = application(lines, dress);
+  return { ...(await build(program)), linesWritten: program.lines };
+}
+
+const builds = new Map<Dress, Promise<Built>>();
 function built(dress: Dress) {
   let building = builds.get(dress);
   if (!building) builds.set(dress, (building = buildApplication(dress)));
@@ -141,6 +153,10 @@ const shapeOf = (value: unknown): unknown =>
     : typeof value;
 
 describe.skipIf(!!whyNotBuilt)("compile/aot/compiler budgets", () => {
+  // Both builds run at once and have ended before the first check. Left to the checks, the erased build would begin when the typed build has ended: a check that waits for
+  // its build keeps one of the places that `--max-concurrency` gives, and a check that is not yet met runs alone. A check of a build that failed says so itself.
+  beforeAll(() => Promise.allSettled(dresses.map(built)), timeout);
+
   afterAll(() => {
     if (process.env.AOT_BUDGETS !== "lower") return;
     for (const stage of budgetedStages) budgets.instructions[stage][libc] = lowered(stage, limitOf(stage), 0);
@@ -156,13 +172,23 @@ describe.skipIf(!!whyNotBuilt)("compile/aot/compiler budgets", () => {
   });
 
   for (const dress of dresses) {
-    // `concurrent` comes first: with a sanitizer `test` is concurrent already, and only its own `concurrent` allows for that.
+    // A build that left a part of the application out would be held to the limits for the rest.
+    test(`${dress}: the build reads every line of the application`, async () => {
+      const { counts, linesWritten } = await built(dress);
+      expect(counts.SourceLines).toBe(linesWritten);
+    });
+
+    test(`${dress}: the build prints every number that a check reads`, async () => {
+      const finished = await built(dress);
+      const stages = stagesOf(finished);
+      expect({
+        counters: countersRead.filter(name => finished.counts[name] > 0),
+        instructions: stagesCounted.filter(stage => stages[stage].instructions! > 0),
+      }).toEqual({ counters: countersRead, instructions: stagesCounted });
+    });
+
     for (const [stage, parts] of Object.entries(budgetedPartsOf) as [StageName, BudgetedStage[]][])
-      (whyNotCounted
-        ? test.concurrent.skipIf(true)
-        : measuredWhereNotYetMet[dress][stage]
-          ? test.failing
-          : test.concurrent)(
+      (whyNotCounted ? test.skip : measuredWhereNotYetMet[dress][stage] ? test.failing : test)(
         nameOfCheck(
           `${dress}: instructions of ${stage}`,
           measuredWhereNotYetMet[dress][stage],
@@ -179,11 +205,10 @@ describe.skipIf(!!whyNotBuilt)("compile/aot/compiler budgets", () => {
           console.error(line);
           expect(instructions, line).toBeLessThanOrEqual(allowed);
         },
-        timeout,
       );
 
     for (const touch of touches)
-      (measuredWhereNotYetMet[dress][touch] ? test.failing : test.concurrent)(
+      (measuredWhereNotYetMet[dress][touch] ? test.failing : test)(
         nameOfCheck(
           `${dress}: ${touch} per ${unitOfTouch[touch]}`,
           measuredWhereNotYetMet[dress][touch],
@@ -197,7 +222,6 @@ describe.skipIf(!!whyNotBuilt)("compile/aot/compiler budgets", () => {
           console.error(line);
           expect(ratio, line).toBeLessThanOrEqual(budgets.touches[touch]);
         },
-        timeout,
       );
   }
 });

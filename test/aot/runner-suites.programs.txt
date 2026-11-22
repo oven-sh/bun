@@ -188,6 +188,10 @@ test/bundler/transpiler/es-decorators.test.ts: ES decorators lowering matrix > .
 test/js/bun/util/inspect-error.test.js: AggregateError whose errors cannot be walked > the error a second load of a module that failed to build rejects with
 test/js/bun/util/inspect-error.test.js: a relative source with backslashes in an external map
 test/js/bun/util/inspect-error.test.js: a rooted source with backslashes in an external map
+test/js/bun/util/inspect-error.test.js: source map remapping of the printed stack > Bun.file() with a relative path: frames are those of the file loaded by its path
+test/js/bun/util/inspect-error.test.js: source map remapping of the printed stack > Bun.file() with a relative path: its .map file is found after process.chdir()
+test/js/bun/util/inspect-error.test.js: source map remapping of the printed stack > Bun.file() with a relative path: the original source is beside the file
+test/js/bun/util/inspect-error.test.js: source map remapping of the printed stack > Bun.file() with the same relative path in two working directories: each keeps its map
 test/js/bun/util/inspect-error.test.js: source map remapping of the printed stack > a `cause` getter that loads the throwing file again
 test/js/bun/util/inspect-error.test.js: source map remapping of the printed stack > external map whose original source is unavailable
 test/js/node/v8/capture-stack-trace.test.js: CallFrame.p.getFunction does not expose the module loader reaction

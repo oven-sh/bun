@@ -883,7 +883,7 @@ function getTestBunStep(platform: Platform, options: PipelineOptions, testOption
   }
 
   if (testFiles?.length) {
-    args.push(...testFiles.map(testFile => `--include=${testFile}`), "--vendor=false");
+    args.push(...testFiles.map(testFile => `--include=${testFile}`));
   } else if (platform.tests) {
     args.push(...platform.tests.map(test => `--include=${test}`), "--vendor=false");
   } else {
@@ -1532,9 +1532,8 @@ function getPipelineOptions(): PipelineOptions | undefined {
     forceBuilds: parseOption(/\[(force builds?)\]/i),
     skipTests: parseOption(/\[(skip tests?|no tests?|only builds?)\]/i),
     skipSizeCheck: parseOption(/\[(skip size( check)?|allow size)\]/i),
-    buildPlatforms: Array.from(buildPlatformsMap.values()).filter(p => p.os === "windows" && p.arch === "aarch64"),
-    testPlatforms: Array.from(testPlatformsMap.values()).filter(p => p.os === "windows" && p.arch === "aarch64"),
-    testFiles: ["aot/zz-diagnose", "js/web/intl", "aot/engine/native", "js/web/workers", "js/web/atomics"],
+    buildPlatforms: Array.from(buildPlatformsMap.values()),
+    testPlatforms: Array.from(testPlatformsMap.values()),
   };
 }
 
@@ -1831,9 +1830,8 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
     .filter(({ os }) => os !== "darwin" || darwinTestsEnabled)
     // The files that a manual build asks for are not written for a platform that names its own.
     .filter(({ tests }) => !tests || !options.testFiles?.length)
-    .concat([])
-    .concat([]);
-  void [prDarwinTestPlatforms, betaDarwinTestPlatforms];
+    .concat(darwinTestsEnabled ? [] : prDarwinTestPlatforms)
+    .concat(darwinTestsEnabled ? [] : betaDarwinTestPlatforms);
   {
     const { skipTests, testFiles } = options;
     if (!skipTests) {

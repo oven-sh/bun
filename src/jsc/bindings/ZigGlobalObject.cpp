@@ -99,7 +99,6 @@
 #include "ImportMetaObject.h"
 #include <wtf/SetForScope.h>
 #include "JS2Native.h"
-#include "JSAbortAlgorithm.h"
 #include "JSAbortController.h"
 #include "JSAbortSignal.h"
 #include "streams/JSCompressionStream.h"

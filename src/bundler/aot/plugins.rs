@@ -2,7 +2,6 @@ use bun_aot::load::source_provider::{
     Failed, LoadRequest, Loaded, ModuleName, Resolution, ResolveRequest,
 };
 use bun_ast::{Kind, Loader, Log, Msg, Range};
-use bun_core::strings;
 use bun_ptr::detach_lifetime;
 use bun_sema::util::{FxHashMap, ShardedMap, SharedSort};
 use bun_threading::{Condvar, Guarded};
@@ -255,7 +254,8 @@ impl PluginRequests {
         }
         match self.written_keys.get(module.path) {
             Some(key) => Cow::Borrowed(&**key),
-            None => with_separators_of_host(module.path, cfg!(windows)),
+            // The compiler writes `C:/a/b.ts`. A filter may be written for `C:\a\b.ts`.
+            None => bun_paths::to_native(module.path),
         }
     }
 
@@ -396,15 +396,6 @@ impl PluginRequests {
     }
 }
 
-// The compiler writes `C:/a/b.ts`. The bundler tells a plugin `C:\a\b.ts`, and a filter may be written for that.
-pub(super) fn with_separators_of_host(path: &[u8], is_windows: bool) -> Cow<'_, [u8]> {
-    if !is_windows || !strings::contains_char(path, b'/') {
-        return Cow::Borrowed(path);
-    }
-    let to_backslash = |&byte: &u8| if byte == b'/' { b'\\' } else { byte };
-    Cow::Owned(path.iter().map(to_backslash).collect())
-}
-
 fn load_value(answer: Answer) -> LoadValue {
     match answer {
         Answer::Load(value) => value,
@@ -512,15 +503,6 @@ mod tests {
             Ok(Loaded::Source { contents, loader: Loader::Ts, is_from_plugin: false })
                 if &**contents == b"from file"
         )
-    }
-
-    #[test]
-    fn told_paths_have_the_separators_of_the_host() {
-        assert_eq!(
-            &*with_separators_of_host(b"C:/a/b.ts", true),
-            b"C:\\a\\b.ts"
-        );
-        assert_eq!(&*with_separators_of_host(b"/a/b.ts", false), b"/a/b.ts");
     }
 
     #[test]

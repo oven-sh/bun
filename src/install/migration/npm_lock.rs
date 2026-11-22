@@ -4,7 +4,6 @@ use bun_ast::E;
 use bun_collections::{DynamicBitSet, StringArrayHashMap, StringHashMap};
 use bun_core::strings;
 use bun_install_types::DependencyGroup;
-use bun_paths::resolve_path;
 use bun_semver::{self as Semver, String as SemverString};
 use bun_sys::{Fd, File, O};
 
@@ -1158,14 +1157,10 @@ pub(super) fn apply_root_overrides(
     };
     drop(file);
 
-    let mut package_json_path_buf = bun_paths::path_buffer_pool::get();
-    let package_json_path = resolve_path::join_string_buf::<bun_paths::platform::Auto>(
-        &mut package_json_path_buf[..],
-        &[
-            bun_paths::dirname(abs_lockfile_path).unwrap_or_default(),
-            b"package.json",
-        ],
-    );
+    let package_json_path: &[u8] = &bun_paths::Path::join(&[
+        bun_paths::dirname_or_root(abs_lockfile_path),
+        b"package.json",
+    ]);
     let source = bun_ast::Source::init_path_string(package_json_path, contents.as_slice());
     let arena = bun_alloc::Arena::new();
     let Ok(parsed) = bun_json::parse_package_json_utf8_with_opts(

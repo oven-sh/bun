@@ -1,30 +1,25 @@
-use bun_paths::path_options::{Kind, PathSeparators};
-use bun_paths::{AutoRelPath, Path};
+use bun_core::ZStr;
 use bun_sys::{self as sys, Errno, Fd, FdDirExt, FdExt};
 
 // macOS clonefileat only
 
-// `cache_dir_subpath` is borrowed mutably (rather than owned) so the caller's
-// path survives a clonefile→hardlink fallback (`continue 'backend` in
-// `Installer::Task::run`). The borrow must be `&mut` because `Path::slice_z`
-// writes the NUL terminator into the pooled buf.
 pub(crate) struct FileCloner<'a> {
     pub cache_dir: Fd,
-    pub cache_dir_subpath: &'a mut AutoRelPath,
-    pub dest_subpath: Path<u8, { Kind::ANY }, { PathSeparators::AUTO }>,
+    pub cache_dir_subpath: &'a ZStr,
+    pub dest_subpath: &'a ZStr,
 }
 
 impl FileCloner<'_> {
-    fn clonefileat(&mut self) -> sys::Result<()> {
+    fn clonefileat(&self) -> sys::Result<()> {
         sys::clonefileat(
             self.cache_dir,
-            self.cache_dir_subpath.slice_z(),
+            self.cache_dir_subpath,
             Fd::cwd(),
-            self.dest_subpath.slice_z(),
+            self.dest_subpath,
         )
     }
 
-    pub(crate) fn clone(&mut self) -> sys::Result<()> {
+    pub(crate) fn clone(&self) -> sys::Result<()> {
         match self.clonefileat() {
             Ok(()) => Ok(()),
             Err(err) => match err.get_errno() {
@@ -36,12 +31,12 @@ impl FileCloner<'_> {
                     // to wipe and re-clone here — we're only ever writing
                     // into a per-process staging directory or a project-local
                     // path, never into a published shared directory.
-                    let _ = Fd::cwd().delete_tree(self.dest_subpath.slice());
+                    let _ = Fd::cwd().delete_tree(self.dest_subpath);
                     self.clonefileat()
                 }
 
                 Errno::ENOENT => {
-                    let Some(parent_dest_dir) = self.dest_subpath.dirname() else {
+                    let Some(parent_dest_dir) = bun_paths::dirname(self.dest_subpath) else {
                         return Err(err);
                     };
                     let _ = Fd::cwd().make_path(parent_dest_dir);

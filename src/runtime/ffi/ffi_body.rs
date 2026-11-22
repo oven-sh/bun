@@ -668,7 +668,6 @@ impl CompileC {
 
         #[cfg(target_os = "macos")]
         {
-            let mut pathbuf = bun_paths::path_buffer_pool::get();
             'add_system_include_dir: {
                 let dirs_to_try: [&[u8]; 2] = [
                     env_var::SDKROOT.get().unwrap_or(b""),
@@ -678,23 +677,16 @@ impl CompileC {
                 ];
 
                 for sdkroot in dirs_to_try {
-                    if !sdkroot.is_empty() {
-                        let include_dir = path::resolve_path::join_abs_string_buf_z::<
-                            path::platform::Auto,
-                        >(
-                            sdkroot, pathbuf.as_mut_slice(), &[b"usr", b"include"]
-                        );
-                        if state.add_sys_include_path(include_dir).is_err() {
+                    // It can be the name of an SDK.
+                    if path::is_absolute(sdkroot) {
+                        let include_dir = path::Path::resolve(&[sdkroot, b"usr/include"]);
+                        if state.add_sys_include_path(&include_dir).is_err() {
                             global_this.throw(format_args!("TinyCC failed to add sysinclude path"));
                             return Err(crate::Error::JSError);
                         }
 
-                        let lib_dir = path::resolve_path::join_abs_string_buf_z::<
-                            path::platform::Auto,
-                        >(
-                            sdkroot, pathbuf.as_mut_slice(), &[b"usr", b"lib"]
-                        );
-                        if state.add_library_path(lib_dir).is_err() {
+                        let lib_dir = path::Path::resolve(&[sdkroot, b"usr/lib"]);
+                        if state.add_library_path(&lib_dir).is_err() {
                             global_this.throw(format_args!("TinyCC failed to add library path"));
                             return Err(crate::Error::JSError);
                         }
@@ -1502,7 +1494,7 @@ impl FFI {
             return Ok(invalid_options_arg(global));
         };
 
-        let mut filepath_buf = bun_paths::path_buffer_pool::get();
+        let extracted;
         let name: &[u8] = 'brk: {
             let ext: &[u8] = match () {
                 // Android shared libraries are `.so` (ELF, same as Linux/FreeBSD).
@@ -1522,17 +1514,9 @@ impl FFI {
             // can't see the bunfs virtual FS. The helper lives in
             // `crate::jsc_hooks` — same crate, so a direct call.
             let _ = vm;
-            if let Some(len) = crate::jsc_hooks::resolve_embedded_file_to_buf(
-                name_slice,
-                ext,
-                &mut filepath_buf[..],
-            ) {
-                // NUL-terminate in place so `DynLib::open`
-                // can pass the slice to libc without copying. `resolve_*_to_buf`
-                // is bounded by `Fs::FileSystem::tmpname` + a tmpdir join (both
-                // fit in `PATH_MAX`), so `filepath_buf[len]` is in bounds.
-                filepath_buf[len] = 0;
-                break 'brk &filepath_buf[0..len];
+            if let Some(path) = crate::jsc_hooks::resolve_embedded_file(name_slice, ext) {
+                extracted = path;
+                break 'brk &extracted;
             }
 
             break 'brk name_slice;
@@ -1561,12 +1545,10 @@ impl FFI {
                 Ok(d) => break 'brk d,
                 Err(_) => {
                     // if that fails, try resolving the filepath relative to the current working directory
-                    let mut backup_buf = bun_paths::path_buffer_pool::get();
-                    let backup_name =
-                        Fs::FileSystem::get().abs_buf_checked(&[name], &mut backup_buf[..]);
-                    match backup_name.map(open) {
-                        Some(Ok(d)) => break 'brk d,
-                        Some(Err(_)) | None => {
+                    let cwd = Fs::FileSystem::get().top_level_dir();
+                    match open(&bun_resolver::resolve_keeping_sep(&[cwd, name])) {
+                        Ok(d) => break 'brk d,
+                        Err(_) => {
                             // Then, if that fails, report an error with the library name and system error
                             let dlerror_msg = get_dl_error();
 

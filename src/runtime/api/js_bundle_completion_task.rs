@@ -1135,6 +1135,7 @@ impl JSBundleCompletionTask {
             },
             entry_points: config.entry_points.keys().to_vec(),
             target: Some(config.target.to_api()),
+            target_is_explicit: config.target_is_explicit,
             absolute_working_dir: if !config.dir.list.is_empty() {
                 Some(Box::from(config.dir.list.as_slice()))
             } else {

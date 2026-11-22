@@ -10,7 +10,7 @@ use crate::response::{State, WriteResult};
 use crate::socket_context::BunSocketContextOptions;
 use crate::thunk;
 use crate::{AnyRequest, AnyResponse};
-use bun_ptr::ThisPtr;
+use bun_ptr::{AnyRefCounted, RefPtr};
 
 // ──────────────────────────────────────────────────────────────────────────
 // ListenSocket
@@ -453,20 +453,33 @@ impl App {
     }
 
     /// `route` for an intrusively-refcounted `U` as the route userdata; see
-    /// [`method_this`](Self::method_this).
-    fn route_this<U: 'static, H>(which: RouteKind, this: &mut App, pattern: &[u8], ud: ThisPtr<U>)
-    where
-        H: Fn(ThisPtr<U>, AnyRequest, AnyResponse) + Copy + 'static,
+    /// [`method_ref`](Self::method_ref).
+    fn route_ref<U: AnyRefCounted + 'static, H>(
+        which: RouteKind,
+        this: &mut App,
+        pattern: &[u8],
+        owner: &RefPtr<U>,
+    ) where
+        H: Fn(RefPtr<U>, AnyRequest, AnyResponse) + Copy + 'static,
     {
-        extern "C" fn cb<U: 'static, H>(res: *mut Response, req: *mut Request, p: *mut c_void)
-        where
-            H: Fn(ThisPtr<U>, AnyRequest, AnyResponse) + Copy + 'static,
+        extern "C" fn cb<U: AnyRefCounted + 'static, H>(
+            res: *mut Response,
+            req: *mut Request,
+            p: *mut c_void,
+        ) where
+            H: Fn(RefPtr<U>, AnyRequest, AnyResponse) + Copy + 'static,
         {
-            // SAFETY: `p` is the `ThisPtr` registered with this thunk; the registrant holds a ref on it while the route is registered.
-            let this = unsafe { ThisPtr::new(p.cast::<U>()) };
-            thunk::zst::<H>()(this, AnyRequest::H3(req), AnyResponse::H3(res));
+            // SAFETY: `p` is the pointer registered with this thunk; the registrant holds a ref on it while the route is registered.
+            let owner = unsafe { RefPtr::init_ref(p.cast::<U>()) };
+            thunk::zst::<H>()(owner, AnyRequest::H3(req), AnyResponse::H3(res));
         }
-        Self::route_raw(which, this, pattern, Some(cb::<U, H>), ud.as_ptr().cast());
+        Self::route_raw(
+            which,
+            this,
+            pattern,
+            Some(cb::<U, H>),
+            owner.as_ptr().cast(),
+        );
     }
 
     fn route_raw(
@@ -513,28 +526,28 @@ impl App {
     }
 
     /// [`method`](Self::method) with an intrusively-refcounted `U` as the
-    /// route userdata. The registrant keeps a ref on `this` for as long as the
-    /// route is registered, so the trampoline can hand the handler a `ThisPtr`.
-    pub fn method_this<U: 'static, H>(
+    /// route userdata. The registrant keeps a ref on `owner` for as long as the
+    /// route is registered, so the trampoline can hand the handler a ref of its own.
+    pub fn method_ref<U: AnyRefCounted + 'static, H>(
         &mut self,
         m: bun_http_types::Method::Method,
         p: &[u8],
         _h: H,
-        this: ThisPtr<U>,
+        owner: &RefPtr<U>,
     ) where
-        H: Fn(ThisPtr<U>, AnyRequest, AnyResponse) + Copy + 'static,
+        H: Fn(RefPtr<U>, AnyRequest, AnyResponse) + Copy + 'static,
     {
         if let Some(kind) = RouteKind::from_method(m) {
-            Self::route_this::<U, H>(kind, self, p, this);
+            Self::route_ref::<U, H>(kind, self, p, owner);
         }
     }
 
-    /// [`any`](Self::any) counterpart of [`method_this`](Self::method_this).
-    pub fn any_this<U: 'static, H>(&mut self, p: &[u8], _h: H, this: ThisPtr<U>)
+    /// [`any`](Self::any) counterpart of [`method_ref`](Self::method_ref).
+    pub fn any_ref<U: AnyRefCounted + 'static, H>(&mut self, p: &[u8], _h: H, owner: &RefPtr<U>)
     where
-        H: Fn(ThisPtr<U>, AnyRequest, AnyResponse) + Copy + 'static,
+        H: Fn(RefPtr<U>, AnyRequest, AnyResponse) + Copy + 'static,
     {
-        Self::route_this::<U, H>(RouteKind::Any, self, p, this);
+        Self::route_ref::<U, H>(RouteKind::Any, self, p, owner);
     }
 
     pub fn listen_with_config<UD, H>(&mut self, ud: *mut UD, _handler: H, config: &ListenConfig)

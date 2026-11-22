@@ -804,14 +804,82 @@ describe.concurrent("console.*", () => {
         `
           for (const name of ["log", "warn", "error"]) dc.subscribe("console." + name, args => (args.length = 0));
           const c = ${target};
-          for (const method of ["log", "dirxml", "table", "count", "warn", "error", "trace", "group"]) c[method]("secret");
+          for (const method of ["log", "dirxml", "table", "count", "warn", "error", "group"]) c[method]("secret");
+          c.count();
+          c.table(["secret"]);
           c.groupEnd();
           c.assert(false);
           c.info("end");
         `,
-        { stderr: "\n\n\n\n" },
+        { stderr: "\n\n\n" },
       ),
-    ).toEqual(["", "", "", "", "", "end"]);
+    ).toEqual(["", "", "", "", "", "  ", "  ", "end"]);
+  });
+
+  test("what a subscriber changes stays on the stream that the global console prints it on", async () => {
+    expect(
+      await run(
+        `
+          dc.subscribe("console.log", args => (args.length > 3 ? (args[2] = "changed") : (args.length = 0)));
+          dc.subscribe("console.error", args => (args[0] = "trace"));
+          console.time();
+          console.timeLog("default", 1);
+          console.timeEnd();
+          console.trace();
+        `,
+        { stderr: "default: changed 1\n\n" },
+      ),
+    ).toEqual(["trace"]);
+  });
+
+  test.each(["timeLog('default', error)", "assert(false, error)"])(
+    "an error in %s is printed as one if a subscriber changes another argument",
+    async call => {
+      await run(
+        `
+          for (const name of ["log", "warn"]) dc.subscribe("console." + name, args => args.push("added"));
+          const error = new Error("message");
+          console.time();
+          console.${call};
+        `,
+        { stderr: expect.stringMatching(/error: message[^]*added/) },
+      );
+    },
+  );
+
+  test.each(["log", "count"])("console.%s() prints a part of a list that is too long", async method => {
+    const [line] = await run(`
+      dc.subscribe("console.log", args => (args.length = 2 ** 32 - 1));
+      console.${method}("a");
+    `);
+    expect(line.split(" undefined")).toHaveLength(255);
+  });
+
+  test("a subscriber can wait for a thread that prints while console.table() publishes", async () => {
+    expect(
+      await run(`
+        const turn = new Int32Array(new SharedArrayBuffer(4));
+        const give = (turn, to) => (Atomics.store(turn, 0, to), Atomics.notify(turn, 0));
+        const worker = new Worker("data:text/javascript," + encodeURIComponent(\`
+          onmessage = ({ data: turn }) => {
+            postMessage(0);
+            Atomics.wait(turn, 0, 0);
+            console.log("worker");
+            (\${give})(turn, 2);
+          };
+        \`));
+        dc.subscribe("console.log", args => {
+          give(turn, 1);
+          Atomics.wait(turn, 0, 1);
+          args[0] = "table";
+        });
+        worker.onmessage = () => {
+          console.table([1]);
+          worker.terminate();
+        };
+        worker.postMessage(turn);
+      `),
+    ).toEqual(["worker", "table"]);
   });
 
   test("a subscriber that changes nothing leaves the output as it is", async () => {
@@ -2309,8 +2377,11 @@ async function run(script: string, options: { cwd?: string; stderr?: string } = 
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toEqual(options.stderr ?? "");
-  expect(exitCode).toBe(0);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: expect.any(String),
+    stderr: options.stderr ?? "",
+    exitCode: 0,
+  });
   return stdout.trimEnd().split("\n");
 }
 

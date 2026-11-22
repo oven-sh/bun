@@ -13,6 +13,7 @@ use crate::virtual_machine::VirtualMachine;
 use crate::{EventType, JSGlobalObject, JSPromise, JSValue, JsCell, JsResult, StringJsc as _};
 use bun_collections::HashMap;
 use bun_core::io::WriterStorage;
+use bun_core::output::Destination;
 use bun_core::{EncodedSlice, String as BunString, strings};
 use bun_core::{Output, StackCheck};
 
@@ -315,14 +316,35 @@ fn publish_log(
     global: &JSGlobalObject,
     hook: JSValue,
     method: &'static str,
+    stream: Destination,
     values: JSValue,
 ) -> JsResult<bool> {
+    /// As for `console.log()`, in ConsoleObject.cpp.
+    const MAX_PRINTED: u64 = 255;
+
     let method = BunString::static_(method).to_js(global)?;
     let changed = hook.call_for_running_script(global, JSValue::UNDEFINED, &[values, method])?;
     if changed.is_undefined() {
         return Ok(false);
     }
-    crate::cpp::Bun__consoleLogItems(global, changed)?;
+    crate::MarkedArgumentBuffer::new(|rooted| {
+        let mut printed = Vec::new();
+        for index in 0..changed.get_length(global)?.min(MAX_PRINTED) {
+            let value = changed.get_index(global, index as u32)?;
+            rooted.append(value);
+            printed.push(value);
+        }
+        if printed.is_empty() {
+            printed.push(JSValue::js_empty_string(global));
+        }
+        print_message(
+            MessageType::Log,
+            MessageLevel::Log,
+            stream,
+            global,
+            &printed,
+        )
+    })?;
     Ok(true)
 }
 
@@ -332,6 +354,7 @@ fn publish_labelled(
     global: &JSGlobalObject,
     hook: JSValue,
     method: &'static str,
+    stream: Destination,
     label: &BunString,
     value: f64,
     rest: &[JSValue],
@@ -342,7 +365,7 @@ fn publish_labelled(
         for (index, &value) in head.iter().chain(rest).enumerate() {
             values.put_index(global, index as u32, value)?;
         }
-        publish_log(global, hook, method, values)
+        publish_log(global, hook, method, stream, values)
     };
     publish().unwrap_or_else(|err| {
         leave_pending(global, err);
@@ -355,7 +378,7 @@ fn publish_table(global: &JSGlobalObject, hook: JSValue, text: &[u8]) -> JsResul
     let text = text.strip_suffix(b"\n").unwrap_or(text);
     let text = crate::bun_string_jsc::create_utf8_for_js(global, text)?;
     let values = JSValue::create_array_from_slice(global, &[text])?;
-    publish_log(global, hook, "table", values)
+    publish_log(global, hook, "table", Destination::Stdout, values)
 }
 
 /// The exception is already set on the VM (`JsError::Thrown`); for OOM
@@ -374,7 +397,11 @@ pub fn message_with_type_and_level(
     global: &JSGlobalObject,
     vals: &[JSValue],
 ) {
-    if let Err(err) = message_with_type_and_level_(message_type, level, global, vals) {
+    let stream = match level {
+        MessageLevel::Warning | MessageLevel::Error => Destination::Stderr,
+        _ => Destination::Stdout,
+    };
+    if let Err(err) = print_message(message_type, level, stream, global, vals) {
         leave_pending(global, err);
     }
 }
@@ -419,9 +446,10 @@ fn print_one_text(level: MessageLevel, global: &JSGlobalObject, text: JSValue) -
     Ok(())
 }
 
-fn message_with_type_and_level_(
+fn print_message(
     message_type: MessageType,
     level: MessageLevel,
+    stream: Destination,
     global: &JSGlobalObject,
     vals: &[JSValue],
 ) -> JsResult<()> {
@@ -449,9 +477,9 @@ fn message_with_type_and_level_(
 
     // Lock/unlock a mutex incase two JS threads are console.log'ing at the same
     // time. We do this the slightly annoying way to avoid assigning a pointer.
-    let use_stderr = matches!(level, MessageLevel::Warning | MessageLevel::Error)
-        || message_type == MessageType::Assert;
-    let _stream_lock = ConsoleStreamLock::acquire(use_stderr);
+    let is_stderr = stream == Destination::Stderr;
+    let use_stderr = is_stderr || message_type == MessageType::Assert;
+    let stream_lock = ConsoleStreamLock::acquire(use_stderr);
 
     if message_type == MessageType::Clear {
         Output::reset_terminal();
@@ -470,7 +498,7 @@ fn message_with_type_and_level_(
         return Ok(());
     }
 
-    let enable_colors = if matches!(level, MessageLevel::Warning | MessageLevel::Error) {
+    let enable_colors = if is_stderr {
         Output::enable_ansi_colors_stderr()
     } else {
         Output::enable_ansi_colors_stdout()
@@ -478,7 +506,7 @@ fn message_with_type_and_level_(
 
     let default_indent = console.default_indent.get();
 
-    let mut raw_writer = if matches!(level, MessageLevel::Warning | MessageLevel::Error) {
+    let mut raw_writer = if is_stderr {
         console.error_writer()
     } else {
         console.writer()
@@ -537,10 +565,15 @@ fn message_with_type_and_level_(
             } else {
                 table_printer.print_table::<false>(target)
             };
-            if let (Some(hook), Ok(())) = (hook, printed)
-                && !publish_table(global, hook, &text)?
-            {
-                let _ = writer.write_all(&text);
+            if let (Some(hook), Ok(())) = (hook, printed) {
+                // A subscriber can wait for a thread that prints.
+                drop(stream_lock);
+                if !publish_table(global, hook, &text)? {
+                    let _stream_lock = ConsoleStreamLock::acquire(use_stderr);
+                    let _ = writer.write_all(&text);
+                    let _ = writer.flush();
+                }
+                return Ok(());
             }
             let _ = writer.flush();
             return Ok(());
@@ -5684,7 +5717,15 @@ pub(crate) extern "C" fn Bun__ConsoleObject__count(
     });
 
     if let Some(hook) = log_hook(global_this)
-        && publish_labelled(global_this, hook, "count", label, f64::from(current), &[])
+        && publish_labelled(
+            global_this,
+            hook,
+            "count",
+            Destination::Stdout,
+            label,
+            f64::from(current),
+            &[],
+        )
     {
         return;
     }
@@ -5765,7 +5806,15 @@ pub(crate) extern "C" fn Bun__ConsoleObject__timeEnd(global: &JSGlobalObject, la
     let elapsed =
         (value.read() / bun_core::time::NS_PER_US) as f64 / bun_core::time::US_PER_MS as f64;
     if let Some(hook) = log_hook(global)
-        && publish_labelled(global, hook, "time", label, elapsed, &[])
+        && publish_labelled(
+            global,
+            hook,
+            "time",
+            Destination::Stderr,
+            label,
+            elapsed,
+            &[],
+        )
     {
         return;
     }
@@ -5802,7 +5851,15 @@ pub(crate) extern "C" fn Bun__ConsoleObject__timeLog(
     let elapsed =
         (value.read() / bun_core::time::NS_PER_US) as f64 / bun_core::time::US_PER_MS as f64;
     if let Some(hook) = log_hook(global)
-        && publish_labelled(global, hook, "time", label, elapsed, args)
+        && publish_labelled(
+            global,
+            hook,
+            "time",
+            Destination::Stderr,
+            label,
+            elapsed,
+            args,
+        )
     {
         return;
     }

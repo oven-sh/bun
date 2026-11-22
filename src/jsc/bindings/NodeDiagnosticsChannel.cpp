@@ -3,7 +3,6 @@
 #include "AsyncContextFrame.h"
 #include "ModuleGraph.h"
 #include "WebCoreJSBuiltins.h"
-#include "headers.h"
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/JSPromisePrototype.h>
 #include <JavaScriptCore/JSWeakMapInlines.h>
@@ -94,21 +93,9 @@ static DiagnosticsHook hookOfLevel(MessageLevel level)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static void appendItems(JSGlobalObject* globalObject, JSArray* array, MarkedArgumentBuffer& items, size_t limit)
-{
-    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
-    for (unsigned i = 0; i < array->length() && i < limit; ++i) {
-        JSValue value = array->getIndex(globalObject, i);
-        RETURN_IF_EXCEPTION(scope, );
-        items.append(value);
-    }
-    if (items.hasOverflowed()) [[unlikely]]
-        throwOutOfMemoryError(globalObject, scope);
-}
-
 // Five methods publish. The others that are heard call one of the five:
 // https://github.com/nodejs/node/blob/v26.12.1/lib/internal/console/constructor.js#L409-L560
-bool publishConsoleCall(Zig::GlobalObject* globalObject, MessageType& type, MessageLevel& level, const Inspector::ScriptArguments& arguments, MarkedArgumentBuffer& printed, size_t printedLimit)
+bool publishConsoleCall(Zig::GlobalObject* globalObject, MessageType& type, MessageLevel level, const Inspector::ScriptArguments& arguments, MarkedArgumentBuffer& printed, size_t printedLimit)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -170,23 +157,21 @@ bool publishConsoleCall(Zig::GlobalObject* globalObject, MessageType& type, Mess
     if (result.isUndefined())
         return false;
 
-    appendItems(globalObject, asArray(result), printed, printedLimit);
-    RETURN_IF_EXCEPTION(scope, false);
+    auto* changed = asArray(result);
+    for (unsigned i = 0; i < changed->length() && i < printedLimit; ++i) {
+        JSValue value = changed->getIndex(globalObject, i);
+        RETURN_IF_EXCEPTION(scope, false);
+        printed.append(value);
+    }
+    if (printed.hasOverflowed()) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return false;
+    }
     // A subscriber took everything away: the line stays.
     if (printed.isEmpty() && (count || !method.isNull()))
         printed.append(jsEmptyString(vm));
     type = publishedType;
-    level = publishedLevel;
     return true;
-}
-
-extern "C" [[ZIG_EXPORT(check_slow)]] void Bun__consoleLogItems(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue array)
-{
-    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
-    MarkedArgumentBuffer items;
-    appendItems(globalObject, asArray(JSValue::decode(array)), items, std::numeric_limits<size_t>::max());
-    RETURN_IF_EXCEPTION(scope, );
-    RELEASE_AND_RETURN(scope, Bun__ConsoleObject__messageWithTypeAndLevel(static_cast<uint32_t>(MessageType::Log), static_cast<uint32_t>(MessageLevel::Log), globalObject, items.data(), items.size()));
 }
 
 extern "C" [[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue Bun__consoleLogDiagnosticsHook(JSC::JSGlobalObject* globalObject)

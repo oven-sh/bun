@@ -1292,7 +1292,7 @@ impl BlobExt for Blob {
 
         // `pipe_stream` takes its own refs; init's +1 drops with `file_sink` on return.
         let mut readable_stream = readable_stream;
-        match webcore::FileSink::pipe_stream(&file_sink, &mut readable_stream, cx.global()) {
+        match file_sink.pipe_stream(&mut readable_stream, cx.global()) {
             Ok(promise) => Ok(promise),
             Err(err) => {
                 Ok(JSPromise::rejected_promise_with_caught_exception(cx.global(), err)?.to_js())
@@ -1428,7 +1428,7 @@ impl BlobExt for Blob {
                 sink.close_with_graph(context);
             }
 
-            return Ok(webcore::FileSink::to_js(sink, global_this));
+            return Ok(sink.to_js(global_this));
         }
 
         #[cfg(not(windows))]
@@ -1472,7 +1472,7 @@ impl BlobExt for Blob {
                 return Err(global_this.throw_value(err.to_js(global_this)));
             }
 
-            Ok(webcore::FileSink::to_js(sink, global_this))
+            Ok(sink.to_js(global_this))
         }
     }
     fn get_slice_from(

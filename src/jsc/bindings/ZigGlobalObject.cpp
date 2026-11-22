@@ -375,8 +375,7 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
 
         std::set_terminate([]() {
 #if OS(DARWIN)
-            // A native addon or a system library calls the operator new of libc++abi.dylib, which throws where it has no
-            // memory. Nothing caught it.
+            // libc++abi's operator new threw in a native addon or a system library, and nothing caught it.
             if (auto* type = abi::__cxa_current_exception_type()) {
                 if (!strcmp(type->name(), "St9bad_alloc") || !strcmp(type->name(), "St20bad_array_new_length"))
                     Bun__outOfMemory();

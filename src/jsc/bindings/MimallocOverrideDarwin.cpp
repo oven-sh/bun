@@ -11,9 +11,8 @@
 //
 // free, realloc and operator delete look the pointer up and give a block that is not mimalloc's back to the zone that
 // owns it. Such blocks also reach the executable from realpath(path, nullptr), getcwd(nullptr, 0), __cxa_demangle,
-// backtrace_symbols, getdelim, and native addons that hand over ownership. Another image's operator new can also be some
-// library's own: one that the library exports, which dyld gives to the images it binds later, or one that
-// DYLD_INSERT_LIBRARIES interposes. Its blocks come to operator delete here, so it has to allocate from a malloc zone.
+// backtrace_symbols, getdelim, and native addons that hand over ownership.
+// An operator new that a library exports or interposes has to allocate from a malloc zone: its blocks come here too.
 //
 // The other direction has no such check: never hand a block from malloc to a system API that releases it with its own
 // free (kCFAllocatorMalloc, freeWhenDone:YES, DISPATCH_DATA_DESTRUCTOR_FREE, a heap block for _Block_release, a buffer
@@ -87,8 +86,7 @@ BUN_LINKED_ONLY char* strndup(const char* string, size_t maxLength) { return mi_
 
 #undef BUN_LINKED_ONLY
 
-// The link exports none of the eight, so they serve the executable alone. clang refuses to hide a replaceable operator
-// in the source. Out of line: a call site is then one call, not a copy of mimalloc's allocation path.
+// clang refuses to hide a replaceable operator, so the link does. Not inlined: each caller would get a copy of mi_new.
 #define BUN_OPERATOR_NEW __attribute__((used)) NEVER_INLINE void*
 
 BUN_OPERATOR_NEW operator new(size_t size) { return mi_new(size); }

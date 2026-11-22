@@ -98,7 +98,7 @@ Then `bun run ci:watch` and fix anything that turns up.
 - **`X509_V_ERR_UNABLE_TO_VERIFY_LEAF_SIGNATURE`** (upstream no longer reports it; Node does) — `check_lone_untrusted_leaf` in `crypto/x509/x509_vfy.cc`
 - **OpenSSL's verdicts in the path builder** (attribute-certificate CRLs, revocation of trust anchors, partial chains, `keyUsage`-only anchors, auto-chaining) — `crypto/x509/{x509_vfy,v3_purp}.cc`, `ssl/ssl_x509.cc`
 - **OpenSSL's choice of issuer, purposes, trust settings, policies and error strings** (`X509IssuerSelectionTest` lists the rules, and the bugs of OpenSSL that are left out) — `crypto/x509/{x509_vfy,x509_lu,x509_trs,x509_txt,v3_purp,policy,by_dir}.cc`
-- **A wrong `keyUsage` of the peer is a verification error, not a handshake failure** — `ssl_check_peer_key_usage` and its callers in `ssl/`
+- **Only ECDSA cipher suites are matched to `keyUsage`, as in OpenSSL** (upstream matches every handshake) — the callers of `ssl_cert_check_key_usage` in `ssl/`
 
 If upstream upstreams any of these (check `git grep` on `upstream/main` before re-applying), drop the fork's copy.
 

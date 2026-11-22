@@ -2,7 +2,14 @@ import { describe, expect, it } from "bun:test";
 import { once } from "events";
 import { readFileSync } from "fs";
 import { bunEnv, bunExe, tls as harnessCert, invalidTls, isLinux, tempDir, tmpdirSync } from "harness";
-import { generateKeyPairSync, sign, X509Certificate, type KeyObject } from "node:crypto";
+import {
+  createPrivateKey,
+  createPublicKey,
+  generateKeyPairSync,
+  sign,
+  X509Certificate,
+  type KeyObject,
+} from "node:crypto";
 import https from "node:https";
 import net, { type AddressInfo } from "node:net";
 import { Duplex } from "node:stream";
@@ -1101,10 +1108,15 @@ describe("several certificates match one issuer", () => {
   const armor = (label: string, der: Buffer) =>
     `-----BEGIN ${label}-----\n${der.toString("base64").replace(/.{64}(?!$)/g, "$&\n")}\n-----END ${label}-----\n`;
   type KeyPair = { publicKey: KeyObject; privateKey: KeyObject };
-  const isEC = ({ privateKey }: KeyPair) => privateKey.asymmetricKeyType === "ec";
-  const algorithm = (signer: KeyPair) => seq(oid(isEC(signer) ? "2a8648ce3d040302" : "2b6570"));
+  const algorithms: Record<string, Buffer> = {
+    ec: seq(oid("2a8648ce3d040302")),
+    ed25519: seq(oid("2b6570")),
+    rsa: seq(oid("2a864886f70d01010b"), hex("0500")),
+  };
+  const algorithm = ({ privateKey }: KeyPair) => algorithms[privateKey.asymmetricKeyType!];
+  const digest = ({ privateKey }: KeyPair) => (privateKey.asymmetricKeyType === "ed25519" ? null : "sha256");
   const signed = (tbs: Buffer, signer: KeyPair) =>
-    seq(tbs, algorithm(signer), tlv(0x03, hex("00"), sign(isEC(signer) ? "sha256" : null, tbs, signer.privateKey)));
+    seq(tbs, algorithm(signer), tlv(0x03, hex("00"), sign(digest(signer), tbs, signer.privateKey)));
 
   const [serverAuth, clientAuth] = ["01", "02"].map(n => oid(`2b060105050703${n}`));
   const isCA = extension("551d13", seq(hex("0101ff")), true);
@@ -1225,12 +1237,15 @@ describe("several certificates match one issuer", () => {
     await using server = await serve(cert);
     return await connect(server.port, { ca, ...options });
   }
-  async function verifyClient(cert: string, ca: string | string[]) {
+  async function verifyClient(cert: string, ca: string | string[], options?: tls.ConnectionOptions) {
     await using server = await serve(chain, { ca, requestCert: true, rejectUnauthorized: false });
-    const accepted = once(server, "secureConnection");
-    expect(await connect(server.port, { key, cert, ca: root, maxVersion: "TLSv1.2" })).toBe("authorized");
-    const [peer] = (await accepted) as [TLSSocket];
-    return peer.authorized ? "authorized" : String(peer.authorizationError);
+    const socket = tls.connect({ host: "127.0.0.1", port: server.port, key, cert, ca: root, ...options });
+    try {
+      const [[peer]] = await Promise.all([once(server, "secureConnection"), once(socket, "secureConnect")]);
+      return peer.authorized ? "authorized" : String(peer.authorizationError);
+    } finally {
+      socket.destroy();
+    }
   }
   /** The certificates that getPeerCertificate(true) links. */
   async function linked(cert: string, ca: string[]) {
@@ -1670,6 +1685,14 @@ describe("several certificates match one issuer", () => {
       expect(await verify(chain, [root, withSettings(leaf, reject(serverAuth))])).toBe("CERT_REJECTED");
     });
 
+    it("that trust a leaf for another purpose do not reject it", async () => {
+      const forClients = withSettings(leaf, trustOnly(clientAuth));
+      expect([
+        await verify(chain, [root, forClients]),
+        await verify(chain, [forClients], { allowPartialTrustChain: true }),
+      ]).toEqual(["authorized", "CERT_REJECTED"]);
+    });
+
     it("do not extend the validity of an intermediate, unlike in Node.js", async () => {
       const expired = copy("a validity that ended", "usual", "intermediate");
       expect(await verify(leaf, withSettings(expired, trustOnly(serverAuth)))).toBe("CERT_HAS_EXPIRED");
@@ -1747,20 +1770,126 @@ describe("several certificates match one issuer", () => {
       ]);
     });
 
-    describe("a leaf whose keyUsage does not allow signatures", () => {
-      const keyAgreement = extension("551d0f", hex("03020308"), true);
-      const issued = mint("leaf", "intermediate", [keyAgreement, localhost], { subjectKey: leafKey }) + intermediate;
+    describe("the keyUsage of a leaf", () => {
+      const rsaKey = { privateKey: createPrivateKey(serverTls.key), publicKey: createPublicKey(serverTls.key) };
+      const usages = {
+        digitalSignature: "0780",
+        nonRepudiation: "0640",
+        keyEncipherment: "0520",
+        keyAgreement: "0308",
+        keyCertSign: "0204",
+      };
+      const keyUsage = (usage: keyof typeof usages) => extension("551d0f", tlv(0x03, hex(usages[usage])), true);
+      const identity = (subjectKey: KeyPair, usage: keyof typeof usages) => ({
+        key: subjectKey.privateKey.export({ type: "pkcs8", format: "pem" }) as string,
+        cert: mint("leaf", "intermediate", [keyUsage(usage), localhost], { subjectKey }) + intermediate,
+      });
+      const tls12 = { maxVersion: "TLSv1.2" } as const;
+      const forPurposes = [
+        ["digitalSignature", "authorized", "authorized"],
+        ["keyEncipherment", "authorized", "INVALID_PURPOSE"],
+        ["keyAgreement", "authorized", "authorized"],
+        ["nonRepudiation", "INVALID_PURPOSE", "INVALID_PURPOSE"],
+        ["keyCertSign", "INVALID_PURPOSE", "INVALID_PURPOSE"],
+      ] as const;
 
-      it("can connect when it does not have to be authorized", async () => {
-        expect(await verify(issued, [root], { rejectUnauthorized: false })).toBe("authorized");
+      // BoringSSL matches it to the key exchange. OpenSSL declined: https://github.com/openssl/openssl/issues/12721
+      it.each(forPurposes)("%s has to suit the purpose, not the key exchange", async (usage, asServer, asClient) => {
+        const [rsa, ec] = [rsaKey, leafKey].map(subjectKey => identity(subjectKey, usage));
+        await using server = await serve(rsa.cert, rsa);
+        expect({
+          asServer: [
+            await connect(server.port, { ca: root }),
+            await connect(server.port, { ca: root, ...tls12, ciphers: "ECDHE-RSA-AES128-GCM-SHA256" }),
+            await connect(server.port, { ca: root, ...tls12, ciphers: "AES128-GCM-SHA256" }),
+            await verify(ec.cert, root),
+          ],
+          asClient: [
+            await verifyClient(rsa.cert, root, rsa),
+            await verifyClient(rsa.cert, root, { ...rsa, ...tls12 }),
+            await verifyClient(ec.cert, root),
+            await verifyClient(ec.cert, root, tls12),
+          ],
+          toAnyone: [
+            await connect(server.port, { rejectUnauthorized: false }),
+            await connect(server.port, { rejectUnauthorized: false, ...tls12 }),
+          ],
+        }).toEqual({
+          asServer: Array(4).fill(asServer),
+          asClient: Array(4).fill(asClient),
+          toAnyone: ["authorized", "authorized"],
+        });
       });
 
-      // https://github.com/openssl/openssl/issues/12721
-      it("is not authorized, unlike in Node.js", async () => {
-        expect([await verify(issued, [root]), await verifyClient(issued, [root])]).toEqual([
-          "INVALID_PURPOSE",
-          "INVALID_PURPOSE",
-        ]);
+      it("keyEncipherment is enough for a self-signed certificate, as IIS makes them", async () => {
+        const extensions = [extension("551d0f", hex("03020430")), eku(serverAuth), localhost];
+        const cert = mint("self", "self", extensions, { subjectKey: rsaKey, signer: rsaKey });
+        await using server = await serve(cert, { key: serverTls.key });
+        const get = (tls: Bun.TLSOptions) =>
+          fetch(`https://127.0.0.1:${server.port}`, { tls, keepalive: false }).then(
+            response => response.text(),
+            error => error.code ?? error.cause.code,
+          );
+        expect([
+          await connect(server.port, { ca: cert }),
+          await connect(server.port, { ca: cert, ...tls12 }),
+          await connect(server.port, { ca: root }),
+          await get({ ca: cert }),
+          await get({ rejectUnauthorized: false }),
+        ]).toEqual(["authorized", "authorized", "DEPTH_ZERO_SELF_SIGNED_CERT", "authorized", "authorized"]);
+      });
+
+      it("with HTTP/3", async () => {
+        const certs = forPurposes.map(([usage]) => identity(leafKey, usage).cert);
+        using dir = tempDir("key-usage", { "root.pem": root, "plan.json": JSON.stringify({ key, certs }) });
+        const script = `
+          const { key, certs } = await Bun.file("plan.json").json();
+          for (const cert of certs) {
+            const fetch = () => new Response("authorized");
+            using server = Bun.serve({ hostname: "127.0.0.1", port: 0, tls: { key, cert }, http3: true, fetch });
+            console.log(await globalThis.fetch(server.url, { protocol: "http3" }).then(res => res.text(), error => error.code));
+          }
+          process.exit(0);
+        `;
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", script],
+          cwd: String(dir),
+          env: { ...bunEnv, NODE_EXTRA_CA_CERTS: "root.pem" },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ outcomes: stdout.trim().split(/\r?\n/), stderr, exitCode }).toEqual({
+          outcomes: forPurposes.map(([, asServer]) => (asServer === "authorized" ? asServer : "HTTP3HandshakeFailed")),
+          stderr: "",
+          exitCode: 0,
+        });
+      });
+
+      describe("has to allow signatures for the ECDSA cipher suites of TLS 1.2", () => {
+        it("or a server does not offer them", async () => {
+          const [ec, rsa] = [leafKey, rsaKey].map(subjectKey => identity(subjectKey, "keyAgreement"));
+          await using alone = tls.createServer(ec);
+          await once(alone.listen(0, "127.0.0.1"), "listening");
+          const refused = once(alone, "tlsClientError");
+          await connect((alone.address() as AddressInfo).port, { ca: root, ...tls12 });
+          await using both = await serve(ec.cert, { key: [ec.key, rsa.key], cert: [ec.cert, rsa.cert] });
+          expect([(await refused)[0].code, await connect(both.port, { ca: root, ...tls12 })]).toEqual([
+            "ERR_SSL_NO_SHARED_CIPHER",
+            "authorized",
+          ]);
+        });
+
+        // Ed25519 shares them, and a server does not look at the key usage of such a certificate.
+        it("or a client gives up, even if it would accept anyone", async () => {
+          const ed25519 = identity(ed25519Key, "keyAgreement");
+          await using server = await serve(ed25519.cert, ed25519);
+          expect([
+            await connect(server.port, { ca: root, ...tls12 }),
+            await connect(server.port, { rejectUnauthorized: false, ...tls12 }),
+            await connect(server.port, { ca: root }),
+          ]).toEqual(["ERR_SSL_ECC_CERT_NOT_FOR_SIGNING", "ERR_SSL_ECC_CERT_NOT_FOR_SIGNING", "authorized"]);
+        });
       });
     });
   });

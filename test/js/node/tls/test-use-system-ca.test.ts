@@ -412,7 +412,7 @@ describe.concurrent("--use-openssl-ca", () => {
 
   // Answers a ClientHello with the ServerHello, Certificate and ServerHelloDone of TLS 1.2, which takes no private key, so
   // the certificate can be a bundled root. The client verifies it next. One that trusts the root then fails on something
-  // else: the root is not for 127.0.0.1, and may not be used for the key exchange.
+  // else: the root is not for 127.0.0.1, and the server hangs up instead of finishing the handshake.
   function serveBundledRoot() {
     const uint = (size: number, value: number) => {
       const bytes = Buffer.alloc(size);
@@ -440,7 +440,7 @@ describe.concurrent("--use-openssl-ca", () => {
         },
         data(socket, chunk) {
           const state = socket.data;
-          if (state.answered) return;
+          if (state.answered) return void socket.end();
           state.received = Buffer.concat([state.received, chunk]);
           if (state.received.length < 5 || state.received.length < 5 + state.received.readUInt16BE(3)) return;
           state.answered = true;
@@ -457,7 +457,7 @@ describe.concurrent("--use-openssl-ca", () => {
       connect: (port: number) => `fetch("https://127.0.0.1:${port}")`,
     },
     "tls.connect": {
-      trusted: "INVALID_PURPOSE",
+      trusted: "ECONNRESET",
       connect: (port: number) => `new Promise((resolve, reject) => require("node:tls").connect({
         host: "127.0.0.1", port: ${port}, maxVersion: "TLSv1.2", checkServerIdentity() {},
       }).on("error", reject))`,

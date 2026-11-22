@@ -1424,6 +1424,58 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
         exitCode: 0,
       });
     });
+
+    // The addon clears the exception that napi_run_script() reports. What stops a vm run is not one: the addon
+    // cannot clear it, and the script that called the addon does not go on. A stop that is lost fails the test
+    // and does not hang it: the script ends by itself.
+    it("does not hand a vm timeout in the script to the addon as an exception", async () => {
+      using dir = tempDir("napi-run-script-stop", {
+        "fixture.cjs": `
+          const vm = require("node:vm");
+          const { test_napi_run_script_exception_value } = require(process.argv[2]);
+          globalThis.spin = () => { const end = performance.now() + 3000; while (performance.now() < end) for (let i = 0; i < 1e4; i++); };
+          const ran = { afterTheCall: false, caught: false, finally: false };
+          const call = () => {
+            try {
+              test_napi_run_script_exception_value(() => {}, "spin()");
+              ran.afterTheCall = true;
+            } catch {
+              ran.caught = true;
+            } finally {
+              ran.finally = true;
+            }
+          };
+          let code;
+          try {
+            vm.runInContext("call()", vm.createContext({ call }), { timeout: 50 });
+            code = "no error";
+          } catch (e) {
+            code = e?.code ?? String(e);
+          }
+          console.log(JSON.stringify({ code, ...ran }));
+        `,
+      });
+      await using proc = spawn({
+        cmd: [bunExe(), "fixture.cjs", join(__dirname, "napi-app/build/Debug/napitests.node")],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      // The addon prints what it saw too.
+      const outcome = stdout.split("\n").find(line => line.startsWith("{"));
+      expect({ outcome, stderr, exitCode }).toEqual({
+        outcome: JSON.stringify({
+          code: "ERR_SCRIPT_EXECUTION_TIMEOUT",
+          afterTheCall: false,
+          caught: false,
+          finally: false,
+        }),
+        stderr: "",
+        exitCode: 0,
+      });
+    });
   });
 
   describe("napi_get_named_property", () => {

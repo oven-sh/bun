@@ -3273,9 +3273,9 @@ describe("nothing queued runs after the worker's VM stops", () => {
 // exited:
 // - the BunPerformMicrotaskJob handler in JSC (the job for `queueMicrotask()` and for the C++ web
 //   streams' start/pull/write reactions) cleared it with a plain clearException() (oven-sh/WebKit#491);
-// - JSEventListener::handleEvent and EventEmitter::innerInvokeEventListeners took it through the
-//   NakedPtr<Exception> overload of JSC::call(), which clears unconditionally, and then reported it to
-//   a reporter that ignores terminations.
+// - JSEventListener::handleEvent, EventEmitter::innerInvokeEventListeners and JSCallbackData::invokeCallback
+//   took it through the NakedPtr<Exception> overload of JSC::call(), which clears unconditionally, and
+//   then reported it to a reporter that ignores terminations.
 //
 // Every shape except the stream ones is deterministic: the listener or callback posts 'go' and spins,
 // so terminate() lands inside it while the `await 0` continuation is already queued behind it. Two
@@ -3307,6 +3307,14 @@ describe("terminate() or process.exit() while a microtask-only loop keeps enteri
       },
     ],
     ["process.emit()", { setup: spinOnSecondCall + "process.on('evt', L);", loop: "process.emit('evt');" }],
+    [
+      // observe({ buffered: true }) calls the callback before it returns.
+      "a PerformanceObserver's callback",
+      {
+        setup: spinOnSecondCall,
+        loop: "performance.mark('m'); new PerformanceObserver(L).observe({ type: 'mark', buffered: true });",
+      },
+    ],
     // process.exit() inside the job: the worker exits on its own with that code, and runs nothing after.
     ["process.exit() in queueMicrotask()", { loop: "queueMicrotask(() => { process.exit(42); });", exit: 42 }],
     [

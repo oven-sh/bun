@@ -2,16 +2,14 @@ import { file, Glob } from "bun";
 import { describe, expect, test } from "bun:test";
 import path from "path";
 
-// JSC's `NakedPtr<Exception>&` overloads of `call()` / `profiledCall()` hand the caller whatever the
-// callee threw and clear it from the VM, a TerminationException included. A TerminationException is
-// not the callee's error: it is the VM's stop (a worker's `process.exit()`, its parent's
-// `terminate()`, a `node:vm` timeout). A frame that takes it this way and then reports "the error"
-// has dropped the stop: the script that called into native code goes on, and queued work runs on a
-// VM that was told to stop.
+// JSC's `NakedPtr<Exception>&` overloads of `call()`, `profiledCall()` and `evaluate()` hand the caller
+// whatever the callee threw and clear it from the VM, a TerminationException included. A
+// TerminationException is not the callee's error: it is the VM's stop (a worker's `process.exit()`, its
+// parent's `terminate()`, a `node:vm` timeout). A frame that takes it this way has dropped the stop: the
+// script that called into native code goes on, and queued work runs on a VM that was told to stop.
 //
-// A frame that calls script and does not re-throw what it threw uses the plain overload under a
-// `TopExceptionScope` instead, and hands what it finds there to `Bun::clearExceptionOrTakeTermination()`
-// (BunClientData.h) before it reports anything:
+// A frame that calls script and reports what it threw uses the plain overload under a `TopExceptionScope`
+// and hands what it finds there to `Bun::clearExceptionOrTakeTermination()` (BunClientData.h):
 //
 //     call(globalObject, function, callData, thisValue, args);
 //     if (auto* exception = scope.exception()) [[unlikely]] {
@@ -20,17 +18,20 @@ import path from "path";
 //         report(exception);
 //     }
 //
-// (`EventEmitter::innerInvokeEventListeners`, `JSEventListener::handleEvent`, `JSCallbackData::invokeCallback`.)
+// A frame that throws it again uses the plain overload and `RETURN_IF_EXCEPTION`. `Bun::evaluateProgram()`
+// is `JSC::evaluate()` without its catch.
 //
-// This lint guards that call shape only. The other half of the rule has no spelling to count: a report can
-// stop the VM and leave nothing pending, so a loop that reports an error and then calls script again reads
-// the gate first (`isStoppingOrStopped`, as `JSNextTickQueue::drain` does). The tests in "a worker stopped
-// by the handler of its uncaught error" (worker_threads.test.ts) guard that half.
+// The frame that leaves a termination pending also ends its own dispatch, and a native caller that goes on
+// to enter script reads what the callee returns (`AbortSignal::runAbortSteps`). The other half has no
+// spelling to count: a report can stop the VM and leave nothing pending, so a loop that reports an error
+// and then calls script again reads the gate first (`isStoppingOrStopped`, as `JSNextTickQueue::drain`
+// does). The tests in "a worker stopped by the handler of its uncaught error" (worker_threads.test.ts)
+// guard that half.
 //
-// This is a ratchet: `nakedptr-exception.inventory.json` counts today's uses per file, whether they keep the
-// rule or not. A new one fails the test; removing one requires lowering its count (the test tells you).
-// Regenerate with `bun test/internal/source-lints/nakedptr-exception.test.ts --update` (run as a script)
-// only when removing.
+// `nakedptr-exception.inventory.json` lists the files that keep the type, with a count. They are
+// `node:vm`'s: a run owns the termination of its own timeout and withdraws it (`NodeVMRunTermination`). A
+// new use fails the test; removing one requires lowering its count (the test tells you). Regenerate with
+// `bun test/internal/source-lints/nakedptr-exception.test.ts --update` (run as a script) only when removing.
 
 const root = path.resolve(import.meta.dir, "..", "..", "..");
 const INVENTORY = import.meta.dir + "/nakedptr-exception.inventory.json";
@@ -92,7 +93,7 @@ describe("NakedPtr<Exception> takes (ratchet)", () => {
     }
     expect(
       grown,
-      "call script with the plain overload under a TopExceptionScope and hand what it threw to Bun::clearExceptionOrTakeTermination — see the header of this test",
+      "call script with the plain overload under a TopExceptionScope and hand what it threw to Bun::clearExceptionOrTakeTermination, see the header of this test",
     ).toEqual([]);
   });
 
@@ -100,7 +101,7 @@ describe("NakedPtr<Exception> takes (ratchet)", () => {
     const stale: string[] = [];
     for (const [f, allowed] of Object.entries(inventory)) {
       const count = found[f] ?? 0;
-      if (count < allowed) stale.push(`${f} is ${count} now, inventory says ${allowed} — lower it`);
+      if (count < allowed) stale.push(`${f} is ${count} now, inventory says ${allowed}: lower it`);
     }
     expect(stale).toEqual([]);
   });

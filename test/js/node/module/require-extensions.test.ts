@@ -285,6 +285,53 @@ describe.concurrent("handler that calls the loader it replaced, for a module tha
       const second = require(id);
       console.log(JSON.stringify({ first, cached, sameExports: second === first, calls }));
     `,
+    "stopped-fixture.cjs": `
+      const Module = require("module");
+      const fs = require("fs");
+      const path = require("path");
+      const vm = require("vm");
+      const ext = Module._extensions[".mjs"] ? ".mjs" : ".js";
+      const original = Module._extensions[ext];
+      const nothing = {};
+      // What the handler and the module did in one attempt. Each attempt has a new one, so nothing of an attempt
+      // that is tried again stays in the result.
+      let attempt;
+      Module._extensions[ext] = function (module, filename) {
+        attempt.calls++;
+        try {
+          return original.call(this, module, filename);
+        } catch (e) {
+          // Only an assignment: the request to stop is still there, and it ends a catch block at its first call.
+          attempt.caught = e;
+        } finally {
+          attempt.finallyRan = true;
+        }
+      };
+      let code;
+      let outcome;
+      // The module waits off-CPU when the timeout passes, and the run stops it in that wait. A loop that spins can
+      // run to its end and return. A timeout can also pass before the module body starts, or too late: the next
+      // attempt has a longer one and a new file.
+      for (let timeout = 100; timeout <= 800 && outcome !== "stopped"; timeout *= 2) {
+        const file = path.join(__dirname, "wait-" + timeout + ".mjs");
+        const wait = "Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, " + (timeout + 250) + ");";
+        fs.writeFileSync(file, "globalThis.attempt.started = true; " + wait + " globalThis.attempt.returned = true;");
+        attempt = { started: false, returned: false, calls: 0, caught: nothing, finallyRan: false };
+        globalThis.attempt = attempt;
+        try {
+          vm.runInContext("load()", vm.createContext({ load: () => require(file) }), { timeout });
+          code = "no error";
+        } catch (e) {
+          code = e?.code ?? String(e);
+        }
+        outcome = !attempt.started ? "not started" : attempt.returned ? "returned" : "stopped";
+        // A run that ends in another way is not tried again.
+        if (outcome !== "returned" && code !== "ERR_SCRIPT_EXECUTION_TIMEOUT") break;
+      }
+      const { calls, caught, finallyRan } = attempt;
+      const caughtText = caught === nothing ? "nothing" : String(caught);
+      console.log(JSON.stringify({ code, outcome, calls, caught: caughtText, finallyRan }));
+    `,
     "throws.js": `export default 1;\nthrow new Error("boom");\n`,
     "throws.ts": `export default 1 as number;\nthrow new Error("boom");\n`,
     "throws.mjs": `export default 1;\nthrow new Error("boom");\n`,
@@ -344,6 +391,17 @@ describe.concurrent("handler that calls the loader it replaced, for a module tha
   test("a handler that catches the error keeps the module in require.cache", async () => {
     expect(await run("recover-fixture.cjs")).toEqual({
       stdout: JSON.stringify({ first: { recovered: "boom" }, cached: true, sameExports: true, calls: 1 }),
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
+  // What stops a vm run is not an error of the module: no script can catch it, as in Node.
+  test("a handler's catch and finally do not run for a module that a vm timeout stops", async () => {
+    const stopped = { code: "ERR_SCRIPT_EXECUTION_TIMEOUT", outcome: "stopped", calls: 1 };
+    expect(await run("stopped-fixture.cjs")).toEqual({
+      stdout: JSON.stringify({ ...stopped, caught: "nothing", finallyRan: false }),
       stderr: "",
       exitCode: 0,
       signalCode: null,

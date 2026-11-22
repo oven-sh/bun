@@ -3038,10 +3038,9 @@ extern "C" napi_status napi_run_script(napi_env env, napi_value script,
 
     if (auto* exception = throwScope.exception()) [[unlikely]] {
         JSValue thrown = exception->value();
-        // The VM's termination is not an error value for the addon: it stays pending for the script beneath.
-        if (!throwScope.tryClearException())
-            return napi_set_last_error(env, napi_pending_exception);
-        env->scheduleException(thrown);
+        // The VM's termination is not an error value for the addon to clear: it stays pending for the script beneath.
+        if (throwScope.tryClearException())
+            env->scheduleException(thrown);
         return napi_set_last_error(env, napi_generic_failure);
     }
 

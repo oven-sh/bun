@@ -1479,7 +1479,9 @@ where
         if let Some(signal) = this.signal.take()
             && !signal.aborted()
         {
-            crate::dispatch::fold(signal.signal(global_this, jsc::CommonAbortReason::ConnectionClosed));
+            crate::dispatch::fold(
+                signal.signal(global_this, jsc::CommonAbortReason::ConnectionClosed),
+            );
             any_js_calls.set(true);
         }
 
@@ -1567,7 +1569,9 @@ where
             && self.flags.aborted()
             && !signal.aborted()
         {
-            crate::dispatch::fold(signal.signal(global_this, jsc::CommonAbortReason::ConnectionClosed));
+            crate::dispatch::fold(
+                signal.signal(global_this, jsc::CommonAbortReason::ConnectionClosed),
+            );
         }
 
         // Case 1:

@@ -3603,6 +3603,37 @@ describe("a vm timeout in a listener that native code called ends the script", (
       `threw ERR_SCRIPT_EXECUTION_TIMEOUT [] then ["1 listeners"]`,
     ],
     [
+      // The signals that follow an aborted one run their abort steps in the same call. Their listener here is a
+      // bound host function: JSC ends a script function that is entered over a termination before its first statement.
+      "abort(), a listener of an AbortSignal.any() signal behind it",
+      `const controller = new AbortController();
+       const any = AbortSignal.any([controller.signal]);
+       controller.signal.addEventListener("abort", spin);
+       any.addEventListener("abort", Reflect.apply.bind(null, ran.push, ran, ["listener of the AbortSignal.any() signal"]));
+       const call = () => controller.abort();`,
+      "threw ERR_SCRIPT_EXECUTION_TIMEOUT []",
+    ],
+    [
+      // A listener object with no callable handleEvent is reported as a TypeError, from inside dispatchEvent().
+      "dispatchEvent(), in the 'uncaughtException' listener that a listener object with no handleEvent() is reported to",
+      `let spinning = true;
+       process.on("uncaughtException", () => { if (spinning) spin(); });
+       const target = new EventTarget();
+       target.addEventListener("throw", { handleEvent: "not callable" });
+       target.addEventListener("throw", () => ran.push("once listener"), { once: true });
+       target.addEventListener("throw", () => ran.push("plain listener"));
+       const call = () => target.dispatchEvent(new Event("throw"));
+       const afterwards = () => { spinning = false; call(); };`,
+      `threw ERR_SCRIPT_EXECUTION_TIMEOUT [] then ["once listener","plain listener"]`,
+    ],
+    [
+      // observe({ buffered: true }) calls the callback before it returns.
+      "a PerformanceObserver's callback",
+      `performance.mark("before the observer");
+       const call = () => new PerformanceObserver(spin).observe({ type: "mark", buffered: true });`,
+      "threw ERR_SCRIPT_EXECUTION_TIMEOUT []",
+    ],
+    [
       // The context's own microtask checkpoint runs inside the run, under its timeout.
       "dispatchEvent() from a microtask of an afterEvaluate context",
       `const target = new EventTarget();

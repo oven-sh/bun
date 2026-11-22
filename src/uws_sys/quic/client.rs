@@ -118,6 +118,7 @@ impl Client {
                 encodes_with_dynamic_table: true,
                 ..Http3Config::default()
             }),
+            gives_up_early: true,
             ..Config::client()
         };
         let tls = us_quic_create_client_ssl_ctx()?;

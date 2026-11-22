@@ -535,6 +535,19 @@ fn single_packet_is_probed_sooner_if_the_peer_keeps_being_quick() {
 }
 
 #[test]
+fn single_packet_is_probed_sooner_however_long_the_peer_has_been_quick() {
+    let mut raw = Raw::client().connected_over(20);
+    let id = raw.peer.open(Unidirectional);
+    for _ in 0..256 {
+        raw.peer.send(id, b"a", false);
+        raw.advance(20);
+        raw.send("ack");
+    }
+    raw.request_packets("b");
+    assert_eq!(raw.wait(), 40);
+}
+
+#[test]
 fn single_packet_is_given_time_again_after_a_needless_probe() {
     for (is_lost, timeout) in [(true, 40), (false, 50)] {
         let mut raw = Raw::client().connected_over(20);

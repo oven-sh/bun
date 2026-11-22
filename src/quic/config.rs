@@ -18,6 +18,9 @@ pub struct Config {
     pub keep_alive: KeepAlive,
     /// Whether a timeout goes without CONNECTION_CLOSE.
     pub closes_silently: bool,
+    /// Whether the idle timeout counts from the last packet that was received, even if one has been sent since. It is for
+    /// an application that can start over on another connection.
+    pub gives_up_early: bool,
     /// Whether acknowledgments can be made less frequent (draft-iyengar-quic-delayed-ack-02).
     pub adapts_ack_frequency: bool,
     /// Whether a client goes on with TLS after the handshake.
@@ -86,6 +89,7 @@ impl Config {
             progress_timeout: Duration::from_secs(60),
             keep_alive: KeepAlive::Never,
             closes_silently: true,
+            gives_up_early: false,
             adapts_ack_frequency: true,
             wants_tickets: false,
             uses_preferred_address: false,

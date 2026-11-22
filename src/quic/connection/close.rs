@@ -223,13 +223,23 @@ impl Connection {
     #[inline]
     pub(super) fn restart_idle_timer(&mut self, now: Instant) {
         if !self.idle_timeout.is_zero() {
-            let probe_timeout = match self.rtt.has_sample() {
-                true => self.probe_timeout().max(MIN_IDLE_PROBE_TIMEOUT),
-                false => INITIAL_IDLE_PROBE_TIMEOUT,
-            };
-            let timeout = (self.idle_timeout).max((probe_timeout * 3).min(MAX_SETTLING_PERIOD));
+            let timeout = self.idle_timeout.max(self.min_idle_timeout());
             self.timers.set(Timer::Idle, now + timeout);
         }
+    }
+
+    pub(super) fn leave_time_for_an_answer(&mut self, now: Instant) {
+        let deadline = now + self.min_idle_timeout();
+        (self.timers).set(Timer::Idle, deadline.max(self.timers.get(Timer::Idle)));
+    }
+
+    #[inline]
+    fn min_idle_timeout(&self) -> Duration {
+        let probe_timeout = match self.rtt.has_sample() {
+            true => self.probe_timeout().max(MIN_IDLE_PROBE_TIMEOUT),
+            false => INITIAL_IDLE_PROBE_TIMEOUT,
+        };
+        (probe_timeout * 3).min(MAX_SETTLING_PERIOD)
     }
 
     #[inline]

@@ -390,6 +390,28 @@ mod tests {
     }
 
     #[test]
+    fn window_of_a_stream_starts_at_what_has_arrived() {
+        for (limit, window) in [(140, 100), (160, 110)] {
+            let mut stream = stream(50 * K, 0, 0);
+            stream.send.on_acked(0..50 * K);
+            (stream.send_limit, stream.send_window) = (100 * K, 100 * K);
+            State::default().raise_send_limit(StreamId(1), &mut stream, limit * K);
+            assert_eq!(stream.send_window, window * K);
+        }
+    }
+
+    #[test]
+    fn peer_is_behind_if_it_holds_back_a_quarter_of_the_window() {
+        for (limit, is_behind) in [(125 * K - 1, true), (125 * K, false)] {
+            let mut streams = streams();
+            (streams.state.send_window, streams.state.reached) = (100 * K, 50 * K);
+            streams.state.send_limit = 100 * K;
+            streams.on_max_data(limit);
+            assert_eq!(streams.state.is_peer_behind, is_behind);
+        }
+    }
+
+    #[test]
     fn allowance_holds_while_it_is_good_for_a_write() {
         for (end, wanted) in [(9, 9), (8, LITTLE)] {
             let mut state = State {

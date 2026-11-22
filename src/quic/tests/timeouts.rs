@@ -90,11 +90,39 @@ fn idle_timer_restarts_with_the_first_packet_that_is_sent() {
 }
 
 #[test]
+fn giving_up_early_leaves_time_for_an_answer_to_the_first_packet_that_is_sent() {
+    for (first, second, rest) in [
+        (10_000, 10_000, 10_000),
+        (10_000, 19_900, 100),
+        (29_550, 100, 350),
+        (29_900, 200, 250),
+    ] {
+        let mut raw = (Raw::client().config(|it| it.gives_up_early = true)).connected();
+        raw.send("ack");
+        raw.advance(first);
+        raw.request_packets("a");
+        raw.advance(second);
+        raw.request_packets("b");
+        assert_eq!(raw.wait_for_the_end(), rest);
+        assert_eq!(raw.events(), "3 closed, 7 closed, closed: IdleTimeout");
+    }
+}
+
+#[test]
 fn idle_timer_runs_before_the_first_packet_is_sent() {
     let mut raw = Raw::server().config(|it| it.handshake_timeout = Duration::ZERO);
     (raw.peer).connect(raw.now, raw.addresses.peer, raw.random, &[]);
     let timeout = raw.peer.endpoint.timeout().unwrap();
     assert_eq!(timeout - raw.now, Duration::from_secs(30));
+    raw.now = raw.now + Duration::from_secs(1);
+    assert_eq!(raw.wait_for_the_end(), 30_000);
+}
+
+#[test]
+fn giving_up_early_is_not_for_the_handshake() {
+    let mut raw = Raw::server()
+        .config(|it| (it.handshake_timeout, it.gives_up_early) = (Duration::ZERO, true));
+    (raw.peer).connect(raw.now, raw.addresses.peer, raw.random, &[]);
     raw.now = raw.now + Duration::from_secs(1);
     assert_eq!(raw.wait_for_the_end(), 30_000);
 }
@@ -385,10 +413,23 @@ fn client_that_is_late_goes_by_what_it_has_read() {
 
 #[test]
 fn time_without_a_stream_is_not_a_pause() {
-    let mut raw = Raw::server().quiet();
-    raw.keep_sending("ack, fin 3 0 a", 20, 1);
-    raw.keep_sending("ack, stream 7 0 a", 1, 8000);
-    assert_eq!(raw.wait_for_ping(), 156);
+    for end in ["fin 3 1 a", "reset_stream 3 0 1"] {
+        let mut raw = Raw::server().quiet().kept_sending();
+        raw.send(end);
+        raw.keep_sending("ack", 1, RTT);
+        raw.keep_sending("stream 7 0 a", 1, 8000);
+        assert_eq!(raw.wait_for_ping(), 123);
+    }
+}
+
+#[test]
+fn client_speaks_up_without_probing_the_mtu() {
+    let mut raw = Raw::server().with("max_udp_payload_size=").quiet();
+    raw.keep_sending("stream 3 0 a", 24, 1);
+    raw.received[2].remove(&10);
+    raw.keep_sending("ack", 1, RTT);
+    raw.wait();
+    assert_eq!(raw.outline(), "1[ack, ping]");
 }
 
 #[test]

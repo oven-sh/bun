@@ -39,10 +39,11 @@ impl Connection {
             (silence.awaited, silence.owes_ping) = (None, false);
             self.timers.stop(Timer::Silence);
         }
-        self.spaces.data.received.is_ack_due |= silence.owes_ping;
         if is_over {
-            let pause = now - silence.delivered_at.replace(now).unwrap_or(now);
+            let pause = now - silence.delivered_at.unwrap_or(now);
             let pause = pause.max(silence.longest_pause * 15 / 16);
+            let expects_more = silence.was_datagram || self.streams.table.has_application_streams();
+            silence.delivered_at = expects_more.then_some(now);
             silence.longest_pause = pause;
             silence.idle_at = self.timers.get(Timer::Idle);
             silence.deliveries = silence.deliveries.saturating_add(1);

@@ -303,7 +303,10 @@ impl Connection {
             .set(Timer::KeepAlive, now + self.keep_alive_period);
         // RFC 9000 §10.1.
         if !core::mem::replace(&mut self.has_sent_since_receiving, true) {
-            self.restart_idle_timer(now);
+            match self.config.gives_up_early && self.phase != Phase::Handshake {
+                true => self.leave_time_for_an_answer(now),
+                false => self.restart_idle_timer(now),
+            }
         }
     }
 
@@ -386,12 +389,14 @@ impl Connection {
             self.congestion.on_application_limited();
         }
         let may_elicit = has_frames && (is_probe || self.may_send(now));
-        if !may_elicit && !self.spaces.data.received.is_ack_due {
+        let breaks_silence = core::mem::take(&mut self.silence.owes_ping);
+        let is_ack_due = self.spaces.data.received.is_ack_due || breaks_silence;
+        if !may_elicit && !is_ack_due {
             return None;
         }
         let (mut draft, end) = self.begin(SpaceId::Data, out, end)?;
         let space = &mut self.spaces.data;
-        if space.received.is_ack_due || space.received.unacked_eliciting > 0 || is_probe {
+        if is_ack_due || space.received.unacked_eliciting > 0 || is_probe {
             (space.received).write_ack(now, draft.packet.number, out, end);
             self.timers.stop(Timer::Ack);
         }
@@ -410,7 +415,6 @@ impl Connection {
         let asks_for_ack = self.ack_only_packets >= MAX_ACK_ONLY_PACKETS
             && after_ack > draft.packet.payload_start
             && !self.spaces.data.sent.has_in_flight();
-        let breaks_silence = core::mem::take(&mut self.silence.owes_ping);
         if !draft.is_eliciting && (is_probe || asks_for_ack || breaks_silence) && out.len() < end {
             out.push(kind::PING as u8);
             draft.is_eliciting = !breaks_silence;

@@ -2,7 +2,7 @@ import type { ServerWebSocket } from "bun";
 import { describe, expect, test } from "bun:test";
 import { createHash, createPrivateKey, randomBytes, X509Certificate } from "crypto";
 import { readFileSync } from "fs";
-import { bunEnv, bunExe, isASAN, isDebug, isLinux, tempDir, tls } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, normalizeBunSnapshot, tempDir, tls } from "harness";
 import { once } from "node:events";
 import type { SocketAddress } from "node:net";
 import { connect, QuicEndpoint, type SessionOptions } from "node:quic";
@@ -337,11 +337,10 @@ test.concurrent.skipIf(!isLinux)("the servers of a process take turns at sending
   `;
   await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stderr: "inherit" });
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-  expect(stdout).toMatchInlineSnapshot(`
+  expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
     "alone 3
     beside node:quic, whose events keep their order 1
-    alone 3
-    "
+    alone 3"
   `);
   expect(exitCode).toBe(0);
 });

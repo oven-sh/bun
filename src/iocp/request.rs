@@ -120,6 +120,8 @@ impl Slot {
 pub(crate) struct Requests {
     slab: RefCell<Slab<Slot>>,
     callbacks: Cell<usize>,
+    /// How many are `Awaits::Io` without a callback.
+    abandoned: Cell<usize>,
 }
 
 impl Requests {
@@ -127,6 +129,7 @@ impl Requests {
         Requests {
             slab: RefCell::new(Slab::new()),
             callbacks: Cell::new(0),
+            abandoned: Cell::new(0),
         }
     }
 
@@ -158,9 +161,12 @@ impl Requests {
             return;
         }
         let (completion, outcome) = (slot.take_completion(), slot.outcome.take());
-        let callback = (self.take_callback(&slot)).filter(|_| !port.is_shut_down());
+        let callback = self.take_callback(&slot);
+        if callback.is_none() && slot.awaits.get() == Awaits::Io {
+            self.abandoned.update(|count| count - 1);
+        }
         self.slab.borrow_mut().release(token);
-        match (callback, outcome) {
+        match (callback.filter(|_| !port.is_shut_down()), outcome) {
             (Some(Callback::Io(done)), _) => done(completion),
             (Some(Callback::Signal(done)), _) => done(),
             (Some(Callback::Outcome(done)), Some(outcome)) => done(outcome),
@@ -187,6 +193,7 @@ impl Requests {
         match slot.awaits.get() {
             // Closing the file is no cancellation while there is another handle to it.
             Awaits::Io => {
+                self.abandoned.update(|count| count + 1);
                 if let Some(file) = slot.file.take() {
                     sys::cancel(file.raw(), &slot.status);
                 }
@@ -206,8 +213,8 @@ impl Requests {
         }
     }
 
-    pub(crate) fn is_system_writing(&self) -> bool {
-        (self.slab.borrow().used()).any(|(_, slot)| slot.awaits.get() == Awaits::Io)
+    pub(crate) fn has_abandoned(&self) -> bool {
+        self.abandoned.get() > 0
     }
 
     #[cfg(test)]

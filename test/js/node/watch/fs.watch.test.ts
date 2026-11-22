@@ -2077,6 +2077,50 @@ describe.concurrent.skipIf(!isWindows)("fs.watch on Windows", () => {
     }
   });
 
+  test.each(["beforeExit", "exit"])("a share has let go of the directory of a closed watcher at %s", async event => {
+    using dir = tempDir("watch-share", { "parent/d": {} });
+    const base = String(dir);
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const parent = process.argv[1];
+         const watcher = fs.watch(parent + "/d");
+         setImmediate(() => watcher.close());
+         process.once(${JSON.stringify(event)}, () => {
+           fs.rmdirSync(parent + "/d");
+           fs.rmdirSync(parent);
+         });`,
+        `\\\\localhost\\${base[0]}$${base.slice(2)}\\parent`,
+      ],
+      env: bunEnv,
+      stdout: "inherit",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect({ stderr, left: fs.readdirSync(base) }).toEqual({ stderr: "", left: [] });
+    expect(exitCode).toBe(0);
+  });
+
+  test("beforeExit comes again after it has closed a watcher", async () => {
+    using dir = tempDir("watch-before-exit", {});
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const watcher = fs.watch(".", { persistent: false });
+         process.on("beforeExit", () => (console.log("beforeExit"), watcher.close()));`,
+      ],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe("beforeExit\nbeforeExit\n");
+    expect(exitCode).toBe(0);
+  });
+
   test.serial("a file in the root of a drive", async () => {
     using dir = tempDir("watch-root", { f: "" });
     using drive = substDrive(String(dir));

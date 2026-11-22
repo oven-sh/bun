@@ -226,6 +226,11 @@ impl Port {
         self.holds.get() > 0
     }
 
+    /// Whether a request that was dropped is still under way. The system keeps its file open until the packet is taken.
+    pub fn is_closing(&self) -> bool {
+        self.requests.has_abandoned()
+    }
+
     /// How many expect to be called, apart from each [`Watcher::Foreign`](crate::Watcher::Foreign).
     pub fn callback_count(&self) -> usize {
         self.requests.callback_count() + self.sockets.callback_count()
@@ -544,8 +549,9 @@ impl Port {
         }
     }
 
+    /// After `abandon_all`.
     fn is_system_writing(&self) -> bool {
-        self.sockets.is_system_writing() || self.requests.is_system_writing()
+        self.sockets.is_system_writing() || self.is_closing()
     }
 }
 

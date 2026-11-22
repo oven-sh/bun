@@ -117,7 +117,7 @@ extern "C" fn us_internal_monotonic_ns() -> u64 {
 
 #[unsafe(no_mangle)]
 extern "C" fn us_internal_loop_has_polls(loop_: &Loop) -> c_int {
-    (loop_.poll_count() != 0).into()
+    (loop_.poll_count() != 0 || loop_.port().is_closing()).into()
 }
 
 #[unsafe(no_mangle)]

@@ -196,7 +196,7 @@ impl Loop {
 
     pub fn is_active(&self) -> bool {
         #[cfg(windows)]
-        if self.port().is_held() {
+        if self.port().is_held() || self.port().is_closing() {
             return true;
         }
         self.active.get() > 0

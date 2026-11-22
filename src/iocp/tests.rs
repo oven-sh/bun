@@ -192,7 +192,8 @@ fn a_cancelled_request_is_reported_and_a_dropped_one_is_not() {
         assert_eq!(port.callback_count(), 0);
         drop(file);
         assert_eq!(peer.read(&mut [0; 1]).unwrap(), 0);
-        run_until(&port, || !port.requests.is_system_writing());
+        assert!(port.is_closing());
+        run_until(&port, || !port.is_closing());
         assert!(read.borrow().is_none());
     }
 }
@@ -250,7 +251,7 @@ fn a_request_can_be_dropped_while_its_packet_waits_to_be_dispatched() {
     );
     first_peer.write_all(b"1").unwrap();
     second_peer.write_all(b"2").unwrap();
-    run_until(&port, || !port.requests.is_system_writing());
+    run_until(&port, || port.requests.in_use() == 0);
 }
 
 #[test]
@@ -515,7 +516,7 @@ fn shutting_down_ends_everything() {
     turn(&port, Duration::ZERO);
 
     port.shut_down();
-    assert!(!port.requests.is_system_writing() && !port.sockets.is_system_writing());
+    assert!(!port.is_closing() && !port.sockets.is_system_writing());
     assert!(read.borrow().is_none() && seen.borrow().is_empty());
     watch.set_interest(Readiness::SEND);
     let refused = pipes[0].0.read(Vec::new(), 0, |_| unreachable!());
@@ -996,7 +997,7 @@ fn a_request_whose_end_could_not_be_heard_is_cancelled() {
     let slot = Slot::default();
     let _refused = fail(call, 1, result);
     let read = start_read(&file, &slot);
-    assert!(!port.requests.is_system_writing() && slot.borrow().is_none());
+    assert!(port.prepare() && slot.borrow().is_none());
     run_until(&port, || slot.borrow().is_some());
     assert_eq!(slot.take().unwrap().status, NTSTATUS::CANCELLED);
     read.cancel();
@@ -1035,7 +1036,7 @@ fn shutting_down_gives_up_on_what_does_not_end() {
     let _deaf = fail(Call::NtCancelIoFileEx, 2, status(NTSTATUS::SUCCESS));
     CLOCK_STEP.set(Duration::from_secs(11));
     port.shut_down();
-    assert!(port.requests.is_system_writing() && port.sockets.is_system_writing());
+    assert!(port.is_closing() && port.sockets.is_system_writing());
     let handle = std::sync::Arc::clone(file.handle());
     drop((watch, read, file, port));
     peer.write_all(b"late").unwrap();
@@ -1450,7 +1451,7 @@ fn only_what_has_ended_can_be_taken() {
     let pending = start_read(&file, &Slot::default());
     drop(pending.take_immediate().err().unwrap());
     drop(Request::defer(&port, || {}).finish_now().err().unwrap());
-    run_until(&port, || !port.requests.is_system_writing());
+    run_until(&port, || !port.is_closing());
 
     peer.write_all(b"here").unwrap();
     let ended = start_read(&file, &Slot::default());

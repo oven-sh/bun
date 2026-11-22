@@ -903,6 +903,30 @@ test("bun build reports a macro result that is nested too deeply", async () => {
   expect(exitCode).toBe(1);
 });
 
+// The macro runner reports the rejection. It must not also reach the event loop's unhandled-rejection report.
+test.concurrent.each([
+  [
+    "that a reaction job rejected",
+    [
+      `let rejectSettled;`,
+      `const settled = Promise.resolve().then(() => ({ then(_, reject) { rejectSettled = reject; } }));`,
+      `export function m() {`,
+      `  rejectSettled(new Error("the macro failed"));`,
+      `  return settled;`,
+      `}`,
+    ].join("\n"),
+  ],
+  ["from Promise.reject()", `export function m() {\n  return Promise.reject(new Error("the macro failed"));\n}\n`],
+])("a macro that returns an already rejected promise %s is reported once", async (_, macroSource) => {
+  const { stderr, exitCode } = await run({
+    "m.ts": macroSource,
+    "index.ts": `import { m } from "./m.ts" with { type: "macro" };\nconsole.log(m());\n`,
+  });
+  expect(stderr.split("error: the macro failed").length - 1).toBe(1);
+  expect(stderr).toContain("error: macro threw exception");
+  expect(exitCode).toBe(1);
+});
+
 // Each parse thread creates a macro VM on its first macro call, and that VM loads the cwd's `.env` files.
 describe("macro VM env loader", () => {
   const macroModules = 8;

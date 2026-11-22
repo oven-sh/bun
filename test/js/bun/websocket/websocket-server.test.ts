@@ -1832,8 +1832,8 @@ describe.concurrent("a handler that calls server.upgrade() before it returns", (
     return { stdout, stderr, exitCode };
   }
 
-  // A then() or catch() promise is rejected by a reaction job. It is a
-  // separate case: JSC does not set its first-resolving-function flag.
+  // A then() or catch() promise is rejected by a reaction job, not by a
+  // resolving function. It is a separate case.
   it.each([
     [
       "fetch() is async and throws after an await",
@@ -1873,6 +1873,78 @@ describe.concurrent("a handler that calls server.upgrade() before it returns", (
       exitCode: 0,
     });
   });
+});
+
+// The server does not subscribe to the promise that message() returns. A
+// rejection stays unhandled, whatever rejected the promise and whenever the
+// handler returns it, and a promise that was reported before it was returned
+// still gets its rejectionHandled.
+it.concurrent("message() that returns a rejected promise leaves the rejection unhandled", async () => {
+  await using proc = spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const seen = [];
+       process.on("unhandledRejection", reason => seen.push("unhandledRejection: " + reason.message));
+       process.on("rejectionHandled", () => seen.push("rejectionHandled"));
+       const drain = async () => { for (let i = 0; i < 3; i++) await new Promise(resolve => setImmediate(resolve)); };
+       // A reaction job settles this promise. rejectSettled() rejects it at once.
+       let rejectSettled;
+       const settled = Promise.resolve().then(() => ({ then(_, reject) { rejectSettled = reject; } }));
+       const reported = Promise.resolve().then(() => { throw new Error("reported before"); });
+       let shared;
+       await drain();
+       // What message() returns, and the number of messages that are sent in one task.
+       const returns = {
+         "a promise that a reaction job rejected": [() => (rejectSettled(new Error("reaction job")), settled), 1],
+         "the promise of an async function that throws": [async () => { throw new Error("async"); }, 1],
+         "Promise.reject()": [() => Promise.reject(new Error("Promise.reject")), 1],
+         "a promise that was reported before": [() => reported, 1],
+         // The second message gets the promise after its rejection, before or after its report.
+         "one then() promise for two messages": [() => (shared ??= Promise.reject(new Error("shared")).then(() => {})), 2],
+       };
+       const server = Bun.serve({
+         port: 0,
+         fetch(req, server) { if (!server.upgrade(req)) return new Response(null, { status: 400 }); },
+         websocket: {
+           message(ws, name) { ws.send(name); return returns[name][0](); },
+           error(error) { seen.push("error(): " + error.message); },
+         },
+       });
+       const ws = new WebSocket(server.url.href.replace(/^http/, "ws"));
+       const fail = why => { console.log(JSON.stringify([...seen, why])); process.exit(1); };
+       ws.onerror = () => fail("the socket had an error");
+       ws.onclose = event => fail("the socket closed with code " + event.code);
+       await new Promise(resolve => (ws.onopen = resolve));
+       for (const [name, [, messages]] of Object.entries(returns)) {
+         let echoes = 0;
+         const echoed = new Promise(resolve => (ws.onmessage = () => ++echoes === messages && resolve()));
+         for (let i = 0; i < messages; i++) ws.send(name);
+         await echoed;
+         await drain();
+       }
+       reported.catch(() => {});
+       await drain();
+       ws.onclose = null;
+       ws.close();
+       await server.stop(true);
+       console.log(JSON.stringify(seen));`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual([
+    "unhandledRejection: reported before",
+    "unhandledRejection: reaction job",
+    "unhandledRejection: async",
+    "unhandledRejection: Promise.reject",
+    "unhandledRejection: shared",
+    "rejectionHandled",
+  ]);
+  expect(exitCode).toBe(0);
 });
 
 it("server.upgrade() does not blank the Request's url/headers read afterwards", async () => {

@@ -370,6 +370,32 @@ test("uncaught error from a CommonJS-sniffed stdin entry reports and exits 1", a
   expect(exitCode).toBe(1);
 });
 
+// The promise is pending when the entry point finishes. The last turn of the event loop rejects it.
+test.concurrent.each([
+  [
+    "a then() callback that throws",
+    `new Promise(resolve => setImmediate(resolve)).then(() => { throw new Error("rejected in the last turn"); })`,
+  ],
+  [
+    "the executor's reject function",
+    `new Promise((resolve, reject) => setImmediate(() => reject(new Error("rejected in the last turn"))))`,
+  ],
+])(
+  "bun -p of a promise that %s rejects in the last turn of the event loop is an unhandled rejection",
+  async (_, expr) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-p", expr],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toContain("error: rejected in the last turn");
+    expect(stderr).toContain("error: rejected in the last turn");
+    expect(exitCode).toBe(1);
+  },
+);
+
 // The eval entry point (-e, -p, stdin) is transpiled as CommonJS without the
 // module wrapper and then evaluated as a classic script. The directive prologue
 // of the script is the first thing in the printed text, as it is in node.

@@ -124,7 +124,7 @@ CPP_DECL void JSC__JSPromise__rejectOnNextTickWithHandled(JSC::JSPromise* arg0, 
 CPP_DECL void JSC__JSPromise__resolve(JSC::JSPromise* arg0, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2);
 CPP_DECL JSC::JSPromise* JSC__JSPromise__resolvedPromise(JSC::JSGlobalObject* arg0, JSC::EncodedJSValue JSValue1);
 CPP_DECL JSC::EncodedJSValue JSC__JSPromise__resolvedPromiseValue(JSC::JSGlobalObject* arg0, JSC::EncodedJSValue JSValue1);
-CPP_DECL JSC::EncodedJSValue JSC__JSPromise__result(JSC::JSPromise* arg0, JSC::VM* arg1);
+CPP_DECL JSC::EncodedJSValue JSC__JSPromise__result(const JSC::JSPromise* arg0, JSC::VM* arg1);
 CPP_DECL void JSC__JSPromise__setHandled(JSC::JSPromise* arg0);
 CPP_DECL uint32_t JSC__JSPromise__status(const JSC::JSPromise* arg0);
 

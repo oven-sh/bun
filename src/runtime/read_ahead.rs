@@ -200,11 +200,7 @@ struct Version {
 
 impl Version {
     fn of(path: &[u8]) -> Option<Version> {
-        let mut buffer = bun_paths::path_buffer_pool::get();
-        if path.len() >= buffer.len() {
-            return None;
-        }
-        let stat = bun_sys::stat(bun_paths::resolve_path::z(path, &mut buffer)).ok()?;
+        let stat = bun_sys::stat(&bun_paths::Path::from(path).check_len().ok()?).ok()?;
         let stat = bun_sys::PosixStat::init(&stat);
         Some(Version {
             inode: stat.ino,

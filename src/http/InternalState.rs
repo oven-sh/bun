@@ -8,7 +8,7 @@ use crate::{CertificateInfo, Decompressor, Encoding, HTTPRequestBody, HTTPRespon
 bun_core::define_scoped_log!(log, HTTPInternalState, hidden);
 
 /// Bounds the allocation that an untrusted gzip trailer can ask libdeflate's exact-size call for.
-const EXACT_SIZE_INFLATE_MAX: usize = 32 * 1024 * 1024;
+pub(crate) const EXACT_SIZE_INFLATE_MAX: usize = 32 * 1024 * 1024;
 
 /// ISIZE, the last 4 bytes of a gzip stream: the decoded size of its last member, modulo 4 GB.
 fn gzip_trailer_size(buffer: &[u8]) -> Option<usize> {
@@ -96,8 +96,10 @@ pub struct InternalStateFlags {
     /// `init()` so each redirect/retry hop re-compresses from the
     /// original uncompressed `original_request_body`.
     pub(crate) body_compressed: bool,
-    /// Held input or buffered decoder output remains for `HTTPClient::drain_response_body`.
+    /// Held input or buffered decoder output remains for `HTTPClient::pump_held_body`.
     pub(crate) decompress_output_pending: bool,
+    /// See [`crate::HTTPClientResult::left_transport`].
+    pub(crate) left_transport: bool,
 }
 
 impl InternalStateFlags {
@@ -113,6 +115,7 @@ impl InternalStateFlags {
             receive_paused: false,
             body_compressed: false,
             decompress_output_pending: false,
+            left_transport: false,
         }
     }
 }
@@ -209,7 +212,7 @@ impl<'a> InternalState<'a> {
         self.flags.decompress_output_pending
     }
 
-    /// A complete gzip body that only an unbudgeted pass can inflate in one `bun_deflate` call.
+    /// A complete gzip body that is too long for a reader's budget, but not for one `bun_deflate` call.
     pub(crate) fn wants_exact_size_inflate(&self) -> bool {
         bun_core::feature_flags::is_libdeflate_enabled()
             && self.encoding == Encoding::Gzip
@@ -237,37 +240,21 @@ impl<'a> InternalState<'a> {
         self.content_length.is_none() && self.response_stage == HTTPStage::Body
     }
 
-    /// Mark the body complete and drive `process_body_buffer` one last time
-    /// with `is_final_chunk = true` so a compressed stream that never reached
-    /// stream-end is rejected. Call from every site that flips
-    /// `received_last_chunk` on an end-of-body signal that arrives with no
-    /// accompanying body bytes (h1 FIN, proxy-tunnel close, h2/h3 END_STREAM).
-    /// No-op for complete, empty, or uncompressed bodies.
-    pub(crate) fn finalize_body_on_eof(&mut self) -> Result<(), Error> {
-        self.flags.received_last_chunk = true;
-        let buffer_snap = core::mem::take(&mut self.get_body_buffer().list);
-        self.process_body_buffer(buffer_snap, true, usize::MAX)
-            .map(drop)
-    }
-
     pub(crate) fn decompress_bytes(
         &mut self,
         buffer: &[u8],
         is_final_chunk: bool,
         max_output: usize,
     ) -> Result<usize, Error> {
+        debug_assert!(self.compressed_body.list.is_empty());
         // A response that declared a Content-Encoding but sent zero body bytes
         // (e.g. an empty chunked gzip response) has nothing to decompress.
         // Running the decompressor anyway makes it report a truncated stream
         // (ZlibError); Node treats this as an empty body.
         if buffer.is_empty() && self.total_body_received == 0 {
-            self.compressed_body.reset();
             return Ok(0);
         }
 
-        // `self.compressed_body.reset()` must run on every exit. scopeguard would
-        // hold &mut self.compressed_body across the body and conflict with &mut self.decompressor,
-        // so each early-return below calls it explicitly.
         let mut still_needs_to_decompress = true;
         let mut consumed = buffer.len();
 
@@ -305,8 +292,7 @@ impl<'a> InternalState<'a> {
                     && let Some(estimated_size) = gzip_trailer_size(buffer)
                     && estimated_size > deflater.shared_buffer.len()
                 {
-                    // Under an output budget only `shared_buffer`'s worth may come out in one shot.
-                    if max_output != usize::MAX {
+                    if estimated_size > max_output {
                         break 'libdeflate;
                     }
                     if estimated_size < EXACT_SIZE_INFLATE_MAX {
@@ -351,7 +337,6 @@ impl<'a> InternalState<'a> {
                         .try_reserve_exact(result.written)
                         .is_err()
                     {
-                        self.compressed_body.reset();
                         return Err(bun_alloc::AllocError.into());
                     }
                     self.decoded_body
@@ -373,7 +358,6 @@ impl<'a> InternalState<'a> {
                     .decoded_body
                     .grow_by((min as usize).max(32).min(max_output))
                 {
-                    self.compressed_body.reset();
                     return Err(err.into());
                 }
             }
@@ -394,71 +378,44 @@ impl<'a> InternalState<'a> {
                             bstr::BStr::new(err.name()),
                         );
                         Output::flush();
-                        self.compressed_body.reset();
                         return Err(err);
                     }
                 }
             }
         }
 
-        self.compressed_body.reset();
         Ok(consumed)
     }
 
-    // `buffer` is always the current body buffer's bytes. To avoid aliased &mut/& under
-    // Stacked Borrows (decompress_bytes mutates `self.compressed_body`; the uncompressed
-    // path materialises `&mut self.decoded_body`), callers `mem::take` the body buffer's `list`
-    // and pass it here as an owned Vec — no `&` into `self` survives across `&mut self`.
+    /// Decodes `compressed_body` until `decoded_body` holds `max_output` bytes. Returns whether it holds any.
     pub(crate) fn process_body_buffer(
         &mut self,
-        mut buffer: Vec<u8>,
         is_final_chunk: bool,
         max_output: usize,
     ) -> Result<bool, Error> {
         if self.flags.is_redirect_pending {
-            // Caller moved the bytes out of the body buffer; put them back so the
-            // take is a no-op.
-            self.get_body_buffer().list = buffer;
             return Ok(false);
         }
 
-        match self.encoding {
-            Encoding::Brotli | Encoding::Gzip | Encoding::Deflate | Encoding::Zstd => {
-                let start = self.compressed_body_consumed;
-                let consumed =
-                    start + self.decompress_bytes(&buffer[start..], is_final_chunk, max_output)?;
-                let held = buffer.len() - consumed;
-                // A decoder can hold output with no input left (brotli copy command, zstd flush).
-                self.flags.decompress_output_pending = self.decoded_body.list.len() >= max_output
-                    && (held != 0 || self.decompressor.is_mid_stream());
-                // Shifting only once the taken prefix is the larger part moves each byte once.
-                if consumed >= held {
-                    buffer.drain(..consumed);
-                    self.compressed_body_consumed = 0;
-                } else {
-                    self.compressed_body_consumed = consumed;
-                }
-                // Retain capacity by returning the allocation to compressed_body.
-                self.compressed_body.list = buffer;
+        if self.encoding.is_compressed() {
+            // `decompress_bytes` takes `&mut self`, so the bytes move out first.
+            let mut buffer = core::mem::take(&mut self.compressed_body.list);
+            let start = self.compressed_body_consumed;
+            let consumed =
+                start + self.decompress_bytes(&buffer[start..], is_final_chunk, max_output)?;
+            let held = buffer.len() - consumed;
+            // A decoder can hold output with no input left (brotli copy command, zstd flush).
+            self.flags.decompress_output_pending = self.decoded_body.list.len() >= max_output
+                && (held != 0 || self.decompressor.is_mid_stream());
+            // Shifting only once the taken prefix is the larger part moves each byte once.
+            if consumed >= held {
+                buffer.drain(..consumed);
+                self.compressed_body_consumed = 0;
+            } else {
+                self.compressed_body_consumed = consumed;
             }
-            _ => {
-                // Uncompressed: caller took `buffer` from `decoded_body.list`, leaving it
-                // empty — move the bytes back. If decoded_body is
-                // somehow non-empty, fall back to append.
-                if self.decoded_body.list.is_empty() {
-                    self.decoded_body.list = buffer;
-                } else if !self.decoded_body.owns(&buffer) {
-                    if let Err(err) = self.decoded_body.append(&buffer) {
-                        let err: Error = err.into();
-                        bun_core::pretty_errorln!(
-                            "<r><red>Failed to append to body buffer: {}<r>",
-                            bstr::BStr::new(err.name()),
-                        );
-                        Output::flush();
-                        return Err(err);
-                    }
-                }
-            }
+            // Retain capacity by returning the allocation to compressed_body.
+            self.compressed_body.list = buffer;
         }
 
         Ok(!self.decoded_body.list.is_empty())

@@ -2,6 +2,8 @@ use crate::cli::script_or_command::{
     LAUNCHER_SUFFIXES, RUNNABLE_EXTENSIONS, is_runnable_file, nearest_package_json,
     read_package_json,
 };
+use bun_paths::{Path, from_portable};
+use bun_sys::converted_spelling;
 
 const INDEX_FILES: [&[u8]; 4] = [b"index.ts", b"index.tsx", b"index.mts", b"index.js"];
 
@@ -120,7 +122,8 @@ impl EntryPointError {
                     b"\". Choose one:",
                 ]);
                 for (name, written) in entries {
-                    write(&[b"\n  bun compile ", written, b" --outfile ", name]);
+                    let path = from_portable(written);
+                    write(&[b"\n  bun compile ", &path, b" --outfile ", name]);
                 }
             }
         }
@@ -135,9 +138,7 @@ fn index_file_list() -> Vec<u8> {
 pub(super) fn find_default_entry_point(
     working_directory: &[u8],
 ) -> Result<DefaultEntryPoint, EntryPointError> {
-    use bun_paths::platform::Auto;
-    use bun_paths::resolve_path::join_abs_string;
-    let package_json = join_abs_string::<Auto>(working_directory, &[b"package.json"]).to_vec();
+    let package_json = join(working_directory, b"package.json");
     if let Some(contents) = read_package_json(&package_json) {
         return find_package_entry_point(working_directory, package_json, &contents);
     }
@@ -278,7 +279,8 @@ fn is_named_by_bin(path: &[u8]) -> bool {
         return false;
     };
     let executables = parse_manifest(directory, &package_json, &contents).executables;
-    executables.iter().any(|it| join(directory, &it.1) == path)
+    (executables.iter())
+        .any(|it| join(directory, &converted_spelling(&it.1, from_portable)) == path)
 }
 
 fn find_package_executable(
@@ -295,13 +297,17 @@ fn find_package_executable(
         return Ok(PackageExecutable::NotProvided { executable_names });
     };
     let (_, written) = executables.swap_remove(index);
-    if is_outside(package_directory, &join(package_directory, &written)) {
+    let path = join(
+        package_directory,
+        &converted_spelling(&written, from_portable),
+    );
+    if is_outside(package_directory, &path) {
         return Err(EntryPointError::ExecutableOutsidePackage {
             package_json,
             written,
         });
     }
-    match find_file(package_directory, &written) {
+    match find_file(package_directory, &path) {
         Some(path) => Ok(PackageExecutable::Found(path)),
         None => Err(EntryPointError::NamedFileMissing {
             field: PackageField::Bin,
@@ -373,13 +379,14 @@ fn directory_entries(path: &[u8]) -> Vec<Vec<u8>> {
 }
 
 fn is_outside(directory: &[u8], path: &[u8]) -> bool {
-    use bun_paths::resolve_path::{ParentEqual, is_parent_or_equal};
+    use bun_paths::{ParentEqual, is_parent_or_equal};
     is_parent_or_equal(directory, path) == ParentEqual::Unrelated
 }
 
 fn join(directory: &[u8], path: &[u8]) -> Vec<u8> {
-    use bun_paths::platform::Auto;
-    bun_paths::resolve_path::join_abs_string::<Auto>(directory, &[path]).to_vec()
+    let mut joined = Path::resolve(&[directory, path]);
+    joined.copy_trailing_sep_from(path);
+    joined.to_vec()
 }
 
 fn find_package_entry_point(
@@ -417,7 +424,7 @@ fn find_package_entry_point(
             };
         }
     };
-    match find_file(directory, &written) {
+    match find_file(directory, &converted_spelling(&written, from_portable)) {
         Some(path) => Ok(DefaultEntryPoint {
             path,
             executable_name: executable_name.into(),
@@ -487,13 +494,11 @@ fn find_index_file(directory: &[u8]) -> Option<Box<[u8]>> {
 }
 
 fn find_file(directory: &[u8], path: &[u8]) -> Option<Box<[u8]>> {
-    use bun_paths::platform::Auto;
-    use bun_paths::resolve_path::join_abs_string_checked;
-    let absolute_path = join_abs_string_checked::<Auto>(directory, &[path])?;
-    if bun_core::strings::contains_char(absolute_path, 0) {
+    let absolute_path = join(directory, path);
+    if bun_core::strings::contains_char(&absolute_path, 0) {
         return None;
     }
-    let absolute_path = bun_core::ZBox::from_bytes(absolute_path);
+    let absolute_path = bun_core::ZBox::from_vec(absolute_path);
     match bun_sys::exists_at_type(bun_core::Fd::cwd(), &absolute_path) {
         Ok(bun_sys::ExistsAtType::File) => Some(absolute_path.as_bytes().into()),
         Ok(bun_sys::ExistsAtType::Directory) | Err(_) => None,

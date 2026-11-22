@@ -44,22 +44,14 @@ fn stat_for_digest(path: &bun_core::ZStr) -> Option<[i64; 3]> {
     // reparse points — it would return the link's own mtime/size and miss an
     // in-place cert rotation behind a symlink (stale SSL_CTX served). Match
     // libuv: open query-only, `GetFileInformationByHandle`, close.
-    //
-    // `bun_core::to_w_path_normalized` lives above this crate, so widen
-    // inline: UTF-8→UTF-16LE (≤ input.len() code units), normalize `/`→`\`,
-    // NUL-terminate. Heap-allocated (cold init path; avoids a 64KB stack
-    // `WPathBuffer` and the wrong-unit `MAX_PATH_BYTES` previously used here).
-    let bytes = path.as_bytes();
-    let mut wbuf = vec![0u16; bytes.len() + 1];
-    let n = bun_core::strings::convert_utf8_to_utf16_in_buffer(&mut wbuf, bytes).len();
-    bun_paths::slashes_to_windows_in_place(&mut wbuf[..n]);
-    wbuf[n] = 0;
-    // SAFETY: `wbuf` is NUL-terminated at `[n]`. dwDesiredAccess=0 is query-
+    let mut wide = bun_paths::OSPath::from(path);
+    bun_paths::to_native_in_place(wide.as_mut_slice());
+    // SAFETY: `wide` is NUL-terminated. dwDesiredAccess=0 is query-
     // only (metadata). FILE_FLAG_BACKUP_SEMANTICS lets this succeed on dirs;
     // omitting FILE_FLAG_OPEN_REPARSE_POINT makes CreateFileW follow symlinks.
     let h = unsafe {
         HandleOrInvalid::from_raw_handle(fs::CreateFileW(
-            wbuf.as_ptr(),
+            wide.as_ptr(),
             0,
             fs::FILE_SHARE_READ | fs::FILE_SHARE_WRITE | fs::FILE_SHARE_DELETE,
             ptr::null_mut(),

@@ -24,7 +24,7 @@ const HAS_TEST_RUNNER: bool = bun_core::Environment::IS_CANARY || bun_core::Envi
 
 fn change_directory(cwd: &[u8]) {
     // Free the copy here, because `exit` doesn't return and nothing would free it later.
-    let changed = bun_sys::chdir(&bun_core::ZBox::from_vec(directory_of_cwd(cwd)));
+    let changed = bun_sys::chdir(&directory_of_cwd(cwd));
     if let bun_sys::Result::Err(err) = changed {
         Output::err(
             err,
@@ -184,9 +184,8 @@ fn run_script(script: &Script) -> Result<Vec<u8>, Vec<u8>> {
 
 /// Runs git and waits for it to exit.
 fn run_git(command: &git::Command) -> Result<git::Finished, git::NotRun> {
-    let mut buffer = bun_paths::path_buffer_pool::get();
     let path = bun_core::env_var::PATH.get().unwrap_or(b"");
-    let Some(found) = bun_which::which(&mut buffer, path, command.cwd, b"git") else {
+    let Some(found) = bun_which::which(path, command.cwd, b"git") else {
         return Err(git::NotRun::NotFound);
     };
     let argv = std::iter::once(found.as_bytes())

@@ -485,7 +485,13 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         module: ModuleRef,
         options: Option<ValueId>,
     ) -> ValueId {
-        let module = self.file.inputs.modules.facade(module).unwrap_or(module);
+        let modules = self.file.inputs.modules;
+        // Nothing is known of the namespace that a call with options gives.
+        let options = match options {
+            None if modules.may_typed_form_answer_import(module) => Some(self.builder.undefined()),
+            _ => options,
+        };
+        let module = modules.facade(module).unwrap_or(module);
         let module = self.file.fragment.declare_module(module);
         let referrer = self.file.module_id();
         self.builder.import_module(module, options, referrer)
@@ -2685,7 +2691,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             return None;
         };
         match self.file.inputs.sources.source_path(file) {
-            Some(path) if !bun_paths::is_absolute_loose(self.file.queries.atom_bytes(name)) => {
+            Some(path) if !bun_paths::portable::is_absolute(self.file.queries.atom_bytes(name)) => {
                 Some(self.emit_text(&path))
             }
             _ => Some(self.emit_name_as_given(name, given)),
@@ -2776,7 +2782,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         module: ModuleRef,
         is_url: bool,
     ) -> ValueId {
-        let is_path = bun_paths::is_absolute_loose(self.file.queries.atom_bytes(name));
+        let is_path = bun_paths::portable::is_absolute(self.file.queries.atom_bytes(name));
         if is_path && !is_url && self.file.has_source_path_of(module) {
             let specifier = self.emit_name_as_given(name, given);
             let referrer = self.file.module_id();
@@ -2815,7 +2821,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         module: ModuleRef,
         is_url: bool,
     ) -> ValueId {
-        let is_path = bun_paths::is_absolute_loose(self.file.queries.atom_bytes(name));
+        let is_path = bun_paths::portable::is_absolute(self.file.queries.atom_bytes(name));
         let name = self.file.intern_atom(name);
         let referrer = self.file.module_id();
         let is_host_value =

@@ -83,6 +83,8 @@ type RawState = {
   rst: Array<{ id: number; code: number }>;
   /** Called for each PING from the client. The helper never ACKs a PING; a test does it. */
   onPing?: (conn: RawConn, payload: Buffer) => void;
+  /** Called for each frame from the client. */
+  onFrame?: (type: number, flags: number, streamId: number) => void;
   /** Called for each request, before `onStream`. */
   onRequest?: (block: Buffer) => void;
   /** Resolves once every accepted socket has emitted `close` — i.e. all
@@ -138,6 +140,7 @@ async function withRawH2Server(
           id = buf.readUInt32BE(5) & 0x7fffffff;
         const payload = buf.subarray(9, 9 + len);
         buf = buf.subarray(9 + len);
+        state.onFrame?.(type, flags, id);
         if (type === 4 && !(flags & 1)) socket.write(frame(4, 1, 0)); // ack their SETTINGS
         if (type === 1 || type === 9) {
           fragments.push(payload);
@@ -1049,6 +1052,49 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
       );
     });
 
+    test("the window of a stream stays as it is while there is input left to decode", async () => {
+      const MIB = 1 << 20;
+      const wrongCrc = zlib.gzipSync("");
+      wrongCrc[wrongCrc.length - 8] ^= 1;
+      // More than one turn of decoding, then damage, then enough for a WINDOW_UPDATE to be due.
+      const body = Buffer.concat([...Array(5).fill(zlib.gzipSync(Buffer.alloc(MIB))), wrongCrc, Buffer.alloc(8 * MIB)]);
+      await withRawH2Server(
+        (conn, id) => {
+          if (id !== 1) return conn.headers(id, hpackStatus(204), { endStream: true });
+          conn.headers(id, Buffer.concat([hpackStatus(200), hpackLit("content-encoding", "gzip")]));
+          for (let at = 0; at < body.length; at += 16384) conn.data(id, body.subarray(at, at + 16384));
+          conn.socket.write(frame(6, 0, 0, Buffer.alloc(8)));
+        },
+        async (url, state) => {
+          await using proc = await spawnFetch(
+            `
+              const received = new Promise(resolve => process.once("message", resolve));
+              const tls = { rejectUnauthorized: false };
+              const res = await fetch("${url}", { tls });
+              await received;
+              console.log(await res.bytes().catch(e => e.code));
+              // Windows drops what is not sent yet at exit. This request follows those frames.
+              console.log((await fetch("${url}", { tls })).status);
+            `,
+            { ipc() {} },
+          );
+          const frames: string[] = [];
+          state.onFrame = (type, _flags, id) => {
+            const name = { 3: "RST_STREAM", 6: "PING", 8: id !== 0 && "WINDOW_UPDATE" }[type];
+            if (name && frames.push(name) === 1) proc.send("received");
+          };
+          const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+          await state.allClosed();
+          expect({ stdout, frames, connections: state.connections, exitCode }).toEqual({
+            stdout: "ZlibError\n204\n",
+            frames: ["PING", "RST_STREAM"],
+            connections: 1,
+            exitCode: 0,
+          });
+        },
+      );
+    });
+
     test("RST_STREAM(NO_ERROR) after a complete response keeps the response; a later RST is ignored", async () => {
       // RFC 9113 §8.1: the server may finish the response before the request
       // body and reset with NO_ERROR; DATA we had in flight can then draw a
@@ -1391,6 +1437,31 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
           const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
           expect(stdout.trim()).toBe("rejected true");
           expect(exitCode).toBe(0);
+        },
+      );
+    });
+
+    test.each([
+      ["identity", Buffer.from("hello")],
+      ["zstd", zlib.zstdCompressSync(Buffer.alloc(1 << 20))],
+    ])("a DATA frame that runs past Content-Length rejects without END_STREAM too (%s)", async (encoding, body) => {
+      await withRawH2Server(
+        (conn, id) => {
+          const fields = [hpackLit("content-encoding", encoding), hpackLit("content-length", `${body.length}`)];
+          conn.headers(id, Buffer.concat([hpackStatus(200), ...fields]));
+          conn.data(id, Buffer.concat([body, Buffer.from("more")]));
+        },
+        async url => {
+          await using proc = await spawnFetch(`
+            const bytes = fetch("${url}", { tls: { rejectUnauthorized: false } }).then(r => r.bytes());
+            console.log(await bytes.then(bytes => bytes.length, e => e.code));
+          `);
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect({ stdout, stderr, exitCode }).toEqual({
+            stdout: "HTTP2ContentLengthMismatch\n",
+            stderr: "",
+            exitCode: 0,
+          });
         },
       );
     });

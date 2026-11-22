@@ -1,6 +1,7 @@
 use crate::mal_prelude::*;
 use core::fmt;
 use core::num::NonZeroU32;
+use std::borrow::Cow;
 use std::io::Write as _;
 
 use bun_alloc::AllocError;
@@ -15,6 +16,7 @@ use bun_core::{FeatureFlags, Output};
 // it from parser-side indices; all consumers only call `.get()`.
 use bun_ast::Index;
 use bun_core::{string_joiner::StringJoiner, strings};
+use bun_paths::Path;
 use bun_sourcemap as source_map;
 
 use crate::analyze_transpiled_module;
@@ -324,6 +326,8 @@ pub enum ReferencePathStyle {
     ImporterRelative,
     /// The outdir, wherever the emitting chunk lands (`bun build --compile`).
     OutdirRelative,
+    /// `ImporterRelative`, but never a URL.
+    Metafile,
 }
 
 impl ReferencePathStyle {
@@ -553,7 +557,6 @@ impl IntermediateOutput {
         let additional_files = graph.input_files.items_additional_files();
         let unique_key_for_additional_files =
             graph.input_files.items_unique_key_for_additional_file();
-        let mut file_path_posix: Vec<u8> = Vec::new();
         match self {
             IntermediateOutput::Pieces(pieces) => {
                 let entry_point_chunks_for_scb = linker_graph.files.items_entry_point_chunk_index();
@@ -573,9 +576,9 @@ impl IntermediateOutput {
                 }
 
                 let mut count: usize = 0;
-                let mut from_chunk_dir = bun_paths::resolve_path::dirname::<
-                    bun_paths::platform::Posix,
-                >(&chunk.final_rel_path);
+                let chunk_dir =
+                    chunk.as_referenced(bun_paths::dirname_or_root(&chunk.final_rel_path));
+                let mut from_chunk_dir: &[u8] = &chunk_dir;
                 if from_chunk_dir == b"." {
                     from_chunk_dir = b"";
                 }
@@ -586,6 +589,15 @@ impl IntermediateOutput {
                 let use_outdir_relative_path = from_chunk_dir.is_empty()
                     || reference_path_style == ReferencePathStyle::OutdirRelative
                     || !import_prefix.is_empty();
+                let reference_to = |file_path: &[u8]| {
+                    let file_path: &[u8] = &chunk.as_referenced(file_path);
+                    let path = if use_outdir_relative_path {
+                        Path::from(file_path)
+                    } else {
+                        Path::relative(from_chunk_dir, file_path)
+                    };
+                    chunk.escape_reference(path.into_portable(), reference_path_style, linker_graph)
+                };
 
                 let urls_for_css: &[&[u8]] = if standalone_chunk_contents.is_some() {
                     graph.ast.items_url_for_css()
@@ -666,26 +678,9 @@ impl IntermediateOutput {
                                 QueryKind::None | QueryKind::ChunkId => unreachable!(),
                             };
 
-                            // Normalize like the write pass below so the counted length matches.
-                            let file_path: &[u8] = {
-                                file_path_posix.clear();
-                                file_path_posix.extend_from_slice(file_path);
-                                bun_paths::resolve_path::platform_to_posix_in_place::<u8>(
-                                    &mut file_path_posix,
-                                );
-                                &file_path_posix
-                            };
-                            let cheap_normalizer = cheap_prefix_normalizer(
-                                import_prefix,
-                                if use_outdir_relative_path {
-                                    file_path
-                                } else {
-                                    bun_paths::resolve_path::relative_platform::<
-                                        bun_paths::platform::Posix,
-                                        false,
-                                    >(from_chunk_dir, file_path)
-                                },
-                            );
+                            let reference = reference_to(file_path);
+                            let cheap_normalizer =
+                                cheap_prefix_normalizer(import_prefix, &reference);
                             count += cheap_normalizer[0].len() + cheap_normalizer[1].len();
                         }
                         QueryKind::None => {}
@@ -845,26 +840,9 @@ impl IntermediateOutput {
                                 _ => unreachable!(),
                             };
 
-                            // Normalize Windows paths to '/' in a copy because the source is borrowed immutably.
-                            let file_path: &[u8] = {
-                                file_path_posix.clear();
-                                file_path_posix.extend_from_slice(file_path);
-                                bun_paths::resolve_path::platform_to_posix_in_place::<u8>(
-                                    &mut file_path_posix,
-                                );
-                                &file_path_posix
-                            };
-                            let cheap_normalizer = cheap_prefix_normalizer(
-                                import_prefix,
-                                if use_outdir_relative_path {
-                                    file_path
-                                } else {
-                                    bun_paths::resolve_path::relative_platform::<
-                                        bun_paths::platform::Posix,
-                                        false,
-                                    >(from_chunk_dir, file_path)
-                                },
-                            );
+                            let reference = reference_to(file_path);
+                            let cheap_normalizer =
+                                cheap_prefix_normalizer(import_prefix, &reference);
 
                             if !cheap_normalizer[0].is_empty() {
                                 total_buf.extend_from_slice(cheap_normalizer[0]);
@@ -1345,6 +1323,38 @@ pub struct CrossChunkImportItem {
 pub type CrossChunkImportItemList = Vec<CrossChunkImportItem>;
 
 impl Chunk<'_> {
+    /// `Bun.serve` has `/` for `\` in the route of an output.
+    fn as_referenced<'a>(&self, output: &'a [u8]) -> Cow<'a, [u8]> {
+        match (self.flags).contains(Flags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD) {
+            true => {
+                let mut route = strings::replace_char(output, b'\\', b'/');
+                if let Cow::Owned(converted) = &mut route {
+                    converted.dedup_by(|next, last| (*next, *last) == (b'/', b'/'));
+                }
+                route
+            }
+            false => Cow::Borrowed(output),
+        }
+    }
+
+    /// `path` is printed as a JavaScript or JSON string, or as a URL, which is what a browser makes of a string too.
+    fn escape_reference(
+        &self,
+        path: Path,
+        style: ReferencePathStyle,
+        graph: &LinkerGraph<'_>,
+    ) -> Path {
+        if !strings::contains_char(&path, b'\\') {
+            return path;
+        }
+        let is_url = style != ReferencePathStyle::Metafile
+            && (!self.content.is_javascript()
+                || graph.ast.items_target()[self.entry_point.source_index() as usize]
+                    == bun_ast::Target::Browser);
+        let backslash: &[u8] = if is_url { b"%5C" } else { b"\\u005C" };
+        Path::from(&strings::replace_owned(&path, b"\\", backslash))
+    }
+
     /// Fills `order` with the indices of `imports_from_other_chunks`, in the order to import them.
     /// `evaluation_rank[other]` is the position of `other` in the importing
     /// chunk's `reached_chunks_in_order` (`u32::MAX` when the walk did not

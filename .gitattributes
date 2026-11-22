@@ -68,6 +68,7 @@ bench/**/* linguist-documentation
 
 vendor/*.c linguist-vendored
 src/brotli/dictionary.bin binary linguist-vendored
+src/icu/data/* binary linguist-vendored
 
 test/js/node/test/fixtures linguist-vendored
 test/js/node/test/common linguist-vendored

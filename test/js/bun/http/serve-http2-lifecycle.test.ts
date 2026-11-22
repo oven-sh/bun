@@ -1,5 +1,6 @@
+import { drainMicrotasks } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir, tls as tlsCert } from "harness";
 import http2 from "node:http2";
 import tls from "node:tls";
 import {
@@ -13,6 +14,7 @@ import {
   frame,
   hpackLiteral,
   request,
+  sha256,
   startFixture,
 } from "./serve-http2-helpers";
 
@@ -63,6 +65,75 @@ describe("Bun.serve http2 + http3 on one port", () => {
     );
     expect(h1).toBe("error");
     session.close();
+  });
+});
+
+// The first chunk stalls, so the writable callback calls the second pull(), which releases every ref on
+// the request but the callback's own. Only an optimized build can fold that ref away.
+describe.each([true, false])("a request outlives the writable callback it ends in (development: %p)", development => {
+  // More than the initial HTTP/2 window, and several QUIC congestion windows.
+  const chunk = Buffer.alloc(1024 * 1024, "0123456789a");
+
+  async function readH2(port: number, secure: boolean, onStalled: () => void) {
+    const raw = await RawH2.connect(port, secure);
+    try {
+      raw.headers(1, baseHeaders("/"));
+      await raw.waitFor(f => f.type === T.DATA && f.streamId === 1);
+      onStalled();
+      const increment = Buffer.alloc(4);
+      increment.writeUInt32BE(chunk.length);
+      raw.write(frame(T.WINDOW_UPDATE, 0, 0, increment));
+      raw.write(frame(T.WINDOW_UPDATE, 0, 1, increment));
+      return await raw.body(1);
+    } finally {
+      raw.close();
+    }
+  }
+
+  async function readH3(port: number, _secure: boolean, onStalled: () => void) {
+    const res = await fetchH3(port, "/");
+    onStalled();
+    return await res.bytes();
+  }
+
+  test.each([
+    ["h2", true, readH2],
+    ["h2c", false, readH2],
+    ["h3", true, readH3],
+  ] as const)("%s", async (_name, secure, read) => {
+    let pulls = 0;
+    let pullsWhileStalled: number | undefined;
+    let pendingInCallback: number | undefined;
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      development,
+      tls: secure ? tlsCert : undefined,
+      http2: true,
+      http3: secure,
+      fetch: () =>
+        new Response(
+          new ReadableStream(
+            {
+              pull(controller) {
+                if (++pulls === 1) return controller.enqueue(chunk);
+                controller.close();
+                drainMicrotasks();
+                pendingInCallback = server.pendingRequests;
+              },
+            },
+            { highWaterMark: 0 },
+          ),
+        ),
+    });
+
+    const body = await read(server.port!, secure, () => (pullsWhileStalled = pulls));
+    expect({ pullsWhileStalled, pendingInCallback, pendingAfter: server.pendingRequests, body: sha256(body) }).toEqual({
+      pullsWhileStalled: 1,
+      pendingInCallback: 1,
+      pendingAfter: 0,
+      body: sha256(chunk),
+    });
   });
 });
 

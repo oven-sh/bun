@@ -250,11 +250,9 @@ pub(crate) fn run_tasks(
                     if apply.task_id.is_none() {
                         if let Some(ctx) = apply.install_context.as_mut() {
                             // The hoisted loop runs tasks in the middle of a tree.
-                            let prev_node_modules = core::mem::take(&mut installer.node_modules);
-                            let prev_tree_id = installer.current_tree_id;
+                            let mut installer = installer.leave_tree();
                             installer.node_modules.path = core::mem::take(&mut ctx.path);
                             installer.node_modules.tree_id = ctx.tree_id;
-                            installer.current_tree_id = ctx.tree_id;
                             let pkg_id = apply.pkg_id;
                             let resolution =
                                 &manager.lockfile.packages.items_resolution()[pkg_id as usize];
@@ -271,8 +269,6 @@ pub(crate) fn run_tasks(
                                 needs_verify,
                                 is_pending_package_install,
                             );
-                            installer.node_modules = prev_node_modules;
-                            installer.current_tree_id = prev_tree_id;
                         }
                     }
                 }
@@ -1450,7 +1446,7 @@ pub fn is_bunx_tree(dir: &[u8]) -> bool {
     if !bun_paths::is_absolute(tree) {
         return false;
     }
-    let [tree, dir] = [tree, dir].map(strings::without_trailing_slash);
+    let [tree, dir] = [tree, dir].map(bun_paths::without_trailing_sep);
     if tree == dir {
         return true;
     }

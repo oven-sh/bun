@@ -70,11 +70,19 @@ export const libuv: Dependency = {
   // win-poll-no-reendgame-after-close: doesn't queue the endgame after poll_cb
   // if a nested uv_run inside poll_cb already ran it. Otherwise close_cb runs
   // twice.
+  //
+  // win-thread-stack-reservation: upstream libuv/libuv#5279 (libuv 1.53.0).
+  // uv_thread_create_ex passes STACK_SIZE_PARAM_IS_A_RESERVATION with an
+  // explicit stack size. Without it Windows commits the whole size when the
+  // thread starts: 8 MB for each thread of the pool. Delete the file when
+  // LIBUV_COMMIT has oven-sh/libuv#19, the same commit for the fork
+  // (workarounds.ts fails configure when the pin changes).
   patches: [
     "patches/libuv/win-poll-rearm-before-callback.patch",
     "patches/libuv/win-poll-abort-with-disconnect.patch",
     "patches/libuv/win-poll-no-reendgame-after-close.patch",
     "patches/libuv/win-pipe-read-req-count-across-callback.patch",
+    "patches/libuv/win-thread-stack-reservation.patch",
   ],
 
   build: () => ({

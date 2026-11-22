@@ -262,7 +262,15 @@ mod lib_c {
         fn ask(query: GetAddrInfo) -> Arc<Guarded<Self>> {
             let answer = Arc::new(Guarded::new(Self::Pending(None)));
             let this = Arc::clone(&answer);
-            resolver_pool::FOR_SCRIPT.go(move || {
+            let is_answer = (bun_core::ip_address::parse_strict(&query.name)).is_some_and(|ip| {
+                let other = if ip.is_ipv4() {
+                    bun_dns::Family::Inet6
+                } else {
+                    bun_dns::Family::Inet
+                };
+                query.options.family != other
+            });
+            let ask = move || {
                 if matches!(*this.lock(), Self::Settled(_)) {
                     return;
                 }
@@ -271,7 +279,11 @@ mod lib_c {
                 let hints = query.options.to_libc();
                 let result = AddrInfoList::lookup(Some(&query.name), Some(port), hints.as_ref());
                 Self::settle(&this, result.map(|list| bun_dns::to_result_list(&list)));
-            });
+            };
+            match is_answer {
+                true => ask(),
+                false => resolver_pool::FOR_SCRIPT.go(ask),
+            }
             answer
         }
 

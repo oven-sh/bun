@@ -438,7 +438,7 @@ impl Port {
             } else {
                 // The timer can be set for an earlier time.
                 if !core::mem::replace(&mut has_slept, true) {
-                    self.timer.before_sleep(ran_ns, is_brief, deadline - now);
+                    (self.timer).before_sleep(now, ran_ns, is_brief, deadline - now);
                 }
                 self.sleep(timeout, is_brief)
             };

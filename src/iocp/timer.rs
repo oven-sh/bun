@@ -31,6 +31,9 @@ pub(crate) struct Timer {
     early: Cell<u32>,
     /// How much longer the thread has run than slept of late.
     debt_ns: Cell<u64>,
+    /// When a long turn is let pass again.
+    next_pardon_ns: Cell<u64>,
+    is_pardoned: Cell<bool>,
 }
 
 impl Timer {
@@ -50,7 +53,7 @@ impl Timer {
     }
 
     /// Time raises no priority, so the thread would queue behind what keeps the CPUs busy. This makes it count like a socket.
-    pub(crate) fn before_sleep(&self, ran_ns: u64, is_brief: bool, remaining_ns: u64) {
+    pub(crate) fn before_sleep(&self, now: u64, ran_ns: u64, is_brief: bool, remaining_ns: u64) {
         const MAX_NS: u64 = 1_000_000_000;
         const MAX_EARLY: u32 = 4;
         const LONG_NS: u64 = 15_000_000;
@@ -59,7 +62,8 @@ impl Timer {
             return drop_boost();
         }
         let is_first = self.early.replace(self.early.get() + 1) == 0;
-        if self.debt_ns.get() + ran_ns > MAX_DEBT_NS / 2 + remaining_ns || !(is_first || is_brief) {
+        let is_fair = self.debt_ns.get() + ran_ns <= MAX_DEBT_NS / 2 + remaining_ns;
+        if !((is_first || is_brief) && (is_fair || self.pardon(now))) {
             return drop_boost();
         }
         // In the foreground, every wait ends with as much.
@@ -71,8 +75,20 @@ impl Timer {
         }
     }
 
+    fn pardon(&self, now: u64) -> bool {
+        const EVERY_NS: u64 = 5_000_000_000;
+        self.is_pardoned.set(now >= self.next_pardon_ns.get());
+        if self.is_pardoned.get() {
+            self.next_pardon_ns.set(now + EVERY_NS);
+        }
+        self.is_pardoned.get()
+    }
+
     pub(crate) fn waited(&self, ran_ns: u64, slept_ns: u64) {
-        (self.debt_ns).update(|debt| (debt + ran_ns).min(MAX_DEBT_NS).saturating_sub(slept_ns));
+        (self.debt_ns).update(|debt| match self.is_pardoned.take() {
+            true => 0,
+            false => (debt + ran_ns).min(MAX_DEBT_NS).saturating_sub(slept_ns),
+        });
     }
 
     pub(crate) fn note_deadline(&self, has_packets: bool) {

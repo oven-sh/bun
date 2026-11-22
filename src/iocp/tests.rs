@@ -871,6 +871,9 @@ fn a_thread_that_waits_for_time_to_pass_is_ahead_of_others() {
     assert_eq!(sleep(10, false), [10, 8]);
     assert_eq!(sleep(20, false), [11, 8]);
 
+    let long_turns = [50, 0, 50, 5_000, 0].map(|ms| (pass(ms), sleep(1, false).len()).1);
+    assert_eq!(long_turns, [2, 2, 0, 2, 2]);
+
     let shares = [(); 8].map(|()| (pass(4), sleep(1, false).len()).1);
     assert_eq!(shares, [2, 2, 2, 2, 2, 0, 0, 0]);
     assert_eq!(sleep(60, false), [11, 8]);

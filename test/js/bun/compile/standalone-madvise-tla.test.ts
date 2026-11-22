@@ -5,7 +5,8 @@
 // BUN_FEATURE_FLAG_DISABLE_STANDALONE_MADVISE, read by the compiled binary at
 // runtime, skips the hint.
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, isMacOS, isWindows, tempDir } from "harness";
+import { statSync } from "node:fs";
 import path from "node:path";
 
 // Relies on the StandaloneModuleGraph scoped logger which is compiled out in
@@ -125,6 +126,99 @@ test.concurrent.skipIf(isWindows || !isDebug)(
     expect(bytes).toBeGreaterThan(literalBytes / 2);
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
+  },
+  30_000,
+);
+
+// dyld lists the libraries of DYLD_INSERT_LIBRARIES before the executable, so
+// the executable is not always dyld's image 0. The library inserted here
+// reports each F_RDADVISE, which shows the prefetch in a release build too.
+const cc = Bun.which("cc") || Bun.which("clang");
+test.concurrent.skipIf(!isMacOS || !cc)(
+  "standalone prefetch reads the executable ahead with a library inserted",
+  async () => {
+    const marker = "the prefetch covers this text of the entry point";
+    using dir = tempDir("standalone-prefetch-inserted", {
+      "entry.ts": `console.log(${JSON.stringify(marker)});\n`,
+      "reports-read-advice.c": /* c */ `
+        #include <fcntl.h>
+        #include <stdarg.h>
+        #include <stdio.h>
+        #include <sys/stat.h>
+
+        static int reporting_fcntl(int fd, int cmd, ...) {
+          va_list args;
+          va_start(args, cmd);
+          void *arg = va_arg(args, void *);
+          va_end(args);
+          if (cmd == F_RDADVISE) {
+            const struct radvisory *advice = arg;
+            struct stat file = {0};
+            fstat(fd, &file);
+            dprintf(2, "F_RDADVISE inode=%llu offset=%lld count=%d\\n", (unsigned long long)file.st_ino,
+                    (long long)advice->ra_offset, advice->ra_count);
+          }
+          return fcntl(fd, cmd, arg);
+        }
+
+        __attribute__((used, section("__DATA,__interpose"))) static const struct {
+          const void *replacement, *original;
+        } interpose = {(const void *)reporting_fcntl, (const void *)fcntl};
+      `,
+    });
+
+    const library = path.join(String(dir), "reports-read-advice.dylib");
+    await using compile = Bun.spawn({
+      cmd: [cc!, "-dynamiclib", "-o", library, path.join(String(dir), "reports-read-advice.c")],
+      env: bunEnv,
+      stdout: "inherit",
+      stderr: "pipe",
+    });
+    const [compileErrors, compileExitCode] = await Promise.all([compile.stderr.text(), compile.exited]);
+    if (compileExitCode !== 0) throw new Error(`could not compile reports-read-advice.c: ${compileErrors}`);
+
+    const out = path.join(String(dir), "compiled");
+    const build = Bun.spawnSync({
+      cmd: [bunExe(), "build", "--compile", path.join(String(dir), "entry.ts"), "--outfile", out],
+      env: bunEnv,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    expect(build.stderr.toString()).not.toContain("error:");
+    expect(build.exitCode).toBe(0);
+
+    const inode = statSync(out, { bigint: true }).ino;
+    for (const [flag, advised] of [
+      [undefined, true],
+      ["1", false],
+    ] as const) {
+      await using proc = Bun.spawn({
+        cmd: [out],
+        env: { ...bunEnv, DYLD_INSERT_LIBRARIES: library, BUN_FEATURE_FLAG_DISABLE_STANDALONE_MADVISE: flag },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      const reported = /^F_RDADVISE inode=(\d+) offset=(\d+) count=(\d+)\n/gm;
+      const advice = await Promise.all(
+        Array.from(stderr.matchAll(reported), async ([, file, offset, count]) => ({
+          ofExecutable: BigInt(file) === inode,
+          // The text of the entry point is what this executable loads at startup.
+          holdsEntryPoint: (
+            await Bun.file(out)
+              .slice(Number(offset), Number(offset) + Number(count))
+              .text()
+          ).includes(marker),
+        })),
+      );
+      expect({ stdout, advice, stderr: stderr.replace(reported, ""), exitCode }).toEqual({
+        stdout: marker + "\n",
+        advice: advised ? [{ ofExecutable: true, holdsEntryPoint: true }] : [],
+        stderr: "",
+        exitCode: 0,
+      });
+    }
   },
   30_000,
 );

@@ -1,0 +1,5 @@
+// Every length round the stub's bound, four kinds of values, three doors: what is shifted out, the length, the first and the last that stay.
+// The list goes through a door under a key that is read, so nothing is copied in line and the list is out of sight where it is shifted.
+// COUNT: operation:operationAOTArrayShiftGeneric <= 3990
+const doors = { name(q) { return q.shift(); }, value(q) { const f = q.shift; return f.call(q); }, apply(q) { return Reflect.apply(Array.prototype.shift, q, []); } }; const go = (d, q) => doors[d](q); const all = Object.keys(doors);
+let bad = 0, calls = 0; const kinds = [i => i, i => "t" + i, i => ({ i }), i => i + 0.5]; for (const d of all) for (const k of kinds) for (const n of [0, 1, 2, 3, 15, 16, 17, 18, 31, 32, 33, 34, 128, 129]) { const q = [], made = []; for (let i = 0; i < n; i++) { const v = k(i); q.push(v); made.push(v); } for (let i = 0; i <= n; i++) { const x = go(d, q); calls++; if (x !== made[i] || q.length !== Math.max(n - i - 1, 0) || (q.length && (q[0] !== made[i + 1] || q[q.length - 1] !== made[n - 1]))) bad++; } } console.log(bad, calls);

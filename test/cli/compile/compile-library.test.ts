@@ -519,12 +519,13 @@ describe.concurrent("bun compile --library", () => {
     });
   });
 
+  const outdirIsProject = (dir: string) =>
+    `error: --library writes a package.json into --outdir, so --outdir can't be the project folder (${dir}). Use a folder inside it, such as --outdir=dist\n`;
+
   test.each([
-    [
-      ["--outdir", "."],
-      (dir: string) =>
-        `error: --library writes a package.json into --outdir, so --outdir can't be the project folder (${dir}). Use a folder inside it, such as --outdir=dist\n`,
-    ],
+    [["--outdir", "."], outdirIsProject],
+    [["--outdir", "./"], outdirIsProject],
+    [["--outdir", isWindows ? "a/b/../.." : "a\\b/.."], outdirIsProject],
     [
       ["--outdir", "src"],
       () =>
@@ -535,6 +536,10 @@ describe.concurrent("bun compile --library", () => {
     [["--aot"], () => "error: --library cannot be used with --aot\n"],
     [["--trim"], () => "error: --library cannot be used with --trim\n"],
     [["--format=iife"], () => "error: --library only supports --format=esm and --format=cjs\n"],
+    [
+      ["--target=bun-linux-x64"],
+      () => "error: --library only supports --target=bun, --target=node and --target=browser\n",
+    ],
   ])("%j is refused", async (flags, stderr) => {
     using dir = tempDir("library-refused", { ...sources, "package.json": JSON.stringify(packageJson) });
     expect(await bun(String(dir), "compile", "--library", "src/index.ts", ...flags)).toEqual({
@@ -633,7 +638,7 @@ describe.concurrent("the .aot.ts file that bun compile --library writes", () => 
     [
       "how classes and JSX are written",
       { jsx: "react-jsx", experimentalDecorators: true, useDefineForClassFields: false },
-      { strict: true, jsx: "react-jsx", experimentalDecorators: true, useDefineForClassFields: false },
+      { strict: true, jsx: "react-jsx", experimentalDecorators: true, useDefineForClassFields: true },
     ],
     ["what the reader decides", { target: "es2022", module: "esnext", skipLibCheck: false }, { strict: true }],
   ])("compilerOptions in the package.json say how strict the sources are: %s", async (_, stated, written) => {

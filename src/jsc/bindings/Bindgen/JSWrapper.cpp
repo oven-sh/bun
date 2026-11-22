@@ -113,6 +113,11 @@ extern "C" JSC::EncodedJSValue Bun__Bindgen__constructorForClass(JSC::JSGlobalOb
     return JSC::JSValue::encode(Bun::Bindgen::constructorForClass(globalObject, classIndex));
 }
 
+extern "C" JSC::JSGlobalObject* Bun__Bindgen__globalObjectOf(JSC::JSObject* wrapper)
+{
+    return wrapper->globalObject();
+}
+
 // The payload was written after `finishCreation`: the fence of ~ObjectInitializationScope.
 extern "C" void Bun__Bindgen__notifyInitialized(JSC::JSGlobalObject* globalObject, JSC::JSCell* cell, size_t extraMemorySize)
 {

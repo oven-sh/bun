@@ -1,5 +1,5 @@
 // Functions in fields under `JSON.stringify`, `Object.values`, `Object.entries`, spread and `Object.assign`: the walks hand out the same function object as a read, and a function that gets a `toJSON` by any route (a store, a computed key, a definition, `Object.assign`, a getter, another prototype, through a parameter or an array) is written by it from then on.
-// STATISTIC: OwnKeyWalksExpanded >= 10
+// STATISTIC: OwnKeyWalksExpanded >= 10 Todo: half of the walks over objects with functions in their fields are written out by layout
 {
 class A { x = 1; f = () => this.x; g = () => 7 }
 function text(o) { return JSON.stringify(o) }

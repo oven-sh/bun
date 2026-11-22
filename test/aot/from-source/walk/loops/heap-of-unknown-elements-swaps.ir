@@ -1,0 +1,45 @@
+# -- source: heap-of-unknown-elements-swaps.js
+# function Entry(weight, name) { this.weight = weight; this.name = name; }
+# function sink(heap) {
+#   let i = 0;
+#   for (;;) {
+#     const left = 2 * i + 1, right = left + 1;
+#     let least = i;
+#     if (left < heap.length && heap[left].weight < heap[least].weight)
+#       least = left;
+#     if (right < heap.length && heap[right].weight < heap[least].weight)
+#       least = right;
+#     if (least === i)
+#       break;
+#     const moved = heap[least];
+#     heap[least] = heap[i];
+#     heap[i] = moved;
+#     i = least;
+#   }
+#   return heap.map(entry => entry.name).join("");
+# }
+# function add(heap, entry) {
+#   let i = heap.length;
+#   heap.push(entry);
+#   while (i > 0) {
+#     const above = (i - 1) >> 1;
+#     if (heap[above].weight <= heap[i].weight)
+#       break;
+#     const moved = heap[above];
+#     heap[above] = heap[i];
+#     heap[i] = moved;
+#     i = above;
+#   }
+# }
+# const heap = [];
+# for (const [weight, name] of JSON.parse("[[9,\"a\"],[2,\"b\"],[4,\"c\"],[3,\"d\"],[7,\"e\"]]"))
+#   add(heap, new Entry(weight, name));
+# heap[0] = heap.pop();
+# print(sink(heap));
+# -- end of source
+# RUN: walk f2:Body mechanisms=all
+# CHECK: PutContiguousIndex
+# RUN(SHELL): run-in-shell mechanisms=all
+# SHELL: deca
+# SHELL-NEXT: exited with 0
+# SHELL-NEXT: the source prints the same

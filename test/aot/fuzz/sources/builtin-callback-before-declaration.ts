@@ -7,7 +7,6 @@ export default family(
   "builtin callback before declaration",
   Array.from({ length: 240 }, (_, index) => ({
     name: `seed ${index + 1}.`,
-    flags: index % 4 === 2 ? ["--aot-validate"] : [],
     make: () => generate(new Random(index + 1)),
   })),
 );

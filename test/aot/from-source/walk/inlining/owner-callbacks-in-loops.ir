@@ -1,0 +1,22 @@
+# -- source: main.cjs
+# function Choir() { this.voices = []; this.air = 9; this.breaths = 0; }
+# Choir.prototype.sing = function (bars) { let loud = 0; for (let bar = 0; bar < bars; bar++) loud += this.voices[bar % 2].note(bar); return loud; };
+# Choir.prototype.breathe = function () { this.breaths++; this.air = this.air < 3 ? 9 : this.air - 2; return this.air; };
+# function High(choir) { this.choir = choir; this.pitch = 7; }
+# High.prototype.note = function (bar) { this.pitch = this.pitch + bar & 15; return this.pitch * 3 - this.choir.breathe(); };
+# function Low(choir) { this.choir = choir; this.hums = 0; }
+# Low.prototype.note = function (bar) { this.hums++; return this.choir.breathe() + bar * 2; };
+# const choir = new Choir();
+# choir.voices.push(new High(choir), new Low(choir));
+# sink(choir.sing(9) + choir.breaths);
+# -- end of source
+# The notes of the voices call back the choir whose loop sings them: the copies go on with that choir behind one compare, and call the method where it is another.
+# f4 = Choir.prototype.sing, f5 = Choir.prototype.breathe
+# RUN: walk f4 mechanisms=all
+# CHECK: isLoopHead=true
+# CHECK: [[first]]: {{*}} key="choir"
+# CHECK-NEXT: = StrictEq [[first]], v0
+# CHECK: CallDirect [[first]] function=f5
+# CHECK: [[second]]: {{*}} key="choir"
+# CHECK-NEXT: = StrictEq [[second]], v0
+# CHECK: CallDirect [[second]] function=f5

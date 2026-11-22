@@ -1,14 +1,13 @@
 //! `Bun.FileSystemRouter` / `MatchedRoute` — Next.js-style file router.
 
-use bun_paths::strings;
+use bun_core::strings;
 
 use bun_ast as Log;
-use bun_core::Utf8Bytes;
+use bun_core::{Utf8Bytes, WTFString};
 use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsPayload as _, JsScope, JsWrapper, to_js};
-use bun_jsc::ref_string::{RefString, StringTooLong};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{JSGlobalObject, JSValue, JsCell, JsResult, LogJsc};
-use bun_paths::{self as path, MAX_PATH_BYTES};
+use bun_paths::{self as path};
 use bun_ptr::BackRef;
 
 use bun_http_types::URLPath;
@@ -45,41 +44,11 @@ impl<'a, 'r> Router::ResolverLike for RouterResolver<'a, 'r> {
     }
 }
 
-/// A ref on a string of the VM's interning cache.
-struct RefCountedString(BackRef<RefString>);
-
-impl RefCountedString {
-    fn new(vm: &mut VirtualMachine, bytes: &[u8]) -> Result<Self, StringTooLong> {
-        let string = BackRef::from(vm.ref_counted_string(bytes, None)?);
-        // The cache adds no ref on a hit.
-        string.ref_();
-        Ok(Self(string))
-    }
-
-    fn bytes(&self) -> &[u8] {
-        self.0.leak()
-    }
-}
-
-impl Clone for RefCountedString {
-    fn clone(&self) -> Self {
-        self.0.ref_();
-        Self(self.0)
-    }
-}
-
-impl Drop for RefCountedString {
-    fn drop(&mut self) {
-        // `get()`: a bare `deref()` is `<BackRef as Deref>::deref`.
-        self.0.get().deref();
-    }
-}
-
 pub(crate) struct FileSystemRouter {
-    origin: Option<RefCountedString>,
-    base_dir: RefCountedString,
+    origin: Option<WTFString>,
+    base_dir: WTFString,
     router: JsCell<Router::Router>,
-    asset_prefix: Option<RefCountedString>,
+    asset_prefix: Option<WTFString>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -96,22 +65,20 @@ fn load_router(
     config: RouteConfig,
     load: Load,
 ) -> JsResult<Option<(Router::Router, bun_resolver::DirInfoRef)>> {
+    let transpiler = &VirtualMachine::get().transpiler;
     let mut log = Log::Log::new();
     // SAFETY: the VM and its resolver outlive this call, and this is dropped before `log`.
     let _restore_log = unsafe {
         Resolver::scoped_log(
-            core::ptr::addr_of_mut!((*VirtualMachine::get_mut_ptr()).transpiler.resolver),
+            &raw mut (*transpiler.as_ptr()).resolver,
             core::ptr::NonNull::from(&mut log),
         )
     };
     if load == Load::FromDisk {
-        FileSystemRouter::bust_dir_cache_recursive(
-            strings::paths::without_trailing_slash_windows_path(&config.dir),
-        );
+        FileSystemRouter::bust_dir_cache_recursive(path::without_trailing_sep(&config.dir));
     }
 
-    let resolver = &mut VirtualMachine::get().as_mut().transpiler.resolver;
-    let root_dir_info = match resolver.read_dir_info(&config.dir) {
+    let root_dir_info = match transpiler.with_mut(|t| t.resolver.read_dir_info(&config.dir)) {
         Ok(Some(info)) => info,
         Ok(None) => return Ok(None),
         Err(_) => {
@@ -122,12 +89,14 @@ fn load_router(
 
     let mut router = Router::Router::init(config).expect("unreachable");
     let config_dir = router.config.dir.clone();
-    let loaded = router.load_routes(
-        &mut log,
-        &root_dir_info,
-        &mut RouterResolver(resolver),
-        &config_dir,
-    );
+    let loaded = transpiler.with_mut(|t| {
+        router.load_routes(
+            &mut log,
+            &root_dir_info,
+            &mut RouterResolver(&mut t.resolver),
+            &config_dir,
+        )
+    });
     if loaded.is_err() || (load == Load::Cached && log.errors + log.warnings > 0) {
         let error = log.to_js(global, format_args!("loading routes"))?;
         return Err(global.throw_value(error));
@@ -136,25 +105,9 @@ fn load_router(
 }
 
 impl FileSystemRouter {
-    fn bust_dir_cache_recursive(input_path: &[u8]) {
-        // `vm.as_mut()` at each use: the recursive call makes its own, which ends one held across it.
+    fn bust_dir_cache_recursive(path: &[u8]) {
         let vm = VirtualMachine::get();
-        #[cfg(not(windows))]
-        let path = input_path;
-        #[cfg(windows)]
-        let path;
-        #[cfg(windows)]
-        let normalized: Vec<u8>;
-        #[cfg(windows)]
-        {
-            // Note: `with_borrow_mut` can't hand back a slice that outlives
-            // the closure, so copy out (cold reload path).
-            normalized = WIN32_NORMALIZE_BUF
-                .with_borrow_mut(|buf| vm.fs().normalize_buf(&mut buf[..], input_path).to_vec());
-            path = normalized.as_slice();
-        }
-
-        let root_dir_info = match vm.as_mut().transpiler.resolver.read_dir_info(path) {
+        let root_dir_info = match vm.transpiler.with_mut(|t| t.resolver.read_dir_info(path)) {
             Ok(v) => v,
             Err(_) => return,
         };
@@ -187,20 +140,19 @@ impl FileSystemRouter {
                                 continue 'outer;
                             }
                         }
-                        let abs_parts: [&[u8]; 2] = [entry.dir, entry.base()];
-                        // `abs()` writes into a thread-local buffer; copy out
-                        // before recursing (recursion overwrites it).
-                        let full_path = vm.fs().abs(&abs_parts).to_vec();
-                        let _ = vm.as_mut().transpiler.resolver.bust_dir_cache(
-                            strings::paths::without_trailing_slash_windows_path(&full_path),
-                        );
+                        let Some(full_path) = entry.build_abs_path() else {
+                            continue 'outer;
+                        };
+                        let _ = vm
+                            .transpiler
+                            .with_mut(|t| t.resolver.bust_dir_cache(&full_path));
                         Self::bust_dir_cache_recursive(&full_path);
                     }
                 }
             }
         }
 
-        let _ = vm.as_mut().transpiler.resolver.bust_dir_cache(path);
+        let _ = vm.transpiler.with_mut(|t| t.resolver.bust_dir_cache(path));
     }
 }
 
@@ -225,24 +177,10 @@ impl FileSystemRouter {
         let global = cx.global();
         Valid::no_null_bytes(options.dir, "dir", "a string", global)?;
 
-        let mut out_buf = [0u8; MAX_PATH_BYTES * 2];
-        let mut root_dir_path = global.bun_vm().top_level_dir();
-        if !(options.dir.is_empty() || options.dir == b".") {
-            // An absolute path is joined too: a route's name is cut from the resolver's normalized spelling.
-            let Some(joined) =
-                path::resolve_path::join_abs_string_buf_checked::<path::platform::Auto>(
-                    Fs::FileSystem::get().top_level_dir(),
-                    &mut out_buf,
-                    &[options.dir],
-                )
-            else {
-                return Err(cx.heap.error(format_args!(
-                    "Unable to find directory: {}",
-                    bstr::BStr::new(options.dir)
-                )));
-            };
-            root_dir_path = joined;
-        }
+        // An absolute path is normalized too: a route's name is cut from the resolver's spelling.
+        let mut resolved = path::Path::resolve(&[global.bun_vm().top_level_dir(), options.dir]);
+        resolved.copy_trailing_sep_from(options.dir);
+        let root_dir_path: &[u8] = &resolved;
 
         let mut extensions: Vec<Box<[u8]>> = options
             .file_extensions
@@ -255,9 +193,10 @@ impl FileSystemRouter {
             extensions = DEFAULT_EXTENSIONS.iter().map(|s| Box::from(*s)).collect();
         }
 
+        let mut dir_with_trailing_sep = path::Path::from(root_dir_path);
+        dir_with_trailing_sep.push_trailing_sep();
         let config = RouteConfig {
-            // Ends with the native separator (`\` on Windows).
-            dir: strings::paths::clone_normalizing_separators(root_dir_path).into_boxed_slice(),
+            dir: dir_with_trailing_sep.as_bytes().into(),
             extensions: extensions.into(),
         };
         let Some((mut router, root_dir_info)) = load_router(global, config, Load::Cached)? else {
@@ -273,31 +212,32 @@ impl FileSystemRouter {
             root_dir_info.abs_path
         };
 
-        let vm = global.bun_vm().as_mut();
-        let mut ref_counted = |bytes: &[u8]| {
-            RefCountedString::new(vm, bytes).map_err(|_| global.throw_string_too_long())
+        let vm = global.bun_vm();
+        let ref_counted = |bytes: &[u8]| {
+            vm.ref_counted_string(bytes)
+                .map_err(|_| global.throw_string_too_long())
         };
         let base_dir = ref_counted(base_dir_str)?;
-        router.config.dir = Box::from(base_dir.bytes());
+        router.config.dir = Box::from(base_dir.latin1_slice());
         let not_empty = |bytes: &&[u8]| !bytes.is_empty();
         Ok(FileSystemRouter {
             origin: options
                 .origin
                 .filter(not_empty)
-                .map(&mut ref_counted)
+                .map(ref_counted)
                 .transpose()?,
             base_dir,
             asset_prefix: options
                 .asset_prefix
                 .filter(not_empty)
-                .map(&mut ref_counted)
+                .map(ref_counted)
                 .transpose()?,
             router: JsCell::new(router),
         })
     }
 
     pub(crate) fn get_asset_prefix(&self) -> Option<impl AsRef<[u8]>> {
-        self.asset_prefix.as_ref().map(RefCountedString::bytes)
+        self.asset_prefix.as_ref().map(|s| s.latin1_slice())
     }
 
     pub(crate) fn r#match<'a>(
@@ -381,7 +321,7 @@ impl FileSystemRouter {
     }
 
     pub(crate) fn get_origin(&self) -> Option<impl AsRef<[u8]>> {
-        self.origin.as_ref().map(RefCountedString::bytes)
+        self.origin.as_ref().map(|s| s.latin1_slice())
     }
 
     pub(crate) fn reload<'a>(
@@ -425,9 +365,9 @@ pub(crate) struct MatchedRoute {
     params_list: route_param::List<'static>,
     /// Made by the first of `params` and `query` to need it.
     param_map: JsCell<Option<QueryStringMap>>,
-    origin: Option<RefCountedString>,
-    asset_prefix: Option<RefCountedString>,
-    base_dir: RefCountedString,
+    origin: Option<WTFString>,
+    asset_prefix: Option<WTFString>,
+    base_dir: WTFString,
 }
 
 impl MatchedRoute {
@@ -532,23 +472,16 @@ impl MatchedRoute {
         let origin_url = self
             .origin
             .as_ref()
-            .map(|origin| URL::parse(origin.bytes()));
+            .map(|origin| URL::parse(origin.latin1_slice()));
         bun_object::get_public_path_with_asset_prefix(
             self.file_path,
-            self.base_dir.bytes(),
+            self.base_dir.latin1_slice(),
             &origin_url.unwrap_or_default(),
             self.asset_prefix
                 .as_ref()
-                .map_or(b"", RefCountedString::bytes),
+                .map_or(b"", |prefix| prefix.latin1_slice()),
             &mut src,
-            path::Platform::Posix,
         );
         src
     }
-}
-
-#[cfg(windows)]
-thread_local! {
-    static WIN32_NORMALIZE_BUF: core::cell::RefCell<Box<[u8; MAX_PATH_BYTES * 2]>> =
-        core::cell::RefCell::new(bun_core::boxed_zeroed());
 }

@@ -79,7 +79,7 @@ const crossed = declared.flatMap(type =>
 );
 
 export const inOne = 12;
-const laidOut = [[], ["--aot-heat=everything-is-hot"], ["--aot-erase-types"]];
+const laidOut = [[], ["--aot-erase-types"]];
 const inOneBuild = Math.ceil(crossed.length / inOne);
 export const programs = laidOut.length * inOneBuild;
 export const cases = crossed.length;

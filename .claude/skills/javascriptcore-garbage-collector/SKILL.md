@@ -164,6 +164,8 @@ void JSFoo::visitOutputConstraints(JSCell* cell, Visitor& visitor) {
 }
 ```
 
+DOM wrappers get both entry points from `JSDOMInterfaceWithAdditionalChildren` (`src/jsc/bindings/webcore/JSDOMInterface.h`) and only define `visitAdditionalChildrenInGCThread`.
+
 **Why two entry points?** `visitChildren` runs once when the cell turns grey. But marking may later discover that some _other_ native object (an opaque root) is live, which retroactively makes more of _this_ cell's references live. `visitOutputConstraints` is re-invoked by `DOMGCOutputConstraint` during the constraint fixpoint to catch that.
 
 To make a class participate, its IsoSubspace must be registered as an **output-constraint subspace** (`clientSubspaceFor*` with `outputConstraint` in `BunClientData`).
@@ -184,6 +186,8 @@ bool JSBarOwner::isReachableFromOpaqueRoots(Handle<Unknown> h, void* ctx,
     return v.containsOpaqueRoot(bar->ownerNode());
 }
 ```
+
+For DOM wrappers the owner is `JSDOMWrapperOwner<JSBar>` (`src/jsc/bindings/JSDOMWrapperCache.h`), which keeps an `ActiveDOMObject` with pending activity alive and then asks `JSBar::isReachableFromOpaqueRoots(visitor, reason)`.
 
 The opaque-root set is just a `HashSet<void*>` rebuilt each cycle. It's how DOM trees stay alive as a unit.
 
@@ -219,31 +223,31 @@ When a native object needs to hold a reference back to its own JS wrapper, **use
 
 `JSRef` is a tagged union with three states:
 
-- `Weak` — a bare `JSValue`. Does **not** keep the wrapper alive. Valid only because the wrapper's `finalize()` will flip this to `Finalized` before the cell is freed, so `try_get()` returns `None` instead of a dangling pointer. (This is _not_ a `JSC::Weak`; it's cheaper — no `WeakImpl` allocation.)
+- `Weak` — a bare `JSValue`. Does **not** keep the wrapper alive. Valid only because the wrapper's generated finalizer will flip this to `Finalized` before the cell is freed, so `try_get()` returns `None` instead of a dangling pointer. (This is _not_ a `JSC::Weak`; it's cheaper — no `WeakImpl` allocation.)
 - `Strong` — wraps `bun_jsc::Strong` (a `JSC::Strong<Unknown>` root). Keeps the wrapper alive.
 - `Finalized` — terminal; `try_get()` returns `None`.
 
 Pattern: **strong while busy, weak while idle.**
 
 ```rust
-this_value: JSRef, // initialized with JSRef::empty()
+this_value: JsCell<JsRef>, // `thisValue: "this_value"` in the `.bind.ts` file; initialized with JsRef::empty()
 
-// On construction / when work starts:
-self.this_value.set_strong(js_wrapper, global);   // or .upgrade(global)
+// On construction:
+js_wrapper.set_js_ref_strong(global);             // or set_js_ref_weak() if it starts idle
 
 // When the last in-flight operation completes:
-self.this_value.downgrade();                      // Strong -> Weak, GC may now collect
+self.this_value.with_mut(|r| r.downgrade());      // Strong -> Weak, GC may now collect
 
-// In any callback that needs the wrapper:
+// When work starts again:
+self.this_value.with_mut(|r| r.upgrade(global));  // Weak -> Strong
+
+// In any callback that needs the wrapper (`JsCellRefExt`):
 let Some(js_this) = self.this_value.try_get() else { return };
-
-// In the codegen'd finalize():
-self.this_value.finalize();
 ```
 
-See `ServerWebSocket`, `UDPSocket`, `MySQLConnection`, `ValkeyClient` for real examples.
+See `ServerWebSocket`, `UDPSocket`, `MySQLConnection` for real examples.
 
-**`JSRef` requires a finalizer.** The `Weak` state is only sound because `finalize()` flips it to `Finalized` before the cell is reused. A `refCounted` class of a `.bind.ts` file declares `finalize: true` and calls `JsRef::finalize` from its `fn finalize(&self)`; a struct stored inside its object is dropped with it.
+**`JSRef` requires `thisValue`.** The `Weak` state is only sound because it is flipped to `Finalized` before the cell is reused. The class names the field with `thisValue` in its `.bind.ts` file, which generates that step and the only functions that can fill the field.
 
 ## `gcProtect` / `JSValueProtect` — almost never
 
@@ -308,7 +312,7 @@ If your class shows up as an opaque blob in heap snapshots, implement `analyzeHe
 | JSCell field pointing to another JSCell                             | `WriteBarrier<T>` member + `visitor.append(m_field)` in `visitChildren`                                                                              |
 | Native state inside the wrapped C++ object holds JS values          | `visitAdditionalChildren` + register subspace as output-constraint                                                                                   |
 | C++/Rust local across allocation/call                               | Conservative scan (free) — add `EnsureStillAliveScope` / `value.ensure_still_alive()` if extracting interior pointers or seeing release-only crashes |
-| Native object holds its own JS wrapper (class has `finalize: true`) | **`JSRef`** — `upgrade()` when work starts, `downgrade()` when idle. **This is the default.**                                                        |
+| Native object holds its own JS wrapper (class has `thisValue`)      | **`JSRef`** — `upgrade()` when work starts, `downgrade()` when idle. **This is the default.**                                                        |
 | Native object owns an arbitrary JS value (callback, options object) | `bun_jsc::Strong` — drop in `finalize()`. Watch for cycles                                                                                           |
 | C++ non-GC object owns a JS value as a root                         | `JSC::Strong<T>`. **Danger:** cycle if the JS value can reach back → leak                                                                            |
 | Weak ref with resurrection predicate / finalize callback (C++)      | `JSC::Weak<T>` + `WeakHandleOwner`                                                                                                                   |

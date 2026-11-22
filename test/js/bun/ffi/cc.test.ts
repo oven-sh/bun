@@ -10,7 +10,16 @@ import {
   symlinkSync,
   writeFileSync,
 } from "fs";
-import { bunEnv, bunExe, isASAN, isWindows, normalizeBunSnapshot, tempDir, tempDirWithFiles } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  expectRssDeltaBelow,
+  isASAN,
+  isWindows,
+  normalizeBunSnapshot,
+  tempDir,
+  tempDirWithFiles,
+} from "harness";
 import path from "path";
 
 // TODO: we need to install build-essential and Apple SDK in CI.
@@ -294,6 +303,41 @@ it("throws for an empty source array", () => {
       message: 'The "source" argument must have at least one file. Received an instance of Array',
     }),
   );
+});
+
+// TinyCC's setjmp/longjmp error handling conflicts with ASan.
+it.each([
+  ["a symbol is missing", "", '"missing" is missing'],
+  ...(isASAN
+    ? []
+    : [
+        ["the source does not parse", "int missing() { return 1 2; }", "';' expected"],
+        ["a reference is unresolved", "int nowhere(); int missing() { return nowhere(); }", "nowhere"],
+      ]),
+])("frees the compiled code when %s", async (_, code, message) => {
+  using dir = tempDir("bun-ffi-cc-throw-leak", {
+    "big.c": `char big[4 << 20] = { 1 }; ${code}`,
+    "fixture.js": `
+      import { cc } from "bun:ffi";
+      import path from "path";
+      const source = path.join(import.meta.dir, "big.c");
+      const fail = () => {
+        try {
+          cc({ source, symbols: { missing: { args: [], returns: "int" } } });
+        } catch (e) {
+          if ((e.errors ?? [e]).some(e => e.message.includes(${JSON.stringify(message)}))) return;
+          throw e;
+        }
+        throw new Error("cc() did not throw");
+      };
+      fail();
+      const before = process.memoryUsage.rss();
+      for (let i = 0; i < 24; i++) fail();
+      console.log(JSON.stringify({ deltaMiB: (process.memoryUsage.rss() - before) / 1024 / 1024 }));
+    `,
+  });
+  // Unfixed: 96 MiB.
+  await expectRssDeltaBelow([path.join(String(dir), "fixture.js")], { release: 40, debug: 48 });
 });
 
 describe("given a source file with syntax errors", () => {
@@ -1512,6 +1556,25 @@ it.skipIf(isWindows)("returns undefined for a NULL napi_value and throws a pendi
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
   expect(stdout).toBe("undefined\nERR_FROM_C thrown from C\nundefined\n");
   expect(exitCode).toBe(0);
+});
+
+// Only macOS reads it.
+it.skipIf(isASAN || isWindows)("SDKROOT with the name of an SDK is not a directory below the cwd", async () => {
+  using dir = tempDir("bun-ffi-cc-sdkroot", {
+    "macosx/usr/include/in_cwd.h": "",
+    "one.c": `#include <in_cwd.h>\nint one(void) { return 1; }`,
+    "fixture.js": `require("bun:ffi").cc({ source: "./one.c", symbols: { one: { args: [], returns: "i32" } } });`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.js"],
+    env: { ...bunEnv, SDKROOT: "macosx" },
+    cwd: String(dir),
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("include file 'in_cwd.h' not found");
+  expect(exitCode).toBe(1);
 });
 
 describe.skipIf(isASAN)("compiler runtime header directory under BUN_TMPDIR", () => {

@@ -9,7 +9,9 @@ use bun_sema::check::compute_ecma_line_starts;
 use bun_sema::config::{self, Project};
 use bun_sema::json::Json;
 use bun_sema::messages::text;
-use bun_sema::resolve::{Host, displayed_path, join, to_path};
+use bun_sema::resolve::{
+    Host, displayed_path, get_relative_path_from_directory, join, parent_directory, to_path,
+};
 use bun_sema::session::Session;
 use bun_sema::util::SharedSort;
 use bun_sema_driver::{Category, Diagnostic, Report, Request, TaskSize};
@@ -34,7 +36,7 @@ macro_rules! error_line {
 }
 
 pub fn write_line(to: bun_core::Fd, line: std::fmt::Arguments<'_>) {
-    let _ = bun_sys::File::from_fd(to).write_all(format!("{line}\n").as_bytes());
+    let _ = bun_sys::File::borrow(&to).write_all(format!("{line}\n").as_bytes());
 }
 
 fn read_file(path: &str) -> Option<Vec<u8>> {
@@ -316,7 +318,7 @@ impl Virtual {
     }
 
     fn add_directories_above(&mut self, path: &[u8]) {
-        let mut dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Posix>(path);
+        let mut dir = parent_directory(path);
         loop {
             if self
                 .directories
@@ -327,7 +329,7 @@ impl Virtual {
             {
                 break;
             }
-            dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Posix>(dir);
+            dir = parent_directory(dir);
         }
     }
 
@@ -1358,6 +1360,8 @@ pub struct Setup<'a> {
     pub traces: bool,
     /// `PlanOptions::discards_first_visits`. The baselines are the same.
     pub discards_first_visits: bool,
+    /// `Request::order`. The baselines are the same.
+    pub order: u32,
     pub threads: usize,
     /// Run only every n-th test, ordered by path. 1 runs all of them.
     pub every: usize,
@@ -1745,12 +1749,13 @@ fn run_one(
         let moves = !files.options.declaration_dir.is_empty() || !out_dir.is_empty();
         let looked_up = match common.filter(|it| moves && !it.is_empty()) {
             Some(common) => {
-                use bun_paths::{platform::Posix, resolve_path::relative_normalized};
                 let dir = match out_dir.is_empty() {
                     true => cwd.as_bytes(),
                     false => &out_dir[..],
                 };
-                join(dir, relative_normalized::<Posix, true>(common, path))
+                let relative =
+                    get_relative_path_from_directory(common, path, files.is_case_sensitive);
+                join(dir, &relative)
             }
             None => path.to_vec(),
         };
@@ -1795,7 +1800,7 @@ fn run_one(
             threads: 1,
             libs: bun_sema_driver::Libs::Directory(setup.lib_dir.as_bytes()),
             progress: None,
-            order: 1,
+            order: setup.order,
             plan_options: bun_sema_driver::PlanOptions {
                 discards_first_visits: setup.discards_first_visits,
                 ..Default::default()
@@ -2495,6 +2500,10 @@ pub fn run_from_command_line(args: &[&[u8]]) -> bool {
         declarations: args.iter().any(|it| it == "--declarations"),
         traces: args.iter().any(|it| it == "--traces"),
         discards_first_visits: args.iter().any(|it| it == "--discard-first-visits"),
+        order: match args.iter().any(|it| it == "--last-file-first") {
+            true => u32::MAX,
+            false => 1,
+        },
         threads: number("threads").unwrap_or(8),
         every: number("every").unwrap_or(1),
         first: number("first").unwrap_or(0),

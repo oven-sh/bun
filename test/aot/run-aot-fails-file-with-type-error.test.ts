@@ -24,6 +24,12 @@ const files = {
   "d-fine.test.ts": `export {}; function double(n: number): number { return n * 2; } test("another fine test", () => { expect(double(2)).toBe(4); });`,
 };
 
+// A file that is missing at the build may be written by the run, so such a run is built to load any code, which takes thirty times as long. A package that is
+// missing opens nothing. One case has the file. Where a test file that fails at its load is only the scene, it is the package.
+const withMissingPackage = Object.fromEntries(
+  Object.entries(files).map(([path, text]) => [path, text.replace(`"./nowhere"`, `"nowhere"`)]),
+);
+
 const passed = (said: string) => [...said.matchAll(/^\(pass\) (.*?)(?: \[.*\])?$/gm)].map(match => match[1]).sort();
 const ran = (said: string) => [...said.matchAll(/^\((?:pass|fail)\) .*$/gm)].map(match => match[0]);
 /** `error: TS2322: ..` and under it `    at <path>:<line>:<column>` */
@@ -38,7 +44,7 @@ async function run(dir: string, ...args: string[]) {
   return { said: stdout + stderr, exitCode };
 }
 
-// Plain `bun test` checks no types, so a type error stops nothing. The file is compiled without its types.
+// Plain `bun test` checks no types, so a type error stops nothing: it is printed as a warning.
 test("a type error is a warning, and the test files that reach it run", async () => {
   using dir = tempDir("run-aot-fails-file-with-type-error", {
     "tsconfig.json": files["tsconfig.json"],
@@ -51,7 +57,6 @@ test("a type error is a warning, and the test files that reach it run", async ()
   const { said, exitCode } = await run(String(dir));
   expect(errors(said)).toEqual([]);
   expect(reported("warn", said)).toEqual(["b-mistyped.test.ts:1:18 TS2322", "mistyped.ts:1:14 TS2322"]);
-  expect(said).toContain("warn: TS100075: Files with type errors are compiled without their types: 2 in this run");
   expect(passed(said)).toEqual(["a fine test", "an imported error", "its own error"]);
   expect(exitCode).toBe(0);
 });
@@ -80,28 +85,28 @@ test("an import that does not resolve fails the test files that reach it, and th
 });
 
 test("--bail counts such a file", async () => {
-  using dir = tempDir("run-aot-fails-file-with-type-error", files);
+  using dir = tempDir("run-aot-fails-file-with-type-error", withMissingPackage);
   const { said, exitCode } = await run(String(dir), "--bail");
   expect(said).toContain("Bailed out after 1 failure");
-  expect(said.split("Cannot find module './nowhere' from").length - 1).toBe(1);
+  expect(said.split("Cannot find package 'nowhere' from").length - 1).toBe(1);
   expect(exitCode).toBe(1);
 });
 
 test("where every test file reaches such an error each fails by itself", async () => {
-  using dir = tempDir("run-aot-fails-file-with-type-error", files);
+  using dir = tempDir("run-aot-fails-file-with-type-error", withMissingPackage);
   const { said, exitCode } = await run(String(dir), "b-wrong", "c-imports-wrong");
   expect(errors(said)).toEqual([]);
-  expect(said.split("Cannot find module './nowhere' from").length - 1).toBe(2);
+  expect(said.split("Cannot find package 'nowhere' from").length - 1).toBe(2);
   expect(said).toMatch(/\b0 pass\b/);
   expect(said).toMatch(/\b2 fail\b/);
   expect(exitCode).toBe(1);
 });
 
 test("such an error in a preload fails every file, as in bun test", async () => {
-  using dir = tempDir("run-aot-fails-file-with-type-error", files);
+  using dir = tempDir("run-aot-fails-file-with-type-error", withMissingPackage);
   const { said, exitCode } = await run(String(dir), "--preload", "./broken.ts", "a-fine", "d-fine");
   expect(errors(said)).toEqual([]);
-  expect(said).toContain("Cannot find module './nowhere' from");
+  expect(said).toContain("Cannot find package 'nowhere' from");
   expect(said).not.toContain("(pass)");
   expect(exitCode).toBe(1);
 });
@@ -112,7 +117,7 @@ test("what only a refused test file imports is still declared for the others", a
     "global.ts": `export {}; declare global { var added: number | undefined; interface Settings { depth?: number } }`,
     "shape.ts": `export interface Shape { side: number }\nexport const square: Shape = { side: 2 };`,
     "wider.ts": `declare module "./shape" { interface Shape { label?: string } }\nexport {};`,
-    "1-wrong.test.ts": `import "./global"; import "./wider"; import { n } from "./nowhere"; test("never run", () => { expect(n).toBe(1); });`,
+    "1-wrong.test.ts": `import "./global"; import "./wider"; import { n } from "nowhere"; test("never run", () => { expect(n).toBe(1); });`,
     "2-global.test.ts": `export {}; test("a global variable", () => { expect(typeof added).toBe("undefined"); });`,
     "3-interface.test.ts": `export {}; const settings: Settings = {}; test("a global interface", () => { expect(settings.depth).toBeUndefined(); });`,
     "4-module.test.ts": `import { square } from "./shape"; test("a member added to a module's interface", () => { expect(square.label).toBeUndefined(); });`,
@@ -120,7 +125,7 @@ test("what only a refused test file imports is still declared for the others", a
   const { said, exitCode } = await run(String(dir));
   expect(reported("warn", said).filter(it => !it.startsWith("1-wrong"))).toEqual([]);
   expect(passed(said)).toEqual(["a global interface", "a global variable", "a member added to a module's interface"]);
-  expect(said).toContain("Cannot find module './nowhere' from");
+  expect(said).toContain("Cannot find package 'nowhere' from");
   expect(exitCode).toBe(1);
 });
 
@@ -129,7 +134,7 @@ test("refusing one test file after another does not refuse a third", async () =>
     "tsconfig.json": files["tsconfig.json"],
     "first.ts": `export {}; declare global { var first: number | undefined; }`,
     "second.ts": `export {}; declare global { var second: number | undefined; }`,
-    "1-wrong.test.ts": `import "./first"; import { n } from "./nowhere"; test("never run", () => { expect(n).toBe(1); });`,
+    "1-wrong.test.ts": `import "./first"; import { n } from "nowhere"; test("never run", () => { expect(n).toBe(1); });`,
     "2-uses-first.test.ts": `import "./second"; test("uses the first", () => { expect(typeof first).toBe("undefined"); });`,
     "3-uses-second.test.ts": `export {}; test("uses the second", () => { expect(typeof second).toBe("undefined"); });`,
   });
@@ -150,8 +155,7 @@ test("a syntax error fails the test files that reach it, and the others run", as
   const { said, exitCode } = await run(String(dir));
   expect(passed(said)).toEqual(["a fine test", "another fine test"]);
   expect(ran(said).join("\n")).not.toContain("never run");
-  // The build refuses the test file with a mistake of its own. The one that imports a file with a mistake fails when it loads, with the words of `bun test`.
-  expect(said.split("bun test --aot does not run this file").length - 1).toBe(1);
-  expect(said).toContain("error: Unexpected ;");
+  // Both fail when they load, with the words of `bun test`: the test file with a mistake of its own, and the one that imports a file with a mistake.
+  expect(said.split("error: Unexpected ;").length - 1).toBe(2);
   expect(exitCode).toBe(1);
 });

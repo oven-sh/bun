@@ -72,6 +72,72 @@ fn chain_in_parentheses() {
 }
 
 #[test]
+fn cast_in_parentheses() {
+    expect(&[
+        ("/* @__PURE__ */ (f() as T)", &[true]),
+        ("/* @__PURE__ */ (f() satisfies T)", &[true]),
+        ("/* @__PURE__ */ (f() as const)", &[true]),
+        ("/* @__PURE__ */ ((f() as T) as U)", &[true]),
+        ("/* @__PURE__ */ (<T>f())", &[true]),
+        ("/* @__PURE__ */ (<T>(f()))", &[true]),
+        ("/* @__PURE__ */ (f()) as T", &[true]),
+        ("/* @__PURE__ */ (f() as T)()", &[false, true]),
+        ("/* @__PURE__ */ (f() + 1 as T)", &[false]),
+        ("/* @__PURE__ */ (f().b as T)", &[false]),
+    ]);
+}
+
+#[test]
+fn cast_in_front_of_chain() {
+    expect(&[
+        ("/* @__PURE__ */ <T>f()", &[true]),
+        ("// @__PURE__\n<T>f()", &[true]),
+        ("/* @__PURE__ */ <const>f()", &[true]),
+        ("/* @__PURE__ */ <T><U>f()", &[true]),
+        ("/* @__PURE__ */ <T>(f())", &[true]),
+        ("/* @__PURE__ */ <T>(f() as U)", &[true]),
+        ("/* @__PURE__ */ <T>(<U>f())", &[true]),
+        ("/* @__PURE__ */ <T>new A", &[true]),
+        ("/* @__PURE__ */ <T>f<U>()", &[true]),
+        ("/* @__PURE__ */ <T>f?.()", &[true]),
+        ("/* @__PURE__ */ <T>a().b()", &[true, true]),
+        ("/* @__PURE__ */ <T>(f())()", &[false, true]),
+        ("/* @__PURE__ */ <T>f() + g()", &[true, false]),
+        ("x = /* @__PURE__ */ <T>f()", &[true]),
+        ("typeof /* @__PURE__ */ <T>f()", &[true]),
+        ("/* @__PURE__ */ <T>f().b", &[false]),
+        ("/* @__PURE__ */ <T>(f()).b", &[false]),
+        ("/* @__PURE__ */ <T>-f()", &[false]),
+        ("/* @__PURE__ */ <T>f`t`", &[false]),
+    ]);
+}
+
+#[test]
+fn annotation_behind_cast() {
+    expect(&[
+        ("<T>/* @__PURE__ */ f()", &[false]),
+        ("<const>/* @__PURE__ */ f()", &[false]),
+        ("<T>/* @__PURE__ */ (f())", &[false]),
+        ("<T>/* @__PURE__ */ ((f()))", &[false]),
+        ("<T>/* @__PURE__ */ <U>f()", &[false]),
+        ("<T><U>/* @__PURE__ */ f()", &[false]),
+        ("<A<B>>/* @__PURE__ */ f()", &[false]),
+        ("<(A)>/* @__PURE__ */ f()", &[false]),
+        ("<T>/* x */ /* @__PURE__ */ new A", &[false]),
+        ("(<T>/* @__PURE__ */ f())", &[false]),
+        ("<T>(<U>/* @__PURE__ */ f())", &[false]),
+        ("</* @__PURE__ */ T>f()", &[false]),
+        ("<T /* @__PURE__ */>f()", &[false]),
+        ("<T>(/* @__PURE__ */ f())", &[true]),
+        ("<T>(/* @__PURE__ */ (f()))", &[true]),
+        ("<T>(/* @__PURE__ */ <U>f())", &[true]),
+        ("/* @__PURE__ */ <T>/* @__PURE__ */ f()", &[true]),
+        ("a > /* @__PURE__ */ f()", &[true]),
+        ("() => /* @__PURE__ */ f()", &[true]),
+    ]);
+}
+
+#[test]
 fn annotation_is_before_first_token() {
     expect(&[
         ("f()", &[false]),

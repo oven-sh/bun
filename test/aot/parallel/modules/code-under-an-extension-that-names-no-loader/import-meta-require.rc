@@ -1,1 +1,0 @@
-module.exports = { name: "import-meta-require.rc", strict: (function () { return this === undefined; })() };

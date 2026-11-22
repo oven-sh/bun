@@ -1,0 +1,31 @@
+# A rope was flattened before every loop that reads its characters, also where the loop leaves before its first read.
+# f1: an element decides, which the preheader cannot know: the string may stay a rope, and the first read resolves it. f2: a relation over values that enter the loop decides: it is tested in front.
+# f3 reads first: nothing is tested but the loop's own bound. f4: the iteration stores before it reads, and whoever catches an error for lack of memory sees the store: what stands in front resolves without throwing, and a version runs where the string is flat.
+# -- source: rope-behind-loop-exit.ts
+# function find(s: string, mark: number): number { const marks = new Uint8Array(16); marks[mark] = 1; for (let i = 0; i < s.length; i++) { if (marks[i]) return i; if (s.charCodeAt(i) === 58) return -i; } return -1; }
+# function scan(s: string, max: number): number { let n = 0; for (let i = 0; i < s.length; i++) { if (i > max) break; if (s.charCodeAt(i) === 32) n++; } return n; }
+# function count(s: string): number { let n = 0; for (let i = 0; i < s.length; i++) { if (s.charCodeAt(i) === 32) n++; } return n; }
+# let seen = 0;
+# function countSeen(s: string): number { let n = 0; for (let i = 0; i < s.length; i++) { seen++; if (s.charCodeAt(i) === 32) n++; } return n; }
+# const size = process.argv.length;
+# console.log(find("abc:def" + size, size + 9), scan("a b c" + size, size), count("a b c" + size), countSeen("a b c" + size), seen);
+# -- end of source
+# RUN: walk f1 f2 f3 f4 mechanisms=all-Inlining
+# CHECK-LABEL: code f1:Body
+# CHECK: = FlattenString {{*}} [mayStayRope]
+# CHECK-LABEL: code f2:Body
+# CHECK-NOT: mayStayRope
+# CHECK: [[begins]]: boolean @Boolean = Less
+# CHECK: [[stays]]: boolean @Boolean = LogicalNot
+# CHECK: = FlattenString {{*}}, [[begins]], [[stays]] traits
+# CHECK-LABEL: code f3:Body
+# CHECK-NOT: mayStayRope
+# CHECK: [[starts]]: boolean @Boolean = Less
+# CHECK: = FlattenString {{*}}, [[starts]] traits
+# CHECK-LABEL: code f4:Body
+# CHECK-NOT: FlattenString
+# CHECK: = TryResolveRope
+# CHECK: isLoopHead=true:
+# CHECK: = PutModuleVariable
+# CHECK: = GetStringCodeUnit
+# CHECK: = FlattenString

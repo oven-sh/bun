@@ -1,7 +1,6 @@
 use core::ptr::NonNull;
 use std::borrow::Cow;
 
-use bstr::BStr;
 use bun_alloc::Arena;
 use bun_aot::load::source_provider::Failed;
 use bun_ast::{Loc, Log, Source};
@@ -9,17 +8,14 @@ use bun_event_loop::AnyEventLoop;
 use bun_js_printer::Encoding;
 use bun_paths::fs::Path;
 use bun_resolver::compiled_program::compare_source_paths;
-use bun_sema::atom::Interner;
-use bun_sema::hir_from_data::DataValue;
 use bun_sema::util::SharedSort;
 
 use super::assets::EmbeddedFiles;
-use super::data_values::{data_value_from_expr, report_not_data};
 use super::services::{BuildContext, with_ast_scope};
 use crate::bundle_v2::bv2_impl::generate_unique_key;
 use crate::mal_prelude::*;
 use crate::options::{CompileMode, Loader, ModuleType, OutputFile, OutputKind, Side, Target};
-use crate::{BundleV2, Chunk, Index, Transpiler};
+use crate::{BundleV2, Chunk, Index, LinkerContext, LinkerGraph, Transpiler};
 
 const ENTRY_NAMESPACE: &[u8] = b"bun-aot-page";
 const ENTRY_FILE_NAME: &[u8] = b"page-entry.js";
@@ -30,14 +26,13 @@ struct PageOutputs {
     output_files: Vec<OutputFile>,
 }
 
-pub(crate) fn bundle_pages<'s>(
+/// `SourceProvider::bundle_pages`
+pub(crate) fn bundle_pages(
     context: &BuildContext,
     embedded: &EmbeddedFiles,
     pages: &[&[u8]],
-    arena: &'s Arena,
-    atoms: &Interner<'s>,
     log: &mut Log,
-) -> Result<Vec<&'s DataValue<'s>>, Failed> {
+) -> Result<Vec<Vec<u8>>, Failed> {
     if pages.is_empty() {
         return Ok(Vec::new());
     }
@@ -46,11 +41,7 @@ pub(crate) fn bundle_pages<'s>(
         output_files,
     } = create_page_outputs(context, pages, log)?;
     embedded.embed_page_outputs(collect_client_files(output_files));
-    pages
-        .iter()
-        .zip(&manifests)
-        .map(|(page, manifest)| parse_page_manifest(manifest, page, arena, atoms, log))
-        .collect()
+    Ok(manifests)
 }
 
 fn create_page_outputs(
@@ -60,41 +51,25 @@ fn create_page_outputs(
 ) -> Result<PageOutputs, Failed> {
     with_ast_scope(|heap| {
         let mut page_log = Log::init();
-        let transpiler = create_page_transpiler(context, heap, &raw mut page_log);
-        let transpiler_pointer: *mut Transpiler<'_> = transpiler;
-        let mut any_loop = AnyEventLoop::default();
+        let mut transpiler = create_page_transpiler(context, heap, &raw mut page_log);
+        let any_loop = AnyEventLoop::default();
         let carrier = context.bundle();
 
-        let result = BundleV2::init(
-            // SAFETY: `transpiler_pointer` is the unique slot `heap.alloc` returned, and it lives in `heap`.
-            unsafe { &mut *transpiler_pointer },
+        let mut bundle = BundleV2::init(
+            &mut transpiler,
             None,
             heap,
-            Some(NonNull::from(&mut any_loop)),
-            false,
-            NonNull::new(carrier.graph.pool().worker_pool),
+            Some(NonNull::from(&any_loop)),
+            Some(NonNull::from(carrier.graph.pool().worker_pool())),
             heap,
-        )
-        .and_then(|mut bundle| {
-            bundle.plugins = carrier.plugins;
-            bundle.plugin_context = carrier.plugin_context;
-            bundle.completion = carrier.completion;
-            bundle.file_map = carrier.file_map;
+        );
+        bundle.plugins = carrier.plugins;
+        bundle.plugin_context = carrier.plugin_context;
+        bundle.completion = carrier.completion;
+        bundle.file_map = carrier.file_map;
 
-            let result = run(&mut bundle, pages, heap);
-            bundle.deinit_without_freeing_arena();
-            drop(bundle);
-            result
-        });
-
-        // SAFETY: the bundle that borrowed the transpiler is gone, so this is the only pointer to it. The arena frees
-        // the struct's bytes, and `drop_in_place` releases what its fields own on the global heap. No double free.
-        unsafe {
-            if let Some(macros) = (*transpiler_pointer).macro_context.take() {
-                macros.deinit();
-            }
-            core::ptr::drop_in_place(transpiler_pointer);
-        }
+        let result = run(&mut bundle, pages, heap);
+        drop(bundle);
 
         let has_page_errors = page_log.errors > 0;
         page_log.append_to(log);
@@ -112,16 +87,12 @@ fn create_page_outputs(
     })
 }
 
-#[allow(clippy::mut_from_ref)] // allocated in the arena
 fn create_page_transpiler<'h>(
     context: &BuildContext,
     heap: &'h Arena,
     log: *mut Log,
-) -> &'h mut Transpiler<'h> {
-    // SAFETY: the carrier's transpiler outlives this one, which `create_page_outputs` destroys before it returns, and
-    // `log` is non-null and outlives it too.
-    let transpiler =
-        heap.alloc(unsafe { Transpiler::for_worker(context.bundle().transpiler(), heap, log) });
+) -> Transpiler<'h> {
+    let mut transpiler = Transpiler::for_worker(context.bundle().transpiler(), heap, log);
 
     let options = &mut transpiler.options;
     options.type_check = None;
@@ -137,7 +108,6 @@ fn create_page_transpiler<'h>(
     options.footer = Cow::Borrowed(b"");
 
     transpiler.sync_resolver_opts();
-    transpiler.wire_after_move();
     transpiler
 }
 
@@ -176,8 +146,13 @@ fn run<'h>(
     bundle.enqueue_entry_points_normal::<&[u8]>(&[])?;
 
     let mut source = create_entry_source(pages, heap);
-    let index =
-        bundle.enqueue_parse_task2(&mut source, Loader::Js, Target::Bun, ModuleType::Esm)?;
+    let index = bundle.enqueue_parse_task2(
+        &mut source,
+        Loader::Js,
+        Target::Bun,
+        ModuleType::Esm,
+        Default::default(),
+    )?;
     bundle.graph.entry_points.push(Index::init(index));
 
     bundle.wait_for_parse();
@@ -187,24 +162,27 @@ fn run<'h>(
     bundle.fail_if_no_entry_points()?;
 
     bundle.scan_for_secondary_paths();
+    bundle.disambiguate_pretty_paths();
     bundle.process_server_component_manifest_files()?;
-    bundle.clone_ast()?;
+    let mut linker_graph = bundle.create_linker_graph()?;
 
     let reachable_files = bundle.find_reachable_files()?;
-    bundle.process_files_to_copy(&reachable_files)?;
+    linker_graph.additional_output_files = bundle.process_files_to_copy(&reachable_files)?;
     bundle.add_server_component_boundaries_as_extra_entry_points()?;
 
-    let mut chunks = bundle.link(&reachable_files)?;
+    let mut linker = LinkerContext::load(bundle, linker_graph, &reachable_files)?;
+    let mut chunks = linker.link(bundle.transpiler.log_mut())?;
     if bundle.transpiler.log().errors > 0 {
         return Err(crate::Error::BuildFailed);
     }
 
     let output_files = crate::linker_context_mod::generate_chunks_in_parallel::<false>(
-        &mut bundle.linker,
+        &mut linker,
+        bundle.transpiler.log_mut(),
         &mut chunks,
     )?;
 
-    let manifests = write_page_manifests(bundle, &chunks, &output_files, pages)?;
+    let manifests = write_page_manifests(bundle, &linker.graph, &chunks, &output_files, pages)?;
     Ok(PageOutputs {
         manifests,
         output_files,
@@ -213,11 +191,12 @@ fn run<'h>(
 
 fn write_page_manifests(
     bundle: &BundleV2<'_>,
+    linker_graph: &LinkerGraph<'_>,
     chunks: &[Chunk<'_>],
     output_files: &[OutputFile],
     pages: &[&[u8]],
 ) -> Result<Vec<Vec<u8>>, crate::Error> {
-    let server_source_indices = &bundle.graph.html_imports.server_source_indices;
+    let server_source_indices = &bundle.graph.html_imports;
     if server_source_indices.len() != pages.len() {
         return Err(report_page_count(
             bundle,
@@ -243,8 +222,8 @@ fn write_page_manifests(
         let mut manifest: Vec<u8> = Vec::new();
         crate::HTMLImportManifest::write_with_assets(
             index as u32,
-            &bundle.graph,
-            &bundle.linker.graph,
+            bundle,
+            linker_graph,
             chunks,
             output_files,
             &mut manifest,
@@ -270,31 +249,6 @@ fn report_page_count(
         format_args!("{bundled_count} pages were bundled, {requested_count} were asked for"),
     );
     crate::Error::BuildFailed
-}
-
-fn parse_page_manifest<'s>(
-    manifest: &[u8],
-    path: &[u8],
-    arena: &'s Arena,
-    atoms: &Interner<'s>,
-    log: &mut Log,
-) -> Result<&'s DataValue<'s>, Failed> {
-    let source = Source::init_path_string(path, manifest);
-    with_ast_scope(|scratch| {
-        let Ok(root) = bun_parsers::json::parse_json_into_arena(&source, log, scratch) else {
-            let path = BStr::new(path);
-            log.add_error_fmt(
-                Some(&source),
-                Loc::EMPTY,
-                format_args!("the manifest of \"{path}\" is not JSON"),
-            );
-            return Err(Failed);
-        };
-        data_value_from_expr(&root, scratch, arena, atoms).map_err(|error| {
-            report_not_data(log, path, "the manifest", error);
-            Failed
-        })
-    })
 }
 
 fn is_client_output(file: &OutputFile) -> bool {
@@ -346,8 +300,6 @@ fn collect_client_files(outputs: Vec<OutputFile>) -> Vec<OutputFile> {
 
 #[cfg(test)]
 mod tests {
-    use bun_sema::session::Session;
-
     use super::super::services::with_test_context;
     use super::*;
 
@@ -490,13 +442,10 @@ mod tests {
         with_test_context(
             |_| {},
             |context| {
-                let session = Session::new();
-                let atoms = Interner::new_in(&session);
-                let arena = Arena::new();
                 let embedded = EmbeddedFiles::default();
                 let mut log = Log::init();
 
-                let manifests = bundle_pages(context, &embedded, &[], &arena, &atoms, &mut log);
+                let manifests = bundle_pages(context, &embedded, &[], &mut log);
 
                 assert!(manifests.unwrap().is_empty());
                 assert!(log.msgs.is_empty());

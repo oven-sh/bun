@@ -1,5 +1,4 @@
 // A loop reads a field of an object made ahead of it and stores the object itself into that field.
-// Env of the executable: BUN_JSC_validateAOTRuntime=1
 class Node { self: Node | null = null; n = 0; }
 function run(o: Node, n: number): number { let count = 0; for (let i = 0; i < n; i++) { if (o.self !== null) count++; if (i === 20) o.self = o; } return count; }
 const a = new Node(), b = new Node();

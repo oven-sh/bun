@@ -1,0 +1,30 @@
+# let kept = holder.count; process.nextTick(later); return kept + holder.count
+# The host makes process.nextTick when it is first read, and it makes it by entering compiled code of the library. The first read was built as InitializeBuiltin, whose row says: no other code, no throw, no collection;
+# the walk kept all that it remembered across it. It is built as the read that may do all of that. A member that the engine merely adds at its first read (Math.imul) goes as before.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: InitializeBuiltin
+# CHECK: GetWatchedBuiltinValue {{*}}builtin=ProcessNextTick
+
+module m0 path="/main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Call v0, -
+    Return v1
+}
+function f1 name="later" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="process" [isFreeName]
+    v2 = PropGet v1 key="nextTick"
+    v3 = NewClosure function=f2
+    v4 = Call v2, v1, v3 calleeKey="nextTick"
+    Return v4
+}
+function f2 module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}

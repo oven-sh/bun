@@ -1,8 +1,8 @@
 use bun_options_types::aot_options::ExplainSet;
 use bun_sema::util::SharedSort;
 use bun_trim::{
-    Decision, Feature, FeatureSet, RetainReason, Retained, UsedFeature, UsedLocales, WitnessIndex,
-    can_run_unseen_code,
+    Decision, Feature, FeatureSet, RetainReason, Retained, UnseenCodeCause, UsedFeature,
+    UsedLocales, WitnessIndex, can_run_unseen_code,
 };
 
 use super::format::write_parts;
@@ -12,17 +12,34 @@ use super::{ReportEntry, ReportInput};
 use crate::builtins::BuiltinId;
 use crate::builtins::table::{self, BuiltinKind};
 use crate::engine::{
-    BuiltinUseRecord, FeatureUseRecord, Position, SourceLocation, builtin_of, feature_of,
-    position_of,
+    BuiltinUseRecord, FeatureUseRecord, Position, SourceLocation, UnseenCodeRecord, builtin_of,
+    feature_of, position_of,
 };
-use crate::ir::generated::{BuiltinUse, FeatureUseKind, LocaleUseKind};
+use crate::ir::generated::{
+    BuiltinUse, FeatureUseKind, LocaleUseKind, UnseenCodeCause as EngineCause,
+};
 
 const PREFIX: &[u8] = b"trim: ";
 
 pub(super) fn collect(input: &ReportInput<'_>, out: &mut Vec<ReportEntry>) {
-    let mut positions = Positions::new(input, PathStyle::Native);
+    let mut positions = Positions::new(input, PathStyle::Posix);
     let reachable = find_removed_but_reachable(input, &mut positions);
     cause_lines(input, &reachable, &mut positions, out);
+    let brings_names = |cause| {
+        matches!(
+            cause,
+            UnseenCodeCause::EvaluatesText
+                | UnseenCodeCause::LoadsModuleByName
+                | UnseenCodeCause::LoadsCodeByName
+        )
+    };
+    let causes = &input.used_features.causes;
+    if !input.options.trim.removes_unused && causes.iter().any(|it| brings_names(it.cause)) {
+        let line = line_from(&[
+            b"without --trim this report keeps what only a name from run time could reach; --trim removes it",
+        ]);
+        out.push(entry_at(line, None));
+    }
     let items = item_lines(input.engine.builtins_used());
     out.extend(items.into_iter().map(|line| entry_at(line, None)));
     out.push(locale_line(input, &mut positions));
@@ -66,9 +83,23 @@ fn write_witness(
     Some(position)
 }
 
+fn builtin_shown_for(records: &[UnseenCodeRecord], record: &UnseenCodeRecord) -> u32 {
+    let loads_by_name = matches!(
+        record.cause,
+        EngineCause::LoadsModuleByName | EngineCause::LoadsCodeByName
+    );
+    let place = position_of(record.witness.location);
+    if !loads_by_name || builtin_of(record.builtin).is_some() || place.is_none() {
+        return record.builtin;
+    }
+    let evaluator = records.iter().find(|other| {
+        other.cause == EngineCause::EvaluatesText && position_of(other.witness.location) == place
+    });
+    evaluator.map_or(record.builtin, |other| other.builtin)
+}
+
 type ReachableFeature<'a> = (Feature, &'a FeatureUseRecord);
 
-// A feature that no code names, that --trim removes, and that a place in the program can still reach.
 fn find_removed_but_reachable<'a>(
     input: &ReportInput<'a>,
     positions: &mut Positions<'_>,
@@ -83,7 +114,11 @@ fn find_removed_but_reachable<'a>(
             continue;
         };
         let is_removed = decision.unused.contains(feature) && !decision.requested.contains(feature);
-        if record.kind == FeatureUseKind::Named || !is_removed || seen.contains(feature) {
+        let is_named = matches!(
+            record.kind,
+            FeatureUseKind::Named | FeatureUseKind::FoundByName
+        );
+        if is_named || !is_removed || seen.contains(feature) {
             continue;
         }
         let position = position_of(record.witness.location);
@@ -135,7 +170,8 @@ fn cause_lines(
         let record = record_at(input.engine.unseen_code(), unseen.witness);
         let position = record.and_then(|record| {
             let location = record.witness.location;
-            write_witness(&mut line, record.builtin, location, positions)
+            let builtin = builtin_shown_for(input.engine.unseen_code(), record);
+            write_witness(&mut line, builtin, location, positions)
         });
         out.push(entry_at(line, position));
     }
@@ -165,7 +201,8 @@ fn item_lines(records: &[BuiltinUseRecord]) -> Vec<Vec<u8>> {
         let Some(id) = builtin_of(record.builtin) else {
             continue;
         };
-        if record.uses.without(BuiltinUse::TESTED).is_empty() {
+        let counts = !record.uses.contains(BuiltinUse::NAMED_AT_RUN_TIME);
+        if !counts || record.uses.without(BuiltinUse::TESTED).is_empty() {
             continue;
         }
         push_item(&mut items, id);
@@ -224,7 +261,6 @@ fn locale_line(input: &ReportInput<'_>, positions: &mut Positions<'_>) -> Report
     }
     let requirements = input.decision.map_or(&[][..], |it| &it.requirements);
     match &input.used_features.locales {
-        // Unseen code can ask for any locale, so the plan ignores the list and keeps them all.
         UsedLocales::Listed(_) if can_run_unseen_code(input.used_features, requirements) => {
             let why = b"code loaded at run time could use any";
             entry_at(line_from(&[b"locales: all, because ", why]), None)
@@ -306,6 +342,22 @@ fn write_reachable(
     position
 }
 
+fn record_with_written_name<'a>(
+    records: &'a [FeatureUseRecord],
+    first: &'a FeatureUseRecord,
+) -> &'a FeatureUseRecord {
+    let is_written = |record: &FeatureUseRecord| {
+        builtin_of(record.builtin).is_some_and(|id| !table::text_of(id).starts_with('%'))
+    };
+    if is_written(first) {
+        return first;
+    }
+    let mut others = records.iter();
+    others
+        .find(|record| record.feature == first.feature && is_written(record))
+        .unwrap_or(first)
+}
+
 fn write_reason(
     line: &mut Vec<u8>,
     reason: RetainReason,
@@ -321,7 +373,8 @@ fn write_reason(
         }
         RetainReason::Used(witness) => {
             line.extend_from_slice(b"used");
-            let record = record_at(input.engine.features_used(), witness)?;
+            let records = input.engine.features_used();
+            let record = record_with_written_name(records, record_at(records, witness)?);
             return write_witness(line, record.builtin, record.witness.location, positions);
         }
         RetainReason::RequiredByOption(index) => {

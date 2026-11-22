@@ -119,7 +119,7 @@ pub(crate) struct QuicStream {
     session: Cell<*mut QuicSession>,
     key: Key,
     session_js: JsCell<Option<Strong>>,
-    this_value: JsCell<JsRef>,
+    pub(crate) this_value: JsCell<JsRef>,
     state: Cell<*mut StreamState>,
     stats: Cell<*mut u64>,
     pub(super) outbound: JsCell<Outbound>,
@@ -211,7 +211,7 @@ impl QuicStream {
             this.state.set(state_ptr.cast::<StreamState>());
             this.stats.set(stats_ptr.cast::<u64>());
         }
-        this.this_value.with_mut(|r| r.set_strong(handle, global));
+        this_value.set_js_ref_strong(global);
         let _ = this.vtable;
         let now = super::now_ns();
         this.write_stat(IDX_STATS_CREATED_AT, now);
@@ -583,8 +583,8 @@ impl QuicStream {
         self.inbound.with_mut(|i| i.ended = true);
         self.with_state(|s| s.read_ended = 1);
         if let Some(wakeup) = self.take_wakeup() {
-            let vm = global.bun_vm().as_mut();
-            vm.event_loop_ref().run_callback(
+            let vm = global.bun_vm();
+            vm.event_loop().run_callback(
                 bun_event_loop::ContextId::NONE,
                 wakeup.get(),
                 global,
@@ -623,8 +623,8 @@ impl QuicStream {
         });
         self.with_state(|s| s.read_ended = 1);
         if let Some(wakeup) = self.take_wakeup() {
-            let vm = global.bun_vm().as_mut();
-            vm.event_loop_ref().run_callback(
+            let vm = global.bun_vm();
+            vm.event_loop().run_callback(
                 bun_event_loop::ContextId::NONE,
                 wakeup.get(),
                 global,
@@ -693,8 +693,8 @@ impl QuicStream {
             }
             None => JSValue::UNDEFINED,
         };
-        let vm = global.bun_vm().as_mut();
-        vm.event_loop_ref().run_callback(
+        let vm = global.bun_vm();
+        vm.event_loop().run_callback(
             bun_event_loop::ContextId::NONE,
             cb,
             global,

@@ -31,7 +31,6 @@ pub(crate) struct Source<'a> {
     pub(crate) text: &'a [u8],
     pub(crate) experimental_decorators: bool,
     pub(crate) reads_jsdoc: bool,
-    pub(crate) keeps_function_directives: bool,
 }
 
 impl<'a> Source<'a> {
@@ -45,7 +44,6 @@ impl<'a> Source<'a> {
             text,
             experimental_decorators: false,
             reads_jsdoc: true,
-            keeps_function_directives: false,
         }
     }
 }
@@ -165,7 +163,7 @@ impl<'s> Workspace<'s> {
             experimental_decorators: source.experimental_decorators,
             every_file_is_a_module: false,
             reads_jsdoc: source.reads_jsdoc,
-            keeps_function_directives: source.keeps_function_directives,
+            ignores_pure_comments: false,
         };
         let mut hir = parse_for_compile(self.arena, &options, source.text, &self.atoms);
         self.set_text(&mut hir, source.text);

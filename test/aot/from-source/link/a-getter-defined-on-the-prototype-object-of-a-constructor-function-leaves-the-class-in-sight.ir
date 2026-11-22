@@ -1,0 +1,21 @@
+# A literal descriptor with a getter, defined in sight on the prototype object of a constructor function, is a member as `get rung() {}` in a class body is. A read that passes the name enters the getter; it no longer lets the whole class go.
+# -- source: main.js
+# const strokes = Symbol("strokes");
+# function Bell(hour) { this[strokes] = hour; }
+# Object.defineProperty(Bell.prototype, "rung", { get() { return this[strokes] % 12 + 1; } });
+# function hear(bell) { return bell.rung; }
+# let count = 0;
+# for (let turn = 0; turn < 10; turn++) { const bell = new Bell(turn * 5); count += hear(bell); }
+# print(count);
+# -- end of source
+# RUN: link members layouts mechanisms=all
+# CHECK: on-prototype L0 "rung" getter=f
+# CHECK: layout L0 {{*}}changes=[] stays-with-compiled-code
+# The number of `hear` is to be filled in by who lays the test.
+# RUN(FORM): walk f2 mechanisms=all
+# FORM-NOT: PropGet {{*}}key="rung"
+# FORM: = AreMembersUnchanged conditions=[{layout=L0 key="rung"}]
+# RUN(ALL): run-in-shell mechanisms=all
+# ALL: 67
+# RUN(NONE): run-in-shell mechanisms=none
+# NONE: 67

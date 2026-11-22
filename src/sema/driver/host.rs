@@ -6,19 +6,18 @@
 
 use bun_ast::e::{JsonValue, ObjectJSON};
 use bun_core::strings::{
-    BOM, contains, contains_char, is_valid_utf8, rsplit_once_char, split_once_char,
-    without_trailing_slash,
+    BOM, contains, contains_char, is_valid_utf8, last_index_of_char, rsplit_once_char,
+    split_once_char, without_trailing_slash,
 };
-use bun_paths::platform::Posix;
-use bun_paths::resolve_path::{dirname, windows_volume_name_len, z};
-use bun_paths::{basename_posix, path_buffer_pool};
+use bun_paths::{Path, path_buffer_pool};
 use bun_sema::atom::Interner;
 use bun_sema::hir;
 use bun_sema::json::Json;
 use bun_sema::resolve::{
     CachedConfig, FileStamp, Host, ModuleDetection, ParseOptions, Paths, ScriptKind, ancestors,
-    case_insensitive_hash, inside, is_declaration_file_name, is_same_path, join, root_length,
-    to_file_name_lower_case, to_path, typescript_path,
+    basename, case_insensitive_hash, inside, is_declaration_file_name, is_plainly_normalized,
+    is_same_path, join, parent_directory, root_length, to_file_name_lower_case, to_path,
+    typescript_path,
 };
 use bun_sema::session::{Arena, Session};
 use bun_sema::util::SharedSort;
@@ -39,8 +38,9 @@ pub struct BundledLibs {
 pub const BUNDLED_LIBS: &[u8] = b"/bundled:///libs";
 
 /// `bundled.IsBundled`
+#[inline]
 pub fn is_bundled(path: &[u8]) -> bool {
-    path.starts_with(b"/bundled:")
+    path.first_chunk() == Some(b"/bundled:")
 }
 
 /// `/C:/a` becomes `C:/a`, and `/\\server/share/a` becomes `\\server/share/a`, which Windows accepts.
@@ -63,6 +63,12 @@ fn to_syscall_path(path: &[u8]) -> Option<&[u8]> {
     is_representable.then_some(native)
 }
 
+/// Opening a named pipe waits for a writer, and some devices never end.
+pub fn is_regular_file(path: &[u8]) -> bool {
+    let stat = to_syscall_path(path).and_then(|it| bun_sys::stat(&Path::from(it)).ok());
+    stat.is_some_and(|it| bun_sys::is_regular_file(it.st_mode as bun_sys::Mode))
+}
+
 /// A drive's root is `/C:`. The system treats `C:` as the working directory on that drive, so it needs `/C:/`. The same
 /// goes for every root except `/`.
 fn with_root(path: &[u8]) -> Cow<'_, [u8]> {
@@ -74,7 +80,22 @@ fn with_root(path: &[u8]) -> Cow<'_, [u8]> {
 
 /// Converts a native path to the checker's path format. It must be absolute.
 pub fn from_native(path: &[u8]) -> Vec<u8> {
-    let path = join(b"/", bun_paths::string_paths::without_nt_prefix(path));
+    match name_with_backslash(path) {
+        Some((directory, name)) => inside(&from_native(directory), name),
+        None => from_native_with_separators(path),
+    }
+}
+
+/// `from_native`, where every `\` is a separator.
+fn from_native_with_separators(path: &[u8]) -> Vec<u8> {
+    let path = match !cfg!(windows) && is_plainly_normalized(path) {
+        true => path.to_vec(),
+        false => {
+            let mut path = bun_paths::Path::from(path);
+            path.strip_nt_prefix();
+            join(b"/", &path)
+        }
+    };
     // A POSIX path's root is `/`, even if its first name looks like a drive or a URL. See `root_length`.
     match !cfg!(windows) && root_length(&path) > 1 && !path.starts_with(b"//") {
         true => [b"/\0", &path[..]].concat(),
@@ -82,13 +103,69 @@ pub fn from_native(path: &[u8]) -> Vec<u8> {
     }
 }
 
+/// The directory and the name of the file at `path`, if the name has a `\`, which is a separator on Windows alone. The
+/// checker joins the paths of directories with `\` as a separator everywhere, but it takes a file's name as it is.
+fn name_with_backslash(path: &[u8]) -> Option<(&[u8], &[u8])> {
+    let at = last_index_of_char(path, b'/').map_or(0, |at| at + 1);
+    let name = &path[at..];
+    (!cfg!(windows) && contains_char(name, b'\\')).then(|| (&path[..at], name))
+}
+
+/// True if the checker can't find the file at `path`, a native path, because a directory's name has a `\`.
+pub fn is_below_backslash(path: &[u8]) -> bool {
+    let directory = &path[..last_index_of_char(path, b'/').unwrap_or(0)];
+    !cfg!(windows) && contains_char(directory, b'\\')
+}
+
+/// Logs an error and returns false if an entry point (or `cwd`, if there are none) is in or is a directory with a `\` in its name.
+pub fn check_entry_point_dirs(
+    cwd: &[u8],
+    entry_points: &[Vec<u8>],
+    log: &mut bun_ast::Log,
+) -> bool {
+    let cwd_itself = [Vec::new()];
+    let paths = if entry_points.is_empty() {
+        &cwd_itself[..]
+    } else {
+        entry_points
+    };
+    for path in paths {
+        let path = Path::resolve(&[cwd, path]);
+        // Where there is no such directory, the checker is right to read the `\` as a separator.
+        let is_unreadable = |dir: &[u8]| {
+            name_with_backslash(dir).is_some() && is_directory(Fd::cwd(), dir).unwrap_or_default()
+        };
+        if bun_paths::ancestors(&path).any(is_unreadable) {
+            log.add_error_fmt(
+                None,
+                bun_ast::Loc::EMPTY,
+                format_args!(
+                    "The type checker cannot read a path that has a backslash in a directory's name: {}",
+                    bstr::BStr::new(path.as_bytes())
+                ),
+            );
+            return false;
+        }
+    }
+    true
+}
+
 /// Converts a command-line path, which is relative to `cwd`. Where `/` is the file system root, a path that begins with
 /// it is a native path.
 pub fn from_argument(cwd: &[u8], path: &[u8]) -> Vec<u8> {
     match !cfg!(windows) && path.starts_with(b"/") {
-        true => from_native(path),
+        true => from_native_with_separators(path),
         false => join(cwd, path),
     }
+}
+
+/// `from_argument`, for a path that names a file. `tsc` reads every `\` as a separator, so a name that has one only counts
+/// if there is such a file.
+pub(crate) fn file_from_argument(host: &dyn Host, cwd: &[u8], path: &[u8]) -> Vec<u8> {
+    let named = name_with_backslash(path).filter(|_| !is_below_backslash(path));
+    let named = named.map(|(directory, name)| inside(&from_argument(cwd, directory), name));
+    let named = named.filter(|it| host.is_file(it));
+    named.unwrap_or_else(|| from_argument(cwd, path))
 }
 
 #[derive(Copy, Clone)]
@@ -251,9 +328,10 @@ pub struct Disk {
     /// and configuration files.
     reader_limit: Option<bun_threading::Semaphore>,
     /// `Host::io_pool`
-    io_pool: Option<bun_threading::io_thread_pool::Ref>,
+    io_pool: Option<&'static bun_threading::ThreadPool>,
     /// Readers that aren't in use, least recently used first.
     idle_readers: bun_threading::Guarded<Vec<Reader>>,
+    idle_buffers: bun_threading::Guarded<Vec<Vec<u8>>>,
     /// See `Host::take_unreadable`.
     unreadable: bun_threading::Guarded<Vec<Vec<u8>>>,
     /// See `AlreadyRead`. Keyed by `tspath.Path`, so such a file is found however its name is spelled, like a file on
@@ -354,7 +432,6 @@ struct Reader {
     directory: Vec<u8>,
     /// Opened when a second file is read from `directory`.
     handle: Option<bun_sys::Dir>,
-    buffer: Vec<u8>,
 }
 
 /// The maximum number of idle readers, and so of open directories, that are retained.
@@ -395,6 +472,7 @@ fn read_file(directory: Fd, name: &[u8], buffer: &mut Vec<u8>) -> Option<Vec<u8>
     let size = file.get_end_pos().ok()?.max(count);
     let mut all = Vec::new();
     all.try_reserve_exact(size.saturating_add(16)).ok()?;
+    bun_sema::util::prefault(all.spare_capacity_mut());
     all.extend_from_slice(&buffer[..count]);
     file.read_to_end_into(&mut all).ok()?;
     Some(all)
@@ -402,8 +480,7 @@ fn read_file(directory: Fd, name: &[u8], buffer: &mut Vec<u8>) -> Option<Vec<u8>
 
 #[cfg(unix)]
 fn stamp_on_disk(path: &[u8]) -> Option<FileStamp> {
-    let mut buffer = path_buffer_pool::get();
-    let stat = bun_sys::stat(z(to_syscall_path(path)?, &mut buffer)).ok()?;
+    let stat = bun_sys::stat(&Path::from(to_syscall_path(path)?)).ok()?;
     Some(FileStamp {
         device: stat.st_dev as u64,
         inode: stat.st_ino as u64,
@@ -457,7 +534,17 @@ struct Split<'a> {
 
 /// `GetDirectoryPath`, `GetBaseFileName`. A root is its own directory and has no name.
 fn split(path: &[u8]) -> Split<'_> {
-    let parent = dirname::<Posix>(path);
+    if let Some(separator) = last_index_of_char(path, b'/')
+        && separator > 0
+        && separator + 1 < path.len()
+        && path[separator - 1] != b'/'
+    {
+        return Split {
+            parent: &path[..separator],
+            name: &path[separator + 1..],
+        };
+    }
+    let parent = parent_directory(path);
     // `parent` only ends with a separator when it was cut out of a root.
     if parent.ends_with(b"/") && path.len() <= root_length(path) {
         return Split {
@@ -467,7 +554,7 @@ fn split(path: &[u8]) -> Split<'_> {
     }
     Split {
         parent,
-        name: basename_posix(path),
+        name: basename(path),
     }
 }
 
@@ -475,8 +562,7 @@ fn split(path: &[u8]) -> Split<'_> {
 /// doesn't exist or is neither. `FileExists` and `GetAccessibleEntries` only accept regular files, because reading a
 /// FIFO or a device can block forever.
 fn is_directory(directory: Fd, path: &[u8]) -> Option<bool> {
-    let mut buffer = path_buffer_pool::get();
-    let path = z(path, &mut buffer);
+    let path = &Path::from(path);
     if cfg!(windows) {
         return Some(bun_sys::exists_at_type(directory, path).ok()? == ExistsAtType::Directory);
     }
@@ -532,8 +618,9 @@ impl Disk {
             }),
             // The bundler's condition, plus the same threshold for this check's own threads.
             io_pool: (threads > 3 && bun_threading::io_thread_pool::uses_io_pool())
-                .then(|| bun_threading::io_thread_pool::acquire().into()),
+                .then(bun_threading::io_thread_pool::get),
             idle_readers: bun_threading::Guarded::new(Vec::new()),
+            idle_buffers: bun_threading::Guarded::new(Vec::new()),
             unreadable: bun_threading::Guarded::new(Vec::new()),
             bundled_libs: None,
             script_kinds: Vec::new(),
@@ -546,9 +633,7 @@ impl Disk {
     /// As on a system where the threads that read files are not the threads that parse them.
     #[cfg(test)]
     pub(crate) fn with_reader_threads(mut self) -> Self {
-        if self.io_pool.is_none() {
-            self.io_pool = Some(bun_threading::io_thread_pool::acquire().into());
-        }
+        self.io_pool = Some(bun_threading::io_thread_pool::get());
         self
     }
 
@@ -579,20 +664,28 @@ impl Disk {
         idle.push(reader);
     }
 
+    fn return_buffer(&self, buffer: Vec<u8>) {
+        let mut idle = self.idle_buffers.lock();
+        if idle.len() < MAX_IDLE_READERS {
+            idle.push(buffer);
+        }
+    }
+
     /// True if the entries of `path` are queried from the system every time. That's the case for the roots, which
     /// aren't directories on Windows. Neither is a server, and `C:` means the working directory on that drive.
     fn is_never_listed(path: &[u8]) -> bool {
-        // `(length, 0)`: a drive, or a server without a share.
+        // A drive, or a server without a share.
         let is_volume = |path: &[u8]| {
             let native = to_native(path);
-            windows_volume_name_len(native) == (native.len(), 0)
+            bun_paths::volume(native) == native
+                && bun_core::strings::tokenize_any(native, b"/\\").count() == 1
         };
         path.is_empty() || cfg!(windows) && (path == b"/" || is_volume(path))
     }
 
     fn directory(&self, path: &[u8]) -> &Directory {
         // `SplitPath` drops a trailing separator after the root.
-        let path = match path.ends_with(b"/") {
+        let path = match path.last() == Some(&b'/') {
             true => &path[..without_trailing_slash(path).len().max(root_length(path))],
             false => path,
         };
@@ -708,8 +801,8 @@ impl Disk {
         let Some(native) = to_syscall_path(&rooted) else {
             return path.to_vec();
         };
-        let (mut name, mut real) = (path_buffer_pool::get(), path_buffer_pool::get());
-        bun_sys::realpath(z(native, &mut name), &mut real)
+        let mut real = path_buffer_pool::get();
+        bun_sys::realpath(&Path::from(native), &mut real)
             .map_or_else(|_| path.to_vec(), from_native)
     }
 
@@ -790,14 +883,6 @@ impl Disk {
     }
 }
 
-impl Drop for Disk {
-    fn drop(&mut self) {
-        if self.io_pool.is_some() {
-            bun_threading::io_thread_pool::release();
-        }
-    }
-}
-
 /// True if `name` looks like the alternate name that NTFS and FAT give an entry whose own name isn't 8.3: `PROGRA~1`
 /// for `Program Files`, `RUNNER~1` for `runneradmin`. The entry can be opened by that name, but no listing has it.
 fn looks_like_short_name(name: &[u8]) -> bool {
@@ -837,12 +922,10 @@ fn list(path: &[u8]) -> Directory {
         // The entry kind from the directory listing avoids a system call per file.
         let is_link = match entry.kind {
             EntryKind::SymLink => true,
-            EntryKind::Unknown => {
-                match bun_sys::lstatat(directory.fd(), z(name, &mut path_buffer_pool::get())) {
-                    Ok(found) => bun_sys::kind_from_mode(found.st_mode as _) == EntryKind::SymLink,
-                    Err(_) => continue,
-                }
-            }
+            EntryKind::Unknown => match bun_sys::lstatat(directory.fd(), entry.name.as_zstr()) {
+                Ok(found) => bun_sys::kind_from_mode(found.st_mode as _) == EntryKind::SymLink,
+                Err(_) => continue,
+            },
             _ => false,
         };
         let is_dir = match entry.kind {
@@ -1423,6 +1506,7 @@ impl Host for Disk {
         }
         let _turn = self.reader_limit.as_ref().map(ReadSlot::wait_for);
         let mut reader = self.take_reader(parent);
+        let mut buffer = self.idle_buffers.lock().pop().unwrap_or_default();
         // The second and later files read from a directory are opened relative to the directory. An absolute path makes
         // the kernel look up every directory on the way again, and all threads contend on the ones near the root. For a
         // single file, opening the directory costs that walk and more. On macOS it always does: opens wait for one lock.
@@ -1437,16 +1521,15 @@ impl Host for Disk {
                     .ok()
                     .map(bun_sys::Dir::from_fd);
             }
-            let Reader { handle, buffer, .. } = &mut reader;
-            handle
-                .as_ref()
-                .map(|directory| read_file(directory.fd(), name, buffer))
+            let handle = reader.handle.as_ref();
+            handle.map(|directory| read_file(directory.fd(), name, &mut buffer))
         };
         let read = read.unwrap_or_else(|| {
             let path = to_native(without_trailing_slash(path));
-            read_file(Fd::cwd(), path, &mut reader.buffer)
+            read_file(Fd::cwd(), path, &mut buffer)
         });
         self.return_reader(reader);
+        self.return_buffer(buffer);
         read.map(|bytes| {
             crate::did_read_source(bytes.len());
             decoded(bytes, keeps_mark)
@@ -1542,7 +1625,11 @@ impl Host for Disk {
         atoms: &Interner<'s>,
         options: ParseOptions,
     ) -> hir::File<'s> {
-        bun_sema_parser::summarize(
+        let summarize = match options.keeps_comments {
+            true => bun_sema_parser::summarize,
+            false => bun_sema_parser::summarize_without_comments,
+        };
+        summarize(
             arena,
             path,
             self.script_kind(path),
@@ -1594,7 +1681,7 @@ impl Host for Disk {
         // The I/O threads serve one load at a time.
         match *self.shares.lock() {
             Some(_) => None,
-            None => self.io_pool.as_deref(),
+            None => self.io_pool,
         }
     }
     fn with_helpers(&self, helpers: usize, count: usize, work: &(dyn Fn(usize) + Sync)) {

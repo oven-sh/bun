@@ -339,6 +339,39 @@ fn other_values_export_default_and_marker() {
 }
 
 #[test]
+fn path_of_file_stays_export_default_beside_the_marker() {
+    with_workspace(|w| {
+        let path = w.atom("/x.bin");
+        let on_disk = DataValue::String(path);
+        let modules = [
+            (DataModule::EmbeddedFile { path }, true),
+            (DataModule::FileInPlace(&on_disk), false),
+        ];
+        for (data, is_resolved_at_runtime) in &modules {
+            let tree = module(w, data);
+            let host_value_count = usize::from(!is_resolved_at_runtime);
+            assert_eq!(tree.host_values.len(), host_value_count, "{data:?}");
+            let s = analyze(w, tree);
+            assert_eq!(exports(&s), ["__esModule", "default"], "{data:?}");
+            let default = export_default_value(&s.hir);
+            let kind = s.hir[default].kind;
+            assert!(
+                matches!(kind, ExprKind::String(text) if text == path),
+                "{kind:?}"
+            );
+            let flagged = exprs_resolved_at_runtime(&s.hir);
+            match is_resolved_at_runtime {
+                true => assert_eq!(flagged, [default], "{data:?}"),
+                false => assert!(flagged.is_empty(), "{data:?}"),
+            }
+            assert_eq!(export_pairs(&s), [("_0", "__esModule")], "{data:?}");
+            let marker = s.hir[s.hir.var_decls[0].init].kind;
+            assert!(matches!(marker, ExprKind::True), "marker: {marker:?}");
+        }
+    });
+}
+
+#[test]
 fn empty_object_exports_default() {
     with_workspace(|w| {
         for value in [Data::Object(&[]), Data::Object(&[("default", Data::Null)])] {
@@ -441,6 +474,41 @@ fn host_values_name_the_root() {
 }
 
 #[test]
+fn value_with_a_date_is_made_by_a_call() {
+    with_workspace(|w| {
+        let (class, text) = (w.atom("PlainDate"), w.atom("1979-05-27"));
+        let date = DataValue::Temporal { class, text };
+        let list = DataValue::Array(w.arena.alloc_slice_copy(&[date]));
+        let default: &DataValue<'_> = w.arena.alloc(list);
+        let data = DataModule::Value {
+            default,
+            exports_keys: false,
+        };
+        let tree = module(w, &data);
+        let hir = &tree.file;
+        assert!(tree.host_values.is_empty());
+
+        let ExprKind::Array(items) = hir[export_default_value(hir)].kind else {
+            panic!("default export: {:?}", hir[export_default_value(hir)].kind);
+        };
+        let ExprKind::Call(call) = hir[hir.id_at(items, 0)].kind else {
+            panic!("first element: {:?}", hir[hir.id_at(items, 0)].kind);
+        };
+        let Some((constructor, from)) = hir.member_key(hir[call].callee) else {
+            panic!("callee: {:?}", hir[hir[call].callee].kind);
+        };
+        assert_eq!(from, MemberKey::Name(w.atom("from")));
+        let Some((temporal, name)) = hir.member_key(constructor) else {
+            panic!("constructor: {:?}", hir[constructor].kind);
+        };
+        assert_eq!(name, MemberKey::Name(class));
+        assert!(matches!(hir[temporal].kind, ExprKind::Ident(name) if name == w.atom("Temporal")));
+        let arguments: Vec<ExprId> = hir.ids(hir[call].args).collect();
+        assert!(matches!(hir[arguments[0]].kind, ExprKind::String(given) if given == text));
+    });
+}
+
+#[test]
 fn native_addon_is_loaded_by_process_dlopen() {
     with_workspace(|w| {
         let path = w.atom("/x.node");
@@ -534,13 +602,17 @@ fn assert_runtime_require(s: &Analyzed<'_>, loader_type: Option<&str>, member: O
 #[test]
 fn database_names_the_modules_that_open_it() {
     with_workspace(|w| {
-        for (is_embedded, modules) in [
-            (false, &["bun:sqlite"][..]),
-            (true, &["node:fs", "bun:sqlite"]),
+        for (place, modules) in [
+            (DatabasePlace::Disk, &["bun:sqlite"][..]),
+            (
+                DatabasePlace::WorkingDirectory,
+                &["bun-folder-of-database:/x.db", "bun:sqlite"],
+            ),
+            (DatabasePlace::Executable, &["node:fs", "bun:sqlite"]),
         ] {
             let data = DataModule::Database {
                 path: w.atom("/x.db"),
-                is_embedded,
+                place,
             };
             let s = analyzed_module(w, &data);
             let sites = s.analysis.import_sites.iter();

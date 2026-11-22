@@ -1,5 +1,6 @@
 use super::manifest::ExportsEntry;
 use super::*;
+use crate::resolve::parent_directory;
 
 const DECLARATION_EXTENSIONS: [(&[u8], &[&[u8]]); 3] = [
     (b".js", &[b".d.ts"]),
@@ -7,14 +8,12 @@ const DECLARATION_EXTENSIONS: [(&[u8], &[&[u8]]); 3] = [
     (b".cjs", &[b".d.cts", b".d.ts"]),
 ];
 
-// `./dist/index.js` is declared by `./dist/types/index.d.ts`: what lies in `./dist/` is declared in `./dist/types/`.
 struct DeclarationFolder<'h> {
     code: &'h [u8],
     declarations: &'h [u8],
 }
 
 impl<'h> Resolver<'h> {
-    /// The declaration file that a package ships for one of its JavaScript files.
     pub fn declaration_file_of(&self, path: &[u8]) -> Option<&'h [u8]> {
         let (stem, extensions) = DECLARATION_EXTENSIONS
             .into_iter()
@@ -24,7 +23,7 @@ impl<'h> Resolver<'h> {
             candidates.find(|candidate| self.is_file(candidate))
         };
         let found = find_file(stem).or_else(|| {
-            let manifest = self.nearest_code_manifest(dirname::<Posix>(path))?;
+            let manifest = self.nearest_code_manifest(parent_directory(path))?;
             let relative = stem.strip_prefix(manifest.directory)?;
             let relative = [b".", relative].concat();
             let mut folders = find_declaration_folders(manifest.exports.as_ref()?);
@@ -61,7 +60,6 @@ fn find_declaration_folders<'h>(exports: &ExportsEntry<'h>) -> Vec<DeclarationFo
         .collect()
 }
 
-// The folder with its last slash, and the name up to its first dot.
 fn split_file_name(path: &[u8]) -> Option<(&[u8], &[u8])> {
     let slash = bun_core::strings::last_index_of_char(path, b'/')?;
     let (folder, name) = path.split_at(slash + 1);

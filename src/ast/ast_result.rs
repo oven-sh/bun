@@ -11,7 +11,7 @@ use bun_collections::{ArrayHashMap, StringArrayHashMap, StringHashMap};
 use crate::runtime;
 use crate::{
     CharFreq, ExportsKind, Expr, InlinedEnumValue, LocRef, NamedExport, NamedImport, Part, Range,
-    Ref, Scope, SlotCounts, StoreStr, Target,
+    Ref, Scope, SlotCounts, Stmt, StoreSlice, StoreStr, Target,
 };
 
 use crate::part::List as PartList;
@@ -50,10 +50,13 @@ pub struct Ast<'a> {
     /// they can be manipulated efficiently without a full AST traversal
     pub import_records: ImportRecordList<'a>,
 
-    // `hashbang`/`directive` are slices into source text. `StoreStr` records
-    // them under the same lifetime-erased contract as `StoreRef`.
+    // `hashbang` is a slice into source text. `StoreStr` records it under the
+    // same lifetime-erased contract as `StoreRef`.
     pub hashbang: StoreStr,
-    pub directive: Option<StoreStr>,
+    /// The module's directive prologue: its `S::Directive` statements in source order, taken
+    /// off `parts`. What prints them prints them ahead of the statements it generates. The
+    /// linker prints them for the entry point of a chunk and for a wrapped file, no others.
+    pub directives: StoreSlice<Stmt>,
     /// `export default X` where `X` is an import binding in this file. When
     /// `X` resolves to a module namespace the linker binds importers of
     /// `default` through `X` (a namespace never changes identity, so the
@@ -100,10 +103,11 @@ pub struct Ast<'a> {
     /// This is a list of named exports that may exist in a CommonJS module
     /// We use this with `commonjs_at_runtime` to re-export CommonJS
     pub has_commonjs_export_names: bool,
-    pub has_import_meta: bool,
     pub import_meta_ref: Ref,
     /// Output depends on more than the source text (macros, `import.meta.glob`), so don't cache it.
     pub depends_on_more_than_source: bool,
+    /// See `Symbol::is_deferred_require`.
+    pub has_deferred_requires: bool,
 }
 
 // `parts`/`symbols`/`import_records` are now `ArenaVec`s and need an allocator,
@@ -126,7 +130,7 @@ impl<'a> Ast<'a> {
             top_level_await_keyword: Range::NONE,
             import_records: ImportRecordList::new_in(arena),
             hashbang: StoreStr::EMPTY,
-            directive: None,
+            directives: StoreSlice::EMPTY,
             export_default_alias_of_import: Ref::NONE,
             parts: PartList::new_in(arena),
             symbols: SymbolList::new_in(arena),
@@ -147,9 +151,9 @@ impl<'a> Ast<'a> {
             target: Target::Browser,
             ts_enums: Default::default(),
             has_commonjs_export_names: false,
-            has_import_meta: false,
             import_meta_ref: Ref::NONE,
             depends_on_more_than_source: false,
+            has_deferred_requires: false,
         }
     }
 }

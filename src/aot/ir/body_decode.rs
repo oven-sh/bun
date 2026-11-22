@@ -75,8 +75,8 @@ pub(super) fn read_block(
         id,
         first_parameter: ValueId::from_word(first_parameter),
         role: head.role,
-        subject: head.subject,
         frequency: head.frequency,
+        subject: head.subject,
         parameter_types,
         handler,
         value_count: head.value_count,
@@ -99,13 +99,12 @@ pub(super) fn read_value(
     let length = visit_value_fields(opcode, rest, 0, &mut |_, _| {});
     let (fields, rest) = split_fields(rest, length)?;
     let written_length = usize::from(head.opcode & WRITTEN_POSITION_FOLLOWS != 0);
-    let (written, rest) = split_fields(rest, Some(written_length))?;
+    let (second_position, rest) = split_fields(rest, Some(written_length))?;
     let value = ValueView {
         id,
         opcode,
         position: head.position,
-        written_position: written.first().copied(),
-        is_written_position_for_callers: head.opcode & WRITTEN_POSITION_IS_FOR_CALLERS != 0,
+        second_position: second_position.first().copied(),
         fields,
     };
     Ok((value, rest))
@@ -571,6 +570,48 @@ mod tests {
         assert_eq!(arguments, [ValueId::from_word(5), ValueId::from_word(6)]);
         assert_eq!(target.proofs, [7, ABSENT_WORD]);
         assert_eq!(rest, [9]);
+    }
+
+    #[test]
+    fn word_after_marked_value_is_skipped() {
+        let marks =
+            WRITTEN_POSITION_FOLLOWS | STANDS_IN_TAIL_POSITION | WRITTEN_POSITION_IS_FOR_CALLERS;
+        let mut stream = TestStream::default();
+        stream.push_block_head(BlockHead {
+            parameter_count: 1,
+            value_count: 2,
+            ..BlockHead::default()
+        });
+        stream.push_parameter(Some(TypeTable::ANYTHING));
+        let marked_head = value_words(Opcode::PropGet.to_wire() | marks, &[]);
+        stream.words.extend(marked_head);
+        stream.words.push(0);
+        stream.push_visited(FieldWord::Operand, 0);
+        stream.push_visited(FieldWord::Reference(ReferenceKind::PropertyKey), 7);
+        stream.words.push(99);
+        stream.push_value_head(Opcode::Undefined);
+        stream.push_terminator_head(TerminatorKind::Unreachable, 0);
+
+        let body = Body {
+            code: stream.words,
+            block_count: 1,
+            value_count: 3,
+        };
+        assert_prefixes_are_out_of_bounds(&body);
+        assert_eq!(visits_of(&body.code, 1), stream.expected_visits);
+
+        let (block, rest) = read_block(&body.code, ENTRY, 0).expect(WELL_FORMED);
+        assert!(rest.is_empty());
+        let values: Vec<ValueView<'_>> = block.values().collect();
+        let [marked, plain] = values[..] else {
+            panic!("{} values", values.len());
+        };
+        assert_eq!(
+            (marked.opcode, plain.opcode),
+            (Opcode::PropGet, Opcode::Undefined)
+        );
+        assert_eq!(marked.fields, [0, 0, 7]);
+        assert!(plain.fields.is_empty());
     }
 
     #[test]

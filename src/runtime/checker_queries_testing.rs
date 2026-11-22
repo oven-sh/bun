@@ -1,12 +1,9 @@
 use std::num::NonZeroUsize;
 
-use bun_aot::builtins::unlinked_named_values;
+use bun_aot::builtins::name_values_of_unlinked_files;
 use bun_aot::statistics::{LimitId, LimitValues};
-use bun_core::strings;
 use bun_jsc::bindgen::JsScope;
 use bun_jsc::{JSGlobalObject, JsError, JsResult};
-use bun_paths::platform::Posix;
-use bun_paths::resolve_path::dirname;
 use bun_sema::atom::Interner;
 use bun_sema::check::aot::{
     BuiltinClassIndex, BuiltinTypePath, BuiltinTypeSymbols, Denotation, FileOrigin, QueryInputs,
@@ -14,7 +11,7 @@ use bun_sema::check::aot::{
 };
 use bun_sema::fold::FoldInputs;
 use bun_sema::program::Files;
-use bun_sema::resolve::{AOT_CONDITION, CodeOptions, Host};
+use bun_sema::resolve::{AOT_CONDITION, CodeOptions, Host, parent_directory};
 use bun_sema::session::Session;
 use bun_sema_driver::host::from_native;
 use bun_sema_driver::{
@@ -23,7 +20,7 @@ use bun_sema_driver::{
 };
 
 use crate::cli::typescript_libs::BUNDLED;
-use crate::code_resolver_testing::{DiskWithBuiltinModules, fold_options_with_limits};
+use crate::code_resolver_testing::{DiskWithBuiltinModules, fold_options_for_compile};
 
 const fn global_type_path(
     class: u32,
@@ -94,7 +91,7 @@ pub(crate) fn describe_checker_queries(
     // Bun's resolver reads an entry point as it is written, so it stays a native path.
     let entry_points = [entry_point.to_vec()];
     let entry_path = from_native(entry_point);
-    let directory = strings::without_trailing_slash(dirname::<Posix>(&entry_path));
+    let directory = parent_directory(&entry_path);
     let conditions = [AOT_CONDITION.to_vec()];
     let host =
         DiskWithBuiltinModules::new(global.bun_vm(), requested_threads, directory, &conditions);
@@ -107,7 +104,7 @@ pub(crate) fn describe_checker_queries(
         root.push(b'/');
     }
 
-    let fold = FoldInputs::new(fold_options_with_limits(&limits), session.arena());
+    let fold = FoldInputs::new(fold_options_for_compile(), session.arena());
     let atoms = Interner::new_in(&session);
     let request = CompileRequest {
         entry_points: EntryPoints::Written(&entry_points),
@@ -119,6 +116,8 @@ pub(crate) fn describe_checker_queries(
         threads,
         progress: None,
         left_out_bodies: None,
+        discards_first_visits: false,
+        order: 1,
     };
 
     let loaded = match load_program(&session, &host, &request) {
@@ -129,13 +128,15 @@ pub(crate) fn describe_checker_queries(
     let files_to_lower = files.compiled_files();
     let roles = decide_roles(&loaded, &host, &request, files_to_lower);
     let builtin_types = BuiltinTypeSymbols::compute(files, &TYPE_PATHS, Box::new(|| &[]));
-    let named_values = unlinked_named_values(files, &request.atoms);
+    let named_values = name_values_of_unlinked_files(files);
     let inputs = QueryInputs {
         roles: &roles.roles,
         checked_elsewhere: &[],
         builtin_types: &builtin_types,
         named_values: &*named_values,
+        alias_mentions: None,
         max_inference_nodes: limits.get(LimitId::MaxInferenceNodes),
+        limits: limits.for_queries(),
     };
     let checked = check_and_lower(
         &loaded,
@@ -145,7 +146,7 @@ pub(crate) fn describe_checker_queries(
         files_to_lower,
         &|checker, file| {
             let mut out = Vec::new();
-            checker.with_queries(file, inputs, |queries| {
+            checker.with_queries(file, &inputs, |queries| {
                 write_queries(queries, &root, &mut out)
             });
             Some(out)

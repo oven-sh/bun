@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Runs the programs in ../programs without building Bun.
 
-Each program goes through three tools: the front end (a Bun) lowers it to IR, `testaot` compiles the IR to an image, with B3, Air
-and compressed references validated, and the `jsc` shell runs the image. Use this while working on the compiler: all programs take
-about five minutes, one takes a second. The real test is `bun test test/aot`, which needs a full Bun.
+Each program goes through three tools: the front end (a Bun) lowers it to IR, `testaot` compiles the IR to an image, with compressed
+references validated, and the `jsc` shell runs the image. Use this while working on the compiler: all programs take about five
+minutes, one takes a second. The real test is `bun test test/aot`, which needs a full Bun.
 
     JSC=<jsc> TESTAOT=<testaot> FRONT_END=<bun> PLAIN=<any bun> test/aot/shell/quick.py [-j <jobs>] <program>... | all | counting
 
@@ -186,7 +186,7 @@ def run_program(program):
         return "NO IR: " + " | ".join(failed.said.strip().split("\n")[:2])[:200]
 
     build_env = {name[len("BUN_"):] if name.startswith("BUN_JSC_") else name: value for name, value in options.get("buildEnv", {}).items()}
-    words = ["check=validate-back-end,validate-references", "threads=2", *words, *os.environ.get("WORDS", "").split()]
+    words = ["check=verify-each-stage", "threads=2", *words, *os.environ.get("WORDS", "").split()]
     try:
         entries = toolchain.compile_image(ir, image, words, cwd=cwd, env={**build_env, **os.environ})
     except toolchain.ToolFailed as failed:

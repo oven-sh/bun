@@ -24,6 +24,13 @@ export const addBlockedSPKIForTesting: (hash: ArrayBufferView) => void = $newCpp
 );
 export const clearBlockedSPKIsForTesting: () => void = $newCppFunction("NodeTLS.cpp", "clearBlockedSPKIsForTesting", 0);
 
+/** Lays the one function that runs when the process exits, in front of the listeners of 'exit'. */
+export const runWhenProcessExits: (run: () => void) => void = $newCppFunction(
+  "BunProcess.cpp",
+  "jsFunctionRunWhenProcessExits",
+  1,
+);
+
 // This thread's BoringSSL error queue. An API that returns with entries on it makes the next unrelated failure that
 // reads the queue report them. `put` adds BN_R_BITS_TOO_SMALL; `take` empties it and returns its entries, oldest first.
 export const putBoringSSLErrorForTesting: () => void = $newCppFunction("NodeTLS.cpp", "putBoringSSLErrorForTesting", 0);
@@ -47,7 +54,9 @@ export const xxHash3ForTesting: (view: ArrayBufferView, seed?: number | bigint) 
 // not found), a count, or for memmem/memrmem the offset with -1 = not found.
 // scannerRunStops fills `arg` with its three bitmaps and returns 0. lineStarts
 // fills `arg` with uint32 offsets and returns how many. oddBlocks fills `arg`
-// with uint64 words and returns 0.
+// with uint64 words and returns 0, and so does byteBits, for `byte`.
+// byteSetPrefixLength takes a set of 32 bytes.
+// Those for zstd are only there on x64, and return 1 or 0.
 export const highwayStringsForTesting: (
   op:
     | "indexOfChar"
@@ -68,9 +77,15 @@ export const highwayStringsForTesting: (
     | "memrmem16"
     | "scannerRunStops"
     | "lineStarts"
-    | "oddBlocks",
+    | "oddBlocks"
+    | "byteBits"
+    | "byteSetPrefixLength"
+    | "zstdIsQuicker"
+    | "zstdCountBytes"
+    | "zstdWriteCodes",
   haystack: Uint8Array,
   arg: number | Uint8Array,
+  byte?: number,
 ) => number = $newCppFunction("highway_strings_testing.cpp", "Bun__highwayStringsForTesting", 3);
 
 export const SQL = $cpp("JSSQLStatement.cpp", "createJSSQLStatementConstructor");
@@ -230,6 +245,14 @@ export const isModuleResolveFilenameSlowPathEnabled: () => boolean = $newCppFunc
 export const frameworkRouterInternals = {
   parseRoutePattern: $bindgen("FrameworkRouter.bind.ts", "parseRoutePattern"),
   FrameworkRouter: $bindgen("filesystem_router.bind.ts", "FrameworkFileSystemRouter"),
+};
+
+export const declaredResults = {
+  declaredAsString: $bindgen("declared_results_testing.bind.ts", "declaredAsString") as (value: unknown) => string,
+  holdsResultsToDeclaredTypes: $bindgen(
+    "declared_results_testing.bind.ts",
+    "holdsResultsToDeclaredTypes",
+  ) as () => boolean,
 };
 
 // Only in a build with assertions: `isCompiled` in scripts/build/codegen.ts.
@@ -745,7 +768,7 @@ export function storedOutgoingHeaders(message: any): Record<string, [string, unk
 }
 
 /**
- * The syscalls instrumented in bsd.c, plus non-syscall hooks whose failure
+ * The syscalls instrumented in bsd.cpp, plus non-syscall hooks whose failure
  * paths are otherwise unreachable without injection ("ssl_loop_buffer",
  * "poll_start", "session_buffer", "ssl_write"; see fault_inject.h for the per-hook
  * description). Arming anything else is rejected.
@@ -903,6 +926,12 @@ export const privateGlobalFunctions: Record<string, (...operands: any[]) => unkn
 export const builtinFeatureUses: () => import("../../scripts/build/trim/types.ts").BuiltinEntry[] = $newCppFunction(
   "InternalForTesting.cpp",
   "jsFunction_builtinFeatureUses",
+  0,
+);
+/** In an executable compiled ahead of time: asks for every module of the library that the image holds, once. The path of each, and behind a blank what asking for it threw. */
+export const aotRunEveryLibraryModule: () => string[] = $newCppFunction(
+  "InternalForTesting.cpp",
+  "jsFunction_aotRunEveryLibraryModule",
   0,
 );
 /** The engine's `NameClass` of a property name, by the enumerator's name. */

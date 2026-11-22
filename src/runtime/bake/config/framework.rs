@@ -5,7 +5,9 @@ use crate::bake::{BuiltInModule, router};
 use bun_collections::StringArrayHashMap;
 use bun_core::Utf8Bytes;
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
+use bun_paths::Path;
 use std::borrow::Cow;
+use std::sync::Arc;
 
 /// `bake.Framework.ServerComponents`.
 ///
@@ -99,9 +101,8 @@ impl Framework {
     /// Project the runtime-side `bake::Framework` into the bundler crate's
     /// TYPE_ONLY view (`bun_bundler::bake_types::Framework`). The bundler is a
     /// lower-tier crate and cannot name `bun_runtime::bake::Framework`; this is
-    /// the value `init_transpiler` arena-allocates and hands to
-    /// `out.options.framework`.
-    pub(in crate::bake) fn as_bundler_view(&self) -> bun_bundler::bake_types::Framework {
+    /// a transpiler's `options.framework`.
+    pub(in crate::bake) fn as_bundler_view(&self) -> Arc<bun_bundler::bake_types::Framework> {
         use bun_bundler::bake_types as bt;
         let built_in_modules = bun_core::handle_oom(self.built_in_modules.clone());
         let server_components = self
@@ -135,9 +136,7 @@ impl Framework {
             .iter()
             .filter(|fsr| fsr.client_pages)
             .map(|fsr| bt::ClientPageDir {
-                dir: Box::<[u8]>::from(bun_paths::resolve_path::join_abs::<
-                    bun_paths::platform::Auto,
-                >(top_level_dir, &fsr.root)),
+                dir: Path::resolve(&[top_level_dir, &fsr.root]).as_bytes().into(),
                 server_exports: fsr
                     .server_exports
                     .iter()
@@ -145,12 +144,12 @@ impl Framework {
                     .collect(),
             })
             .collect();
-        bt::Framework::new(
+        Arc::new(bt::Framework::new(
             built_in_modules,
             server_components,
             react_fast_refresh,
             client_page_dirs,
-        )
+        ))
     }
 
     /// Resolves built-in module
@@ -250,13 +249,8 @@ impl Framework {
 /// Joins a directory option onto the working directory.
 /// Returns `None` if the result is too long for `Resolver::read_dir_info`.
 pub(crate) fn resolve_dir_option(dir: &[u8]) -> Option<Vec<u8>> {
-    let mut buf = bun_paths::path_buffer_pool::get();
-    let resolved = bun_paths::resolve_path::join_abs_string_buf_checked::<bun_paths::platform::Auto>(
-        bun_resolver::fs::FileSystem::get().top_level_dir(),
-        &mut buf[..bun_paths::MAX_PATH_BYTES - 1],
-        &[dir],
-    )?;
-    Some(bun_paths::string_paths::without_trailing_slash_windows_path(resolved).to_vec())
+    let resolved = Path::resolve(&[bun_resolver::fs::FileSystem::get().top_level_dir(), dir]);
+    Some(resolved.check_len().ok()?.to_vec())
 }
 
 impl Framework {

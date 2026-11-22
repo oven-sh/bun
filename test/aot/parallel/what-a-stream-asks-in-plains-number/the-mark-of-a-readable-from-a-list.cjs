@@ -1,0 +1,1 @@
+const { Readable } = require("node:stream"); const P = Object.getPrototypeOf(new Readable()._readableState), held = new WeakMap(), log = []; Object.defineProperty(P, "highWaterMark", { configurable: true, get() { return held.get(this); }, set(v) { log.push(v); held.set(this, v); } }); Readable.from([1]); console.log(log.join());

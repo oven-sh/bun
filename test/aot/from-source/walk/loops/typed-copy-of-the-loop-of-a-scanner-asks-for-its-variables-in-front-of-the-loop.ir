@@ -1,0 +1,38 @@
+# The variables are declared without a value, the text is read through a closure, and the marks are written behind the step. The loop of measures() is built twice. In front of its typed copy place and stop are asked for an int32; where that fails the other copy runs. place comes round as a parameter of the head, so no turn holds a test of it behind which the turn would have to begin again.
+# f4 = measures
+# -- source: typed-copy-of-the-loop-of-a-scanner-asks-for-its-variables-in-front-of-the-loop.ts
+# function side(unit: number): number { return unit === 40 ? 1 : unit === 41 ? -1 : 0; }
+# function makeGauge() {
+#   var tape: string; var place: number; var stop: number; var peaks = 0; var most: number;
+#   function unitAt(where: number) { return tape.charCodeAt(where); }
+#   function measures(): number {
+#     let deep = 0;
+#     while (place < stop) {
+#       const turn = side(unitAt(place));
+#       place++;
+#       deep += turn;
+#       if (deep > most) { most = deep; peaks++; }
+#     }
+#     return deep;
+#   }
+#   function winds(text: string, from: number) { most = 0; place = from; tape = text; stop = text.length; }
+#   return { winds, measures, deepest: () => most, climbs: () => peaks };
+# }
+# const gauge = makeGauge();
+# (globalThis as any).keptOutside = gauge;
+# gauge.winds("a (b (c) d (e (f)))", 0);
+# console.log(gauge.measures(), gauge.deepest(), gauge.climbs());
+# gauge.winds("((open", 1);
+# console.log(gauge.measures(), gauge.deepest(), gauge.climbs());
+# export {};
+# -- end of source
+# RUN: walk f4 mechanisms=all
+# CHECK-LABEL: code f4:Body
+# CHECK: = GetEnvironmentField {{*}}field=1
+# CHECK-NEXT: = TypeTest {{*}}testedType=i32
+# CHECK: frequency=Rare isLoopHead=true:
+# CHECK: = GetEnvironmentField {{*}}field=2
+# CHECK: = TypeTest {{*}}testedType=i32
+# CHECK: : i32 @Int32, {{*}}: int[0, 9007199254740992] @Int64) isInLoop=true isLoopHead=true:
+# CHECK-NOT: testedType=i32
+# CHECK: = PutEnvironmentField {{*}}field=1

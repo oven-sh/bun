@@ -18,8 +18,12 @@ use bun_install::dependency::{self, Dependency, DependencyExt as _, Tag as DepTa
 use bun_install::install::{self, PackageID, PackageManager};
 use bun_install::integrity::Integrity;
 use bun_install::npm;
-use bun_paths::AutoAbsPath;
+use bun_paths::{Path, from_portable};
 use bun_semver::{self as Semver, String as SemverString};
+
+fn is_tarball(file: &[u8]) -> bool {
+    file.ends_with(b".tgz") || file.ends_with(b".tar.gz")
+}
 
 #[derive(Default)]
 pub(crate) struct YarnLock<'a> {
@@ -42,10 +46,10 @@ pub struct Entry<'a> {
     pub(crate) dependencies: [Option<StringHashMap<&'a [u8]>>; 4],
     pub(crate) commit: Option<&'a [u8]>,
     pub(crate) workspace: bool,
-    pub(crate) file: Option<&'a [u8]>,
+    pub(crate) file: Option<Box<[u8]>>,
     /// The directory that a `link:` spec points to. yarn writes it relative to yarn.lock, even when
     /// the dependency is declared in a workspace.
-    pub(crate) link: Option<Cow<'a, [u8]>>,
+    pub(crate) link: Option<Box<[u8]>>,
     pub(crate) os: npm::Negatable<npm::OperatingSystem>,
     pub(crate) cpu: npm::Negatable<npm::Architecture>,
     pub(crate) git_repo_name: Option<Box<[u8]>>,
@@ -173,12 +177,18 @@ impl<'a> Entry<'a> {
         }
     }
 
-    pub(crate) fn file_path_from_spec(spec: &[u8]) -> &[u8] {
-        let mut path = spec.strip_prefix(b"file:").unwrap_or(spec);
+    pub(crate) fn file_path_from_spec(spec: &[u8]) -> Box<[u8]> {
+        let written = spec.strip_prefix(b"file:").unwrap_or(spec);
+        let converted = from_portable(written);
+        // A tarball is stored as package.json spells it.
+        let mut path = match is_tarball(written) {
+            true => written,
+            false => &converted,
+        };
         while let Some(rest) = path.strip_prefix(b"./") {
             path = rest;
         }
-        strings::without_trailing_slash(path)
+        bun_paths::without_trailing_sep(path).into()
     }
 
     /// `https://registry.npmjs.org/@scope/name/-/name-1.0.0.tgz` -> `@scope/name`
@@ -294,7 +304,10 @@ impl<'a> YarnLock<'a> {
                     let name = Entry::get_name_from_spec(spec);
                     let range = spec.get(name.len() + 1..).unwrap_or(b"");
                     if let Some(path) = range.strip_prefix(b"link:") {
-                        new_entry.link = Some(dependency::link_path_for_lockfile(path));
+                        // `link:./ui/` and `link:./ui` are the same package.
+                        let path = from_portable(path);
+                        let path = bun_paths::without_trailing_sep(&path);
+                        new_entry.link = Some(dependency::link_path_for_lockfile(path).into());
                         break;
                     }
                     // yarn treats a bare relative path the same as a `file:` path.
@@ -396,7 +409,7 @@ impl<'a> YarnLock<'a> {
             Default::default()
         } else {
             (
-                new_entry.file.unwrap_or_default(),
+                new_entry.file.as_deref().unwrap_or_default(),
                 new_entry.resolved.as_deref().unwrap_or_default(),
                 new_entry.commit.unwrap_or_default(),
             )
@@ -433,21 +446,17 @@ fn append_package_json(
     log: &mut bun_ast::Log,
     workspace_path: Option<SemverString>,
 ) -> Result<LockfilePackage, Error> {
-    let mut path = AutoAbsPath::init_top_level_dir();
-    let _ = path.append(match &workspace_path {
-        Some(workspace_path) => workspace_path.slice(this.buffers.string_bytes.as_slice()),
-        None => b"",
-    });
-    let _ = path.append(b"package.json");
-    let (source, json) = match manager.workspace_package_json_cache.get_with_path(
-        log,
-        path.slice(),
-        Default::default(),
-    ) {
+    let mut path = Path::from_top_level_dir();
+    if let Some(workspace_path) = &workspace_path {
+        path.push(workspace_path.slice(this.buffers.string_bytes.as_slice()));
+    }
+    path.push(b"package.json");
+    let cache = &mut manager.workspace_package_json_cache;
+    let (source, json) = match cache.get_with_path(log, &path, Default::default()) {
         // Cloned because parsing the root's `workspaces` grows the cache holding this entry.
         GetJsonResult::Entry(entry) => (entry.source.clone(), entry.root),
         GetJsonResult::ReadErr(err) => {
-            let path = bstr::BStr::new(path.slice());
+            let path = bstr::BStr::new(path.as_bytes());
             let loc = bun_ast::Loc::EMPTY;
             log.add_error_fmt(
                 None,
@@ -478,8 +487,8 @@ fn bind_importer_dependency(
     spec: &mut Vec<u8>,
 ) -> Option<PackageID> {
     let string_bytes = this.buffers.string_bytes.as_slice();
-    if dep.version.tag == dependency::Tag::Workspace {
-        let path = dep.version.workspace().slice(string_bytes);
+    if let dependency::Value::Workspace(workspace) = &dep.version.value {
+        let path = workspace.slice(string_bytes);
         return workspace_id_by_path.get(path).copied();
     }
     // Yarn never locked these peers, so bind them the way loading a bun.lock does.
@@ -509,9 +518,9 @@ fn bind_importer_dependency(
     }
     // yarn.lock spells a `file:` or `link:` path relative to yarn.lock. The parsed path matches
     // that; the literal in a workspace's package.json is relative to the workspace.
-    let (protocol, range) = match dep.version.tag {
-        dependency::Tag::Folder => (b"file:".as_slice(), dep.version.folder()),
-        dependency::Tag::Symlink => (b"link:".as_slice(), dep.version.symlink()),
+    let (protocol, range) = match &dep.version.value {
+        dependency::Value::Folder(folder) => (b"file:".as_slice(), folder),
+        dependency::Value::Symlink(symlink) => (b"link:".as_slice(), symlink),
         _ => (b"".as_slice(), &dep.version.literal),
     };
     spec.clear();
@@ -611,7 +620,9 @@ pub(crate) fn migrate_yarn_lockfile(
         if !dep.behavior.is_workspace() {
             continue;
         }
-        let workspace_path = *dep.version.workspace();
+        let dependency::Value::Workspace(workspace_path) = dep.version.value else {
+            continue;
+        };
         let workspace = append_package_json(this, manager, log, Some(workspace_path))?;
         workspace_id_by_path.put(
             workspace_path.slice(this.buffers.string_bytes.as_slice()),
@@ -646,8 +657,8 @@ pub(crate) fn migrate_yarn_lockfile(
                 break 'blk Resolution::init(ResolutionValue::Workspace(
                     sbuf!(this).append(base_name)?,
                 ));
-            } else if let Some(file) = entry.file {
-                if file.ends_with(b".tgz") || file.ends_with(b".tar.gz") {
+            } else if let Some(file) = entry.file.as_deref() {
+                if is_tarball(file) {
                     break 'blk Resolution::init(ResolutionValue::LocalTarball(
                         sbuf!(this).append(file)?,
                     ));
@@ -795,13 +806,12 @@ pub(crate) fn migrate_yarn_lockfile(
         if matches!(
             resolution.tag,
             crate::resolution::Tag::Folder | crate::resolution::Tag::Symlink
-        ) && let Some(folder) = entry.file.or(entry.link.as_deref())
+        ) && let Some(folder) = entry.file.as_deref().or(entry.link.as_deref())
             && let Some(path) = lockfile::join_top_level_dir(&[folder, b"package.json"])
-            && let GetJsonResult::Entry(json) = manager.workspace_package_json_cache.get_with_path(
-                log,
-                path.slice(),
-                Default::default(),
-            )
+            && let GetJsonResult::Entry(json) =
+                manager
+                    .workspace_package_json_cache
+                    .get_with_path(log, &path, Default::default())
         {
             let manifest = json.root;
             crate::migration::parse_manifest_bin(this, &mut package, &manifest)?;
@@ -820,7 +830,7 @@ pub(crate) fn migrate_yarn_lockfile(
         }
         // yarn.lock spells the path as package.json does, with or without `./`.
         // `bind_importer_dependency` looks it up in normalized form, so that form is added too.
-        if let Some(file) = entry.file {
+        if let Some(file) = entry.file.as_deref() {
             spec_to_package_id.put(&[entry.name, b"@file:", file].concat(), package_id)?;
         } else if let Some(link) = entry.link.as_deref() {
             spec_to_package_id.put(&[entry.name, b"@link:", link].concat(), package_id)?;

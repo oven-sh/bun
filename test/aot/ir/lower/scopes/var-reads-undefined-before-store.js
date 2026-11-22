@@ -1,8 +1,7 @@
 // RUN: lower
 // CHECK-LABEL: function {{*}}name="f"
 // CHECK: [[undefined]] = Undefined
-// CHECK: [[convertedUndefined]] = Convert [[undefined]] declared={type=number flags=[IsExpected]}
-// CHECK: = Call {{*}}, -, [[convertedUndefined]] calleeName="g"
+// CHECK: = Call {{*}}, -, [[undefined]] calleeName="g"
 
 // RUN(ZONE): lower
 // ZONE-LABEL: function {{*}}name="f"

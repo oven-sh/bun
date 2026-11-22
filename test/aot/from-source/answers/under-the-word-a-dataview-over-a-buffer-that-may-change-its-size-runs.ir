@@ -1,0 +1,18 @@
+# -- source: under-the-word-a-dataview-over-a-buffer-that-may-change-its-size-runs.ts
+# declare function print(...values: unknown[]): void;
+# declare function id(value: any): any;
+# function look(size: number): string { const buffer = new ArrayBuffer(size, { maxByteLength: 32 }); const view = new DataView(buffer); view.setInt8(7, 3); buffer.resize(4); let read: unknown; try { read = view.getInt8(7); } catch (error) { read = (error as Error).name; } return read + "|" + view.byteLength; }
+# print(id(look)(8));
+# -- end of source
+# LIBRARY: own
+# The walk notes at its birth that a DataView is as made, and leans on that for the methods that its names find. The run time once marked the structure of DataViews over buffers of one size alone, so the mark said less than the note: under testing=CheckProofsAtRunTime (--aot-harden=proof-checks) the question whether the cell bears the mark stopped this right program. Both structures bear the mark now, as those of typed arrays do, and the cell is asked.
+# RUN(ASKED): walk f1 mechanisms=all testing=CheckProofsAtRunTime
+# ASKED-LABEL: code f1:Body
+# ASKED: [[asked]]: boolean @Boolean = IsPristine {{*}}builtinClass=DataView
+# ASKED: CheckProof [[asked]] checkedType=true {{*}}source=RememberedFact
+# RUN: run-in-shell mechanisms=all
+# CHECK: RangeError|4
+# CHECK-NEXT: exited with 0
+# RUN(HARDENED): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# HARDENED: RangeError|4
+# HARDENED-NEXT: exited with 0

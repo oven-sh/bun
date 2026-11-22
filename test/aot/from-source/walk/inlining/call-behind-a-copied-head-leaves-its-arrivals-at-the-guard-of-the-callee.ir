@@ -1,0 +1,30 @@
+# f1 = cachedOf, f3 = guarded, f4 = plain
+# -- source: call-behind-a-copied-head-leaves-its-arrivals-at-the-guard-of-the-callee.js
+# class Box { constructor(width, height) { this.cached = ""; this.width = width; this.height = height; } }
+# function make(width, height) { let work = 0; for (let i = 0; i < 2; i++) work = (work + i) | 0; return new Box(width, height + work - 1); }
+# function cachedOf(box, unit) {
+#   if (box.cached) return box.cached;
+#   let sum = 0;
+#   for (let i = 0; i < box.height; i++) sum = (sum + box.width * box.height + i) | 0;
+#   box.cached = typeof unit + ":" + sum;
+#   return box.cached;
+# }
+# function guarded(box) { let work = 0; for (let i = 0; i < 2; i++) work = (work + i) | 0; try { return cachedOf(box, 7); } catch (error) { return error.name; } }
+# function plain(box) { let work = 0; for (let i = 0; i < 2; i++) work = (work + i) | 0; const answer = cachedOf(box, "text"); return answer + "!"; }
+# print(guarded(make(1, 2)));
+# print(plain(make(3, 4)));
+# print(plain(JSON.parse('{"cached":"","width":5,"height":6}')));
+# -- end of source
+# `cachedOf` has a guard. In `guarded` the call stands under a try: no head is copied there, and the call leaves its arrivals: `unit` is 7. In `plain` the head is copied, and the call behind it enters the guard as every direct call does: it leaves its arrivals too: `unit` is 7 or "text".
+# Without them the guard and the body behind it believed the other site alone, and `typeof unit` was folded to "number".
+# RUN: walk f4 mechanisms=all
+# CHECK: frame 1 callee=f1
+# CHECK: = CallDirect {{*}}function=f1 {{*}}role=ParameterGuard
+# RUN(ARRIVALS): walk f1 mechanisms=all
+# ARRIVALS-LABEL: code f1:Body
+# ARRIVALS: v1: 7|"text" @JSValue
+# ARRIVALS: = TypeOf v1
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: number:5
+# ANSWERS: string:54!
+# ANSWERS: string:195!

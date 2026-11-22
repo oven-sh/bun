@@ -1,7 +1,7 @@
 // RUN: lower
 // CHECK-LABEL: function {{*}}name="C" {{*}}kind=BaseConstructor
 // CHECK: [[allocated]] = NewObject {{*}}layout=[[layout]] @
-// CHECK-NEXT: [[this]] = Convert [[allocated]] declared={type=[[layout]] flags=[IsFromCompiler]}
+// CHECK-NEXT: [[this]] = Convert [[allocated]] declared={type=[[layout]]}
 // CHECK: PrivateDefine [[this]], [[token]], [[token]] layout=[[layout]] @
 // CHECK: [[undefined]] = Undefined
 // CHECK: PrivateDefine [[this]], {{*}}, [[undefined]] layout=[[layout]] field=[[p]] @

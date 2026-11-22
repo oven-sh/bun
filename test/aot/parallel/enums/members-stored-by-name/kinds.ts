@@ -1,0 +1,16 @@
+export enum Method { OfMethod = 1 }
+export enum Static { OfStatic = 2 }
+export enum Instance { OfInstance = 3 }
+export enum Called { OfCalled = 4 }
+export enum Callback { OfCallback = 5 }
+export enum Rest { OfRest = 6 }
+export enum Spread { OfSpread = 7 }
+export enum Listed { OfListed = 8 }
+export enum Property { OfProperty = 9 }
+export enum Keyed { OfKeyed = 10 }
+export enum Mapped { OfMapped = 11 }
+export enum Answered { OfAnswered = 12 }
+export enum Held { OfHeld = 13 }
+export enum Deleted { OfDeleted = 14 }
+export enum Stepped { OfStepped = 15 }
+export enum Printed { OfPrinted = 16 }

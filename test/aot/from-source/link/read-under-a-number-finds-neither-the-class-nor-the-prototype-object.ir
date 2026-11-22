@@ -1,0 +1,14 @@
+# Printed, a number is an index or another canonical numeric string: never `__proto__`, `constructor` or the name of a field. So a read under a loop counter through strangers that have met
+# brings neither their prototype objects nor their classes together, and none of them escapes.
+# RUN: link layouts mechanisms=all
+# CHECK: layout L0 changes=[] stays-with-compiled-code
+# CHECK: layout L1 changes=[] stays-with-compiled-code
+# RUN(ALL): run-in-shell mechanisms=all
+# ALL: undefined undefined
+# ALL-NEXT: exited with 0
+# -- source: main.mjs
+# class A { x = 1; }
+# class B { y = 2; }
+# function first(holder) { let found; for (let i = 0; i < 1; i++) found = holder[i]; return found; }
+# print(first(new A) + " " + first(new B));
+# -- end of source

@@ -2,6 +2,7 @@
 #include "Bindgen/IDLConvertBase.h"
 #include "Bindgen/IDLConvertNumbers.h"
 #include "Bindgen/IDLTypes.h"
+#include "Bindgen/JSBytesView.h"
 #include "JSDOMConvert.h"
 #include <JavaScriptCore/ArgList.h>
 #include <JavaScriptCore/CallFrameInlines.h>
@@ -659,7 +660,7 @@ template<> struct WebCore::Converter<Bun::Bindgen::IDLArrayBufferRef>
             if (jsView->isShared())
                 return std::nullopt;
             // A copy: the view's buffer can hold more than the view shows.
-            if (auto bytes = JSC::ArrayBuffer::tryCreate(jsView->span()))
+            if (auto bytes = Bun::Bindgen::tryCopySensitiveBytes(jsView->span()))
                 return bytes;
             // Declared where it throws: at the top, every caller would owe a check for the paths that cannot.
             auto scope = DECLARE_THROW_SCOPE(vm);

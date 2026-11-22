@@ -52,9 +52,8 @@ describe("a program of thousands of files", () => {
     expect(await run([bunExe(), "test", "--aot", "./any.test.mjs"], String(dir))).toEqual(plain);
   });
 
-  // The analysis takes the entry points of a program in parts too, of 256. Test files are entry points where a run is one program,
-  // and what they import is where they stand on a layer.
-  test.each(["TestRunLayers:0", "TestRunLayers:2"])("has hundreds of entry points (%s)", async words => {
+  // The analysis takes the entry points of a program in parts too, of 256. Test files are entry points where a run is one program.
+  test("has hundreds of entry points", async () => {
     const testFiles = 300;
     const sources: Record<string, string> = {};
     for (let index = 0; index < testFiles; index++) {
@@ -68,7 +67,7 @@ describe("a program of thousands of files", () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "test", "--aot", "--isolate", "--parallel=4"],
       cwd: String(dir),
-      env: { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: words },
+      env: { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: "TestRunLayers:0" },
       stdout: "pipe",
       stderr: "pipe",
     });

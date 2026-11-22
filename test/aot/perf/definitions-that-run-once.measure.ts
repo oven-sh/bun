@@ -6,8 +6,16 @@ import { bunEnv, bunExe, isASAN, isDebug, isLinux, isMusl, tempDir } from "harne
 import { join } from "path";
 import { measureCommand } from "../analysis-scaling/measure-check";
 import { built, spawned, withoutDebugInformation } from "../harness/commands";
-import { withSteadyCollections } from "../harness/counted-run";
 import { describe, test } from "../supported";
+
+// Otherwise what the collector's threads get done beside the program differs by some percent from run to run.
+const withSteadyCollections = {
+  BUN_GC_TIMER_DISABLE: "1",
+  BUN_JSC_percentCPUPerMBForEdenTimer: "0",
+  BUN_JSC_percentCPUPerMBForFullTimer: "0",
+  BUN_JSC_useConcurrentGC: "0",
+  BUN_JSC_numberOfGCMarkers: "1",
+};
 
 const numberOfFiles = 100;
 const rows: [what: string, statement: (file: number, index: number) => string, head: string, allowance: number][] = [

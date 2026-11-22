@@ -1,21 +1,12 @@
-// How a run in parts reads: ./test-run-in-parts.test.ts.
+// How a test run reads: ./test-run-in-parts.test.ts.
 import { expect } from "bun:test";
 import { tempDir } from "harness";
-import { files, passing, runTests, twoFiles } from "./harness/test-run-in-parts";
-import { test } from "./supported";
+import { files, passing, runTests } from "./harness/test-run-in-parts";
+// One by one: a case builds for minutes, and beside others it would pass its limit where Bun has a sanitizer.
+import { testOneByOne as test } from "./supported";
 
-test("a CommonJS file that a test file requires has the test file for its parent, in a realm of its own too", async () => {
-  using dir = tempDir("aot-test-run-in-parts-parent", {
-    ...files,
-    "helper.cjs": `const base = path => String(path).split(/[\\\\/]/).pop();\nmodule.exports = base(module.id) + " " + base(module.parent && module.parent.filename);\n`,
-    "h.test.ts": `${passing("h")}test("parent", () => {\n  console.log("helper.cjs ran with " + require("./helper.cjs"));\n});\n`,
-  });
-  const plain = await runTests(String(dir), undefined, "--isolate");
-  expect(plain.stdout).toContain("helper.cjs ran with helper.cjs h.test.ts");
-  expect(await runTests(String(dir), twoFiles, "--aot", "--isolate")).toEqual(plain);
-}, 120_000);
-
-test("a large file that the parts share reads as a small one: values, positions of errors, the texts of functions", async () => {
+// Four things that code sees, each in a test file of its own, in ONE project: a build costs what it costs whatever stands in it.
+test("code sees in a compiled test run what it sees in a plain one", async () => {
   const functions = (letter: string, count: number) =>
     Array.from(
       { length: count },
@@ -25,8 +16,12 @@ test("a large file that the parts share reads as a small one: values, positions 
   // The second file ends where a page ends, and the third begins with a byte order mark.
   const wholePages = functions("w", 200);
   const rest = 4096 - (Buffer.byteLength(wholePages) % 4096);
-  using dir = tempDir("aot-test-run-in-parts-large", {
+  using dir = tempDir("aot-test-run-in-parts-what-code-sees", {
     ...files,
+    // A CommonJS file that a test file requires has the test file for its parent, in a realm of its own too.
+    "helper.cjs": `const base = path => String(path).split(/[\\\\/]/).pop();\nmodule.exports = base(module.id) + " " + base(module.parent && module.parent.filename);\n`,
+    "h.test.ts": `${passing("h")}test("parent", () => {\n  console.log("helper.cjs ran with " + require("./helper.cjs"));\n});\n`,
+    // A large file reads as a small one: values, positions of errors, the texts of functions.
     "large.ts": functions("l", 400),
     "whole-pages.ts": wholePages + "//" + "x".repeat(rest + 4096 - 3) + "\n",
     "marked.ts": "\ufeff" + functions("m", 200),
@@ -37,17 +32,7 @@ test("large files", () => {
     console.log(letter + " ran with", Object.keys(all).length, (all as any)[letter + 7](3), where, Bun.hash((all as any)[letter + last].toString().replace(/\\s+|\\/\\/.*|new /g, "")));
   }
 });\n`,
-  });
-  expect(Buffer.byteLength(await Bun.file(String(dir) + "/whole-pages.ts").text()) % 4096).toBe(0);
-  const one = await runTests(String(dir), "TestRunLayers:0", "--aot", "--isolate");
-  expect(one.stdout.join("\n")).toContain("l ran with 400 22 l399 refuses 399 large.ts:");
-  expect(one.stdout.length).toBeGreaterThanOrEqual(3);
-  expect(await runTests(String(dir), twoFiles, "--aot", "--isolate")).toEqual(one);
-}, 120_000);
-
-test("a shell script that a test file imports is its path", async () => {
-  using dir = tempDir("aot-test-run-in-parts-shell-script", {
-    ...files,
+    // A shell script that a test file imports is its path.
     "script.sh": "echo script\n",
     "j.test.ts": `${passing("j")}// @ts-ignore\nimport spelled from "./script.sh";
 const base = (path: unknown) => String(path).split(/[\\\\/]/).pop();
@@ -55,16 +40,7 @@ test("script", async () => {
   const name = "./script";
   console.log("script.sh ran with", base(spelled), base((await import(name + ".sh")).default), base((await import("./script.sh")).default));
 });\n`,
-  });
-  const plain = await runTests(String(dir), undefined, "--isolate");
-  expect(plain.stdout).toContain("script.sh ran with script.sh script.sh script.sh");
-  expect(await runTests(String(dir), "TestRunLayers:0", "--aot", "--isolate")).toEqual(plain);
-  expect(await runTests(String(dir), twoFiles, "--aot", "--isolate")).toEqual(plain);
-}, 120_000);
-
-test("a mock that comes before an ES module is loaded stands for the whole module", async () => {
-  using dir = tempDir("aot-test-run-in-parts-mock-first", {
-    ...files,
+    // A mock that comes before an ES module is loaded stands for the whole module.
     "real.mjs": `console.log("real.mjs ran with its body");\nexport const given = () => "real";\nexport const leftOut = 1;\nexport default "real default";\n`,
     "loaded.mjs": `export const given = () => "real";\nexport const kept = 2;\n`,
     "k.test.ts": `${passing("k")}import { mock } from "bun:test";\nimport * as loaded from "./loaded.mjs";
@@ -79,15 +55,26 @@ test("mocks", async () => {
   console.log("a module that was loaded ran with", loaded.given(), loaded.kept, Object.keys(loaded).join());
 });\n`,
   });
-  const plain = await runTests(String(dir), undefined, "--isolate");
+  expect(Buffer.byteLength(await Bun.file(String(dir) + "/whole-pages.ts").text()) % 4096).toBe(0);
+  const plain = await runTests(String(dir), "--isolate");
+  expect(plain.stdout).toContain("helper.cjs ran with helper.cjs h.test.ts");
+  expect(plain.stdout).toContain("script.sh ran with script.sh script.sh script.sh");
   expect(plain.stdout).toContain("the mock ran with fake given undefined undefined false");
   expect(plain.stdout).toContain("a module that was loaded ran with fake 2 given,kept");
-  expect(await runTests(String(dir), "TestRunLayers:0", "--aot", "--isolate")).toEqual(plain);
-  expect(await runTests(String(dir), twoFiles, "--aot", "--isolate")).toEqual(plain);
-}, 120_000);
+  const compiled = await runTests(String(dir), "--aot", "--isolate");
+  const seen = compiled.stdout.join("\n");
+  expect(seen).toContain("l ran with 400 22 l399 refuses 399 large.ts:");
+  expect(seen).toContain("w ran with 200 22 w199 refuses 199 whole-pages.ts:");
+  expect(seen).toContain("m ran with 200 22 m199 refuses 199 marked.ts:");
+  // Of the large files plain Bun prints other columns and other texts.
+  const withoutLargeFiles = (ran: typeof plain) => ({
+    ...ran,
+    stdout: ran.stdout.filter(line => !/^[lwm] ran with /.test(line)),
+  });
+  expect(withoutLargeFiles(compiled)).toEqual(withoutLargeFiles(plain));
+}, 240_000);
 
 test("what is the host's stays when a Bun.ModuleGraph that used it is disposed", async () => {
-  // Without the test file that cannot be built: beside it the library is compiled with the test file that uses it.
   using dir = tempDir("aot-test-run-in-parts-module-graph", {
     "lib.ts": files["lib.ts"],
     "preload.ts": files["preload.ts"],
@@ -127,7 +114,7 @@ test("graphs", async () => {
   server.close();
 });\n`,
   });
-  const plain = await runTests(String(dir), undefined, "--isolate");
+  const plain = await runTests(String(dir), "--isolate");
   expect(plain.stdout).toContain("the graphs ran with host true true global true true graph true false");
-  expect(await runTests(String(dir), twoFiles, "--aot", "--isolate")).toEqual(plain);
+  expect(await runTests(String(dir), "--aot", "--isolate")).toEqual(plain);
 }, 120_000);

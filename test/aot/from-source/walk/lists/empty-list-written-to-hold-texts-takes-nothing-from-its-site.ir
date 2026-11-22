@@ -1,0 +1,17 @@
+# `const found: string[] = []`: storage for any value is the most general kind, so the list is born with it and its site keeps no profile. Where numbers are written, or nothing, the site still remembers which kind its lists turned into.
+# f1 = texts, f2 = numbers, f3 = whatever
+# -- source: empty-list-written-to-hold-texts-takes-nothing-from-its-site.ts
+# declare function sink(...values: unknown[]): void;
+# function texts(n: number) { const found: string[] = []; for (let i = 0; i < n; i++) found.push("t" + i); return found; }
+# function numbers(n: number) { const found: number[] = []; for (let i = 0; i < n; i++) found.push(i / 2); return found; }
+# function whatever(n: number) { const found: any[] = []; for (let i = 0; i < n; i++) found.push(i); return found; }
+# sink(texts, numbers, whatever);
+# -- end of source
+# RUN: walk f1 f2 f3 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = NewArray
+# CHECK-NOT: literalStorage=Profiled
+# CHECK-LABEL: code f2:Body
+# CHECK: = NewArray {{*}}literalStorage=Profiled
+# CHECK-LABEL: code f3:Body
+# CHECK: = NewArray {{*}}literalStorage=Profiled

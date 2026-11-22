@@ -1,0 +1,20 @@
+# The members `get` and `set` are written in literals that are DESCRIPTORS: one held by a constant (its own layout, L1), two written in the map of Object.defineProperties, one of them under a computed key (the layout that all written descriptors share, L2). They run on the object defined upon, never on the descriptor: the literal is not written of their `this`.
+# RUN: link functions mechanisms=all
+# CHECK: function f2 cycle
+# CHECK-NOT: parameter 0 expected=L1 declared
+# CHECK: function f3 cycle
+# CHECK-NOT: parameter 0 expected=L2 declared
+# CHECK: function f6 cycle
+# -- source: descriptors.js
+# function Lamp() { this.wicks = 2; this.oil = 90; }
+# const byName = { get() { return this.oil / this.wicks; } };
+# Object.defineProperty(Lamp.prototype, "hours", byName);
+# Object.defineProperties(Lamp.prototype, {
+#   trimmed: { get() { return this.wicks < 2; }, set(wicks) { this.oil -= 6; this.wicks = wicks; } },
+#   ["computed" + 1]: { get() { return this.oil % 7; } },
+# });
+# globalThis.kept = Lamp;
+# const lamp = new Lamp();
+# lamp.trimmed = 1;
+# console.log(lamp.hours, lamp.trimmed, lamp.computed1);
+# -- end of source

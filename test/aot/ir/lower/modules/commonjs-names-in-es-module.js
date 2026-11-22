@@ -17,12 +17,6 @@
 // META-NOT: isFreeName
 // META: Return
 
-// RUN(STORE): lower
-// STORE-LABEL: function {{*}}name="store"
-// STORE: [[meta]] = ModuleBuiltin builtin=ImportMeta
-// STORE: PropSet [[meta]]{{*}}key="require"
-// STORE: Return
-
 // RUN(KIND): lower
 // KIND-NOT: kind=CommonJsModule
 
@@ -36,8 +30,4 @@ export function readExports() {
 
 export function readOthers() {
   return [require, __filename, __dirname];
-}
-
-export function store(loader) {
-  require = loader;
 }

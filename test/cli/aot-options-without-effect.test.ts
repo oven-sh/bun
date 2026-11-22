@@ -17,7 +17,7 @@ async function bun(cwd: string, ...args: string[]) {
 }
 
 describe.concurrent("an option that configures bytecode has no effect with --aot", () => {
-  test.skipIf(!!unsupported).each(["--bytecode-depth=1", "--bytecode-order=app.order"])(
+  test.skipIf(!!unsupported).each(["--bytecode-depth=1", "--bytecode-order=app.order", "--no-optimize-bytecode"])(
     "bun build --compile --aot %s",
     async flag => {
       using dir = tempDir("aot-bytecode-flag", files);
@@ -31,7 +31,10 @@ describe.concurrent("an option that configures bytecode has no effect with --aot
         "--outfile",
         "out",
       );
-      expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      expect({ stderr, exitCode }).toEqual({
+        stderr: `note: ${flag.split("=")[0]} has no effect with --aot: the program is compiled to machine code\n`,
+        exitCode: 0,
+      });
       expect(await run([join(String(dir), isWindows ? "out.exe" : "out")], String(dir), bunEnv)).toMatchObject({
         stdout: "1\n",
         exitCode: 0,
@@ -43,7 +46,6 @@ describe.concurrent("an option that configures bytecode has no effect with --aot
   test.skipIf(!!unsupported).each([
     ["bytecodeDepth: 1", ""],
     ["", 'bytecodeOrder: "./app.order"'],
-    ["bytecode: true", 'bytecodeOrder: "./app.order"'],
   ])(
     "Bun.build: %s %s",
     async (option, ofCompile) => {
@@ -68,7 +70,29 @@ describe.concurrent("an option that configures bytecode has no effect with --aot
   );
 
   test.skipIf(!!unsupported)(
-    "--bytecode may be combined with --aot, where it has no effect",
+    "Bun.build refuses bytecode with compile.aot",
+    async () => {
+      using dir = tempDir("aot-with-bytecode-option", {
+        ...files,
+        "build.ts": `try {
+  await Bun.build({ entrypoints: ["./app.ts"], bytecode: true, compile: { outfile: "./out", aot: true } });
+  console.log("built");
+} catch (error) {
+  console.log((error as Error).message);
+}
+`,
+      });
+      const { stdout } = await bun(String(dir), "build.ts");
+      expect(stdout).toBe(
+        "compile.aot cannot be used with bytecode. Choose compile.aot for machine code or bytecode for bytecode\n",
+      );
+      expect(existsSync(join(String(dir), isWindows ? "out.exe" : "out"))).toBe(false);
+    },
+    60_000,
+  );
+
+  test.skipIf(!!unsupported)(
+    "--bytecode cannot be combined with --aot",
     async () => {
       using dir = tempDir("aot-with-bytecode", files);
       const { stderr, exitCode } = await bun(
@@ -81,7 +105,10 @@ describe.concurrent("an option that configures bytecode has no effect with --aot
         "--outfile",
         "out",
       );
-      expect({ stderr: stderr.includes("error"), exitCode }).toEqual({ stderr: false, exitCode: 0 });
+      expect({ stderr, exitCode }).toEqual({
+        stderr: expect.stringContaining("Cannot use both --aot and --bytecode"),
+        exitCode: 1,
+      });
     },
     60_000,
   );

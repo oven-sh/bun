@@ -1,0 +1,39 @@
+# `bells.set(bell.tone, bell); bells.set(bell.tone, bell);` in a turn of a loop. Each statement had a test of its own that the Map is as made, both arms walked [the read of the method .. its call] and met; and
+# `bell.tone` was a read that asks for itself whether the shape fits and the slot is filled: an empty slot goes up the prototypes and may run code. So at the second statement nothing was known, and the Map's set was
+# called twice. TypeScript 6 has two such statements: 0.86 million turns, about 60 M instructions.
+# In a loop, calls of methods of one Map or Set that stand in a row in one block are walked behind ONE test, where nothing in the row runs code on the typed arm: between a read of a method and its call stand only
+# conversions and reads by name off holders from in front of which one layout is expected. In front of the row: the holder's shape; is the slot filled; who fails goes the closed arm, where the row stands as
+# written. The slot is read once. A set, or an add, straight behind the same one (the same table, key and value) is dropped: it finds the key and stores what is there.
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# declare function hand(value: unknown): void;
+# class Bell { tone: unknown; weight: number; constructor(tone: unknown, weight: number) { this.weight = weight; this.tone = tone; } }
+# function hang(bells: Map<unknown, Bell>, cast: Bell[], least: number): number {
+#   let light = 0;
+#   for (const bell of cast) {
+#     if (bell.weight < least) light += bell.weight;
+#     else {
+#       bells.set(bell.tone, bell);
+#       bells.set(bell.tone, bell);
+#     }
+#   }
+#   return light;
+# }
+# hand(hang);
+# let reads = 0;
+# const loud = new Bell("x", 5);
+# Object.defineProperty(loud, "tone", { get() { reads++; return "n" + reads; } });
+# const tower = new Map<unknown, Bell>();
+# const light = hang(tower, [new Bell("a", 1), new Bell(-0, 2), new Bell(0, 3), new Bell(NaN, 4), new Bell(NaN, 5), new Bell("a", 6), loud], 2);
+# let said = "";
+# for (const [tone, bell] of tower) said += (Object.is(tone, -0) ? "-0" : String(tone)) + "=" + bell.weight + " ";
+# print(tower.size, said, reads, light);
+# -- end of source
+# RUN(ADD): walk f1 mechanisms=all
+# ADD: = IsSlotFilled {{*}}key="tone"
+# ADD: inlineBuiltin=MapSet
+# RUN(COUNT): compile CollectionCallRunsGuardedOnce DuplicateCollectionStoresRemoved mechanisms=all
+# COUNT: statistic CollectionCallRunsGuardedOnce 1
+# COUNT-NOT: statistic DuplicateCollectionStoresRemoved 0
+# RUN(ANSWERS): run-in-shell hand = function () { };
+# ANSWERS: 5 0=3 NaN=5 a=6 n1=5 n2=5  2 1

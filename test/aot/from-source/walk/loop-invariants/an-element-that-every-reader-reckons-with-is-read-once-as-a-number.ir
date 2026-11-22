@@ -1,0 +1,32 @@
+# LIBRARY: own
+# -- source: an-element-that-every-reader-reckons-with-is-read-once-as-a-number.ts
+# declare function sink(value: unknown): void;
+# function sums(x: number[], y: number[]): number { let sx = 0, sy = 0, sxy = 0, sxx = 0, syy = 0; for (let i = 0; i < x.length; i++) { sx += x[i]; sy += y[i]; sxy += x[i] * y[i]; sxx += x[i] * x[i]; syy += y[i] * y[i]; } return sx + sy * 3 + sxy * 5 + sxx * 7 + syy * 11; }
+# sink(sums);
+# -- end of source
+# Eight mentions of two places. Each of them is only reckoned with, so each may take NaN for a hole, and a number that was read so is known again where the same place is read for a number again:
+# two reads a turn, and nothing in the turn asks whether what it holds is a number. While an element that is read again was refused that form whoever read it, `x[i]` and `y[i]` were read twice each,
+# once as a number or undefined, and every product asked anew which of the two it held: half of what a regression over two lists of 100 fractions executed.
+# f1 = sums
+# RUN: walk f1 mechanisms=all
+# REQUIRES: as-written
+# CHECK-LABEL: code f1:Body
+# CHECK-COUNT-2: @Double = GetArrayElement {{*}}level=Proven {{*}}readsHoleAsNaN, admitsInt32Storage]
+# The version for lists of doubles alone, which comes first, reads each place once too.
+# CHECK-COUNT-2: @Double = GetArrayElement {{*}}level=Proven {{*}}readsHoleAsNaN]
+# The version for boxed numbers reads each place once too.
+# CHECK-NOT: readsHoleAsNaN
+# RUN(SHELL): run-in-shell globalThis.sink = sums => { const halves = Array.from({ length: 40 }, (_, i) => i + 0.5), wholes = Array.from({ length: 40 }, (_, i) => i), holed = halves.slice(), holedWholes = wholes.slice(), short = halves.slice(0, 7); delete holed[21]; delete holedWholes[3]; for (const [x, y] of [[halves, halves], [halves, wholes], [wholes, halves], [wholes, wholes], [holed, halves], [halves, holed], [holedWholes, wholes], [wholes, holedWholes], [halves, short], [short, halves], [[], halves], [[1.5, NaN], [2, 3]], [[2], [3]]]) print(sums(x, y)); };
+# SHELL: 493790
+# SHELL: 483040
+# SHELL: 486240
+# SHELL: 475540
+# SHELL: NaN
+# SHELL: NaN
+# SHELL: NaN
+# SHELL: NaN
+# SHELL: NaN
+# SHELL: 2714.25
+# SHELL: 0
+# SHELL: NaN
+# SHELL: 168

@@ -843,7 +843,7 @@ declare namespace $Node {
     onResolve: Map<string, [RegExp, BundlerPlugin.OnResolveCallback][]> | undefined;
     promises: Promise<unknown>[] | undefined;
     $onEndCallbacks: BundlerPlugin.OnEndCallback[] | undefined;
-    /** `internalID`: the address of the native request, as a double. */
+    /** `internalID`: the request's `BundlerPlugin::RequestID`. */
     onLoadAsync(
       internalID: number,
       sourceCode: string | ArrayBufferView | ArrayBuffer | null,
@@ -2394,17 +2394,6 @@ declare namespace $Node {
       autoHeaderBits: number,
       keepAliveTimeoutSecs: number,
     ): number;
-    /** `writeHeadAndEnd` where the arguments are the usual ones. `undefined`: nothing was written. */
-    writeWholeResponse(
-      statusCode: number,
-      statusMessage: string | undefined,
-      headers: string[],
-      chunk: HttpChunk | null | undefined,
-      encoding: string | null | undefined,
-      strictContentLength: number | undefined,
-      autoHeaderBits: number,
-      keepAliveTimeoutSecs: number,
-    ): number | undefined;
     /** Negative when the socket did not take all of it: `callback` runs once it has drained. */
     write(
       chunk: HttpChunk | null | undefined,
@@ -2424,6 +2413,17 @@ declare namespace $Node {
 
   /** The native class `NodeHTTPResponse` (src/runtime/server/NodeHTTPResponse.rs): one request and its response. */
   interface NodeHTTPResponse extends HttpResponseHandle {
+    /** `writeHeadAndEnd` where the arguments are the usual ones. `undefined`: nothing was written. */
+    writeWholeResponse(
+      statusCode: number,
+      statusMessage: string | undefined,
+      headers: string[],
+      chunk: HttpChunk | null | undefined,
+      encoding: string | null | undefined,
+      strictContentLength: number | undefined,
+      autoHeaderBits: number,
+      keepAliveTimeoutSecs: number,
+    ): number | undefined;
     /** `NodeHTTPBodyReadState` */
     readonly hasBody: number;
     readonly upgraded: boolean;

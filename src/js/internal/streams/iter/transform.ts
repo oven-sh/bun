@@ -254,14 +254,6 @@ function createZstdHandle(mode: number, options, processCallback: () => void, on
   validateParams(options.params, maxParam, key => $ERR_ZSTD_INVALID_PARAM(key));
 
   const pledgedSrcSize = options.pledgedSrcSize;
-  if (pledgedSrcSize !== undefined) {
-    if (typeof pledgedSrcSize !== "number" || Number.isNaN(pledgedSrcSize)) {
-      throw $ERR_INVALID_ARG_TYPE("options.pledgedSrcSize", "number", pledgedSrcSize);
-    }
-    if (pledgedSrcSize < 0) {
-      throw $ERR_OUT_OF_RANGE("options.pledgedSrcSize", ">= 0", pledgedSrcSize);
-    }
-  }
 
   const handle = new NativeZstd(mode);
   const writeState = new Uint32Array(2);

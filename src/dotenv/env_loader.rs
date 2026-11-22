@@ -1,13 +1,12 @@
 use core::cell::Cell;
-use core::ffi::c_char;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 
 use bun_alloc::AllocError;
 use bun_collections::{ArrayHashMapExt, GetOrPutResult, StringSet};
 use bun_core::{self, Output};
-use bun_core::{ZStr, strings};
-use bun_paths::{self, MAX_PATH_BYTES, PathBuffer};
+use bun_core::{CStringList, strings};
+use bun_paths::{self, Path};
 use bun_sys;
 use bun_url::URL;
 use bun_which::which;
@@ -227,31 +226,20 @@ impl Loader {
         self.get_node_env() == Some(b"test")
     }
 
-    pub fn get_node_path<'b>(
-        &mut self,
-        fs: &bun_paths::fs::FileSystem,
-        buf: &'b mut PathBuffer,
-    ) -> Option<&'b ZStr> {
+    pub fn get_node_path(&mut self, fs: &bun_paths::fs::FileSystem) -> Option<Path> {
         // Check NODE or npm_node_execpath env var, but only use it if the file actually exists.
         if let Some(node) = self
             .get(b"NODE")
             .or_else(|| self.get(b"npm_node_execpath"))
-            .filter(|n| !n.is_empty() && n.len() < MAX_PATH_BYTES)
+            .filter(|n| !n.is_empty())
         {
-            buf[..node.len()].copy_from_slice(node);
-            buf[node.len()] = 0;
-            let node = ZStr::from_buf(&buf[..], node.len());
-            if bun_sys::is_executable_file_path(node) {
+            let node = Path::from(node);
+            if bun_sys::is_executable_file_path(&node) {
                 return Some(node);
             }
         }
 
-        let path = self.get(b"PATH")?;
-        if let Some(node) = which(buf, path, fs.top_level_dir(), b"node") {
-            return Some(node);
-        }
-
-        None
+        which(self.get(b"PATH")?, fs.top_level_dir(), b"node")
     }
 
     pub fn is_ci(&self) -> bool {
@@ -415,14 +403,11 @@ impl Loader {
     fn load_ccache_path_impl(&mut self, fs: &bun_paths::fs::FileSystem) -> Result<(), AllocError> {
         // if they have ccache installed, put it in env variable `CMAKE_CXX_COMPILER_LAUNCHER` so
         // cmake can use it to hopefully speed things up
-        let mut buf = bun_paths::path_buffer_pool::get();
         let path = match self.get(b"PATH") {
             Some(p) => p,
             None => return Ok(()),
         };
-        // borrowck — `path` borrows `self.map`; `which` writes into `buf` and
-        // returns a borrow of `buf`. Copy the result before mutating `self.map`.
-        let ccache_path: Box<[u8]> = which(&mut buf, path, fs.top_level_dir(), b"ccache")
+        let ccache_path: Box<[u8]> = which(path, fs.top_level_dir(), b"ccache")
             .map(|z| Box::<[u8]>::from(z.as_bytes()))
             .unwrap_or_default();
 
@@ -455,8 +440,6 @@ impl Loader {
         fs: &bun_paths::fs::FileSystem,
         override_node: &[u8],
     ) -> crate::Result<bool> {
-        let mut buf = bun_paths::path_buffer_pool::get();
-
         let node_path_to_use: Box<[u8]> = if !override_node.is_empty() {
             Box::from(override_node)
         } else {
@@ -468,7 +451,7 @@ impl Loader {
             if let Some(c) = cached {
                 c
             } else {
-                let Some(node) = self.get_node_path(fs, &mut buf) else {
+                let Some(node) = self.get_node_path(fs) else {
                     return Ok(false);
                 };
                 Box::from(node.as_bytes())
@@ -589,11 +572,11 @@ impl Loader {
             return Ok(());
         }
 
-        let environ: &[*const c_char] = bun_sys::environ();
+        // SAFETY: copied below. Bun only calls `setenv` on the main thread, while it starts.
+        let environ = unsafe { bun_sys::environ() };
         self.map.map.ensure_total_capacity(environ.len())?;
-        for &_env in environ {
-            // SAFETY: environ entries are NUL-terminated C strings from the OS
-            let env = unsafe { bun_core::ffi::cstr(_env) }.to_bytes();
+        for entry in environ {
+            let env = entry.to_cstr().to_bytes();
             if let Some(i) = strings::index_of_char(env, b'=') {
                 let key = &env[..i as usize];
                 let value = &env[i as usize + 1..];
@@ -1324,32 +1307,10 @@ pub struct Map {
 }
 
 impl Map {
-    /// Builds a NULL-terminated `K=V\0` envp array. Returns an owning struct so
-    /// dropping it frees the joined buffers (PORTING.md §Forbidden: no Box::leak).
-    pub fn create_null_delimited_env_map(&mut self) -> Result<NullDelimitedEnvMap, AllocError> {
-        let envp_count = self.map.count();
-        let mut storage: Vec<Box<[u8]>> = Vec::with_capacity(envp_count);
-        let mut envp_buf: Vec<*const c_char> = Vec::with_capacity(envp_count + 1);
-        {
-            let mut it = self.map.iterator();
-            while let Some(pair) = it.next() {
-                let klen = pair.key_ptr.len();
-                let vlen = pair.value_ptr.value.len();
-                let mut env_buf = vec![0u8; klen + vlen + 2].into_boxed_slice();
-                env_buf[..klen].copy_from_slice(pair.key_ptr);
-                env_buf[klen] = b'=';
-                env_buf[klen + 1..klen + 1 + vlen].copy_from_slice(&pair.value_ptr.value);
-                // env_buf[klen + 1 + vlen] = 0; (already zero-initialized)
-                envp_buf.push(env_buf.as_ptr().cast::<c_char>());
-                storage.push(env_buf);
-            }
-            debug_assert!(envp_buf.len() == envp_count);
-        }
-        envp_buf.push(core::ptr::null()); // sentinel
-        Ok(NullDelimitedEnvMap {
-            _storage: storage,
-            envp: envp_buf.into_boxed_slice(),
-        })
+    /// Builds a NULL-terminated `K=V\0` envp array.
+    pub fn to_envp(&self) -> CStringList {
+        let entries = (self.map.iter()).map(|(key, value)| [&**key, b"=", &value.value]);
+        CStringList::from_parts(entries)
     }
 
     /// Build a heap-allocated Windows environment block suitable for
@@ -1512,41 +1473,6 @@ impl Map {
             loader.map.remove(key);
         }
         Ok(loader.map)
-    }
-}
-
-/// Owns the `K=V\0` strings backing a NULL-terminated envp array.
-/// Dropping this frees every entry (PORTING.md §Forbidden: no Box::leak).
-///
-/// LAYOUT NOTE: `envp` stores raw `*const c_char` (with a trailing
-/// `ptr::null()` sentinel), **not** `Option<*const c_char>`. Raw pointers are
-/// already nullable, so `Option<*const T>` is *not* niche-optimized — it is a
-/// 2-word `(tag, ptr)` pair. Casting `*const Option<*const c_char>` to
-/// `*const *const c_char` for `execve()` interleaves `Some`-discriminant
-/// `0x1` words between the real pointers and the kernel faults with `EFAULT`.
-/// The correct FFI representation is `*const c_char`, not
-/// `Option<*const c_char>`.
-pub struct NullDelimitedEnvMap {
-    _storage: Vec<Box<[u8]>>,
-    envp: Box<[*const c_char]>,
-}
-
-impl NullDelimitedEnvMap {
-    /// `[:null]?[*:0]const u8` — last element is `ptr::null()`.
-    #[inline]
-    pub fn as_slice(&self) -> &[*const c_char] {
-        &self.envp
-    }
-    /// Raw `*const ?[*:0]const u8` for FFI (`envp`-style).
-    #[inline]
-    pub fn as_ptr(&self) -> *const *const c_char {
-        self.envp.as_ptr()
-    }
-    /// The `KEY=VALUE` entries as C strings.
-    pub fn iter(&self) -> impl Iterator<Item = &core::ffi::CStr> {
-        self._storage.iter().map(|s| {
-            core::ffi::CStr::from_bytes_until_nul(s).expect("entries are built NUL-terminated")
-        })
     }
 }
 

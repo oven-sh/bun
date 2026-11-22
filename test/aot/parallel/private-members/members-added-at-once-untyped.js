@@ -2,6 +2,8 @@
 // Only the jsc shell can count. Elsewhere the program checks the answers alone.
 // What the shell has counted so far: a line "<calls>\toperation:<name>" for each operation of the run time that compiled code has called.
 // Env: JSC_aotCountsPath=/dev/null
+// COUNT: operation:operationAOTPrivateDefine <= 100
+// COUNT: operation:operationAOTDidCreateFieldAt <= 10
 const countsSoFar = () => (typeof aotRuntimeCounters === "function" ? aotRuntimeCounters() : "");
 // The calls in such a text, whatever they were for, but for the operations named.
 function callsIn(counts, ...besides) {
@@ -12,58 +14,62 @@ function callsIn(counts, ...besides) {
   }
   return sum;
 }
-// These make the text that is printed, list the names for it and keep it in a set; a cell where the allocator has none at hand is the work of the run time.
-const owed = ["operationAOTArrayJoin", "operationAOTConcat", "operationAOTConcatThree", "operationAOTLiteralStringToString", "operationAOTStackStringBuilderAppend", "operationAOTStackStringBuilderFinish", "operationAOTStringConstant", "operationAOTToString", "operationAOTValueAdd", "operationAOTOwnPropertyKeys", "operationAOTSetAdd", "operationAOTReserveCollectionCapacity", "operationAOTAllocateSlow"];
+// These make the text that is printed, list the names for it and keep it in a set; a cell or a closure where the allocator has none at hand is the work of the run time, and a site is told what its samples found whenever they are enough.
+const owed = ["operationAOTArrayJoin", "operationAOTConcat", "operationAOTConcatThree", "operationAOTConcatenatePair", "operationAOTIntToString", "operationAOTStackStringBuilderAppend", "operationAOTStackStringBuilderFinish", "operationAOTStringConstant", "operationAOTToString", "operationAOTValueAdd", "operationAOTOwnPropertyKeys", "operationAOTSetAdd", "operationAOTAllocateSlow", "operationAOTNewClosureSlow", "operationAOTFillSiteAnswers"];
 const collect = typeof gc === "function" ? gc : () => Bun.gc(true);
 const attempt = f => { try { return f(); } catch (error) { return error.constructor.name; } };
 const thrownBy = f => { try { f(); return "nothing"; } catch (error) { return error.constructor.name; } };
 
-class Context {
-  #raw;
-  #request;
-  env = {};
-  #variables;
-  finalized = false;
-  error;
-  #status = 200;
-  #headers;
-  #path;
-  constructor(raw, options) {
-    this.#raw = raw;
-    if (options) {
-      this.env = options.env;
-      this.#path = options.path;
+class Locker {
+  opened = false;
+  #place;
+  #weight = 40;
+  #owner;
+  note;
+  #guest;
+  tags = {};
+  #seal;
+  #keys;
+  constructor(owner, given) {
+    if (given) {
+      this.tags = given.tags;
+      this.#place = given.place;
     }
+    this.#owner = owner;
   }
-  #respond(body, type) { return this.#status + " " + type + " " + body + " " + this.#path + " " + this.#raw; }
-  get #kind() { return this.#headers ? "with headers" : "bare"; }
-  set #kind(value) { this.#headers = value; }
-  text = body => this.#respond(body, "text");
-  json = body => this.#respond(JSON.stringify(body), "json");
-  status = status => { this.#status = status; return this; };
-  header = value => { this.#kind = value; return this.#kind; };
-  kind = () => this.#kind;
-  static has(object) { return [#raw in object, #respond in object, #kind in object, #path in object].join(); }
-  static assignToMethod(object) { object.#respond = 1; }
+  get #state() { return this.#seal ? "sealed" : "bare"; }
+  set #state(wax) { this.#seal = wax; }
+  #told(what, how) { return how + ": " + what + " of " + this.#owner + " at " + this.#place + ", " + this.#weight; }
+  state = () => this.#state;
+  sealed = wax => { this.#state = wax; return this.#state; };
+  shown = what => this.#told(what, "shown");
+  listed = things => this.#told(JSON.stringify(things), "listed");
+  weighs = weight => { this.#weight = weight; return this; };
+  static has(object) { return [#owner in object, #told in object, #state in object, #place in object].join(); }
+  static storeIntoMethod(object) { object.#told = 1; }
 }
-const describe = c => Object.keys(c).join() + " | " + JSON.stringify(c) + " | " + c.text("a") + " | " + c.status(201).json({ b: 1 }) + " | " + c.kind() + " " + c.header(1) + " | " + Context.has(c);
-const env = { name: "env" };
-const make = i => new Context("raw" + (i & 1), i & 2 ? { env, path: "/p" } : undefined);
+const describe = l => Object.keys(l).join() + " | " + JSON.stringify(l) + " | " + l.shown("a") + " | " + l.weighs(51).listed({ b: 1 }) + " | " + l.state() + " " + l.sealed(1) + " | " + Locker.has(l);
+const tags = { name: "tags" };
+const make = i => new Locker("owner" + (i & 1), i & 2 ? { tags, place: "row" } : undefined);
 const seen = new Set();
-const asksBefore = countsSoFar();
+const atNone = countsSoFar();
 for (let i = 0; i < 60; i++) seen.add(describe(make(i)));
-const asks = callsIn(countsSoFar(), ...owed) - callsIn(asksBefore, ...owed);
-for (let i = 0; i < 340; i++) seen.add(describe(make(i)));
+const at60 = countsSoFar();
+for (let i = 60; i < 600; i++) seen.add(describe(make(i)));
+const at600 = countsSoFar();
+const asksFor60 = callsIn(at60, ...owed) - callsIn(atNone, ...owed);
+const asksFor600 = callsIn(at600, ...owed) - callsIn(atNone, ...owed);
 const before = countsSoFar();
 for (let i = 0; i < 1000; i++) seen.add(describe(make(i)));
 const calls = callsIn(countsSoFar(), ...owed) - callsIn(before, ...owed);
 console.log([...seen].sort().join("\n"));
-console.log(asks <= 10 ? "the members were learnt as one step in at most 10 calls" : "the run time was asked " + asks + " times to add the members in one step");
-console.log(calls < 100 ? "1,000 objects were made with under 100 calls of the run time" : "1,000 objects were made with " + calls + " calls of the run time");
+// Only what is wrong is said: plain Bun and an executable count nothing, and the shell must print what they print.
+if (asksFor600 !== asksFor60) console.log("the run time was asked " + asksFor60 + " times for 60 objects and " + asksFor600 + " times for 600");
+if (calls >= 100) console.log("1,000 objects were made with " + calls + " calls of the run time");
 collect();
 console.log(describe(make(3)));
 console.log(JSON.stringify(Object.getOwnPropertyDescriptors(make(0)), (key, value) => typeof value === "function" ? "function " + value.name : value));
-console.log(Reflect.ownKeys(make(0)).length, make(0).text !== make(0).text, thrownBy(() => Context.assignToMethod(make(0))), thrownBy(() => Context.assignToMethod({})), Context.has({}));
+console.log(Reflect.ownKeys(make(0)).length, make(0).shown !== make(0).shown, thrownBy(() => Locker.storeIntoMethod(make(0))), thrownBy(() => Locker.storeIntoMethod({})), Locker.has({}));
 
 // The object comes from somewhere else: a base class that returns what it is handed.
 class Returns { constructor(object) { return object; } }
@@ -168,9 +174,9 @@ for (let i = 0; i < 200; i++) total += new Many().sum();
 console.log(total);
 
 // The prototype changes under a class whose objects have been made many times.
-Object.defineProperty(Context.prototype, "finalized", { set(value) { throw new Error("a definition calls no setter"); }, configurable: true });
+Object.defineProperty(Locker.prototype, "opened", { set(value) { throw new Error("a definition calls no setter"); }, configurable: true });
 console.log(describe(make(3)));
-Object.setPrototypeOf(Context.prototype, { get error() { return "inherited"; } });
-console.log(describe(make(2)), make(2).error);
+Object.setPrototypeOf(Locker.prototype, { get note() { return "inherited"; } });
+console.log(describe(make(2)), make(2).note);
 collect();
 console.log(describe(make(1)));

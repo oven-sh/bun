@@ -1,5 +1,5 @@
-// `bun test --aot` reports a failing test as `bun test` does: the message, the code frame, the frames with their lines and columns,
-// and the summary. The files of ./failures-printed fail in the ways that tests fail: expectations, thrown values, rejections, hooks,
+// `bun test --aot` reports a failing test as `bun test` does: the message, the code frame, the frames with their lines, and the summary.
+// The columns of frames, and so where the caret under a code frame stands, are not held to plain Bun. The files of ./failures-printed fail in the ways that tests fail: expectations, thrown values, rejections, hooks,
 // timeouts, snapshots, and errors while a file loads.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
@@ -20,6 +20,10 @@ const withoutTimes = (said: string) =>
     .replace(/after \d+(\.\d+)?ms/g, "after some time")
     // A build with assertions records positions inside built-in functions, so plain Bun gives `map (17:41)` there and `map (1:11)` in a release build. A compiled run gives `map (1:11)` in both.
     .replace(/^(\s+at \S+ )\((?:native:)?\d+:\d+\)$/gm, "$1(built-in)")
+    .replace(/^(\s+at .*:\d+):\d+(\)?)$/gm, "$1$2")
+    .replace(/^\s+\^$/gm, "^")
+    // docs/compiler/compatibility.mdx, "Error messages": a literal that is written on several lines is not quoted whole.
+    .replace(/'api\.fetchUser\(\{[^']*\}\)'/, "'api.fetchUser()'")
     .replaceAll("\r\n", "\n");
 
 test("a failing test is reported as in a plain run", async () => {

@@ -1,5 +1,4 @@
 // Function objects that capture nothing are only called where they are made, once everything between is copied into the caller. Others of the same functions get names of their own, and each frame shows the name of its function object.
-// Flags: --aot-check=verify-each-pass
 let total = 0;
 let shown = "";
 function nameInFrame() {

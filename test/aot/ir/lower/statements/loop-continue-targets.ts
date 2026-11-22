@@ -5,9 +5,7 @@
 // CHECK-NEXT: [[doHeader]]():
 // CHECK-NEXT: LoopHint
 // CHECK: key="call"
-// CHECK: Jump -> next [[doContinue]]()
-// CHECK-NEXT: [[doContinue]]():
-// CHECK-NEXT: Jump -> next [[doTest]]()
+// CHECK: Branch {{*}} -> taken [[doTest]]()
 // CHECK: integer=1
 // CHECK: [[doTest]]():
 // CHECK-NOT: LoopHint
@@ -18,9 +16,7 @@
 // CHECK-NEXT: [[forHeader]]():
 // CHECK-NEXT: LoopHint
 // CHECK: key="call"
-// CHECK: Jump -> next [[forContinue]]()
-// CHECK-NEXT: [[forContinue]]():
-// CHECK-NEXT: Jump -> next [[forUpdate]]()
+// CHECK: Branch {{*}} -> taken [[forUpdate]]()
 // CHECK: integer=1
 // CHECK: [[forUpdate]]():
 // CHECK-NOT: LoopHint
@@ -32,9 +28,7 @@
 // CHECK-NEXT: [[whileHeader]]():
 // CHECK-NEXT: LoopHint
 // CHECK: key="call"
-// CHECK: Jump -> next [[whileContinue]]()
-// CHECK-NEXT: [[whileContinue]]():
-// CHECK-NEXT: Jump -> next [[whileHeader]]()
+// CHECK: Jump -> next [[whileHeader]]()
 // CHECK: integer=1
 
 declare function use(value: unknown): void;

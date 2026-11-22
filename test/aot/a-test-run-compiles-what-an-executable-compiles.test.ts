@@ -29,7 +29,14 @@ type Program = {
   testFile?: string;
   /** The files that the test file asks to be compiled in another way. The others have to be the executable's. */
   opened?: string[];
+  /** The row "All of Bun's own JavaScript that such a file could reach is compiled in": `file:position name form` of a function, and the operations that it has more in the test run. Nothing else of it may differ. */
+  moreInTestRun?: Record<string, string[]>;
+  /**
+   * What differs, with its count: it stands in the name of the case. That both ways are built stays a case of its own, which also holds the count: a mark does not see a number
+   * grow worse.
+   */
   differsToday?: string;
+  unitsThatDifferToday?: number;
 };
 
 const programs: Record<string, Program> = {
@@ -57,6 +64,9 @@ export function far(n: number): number { return new Point(n, LIMIT).length(); }
 console.log(sum(1000), far(3));
 `,
     },
+    differsToday:
+      "2 units of the executable for 1 of the test run: the test run copies far() into the body of main.ts and keeps no body of it",
+    unitsThatDifferToday: 2,
   },
   "a namespace object that goes somewhere, and no spy that could take it": {
     files: {
@@ -71,6 +81,8 @@ const late = await import("./lib.ts");
 console.log(sum(1000), far(3), Object.keys(whole).join(), [lib, late].length);
 `,
     },
+    // A built-in is read for the first time behind the \`await\`.
+    moreInTestRun: { "main.ts:0  CoroutineBody": ["InitializeBuiltin Closed 1"] },
   },
   "a namespace object that goes somewhere, and a spy on some object under a name that nothing exports": {
     files: {
@@ -85,6 +97,7 @@ const late = await import("./lib.ts");
 console.log(sum(1000), far(3), Object.keys(whole).join(), [lib, late].length);
 `,
     },
+    moreInTestRun: { "main.ts:0  CoroutineBody": ["InitializeBuiltin Closed 1"] },
     testFile: `
 import { expect, spyOn, test } from "bun:test";
 import "./main.ts";
@@ -117,6 +130,23 @@ console.log(join([describe(new Failure("one")), {}, [1, 2], () => 3, 4]));
 `,
     },
   },
+  // `Symbol`, `Object`, `Array` and `Map` are looked up in a test run. What hangs below them is what the executable has: a key of a layout, a constant.
+  "what hangs below a built-in that a test may replace": {
+    files: {
+      "main.ts": `
+class Row {
+  constructor(public cells: number[]) {}
+  *[Symbol.iterator]() { yield* this.cells; }
+  get [Symbol.toStringTag]() { return "Row"; }
+}
+function own(o: object, key: string): boolean { return Object.prototype.hasOwnProperty.call(o, key); }
+function rest(...all: number[]): number[] { return Array.prototype.slice.call(all, 1); }
+console.log([...new Row([1, 2, 3])].join(), String(new Row([])), own({ a: 1 }, "a"), rest(1, 2, 3).join(), Object.getPrototypeOf(new Map()) === Map.prototype);
+`,
+    },
+    // `Map.prototype` is read behind calls that run the program's own code.
+    moreInTestRun: { "main.ts:0  Body": ["InitializeBuiltin Closed 1"] },
+  },
   "CommonJS files that require each other": {
     files: {
       "shapes.cjs": `
@@ -133,6 +163,9 @@ const total = require("./sums.cjs");
 console.log(total([1, 2, 3]), new shapes.Box(2).volume(), (await import("./sums.cjs")).default([4]));
 `,
     },
+    differsToday:
+      "2 units differ, none may: the bodies of shapes.cjs and sums.cjs, of 219 and 209 bytes on Linux x64 where the test run has 197 and 191",
+    unitsThatDifferToday: 2,
   },
   "a test takes one file out of require.cache, and the others are not touched": {
     files: {
@@ -169,23 +202,30 @@ console.log(name("a/b", "c.ts"), name("d", "e.ts"));
   },
 };
 
-/** `position name form bytes` of each function of the program's own files. */
-function ownFunctions(mapPath: string, files: string[]): string[] {
-  const rows = readFileSync(mapPath, "latin1").split("\n");
-  const functions = rows.map(row => row.split("\t")).filter(columns => columns[0] === "F");
-  return functions
-    .flatMap(columns => {
-      const file = files.find(name => (columns[10] ?? "").endsWith("/" + name));
-      return file ? [`${file}:${columns[11]} ${columns[7]} ${columns[8]} ${columns[3]}`] : [];
+/** `position name form bytes` of each function of the program's own files. Of a function in `byOperations`: `position name form` and its operations, `name form count` each, in the place of its bytes. */
+function ownFunctions(mapPath: string, files: string[], byOperations: string[]): string[] {
+  const rows = readFileSync(mapPath, "latin1")
+    .split("\n")
+    .map(row => row.split("\t"));
+  return rows
+    .flatMap((columns, at) => {
+      const file = columns[0] === "F" && files.find(name => (columns[10] ?? "").endsWith("/" + name));
+      if (!file) return [];
+      const name = `${file}:${columns[11]} ${columns[7]} ${columns[8]}`;
+      if (!byOperations.includes(name)) return [`${name} ${columns[3]}`];
+      const words = rows[at + 1]?.[0] === "FO" ? rows[at + 1].slice(1) : [];
+      const operations = Array.from({ length: words.length / 3 }, (_, i) => words.slice(3 * i, 3 * i + 3).join(" "));
+      return operations.map(operation => `${name}: ${operation}`);
     })
     .sort();
 }
 
 // The map is written on every platform. The forms are the same there, the bytes are not worth a second look.
 describe.skipIf(isWindows)("compile/aot/a-test-run-compiles-what-an-executable-compiles", () => {
-  for (const [title, { files, testFile, opened = [], differsToday }] of Object.entries(programs)) {
-    // `failing`: it turns red the day the two agree. Then take the reason out.
-    (differsToday ? test.failing : test)(title, async () => {
+  for (const [title, program] of Object.entries(programs)) {
+    const { files, testFile, opened = [], moreInTestRun = {}, differsToday, unitsThatDifferToday = 0 } = program;
+    let built: Promise<{ executable: string[]; testRun: string[] }> | undefined;
+    const buildBothWays = async () => {
       const folder = String(
         tempDir("aot-both-ways", {
           ...files,
@@ -206,7 +246,7 @@ describe.skipIf(isWindows)("compile/aot/a-test-run-compiles-what-an-executable-c
         const [out, err, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
         expect({ out, err, exitCode }).toEqual({ out: expect.any(String), err: expect.any(String), exitCode: 0 });
         const compared = Object.keys(files).filter(file => !opened.includes(file));
-        return ownFunctions(join(folder, map), compared);
+        return ownFunctions(join(folder, map), compared, Object.keys(moreInTestRun));
       };
       const executable = await build(
         "executable.map",
@@ -219,9 +259,25 @@ describe.skipIf(isWindows)("compile/aot/a-test-run-compiles-what-an-executable-c
       );
       const testRun = await build("test-run.map", "test", "--aot", "./entry.test.ts");
       expect(executable).not.toBeEmpty();
+      return { executable, testRun };
+    };
+    if (differsToday)
+      test(`${title}: both ways are built, and no more than ${unitsThatDifferToday} units differ`, async () => {
+        const { executable, testRun } = await (built ??= buildBothWays());
+        expect(executable.filter(it => !testRun.includes(it)).length).toBeLessThanOrEqual(unitsThatDifferToday);
+        expect(testRun.filter(it => !executable.includes(it)).length).toBeLessThanOrEqual(unitsThatDifferToday);
+      });
+    // `failing`: it turns red the day the two agree. Then take the reason out.
+    (differsToday ? test.failing : test)(differsToday ? `${title}: ${differsToday}` : title, async () => {
+      const { executable, testRun } = await (built ??= buildBothWays());
       // A file that loads again comes from disk, so the loader of the run time has to find the others: each has a few bytes more for that.
       if (opened.length) expect(executable.filter(it => !testRun.includes(it))).toEqual([]);
-      else expect(testRun).toEqual(executable);
+      else {
+        const more = Object.entries(moreInTestRun).flatMap(([name, operations]) =>
+          operations.map(it => `${name}: ${it}`),
+        );
+        expect(testRun).toEqual([...executable, ...more].sort());
+      }
     });
   }
 });

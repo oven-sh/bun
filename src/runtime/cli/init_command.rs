@@ -8,7 +8,6 @@ use bun_core::{self as bun, Environment, Global, Output, env_var, fmt as bun_fmt
 use bun_core::{MutableString, ZStr, strings};
 use bun_js_printer as js_printer;
 use bun_parsers::json;
-use bun_paths::{self, path_buffer_pool};
 use bun_resolver::fs as Fs;
 use bun_sys::{self, Fd};
 
@@ -386,7 +385,6 @@ impl InitCommand {
             }
             let mut ifdir_z = ifdir.to_vec();
             ifdir_z.push(0);
-            // SAFETY: ifdir_z[len-1] == 0 written above.
             let ifdir_zstr = ZStr::from_slice_with_nul(&ifdir_z[..]);
             if let Err(err) = bun_sys::chdir(ifdir_zstr) {
                 bun_core::pretty_errorln!(
@@ -540,13 +538,10 @@ impl InitCommand {
                 }
 
                 // Find any source file
-                let Ok(dir) = bun_sys::open_dir_at(Fd::cwd(), b".") else {
+                let Ok(dir) = bun_sys::Dir::open(b".") else {
                     break 'infer;
                 };
-                let _close = scopeguard::guard(dir, |d| {
-                    let _ = bun_sys::close(d);
-                });
-                let mut it = bun_sys::iterate_dir(dir);
+                let mut it = bun_sys::iterate_dir(dir.fd());
                 while let Some(file) = it.next().map_err(crate::Error::from)? {
                     if file.kind != bun_sys::FileKind::File {
                         continue;
@@ -803,16 +798,14 @@ impl InitCommand {
         }
 
         'write_package_json: {
-            let (fd, created_close): (Fd, Option<bun_sys::CloseOnDrop>) = match package_json_file
-                .as_ref()
-            {
-                Some(f) => (f.handle(), None),
+            let created;
+            let file: &bun_sys::File = match &package_json_file {
+                Some(file) => file,
                 None => {
-                    let fd = bun_sys::File::create(Fd::cwd(), b"package.json", true)?.into_raw();
-                    (fd, Some(bun_sys::CloseOnDrop::new(fd)))
+                    created = bun_sys::File::create(Fd::cwd(), b"package.json", true)?;
+                    &created
                 }
             };
-            let _close = created_close;
             let mut buffer_writer = js_printer::BufferWriter::init();
             buffer_writer.append_newline = true;
             let mut package_json_writer = js_printer::BufferPrinter::init(buffer_writer);
@@ -839,7 +832,7 @@ impl InitCommand {
                 break 'write_package_json;
             }
             let written = package_json_writer.ctx.get_written();
-            if let Err(err) = bun_sys::File::borrow(&fd).write_all(written) {
+            if let Err(err) = file.write_all(written) {
                 bun_core::pretty_errorln!(
                     "package.json failed to write due to error {}",
                     bstr::BStr::new(err.name()),
@@ -848,7 +841,7 @@ impl InitCommand {
                 break 'write_package_json;
             }
             if let Err(err) =
-                bun_sys::ftruncate(fd, i64::try_from(written.len()).expect("int cast"))
+                bun_sys::ftruncate(file.fd(), i64::try_from(written.len()).expect("int cast"))
             {
                 bun_core::pretty_errorln!(
                     "package.json failed to write due to error {}",
@@ -875,17 +868,18 @@ impl InitCommand {
                     Output::flush();
                 }
 
-                if !fields.entry_point.is_empty()
+                let entry_point = bun_paths::from_portable(&fields.entry_point);
+                if !entry_point.is_empty()
                     && is_safe_entry_point_path(&fields.entry_point)
-                    && !exists(&fields.entry_point)
+                    && !exists(&entry_point)
                 {
-                    if let Some(dirname) = bun_core::dirname(&fields.entry_point) {
+                    if let Some(dirname) = bun_paths::dirname(&entry_point) {
                         if dirname != b"." {
                             let _ = bun_sys::Dir::cwd().make_path(dirname);
                         }
                     }
 
-                    let mut ep_z = fields.entry_point.clone();
+                    let mut ep_z = entry_point.into_owned();
                     ep_z.push(0);
                     let ep_zstr = ZStr::from_slice_with_nul(&ep_z[..]);
                     // SAFETY: ep_z[len-1] == 0 written above
@@ -999,7 +993,7 @@ impl Assets {
 
     fn create_new(filename: &ZStr, contents: &[u8]) -> Result<(), Error> {
         // Create parent dirs then open.
-        if let Some(dir) = bun_core::dirname(filename.as_bytes()) {
+        if let Some(dir) = bun_paths::dirname(filename.as_bytes()) {
             if !dir.is_empty() && dir != b"." {
                 let _ = bun_sys::Dir::cwd().make_path(dir);
             }
@@ -1472,13 +1466,11 @@ impl Template {
             return false;
         }
 
-        let mut pathbuffer = path_buffer_pool::get();
-
         let Some(path) = env_var::PATH.get() else {
             return false;
         };
         let top_level_dir = Fs::FileSystem::get().top_level_dir();
-        bun_which::which(&mut *pathbuffer, path, top_level_dir, b"claude").is_some()
+        bun_which::which(path, top_level_dir, b"claude").is_some()
     }
 
     fn create_agent_rule() {
@@ -1534,9 +1526,7 @@ impl Template {
                         target_z.push(0);
                         let mut dest_z = template_file.path.to_vec();
                         dest_z.push(0);
-                        // SAFETY: NUL-terminated above.
                         let target_zstr = ZStr::from_slice_with_nul(&target_z[..]);
-                        // SAFETY: NUL-terminated above.
                         let dest_zstr = ZStr::from_slice_with_nul(&dest_z[..]);
                         if bun_sys::symlinkat(target_zstr, Fd::cwd(), dest_zstr).is_err() {
                             break 'symlink_cursor_rule;
@@ -1561,8 +1551,7 @@ impl Template {
             };
 
             let _ = Assets::create_new(
-                ZStr::from_static(b"CLAUDE.md\0"),
-                // SAFETY: literal is NUL-terminated
+                bun_core::zstr!("CLAUDE.md"),
                 Self::AGENT_RULE[end_of_frontmatter..].trim_ascii_start(),
             );
         }
@@ -1591,31 +1580,8 @@ impl Template {
         #[cfg(windows)]
         {
             if let Some(user) = bun_core::getenv_z_any_case(bun_core::zstr!("USER")) {
-                let mut pathbuf = path_buffer_pool::get();
-                // Fallible on overflow, do not panic.
-                let path: &ZStr = {
-                    use std::io::Write as _;
-                    let total = pathbuf.len();
-                    let mut cursor: &mut [u8] = &mut pathbuf[..];
-                    if cursor.write_all(b"C:\\Users\\").is_err()
-                        || cursor.write_all(user).is_err()
-                        || cursor
-                            .write_all(b"\\AppData\\Local\\Programs\\Cursor\\Cursor.exe")
-                            .is_err()
-                    {
-                        return false;
-                    }
-                    let remaining = cursor.len();
-                    let written = total - remaining;
-                    if written >= total {
-                        return false;
-                    }
-                    pathbuf[written] = 0;
-                    // SAFETY: NUL written at pathbuf[written].
-                    ZStr::from_buf(&pathbuf[..], written)
-                };
-
-                if bun_sys::exists(path.as_bytes()) {
+                let exe = br"AppData\Local\Programs\Cursor\Cursor.exe";
+                if bun_sys::exists_z(&bun_paths::Path::from_parts(&[br"C:\Users", user, exe])) {
                     return true;
                 }
             }
@@ -1948,7 +1914,7 @@ fn is_type_script_entry_point(entry_point: &[u8]) -> bool {
 /// (absolute paths or any `..` segment), so `bun init` only creates files
 /// inside the current working directory.
 fn is_safe_entry_point_path(path: &[u8]) -> bool {
-    !bun_paths::is_absolute_loose(path) && !strings::split_any(path, b"/\\").any(|seg| seg == b"..")
+    !bun_paths::portable::is_absolute(path) && !bun_paths::portable::has_dot_dot(path)
 }
 
 #[inline]

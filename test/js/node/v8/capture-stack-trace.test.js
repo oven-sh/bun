@@ -4,6 +4,9 @@ import { afterEach, expect, mock, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { totalmem } from "node:os";
 import { createContext, runInContext } from "node:vm";
+import storesThatEndInADefinition from "../../bun/jsc/stores-that-end-in-a-definition-fixture.js";
+
+const storesFixture = join(import.meta.dir, "..", "..", "bun", "jsc", "stores-that-end-in-a-definition-fixture.js");
 const origPrepareStackTrace = Error.prepareStackTrace;
 afterEach(() => {
   Error.prepareStackTrace = origPrepareStackTrace;
@@ -1453,6 +1456,48 @@ test("Error.stackTraceLimit default matches the limit captureStackTrace applies"
   expect({ reported, before, after, exitCode }).toEqual({ reported: 10, before: 10, after: 10, exitCode: 0 });
 });
 
+test.concurrent("Error.stackTraceLimit assignments keep applying after the assignment site gets hot", async () => {
+  // Runs in a fresh process so that the JIT state of each assignment site starts cold.
+  const src = `
+    // try/finally keeps each call out of tail position, so every helper stays on the stack.
+    function f3() { return new Error("L").stack.split("\\n").length - 1; }
+    function f2() { try { return f3(); } finally {} }
+    function f1() { try { return f2(); } finally {} }
+    function f0() { try { return f1(); } finally {} }
+
+    function store(n) { Error.stackTraceLimit = n; }
+    const key = "stackTraceLimit";
+    function storeByVal(n) { Error[key] = n; }
+    // The load gives the optimizing JIT a proven structure for the base of the store.
+    function loadThenStore(n) { const previous = Error.stackTraceLimit; Error.stackTraceLimit = n; return previous; }
+
+    const failures = [];
+    for (const site of [store, storeByVal, loadThenStore]) {
+      for (let i = 0; i < 3000; i++) {
+        const want = 1 + (i % 3);
+        site(want);
+        // Creating an Error is slow in debug builds. Check the first iterations, then a sample.
+        if (i >= 64 && i % 199 !== 0) continue;
+        const got = f0();
+        if (got !== want) {
+          failures.push({ site: site.name, iteration: i, assigned: want, readback: Error.stackTraceLimit, frames: got });
+          break;
+        }
+      }
+    }
+    process.stdout.write(JSON.stringify(failures));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    // Without compiler threads each site reaches the optimizing JIT at a fixed iteration.
+    env: { ...bunEnv, BUN_JSC_useConcurrentJIT: "0" },
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toBe("[]");
+  expect(exitCode).toBe(0);
+});
+
 test("call sites inside a WebSocket message listener only contain script frames when the message arrives with the upgrade response", async () => {
   // Runs in its own process: which dispatch path delivers the message (and therefore
   // which frames are on the stack under the listener) depends on prior event-loop state.
@@ -2156,6 +2201,92 @@ test("Error.captureStackTrace rejects a WebAssembly GC object", () => {
   const struct = new WebAssembly.Instance(new WebAssembly.Module(bytes)).exports.mk();
   expect(() => Error.captureStackTrace(struct)).toThrow(new TypeError("invalid_argument"));
 });
+
+// Error.prepareStackTrace is a data property to a script, and native code keeps the function it calls. Each store of
+// the fixture ends in a definition of the value on Error, and that definition has to reach the native side: a
+// definition that puts a plain value in the property's place leaves every later store without effect.
+// A class field is left out. It says that the property is enumerable, and Error.prepareStackTrace is not: a definition
+// that changes an attribute puts a plain value in the property's place.
+const storesOnError = Object.keys(storesThatEndInADefinition).filter(what => !what.startsWith("a class field"));
+
+test.concurrent(
+  "Error.prepareStackTrace: every store that ends in a definition on Error installs the function",
+  async () => {
+    const src = `
+    const fixture = require(${JSON.stringify(storesFixture)});
+    const stores = Object.fromEntries(${JSON.stringify(storesOnError)}.map(what => [what, fixture[what]]));
+    const { getCallSites } = require("node:util");
+    // Code of a node:vm context reaches the property of this realm's Error too.
+    const inContext = require("node:vm").runInNewContext;
+    Object.assign(stores, {
+      "a proxy made in a node:vm context": (target, name, value) => {
+        inContext("target => new Proxy(target, {})")(target)[name] = value;
+      },
+      "a proxy, by code of a node:vm context": inContext(
+        "(target, name, value) => { new Proxy(target, {})[name] = value; }",
+      ),
+      "Object.defineProperty with a value, by code of a node:vm context": inContext(
+        "(target, name, value) => { Object.defineProperty(target, name, { value }); }",
+      ),
+    });
+    const formatter = who => (error, callSites) =>
+      who + " formats " + error.message + " from " + (Array.isArray(callSites) ? "call sites" : typeof callSites);
+    function callSitesHere() {
+      return getCallSites();
+    }
+    const results = {};
+    for (const [what, store] of Object.entries(stores)) {
+      const first = formatter("the first");
+      store(Error, "prepareStackTrace", first);
+      const readBack = Error.prepareStackTrace === first;
+      const stored = new Error("one").stack;
+      Error.prepareStackTrace = formatter("the second");
+      const storedDirectly = new Error("two").stack;
+      // util.getCallSites() stores a function of its own for one capture, and the previous one again.
+      const callSites = callSitesHere();
+      const afterGetCallSites = new Error("three").stack;
+      new Proxy(Error, {}).prepareStackTrace = undefined;
+      const cleared = new Error("four").stack.split("\\n")[0];
+      results[what] = [
+        readBack,
+        stored,
+        storedDirectly,
+        Array.isArray(callSites) ? callSites[0].functionName : typeof callSites,
+        afterGetCallSites,
+        cleared,
+        JSON.stringify(Object.getOwnPropertyDescriptor(Error, "prepareStackTrace")),
+      ];
+    }
+    console.log(JSON.stringify(results));
+  `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const names = [
+      ...storesOnError,
+      "a proxy made in a node:vm context",
+      "a proxy, by code of a node:vm context",
+      "Object.defineProperty with a value, by code of a node:vm context",
+    ];
+    expect({ stdout: stdout && JSON.parse(stdout), stderr }).toEqual({
+      stdout: Object.fromEntries(
+        names.map(what => [
+          what,
+          [
+            true,
+            "the first formats one from call sites",
+            "the second formats two from call sites",
+            "callSitesHere",
+            "the second formats three from call sites",
+            "Error: four",
+            `{"writable":true,"enumerable":false,"configurable":true}`,
+          ],
+        ]),
+      ),
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  },
+);
 
 test.concurrent("a stack taken while a CommonJS module loads names the frame of require() anonymous", async () => {
   using dir = tempDir("stack-while-commonjs-loads", {

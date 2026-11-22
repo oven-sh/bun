@@ -2,8 +2,9 @@ use core::num::NonZeroU32;
 
 use bstr::BStr;
 use bun_aot::report;
+use bun_aot::report::build_rows::{format_line_count, format_rate, format_untyped_files};
 use bun_core::{Global, Output};
-use bun_options_types::aot_options::AotOptions;
+use bun_options_types::aot_options::{AotOptions, DependencyTypeErrors, ExplainSet};
 use bun_options_types::context::ContextData;
 use bun_options_types::schema::api;
 use bun_sema::util::SharedSort;
@@ -12,7 +13,7 @@ use bun_sema_driver::{CommandLine, CompilerOption};
 
 use super::{Destination, Options, style_for, usage_error, working_directory};
 use crate::cli::compile_command::{
-    self, CompileFailure, CompileOutcome, CompileProduct, RequestOrigin,
+    self, CompileFailure, CompileOutcome, CompileProduct, RequestOrigin, time_since_start,
 };
 use crate::cli::{arguments, compile_options, run_compiled};
 
@@ -24,8 +25,6 @@ pub(super) fn reject_flags_requiring_aot(options: &Options) {
             "--disallow-code-generation-from-strings",
         ),
         (!options.defines.is_empty(), "--define"),
-        (options.report_path.is_some(), "--aot-report"),
-        (options.report_detail.is_some(), "--aot-report-detail"),
         (options.trim, "--trim"),
     ];
     if let Some((_, flag)) = flags.iter().find(|(is_given, _)| *is_given) {
@@ -111,29 +110,18 @@ fn set_compile_context(ctx: &mut ContextData, options: &Options, cwd: &[u8]) {
     let mut aot = AotOptions {
         explain,
         thread_count: NonZeroU32::new(u32::try_from(options.threads).unwrap_or(u32::MAX)),
+        looks_for_type_errors: true,
+        dependency_type_errors: match options.all {
+            true => DependencyTypeErrors::Listed,
+            false => DependencyTypeErrors::Counted,
+        },
         ..Default::default()
     };
     aot.code_generation_from_strings =
         compile_options::code_generation_from_strings(exec_argv.as_deref().unwrap_or_default());
-    aot.trim.removes_unused = options.trim;
-    set_build_report(&mut aot, options);
+    aot.trim.removes_unused = options.trim || explain.contains(ExplainSet::RUNTIME_USE);
     bundler_options.compile_exec_argv = exec_argv;
     bundler_options.aot = Some(Box::new(aot));
-}
-
-fn set_build_report(aot: &mut AotOptions, options: &Options) {
-    let words = [
-        ("report", options.report_path),
-        ("report-detail", options.report_detail),
-    ];
-    for (key, value) in words {
-        if value.is_none() {
-            continue;
-        }
-        if let Err(error) = compile_options::apply_developer_word(key, value, aot) {
-            option_usage_error(&error);
-        }
-    }
 }
 
 fn report_compile_check(
@@ -159,7 +147,7 @@ fn report_compile_check(
             }
         }
         Layout::Pretty | Layout::Agent => {
-            let stdout = std::ptr::from_mut::<bun_core::io::Writer>(Output::writer());
+            let stdout = Output::writer();
             let _ = log.print(stdout);
         }
     }
@@ -170,14 +158,20 @@ fn report_compile_check(
     if log.errors > 0 {
         bun_core::pretty_errorln!("{}", BStr::new(&errors_line(log, files_checked)));
     } else if let Some(outcome) = &outcome {
-        let files = format::plural(outcome.module_count as usize, b"file", b"files");
-        let note = &outcome.untyped_note;
-        let separator = if note.is_empty() { "" } else { ", " };
+        let clean_files =
+            u64::from(outcome.module_count) - outcome.unverified_dependency_file_count;
+        let files = format::plural(clean_files as usize, b"file", b"files");
+        let whole_check = time_since_start(bun_core::time::nano_timestamp());
+        let counts = [
+            Some(format_line_count(outcome.line_count)),
+            format_rate(outcome.line_count, whole_check),
+            format_untyped_files(outcome.untyped_file_count),
+        ];
+        let counts: Vec<String> = counts.into_iter().flatten().collect();
         bun_core::pretty_errorln!(
-            "<green>✓<r> No type errors in {}{}{}",
+            "<green>✓<r> No type errors in {}, {}",
             files,
-            separator,
-            BStr::new(note)
+            counts.join(", ")
         );
     } else {
         Output::err_generic("the build failed", ());
@@ -240,10 +234,10 @@ fn write_plain_message(
     out.extend_from_slice(indent);
     if let Some(location) = data.location.as_ref().filter(|it| it.line > 0) {
         let file: &[u8] = &location.file;
-        out.extend_from_slice(match bun_paths::is_absolute(file) {
-            true => bun_paths::resolve_path::relative(cwd, file),
-            false => file,
-        });
+        match bun_paths::is_absolute(file) {
+            true => out.extend_from_slice(&bun_paths::Path::relative(cwd, file)),
+            false => out.extend_from_slice(file),
+        }
         let _ = write!(out, "({},{}): ", location.line, location.column);
     }
     out.extend_from_slice(label);

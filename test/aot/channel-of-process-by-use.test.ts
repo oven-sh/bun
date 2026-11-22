@@ -82,7 +82,7 @@ setTimeout(() => {
 
 // What text put together at run time answers is any value to the compiler. It does not take a method called on such a value for one of `process`.
 test("a listener added through a value that the compiler can't follow leaves the channel's JavaScript out, and the error says so", async () => {
-  expect(await startWithChannel("lost", `(0, eval)(["pro", "cess"].join(""))`)).toEqual({
+  expect(await startWithChannel("lost", `(0, eval)(["pro", JSON.parse('"cess"')].join(""))`)).toEqual({
     stdout: "",
     error:
       "error: Bun.spawn was not compiled into this executable because your code never uses it. " +

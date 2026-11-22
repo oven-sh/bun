@@ -1,0 +1,22 @@
+// STATISTIC: ViewSumNests >= 3
+"use strict";
+// Nests that add up products of elements of views: the sums of several columns are made side by side. Every number of columns and terms, NaN, infinities, stores among what is read, places that wrap around or leave the view.
+const one = JSON.parse("1");
+function product(a, b, out, rows, terms, columns) { for (let i = 0; i < rows; i++) for (let j = 0; j < columns; j++) { let sum = 0; for (let k = 0; k < terms; k++) sum += a[i * terms + k] * b[k * columns + j]; out[i * columns + j] = sum; } return out; }
+function weighted(a, w, out, terms, columns) { for (let j = 0; j < columns; j++) { let sum = 0; for (let k = 0; k < terms; k++) sum += a[k * columns + j] * w[k]; out[j] = sum; } return out; }
+function folded(x, h, out, n, terms) { for (let i = 0; i < n; i++) { let sum = 0; for (let k = 0; k < terms; k++) sum += x[i + k] * h[k]; out[i] = sum; } return out; }
+function added(a, b, out, rows, terms, columns) { for (let i = 0; i < rows; i++) for (let j = 0; j < columns; j++) { let sum = out[i * columns + j]; for (let k = 0; k < terms; k++) sum += a[i * terms + k] * b[k * columns + j]; out[i * columns + j] = sum; } return out; }
+function wrapped(x, h, out, n, terms) { for (let i = 0; i < n; i++) { let sum = 0; for (let k = 0; k < terms; k++) sum += x[(i + k) % n] * h[k]; out[i] = sum; } return out; }
+const filled = (Kind, n, f) => Kind.from({ length: n }, (_, i) => f(i));
+const told = view => Array.from(view, x => Object.is(x, -0) ? "-0" : String(x)).join();
+const plain = i => i % 7 - 3 + i % 3 * .5;
+for (let turn = 0; turn < 20; turn++) { product(filled(Float64Array, 36, plain), filled(Float64Array, 36, plain), new Float64Array(36), 6, 6, 6); weighted(filled(Float64Array, 64, plain), filled(Float64Array, 8, plain), new Float64Array(8), 8, 8); folded(filled(Float64Array, 40, plain), filled(Float64Array, 8, plain), new Float64Array(32), 32, 8); added(filled(Float64Array, 36, plain), filled(Float64Array, 36, plain), new Float64Array(36), 6, 6, 6); wrapped(filled(Float64Array, 32, plain), filled(Float64Array, 8, plain), new Float64Array(32), 32, 8); }
+let line = 0;
+for (let columns = 1; columns < 11; columns++) for (const terms of [0, 1, 2, 3, 5, 8]) { const a = filled(Float64Array, 3 * terms, plain), b = filled(Float64Array, terms * columns, i => plain(i + 1)); console.log(++line, told(product(a, b, new Float64Array(3 * columns), 3, terms, columns)), told(weighted(b, a, new Float64Array(columns), terms, columns)), told(added(a, b, new Float64Array(3 * columns).fill(.25), 3, terms, columns))); }
+for (let terms = 0; terms < 7; terms++) console.log(terms, told(folded(filled(Float64Array, 20, plain), filled(Float64Array, terms, plain), new Float64Array(20), 20, terms)), told(wrapped(filled(Float64Array, 9, plain), filled(Float64Array, terms, plain), new Float64Array(9), 9, terms)));
+for (const odd of [NaN, Infinity, -Infinity, -0, 1e308, 5e-324]) { const a = filled(Float64Array, 16, i => i === 5 ? odd : plain(i)), b = filled(Float64Array, 16, i => i === 6 ? odd : plain(i + 2)); console.log(String(odd), told(product(a, b, new Float64Array(16), 4, 4, 4)), told(folded(a, b, new Float64Array(8), 8, 4)), told(weighted(a, b, new Float64Array(4), 4, 4))); }
+for (const Kind of [Float32Array, Int32Array, Uint8Array, Int16Array, Float64Array]) console.log(Kind.name, told(product(filled(Kind, 16, plain), filled(Kind, 16, i => i * 3), new Kind(16), 4, 4, 4)), told(product(filled(Float64Array, 16, plain), filled(Kind, 16, i => i * 3), new Float32Array(16), 4, 4, 4)));
+// What is stored lies among what is read, and places leave the view.
+const all = filled(Float64Array, 64, plain); console.log(told(product(all.subarray(0, 16), all.subarray(8, 24), all.subarray(4, 20), 4, 4, 4)), told(all)); console.log(told(folded(all, all.subarray(0, 4), all.subarray(1), 30, 4)));
+console.log(told(product(filled(Float64Array, 10, plain), filled(Float64Array, 16, plain), new Float64Array(10), 4, 4, 4)), told(weighted(filled(Float64Array, 5, plain), filled(Float64Array, 3, plain), new Float64Array(6), 4, 4)), told(folded(filled(Float64Array, 6, plain), filled(Float64Array, 4, plain), new Float64Array(12), 12, 4)));
+console.log(told(product(filled(Float64Array, 16, plain), filled(Float64Array, 16, plain), new Float64Array(16), 4 * one, "4", 4)), told(weighted([1, 2, 3, 4], [5, 6], new Float64Array(2), 2, 2)), product(filled(Float64Array, 4, plain), filled(Float64Array, 4, plain), [], 2, 2, 2).join());

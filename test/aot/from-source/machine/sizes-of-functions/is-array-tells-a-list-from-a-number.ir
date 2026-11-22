@@ -1,0 +1,17 @@
+# f1 = first
+# -- source: is-array-tells-a-list-from-a-number.ts
+# function first(value: number[] | number): number {
+#   if (Array.isArray(value)) return value.length;
+#   return value;
+# }
+# declare const input: any;
+# const numbers: number[] = [];
+# numbers.push(+input);
+# (globalThis as any).answer = first(input ? numbers : +input);
+# -- end of source
+# The compiler before this one: 12 instructions, 0 of them patches.
+# When the bound was taken: steps: operations 10, patches 0, moves 2, unlikely or rare 4.
+# RUN(X64): steps most:12 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 12

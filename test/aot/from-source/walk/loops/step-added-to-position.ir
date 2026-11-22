@@ -1,0 +1,27 @@
+# A for-of step that is added into an array position is asked for its presence in the typed loop, and the number from in front that it is added to is asked for an int32 there. The sum is an integer.
+# f2 = count
+# -- source: main.ts
+# class Board {
+#   readonly cells: number[] = new Array<number>(128).fill(0);
+#   count(square: number, steps: readonly number[], want: number): number {
+#     let found = 0;
+#     for (const step of steps) {
+#       const at = square + step;
+#       if (!(at & 0x88) && this.cells[at] === want) found++;
+#     }
+#     return found;
+#   }
+# }
+# const board = new Board();
+# for (let i = 0; i < 128; i += 3) board.cells[i] = i % 5;
+# const squares: number[] = JSON.parse("[0, 17, 34, 0.5]");
+# let total = 0;
+# for (const square of squares) total += board.count(square, [-17, -15, 15, 17], 2) + board.count(square, [1, , 3] as any, 3);
+# export { total };
+# -- end of source
+# RUN(COUNT): walk f2 mechanisms=all
+# COUNT-LABEL: code f2:Body
+# COUNT: = TypeTest {{*}} testedType=i32
+# COUNT: = IsElementPresent
+# COUNT: isPresent
+# COUNT: = Add {{*}} form=Integers

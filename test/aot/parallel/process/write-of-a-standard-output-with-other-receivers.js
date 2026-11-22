@@ -1,5 +1,5 @@
 // Both outputs have one function for `write`. A receiver that is no stream gets what the function of the whole stream does with it.
-// STATISTIC: ImageFunctionsEmitted <= 220
+// STATISTIC: ImageFunctionsEmitted <= 220 Todo: what this program reaches of Bun's library is not cut down to what it uses yet
 console.log(process.stdout.write === process.stderr.write, process.stdout.write === process.stdout.write);
 console.log(
   process.stdout.write.call(process.stdout, "to the output\n"),

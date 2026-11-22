@@ -1,3 +1,5 @@
+// Flags: --minify-syntax
+// `bun run` minifies syntax, and a message quotes what the same build prints without --aot.
 // `instanceof` of a right side that is no function: the message quotes both operands, also when they are more than names.
 function tell(label, run) {
   try {

@@ -14,7 +14,6 @@ pub(crate) fn statement_esm_syntax(hir: &File<'_>, stmt: StmtId) -> EsmSyntax {
 }
 
 pub(crate) fn file_esm_syntax(hir: &File<'_>) -> EsmSyntax {
-    // A mark makes an ES module of a text that has none of the syntax.
     if find_marked_format(&hir.text) == Some(ModuleFormat::Esm) || has_written_top_level_await(hir)
     {
         return EsmSyntax::ExportOrTopLevelAwait;

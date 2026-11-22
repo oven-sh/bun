@@ -1,0 +1,16 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# function make(): object { return (Object as any)[["create"].join("")](function () {}); }
+# const made = make();
+# print(typeof made, Object.getOwnPropertyNames(Object.getPrototypeOf(made)).join());
+# -- end of source
+# Link does not follow the name that is joined, so it expects the closure to stay as made and the plan makes it slim; the walk folds the name and calls Object.create() in line.
+# JSObject::didBecomePrototype() gives a slim closure that becomes a prototype the storage of its own names (SlimClosure::reify()). No read of the language answers otherwise behind it: length, name and prototype
+# were there, with those values and attributes; a slim closure has no storage that emitted code could hold on to, and whoever reads a name off a closure asks the cell's type at each use.
+# The net of effects took it for a write of NamedProperties that the row of operationAOTObjectCreate does not name.
+# RUN: walk f1 mechanisms=all
+# CHECK: NewClosure function=f2 closureForm=Slim
+# CHECK: inlineBuiltin=ObjectCreate
+# RUN(NET): run-in-shell mechanisms=all testing=CheckEffectsAtRunTime
+# NET: object length,name,prototype
+# NET-NEXT: exited with 0

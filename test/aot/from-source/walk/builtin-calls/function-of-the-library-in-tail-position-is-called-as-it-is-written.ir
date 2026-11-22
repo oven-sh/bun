@@ -1,0 +1,21 @@
+# -- source: function-of-the-library-in-tail-position-is-called-as-it-is-written.mjs
+# function spin(n, acc, make) { return n === 0 ? acc : Reflect.apply(spin, null, make(n - 1, acc + 1, make)); }
+# function kept(n, acc, make) { const answer = Reflect.apply(spin, null, make(n, acc, make)); return answer + 1; }
+# const real = (n, a, make) => [n, a, make];
+# const like = (n, a, make) => ({ length: 3, 0: n, 1: a, 2: make });
+# console.log(String(spin(3, 0, real)), String(spin(3, 0, like)), String(kept(3, 0, real)), String(kept(3, 0, like)));
+# -- end of source
+# `return Reflect.apply(f, t, list)`: the call is made as it is written. Reflect.apply is a function of the library, which ends in a tail call of its target:
+# called by value under a ReturnCall it leaves the frame behind, and the depth of a program may rest on that. A CallBuiltin has no tail form: native code comes back to its caller.
+# As a CallBuiltin the arm kept a frame of spin for each turn: 300,000 turns with `{ length: 2, .. }` or a Float64Array for a list ended in a RangeError.
+# f1 = spin, f2 = kept
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = Call {{*}}calleeName="Reflect.apply"{{*}} tail
+# CHECK-NEXT: ReturnCall
+# RUN(NEVER): walk f1 mechanisms=all
+# NEVER-NOT: = CallBuiltin
+# Where the frame stays anyway the function is named without a look at the callee, as before.
+# RUN(KEPT): walk f2 mechanisms=all
+# KEPT-LABEL: code f2:Body
+# KEPT: = CallBuiltin {{*}}overload=ReflectApply/0

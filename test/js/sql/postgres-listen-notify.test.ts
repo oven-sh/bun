@@ -180,7 +180,7 @@ describe.concurrent("in a subprocess", () => {
     using dir = tempDir("pg-listen-subprocess", {
       "fixture.ts": `
         import { SQL } from "bun";
-        import { listeningServer, pgAuthenticationOk, pgReadyForQuery, pgCommandComplete, pgNotificationResponse, pgReadFrontendMessages, pgBackendKeyData } from ${JSON.stringify(wireFrames)};
+        import { listeningServer, pgAuthenticationOk, pgReadyForQuery, pgCommandComplete, pgNotificationResponse, pgReadFrontendMessages, pgBackendKeyData, loopbackFence } from ${JSON.stringify(wireFrames)};
         const sockets = new Set();
         const { port, server } = await listeningServer(socket => {
           sockets.add(socket);
@@ -241,6 +241,50 @@ describe.concurrent("in a subprocess", () => {
       setTimeout(() => notifyMany([["ch", "wake"]]), 20).unref();
     `);
     expect(result).toEqual(clean("subscribed\ngot wake\nunlistened\n"));
+  });
+
+  // Bun.build() runs the event loop until an async setup() settles.
+  const listenAndBuildOnce = (setup: string) => `
+    const write = bytes => { for (const socket of sockets) socket.write(bytes); return loopbackFence(); };
+    const [a, b, c, d] = ["a", "b", "c".repeat(200), "d"].map(payload => pgNotificationResponse(1, "ch", payload));
+    let waited = false;
+    const listenerReturned = Promise.withResolvers();
+    // No fence: with kqueue, its connect event is lost if it comes in the batch that reaches the listener.
+    const writeAndAwaitListener = bytes => {
+      for (const socket of sockets) socket.write(bytes);
+      return listenerReturned.promise;
+    };
+    await sql.listen("ch", payload => {
+      console.log(payload[0]);
+      if (waited) return;
+      waited = true;
+      Bun.build({ entrypoints: [import.meta.path], target: "bun", plugins: [{ name: "wait", setup: ${setup} }] });
+      listenerReturned.resolve();
+    });
+  `;
+
+  test.each([0, 7].flatMap(split => ["0", "7", "b.length"].map(extra => ({ split, extra }))))(
+    "a listener runs the event loop while more comes in: %j",
+    async ({ split, extra }) => {
+      const result = await run(`
+      ${listenAndBuildOnce(`() => write(stream.subarray(a.length + ${extra}, -d.length + 7))`)}
+      const stream = Buffer.concat([a, b, c, d]);
+      if (${split}) await write(stream.subarray(0, ${split}));
+      await writeAndAwaitListener(stream.subarray(${split}, a.length + ${extra}));
+      await write(d.subarray(7));
+      await sql.close();
+    `);
+      expect(result).toEqual(clean("a\nb\nc\nd\n"));
+    },
+  );
+
+  test("a listener runs the event loop until its own connection answers", async () => {
+    const result = await run(`
+      ${listenAndBuildOnce(`async () => { await sql.listen("other", () => {}); console.log("listening"); }`)}
+      await writeAndAwaitListener(Buffer.concat([a, b]));
+      await sql.close();
+    `);
+    expect(result).toEqual(clean("a\nb\nlistening\n"));
   });
 
   test("a dropped connection keeps the process alive through the backoff and reconnects", async () => {

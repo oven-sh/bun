@@ -1,7 +1,7 @@
 // RUN: lower
 // CHECK-LABEL: function {{*}}name="create"
 // CHECK: [[called]] = Call {{*}}calleeName="k"
-// CHECK-NEXT: [[text]] = Convert [[called]] declared={type=undefined|null|string site=w{{*}}} illTypedCause=DeclarationWithoutBody
+// CHECK-NEXT: [[text]] = Convert [[called]] declared={type=undefined|null|string flags={{*}}} illTypedCause=DeclarationWithoutBody
 // CHECK-NEXT: [[key]] = ToPropertyKey [[text]]
 // CHECK: [[value]] = Call {{*}}calleeName="v"
 // CHECK: [[head]] = NewObject

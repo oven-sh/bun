@@ -1,0 +1,9 @@
+# a test of its kind lets the mark pass
+# -- source: main.js
+# const given = JSON.parse(process.argv[2] ?? "5");
+# const own = Object.getPrototypeOf(given);
+# if (typeof own === "object" && own !== null)
+#   console.log(typeof own.toFixed);
+# -- end of source
+# RUN: link lookups mechanisms=all
+# CHECK: lookup let-go NumberPrototype

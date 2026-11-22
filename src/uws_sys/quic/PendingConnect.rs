@@ -1,38 +1,40 @@
 //! `us_quic_pending_connect_s` — DNS-pending client connect. Created when
 //! `Context.connect` returns 0 (cache miss); holds the
 //! `Bun__addrinfo` request that the caller registers a callback on.
-//! Consumed by exactly one of `resolved()` or `cancel()`.
 
 use core::ffi::c_void;
+use core::ptr::NonNull;
 
 use crate::quic::Socket;
 
 bun_opaque::opaque_ffi! {
     /// Opaque FFI handle for `us_quic_pending_connect_s`.
-    pub struct PendingConnect;
+    struct PendingConnect;
 }
 
-// `PendingConnect` is an `opaque_ffi!` ZST (`UnsafeCell<[u8; 0]>`), so
-// `&mut PendingConnect` is ABI-identical to a non-null `*mut PendingConnect`
-// with no `noalias`/`readonly` attribute — handle-only shims are `safe fn`.
+/// Cancelled on drop.
+#[repr(transparent)]
+pub struct OwnedPendingConnect(NonNull<PendingConnect>);
+
 unsafe extern "C" {
-    safe fn us_quic_pending_connect_addrinfo(pc: &mut PendingConnect) -> *mut c_void;
-    safe fn us_quic_pending_connect_resolved(pc: &mut PendingConnect) -> *mut Socket;
-    safe fn us_quic_pending_connect_cancel(pc: &mut PendingConnect);
+    safe fn us_quic_pending_connect_addrinfo(pc: &PendingConnect) -> *mut c_void;
+    safe fn us_quic_pending_connect_resolved(pc: OwnedPendingConnect) -> Option<NonNull<Socket>>;
+    fn us_quic_pending_connect_cancel(pc: NonNull<PendingConnect>);
 }
 
-impl PendingConnect {
-    pub fn addrinfo(&mut self) -> *mut c_void {
-        us_quic_pending_connect_addrinfo(self)
+impl OwnedPendingConnect {
+    pub fn addrinfo(&self) -> *mut c_void {
+        us_quic_pending_connect_addrinfo(PendingConnect::opaque_ref(self.0.as_ptr()))
     }
 
-    pub fn resolved(&mut self) -> Option<&mut Socket> {
-        // SAFETY: C returns null or a valid `us_quic_socket_t*`; `Socket` is an
-        // opaque ZST handle so `&mut` carries no aliasing assumptions.
-        unsafe { us_quic_pending_connect_resolved(self).as_mut() }
+    pub fn resolved(self) -> Option<NonNull<Socket>> {
+        us_quic_pending_connect_resolved(self)
     }
+}
 
-    pub fn cancel(&mut self) {
-        us_quic_pending_connect_cancel(self)
+impl Drop for OwnedPendingConnect {
+    fn drop(&mut self) {
+        // SAFETY: `self` is the only owner.
+        unsafe { us_quic_pending_connect_cancel(self.0) }
     }
 }

@@ -1,4 +1,3 @@
-// STATISTIC: SerializersCreated = 1
 // STATISTIC: InlineFramesEmitted = 0
 const word = process.argv[2] ?? "word";
 const note = { role: word + "-role", text: word + "-text" };

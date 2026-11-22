@@ -2,7 +2,17 @@ import { write } from "bun";
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
 import { chmodSync, mkdirSync, readdirSync, writeFileSync } from "fs";
 import { rm } from "fs/promises";
-import { bunEnv, bunExe, isIPv6, isLinux, isWindows, tempDir, tls, unprivilegedSpawnOptions } from "harness";
+import {
+  autoInstallTempDir,
+  bunEnv,
+  bunExe,
+  isIPv6,
+  isLinux,
+  isWindows,
+  tempDir,
+  tls,
+  unprivilegedSpawnOptions,
+} from "harness";
 import { createServer as createTlsServer } from "node:tls";
 import { dirname, join } from "path";
 import { TestRegistry } from "registry";
@@ -261,6 +271,35 @@ registry = http://localhost:${registry.port}/
       });
       expect(result).toEqual(usesRegistry(3));
     });
+
+    it.concurrent.each([
+      ["NPM_CONFIG_USERCONFIG", "<dir>\\elsewhere\\.npmrc"],
+      ["NPM_CONFIG_USERCONFIG", "..\\elsewhere\\.npmrc"],
+      ["NPM_CONFIG_USERCONFIG", "~\\..\\elsewhere\\.npmrc"],
+      ["NPM_CONFIG_USERCONFIG", "<dir>/pkg/..\\elsewhere\\.npmrc"],
+      ["XDG_CONFIG_HOME", "<dir>\\elsewhere"],
+      ["XDG_CONFIG_HOME", "<dir>/pkg/..\\elsewhere"],
+    ])("finds the file when $%s is %s", async (name, value) => {
+      using dir = tempDir("npmrc-userconfig-backslash", {
+        ...pkg,
+        "home/.keep": "",
+        "elsewhere/.npmrc": npmrc(1),
+        ...(isWindows ? {} : { "pkg/..\\elsewhere\\.npmrc": npmrc(2), "pkg/..\\elsewhere/.npmrc": npmrc(2) }),
+      });
+      const result = await publishDryRun(String(dir), { [name]: value.replace("<dir>", () => String(dir)) });
+      expect(result).toEqual(usesRegistry(1));
+    });
+
+    it.concurrent.skipIf(isWindows)(
+      "looks nowhere else for a file that a directory with a backslash lacks",
+      async () => {
+        using dir = tempDir("npmrc-userconfig-twin", { ...pkg, "ho\\me/.keep": "", "ho/me/ci.npmrc": npmrc(1) });
+        const HOME = join(String(dir), "ho\\me");
+        const result = await publishDryRun(String(dir), { HOME, NPM_CONFIG_USERCONFIG: "~/ci.npmrc" });
+        expect(result.stderr).toContain("missing authentication");
+        expect(result.exitCode).toBe(1);
+      },
+    );
 
     it.concurrent("accepts lowercase $npm_config_userconfig", async () => {
       using dir = tempDir("npmrc-userconfig-lowercase", {
@@ -5347,7 +5386,7 @@ describe.concurrent("registry credentials from $VAR env references", () => {
   test("runtime auto-install does not send an unset $VAR token", async () => {
     const auths: (string | null)[] = [];
     await using server = authLoggingRegistry(auths);
-    using dir = tempDir("bunfig-auto-install-unset", {
+    using dir = autoInstallTempDir("bunfig-auto-install-unset", {
       "index.ts": `import "@myscope/no-deps";`,
       "bunfig.toml": `[install.scopes]\nmyscope = { url = "http://127.0.0.1:${server.port}/", token = "$UNSET_TOKEN_41044" }\n`,
     });

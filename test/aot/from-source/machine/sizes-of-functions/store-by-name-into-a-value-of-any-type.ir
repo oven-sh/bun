@@ -1,0 +1,14 @@
+# f1 = rename
+# -- source: store-by-name-into-a-value-of-any-type.ts
+# function rename(value: any, name: string): void {
+#   value.name = name;
+# }
+# declare const input: any;
+# for (let i = 0; i < input.length; i++) rename(input[i], String(i));
+# -- end of source
+# The compiler before this one: 4 instructions, 2 of them patches.
+# When the bound was taken: steps: operations 4, patches 1, moves 3, unlikely or rare 0.
+# RUN(X64): steps most:7 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 7

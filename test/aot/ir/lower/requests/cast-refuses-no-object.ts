@@ -1,51 +1,51 @@
 // RUN: lower
 // CHECK-LABEL: function {{*}}name="anyToArray"
-// CHECK: = Convert {{*}}declared={type=undefined|null|Array<undefined|null|string> site=w{{*}}} illTypedCause=FromLooseType
+// CHECK: = Convert {{*}}declared={type=undefined|null|Array<undefined|null|string> flags={{*}}} illTypedCause=Assertion
 // CHECK-LABEL: function {{*}}name="arrayOrStringToString"
-// CHECK: = Convert {{*}}declared={type=undefined|null|string site=w{{*}}} illTypedCause=Assertion
+// CHECK: = Convert {{*}}declared={type=undefined|null|string flags={{*}}} illTypedCause=Assertion
 // CHECK-LABEL: function {{*}}name="arrayToArray"
-// CHECK: [[anyArray]] = Convert {{*}}declared={type=undefined|null|Array site=w{{*}}} @
-// CHECK-NEXT: = Convert [[anyArray]] declared={type=undefined|null|Array<undefined|null|string> site=w{{*}}} illTypedCause=Assertion
+// CHECK: [[anyArray]] = Convert {{*}}declared={type=undefined|null|Array flags={{*}}} illTypedCause=Assertion
+// CHECK-NEXT: = Convert [[anyArray]] declared={type=undefined|null|Array<undefined|null|string> flags={{*}}} illTypedCause=Assertion
 // CHECK-LABEL: function {{*}}name="concatToArray"
-// CHECK: ReturnCall {{*}}casts=[{declared={type=undefined|null|Array<undefined|null|number|string> site=w{{*}}}}, {declared={type=undefined|null|Array<undefined|null|string> site=w{{*}}}}, {declared=
+// CHECK: ReturnCall {{*}}casts=[{declared={type=undefined|null|Array<undefined|null|number|string> flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]}}]
 // CHECK-LABEL: function {{*}}name="filterToArray"
-// CHECK: ReturnCall {{*}}casts=[{declared={type=undefined|null|Array<undefined|null|string> site=w{{*}}}}, {declared={type=undefined|null|Array<undefined|null|string> site=w{{*}}}}, {declared=
+// CHECK: ReturnCall {{*}}casts=[{declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]}}]
 // CHECK-LABEL: function {{*}}name="fromObjectOrString"
-// CHECK: = Convert {{*}}declared={type=undefined|null|string site=w{{*}}} illTypedCause=Assertion
+// CHECK: = Convert {{*}}declared={type=undefined|null|string flags={{*}}} illTypedCause=Assertion
 // CHECK-LABEL: function {{*}}name="fromString"
-// CHECK: = Convert {{*}}declared={type=undefined|null|"a"|"b" site=w{{*}}} illTypedCause=Assertion
+// CHECK: = Convert {{*}}declared={type=undefined|null|"a"|"b" flags={{*}}} illTypedCause=Assertion
 // CHECK-LABEL: function {{*}}name="fromUnknown"
-// CHECK: = Convert {{*}}declared={type=undefined|null|boolean|number|string site=w{{*}}} illTypedCause=FromLooseType
+// CHECK: = Convert {{*}}declared={type=undefined|null|boolean|number|string flags={{*}}} illTypedCause=Assertion
 // CHECK-LABEL: function {{*}}name="functionToFunction"
-// CHECK: results=[{type=undefined|null|[[takesCount]] site=w{{*}}}]
-// CHECK: = Convert {{*}}declared={type=undefined|null|[[takesCount]] site=w{{*}}} @
+// CHECK: = Convert {{*}}declared={type=undefined|null|[[takesCount]] flags={{*}}} illTypedCause=Assertion
 // CHECK-LABEL: function {{*}}name="mapToArray"
-// CHECK: ReturnCall {{*}}casts=[{declared={type=undefined|null|Array<undefined|null|number|string> site=w{{*}}}}, {declared={type=undefined|null|Array<undefined|null|string> site=w{{*}}}}, {declared=
+// CHECK: ReturnCall {{*}}casts=[{declared={type=undefined|null|Array<undefined|null|number|string> flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]}}]
 // CHECK-LABEL: function {{*}}name="sliceToArray"
-// CHECK: [[slice]] = Convert {{*}}declared={type=undefined|null|Array<undefined|null|number|string> site=w{{*}}}
-// CHECK-NEXT: = Convert [[slice]] declared={type=undefined|null|Array<undefined|null|string> site=w{{*}}} illTypedCause=Assertion
+// CHECK: [[slice]] = Convert {{*}}declared={type=undefined|null|Array<undefined|null|number|string> flags={{*}}}
+// CHECK-NEXT: = Convert [[slice]] declared={type=undefined|null|Array<undefined|null|string> flags={{*}}} illTypedCause=Assertion
 // CHECK-LABEL: function {{*}}name="throughUnknown"
-// CHECK: = Convert {{*}}declared={type=number site=w{{*}}} illTypedCause=FromLooseType
+// CHECK: = Convert {{*}}declared={type=number} illTypedCause=Assertion
 // CHECK-LABEL: function {{*}}name="toArray"
-// CHECK: = Convert {{*}}declared={type=undefined|null|Array<undefined|null|string> site=w{{*}}} illTypedCause=FromLooseType
+// CHECK: = Convert {{*}}declared={type=undefined|null|Array<undefined|null|string> flags={{*}}} illTypedCause=Assertion
 // CHECK-LABEL: function {{*}}name="toFunctionType"
-// CHECK: results=[{type=undefined|null|[[takesNothing]] site=w{{*}}}]
-// CHECK: = Convert {{*}}declared={type=undefined|null|[[takesNothing]] site=w{{*}}} illTypedCause=FromLooseType
+// CHECK: = Convert {{*}}declared={type=undefined|null|[[takesNothing]] flags={{*}}} illTypedCause=Assertion
 // CHECK-LABEL: function {{*}}name="typeParameterToArray"
-// CHECK: = Convert {{*}}declared={type=undefined|null|Array<undefined|null|string> site=w{{*}}} illTypedCause=FromLooseType
+// CHECK: = Convert {{*}}declared={type=undefined|null|Array<undefined|null|string> flags={{*}}} illTypedCause=Assertion
 // CHECK-LABEL: function {{*}}name="viewToFloat64Array"
-// CHECK: = Convert {{*}}declared={type=undefined|null|Float64Array site=w{{*}}} illTypedCause=Assertion
+// CHECK: = Convert {{*}}declared={type=undefined|null|Float64Array flags={{*}}} illTypedCause=Assertion
+// CHECK: function [[takesCount]] {{*}}role=Signature
+// CHECK: function [[takesNothing]] {{*}}role=Signature
 
 // RUN(NEVER): lower
 // NEVER-LABEL: function {{*}}name="throughNever"
-// NEVER: = Convert {{*}}declared={type=number site=w{{*}}} illTypedCause=
+// NEVER: = Convert {{*}}declared={type=number} illTypedCause=
 // NEVER-LABEL: function {{*}}name="throughUnknown"
 
 // RUN(TAIL): lower
 // TAIL-LABEL: function {{*}}name="tailCall"
-// TAIL: ReturnCall {{*}}casts=[{declared={type=number site=w{{*}}}}, {declared={type=number site=w{{*}}}}]
+// TAIL: ReturnCall {{*}}casts=[{declared={type=number}}]
 
-// An assertion converts its operand to the asserted type, and to nothing wider: no kind of object is added for what the operand may be. The cause says how the checker's type of the operand stands to the asserted type. There is none where the operand is assignable to it: an array to `unknown[]`, a function to a function type that takes more. It is `Assertion` where the assertion goes down or sideways. It is `FromLooseType` where the operand says nothing about its value: `any`, `unknown`, a bare type parameter. `never` says nothing either: the checker assigns it to every type, and the value behind `as never` is still the string. In a tail call the asserted type is one of the casts, between the type of the call's result and the type that the function returns.
+// An assertion converts its operand to the asserted type, and to nothing wider: no kind of object is added for what the operand may be. Nobody asks for the type of the operand, so the cause is `Assertion` whatever the operand is: `any`, `unknown`, a bare type parameter, a type that is assignable to the asserted one, a type that is not. `as unknown` and `as never` convert to nothing, and the value behind them is still the string. In a tail call the asserted type is a cast behind the type of the call's result. The result of a function without an annotation adds none.
 type Attribute = boolean | string | number;
 
 declare function make(): unknown;

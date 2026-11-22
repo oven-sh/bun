@@ -1,5 +1,4 @@
 // A typed function is given objects of the declared layout whose fields have left their slots: a getter, a value of another type, a deleted field. Every getter and every effect runs once, in order.
-// STATISTIC: RestartsInGenericVersion >= 1
 type Point = { x: number; y: number; label: string };
 
 const log: string[] = [];

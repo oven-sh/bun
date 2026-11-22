@@ -1,11 +1,12 @@
 #![warn(unused_must_use)]
 
+use core::ffi::c_int;
 #[cfg(target_os = "macos")]
-use core::ffi::c_short;
-use core::ffi::{c_char, c_int};
+use core::ffi::{c_char, c_short};
 use core::ptr;
 use std::ffi::{CStr, CString};
 
+use bun_core::CStrList;
 use bun_sys::{self as sys, Fd};
 
 // `bun_sys::c` only re-exports a thin slice of libc
@@ -430,27 +431,26 @@ pub mod posix_spawn {
     fn spawn_bun(
         path: &CStr,
         req: &BunSpawnRequest,
-        argv: *const *const c_char,
-        envp: *const *const c_char,
+        argv: CStrList<'_>,
+        envp: Option<CStrList<'_>>,
     ) -> sys::Result<pid_t> {
         let mut pid: c_int = 0;
+        let envp = envp.map_or_else(bun_core::c_environ, CStrList::as_ptr);
 
-        // SAFETY: path is NUL-terminated; argv/envp are NULL-terminated arrays of C strings
-        let rc = unsafe { posix_spawn_bun(&raw mut pid, path.as_ptr(), req, argv, envp) };
+        let rc = sys::close_on_fork::with_pending_fork(|fork| {
+            let (path, argv) = (path.as_ptr(), argv.as_ptr());
+            // SAFETY: path is NUL-terminated; argv/envp are NULL-terminated arrays of C strings
+            unsafe { posix_spawn_bun(&raw mut pid, path, req, fork.cast(), argv, envp) }
+        });
+        let arg0 = || {
+            argv.first()
+                .map_or(&b""[..], |arg0| arg0.to_cstr().to_bytes())
+        };
 
         if cfg!(debug_assertions) {
-            // SAFETY: argv has at least one element (the NULL terminator)
-            let arg0 = unsafe {
-                let p = *argv;
-                if p.is_null() {
-                    &b""[..]
-                } else {
-                    bun_core::ffi::cstr(p).to_bytes()
-                }
-            };
             sys::syslog!(
                 "posix_spawn_bun({}) = {} ({})",
-                bstr::BStr::new(arg0),
+                bstr::BStr::new(arg0()),
                 rc,
                 pid
             );
@@ -466,20 +466,11 @@ pub mod posix_spawn {
             return sys::Result::Err(sys::Error::from_code_int((-rc) as _, sys::Tag::clone3));
         }
 
-        // SAFETY: argv has at least one element (the NULL terminator)
-        let arg0 = unsafe {
-            let p = *argv;
-            if p.is_null() {
-                &b""[..]
-            } else {
-                bun_core::ffi::cstr(p).to_bytes()
-            }
-        };
         sys::Result::Err(sys::Error {
             // posix_spawn* returns the errno value directly.
             errno: rc as sys::ErrorInt,
             syscall: SYSCALL_POSIX_SPAWN,
-            path: arg0.into(),
+            path: arg0().into(),
             ..Default::default()
         })
     }
@@ -555,8 +546,8 @@ pub mod posix_spawn {
         path: &CStr,
         actions: Option<&Actions>,
         attr: Option<&Attr>,
-        argv: *const *const c_char,
-        envp: *const *const c_char,
+        argv: CStrList<'_>,
+        envp: Option<CStrList<'_>>,
     ) -> sys::Result<pid_t> {
         let pty_slave_fd = attr.map_or(-1, |a| a.pty_slave_fd);
         let detached = attr.is_some_and(|a| a.detached);
@@ -617,6 +608,7 @@ pub mod posix_spawn {
             // Drop handles posix_actions.deinit() / posix_attr.deinit()
 
             let mut pid: pid_t = 0;
+            let envp = envp.map_or_else(bun_core::c_environ, CStrList::as_ptr);
             // SAFETY: all pointers valid; argv/envp NULL-terminated. Darwin's
             // `libc` crate types argv/envp as `*const *mut c_char` (matching
             // the C header's non-const `char *const argv[]`); the strings are
@@ -627,7 +619,7 @@ pub mod posix_spawn {
                     path.as_ptr(),
                     &raw const posix_actions.actions,
                     &raw const posix_attr.attr,
-                    argv.cast::<*mut c_char>(),
+                    argv.as_ptr().cast::<*mut c_char>(),
                     envp.cast::<*mut c_char>(),
                 )
             };

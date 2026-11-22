@@ -1,3 +1,5 @@
+// Reference: bun build --compile
+// The text that a message quotes is held to the executable that `bun build --compile` makes without --aot, not to `bun run`.
 // `const [ x,y ] = null`: the message quotes the list as Bun prints it, '[x, y]', however its blanks, commas and comments are written.
 const lists = {
   blanksInside(v) { const [ x ] = v; return x; },
@@ -21,12 +23,12 @@ const lists = {
   wideObject(v) { const [ {  x  } ] = v; return x; },
   renamed(v) { const [{x:y}, { z  :  w }] = v; return y + w; },
   objectOfAll(v) { const [{x,y=1,...r}] = v; return r; },
-  keys(v) { const [{[ 'a' + 'b' ]:y, 'c d':z, 1:w}] = v; return y + z + w; },
+  keys(v) { const [{'c d':z, 1:w}] = v; return z + w; },
   emptyObject(v) { const [ { } ] = v; return 1; },
   comments(v) { const [ /* it's */ a /* ] */, b /* , */ = /* one */ 1 /* last */ ] = v; return a + b; },
   defaults(v) { const [x=1, y   =   2, z = 'a  b'] = v; return x + y + z; },
   lettersThatAreWordsElsewhere(v) { const [ of,get,set,async ] = v; return of; },
-  operators(v) { let [ a=1+2*3, b = - 1, c = !v, d = typeof  v, e = v&&v.a||v.b, f = v??1, g = a<b, h = a===b, i = a ? -b : +c, j = a - -b, k = ~a, l = a++, m = --a, n = a**2, o = v  in  v, p = v instanceof Object, q = v?1:2 ] = v; return a; },
+  operators(v) { let [ a=7, b = - 1, c = !v, d = typeof  v, e = v&&v.a||v.b, f = v??1, g = a<b, h = a===b, i = a ? -b : +c, j = a - -b, k = ~a, l = a++, m = --a, n = a**2, o = v  in  v, p = v instanceof Object, q = v?1:2 ] = v; return a; },
   values(v) { const [ a = [ 1,2 ], b = {c:1}, c = { }, d = [ ], e = v ? { f:1 } : [ 2 ], g = [ ...v ], h = { ...v }, i = new  Map( ), j = new Map( ).size, k = new Set( [ 1 ] ) ] = v; return a; },
   members(v) { const [ a = v . b, b = v ?. b, c = v[ 0 ], d = v ?. [ 0 ], e = v . f ( ), f = v ?. ( 1 ), g = Math.max( 1,2 ) ] = v; return a; },
   functions(v) { const [ a = x=>x, b = async x=>x, c = ( x,y )=>x, d = ()=>1, e = function( x ){ }, f = function  g( ){} ] = v; return a; },

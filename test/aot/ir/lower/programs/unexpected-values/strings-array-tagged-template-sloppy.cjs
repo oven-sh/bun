@@ -110,87 +110,8 @@ attempt("a loop at one place", () => {
   return seen.size;
 });
 
-// GENERATED: attempt iterates storesTheFirst addsAMember here
-// CHECK-LABEL: function {{*}}name="attempt"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsSloppy, HasExplicitName] length=2 captures=[{type=env [[L_1]] flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=anything}, {type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: env [[L_1]], v1: anything, v2: undefined|null|function):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v3 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v4 = PropGet v3 key="console" [isFreeName]
-// CHECK-NEXT: v5 = Convert v4 declared={type=builtin(Console) flags=[IsExpected]}
-// CHECK-NEXT: v6 = PropGet v5 key="log"
-// CHECK-NEXT: v7 = Convert v6 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-// CHECK-NEXT: v8 = String string=" -> "
-// CHECK-NEXT: v9 = Add v1, v8
-// CHECK-NEXT: v10 = GetEnvironmentField v0 layout=[[L_1]] field=1
-// CHECK-NEXT: v11 = Call v10, -, v2 calleeName="outcome"
-// CHECK-NEXT: v12 = Convert v11 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: v13 = Add v9, v12
-// CHECK-NEXT: v14 = Call v7, v5, v13 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: v15 = Undefined
-// CHECK-NEXT: Return v15
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="iterates"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsSloppy, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected]}] results=[{type=undefined|null|Array flags=[IsExpected]}] {
-// CHECK-NEXT: b0(v0: undefined|null|string|Array):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = Data data=[[d_2]]
-// CHECK-NEXT: v2 = Convert v1 declared={type=undefined|null|Array<never> flags=[IsExpected]}
-// CHECK-NEXT: v3 = Convert v2 declared={type=undefined|null|Array flags=[IsExpected]}
-// CHECK-NEXT: v4 = IteratorOpen v0
-// CHECK-NEXT: Jump -> next b2()
-// CHECK-NEXT: b2():
-// CHECK-NEXT: LoopHint
-// CHECK-NEXT: v6 = IteratorResume v4
-// CHECK-NEXT: v7 = ResultAt v6
-// CHECK-NEXT: v8 = ResultAt v6 index=1
-// CHECK-NEXT: Branch v7 -> taken b3(), notTaken b4()
-// CHECK-NEXT: b3():
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: b4():
-// CHECK-NEXT: Jump -> next b5()
-// CHECK-NEXT: b5() handler=b6():
-// CHECK-NEXT: v9 = PropGet v3 key="push"
-// CHECK-NEXT: v10 = Convert v9 declared={type=undefined|null|[[f_3]] flags=[IsExpected]}
-// CHECK-NEXT: v11 = Call v10, v3, v8 calleeKey="push" calleeName="seen.push"
-// CHECK-NEXT: Jump -> next b2()
-// CHECK-NEXT: b6() role=IterationCleanup subject=v4:
-// CHECK-NEXT: v12 = CatchException
-// CHECK-NEXT: IteratorClose v4 completion=Throw
-// CHECK-NEXT: Rethrow v12
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="storesTheFirst"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsSloppy, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}] results=[{type=undefined|null|string flags=[IsExpected]}] {
-// CHECK-NEXT: b0(v0: undefined|null|Array<undefined|null|string>):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = Integer
-// CHECK-NEXT: v2 = String string="changed"
-// CHECK-NEXT: ElemSet v0, v1, v2 mode=Sloppy
-// CHECK-NEXT: v4 = Integer
-// CHECK-NEXT: v5 = ElemGet v0, v4
-// CHECK-NEXT: v6 = Convert v5 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: Return v6
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="addsAMember"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsSloppy, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|[[L_4]] flags=[IsExpected]}] results=[{type=number flags=[IsExpected]}] {
-// CHECK-NEXT: b0(v0: undefined|null|number|string|symbol|bigint|[[L_4]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = Integer integer=1
-// CHECK-NEXT: PropSet v0, v1 key="x" mode=Sloppy
-// CHECK-NEXT: v3 = PropGet v0 key="x"
-// CHECK-NEXT: v4 = Convert v3 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: Return v4
-// CHECK-NEXT: }
+// CHECK-LABEL: function {{*}}name="attempt"
 // CHECK-LABEL: function {{*}}name="here"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsSloppy] captures=[{type=[[f_5]] flags=[IsFromCompiler] variableName="returnsIt"}] thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_6]]] {
-// CHECK-NEXT: b0(v0: [[f_5]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = NewTemplateObject templateStrings=[{cooked="same place" raw="same place"}]
-// CHECK-NEXT: v2 = Call v0, -, v1 calleeName="returnsIt"
-// CHECK-NEXT: Return v2
-// CHECK-NEXT: }

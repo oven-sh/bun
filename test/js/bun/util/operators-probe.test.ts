@@ -1,8 +1,9 @@
 // TEMPORARY PROBE, NOT FOR MERGE. Prints facts about operator new and operator delete on the macOS machines.
 // Each line that starts with PROBE is a result. The tests pass whatever the results are.
+import { dlopen, ptr } from "bun:ffi";
 import { test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isMacOS, nodeExe, tempDir } from "harness";
-import { closeSync, openSync, readSync } from "node:fs";
+import { closeSync, copyFileSync, openSync, readSync, writeSync } from "node:fs";
 import { release } from "node:os";
 import { basename, join, resolve } from "node:path";
 
@@ -157,6 +158,113 @@ test.skipIf(!isMacOS || isASAN)("PROBE: what dyld binds the operators to when th
     say(`${name}: ${answer.map(line => line.replace(/^dyld\[\d+\]:\s*/, "").trim()).join(" | ") || "no line"}`);
   }
 });
+
+// What the patches cost a process: the executable as built, against a copy without MH_WEAK_DEFINES in its header.
+// Without the flag dyld looks for no operator in the executable and patches nothing. A second copy keeps the flag:
+// it shows what the copy and the new signature change by themselves.
+test.skipIf(!isMacOS || isASAN)(
+  "PROBE: what the patches of the shared cache cost a process",
+  async () => {
+    using dir = tempDir("operators-probe-cost", {});
+    const folder = String(dir);
+    const copyOf = async (name: string, clear: number) => {
+      const path = join(folder, name);
+      copyFileSync(bunExe(), path);
+      const fd = openSync(path, "r+");
+      try {
+        const header = Buffer.alloc(32);
+        readSync(fd, header, 0, 32, 0);
+        if (header.readUInt32LE(0) !== 0xfeedfacf) throw new Error("not a thin 64-bit Mach-O file");
+        const flags = Buffer.alloc(4);
+        flags.writeUInt32LE((header.readUInt32LE(24) & ~clear) >>> 0);
+        writeSync(fd, flags, 0, 4, 24);
+      } finally {
+        closeSync(fd);
+      }
+      const signed = await run(["codesign", "--force", "--sign", "-", path]);
+      if (signed.exitCode !== 0)
+        say(`cost: codesign of ${name}: exit ${signed.exitCode}: ${signed.stderr.slice(0, 300)}`);
+      return path;
+    };
+    const executables: [string, string][] = [
+      ["as built", bunExe()],
+      ["a copy, signed again", await copyOf("bun-copy", 0)],
+      ["a copy without MH_WEAK_DEFINES, signed again", await copyOf("bun-without-weak-defines", 0x8000)],
+    ];
+    for (const [name, executable] of executables) {
+      const { stderr, exitCode, signalCode } = await run([executable, "-e", "0"], { DYLD_PRINT_BINDINGS: "1" });
+      const lines = stderr.split("\n");
+      say(
+        `cost: ${name}: exit ${exitCode}, signal ${signalCode}; ${describePatches(lines, new Map(), process.arch)[0]}`,
+      );
+    }
+
+    // proc_pid_rusage(pid, RUSAGE_INFO_V4, buffer): 64-bit fields after a 16-byte UUID.
+    const { symbols } = dlopen("/usr/lib/libSystem.B.dylib", {
+      proc_pid_rusage: { args: ["i32", "i32", "ptr"], returns: "i32" },
+    });
+    // The unit of the times is 125/3 ns on Apple silicon and 1 ns on Intel.
+    const nanoseconds = (ticks: bigint) => (process.arch === "arm64" ? (Number(ticks) * 125) / 3 : Number(ticks));
+    const measures = new Map<
+      string,
+      { footprint: number[]; resident: number[]; cpu: number[]; instructions: number[] }
+    >();
+    const failures: string[] = [];
+    const idle = `console.log("ready"); process.stdin.once("data", () => process.exit(0));`;
+    for (let repeat = 0; repeat < 12; repeat++) {
+      for (const [name, executable] of executables) {
+        await using child = Bun.spawn({
+          cmd: [executable, "-e", idle],
+          env: bunEnv,
+          stdin: "pipe",
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const reader = child.stdout.getReader();
+        let printed = "";
+        while (!printed.includes("ready")) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          printed += Buffer.from(value).toString();
+        }
+        const info = new BigUint64Array(64);
+        const status = printed.includes("ready") ? symbols.proc_pid_rusage(child.pid, 4, ptr(info)) : -1;
+        try {
+          child.stdin.write("x");
+          await child.stdin.end();
+        } catch {}
+        const exitCode = await child.exited;
+        if (status !== 0) {
+          const stderr = (await child.stderr.text()).trim().split("\n").slice(0, 3).join(" | ");
+          if (failures.length < 3)
+            failures.push(`${name}: no measure: exit ${exitCode}, signal ${child.signalCode}; ${stderr.slice(0, 300)}`);
+          continue;
+        }
+        // The first two runs of each executable are not kept: the system reads and checks a new file then.
+        if (repeat < 2) continue;
+        if (!measures.has(name)) measures.set(name, { footprint: [], resident: [], cpu: [], instructions: [] });
+        const measure = measures.get(name)!;
+        measure.resident.push(Number(info[8]) / 1024);
+        measure.footprint.push(Number(info[9]) / 1024);
+        measure.cpu.push(nanoseconds(info[2]! + info[3]!) / 1e6);
+        measure.instructions.push(Number(info[31]) / 1e6);
+      }
+    }
+    for (const failure of failures) say(`cost: ${failure}`);
+    const spread = (values: number[], digits: number) => {
+      const sorted = [...values].sort((a, b) => a - b);
+      return `${sorted[0]!.toFixed(digits)} to ${sorted.at(-1)!.toFixed(digits)}, median ${sorted[sorted.length >> 1]!.toFixed(digits)}`;
+    };
+    for (const [name, measure] of measures) {
+      say(
+        `cost: ${name}, ${measure.footprint.length} runs, idle after start: footprint ${spread(measure.footprint, 0)} KB; ` +
+          `resident ${spread(measure.resident, 0)} KB; CPU time ${spread(measure.cpu, 2)} ms; ` +
+          `instructions ${spread(measure.instructions, 1)} million`,
+      );
+    }
+  },
+  240_000,
+);
 
 // Image A replaces operator new and operator delete and exports them, as a library that links an allocator of its own
 // does. HEADER=0: its blocks are malloc's. HEADER=16: each block has a header in front that only A knows.

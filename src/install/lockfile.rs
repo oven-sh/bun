@@ -599,7 +599,6 @@ impl Lockfile {
             self.convert_windows_paths(dir).unwrap_or_oom();
             self.rebase_folder_dependencies().unwrap_or_oom();
         }
-        crate::error::exit_if_out_of_memory();
         result
     }
 
@@ -2066,7 +2065,6 @@ impl Lockfile {
         load_result: &LoadResult,
         options: &PackageManagerOptions,
     ) -> bool {
-        crate::error::exit_if_out_of_memory();
         let save_format = load_result.save_format(options);
         // Only `bun install` sets the option.
         let config_version = options

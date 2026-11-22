@@ -279,7 +279,6 @@ fn finish_migration(
             &bun_alloc::Arena::new(),
         ));
     }
-    crate::error::check_memory().map_err(|err| migrating_error(err.into(), lockfile_name))?;
     report_migrated(manager, log, timer, lockfile_name);
     Ok(ok)
 }

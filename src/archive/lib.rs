@@ -716,12 +716,9 @@ impl Archiver {
                             read_data_into_file(&mut reader, output, &mut write_strategy)
                         {
                             if options.log {
-                                log_archive_error(path_slice, &err);
+                                log_archive_error(path_slice, err);
                             }
-                            return Err(match err {
-                                ReadDataError::Archive(err) => err.into(),
-                                ReadDataError::Sys(_) => crate::Error::Fail,
-                            });
+                            return Err(crate::Error::Fail);
                         }
                     }
                 }

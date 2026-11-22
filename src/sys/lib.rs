@@ -25,9 +25,9 @@ pub mod fd;
 pub use fd::{FdExt, MakeLibUvOwnedError, RawFd};
 #[path = "Error.rs"]
 mod error;
+pub use error::Error;
 #[cfg(windows)]
 pub use error::ReturnCodeExt;
-pub use error::{Error, check_memory, check_memory_of_thread, note_out_of_memory};
 impl From<Error> for bun_errno::SystemErrno {
     #[inline]
     fn from(e: Error) -> Self {
@@ -1137,15 +1137,6 @@ pub fn to_posix_path(
 fn err_with(tag: Tag) -> Error {
     Error::from_code_int(last_errno(), tag)
 }
-/// The answer of a probe that left its error in `errno`.
-#[inline]
-#[cfg(not(windows))]
-fn found(found: bool) -> bool {
-    if !found && last_errno() == libc::ENOMEM {
-        note_out_of_memory(Tag::access);
-    }
-    found
-}
 #[inline]
 #[cfg(not(windows))]
 fn err_with_path(tag: Tag, path: &ZStr) -> Error {
@@ -2189,7 +2180,11 @@ mod posix_impl {
                     stop_using_statx();
                     return statx_fallback(fd, path, flags);
                 }
-                return Err(Error::from_code_int(raw_errno, syscall));
+                return Err(Error {
+                    errno: raw_errno as _,
+                    syscall,
+                    ..Default::default()
+                });
             }
 
             // SAFETY: rc == 0 ⇒ kernel populated the buffer.
@@ -2921,21 +2916,19 @@ mod posix_impl {
     /// Windows uses `GetFileAttributesW`; posix is plain `access`.
     pub fn exists_z(path: &ZStr) -> bool {
         // SAFETY: `ZStr::as_ptr()` yields a valid NUL-terminated C string.
-        found(unsafe { libc::access(path.as_ptr(), libc::F_OK) == 0 })
+        unsafe { libc::access(path.as_ptr(), libc::F_OK) == 0 }
     }
     pub fn exists_at(dir: impl AsFd, sub: &ZStr) -> bool {
         let dir = dir.as_fd();
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
-            super::linux_syscall::faccessat(dir, sub, libc::F_OK)
-                .map_err(|errno| Error::from_code_int(errno, Tag::access))
-                .is_ok()
+            super::linux_syscall::faccessat(dir, sub, libc::F_OK).is_ok()
         }
         #[cfg(not(any(target_os = "linux", target_os = "android")))]
         {
             // SAFETY: `dir` is a live fd (or AT_FDCWD); `ZStr::as_ptr()` is a
             // valid NUL-terminated C string.
-            found(unsafe { libc::faccessat(dir.native(), sub.as_ptr(), libc::F_OK, 0) == 0 })
+            unsafe { libc::faccessat(dir.native(), sub.as_ptr(), libc::F_OK, 0) == 0 }
         }
     }
     /// Calls extern C `is_executable_file` (c-bindings.cpp:72-89) via FFI.
@@ -2947,12 +2940,8 @@ mod posix_impl {
             // its platform sign.
             fn is_executable_file(path: *const c_char) -> bool;
         }
-        // SAFETY: `errno_ptr()` is this thread's; `ZStr::as_ptr()` yields a valid NUL-terminated C string.
-        found(unsafe {
-            // It also answers `false` after a `stat` that succeeded.
-            *bun_core::ffi::errno_ptr() = 0;
-            is_executable_file(path.as_ptr())
-        })
+        // SAFETY: `ZStr::as_ptr()` yields a valid NUL-terminated C string.
+        unsafe { is_executable_file(path.as_ptr()) }
     }
     /// `fstat`, then clamp a negative `st_size` to 0.
     pub fn get_file_size(fd: Fd) -> Maybe<u64> {
@@ -6261,9 +6250,7 @@ pub struct WindowsFileAttributes {
 #[cfg(windows)]
 pub fn get_file_attributes(path: &ZStr) -> Option<WindowsFileAttributes> {
     use bun_windows_sys::externs as w;
-    let dword = windows::GetFileAttributesW(&long_path(path, Tag::access).ok()?)
-        .map_err(|err| Error::from_win32(err, Tag::access))
-        .ok()?;
+    let dword = windows::GetFileAttributesW(&long_path(path, Tag::access).ok()?).ok()?;
     Some(WindowsFileAttributes {
         is_directory: (dword & w::FILE_ATTRIBUTE_DIRECTORY) != 0,
         is_reparse_point: (dword & w::FILE_ATTRIBUTE_REPARSE_POINT) != 0,
@@ -6276,15 +6263,14 @@ pub fn exists_os_path(path: &bun_paths::OSPathSliceZ, file_only: bool) -> bool {
     {
         let _ = file_only;
         // SAFETY: path is NUL-terminated.
-        found(unsafe { libc::access(path.as_ptr().cast(), libc::F_OK) == 0 })
+        unsafe { libc::access(path.as_ptr().cast(), libc::F_OK) == 0 }
     }
     #[cfg(windows)]
     {
         use bun_windows_sys::externs as w;
         // `getFileAttributes(path)`; if `file_only` reject dirs;
         // if reparse point, open the target with `OPEN_EXISTING` to follow.
-        let to_error = |err| Error::from_win32(err, Tag::access);
-        let Ok(attrs) = windows::GetFileAttributesW(path).map_err(to_error) else {
+        let Ok(attrs) = windows::GetFileAttributesW(path) else {
             return false;
         };
         if file_only && (attrs & w::FILE_ATTRIBUTE_DIRECTORY) != 0 {
@@ -6314,7 +6300,6 @@ pub fn exists_os_path(path: &bun_paths::OSPathSliceZ, file_only: bool) -> bool {
                 w::OPEN_EXISTING,
                 w::FILE_FLAG_BACKUP_SEMANTICS,
             )
-            .map_err(to_error)
             .is_ok();
         }
         true

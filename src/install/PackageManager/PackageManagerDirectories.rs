@@ -67,10 +67,9 @@ impl PackageManager {
     }
 
     /// Prints `why` and exits. Auto-install only logs `why`, and the import that needed the
-    /// directory then throws it. So does a command without memory: see
-    /// [`crate::error::exit_if_out_of_memory`].
+    /// directory then throws it.
     pub(crate) fn exit_or_log(&mut self, why: &DirectoryError) {
-        if !self.options.runtime_auto_install && crate::error::check_memory().is_ok() {
+        if !self.options.runtime_auto_install {
             Output::err_generic("{}", (why,));
             Global::exit(1);
         }

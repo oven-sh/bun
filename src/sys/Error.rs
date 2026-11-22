@@ -1,9 +1,7 @@
 //! Error type that preserves useful information from the operating system
 
-use core::cell::Cell;
 use core::ffi::c_int;
 use core::fmt;
-use core::sync::atomic::{AtomicU16, Ordering};
 
 use crate::SystemError;
 use bun_core::{String as BunString, StringView};
@@ -71,66 +69,16 @@ impl IntoErrnoInt for SystemErrno {
     }
 }
 
-const NO_CALL: u16 = u16::MAX;
-/// Relaxed: it guards no data, and a thread that takes over the work of another has synchronized.
-static FIRST_CALL_WITHOUT_MEMORY: AtomicU16 = AtomicU16::new(NO_CALL);
-thread_local! {
-    static CALL_WITHOUT_MEMORY_HERE: Cell<Option<Tag>> = const { Cell::new(None) };
-}
-
-/// For a failure that does not become an [`Error`].
-#[cold]
-pub fn note_out_of_memory(call: Tag) {
-    CALL_WITHOUT_MEMORY_HERE.set(Some(call));
-    let _ = FIRST_CALL_WITHOUT_MEMORY.compare_exchange(
-        NO_CALL,
-        call.0.into(),
-        Ordering::Relaxed,
-        Ordering::Relaxed,
-    );
-}
-
-fn noted(call: Option<Tag>) -> crate::Maybe<()> {
-    match call {
-        Some(syscall) => Err(Error {
-            errno: E::ENOMEM as Int,
-            syscall,
-            ..Default::default()
-        }),
-        None => Ok(()),
-    }
-}
-
-/// The first `ENOMEM` on any thread, also if its caller dropped it or took it for a missing file.
-#[inline]
-pub fn check_memory() -> crate::Maybe<()> {
-    let call = FIRST_CALL_WITHOUT_MEMORY.load(Ordering::Relaxed);
-    noted(u8::try_from(call).ok().map(Tag))
-}
-
-/// [`check_memory`] for what this thread has done since it last asked.
-pub fn check_memory_of_thread() -> crate::Maybe<()> {
-    noted(CALL_WITHOUT_MEMORY_HERE.take())
-}
-
 impl Error {
-    #[inline]
-    fn of_call(errno: Int, syscall: Tag) -> Error {
-        if errno == E::ENOMEM as Int {
-            note_out_of_memory(syscall);
-        }
-        Error {
-            errno,
-            syscall,
-            ..Default::default()
-        }
-    }
-
     /// `Error::new(errno, tag)` — dispatches via `IntoErrnoInt` so a single
     /// constructor covers `E`, `SystemErrno` and (Windows) `NTSTATUS`.
     #[inline]
     pub fn new<C: IntoErrnoInt>(errno: C, syscall_tag: Tag) -> Error {
-        Error::of_call(errno.into_errno_int(), syscall_tag)
+        Error {
+            errno: errno.into_errno_int(),
+            syscall: syscall_tag,
+            ..Default::default()
+        }
     }
 
     /// The error for a Win32 call that returned its failure value; `code` is
@@ -143,13 +91,21 @@ impl Error {
     }
 
     pub fn from_code(errno: E, syscall_tag: Tag) -> Error {
-        Error::of_call(errno as Int, syscall_tag)
+        Error {
+            errno: errno as Int,
+            syscall: syscall_tag,
+            ..Default::default()
+        }
     }
 
     // c_int covers all call sites in practice.
     pub fn from_code_int(errno: c_int, syscall_tag: Tag) -> Error {
         debug_assert!((0..=c_int::from(u16::MAX)).contains(&errno));
-        Error::of_call(errno as Int, syscall_tag)
+        Error {
+            errno: errno as Int,
+            syscall: syscall_tag,
+            ..Default::default()
+        }
     }
 
     /// `self.errno` is an `E`/`SystemErrno` discriminant on every platform (not
@@ -191,7 +147,11 @@ impl Error {
     /// fields prevent a true `const` item.)
     #[inline]
     pub fn oom() -> Error {
-        Error::from_code(E::ENOMEM, Tag::read)
+        Error {
+            errno: E::ENOMEM as Int,
+            syscall: Tag::read,
+            ..Default::default()
+        }
     }
 
     /// `bun.sys.Error.retry`. (The `Box<[u8]>`

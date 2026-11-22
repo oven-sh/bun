@@ -202,7 +202,7 @@ pub(crate) fn link_global_bins(
     } else {
         bin_linker.link(true);
     }
-    (bin_linker.err).or_else(|| bun_sys::check_memory().err().map(Into::into))
+    bin_linker.err
 }
 
 fn link(ctx: command::Context) -> crate::Result<()> {

@@ -112,7 +112,7 @@ impl FileCopier {
                 #[cfg(unix)]
                 {
                     let stat = bun_sys::fstat(src.handle())?;
-                    let _ = bun_sys::fchmod(dest.handle(), stat.st_mode as bun_sys::Mode);
+                    let _ = bun_sys::c::fchmod(dest.handle().native(), stat.st_mode);
                 }
 
                 bun_sys::copy_file::copy_file_with_state(

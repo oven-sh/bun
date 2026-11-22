@@ -13,7 +13,6 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { without } from "./harness/capabilities";
-import { buildFlags } from "./harness/flags";
 import { run as runCommand } from "./harness/run";
 import { describe, test } from "./supported";
 
@@ -22,10 +21,14 @@ async function run(cwd: string, cmd: string[], env = bunEnv) {
   return { stdout, stderr, exitCode };
 }
 
-/** For cases that one build serves: `work` runs once, whichever of them asks first. */
+/** For cases that one build serves: `work` runs once, whichever of them asks first. A failure is not kept: the next case that asks starts it again. */
 function once<T>(work: () => Promise<T>) {
   let done: Promise<T> | undefined;
-  return () => (done ??= work());
+  return () =>
+    (done ??= work().catch(error => {
+      done = undefined;
+      throw error;
+    }));
 }
 
 function bothWays(dir: string, entryPoint: string, ...flags: string[]) {
@@ -40,14 +43,6 @@ async function bothWaysIn(dir: string, folder: string, entryPoint: string, ...fl
 
 /** As `bothWaysIn`, but plain Bun is not started: for a case that holds nothing against it. */
 async function compiledIn(dir: string, folder: string, entryPoint: string, ...flags: string[]) {
-  const built = await buildIn(dir, folder, entryPoint, ...flags);
-  renameSync(join(dir, "app"), join(dir, "moved-away"));
-  const compiled = await run(dir, ["./built.exe"], { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" });
-  return { built, compiled };
-}
-
-/** The build alone, which must succeed. */
-async function buildIn(dir: string, folder: string, entryPoint: string, ...flags: string[]) {
   const built = await run(join(dir, folder), [
     bunExe(),
     "build",
@@ -59,15 +54,10 @@ async function buildIn(dir: string, folder: string, entryPoint: string, ...flags
     join(dir, "built.exe"),
   ]);
   expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
-  return built;
+  renameSync(join(dir, "app"), join(dir, "moved-away"));
+  const compiled = await run(dir, ["./built.exe"], { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" });
+  return { built, compiled };
 }
-
-/**
- * For a case that reads the notes of `--explain` alone: the compile makes them, so the build writes no executable and no program is started.
- * What a build finds only while it lays the files into the executable is then neither said nor refused, and no metafile is written.
- */
-const notesIn = (dir: string, folder: string, entryPoint: string) =>
-  buildIn(dir, folder, entryPoint, "--explain", buildFlags.withoutExecutable);
 
 /** Plain Bun runs behind the build, because the program changes its files. Then they are moved away, and `folders` are there without them. */
 async function plainAfterBuild(dir: string, ...folders: string[]) {
@@ -971,7 +961,9 @@ say("what nobody reads", () => fs.existsSync(path.join(here, "..", "node_modules
       "app/server/package.json": `{ "name": "server" }`,
       "app/server/main.mjs": main,
     });
-    const built = await notesIn(String(dir), "app/server", "./main.mjs");
+    const { plain, built, compiled } = await bothWaysIn(String(dir), "app/server", "./main.mjs", "--explain");
+    expect(plain).toEqual({ stdout: saidByMain(), stderr: "", exitCode: 0 });
+    expect(compiled).toEqual(plain);
     expect(warnings(built).filter(it => it.includes("TS100166"))).toEqual([
       "note TS100166 node_modules/@scope/kit/package.json",
       "note TS100166 node_modules/tool/fonts/standard.flf",
@@ -2149,33 +2141,37 @@ say("they are used", () => [typeof list, typeof lister.stat, isMarked()].join())
 say("Bun.embeddedFiles", () => Bun.embeddedFiles.map(it => it.name).sort().join());
 `,
   };
+  /** What that program prints: the version of the package that asks about a known path elsewhere, and the program's own. */
+  const saidBySearchers = (elsewhere: string, own: string) => ({
+    stdout: [
+      "a package that climbs to its manifest 3.1.4",
+      "at the root of a package that lists folders 2.0.0",
+      "beside its code true",
+      "a scoped package that queries files 5.5.5",
+      "a known folder with an unknown name 4.4.4",
+      `a package that asks about a known path elsewhere ${elsewhere}`,
+      `the program's own ${own}`,
+      "they are used function,function,false",
+      "Bun.embeddedFiles ",
+      "",
+    ].join("\n"),
+    stderr: "",
+    exitCode: 0,
+  });
 
   test("the package.json of a package whose code reads paths that the build cannot know", async () => {
     using dir = tempDir("aot-package-json-of-searching-packages", searchers);
     const { plain, built, compiled } = await bothWaysIn(String(dir), "app", "./main.mjs");
-    const embedded = `a package that climbs to its manifest 3.1.4
-at the root of a package that lists folders 2.0.0
-beside its code true
-a scoped package that queries files 5.5.5
-a known folder with an unknown name 4.4.4
-`;
-    const used = `they are used function,function,false\nBun.embeddedFiles \n`;
-    expect(plain).toEqual({
-      stdout: `${embedded}a package that asks about a known path elsewhere 9.9.9\nthe program's own 7.8.9\n${used}`,
-      stderr: "",
-      exitCode: 0,
-    });
-    expect(compiled).toEqual({
-      stdout: `${embedded}a package that asks about a known path elsewhere ENOENT\nthe program's own ENOENT\n${used}`,
-      stderr: "",
-      exitCode: 0,
-    });
+    expect(plain).toEqual(saidBySearchers("9.9.9", "7.8.9"));
+    expect(compiled).toEqual(saidBySearchers("ENOENT", "ENOENT"));
     expect(warnings(built)).toEqual([]);
   }, 120_000);
 
   test("--explain lists each such package.json once", async () => {
     using dir = tempDir("aot-package-json-files-listed", searchers);
-    const built = await notesIn(String(dir), "app", "./main.mjs");
+    const { plain, built, compiled } = await bothWaysIn(String(dir), "app", "./main.mjs", "--explain");
+    expect(plain).toEqual(saidBySearchers("9.9.9", "7.8.9"));
+    expect(compiled).toEqual(saidBySearchers("ENOENT", "ENOENT"));
     expect(warnings(built).filter(it => it.includes("TS100170"))).toEqual([
       "note TS100170 node_modules/@scope/lister/package.json",
       "note TS100170 node_modules/climber/package.json",
@@ -3283,7 +3279,7 @@ exports.five = use => use(path.join(__dirname, "five.txt"));
       "app/main.cjs": `const { read } = require("chooser");\nfor (const line of read()) console.log(line);\n`,
       "app/node_modules/chooser/package.json": `{ "name": "chooser", "version": "1.0.0", "main": "./index.cjs" }`,
       "app/node_modules/chooser/index.cjs": `const attempt = (name, load) => {
-  try { return name + ": " + load(); } catch (error) { return name + ": " + error.code; }
+  try { return name + ": " + load(); } catch (error) { return name + ": " + (error.code ?? error.name); }
 };
 exports.read = () => [
 ${names.map((name, index) => `  attempt(${JSON.stringify(name)}, () => require("./${index}.cjs")),`).join("\n")}
@@ -3313,7 +3309,7 @@ module.exports = fs.readFileSync(path.join(__dirname, \`files/${index}/\${v}.txt
     const plain = await Promise.all(all.map(env => run(app, [bunExe(), "run", "./main.cjs"], env)));
     renameSync(app, join(String(dir), "moved-away"));
     const compiled = await Promise.all(all.map(env => run(String(dir), [outfile], env)));
-    // Under plain Bun every row names one of its files. A row that ends in a code, as for a file that is not there, would hold one failure against another.
+    // Under plain Bun every row names one of its files: a row that failed would hold one failure against another.
     const fileOf = (row: string) => row.slice(row.indexOf(": ") + 2);
     for (const { stdout, stderr, exitCode } of plain) {
       const said = stdout.split("\n").slice(0, -1);

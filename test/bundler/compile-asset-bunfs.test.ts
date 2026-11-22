@@ -419,6 +419,10 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
             ["build", "--compile", "./index.ts", "--outfile", "app", "--asset", "/dev/null"],
             "is not a regular file or directory",
           ] as const,
+          [
+            ["build", "--compile", "./index.ts", "--outfile", "app", "--asset", "./public\\"],
+            "failed to read asset",
+          ] as const,
         ]),
   ])(
     "rejects %j",

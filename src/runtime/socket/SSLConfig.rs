@@ -304,30 +304,29 @@ fn handle_path(
             .throw());
     }
     // Opened later (for fetch, on the HTTP thread), and the SSL_CTX caches key on this string.
-    let mut path = if cfg!(windows) || !bun_paths::is_absolute_posix(name) {
-        bun_paths::AutoAbsPathChecked::init_top_level_dir()
+    let mut path = if cfg!(windows) || !bun_paths::is_absolute(name) {
+        bun_paths::Path::from_top_level_dir()
     } else {
-        bun_paths::AutoAbsPathChecked::init()
+        bun_paths::Path::new()
     };
-    // The kernel resolves `..` through symlinks, so it is left in. Win32 resolves it as `join` does, which also knows `C:foo` and `\foo`.
-    let pinned = if cfg!(windows) {
-        path.join(&[name])
+    // The kernel resolves `..` through symlinks, so it is left in. Win32 resolves it as `resolve` does, which also knows `C:foo` and `\foo`.
+    if cfg!(windows) {
+        path.resolve_in_place(&[name]);
     } else {
-        path.append(name)
-    };
-    // `append` drops a trailing slash, with which no file opens.
+        path.push(name);
+    }
+    // `push` drops a trailing slash, with which no file opens.
     if name.is_empty()
         || (cfg!(not(windows)) && name.ends_with(b"/"))
-        || pinned.is_err()
-        || bun_sys::access(path.slice_z(), bun_sys::posix::F_OK).is_err()
+        || bun_sys::access(&path, bun_sys::posix::F_OK).is_err()
     {
         return Err(global.throw_invalid_arguments(format_args!("Unable to access {field} path")));
     }
     // BoringSSL's fopen is narrow on Windows: a non-ASCII cwd must not be baked into the path.
-    if cfg!(windows) && !bun_core::strings::is_all_ascii(path.slice()) {
+    if cfg!(windows) && !bun_core::strings::is_all_ascii(&path) {
         return Ok(SensitiveCString::new(name));
     }
-    Ok(SensitiveCString::new(path.slice()))
+    Ok(SensitiveCString::new(path.as_bytes()))
 }
 
 fn handle_file_for_field(

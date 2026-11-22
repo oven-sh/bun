@@ -518,7 +518,6 @@ dependencies = [
  "bun_removable_features",
  "bun_sys",
  "bun_threading",
- "bun_which",
  "bun_zlib",
  "const_format",
  "libc",
@@ -852,11 +851,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "bun_icu"
+version = "0.0.0"
+dependencies = [
+ "bun_collections",
+ "bun_core",
+ "bun_icu_macros",
+ "bun_paths",
+ "bun_sema_standalone",
+ "bun_sys",
+ "bun_wyhash",
+ "libc",
+]
+
+[[package]]
 name = "bun_icu_data"
 version = "0.0.0"
 dependencies = [
  "bun_zstd_decoder",
 ]
+
+[[package]]
+name = "bun_icu_macros"
+version = "0.0.0"
 
 [[package]]
 name = "bun_ini"
@@ -872,6 +889,7 @@ dependencies = [
  "bun_install_types",
  "bun_options_types",
  "bun_parsers",
+ "bun_paths",
  "bun_url",
  "strum",
 ]
@@ -957,6 +975,7 @@ dependencies = [
  "bun_alloc",
  "bun_ast",
  "bun_core",
+ "bun_paths",
  "bun_semver",
  "bun_wyhash",
  "strum",
@@ -1007,7 +1026,6 @@ dependencies = [
  "bun_crash_handler",
  "bun_glob",
  "bun_highway",
- "bun_node_path",
  "bun_options_types",
  "bun_paths",
  "bun_ptr",
@@ -1475,11 +1493,9 @@ dependencies = [
  "bun_alloc",
  "bun_core",
  "bun_errno",
+ "bun_highway",
  "bun_simdutf_sys",
  "const_format",
- "libc",
- "strum",
- "thiserror",
 ]
 
 [[package]]
@@ -1574,6 +1590,7 @@ dependencies = [
  "bun_http_types",
  "bun_install_types",
  "bun_js_parser",
+ "bun_node_path",
  "bun_options_types",
  "bun_parsers",
  "bun_paths",
@@ -1665,6 +1682,7 @@ dependencies = [
  "bun_http1",
  "bun_http_jsc",
  "bun_http_types",
+ "bun_icu",
  "bun_icu_data",
  "bun_install",
  "bun_install_jsc",
@@ -1789,7 +1807,6 @@ version = "0.0.0"
 dependencies = [
  "bstr",
  "bun_core",
- "bun_paths",
  "bun_sema",
  "bun_sema_driver",
  "bun_sys",

@@ -115,8 +115,7 @@ describe.if(isWindows)("path length validation in normalizePathWindows", () => {
   });
 
   // Absolute drive-letter paths are normalized into `buf` with an NT object
-  // prefix (\??\ or \??\UNC\) and NUL terminator added by
-  // normalizeStringGenericTZ, which does not bounds-check. node:fs prepends
+  // prefix (\??\ or \??\UNC\) and NUL terminator. node:fs prepends
   // a \\?\ long-path prefix before reaching normalizePathWindows, so size
   // the input so that prefixed length (+4) still fits the 32767-u16
   // conversion buffer and the headroom guard is what rejects it.
@@ -202,7 +201,7 @@ describe.if(isWindows)("path length validation against UTF-16 conversion buffers
   it("still accepts multi-byte paths that are long in bytes but within the UTF-16 bound", () => {
     // 150 × 200-char CJK segments: 90152 UTF-8 bytes — past the UTF-16-unit
     // limit in bytes — but only 30152 UTF-16 units, so
-    // fits_in_wide_path_buffer must compute the exact length and accept it.
+    // the conversion must compute the exact length and accept it.
     // Each component stays under NTFS's 255-unit limit so the only possible
     // syscall failure is non-existence: copyFileSync (which checks both
     // paths against the guard and does not swallow errors) must get past

@@ -233,20 +233,8 @@ mod host {
             }
         }
 
-        /// Returns the file extension (including the dot) of a UTF-16 path.
-        pub(crate) fn extension_w(path: &[u16]) -> &[u16] {
-            let filename = strings::basename_windows(path);
-            let Some(index) = filename.iter().rposition(|&c| c == b'.' as u16) else {
-                return &path[path.len()..];
-            };
-            if index == 0 {
-                return &path[path.len()..];
-            }
-            &filename[index..]
-        }
-
         pub(crate) fn parse_from_bin_path(bin_path: &[u16]) -> Option<Shebang<'static>> {
-            if let Some(i) = bun_extensions_get(Self::extension_w(bin_path)) {
+            if let Some(i) = bun_extensions_get(bun_paths::extension(bin_path)) {
                 return Some(match i {
                     // Const-evaluated; the
                     // values below are the simdutf utf16 lengths of pure-ASCII literals

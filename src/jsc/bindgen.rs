@@ -810,15 +810,15 @@ impl<'a> JsLocal<'a, BufferSource> {
 }
 
 /// # Safety
-/// `wrapped` is the `T` that a cell wraps, and something holds that cell for the call `heap` belongs to.
+/// `wrapped` is the ref that a cell holds, or a copy of it, and something holds that cell for the call `heap` belongs to.
 #[doc(hidden)]
 #[inline(always)]
-pub unsafe fn class_ref_from_extern<'a, T: crate::JsClass>(
-    wrapped: *mut c_void,
+pub unsafe fn class_ref_from_extern<'a, T: bun_ptr::AnyRefCounted>(
+    wrapped: &'a *mut c_void,
     _: &JsHeap<'a>,
-) -> &'a T {
-    // SAFETY: forwarded.
-    unsafe { &*wrapped.cast::<T>() }
+) -> &'a bun_ptr::RefPtr<T> {
+    // SAFETY: forwarded. `RefPtr` is a transparent pointer.
+    unsafe { &*core::ptr::from_ref(wrapped).cast() }
 }
 
 /// `b.bytes` with `held: "handle"`, for a function that can run JavaScript, which can detach, resize or free a buffer.

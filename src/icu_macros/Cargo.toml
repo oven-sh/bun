@@ -1,0 +1,13 @@
+[package]
+name = "bun_icu_macros"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+proc-macro = true
+test = false
+doctest = false
+
+[lints]
+workspace = true

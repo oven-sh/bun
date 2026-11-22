@@ -1765,7 +1765,9 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionCall, (JSGlobalObject * lexicalGlobalObje
 
     returnValue = runMockImplementation(globalObject, impl, thisValue, args);
     if (auto* exception = scope.exception()) [[unlikely]] {
-        completeMockResult(vm, globalObject, result, MockResultType::Throw, exception->value());
+        // A termination is not a value that the implementation threw: the result stays "incomplete".
+        if (!vm.isTerminationException(exception))
+            completeMockResult(vm, globalObject, result, MockResultType::Throw, exception->value());
         return {};
     }
     completeMockResult(vm, globalObject, result, MockResultType::Return, returnValue);
@@ -1847,7 +1849,9 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsMockFunctionConstruct, __attribute__(
             mockInstanceMethods(globalObject, fn, asObject(returnValue));
     }
     if (auto* exception = scope.exception()) [[unlikely]] {
-        completeMockResult(vm, globalObject, result, MockResultType::Throw, exception->value());
+        // A termination is not a value that the implementation threw: the result stays "incomplete".
+        if (!vm.isTerminationException(exception))
+            completeMockResult(vm, globalObject, result, MockResultType::Throw, exception->value());
         return {};
     }
     completeMockResult(vm, globalObject, result, MockResultType::Return, resultValue);

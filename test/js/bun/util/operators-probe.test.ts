@@ -1,10 +1,10 @@
 // TEMPORARY PROBE, NOT FOR MERGE. Prints facts about operator new and operator delete on the macOS machines.
 // Each line that starts with PROBE is a result. The tests pass whatever the results are.
 import { test } from "bun:test";
+import { bunEnv, bunExe, isASAN, isMacOS, nodeExe, tempDir } from "harness";
 import { closeSync, openSync, readSync } from "node:fs";
 import { release } from "node:os";
 import { basename, join, resolve } from "node:path";
-import { bunEnv, bunExe, isASAN, isMacOS, nodeExe, tempDir } from "harness";
 
 const say = (line: string) => console.log(`PROBE [${process.arch} darwin ${release()}] ${line}`);
 

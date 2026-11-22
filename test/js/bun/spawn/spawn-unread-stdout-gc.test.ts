@@ -180,6 +180,13 @@ describe.concurrent("the collector counts a child's output that nobody has read"
     expect(exitCode).toBe(0);
   });
 
+  test.skipIf(isWindows)("when a late getter takes the last pipe, which also lets go of the Subprocess", async () => {
+    const { held, finalized, exitCode } = await scenario("lateGetter");
+    // An ASAN build writes a warning to the stderr of the child.
+    expect(held).toBeWithin(size, size + slack);
+    expect({ finalized, exitCode }).toEqual({ finalized: true, exitCode: 0 });
+  });
+
   test("so a loop of spawns is collected with no collection forced", async () => {
     expect(await scenario("loop")).toEqual({ collected: true, exitCode: 0 });
   });

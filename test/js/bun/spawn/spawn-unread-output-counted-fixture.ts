@@ -233,6 +233,38 @@ const scenarios: Record<string, () => Promise<object>> = {
     return { held: counted() - base, pid: proc.pid };
   },
 
+  // The child writes to stderr and exits while a grandchild still holds the pipe of stdout, and `stdout` is read
+  // as a property only then. From there on that pipe is the stream's: nothing native holds the Subprocess, and
+  // only a collection frees what stderr left.
+  async lateGetter() {
+    let finalized = false;
+    const registry = new FinalizationRegistry(() => {
+      finalized = true;
+    });
+    const holdsStdout = `require("child_process").spawn(process.execPath, ["-e", "setTimeout(() => {}, 1000)"], { stdio: ["ignore", "inherit", "ignore"], detached: true }).unref();`;
+    const held = await (async () => {
+      const proc = Bun.spawn({
+        cmd: [process.execPath, "-e", `process.stdin.once("data", () => { ${holdsStdout} ${writes(["stderr"])} });`],
+        env: process.env,
+        stdin: "pipe",
+        ...piped(["stdout", "stderr"]),
+      });
+      registry.register(proc, undefined);
+      const { stdin, exited } = proc;
+      fullGC();
+      const base = counted();
+      await writeAndExit({ stdin, exited });
+      // In a later turn than the one that reports the exit: the getter is what lets go of the Subprocess then.
+      await new Promise(resolve => setImmediate(resolve));
+      proc.stdout;
+      await until(() => counted() - base >= size, edenGC);
+      return counted() - base;
+    })();
+    // The report is made where the Subprocess is let go of: without it there is no collection to wait for.
+    if (held >= size) await until(() => finalized, fullGC);
+    return { held, finalized };
+  },
+
   // Nothing forces a collection here. The reports make JSC collect by itself, and that frees a Subprocess which
   // the script has dropped.
   async loop() {

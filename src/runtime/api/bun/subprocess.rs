@@ -449,6 +449,8 @@ impl Subprocess<'_> {
         // The stream is the script's that reads the property.
         let stream = output.with_mut(|s| s.to_js(&cx.js_thread(), exited));
         self.update_parked_output();
+        // A pipe that is the stream's now does not end here: nothing else would let go of the wrapper.
+        self.update_has_pending_activity();
         stream
     }
 

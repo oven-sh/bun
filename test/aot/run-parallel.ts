@@ -808,6 +808,7 @@ function fail(
   actual?: Output,
   expected?: Output,
   alikeBut?: AlikeBut,
+  again?: { buildAgain: Output } | { expectedAgain: Output; actualAgain: Output },
 ) {
   settle(program, {
     state: "fail",
@@ -817,6 +818,7 @@ function fail(
     alikeBut,
     expected: expected && shown(actual ? leavingOutTheSame(expected, actual) : expected),
     actual: actual && shown(expected ? leavingOutTheSame(actual, expected) : actual),
+    ...again,
   });
 }
 
@@ -1447,7 +1449,7 @@ async function run(program: Program): Promise<void> {
     if (Bun.deepEquals(comparedWithPlain(compiled.output), comparedWithPlain(plain!.output)))
       return settle(program, { ...passes, plainMs: plain!.ms });
     if (agreeButForFrames(comparedWithPlain(compiled.output), comparedWithPlain(plain!.output))) return passesButForFrames();
-    const differs = () =>
+    const differs = (again?: Parameters<typeof fail>[6]) =>
       fail(
         program,
         "compare",
@@ -1461,6 +1463,7 @@ async function run(program: Program): Promise<void> {
             { ...its, stdout: its.stdout.replaceAll(one, other) },
           );
         },
+        again,
       );
     if (program.asksForEntryPoint) return differs();
     const entry = `${executable}-behind-the-same-frames.mjs`;
@@ -1473,20 +1476,25 @@ async function run(program: Program): Promise<void> {
         return start(cmd, cwd, { ...environmentOfBuilds, ...program.envOfBuild }, timeLimit(cmd, program.weight));
       });
       removeOther = noteExecutable(other);
-      if (rebuilt.output.overLimit || rebuilt.output.exitCode !== 0) return differs();
+      if (rebuilt.output.overLimit || rebuilt.output.exitCode !== 0) return differs({ buildAgain: shown(rebuilt.output) });
       const compiledAgain = await withSlotOfRun(() => start([other], cwd, { ...envOfRuns, ...program.envOfExecutable }));
       const plainAgain = await runReference(entry);
       compiledAgain.output.stderr = withoutLinesOfImage(compiledAgain.output.stderr);
-      if (compiledAgain.output.overLimit || compiledAgain.output.signal || plainAgain.output.overLimit) return differs();
+      const isTheSameAgain = Bun.deepEquals(plainAgain.output, compiledAgain.output);
+      const again = {
+        expectedAgain: shown(isTheSameAgain ? plainAgain.output : leavingOutTheSame(plainAgain.output, compiledAgain.output)),
+        actualAgain: shown(leavingOutTheSame(compiledAgain.output, plainAgain.output)),
+      };
+      if (compiledAgain.output.overLimit || compiledAgain.output.signal || plainAgain.output.overLimit) return differs(again);
       const [first, reference, second, referenceAgain] = [compiled, plain!, compiledAgain, plainAgain].map(run => comparedWithPlain(run.output));
-      if ([first, second, referenceAgain].some(({ exitCode }) => exitCode !== reference.exitCode)) return differs();
+      if ([first, second, referenceAgain].some(({ exitCode }) => exitCode !== reference.exitCode)) return differs(again);
       if (
         agreeButForFrames(second, referenceAgain) &&
         differOnlyInLinesWithFrames(first.stdout, reference.stdout, second.stdout, referenceAgain.stdout) &&
         differOnlyInLinesWithFrames(first.stderr, reference.stderr, second.stderr, referenceAgain.stderr)
       )
         return passesButForFrames();
-      differs();
+      differs(again);
     } finally {
       removeOther();
       rmSync(entry, { force: true });

@@ -895,9 +895,20 @@ impl UpgradeCommand {
                         &unzip_script,
                     ];
 
+                    // Spawn Windows PowerShell 5.1 with a sanitized environment:
+                    // the child must not inherit the caller's `PSModulePath`.
+                    // Launched from PowerShell 7 (`pwsh`), that variable lists
+                    // PS7's `Modules` directory ahead of 5.1's, so 5.1 loads
+                    // PS7's `Microsoft.PowerShell.Archive`, whose 3-argument
+                    // `ExtractToDirectory` overload only exists on .NET Core —
+                    // `Expand-Archive` fails, nothing is extracted, and the
+                    // verification below dies with ENOENT (oven-sh/bun#49334).
+                    // With the variable absent, 5.1 falls back to its built-in
+                    // default module path.
+                    let child_envp = env_loader.map.to_envp_for_windows_powershell_child();
                     let spawn_res = spawn_sync::spawn(&spawn_sync::Options {
                         argv: build_argv(&unzip_argv),
-                        envp: None,
+                        envp: Some(child_envp.as_list()),
                         cwd: Box::<[u8]>::from(tmpdir_z.as_bytes()),
                         stderr: spawn_sync::SyncStdio::Inherit,
                         stdout: spawn_sync::SyncStdio::Inherit,
@@ -916,13 +927,34 @@ impl UpgradeCommand {
                             Global::exit(1);
                         }
                     };
-                    if let Err(err) = spawn_res {
-                        bun_core::pretty_errorln!(
-                            "<r><red>error:<r> Failed to run Expand-Archive on {} due to error {}",
-                            bstr::BStr::new(tmpname.as_bytes()),
-                            bstr::BStr::new(err.name())
-                        );
-                        Global::exit(1);
+                    let spawn_status = match spawn_res {
+                        Ok(r) => r.status,
+                        Err(err) => {
+                            bun_core::pretty_errorln!(
+                                "<r><red>error:<r> Failed to run Expand-Archive on {} due to error {}",
+                                bstr::BStr::new(tmpname.as_bytes()),
+                                bstr::BStr::new(err.name())
+                            );
+                            Global::exit(1);
+                        }
+                    };
+                    // PowerShell can spawn fine yet fail inside Expand-Archive
+                    // (e.g. the wrong Archive module loaded via an inherited
+                    // PSModulePath); report that as an unzip failure instead of
+                    // letting the verify step below die with a misleading ENOENT.
+                    match spawn_status {
+                        Status::Exited(e) if e.code == 0 => {}
+                        Status::Exited(e) => {
+                            bun_core::pretty_errorln!(
+                                "<r><red>Expand-Archive failed<r> (exit code: {})",
+                                e.code
+                            );
+                            Global::exit(1);
+                        }
+                        other => {
+                            bun_core::pretty_errorln!("<r><red>Expand-Archive failed<r> ({})", other);
+                            Global::exit(1);
+                        }
                     }
                 }
             }

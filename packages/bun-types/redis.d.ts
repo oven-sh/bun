@@ -138,24 +138,6 @@ declare module "bun" {
     ): Promise<any>;
 
     /**
-     * Send a raw command like {@link send}, and get the strings of the reply as bytes
-     * @param command The command to send
-     * @param args The arguments to the command, as for {@link send}
-     * @returns A promise that resolves with the command result. Each string in it, at any depth, is a `Buffer`, and so
-     * is a big number. The keys of a map stay strings, so keys that are not valid UTF-8 can collide.
-     *
-     * @example
-     * ```ts
-     * await redis.hset("images", "logo", new Uint8Array([0xff, 0xd8]));
-     * await redis.sendBuffer("HGET", ["images", "logo"]); // <Buffer ff d8>
-     * ```
-     */
-    sendBuffer(
-      command: string,
-      args: readonly (string | number | NodeJS.TypedArray | DataView<ArrayBufferLike> | ArrayBufferLike | Blob)[],
-    ): Promise<any>;
-
-    /**
      * Get the value of a key
      * @param key The key to get
      * @returns Promise that resolves with the key's value as a string, or null if the key doesn't exist

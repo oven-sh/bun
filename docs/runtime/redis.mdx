@@ -307,13 +307,6 @@ await redis.send("LPUSH", ["mylist", "value1", "value2"]);
 const list = await redis.send("LRANGE", ["mylist", "0", "-1"]);
 ```
 
-`sendBuffer` returns the strings of the reply as `Buffer`s.
-
-```ts redis.ts icon="/icons/typescript.svg"
-await redis.hset("images", "logo", new Uint8Array([0xff, 0xd8]));
-const logo = await redis.sendBuffer("HGET", ["images", "logo"]);
-```
-
 A `null` or `undefined` argument throws where it would shift or drop another one, as in `mget(a, undefined, c)` or `set(key, value, undefined, "NX")`. After `MULTI`, catch such errors and send `DISCARD`, or later commands stay queued.
 
 ### Connection Events

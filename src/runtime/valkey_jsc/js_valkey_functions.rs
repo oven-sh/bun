@@ -430,27 +430,7 @@ impl JSValkeyClient {
         command: JsLocal<'_>,
         args: JsLocal<'_>,
     ) -> JsResult<JSValue> {
-        self.send_raw(this, cx.global(), command, args, Reply::Value)
-    }
-
-    pub(crate) fn send_buffer(
-        self: &RefPtr<Self>,
-        this: JsWrapper<'_, Self>,
-        cx: &mut JsScope<'_>,
-        command: JsLocal<'_>,
-        args: JsLocal<'_>,
-    ) -> JsResult<JSValue> {
-        self.send_raw(this, cx.global(), command, args, Reply::Buffer)
-    }
-
-    fn send_raw(
-        self: &RefPtr<Self>,
-        this: JsWrapper<'_, Self>,
-        global: &JSGlobalObject,
-        command: JsLocal<'_>,
-        args: JsLocal<'_>,
-        reply: Reply,
-    ) -> JsResult<JSValue> {
+        let global = cx.global();
         let command = command.to_js().to_bun_string(global)?;
 
         let args_array = args.to_js();
@@ -471,7 +451,7 @@ impl JSValkeyClient {
             args.push(v);
         }
 
-        Ok(self.send(this, global, command.to_utf8().slice(), &args, reply))
+        Ok(self.send(this, global, command.to_utf8().slice(), &args, Reply::Value))
     }
 
     cmd!(get, "get", "GET", NotSubscriber, key: "key");

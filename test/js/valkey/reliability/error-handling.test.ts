@@ -298,7 +298,6 @@ describe("Valkey: Command Arguments", () => {
       SUBSCRIBE: ">3\r\n$9\r\nsubscribe\r\n$2\r\nch\r\n:1\r\n",
       GET: "$1\r\nv\r\n",
       SELECT: "+OK\r\n",
-      HGETALL: "%1\r\n$1\r\nf\r\n*2\r\n$1\r\nv\r\n:1\r\n",
     };
     const server = Bun.listen({
       hostname: "127.0.0.1",
@@ -389,7 +388,7 @@ describe("Valkey: Command Arguments", () => {
     { call: ["hset", "k", "f", Uint8Array.of(7, 0xff)], sends: ["HSET", "k", "f", "\x07\xff"], resolves: 1 },
     { call: ["hset", "k", "f", new Uint8Array(0)], sends: ["HSET", "k", "f", ""], resolves: 1 },
     { call: ["hset", "k", "f", new ArrayBuffer(0)], sends: ["HSET", "k", "f", ""], resolves: 1 },
-    { call: ["hset", "k", { f: Buffer.of(0xff) }], sends: ["HSET", "k", "f", "\xff"], resolves: 1 },
+    { call: ["hset", "k", { f: Buffer.of(0xff, 0, 0x41) }], sends: ["HSET", "k", "f", "\xff\0A"], resolves: 1 },
     { call: ["hset", "k", { f: new Blob(["v"]) }], sends: ["HSET", "k", "f", "v"], resolves: 1 },
     {
       call: ["hset", "k", { a: true, b: 1n, c: ["x", "y"], d: new String("s") }],
@@ -494,10 +493,10 @@ describe("Valkey: Command Arguments", () => {
     });
   }
 
-  test("sendBuffer() resolves with the strings of the reply as buffers", async () => {
+  test("send() sends a buffer as its bytes and a number as text", async () => {
     using server = await connect();
-    expect(await server.client.sendBuffer("HGETALL", ["k"])).toEqual({ f: [Buffer.from("v"), 1] });
-    expect(server.lastReceived()).toEqual(["HGETALL", "k"]);
+    await server.client.send("SET", ["k", Buffer.of(0xff, 0), "EX", 60]);
+    expect(server.lastReceived()).toEqual(["SET", "k", "\xff\0", "EX", "60"]);
   });
 
   test("a URL object selects the database of its path", async () => {

@@ -166,8 +166,6 @@ redis.send("SET", "k");
 // @ts-expect-error - a call with no `args` throws "Arguments must be an array"
 redis.send("PING");
 
-expectType(redis.sendBuffer("HGET", ["k", buf])).is<Promise<any>>();
-
 expectType(redis.publish("ch", 1)).is<Promise<number>>();
 expectType(redis.publish("ch", buf)).is<Promise<number>>();
 expectType(redis.publish("ch", new ArrayBuffer(1))).is<Promise<number>>();

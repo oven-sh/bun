@@ -705,7 +705,7 @@ describe("hunks", () => {
 
   // prettier-ignore
   test.each([
-    ["4 by default", changed(10), undefined, [[6, 9, 6, 9]]],
+    ["3 by default", changed(10), undefined, [[7, 7, 7, 7]]],
     ["0", changed(10), 0, [[10, 1, 10, 1]]],
     ["Infinity", changed(10), Infinity, [[1, 20, 1, 20]]],
     ["cut at the start and the end", changed(2, 19), 3, [[1, 5, 1, 5], [16, 5, 16, 5]]],
@@ -751,7 +751,7 @@ describe("hunks", () => {
 });
 
 describe("createPatch", () => {
-  const body = "@@ -1,1 +1,1 @@\n-a\n+b\n";
+  const body = "@@ -1 +1 @@\n-a\n+b\n";
   // prettier-ignore
   test.each([
     ["no names", {}, ""],
@@ -769,8 +769,8 @@ describe("createPatch", () => {
   });
 
   test("the header of an empty range names the line before it", () => {
-    expect(diff.createPatch("", "a\n")).toBe("@@ -0,0 +1,1 @@\n+a\n");
-    expect(diff.createPatch("a\nb\n", "a\n", { context: 0 })).toBe("@@ -2,1 +1,0 @@\n-b\n");
+    expect(diff.createPatch("", "a\n")).toBe("@@ -0,0 +1 @@\n+a\n");
+    expect(diff.createPatch("a\nb\n", "a\n", { context: 0 })).toBe("@@ -2 +1,0 @@\n-b\n");
   });
 
   test("equal texts, as with diff -u", () => {
@@ -891,6 +891,12 @@ describe("parsePatch", () => {
     ["--- after a rule in the second commit", `diff --git a/f b/f\n${body}-- \n\n${rule}\n--- x\ndiff --git a/f b/f\n${body}`, Array(2).fill({ isGit: true, oldFileName: "a/f", newFileName: "b/f", hunks: [hunk] })],
     ["--- after a rule on the first line", `${rule}\n--- x\ndiff --git a/f b/f\n${body}`, [{ isGit: true, oldFileName: "a/f", newFileName: "b/f", hunks: [hunk] }]],
     ["--- before stars in a commit message", `Subject: x\n\n--- x\n***************\ndiff --git a/f b/f\n${body}`, [{ isGit: true, oldFileName: "a/f", newFileName: "b/f", hunks: [hunk] }]],
+    ["--- before a pair", `--- x\n--- o\n+++ n\n${body}`, [{ oldFileName: "o", oldHeader: "", newFileName: "n", newHeader: "", hunks: [hunk] }]],
+    ["+++ before Index:", `+++ x\nIndex: f\n${body}`, [{ index: "f", hunks: [hunk] }]],
+    ["--- in a footer", `${body}\n--- x\n`, [{ hunks: [hunk] }]],
+    ["cut after diff -u and ---", `${body}diff -u o n\n--- o\n`, 'Missing "+++ ..." file header for o'],
+    ["--- right after the last hunk", `${body}--- x\n`, "Hunk at line 1 has more lines than expected (expected 1 old lines and 1 new lines)"],
+    ["cut before the added line", "@@ -1 +1 @@\n-a", "Added line count did not match for hunk at line 1"],
     ["a removed line too many that starts with --", `${body}--- x\ndiff --git a/f b/f\n`, "Hunk at line 1 has more lines than expected (expected 1 old lines and 1 new lines)"],
     // diff makes two entries of each file.
     ["svn diff --git", `Index: e\n${rule}\ndiff --git a/e b/e\nnew file mode 100644\nIndex: f\n${rule}\ndiff --git a/f b/f\n--- a/f\t(revision 1)\n+++ b/f\t(working copy)\n${body}`, [
@@ -981,7 +987,8 @@ describe("applyPatch", () => {
     ["an insertion before the previous hunk", "a\nc\n", [{ oldStart: 2, lines: ["-c"] }, { oldStart: 1, lines: ["+b"] }], undefined],
     ["an insertion past the end", "a\n", [{ oldStart: 4, lines: ["+b"] }], undefined],
     ["an insertion one line past the end", "a\n", [{ oldStart: 3, lines: ["+b"] }], undefined],
-    ["removes an empty line after the last newline", "\na\n", [{ oldStart: 3, lines: ["-", "+b"] }], undefined],
+    ["removes an empty line after the last newline", "a\n", [{ oldStart: 2, lines: ["-", "+b"] }], undefined],
+    ["the same, fits earlier", "\na\n", [{ oldStart: 3, lines: ["-", "+b"] }], "b\na\n"],
     ["adds after an empty line after the last newline", "a\n", [{ oldStart: 1, lines: [" a", " ", "+b"] }], undefined],
     ["removes an empty line of an empty source", "", [{ oldStart: 1, lines: ["-", "+b"] }], undefined],
     // diff leaves half a line ending.
@@ -996,7 +1003,17 @@ describe("applyPatch", () => {
     // diff changes the last newline wherever the hunk fits.
     ["removes the last newline, before the end", "a\nx\n", [{ oldStart: 1, lines: ["-a", "+b", marker] }], undefined],
     ["adds the last newline, before the end", "a\nx", [{ oldStart: 1, lines: ["-a", marker, "+b"] }], undefined],
-    ["removes the last newline, fits at the end too", "a\na\n", [{ oldStart: 1, lines: ["-a", "+b", marker] }], undefined],
+    ["removes the last newline, fits at the end too", "a\na\n", [{ oldStart: 1, lines: ["-a", "+b", marker] }], "a\nb"],
+    // As git apply and GNU patch. diff takes the nearest place.
+    ["context only before, fits at the end too", "a\nx\na\n", [{ oldStart: 1, lines: [" a", "+b"] }], "a\nx\na\nb\n"],
+    ["the same, CRLF and UTF-16", "世\r\nx\r\n世\r\n", [{ oldStart: 1, lines: [" 世", "+b"] }], "世\r\nx\r\n世\r\nb\r\n"],
+    ["keeps a line without newline, fits at the end too", "c\na\nc\na", [{ oldStart: 1, lines: ["-c", " a", marker] }], "c\na\na"],
+    ["context only before, not at the end", "a\nx\n", [{ oldStart: 1, lines: [" a", "+b"] }], "a\nb\nx\n"],
+    ["context only before, the end of the last line", "a\nxa\n", [{ oldStart: 1, lines: [" a", "+b"] }], "a\nb\nxa\n"],
+    ["context only before, the last line has no newline", "a\nx\na", [{ oldStart: 1, lines: [" a", "+b"] }], "a\nb\nx\na"],
+    ["context only before, not the last hunk", "a\nc\na\n", [{ oldStart: 1, lines: [" a", "+b"] }, { oldStart: 2, lines: ["-c"] }], "a\nb\na\n"],
+    ["context only before, the previous hunk has the end", "c\na\n", [replace(2), { oldStart: 2, lines: [" a", "+b"] }], undefined],
+    ["context on both sides, fits at the end too", "a\nc\na\nc\n", [{ oldStart: 1, lines: [" a", "+b", " c"] }], "a\nb\nc\na\nc\n"],
   ])("%s", (_, source, hunks, expected) => {
     expect(diff.applyPatch(source, hunks)).toBe(expected);
   });

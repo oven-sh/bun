@@ -37,7 +37,7 @@ for (const [name, [a, b]] of Object.entries(texts)) {
   compare(
     `hunks, ${name}`,
     () => Bun.diff.hunks(a, b),
-    () => jsdiff.structuredPatch("a", "b", a, b),
+    () => jsdiff.structuredPatch("a", "b", a, b, undefined, undefined, { context: 3 }),
   );
 }
 
@@ -49,7 +49,7 @@ const [oldArray, newArray] = [a.split("\n"), b.split("\n")];
 compare(
   "createPatch",
   () => Bun.diff.createPatch(a, b, { oldFileName: "file" }),
-  () => jsdiff.createPatch("file", a, b),
+  () => jsdiff.createPatch("file", a, b, undefined, undefined, { context: 3 }),
 );
 compare(
   "parsePatch",

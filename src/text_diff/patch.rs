@@ -140,13 +140,18 @@ pub fn write_file_header<T: Unit>(out: &mut Vec<T>, marker: &[u8], name: &[u8], 
 }
 
 pub fn write_hunk<T: Unit>(out: &mut Vec<T>, hunk: &PatchHunk<Line<'_, T>>) {
-    // The header of an empty range names the line before it.
+    let range = |start: usize, lines: usize| {
+        core::fmt::from_fn(move |f| match lines {
+            // An empty range names the line before it.
+            0 => write!(f, "{},0", start - 1),
+            1 => write!(f, "{start}"),
+            _ => write!(f, "{start},{lines}"),
+        })
+    };
     let header = format!(
-        "@@ -{},{} +{},{} @@\n",
-        hunk.old_start - usize::from(hunk.old_lines == 0),
-        hunk.old_lines,
-        hunk.new_start - usize::from(hunk.new_lines == 0),
-        hunk.new_lines,
+        "@@ -{} +{} @@\n",
+        range(hunk.old_start, hunk.old_lines),
+        range(hunk.new_start, hunk.new_lines),
     );
     extend_ascii(out, header.as_bytes());
     for line in &hunk.lines {
@@ -523,13 +528,15 @@ struct Parser<'a, T> {
     /// From 1.
     number: usize,
     next_header: NextHeader,
+    has_hunks: bool,
 }
 
-/// The line that starts a hunk or a section, seen from the last `---` or `+++` that looked for it.
+/// The line that starts a hunk or a section or ends a pair, seen from the last `---` or `+++` that looked for it.
 #[derive(Clone, Copy, Default)]
 struct NextHeader {
     number: usize,
-    is_git: bool,
+    /// Or there is none, and a hunk came before.
+    is_section: bool,
 }
 
 impl<'a, T: Unit> Parser<'a, T> {
@@ -549,7 +556,7 @@ impl<'a, T: Unit> Parser<'a, T> {
         self.number += 1;
     }
 
-    /// A commit message can have a line like `--- Original Message ---`. It is alone, and `diff --git` follows it.
+    /// A commit message can have a line like `--- Original Message ---`. It is alone, and no hunk follows it.
     fn is_at_file_header(&mut self) -> bool {
         let Some(line) = self.peek().filter(|line| is_file_header(line)) else {
             return false;
@@ -566,20 +573,22 @@ impl<'a, T: Unit> Parser<'a, T> {
             return true;
         }
         if self.number >= self.next_header.number {
+            let mut last = line;
             while let Some(line) = ahead.peek()
                 && !is_diff_header(line)
                 && strip(line, b"@@").is_none()
+                && !(after_marker(line, b"+++").is_some() && after_marker(last, b"---").is_some())
             {
+                last = line;
                 ahead.advance();
             }
+            let is_section = |line| strip(line, b"@@").is_none();
             self.next_header = NextHeader {
                 number: ahead.number,
-                is_git: ahead
-                    .peek()
-                    .is_some_and(|it| strip(it, GIT_HEADER).is_some()),
+                is_section: ahead.peek().map_or(self.has_hunks, is_section),
             };
         }
-        !self.next_header.is_git
+        !self.next_header.is_section
     }
 
     /// The lines before this one, from the nearest.
@@ -597,10 +606,11 @@ impl<'a, T: Unit> Parser<'a, T> {
         before.next().is_some_and(is_rule) && before.next().and_then(index_name).is_some()
     }
 
-    /// After `Index:` or its rule, or between `*** name` and the stars that start a hunk of `diff -c`.
+    /// After `diff -u`, `Index:` or its rule, or between `*** name` and the stars that start a hunk of `diff -c`.
     fn is_in_header(&self, next: &[T]) -> bool {
         let last = self.before().next().unwrap_or_default();
         index_name(last).is_some()
+            || strip(last, b"diff -").is_some_and(|_| strip(last, GIT_HEADER).is_none())
             || self.is_after_rule_of_index()
             || after_marker(last, b"***").is_some() && strip(next, &[b'*'; 15]).is_some()
     }
@@ -666,6 +676,7 @@ impl<'a, T: Unit> Parser<'a, T> {
         let at = self.number;
         let mut hunk = hunk_header(header).ok_or(ParseError::InvalidHunkHeader { at })?;
         self.advance();
+        self.has_hunks = true;
 
         let (mut added, mut removed) = (0, 0);
         while let Some(place) = self.line.clone() {
@@ -688,12 +699,6 @@ impl<'a, T: Unit> Parser<'a, T> {
             self.advance();
         }
 
-        if added == 0 && hunk.new_lines == 1 {
-            hunk.new_lines = 0;
-        }
-        if removed == 0 && hunk.old_lines == 1 {
-            hunk.old_lines = 0;
-        }
         if added != hunk.new_lines {
             return Err(ParseError::AddedCount { at });
         }
@@ -725,6 +730,7 @@ pub fn parse<T: Unit>(text: &[T]) -> Result<Vec<FilePatch>, ParseError> {
         line: Some(Parser::line_from(text, 0)),
         number: 1,
         next_header: NextHeader::default(),
+        has_hunks: false,
     };
     let mut files = Vec::new();
     while parser.line.is_some() {
@@ -878,6 +884,12 @@ fn change_last_newline<T: Unit>(
     true
 }
 
+/// As if the end of the source had cut it short.
+fn has_only_context_before<T>(hunk: &[Step<'_, T>]) -> bool {
+    let is_kept = |step: &Step<'_, T>| step.operation == Operation::Keep;
+    hunk.first().is_some_and(is_kept) && !hunk.last().is_some_and(is_kept)
+}
+
 const HASH_BASE: u64 = 0x9E37_79B9_7F4A_7C15;
 
 /// `hash` of some lines, extended by `line` and `cr`. A last `\r` counts the same in either.
@@ -890,6 +902,8 @@ fn roll<T: Unit>(hash: u64, line: &[T], cr: Option<T>) -> u64 {
 
 struct Source<'a, T> {
     text: &'a [T],
+    /// Without the empty one after the last newline.
+    line_count: usize,
     end: Place,
     index: OnceCell<Index>,
     /// What is left for trying places, in all hunks together.
@@ -948,13 +962,24 @@ impl<'a, T: Unit> Source<'a, T> {
     }
 
     /// The place from `first` on, nearest to `wanted`, that has what the hunk keeps and removes.
-    fn locate(&self, steps: &[Step<'_, T>], wanted: isize, first: Place) -> Option<Place> {
+    fn locate(
+        &self,
+        steps: &[Step<'_, T>],
+        wanted: isize,
+        first: Place,
+        prefers_end: bool,
+    ) -> Option<Place> {
         let old = || {
             let steps = steps.iter();
             steps.filter(|step| matches!(step.operation, Operation::Keep | Operation::Remove))
         };
         let old_lines = old().count();
-        let (min, max) = (first.line, self.end.line.checked_sub(old_lines)?);
+        // The empty line after the last newline can only be kept.
+        let end = match steps.last().map(|step| step.operation) {
+            Some(Operation::Keep | Operation::NoNewline) => self.end.line,
+            _ => self.line_count,
+        };
+        let (min, max) = (first.line, end.checked_sub(old_lines)?);
         if old_lines == 0 {
             let wanted = usize::try_from(wanted).ok();
             let wanted = wanted.filter(|at| (min..=max).contains(at));
@@ -975,6 +1000,20 @@ impl<'a, T: Unit> Source<'a, T> {
                 rest.is_some_and(|rest| rest.is_empty() || is(rest.first(), b'\n'))
             })
         };
+        let units = || old().map(|step| step.len() + 1).sum::<usize>();
+        let has_newline = is(self.text.last(), b'\n');
+        if prefers_end
+            && let Some(line) = self.line_count.checked_sub(old_lines)
+            && let Some(unit) = (self.text.len() + usize::from(!has_newline)).checked_sub(units())
+            && unit >= first.unit
+            && (unit == 0 || is(self.text.get(unit - 1), b'\n'))
+            && old()
+                .next_back()
+                .is_some_and(|it| it.has_line_ending == has_newline)
+            && fits(Place { line, unit })
+        {
+            return Some(Place { line, unit });
+        }
         let nearest = wanted.clamp(min as isize, max as isize) as usize;
         let place = |line: usize| self.place(line, first);
         let at = place(nearest);
@@ -1001,8 +1040,7 @@ impl<'a, T: Unit> Source<'a, T> {
             let earlier = nearest.checked_sub(distance).filter(|&at| at >= min);
             later.into_iter().chain(earlier)
         });
-        let units: usize = old().map(|step| step.len() + 1).sum();
-        let mut work = self.work.get();
+        let (units, mut work) = (units(), self.work.get());
         for at in around {
             if hashes[at + old_lines].wrapping_sub(hashes[at].wrapping_mul(shift)) == hash {
                 let at = place(at);
@@ -1036,11 +1074,12 @@ pub fn apply<T: Unit>(
         line: line_count + usize::from(has_newline),
         unit: source.len() + 1,
     };
-    if let Some(last_hunk) = steps.last()
-        && !change_last_newline(&mut end, has_newline, last_hunk)
-    {
+    let last_hunk = steps.last().map_or(&[][..], |steps| steps);
+    let has_marker = last_hunk.iter().any(|step| !step.has_line_ending);
+    if has_marker && !change_last_newline(&mut end, has_newline, last_hunk) {
         return Ok(None);
     }
+    let is_made_at_end = has_marker || has_only_context_before(last_hunk);
 
     let units = |operation: Operation| -> usize {
         let steps = steps.iter().flatten();
@@ -1052,6 +1091,7 @@ pub fn apply<T: Unit>(
     let mut out = Vec::with_capacity(end.unit + growth.min(source.len()));
     let source = Source {
         text: source,
+        line_count,
         end,
         index: OnceCell::new(),
         work: Cell::new(WORK + WORK_PER_UNIT * source.len()),
@@ -1059,9 +1099,10 @@ pub fn apply<T: Unit>(
     // Lines that a hunk keeps after its last change are not copied yet: the next hunk can start among them.
     let mut copied = Place::default();
     let mut offset = 0;
-    for (hunk, steps) in hunks.iter().zip(&steps) {
+    for (left, (hunk, steps)) in (0..hunks.len()).rev().zip(hunks.iter().zip(&steps)) {
         let declared = hunk.old_start as isize - 1;
-        let Some(mut at) = source.locate(steps, declared + offset, copied) else {
+        let prefers_end = left == 0 && is_made_at_end;
+        let Some(mut at) = source.locate(steps, declared + offset, copied, prefers_end) else {
             return Ok(None);
         };
         offset = at.line as isize - declared;

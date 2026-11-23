@@ -6062,7 +6062,7 @@ declare module "bun" {
        * The number of unchanged lines before and after each change, like `diff -U`.
        * An integer from 0, or `Infinity` for the whole file.
        *
-       * @default 4
+       * @default 3
        */
       context?: number | undefined;
     }

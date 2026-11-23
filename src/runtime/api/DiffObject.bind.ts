@@ -5,7 +5,7 @@ export default b.module({ rustPath: "crate::api::diff_object" });
 /** A whole number from 0 on, or `Infinity`. */
 const limit = b.f64;
 const maxEditLength = limit.optional;
-const context = limit.default(4);
+const context = limit.default(3);
 
 const off = b.bool.default(false);
 const forText = { maxEditLength, ignoreCase: off } as const;

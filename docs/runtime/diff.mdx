@@ -93,7 +93,7 @@ Bun.diff.createPatch(oldText, newText, {
   newFileName: "b/file.txt", // defaults to oldFileName
   oldHeader: "2024-01-01", // text after the old name
   newHeader: "2024-01-02", // text after the new name
-  context: 3, // unchanged lines around each change. Default: 4. Infinity for the whole file
+  context: 3, // unchanged lines around each change. Default: 3. Infinity for the whole file
 });
 ```
 
@@ -131,6 +131,7 @@ Bun.diff.applyPatch(source, file.hunks);
 
 - The lines that a hunk keeps and removes have to match exactly.
 - If they don't match at `oldStart`, Bun uses the nearest line where they do, after the previous hunk. This search has a limit on its number of steps, and `applyPatch` returns `undefined` when it reaches the limit.
+- If the last hunk has unchanged lines before its changes and none after them, it was made at the end of a file. Bun tries the end of the source first.
 - A hunk that adds or removes a line marked `\ No newline at end of file` has to reach the end of the source. `diff` does not check this.
 - If the source only has `\r\n` line endings and the patch only has `\n`, or the reverse, Bun converts the patch first. A patch made with `context: 0` that adds the other line ending is converted too.
 
@@ -152,9 +153,10 @@ Changes, hunks and parsed patches have the same shape as in [`diff`](https://git
 
 Differences:
 
+- The default `context` is 3, not 4, and a range of one line is `@@ -1 +1 @@`, as in `git diff`.
 - `createPatch` does not write the `Index:` and `===` lines, and returns `""` for equal texts. It writes a tab after a file name with a space, as Git does.
-- `applyPatch` returns `undefined` instead of `false`. It rejects a hunk that only fits outside the source or before the previous hunk. It throws for a binary patch from `git diff`.
-- `parsePatch` throws for a malformed `@@` line, accepts the `-- ` signature of `git format-patch`, sets `isBinary` for `GIT binary patch`, and returns one entry for each file of `svn diff --git`.
-- `parsePatch` skips `--- text` and `+++ text` lines in the message before `diff --git`, unless they form a pair or follow an `Index:` line. It returns no entry for a line of `=` that no header or hunk follows.
+- `applyPatch` returns `undefined` instead of `false`. It rejects a hunk that only fits outside the source or before the previous hunk. It tries the end of the source first for a hunk that was made there, as `git apply` does. It throws for a binary patch from `git diff`.
+- `parsePatch` throws for a malformed `@@` line and for a patch that ends before its last hunk does, accepts the `-- ` signature of `git format-patch`, sets `isBinary` for `GIT binary patch`, and returns one entry for each file of `svn diff --git`.
+- `parsePatch` skips `--- text` and `+++ text` lines in the text around a patch, unless they form a pair, follow an `Index:` line or come before a hunk. It returns no entry for a line of `=` that no header or hunk follows.
 - `parsePatch` and `applyPatch` accept a patch whose line endings were converted to `\r\n`. The lines of a hunk keep the `\r`. File names do not.
 - The only options are the ones on this page. `timeout`, `callback`, `comparator`, `fuzzFactor`, `newlineIsToken` and `ignoreNewlineAtEof` are not supported.

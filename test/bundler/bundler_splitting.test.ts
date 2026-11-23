@@ -292,8 +292,7 @@ describe("bundler", () => {
       ...cssBehindBarrel,
       "/lib/a.js": `import "./a.css"; export function A() { return "A"; }`,
       "/lib/b.js": `import "./b.css"; export function B() { return "B"; }`,
-      "/common.js":
-        `export function c() { return "c"; }\n` + `export function pad() { return "${"s".repeat(60)}"; }\n`.repeat(64),
+      "/common.js": `export function c() { return "c"; }\nexport function pad() { return "${Buffer.alloc(4096, "s").toString()}"; }\n`,
       ...Object.fromEntries(
         [
           ["e1", "A"],
@@ -302,7 +301,7 @@ describe("bundler", () => {
         ].map(([entry, name]) => [
           `/${entry}.js`,
           `import { ${name} } from "./lib/index.js"; import { c } from "./common.js"; console.log("${entry}", ${name}(), c());\n` +
-            `console.log("${"a".repeat(72)}");\n`.repeat(256),
+            `console.log("${Buffer.alloc(20_000, "a").toString()}".length);\n`,
         ]),
       ),
     },

@@ -3676,6 +3676,27 @@ describe("bundler", () => {
       run: { file: "/out/entry.js", stdout },
     });
   }
+  // The package says that theme.js has no side effects, so the bare import of theme.js does not run it.
+  // webpack drops theme.css too. esbuild keeps it, and warns that it ignores the import.
+  for (const [name, sideEffects] of [
+    ["SideEffectsFalse", false],
+    ["SideEffectsOnlyCSS", ["*.css"]],
+  ] as const) {
+    itBundled("dce/CSSBehindBareImportOfFileThatDoesNotRun" + name, {
+      files: {
+        "/entry.js": `import "pkg/theme"; console.log("entry.js runs");`,
+        "/node_modules/pkg/package.json": JSON.stringify({ name: "pkg", version: "1.0.0", sideEffects }),
+        "/node_modules/pkg/theme.js": `import "./theme.css"; console.log("theme.js runs");`,
+        "/node_modules/pkg/theme.css": `.theme { color: red }`,
+      },
+      entryPoints: ["/entry.js"],
+      outdir: "/out",
+      onAfterBundle(api) {
+        expect(cssFilesIn(api, "/out/entry.css")).toEqual([]);
+      },
+      run: { file: "/out/entry.js", stdout: "entry.js runs" },
+    });
+  }
   // b.js runs, so its CSS stays.
   for (const [name, packageJson, options] of [
     ["SideEffectsListsTheFile", { sideEffects: ["*.css", "./b.js"] }, {}],

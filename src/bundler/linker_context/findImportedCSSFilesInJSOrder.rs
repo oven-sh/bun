@@ -216,9 +216,9 @@ pub(crate) fn find_imported_css_files_in_js_order(
     };
 
     // A JS file that the walk entered, or a CSS file that has its place in `order`.
-    let mut visited = BitSet::init_empty(this.graph.files.len()).expect("oom");
+    let mut visited = bun_core::handle_oom(BitSet::init_empty(this.graph.files.len()));
     // A CSS file that a file that runs imports.
-    let mut kept = BitSet::init_empty(this.graph.files.len()).expect("oom");
+    let mut kept = bun_core::handle_oom(BitSet::init_empty(this.graph.files.len()));
     let mut order: Vec<Index> = Vec::new();
 
     // Explicit-stack DFS. `Enter` pushes successors in discovery order then

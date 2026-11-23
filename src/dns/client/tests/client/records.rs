@@ -171,6 +171,15 @@ fn only_what_was_asked_for_is_read() {
     assert_eq!(outcome(RecordType::A, 0, [&good, &good, &[]]), "1.2.3.4/60");
 }
 
+fn among_other_types(missing: RecordType) -> &'static str {
+    use RecordType::*;
+    match missing {
+        A | AAAA | CNAME | NS | PTR => "ENODATA",
+        SOA => "EBADRESP",
+        MX | TXT | SRV | NAPTR | CAA | ANY => "",
+    }
+}
+
 #[test]
 fn classes() {
     for (kind, whole, expected) in one_of_each() {
@@ -180,11 +189,7 @@ fn classes() {
                 &[resource(ASKED, kind as u16, class, 60, &whole[12..])],
             )
         };
-        let missing = if kind == RecordType::SOA {
-            "EBADRESP"
-        } else {
-            "ENODATA"
-        };
+        let missing = among_other_types(kind);
         let in_chaos = match kind {
             RecordType::TXT | RecordType::CAA => expected,
             _ => missing,
@@ -213,8 +218,7 @@ fn nothing_of_the_type() {
         let expected = match kind {
             RecordType::A | RecordType::AAAA => "",
             RecordType::CNAME => "c.test",
-            RecordType::SOA => "EBADRESP",
-            _ => "ENODATA",
+            _ => among_other_types(kind),
         };
         assert_eq!(answered(kind, &alias), expected);
         assert_eq!(answered(kind, &[]), "ENODATA");

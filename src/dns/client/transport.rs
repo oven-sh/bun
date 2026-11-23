@@ -28,6 +28,8 @@ const TRIES_PER_UDP_SOCKET: usize = 64;
 const UDP_SOCKET_LIFETIME: Duration = Duration::from_secs(1);
 /// From there on, a socket takes more tries than it has room for.
 const MANY_SOCKETS: usize = 256;
+/// From there on, it does so at any age.
+const TOO_MANY_SOCKETS: usize = 2 * MANY_SOCKETS;
 /// Half of the ids.
 const MAX_TRIES_PER_SOCKET: usize = 1 << 15;
 /// Messages that answer nothing, after which the event loop gets its turn.
@@ -293,7 +295,7 @@ impl<S: System, R> Client<S, R> {
         };
 
         let open = &mut self.connections.open;
-        let has_many = open.len() >= MANY_SOCKETS;
+        let [has_many, has_too_many] = [MANY_SOCKETS, TOO_MANY_SOCKETS].map(|it| open.len() >= it);
         let last = match server.socket(transport).map(|socket| open.entry(socket)) {
             Some(Entry::Occupied(last)) => Some(last),
             _ => None,
@@ -301,7 +303,8 @@ impl<S: System, R> Client<S, R> {
         let last =
             last.filter(|it| (it.get().server, it.get().transport) == (server.id, transport));
         let should_take_more = |it: &Connection<_>| {
-            (it.room > 0 || (has_many && it.can_take_more())) && !it.is_old(self.now)
+            (it.room > 0 || (has_many && it.can_take_more()))
+                && (has_too_many || !it.is_old(self.now))
         };
         let mut entry = match last {
             Some(last) if should_take_more(last.get()) => last,

@@ -455,15 +455,16 @@ impl Message {
         matches!(self.rcode, NOERROR | NXDOMAIN)
     }
 
+    /// As in Node.js, it depends on the type whether an empty list is an error.
     pub(crate) fn into_records(self) -> Result<Records, Error> {
+        use RecordType::*;
         Err(match (self.rcode, self.asked) {
             (NOERROR, _) if self.answer_count == 0 => Error::ENODATA,
             (NOERROR, _) if self.answer_types != 0 => return Ok(Records(self)),
-            (NOERROR, RecordType::A | RecordType::AAAA) if self.cname_ttl != u32::MAX => {
-                return Ok(Records(self));
-            }
-            (NOERROR, RecordType::ANY) => return Ok(Records(self)),
-            (NOERROR, RecordType::SOA) => Error::EBADRESP,
+            (NOERROR, A | AAAA) if self.cname_ttl != u32::MAX => return Ok(Records(self)),
+            (NOERROR, MX | SRV) if self.has_unusable => Error::ENODATA,
+            (NOERROR, MX | TXT | SRV | NAPTR | ANY | CAA) => return Ok(Records(self)),
+            (NOERROR, SOA) => Error::EBADRESP,
             (NOERROR, _) => Error::ENODATA,
             (1, _) => Error::EFORMERR,
             (NXDOMAIN, _) => Error::ENOTFOUND,

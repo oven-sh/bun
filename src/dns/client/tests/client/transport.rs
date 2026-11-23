@@ -202,6 +202,23 @@ fn many_sockets_are_filled_up() {
 }
 
 #[test]
+fn old_socket_is_better_than_too_many() {
+    let mut setup = one_server().tries(1);
+    setup.timeout_ms = Some(600_000);
+    let mut test = setup.start();
+    for second in 0..600 {
+        assert_eq!(test.ask(&format!("{second}.test")).socket, second.min(511));
+        test.wait(1000);
+    }
+    assert_eq!(test.open_sockets(), 511);
+    test.world().randoms.extend(1..=u16::MAX);
+    for index in 0..32769 {
+        let query = test.ask(&format!("{index}.a.test"));
+        assert_eq!(query.socket, 512 + index / 32768);
+    }
+}
+
+#[test]
 fn retries_are_spread_over_sockets() {
     let mut test = one_server().start();
     for index in 0..200 * 64 {

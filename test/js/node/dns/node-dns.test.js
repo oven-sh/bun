@@ -1415,6 +1415,26 @@ describe("resolve record types", () => {
     }
   });
 
+  test.concurrent.each([
+    ["A", []],
+    ["AAAA", []],
+    ["CAA", []],
+    ["MX", []],
+    ["NAPTR", []],
+    ["NS", "ENODATA"],
+    ["PTR", "ENODATA"],
+    ["SOA", "EBADRESP"],
+    ["SRV", []],
+    ["TXT", []],
+  ])("%s of an alias whose target has none is %j", async (rrtype, expected) => {
+    const { socket, resolver } = await startFakeServer(qname => [rr(qname, "CNAME", encodeName("c.test"))]);
+    try {
+      expect(await resolver.resolve(NAME, rrtype).catch(err => err.code)).toEqual(expected);
+    } finally {
+      socket.close();
+    }
+  });
+
   // https://github.com/oven-sh/bun/issues/44777
   test.concurrent("a record shows as soon as the server has it", async () => {
     let exists = false;

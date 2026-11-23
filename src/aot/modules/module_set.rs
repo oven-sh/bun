@@ -551,13 +551,7 @@ fn answer_require_with_what_the_loader_holds(
         };
         let is_read_by_require =
             interop.require_result != RequireResult::Namespace || stands_for_string(input, file);
-        let is_checked_by_require =
-            is_read_by_require && (is_any_required || is_required[file.idx()]);
-        // import() without a type finds what require() has loaded as text.
-        let is_imported_behind_text = stands_for_string(input, form)
-            && (is_any_required || is_required[form.idx()])
-            && (is_any_imported || is_imported[file.idx()]);
-        if !is_checked_by_require && !is_imported_behind_text {
+        if !is_read_by_require || !(is_any_required || is_required[file.idx()]) {
             continue;
         }
         let is_first_form = checked_first.last().is_none_or(|last| last.0 != file);

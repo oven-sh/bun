@@ -790,7 +790,7 @@ impl ModuleGraph {
         self.module_forms.binary_search(&file).is_ok()
     }
 
-    /// Whether import() of the file may answer with what require() has loaded under a type.
+    /// Whether import() of the code may answer with what require() has loaded under a type.
     pub fn may_typed_form_answer_import(&self, module: ModuleRef) -> bool {
         let ModuleRef::File(imported) = module else {
             return false;
@@ -804,16 +804,8 @@ impl ModuleGraph {
             true => (all.iter().find(|it| it.1 == imported)).map_or(imported, |it| it.0),
             false => imported,
         };
-        let is_text = |form: FileId| {
-            self.find_row(form)
-                .is_some_and(|row| row.interop.loader_returns_namespace)
-        };
         let forms = self.forms_require_checks_first(ModuleRef::File(file));
-        let mut forms = forms.iter().map(|it| it.1).filter(|&form| is_data(form));
-        match is_data(file) {
-            true => forms.any(|form| form != file && is_text(form)),
-            false => forms.next().is_some(),
-        }
+        !is_data(file) && forms.iter().any(|it| is_data(it.1))
     }
 
     pub fn is_every_export_asked_for(&self, module: ModuleRef) -> bool {

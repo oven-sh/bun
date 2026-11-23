@@ -1,7 +1,7 @@
 //! A read or write on the work pool that leaves it while its descriptor is not ready.
 
-use bun_io::fd_wait::{Canceller, FdWait, Interest, JobFd, Unopened};
-use bun_jsc::job::{JsAffine, OwnedJob, Running};
+use bun_io::fd_wait::{FdWait, Interest, JobFd, LazyPoller, Parking, Waiter};
+use bun_jsc::job::{JsAffine, OwnedJob, Running, Suspended};
 use bun_jsc::node_path::{JoinedPath, PathLike};
 use bun_jsc::{Job, JsResult, JsThread, SystemError};
 use bun_sys::{E, Fd, File, O};
@@ -31,79 +31,86 @@ pub(crate) trait FdOp: Send + Sized + 'static {
     fn then(self, result: Result<(), Box<SystemError>>, js: Self::Js) -> JsResult<()>;
 }
 
-pub(crate) struct FdJob<Op>(Op);
+/// The wait, and how it ended.
+type Woken = (FdWait, Result<(), Box<SystemError>>);
 
-pub(crate) enum Outcome {
-    Ran(Result<(), Box<SystemError>>),
-    Unrun,
+pub(crate) struct Parked(Suspended<Parking<Parked>, Woken>);
+
+// SAFETY: a job has one handle, is on the heap, and `with` borrows another field than `shared`.
+unsafe impl Waiter for Parked {
+    fn parking(&self) -> &Parking<Self> {
+        self.0.shared()
+    }
+
+    fn wait(&mut self) -> &mut FdWait {
+        &mut self.0.with().0
+    }
+
+    fn wake(mut self, outcome: bun_sys::Result<()>) {
+        self.0.with().1 = outcome.map_err(Into::into);
+        self.0.resume();
+    }
+}
+
+static POLLER: LazyPoller<Parked> = LazyPoller::new();
+
+pub(crate) struct FdJob<Op> {
+    op: Op,
+    result: Result<(), Box<SystemError>>,
 }
 
 impl<Op: FdOp> OwnedJob for FdJob<Op> {
-    type Start = Unopened;
     type OffThread = Self;
-    type Js = (Op::Js, Canceller);
-    type Outcome = Outcome;
-    const CANCELLABLE: bool = true;
+    type Js = Op::Js;
+    type Shared = Parking<Parked>;
+    type Resume = Woken;
     const OUTLIVES_SCRIPT: bool = false;
 
-    fn run(mut job: Running<Self>, unopened: Unopened) {
-        match job.off().0.open() {
-            Ok((fd, step)) => {
-                let wait = FdWait::new(unopened, Op::INTEREST, fd);
-                Self::advance(job, wait, Ok(step))
-            }
-            Err(err) => job.finish(Outcome::Ran(Err(err))),
+    fn run(mut job: Running<Self>) {
+        match job.off().op.open() {
+            Ok((fd, step)) => Self::advance(job, FdWait::new(Op::INTEREST, fd), Ok(step)),
+            Err(err) => Self::finish(job, Err(err)),
         }
     }
 
-    fn unrun() -> Outcome {
-        Outcome::Unrun
+    fn resume(mut job: Running<Self>, (wait, woken): Woken) {
+        let step = woken.and_then(|()| job.off().op.step(wait.fd(), true));
+        Self::advance(job, wait, step)
     }
 
-    fn then(Self(op): Self, outcome: Outcome, js: Self::Js, _: &JsThread<'_>) -> JsResult<()> {
-        let result = match outcome {
-            Outcome::Ran(result) => result,
-            Outcome::Unrun => Err(Op::INTEREST.cancelled().into()),
-        };
-        op.then(result, js.0)
-    }
-
-    fn cancel((_, canceller): &mut Self::Js) {
-        canceller.cancel();
+    fn then(this: Self, js: Op::Js, _: &JsThread<'_>) -> JsResult<()> {
+        this.op.then(this.result, js)
     }
 }
 
 impl<Op: FdOp> FdJob<Op> {
     #[track_caller]
     pub(crate) fn schedule(op: Op, js: Op::Js, cx: &JsThread<'_>) {
-        let (unopened, canceller) = Unopened::new();
-        Job::<Self>::schedule_owned(cx, unopened, Self(op), (js, canceller));
+        Job::<Self>::schedule(cx, Self { op, result: Ok(()) }, js);
     }
 
     fn advance(mut job: Running<Self>, wait: FdWait, mut step: Result<Step, Box<SystemError>>) {
         let result = loop {
             step = match step {
                 Ok(Step::Done) => break Ok(()),
-                Ok(Step::Wait) => return wait.park(|woken| Self::resume(job, woken)),
-                Ok(Step::Again) => match wait.check_cancelled() {
-                    Ok(()) => job.off().0.step(wait.fd(), false),
+                Ok(Step::Wait) => match POLLER.admit(job.shared(), &wait) {
+                    Ok(poller) => return poller.park(Parked(job.suspend((wait, Ok(()))))),
+                    Err(err) => break Err(err.into()),
+                },
+                Ok(Step::Again) => match job.shared().check_cancelled(&wait) {
+                    Ok(()) => job.off().op.step(wait.fd(), false),
                     Err(err) => break Err(err.into()),
                 },
                 Err(err) => break Err(err),
             };
         };
         drop(wait);
-        job.finish(Outcome::Ran(result));
+        Self::finish(job, result);
     }
 
-    fn resume(mut job: Running<Self>, woken: bun_sys::Result<FdWait>) {
-        match woken {
-            Ok(wait) => {
-                let step = job.off().0.step(wait.fd(), true);
-                Self::advance(job, wait, step)
-            }
-            Err(err) => job.finish(Outcome::Ran(Err(err.into()))),
-        }
+    fn finish(mut job: Running<Self>, result: Result<(), Box<SystemError>>) {
+        job.off().result = result;
+        job.finish();
     }
 }
 

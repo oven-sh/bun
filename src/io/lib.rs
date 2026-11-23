@@ -335,8 +335,6 @@ use bun_sys::Fd;
 // By-value scalar args only; the kernel validates and reports failure via the
 // return value / errno — never UB. Local `safe fn` decls (vs. routing through
 // the `libc` crate's raw items) move the proof into the type signature.
-// Unused externs do not generate linker references, so per-target `#[cfg]` is
-// unnecessary; every caller is gated.
 #[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
 mod safe_c {
     use core::ffi::c_int;
@@ -348,8 +346,7 @@ mod safe_c {
     }
 }
 
-/// For types that embed an
-/// intrusive `io_request: uv::fs_t` and recover the parent in
+/// For types that embed an intrusive `io_request: uv::fs_t` and recover the parent in
 /// `extern "C" fn(*mut uv::fs_t)` libuv callbacks.
 ///
 /// Implement via [`intrusive_uv_fs!`].

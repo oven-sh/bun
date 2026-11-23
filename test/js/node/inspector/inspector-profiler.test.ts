@@ -432,6 +432,8 @@ describe("node:inspector", () => {
         const session = new Session();
         session.connect();
         session.post("Profiler.enable");
+        // On Windows, starting the collector's threads blocks until they have run, which is long on a busy machine.
+        Bun.gc(true);
 
         const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 

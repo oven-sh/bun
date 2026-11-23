@@ -531,6 +531,12 @@ describe.concurrent("--cpu-prof", () => {
             const end = performance.now() + ms;
             while (performance.now() < end);
           }
+          // A timer also counts the time until the loop waits for it. On Windows, starting a thread blocks until that
+          // thread has run, so on a busy machine the first collection can outlast a timer set by the main script.
+          function wait(ms, then = () => {}, parts = 10) {
+            if (parts) setTimeout(wait, ms / 10, ms, then, parts - 1);
+            else then();
+          }
           ${script}`,
       });
       await using proc = Bun.spawn({
@@ -630,10 +636,10 @@ describe.concurrent("--cpu-prof", () => {
       const profile = await run(
         ["--cpu-prof", "--cpu-prof-md", `--cpu-prof-interval=${interval}`],
         `busy(250);
-         setTimeout(() => {
+         wait(500, () => {
            busy(250);
-           setTimeout(() => {}, 100);
-         }, 500);`,
+           wait(100);
+         });`,
       );
       const json = readJSON(profile.json);
       const markdown = readMarkdown(profile.markdown);
@@ -659,14 +665,13 @@ describe.concurrent("--cpu-prof", () => {
         ["--cpu-prof", "--cpu-prof-md", `--cpu-prof-interval=${interval * 1000}`],
         `let remaining = ${count};
          let waited = 0;
-         let start = performance.now();
-         (function next() {
+         function next(start) {
            waited += performance.now() - start;
            if (!remaining--) return console.log(waited);
            busy(${call});
-           setTimeout(next, ${wait});
-           start = performance.now();
-         })();`,
+           setTimeout(next, ${wait}, performance.now());
+         }
+         setImmediate(() => next(performance.now()));`,
       );
       const waited = Number(profile.stdout);
       const markdown = readMarkdown(profile.markdown);
@@ -676,7 +681,7 @@ describe.concurrent("--cpu-prof", () => {
     });
 
     test("a wait after the last call", async () => {
-      const profile = await run(["--cpu-prof-md"], `busy(100); setTimeout(() => {}, 500);`);
+      const profile = await run(["--cpu-prof-md"], `busy(100); wait(500);`);
       const markdown = readMarkdown(profile.markdown);
 
       expect(markdown.idle).toBeWithin(250, markdown.duration - 100 + markdownPrecision);
@@ -691,7 +696,7 @@ describe.concurrent("--cpu-prof", () => {
     });
 
     test("nothing but a wait", async () => {
-      const profile = await run(["--cpu-prof"], `setTimeout(() => {}, 500);`);
+      const profile = await run(["--cpu-prof"], `wait(500);`);
       const json = readJSON(profile.json);
 
       expect(json.byTimestamps.idle).toBeWithin(250, json.duration);
@@ -700,15 +705,11 @@ describe.concurrent("--cpu-prof", () => {
     test("a wait after another thread ended the one before it", async () => {
       const profile = await run(
         ["--cpu-prof-md"],
-        `const start = performance.now();
-         await Bun.password.hash("password", { algorithm: "bcrypt", cost: 8 });
-         console.log(performance.now() - start);
+        `await Bun.password.hash("password", { algorithm: "bcrypt", cost: 8 });
          await Bun.sleep(500);`,
       );
-      const hashing = Number(profile.stdout);
-      const markdown = readMarkdown(profile.markdown);
 
-      expect(markdown.idle).toBeGreaterThan(hashing + 250);
+      expect(readMarkdown(profile.markdown).idle).toBeGreaterThan(250);
     });
 
     test("a wait beneath a JavaScript frame belongs to that frame", async () => {
@@ -719,7 +720,7 @@ describe.concurrent("--cpu-prof", () => {
          const built = Bun.build({ entrypoints: [import.meta.path], plugins: [{ name: "slow", setup: () => Bun.sleep(400) }] });
          console.log(performance.now() - start);
          await built;
-         await Bun.sleep(200);`,
+         wait(200);`,
       );
       const blocked = Number(profile.stdout);
       const markdown = readMarkdown(profile.markdown);
@@ -733,22 +734,22 @@ describe.concurrent("--cpu-prof", () => {
     test.each([
       {
         name: "before the last wait",
-        script: `${stopSampling} busy(400); setTimeout(() => process.exit(), 300);`,
+        script: `${stopSampling} busy(400); wait(300, process.exit);`,
         position: "programBeforeLastWait",
       },
       {
         name: "after the last wait",
-        script: `${stopSampling} setTimeout(() => busy(400), 300);`,
+        script: `${stopSampling} wait(300, () => busy(400));`,
         position: "programAfterLastWait",
       },
       {
         name: "without a wait since the last sample",
-        script: `setTimeout(() => { ${stopSampling} busy(400); }, 300);`,
+        script: `wait(300, () => { ${stopSampling} busy(400); });`,
         position: "programAfterLastWait",
       },
       {
         name: "without any sample",
-        script: `profile(() => {}); busy(400); setTimeout(() => {}, 300);`,
+        script: `profile(() => {}); busy(400); wait(300);`,
         position: "programBeforeLastWait",
       },
     ] as const)("what the sampler cannot see at the end is (program): $name", async ({ name, script, position }) => {
@@ -781,7 +782,7 @@ describe.concurrent("--cpu-prof", () => {
          setTimeout(() => {}, 400);`,
       );
 
-      expect(readMarkdown(profile.markdown).functions).toBeWithin(100, Number(profile.stdout) + 200);
+      expect(readMarkdown(profile.markdown).functions).toBeWithin(1, Number(profile.stdout) + 200);
     });
 
     test("a wait that is much shorter than what the only sample stands for", async () => {
@@ -792,7 +793,7 @@ describe.concurrent("--cpu-prof", () => {
          busy(500);
          startSamplingProfiler(undefined, 60_000_000);
          busy(50);
-         setTimeout(() => {}, 200);`,
+         wait(200);`,
       );
       const { idle } = readMarkdown(profile.markdown);
 

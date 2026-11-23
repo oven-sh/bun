@@ -115,6 +115,31 @@ function blockingPoll(pid: number) {
   }
 }
 
+/**
+ * Whether `blockingPoll` can work on this host. The read needs ptrace access to the child. Yama's `ptrace_scope` or
+ * a security profile can deny it, and a sandbox can lack the file.
+ */
+function canReadSyscallOfChild() {
+  const child = spawn({
+    cmd: [bunExe(), "-e", "setTimeout(() => {}, 2 ** 30)"],
+    env: bunEnv,
+    stdio: ["ignore", "ignore", "ignore"],
+  });
+  const path = `/proc/${child.pid}/syscall`;
+  try {
+    readFileSync(path);
+    return true;
+  } catch (error) {
+    const { code } = error as NodeJS.ErrnoException;
+    const denied = code === "EACCES" || code === "EPERM";
+    // The child is alive, so a missing file is one that this /proc does not have.
+    if (denied || (code === "ENOENT" && existsSync(`/proc/${child.pid}`))) return false;
+    throw new Error(`cannot read ${path}: ${code}`, { cause: error });
+  } finally {
+    child.kill("SIGKILL");
+  }
+}
+
 /** Start of a script. A server that does not keep the loop alive answers with how often that loop has turned. */
 const turns = `
   const turns = Bun.serve({
@@ -362,7 +387,7 @@ const leftByListener = [
 
 // The sleep ends by itself after a second, so these look at the main thread from outside: /proc names the system
 // call that blocks it. Each script writes `queued` once its work waits, and the work writes `ran`.
-test.concurrent.skipIf(!isLinux).each([
+test.concurrent.skipIf(!isLinux || !canReadSyscallOfChild()).each([
   [
     // The loop runs an immediate right before it polls.
     "after a failed run while the reload of a save waits",

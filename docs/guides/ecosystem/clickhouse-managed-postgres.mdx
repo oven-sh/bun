@@ -8,16 +8,15 @@ mode: center
 
 ## Get your connection details
 
-In the ClickHouse Cloud console, open the **Connect** menu for your instance and select **Directly**. Copy the connection URL and download the instance's CA certificate bundle from **Settings**.
+In the ClickHouse Cloud console, open the **Connect** view for your instance and leave the **via PgBouncer** toggle off to connect directly to PostgreSQL. Copy the connection URL, then download the instance's CA certificate bundle from the **Settings** tab.
 
-Create a project directory and add your connection details to a `.env` file:
+Create a project directory and add the connection URL to a `.env` file. Append `sslmode=verify-full` and the absolute path to the CA bundle so that Bun verifies the server's certificate and hostname:
 
 ```ini .env icon="settings"
-DATABASE_URL="postgresql://USER:PASSWORD@HOST:5432/postgres"
-PGSSLROOTCERT="/absolute/path/to/ca-certificate.pem"
+DATABASE_URL="postgresql://USER:PASSWORD@HOST:5432/postgres?sslmode=verify-full&sslrootcert=/absolute/path/to/ca-certificate.pem"
 ```
 
-For this example, use the hostname from the **Connect** menu and remove the query string (the part starting with `?`) from the URL, including parameters such as `sslmode` and `channel_binding`. The client below configures TLS and verifies the server's certificate using the downloaded CA bundle. Keep `.env` out of version control. See the [connection documentation](https://clickhouse.com/docs/products/managed-postgres/connection) for details.
+Bun's SQL client does not use TLS unless the URL or the `tls` option asks for it, so keep `sslmode` in the URL. Keep `.env` out of version control. See the [connection documentation](https://clickhouse.com/docs/products/managed-postgres/connection) for details.
 
 ## Query the database
 
@@ -27,19 +26,12 @@ Create `index.ts` with a SQL client and a query that returns the database name:
 import { SQL } from "bun";
 
 const databaseUrl = Bun.env.DATABASE_URL;
-const caPath = Bun.env.PGSSLROOTCERT;
 
-if (!databaseUrl || !caPath) {
-  throw new Error("Set DATABASE_URL and PGSSLROOTCERT before running this script.");
+if (!databaseUrl) {
+  throw new Error("Set DATABASE_URL before running this script.");
 }
 
-const sql = new SQL({
-  url: databaseUrl,
-  tls: {
-    ca: await Bun.file(caPath).text(),
-    rejectUnauthorized: true,
-  },
-});
+const sql = new SQL(databaseUrl);
 
 try {
   const rows = await sql`SELECT current_database() AS database`;

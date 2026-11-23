@@ -153,7 +153,7 @@ pub(crate) struct ExecutionSequence {
     pub(crate) result: Cell<Result>,
     executing: Cell<bool>,
     started_at: Cell<Timespec>,
-    /// The auto-killer's mark when this attempt started: a timeout kills only the processes spawned since.
+    /// The auto-killer's mark when the active entry (a hook or the test) started: its timeout kills only the processes spawned since.
     auto_killer_mark: Cell<u64>,
     /// Number of expect() calls observed in this sequence.
     pub(crate) expect_call_count: Cell<u32>,
@@ -472,8 +472,8 @@ impl Execution {
     /// The kill-only half of [`BunTest::handle_timeout`]: reaps a timed-out test's spawned processes without touching the runner's queue, so it may run from inside `spawnSync`'s isolated loop.
     pub(crate) fn kill_dangling_processes_on_timeout(buntest: &BunTest, global_this: &JSGlobalObject) {
         // if the concurrent group has one sequence and the sequence has an active entry that has timed out,
-        //   kill the processes spawned since that sequence started (its beforeEach hooks, the test, its afterEach hooks)
-        //   and keep the ones spawned before it, such as a server that a beforeAll hook started for the whole file.
+        //   kill the processes spawned since that entry started, and keep the ones spawned before it,
+        //   such as a server that a beforeAll or beforeEach hook started.
         // when using test.concurrent(), we can't do this because it could kill multiple tests at once.
         if let Some(current_group) = buntest.execution.active_group() {
             let sequences = current_group.sequences(&buntest.execution);
@@ -706,7 +706,6 @@ impl Execution {
     }
 
     fn on_sequence_started(buntest: &BunTest, global_this: &JSGlobalObject, sequence: &ExecutionSequence) {
-        sequence.auto_killer_mark.set(global_this.bun_vm().auto_killer.mark());
         let test = sequence.test(buntest);
         if test.is_some_and(|entry| !entry.callback.is_some()) {
             return;
@@ -1141,6 +1140,7 @@ fn step_sequence_one(
     if Some(next_id) == sequence.first_entry && sequence.started_at.get().eql(&Timespec::EPOCH) {
         Execution::on_sequence_started(buntest, global_this, sequence);
     }
+    sequence.auto_killer_mark.set(global_this.bun_vm().auto_killer.mark());
     Execution::on_entry_started(next_entry, next_item);
     if next_item.added_in_phase == AddedInPhase::Preload {
         bun_jsc::compiled_program::will_run_preloads(global_this);

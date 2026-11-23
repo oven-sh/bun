@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, expect, test } from "bun:test";
+import { afterAll, beforeAll, beforeEach, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
 // Echoes stdin to stdout until it is killed.
@@ -11,15 +11,31 @@ const echo = () =>
     env: bunEnv,
   });
 
+async function expectEcho(proc: ReturnType<typeof echo>) {
+  const reader = proc.stdout.getReader();
+  proc.stdin.write("ping\n");
+  proc.stdin.flush();
+  const { value } = await reader.read();
+  expect(new TextDecoder().decode(value)).toBe("ping\n");
+  reader.releaseLock();
+}
+
 let server: ReturnType<typeof echo>;
+let perTest: ReturnType<typeof echo> | undefined;
 let own: ReturnType<typeof echo>;
 
 beforeAll(() => {
   server = echo();
 });
 
+// Spawns once, in the first test's beforeEach.
+beforeEach(() => {
+  perTest ??= echo();
+});
+
 afterAll(() => {
   server.kill();
+  perTest?.kill();
 });
 
 test("test timeout kills the processes this test spawned", async () => {
@@ -27,14 +43,10 @@ test("test timeout kills the processes this test spawned", async () => {
   await new Promise(() => {});
 }, 10);
 
-test("process spawned in beforeAll survives the timeout", async () => {
+test("process spawned in beforeAll and beforeEach survives the timeout", async () => {
   await own.exited;
-  expect(own.killed || own.signalCode !== null).toBe(true);
+  expect(own.signalCode).not.toBeNull();
 
-  const reader = server.stdout.getReader();
-  server.stdin.write("ping\n");
-  server.stdin.flush();
-  const { value } = await reader.read();
-  expect(new TextDecoder().decode(value)).toBe("ping\n");
-  reader.releaseLock();
+  await expectEcho(server);
+  await expectEcho(perTest!);
 });

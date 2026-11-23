@@ -5403,6 +5403,36 @@ describe.concurrent("a callback with its own toString()", () => {
     });
   });
 
+  test("a lookup of toString that throws when the stack is full", async () => {
+    const { log, results, exitCode } = await runTests({
+      "a.test.js": `
+        import { test as base } from "vitest";
+        import vm from "node:vm";
+        const test = base.extend({ a: "A" });
+        // The lookup goes through the global of a node:vm context, which throws a RangeError when the stack is full.
+        const callback = Object.setPrototypeOf(({ a }) => {}, vm.runInContext("this", vm.createContext({})));
+        let left = 50;
+        function recurse() {
+          try {
+            recurse();
+          } catch (error) {
+            if (left-- > 0) test.skip("out of stack", callback);
+            throw error;
+          }
+        }
+        try {
+          recurse();
+        } catch {}
+        test("after", ({ a }) => console.log("after", a));
+      `,
+    });
+    expect({ log, results: results.filter(result => !result.startsWith("(skip)")), exitCode }).toEqual({
+      log: ["after A"],
+      results: ["(pass) after"],
+      exitCode: 0,
+    });
+  });
+
   // Vitest calls toString() when the test runs, where test() throws. Bun calls it when the test is registered.
   test(`one that registers tests, hooks and fixtures, for a test of "bun:test"`, async () => {
     const { log, results, exitCode } = await runTests({

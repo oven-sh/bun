@@ -5,7 +5,7 @@ use bun_ast::expr::Data;
 use bun_ast::stmt::Data as StmtData;
 use bun_ast::{G, Stmt};
 use bun_core::strings;
-use bun_jsc::{JSGlobalObject, JSValue, JsResult};
+use bun_jsc::{JSGlobalObject, JSValue, JsError, JsResult};
 
 use super::pretty_format;
 
@@ -46,7 +46,7 @@ impl ContextParameter {
         }
     }
 
-    /// Runs no JavaScript. `None` for a function whose `toString` is not the built-in: `of_to_string` calls that.
+    /// Runs no JavaScript. `None` for a function whose `toString` is not the built-in, or whose lookup threw: `of_to_string` is next.
     #[optimize(size)]
     pub(crate) fn of_engine_text(function: JSValue, index: usize) -> Option<ContextParameter> {
         let mut is_arrow_function = false;
@@ -81,6 +81,10 @@ impl ContextParameter {
     /// Vitest reads the parameters from what `toString()` returns, which a wrapper sets to the text of the function it wraps.
     #[cold]
     pub(crate) fn of_to_string(global: &JSGlobalObject, function: JSValue, index: usize) -> JsResult<ContextParameter> {
+        // Thrown by the lookup in `of_engine_text`.
+        if global.has_exception() {
+            return Err(JsError::Thrown);
+        }
         let function = function.without_async_context();
         let to_string = pretty_format::member(global, function, "toString")?;
         if !to_string.is_callable() {

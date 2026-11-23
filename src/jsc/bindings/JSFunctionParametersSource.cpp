@@ -13,7 +13,9 @@ static bool hasBuiltinToString(JSC::VM& vm, JSC::JSObject* callee)
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSC::PropertySlot slot(callee, JSC::PropertySlot::InternalMethodType::VMInquiry, &vm);
     bool found = callee->getNonIndexPropertySlot(callee->globalObject(), vm.propertyNames->toString, slot);
-    scope.assertNoExceptionExceptTermination();
+    // The global of a node:vm context on the prototype chain throws when the stack is full. It stays pending for the caller.
+    if (scope.exception()) [[unlikely]]
+        return false;
     // A getter or a Proxy gives no function here. The caller asks those, which can run JavaScript.
     auto* function = found ? dynamicDowncast<JSC::JSFunction>(slot.getPureResult()) : nullptr;
     return function && function->isHostFunction() && function->nativeFunction() == JSC::toTagged(JSC::functionProtoFuncToString);
@@ -21,6 +23,7 @@ static bool hasBuiltinToString(JSC::VM& vm, JSC::JSObject* callee)
 
 // JSC's source for a function starts at its parameter list, not at `function` or its name.
 // A callee whose `toString` is not the built-in sets `hasCustomToString` instead: its text is what that returns.
+// So does one whose lookup of `toString` threw, with the exception pending.
 extern "C" BunString Bun__JSFunction__sourceFromParameters(JSC::EncodedJSValue encodedValue, bool* isArrowFunction, bool* hasCustomToString)
 {
     JSC::JSValue value = JSC::JSValue::decode(encodedValue);

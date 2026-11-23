@@ -2,7 +2,7 @@ use core::ops::Range;
 use std::borrow::Cow;
 
 use bun_core::String;
-use bun_core::strings::CodeUnits;
+use bun_core::strings::{CodeUnits, copy_u16_into_u8};
 use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsScope};
 use bun_jsc::{
     ErrorCode, JSArray, JSArrayIterator, JSGlobalObject, JSMap, JSValue, JsResult,
@@ -18,10 +18,20 @@ use crate::generated_bindgen::diff_object::{
 
 trait JsUnit: Unit {
     fn of(string: &String) -> Cow<'_, [Self]>;
+    /// `operation`, which is ASCII, and then `text`. If there is no memory, a string that throws when it is converted.
+    fn line(operation: u8, text: &[Self]) -> String;
 }
 impl JsUnit for u8 {
     fn of(string: &String) -> Cow<'_, [u8]> {
         Cow::Borrowed(string.latin1())
+    }
+    fn line(operation: u8, text: &[u8]) -> String {
+        let (line, units) = String::create_uninitialized_latin1(1 + text.len());
+        if let [first, rest @ ..] = units {
+            *first = operation;
+            rest.copy_from_slice(text);
+        }
+        line
     }
 }
 impl JsUnit for u16 {
@@ -31,6 +41,23 @@ impl JsUnit for u16 {
         } else {
             Cow::Owned(string.latin1().iter().map(|&unit| unit.into()).collect())
         }
+    }
+    fn line(operation: u8, text: &[u16]) -> String {
+        // ASCII is stored as Latin-1, as in `String::clone_utf16`. A loop without an early exit is vectorized.
+        if text.iter().fold(0, |all, &unit| all | unit) < 0x80 {
+            let (line, units) = String::create_uninitialized_latin1(1 + text.len());
+            if let [first, rest @ ..] = units {
+                *first = operation;
+                copy_u16_into_u8(rest, text);
+            }
+            return line;
+        }
+        let (line, units) = String::create_uninitialized_utf16(1 + text.len());
+        if let [first, rest @ ..] = units {
+            *first = operation.into();
+            rest.copy_from_slice(text);
+        }
+        line
     }
 }
 
@@ -270,12 +297,10 @@ fn hunks_of<T: JsUnit>(
 ) -> Option<Vec<Hunk>> {
     let (a, b) = (T::of(old), T::of(new));
     let edits = diff_text(Split::Lines, &a, &b, max_edits)?;
-    let mut scratch = Vec::new();
     let hunks = patch::hunks(&a, &b, &edits, context).map(|hunk| {
-        hunk_with(hunk, |line| {
-            scratch.clear();
-            line.write(&mut scratch);
-            clone_units(&scratch)
+        hunk_with(hunk, |line| match line {
+            patch::Line::Text(operation, text) => T::line(operation, text),
+            patch::Line::NoNewline => String::clone_latin1(patch::NO_NEWLINE),
         })
     });
     Some(hunks.collect())

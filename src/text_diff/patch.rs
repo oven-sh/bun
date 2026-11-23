@@ -28,6 +28,8 @@ fn extend_ascii<T: Unit>(out: &mut Vec<T>, ascii: &[u8]) {
 
 // ───────────────────────────── create ─────────────────────────────
 
+pub const NO_NEWLINE: &[u8] = b"\\ No newline at end of file";
+
 pub enum Line<'a, T> {
     /// ` `, `-` or `+`, and the line without its `\n`.
     Text(u8, &'a [T]),
@@ -35,13 +37,13 @@ pub enum Line<'a, T> {
 }
 
 impl<T: Unit> Line<'_, T> {
-    pub fn write(&self, out: &mut Vec<T>) {
+    fn write(&self, out: &mut Vec<T>) {
         match *self {
             Line::Text(operation, text) => {
                 out.push(T::from_u8(operation));
                 out.extend_from_slice(text);
             }
-            Line::NoNewline => extend_ascii(out, b"\\ No newline at end of file"),
+            Line::NoNewline => extend_ascii(out, NO_NEWLINE),
         }
     }
 }

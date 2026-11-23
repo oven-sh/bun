@@ -602,6 +602,13 @@ describe("hunks", () => {
 
   test("CR, empty lines and UTF-16", () => {
     expect(diff.hunks("\né\r\n", "\n世\r\n")[0].lines).toEqual([" ", "-é\r", "+世\r"]);
+    const long = Buffer.alloc(70, "a").toString();
+    expect(diff.hunks(`${long}\n${long}ÿ\n\x80\n`, `${long}\n${long}ÿ\n${long}Ā\n`)[0].lines).toEqual([
+      ` ${long}`,
+      ` ${long}ÿ`,
+      "-\x80",
+      `+${long}Ā`,
+    ]);
   });
 
   test.each([-1, 0.5, NaN])("context: %p is refused", context => {

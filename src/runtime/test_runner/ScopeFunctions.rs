@@ -340,7 +340,7 @@ pub(crate) fn call_as_function<'a>(
         _ => CallbackMode::Require,
     };
 
-    let args = parse_arguments(
+    let mut args = parse_arguments(
         global,
         first,
         second,
@@ -359,13 +359,19 @@ pub(crate) fn call_as_function<'a>(
         _ => 0,
     };
     let parameter: Option<SharedContextParameter> = match args.callback {
-        Some(callback) if !this.fixtures.is_empty() && this.mode == Mode::Test => Some(Rc::new(core::cell::OnceCell::from(if this.each.is_empty() {
-            ContextParameter::of(callback, 0)
-        } else if this.rows == Rows::For {
-            ContextParameter::of(callback, 1)
-        } else {
-            ContextParameter::Absent
-        }))),
+        Some(callback) if !this.fixtures.is_empty() && this.mode == Mode::Test => {
+            let read = if this.each.is_empty() {
+                test_context::parameter_at_registration(global, callback, 0)?
+            } else if this.rows == Rows::For {
+                test_context::parameter_at_registration(global, callback, 1)?
+            } else {
+                Ok(ContextParameter::Absent)
+            };
+            Some(Rc::new(core::cell::OnceCell::from(read.unwrap_or_else(|rejecting| {
+                args.callback = Some(rejecting);
+                ContextParameter::Absent
+            }))))
+        }
         _ => None,
     };
 

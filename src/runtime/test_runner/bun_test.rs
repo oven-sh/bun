@@ -1211,6 +1211,34 @@ impl BunTest {
         }
     }
 
+    /// Every call into the user's code for the entry of `data` goes through here: the callback, and a `toString()` read for it.
+    /// On `Err`, call `report_thrown`.
+    pub(crate) fn enter_callback<R>(
+        this: &BunTestPtr,
+        global_this: &JSGlobalObject,
+        data: &RefDataValue,
+        call: impl FnOnce() -> JsResult<R>,
+    ) -> JsResult<R> {
+        // An exception left pending by earlier code would make this call fail, so report it first.
+        if global_this.has_exception() {
+            global_this.clear_termination_exception();
+            this.on_uncaught_exception(global_this, global_this.try_take_exception(), false, &RefDataValue::Start);
+        }
+        let vm = global_this.bun_vm();
+        let on_stack = OnStack::enter(&this.execution.on_stack, data);
+        vm.event_loop().run_callback_with_result_and_forcefully_drain_microtasks(
+            vm.test_isolation_state.file_context.get(),
+            global_this,
+            call,
+            move || drop(on_stack),
+        )
+    }
+
+    pub(crate) fn report_thrown(this: &BunTestPtr, global_this: &JSGlobalObject, data: &RefDataValue) {
+        global_this.clear_termination_exception();
+        this.on_uncaught_exception(global_this, global_this.try_take_exception(), false, data);
+    }
+
     /// if sync, the result is returned. if async, None is returned.
     #[optimize(size)]
     pub(crate) fn run_test_callback(
@@ -1242,31 +1270,16 @@ impl BunTest {
             };
         }
 
-        // An exception left pending by earlier code would make this call fail, so report it first.
-        if global_this.has_exception() {
-            global_this.clear_termination_exception();
-            this.on_uncaught_exception(global_this, global_this.try_take_exception(), false, &RefDataValue::Start);
-        }
-
         Self::update_min_timeout(this, timeout);
         let args_slice: &[JSValue] = if !done_arg.is_empty() { core::slice::from_ref(&done_arg) } else { cfg_args };
-        let on_stack = OnStack::enter(&this.execution.on_stack, &cfg_data);
-        let result: JSValue = match vm
-            .event_loop()
-            .run_callback_with_result_and_forcefully_drain_microtasks(
-                vm.test_isolation_state.file_context.get(),
-                cfg_callback,
-                global_this,
-                JSValue::UNDEFINED,
-                args_slice,
-                move || drop(on_stack),
-            )
-            .and_then(|returned| Self::promise_of_thenable(global_this, returned))
+        let result: JSValue = match Self::enter_callback(this, global_this, &cfg_data, || {
+            cfg_callback.call(global_this, JSValue::UNDEFINED, args_slice)
+        })
+        .and_then(|returned| Self::promise_of_thenable(global_this, returned))
         {
             Ok(v) => v,
             Err(_) => {
-                global_this.clear_termination_exception();
-                this.on_uncaught_exception(global_this, global_this.try_take_exception(), false, &cfg_data);
+                Self::report_thrown(this, global_this, &cfg_data);
                 bun_core::scoped_log!(bun_test_group, "callTestCallback -> error");
                 JSValue::ZERO
             }

@@ -7,7 +7,7 @@ use bun_core::String as BunString;
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 use bun_jsc::{
     self as jsc, AbortSignal, CommonAbortReason, JSFunction, JSGlobalObject, JSHostFn,
-    JSPromise, JSValue, JsClass as _, JsResult, Strong, StringJsc as _, WrapperGuard, bun_string_jsc,
+    JSPromise, JSValue, JsClass as _, JsError, JsResult, Strong, StringJsc as _, WrapperGuard, bun_string_jsc,
 };
 use bun_ptr::CellExt as _;
 use bun_resolver::fs::FileSystem;
@@ -581,7 +581,11 @@ pub(crate) fn suite_hook(
     } else {
         ("second", format!("The suite is the third argument: {name}((runSuite, {{}}, suite) => {{}})"))
     };
-    let error = match ContextParameter::of(callback, context_index) {
+    let parameter = match parameter_at_registration(global, callback, context_index)? {
+        Ok(parameter) => parameter,
+        Err(rejecting) => return Ok(rejecting),
+    };
+    let error = match parameter {
         ContextParameter::Absent => return Ok(callback),
         ContextParameter::TextLeftOut if !has_fixtures => return Ok(callback),
         ContextParameter::TextLeftOut => global.create_error_instance(format_args!("{name}(): {TEXT_LEFT_OUT}")),
@@ -605,6 +609,23 @@ pub(crate) fn suite_hook(
         )),
     };
     rejecting(global, error)
+}
+
+/// Vitest calls a callback's `toString()` when the callback is about to run, so one that throws fails the callback.
+/// `Err` is the callback to register in its place. It rejects with what `toString()` threw.
+pub(crate) fn parameter_at_registration(
+    global: &JSGlobalObject,
+    callback: JSValue,
+    index: usize,
+) -> JsResult<Result<ContextParameter, JSValue>> {
+    match ContextParameter::of(global, callback, index) {
+        Ok(parameter) => Ok(Ok(parameter)),
+        Err(JsError::Thrown) if !global.has_pending_termination_exception() => {
+            let exception = global.take_exception(JsError::Thrown);
+            rejecting(global, exception.to_error().unwrap_or(exception)).map(Err)
+        }
+        Err(error) => Err(error),
+    }
 }
 
 pub(crate) fn rejecting(global: &JSGlobalObject, error: JSValue) -> JsResult<JSValue> {

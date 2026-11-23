@@ -4,7 +4,9 @@ use bun_ast::b::B;
 use bun_ast::expr::Data;
 use bun_ast::stmt::Data as StmtData;
 use bun_ast::{G, Stmt};
-use bun_jsc::JSValue;
+use bun_jsc::{JSGlobalObject, JSValue, JsResult};
+
+use super::pretty_format;
 
 /// Parsed at most once. The rows of an `.each()` / `.for()` table share one.
 pub(crate) type SharedContextParameter = std::rc::Rc<core::cell::OnceCell<ContextParameter>>;
@@ -27,6 +29,7 @@ unsafe extern "C" {
     safe fn Bun__JSFunction__sourceFromParameters(
         function: JSValue,
         is_arrow_function: &mut bool,
+        has_custom_to_string: &mut bool,
     ) -> bun_core::String;
     safe fn Bun__JSFunction__compiledSource(
         function: JSValue,
@@ -35,12 +38,24 @@ unsafe extern "C" {
 }
 
 impl ContextParameter {
+    pub(crate) fn of(global: &JSGlobalObject, function: JSValue, index: usize) -> JsResult<ContextParameter> {
+        match Self::of_engine_text(function, index) {
+            Some(parameter) => Ok(parameter),
+            None => Self::of_to_string(global, function, index),
+        }
+    }
+
+    /// Runs no JavaScript. `None` for a function whose `toString` is not the built-in: `of_to_string` calls that.
     #[optimize(size)]
-    pub(crate) fn of(function: JSValue, index: usize) -> ContextParameter {
+    pub(crate) fn of_engine_text(function: JSValue, index: usize) -> Option<ContextParameter> {
         let mut is_arrow_function = false;
-        let from_parameters = Bun__JSFunction__sourceFromParameters(function, &mut is_arrow_function);
+        let mut has_custom_to_string = false;
+        let from_parameters = Bun__JSFunction__sourceFromParameters(function, &mut is_arrow_function, &mut has_custom_to_string);
+        if has_custom_to_string {
+            return None;
+        }
         if from_parameters.is_dead() {
-            return Self::of_compiled(function, index);
+            return Some(Self::of_compiled(function, index));
         }
         let from_parameters = from_parameters.to_utf8();
         // An async generator or async arrow accepts any body, except that `super.x` and `this.#x` need a class.
@@ -50,13 +65,45 @@ impl ContextParameter {
         } else {
             [(b"(async function*", b")"), (b"(class{async*m", b"})")]
         };
-        around
-            .iter()
-            .find_map(|(before, after)| {
-                let text = [before, from_parameters.slice(), after].concat();
-                Self::parse(&text, bun_ast::Loader::Js, is_arrow_function, index)
-            })
-            .unwrap_or(ContextParameter::Other(None))
+        Some(
+            around
+                .iter()
+                .find_map(|(before, after)| {
+                    let text = [before, from_parameters.slice(), after].concat();
+                    Self::parse(&text, bun_ast::Loader::Js, is_arrow_function, index)
+                })
+                .unwrap_or(ContextParameter::Other(None)),
+        )
+    }
+
+    /// Vitest reads the parameters from what `toString()` returns.
+    /// A wrapper around a callback overrides it to return the text of that callback.
+    #[cold]
+    pub(crate) fn of_to_string(global: &JSGlobalObject, function: JSValue, index: usize) -> JsResult<ContextParameter> {
+        let function = function.without_async_context();
+        let to_string = pretty_format::member(global, function, "toString")?;
+        if !to_string.is_callable() {
+            return Err(global.throw_type_error(format_args!("callback.toString is not a function")));
+        }
+        let text = to_string.call(global, function, &[])?;
+        if !text.is_string() {
+            return Ok(ContextParameter::Absent);
+        }
+        let text = text.to_utf8(global)?;
+        let text = text.slice();
+        if text.trim_ascii_end().strip_suffix(b"}").is_some_and(|body| body.trim_ascii_end().ends_with(b"[native code]")) {
+            let mut is_text_left_out = false;
+            let _ = Bun__JSFunction__compiledSource(function, &mut is_text_left_out);
+            return Ok(match is_text_left_out {
+                true => ContextParameter::TextLeftOut,
+                false => ContextParameter::Absent,
+            });
+        }
+        // Vitest finds no parameters in a text without a parenthesis.
+        if !text.contains(&b'(') {
+            return Ok(ContextParameter::Absent);
+        }
+        Ok(Self::of_whole(text, index))
     }
 
     /// The whole function as written, without its types, if `bun test --aot` compiled it.
@@ -70,7 +117,11 @@ impl ContextParameter {
                 false => ContextParameter::Absent,
             };
         }
-        let whole = whole.to_utf8();
+        Self::of_whole(whole.to_utf8().slice(), index)
+    }
+
+    /// `whole` is a function as `toString()` shows it.
+    fn of_whole(whole: &[u8], index: usize) -> ContextParameter {
         // A method parses in an object or a class and nowhere else. `this.#x` needs a class.
         let around: [(&[u8], &[u8], bool); 4] = [
             (b"(", b")", false),
@@ -81,7 +132,7 @@ impl ContextParameter {
         around
             .iter()
             .find_map(|&(before, after, is_arrow_in_method)| {
-                let text = [before, whole.slice(), after].concat();
+                let text = [before, whole, after].concat();
                 Self::parse(&text, bun_ast::Loader::Jsx, is_arrow_in_method, index)
             })
             .unwrap_or(ContextParameter::Other(None))

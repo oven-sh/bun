@@ -1186,8 +1186,27 @@ fn step_sequence_one(
         if let Some(fixtures) = fixtures
             && let Some(parameter) = &next_item.parameter
         {
-            // An around hook's first parameter is `runTest` or `runSuite`.
-            let parameter = parameter.get_or_init(|| ContextParameter::of(callback, usize::from(next_item.around.is_some())));
+            let parameter = match parameter.get() {
+                Some(parameter) => parameter,
+                None => {
+                    // An around hook's first parameter is `runTest` or `runSuite`.
+                    let index = usize::from(next_item.around.is_some());
+                    let read = match ContextParameter::of_engine_text(callback, index) {
+                        Some(read) => read,
+                        None => match BunTest::enter_callback(buntest, global_this, &callback_data, || {
+                            ContextParameter::of_to_string(global_this, callback, index)
+                        }) {
+                            Ok(read) => read,
+                            Err(_) => {
+                                BunTest::report_thrown(buntest, global_this, &callback_data);
+                                Execution::advance_sequence(buntest, sequence, group);
+                                return Ok(None); // run again
+                            }
+                        },
+                    };
+                    parameter.get_or_init(|| read)
+                }
+            };
             let into = context.or_else(|| args.first().copied()).unwrap_or(JSValue::UNDEFINED);
             match TestFixtures::next(fixtures, global_this, into, buntest.scopes_from(fixtures_scope), parameter, next_item.timeout) {
                 Ok(NextFixture::Ready) => {}

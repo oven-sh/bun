@@ -216,6 +216,7 @@ bun upgrade --canary
   - [Node-API](https://bun.com/docs/runtime/node-api)
   - [Glob (`Bun.Glob`)](https://bun.com/docs/runtime/glob)
   - [Semver (`Bun.semver`)](https://bun.com/docs/runtime/semver)
+  - [Diff (`Bun.diff`)](https://bun.com/docs/runtime/diff)
   - [DNS](https://bun.com/docs/runtime/networking/dns)
   - [fetch API extensions](https://bun.com/docs/runtime/networking/fetch)
 

@@ -1,4 +1,5 @@
 import { describe, expect } from "bun:test";
+import { isWindows } from "harness";
 import path from "node:path";
 import { type BundlerTestBundleAPI, itBundled } from "./expectBundled";
 
@@ -813,6 +814,20 @@ body {
     onAfterBundle(api) {
       const src = api.readFile("out/index.html").match(/src="(.*\.js)"/);
       expect(api.readFile("out/" + src![1])).toContain("at the root");
+    },
+  });
+
+  // `\\?\` starts a path only on Windows.
+  (isWindows ? itBundled : itBundled.skip)("html/path-that-starts-with-two-backslashes", {
+    outdir: "out/",
+    files: {
+      "/pages/index.html": `<script src="\\\\?\\{{root}}\\app.js"></script>`,
+      "/app.js": "console.log('found')",
+    },
+    entryPoints: ["/pages/index.html"],
+    onAfterBundle(api) {
+      const src = api.readFile("out/index.html").match(/src="(.*\.js)"/);
+      expect(api.readFile("out/" + src![1])).toContain("found");
     },
   });
 

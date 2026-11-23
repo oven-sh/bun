@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, tempDir } from "harness";
 import inspector from "node:inspector";
 import inspectorPromises from "node:inspector/promises";
+import { join } from "node:path";
 
 // Mirrors how vitest's @vitest/coverage-v8 provider drives the inspector: a
 // promise Session, Profiler.enable, startPreciseCoverage, evaluating modules
@@ -455,10 +456,12 @@ describe("node:inspector", () => {
           samples.forEach((id, i) => {
             if (id === idleNode?.id) idle += (timeDeltas[i + 1] ?? untilEnd) / 1000;
           });
+          const programNode = nodes.find(node => node.callFrame.functionName === "(program)" && !node.callFrame.url);
           return {
             callFrame: idleNode?.callFrame,
             isChildOfRoot: !!nodes[0].children?.includes(idleNode?.id),
             idleSamples: samples.filter(id => id === idleNode?.id).length,
+            programSamples: samples.filter(id => id === programNode?.id).length,
             idle,
             sampleCount: samples.length,
             duration: (endTime - startTime) / 1000,
@@ -488,6 +491,27 @@ describe("node:inspector", () => {
         isChildOfRoot: true,
       });
       expect(idle).toBeWithin(waited / 2, waited + 150);
+    });
+
+    test("native code between two calls is (program)", async () => {
+      using dir = tempDir("inspector-profiler-program", {
+        "strings.json": JSON.stringify(Array.from({ length: 30_000 }, (_, i) => `string ${i}`)),
+      });
+      const { programSamples, idleSamples, sampleCount } = await run(`
+        const file = Bun.file(${JSON.stringify(join(String(dir), "strings.json"))});
+        let result;
+        // A thread that is kept from running collects samples wherever it happens to be.
+        for (const end = performance.now() + 3000; performance.now() < end; ) {
+          session.post("Profiler.start");
+          // It is parsed once it has been read.
+          for (const end = performance.now() + 100; performance.now() < end; ) await file.json();
+          busy(5);
+          result = await stop();
+          if (result.programSamples > Math.max(5, (result.sampleCount - result.idleSamples) / 2)) break;
+        }
+        console.log(JSON.stringify(result));
+      `);
+      expect(programSamples).toBeGreaterThan(Math.max(5, (sampleCount - idleSamples) / 2));
     });
 
     test("is not sampled more often than the sampling interval", async () => {

@@ -735,7 +735,16 @@ impl Request {
 
     /// The authority of an absolute-form target replaces Host (RFC 9112 3.2.2). Its scheme is
     /// dropped: the listener decides that.
+    #[inline(always)]
     fn split_request_target(target: &[u8]) -> (Option<&[u8]>, Cow<'_, [u8]>) {
+        if target.first() == Some(&b'/') {
+            return (None, Cow::Borrowed(target));
+        }
+        Self::split_absolute_form(target)
+    }
+
+    #[cold]
+    fn split_absolute_form(target: &[u8]) -> (Option<&[u8]>, Cow<'_, [u8]>) {
         let scheme_len = if strings::has_prefix_case_insensitive(target, b"https://") {
             b"https://".len()
         } else if strings::has_prefix_case_insensitive(target, b"http://") {

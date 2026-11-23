@@ -606,6 +606,7 @@ describe("applyPatch", () => {
     ["no match", "x\n", [replace(1)], undefined],
     ["a kept line does not match", "x\na\n", [{ oldStart: 1, lines: [" y", "-a"] }], undefined],
     ["longer than the source", "a", [{ oldStart: 1, lines: ["-a", "-a"] }], undefined],
+    ["a line with a newline in it", "a\nb\n", [{ oldStart: 1, lines: ["-a\nb"] }], undefined],
     ["an insertion without context", "a\nc\n", [{ oldStart: 2, lines: ["+b"] }], "a\nb\nc\n"],
     ["an insertion at the end", "a\n", [{ oldStart: 2, lines: ["+b"] }], "a\nb\n"],
     ["an empty last line", "a\n\n", [{ oldStart: 2, lines: ["-", "+b"] }], "a\nb\n"],
@@ -616,6 +617,7 @@ describe("applyPatch", () => {
     ["a kept line without its space", "\na\n", [{ oldStart: 1, lines: ["", "-a", "+b"] }], "\nb\n"],
     ["adds the last newline", "a", [{ oldStart: 1, lines: ["-a", marker, "+a"] }], "a\n"],
     ["adds a last newline that is there", "a\n", [{ oldStart: 1, lines: ["-a", marker, "+a"] }], undefined],
+    ["adds the last newline, no match", "x\ny", [{ oldStart: 1, lines: ["-a", marker, "+a"] }], undefined],
     ["removes the last newline", "a\n", [{ oldStart: 1, lines: ["-a", "+a", marker] }], "a"],
     ["removes a last newline that is not there", "a", [{ oldStart: 1, lines: ["-a", "+a", marker] }], undefined],
     ["no last newline on either side", "a", [{ oldStart: 1, lines: ["-a", marker, "+b", marker] }], "b"],
@@ -624,6 +626,7 @@ describe("applyPatch", () => {
     ["LF patch, CRLF source, no last newline", "c\r\na", [{ oldStart: 1, lines: [" c", "-a", marker, "+b", marker] }], "c\r\nb"],
     ["CRLF patch, LF source", "a\nc\n", [{ oldStart: 1, lines: ["-a\r", "+b\r"] }], "b\nc\n"],
     ["LF patch, mixed source", "a\r\nc\n", [replace(1)], undefined],
+    ["CRLF patch, mixed source", "a\nc\r\n", [{ oldStart: 2, lines: ["-c\r", "+b\r"] }], "a\nb\r\n"],
     ["mixed patch, CRLF source", "a\r\n", [{ oldStart: 1, lines: ["-a\r", "+b"] }], "b\n"],
     ["mixed patch, LF source", "a\n", [{ oldStart: 1, lines: ["-a", "+b\r"] }], "b\r\n"],
     ["CRLF, not at oldStart", "x\r\na\r\r\n", [{ oldStart: 1, lines: ["-a\r\r", "+b\r"] }], "x\r\nb\r\n"],
@@ -724,6 +727,19 @@ describe("applyPatch", () => {
     const lines = [...Array(100_000).fill(" a"), "-a\r"];
     expect(diff.applyPatch(kept, [{ oldStart: 1, lines }])).toBeUndefined();
     expect(diff.applyPatch(kept + "a\r\n", [{ oldStart: 1, lines }]) === kept).toBeTrue();
+  });
+
+  test.each(["é", "世"])("hunks that are far apart, %s", unit => {
+    const lines = Array.from({ length: 3000 }, (_, i) => (i % 700 ? unit + i : Buffer.alloc(2000, "x").toString()));
+    const hunks = [0, 1, 699, 701, 1500, 2999].map(i => ({ oldStart: i + 1, lines: ["-" + lines[i], "+new"] }));
+    const patched = lines.map((line, i) => (hunks.some(hunk => hunk.oldStart === i + 1) ? "new" : line));
+    for (const [before, end] of [
+      ["", ""],
+      ["", "\n"],
+      ["a\nb\n", "\n"],
+    ]) {
+      expect(diff.applyPatch(before + lines.join("\n") + end, hunks)).toBe(before + patched.join("\n") + end);
+    }
   });
 
   test("undoes createPatch and hunks", () => {

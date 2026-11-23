@@ -3894,8 +3894,10 @@ mod windows_impl {
             return super::nt_path(path, syscall);
         }
         let parent = bun_paths::dirname(path).map(bun_paths::Path::from);
-        match parent.map(|parent| super::directory_exists_at(dir, &parent)) {
-            Some(Ok(false)) => Err(Error::from_code(E::ENOENT, syscall)),
+        match parent.map(|parent| super::exists_at_type(dir, &parent)) {
+            Some(Err(err)) if err.get_errno() == E::ENOENT => {
+                Err(Error::from_code(E::ENOENT, syscall))
+            }
             _ => Err(Error::from_code(E::EINVAL, syscall)),
         }
     }

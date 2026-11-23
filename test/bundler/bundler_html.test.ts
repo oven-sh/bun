@@ -817,20 +817,19 @@ body {
     },
   });
 
-  if (isWindows) {
-    itBundled("html/path-that-starts-with-two-backslashes", {
-      outdir: "out/",
-      files: {
-        "/pages/index.html": `<script src="\\\\?\\{{root}}\\app.js"></script>`,
-        "/app.js": "console.log('found')",
-      },
-      entryPoints: ["/pages/index.html"],
-      onAfterBundle(api) {
-        const src = api.readFile("out/index.html").match(/src="(.*\.js)"/);
-        expect(api.readFile("out/" + src![1])).toContain("found");
-      },
-    });
-  }
+  // `\\?\` starts a path only on Windows.
+  (isWindows ? itBundled : itBundled.skip)("html/path-that-starts-with-two-backslashes", {
+    outdir: "out/",
+    files: {
+      "/pages/index.html": `<script src="\\\\?\\{{root}}\\app.js"></script>`,
+      "/app.js": "console.log('found')",
+    },
+    entryPoints: ["/pages/index.html"],
+    onAfterBundle(api) {
+      const src = api.readFile("out/index.html").match(/src="(.*\.js)"/);
+      expect(api.readFile("out/" + src![1])).toContain("found");
+    },
+  });
 
   for (const [name, src] of Object.entries({
     "one-letter-directory": "d\\app.js",

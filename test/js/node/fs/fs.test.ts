@@ -3924,22 +3924,25 @@ describe("rm", () => {
     expect(readdirSync(String(dir))).toEqual([]);
   });
 
-  it.skipIf(!isWindows)("force does not hide that a relative path that ends in . cannot be removed", async () => {
-    using dir = tempDir("rm-dot", { "sub/a.txt": "" });
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `fs.promises.rm("sub/.", { recursive: true, force: true }).catch(e => console.log(e.code))`,
-      ],
-      env: bunEnv,
-      cwd: String(dir),
-      stderr: "inherit",
-    });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    expect(stdout).toBe("EINVAL\n");
-    expect(exitCode).toBe(0);
-  });
+  it.concurrent.skipIf(!isWindows).each(["sub/.", "sub/a.txt/."])(
+    "force does not hide that %s cannot be removed",
+    async name => {
+      using dir = tempDir("rm-dot", { "sub/a.txt": "" });
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `fs.promises.rm("${name}", { recursive: true, force: true }).catch(e => console.log(e.code))`,
+        ],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "inherit",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(stdout).toBe("EINVAL\n");
+      expect(exitCode).toBe(0);
+    },
+  );
 
   it("removes a file", () => {
     const path = `${tmpdir()}/${Date.now()}.rm.txt`;

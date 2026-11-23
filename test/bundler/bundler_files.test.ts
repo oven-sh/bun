@@ -1045,8 +1045,8 @@ describe("bundler files option", () => {
         env: bunEnv,
         stderr: "pipe",
       });
-      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-      expect(stderr).toBe("");
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr }).toEqual({ stdout: "", stderr: "" });
       expect(readFileSync(join(String(dir), "w", "src", "a.js"), "utf8")).toBe("// source");
       expect(readdirSync(join(String(dir), "w", "out"), { recursive: true })).toEqual(["src", "src\\a.js"]);
       expect(exitCode).toBe(0);

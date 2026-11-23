@@ -520,16 +520,18 @@ test("removes a directory that is written with ./", async () => {
   expect(exitCode).toBe(0);
 });
 
-test.skipIf(!isWindows)("-f forgives a name that ends in . or .. only if it is not there", async () => {
+test.skipIf(!isWindows)("-f forgives a name that ends in . or .. only if its parent is not there", async () => {
   using dir = tempDir("rm-dot", { "sub/b.txt": "" });
   const results: Record<string, [string, number]> = {};
-  for (const operand of [".", "sub/.", "missing/.", "missing/..", "sub/missing/."]) {
+  for (const operand of [".", "sub/.", "sub/b.txt/.", "sub/b.txt/..", "missing/.", "missing/..", "sub/missing/."]) {
     const { exitCode, stderr } = await $`rm -rf ${operand}`.cwd(String(dir)).quiet();
     results[operand] = [stderr.toString(), exitCode];
   }
   expect(results).toEqual({
     ".": ["rm: .: Invalid argument\n", 1],
     "sub/.": ["rm: sub/.: Invalid argument\n", 1],
+    "sub/b.txt/.": ["rm: sub/b.txt/.: Invalid argument\n", 1],
+    "sub/b.txt/..": ["rm: sub/b.txt/..: Invalid argument\n", 1],
     "missing/.": ["", 0],
     "missing/..": ["", 0],
     "sub/missing/.": ["", 0],

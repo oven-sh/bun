@@ -684,7 +684,11 @@ pub(crate) fn compute_chunks<'a>(
 
             let root_dir = &this.resolver.opts.root_dir;
             chunk.template.placeholder.dir = Path::relative(root_dir, dir).as_bytes().into();
-            if !is_real && bun_paths::climbs_out(&chunk.template.placeholder.dir) {
+            // In an executable `node:fs` finds `D:/a/b.js`, and not `../a/b.js`.
+            if !is_real
+                && bun_paths::climbs_out(&chunk.template.placeholder.dir)
+                && !this.options.compile_mode.is_executable()
+            {
                 chunk.template.resolve_dir(root_dir);
             }
         }

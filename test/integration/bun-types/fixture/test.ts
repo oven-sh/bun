@@ -383,6 +383,24 @@ expectType(vi.advanceTimersToNextTimer(2).advanceTimersToNextFrame().runAllTicks
 expectType(jest.advanceTimersToNextTimer(2).advanceTimersToNextFrame().runAllTicks().runAllImmediates()).is<
   typeof jest
 >();
+expectType(jest.clearAllTimers()).is<typeof jest>();
+expectType(vi.clearAllTimers()).is<typeof vi>();
+// @ts-expect-error
+jest.advanceTimersByTime();
+// @ts-expect-error
+jest.advanceTimersByTime("1");
+// @ts-expect-error
+jest.advanceTimersToNextTimer("1");
+// @ts-expect-error
+vi.advanceTimersByTime();
+// @ts-expect-error
+vi.advanceTimersByTime("1");
+// @ts-expect-error
+vi.advanceTimersToNextTimer("1");
+// @ts-expect-error
+jest.advanceTimersByTimeAsync("1");
+// @ts-expect-error
+vi.advanceTimersToNextTimerAsync("1");
 vi.setTimerTickMode("nextTimerAsync").setTimerTickMode("interval", 5).setTimerTickMode("manual");
 // @ts-expect-error
 vi.setTimerTickMode("manual", 5);

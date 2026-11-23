@@ -1256,16 +1256,21 @@ impl FakeTimers {
         Ok(())
     }
 
+    /// `false` when the fake clock is off: only a fake clock has a tick mode.
     #[optimize(size)]
-    fn set_tick_mode(mode: TickMode) {
+    fn set_tick_mode(mode: TickMode) -> bool {
         let this = &timer_all().fake_timers;
+        if !this.active.get() {
+            return false;
+        }
         if this.tick_mode.get() == mode {
-            return;
+            return true;
         }
         this.tick_mode.set(mode);
         this.tick_timer.disarm();
         Self::arm_tick_timer();
         this.post_auto_step();
+        true
     }
 
     fn arm_tick_timer() {
@@ -1849,7 +1854,10 @@ fn set_timer_tick_mode(
     } else {
         TickMode::interval_from_js(global, "setTimerTickMode() interval", interval)?
     };
-    FakeTimers::set_tick_mode(mode);
+    // Reading `mode` or `delta` ran the script, which can have called `useRealTimers()`.
+    if !FakeTimers::set_tick_mode(mode) && flavor == Flavor::Vi {
+        return Err(not_active_error(global));
+    }
     Ok(chainable_this(global, this_value))
 }
 

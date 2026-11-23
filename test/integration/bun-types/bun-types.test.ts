@@ -1335,19 +1335,21 @@ describe("@types/bun integration test", () => {
   });
 
   describe("Runtime plugins", () => {
-    typeTest("accept a value that is not set with exactOptionalPropertyTypes", {
+    typeTest("accept a value that is not set with exactOptionalPropertyTypes, except a target", {
       options: { exactOptionalPropertyTypes: true },
       files: {
         "runtime-plugin-options.ts": `
           declare const settings: { name?: string; target?: Bun.Target };
           Bun.plugin({
             name: settings.name,
-            target: settings.target,
             setup(build) {
               // The runtime passes no default loader, so this is the loader that the path gives.
               build.onLoad({ filter: /\\.txt$/ }, args => ({ contents: args.path, loader: args.loader }));
             },
           });
+          // Bun.plugin() throws for a target that is present and undefined.
+          // @ts-expect-error
+          Bun.plugin({ target: settings.target, setup() {} });
         `,
       },
       emptyInterfaces: expectedEmptyInterfacesWhenNoDOM,

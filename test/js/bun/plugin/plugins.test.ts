@@ -402,6 +402,14 @@ describe("errors", () => {
     }).toThrow("plugin target must be one of 'node', 'bun' or 'browser'");
   });
 
+  // The types of Bun.plugin() reject `target: undefined` with exactOptionalPropertyTypes for this reason.
+  it("handles a 'target' that is present and undefined, and a 'name' that is", () => {
+    expect(() => plugin({ setup() {}, target: undefined })).toThrow(
+      "plugin target must be one of 'node', 'bun' or 'browser'",
+    );
+    expect(() => plugin({ setup() {}, name: undefined })).not.toThrow();
+  });
+
   it("handles 'target' that throws while being coerced to a string", () => {
     let called = false;
     const opts = {

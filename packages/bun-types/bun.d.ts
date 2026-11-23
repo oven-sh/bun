@@ -7104,9 +7104,10 @@ declare module "bun" {
 
     /**
      * {@link Bun.plugin} accepts `"bun"`, `"node"` and `"browser"`, and does
-     * not use the value.
+     * not use the value. It throws for any other value that is present, also
+     * for `undefined`.
      */
-    target?: Target | undefined;
+    target?: Target;
 
     /**
      * {@link Bun.plugin} calls this function once, before it returns.

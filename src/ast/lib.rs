@@ -2545,6 +2545,7 @@ pub mod expr;
 pub mod fold_string_addition;
 pub mod g;
 pub mod known_global;
+pub mod late_fold;
 pub mod new_store;
 pub mod op;
 pub mod s;

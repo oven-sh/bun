@@ -1319,6 +1319,11 @@ pub struct Options<'a> {
     /// Borrowed from `LinkerGraph.ts_enums` (one shared map for the whole
     /// bundle); the printer only reads from it.
     pub ts_enums: Option<&'a TsEnumsMap>,
+    /// Fold the expressions and the `if` statements that a value of another
+    /// file decides (`bun_ast::late_fold`). The linker turns this on for a
+    /// bundle that has such values. `minify_syntax` is not the gate: the
+    /// runtime transpiler sets it for every module.
+    pub late_fold: bool,
     /// Borrowed from `LinkerGraph.import_member_bindings`: `X.name` property
     /// reads the linker bound straight to an export (see `E::Dot::is_import_property_use`).
     pub import_member_bindings: Option<&'a js_ast::ast_result::ImportMemberBindings>,
@@ -1382,6 +1387,7 @@ impl<'a> Default for Options<'a> {
             input_module_type: bundle_opts::ModuleType::Unknown,
             module_type: bundle_opts::Format::Esm,
             ts_enums: None,
+            late_fold: false,
             import_member_bindings: None,
             has_dynamic_import_items: false,
             has_deferred_requires: false,
@@ -1476,6 +1482,9 @@ pub enum ExprFlag {
     HasNonOptionalChainParent,
     ExprResultIsUnused,
     IsFollowedByOf,
+    /// The late fold already ran over this expression as an operand of its
+    /// parent, or must not replace it (a call target keeps its `this`).
+    SkipLateFold,
 }
 
 pub(crate) type ExprFlagSet = enumset::EnumSet<ExprFlag>;
@@ -1577,6 +1586,8 @@ pub(crate) mod __gated_printer {
         pub(crate) temporary_bindings: Vec<B::Property>,
 
         pub(crate) binary_expression_stack: Vec<BinaryExpressionVisitor<'a>>,
+        /// Scratch space of `LateFold::fold`.
+        pub(crate) late_fold_spine: Vec<Expr>,
 
         pub(crate) stack_check: bun_core::StackCheck,
         pub(crate) stack_overflowed: bool,
@@ -1706,7 +1717,13 @@ pub(crate) mod __gated_printer {
                                 v.left_level = Level::Call;
                             }
                         }
-                        ExprData::EAwait(_) | ExprData::EUndefined(_) | ExprData::ENumber(_) => {
+                        // A property access can print as the number of an
+                        // enum member of another file, and that can be negative.
+                        ExprData::EAwait(_)
+                        | ExprData::EUndefined(_)
+                        | ExprData::ENumber(_)
+                        | ExprData::EDot(_)
+                        | ExprData::EIndex(_) => {
                             v.left_level = Level::Call;
                         }
                         ExprData::EBoolean(_) | ExprData::EBranchBoolean(_) => {
@@ -1732,7 +1749,7 @@ pub(crate) mod __gated_printer {
                 return false;
             }
 
-            v.left_flags = ExprFlagSet::empty();
+            v.left_flags = ExprFlag::SkipLateFold.into();
 
             if v.flags.contains(ExprFlag::ForbidIn) {
                 v.left_flags.insert(ExprFlag::ForbidIn);
@@ -1749,7 +1766,7 @@ pub(crate) mod __gated_printer {
         fn binary_visit_right_and_finish(&mut self, v: &BinaryExpressionVisitor<'a>) {
             let e = v.e;
             let entry = v.entry;
-            let mut flags = ExprFlagSet::empty();
+            let mut flags: ExprFlagSet = ExprFlag::SkipLateFold.into();
 
             if e.op != Op::Code::BinComma {
                 self.print_space();
@@ -2059,7 +2076,7 @@ pub(crate) mod __gated_printer {
         pub(crate) fn print_block_body(&mut self, stmts: &[Stmt]) {
             for stmt in stmts {
                 self.print_semicolon_if_needed();
-                self.print_stmt(*stmt).expect("unreachable");
+                self.print_stmt_in_list(*stmt).expect("unreachable");
             }
         }
 
@@ -3393,9 +3410,10 @@ pub(crate) mod __gated_printer {
                 }
                 ExprData::ECall(e) => {
                     let mut wrap = level.gte(Level::New) || flags.contains(ExprFlag::ForbidCall);
-                    let mut target_flags = ExprFlag::none();
+                    // `(E.A && a.b)()` must not print as `a.b()`.
+                    let mut target_flags: ExprFlagSet = ExprFlag::SkipLateFold.into();
                     if e.optional_chain.is_none() {
-                        target_flags = ExprFlag::has_non_optional_chain_parent();
+                        target_flags |= ExprFlag::has_non_optional_chain_parent();
                     } else if flags.contains(ExprFlag::HasNonOptionalChainParent) {
                         wrap = true;
                     }
@@ -3672,7 +3690,7 @@ pub(crate) mod __gated_printer {
                     }
 
                     // The index target is not directly followed by `of`.
-                    flags.remove(ExprFlag::IsFollowedByOf);
+                    flags.remove_all(ExprFlag::IsFollowedByOf | ExprFlag::SkipLateFold);
                     self.print_expr(e.target, Level::Postfix, flags);
 
                     let is_optional_chain_start =
@@ -3702,12 +3720,16 @@ pub(crate) mod __gated_printer {
                     }
                 }
                 ExprData::EIf(e) => {
+                    if self.print_late_folded(expr, level, flags) {
+                        return;
+                    }
+                    flags.remove(ExprFlag::SkipLateFold);
                     let wrap = level.gte(Level::Conditional);
                     if wrap {
                         self.print(b"(");
                         flags.remove(ExprFlag::ForbidIn);
                     }
-                    self.print_expr(e.test, Level::Conditional, flags);
+                    self.print_expr(e.test, Level::Conditional, flags | ExprFlag::SkipLateFold);
                     self.print_space();
                     self.print(b"?");
                     self.print_space();
@@ -4130,6 +4152,7 @@ pub(crate) mod __gated_printer {
                     }
 
                     if let Some(tag) = &e.tag {
+                        // Like a call target, a tag keeps its `this`.
                         self.add_source_mapping(expr.loc);
                         // Optional chains are forbidden in template tags
                         // `Expr::is_optional_chain` is gated upstream; inline its body.
@@ -4141,12 +4164,12 @@ pub(crate) mod __gated_printer {
                         };
                         if is_optional_chain {
                             self.print(b"(");
-                            self.print_expr(*tag, Level::Lowest, ExprFlag::none());
+                            self.print_expr(*tag, Level::Lowest, ExprFlag::SkipLateFold.into());
                             self.print(b")");
                         } else if let ExprData::ECommonjsExportIdentifier(id) = tag.data {
                             self.print_commonjs_export_identifier(id, tag.loc, true);
                         } else {
-                            self.print_expr(*tag, Level::Postfix, ExprFlag::none());
+                            self.print_expr(*tag, Level::Postfix, ExprFlag::SkipLateFold.into());
                         }
                     } else {
                         self.add_source_mapping(expr.loc);
@@ -4356,6 +4379,9 @@ pub(crate) mod __gated_printer {
                     }
                 }
                 ExprData::EUnary(e) => {
+                    if self.print_late_folded(expr, level, flags) {
+                        return;
+                    }
                     let entry: &'static OpInfo = Op::TABLE.get_ptr_const(e.op);
                     let wrap = level.gte(entry.level);
 
@@ -4389,10 +4415,10 @@ pub(crate) mod __gated_printer {
                     {
                         self.print(b"(0,");
                         self.print_space();
-                        self.print_expr(e.value, Level::Prefix.sub(1), ExprFlag::none());
+                        self.print_expr(e.value, Level::Prefix.sub(1), ExprFlag::SkipLateFold.into());
                         self.print(b")");
                     } else {
-                        self.print_expr(e.value, Level::Prefix.sub(1), ExprFlag::none());
+                        self.print_expr(e.value, Level::Prefix.sub(1), ExprFlag::SkipLateFold.into());
                     }
                     }
 
@@ -4401,6 +4427,10 @@ pub(crate) mod __gated_printer {
                     }
                 }
                 ExprData::EBinary(e) => {
+                    if self.print_late_folded(expr, level, flags) {
+                        return;
+                    }
+                    flags.remove(ExprFlag::SkipLateFold);
                     // The handling of binary expressions is convoluted because we're using
                     // iteration on the heap instead of recursion on the call stack to avoid
                     // stack overflow for deeply-nested ASTs.
@@ -5990,7 +6020,7 @@ pub(crate) mod __gated_printer {
                         self.indent();
                         for st in c_body.iter() {
                             self.print_semicolon_if_needed();
-                            self.print_stmt(*st).expect("unreachable");
+                            self.print_stmt_in_list(*st).expect("unreachable");
                         }
                         self.unindent();
                     }
@@ -6421,14 +6451,7 @@ pub(crate) mod __gated_printer {
                     self.print_expr(s.value, Level::Lowest, ExprFlag::none());
                     self.print_semicolon_after_statement();
                 }
-                StmtData::SExpr(s) => {
-                    if !self.options.minify_whitespace && self.options.indent.count > 0 {
-                        self.print_indent();
-                    }
-                    self.stmt_start = self.writer.written();
-                    self.print_expr(s.value, Level::Lowest, ExprFlag::expr_result_is_unused());
-                    self.print_semicolon_after_statement();
-                }
+                StmtData::SExpr(s) => self.print_expr_stmt(s.value),
                 other => {
                     let name: &'static str = other.tag().into();
                     Output::panic(format_args!("Unexpected tag in printStmt: .{}", name));
@@ -6486,6 +6509,8 @@ pub(crate) mod __gated_printer {
                 return;
             }
 
+            let no = self.else_branch(s);
+
             self.print_space_before_identifier();
             self.add_source_mapping(loc);
             self.print(b"if");
@@ -6502,14 +6527,14 @@ pub(crate) mod __gated_printer {
                         slice_of(block.stmts),
                         Some(block.close_brace_loc),
                     );
-                    if s.no.is_some() {
+                    if no.is_some() {
                         self.print_space();
                     } else {
                         self.print_newline();
                     }
                 }
                 _ => {
-                    if Self::wrap_to_avoid_ambiguous_else(&s.yes.data) {
+                    if self.wrap_to_avoid_ambiguous_else(&s.yes.data) {
                         self.print_space();
                         self.print(b"{");
                         self.print_newline();
@@ -6522,7 +6547,7 @@ pub(crate) mod __gated_printer {
                         self.print_indent();
                         self.print(b"}");
 
-                        if s.no.is_some() {
+                        if no.is_some() {
                             self.print_space();
                         } else {
                             self.print_newline();
@@ -6533,14 +6558,14 @@ pub(crate) mod __gated_printer {
                         self.print_stmt(s.yes).expect("unreachable");
                         self.unindent();
 
-                        if s.no.is_some() {
+                        if no.is_some() {
                             self.print_indent();
                         }
                     }
                 }
             }
 
-            if let Some(no_block) = &s.no {
+            if let Some(no_block) = &no {
                 self.print_semicolon_if_needed();
                 self.print_space_before_identifier();
                 self.add_source_mapping(s.else_loc.to_nullable().unwrap_or(no_block.loc));
@@ -6565,23 +6590,23 @@ pub(crate) mod __gated_printer {
             }
         }
 
-        pub(crate) fn wrap_to_avoid_ambiguous_else(s_: &StmtData) -> bool {
-            let mut s = s_;
+        pub(crate) fn wrap_to_avoid_ambiguous_else(&mut self, s_: &StmtData) -> bool {
+            let mut s = *s_;
             loop {
                 match s {
                     StmtData::SIf(index) => {
-                        if let Some(no) = &index.no {
-                            s = &no.data;
+                        if let Some(no) = self.else_branch(&index) {
+                            s = no.data;
                         } else {
                             return true;
                         }
                     }
-                    StmtData::SFor(current) => s = &current.body.data,
-                    StmtData::SForIn(current) => s = &current.body.data,
-                    StmtData::SForOf(current) => s = &current.body.data,
-                    StmtData::SWhile(current) => s = &current.body.data,
-                    StmtData::SWith(current) => s = &current.body.data,
-                    StmtData::SLabel(current) => s = &current.stmt.data,
+                    StmtData::SFor(current) => s = current.body.data,
+                    StmtData::SForIn(current) => s = current.body.data,
+                    StmtData::SForOf(current) => s = current.body.data,
+                    StmtData::SWhile(current) => s = current.body.data,
+                    StmtData::SWith(current) => s = current.body.data,
+                    StmtData::SLabel(current) => s = current.stmt.data,
                     _ => return false,
                 }
             }
@@ -6647,19 +6672,11 @@ pub(crate) mod __gated_printer {
         /// import(…)`).
         #[inline]
         fn import_ref(&self, target: Expr) -> Option<Ref> {
-            match &target.data {
-                ExprData::EImportIdentifier(id) => Some(id.ref_),
-                ExprData::EIdentifier(id)
-                    if self.options.has_dynamic_import_items
-                        && self
-                            .symbols()
-                            .get_const(id.ref_)
-                            .is_some_and(|symbol| symbol.is_bound_import_item()) =>
-                {
-                    Some(id.ref_)
-                }
-                _ => None,
-            }
+            js_ast::late_fold::import_ref(
+                self.symbols(),
+                self.options.has_dynamic_import_items,
+                target,
+            )
         }
 
         /// `X.name` where the linker bound the access straight to an export
@@ -6683,20 +6700,195 @@ pub(crate) mod __gated_printer {
             target: Expr,
             name: &[u8],
         ) -> Option<js_ast::InlinedEnumValueDecoded> {
-            let base = self.import_ref(target)?;
-            {
-                let ref_ = self.symbols().follow(base);
-                if let Some(symbol) = self.symbols().get_const(ref_) {
-                    if symbol.kind == js_ast::symbol::Kind::TsEnum {
-                        if let Some(enum_value) = self.options.ts_enums.and_then(|m| m.get(&ref_)) {
-                            if let Some(value) = enum_value.get(name) {
-                                return Some(value.decode());
-                            }
-                        }
+            js_ast::late_fold::imported_enum_value(
+                self.symbols(),
+                self.options.ts_enums,
+                self.options.has_dynamic_import_items,
+                target,
+                name,
+            )
+        }
+
+        fn late_fold(&self) -> js_ast::late_fold::LateFold<'a> {
+            js_ast::late_fold::LateFold {
+                symbols: self.symbols(),
+                ts_enums: self.options.ts_enums,
+                has_dynamic_import_items: self.options.has_dynamic_import_items,
+                bump: self.bump,
+                stack_check: self.stack_check,
+            }
+        }
+
+        /// Prints `expr` (a unary, binary or conditional expression) folded,
+        /// when values of other files let operators in it be evaluated.
+        #[inline]
+        fn print_late_folded(&mut self, expr: Expr, level: Level, flags: ExprFlagSet) -> bool {
+            if !self.options.late_fold || flags.contains(ExprFlag::SkipLateFold) {
+                return false;
+            }
+            let mut spine = core::mem::take(&mut self.late_fold_spine);
+            let folded = self.late_fold().fold(expr, &mut spine);
+            self.late_fold_spine = spine;
+            let Some(folded) = folded else {
+                return false;
+            };
+            self.print_expr(folded, level, flags | ExprFlag::SkipLateFold);
+            true
+        }
+
+        /// `ToBoolean(test)` when values of other files decide it and `test`
+        /// has no side effect.
+        fn late_folded_test(&mut self, test: Expr) -> Option<bool> {
+            let mut spine = core::mem::take(&mut self.late_fold_spine);
+            let value = self.late_fold().to_boolean(test, &mut spine);
+            self.late_fold_spine = spine;
+            value
+        }
+
+        /// The `else` branch that `print_if` prints for `s`. An `else if`
+        /// whose test a value of another file decides is replaced by the
+        /// branch that runs.
+        fn else_branch(&mut self, s: &S::If) -> Option<Stmt> {
+            let mut no = s.no;
+            if self.options.late_fold {
+                while let Some(StmtData::SIf(inner)) = no.as_ref().map(|stmt| &stmt.data) {
+                    let Some(value) = self.late_folded_test(inner.test) else {
+                        break;
+                    };
+                    let (live, dead) = if value {
+                        (Some(inner.yes), inner.no)
+                    } else {
+                        (inner.no, Some(inner.yes))
+                    };
+                    if dead
+                        .as_ref()
+                        .is_some_and(js_ast::late_fold::dead_branch_declares)
+                    {
+                        break;
                     }
+                    no = live.filter(|stmt| !Self::is_empty_stmt(stmt));
                 }
             }
-            None
+            no
+        }
+
+        fn is_empty_stmt(stmt: &Stmt) -> bool {
+            match &stmt.data {
+                StmtData::SEmpty(_) => true,
+                StmtData::SBlock(block) => slice_of(block.stmts).is_empty(),
+                _ => false,
+            }
+        }
+
+        /// Prints a statement of a statement list. Here a statement can be
+        /// left out or replaced by several, so this is where the late fold
+        /// removes an `if` or an expression that a value of another file
+        /// decides. The body of a loop or of an `if` is printed as it is.
+        pub(crate) fn print_stmt_in_list(&mut self, stmt: Stmt) -> crate::Result<()> {
+            if self.options.late_fold {
+                match &stmt.data {
+                    StmtData::SIf(s) => {
+                        if self.print_late_folded_if(s)? {
+                            return Ok(());
+                        }
+                    }
+                    // `E.Off && debug()` folds to a literal that nothing reads.
+                    StmtData::SExpr(s) => {
+                        if matches!(&s.value.data, ExprData::EBinary(e) if matches!(
+                            e.op,
+                            Op::Code::BinLogicalAnd
+                                | Op::Code::BinLogicalOr
+                                | Op::Code::BinNullishCoalescing
+                        )) && self.late_folded_test(s.value).is_some()
+                        {
+                            return Ok(());
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            self.print_stmt(stmt)
+        }
+
+        fn print_late_folded_if(&mut self, s: &S::If) -> crate::Result<bool> {
+            // `if (effect(), E.A)`: the parser merges a preceding expression
+            // statement into the test.
+            let (effects, test) = match &s.test.data {
+                ExprData::EBinary(e) if e.op == Op::Code::BinComma => (Some(e.left), e.right),
+                _ => (None, s.test),
+            };
+            let Some(value) = self.late_folded_test(test) else {
+                return Ok(false);
+            };
+            let (live, dead) = if value {
+                (Some(s.yes), s.no)
+            } else {
+                (s.no, Some(s.yes))
+            };
+            if dead
+                .as_ref()
+                .is_some_and(js_ast::late_fold::dead_branch_declares)
+            {
+                return Ok(false);
+            }
+            // In sloppy mode a function declared as the body of an `if` is not
+            // hoisted like one declared in a statement list. A string can
+            // become a directive there.
+            if live.as_ref().is_some_and(|stmt| {
+                matches!(stmt.data, StmtData::SFunction(_)) || Self::can_be_directive(stmt)
+            }) {
+                return Ok(false);
+            }
+
+            if let Some(effects) = effects {
+                self.print_semicolon_if_needed();
+                self.print_expr_stmt(effects);
+            }
+            let Some(live) = live.filter(|stmt| !Self::is_empty_stmt(stmt)) else {
+                return Ok(true);
+            };
+            match &live.data {
+                StmtData::SBlock(block) if Self::can_unwrap_block(slice_of(block.stmts)) => {
+                    for stmt in slice_of(block.stmts) {
+                        self.print_semicolon_if_needed();
+                        self.print_stmt_in_list(*stmt)?;
+                    }
+                }
+                _ => {
+                    self.print_semicolon_if_needed();
+                    self.print_stmt_in_list(live)?;
+                }
+            }
+            Ok(true)
+        }
+
+        fn can_be_directive(stmt: &Stmt) -> bool {
+            match &stmt.data {
+                StmtData::SExpr(s) => matches!(s.value.data, ExprData::EString(_)),
+                StmtData::SDirective(_) => true,
+                _ => false,
+            }
+        }
+
+        /// The statements of a block can move into the enclosing statement
+        /// list when none of them is scoped to the block, and the first one
+        /// cannot become a directive there.
+        fn can_unwrap_block(stmts: &[Stmt]) -> bool {
+            !stmts.first().is_some_and(Self::can_be_directive)
+                && stmts.iter().all(|stmt| match &stmt.data {
+                    StmtData::SLocal(local) => local.kind == S::Kind::KVar,
+                    StmtData::SFunction(_) | StmtData::SClass(_) => false,
+                    _ => true,
+                })
+        }
+
+        fn print_expr_stmt(&mut self, value: Expr) {
+            if !self.options.minify_whitespace && self.options.indent.count > 0 {
+                self.print_indent();
+            }
+            self.stmt_start = self.writer.written();
+            self.print_expr(value, Level::Lowest, ExprFlag::expr_result_is_unused());
+            self.print_semicolon_after_statement();
         }
 
         pub(crate) fn print_inlined_enum(
@@ -6952,6 +7144,7 @@ pub(crate) mod __gated_printer {
                 source_map_builder,
                 temporary_bindings: Vec::new(),
                 binary_expression_stack: Vec::new(),
+                late_fold_spine: Vec::new(),
                 stack_check: bun_core::StackCheck::init(),
                 stack_overflowed: false,
                 was_lazy_export: false,
@@ -7968,7 +8161,7 @@ pub(crate) fn print_with_writer_and_platform<
 
         for part in parts {
             for stmt in slice_of(part.stmts).iter() {
-                if let Err(err) = printer.print_stmt(*stmt) {
+                if let Err(err) = printer.print_stmt_in_list(*stmt) {
                     return PrintResult::Err(err);
                 }
                 printer.print_semicolon_if_needed();

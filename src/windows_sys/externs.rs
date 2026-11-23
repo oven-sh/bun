@@ -335,6 +335,7 @@ impl FILE_INFORMATION_CLASS {
     pub const FileAllInformation: Self = Self(18);
     pub const FileEndOfFileInformation: Self = Self(20);
     pub const FilePipeInformation: Self = Self(23);
+    pub const FilePipeLocalInformation: Self = Self(24);
     pub const FileIdFullDirectoryInformation: Self = Self(38);
     pub const FileDispositionInformationEx: Self = Self(64);
     pub const FileStatBasicInformation: Self = Self(77);
@@ -404,6 +405,21 @@ pub struct FILE_MODE_INFORMATION {
 pub struct FILE_PIPE_INFORMATION {
     pub ReadMode: ULONG,
     pub CompletionMode: ULONG,
+}
+
+/// `FILE_PIPE_LOCAL_INFORMATION` (`ntifs.h`).
+#[repr(C)]
+pub struct FILE_PIPE_LOCAL_INFORMATION {
+    pub NamedPipeType: ULONG,
+    pub NamedPipeConfiguration: ULONG,
+    pub MaximumInstances: ULONG,
+    pub CurrentInstances: ULONG,
+    pub InboundQuota: ULONG,
+    pub ReadDataAvailable: ULONG,
+    pub OutboundQuota: ULONG,
+    pub WriteQuotaAvailable: ULONG,
+    pub NamedPipeState: ULONG,
+    pub NamedPipeEnd: ULONG,
 }
 
 /// `FILE_POSITION_INFORMATION` (`wdm.h`).

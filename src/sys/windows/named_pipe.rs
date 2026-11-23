@@ -12,9 +12,9 @@ use std::os::windows::io::{AsRawHandle as _, HandleOrInvalid, OwnedHandle};
 use bun_core::WStr;
 use bun_windows_sys::externs::{
     FILE_ACCESS_INFORMATION, FILE_FLAG_OVERLAPPED, FILE_FS_DEVICE_INFORMATION,
-    FILE_MODE_INFORMATION, FILE_PIPE_INFORMATION, FILE_PIPE_QUEUE_OPERATION, FILE_READ_ATTRIBUTES,
-    FILE_WRITE_ATTRIBUTES, GENERIC_READ, GENERIC_WRITE, OPEN_EXISTING, PIPE_ACCESS_DUPLEX,
-    WAIT_OBJECT_0,
+    FILE_MODE_INFORMATION, FILE_PIPE_INFORMATION, FILE_PIPE_LOCAL_INFORMATION,
+    FILE_PIPE_QUEUE_OPERATION, FILE_READ_ATTRIBUTES, FILE_WRITE_ATTRIBUTES, GENERIC_READ,
+    GENERIC_WRITE, OPEN_EXISTING, PIPE_ACCESS_DUPLEX, WAIT_OBJECT_0,
 };
 
 use super::{
@@ -83,6 +83,16 @@ pub fn max_len(handle: HANDLE) -> usize {
         Ok(device) if device.Characteristics & FILE_REMOTE_DEVICE != 0 => MAX_REMOTE_LEN,
         _ => usize::MAX,
     }
+}
+
+/// How much the pipe holds for this end before a writer has to wait.
+pub fn input_quota(handle: HANDLE) -> Result<usize, NTSTATUS> {
+    const FILE_PIPE_SERVER_END: ULONG = 1;
+    let pipe = nt::query::<FILE_PIPE_LOCAL_INFORMATION>(handle)?;
+    Ok(match pipe.NamedPipeEnd {
+        FILE_PIPE_SERVER_END => pipe.InboundQuota,
+        _ => pipe.OutboundQuota,
+    } as usize)
 }
 
 /// Undoes `PIPE_NOWAIT`.
@@ -224,4 +234,33 @@ pub fn peer_process_id(handle: HANDLE) -> Option<u32> {
         return Some(id);
     }
     (GetNamedPipeServerProcessId(handle, &mut id) != 0).then_some(id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn each_end_has_its_own_quota() {
+        let name = format!(r"\\.\pipe\bun-quota-{}", std::process::id());
+        let name: Vec<u16> = name.encode_utf16().chain([0]).collect();
+        let (to_client, to_server) = (4096, 8192);
+        // SAFETY: `name` ends with a NUL. The result is a new handle or `INVALID_HANDLE_VALUE`.
+        let server = unsafe {
+            HandleOrInvalid::from_raw_handle(kernel32::CreateNamedPipeW(
+                name.as_ptr(),
+                PIPE_ACCESS_DUPLEX,
+                0,
+                1,
+                to_client,
+                to_server,
+                0,
+                ptr::null_mut(),
+            ))
+        };
+        let server = OwnedHandle::try_from(server).unwrap();
+        let client = connect(WStr::from_slice_with_nul(&name)).unwrap();
+        let quotas = [&client, &server].map(|end| input_quota(end.as_raw_handle()));
+        assert_eq!(quotas, [Ok(4096), Ok(8192)]);
+    }
 }

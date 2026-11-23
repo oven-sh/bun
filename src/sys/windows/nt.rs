@@ -165,6 +165,7 @@ info!(FileClass:
     FILE_ID_FULL_DIR_INFORMATION = FileIdFullDirectoryInformation,
     FILE_MODE_INFORMATION = FileModeInformation,
     FILE_PIPE_INFORMATION = FilePipeInformation,
+    FILE_PIPE_LOCAL_INFORMATION = FilePipeLocalInformation,
     FILE_POSITION_INFORMATION = FilePositionInformation,
     FILE_STANDARD_INFORMATION = FileStandardInformation,
     FILE_STAT_BASIC_INFORMATION = FileStatBasicInformation,

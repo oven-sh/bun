@@ -83,6 +83,7 @@ struct Inner {
     is_input_shared: Cell<bool>,
     was_full: Cell<bool>,
     takes_long_writes_whole: Cell<bool>,
+    quota: OnceCell<usize>,
     read: Cell<Option<InFlight>>,
     write: Cell<Option<InFlight>>,
 }
@@ -104,6 +105,7 @@ impl Pipe {
             is_input_shared: Cell::new(is_input_shared),
             was_full: Cell::new(false),
             takes_long_writes_whole: Cell::new(false),
+            quota: OnceCell::new(),
             read: Cell::new(None),
             write: Cell::new(None),
         }))
@@ -119,7 +121,9 @@ impl Pipe {
     pub(super) fn connected(port: &Rc<Port>, end: OwnedHandle) -> Pipe {
         let handle = Handle::from_owned(end);
         let max_len = named_pipe::max_len(handle.raw());
-        Pipe::exclusive(Rc::new(AsyncFile::exclusive(port, handle)), max_len)
+        let pipe = Pipe::exclusive(Rc::new(AsyncFile::exclusive(port, handle)), max_len);
+        pipe.0.find_quota();
+        pipe
     }
 
     pub(super) fn exclusive(file: Rc<AsyncFile>, max_len: usize) -> Pipe {
@@ -290,11 +294,27 @@ impl Inner {
             Kind::Overlapped => {
                 let file = AsyncFile::shared(&self.endpoint.port, Arc::clone(&self.handle));
                 file.limit_writes(self.max_len);
+                self.find_quota();
                 Io::Overlapped(Rc::new(file))
             }
             Kind::Synchronous => Io::Synchronous,
             Kind::NotAPipe => Io::NotAPipe,
         });
+    }
+
+    /// For a pipe that was made elsewhere. Many hold 4 KiB, or nothing.
+    fn find_quota(&self) {
+        if self.max_len == usize::MAX {
+            self.quota.get_or_init(|| {
+                let quota = named_pipe::input_quota(self.handle.raw());
+                quota.map_or(BUSY_SIZE, |quota| quota.clamp(4096, BUSY_SIZE))
+            });
+        }
+    }
+
+    /// Whether the writer had run out of room.
+    fn is_full(&self, len: usize) -> bool {
+        len >= self.quota.get().copied().unwrap_or(BUSY_SIZE)
     }
 
     // ── reading ──────────────────────────────────────────────────────────
@@ -351,6 +371,7 @@ impl Inner {
             // It would wait for the write, which starts it when it has ended.
             Some(Io::Synchronous) | None if self.write.is_some() => {}
             Some(Io::Synchronous) if take == Take::Now && named_pipe::is_left_alone(handle) => {
+                self.find_quota();
                 match named_pipe::input(handle) {
                     Ok(Some(available)) => self.read_here(available, max_len),
                     _ => self.read_on_thread(max_len, Take::OnceThereIsSome),
@@ -431,7 +452,7 @@ impl Inner {
                     self.size_next_read(&more.buffer);
                     data.extend_from_slice(&more.buffer);
                     last_len = more.buffer.len();
-                    if data.len() >= BUSY_SIZE {
+                    if self.is_full(data.len()) {
                         self.endpoint.port.expect_more();
                     }
                     self.endpoint.recycle(more.buffer);
@@ -469,7 +490,7 @@ impl Inner {
         let (status, mut buffer) = (completion.status, completion.buffer);
         let is_much = self.size_next_read(&buffer);
         if !buffer.is_empty() {
-            if is_much {
+            if is_much || self.is_full(buffer.len()) {
                 self.endpoint.port.expect_more();
             } else {
                 self.endpoint.port.did_receive();

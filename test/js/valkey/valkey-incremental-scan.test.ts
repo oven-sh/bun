@@ -175,6 +175,12 @@ describe.concurrent.each([
 });
 
 describe.concurrent("Valkey reply decoding", () => {
+  test("status resolves a Buffer for getBuffer", async () => {
+    await withClient(createReplyServer(`+QUEUED${CRLF}`), async client => {
+      expect(await client.getBuffer("k")).toEqual(Buffer.from("QUEUED"));
+    });
+  });
+
   test("big number resolves a Buffer of the digits for getBuffer", async () => {
     const server = createReplyServer(`(9007199254740993${CRLF}`);
     await withClient(server, async client => {

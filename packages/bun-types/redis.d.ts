@@ -49,12 +49,35 @@ declare module "bun" {
 
   export namespace RedisClient {
     type KeyLike = string | ArrayBufferView | Blob;
+
+    /** The last argument of a command whose reply can have stored data. */
+    interface ReplyOptions<AsBuffer extends boolean | undefined = boolean | undefined> {
+      /**
+       * Get the bulk and verbatim strings of the reply, at any depth, as Buffers instead of UTF-8 text. Redis sends
+       * stored values and stream IDs as bulk strings. Status replies such as `"OK"`, integers, doubles, `null` and the
+       * cursor of a scan method do not change. The keys of an object are strings. If one is not UTF-8 text, the
+       * command rejects with `ERR_ENCODING_INVALID_ENCODED_DATA`, and `error.reply` has `[key, value]` pairs. In a
+       * transaction, that error is the result in the reply to `EXEC`.
+       *
+       * @example
+       * ```ts
+       * await redis.hset("images", "logo", new Uint8Array([0xff, 0xd8]));
+       * await redis.hget("images", "logo", { buffer: true }); // <Buffer ff d8>
+       * ```
+       */
+      buffer: AsBuffer;
+    }
+
+    /** A bulk string of a reply, as {@link ReplyOptions} asks for it. */
+    type Data<AsBuffer extends boolean | undefined> = AsBuffer extends true ? Buffer<ArrayBuffer> : string;
+
     type StringPubSubListener = (message: string, channel: string) => void;
 
     // Buffer subscriptions are not yet implemented
     // type BufferPubSubListener = (message: Uint8Array<ArrayBuffer>, channel: string) => void;
   }
 
+  // A method repeats its last signature after those with options: `ReturnType`, `Parameters` and `call` read the last one.
   export class RedisClient {
     /**
      * Creates a new Redis client
@@ -117,11 +140,13 @@ declare module "bun" {
      * - A typed array, a `DataView`, an `ArrayBuffer` or a `SharedArrayBuffer` is sent as its bytes.
      * - A `Blob` whose bytes are in memory is sent as its bytes. `Bun.file()` and an `S3File` throw: pass
      *   `await file.bytes()`.
+     * @param options `buffer: true` on a command in a transaction holds for its result in the reply to `EXEC`, and on
+     * `EXEC` for the other results. It makes cursors Buffers too. Subscription commands ignore it.
      * @returns A promise that resolves with the command result
      *
      * The reply is converted as follows. See the type conversion section in
      * docs/runtime/redis.mdx.
-     * - A simple, bulk or verbatim string becomes a string. Methods that return a Buffer, such as getBuffer, keep the bytes.
+     * - A simple, bulk or verbatim string becomes a string. See {@link RedisClient.ReplyOptions} for bytes.
      * - An integer becomes a number.
      * - A double becomes a number.
      * - A big number becomes a bigint. When its payload is not an integer literal it becomes a string.
@@ -135,6 +160,7 @@ declare module "bun" {
     send(
       command: string,
       args: readonly (string | number | NodeJS.TypedArray | DataView<ArrayBufferLike> | ArrayBufferLike | Blob)[],
+      options?: RedisClient.ReplyOptions,
     ): Promise<any>;
 
     /**
@@ -142,6 +168,12 @@ declare module "bun" {
      * @param key The key to get
      * @returns Promise that resolves with the key's value as a string, or null if the key doesn't exist
      */
+    get(key: RedisClient.KeyLike): Promise<string | null>;
+    /** With {@link RedisClient.ReplyOptions}. */
+    get<B extends boolean | undefined>(
+      key: RedisClient.KeyLike,
+      options: RedisClient.ReplyOptions<B>,
+    ): Promise<RedisClient.Data<B> | null>;
     get(key: RedisClient.KeyLike): Promise<string | null>;
 
     /**
@@ -274,6 +306,24 @@ declare module "bun" {
      * @param options Array of options (EX, PX, EXAT, PXAT, NX, XX, KEEPTTL, GET)
      * @returns Promise that resolves with "OK" on success, null if NX/XX condition not met, or the old value if GET is specified
      */
+    set(
+      key: RedisClient.KeyLike,
+      value: RedisClient.KeyLike | number,
+      ...options: string[]
+    ): Promise<"OK" | string | null>;
+    /** With {@link RedisClient.ReplyOptions}. */
+    set<B extends boolean | undefined>(
+      key: RedisClient.KeyLike,
+      value: RedisClient.KeyLike | number,
+      get: "GET",
+      options: RedisClient.ReplyOptions<B>,
+    ): Promise<RedisClient.Data<B> | null>;
+    /** With {@link RedisClient.ReplyOptions}. */
+    set<B extends boolean | undefined>(
+      key: RedisClient.KeyLike,
+      value: RedisClient.KeyLike | number,
+      ...args: [...args: (RedisClient.KeyLike | number)[], options: RedisClient.ReplyOptions<B>]
+    ): Promise<"OK" | RedisClient.Data<B> | null>;
     set(
       key: RedisClient.KeyLike,
       value: RedisClient.KeyLike | number,
@@ -428,6 +478,19 @@ declare module "bun" {
       numfields: number,
       ...fields: RedisClient.KeyLike[]
     ): Promise<Array<string | null>>;
+    /** With {@link RedisClient.ReplyOptions}. */
+    hgetdel<B extends boolean | undefined>(
+      key: RedisClient.KeyLike,
+      fieldsKeyword: "FIELDS",
+      numfields: number,
+      ...args: [...args: RedisClient.KeyLike[], options: RedisClient.ReplyOptions<B>]
+    ): Promise<Array<RedisClient.Data<B> | null>>;
+    hgetdel(
+      key: RedisClient.KeyLike,
+      fieldsKeyword: "FIELDS",
+      numfields: number,
+      ...fields: RedisClient.KeyLike[]
+    ): Promise<Array<string | null>>;
 
     /**
      * Get hash field values with expiration options (Redis 8.0.0+)
@@ -449,6 +512,18 @@ declare module "bun" {
     hgetex(key: RedisClient.KeyLike, pxat: "PXAT", unixTimeMilliseconds: number, fieldsKeyword: "FIELDS", numfields: number, ...fields: RedisClient.KeyLike[]): Promise<Array<string | null>>;
     //prettier-ignore
     hgetex(key: RedisClient.KeyLike, persist: "PERSIST", fieldsKeyword: "FIELDS", numfields: number, ...fields: RedisClient.KeyLike[]): Promise<Array<string | null>>;
+    /** With {@link RedisClient.ReplyOptions}. */
+    hgetex<B extends boolean | undefined>(
+      key: RedisClient.KeyLike,
+      ...args: [...args: (RedisClient.KeyLike | number)[], options: RedisClient.ReplyOptions<B>]
+    ): Promise<Array<RedisClient.Data<B> | null>>;
+    hgetex(
+      key: RedisClient.KeyLike,
+      persist: "PERSIST",
+      fieldsKeyword: "FIELDS",
+      numfields: number,
+      ...fields: RedisClient.KeyLike[]
+    ): Promise<Array<string | null>>;
 
     /**
      * Set hash fields with expiration options (Redis 8.0.0+)
@@ -695,6 +770,13 @@ declare module "bun" {
      * @returns Promise that resolves with the field value or null if the field doesn't exist
      */
     hget(key: RedisClient.KeyLike, field: RedisClient.KeyLike): Promise<string | null>;
+    /** With {@link RedisClient.ReplyOptions}. */
+    hget<B extends boolean | undefined>(
+      key: RedisClient.KeyLike,
+      field: RedisClient.KeyLike,
+      options: RedisClient.ReplyOptions<B>,
+    ): Promise<RedisClient.Data<B> | null>;
+    hget(key: RedisClient.KeyLike, field: RedisClient.KeyLike): Promise<string | null>;
 
     /**
      * Get the values of all the given hash fields
@@ -702,7 +784,7 @@ declare module "bun" {
      * @param fields The fields to get
      * @returns Promise that resolves with an array of values
      */
-    hmget(key: RedisClient.KeyLike, ...fields: string[]): Promise<Array<string | null>>;
+    hmget(key: RedisClient.KeyLike, ...fields: RedisClient.KeyLike[]): Promise<Array<string | null>>;
 
     /**
      * Get the values of all the given hash fields
@@ -710,7 +792,19 @@ declare module "bun" {
      * @param fields The fields to get
      * @returns Promise that resolves with an array of values
      */
-    hmget(key: RedisClient.KeyLike, fields: string[]): Promise<Array<string | null>>;
+    hmget(key: RedisClient.KeyLike, fields: RedisClient.KeyLike[]): Promise<Array<string | null>>;
+    /** With {@link RedisClient.ReplyOptions}. */
+    hmget<B extends boolean | undefined>(
+      key: RedisClient.KeyLike,
+      fields: RedisClient.KeyLike[],
+      options: RedisClient.ReplyOptions<B>,
+    ): Promise<Array<RedisClient.Data<B> | null>>;
+    /** With {@link RedisClient.ReplyOptions}. */
+    hmget<B extends boolean | undefined>(
+      key: RedisClient.KeyLike,
+      ...args: [...args: RedisClient.KeyLike[], options: RedisClient.ReplyOptions<B>]
+    ): Promise<Array<RedisClient.Data<B> | null>>;
+    hmget(key: RedisClient.KeyLike, fields: RedisClient.KeyLike[]): Promise<Array<string | null>>;
 
     /**
      * Delete one or more hash fields
@@ -751,6 +845,25 @@ declare module "bun" {
      * @param withValues Literal "WITHVALUES" to include values
      * @returns Promise that resolves with an array of [field, value] pairs
      */
+    hrandfield(key: RedisClient.KeyLike, count: number, withValues: "WITHVALUES"): Promise<[string, string][]>;
+    /** With {@link RedisClient.ReplyOptions}. */
+    hrandfield<B extends boolean | undefined>(
+      key: RedisClient.KeyLike,
+      options: RedisClient.ReplyOptions<B>,
+    ): Promise<RedisClient.Data<B> | null>;
+    /** With {@link RedisClient.ReplyOptions}. */
+    hrandfield<B extends boolean | undefined>(
+      key: RedisClient.KeyLike,
+      count: number,
+      options: RedisClient.ReplyOptions<B>,
+    ): Promise<RedisClient.Data<B>[]>;
+    /** With {@link RedisClient.ReplyOptions}. */
+    hrandfield<B extends boolean | undefined>(
+      key: RedisClient.KeyLike,
+      count: number,
+      withValues: "WITHVALUES",
+      options: RedisClient.ReplyOptions<B>,
+    ): Promise<[RedisClient.Data<B>, RedisClient.Data<B>][]>;
     hrandfield(key: RedisClient.KeyLike, count: number, withValues: "WITHVALUES"): Promise<[string, string][]>;
 
     /**
@@ -809,6 +922,20 @@ declare module "bun" {
       count: "COUNT",
       limit: number,
     ): Promise<[string, string[]]>;
+    /** With {@link RedisClient.ReplyOptions}. */
+    hscan<B extends boolean | undefined>(
+      key: RedisClient.KeyLike,
+      cursor: string | number,
+      ...args: [...args: (RedisClient.KeyLike | number)[], options: RedisClient.ReplyOptions<B>]
+    ): Promise<[string, RedisClient.Data<B>[]]>;
+    hscan(
+      key: RedisClient.KeyLike,
+      cursor: number | string,
+      match: "MATCH",
+      pattern: string,
+      count: "COUNT",
+      limit: number,
+    ): Promise<[string, string[]]>;
 
     /**
      * Check if a value is a member of a set
@@ -817,7 +944,7 @@ declare module "bun" {
      * @returns Promise that resolves with true if the member exists, false
      * otherwise
      */
-    sismember(key: RedisClient.KeyLike, member: string | number): Promise<boolean>;
+    sismember(key: RedisClient.KeyLike, member: RedisClient.KeyLike | number): Promise<boolean>;
 
     /**
      * Add one or more members to a set
@@ -825,7 +952,7 @@ declare module "bun" {
      * @param members The members to add
      * @returns Promise that resolves with the number of members added
      */
-    sadd(key: RedisClient.KeyLike, ...members: (string | number)[]): Promise<number>;
+    sadd(key: RedisClient.KeyLike, ...members: (RedisClient.KeyLike | number)[]): Promise<number>;
 
     /**
      * Remove one or more members from a set
@@ -833,7 +960,7 @@ declare module "bun" {
      * @param members The members to remove
      * @returns Promise that resolves with the number of members removed
      */
-    srem(key: RedisClient.KeyLike, ...members: (string | number)[]): Promise<number>;
+    srem(key: RedisClient.KeyLike, ...members: (RedisClient.KeyLike | number)[]): Promise<number>;
 
     /**
      * Move a member from one set to another
@@ -842,13 +969,23 @@ declare module "bun" {
      * @param member The member to move
      * @returns Promise that resolves with true if the element was moved, false if it wasn't a member of source
      */
-    smove(source: RedisClient.KeyLike, destination: RedisClient.KeyLike, member: string | number): Promise<boolean>;
+    smove(
+      source: RedisClient.KeyLike,
+      destination: RedisClient.KeyLike,
+      member: RedisClient.KeyLike | number,
+    ): Promise<boolean>;
 
     /**
      * Get all the members in a set
      * @param key The set key
      * @returns Promise that resolves with an array of all members
      */
+    smembers(key: RedisClient.KeyLike): Promise<string[]>;
+    /** With {@link RedisClient.ReplyOptions}. */
+    smembers<B extends boolean | undefined>(
+      key: RedisClient.KeyLike,
+      options: RedisClient.ReplyOptions<B>,
+    ): Promise<RedisClient.Data<B>[]>;
     smembers(key: RedisClient.KeyLike): Promise<string[]>;
 
     /**
@@ -866,6 +1003,18 @@ declare module "bun" {
      * doesn't exist
      */
     srandmember(key: RedisClient.KeyLike, count: number): Promise<string[] | null>;
+    /** With {@link RedisClient.ReplyOptions}. */
+    srandmember<B extends boolean | undefined>(
+      key: RedisClient.KeyLike,
+      options: RedisClient.ReplyOptions<B>,
+    ): Promise<RedisClient.Data<B> | null>;
+    /** With {@link RedisClient.ReplyOptions}. */
+    srandmember<B extends boolean | undefined>(
+      key: RedisClient.KeyLike,
+      count: number,
+      options: RedisClient.ReplyOptions<B>,
+    ): Promise<RedisClient.Data<B>[] | null>;
+    srandmember(key: RedisClient.KeyLike, count: number): Promise<string[] | null>;
 
     /**
      * Remove and return a random member from a set
@@ -881,6 +1030,18 @@ declare module "bun" {
      * @returns Promise that resolves with the removed members, or null if the
      * set is empty
      */
+    spop(key: RedisClient.KeyLike, count: number): Promise<string[] | null>;
+    /** With {@link RedisClient.ReplyOptions}. */
+    spop<B extends boolean | undefined>(
+      key: RedisClient.KeyLike,
+      options: RedisClient.ReplyOptions<B>,
+    ): Promise<RedisClient.Data<B> | null>;
+    /** With {@link RedisClient.ReplyOptions}. */
+    spop<B extends boolean | undefined>(
+      key: RedisClient.KeyLike,
+      count: number,
+      options: RedisClient.ReplyOptions<B>,
+    ): Promise<RedisClient.Data<B>[] | null>;
     spop(key: RedisClient.KeyLike, count: number): Promise<string[] | null>;
 
     /**
@@ -925,6 +1086,13 @@ declare module "bun" {
      * @returns Promise that resolves with a tuple [cursor, members[]]
      */
     sscan(key: RedisClient.KeyLike, cursor: number | string, ...args: (string | number)[]): Promise<[string, string[]]>;
+    /** With {@link RedisClient.ReplyOptions}. */
+    sscan<B extends boolean | undefined>(
+      key: RedisClient.KeyLike,
+      cursor: string | number,
+      ...args: [...args: (RedisClient.KeyLike | number)[], options: RedisClient.ReplyOptions<B>]
+    ): Promise<[string, RedisClient.Data<B>[]]>;
+    sscan(key: RedisClient.KeyLike, cursor: number | string, ...args: (string | number)[]): Promise<[string, string[]]>;
 
     /**
      * Increment the integer value of a hash field by the given number
@@ -950,12 +1118,24 @@ declare module "bun" {
      * @returns Promise that resolves with an object containing all fields and values, or empty object if key does not exist
      */
     hgetall(key: RedisClient.KeyLike): Promise<Record<string, string>>;
+    /** With {@link RedisClient.ReplyOptions}. */
+    hgetall<B extends boolean | undefined>(
+      key: RedisClient.KeyLike,
+      options: RedisClient.ReplyOptions<B>,
+    ): Promise<Record<string, RedisClient.Data<B>>>;
+    hgetall(key: RedisClient.KeyLike): Promise<Record<string, string>>;
 
     /**
      * Get all field names in a hash
      * @param key The hash key
      * @returns Promise that resolves with an array of field names
      */
+    hkeys(key: RedisClient.KeyLike): Promise<string[]>;
+    /** With {@link RedisClient.ReplyOptions}. */
+    hkeys<B extends boolean | undefined>(
+      key: RedisClient.KeyLike,
+      options: RedisClient.ReplyOptions<B>,
+    ): Promise<RedisClient.Data<B>[]>;
     hkeys(key: RedisClient.KeyLike): Promise<string[]>;
 
     /**
@@ -971,7 +1151,7 @@ declare module "bun" {
      * @param field The field name
      * @returns Promise that resolves with the length of the string value, or 0 if the field doesn't exist
      */
-    hstrlen(key: RedisClient.KeyLike, field: string): Promise<number>;
+    hstrlen(key: RedisClient.KeyLike, field: RedisClient.KeyLike): Promise<number>;
 
     /**
      * Get all values in a hash
@@ -979,13 +1159,25 @@ declare module "bun" {
      * @returns Promise that resolves with an array of values
      */
     hvals(key: RedisClient.KeyLike): Promise<string[]>;
+    /** With {@link RedisClient.ReplyOptions}. */
+    hvals<B extends boolean | undefined>(
+      key: RedisClient.KeyLike,
+      options: RedisClient.ReplyOptions<B>,
+    ): Promise<RedisClient.Data<B>[]>;
+    hvals(key: RedisClient.KeyLike): Promise<string[]>;
 
     /**
      * Find all keys matching the given pattern
      * @param pattern The pattern to match
      * @returns Promise that resolves with an array of matching keys
      */
-    keys(pattern: string): Promise<string[]>;
+    keys(pattern: RedisClient.KeyLike): Promise<string[]>;
+    /** With {@link RedisClient.ReplyOptions}. */
+    keys<B extends boolean | undefined>(
+      pattern: RedisClient.KeyLike,
+      options: RedisClient.ReplyOptions<B>,
+    ): Promise<RedisClient.Data<B>[]>;
+    keys(pattern: RedisClient.KeyLike): Promise<string[]>;
 
     /**
      * Blocking pop from head of one or more lists
@@ -1010,6 +1202,11 @@ declare module "bun" {
      * ```
      */
     blpop(...args: (RedisClient.KeyLike | number)[]): Promise<[string, string] | null>;
+    /** With {@link RedisClient.ReplyOptions}. */
+    blpop<B extends boolean | undefined>(
+      ...args: [...args: (RedisClient.KeyLike | number)[], options: RedisClient.ReplyOptions<B>]
+    ): Promise<[RedisClient.Data<B>, RedisClient.Data<B>] | null>;
+    blpop(...args: (RedisClient.KeyLike | number)[]): Promise<[string, string] | null>;
 
     /**
      * Blocking pop from tail of one or more lists
@@ -1033,6 +1230,11 @@ declare module "bun" {
      * const result2 = await redis.brpop("list1", "list2", 0);
      * ```
      */
+    brpop(...args: (RedisClient.KeyLike | number)[]): Promise<[string, string] | null>;
+    /** With {@link RedisClient.ReplyOptions}. */
+    brpop<B extends boolean | undefined>(
+      ...args: [...args: (RedisClient.KeyLike | number)[], options: RedisClient.ReplyOptions<B>]
+    ): Promise<[RedisClient.Data<B>, RedisClient.Data<B>] | null>;
     brpop(...args: (RedisClient.KeyLike | number)[]): Promise<[string, string] | null>;
 
     /**
@@ -1067,6 +1269,22 @@ declare module "bun" {
       to: "LEFT" | "RIGHT",
       timeout: number,
     ): Promise<string | null>;
+    /** With {@link RedisClient.ReplyOptions}. */
+    blmove<B extends boolean | undefined>(
+      source: RedisClient.KeyLike,
+      destination: RedisClient.KeyLike,
+      from: "LEFT" | "RIGHT",
+      to: "LEFT" | "RIGHT",
+      timeout: number,
+      options: RedisClient.ReplyOptions<B>,
+    ): Promise<RedisClient.Data<B> | null>;
+    blmove(
+      source: RedisClient.KeyLike,
+      destination: RedisClient.KeyLike,
+      from: "LEFT" | "RIGHT",
+      to: "LEFT" | "RIGHT",
+      timeout: number,
+    ): Promise<string | null>;
 
     /**
      * Blocking pop multiple elements from lists
@@ -1093,6 +1311,13 @@ declare module "bun" {
      * // Returns: ["mylist", ["elem1", "elem2", "elem3"]] or null if timeout
      * ```
      */
+    blmpop(timeout: number, numkeys: number, ...args: (string | number)[]): Promise<[string, string[]] | null>;
+    /** With {@link RedisClient.ReplyOptions}. */
+    blmpop<B extends boolean | undefined>(
+      timeout: number,
+      numkeys: number,
+      ...args: [...args: (RedisClient.KeyLike | number)[], options: RedisClient.ReplyOptions<B>]
+    ): Promise<[RedisClient.Data<B>, RedisClient.Data<B>[]] | null>;
     blmpop(timeout: number, numkeys: number, ...args: (string | number)[]): Promise<[string, string[]] | null>;
 
     /**
@@ -1121,6 +1346,14 @@ declare module "bun" {
      * ```
      */
     brpoplpush(source: RedisClient.KeyLike, destination: RedisClient.KeyLike, timeout: number): Promise<string | null>;
+    /** With {@link RedisClient.ReplyOptions}. */
+    brpoplpush<B extends boolean | undefined>(
+      source: RedisClient.KeyLike,
+      destination: RedisClient.KeyLike,
+      timeout: number,
+      options: RedisClient.ReplyOptions<B>,
+    ): Promise<RedisClient.Data<B> | null>;
+    brpoplpush(source: RedisClient.KeyLike, destination: RedisClient.KeyLike, timeout: number): Promise<string | null>;
 
     /**
      * Get element at index from a list
@@ -1136,6 +1369,13 @@ declare module "bun" {
      * console.log(await redis.lindex("mylist", 5)); // null
      * ```
      */
+    lindex(key: RedisClient.KeyLike, index: number): Promise<string | null>;
+    /** With {@link RedisClient.ReplyOptions}. */
+    lindex<B extends boolean | undefined>(
+      key: RedisClient.KeyLike,
+      index: number,
+      options: RedisClient.ReplyOptions<B>,
+    ): Promise<RedisClient.Data<B> | null>;
     lindex(key: RedisClient.KeyLike, index: number): Promise<string | null>;
 
     /**
@@ -1173,6 +1413,20 @@ declare module "bun" {
       from: "LEFT" | "RIGHT",
       to: "LEFT" | "RIGHT",
     ): Promise<string | null>;
+    /** With {@link RedisClient.ReplyOptions}. */
+    lmove<B extends boolean | undefined>(
+      source: RedisClient.KeyLike,
+      destination: RedisClient.KeyLike,
+      from: "LEFT" | "RIGHT",
+      to: "LEFT" | "RIGHT",
+      options: RedisClient.ReplyOptions<B>,
+    ): Promise<RedisClient.Data<B> | null>;
+    lmove(
+      source: RedisClient.KeyLike,
+      destination: RedisClient.KeyLike,
+      from: "LEFT" | "RIGHT",
+      to: "LEFT" | "RIGHT",
+    ): Promise<string | null>;
 
     /**
      * Remove and get the first element in a list
@@ -1186,6 +1440,18 @@ declare module "bun" {
      * @param key The list key
      * @returns Promise that resolves with a list of elements, or null if the list doesn't exist
      */
+    lpop(key: RedisClient.KeyLike, count: number): Promise<string[] | null>;
+    /** With {@link RedisClient.ReplyOptions}. */
+    lpop<B extends boolean | undefined>(
+      key: RedisClient.KeyLike,
+      options: RedisClient.ReplyOptions<B>,
+    ): Promise<RedisClient.Data<B> | null>;
+    /** With {@link RedisClient.ReplyOptions}. */
+    lpop<B extends boolean | undefined>(
+      key: RedisClient.KeyLike,
+      count: number,
+      options: RedisClient.ReplyOptions<B>,
+    ): Promise<RedisClient.Data<B>[] | null>;
     lpop(key: RedisClient.KeyLike, count: number): Promise<string[] | null>;
 
     /**
@@ -1247,6 +1513,12 @@ declare module "bun" {
      * ```
      */
     lmpop(numkeys: number, ...args: (string | number)[]): Promise<[string, string[]] | null>;
+    /** With {@link RedisClient.ReplyOptions}. */
+    lmpop<B extends boolean | undefined>(
+      numkeys: number,
+      ...args: [...args: (RedisClient.KeyLike | number)[], options: RedisClient.ReplyOptions<B>]
+    ): Promise<[RedisClient.Data<B>, RedisClient.Data<B>[]] | null>;
+    lmpop(numkeys: number, ...args: (string | number)[]): Promise<[string, string[]] | null>;
 
     /**
      * Get a range of elements from a list
@@ -1263,6 +1535,14 @@ declare module "bun" {
      * console.log(await redis.lrange("mylist", -2, -1)); // ["two", "three"]
      * ```
      */
+    lrange(key: RedisClient.KeyLike, start: number, stop: number): Promise<string[]>;
+    /** With {@link RedisClient.ReplyOptions}. */
+    lrange<B extends boolean | undefined>(
+      key: RedisClient.KeyLike,
+      start: number,
+      stop: number,
+      options: RedisClient.ReplyOptions<B>,
+    ): Promise<RedisClient.Data<B>[]>;
     lrange(key: RedisClient.KeyLike, start: number, stop: number): Promise<string[]>;
 
     /**
@@ -1331,6 +1611,9 @@ declare module "bun" {
      * ```
      */
     randomkey(): Promise<string | null>;
+    /** With {@link RedisClient.ReplyOptions}. */
+    randomkey<B extends boolean | undefined>(options: RedisClient.ReplyOptions<B>): Promise<RedisClient.Data<B> | null>;
+    randomkey(): Promise<string | null>;
 
     /**
      * Remove and get the last element in a list
@@ -1345,6 +1628,18 @@ declare module "bun" {
      * @param count The number of elements to pop
      * @returns Promise that resolves with the removed elements
      */
+    rpop(key: RedisClient.KeyLike, count: number): Promise<string[]>;
+    /** With {@link RedisClient.ReplyOptions}. */
+    rpop<B extends boolean | undefined>(
+      key: RedisClient.KeyLike,
+      options: RedisClient.ReplyOptions<B>,
+    ): Promise<RedisClient.Data<B> | null>;
+    /** With {@link RedisClient.ReplyOptions}. */
+    rpop<B extends boolean | undefined>(
+      key: RedisClient.KeyLike,
+      count: number,
+      options: RedisClient.ReplyOptions<B>,
+    ): Promise<RedisClient.Data<B>[] | null>;
     rpop(key: RedisClient.KeyLike, count: number): Promise<string[]>;
 
     /**
@@ -1367,6 +1662,13 @@ declare module "bun" {
      * // dest: ["a"]
      * ```
      */
+    rpoplpush(source: RedisClient.KeyLike, destination: RedisClient.KeyLike): Promise<string | null>;
+    /** With {@link RedisClient.ReplyOptions}. */
+    rpoplpush<B extends boolean | undefined>(
+      source: RedisClient.KeyLike,
+      destination: RedisClient.KeyLike,
+      options: RedisClient.ReplyOptions<B>,
+    ): Promise<RedisClient.Data<B> | null>;
     rpoplpush(source: RedisClient.KeyLike, destination: RedisClient.KeyLike): Promise<string | null>;
 
     /**
@@ -1456,6 +1758,12 @@ declare module "bun" {
      * @returns Promise that resolves with a tuple [cursor, keys[]]
      */
     scan(cursor: string | number, ...options: (string | number)[]): Promise<[string, string[]]>;
+    /** With {@link RedisClient.ReplyOptions}. */
+    scan<B extends boolean | undefined>(
+      cursor: string | number,
+      ...args: [...args: (RedisClient.KeyLike | number)[], options: RedisClient.ReplyOptions<B>]
+    ): Promise<[string, RedisClient.Data<B>[]]>;
+    scan(cursor: string | number, ...options: (string | number)[]): Promise<[string, string[]]>;
 
     /**
      * Get the number of members in a set
@@ -1472,6 +1780,12 @@ declare module "bun" {
      * @returns Promise that resolves with an array of members in the difference
      */
     sdiff(key: RedisClient.KeyLike, ...keys: RedisClient.KeyLike[]): Promise<string[]>;
+    /** With {@link RedisClient.ReplyOptions}. */
+    sdiff<B extends boolean | undefined>(
+      key: RedisClient.KeyLike,
+      ...args: [...args: RedisClient.KeyLike[], options: RedisClient.ReplyOptions<B>]
+    ): Promise<RedisClient.Data<B>[]>;
+    sdiff(key: RedisClient.KeyLike, ...keys: RedisClient.KeyLike[]): Promise<string[]>;
 
     /**
      * Get the intersection of multiple sets
@@ -1479,6 +1793,12 @@ declare module "bun" {
      * @param keys Additional set keys to intersect
      * @returns Promise that resolves with an array of members in the intersection
      */
+    sinter(key: RedisClient.KeyLike, ...keys: RedisClient.KeyLike[]): Promise<string[]>;
+    /** With {@link RedisClient.ReplyOptions}. */
+    sinter<B extends boolean | undefined>(
+      key: RedisClient.KeyLike,
+      ...args: [...args: RedisClient.KeyLike[], options: RedisClient.ReplyOptions<B>]
+    ): Promise<RedisClient.Data<B>[]>;
     sinter(key: RedisClient.KeyLike, ...keys: RedisClient.KeyLike[]): Promise<string[]>;
 
     /**
@@ -1521,6 +1841,12 @@ declare module "bun" {
      * @param keys Additional set keys to union
      * @returns Promise that resolves with an array of members in the union
      */
+    sunion(key: RedisClient.KeyLike, ...keys: RedisClient.KeyLike[]): Promise<string[]>;
+    /** With {@link RedisClient.ReplyOptions}. */
+    sunion<B extends boolean | undefined>(
+      key: RedisClient.KeyLike,
+      ...args: [...args: RedisClient.KeyLike[], options: RedisClient.ReplyOptions<B>]
+    ): Promise<RedisClient.Data<B>[]>;
     sunion(key: RedisClient.KeyLike, ...keys: RedisClient.KeyLike[]): Promise<string[]>;
 
     /**
@@ -1603,6 +1929,18 @@ declare module "bun" {
      * @returns Promise that resolves with an array of [member, score] tuples
      */
     zpopmax(key: RedisClient.KeyLike, count: number): Promise<Array<[string, number]>>;
+    /** With {@link RedisClient.ReplyOptions}. */
+    zpopmax<B extends boolean | undefined>(
+      key: RedisClient.KeyLike,
+      options: RedisClient.ReplyOptions<B>,
+    ): Promise<[RedisClient.Data<B>, number] | []>;
+    /** With {@link RedisClient.ReplyOptions}. */
+    zpopmax<B extends boolean | undefined>(
+      key: RedisClient.KeyLike,
+      count: number,
+      options: RedisClient.ReplyOptions<B>,
+    ): Promise<[RedisClient.Data<B>, number][]>;
+    zpopmax(key: RedisClient.KeyLike, count: number): Promise<Array<[string, number]>>;
 
     /**
      * Remove and return members with the lowest scores in a sorted set
@@ -1618,6 +1956,18 @@ declare module "bun" {
      * @param count Optional number of members to pop (default: 1)
      * @returns Promise that resolves with an array of [member, score] tuples
      */
+    zpopmin(key: RedisClient.KeyLike, count: number): Promise<[string, number][]>;
+    /** With {@link RedisClient.ReplyOptions}. */
+    zpopmin<B extends boolean | undefined>(
+      key: RedisClient.KeyLike,
+      options: RedisClient.ReplyOptions<B>,
+    ): Promise<[RedisClient.Data<B>, number] | []>;
+    /** With {@link RedisClient.ReplyOptions}. */
+    zpopmin<B extends boolean | undefined>(
+      key: RedisClient.KeyLike,
+      count: number,
+      options: RedisClient.ReplyOptions<B>,
+    ): Promise<[RedisClient.Data<B>, number][]>;
     zpopmin(key: RedisClient.KeyLike, count: number): Promise<[string, number][]>;
 
     /**
@@ -1635,6 +1985,11 @@ declare module "bun" {
      * ```
      */
     bzpopmin(...args: (RedisClient.KeyLike | number)[]): Promise<[string, string, number] | null>;
+    /** With {@link RedisClient.ReplyOptions}. */
+    bzpopmin<B extends boolean | undefined>(
+      ...args: [...args: (RedisClient.KeyLike | number)[], options: RedisClient.ReplyOptions<B>]
+    ): Promise<[RedisClient.Data<B>, RedisClient.Data<B>, number] | null>;
+    bzpopmin(...args: (RedisClient.KeyLike | number)[]): Promise<[string, string, number] | null>;
 
     /**
      * Remove and return the member with the highest score from one or more sorted sets, or block until one is available
@@ -1650,6 +2005,11 @@ declare module "bun" {
      * }
      * ```
      */
+    bzpopmax(...args: (RedisClient.KeyLike | number)[]): Promise<[string, string, number] | null>;
+    /** With {@link RedisClient.ReplyOptions}. */
+    bzpopmax<B extends boolean | undefined>(
+      ...args: [...args: (RedisClient.KeyLike | number)[], options: RedisClient.ReplyOptions<B>]
+    ): Promise<[RedisClient.Data<B>, RedisClient.Data<B>, number] | null>;
     bzpopmax(...args: (RedisClient.KeyLike | number)[]): Promise<[string, string, number] | null>;
 
     /**
@@ -1674,6 +2034,25 @@ declare module "bun" {
      * @returns Promise that resolves with the members and their scores, or
      * null if the set is empty
      */
+    zrandmember(key: RedisClient.KeyLike, count: number, withscores: "WITHSCORES"): Promise<[string, number][] | null>;
+    /** With {@link RedisClient.ReplyOptions}. */
+    zrandmember<B extends boolean | undefined>(
+      key: RedisClient.KeyLike,
+      options: RedisClient.ReplyOptions<B>,
+    ): Promise<RedisClient.Data<B> | null>;
+    /** With {@link RedisClient.ReplyOptions}. */
+    zrandmember<B extends boolean | undefined>(
+      key: RedisClient.KeyLike,
+      count: number,
+      options: RedisClient.ReplyOptions<B>,
+    ): Promise<RedisClient.Data<B>[] | null>;
+    /** With {@link RedisClient.ReplyOptions}. */
+    zrandmember<B extends boolean | undefined>(
+      key: RedisClient.KeyLike,
+      count: number,
+      withscores: "WITHSCORES",
+      options: RedisClient.ReplyOptions<B>,
+    ): Promise<[RedisClient.Data<B>, number][] | null>;
     zrandmember(key: RedisClient.KeyLike, count: number, withscores: "WITHSCORES"): Promise<[string, number][] | null>;
 
     /**
@@ -1804,6 +2183,33 @@ declare module "bun" {
      * ```
      */
     zrange(key: RedisClient.KeyLike, start: string | number, stop: string | number): Promise<string[]>;
+    /** With {@link RedisClient.ReplyOptions}. */
+    zrange<B extends boolean | undefined>(
+      key: RedisClient.KeyLike,
+      start: RedisClient.KeyLike | number,
+      stop: RedisClient.KeyLike | number,
+      withscores: "WITHSCORES",
+      ...args: [...args: (RedisClient.KeyLike | number)[], options: RedisClient.ReplyOptions<B>]
+    ): Promise<[RedisClient.Data<B>, number][]>;
+    /** With {@link RedisClient.ReplyOptions}. */
+    zrange<B extends boolean | undefined>(
+      key: RedisClient.KeyLike,
+      start: RedisClient.KeyLike | number,
+      stop: RedisClient.KeyLike | number,
+      ...args: [
+        ...args: (RedisClient.KeyLike | number)[],
+        withscores: "WITHSCORES",
+        options: RedisClient.ReplyOptions<B>,
+      ]
+    ): Promise<[RedisClient.Data<B>, number][]>;
+    /** With {@link RedisClient.ReplyOptions}. */
+    zrange<B extends boolean | undefined>(
+      key: RedisClient.KeyLike,
+      start: RedisClient.KeyLike | number,
+      stop: RedisClient.KeyLike | number,
+      ...args: [...args: (RedisClient.KeyLike | number)[], options: RedisClient.ReplyOptions<B>]
+    ): Promise<RedisClient.Data<B>[]>;
+    zrange(key: RedisClient.KeyLike, start: string | number, stop: string | number): Promise<string[]>;
 
     /**
      * Return a range of members in a sorted set, by index, with scores ordered from high to low
@@ -1858,6 +2264,21 @@ declare module "bun" {
      * @returns Promise that resolves with an array of members (or with scores if WITHSCORES)
      */
     zrevrange(key: RedisClient.KeyLike, start: number, stop: number, ...options: string[]): Promise<string[]>;
+    /** With {@link RedisClient.ReplyOptions}. */
+    zrevrange<B extends boolean | undefined>(
+      key: RedisClient.KeyLike,
+      start: number,
+      stop: number,
+      ...args: [...args: string[], withscores: "WITHSCORES", options: RedisClient.ReplyOptions<B>]
+    ): Promise<[RedisClient.Data<B>, number][]>;
+    /** With {@link RedisClient.ReplyOptions}. */
+    zrevrange<B extends boolean | undefined>(
+      key: RedisClient.KeyLike,
+      start: number,
+      stop: number,
+      ...args: [...args: string[], options: RedisClient.ReplyOptions<B>]
+    ): Promise<RedisClient.Data<B>[]>;
+    zrevrange(key: RedisClient.KeyLike, start: number, stop: number, ...options: string[]): Promise<string[]>;
 
     /**
      * Append a value to a key
@@ -1875,6 +2296,13 @@ declare module "bun" {
      * @returns Promise that resolves with the old value, or null if the key
      * didn't exist
      */
+    getset(key: RedisClient.KeyLike, value: RedisClient.KeyLike | number): Promise<string | null>;
+    /** With {@link RedisClient.ReplyOptions}. */
+    getset<B extends boolean | undefined>(
+      key: RedisClient.KeyLike,
+      value: RedisClient.KeyLike | number,
+      options: RedisClient.ReplyOptions<B>,
+    ): Promise<RedisClient.Data<B> | null>;
     getset(key: RedisClient.KeyLike, value: RedisClient.KeyLike | number): Promise<string | null>;
 
     /**
@@ -1964,7 +2392,7 @@ declare module "bun" {
      * @returns Promise that resolves with 1 if the HyperLogLog was altered, 0
      * otherwise
      */
-    pfadd(key: RedisClient.KeyLike, element: string | number): Promise<number>;
+    pfadd(key: RedisClient.KeyLike, element: RedisClient.KeyLike | number): Promise<number>;
 
     /**
      * Append one or multiple values to a list
@@ -2034,7 +2462,7 @@ declare module "bun" {
      * @returns Promise that resolves with the score of the member as a number,
      * or null if the member or key doesn't exist
      */
-    zscore(key: RedisClient.KeyLike, member: string | number): Promise<number | null>;
+    zscore(key: RedisClient.KeyLike, member: RedisClient.KeyLike | number): Promise<number | null>;
 
     /**
      * Increment the score of a member in a sorted set
@@ -2104,7 +2532,7 @@ declare module "bun" {
      * await redis.zadd("myzset", "INCR", "1.5", "one");
      * ```
      */
-    zadd(key: RedisClient.KeyLike, ...args: (string | number)[]): Promise<number>;
+    zadd(key: RedisClient.KeyLike, ...args: (RedisClient.KeyLike | number)[]): Promise<number>;
 
     /**
      * Incrementally iterate sorted set elements and their scores
@@ -2154,6 +2582,17 @@ declare module "bun" {
      * const [cursor, elements] = await redis.zscan("myzset", "0", "COUNT", "100");
      * ```
      */
+    zscan(
+      key: RedisClient.KeyLike,
+      cursor: string | number,
+      ...options: (string | number)[]
+    ): Promise<[string, string[]]>;
+    /** With {@link RedisClient.ReplyOptions}. */
+    zscan<B extends boolean | undefined>(
+      key: RedisClient.KeyLike,
+      cursor: string | number,
+      ...args: [...args: (RedisClient.KeyLike | number)[], options: RedisClient.ReplyOptions<B>]
+    ): Promise<[string, RedisClient.Data<B>[]]>;
     zscan(
       key: RedisClient.KeyLike,
       cursor: string | number,
@@ -2262,6 +2701,14 @@ declare module "bun" {
      * @param options Additional options (LIMIT offset count)
      * @returns Promise that resolves with array of members
      */
+    zrangebylex(key: RedisClient.KeyLike, min: string, max: string, ...options: (string | number)[]): Promise<string[]>;
+    /** With {@link RedisClient.ReplyOptions}. */
+    zrangebylex<B extends boolean | undefined>(
+      key: RedisClient.KeyLike,
+      min: RedisClient.KeyLike,
+      max: RedisClient.KeyLike,
+      ...args: [...args: (RedisClient.KeyLike | number)[], options: RedisClient.ReplyOptions<B>]
+    ): Promise<RedisClient.Data<B>[]>;
     zrangebylex(key: RedisClient.KeyLike, min: string, max: string, ...options: (string | number)[]): Promise<string[]>;
 
     /**
@@ -2413,6 +2860,38 @@ declare module "bun" {
       max: string | number,
       ...options: (string | number)[]
     ): Promise<string[]>;
+    /** With {@link RedisClient.ReplyOptions}. */
+    zrangebyscore<B extends boolean | undefined>(
+      key: RedisClient.KeyLike,
+      min: string | number,
+      max: string | number,
+      withscores: "WITHSCORES",
+      ...args: [...args: (RedisClient.KeyLike | number)[], options: RedisClient.ReplyOptions<B>]
+    ): Promise<[RedisClient.Data<B>, number][]>;
+    /** With {@link RedisClient.ReplyOptions}. */
+    zrangebyscore<B extends boolean | undefined>(
+      key: RedisClient.KeyLike,
+      min: string | number,
+      max: string | number,
+      ...args: [
+        ...args: (RedisClient.KeyLike | number)[],
+        withscores: "WITHSCORES",
+        options: RedisClient.ReplyOptions<B>,
+      ]
+    ): Promise<[RedisClient.Data<B>, number][]>;
+    /** With {@link RedisClient.ReplyOptions}. */
+    zrangebyscore<B extends boolean | undefined>(
+      key: RedisClient.KeyLike,
+      min: string | number,
+      max: string | number,
+      ...args: [...args: (RedisClient.KeyLike | number)[], options: RedisClient.ReplyOptions<B>]
+    ): Promise<RedisClient.Data<B>[]>;
+    zrangebyscore(
+      key: RedisClient.KeyLike,
+      min: string | number,
+      max: string | number,
+      ...options: (string | number)[]
+    ): Promise<string[]>;
 
     /**
      * Return members in a sorted set with scores within a given range, ordered from high to low
@@ -2519,6 +2998,38 @@ declare module "bun" {
       min: string | number,
       ...options: (string | number)[]
     ): Promise<string[]>;
+    /** With {@link RedisClient.ReplyOptions}. */
+    zrevrangebyscore<B extends boolean | undefined>(
+      key: RedisClient.KeyLike,
+      max: string | number,
+      min: string | number,
+      withscores: "WITHSCORES",
+      ...args: [...args: (RedisClient.KeyLike | number)[], options: RedisClient.ReplyOptions<B>]
+    ): Promise<[RedisClient.Data<B>, number][]>;
+    /** With {@link RedisClient.ReplyOptions}. */
+    zrevrangebyscore<B extends boolean | undefined>(
+      key: RedisClient.KeyLike,
+      max: string | number,
+      min: string | number,
+      ...args: [
+        ...args: (RedisClient.KeyLike | number)[],
+        withscores: "WITHSCORES",
+        options: RedisClient.ReplyOptions<B>,
+      ]
+    ): Promise<[RedisClient.Data<B>, number][]>;
+    /** With {@link RedisClient.ReplyOptions}. */
+    zrevrangebyscore<B extends boolean | undefined>(
+      key: RedisClient.KeyLike,
+      max: string | number,
+      min: string | number,
+      ...args: [...args: (RedisClient.KeyLike | number)[], options: RedisClient.ReplyOptions<B>]
+    ): Promise<RedisClient.Data<B>[]>;
+    zrevrangebyscore(
+      key: RedisClient.KeyLike,
+      max: string | number,
+      min: string | number,
+      ...options: (string | number)[]
+    ): Promise<string[]>;
 
     /**
      * Return members in a sorted set within a lexicographical range, ordered from high to low
@@ -2548,6 +3059,19 @@ declare module "bun" {
      * console.log(limited); // ["d", "c"] (first 2 members)
      * ```
      */
+    zrevrangebylex(
+      key: RedisClient.KeyLike,
+      max: string,
+      min: string,
+      ...options: (string | number)[]
+    ): Promise<string[]>;
+    /** With {@link RedisClient.ReplyOptions}. */
+    zrevrangebylex<B extends boolean | undefined>(
+      key: RedisClient.KeyLike,
+      max: RedisClient.KeyLike,
+      min: RedisClient.KeyLike,
+      ...args: [...args: (RedisClient.KeyLike | number)[], options: RedisClient.ReplyOptions<B>]
+    ): Promise<RedisClient.Data<B>[]>;
     zrevrangebylex(
       key: RedisClient.KeyLike,
       max: string,
@@ -2600,7 +3124,7 @@ declare module "bun" {
      * @param member The member to find
      * @returns Promise that resolves with the rank (index) of the member, or null if the member doesn't exist
      */
-    zrank(key: RedisClient.KeyLike, member: string | number): Promise<number | null>;
+    zrank(key: RedisClient.KeyLike, member: RedisClient.KeyLike | number): Promise<number | null>;
 
     /**
      * Determine the index of a member in a sorted set with score
@@ -2609,7 +3133,11 @@ declare module "bun" {
      * @param withscore "WITHSCORE" to include the score
      * @returns Promise that resolves with [rank, score] or null if the member doesn't exist
      */
-    zrank(key: RedisClient.KeyLike, member: string | number, withscore: "WITHSCORE"): Promise<[number, number] | null>;
+    zrank(
+      key: RedisClient.KeyLike,
+      member: RedisClient.KeyLike | number,
+      withscore: "WITHSCORE",
+    ): Promise<[number, number] | null>;
 
     /**
      * Determine the index of a member in a sorted set, with scores ordered from high to low
@@ -2617,7 +3145,7 @@ declare module "bun" {
      * @param member The member to find
      * @returns Promise that resolves with the rank (index) of the member, or null if the member doesn't exist
      */
-    zrevrank(key: RedisClient.KeyLike, member: string | number): Promise<number | null>;
+    zrevrank(key: RedisClient.KeyLike, member: RedisClient.KeyLike | number): Promise<number | null>;
 
     /**
      * Determine the index of a member in a sorted set with score, with scores ordered from high to low
@@ -2628,7 +3156,7 @@ declare module "bun" {
      */
     zrevrank(
       key: RedisClient.KeyLike,
-      member: string | number,
+      member: RedisClient.KeyLike | number,
       withscore: "WITHSCORE",
     ): Promise<[number, number] | null>;
 
@@ -2638,6 +3166,11 @@ declare module "bun" {
      * @returns Promise that resolves with an array of values, with null for
      * keys that don't exist
      */
+    mget(...keys: RedisClient.KeyLike[]): Promise<(string | null)[]>;
+    /** With {@link RedisClient.ReplyOptions}. */
+    mget<B extends boolean | undefined>(
+      ...args: [...args: RedisClient.KeyLike[], options: RedisClient.ReplyOptions<B>]
+    ): Promise<(RedisClient.Data<B> | null)[]>;
     mget(...keys: RedisClient.KeyLike[]): Promise<(string | null)[]>;
 
     /**
@@ -2716,6 +3249,14 @@ declare module "bun" {
      * @returns Promise that resolves with the substring, or an empty string if the key doesn't exist
      */
     getrange(key: RedisClient.KeyLike, start: number, end: number): Promise<string>;
+    /** With {@link RedisClient.ReplyOptions}. */
+    getrange<B extends boolean | undefined>(
+      key: RedisClient.KeyLike,
+      start: number,
+      end: number,
+      options: RedisClient.ReplyOptions<B>,
+    ): Promise<RedisClient.Data<B>>;
+    getrange(key: RedisClient.KeyLike, start: number, end: number): Promise<string>;
 
     /**
      * Get a substring of the string stored at a key
@@ -2726,6 +3267,14 @@ declare module "bun" {
      *
      * @deprecated Use {@link getrange} instead. SUBSTR is a deprecated Redis command.
      */
+    substr(key: RedisClient.KeyLike, start: number, end: number): Promise<string>;
+    /** With {@link RedisClient.ReplyOptions}. */
+    substr<B extends boolean | undefined>(
+      key: RedisClient.KeyLike,
+      start: number,
+      end: number,
+      options: RedisClient.ReplyOptions<B>,
+    ): Promise<RedisClient.Data<B>>;
     substr(key: RedisClient.KeyLike, start: number, end: number): Promise<string>;
 
     /**
@@ -2744,6 +3293,12 @@ declare module "bun" {
      * key doesn't exist
      */
     dump(key: RedisClient.KeyLike): Promise<string | null>;
+    /** With {@link RedisClient.ReplyOptions}. */
+    dump<B extends boolean | undefined>(
+      key: RedisClient.KeyLike,
+      options: RedisClient.ReplyOptions<B>,
+    ): Promise<RedisClient.Data<B> | null>;
+    dump(key: RedisClient.KeyLike): Promise<string | null>;
 
     /**
      * Get the expiration time of a key as a UNIX timestamp in seconds
@@ -2761,6 +3316,12 @@ declare module "bun" {
      * @returns Promise that resolves with the value of the key, or null if the
      * key doesn't exist
      */
+    getdel(key: RedisClient.KeyLike): Promise<string | null>;
+    /** With {@link RedisClient.ReplyOptions}. */
+    getdel<B extends boolean | undefined>(
+      key: RedisClient.KeyLike,
+      options: RedisClient.ReplyOptions<B>,
+    ): Promise<RedisClient.Data<B> | null>;
     getdel(key: RedisClient.KeyLike): Promise<string | null>;
 
     /**
@@ -2820,6 +3381,12 @@ declare module "bun" {
      * @returns Promise that resolves with the value of the key, or null if the key doesn't exist
      */
     getex(key: RedisClient.KeyLike, persist: "PERSIST"): Promise<string | null>;
+    /** With {@link RedisClient.ReplyOptions}. */
+    getex<B extends boolean | undefined>(
+      key: RedisClient.KeyLike,
+      ...args: [...args: (RedisClient.KeyLike | number)[], options: RedisClient.ReplyOptions<B>]
+    ): Promise<RedisClient.Data<B> | null>;
+    getex(key: RedisClient.KeyLike, persist: "PERSIST"): Promise<string | null>;
 
     /**
      *  Ping the server
@@ -2833,6 +3400,12 @@ declare module "bun" {
      *  @param message The message to send to the server
      *  @returns Promise that resolves with the message if the server is reachable, or throws an error if the server is not reachable
      */
+    ping(message: RedisClient.KeyLike): Promise<string>;
+    /** With {@link RedisClient.ReplyOptions}. */
+    ping<B extends boolean | undefined>(
+      message: RedisClient.KeyLike,
+      options: RedisClient.ReplyOptions<B>,
+    ): Promise<RedisClient.Data<B>>;
     ping(message: RedisClient.KeyLike): Promise<string>;
 
     /**
@@ -3113,6 +3686,17 @@ declare module "bun" {
      * ```
      */
     zdiff(numkeys: number, ...keys: RedisClient.KeyLike[]): Promise<string[]>;
+    /** With {@link RedisClient.ReplyOptions}. */
+    zdiff<B extends boolean | undefined>(
+      numkeys: number,
+      ...args: [...args: RedisClient.KeyLike[], withscores: "WITHSCORES", options: RedisClient.ReplyOptions<B>]
+    ): Promise<[RedisClient.Data<B>, number][]>;
+    /** With {@link RedisClient.ReplyOptions}. */
+    zdiff<B extends boolean | undefined>(
+      numkeys: number,
+      ...args: [...args: RedisClient.KeyLike[], options: RedisClient.ReplyOptions<B>]
+    ): Promise<RedisClient.Data<B>[]>;
+    zdiff(numkeys: number, ...keys: RedisClient.KeyLike[]): Promise<string[]>;
 
     /**
      * Compute the difference between sorted sets and store the result
@@ -3221,6 +3805,21 @@ declare module "bun" {
      * // Returns: [["b", 1], ["c", 2]] (minimum scores)
      * ```
      */
+    zinter(numkeys: number, ...args: (string | number)[]): Promise<string[]>;
+    /** With {@link RedisClient.ReplyOptions}. */
+    zinter<B extends boolean | undefined>(
+      numkeys: number,
+      ...args: [
+        ...args: (RedisClient.KeyLike | number)[],
+        withscores: "WITHSCORES",
+        options: RedisClient.ReplyOptions<B>,
+      ]
+    ): Promise<[RedisClient.Data<B>, number][]>;
+    /** With {@link RedisClient.ReplyOptions}. */
+    zinter<B extends boolean | undefined>(
+      numkeys: number,
+      ...args: [...args: (RedisClient.KeyLike | number)[], options: RedisClient.ReplyOptions<B>]
+    ): Promise<RedisClient.Data<B>[]>;
     zinter(numkeys: number, ...args: (string | number)[]): Promise<string[]>;
 
     /**
@@ -3380,6 +3979,21 @@ declare module "bun" {
      * ```
      */
     zunion(numkeys: number, ...args: (string | number)[]): Promise<string[]>;
+    /** With {@link RedisClient.ReplyOptions}. */
+    zunion<B extends boolean | undefined>(
+      numkeys: number,
+      ...args: [
+        ...args: (RedisClient.KeyLike | number)[],
+        withscores: "WITHSCORES",
+        options: RedisClient.ReplyOptions<B>,
+      ]
+    ): Promise<[RedisClient.Data<B>, number][]>;
+    /** With {@link RedisClient.ReplyOptions}. */
+    zunion<B extends boolean | undefined>(
+      numkeys: number,
+      ...args: [...args: (RedisClient.KeyLike | number)[], options: RedisClient.ReplyOptions<B>]
+    ): Promise<RedisClient.Data<B>[]>;
+    zunion(numkeys: number, ...args: (string | number)[]): Promise<string[]>;
 
     /**
      * Compute the union of multiple sorted sets and store in destination
@@ -3441,6 +4055,12 @@ declare module "bun" {
      * ```
      */
     zmpop(numkeys: number, ...args: (string | number)[]): Promise<[string, [string, number][]] | null>;
+    /** With {@link RedisClient.ReplyOptions}. */
+    zmpop<B extends boolean | undefined>(
+      numkeys: number,
+      ...args: [...args: (RedisClient.KeyLike | number)[], options: RedisClient.ReplyOptions<B>]
+    ): Promise<[RedisClient.Data<B>, [RedisClient.Data<B>, number][]] | null>;
+    zmpop(numkeys: number, ...args: (string | number)[]): Promise<[string, [string, number][]] | null>;
 
     /**
      * Blocking version of ZMPOP. Blocks until a member is available or timeout expires.
@@ -3460,6 +4080,17 @@ declare module "bun" {
      * // Returns: ["myzset", [["member1", 1], ["member2", 2]]] or null if timeout
      * ```
      */
+    bzmpop(
+      timeout: number,
+      numkeys: number,
+      ...args: (string | number)[]
+    ): Promise<[string, [string, number][]] | null>;
+    /** With {@link RedisClient.ReplyOptions}. */
+    bzmpop<B extends boolean | undefined>(
+      timeout: number,
+      numkeys: number,
+      ...args: [...args: (RedisClient.KeyLike | number)[], options: RedisClient.ReplyOptions<B>]
+    ): Promise<[RedisClient.Data<B>, [RedisClient.Data<B>, number][]] | null>;
     bzmpop(
       timeout: number,
       numkeys: number,
@@ -3589,7 +4220,7 @@ declare module "bun" {
      * await redis.geoadd("Sicily", 15.087269, 37.502669, "Catania");
      * ```
      */
-    geoadd(key: RedisClient.KeyLike, ...args: (string | number)[]): Promise<number>;
+    geoadd(key: RedisClient.KeyLike, ...args: (RedisClient.KeyLike | number)[]): Promise<number>;
 
     /**
      * Return the distance in meters between two members in the geospatial index
@@ -3603,7 +4234,11 @@ declare module "bun" {
      * await redis.geodist("Sicily", "Palermo", "Catania"); // "166274.1516"
      * ```
      */
-    geodist(key: RedisClient.KeyLike, member1: string | number, member2: string | number): Promise<string | null>;
+    geodist(
+      key: RedisClient.KeyLike,
+      member1: RedisClient.KeyLike | number,
+      member2: RedisClient.KeyLike | number,
+    ): Promise<string | null>;
     /**
      * Return the distance between two members in the geospatial index
      * @param key The key of the geo set
@@ -3619,8 +4254,8 @@ declare module "bun" {
      */
     geodist(
       key: RedisClient.KeyLike,
-      member1: string | number,
-      member2: string | number,
+      member1: RedisClient.KeyLike | number,
+      member2: RedisClient.KeyLike | number,
       unit: "m" | "km" | "mi" | "ft" | "M" | "KM" | "MI" | "FT",
     ): Promise<string | null>;
 
@@ -3636,7 +4271,7 @@ declare module "bun" {
      * // ["sqc8b49rny0", "sqdtr74hyu0"]
      * ```
      */
-    geohash(key: RedisClient.KeyLike, ...members: (string | number)[]): Promise<(string | null)[]>;
+    geohash(key: RedisClient.KeyLike, ...members: (RedisClient.KeyLike | number)[]): Promise<(string | null)[]>;
 
     /**
      * Return the longitude/latitude of members of a geospatial index
@@ -3650,7 +4285,10 @@ declare module "bun" {
      * // [[13.36138933897018433, 38.11555639549629859]]
      * ```
      */
-    geopos(key: RedisClient.KeyLike, ...members: (string | number)[]): Promise<([number, number] | null)[]>;
+    geopos(
+      key: RedisClient.KeyLike,
+      ...members: (RedisClient.KeyLike | number)[]
+    ): Promise<([number, number] | null)[]>;
 
     /**
      * Query a geospatial index for members inside an area of a box or circle
@@ -3664,7 +4302,12 @@ declare module "bun" {
      * // ["Catania", "Palermo"]
      * ```
      */
-    geosearch(key: RedisClient.KeyLike, ...args: (string | number)[]): Promise<unknown[]>;
+    geosearch(
+      key: RedisClient.KeyLike,
+      ...args:
+        | (RedisClient.KeyLike | number)[]
+        | [...args: (RedisClient.KeyLike | number)[], options: RedisClient.ReplyOptions]
+    ): Promise<unknown[]>;
 
     /**
      * Query a geospatial index and store the result in a destination key
@@ -3676,7 +4319,7 @@ declare module "bun" {
     geosearchstore(
       destination: RedisClient.KeyLike,
       source: RedisClient.KeyLike,
-      ...args: (string | number)[]
+      ...args: (RedisClient.KeyLike | number)[]
     ): Promise<number>;
 
     /**
@@ -3694,7 +4337,13 @@ declare module "bun" {
      *
      * The reply is converted the same way as for `send`.
      */
-    eval(script: string, numkeys: number, ...keysAndArgs: (string | number)[]): Promise<any>;
+    eval(
+      script: string,
+      numkeys: number,
+      ...keysAndArgs:
+        | (RedisClient.KeyLike | number)[]
+        | [...keysAndArgs: (RedisClient.KeyLike | number)[], options: RedisClient.ReplyOptions]
+    ): Promise<any>;
 
     /**
      * Execute a Lua script server side using the script's SHA1 digest
@@ -3711,7 +4360,13 @@ declare module "bun" {
      *
      * The reply is converted the same way as for `send`.
      */
-    evalsha(sha1: string, numkeys: number, ...keysAndArgs: (string | number)[]): Promise<any>;
+    evalsha(
+      sha1: string,
+      numkeys: number,
+      ...keysAndArgs:
+        | (RedisClient.KeyLike | number)[]
+        | [...keysAndArgs: (RedisClient.KeyLike | number)[], options: RedisClient.ReplyOptions]
+    ): Promise<any>;
 
     /**
      * Manage the Lua script cache
@@ -3725,7 +4380,7 @@ declare module "bun" {
      * await redis.script("FLUSH");
      * ```
      */
-    script(...args: string[]): Promise<any>;
+    script(...args: string[] | [...args: string[], options: RedisClient.ReplyOptions]): Promise<any>;
 
     /**
      * Invoke a function from a loaded library
@@ -3736,7 +4391,13 @@ declare module "bun" {
      *
      * The reply is converted the same way as for `send`.
      */
-    fcall(name: string, numkeys: number, ...keysAndArgs: (string | number)[]): Promise<any>;
+    fcall(
+      name: string,
+      numkeys: number,
+      ...keysAndArgs:
+        | (RedisClient.KeyLike | number)[]
+        | [...keysAndArgs: (RedisClient.KeyLike | number)[], options: RedisClient.ReplyOptions]
+    ): Promise<any>;
 
     /**
      * Manage Redis functions (libraries of Lua functions)
@@ -3750,7 +4411,9 @@ declare module "bun" {
      * await redis.function("DELETE", "mylib");
      * ```
      */
-    function(...args: RedisClient.KeyLike[]): Promise<any>;
+    function(
+      ...args: RedisClient.KeyLike[] | [...args: RedisClient.KeyLike[], options: RedisClient.ReplyOptions]
+    ): Promise<any>;
 
     /**
      * Return the number of keys in the currently-selected database
@@ -3806,6 +4469,12 @@ declare module "bun" {
      * @returns Promise that resolves with the same message
      */
     echo(message: string): Promise<string>;
+    /** With {@link RedisClient.ReplyOptions}. */
+    echo<B extends boolean | undefined>(
+      message: RedisClient.KeyLike,
+      options: RedisClient.ReplyOptions<B>,
+    ): Promise<RedisClient.Data<B>>;
+    echo(message: string): Promise<string>;
 
     /**
      * Get the Unix timestamp of the last successful save to disk
@@ -3824,7 +4493,9 @@ declare module "bun" {
      * const name = await redis.client("GETNAME"); // "myconnection"
      * ```
      */
-    client(...args: (string | number)[]): Promise<any>;
+    client(
+      ...args: (string | number)[] | [...args: (string | number)[], options: RedisClient.ReplyOptions]
+    ): Promise<any>;
 
     /**
      * Get or set server configuration parameters
@@ -3836,14 +4507,18 @@ declare module "bun" {
      * await redis.config("GET", "maxmemory");
      * ```
      */
-    config(...args: (string | number)[]): Promise<any>;
+    config(
+      ...args: (string | number)[] | [...args: (string | number)[], options: RedisClient.ReplyOptions]
+    ): Promise<any>;
 
     /**
      * Run a debugging command. Most subcommands are intended for internal use.
      * @param args Subcommand and its arguments
      * @returns Promise that resolves with the subcommand's result
      */
-    debug(...args: (string | number)[]): Promise<any>;
+    debug(
+      ...args: (string | number)[] | [...args: (string | number)[], options: RedisClient.ReplyOptions]
+    ): Promise<any>;
 
     /**
      * Get details about all Redis commands or specific commands
@@ -3855,7 +4530,9 @@ declare module "bun" {
      * const count = await redis.command("COUNT");
      * ```
      */
-    command(...args: (string | number)[]): Promise<any>;
+    command(
+      ...args: (string | number)[] | [...args: (string | number)[], options: RedisClient.ReplyOptions]
+    ): Promise<any>;
 
     /**
      * Inspect the internals of Redis objects
@@ -3869,7 +4546,10 @@ declare module "bun" {
      * await redis.object("ENCODING", "mykey"); // "embstr"
      * ```
      */
-    object(subcommand: string, ...args: RedisClient.KeyLike[]): Promise<any>;
+    object(
+      subcommand: string,
+      ...args: RedisClient.KeyLike[] | [...args: RedisClient.KeyLike[], options: RedisClient.ReplyOptions]
+    ): Promise<any>;
 
     /**
      * Sort the elements in a list, set or sorted set
@@ -3885,6 +4565,12 @@ declare module "bun" {
      * await redis.sort("mylist", "GET", "missing:*"); // [null, null, null]
      * ```
      */
+    sort(key: RedisClient.KeyLike, ...args: (string | number)[]): Promise<(string | null)[] | number>;
+    /** With {@link RedisClient.ReplyOptions}. */
+    sort<B extends boolean | undefined>(
+      key: RedisClient.KeyLike,
+      ...args: [...args: (RedisClient.KeyLike | number)[], options: RedisClient.ReplyOptions<B>]
+    ): Promise<(RedisClient.Data<B> | null)[] | number>;
     sort(key: RedisClient.KeyLike, ...args: (string | number)[]): Promise<(string | null)[] | number>;
 
     /**
@@ -3910,7 +4596,11 @@ declare module "bun" {
      * await redis.lcs("key1", "key2", "LEN"); // 6
      * ```
      */
-    lcs(key1: RedisClient.KeyLike, key2: RedisClient.KeyLike, ...options: (string | number)[]): Promise<any>;
+    lcs(
+      key1: RedisClient.KeyLike,
+      key2: RedisClient.KeyLike,
+      ...options: (string | number)[] | [...options: (string | number)[], options: RedisClient.ReplyOptions]
+    ): Promise<any>;
 
     /**
      * Append a new entry to a stream
@@ -3923,7 +4613,7 @@ declare module "bun" {
      * const id = await redis.xadd("mystream", "*", "field1", "value1", "field2", "value2");
      * ```
      */
-    xadd(key: RedisClient.KeyLike, ...args: (string | number)[]): Promise<string | null>;
+    xadd(key: RedisClient.KeyLike, ...args: (RedisClient.KeyLike | number)[]): Promise<string | null>;
 
     /**
      * Get the number of entries in a stream
@@ -3952,6 +4642,19 @@ declare module "bun" {
       end: string,
       ...options: (string | number)[]
     ): Promise<[string, string[]][]>;
+    /** With {@link RedisClient.ReplyOptions}. */
+    xrange<B extends boolean | undefined>(
+      key: RedisClient.KeyLike,
+      start: RedisClient.KeyLike,
+      end: RedisClient.KeyLike,
+      ...args: [...args: (RedisClient.KeyLike | number)[], options: RedisClient.ReplyOptions<B>]
+    ): Promise<[RedisClient.Data<B>, RedisClient.Data<B>[]][]>;
+    xrange(
+      key: RedisClient.KeyLike,
+      start: string,
+      end: string,
+      ...options: (string | number)[]
+    ): Promise<[string, string[]][]>;
 
     /**
      * Get a range of entries from a stream in reverse order
@@ -3961,6 +4664,19 @@ declare module "bun" {
      * @param options Optional COUNT modifier
      * @returns Promise that resolves with an array of [id, [field, value, ...]] entries
      */
+    xrevrange(
+      key: RedisClient.KeyLike,
+      end: string,
+      start: string,
+      ...options: (string | number)[]
+    ): Promise<[string, string[]][]>;
+    /** With {@link RedisClient.ReplyOptions}. */
+    xrevrange<B extends boolean | undefined>(
+      key: RedisClient.KeyLike,
+      end: RedisClient.KeyLike,
+      start: RedisClient.KeyLike,
+      ...args: [...args: (RedisClient.KeyLike | number)[], options: RedisClient.ReplyOptions<B>]
+    ): Promise<[RedisClient.Data<B>, RedisClient.Data<B>[]][]>;
     xrevrange(
       key: RedisClient.KeyLike,
       end: string,
@@ -3978,7 +4694,11 @@ declare module "bun" {
      * await redis.xread("COUNT", 2, "STREAMS", "mystream", "0");
      * ```
      */
-    xread(...args: (string | number)[]): Promise<any>;
+    xread(
+      ...args:
+        | (RedisClient.KeyLike | number)[]
+        | [...args: (RedisClient.KeyLike | number)[], options: RedisClient.ReplyOptions]
+    ): Promise<any>;
 
     /**
      * Read entries from one or more streams using a consumer group
@@ -3990,7 +4710,11 @@ declare module "bun" {
      * await redis.xreadgroup("GROUP", "mygroup", "consumer1", "COUNT", 10, "STREAMS", "mystream", ">");
      * ```
      */
-    xreadgroup(...args: (string | number)[]): Promise<any>;
+    xreadgroup(
+      ...args:
+        | (RedisClient.KeyLike | number)[]
+        | [...args: (RedisClient.KeyLike | number)[], options: RedisClient.ReplyOptions]
+    ): Promise<any>;
 
     /**
      * Delete one or more entries from a stream
@@ -3999,7 +4723,7 @@ declare module "bun" {
      * @param moreIds Additional entry IDs to delete
      * @returns Promise that resolves with the number of entries actually deleted
      */
-    xdel(key: RedisClient.KeyLike, id: string, ...moreIds: string[]): Promise<number>;
+    xdel(key: RedisClient.KeyLike, id: RedisClient.KeyLike, ...moreIds: RedisClient.KeyLike[]): Promise<number>;
 
     /**
      * Trim a stream to a given size or minimum ID
@@ -4018,8 +4742,8 @@ declare module "bun" {
     xtrim(
       key: RedisClient.KeyLike,
       strategy: "MAXLEN" | "MINID" | "maxlen" | "minid",
-      threshold: string | number,
-      ...options: (string | number)[]
+      threshold: RedisClient.KeyLike | number,
+      ...options: (RedisClient.KeyLike | number)[]
     ): Promise<number>;
 
     /**
@@ -4030,7 +4754,12 @@ declare module "bun" {
      * @param moreIds Additional message IDs to acknowledge
      * @returns Promise that resolves with the number of messages successfully acknowledged
      */
-    xack(key: RedisClient.KeyLike, group: string, id: string, ...moreIds: string[]): Promise<number>;
+    xack(
+      key: RedisClient.KeyLike,
+      group: string,
+      id: RedisClient.KeyLike,
+      ...moreIds: RedisClient.KeyLike[]
+    ): Promise<number>;
 
     /**
      * Change the ownership of pending messages in a consumer group
@@ -4047,8 +4776,10 @@ declare module "bun" {
       group: string,
       consumer: string,
       minIdleTime: number,
-      id: string,
-      ...rest: (string | number)[]
+      id: RedisClient.KeyLike,
+      ...rest:
+        | (RedisClient.KeyLike | number)[]
+        | [...rest: (RedisClient.KeyLike | number)[], options: RedisClient.ReplyOptions]
     ): Promise<any>;
 
     /**
@@ -4066,8 +4797,10 @@ declare module "bun" {
       group: string,
       consumer: string,
       minIdleTime: number,
-      start: string,
-      ...options: (string | number)[]
+      start: RedisClient.KeyLike,
+      ...options:
+        | (RedisClient.KeyLike | number)[]
+        | [...options: (RedisClient.KeyLike | number)[], options: RedisClient.ReplyOptions]
     ): Promise<any>;
 
     /**
@@ -4085,7 +4818,13 @@ declare module "bun" {
      * await redis.xpending("mystream", "mygroup", "-", "+", 10);
      * ```
      */
-    xpending(key: RedisClient.KeyLike, group: string, ...args: (string | number)[]): Promise<any>;
+    xpending(
+      key: RedisClient.KeyLike,
+      group: string,
+      ...args:
+        | (RedisClient.KeyLike | number)[]
+        | [...args: (RedisClient.KeyLike | number)[], options: RedisClient.ReplyOptions]
+    ): Promise<any>;
 
     /**
      * Get information about a stream or its consumer groups
@@ -4099,7 +4838,12 @@ declare module "bun" {
      * await redis.xinfo("GROUPS", "mystream");
      * ```
      */
-    xinfo(subcommand: string, ...args: (string | number)[]): Promise<any>;
+    xinfo(
+      subcommand: string,
+      ...args:
+        | (RedisClient.KeyLike | number)[]
+        | [...args: (RedisClient.KeyLike | number)[], options: RedisClient.ReplyOptions]
+    ): Promise<any>;
 
     /**
      * Manage consumer groups for a stream
@@ -4113,7 +4857,12 @@ declare module "bun" {
      * await redis.xgroup("DESTROY", "mystream", "mygroup");
      * ```
      */
-    xgroup(subcommand: string, ...args: (string | number)[]): Promise<any>;
+    xgroup(
+      subcommand: string,
+      ...args:
+        | (RedisClient.KeyLike | number)[]
+        | [...args: (RedisClient.KeyLike | number)[], options: RedisClient.ReplyOptions]
+    ): Promise<any>;
 
     /**
      * Set the last entry ID of a stream
@@ -4122,7 +4871,11 @@ declare module "bun" {
      * @param options Optional ENTRIESADDED and MAXDELETEDID modifiers
      * @returns Promise that resolves with "OK"
      */
-    xsetid(key: RedisClient.KeyLike, lastId: string, ...options: (string | number)[]): Promise<"OK">;
+    xsetid(
+      key: RedisClient.KeyLike,
+      lastId: RedisClient.KeyLike,
+      ...options: (RedisClient.KeyLike | number)[]
+    ): Promise<"OK">;
   }
 
   /**

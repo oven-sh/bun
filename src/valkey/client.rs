@@ -41,13 +41,15 @@ impl Default for Config {
     }
 }
 
+// With a tag of its own, a match does not decode a niche in `Transaction`.
+#[repr(u8)]
 enum State {
     /// Never dialed, or only by a [`Client::preconnect`] that failed.
     Idle,
     Opening(Step, By),
     /// HELLO was accepted; the reply to SELECT is due.
     Select,
-    Ready,
+    Ready(Option<Transaction>),
     /// As `Select`, but script has not touched the client.
     SpareSelect,
     /// As `Ready`, but script has not touched the client.
@@ -103,8 +105,28 @@ enum End {
 #[derive(Copy, Clone)]
 enum Expect {
     Reply(Reply),
+    Multi,
+    /// For the results of the commands that did not ask for bytes themselves.
+    Exec(Reply),
     /// Whichever acknowledgement comes next: a count would shift every later reply once a peer sent fewer.
     Ack,
+}
+
+impl Expect {
+    fn reply(self) -> Reply {
+        match self {
+            Expect::Reply(reply) | Expect::Exec(reply) => reply,
+            Expect::Multi | Expect::Ack => Reply::Value,
+        }
+    }
+}
+
+/// The commands that the server has queued since MULTI.
+#[derive(Default)]
+struct Transaction {
+    queued: usize,
+    /// Those that asked for bytes, by position.
+    binary: Vec<(usize, Reply)>,
 }
 
 struct InFlight<P> {
@@ -144,7 +166,12 @@ pub enum Event<P> {
     Resolved {
         promise: P,
         value: RESPValue,
-        as_buffer: bool,
+        reply: Reply,
+    },
+    /// A transaction that asked for bytes.
+    Executed {
+        promise: P,
+        results: Vec<(RESPValue, Reply)>,
     },
     Rejected {
         promise: P,
@@ -160,6 +187,25 @@ pub enum Event<P> {
         message: Box<[u8]>,
         error: RedisError,
     },
+}
+
+impl<P> Event<P> {
+    #[inline(always)]
+    fn answer(promise: P, value: RESPValue, reply: Reply) -> Self {
+        match (value, reply) {
+            (RESPValue::Error(message), _) => Event::Rejected { promise, message },
+            (RESPValue::Integer(int), Reply::Bool) => Event::Resolved {
+                promise,
+                value: RESPValue::Boolean(int > 0),
+                reply,
+            },
+            (value, reply) => Event::Resolved {
+                promise,
+                value,
+                reply,
+            },
+        }
+    }
 }
 
 /// Whom an acknowledgement answers.
@@ -251,14 +297,14 @@ impl<P> Client<P> {
 
     pub fn is_connected(&self) -> bool {
         match self.state {
-            Select | Ready | SpareSelect | Spare => true,
+            Select | Ready(_) | SpareSelect | Spare => true,
             Idle | Opening(..) | Ending(_) | Backoff(_) | Closed => false,
         }
     }
 
     fn is_ready(&self) -> bool {
         match self.state {
-            Ready | Spare => true,
+            Ready(_) | Spare => true,
             Idle | Opening(..) | Select | SpareSelect | Ending(_) | Backoff(_) | Closed => false,
         }
     }
@@ -268,7 +314,7 @@ impl<P> Client<P> {
             Opening(_, by) | Ending(End::Policy(by)) => matches!(by, By::Flag),
             SpareSelect | Spare | Ending(End::FailedUnclaimed) => true,
             Ending(End::Requested(_) | End::Final | End::Failed) => false,
-            Idle | Select | Ready | Backoff(_) | Closed => false,
+            Idle | Select | Ready(_) | Backoff(_) | Closed => false,
         }
     }
 
@@ -279,7 +325,7 @@ impl<P> Client<P> {
     /// An event is still to come.
     pub fn is_active(&self) -> bool {
         match self.state {
-            Opening(..) | Select | Ready | SpareSelect | Spare | Ending(_) | Backoff(_) => true,
+            Opening(..) | Select | Ready(_) | SpareSelect | Spare | Ending(_) | Backoff(_) => true,
             Idle | Closed => false,
         }
     }
@@ -288,7 +334,7 @@ impl<P> Client<P> {
         match self.state {
             Ending(End::Failed | End::FailedUnclaimed) | Closed => true,
             Ending(End::Policy(_) | End::Requested(_) | End::Final) => false,
-            Idle | Opening(..) | Select | Ready | SpareSelect | Spare | Backoff(_) => false,
+            Idle | Opening(..) | Select | Ready(_) | SpareSelect | Spare | Backoff(_) => false,
         }
     }
 
@@ -337,7 +383,7 @@ impl<P> Client<P> {
                 self.state = Ending(End::Policy(By::Script(retries)));
             }
             Opening(..) | SpareSelect | Spare | Ending(End::Policy(_)) => self.claim(),
-            Idle | Select | Ready | Ending(End::Final) => {}
+            Idle | Select | Ready(_) | Ending(End::Final) => {}
         }
     }
 
@@ -349,7 +395,7 @@ impl<P> Client<P> {
             Ending(End::FailedUnclaimed) => (End::Failed, Close::Nothing),
             Ending(End::Policy(by)) => (End::Requested(by.retries()), Close::Nothing),
             Opening(_, by) => (End::Requested(by.retries()), Close::Socket),
-            Select | Ready | SpareSelect | Spare => (End::Requested(0), Close::Socket),
+            Select | Ready(_) | SpareSelect | Spare => (End::Requested(0), Close::Socket),
             Backoff(retries) => (End::Requested(retries), Close::Retry(Attempt(()))),
         };
         self.state = Ending(end);
@@ -363,10 +409,10 @@ impl<P> Client<P> {
                 *by = By::Script(by.retries());
             }
             SpareSelect => self.state = Select,
-            Spare => self.state = Ready,
+            Spare => self.state = Ready(None),
             Ending(End::FailedUnclaimed) => self.state = Ending(End::Failed),
             Ending(End::Requested(_) | End::Final | End::Failed) => {}
-            Idle | Select | Ready | Backoff(_) | Closed => {}
+            Idle | Select | Ready(_) | Backoff(_) | Closed => {}
         }
     }
 
@@ -444,7 +490,7 @@ impl<P> Client<P> {
                 End::FailedUnclaimed
             }
             Ending(End::Policy(By::Script(_)) | End::Requested(_) | End::Final) => End::Failed,
-            Opening(_, By::Script(_)) | Select | Ready => End::Failed,
+            Opening(_, By::Script(_)) | Select | Ready(_) => End::Failed,
         });
         Some(self.take_pending())
     }
@@ -465,7 +511,7 @@ impl<P> Client<P> {
             Opening(_, By::Script(retries))
             | Ending(End::Policy(By::Script(retries)))
             | Backoff(retries) => Ok(retries),
-            Select | Ready => Ok(0),
+            Select | Ready(_) => Ok(0),
             Opening(_, By::Flag)
             | SpareSelect
             | Spare
@@ -525,6 +571,8 @@ impl<P> Client<P> {
     ) -> Sent {
         let expect = match ACKS.get_ascii_case_insensitive(name) {
             Some(_) => Expect::Ack,
+            None if name.eq_ignore_ascii_case(b"MULTI") => Expect::Multi,
+            None if name.eq_ignore_ascii_case(b"EXEC") => Expect::Exec(reply),
             None => Expect::Reply(reply),
         };
         let request = InFlight { expect, promise };
@@ -660,9 +708,9 @@ impl<P> Client<P> {
 
     fn route(&mut self, value: RESPValue) -> Event<P> {
         match self.state {
-            Ready | Spare => self.on_reply(value),
+            Ready(_) | Spare => self.on_reply(value),
             Opening(Step::Hello, by) => self.on_hello(value, by),
-            Select => self.on_select(value, Ready),
+            Select => self.on_select(value, Ready(None)),
             SpareSelect => self.on_select(value, Spare),
             Idle | Opening(Step::Dial, _) | Ending(_) | Backoff(_) | Closed => Event::Ignored,
         }
@@ -696,7 +744,7 @@ impl<P> Client<P> {
                 self.state = match (by, self.config.database) {
                     (By::Flag, 0) => Spare,
                     (By::Flag, 1..) => SpareSelect,
-                    (By::Script(_), 0) => Ready,
+                    (By::Script(_), 0) => Ready(None),
                     (By::Script(_), 1..) => Select,
                 };
                 Event::Connected(value)
@@ -742,19 +790,49 @@ impl<P> Client<P> {
         let Some(InFlight { expect, promise }) = self.in_flight.pop_front() else {
             return Event::Ignored;
         };
-        match (value, expect) {
-            (RESPValue::Error(message), _) => Event::Rejected { promise, message },
-            (RESPValue::Integer(int), Expect::Reply(Reply::Bool)) => Event::Resolved {
-                promise,
-                value: RESPValue::Boolean(int > 0),
-                as_buffer: false,
-            },
-            (value, expect) => Event::Resolved {
-                promise,
-                value,
-                as_buffer: matches!(expect, Expect::Reply(Reply::Buffer)),
-            },
+        match (expect, &self.state) {
+            (Expect::Reply(reply), Ready(None)) => Event::answer(promise, value, reply),
+            _ => self.answer_and_track_transaction(expect, promise, value),
         }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn answer_and_track_transaction(
+        &mut self,
+        expect: Expect,
+        promise: P,
+        mut value: RESPValue,
+    ) -> Event<P> {
+        let Ready(transaction) = &mut self.state else {
+            return Event::answer(promise, value, expect.reply());
+        };
+        match (&mut *transaction, expect, &mut value) {
+            (Some(open), Expect::Exec(others), RESPValue::Array(results))
+                if others.keeps_bytes() || !open.binary.is_empty() =>
+            {
+                let mut results: Vec<_> = results.drain(..).map(|it| (it, others)).collect();
+                for &(at, reply) in &open.binary {
+                    if let Some(result) = results.get_mut(at) {
+                        result.1 = reply;
+                    }
+                }
+                *transaction = None;
+                return Event::Executed { promise, results };
+            }
+            (_, Expect::Exec(_), _) => *transaction = None,
+            (_, _, RESPValue::Error(_)) => {}
+            (_, Expect::Multi, _) => *transaction = Some(Transaction::default()),
+            (Some(open), _, RESPValue::SimpleString(status)) if **status == *b"QUEUED" => {
+                if expect.reply().keeps_bytes() {
+                    open.binary.push((open.queued, expect.reply()));
+                }
+                open.queued += 1;
+            }
+            // To DISCARD or RESET.
+            _ => *transaction = None,
+        }
+        Event::answer(promise, value, expect.reply())
     }
 
     fn on_push(&mut self, push: Push) -> Event<P> {
@@ -792,7 +870,9 @@ impl<P> Client<P> {
             return Event::Ignored;
         }
         match self.in_flight.front().map(|it| it.expect) {
-            None | Some(Expect::Reply(_)) if !self.is_subscriber => {
+            None | Some(Expect::Reply(_) | Expect::Multi | Expect::Exec(_))
+                if !self.is_subscriber =>
+            {
                 self.answer(RESPValue::Push(push))
             }
             _ => broken(

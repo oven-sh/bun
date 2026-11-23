@@ -209,14 +209,14 @@ fn print_pair(
                 let store = StoreScope::enter();
                 let printed = print_with(path, old, loader, options[0], |o| {
                     let [o, n] = symbols_for(o, locals.recv().ok()?);
-                    send_symbols.send(n).expect("the other thread waits");
+                    send_symbols.send(n).ok()?;
                     o
                 });
                 drop(store);
                 let printed = printed.map(|printed| printed.decode(old));
                 // If `old` is not parsed, the other thread still waits for its symbols. Otherwise this waits for it to end.
                 if let Ok(n) = locals.recv() {
-                    (send_symbols.send(not_renamed(n))).expect("the other thread waits");
+                    let _ = send_symbols.send(not_renamed(n));
                 }
                 printed
             },

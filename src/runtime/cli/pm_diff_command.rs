@@ -1394,14 +1394,18 @@ impl Threads {
     fn pool_for(self, changes: &[FileChange<'_>], flags: DiffFlags, style: Style) -> ThreadPool {
         /// One more thread per this much work. With less, starting it costs more than it saves.
         const WORK_PER_THREAD: usize = 64 << 10;
+        /// More take more memory, and no less time on real packages.
+        const MAX_THREADS: usize = 8;
 
         let work: usize = (changes.iter())
             .filter(|change| change.semantic != Semantic::ModeOnly)
             .map(|change| change.work(flags, style))
             .sum();
-        let threads = (1 + work / WORK_PER_THREAD).min(usize::from(bun_core::get_thread_count()));
+        let threads = (1 + work / WORK_PER_THREAD)
+            .min(usize::from(bun_core::get_thread_count()))
+            .min(MAX_THREADS);
         ThreadPool::init(thread_pool::Config {
-            max_threads: u32::try_from(threads).expect("int cast"),
+            max_threads: threads as u32,
             stack_size: u32::try_from(self.stack_size).unwrap_or(u32::MAX),
         })
         .named("Diff")
@@ -1428,7 +1432,7 @@ impl Threads {
                     there()
                 })
                 .ok()?;
-            Some((here(), thread.join().expect("a panic aborts")))
+            Some((here(), thread.join().ok()?))
         })
     }
 
@@ -1525,16 +1529,13 @@ fn compare_all(
     let work = || {
         let mut queue = shared.lock();
         while !queue.parts.is_empty() {
-            let Some((&next, _)) = queue.parts.range(..=(queue.room(), usize::MAX)).next_back()
+            let mut fitting = queue.parts.range(..=(queue.room(), usize::MAX));
+            let next = fitting.next_back().map(|(&next, _)| next);
+            let Some(((tokens, _), part)) = next.and_then(|it| queue.parts.remove_entry(&it))
             else {
                 has_room.wait_guarded(&mut queue);
                 continue;
             };
-            let part = queue
-                .parts
-                .remove(&next)
-                .expect("it was found under this lock");
-            let (tokens, _) = next;
             queue.running.push(tokens);
             // Each thread wakes the next, if that one finds a part or can end.
             if (queue.parts.keys().next()).is_none_or(|smallest| smallest.0 <= queue.room()) {
@@ -1545,8 +1546,9 @@ fn compare_all(
                 compare(file, flags, style, threads);
             }
             queue = shared.lock();
-            let at = queue.running.iter().position(|&it| it == tokens);
-            queue.running.swap_remove(at.expect("this thread added it"));
+            if let Some(at) = queue.running.iter().position(|&it| it == tokens) {
+                queue.running.swap_remove(at);
+            }
         }
         has_room.notify_one();
     };
@@ -2088,8 +2090,6 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags, threads: Threads) {
 fn print_in_colors(changes: &[FileChange<'_>], style: Style, pool: Option<&ThreadPool>) {
     const BYTES_PER_PART: usize = 64 << 10;
     const PARTS_PER_THREAD: usize = 4;
-    /// Beyond this many, printing is what takes the time.
-    const MAX_THREADS: usize = 8;
 
     struct Ahead<Parts: Iterator> {
         parts: core::iter::Peekable<Parts>,
@@ -2143,7 +2143,7 @@ fn print_in_colors(changes: &[FileChange<'_>], style: Style, pool: Option<&Threa
         return parts.for_each(|part| Output::print_bytes(&color(part)));
     };
 
-    let threads = pool.max_threads().min(MAX_THREADS);
+    let threads = pool.max_threads();
     let shared = Guarded::new(Ahead {
         parts: parts.peekable(),
         printed: 0,
@@ -3221,13 +3221,13 @@ impl Style {
 
     /// Copies `lines`, with syntax colours for the code that `segment` has marked in them.
     fn highlight(self, out: &mut Vec<u8>, mut lines: &[u8]) {
-        while let Some(start) = strings::index_of_char_usize(lines, CODE_START) {
-            out.extend_from_slice(&lines[..start]);
-            let bg = self.palette[usize::from(lines[start + 1])];
-            let code = &lines[start + 2..];
-            let end = strings::index_of_char_usize(code, CODE_END).expect("a mark has an end");
+        while let Some((plain, [tint, marked @ ..])) = strings::split_once_char(lines, CODE_START)
+            && let Some((code, rest)) = strings::split_once_char(marked, CODE_END)
+        {
+            out.extend_from_slice(plain);
+            let bg = self.palette[usize::from(*tint)];
             let hl = bun_core::fmt::fmt_javascript(
-                &code[..end],
+                code,
                 bun_core::fmt::HighlighterOptions {
                     enable_colors: true,
                     check_for_unhighlighted_write: false,
@@ -3237,9 +3237,9 @@ impl Style {
             let before = out.len();
             if core::fmt::write(&mut Tinted { out, bg }, format_args!("{hl}")).is_err() {
                 out.truncate(before);
-                out.extend_from_slice(&code[..end]);
+                out.extend_from_slice(code);
             }
-            lines = &code[end + 1..];
+            lines = rest;
         }
         out.extend_from_slice(lines);
     }
@@ -3348,9 +3348,9 @@ fn segment(out: &mut Vec<u8>, text: &[u8], highlight: bool, tint: Tint) {
 /// Splits at `at`, or after the marked code or the character that `at` is inside of. `text` starts outside of both.
 fn split_marked(text: &[u8], at: usize) -> (&[u8], &[u8]) {
     let mut at = at.min(text.len());
-    if let Some(start) = strings::last_index_of_char(&text[..at], CODE_START) {
-        let len =
-            strings::index_of_char_usize(&text[start..], CODE_END).expect("a mark has an end");
+    if let Some(start) = strings::last_index_of_char(&text[..at], CODE_START)
+        && let Some(len) = strings::index_of_char_usize(&text[start..], CODE_END)
+    {
         at = at.max(start + len + 1);
     }
     // A character has three of these at most, so the halves get U+FFFD where the whole would.

@@ -1726,6 +1726,7 @@ impl<'a> LinkerContext<'_, 'a> {
                 .contains(AstFlags::COMMONJS_MODULE_EXPORTS_ASSIGNED_DEOPTIMIZED),
             // .const_values = c.graph.const_values,
             ts_enums: Some(&self.graph.ts_enums),
+            late_fold: flags.late_fold,
             import_member_bindings: Some(&self.graph.import_member_bindings),
             has_dynamic_import_items: ast
                 .dynamic_import_aliases

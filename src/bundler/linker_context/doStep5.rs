@@ -237,6 +237,8 @@ impl LinkerContext<'_, '_> {
                                     if enum_data.get(name).is_none() {
                                         found_non_inlined_enum = true;
                                         use_.merge(SymbolUse::unscoped(prop_use.count_estimate));
+                                    } else {
+                                        meta_flags.late_fold = c.options.minify_syntax;
                                     }
                                 }
 

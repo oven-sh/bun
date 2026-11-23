@@ -8,6 +8,70 @@ import { dedent, itBundled } from "../expectBundled";
 
 // To understand what `dce: true` is doing, see ../expectBundled.md's "dce: true" section
 
+// A grid of operators over constant values, for a test that builds it twice: with values that the
+// same file declares, which the parser folds, and with the same values imported from another file.
+// `ref` is how a row reads a value. `scope` is the parameter that gives `evaluate` those values.
+function foldGrid(members: Record<string, string>, ref: (name: string) => string, scope: string) {
+  const names = Object.keys(members);
+  const rows: { kind: string; text: string }[] = [];
+  const add = (template: (...operands: string[]) => string, ...operands: string[]) =>
+    rows.push({ kind: template(...operands.map(() => ref("x"))), text: template(...operands.map(ref)) });
+  for (const op of ["+", "-", "~", "!", "typeof ", "void "]) {
+    for (const a of names) add(v => `${op}${v}`, a);
+  }
+  for (const op of "+ - * / % ** << >> >>> & | ^ < > <= >= == != === !== && || ??".split(" ")) {
+    for (const a of names) for (const b of names) add((l, r) => `${l} ${op} ${r}`, a, b);
+  }
+  // Through one more operator, and with an operand that only the run knows.
+  for (const a of names) {
+    add((v, one, three) => `(${v} | ${one}) + ${three}`, a, "One", "Three");
+    add((v, one, three) => `${three} * (${v} - ${one})`, a, "One", "Three");
+    add(v => `${v} ? "yes" : "no"`, a);
+    add((v, one, three) => `!${v} ? ${one} : ${three}`, a, "One", "Three");
+    add((v, text, one) => `${v} + ${text} + ${one}`, a, "Text", "One");
+    add((v, text, one) => `${one} + ${v} + ${text}`, a, "Text", "One");
+    add((v, three) => `unknown + (${v} | ${three})`, a, "Three");
+    add(v => `(${v} && unknown) + 1`, a);
+    add(v => `(${v} || unknown) + 1`, a);
+    add(v => `\`<\${${v}}>\``, a);
+  }
+  const format = `v => (typeof v === "string" ? JSON.stringify(v) : Object.is(v, -0) ? "-0" : String(v))`;
+  const values = Object.fromEntries(names.map(name => [name, (0, eval)(members[name])]));
+  // The text of each row, without the comment that names an enum member.
+  const printed = (text: string) =>
+    text
+      .split("\n")
+      .filter(line => line.startsWith("t("))
+      .map(line => line.replace(/\s*\/\*.*?\*\//g, ""));
+  return {
+    names,
+    body: `
+      const out: string[] = [];
+      const format = ${format};
+      const unknown = Number("4");
+      const t = (v: unknown) => out.push(format(v));
+      ${rows.map(row => `t(${row.text});`).join("\n")}
+      console.log(out.join("\\n"));
+    `,
+    /** What the rows print when the engine evaluates them. */
+    stdout: new Function(scope, "unknown", `return [${rows.map(row => row.text).join(",")}]`)(values, 4)
+      .map((0, eval)(format))
+      .join("\n"),
+    /** The kinds of row that the two outputs print differently. */
+    differences(same: string, cross: string) {
+      const [sameRows, crossRows] = [printed(same), printed(cross)];
+      expect([sameRows.length, crossRows.length]).toEqual([rows.length, rows.length]);
+      const kinds: Record<string, { rows: number; example: string }> = {};
+      rows.forEach((row, i) => {
+        if (sameRows[i] === crossRows[i]) return;
+        kinds[row.kind] ??= { rows: 0, example: `${crossRows[i]} where the same file prints ${sameRows[i]}` };
+        kinds[row.kind].rows++;
+      });
+      return kinds;
+    },
+  };
+}
+
 describe("bundler", () => {
   itBundled("dce/PackageJsonSideEffectsFalseKeepNamedImportES6", {
     files: {
@@ -3125,8 +3189,8 @@ describe("bundler", () => {
       "/out/ts-namespace-eval.js": 1,
     },
   });
-  itBundled("dce/CrossModuleConstantFolding", {
-    files: {
+  {
+    const files = {
       "/enum-constants.ts": /* ts */ `
         export enum remove {
           a = 3,
@@ -3230,9 +3294,820 @@ describe("bundler", () => {
           'should be 32': ~(~x.a & ~x.b) & (x.b | x.c),
         })
       `,
+    };
+    const entryPoints = ["/enum-entry.ts", "/const-entry.js", "/nested-entry.ts"];
+    itBundled("dce/CrossModuleConstantFolding", {
+      files,
+      entryPoints,
+      dce: true,
+    });
+    itBundled("dce/CrossModuleConstantFoldingMinifySyntax", {
+      files,
+      entryPoints,
+      minifySyntax: true,
+      dce: true,
+      onAfterBundle(api) {
+        expect(api.readFile("/out/enum-entry.js")).toMatchInlineSnapshot(`
+          "// enum-entry.ts
+          console.log([
+            6,
+            -6,
+            -7,
+            !1,
+            typeof 6 /* b */
+          ], [
+            9,
+            -3,
+            18,
+            0.5,
+            3,
+            729
+          ], [
+            !0,
+            !1,
+            !0,
+            !1,
+            !1,
+            !0,
+            !1,
+            !0
+          ], [
+            12,
+            3,
+            3
+          ], [
+            2,
+            7,
+            5
+          ], [
+            6,
+            3,
+            3
+          ]);
+          "
+        `);
+        expect(api.readFile("/out/nested-entry.js")).toContain('"should be 32": 32');
+      },
+    });
+  }
+  // The tests below are for `bun_ast::late_fold`: the printer folds what an enum value of another
+  // file decides. The parser cannot, because it sees one file at a time.
+
+  // The criterion is the same-file output: each row must print and run the same for an enum that
+  // another file declares as for one that the same file declares.
+  {
+    const members = {
+      Zero: "0",
+      NegZero: "-0",
+      One: "1",
+      Three: "3",
+      Neg: "-1",
+      Half: "0.5",
+      I31: "2147483648",
+      U32: "4294967295",
+      P53: "9007199254740992",
+      Inf: "1 / 0",
+      NaN_: "0 / 0",
+      Text: '"name"',
+      Empty: '""',
+      Digits: '"12"',
+    };
+    const grid = foldGrid(members, name => `E.${name}`, "E");
+    const declaration = `enum E { ${grid.names.map(name => `${name} = ${members[name]}`).join(", ")} }`;
+    itBundled("dce/CrossModuleEnumFoldMatchesSameFile", {
+      files: {
+        "/same.ts": `${declaration}\n${grid.body}`,
+        "/cross.ts": `import { E } from "./enum";\n${grid.body}`,
+        "/enum.ts": `export ${declaration}`,
+      },
+      entryPoints: ["/same.ts", "/cross.ts"],
+      minifySyntax: true,
+      run: [
+        { file: "/out/same.js", stdout: grid.stdout },
+        { file: "/out/cross.js", stdout: grid.stdout },
+      ],
+      onAfterBundle(api) {
+        // Where the late fold stops short of the parser.
+        expect(grid.differences(api.readFile("/out/same.js"), api.readFile("/out/cross.js"))).toMatchInlineSnapshot(`
+          {
+            "\`<\${E.x}>\`": {
+              "example": "t(\`<\${0}>\`); where the same file prints t("<0>");",
+              "rows": 14,
+            },
+          }
+        `);
+      },
+    });
+  }
+  {
+    const statements = {
+      "/entry.ts": /* ts */ `
+        import { Flag } from "./flags";
+        const log = (...args: unknown[]) => console.log(...args);
+        const yes = Number("1") === 1;
+        let count = 0;
+
+        // In a statement list.
+        if (Flag.Off) { for (const v of ["DROP"]) log(v); }
+        if (Flag.On) { for (const v of ["list on"]) log(v); }
+        if (Flag.Off) { for (const v of ["DROP"]) log(v); } else { for (const v of ["list else"]) log(v); }
+        if (Flag.Empty) { for (const v of ["DROP"]) log(v); } else { for (const v of ["empty string"]) log(v); }
+        if (!Flag.On) { for (const v of ["DROP"]) log(v); }
+        if (Flag.On === 1 && Flag.Name !== "other") { for (const v of ["compare"]) log(v); }
+
+        // As the body of another statement.
+        if (yes) { if (Flag.Off) { for (const v of ["DROP"]) log(v); } }
+        if (yes) { if (Flag.On) { for (const v of ["nested on"]) log(v); } }
+        if (yes) { if (Flag.Off) { for (const v of ["DROP"]) log(v); } } else { for (const v of ["not run"]) log(v); }
+        for (const v of ["for body"]) { if (Flag.On) { for (const w of [v]) log(w); } }
+        for (const v of ["not printed"]) { if (Flag.Off) { for (const w of ["DROP"]) log(v, w); } }
+        while (count++ < 1) { if (Flag.On) { for (const v of ["while body"]) log(v); } }
+        do { if (Flag.Off) { for (const v of ["DROP"]) log(v); } } while (count++ < 2);
+        label: if (Flag.Off) { for (const v of ["DROP"]) log(v); }
+        label2: if (Flag.On) { for (const v of ["label body"]) log(v); }
+
+        // In an "else if" chain.
+        function chain(x: number) {
+          if (x === 1) { for (const v of ["one"]) log(v); }
+          else if (Flag.Off) { for (const v of ["DROP"]) log(v); }
+          else if (x === 2) { for (const v of ["two"]) log(v); }
+          else if (Flag.On) { for (const v of ["rest"]) log(v); }
+          else { for (const v of ["DROP"]) log(v); }
+        }
+        chain(1), chain(2), chain(3);
+        function lastElse(x: number) {
+          if (x === 1) { for (const v of ["first"]) log(v); }
+          else if (Flag.Off) { for (const v of ["DROP"]) log(v); }
+        }
+        lastElse(1), lastElse(2);
+        function emptyElse(x: number) {
+          if (x === 1) { for (const v of ["x is 1"]) log(v); }
+          else if (Flag.On) {}
+          else { for (const v of ["DROP"]) log(v); }
+        }
+        emptyElse(1), emptyElse(2);
+        function inSwitch(x: number) {
+          switch (x) {
+            case 1:
+              if (Flag.Off) { for (const v of ["DROP"]) log(v); }
+              if (Flag.On) { for (const v of ["case"]) log(v); }
+          }
+        }
+        inSwitch(1);
+        // The parser merges a call into the test that follows it: if (log("before"), Flag.Off).
+        function merged() {
+          log("before");
+          if (Flag.Off) { for (const v of ["DROP"]) log(v); }
+          log("between");
+          if (Flag.On) { for (const v of ["merged on"]) log(v); }
+          log("after");
+          if (Flag.On) log("merged call");
+          for (const v of ["merged body"]) { log(v); if (Flag.Off) log("DROP"); }
+        }
+        merged();
+
+        // In an expression.
+        Flag.On && log("and on");
+        Flag.Off || log("or off");
+        log(Flag.Off ? "DROP" : "cond off", Flag.On ? "cond on" : "DROP", Flag.Off ?? "DROP", Flag.Empty || "or empty");
+        log(Flag.Read | Flag.Write, Flag.Write / Flag.Read, Flag.Read + "px", \`\${Flag.Read}px\`, typeof Flag.Read);
+      `,
+      "/flags.ts": /* ts */ `
+        export enum Flag { Off = 0, On = 1, Read = 2, Write = 4, Name = "name", Empty = "" }
+      `,
+    };
+    const stdout = [
+      "list on",
+      "list else",
+      "empty string",
+      "compare",
+      "nested on",
+      "for body",
+      "while body",
+      "label body",
+      "one",
+      "two",
+      "rest",
+      "first",
+      "x is 1",
+      "case",
+      "before",
+      "between",
+      "merged on",
+      "after",
+      "merged call",
+      "merged body",
+      "and on",
+      "or off",
+      "cond off cond on 0 or empty",
+      "6 2 2px 2px number",
+    ].join("\n");
+    // The snapshot also shows what the fold leaves: an empty statement where a list had the
+    // "if", the block of the branch that runs, a template part and "typeof".
+    itBundled("dce/CrossModuleEnumFoldStatements", {
+      files: statements,
+      minifySyntax: true,
+      dce: true,
+      run: { stdout },
+      onAfterBundle(api) {
+        api.expectFile("/out.js").toMatchInlineSnapshot(`
+          "// entry.ts
+          var log = (...args) => console.log(...args), yes = Number("1") === 1, count = 0;
+          ;
+          for (let v of ["list on"])
+            log(v);
+          for (let v of ["list else"])
+            log(v);
+          for (let v of ["empty string"])
+            log(v);
+          ;
+          for (let v of ["compare"])
+            log(v);
+          if (yes)
+            ;
+          if (yes)
+            for (let v of ["nested on"])
+              log(v);
+          if (yes)
+            ;
+          else
+            for (let v of ["not run"])
+              log(v);
+          for (let v of ["for body"])
+            for (let w of [v])
+              log(w);
+          for (let v of ["not printed"])
+            ;
+          while (count++ < 1)
+            for (let v of ["while body"])
+              log(v);
+          do
+            ;
+          while (count++ < 2);
+          label:
+            ;
+          label2:
+            for (let v of ["label body"])
+              log(v);
+          function chain(x) {
+            if (x === 1)
+              for (let v of ["one"])
+                log(v);
+            else if (x === 2)
+              for (let v of ["two"])
+                log(v);
+            else
+              for (let v of ["rest"])
+                log(v);
+          }
+          chain(1), chain(2), chain(3);
+          function lastElse(x) {
+            if (x === 1)
+              for (let v of ["first"])
+                log(v);
+          }
+          lastElse(1), lastElse(2);
+          function emptyElse(x) {
+            if (x === 1)
+              for (let v of ["x is 1"])
+                log(v);
+          }
+          emptyElse(1), emptyElse(2);
+          function inSwitch(x) {
+            switch (x) {
+              case 1:
+                ;
+                for (let v of ["case"])
+                  log(v);
+            }
+          }
+          inSwitch(1);
+          function merged() {
+            log("before");
+            {
+              log("between");
+              for (let v of ["merged on"])
+                log(v);
+            }
+            {
+              log("after");
+              log("merged call");
+            }
+            for (let v of ["merged body"])
+              log(v);
+          }
+          merged();
+          log("and on");
+          log("or off");
+          log("cond off", "cond on", 0, "or empty");
+          log(6, 2, "2px", \`\${2 /* Read */}px\`, typeof 2 /* Read */);
+          "
+        `);
+      },
+    });
+    itBundled("dce/CrossModuleEnumFoldStatementsMinified", {
+      files: statements,
+      outdir: "/out",
+      minifySyntax: true,
+      minifyWhitespace: true,
+      minifyIdentifiers: true,
+      sourceMap: "external",
+      dce: true,
+      run: { file: "/out/entry.js", stdout },
+    });
+  }
+  // A fold must not change what a statement declares, or where.
+  itBundled("dce/CrossModuleEnumFoldKeepsDeclarations", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { Flag } from "./flags";
+        const log = (...args: unknown[]) => console.log(...args);
+
+        // "var" in a branch that never runs still declares the variable.
+        function hoisted() {
+          log("before hoisted");
+          if (Flag.Off) { var declared = 1; }
+          // @ts-ignore
+          declared = "assigned";
+          // @ts-ignore
+          return declared;
+        }
+        log(hoisted(), typeof (globalThis as any).declared);
+        function hoistedElse(x: number) {
+          if (x === 1) { for (const v of ["x is 1"]) log(v); }
+          else if (Flag.Off) { var inElse = 1; }
+          else { for (const v of ["else runs"]) log(v); }
+          // @ts-ignore
+          inElse = "assigned in else";
+          // @ts-ignore
+          return inElse;
+        }
+        log(hoistedElse(1), hoistedElse(2), typeof (globalThis as any).inElse);
+        function hoistedLive(x: number) {
+          if (x === 1) { for (const v of ["x is 1 again"]) log(v); }
+          else if (Flag.On) { for (const v of ["live runs"]) log(v); }
+          else { var inDead = 1; }
+          // @ts-ignore
+          inDead = "assigned in dead";
+          // @ts-ignore
+          return inDead;
+        }
+        log(hoistedLive(1), hoistedLive(2), typeof (globalThis as any).inDead);
+        function inSwitch(x: number) {
+          if (Flag.Off) switch (x) { case 1: var inCase = 1; }
+          if (Flag.Off) switch (x) { case 1: log("DROP"); }
+          // @ts-ignore
+          inCase = "assigned in case";
+          // @ts-ignore
+          return inCase;
+        }
+        log(inSwitch(1), typeof (globalThis as any).inCase);
+
+        // The "let" of a branch that runs stays in its block.
+        let scoped = 1;
+        if (Flag.On) {
+          let scoped = 10;
+          for (const v of [1, 2]) scoped += v;
+          log("inner", scoped);
+        }
+        log("outer", scoped);
+
+        // The parser merges a call into the test that follows it. The call must not see what the
+        // block of the branch declares.
+        let shadowed = "outer";
+        function mergedEffect() {
+          log("effect sees", shadowed);
+          if (Flag.On) { let shadowed = Math.random() < 2 ? "inner" : ""; log("branch sees", shadowed); }
+          log("effect sees", typeof shadowed);
+          if (Flag.On) { class shadowed {} log("branch sees", typeof shadowed); }
+        }
+        mergedEffect();
+
+        // The last "else" stays with its own "if".
+        function dangling(a: boolean, b: boolean, c: boolean) {
+          if (a) {
+            if (b) { for (const v of ["b"]) log(v); }
+            else if (Flag.On) { for (const v of ["c"]) if (c) { for (const w of [v]) log(w); } }
+            else { for (const v of ["DROP"]) log(v); }
+          } else { for (const v of ["not a"]) log(v); }
+        }
+        dangling(true, false, false), dangling(false, false, false), dangling(true, false, true), dangling(true, true, true);
+        function danglingThen(a: boolean, c: boolean) {
+          if (a) {
+            if (Flag.On) { if (c) { for (const v of ["a and c"]) log(v); } }
+            else { for (const v of ["DROP"]) log(v); }
+          } else { for (const v of ["not a again"]) log(v); }
+        }
+        danglingThen(true, false), danglingThen(false, false), danglingThen(true, true);
+        function emptied(a: boolean, b: boolean) {
+          if (a) {
+            if (b) { for (const v of ["b again"]) log(v); }
+            else if (Flag.On) {}
+            else { for (const v of ["DROP"]) log(v); }
+          } else { for (const v of ["not a, emptied"]) log(v); }
+        }
+        emptied(true, false), emptied(false, false), emptied(true, true);
+      `,
+      "/flags.ts": /* ts */ `
+        export enum Flag { Off = 0, On = 1 }
+      `,
     },
-    entryPoints: ["/enum-entry.ts", "/const-entry.js", "/nested-entry.ts"],
+    minifySyntax: true,
     dce: true,
+    run: {
+      stdout: [
+        "before hoisted",
+        "assigned undefined",
+        "x is 1",
+        "else runs",
+        "assigned in else assigned in else undefined",
+        "x is 1 again",
+        "live runs",
+        "assigned in dead assigned in dead undefined",
+        "assigned in case undefined",
+        "inner 13",
+        "outer 1",
+        "effect sees outer",
+        "branch sees inner",
+        "effect sees string",
+        "branch sees function",
+        "not a",
+        "c",
+        "b",
+        "not a again",
+        "a and c",
+        "not a, emptied",
+        "b again",
+      ].join("\n"),
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toMatchInlineSnapshot(`
+        "// entry.ts
+        var log = (...args) => console.log(...args);
+        function hoisted() {
+          if (log("before hoisted"), 0 /* Off */)
+            var declared = 1;
+          return declared = "assigned", declared;
+        }
+        log(hoisted(), typeof globalThis.declared);
+        function hoistedElse(x) {
+          if (x === 1)
+            for (let v of ["x is 1"])
+              log(v);
+          else if (0 /* Off */)
+            var inElse = 1;
+          else
+            for (let v of ["else runs"])
+              log(v);
+          return inElse = "assigned in else", inElse;
+        }
+        log(hoistedElse(1), hoistedElse(2), typeof globalThis.inElse);
+        function hoistedLive(x) {
+          if (x === 1)
+            for (let v of ["x is 1 again"])
+              log(v);
+          else if (1 /* On */)
+            for (let v of ["live runs"])
+              log(v);
+          else
+            var inDead = 1;
+          return inDead = "assigned in dead", inDead;
+        }
+        log(hoistedLive(1), hoistedLive(2), typeof globalThis.inDead);
+        function inSwitch(x) {
+          if (0 /* Off */)
+            switch (x) {
+              case 1:
+                var inCase = 1;
+            }
+          ;
+          return inCase = "assigned in case", inCase;
+        }
+        log(inSwitch(1), typeof globalThis.inCase);
+        var scoped = 1;
+        {
+          let scoped = 10;
+          for (let v of [1, 2])
+            scoped += v;
+          log("inner", scoped);
+        }
+        log("outer", scoped);
+        var shadowed = "outer";
+        function mergedEffect() {
+          {
+            log("effect sees", shadowed);
+            {
+              let shadowed = Math.random() < 2 ? "inner" : "";
+              log("branch sees", shadowed);
+            }
+          }
+          {
+            log("effect sees", typeof shadowed);
+            {
+
+              class shadowed {
+              }
+              log("branch sees", typeof shadowed);
+            }
+          }
+        }
+        mergedEffect();
+        function dangling(a, b, c) {
+          if (a) {
+            if (b)
+              for (let v of ["b"])
+                log(v);
+            else
+              for (let v of ["c"])
+                if (c)
+                  for (let w of [v])
+                    log(w);
+          } else
+            for (let v of ["not a"])
+              log(v);
+        }
+        dangling(!0, !1, !1), dangling(!1, !1, !1), dangling(!0, !1, !0), dangling(!0, !0, !0);
+        function danglingThen(a, c) {
+          if (a) {
+            if (c)
+              for (let v of ["a and c"])
+                log(v);
+          } else
+            for (let v of ["not a again"])
+              log(v);
+        }
+        danglingThen(!0, !1), danglingThen(!1, !1), danglingThen(!0, !0);
+        function emptied(a, b) {
+          if (a) {
+            if (b)
+              for (let v of ["b again"])
+                log(v);
+          } else
+            for (let v of ["not a, emptied"])
+              log(v);
+        }
+        emptied(!0, !1), emptied(!1, !1), emptied(!0, !0);
+        "
+      `);
+    },
+  });
+  // A fold must not change the value of "this", "typeof" of an undeclared name, or "delete".
+  // The target is "bun" so that the runtime does not transpile the output again: its parser
+  // folds "(1 && o.m)\`\`" to "o.m\`\`" (#44578).
+  itBundled("dce/CrossModuleEnumFoldKeepsSemantics", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { Flag } from "./flags";
+        const log = (...args: unknown[]) => console.log(...args);
+        declare const notDeclaredAnywhere: unknown;
+
+        const obj = {
+          name: "obj",
+          method(this: any, ..._: unknown[]) { return this === undefined ? "no this" : this.name; },
+        };
+        log((Flag.On && obj.method)(), (Flag.Off || obj.method)(), (Flag.On ? obj.method : obj.method)());
+        log((Flag.On && obj.method)\`\`, (Flag.Off || obj.method)\`\`, (Flag.On ? obj.method : obj.method)\`\`);
+        log(new (Flag.On && Date)(0).getTime());
+
+        const bag: any = { prop: 1 };
+        log(delete (Flag.On && bag.prop), "prop" in bag);
+        try {
+          log(typeof (Flag.On && notDeclaredAnywhere));
+        } catch (e) {
+          log((e as Error).name);
+        }
+        try {
+          log((Flag.On && bag?.missing).x);
+        } catch (e) {
+          log((e as Error).name);
+        }
+      `,
+      "/flags.ts": /* ts */ `
+        export enum Flag { Off = 0, On = 1 }
+      `,
+    },
+    target: "bun",
+    minifySyntax: true,
+    run: {
+      stdout: [
+        "no this no this no this",
+        "no this no this no this",
+        "0",
+        "true true",
+        "ReferenceError",
+        "TypeError",
+      ].join("\n"),
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toMatchInlineSnapshot(`
+        "// @bun
+        // entry.ts
+        var log = (...args) => console.log(...args), obj = {
+          name: "obj",
+          method(..._) {
+            return this === void 0 ? "no this" : this.name;
+          }
+        };
+        log((1 /* On */ && obj.method)(), (0 /* Off */ || obj.method)(), (1 /* On */ ? obj.method : obj.method)());
+        log((1 /* On */ && obj.method)\`\`, (0 /* Off */ || obj.method)\`\`, (1 /* On */ ? obj.method : obj.method)\`\`);
+        log(new Date(0).getTime());
+        var bag = { prop: 1 };
+        log(delete (0, bag.prop), "prop" in bag);
+        try {
+          log(typeof (0, notDeclaredAnywhere));
+        } catch (e) {
+          log(e.name);
+        }
+        try {
+          log((bag?.missing).x);
+        } catch (e) {
+          log(e.name);
+        }
+        "
+      `);
+    },
+  });
+  // A string statement at the start of a function body is a directive. A fold must not make one.
+  // The output is strict code in any case, so the text is what shows it.
+  itBundled("dce/CrossModuleEnumFoldMakesNoDirective", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { D } from "./flags";
+        function concat(this: unknown) { D.Use + "strict"; try { return this === undefined; } finally {} }
+        function logical(this: unknown) { D.On && "use strict"; try { return this === undefined; } finally {} }
+        function viaIf(this: unknown) { if (D.On) D.Use + "strict"; try { return this === undefined; } finally {} }
+        function viaIfMember(this: unknown) { if (D.On) D.Strict; try { return this === undefined; } finally {} }
+        console.log(concat(), logical(), viaIf(), viaIfMember());
+      `,
+      "/flags.ts": /* ts */ `
+        export enum D { On = 1, Use = "use ", Strict = "use strict" }
+      `,
+    },
+    format: "cjs",
+    minifySyntax: true,
+    run: { stdout: "true true true true" },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toMatchInlineSnapshot(`
+        "// entry.ts
+        function concat() {
+          "use " /* Use */ + "strict";
+          try {
+            return this === void 0;
+          } finally {}
+        }
+        function logical() {
+          1 /* On */;
+          try {
+            return this === void 0;
+          } finally {}
+        }
+        function viaIf() {
+          if (1 /* On */)
+            "use " /* Use */ + "strict";
+          try {
+            return this === void 0;
+          } finally {}
+        }
+        function viaIfMember() {
+          if (1 /* On */)
+            "use strict" /* Strict */;
+          try {
+            return this === void 0;
+          } finally {}
+        }
+        console.log(concat(), logical(), viaIf(), viaIfMember());
+        "
+      `);
+    },
+  });
+  // A file that has no "import" or "export" statement is not strict. It can still read an enum.
+  itBundled("dce/CrossModuleEnumFoldSloppyFile", {
+    files: {
+      "/entry.js": /* js */ `
+        async function main() {
+          const { Flag } = await import("./flags.ts");
+          if (Flag.Off) { function inDead() {} }
+          console.log(typeof inDead);
+          if (Flag.Off) { var v = 1; }
+          v = "assigned";
+          console.log(v, typeof globalThis.v);
+          if (Flag.On) function asBody() {}
+          console.log(typeof asBody);
+          if (Flag.On) { function inLive() {} }
+          console.log(typeof inLive);
+          if (Flag.Off) console.log("DROP");
+        }
+        main();
+      `,
+      "/flags.ts": /* ts */ `
+        export enum Flag { Off = 0, On = 1 }
+      `,
+    },
+    minifySyntax: true,
+    dce: true,
+    run: { stdout: "undefined\nassigned undefined\nfunction\nfunction" },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain("var inDead");
+      expect(out).toContain("var v");
+    },
+  });
+  // Each way to read the enum turns the fold on for the file that reads. Each file reads one way.
+  {
+    // What comes before the function, what comes first in it, and how it reads the two members.
+    const readers: Record<string, { imports?: string; first?: string; off: string; on: string }> = {
+      named: { imports: `import { Flag } from "./flags";`, off: "Flag.Off", on: "Flag.On" },
+      index: { imports: `import { Flag } from "./flags";`, off: `Flag["Off"]`, on: `Flag["On"]` },
+      quoted: { imports: `import { Quoted } from "./flags";`, off: `Quoted["not-on"]`, on: `Quoted["is-on"]` },
+      reExport: { imports: `import { Flag } from "./re-export";`, off: "Flag.Off", on: "Flag.On" },
+      reExportStar: { imports: `import { Flag } from "./re-export-star";`, off: "Flag.Off", on: "Flag.On" },
+      namespace: { imports: `import * as ns from "./flags";`, off: "ns.Flag.Off", on: "ns.Flag.On" },
+      notEntry: { imports: `import { Flag } from "./not-entry";`, off: "Flag.Off", on: "Flag.On" },
+      dynamicPattern: { first: `const { Flag } = await import("./flags");`, off: "Flag.Off", on: "Flag.On" },
+      dynamicNamespace: { first: `const ns = await import("./flags");`, off: "ns.Flag.Off", on: "ns.Flag.On" },
+    };
+    const names = Object.keys(readers);
+    itBundled("dce/CrossModuleEnumFoldReaders", {
+      files: {
+        ...Object.fromEntries(
+          names.map(name => [
+            `/${name}.ts`,
+            `${readers[name].imports ?? ""}
+            async function main() {
+              ${readers[name].first ?? ""}
+              if (${readers[name].off}) { for (const v of ["DROP"]) console.log(v); }
+              return [${readers[name].off} ? "DROP" : "live", ${readers[name].on} | 6].join();
+            }
+            console.log(await main());`,
+          ]),
+        ),
+        "/not-entry.ts": `export { Flag } from "./re-export";`,
+        "/re-export.ts": `export { Flag } from "./flags";`,
+        "/re-export-star.ts": `export * from "./flags";`,
+        "/flags.ts": /* ts */ `
+          export enum Flag { Off = 0, On = 1 }
+          export enum Quoted { "not-on" = 0, "is-on" = 1 }
+        `,
+      },
+      entryPoints: names.map(name => `/${name}.ts`),
+      minifySyntax: true,
+      dce: true,
+      run: names.map(name => ({ file: `/out/${name}.js`, stdout: "live,7" })),
+      onAfterBundle(api) {
+        for (const name of names) api.expectFile(`/out/${name}.js`).toContain(`return ["live", 7].join();`);
+      },
+    });
+  }
+  // The fold is a part of --minify-syntax.
+  for (const minifyWhitespace of [false, true]) {
+    itBundled(`dce/CrossModuleEnumFoldNeedsMinifySyntax${minifyWhitespace ? "Whitespace" : ""}`, {
+      files: {
+        "/entry.ts": /* ts */ `
+          import { Flag } from "./flags";
+          if (Flag.Off) console.log("dead");
+          console.log(Flag.Read + Flag.Write, Flag.Read | Flag.Write, Flag.Off ? "dead" : "live");
+        `,
+        "/flags.ts": /* ts */ `
+          export enum Flag { Off = 0, Read = 2, Write = 4 }
+        `,
+      },
+      minifySyntax: false,
+      minifyWhitespace,
+      run: { stdout: "6 6 live" },
+      onAfterBundle(api) {
+        const out = api.readFile("/out.js");
+        if (minifyWhitespace) {
+          expect(out).toContain(`if(0)console.log("dead");console.log(2+4,2|4,0?"dead":"live");`);
+        } else {
+          expect(out).toContain(`if (0 /* Off */)\n  console.log("dead");`);
+          expect(out).toContain(
+            `console.log(2 /* Read */ + 4 /* Write */, 2 /* Read */ | 4 /* Write */, 0 /* Off */ ? "dead" : "live");`,
+          );
+        }
+      },
+    });
+  }
+  // A long chain must not overflow the stack, and must not copy the string at each step.
+  const longChainText = Buffer.alloc(10000, "ab").toString();
+  itBundled("dce/CrossModuleEnumFoldLongChain", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { E } from "./enum";
+        const text = ${Array(5000).fill("E.Text").join(" + ")};
+        const sum = ${Array(5000).fill("E.One").join(" + ")};
+        console.log(text.length, text === ${JSON.stringify(longChainText)}, sum);
+      `,
+      "/enum.ts": /* ts */ `
+        export enum E { One = 1, Text = "ab" }
+      `,
+    },
+    minifySyntax: true,
+    run: { stdout: "10000 true 5000" },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out.includes(`text = "${longChainText}"`)).toBe(true);
+      expect(out).toContain("sum = 5000");
+    },
   });
   itBundled("dce/MultipleDeclarationTreeShaking", {
     files: {

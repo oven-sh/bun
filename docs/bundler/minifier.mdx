@@ -1068,6 +1068,25 @@ const x = Color.Red;
 const x=0;
 ```
 
+### TypeScript enum cross-module constant folding
+
+**Mode:** `--minify-syntax` (bundle mode)
+
+Folds what an enum value from another module decides, as for an enum of the same module: unary and binary operators, `&&`, `||`, `??` and `?:`. An `if` statement whose test is decided becomes the branch that runs. A template literal part is not folded. This runs after tree shaking: a module that only the removed branch imports stays in the bundle.
+
+```ts Input
+// lib.ts
+export enum Flag { Debug = 0, Read = 1, Write = 2 }
+
+// Input (main.ts)
+import { Flag } from './lib';
+console.log(Flag.Debug ? "debug" : "release", Flag.Read | Flag.Write);
+```
+
+```js Output
+console.log("release",3);
+```
+
 ### Computed property enum inlining
 
 **Mode:** `--minify-syntax`

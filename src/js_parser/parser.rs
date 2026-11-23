@@ -1991,19 +1991,7 @@ impl BuiltInHook {
     }
 }
 
-/// Equivalent of esbuild's js_ast_helpers.ToInt32
-pub(crate) fn float_to_int32(f: f64) -> i32 {
-    // Special-case non-finite numbers
-    if !f.is_finite() {
-        return 0;
-    }
-
-    // The `%` keeps the value in [0, u32::MAX], so the `as u32` cast is exact
-    // (and would saturate rather than be UB if it weren't).
-    let uint: u32 = (f.abs() % (u32::MAX as f64 + 1.0)) as u32;
-    let int: i32 = uint as i32; // bitcast (same-width int cast reinterprets bits)
-    if f < 0.0 { 0i32.wrapping_sub(int) } else { int }
-}
+pub(crate) use bun_ast::const_fold::to_int32 as float_to_int32;
 
 #[derive(Clone, Copy, Default)]
 pub struct ParseBindingOptions {

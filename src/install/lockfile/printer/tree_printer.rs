@@ -7,8 +7,8 @@ use crate::package_manager_real::{PackageUpdateInfo, TrackInstalledBin};
 use bun_core::fmt::{PathSep, escape_control_chars};
 use bun_install::lockfile::{Printer, package::Meta as PackageMeta, reachable};
 use bun_install::{
-    self as install, Bin, Dependency, DependencyID, INVALID_PACKAGE_ID, PackageID, PackageManager,
-    PackageNameHash, Resolution, Subcommand, bin, dependency, resolution,
+    self as install, Bin, Dependency, DependencyID, INVALID_DEPENDENCY_ID, PackageID,
+    PackageManager, PackageNameHash, Resolution, Subcommand, bin, dependency, resolution,
 };
 use bun_sys::Fd;
 
@@ -216,7 +216,7 @@ fn should_print_package_install(
             if !is_update
                 && update.matches(dependency, this.lockfile.buffers.string_bytes.as_slice())
             {
-                if *update_dependency_id == INVALID_PACKAGE_ID {
+                if *update_dependency_id == INVALID_DEPENDENCY_ID {
                     *update_dependency_id = dep_id;
                 }
 
@@ -637,7 +637,7 @@ pub(crate) fn print<W: Write>(
     if dependencies_buffer.is_empty() {
         return Ok(());
     }
-    let mut id_map: Vec<DependencyID> = vec![INVALID_PACKAGE_ID; this.updates.len()];
+    let mut id_map: Vec<DependencyID> = vec![INVALID_DEPENDENCY_ID; this.updates.len()];
 
     let end = resolved.len() as PackageID;
 
@@ -793,7 +793,7 @@ pub(crate) fn print<W: Write>(
                         return Ok(());
                     }
                     if !is_update && update.matches(dependency, string_buf) {
-                        if *dependency_id == INVALID_PACKAGE_ID {
+                        if *dependency_id == INVALID_DEPENDENCY_ID {
                             *dependency_id = dep_id as DependencyID;
                         }
 
@@ -823,7 +823,7 @@ pub(crate) fn print<W: Write>(
 
     let mut printed_installed_update_request = false;
     for &dependency_id in &id_map {
-        if dependency_id == INVALID_PACKAGE_ID {
+        if dependency_id == INVALID_DEPENDENCY_ID {
             continue;
         }
         printed_installed_update_request = true;

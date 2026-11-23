@@ -580,7 +580,7 @@ class ListenConnection {
       .runAsOwner(
         () =>
           createPooledConnectionHandle(
-            createPostgresConnection,
+            adapter,
             { ...adapter.connectionInfo, idleTimeout: 0, maxLifetime: 0 },
             adapter.ownerCallback((err, conn) => {
               this.#handshake = null;
@@ -599,7 +599,7 @@ class ListenConnection {
               adapter.runUserCallback($getByIdDirect(adapter.connectionInfo, "onconnect"), null);
             }),
             adapter.ownerCallback(err => {
-              err ??= adapter.connectionClosedError();
+              err = adapter.withAddress(err) ?? adapter.connectionClosedError();
               if (live === null) {
                 const handshake = this.#handshake;
                 this.#handshake = null;

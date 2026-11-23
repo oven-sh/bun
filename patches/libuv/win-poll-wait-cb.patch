@@ -1,0 +1,47 @@
+--- a/src/uv-common.h
++++ b/src/uv-common.h
+@@ -440,6 +440,8 @@
+ #ifdef _WIN32
+   void* hrtimer;       /* CREATE_WAITABLE_TIMER_HIGH_RESOLUTION or NULL */
+   void* hrtimer_pkt;   /* NtCreateWaitCompletionPacket handle or NULL */
++  void (*wait_cb)(void* data, int is_waiting);
++  void* wait_cb_data;
+ #endif  /* _WIN32 */
+ };
+ 
+--- a/src/win/core.c
++++ b/src/win/core.c
+@@ -459,6 +459,16 @@
+ }
+ 
+ 
++/* `cb` runs right before and right after a poll that may block. It must leave
++ * GetLastError() as it is. */
++void uv_loop_set_wait_cb(uv_loop_t* loop,
++                         void (*cb)(void* data, int is_waiting),
++                         void* data) {
++  uv__get_internal_fields(loop)->wait_cb = cb;
++  uv__get_internal_fields(loop)->wait_cb_data = data;
++}
++
++
+ __declspec(noinline) static void uv__poll(uv_loop_t* loop, DWORD timeout) {
+   uv__loop_internal_fields_t* lfields;
+   BOOL success;
+@@ -528,12 +538,16 @@
+ 
+     if (timeout != 0)
+       uv__detect_system_wakeup_ensure();
++    if (timeout != 0 && lfields->wait_cb != NULL)
++      lfields->wait_cb(lfields->wait_cb_data, 1);
+     success = GetQueuedCompletionStatusEx(loop->iocp,
+                                           overlappeds,
+                                           ARRAY_SIZE(overlappeds),
+                                           &count,
+                                           timeout,
+                                           FALSE);
++    if (timeout != 0 && lfields->wait_cb != NULL)
++      lfields->wait_cb(lfields->wait_cb_data, 0);
+ 
+     if (reset_timeout != 0) {
+       timeout = user_timeout;

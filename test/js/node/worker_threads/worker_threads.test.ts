@@ -1,5 +1,5 @@
 import { describe, expect, it, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, tempDir, tls, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isDebug, isLinux, tempDir, tls, tmpdirSync } from "harness";
 import { once } from "node:events";
 import fs from "node:fs";
 import { join, relative, resolve } from "node:path";
@@ -925,6 +925,55 @@ test("startCpuProfile() reports the time a worker waits for messages as (idle)",
   } finally {
     await worker.terminate();
   }
+});
+
+test.if(isLinux)("the thread that samples a worker ends with the worker and gives its stack back", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const { once } = require("events");
+       const { readdirSync, readFileSync } = require("fs");
+       const { Worker } = require("worker_threads");
+       // What is left of "jsc.sampling-profiler.thread".
+       const samplers = () =>
+         readdirSync("/proc/self/task").filter(thread => {
+           try {
+             return readFileSync("/proc/self/task/" + thread + "/comm", "utf8").trim() === "thread";
+           } catch {}
+         }).length;
+       // The stack of a thread that was detached or joined is used again.
+       const stacks = () =>
+         [...readFileSync("/proc/self/maps", "utf8").matchAll(/^(\\w+)-(\\w+) ---p .*\\n\\2-\\w+ rw-p /gm)].filter(
+           ([, guardStart, guardEnd]) => parseInt(guardEnd, 16) - parseInt(guardStart, 16) <= 65536,
+         ).length;
+       async function profileWorkers(count) {
+         for (let i = 0; i < count; i++) {
+           const worker = new Worker(
+             'require("bun:jsc").startSamplingProfiler(undefined, 60_000_000); setInterval(() => {}, 1e6); postMessage(0);',
+             { eval: true },
+           );
+           await once(worker, "message");
+           await worker.terminate();
+           for (const end = performance.now() + 2000; samplers(); await Bun.sleep(1)) {
+             if (performance.now() > end) throw new Error("the sampler outlived the worker");
+           }
+         }
+       }
+       await profileWorkers(2);
+       const before = stacks();
+       await profileWorkers(8);
+       console.log(stacks() - before);`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(Number(stdout)).toBeLessThan(5);
+  expect(exitCode).toBe(0);
 });
 
 test("failed Worker construction restores transferred FileHandles", async () => {

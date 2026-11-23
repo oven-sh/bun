@@ -2283,6 +2283,8 @@ void stop_cpu_profile_and_log_idle_node(
   LOG_EXPR(describe(isolate, profile->GetTitle()));
   if (auto *node = log_node_without_script(profile, "(idle)")) {
     LOG_EXPR(describe(isolate, node->GetScriptResourceName()));
+    int64_t duration = profile->GetEndTime() - profile->GetStartTime();
+    LOG_EXPR(node->GetHitCount() <= duration / 8000 + 3);
   }
   profile->Delete();
 }
@@ -2305,8 +2307,7 @@ static void spin(uint64_t milliseconds) {
 
 // Creates no handles: on Windows that aborts in a libuv callback (see the
 // uv_queue_work test).
-static void spin_then_stop_cpu_profile_and_log_program_node() {
-  spin(300);
+static void stop_cpu_profile_and_log_program_node() {
   int64_t elapsed = (uv_hrtime() - last_profile_started_at) / 1000;
   CpuProfile *profile = idle_test_profiler->Stop(last_profile_id);
   log_node_without_script(profile, "(program)");
@@ -2329,9 +2330,31 @@ void finish_cpu_profile_in_uv_timer(const FunctionCallbackInfo<Value> &info) {
           return;
         }
         uv_close(reinterpret_cast<uv_handle_t *>(timer), nullptr);
-        spin_then_stop_cpu_profile_and_log_program_node();
+        spin(300);
+        stop_cpu_profile_and_log_program_node();
       },
       25, 25);
+}
+
+static bool did_spin_in_uv_after_work = false;
+
+void spin_in_uv_after_work(const FunctionCallbackInfo<Value> &info) {
+  static uv_work_t work;
+  uv_queue_work(
+      node::GetCurrentEventLoop(info.GetIsolate()), &work, [](uv_work_t *) {},
+      [](uv_work_t *, int) {
+        spin(400);
+        did_spin_in_uv_after_work = true;
+      });
+}
+
+void has_spun_in_uv_after_work(const FunctionCallbackInfo<Value> &info) {
+  info.GetReturnValue().Set(
+      Boolean::New(info.GetIsolate(), did_spin_in_uv_after_work));
+}
+
+void finish_cpu_profile(const FunctionCallbackInfo<Value> &) {
+  stop_cpu_profile_and_log_program_node();
 }
 
 void finish_cpu_profile_in_uv_after_work(
@@ -2341,7 +2364,8 @@ void finish_cpu_profile_in_uv_after_work(
       node::GetCurrentEventLoop(info.GetIsolate()), &work,
       [](uv_work_t *) { spin(50); },
       [](uv_work_t *, int) {
-        spin_then_stop_cpu_profile_and_log_program_node();
+        spin(300);
+        stop_cpu_profile_and_log_program_node();
       });
 }
 
@@ -2460,6 +2484,10 @@ void initialize(Local<Object> exports, Local<Value> module,
   NODE_SET_METHOD(exports, "dispose_cpu_profiler", dispose_cpu_profiler);
   NODE_SET_METHOD(exports, "finish_cpu_profile_in_uv_timer",
                   finish_cpu_profile_in_uv_timer);
+  NODE_SET_METHOD(exports, "spin_in_uv_after_work", spin_in_uv_after_work);
+  NODE_SET_METHOD(exports, "has_spun_in_uv_after_work",
+                  has_spun_in_uv_after_work);
+  NODE_SET_METHOD(exports, "finish_cpu_profile", finish_cpu_profile);
   NODE_SET_METHOD(exports, "finish_cpu_profile_in_uv_after_work",
                   finish_cpu_profile_in_uv_after_work);
 

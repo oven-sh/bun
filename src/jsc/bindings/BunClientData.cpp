@@ -1,7 +1,6 @@
 #include "root.h"
 
 #include "BunClientData.h"
-#include "BunCPUProfiler.h"
 #include "WorkerMessagingProxy.h"
 #include "WebCoreJSBuiltins.h"
 

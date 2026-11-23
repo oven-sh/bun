@@ -49,6 +49,8 @@ module.exports = debugMode => {
         // How @datadog/pprof restarts.
         () => (start("second"), stop("first")),
         () => (start("third"), stop("second")),
+        () => start("started between two waits"),
+        () => stop("started between two waits"),
         () => (start("started after the wait"), stop("started after the wait"), nativeModule.dispose_cpu_profiler()),
       ];
       // These timers are the waits being profiled.
@@ -68,6 +70,22 @@ module.exports = debugMode => {
     test_v8_cpu_profiler_program_in_uv_after_work() {
       nativeModule.start_cpu_profile("profile");
       nativeModule.finish_cpu_profile_in_uv_after_work();
+    },
+
+    test_v8_cpu_profiler_program_between_calls() {
+      function busy() {
+        const end = performance.now() + 50;
+        while (performance.now() < end);
+      }
+      nativeModule.start_cpu_profile("profile");
+      busy();
+      nativeModule.spin_in_uv_after_work();
+      const interval = setInterval(() => {
+        if (!nativeModule.has_spun_in_uv_after_work()) return;
+        clearInterval(interval);
+        busy();
+        nativeModule.finish_cpu_profile();
+      }, 1);
     },
 
     test_v8_value_to_int32() {

@@ -225,7 +225,15 @@ bun --cpu-prof script.js
 
 `--cpu-prof` writes a `.cpuprofile` file you can open in Chrome DevTools (Performance tab → Load profile) or VS Code's CPU profiler.
 
-The profile reports the time that the event loop waits for timers or I/O as `(idle)`, like Node.js does.
+Like in Node.js, time that does not belong to a JavaScript function has entries of its own:
+
+| Entry                 | Time spent                                         |
+| --------------------- | -------------------------------------------------- |
+| `(idle)`              | Waiting for timers or I/O                          |
+| `(program)`           | In native code that was not called from JavaScript |
+| `(garbage collector)` | Collecting garbage on the profiled thread          |
+
+A sample has the innermost 255 frames of the stack. Set `BUN_JSC_samplingProfilerMaxStackDepth` to change that.
 
 ### Markdown output
 

@@ -532,7 +532,7 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
     });
     it("reports the time the event loop waits as (idle)", async () => {
       const output = await checkSameOutput("test_v8_cpu_profiler_idle");
-      expect(output.match(/(?<=^node != nullptr = )\d/gm)).toEqual(["1", "1", "0"]);
+      expect(output.match(/(?<=^node != nullptr = )\d/gm)).toEqual(["1", "1", "1", "0"]);
     });
     // What Node 26.12.1 prints for the timer. 26.3.0 has the same ABI and reports (idle), so this is not checkSameOutput().
     async function expectMostSamplesToBeProgram(testName: string) {
@@ -557,6 +557,9 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
     // https://github.com/nodejs/node/blob/v26.12.1/src/env.cc#L1489-L1498
     it("does not report native code in an I/O callback as (idle)", async () => {
       await expectMostSamplesToBeProgram("test_v8_cpu_profiler_program_in_uv_after_work");
+    });
+    it("does not bill native code between two calls to a function", async () => {
+      await expectMostSamplesToBeProgram("test_v8_cpu_profiler_program_between_calls");
     });
   });
 

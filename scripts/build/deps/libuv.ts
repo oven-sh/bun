@@ -74,12 +74,16 @@ export const libuv: Dependency = {
   // win-poll-out-of-line: inlined, the 4 KB `overlappeds` of uv__poll is part of
   // uv_run's frame while the callbacks run. The kernel writes its first entries
   // alone, so the collector finds what earlier calls left in the others.
+  //
+  // win-poll-wait-cb: tells the CPU profiler when the thread waits. uv_run goes
+  // from its poll straight to the I/O callbacks, so no handle type can.
   patches: [
     "patches/libuv/win-poll-rearm-before-callback.patch",
     "patches/libuv/win-poll-abort-with-disconnect.patch",
     "patches/libuv/win-poll-no-reendgame-after-close.patch",
     "patches/libuv/win-pipe-read-req-count-across-callback.patch",
     "patches/libuv/win-poll-out-of-line.patch",
+    "patches/libuv/win-poll-wait-cb.patch",
   ],
 
   build: () => ({

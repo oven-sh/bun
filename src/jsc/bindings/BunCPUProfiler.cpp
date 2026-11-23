@@ -1,6 +1,5 @@
 #include "root.h"
 #include "BunCPUProfiler.h"
-#include "BunClientData.h"
 #include "ZigGlobalObject.h"
 #include "helpers.h"
 #include "BunString.h"
@@ -21,7 +20,6 @@
 #include <wtf/WallTime.h>
 #include <algorithm>
 #include <array>
-#include <cmath>
 #include <limits>
 #include <utility>
 
@@ -57,168 +55,116 @@ void startCPUProfiler(JSC::VM& vm)
     s_profilingStartTime = MonotonicTime::now();
     s_profilingStartWallTime = WallTime::now();
 
-    // Create a stopwatch and start it
+    startSampling(vm, WTF::Seconds::fromMicroseconds(s_samplingInterval));
+    s_isProfilerRunning = true;
+}
+
+void startSampling(JSC::VM& vm, Seconds samplingInterval)
+{
+    // https://github.com/nodejs/node/blob/v26.12.1/deps/v8/src/profiler/tick-sample.h#L79-L80
+    static constexpr size_t maximumStackDepth = 255;
+
     auto stopwatch = WTF::Stopwatch::create();
     stopwatch->start();
 
     JSC::SamplingProfiler& samplingProfiler = vm.ensureSamplingProfiler(WTF::move(stopwatch));
-    samplingProfiler.setTimingInterval(WTF::Seconds::fromMicroseconds(s_samplingInterval));
+    {
+        WTF::Locker locker { samplingProfiler.getLock() };
+        samplingProfiler.setRecordsSamplesWithoutFrames(true);
+        samplingProfiler.setMaximumStackDepth(maximumStackDepth);
+    }
+    samplingProfiler.setTimingInterval(samplingInterval);
     samplingProfiler.noticeCurrentThreadAsJSCExecutionThread();
     samplingProfiler.start();
-    UnsampledTime::startRecording(vm, WTF::Seconds::fromMicroseconds(s_samplingInterval));
-    s_isProfilerRunning = true;
 }
 
-#if OS(WINDOWS)
-void IdleTimeRecorder::willWait(uv_loop_t* loop)
+void stopSampling(JSC::SamplingProfiler& profiler)
 {
-    uv_loop_configure(loop, UV_METRICS_IDLE_TIME);
-    m_loop = loop;
-    m_loopIdleNanosecondsBeforeWait = uv_metrics_idle_time(loop);
-    m_waitBegin = MonotonicTime::now();
+    profiler.pause();
+    profiler.clearData();
+    profiler.setRecordsSamplesWithoutFrames(false);
+    profiler.setMaximumStackDepth(JSC::SamplingProfiler::unlimitedStackDepth);
 }
-#else
-// Must not allocate: mimalloc's scavenger may have this thread's heaps already.
-void IdleTimeRecorder::willWait()
-{
-    m_waitBegin = MonotonicTime::now();
-}
-#endif
 
-void IdleTimeRecorder::didWait()
+// https://github.com/nodejs/node/blob/v26.12.1/deps/v8/src/profiler/symbolizer.cc#L25-L45
+ASCIILiteral SampleTimeline::functionName(ThreadState state)
 {
-    if (!m_waitBegin)
-        return;
-    MonotonicTime begin = *std::exchange(m_waitBegin, std::nullopt);
-#if OS(WINDOWS)
-    // uv_run() goes from its poll straight to the I/O callbacks, so only libuv knows when the wait ended.
-    Seconds idle = Seconds::fromNanoseconds(uv_metrics_idle_time(m_loop) - m_loopIdleNanosecondsBeforeWait);
-    if (!idle)
-        return;
-#else
-    Seconds idle = MonotonicTime::now() - begin;
-#endif
-    MonotonicTime end = begin + idle;
-
-    // A busy server waits far more often than it is sampled.
-    if (!m_spans.isEmpty() && end - m_spans.last().begin <= m_samplingInterval) {
-        m_spans.last().end = end;
-        m_spans.last().idle += idle;
-        return;
+    switch (state) {
+    case ThreadState::Idle:
+        return "(idle)"_s;
+    case ThreadState::GarbageCollector:
+        return "(garbage collector)"_s;
+    case ThreadState::Program:
+    case ThreadState::JavaScript:
+        return "(program)"_s;
     }
-    m_spans.append({ begin, end, idle });
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
-void UnsampledTime::startRecording(JSC::VM& vm, Seconds samplingInterval)
-{
-    auto& recorder = WebCore::clientData(vm)->idleTimeRecorder;
-    if (!recorder)
-        recorder = makeUnique<IdleTimeRecorder>();
-    recorder->m_samplingInterval = samplingInterval;
-}
-
-void UnsampledTime::stopRecording(JSC::VM& vm)
-{
-    WebCore::clientData(vm)->idleTimeRecorder = nullptr;
-}
-
-UnsampledTime UnsampledTime::release(JSC::VM& vm, MonotonicTime profileStart, MonotonicTime profileEnd, const Vector<MonotonicTime>& sampleTimes)
-{
-    auto* recorder = WebCore::clientData(vm)->idleTimeRecorder.get();
-    Vector<IdleTimeRecorder::Span> spans;
-    if (recorder) {
-        recorder->didWait();
-        spans = std::exchange(recorder->m_spans, {});
-    }
-
-    size_t nextSpan = 0;
-    auto takeIdleTimeUntil = [&](MonotonicTime time) {
-        Seconds idle;
-        for (; nextSpan < spans.size() && spans[nextSpan].begin < time; nextSpan++) {
-            auto& span = spans[nextSpan];
-            if (time < span.end) {
-                Seconds part = span.idle * ((time - span.begin) / (span.end - span.begin));
-                span.idle -= part;
-                span.begin = time;
-                return idle + part;
-            }
-            idle += span.idle;
-        }
-        return idle;
-    };
-    takeIdleTimeUntil(profileStart);
-
-    UnsampledTime result;
-    result.m_gaps.reserveInitialCapacity(sampleTimes.size() + 1);
-    MonotonicTime gapEnd = profileStart;
-    auto appendGapUntil = [&](MonotonicTime time) {
-        gapEnd = std::max(gapEnd, time);
-        result.m_gaps.append({ gapEnd, takeIdleTimeUntil(gapEnd) });
-        result.m_idle += result.m_gaps.last().idle;
-    };
-    for (MonotonicTime sampleTime : sampleTimes)
-        appendGapUntil(sampleTime);
-    appendGapUntil(spans.isEmpty() ? gapEnd : spans.last().end);
-
-    if (!recorder) {
-        // Another user of the sampler stopped it. What came after the last sample is unknown.
-        result.m_profileEnd = gapEnd;
-        return result;
-    }
-    result.m_profileEnd = std::max(gapEnd, profileEnd);
-    result.placeSamples(profileStart, recorder->m_samplingInterval, vm.isEntered());
-    return result;
-}
-
-// Some viewers count samples and others measure from each sample to the next. Both have to find the idle time.
-void UnsampledTime::placeSamples(MonotonicTime profileStart, Seconds samplingInterval, bool wasStoppedByScript)
+SampleTimeline::SampleTimeline(JSC::SamplingProfiler& profiler, Sampler sampler, MonotonicTime start)
 {
     // V8 has no limit. A process that waits for days still has to be able to write its profile.
-    static constexpr double maxSampleCount = 1'000'000;
+    static constexpr size_t timestampLimit = 1'000'000;
 
-    const Gap& lastGap = m_gaps.last();
-    size_t busySampleCount = m_gaps.size() - 1;
-    MonotonicTime lastBusySample = busySampleCount ? m_gaps[busySampleCount - 1].end : profileStart;
-    Seconds idleBeforeIt = m_idle - lastGap.idle;
+    JSC::SamplingProfiler::Samples samples;
+    bool wasStoppedByAnotherProfile;
+    {
+        WTF::Locker locker { profiler.getLock() };
+        // https://github.com/nodejs/node/blob/v26.12.1/deps/v8/src/profiler/profile-generator.cc#L793-L794
+        m_end = MonotonicTime::now();
+        wasStoppedByAnotherProfile = !profiler.isRecordingSamplesWithoutFrames();
+        samples = profiler.releaseSamples();
+        if (sampler == Sampler::Stop)
+            stopSampling(profiler);
+    }
+    m_stackTraces = WTF::move(samples.stackTraces);
 
-    Seconds timePerSample = std::max(samplingInterval, (idleBeforeIt + (m_profileEnd - lastBusySample)) / maxSampleCount);
-    if (busySampleCount)
-        timePerSample = std::max(timePerSample, (lastBusySample - profileStart - idleBeforeIt) / busySampleCount);
-    auto sampleCountFor = [&](Seconds time) { return static_cast<size_t>(std::llround(time / timePerSample)); };
+    // Another profile may have been running already.
+    m_stackTraces.removeAllMatching([&](auto& stackTrace) { return stackTrace.timestamp < start; });
+    samples.withoutFrames.removeAllMatching([&](auto& run) { return run.last < start; });
+    if (!samples.withoutFrames.isEmpty() && samples.withoutFrames[0].first < start) {
+        auto& run = samples.withoutFrames[0];
+        Seconds period = (run.last - run.first) / (run.count - 1);
+        run.count = static_cast<size_t>((run.last - start) / period) + 1;
+        run.first = std::max(start, run.last - period * (run.count - 1));
+    }
 
-    Seconds idle;
-    Seconds sampledIdle;
-    MonotonicTime gapBegin = profileStart;
-    for (Gap& gap : m_gaps) {
-        idle += gap.idle;
-        if (size_t count = sampleCountFor(idle) - m_idleSampleCount) {
-            gap.idleSamples = { gap.end, std::min(idle - sampledIdle, gap.end - gapBegin), count };
-            sampledIdle += gap.idleSamples.duration;
-            m_idleSampleCount += count;
+    m_runs.reserveInitialCapacity(m_stackTraces.size() + samples.withoutFrames.size());
+    auto append = [&](StackTrace* stackTrace, ThreadState state, MonotonicTime first, MonotonicTime last, size_t count) {
+        if (state == ThreadState::JavaScript && !stackTrace)
+            state = ThreadState::Program;
+        if (!m_runs.isEmpty())
+            m_runs.last().end = first;
+        m_runs.append({ stackTrace, state, first, last, count, last });
+    };
+
+    size_t countWithoutFrames = 0;
+    size_t index = 0;
+    StackTrace* previous = nullptr;
+    auto appendWithoutFramesUntil = [&](MonotonicTime time, StackTrace* next) {
+        for (; index < samples.withoutFrames.size() && samples.withoutFrames[index].last <= time; index++) {
+            auto& run = samples.withoutFrames[index];
+            // JavaScript that got away from the sampler is taken for the nearest that did not.
+            StackTrace* nearest = next && (!previous || time - run.last < run.first - previous->timestamp) ? next : previous;
+            append(run.state == ThreadState::JavaScript ? nearest : nullptr, run.state, run.first, run.last, run.count);
+            countWithoutFrames += run.count;
         }
-        gapBegin = gap.end;
+    };
+    for (StackTrace& stackTrace : m_stackTraces) {
+        StackTrace* withFrames = stackTrace.frames.isEmpty() ? nullptr : &stackTrace;
+        appendWithoutFramesUntil(stackTrace.timestamp, withFrames);
+        append(withFrames, ThreadState::JavaScript, stackTrace.timestamp, stackTrace.timestamp, 1);
+        if (withFrames)
+            previous = withFrames;
     }
+    appendWithoutFramesUntil(MonotonicTime::infinity(), nullptr);
 
-    if (!m_idleSampleCount && m_idle >= samplingInterval) {
-        Gap& gap = *std::ranges::max_element(m_gaps, {}, &Gap::idle);
-        gap.idleSamples = { gap.end, gap.idle, 1 };
-        m_idleSampleCount = 1;
-    }
-
-    // Nothing suggests that the VM was left since the last sample.
-    if (wasStoppedByScript && !lastGap.idle)
+    m_samplesPerTimestamp = countWithoutFrames / timestampLimit + 1;
+    if (isEmpty())
         return;
-
-    MonotonicTime idleBegin = m_profileEnd;
-    if (lastGap.idleSamples.count) {
-        idleBegin = lastGap.end - lastGap.idleSamples.duration;
-        if (size_t count = sampleCountFor(m_profileEnd - lastGap.end))
-            m_programAfterLastWait = { m_profileEnd, m_profileEnd - lastGap.end, count };
-    }
-    // The first part belongs to the last sample.
-    Seconds busy = std::max(0_s, idleBegin - lastBusySample);
-    if (size_t partCount = sampleCountFor(busy); partCount > 1)
-        m_programBeforeLastWait = { idleBegin, busy - busy / partCount, partCount - 1 };
+    if (wasStoppedByAnotherProfile)
+        m_end = m_runs.last().last;
+    m_runs.last().end = m_end;
 }
 
 static long long microsecondsSinceProfileStart(MonotonicTime time)
@@ -236,7 +182,7 @@ struct ProfileNode {
     // for JSON emission. -1 means "unknown".
     int lineNumber;
     int columnNumber;
-    int hitCount;
+    size_t hitCount;
     WTF::Vector<int> children;
     // Per-line sample counts for this node, keyed by 1-indexed source line.
     // Emitted as `positionTicks` in the JSON output when non-empty, matching
@@ -256,8 +202,8 @@ struct FunctionStats {
     WTF::String location; // file:line format
     long long selfTimeUs = 0; // microseconds where this function was at top of stack
     long long totalTimeUs = 0; // microseconds including children
-    int selfSamples = 0; // samples where this function was at top
-    int totalSamples = 0; // samples where this function appeared anywhere
+    size_t selfSamples = 0; // samples where this function was at top
+    size_t totalSamples = 0; // samples where this function appeared anywhere
     WTF::HashMap<WTF::String, int> callers; // caller location -> count
     WTF::HashMap<WTF::String, int> callees; // callee location -> count
 };
@@ -480,8 +426,6 @@ static WTF::String generateEmptyProfileJSON(long long durationUs)
 void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
 {
     s_isProfilerRunning = false;
-    // https://github.com/nodejs/node/blob/v26.12.1/deps/v8/src/profiler/profile-generator.cc#L793-L794
-    MonotonicTime stopTime = MonotonicTime::now();
 
     JSC::SamplingProfiler* profiler = vm.samplingProfiler();
     if (!profiler) {
@@ -496,35 +440,15 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
     // Defer GC while we're working with stack traces
     JSC::DeferGC deferGC(vm);
 
-    // Pause the profiler while holding the lock
-    auto& lock = profiler->getLock();
-    WTF::Locker profilerLocker { lock };
-    profiler->pause();
-
-    // releaseStackTraces() calls processUnverifiedStackTraces() internally
-    auto stackTraces = profiler->releaseStackTraces();
-    profiler->clearData();
-
-    // Sort traces by timestamp once for both formats
-    WTF::Vector<size_t> sortedIndices;
-    sortedIndices.reserveInitialCapacity(stackTraces.size());
-    for (size_t i = 0; i < stackTraces.size(); i++) {
-        sortedIndices.append(i);
-    }
-    std::sort(sortedIndices.begin(), sortedIndices.end(), [&stackTraces](size_t a, size_t b) {
-        return stackTraces[a].timestamp < stackTraces[b].timestamp;
-    });
-
-    auto unsampledTime = UnsampledTime::release(vm, s_profilingStartTime, stopTime, sortedIndices.map([&](size_t idx) { return stackTraces[idx].timestamp; }));
-    UnsampledTime::stopRecording(vm);
+    SampleTimeline timeline(*profiler, SampleTimeline::Sampler::Stop, s_profilingStartTime);
 
     // If neither output is requested, we're done
     if (!outJSON && !outText)
         return;
 
-    long long totalTimeUs = microsecondsSinceProfileStart(unsampledTime.profileEnd());
+    long long totalTimeUs = microsecondsSinceProfileStart(timeline.end());
 
-    if (stackTraces.isEmpty() && !unsampledTime.sampleCount()) {
+    if (timeline.isEmpty()) {
         if (outJSON) *outJSON = generateEmptyProfileJSON(totalTimeUs);
         if (outText) *outText = "No samples collected.\n"_s;
         return;
@@ -553,37 +477,24 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
 
         WTF::Vector<int> samples;
         WTF::Vector<long long> timeDeltas;
-        samples.reserveInitialCapacity(stackTraces.size() + unsampledTime.sampleCount());
-        timeDeltas.reserveInitialCapacity(samples.capacity());
-
         long long lastTimeUs = 0;
-        auto appendSample = [&](int nodeId, MonotonicTime timestamp) {
-            long long currentTimeUs = std::max(lastTimeUs, microsecondsSinceProfileStart(timestamp));
-            samples.append(nodeId);
-            timeDeltas.append(currentTimeUs - lastTimeUs);
-            lastTimeUs = currentTimeUs;
-        };
 
-        std::array<int, UnsampledTime::kindCount> nodeIdByKind {};
-        auto appendSampleWithoutFrames = [&](UnsampledTime::Kind kind, MonotonicTime timestamp) {
-            int& nodeId = nodeIdByKind[std::to_underlying(kind)];
+        std::array<int, SampleTimeline::stateCount> nodeIdByState {};
+        auto nodeIdWithoutFrames = [&](SampleTimeline::ThreadState state) {
+            int& nodeId = nodeIdByState[std::to_underlying(state)];
             if (!nodeId) {
-                nodeId = appendNodeWithoutScript(UnsampledTime::functionName(kind));
+                nodeId = appendNodeWithoutScript(SampleTimeline::functionName(state));
                 nodes[0].children.append(nodeId);
             }
-            nodes[nodeId - 1].hitCount++;
-            appendSample(nodeId, timestamp);
+            return nodeId;
         };
 
-        for (size_t sampleIndex = 0; sampleIndex < sortedIndices.size(); sampleIndex++) {
-            unsampledTime.forEachSampleBefore(sampleIndex, appendSampleWithoutFrames);
-
-            auto& stackTrace = stackTraces[sortedIndices[sampleIndex]];
-            if (stackTrace.frames.isEmpty()) {
-                appendSampleWithoutFrames(UnsampledTime::Kind::Program, stackTrace.timestamp);
-                continue;
-            }
-
+        struct Leaf {
+            int nodeId { 0 };
+            int line { 0 };
+        };
+        auto appendNodes = [&](SampleTimeline::StackTrace& stackTrace) {
+            Leaf leaf;
             int currentParentId = 1;
 
             for (int i = stackTrace.frames.size() - 1; i >= 0; i--) {
@@ -728,17 +639,28 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
                 }
 
                 currentParentId = nodeId;
-
-                if (i == 0) {
-                    nodes[nodeId - 1].hitCount++;
-                    if (sampleLine > 0)
-                        nodes[nodeId - 1].positionTicks.add(sampleLine, 0).iterator->value++;
-                }
+                leaf = { nodeId, sampleLine };
             }
+            return leaf;
+        };
 
-            appendSample(currentParentId, stackTrace.timestamp);
+        SampleTimeline::StackTrace* lastStackTrace = nullptr;
+        Leaf leafOfLastStackTrace;
+        for (auto& run : timeline.runs()) {
+            if (run.stackTrace && run.stackTrace != std::exchange(lastStackTrace, run.stackTrace))
+                leafOfLastStackTrace = appendNodes(*run.stackTrace);
+            Leaf leaf = run.stackTrace ? leafOfLastStackTrace : Leaf { nodeIdWithoutFrames(run.state) };
+
+            nodes[leaf.nodeId - 1].hitCount += run.count;
+            if (leaf.line > 0)
+                nodes[leaf.nodeId - 1].positionTicks.add(leaf.line, 0).iterator->value += run.count;
+
+            timeline.forEachTimestamp(run, [&](MonotonicTime timestamp) {
+                long long timeUs = microsecondsSinceProfileStart(timestamp);
+                samples.append(leaf.nodeId);
+                timeDeltas.append(timeUs - std::exchange(lastTimeUs, timeUs));
+            });
         }
-        unsampledTime.forEachSampleBefore(sortedIndices.size(), appendSampleWithoutFrames);
 
         long long startTime = s_profilingStartWallTime.secondsSinceEpoch().microsecondsAs<long long>();
         long long endTime = startTime + totalTimeUs;
@@ -758,7 +680,7 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
             callFrame->setInteger("columnNumber"_s, node.columnNumber);
 
             nodeObj->setValue("callFrame"_s, callFrame);
-            nodeObj->setInteger("hitCount"_s, node.hitCount);
+            nodeObj->setDouble("hitCount"_s, node.hitCount);
 
             if (!node.children.isEmpty()) {
                 auto childrenArray = JSON::Array::create();
@@ -806,31 +728,7 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
     if (outText) {
         WTF::HashMap<WTF::String, FunctionStats> functionStatsMap;
 
-        FunctionStats idleStats;
-        idleStats.functionName = UnsampledTime::functionName(UnsampledTime::Kind::Idle);
-        idleStats.selfTimeUs = unsampledTime.idle().microsecondsAs<long long>();
-        FunctionStats programStats;
-        programStats.functionName = UnsampledTime::functionName(UnsampledTime::Kind::Program);
-        programStats.selfTimeUs = unsampledTime.program().microsecondsAs<long long>();
-
-        long long lastTimeUs = 0;
-        auto sampledTimeUntil = [&](long long timeUs, size_t sampleIndex) {
-            return std::max(0LL, timeUs - std::exchange(lastTimeUs, timeUs) - unsampledTime.before(sampleIndex).microsecondsAs<long long>());
-        };
-        int totalSamples = static_cast<int>(stackTraces.size());
-
-        for (size_t sampleIndex = 0; sampleIndex < sortedIndices.size(); sampleIndex++) {
-            auto& stackTrace = stackTraces[sortedIndices[sampleIndex]];
-
-            long long deltaUs = sampledTimeUntil(std::max(lastTimeUs, microsecondsSinceProfileStart(stackTrace.timestamp)), sampleIndex);
-            if (sampleIndex == sortedIndices.size() - 1)
-                deltaUs += sampledTimeUntil(totalTimeUs, sortedIndices.size());
-
-            if (stackTrace.frames.isEmpty()) {
-                programStats.selfTimeUs += deltaUs;
-                continue;
-            }
-
+        auto appendStats = [&](SampleTimeline::StackTrace& stackTrace, long long deltaUs, size_t count) {
             WTF::String previousKey;
 
             for (int i = stackTrace.frames.size() - 1; i >= 0; i--) {
@@ -894,34 +792,48 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
                     stats.location = location;
                 }
 
-                stats.totalSamples++;
+                stats.totalSamples += count;
                 stats.totalTimeUs += deltaUs;
 
                 if (i == 0) {
-                    stats.selfSamples++;
+                    stats.selfSamples += count;
                     stats.selfTimeUs += deltaUs;
                 }
 
                 if (!previousKey.isEmpty()) {
-                    stats.callers.add(previousKey, 0).iterator->value++;
+                    stats.callers.add(previousKey, 0).iterator->value += count;
 
                     auto prevIt = functionStatsMap.find(previousKey);
                     if (prevIt != functionStatsMap.end())
-                        prevIt->value.callees.add(key, 0).iterator->value++;
+                        prevIt->value.callees.add(key, 0).iterator->value += count;
                 }
 
                 previousKey = key;
             }
+        };
+
+        std::array<FunctionStats, SampleTimeline::stateCount> statsByState;
+        size_t totalSamples = 0;
+        for (auto& run : timeline.runs()) {
+            long long deltaUs = microsecondsSinceProfileStart(run.end) - microsecondsSinceProfileStart(run.first);
+            totalSamples += run.count;
+            if (run.stackTrace) {
+                appendStats(*run.stackTrace, deltaUs, run.count);
+                continue;
+            }
+            FunctionStats& stats = statsByState[std::to_underlying(run.state)];
+            stats.functionName = SampleTimeline::functionName(run.state);
+            stats.selfTimeUs += deltaUs;
+            stats.totalTimeUs += deltaUs;
         }
 
         // Sort functions by self time
         WTF::Vector<std::pair<WTF::String, FunctionStats*>> sortedBySelf;
         for (auto& entry : functionStatsMap)
             sortedBySelf.append({ entry.key, &entry.value });
-        for (FunctionStats* stats : { &idleStats, &programStats }) {
-            stats->totalTimeUs = stats->selfTimeUs;
-            if (stats->selfTimeUs)
-                sortedBySelf.append({ stats->functionName, stats });
+        for (FunctionStats& stats : statsByState) {
+            if (stats.selfTimeUs)
+                sortedBySelf.append({ stats.functionName, &stats });
         }
         std::sort(sortedBySelf.begin(), sortedBySelf.end(), [](const auto& a, const auto& b) {
             return a.second->selfTimeUs > b.second->selfTimeUs;
@@ -1019,7 +931,7 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
             // Skip functions with no self time and no interesting relationships
             if (stats->selfTimeUs == 0 && stats->callers.isEmpty() && stats->callees.isEmpty())
                 continue;
-            if (stats == &idleStats || stats == &programStats)
+            if (!functionStatsMap.contains(key))
                 continue;
 
             // Header: ### `functionName`
@@ -1137,37 +1049,12 @@ extern "C" void Bun__startCPUProfiler(JSC::VM* vm)
     Bun::startCPUProfiler(*vm);
 }
 
-static ALWAYS_INLINE Bun::IdleTimeRecorder* idleTimeRecorder(JSC::VM* vm)
+// Only around a poll that may block. Node also counts native code after any callback, so a setImmediate() loop is mostly idle: https://github.com/nodejs/node/blob/v26.12.1/src/api/callback.cc#L156
+extern "C" void Bun__CPUProfiler__setIdle(JSC::VM* vm, int isIdle)
 {
-    return uncheckedDowncast<WebCore::JSVMClientData>(vm->clientData)->idleTimeRecorder.get();
+    if (auto* profiler = vm->samplingProfiler()) [[unlikely]]
+        profiler->setExecutionThreadIsIdle(isIdle);
 }
-
-// A wait beneath a JavaScript frame belongs to that frame: https://github.com/nodejs/node/blob/v26.12.1/deps/v8/src/execution/isolate.cc#L7677-L7686
-#if OS(WINDOWS)
-extern "C" void Bun__CPUProfiler__willPoll(JSC::VM* vm, uv_loop_t* loop)
-{
-    auto* recorder = idleTimeRecorder(vm);
-    if (!recorder) [[likely]]
-        return;
-    recorder->didWait();
-    if (!vm->isEntered())
-        recorder->willWait(loop);
-}
-#else
-extern "C" int Bun__CPUProfiler__willWait(JSC::VM* vm)
-{
-    auto* recorder = idleTimeRecorder(vm);
-    if (!recorder || vm->isEntered()) [[likely]]
-        return 0;
-    recorder->willWait();
-    return 1;
-}
-
-extern "C" void Bun__CPUProfiler__didWait(JSC::VM* vm)
-{
-    idleTimeRecorder(vm)->didWait();
-}
-#endif
 
 extern "C" void Bun__stopCPUProfiler(JSC::VM* vm, BunString* outJSON, BunString* outText)
 {

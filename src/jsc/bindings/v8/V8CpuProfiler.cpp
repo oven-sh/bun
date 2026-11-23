@@ -41,11 +41,9 @@ static int64_t nowMicroseconds()
 
 static void stopSampling(JSC::VM& vm)
 {
-    Bun::UnsampledTime::stopRecording(vm);
     if (JSC::SamplingProfiler* sampler = vm.samplingProfiler()) {
         WTF::Locker locker { sampler->getLock() };
-        sampler->pause();
-        sampler->clearData();
+        Bun::stopSampling(*sampler);
     }
 }
 
@@ -54,16 +52,8 @@ uint32_t CpuProfilerImpl::start(WTF::String&& title, bool recordSamples)
     uint32_t id = m_nextId++;
     m_sessions.append(Session { id, WTF::move(title), nowMicroseconds(), recordSamples });
 
-    if (m_sessions.size() == 1) {
-        auto& vm = m_isolate->vm();
-        auto stopwatch = WTF::Stopwatch::create();
-        stopwatch->start();
-        JSC::SamplingProfiler& sampler = vm.ensureSamplingProfiler(WTF::move(stopwatch));
-        sampler.setTimingInterval(WTF::Seconds::fromMicroseconds(m_samplingIntervalUs));
-        sampler.noticeCurrentThreadAsJSCExecutionThread();
-        sampler.start();
-        Bun::UnsampledTime::startRecording(vm, WTF::Seconds::fromMicroseconds(m_samplingIntervalUs));
-    }
+    if (m_sessions.size() == 1)
+        Bun::startSampling(m_isolate->vm(), WTF::Seconds::fromMicroseconds(m_samplingIntervalUs));
 
     return id;
 }
@@ -83,7 +73,6 @@ const CpuProfilerImpl::Session* CpuProfilerImpl::sessionWithTitle(const WTF::Str
 static void buildProfileTree(JSC::VM& vm, CpuProfileImpl& profile, int64_t startTime, bool recordSamples)
 {
     JSC::SamplingProfiler* sampler = vm.samplingProfiler();
-    WTF::MonotonicTime stopTime = WTF::MonotonicTime::now();
 
     unsigned nextNodeId = 1;
     auto appendNodeWithoutScript = [&](ASCIILiteral functionName) -> CpuProfileNodeImpl* {
@@ -101,64 +90,32 @@ static void buildProfileTree(JSC::VM& vm, CpuProfileImpl& profile, int64_t start
     profile.m_startTime = startTime;
 
     if (!sampler) {
-        profile.m_endTime = toMicroseconds(stopTime);
+        profile.m_endTime = nowMicroseconds();
         return;
     }
 
     JSC::JSLockHolder jsLock(vm);
     JSC::DeferGC deferGC(vm);
 
-    WTF::Vector<JSC::SamplingProfiler::StackTrace> stackTraces;
-    {
-        WTF::Locker locker { sampler->getLock() };
-        stackTraces = sampler->releaseStackTraces();
-    }
+    Bun::SampleTimeline timeline(*sampler, Bun::SampleTimeline::Sampler::Keep, WTF::MonotonicTime() + WTF::Seconds::fromMicroseconds(startTime));
 
-    WTF::Vector<size_t> order;
-    order.reserveInitialCapacity(stackTraces.size());
-    for (size_t i = 0; i < stackTraces.size(); ++i) {
-        // Earlier traces belong to an overlapping session (see CpuProfiler::Start).
-        if (toMicroseconds(stackTraces[i].timestamp) >= startTime)
-            order.append(i);
-    }
-    std::sort(order.begin(), order.end(), [&stackTraces](size_t a, size_t b) {
-        return stackTraces[a].timestamp < stackTraces[b].timestamp;
-    });
-
-    auto unsampledTime = Bun::UnsampledTime::release(vm, WTF::MonotonicTime() + WTF::Seconds::fromMicroseconds(startTime), stopTime, order.map([&](size_t idx) { return stackTraces[idx].timestamp; }));
-
-    WTF::HashMap<WTF::String, CpuProfileNodeImpl*> nodeByKey;
-    int64_t lastTimestamp = startTime;
-
-    auto appendSample = [&](CpuProfileNodeImpl* node, WTF::MonotonicTime time) {
-        lastTimestamp = std::max(lastTimestamp, toMicroseconds(time));
-        if (recordSamples) {
-            profile.m_samples.append(node);
-            profile.m_sampleTimestamps.append(lastTimestamp);
-        }
-    };
-
-    std::array<CpuProfileNodeImpl*, Bun::UnsampledTime::kindCount> nodeByKind {};
-    auto appendSampleWithoutFrames = [&](Bun::UnsampledTime::Kind kind, WTF::MonotonicTime time) {
-        CpuProfileNodeImpl*& node = nodeByKind[std::to_underlying(kind)];
+    std::array<CpuProfileNodeImpl*, Bun::SampleTimeline::stateCount> nodeByState {};
+    auto nodeWithoutFrames = [&](Bun::SampleTimeline::ThreadState state) {
+        CpuProfileNodeImpl*& node = nodeByState[std::to_underlying(state)];
         if (!node) {
-            node = appendNodeWithoutScript(Bun::UnsampledTime::functionName(kind));
+            node = appendNodeWithoutScript(Bun::SampleTimeline::functionName(state));
             root->children.append(node);
         }
-        node->hitCount++;
-        appendSample(node, time);
+        return node;
     };
 
-    for (size_t sampleIndex = 0; sampleIndex < order.size(); ++sampleIndex) {
-        unsampledTime.forEachSampleBefore(sampleIndex, appendSampleWithoutFrames);
-
-        auto& trace = stackTraces[order[sampleIndex]];
-
-        if (trace.frames.isEmpty()) {
-            appendSampleWithoutFrames(Bun::UnsampledTime::Kind::Program, trace.timestamp);
-            continue;
-        }
-
+    WTF::HashMap<WTF::String, CpuProfileNodeImpl*> nodeByKey;
+    struct Leaf {
+        CpuProfileNodeImpl* node { nullptr };
+        int line { 0 };
+    };
+    auto appendNodes = [&](Bun::SampleTimeline::StackTrace& trace) {
+        Leaf leaf;
         CpuProfileNodeImpl* current = root;
 
         for (int i = static_cast<int>(trace.frames.size()) - 1; i >= 0; --i) {
@@ -272,29 +229,39 @@ static void buildProfileTree(JSC::VM& vm, CpuProfileImpl& profile, int64_t start
             }
 
             current = child;
+            leaf = { child, sampleLine };
+        }
+        return leaf;
+    };
 
-            if (i == 0) {
-                current->hitCount++;
-                if (sampleLine > 0) {
-                    bool found = false;
-                    for (auto& tick : current->lineTicks) {
-                        if (tick.line == sampleLine) {
-                            tick.hit_count++;
-                            found = true;
-                            break;
-                        }
-                    }
-                    if (!found)
-                        current->lineTicks.append(CpuProfileNodeImpl::LineTick { sampleLine, 1 });
-                }
-            }
+    Bun::SampleTimeline::StackTrace* lastTrace = nullptr;
+    Leaf leafOfLastTrace;
+    int64_t lastTimestamp = startTime;
+    for (auto& run : timeline.runs()) {
+        if (run.stackTrace && run.stackTrace != std::exchange(lastTrace, run.stackTrace))
+            leafOfLastTrace = appendNodes(*run.stackTrace);
+        Leaf leaf = run.stackTrace ? leafOfLastTrace : Leaf { nodeWithoutFrames(run.state) };
+
+        leaf.node->hitCount = clampTo<unsigned>(leaf.node->hitCount + run.count);
+        if (leaf.line > 0) {
+            auto& ticks = leaf.node->lineTicks;
+            size_t index = ticks.findIf([&](auto& tick) { return tick.line == leaf.line; });
+            if (index == WTF::notFound)
+                ticks.append(CpuProfileNodeImpl::LineTick { leaf.line, static_cast<unsigned>(run.count) });
+            else
+                ticks[index].hit_count += run.count;
         }
 
-        appendSample(current, trace.timestamp);
+        if (recordSamples) {
+            timeline.forEachTimestamp(run, [&](WTF::MonotonicTime time) {
+                lastTimestamp = std::max(lastTimestamp, toMicroseconds(time));
+                profile.m_samples.append(leaf.node);
+                profile.m_sampleTimestamps.append(lastTimestamp);
+            });
+        }
     }
-    unsampledTime.forEachSampleBefore(order.size(), appendSampleWithoutFrames);
 
-    profile.m_endTime = std::max(lastTimestamp, toMicroseconds(unsampledTime.profileEnd()));
+    profile.m_endTime = std::max(lastTimestamp, toMicroseconds(timeline.end()));
 }
 
 CpuProfileImpl* CpuProfilerImpl::stop(uint32_t id)
@@ -511,7 +478,7 @@ CpuProfilingResult CpuProfiler::Start(Local<String> title, CpuProfilingMode, boo
 
     // Sessions with different titles may overlap. JSC::SamplingProfiler is a
     // single VM-global consumer and Stop() drains all traces via
-    // releaseStackTraces(), so a session that overlaps a Stop() of another
+    // releaseSamples(), so a session that overlaps a Stop() of another
     // session loses the samples taken before that Stop(). In practice the only
     // overlapping caller is @datadog/pprof's restart path, which calls
     // Start(new) immediately followed by Stop(old), so the window is

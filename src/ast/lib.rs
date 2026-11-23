@@ -2538,6 +2538,7 @@ pub mod b;
 pub mod base;
 pub mod binding;
 pub mod char_freq;
+pub mod const_fold;
 pub mod e;
 pub mod error;
 pub use error::{Error, Result};

@@ -1691,16 +1691,6 @@ impl<'a> LinkerContext<'_, 'a> {
         Ok(true)
     }
 
-    /// The constants whose reads in this file print as their value: none with a direct `eval`.
-    pub(crate) fn inlined_const_values(
-        &self,
-        source_index: crate::IndexInt,
-    ) -> Option<&bun_ast::ast_result::ConstValuesMap> {
-        (self.graph.const_values.count() > 0
-            && !self.graph.ast.items_module_scope()[source_index as usize].contains_direct_eval)
-            .then_some(&self.graph.const_values)
-    }
-
     pub(crate) fn print_code_for_file_in_chunk_js(
         &self,
         r: renamer::Renamer,
@@ -1736,11 +1726,9 @@ impl<'a> LinkerContext<'_, 'a> {
             commonjs_module_exports_assigned_deoptimized: ast
                 .flags
                 .contains(AstFlags::COMMONJS_MODULE_EXPORTS_ASSIGNED_DEOPTIMIZED),
-            const_values: self.inlined_const_values(source_index.get()),
+            const_values: flags.inlines_const.then_some(&self.graph.const_values),
             ts_enums: Some(&self.graph.ts_enums),
-            late_fold: self.options.minify_syntax
-                && self.options.output_format != Format::InternalBakeDev
-                && (self.graph.ts_enums.count() > 0 || self.graph.const_values.count() > 0),
+            late_fold: flags.late_fold,
             import_member_bindings: Some(&self.graph.import_member_bindings),
             has_dynamic_import_items: ast
                 .dynamic_import_aliases

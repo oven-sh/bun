@@ -1991,7 +1991,7 @@ impl BuiltInHook {
     }
 }
 
-pub(crate) use bun_ast::late_fold::to_int32 as float_to_int32;
+pub(crate) use bun_ast::const_fold::to_int32 as float_to_int32;
 
 #[derive(Clone, Copy, Default)]
 pub struct ParseBindingOptions {

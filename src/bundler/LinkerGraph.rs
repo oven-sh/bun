@@ -150,6 +150,11 @@ pub mod js_meta {
         pub(crate) needs_export_symbol_from_runtime: bool,
         pub(crate) did_wrap_dependencies: bool,
         pub(crate) needs_synthetic_default_export: bool,
+        /// The printer inlines a value of another file here, so it runs `bun_ast::late_fold`.
+        pub(crate) late_fold: bool,
+        /// Step 5 dropped a use of a constant in `LinkerGraph::const_values` from this file, so
+        /// the printer must print the value. Neither may happen without the other.
+        pub(crate) inlines_const: bool,
         pub(crate) wrap: WrapKind,
     }
     pub use crate::WrapKind as Wrap;
@@ -654,15 +659,39 @@ impl<'a> LinkerGraph<'a> {
     }
 }
 
-/// esbuild's "const local prefix" of a file that imports nothing: not `P::const_values`.
+/// True for the call that the parser makes of an enum: `((E) => { … })(E ||= {})`.
+fn fills_enum(value: &bun_ast::Expr, symbols: &symbol::Map) -> bool {
+    use bun_ast::{ExprData, OpCode};
+    let ExprData::ECall(call) = &value.data else {
+        return false;
+    };
+    let [arg] = call.args.slice() else {
+        return false;
+    };
+    let ExprData::EBinary(assign) = &arg.data else {
+        return false;
+    };
+    let ExprData::EIdentifier(name) = &assign.left.data else {
+        return false;
+    };
+    assign.op == OpCode::BinLogicalOrAssign
+        && symbols
+            .get_const(name.ref_)
+            .is_some_and(|symbol| symbol.kind == symbol::Kind::TsEnum)
+}
+
+/// Records the exported constants in esbuild's "const local prefix" of a file that imports
+/// nothing. `P::const_values` is a looser list, for reads in the same file.
 fn collect_leaf_const_values(
     parts: &[bun_ast::Part],
+    named_exports: &bundled_ast::NamedExports,
     symbols: &symbol::Map,
     const_values: &mut bun_ast::ast_result::ConstValuesMap,
 ) -> Result<(), crate::Error> {
     use bun_ast::binding::Data as BindingData;
     use bun_ast::{StmtData, late_fold};
-    for part in parts {
+    let mut prefix = bun_ast::ast_result::ConstValuesMap::default();
+    'scan: for part in parts {
         for stmt in part.stmts.slice() {
             let local = match &stmt.data {
                 StmtData::SEmpty(_)
@@ -670,12 +699,14 @@ fn collect_leaf_const_values(
                 | StmtData::SDebugger(_)
                 | StmtData::STypeScript(_)
                 | StmtData::SDirective(_) => continue,
+                // esbuild does not end the prefix at a TypeScript enum.
+                StmtData::SExpr(call) if fills_enum(&call.value, symbols) => continue,
                 StmtData::SLocal(local) => local,
-                _ => return Ok(()),
+                _ => break 'scan,
             };
             for decl in local.decls.slice() {
                 let BindingData::BIdentifier(id) = &decl.binding.data else {
-                    return Ok(());
+                    break 'scan;
                 };
                 let Some(value) = &decl.value else {
                     continue;
@@ -687,10 +718,18 @@ fn collect_leaf_const_values(
                         .is_some_and(|symbol| symbol.kind == symbol::Kind::Constant)
                     && late_fold::is_const_value(value)
                 {
-                    const_values.put(id.r#ref, *value)?;
+                    prefix.put(id.r#ref, *value)?;
                 } else if !late_fold::is_safe_for_const_prefix(value) {
-                    return Ok(());
+                    break 'scan;
                 }
+            }
+        }
+    }
+    if prefix.count() > 0 {
+        // Only an export can be the target of an import.
+        for export in named_exports.values() {
+            if let Some(value) = prefix.get(&export.ref_) {
+                const_values.put(export.ref_, *value)?;
             }
         }
     }
@@ -870,12 +909,14 @@ impl<'a> LinkerGraph<'a> {
         if inline_const_values {
             let import_records = self.ast.items_import_records();
             let parts = self.ast.items_parts();
+            let named_exports = self.ast.items_named_exports();
             for source_index in &self.reachable_files {
                 let id = source_index.get() as usize;
                 // A file that imports nothing is in no import cycle: it runs before its readers.
-                if import_records[id].len() == 0 {
+                if import_records[id].len() == 0 && named_exports[id].count() > 0 {
                     collect_leaf_const_values(
                         parts[id].as_slice(),
+                        &named_exports[id],
                         &self.symbols,
                         &mut self.const_values,
                     )?;

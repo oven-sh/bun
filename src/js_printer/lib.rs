@@ -6717,8 +6717,7 @@ pub(crate) mod __gated_printer {
             true
         }
 
-        /// The statement to print for `stmt`: an `if` that cross-module values decide is its
-        /// live branch, or an empty statement.
+        /// The statement to print for `stmt`: `LateFold::fold_if` replaces a decided `if`.
         #[inline]
         fn late_folded_stmt(&mut self, stmt: Stmt) -> Stmt {
             if self.options.late_fold && matches!(stmt.data, StmtData::SIf(_)) {
@@ -6732,10 +6731,10 @@ pub(crate) mod __gated_printer {
             let mut spine = core::mem::take(&mut self.late_fold_spine);
             let late_fold = self.late_fold();
             while let StmtData::SIf(s) = &stmt.data {
-                let Some(live) = late_fold.live_branch(s, &mut spine) else {
+                let Some(folded) = late_fold.fold_if(s, stmt.loc, &mut spine) else {
                     break;
                 };
-                stmt = live.unwrap_or(stmt.to_empty());
+                stmt = folded;
             }
             self.late_fold_spine = spine;
             stmt

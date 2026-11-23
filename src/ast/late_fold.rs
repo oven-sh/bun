@@ -104,6 +104,7 @@ fn fold_unary(op: OpCode, value: &Data) -> Option<Data> {
         OpCode::UnNeg => number(-value.to_number()?),
         OpCode::UnCpl => number(f64::from(!to_int32(value.to_number()?))),
         OpCode::UnNot => boolean(!literal_to_boolean(value)?),
+        OpCode::UnVoid if literal_to_boolean(value).is_some() => Data::EUndefined(E::Undefined {}),
         _ => return None,
     })
 }
@@ -180,10 +181,15 @@ impl<'a> LateFold<'a> {
         matches!(expr.unwrap_inlined().data, Data::EString(_))
     }
 
-    /// The branch of `s` that runs, when cross-module values decide the test and nothing
-    /// needs the other branch.
-    pub fn live_branch(&self, s: &S::If, spine: &mut Vec<Expr>) -> Option<Option<Stmt>> {
-        let value = self.to_boolean(s.test, spine)?;
+    /// The statement that replaces the `if` statement `s`, when cross-module values decide
+    /// its test: the branch that runs, after what the test runs for effect.
+    pub fn fold_if(&self, s: &S::If, loc: crate::Loc, spine: &mut Vec<Expr>) -> Option<Stmt> {
+        // `if (effect(), E.A)`: the parser merges a preceding expression statement in.
+        let (effects, test) = match &s.test.data {
+            Data::EBinary(e) if e.op == OpCode::BinComma => (Some(e.left), e.right),
+            _ => (None, s.test),
+        };
+        let value = self.to_boolean(test, spine)?;
         let (live, dead) = if value {
             (Some(s.yes), s.no)
         } else {
@@ -192,12 +198,45 @@ impl<'a> LateFold<'a> {
         if dead.as_ref().is_some_and(dead_branch_declares) {
             return None;
         }
-        if let Some(StmtData::SExpr(live)) = live.map(|stmt| stmt.data)
-            && self.is_string(live.value, spine)
-        {
+        let Some(effects) = effects else {
+            // A string statement can become a directive where the `if` was.
+            if let Some(StmtData::SExpr(live)) = live.map(|stmt| stmt.data)
+                && self.is_string(live.value, spine)
+            {
+                return None;
+            }
+            return Some(live.unwrap_or(Stmt {
+                data: StmtData::SEmpty(S::Empty {}),
+                loc,
+            }));
+        };
+        if self.is_string(effects, spine) {
             return None;
         }
-        Some(live)
+        let effects = Stmt {
+            data: StmtData::SExpr(StoreRef::from_bump(self.bump.alloc(S::SExpr {
+                value: effects,
+                does_not_affect_tree_shaking: false,
+            }))),
+            loc: effects.loc,
+        };
+        let Some(live) = live else {
+            return Some(effects);
+        };
+        let (rest, close_brace_loc) = match &live.data {
+            StmtData::SBlock(block) => (block.stmts.slice(), block.close_brace_loc),
+            _ => (core::slice::from_ref(&live), crate::Loc::EMPTY),
+        };
+        let mut stmts = ArenaVec::with_capacity_in(rest.len() + 1, self.bump);
+        stmts.push(effects);
+        stmts.extend_from_slice(rest);
+        Some(Stmt {
+            data: StmtData::SBlock(StoreRef::from_bump(self.bump.alloc(S::Block {
+                stmts: crate::StoreSlice::from_bump(stmts),
+                close_brace_loc,
+            }))),
+            loc,
+        })
     }
 
     fn enum_value(&self, target: Expr, name: &[u8]) -> Option<InlinedEnumValueDecoded> {

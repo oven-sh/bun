@@ -267,10 +267,7 @@ impl LinkerContext<'_, '_> {
 
             // TODO: inline function calls here
 
-            // The printer prints the value of a constant of another file in
-            // place of a read of its import (`late_fold::inlined_const`, which
-            // has the same two tests). Such a read does not use the
-            // declaration, so the declaration can be tree-shaken.
+            // The printer prints these reads as values (`late_fold::inlined_const`).
             if let Some(const_values) = inlined_const_values {
                 part.symbol_uses.retain(|ref_, _| {
                     !(c.graph

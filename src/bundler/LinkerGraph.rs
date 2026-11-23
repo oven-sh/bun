@@ -248,10 +248,7 @@ pub struct LinkerGraph<'a> {
 
     pub(crate) is_scb_bitset: BitSet,
 
-    /// This is for cross-module inlining of constants: the declaring symbol of
-    /// each `const` whose reads in other files are printed as its value. See
-    /// `collect_leaf_const_values` for what is in it. An import of one is not a
-    /// use of the declaration (`LinkerContext::do_step5`).
+    /// Cross-module inlining of constants: what `collect_leaf_const_values` records.
     pub(crate) const_values: bun_ast::ast_result::ConstValuesMap,
     /// This is for cross-module inlining of TypeScript enum constants
     pub(crate) ts_enums: bun_ast::ast_result::TsEnumsMap,
@@ -657,12 +654,7 @@ impl<'a> LinkerGraph<'a> {
     }
 }
 
-/// Records the constants at the start of a file that imports nothing. This is
-/// the "const local prefix" of esbuild's parser: it ends at the first
-/// statement, or the first initializer, that can run code. The parser keeps a
-/// looser list for reads in the same file (`P::const_values`). That list is
-/// not safe to share: it also holds constants of a file that is in an import
-/// cycle.
+/// esbuild's "const local prefix" of a file that imports nothing: not `P::const_values`.
 fn collect_leaf_const_values(
     parts: &[bun_ast::Part],
     symbols: &symbol::Map,
@@ -688,9 +680,7 @@ fn collect_leaf_const_values(
                 let Some(value) = &decl.value else {
                     continue;
                 };
-                // The parser prints a top-level `const` of a bundle as `var`,
-                // so the kind of the symbol says what the source declared.
-                // `using` declares a constant too.
+                // A bundle prints a top-level `const` as `var`: the symbol kind has the source's.
                 if !local.kind.is_using()
                     && symbols
                         .get_const(id.r#ref)
@@ -882,10 +872,7 @@ impl<'a> LinkerGraph<'a> {
             let parts = self.ast.items_parts();
             for source_index in &self.reachable_files {
                 let id = source_index.get() as usize;
-                // esbuild: "Import statements anywhere in the file disable
-                // top-level const local prefix because import cycles can be
-                // used to trigger TDZ". A file that imports nothing is in no
-                // import cycle.
+                // A file that imports nothing is in no import cycle: it runs before its readers.
                 if import_records[id].len() == 0 {
                     collect_leaf_const_values(
                         parts[id].as_slice(),

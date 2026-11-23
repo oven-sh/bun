@@ -1691,10 +1691,7 @@ impl<'a> LinkerContext<'_, 'a> {
         Ok(true)
     }
 
-    /// The constants whose reads in the file `source_index` are printed as
-    /// their value. Step 5 drops the uses of exactly these, and the printer
-    /// is lent the same map. With a direct `eval` the file has none: the code
-    /// that `eval` runs can read the import by its name.
+    /// The constants whose reads in this file print as their value: none with a direct `eval`.
     pub(crate) fn inlined_const_values(
         &self,
         source_index: crate::IndexInt,

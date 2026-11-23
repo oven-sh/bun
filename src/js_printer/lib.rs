@@ -1314,16 +1314,12 @@ pub struct Options<'a> {
     pub input_module_type: bundle_opts::ModuleType,
     pub module_type: bundle_opts::Format,
 
-    /// Borrowed from `LinkerGraph.const_values`: the constants of other files
-    /// whose reads are printed as their value.
+    /// Borrowed from `LinkerGraph.const_values`: constants whose reads print as their value.
     pub const_values: Option<&'a js_ast::ast_result::ConstValuesMap>,
     /// Borrowed from `LinkerGraph.ts_enums` (one shared map for the whole
     /// bundle); the printer only reads from it.
     pub ts_enums: Option<&'a TsEnumsMap>,
-    /// Fold the expressions and the `if` statements that a value of another
-    /// file decides (`bun_ast::late_fold`). The linker turns this on for a
-    /// bundle that has such values. `minify_syntax` is not the gate: the
-    /// runtime transpiler sets it for every module.
+    /// Run `bun_ast::late_fold`. Set by the linker: `minify_syntax` is on in `bun run` too.
     pub late_fold: bool,
     /// Borrowed from `LinkerGraph.import_member_bindings`: `X.name` property
     /// reads the linker bound straight to an export (see `E::Dot::is_import_property_use`).
@@ -1484,8 +1480,7 @@ pub enum ExprFlag {
     HasNonOptionalChainParent,
     ExprResultIsUnused,
     IsFollowedByOf,
-    /// The late fold already ran over this expression as an operand of its
-    /// parent, or must not replace it (a call target keeps its `this`).
+    /// The late fold already saw this expression, or must not replace it (a call target).
     SkipLateFold,
 }
 
@@ -1719,8 +1714,7 @@ pub(crate) mod __gated_printer {
                                 v.left_level = Level::Call;
                             }
                         }
-                        // A property access or an import can print as a value
-                        // of another file: a negative number, `!0` or `void 0`.
+                        // A property access or an import can print as `-1`, `!0` or `void 0`.
                         ExprData::EAwait(_)
                         | ExprData::EUndefined(_)
                         | ExprData::ENumber(_)
@@ -6742,8 +6736,7 @@ pub(crate) mod __gated_printer {
             }
         }
 
-        /// Prints `expr` (a unary, binary or conditional expression) folded,
-        /// when values of other files let operators in it be evaluated.
+        /// Prints the unary, binary or conditional `expr` folded, if cross-module values fold it.
         #[inline]
         fn print_late_folded(&mut self, expr: Expr, level: Level, flags: ExprFlagSet) -> bool {
             self.options.late_fold
@@ -6763,8 +6756,7 @@ pub(crate) mod __gated_printer {
             true
         }
 
-        /// `ToBoolean(test)` when values of other files decide it and `test`
-        /// has no side effect.
+        /// `ToBoolean(test)` when cross-module values decide it without a side effect.
         fn late_folded_test(&mut self, test: Expr) -> Option<bool> {
             let mut spine = core::mem::take(&mut self.late_fold_spine);
             let value = self.late_fold().to_boolean(test, &mut spine);
@@ -6772,9 +6764,7 @@ pub(crate) mod __gated_printer {
             value
         }
 
-        /// The `else` branch that `print_if` prints for `s`. An `else if`
-        /// whose test a value of another file decides is replaced by the
-        /// branch that runs.
+        /// The `else` branch to print for `s`: the arm that runs replaces a decided `else if`.
         #[inline]
         fn else_branch(&mut self, s: &S::If) -> Option<Stmt> {
             if self.options.late_fold
@@ -6815,10 +6805,7 @@ pub(crate) mod __gated_printer {
             }
         }
 
-        /// Prints a statement of a statement list. Here a statement can be
-        /// left out or replaced by several, so this is where the late fold
-        /// removes an `if` or an expression that a value of another file
-        /// decides. The body of a loop or of an `if` is printed as it is.
+        /// Prints a statement of a statement list, where the late fold can drop or unwrap it.
         #[inline]
         pub(crate) fn print_stmt_in_list(&mut self, stmt: Stmt) -> crate::Result<()> {
             if self.options.late_fold && self.late_folded_stmt(&stmt)? {
@@ -6844,8 +6831,7 @@ pub(crate) mod __gated_printer {
         }
 
         fn print_late_folded_if(&mut self, s: &S::If) -> crate::Result<bool> {
-            // `if (effect(), E.A)`: the parser merges a preceding expression
-            // statement into the test.
+            // `if (effect(), E.A)`: the parser merges a preceding expression statement in.
             let (effects, test) = match &s.test.data {
                 ExprData::EBinary(e) if e.op == Op::Code::BinComma => (Some(e.left), e.right),
                 _ => (None, s.test),
@@ -6864,9 +6850,7 @@ pub(crate) mod __gated_printer {
             {
                 return Ok(false);
             }
-            // In sloppy mode a function declared as the body of an `if` is not
-            // hoisted like one declared in a statement list. A string can
-            // become a directive there.
+            // As the body of an `if`, a function hoists differently and a string is not a directive.
             if live.as_ref().is_some_and(|stmt| {
                 matches!(stmt.data, StmtData::SFunction(_)) || Self::can_be_directive(stmt)
             }) {
@@ -6903,9 +6887,7 @@ pub(crate) mod __gated_printer {
             }
         }
 
-        /// The statements of a block can move into the enclosing statement
-        /// list when none of them is scoped to the block, and the first one
-        /// cannot become a directive there.
+        /// No statement is scoped to the block, and the first cannot become a directive.
         fn can_unwrap_block(stmts: &[Stmt]) -> bool {
             !stmts.first().is_some_and(Self::can_be_directive)
                 && stmts.iter().all(|stmt| match &stmt.data {

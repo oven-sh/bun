@@ -194,7 +194,7 @@ impl<'a> LateFold<'a> {
         } else {
             (s.no, Some(s.yes))
         };
-        if dead.as_ref().is_some_and(dead_branch_declares) {
+        if dead.is_some_and(|dead| self.dead_branch_declares(&dead)) {
             return None;
         }
         let Some(effects) = effects else {
@@ -222,8 +222,11 @@ impl<'a> LateFold<'a> {
         let Some(live) = live else {
             return Some(effects);
         };
+        // The effects ran outside the branch: they must not see what its block declares.
         let (rest, close_brace_loc) = match &live.data {
-            StmtData::SBlock(block) => (block.stmts.slice(), block.close_brace_loc),
+            StmtData::SBlock(block) if declares_no_scoped_name(block.stmts.slice()) => {
+                (block.stmts.slice(), block.close_brace_loc)
+            }
             _ => (core::slice::from_ref(&live), crate::Loc::EMPTY),
         };
         let mut stmts = ArenaVec::with_capacity_in(rest.len() + 1, self.bump);
@@ -475,49 +478,57 @@ impl<'a> LateFold<'a> {
         };
         Some(Expr { data, loc })
     }
+
+    /// True when dead code still declares a hoisted `var` or function, so the branch must stay.
+    fn dead_branch_declares(&self, stmt: &Stmt) -> bool {
+        if !self.stack_check.is_safe_to_recurse() {
+            return true;
+        }
+        let any = |stmts: crate::StoreSlice<Stmt>| {
+            stmts
+                .slice()
+                .iter()
+                .any(|stmt| self.dead_branch_declares(stmt))
+        };
+        let one = |stmt: &Stmt| self.dead_branch_declares(stmt);
+        match &stmt.data {
+            StmtData::SEmpty(_)
+            | StmtData::SExpr(_)
+            | StmtData::SThrow(_)
+            | StmtData::SReturn(_)
+            | StmtData::SBreak(_)
+            | StmtData::SContinue(_)
+            | StmtData::SClass(_)
+            | StmtData::SDebugger(_) => false,
+            StmtData::SLocal(local) => local.kind == S::Kind::KVar,
+            StmtData::SBlock(block) => any(block.stmts),
+            StmtData::STry(try_) => {
+                any(try_.body)
+                    || try_.catch.as_ref().is_some_and(|catch| any(catch.body))
+                    || try_
+                        .finally
+                        .as_ref()
+                        .is_some_and(|finally| any(finally.stmts))
+            }
+            StmtData::SIf(if_) => one(&if_.yes) || if_.no.as_ref().is_some_and(one),
+            StmtData::SWhile(while_) => one(&while_.body),
+            StmtData::SDoWhile(do_while) => one(&do_while.body),
+            StmtData::SFor(for_) => for_.init.as_ref().is_some_and(one) || one(&for_.body),
+            StmtData::SForIn(for_) => one(&for_.init) || one(&for_.body),
+            StmtData::SForOf(for_) => one(&for_.init) || one(&for_.body),
+            StmtData::SLabel(label) => one(&label.stmt),
+            StmtData::SWith(with) => one(&with.body),
+            StmtData::SSwitch(switch) => switch.cases.slice().iter().any(|case| any(case.body)),
+            _ => true,
+        }
+    }
 }
 
-/// True when dead code still declares a hoisted `var` or function, so the branch must stay.
-pub fn dead_branch_declares(stmt: &Stmt) -> bool {
-    fn any(stmts: crate::StoreSlice<Stmt>) -> bool {
-        stmts.slice().iter().any(dead_branch_declares)
-    }
-    match &stmt.data {
-        StmtData::SEmpty(_)
-        | StmtData::SExpr(_)
-        | StmtData::SThrow(_)
-        | StmtData::SReturn(_)
-        | StmtData::SBreak(_)
-        | StmtData::SContinue(_)
-        | StmtData::SClass(_)
-        | StmtData::SDebugger(_) => false,
+/// True when no statement of a block declares a name that is scoped to the block.
+pub fn declares_no_scoped_name(stmts: &[Stmt]) -> bool {
+    stmts.iter().all(|stmt| match &stmt.data {
         StmtData::SLocal(local) => local.kind == S::Kind::KVar,
-        StmtData::SBlock(block) => any(block.stmts),
-        StmtData::STry(try_) => {
-            any(try_.body)
-                || try_.catch.as_ref().is_some_and(|catch| any(catch.body))
-                || try_
-                    .finally
-                    .as_ref()
-                    .is_some_and(|finally| any(finally.stmts))
-        }
-        StmtData::SIf(if_) => {
-            dead_branch_declares(&if_.yes) || if_.no.as_ref().is_some_and(dead_branch_declares)
-        }
-        StmtData::SWhile(while_) => dead_branch_declares(&while_.body),
-        StmtData::SDoWhile(do_while) => dead_branch_declares(&do_while.body),
-        StmtData::SFor(for_) => {
-            for_.init.as_ref().is_some_and(dead_branch_declares) || dead_branch_declares(&for_.body)
-        }
-        StmtData::SForIn(for_) => {
-            dead_branch_declares(&for_.init) || dead_branch_declares(&for_.body)
-        }
-        StmtData::SForOf(for_) => {
-            dead_branch_declares(&for_.init) || dead_branch_declares(&for_.body)
-        }
-        StmtData::SLabel(label) => dead_branch_declares(&label.stmt),
-        StmtData::SWith(with) => dead_branch_declares(&with.body),
-        StmtData::SSwitch(switch) => switch.cases.slice().iter().any(|case| any(case.body)),
+        StmtData::SFunction(_) | StmtData::SClass(_) => false,
         _ => true,
-    }
+    })
 }

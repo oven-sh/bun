@@ -3663,6 +3663,17 @@ describe("bundler", () => {
         }
         log("outer", scoped);
 
+        // The parser merges a call into the test that follows it. The call must not see what the
+        // block of the branch declares.
+        let shadowed = "outer";
+        function mergedEffect() {
+          log("effect sees", shadowed);
+          if (Flag.On) { let shadowed = Math.random() < 2 ? "inner" : ""; log("branch sees", shadowed); }
+          log("effect sees", typeof shadowed);
+          if (Flag.On) { class shadowed {} log("branch sees", typeof shadowed); }
+        }
+        mergedEffect();
+
         // The last "else" stays with its own "if".
         function dangling(a: boolean, b: boolean, c: boolean) {
           if (a) {
@@ -3707,6 +3718,10 @@ describe("bundler", () => {
         "assigned in case undefined",
         "inner 13",
         "outer 1",
+        "effect sees outer",
+        "branch sees inner",
+        "effect sees string",
+        "branch sees function",
         "not a",
         "c",
         "b",
@@ -3768,6 +3783,26 @@ describe("bundler", () => {
           log("inner", scoped);
         }
         log("outer", scoped);
+        var shadowed = "outer";
+        function mergedEffect() {
+          {
+            log("effect sees", shadowed);
+            {
+              let shadowed = Math.random() < 2 ? "inner" : "";
+              log("branch sees", shadowed);
+            }
+          }
+          {
+            log("effect sees", typeof shadowed);
+            {
+
+              class shadowed {
+              }
+              log("branch sees", typeof shadowed);
+            }
+          }
+        }
+        mergedEffect();
         function dangling(a, b, c) {
           if (a) {
             if (b)
@@ -3968,45 +4003,52 @@ describe("bundler", () => {
       expect(out).toContain("var v");
     },
   });
-  // Each way to read the enum turns the fold on for the file that reads.
-  itBundled("dce/CrossModuleEnumFoldReaders", {
-    files: {
-      "/entry.ts": /* ts */ `
-        import { Flag as ReExported } from "./re-export";
-        import { Flag as Star } from "./re-export-star";
-        import * as ns from "./flags";
-        import { inner } from "./not-entry";
-        if (ReExported.Off) console.log("DROP");
-        if (Star.Off) console.log("DROP");
-        if (ns.Flag.Off) console.log("DROP");
-        if (ns.Flag["Off"]) console.log("DROP");
-        if (ReExported["Off"]) console.log("DROP");
-        async function dynamic() {
-          const { Flag } = await import("./flags");
-          if (Flag.Off) console.log("DROP");
-          const all = await import("./flags");
-          if (all.Flag.Off) console.log("DROP");
-          return Flag.On | 6;
-        }
-        console.log(inner(), await dynamic(), ReExported.On | 2, Star.On | 4, ns.Flag.On | 8);
-      `,
-      "/not-entry.ts": /* ts */ `
-        import { Flag } from "./flags";
-        export const inner = () => { if (Flag.Off) console.log("DROP"); return Flag.On | 6; };
-      `,
-      "/re-export.ts": `export { Flag } from "./flags";`,
-      "/re-export-star.ts": `export * from "./flags";`,
-      "/flags.ts": /* ts */ `
-        export enum Flag { Off = 0, On = 1 }
-      `,
-    },
-    minifySyntax: true,
-    dce: true,
-    run: { stdout: "7 7 3 5 9" },
-    onAfterBundle(api) {
-      expect(api.readFile("/out.js")).toContain("console.log(inner(), await dynamic(), 3, 5, 9)");
-    },
-  });
+  // Each way to read the enum turns the fold on for the file that reads. Each file reads one way.
+  {
+    // What comes before the function, what comes first in it, and how it reads the two members.
+    const readers: Record<string, { imports?: string; first?: string; off: string; on: string }> = {
+      named: { imports: `import { Flag } from "./flags";`, off: "Flag.Off", on: "Flag.On" },
+      index: { imports: `import { Flag } from "./flags";`, off: `Flag["Off"]`, on: `Flag["On"]` },
+      quoted: { imports: `import { Quoted } from "./flags";`, off: `Quoted["not-on"]`, on: `Quoted["is-on"]` },
+      reExport: { imports: `import { Flag } from "./re-export";`, off: "Flag.Off", on: "Flag.On" },
+      reExportStar: { imports: `import { Flag } from "./re-export-star";`, off: "Flag.Off", on: "Flag.On" },
+      namespace: { imports: `import * as ns from "./flags";`, off: "ns.Flag.Off", on: "ns.Flag.On" },
+      notEntry: { imports: `import { Flag } from "./not-entry";`, off: "Flag.Off", on: "Flag.On" },
+      dynamicPattern: { first: `const { Flag } = await import("./flags");`, off: "Flag.Off", on: "Flag.On" },
+      dynamicNamespace: { first: `const ns = await import("./flags");`, off: "ns.Flag.Off", on: "ns.Flag.On" },
+    };
+    const names = Object.keys(readers);
+    itBundled("dce/CrossModuleEnumFoldReaders", {
+      files: {
+        ...Object.fromEntries(
+          names.map(name => [
+            `/${name}.ts`,
+            `${readers[name].imports ?? ""}
+            async function main() {
+              ${readers[name].first ?? ""}
+              if (${readers[name].off}) { for (const v of ["DROP"]) console.log(v); }
+              return [${readers[name].off} ? "DROP" : "live", ${readers[name].on} | 6].join();
+            }
+            console.log(await main());`,
+          ]),
+        ),
+        "/not-entry.ts": `export { Flag } from "./re-export";`,
+        "/re-export.ts": `export { Flag } from "./flags";`,
+        "/re-export-star.ts": `export * from "./flags";`,
+        "/flags.ts": /* ts */ `
+          export enum Flag { Off = 0, On = 1 }
+          export enum Quoted { "not-on" = 0, "is-on" = 1 }
+        `,
+      },
+      entryPoints: names.map(name => `/${name}.ts`),
+      minifySyntax: true,
+      dce: true,
+      run: names.map(name => ({ file: `/out/${name}.js`, stdout: "live,7" })),
+      onAfterBundle(api) {
+        for (const name of names) api.expectFile(`/out/${name}.js`).toContain(`return ["live", 7].join();`);
+      },
+    });
+  }
   // The fold is a part of --minify-syntax.
   for (const minifyWhitespace of [false, true]) {
     itBundled(`dce/CrossModuleEnumFoldNeedsMinifySyntax${minifyWhitespace ? "Whitespace" : ""}`, {
@@ -4037,13 +4079,14 @@ describe("bundler", () => {
     });
   }
   // A long chain must not overflow the stack, and must not copy the string at each step.
+  const longChainText = Buffer.alloc(10000, "ab").toString();
   itBundled("dce/CrossModuleEnumFoldLongChain", {
     files: {
       "/entry.ts": /* ts */ `
         import { E } from "./enum";
         const text = ${Array(5000).fill("E.Text").join(" + ")};
         const sum = ${Array(5000).fill("E.One").join(" + ")};
-        console.log(text.length, text === "ab".repeat(5000), sum);
+        console.log(text.length, text === ${JSON.stringify(longChainText)}, sum);
       `,
       "/enum.ts": /* ts */ `
         export enum E { One = 1, Text = "ab" }
@@ -4053,7 +4096,7 @@ describe("bundler", () => {
     run: { stdout: "10000 true 5000" },
     onAfterBundle(api) {
       const out = api.readFile("/out.js");
-      expect(out).toContain(`"${"ab".repeat(5000)}"`);
+      expect(out.includes(`text = "${longChainText}"`)).toBe(true);
       expect(out).toContain("sum = 5000");
     },
   });

@@ -377,15 +377,8 @@ describe.if(isPosix)("BunFrontendDevServer inspector protocol", () => {
     `);
   });
 
-  test("should notify on bundleFailed events", async () => {
-    // Create a file with a syntax error to trigger a bundle failure
-    const invalidContent = `
-      // Syntax error - missing closing parenthesis
-      export function brokenFunction(name: string { // more than 80 bytes follow the error on this line, and more than 40 bytes precede it
-        return \`Broken, \${name}!\`;
-      }
-    `;
-
+  // Breaks utils.ts with `invalidContent`, waits for the bundle to fail, and returns the decoded errors.
+  async function bundleFailedErrors(invalidContent: string) {
     // Listen for bundleStart event first to get the serverId
     const bundleStartPromise = session.waitForEvent("BunFrontendDevServer.bundleStart");
 
@@ -430,6 +423,29 @@ describe.if(isPosix)("BunFrontendDevServer inspector protocol", () => {
     // Set it to a deterministic number.
     errors[0].owner = 123;
 
+    // Fix the file so subsequent tests don't fail
+    fs.writeFileSync(
+      join(tempdir, "utils.ts"),
+      `
+      // Fixed utility module
+      export function greet(name: string) {
+        return \`Hello, \${name}!\`;
+      }
+    `,
+    );
+
+    return errors;
+  }
+
+  test("should notify on bundleFailed events", async () => {
+    // Create a file with a syntax error to trigger a bundle failure
+    const errors = await bundleFailedErrors(`
+      // Syntax error - missing closing parenthesis
+      export function brokenFunction(name: string {
+        return \`Broken, \${name}!\`;
+      }
+    `);
+
     expect(errors).toMatchInlineSnapshot(`
       [
         {
@@ -442,7 +458,7 @@ describe.if(isPosix)("BunFrontendDevServer inspector protocol", () => {
                 "column": 51,
                 "length": 1,
                 "line": 3,
-                "lineText": "      export function brokenFunction(name: string { // more than 80 bytes follow the error on this line, and more than 40 bytes precede it",
+                "lineText": "      export function brokenFunction(name: string {",
               },
               "message": "Expected ")" but found "{"",
               "notes": [],
@@ -464,17 +480,21 @@ describe.if(isPosix)("BunFrontendDevServer inspector protocol", () => {
         },
       ]
     `);
+  });
 
-    // Fix the file so subsequent tests don't fail
-    fs.writeFileSync(
-      join(tempdir, "utils.ts"),
-      `
-      // Fixed utility module
-      export function greet(name: string) {
-        return \`Hello, \${name}!\`;
+  test("bundleFailed carries the whole line when more than 80 bytes follow the error", async () => {
+    // `column` indexes `lineText`, because a line of at most 1,000 bytes is not cut.
+    const line =
+      "      export function brokenFunction(name: string { // more than 80 bytes follow the error on this line, and more than 40 bytes precede it";
+    const errors = await bundleFailedErrors(`
+      // Syntax error - missing closing parenthesis
+${line}
+        return \`Broken, \${name}!\`;
       }
-    `,
-    );
+    `);
+
+    expect(errors[0].messages[0].location).toEqual({ column: 51, length: 1, line: 3, lineText: line });
+    expect(line[51 - 1]).toBe("{");
   });
 
   test("should notify on clientNavigated events", async () => {

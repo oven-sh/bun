@@ -534,15 +534,29 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
       const output = await checkSameOutput("test_v8_cpu_profiler_idle");
       expect(output.match(/(?<=^node != nullptr = )\d/gm)).toEqual(["1", "1", "0"]);
     });
+    // What Node 26.12.1 prints for the timer. 26.3.0 has the same ABI and reports (idle), so this is not checkSameOutput().
+    async function expectMostSamplesToBeProgram(testName: string) {
+      const output = await runOn(Runtime.bun, BuildMode.release, testName);
+      expect(output.split(/\r?\n/)).toEqual([
+        "root_samples = 0",
+        "root->GetHitCount() = 0",
+        "node != nullptr = 1",
+        "is_child_of_root = 1",
+        "node->GetLineNumber() = 0",
+        "node->GetColumnNumber() = 0",
+        "node->GetChildrenCount() = 0",
+        "has_most_samples = 1",
+        "(int)node->GetHitCount() >= node_samples = 1",
+        "profile->GetEndTime() - profile->GetStartTime() + 1000 >= elapsed = 1",
+      ]);
+    }
     it("reports native code before the end of the profile as (program)", async () => {
-      const output = await checkSameOutput("test_v8_cpu_profiler_program_in_uv_timer");
-      expect(output).toContain("has_most_samples = 1");
+      await expectMostSamplesToBeProgram("test_v8_cpu_profiler_program_in_uv_timer");
     });
     // Node reports it as (idle), like all native code between uv_prepare_cb and uv_check_cb:
     // https://github.com/nodejs/node/blob/v26.12.1/src/env.cc#L1489-L1498
     it("does not report native code in an I/O callback as (idle)", async () => {
-      const output = await runOn(Runtime.bun, BuildMode.release, "test_v8_cpu_profiler_program_in_uv_after_work");
-      expect(output).toContain("has_most_samples = 1");
+      await expectMostSamplesToBeProgram("test_v8_cpu_profiler_program_in_uv_after_work");
     });
   });
 

@@ -179,7 +179,7 @@ fn parse_async_args<A: FsArgument>(
     Ok(ParsedAsyncArgs::Args(args))
 }
 
-/// An error found before scheduling. The callback goes to nextTick bare: it asserts against an `AsyncContextFrame`.
+/// An error found before scheduling.
 fn reject_before_schedule(
     global: &JSGlobalObject,
     callback: Option<JSValue>,

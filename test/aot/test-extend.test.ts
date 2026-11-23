@@ -61,7 +61,9 @@ describe.concurrent("test.extend()", () => {
       Object.defineProperty((...args: unknown[]) => inner(...args), "toString", { value: () => inner.toString() });
     const local = test.extend<{ state: number }>({ state: 5 });
     local.beforeEach(wrap(({ state }) => console.log("SAID beforeEach", state)));
-    local("a wrapper", wrap(({ state }) => console.log("SAID test", state)));`;
+    local("a wrapper", wrap(({ state }) => {
+      console.log("SAID test", state); // --aot keeps this comment in the text: [native code]
+    }));`;
 
   test.each(ways)("a callback with its own toString() is read from what that returns: %s", async (_, flags, words) => {
     expect(await runTests({ "wrapped.test.ts": wrapped }, flags, words)).toEqual({

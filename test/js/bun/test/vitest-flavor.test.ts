@@ -5187,6 +5187,7 @@ describe.concurrent("test.extend()", () => {
 
 // Vitest reads the parameters of a callback from what its toString() returns.
 // @effect/vitest wraps every callback in `(...args) => {}` and makes toString() return the text of the wrapped function.
+// The expected logs of the tests that import "vitest" are those of Vitest 5.1.0.
 describe.concurrent("a callback with its own toString()", () => {
   const wrap = `const wrap = inner => Object.defineProperty((...args) => inner(...args), "toString", { value: () => inner.toString() });`;
 
@@ -5257,22 +5258,45 @@ describe.concurrent("a callback with its own toString()", () => {
   });
 
   test("the text decides, whatever the parameters of the function are", async () => {
+    // What Vitest 5.1.0 logs for a callback `(...args) => console.log(args[0].a)` with this text, where `a` is the fixture "A".
+    const texts: [text: string, logged: string][] = [
+      ["method({ a }) {}", "A"],
+      ["async function named({ a }) {}", "A"],
+      // mimic-function, which onetime and p-memoize use, puts a comment in front.
+      ["/* Wrapped with onetime() */\n({ a }) => {}", "A"],
+      ["({ a }) => {\n  f(); // [native code]\n}", "A"],
+      // chai-spies puts a line in front.
+      ["{ Spy }\n({ a }) => {}", "A"],
+      ["({ a }) => { ... }", "A"],
+      ["wrapper of ({ a }) => {}", "A"],
+      ["wrapped({ a })", "A"],
+      ["{ Spy }\n() => {}", "undefined"],
+      ["function () { [native code] }", "undefined"],
+      ["text", "undefined"],
+      ["", "undefined"],
+    ];
     const { log, results, exitCode } = await runTests({
       "a.test.js": `
-        import { test as base } from "vitest";
+        import { test as base, beforeAll } from "vitest";
+        import { AsyncLocalStorage } from "node:async_hooks";
         const test = base.extend({ a: "A" });
         const log = (...args) => console.log(args[0].a);
-        const withText = (fn, text) => Object.defineProperty(fn, "toString", { value: () => text });
+        const withToString = (fn, toString) => Object.defineProperty(fn, "toString", { value: toString });
+        const withText = (fn, text) => withToString(fn, () => text);
+        beforeAll(withText(() => console.log("beforeAll"), "{ Spy }\\n() => {}"));
+        beforeAll(withToString((...args) => console.log("beforeAll", args.length), Function.prototype.toString.bind(() => {})));
         test("the text has the fixture and the function has no parameter", withText(function () { console.log(arguments[0].a); }, "({ a }) => {}"));
         test("the text has no parameter and the function has the fixture", withText(({ a }) => console.log(a), "() => {}"));
         test("a getter", Object.defineProperty((...args) => log(...args), "toString", { get: () => () => "({ a }) => {}" }));
         test("inherited", Object.setPrototypeOf((...args) => log(...args), { __proto__: Function.prototype, toString: () => "({ a }) => {}" }));
         test("a bound function", withText(log.bind(null), "({ a }) => {}"));
-        test("the text of a method", withText((...args) => log(...args), "method({ a }) {}"));
-        test("the text of an async function", withText((...args) => log(...args), "async function named({ a }) {}"));
-        test("not the text of a function", withText(({ a }) => console.log(a), "text"));
+        test("the built-in, bound to another function", withToString((...args) => log(...args), Function.prototype.toString.bind(({ a }) => {})));
+        test("a bound function that returns the text", withToString((...args) => log(...args), ((name, text) => text).bind(null, "name", "({ a }) => {}")));
+        test("Object.prototype.toString", withToString(({ a }) => console.log(a), Object.prototype.toString));
         test("a number", withText(({ a }) => console.log(a), 1));
-        test("native code", withText(({ a }) => console.log(a), (function () {}).bind().toString()));
+        new AsyncLocalStorage().run(1, () => test("in AsyncLocalStorage.run()", withText((...args) => log(...args), "({ a }) => {}")));
+        test.for([1])("for", withText((...args) => console.log(args[1].a), "{ Spy }\\n(n, { a }) => {}"));
+        for (const [text] of ${JSON.stringify(texts)}) test(JSON.stringify(text), withText((...args) => log(...args), text));
       `,
       "replaced.test.js": `
         import { test as base } from "vitest";
@@ -5287,18 +5311,27 @@ describe.concurrent("a callback with its own toString()", () => {
       `,
     });
     expect({ log, results, exitCode }).toEqual({
-      log: ["A", "undefined", "A", "A", "A", "A", "A", "undefined", "undefined", "undefined", "A", "A"],
+      log: [
+        "beforeAll",
+        "beforeAll 2",
+        ...["A", "undefined", "A", "A", "A", "A", "A", "undefined", "undefined", "A", "A"],
+        ...texts.map(([, logged]) => logged),
+        "A",
+        "A",
+      ],
       results: [
         "(pass) the text has the fixture and the function has no parameter",
         "(pass) the text has no parameter and the function has the fixture",
         "(pass) a getter",
         "(pass) inherited",
         "(pass) a bound function",
-        "(pass) the text of a method",
-        "(pass) the text of an async function",
-        "(pass) not the text of a function",
+        "(pass) the built-in, bound to another function",
+        "(pass) a bound function that returns the text",
+        "(pass) Object.prototype.toString",
         "(pass) a number",
-        "(pass) native code",
+        "(pass) in AsyncLocalStorage.run()",
+        "(pass) for",
+        ...texts.map(([text]) => `(pass) ${JSON.stringify(text)}`),
         "(pass) Function.prototype.toString is replaced",
         "(pass) and calls the built-in",
       ],
@@ -5350,10 +5383,11 @@ describe.concurrent("a callback with its own toString()", () => {
     });
   });
 
-  test("one that registers tests, hooks and fixtures", async () => {
+  // Vitest calls toString() when the test runs, where test() throws. Bun calls it when the test is registered.
+  test(`one that registers tests, hooks and fixtures, for a test of "bun:test"`, async () => {
     const { log, results, exitCode } = await runTests({
       "a.test.js": `
-        import { test as base, beforeAll } from "vitest";
+        import { test as base, beforeAll } from "bun:test";
         const test = base.extend({ a: "A" });
         let registered = false;
         const callback = ({ a }) => console.log("test", a);

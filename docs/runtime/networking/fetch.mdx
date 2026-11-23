@@ -307,6 +307,26 @@ const response = await fetch("http://example.com", {
 });
 ```
 
+#### Incomplete compressed responses
+
+Reading the body rejects if Bun cannot decode the compressed data. If the response ends normally before the compressed data does, the body is what the received bytes decode to.
+
+To reject such a response, decode it with a `DecompressionStream`:
+
+```ts
+const response = await fetch("http://example.com", {
+  decompress: false,
+  headers: { "Accept-Encoding": "gzip" },
+});
+
+const body =
+  response.headers.get("Content-Encoding") === "gzip"
+    ? response.body!.pipeThrough(new DecompressionStream("gzip"))
+    : response.body;
+
+const bytes = await new Response(body).bytes();
+```
+
 ### Protocol support
 
 Beyond HTTP(S), Bun's fetch supports several additional protocols:

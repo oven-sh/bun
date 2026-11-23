@@ -7,7 +7,7 @@ use bun_uws as uws;
 
 use crate::http_cert_error::HTTPCertError;
 use crate::http_context::{HTTPSocket, PeerVerification};
-use crate::internal_state::HTTPStage;
+use crate::internal_state::{HTTPStage, TransportEnd};
 use crate::ssl_config::SSLConfig;
 use crate::ssl_wrapper::{Handler as SSLWrapperHandler, InitError, SSLWrapper};
 use crate::{AlpnOffer, HTTPClient, NextStep};
@@ -69,9 +69,9 @@ impl<const IS_SSL: bool> ClientHandler<'_, '_, IS_SSL> {
         }
     }
 
-    fn close(&mut self, err: Error) {
+    fn close(&mut self, err: Error, end: TransportEnd) {
         self.wrapper.deinit();
-        self.next_step = self.client.on_proxy_tunnel_close(err, self.socket);
+        self.next_step = self.client.on_proxy_tunnel_close(err, end, self.socket);
     }
 }
 
@@ -215,7 +215,9 @@ impl<const IS_SSL: bool> SSLWrapperHandler for ClientHandler<'_, '_, IS_SSL> {
                 let flow = client.handle_on_data_headers(decoded_data, self.socket, wrapper);
                 return self.stop_on_break(flow);
             }
-            Decrypted::Unexpected => return self.close(crate::Error::UnexpectedData),
+            Decrypted::Unexpected => {
+                return self.close(crate::Error::UnexpectedData, TransportEnd::Failed);
+            }
         };
         let flow = match report_progress {
             Ok(true) => client.progress_update(self.socket),
@@ -232,7 +234,7 @@ impl<const IS_SSL: bool> SSLWrapperHandler for ClientHandler<'_, '_, IS_SSL> {
         match on_tunnel_handshake(self.client, self.wrapper, handshake_success, ssl_error) {
             Ok(true) => {}
             Ok(false) => return,
-            Err(err) => return self.close(err),
+            Err(err) => return self.close(err, TransportEnd::Failed),
         }
         let client = &mut *self.client;
         if client.wants_server_identity_check() {
@@ -265,7 +267,13 @@ impl<const IS_SSL: bool> SSLWrapperHandler for ClientHandler<'_, '_, IS_SSL> {
 
     fn on_close(&mut self) {
         if self.next_step.is_continue() {
-            self.close(crate::Error::ConnectionClosed);
+            // A fatal error that has a reason went to `on_handshake`. One without comes here.
+            let end = if self.wrapper.flags.fatal_error() {
+                TransportEnd::Failed
+            } else {
+                TransportEnd::Clean
+            };
+            self.close(crate::Error::ConnectionClosed, end);
         }
     }
 
@@ -351,7 +359,7 @@ impl HTTPClient<'_> {
         match tunnel.write(socket.into(), lent_wrapper, buf) {
             Ok(written) => Continue(written),
             Err(TunnelClosed) => self
-                .on_proxy_tunnel_close(Error::ConnectionClosed, socket)
+                .on_proxy_tunnel_close(Error::ConnectionClosed, TransportEnd::Failed, socket)
                 .map_continue(|()| None),
         }
     }
@@ -359,13 +367,14 @@ impl HTTPClient<'_> {
     pub(crate) fn on_proxy_tunnel_close<const IS_SSL: bool>(
         &mut self,
         mut err: Error,
+        end: TransportEnd,
         socket: HTTPSocket<IS_SSL>,
     ) -> ControlFlow<NextStep> {
         scoped_log!(http_proxy_tunnel, "ProxyTunnel onClose");
         // Mirror `HTTPClient::on_close`:
         // treat connection close as end-of-body for identity transfer when no content-length.
         if !self.state.flags.is_redirect_pending && self.state.is_body_complete_on_close() {
-            match self.finalize_body_on_eof() {
+            match self.finalize_body_on_eof(end) {
                 Ok(()) => return Break(NextStep::ReleaseSocket),
                 Err(e) => err = e,
             }

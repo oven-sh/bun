@@ -16,6 +16,14 @@ pub enum Decompressor {
     None,
 }
 
+/// What to do with a compressed stream that still waits for input at the end of the body.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum UnfinishedStream {
+    Reject,
+    /// Framing alone ends the body: https://fetch.spec.whatwg.org/#http-network-fetch
+    Accept,
+}
+
 pub struct ZlibDecoder {
     inflater: Inflater,
     state: ZlibState,
@@ -36,7 +44,7 @@ impl ZlibDecoder {
         mut input: &[u8],
         out: &mut Vec<u8>,
         max_output: usize,
-        is_done: bool,
+        must_finish: bool,
     ) -> crate::Result<usize> {
         let input_len = input.len();
         loop {
@@ -61,7 +69,7 @@ impl ZlibDecoder {
                     continue;
                 }
                 Ok(Status::NeedsInput | Status::NeedsOutput) if out.len() == max_output => continue,
-                Ok(Status::NeedsInput) if !is_done => return Err(crate::Error::ShortRead),
+                Ok(Status::NeedsInput) if !must_finish => return Err(crate::Error::ShortRead),
                 Ok(_) => crate::Error::Zlib,
                 Err(error) => error.into(),
             };
@@ -127,7 +135,7 @@ impl Decompressor {
     /// Feed one body chunk `buffer` through the decoder, appending the
     /// decompressed output to `body_out_str` until it holds `max_output` bytes. Creates the
     /// decoder on first call. Returns the input bytes consumed. Returns `ShortRead` when more
-    /// input is needed and the stream is not yet done.
+    /// input is needed, unless the body `is_done` and `unfinished` rejects that.
     /// Returns 0 and creates no decoder while a deflate body is too short to tell zlib from raw.
     pub(crate) fn decompress_chunk(
         &mut self,
@@ -136,6 +144,7 @@ impl Decompressor {
         body_out_str: &mut MutableString,
         max_output: usize,
         is_done: bool,
+        unfinished: UnfinishedStream,
     ) -> crate::Result<usize> {
         if !encoding.is_compressed() {
             return Ok(buffer.len());
@@ -144,12 +153,15 @@ impl Decompressor {
             return Ok(0);
         }
         let out = &mut body_out_str.list;
+        let must_finish = is_done && unfinished == UnfinishedStream::Reject;
         match self {
-            Decompressor::Zlib(reader) => reader.decompress(buffer, out, max_output, is_done),
+            Decompressor::Zlib(reader) => reader.decompress(buffer, out, max_output, must_finish),
             Decompressor::Brotli(reader) => {
-                Ok(reader.decompress(buffer, out, max_output, is_done)?)
+                Ok(reader.decompress(buffer, out, max_output, must_finish)?)
             }
-            Decompressor::Zstd(reader) => Ok(reader.decompress(buffer, out, max_output, is_done)?),
+            Decompressor::Zstd(reader) => {
+                Ok(reader.decompress(buffer, out, max_output, must_finish)?)
+            }
             Decompressor::None => {
                 unreachable!("Invalid encoding. This code should not be reachable")
             }

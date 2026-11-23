@@ -33,6 +33,8 @@
 
 #include "MoveOnlyFunction.h"
 
+#include <climits>
+
 /* todo: tryWrite is missing currently, only send smaller segments with write */
 
 namespace uWS {
@@ -294,7 +296,7 @@ public:
         return true;
     }
 
-    /* node:http: Node's parser.finish() at the peer's FIN. Returns whether the stream ended inside a message, which is a parse error. The socket can be closed when this returns. */
+    /* node:http: Node's parser.finish() at the peer's FIN. Returns whether the stream ended inside a message, which is a parse error. The socket can be closed or upgraded when this returns. */
     bool finishParsing() {
         HttpResponseData<SSL> *data = getHttpResponseData();
         if (data->state & HttpResponseData<SSL>::HTTP_NODE_PARSING_STOPPED) {
@@ -310,7 +312,7 @@ public:
             if (data->inStream) {
                 us_socket_timeout((us_socket_t *) this, 0);
                 data->inStream(this, nullptr, 0, true, data->userData);
-                if (us_socket_is_closed((us_socket_t *) this)) {
+                if (HttpContext<SSL>::isClosedOrUpgraded((us_socket_t *) this)) {
                     return false;
                 }
                 data->inStream = nullptr;
@@ -512,7 +514,7 @@ public:
     }
 
     /* Manually upgrade to WebSocket. Typically called in upgrade handler. Immediately calls open handler.
-     * NOTE: Will invalidate 'this' as socket might change location in memory. Throw away after use.
+     * NOTE: Will invalidate 'this'. Throw away after use.
      * Returns nullptr and leaves userData untouched if the socket is closed or shut down. Nothing was written in
      * that case, unless the 101 overflowed the cork buffer and that write is what closed the socket. */
     template <typename UserData>
@@ -654,23 +656,17 @@ private:
         }
 
         WebSocketContextData<SSL, UserData> *webSocketContextData = webSocketContext->getExt();
-        HttpContextData<SSL> *httpContextData = HttpContext<SSL>::fromSocket((struct us_socket_t *) this)->getSocketContextData();
 
         /* The cork stays, so the handshake batches with the first frames written from open(). */
         Leftovers left = leaveHttp();
 
-        /* Before we adopt and potentially change socket, check which cork slot
-         * we occupy so we can transfer it to the new WebSocket. */
+        /* Before we adopt, check which cork slot we occupy so we can transfer it to the new WebSocket. */
         LoopData *loopData = Super::getLoopData();
         int corkedSlot = loopData->findCorkSlot(this);
 
-        /* Adopting a socket invalidates it, do not rely on it directly to carry any data */
-        /* The old ext size is only used as an upper bound to keep the block in
-         * place (and as the copy length when it cannot be). The base size is
-         * always correct here: a node:http compat socket's block is bigger, so
-         * under-stating it is an in-bounds under-copy of an already-destructed
-         * ext, while over-stating it for a Bun.serve socket would read out of
-         * bounds. */
+        /* onData tells the upgrade by the kind of its socket, so that has to stay in place.
+         * The block of a node:http compat socket is bigger still. */
+        static_assert(sizeof(WebSocketData) + sizeof(UserData) <= sizeof(HttpResponseData<SSL>));
         us_socket_t *usSocket = us_socket_adopt((us_socket_t *) this, webSocketContext->getSocketGroup(),
             WebSocketContext<SSL, true, UserData>::socketKind(),
             sizeof(HttpResponseData<SSL>), sizeof(WebSocketData) + sizeof(UserData));
@@ -683,8 +679,6 @@ private:
 
         /* Initialize websocket with any moved backpressure intact */
         webSocket->init(perMessageDeflate, compressOptions, std::move(left.backpressure), nullptr, nullptr);
-
-        httpContextData->socketLeft((us_socket_t *) this, usSocket, false);
 
         /* Arm idleTimeout */
         us_socket_timeout((us_socket_t *) webSocket, webSocketContextData->idleTimeoutComponents.first);

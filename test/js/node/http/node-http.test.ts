@@ -13,6 +13,7 @@ import {
   isCI,
   isDebug,
   isIPv6,
+  isLinux,
   isWindows,
   randomPort,
   tempDir,
@@ -4738,6 +4739,41 @@ it("clientError after a kept-alive request reuses the connection's socket and un
   }
 });
 
+it.each([
+  ["100-Continue", "checkContinue"],
+  ["a, 1, 100-continue;b", "checkContinue"],
+  [Buffer.alloc(40, "1 ").toString() + Buffer.alloc(40, "a ") + "100-continue", "checkContinue"],
+  ["1100-continue", "checkExpectation"],
+  ["100-continue_", "checkExpectation"],
+  ["100-continu", "checkExpectation"],
+  ["\x11\x10\x10-continue", "checkExpectation"],
+])("Expect: %j emits %s", async (value, expected) => {
+  await using server = createServer({ insecureHTTPParser: true });
+  for (const event of ["checkContinue", "checkExpectation"]) server.on(event, (req, res) => res.end(event));
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const socket = connect((server.address() as AddressInfo).port, "127.0.0.1");
+  let received = "";
+  socket.on("data", chunk => (received += chunk));
+  socket.write(`GET / HTTP/1.1\r\nHost: localhost\r\nExpect: ${value}\r\nConnection: close\r\n\r\n`);
+  await once(socket, "close");
+  expect(received).toContain(expected);
+});
+
+it("rawPacket of 'clientError' has the method of a dispatched request as it was sent", async () => {
+  const payload = "POST / HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n\r\nzz\r\n";
+  await using server = createServer(req => req.resume());
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const errors: unknown[] = [];
+  server.on("clientError", (error: any, serverSocket) => {
+    errors.push({ code: error.code, rawPacket: String(error.rawPacket) });
+    serverSocket.end();
+  });
+  const socket = connect((server.address() as AddressInfo).port, "127.0.0.1");
+  socket.end(payload);
+  await once(socket.resume(), "close");
+  expect(errors).toEqual([{ code: "HPE_INVALID_CHUNK_SIZE", rawPacket: payload }]);
+});
+
 describe("malformed request line reaches 'connection' and 'clientError' with a writable socket", () => {
   it.each([
     ["method token followed by CRLF", "BOGUS\r\n\r\n"],
@@ -4746,6 +4782,7 @@ describe("malformed request line reaches 'connection' and 'clientError' with a w
     ["CONNECT-prefixed token followed by CRLF", "CONNECTX\r\n\r\n"],
     ["single method char followed by CRLF", "G\r\n\r\n"],
     ["single method char with full line", "G / HTTP/1.1\r\nHost: localhost\r\n\r\n"],
+    ["byte above 0x7f in the method", "G\u00c9T / HTTP/1.1\r\nHost: localhost\r\n\r\n"],
   ])("%s", async (_name, payload) => {
     const events: string[] = [];
     const { promise: errored, resolve: onErrored, reject: onErroredFail } = Promise.withResolvers<void>();
@@ -11039,4 +11076,64 @@ describe.skipIf(!isIPv6())("listen({ ipv6Only })", () => {
       }
     });
   });
+});
+
+it.each(["0\r\n\r\n", "0\r\na: b\r\n\r\n"])(
+  "a chunked request that ends under the listener of another takes nothing from the next one: %j",
+  async end => {
+    const script = `
+      const { runEventLoopUntil } = require("bun:internal-for-testing");
+      const nested = Promise.withResolvers();
+      const server = require("node:http").createServer((req, res) => {
+        console.log(req.method, req.url);
+        if (req.url === "/a") {
+          client.write("POST /c HTTP/1.1\\r\\nHost: x\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\n" + ${JSON.stringify(end)});
+          runEventLoopUntil(nested.promise);
+        }
+        if (req.url === "/c") req.resume().on("end", nested.resolve);
+        if (req.url === "/b") process.exit(0);
+        res.end();
+      });
+      server.on("clientError", error => (console.log(error.code), process.exit(1)));
+      let client;
+      server.listen(0, "127.0.0.1", () => {
+        client = require("node:net").connect(server.address().port, "127.0.0.1");
+        client.write("GET /a HTTP/1.1\\r\\nHost: x\\r\\n\\r\\nUNLOCK /b HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n");
+      });
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "inherit" });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe("GET /a\nPOST /c\nUNLOCK /b\n");
+    expect(exitCode).toBe(0);
+  },
+);
+
+// Linux only: the send buffer has to take the tail whole once it has grown.
+it.skipIf(!isLinux)("a request behind the tail of a res.write() gets its body after socket.end()", async () => {
+  const { setSocketOptions } = require("bun:internal-for-testing");
+  const body = Promise.withResolvers<string>();
+  const dispatched = Promise.withResolvers<void>();
+  await using server = createServer((req, res) => {
+    if (req.url === "/ahead") {
+      setSocketOptions(req.socket, 1, 4096);
+      res.write(Buffer.alloc(96 * 1024, "a"));
+      return;
+    }
+    let received = "";
+    req.on("data", chunk => (received += chunk)).on("end", () => body.resolve(received));
+    req.on("close", () => body.resolve("closed"));
+    setSocketOptions(req.socket, 1, 200 * 1024);
+    req.socket.end();
+    dispatched.resolve();
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const client = connect({ port: (server.address() as AddressInfo).port, host: "127.0.0.1", allowHalfOpen: true });
+  try {
+    client.write("GET /ahead HTTP/1.1\r\nHost: x\r\n\r\nPOST / HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\n");
+    await dispatched.promise;
+    client.write("hello");
+    expect(await body.promise).toBe("hello");
+  } finally {
+    client.destroy();
+  }
 });

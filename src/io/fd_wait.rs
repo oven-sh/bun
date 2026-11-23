@@ -15,7 +15,7 @@ use tests::{epoll_ctl, epoll_del};
 
 use crate::Waker;
 
-bun_core::define_scoped_log!(log, Loop, visible);
+bun_core::define_scoped_log!(log, FdWait, hidden);
 
 #[derive(Clone, Copy, Debug)]
 pub enum Interest {
@@ -147,6 +147,14 @@ impl<J: Waiter> Parking<J> {
             poller.send(NonNull::from(self));
         }
     }
+
+    #[inline]
+    pub fn check_cancelled(&self, wait: &FdWait) -> sys::Result<()> {
+        match self.armed.is_closed() {
+            true => Err(wait.interest.cancelled()),
+            false => Ok(()),
+        }
+    }
 }
 
 /// Has the poller while the job is in its table. The event and the cancel both want to end the
@@ -269,10 +277,7 @@ impl<J: Waiter> LazyPoller<J> {
     /// Pool thread. Refuses a job that is cancelled.
     pub fn admit(&self, parking: &Parking<J>, wait: &FdWait) -> sys::Result<&'static Poller<J>> {
         let poller = (self.running.get().copied()).map_or_else(|| self.start(), Ok)?;
-        match parking.armed.is_closed() {
-            true => Err(wait.interest.cancelled()),
-            false => Ok(poller),
-        }
+        parking.check_cancelled(wait).map(|()| poller)
     }
 
     /// If it fails, the next call retries.
@@ -328,7 +333,7 @@ impl<J: Waiter> IoThread<J> {
                     let added = self.kernel.add(job.wait(), key);
                     self.armed.insert(key, job);
                     if let Err(err) = added {
-                        self.fire(key, Err(err));
+                        self.fire(key, |_| Err(err));
                     }
                 }
                 Request::Disarm(armed) => {
@@ -344,11 +349,13 @@ impl<J: Waiter> IoThread<J> {
     }
 
     /// The kernel reported `key`. If `cancel` was faster, its request ends the wait.
-    fn fire(&mut self, key: Key, outcome: sys::Result<()>) {
+    fn fire(&mut self, key: Key, outcome: impl FnOnce(&FdWait) -> sys::Result<()>) {
         if let hash_map::Entry::Occupied(found) = self.armed.entry(key)
             && found.get().parking().armed.take(self.poller)
         {
-            Self::wake(found.remove(), outcome);
+            let mut job = found.remove();
+            let outcome = outcome(job.wait());
+            Self::wake(job, outcome);
         }
     }
 
@@ -472,14 +479,25 @@ impl<J: Waiter> IoThread<J> {
                 e => bun_core::Output::panic(format_args!("epoll_wait: {:?}", e)),
             }
             for event in &events[..rc as usize] {
-                // EPOLLERR carries no errno, and reading SO_ERROR would clear it on the caller's socket.
-                let outcome = match event.events & EPOLL::ERR {
+                self.fire(Key(event.u64), |wait| match event.events & EPOLL::ERR {
                     0 => Ok(()),
-                    _ => Err(sys::Error::from_code(E::SUCCESS, sys::Tag::epoll_ctl)),
-                };
-                self.fire(Key(event.u64), outcome);
+                    _ => Err(pending_error(wait)),
+                });
             }
         }
+    }
+}
+
+/// EPOLLERR carries no errno, and reading SO_ERROR would clear it on the caller's socket.
+#[cfg(any(all(not(test), target_os = "linux"), target_os = "android"))]
+#[cold]
+fn pending_error(wait: &FdWait) -> sys::Error {
+    if matches!(wait.interest, Interest::Writable)
+        && sys::fstat(wait.fd()).is_ok_and(|stat| sys::S::ISFIFO(stat.st_mode as _))
+    {
+        sys::Error::from_code(E::EPIPE, sys::Tag::write)
+    } else {
+        sys::Error::from_code(E::SUCCESS, sys::Tag::epoll_ctl)
     }
 }
 
@@ -601,7 +619,7 @@ impl<J: Waiter> IoThread<J> {
                     0 => Ok(()),
                     _ => Err(sys::Error::from_code_int(event.data as _, sys::Tag::kevent)),
                 };
-                self.fire(Key(event.udata as u64), outcome);
+                self.fire(Key(event.udata as u64), |_| outcome);
             }
         }
     }
@@ -694,7 +712,7 @@ mod tests {
     }
 
     fn fire(key: Key, outcome: sys::Result<()>) {
-        on_io_thread(|thread| thread.fire(key, outcome));
+        on_io_thread(|thread| thread.fire(key, |_| outcome));
     }
 
     fn ready(fd: i32) {

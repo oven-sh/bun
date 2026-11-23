@@ -102,8 +102,7 @@ struct Http3Request {
 
     std::string_view getCaseSensitiveMethod() { return method; }
 
-    /* HttpRequest::getMethod() lowercases in place; we own no writable
-     * buffer, so write into a per-request scratch instead. */
+    /* We own no writable buffer, so lowercase into a per-request scratch. */
     std::string_view getMethod() {
         size_t n = method.size() < sizeof(methodLower) ? method.size() : sizeof(methodLower);
         for (size_t i = 0; i < n; i++) {

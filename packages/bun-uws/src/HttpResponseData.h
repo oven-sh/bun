@@ -25,6 +25,10 @@
 
 #include "MoveOnlyFunction.h"
 
+#include <span>
+#include <string>
+#include <wtf/Vector.h>
+
 namespace uWS {
 
 template <bool SSL>
@@ -116,8 +120,8 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
         /* Run borrowed onWritable */
         bool ret = borrowedOnWritable(response, offset, writableUserData);
 
-        /* The callback runs application code; if it closed the socket, this object is destructed. */
-        if (us_socket_is_closed((us_socket_t *) response)) {
+        /* The callback runs application code; if it closed or upgraded the socket, this object is destructed. */
+        if (HttpContext<SSL>::isClosedOrUpgraded((us_socket_t *) response)) {
             return ret;
         }
 
@@ -288,19 +292,38 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
     /* HttpContextData::idleTimeout, until HttpResponse::setTimeout() overrides it. The next request starts from the context's value again. */
     uint8_t idleTimeout = 0;
     uint8_t readPauseReasons = 0;
-    /* The parser writes this through a bool& (getHeaders / consumePostPadded),
-     * so it cannot live in `state`. */
-    bool isConnectRequest = false;
     /* Cleartext HTTP/2 preface sniffing: bytes of "PRI * HTTP/2.0..." matched
      * and held back so far (0-3) while the first read(s) were too short to
      * decide; PROTOCOL_DECIDED once this connection is known to be HTTP/1. */
     static constexpr unsigned char PROTOCOL_DECIDED = 255;
     unsigned char h2PrefaceMatched = 0;
 
-    /* Chunk-extension bytes consumed on the current chunk-size line, reset per
-     * chunk (llhttp's on_chunk_header); capped at MAX_CHUNK_EXTENSION_SIZE for
-     * both Bun.serve and node:http servers. */
-    uint64_t chunkedExtensionsByteCount = 0;
+    /* Bun.serve: what the parser left for later (parkAtNextBoundary), from parkedRequestBytesStart on. */
+    unsigned int parkedRequestBytesStart = 0;
+    WTF::Vector<char> parkedRequestBytes;
+    /* The buffer HttpContext::replayParkedRequestBytes is parsing, or nullptr. */
+    WTF::Vector<char> *replayedRequestBytes = nullptr;
+
+    void parkRequestBytes(char *data, unsigned int length) {
+        /* A replay parks the tail of its own buffer. Take the buffer back and move the start, so N parked requests don't cost N copies. */
+        if (WTF::Vector<char> *replayed = std::exchange(replayedRequestBytes, nullptr)) {
+            const uintptr_t begin = (uintptr_t) replayed->mutableSpan().data();
+            if (parkedRequestBytes.isEmpty() && length >= replayed->size() / 2 && (uintptr_t) data >= begin && (uintptr_t) data + length <= begin + replayed->size()) {
+                parkedRequestBytesStart = (unsigned int) ((uintptr_t) data - begin);
+                replayed->shrink(parkedRequestBytesStart + length);
+                parkedRequestBytes = std::exchange(*replayed, {});
+                return;
+            }
+        }
+        /* Drops what a replay has consumed, or the vector would grow for as long as a client keeps the queue from emptying. */
+        parkedRequestBytes.removeAt(0, std::exchange(parkedRequestBytesStart, 0));
+        parkedRequestBytes.append(std::span<const char>(data, length));
+    }
+
+    /* Bytes that arrive while others are parked queue behind them. */
+    void updateParkAtNextBoundary() {
+        this->parkAtNextBoundary = (state & HTTP_RESPONSE_PENDING) || !parkedRequestBytes.isEmpty();
+    }
 
     /* node:http: requests that were dispatched and whose responses wait for the connection (JSNodeHTTPServerSocket::startResponse). */
     uint32_t nodeHttpQueuedPipelinedCount = 0;
@@ -352,12 +375,6 @@ struct HttpResponseData<SSL, true> : HttpResponseData<SSL, false> {
      * chunked framing for the response body. HTTP_NODE_HAS_RESPONSE_TRAILERS in
      * the shared flags word mirrors !empty(). */
     std::string nodeHttpResponseTrailers;
-    /* Raw bytes of the trailer section received after the final 0-size chunk
-     * of the current request's chunked body, including its terminating CRLF.
-     * Cleared when a new request is dispatched; consumed by the JS layer when
-     * the request reaches EOF (req.trailers/rawTrailers). The parser gets it
-     * as a nullable pointer (see HttpParser::consumePostPadded). */
-    std::string nodeHttpRequestTrailers;
     bool headersCompleted = false;
     /* Timeout sweep already reported this message; reset when it completes. */
     bool requestTimeoutReported = false;

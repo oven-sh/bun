@@ -1207,3 +1207,119 @@ test.concurrent.each(["another stream", "its own destroyed socket, patched to lo
     expect(exitCode).toBe(0);
   },
 );
+
+describe.concurrent.each(["http", "https"])("handleUpgrade() from a callback of the %s connection", protocol => {
+  const upgradeRequest = (fields: string) =>
+    "GET /ws HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\n" +
+    `Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n${fields}\r\n`;
+
+  async function open(serverOptions: http.ServerOptions = {}) {
+    const server =
+      protocol === "https" ? https.createServer({ ...options, ...serverOptions }) : http.createServer(serverOptions);
+    const wss = new WebSocketServer({ noServer: true });
+    const address = { port: await listen(server), host: "127.0.0.1", allowHalfOpen: true };
+    const client = protocol === "https" ? tls.connect({ ...address, rejectUnauthorized: false }) : connect(address);
+    const switched = Promise.withResolvers<void>();
+    const firstEvent = Promise.withResolvers<string>();
+    let tail = "";
+    let received = 0;
+    client.on("error", () => {});
+    client.on("data", chunk => {
+      received += chunk.length;
+      tail = (tail + chunk.subarray(-256).toString("latin1")).slice(-256);
+      if (tail.includes("101 Switching Protocols")) switched.resolve();
+    });
+    return {
+      server,
+      client,
+      switched: switched.promise,
+      firstEvent: firstEvent.promise,
+      received: () => received,
+      upgrade(req: http.IncomingMessage, onOpen?: (ws: WsWebSocket) => void) {
+        wss.handleUpgrade(req, req.socket, Buffer.alloc(0), ws => {
+          ws.on("message", message => firstEvent.resolve("message " + message));
+          ws.on("close", code => firstEvent.resolve("close " + code));
+          onOpen?.(ws);
+        });
+      },
+      [Symbol.dispose]() {
+        client.destroy();
+        for (const ws of wss.clients) ws.terminate();
+        server.close();
+      },
+    };
+  }
+
+  test.each(["Upgrade", "Upgrade, close"])("once the response ahead has drained, with Connection: %s", async value => {
+    using c = await open();
+    c.server.on("request", (req, res) => {
+      if (req.url === "/ahead") res.end(Buffer.alloc(16 * 1024 * 1024, "a"));
+      else if (res.socket) c.upgrade(req);
+      else res.once("socket", () => process.nextTick(c.upgrade, req));
+    });
+    c.client.write("GET /ahead HTTP/1.1\r\nHost: localhost\r\n\r\n" + upgradeRequest(`Connection: ${value}\r\n`));
+    await Promise.race([c.switched, c.firstEvent]);
+    c.client.write(maskedTextFrame("hi"));
+    expect(await c.firstEvent).toBe("message hi");
+  });
+
+  test("once the tail of a res.write() ahead has drained", async () => {
+    using c = await open();
+    c.server.on("request", (req, res) => {
+      if (req.url === "/ahead") res.write(Buffer.alloc(16 * 1024 * 1024, "a"), () => res.end());
+      else res.once("socket", () => process.nextTick(c.upgrade, req));
+    });
+    c.client.write("GET /ahead HTTP/1.1\r\nHost: localhost\r\n\r\n" + upgradeRequest("Connection: Upgrade\r\n"));
+    await Promise.race([c.switched, c.firstEvent]);
+    c.client.write(maskedTextFrame("hi"));
+    expect(await c.firstEvent).toBe("message hi");
+  });
+
+  test("once the response ahead has drained, after the FIN", async () => {
+    using c = await open();
+    c.server.on("request", (req, res) => {
+      if (req.url === "/ahead") res.write(Buffer.alloc(16 * 1024 * 1024, "a"), () => res.end());
+      else if (res.socket) c.upgrade(req);
+      else res.once("socket", () => process.nextTick(c.upgrade, req));
+    });
+    c.client.write("GET /ahead HTTP/1.1\r\nHost: localhost\r\n\r\n" + upgradeRequest("Connection: Upgrade\r\n"));
+    // A close_notify in the read of the requests ends req.socket before reads pause, as in Node.
+    await once(c.server, "request");
+    await once(c.client.end(), "close");
+    expect(await c.firstEvent).toBe("close 1006");
+  });
+
+  test("'clientError' for bytes behind a request that closes the connection", async () => {
+    using c = await open();
+    c.client.write(upgradeRequest("Connection: Upgrade, close\r\n"));
+    const [req] = await once(c.server, "request");
+    c.server.on("clientError", () => c.upgrade(req));
+    c.client.write("more");
+    await Promise.race([c.switched, c.firstEvent]);
+    c.client.write(maskedTextFrame("hi"));
+    expect(await c.firstEvent).toBe("message hi");
+  });
+
+  // As in Node: req.socket has emitted 'end', so handleUpgrade() destroys it.
+  test("'clientError' for a FIN in the middle of the next head", async () => {
+    using c = await open();
+    const events: string[] = [];
+    c.client.write(upgradeRequest("Connection: Upgrade\r\n") + "GET /next HT");
+    const [req] = await once(c.server, "request");
+    c.server.on("clientError", () => (events.push("handleUpgrade"), c.upgrade(req, () => events.push("open"))));
+    await once(c.client.end(), "close");
+    expect({ events, received: c.received() }).toEqual({ events: ["handleUpgrade"], received: 0 });
+  });
+
+  test("'end' of a body that the FIN completes", async () => {
+    using c = await open({ insecureHTTPParser: true });
+    const events: string[] = [];
+    c.server.on("request", req => {
+      req.on("data", () => c.client.end());
+      req.on("end", () => (events.push("handleUpgrade"), c.upgrade(req, () => events.push("open"))));
+    });
+    c.client.write(upgradeRequest("Transfer-Encoding: foo\r\n") + "body");
+    await once(c.client, "close");
+    expect({ events, received: c.received() }).toEqual({ events: ["handleUpgrade"], received: 0 });
+  });
+});

@@ -140,6 +140,6 @@ Differences:
 - `createPatch` does not write the `Index:` and `===` lines, and returns `""` for equal texts. It writes a tab after a file name with a space, as Git does.
 - `applyPatch` returns `undefined` instead of `false`. It rejects a hunk that only fits outside the source or before the previous hunk. It throws for a binary patch from `git diff`.
 - `parsePatch` throws for a malformed `@@` line, accepts the `-- ` signature of `git format-patch`, sets `isBinary` for `GIT binary patch`, and returns one entry for each file of `svn diff --git`.
-- `parsePatch` skips a single `--- text` or `+++ text` line in the message before `diff --git`.
+- `parsePatch` skips `--- text` and `+++ text` lines in the message before `diff --git`, unless they form a pair or follow an `Index:` line.
 - `parsePatch` and `applyPatch` accept a patch whose line endings were converted to `\r\n`. The lines of a hunk keep the `\r`. File names do not.
 - The only options are the ones on this page. `timeout`, `callback`, `comparator`, `fuzzFactor` and the `ignore*` options are not supported.

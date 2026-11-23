@@ -1103,7 +1103,7 @@ Server.prototype[kRealListen] = function (
       onNodeHTTPRequest(
         url: string,
         method: string,
-        // Native dispatch bitfield (kDispatch* in NodeHTTP.cpp): presence and
+        // Native dispatch bitfield (Dispatch in NodeHTTPResponse.rs): presence and
         // token bits for the headers the dispatcher consults, so no header
         // object or array is materialized unless user code reads them.
         dispatchBits: number,
@@ -1539,7 +1539,7 @@ function onServerRequestEvent(this: any, event: NodeHTTPResponseAbortEvent) {
     }
   }
 }
-// uWS::HttpParserError
+// RequestError in src/http1/request/error.rs
 enum HttpParserError {
   HTTP_PARSER_ERROR_NONE = 0,
   HTTP_PARSER_ERROR_INVALID_CHUNKED_ENCODING = 1,
@@ -3257,7 +3257,7 @@ function markResponseEndedNT(res) {
 
 // Native dispatch bitfield: presence/token bits for the request headers the
 // dispatcher consults, computed in one native pass over the raw headers
-// (kDispatch* in src/jsc/bindings/NodeHTTP.cpp - keep in sync). This is what
+// (Dispatch in src/runtime/server/NodeHTTPResponse.rs - keep in sync). This is what
 // lets the framework never materialize req.headers/req.rawHeaders unless
 // user code reads them.
 const DISPATCH_CONN_CLOSE = 1 << 0;

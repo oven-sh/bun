@@ -81,8 +81,6 @@ private:
         struct us_socket_t *socket;
         /* A handler of that one ticks the loop (waitForPromise). */
         Parse *outer;
-        /* What the socket became when it left HTTP under this parse. */
-        struct us_socket_t *upgraded = nullptr;
         /* The new owner already has what follows the request head in this read. */
         bool restOfReadTaken = false;
     };
@@ -133,13 +131,9 @@ public:
         return false;
     }
 
-    /* Another owner adopted s after HttpResponse::leaveHttp(). If s is being parsed, the parser stops here. */
-    void socketLeft(struct us_socket_t *s, struct us_socket_t *adopted, bool restOfReadTaken) {
+    void markRestOfReadTaken(struct us_socket_t *s) {
         for (Parse *parse = parsing; parse; parse = parse->outer) {
-            if (parse->socket == s && !parse->upgraded) {
-                parse->upgraded = adopted;
-                parse->restOfReadTaken = restOfReadTaken;
-            }
+            parse->restOfReadTaken |= parse->socket == s;
         }
     }
 };

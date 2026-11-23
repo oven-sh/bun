@@ -495,8 +495,7 @@ public:
 
                     /* Nasty, ugly Safari 15 hack */
                     if (hasBrokenCompression(req->getHeader("user-agent"))) {
-                        std::string_view secWebSocketExtensions = req->getHeader("sec-websocket-extensions");
-                        memset((void *) secWebSocketExtensions.data(), ' ', secWebSocketExtensions.length());
+                        req->clearHeader("sec-websocket-extensions");
                     }
 
                     behavior.upgrade(res, req, webSocketContext);

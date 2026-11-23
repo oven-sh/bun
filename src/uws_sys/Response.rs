@@ -13,6 +13,8 @@
 use core::ffi::{c_int, c_void};
 use core::marker::{PhantomData, PhantomPinned};
 
+use bun_http1::request::RequestParser;
+
 use crate::thunk;
 use crate::thunk::OpaqueHandle;
 use crate::us_socket_t;
@@ -159,6 +161,13 @@ impl<const SSL: bool> Response<SSL> {
 
     pub(crate) fn is_connect_request(&mut self) -> bool {
         c::uws_res_is_connect_request(Self::ssl_flag(), self.as_raw())
+    }
+
+    fn take_request_trailers(&mut self) -> Vec<u8> {
+        let parser = c::uws_res_get_parser(Self::ssl_flag(), self.as_raw());
+        // SAFETY: null once the parser is destroyed. http1.rs does not borrow it while a handler runs.
+        unsafe { parser.cast::<RequestParser>().as_mut() }
+            .map_or_else(Vec::new, RequestParser::take_trailers)
     }
 
     pub(crate) fn flush_headers(&mut self, flush_immediately: bool) {
@@ -1135,6 +1144,15 @@ impl AnyResponse {
         any_dispatch!(self, |r| r.is_connect_request())
     }
 
+    /// The trailer section that a `node:http` server received after the body.
+    pub fn take_request_trailers(self) -> Vec<u8> {
+        match self {
+            AnyResponse::H3(_) | AnyResponse::H2(_) => Vec::new(),
+            AnyResponse::SSL(ptr) => TLSResponse::as_handle(ptr).take_request_trailers(),
+            AnyResponse::TCP(ptr) => TCPResponse::as_handle(ptr).take_request_trailers(),
+        }
+    }
+
     pub fn end_stream(self, close_connection: bool) {
         any_dispatch!(self, |r| r.end_stream(close_connection))
     }
@@ -1308,6 +1326,7 @@ pub mod c {
     unsafe extern "C" {
         pub(crate) safe fn uws_res_mark_fixed_length_file_body(ssl: i32, res: &mut uws_res);
         pub(crate) safe fn uws_res_state(ssl: c_int, res: &uws_res) -> State;
+        pub(crate) safe fn uws_res_get_parser(ssl: i32, res: &mut uws_res) -> *mut c_void;
         // Out-params are `&mut` (non-null, valid for write); the C shim only
         // stores into them and returns a length — no read-through precondition.
         pub(crate) safe fn uws_res_get_remote_address_info(

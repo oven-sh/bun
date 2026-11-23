@@ -13,7 +13,6 @@ pub(crate) use crate::server::SavedRequest;
 
 pub(crate) use crate::socket;
 pub(crate) use crate::socket::Listener;
-pub(crate) use crate::socket::NewSocket;
 pub(crate) use crate::socket::SocketAddress;
 
 pub(crate) use crate::crypto;
@@ -32,10 +31,12 @@ pub(crate) mod bun_object;
 pub(crate) mod crash_handler_jsc;
 #[path = "api/cron.rs"]
 pub(crate) mod cron;
-#[path = "api/cron_parser.rs"]
-pub(crate) mod cron_parser;
+#[path = "api/cron_os.rs"]
+pub(crate) mod cron_os;
 #[path = "api/csrf_jsc.rs"]
 pub(crate) mod csrf_jsc;
+#[path = "api/DiffObject.rs"]
+pub(crate) mod diff_object;
 #[path = "api/filesystem_router.rs"]
 pub(crate) mod filesystem_router;
 #[path = "api/glob.rs"]

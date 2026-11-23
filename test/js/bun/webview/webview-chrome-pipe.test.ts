@@ -159,6 +159,17 @@ test.concurrent("the browser exiting rejects what it owed, and the next WebView 
   expect(result).toEqual({ death: transportLost, second: "alive again" });
 });
 
+test.concurrent("closeAll() in a Worker kills the main thread's browser", async () => {
+  const result = await runScenario(`
+    const view = newView();
+    await view.navigate("http://fake/");
+    const pending = outcome(view.evaluate("__fake_no_reply()"));
+    new Worker(URL.createObjectURL(new Blob(["Bun.WebView.closeAll();"])));
+    print(await pending);
+  `);
+  expect(result).toEqual(transportLost);
+});
+
 // close() is a user-initiated teardown, so the rejection of an in-flight
 // operation must not surface as an unhandled rejection. The constructor's
 // `url:` navigation is the worst case: its promise is internal, so nothing in

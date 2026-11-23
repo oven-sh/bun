@@ -164,7 +164,6 @@ public:
 
     IsoSubspace* m_subspaceForDOMException { nullptr };
     IsoSubspace* m_subspaceForDOMURL { nullptr };
-    IsoSubspace* m_subspaceForURLPattern { nullptr };
     IsoSubspace* m_subspaceForJSSign { nullptr };
     IsoSubspace* m_subspaceForJSVerify { nullptr };
     IsoSubspace* m_subspaceForJSHmac { nullptr };
@@ -180,7 +179,6 @@ public:
     IsoSubspace* m_subspaceForJSPrivateKeyObject { nullptr };
 
     IsoSubspace* m_subspaceForJSConnectionsList { nullptr };
-    IsoSubspace* m_subspaceForJSHTTPParser { nullptr };
 };
 } // namespace WebCore
 

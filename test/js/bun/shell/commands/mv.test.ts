@@ -98,6 +98,13 @@ describe("mv", async () => {
     expect(read("dst")).toBe("new a");
   });
 
+  test.skipIf(isWindows).each(["d/.", "d/sub/.."])("-n %s fails", async source => {
+    using dir = tempDir("mv-n-dot", { d: { sub: {}, a: "a" }, out: {} });
+    const { exitCode } = await $`mv -n ${source} out`.cwd(String(dir)).quiet();
+    expect(existsSync(join(String(dir), "d", "a"))).toBe(true);
+    expect(exitCode).not.toBe(0);
+  });
+
   test("fails when a source name is longer than the path buffers", async () => {
     const segment = Buffer.alloc(240, "d").toString();
     const deep = join(segment, segment);
@@ -355,4 +362,29 @@ describe("mv", async () => {
       expect(exitCode).toBe(0);
     });
   });
+});
+
+test.skipIf(!isWindows)("refuses a target that starts with two slashes", async () => {
+  using dir = tempDir("mv-two-slashes", { "new.txt": "new", "keep.txt": "keep" });
+  const slashes = "//./" + String(dir).replaceAll("\\", "/");
+  const { exitCode, stderr } = await $`mv -n new.txt ${slashes}/keep.txt`.cwd(String(dir)).quiet();
+  expect(stderr.toString()).toBe(`mv: ${slashes}/keep.txt: Invalid argument\n`);
+  expect(readFileSync(join(String(dir), "keep.txt"), "utf8")).toBe("keep");
+  expect(exitCode).not.toBe(0);
+
+  // The system alone reads a source.
+  await $`mv ${slashes}/new.txt moved.txt`.cwd(String(dir)).throws(true);
+  expect(readFileSync(join(String(dir), "moved.txt"), "utf8")).toBe("new");
+});
+
+test.concurrent.skipIf(!isWindows).each([
+  ["keep.txt/.", "Invalid argument\n"],
+  ["missing/.", "No such file or directory\n"],
+])("refuses the target %s", async (target, message) => {
+  using dir = tempDir("mv-dot", { "new.txt": "new", "keep.txt": "keep" });
+  const { exitCode, stderr } = await $`mv new.txt ${target}`.cwd(String(dir)).quiet();
+  expect(stderr.toString()).toEndWith(message);
+  expect(readFileSync(join(String(dir), "keep.txt"), "utf8")).toBe("keep");
+  expect(readFileSync(join(String(dir), "new.txt"), "utf8")).toBe("new");
+  expect(exitCode).not.toBe(0);
 });

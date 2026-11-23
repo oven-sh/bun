@@ -9,6 +9,7 @@ use bun_collections::HashMap;
 use bun_collections::VecExt;
 use bun_dotenv as dot_env;
 use bun_js_parser as js_ast;
+use bun_js_parser::lower::defer_requires::is_in_known_package;
 use bun_resolver::fs as Fs;
 use bun_resolver::{self as resolver, Resolver};
 
@@ -146,7 +147,7 @@ impl<'a> Transpiler<'a> {
     /// The returned value is a normal owned `Transpiler` whose `Drop` is sound
     /// — no `MaybeUninit` / `ptr::write` field-overwrite contract is needed by
     /// callers.
-    pub(crate) fn for_worker(
+    pub fn for_worker(
         from: &Transpiler<'a>,
         arena: &'a Arena,
         log: *mut bun_ast::Log,
@@ -171,6 +172,13 @@ impl<'a> Transpiler<'a> {
             linker: crate::linker::Linker::init(log),
             env: from.env,
         }
+    }
+
+    /// The defines of [`Self::for_worker`] point into the arena of the transpiler that has loaded them.
+    pub fn load_own_defines(&mut self) -> crate::Result<()> {
+        self.options.defines_loaded = false;
+        let env = self.env_mut();
+        self.options.load_defines(self.arena, Some(env))
     }
 
     /// # Safety
@@ -244,7 +252,7 @@ impl<'a> Transpiler<'a> {
         // Relative entry points that were not resolved to a node_modules package are
         // interpreted as relative to the current working directory.
         if !bun_paths::is_absolute(entry_point)
-            && !(entry_point.starts_with(b"./") || entry_point.starts_with(b".\\"))
+            && bun_paths::without_leading_dot_slash(entry_point) == entry_point
         {
             let prefixed = dot_slash.get_or_init(|| [b"./", entry_point].concat());
             assert_eq!(&prefixed[2..], entry_point, "`dot_slash` was reused");
@@ -273,57 +281,19 @@ impl<'a> Transpiler<'a> {
         match self._resolve_entry_point(entry_point, dot_slash) {
             Ok(r) => self.reject_unbundleable_entry_point(r, entry_point),
             Err(err) => {
-                let mut cache_bust_buf = bun_paths::path_buffer_pool::get();
-
                 // Bust directory cache and try again
-                // reshaped for borrowck — a single labelled block would
-                // return a slice that aliases either `entry_point` (via
-                // `dirname`) or `cache_bust_buf`. Rust can't unify the two
-                // disjoint mutable borrows of `cache_bust_buf` across `break`,
-                // so compute `busted` directly instead.
-                let busted: bool = 'name: {
-                    // Neither buster name below would fit `cache_bust_buf`.
-                    if Fs::FileSystem::get().top_level_dir().len() + entry_point.len() + 4
-                        > bun_paths::MAX_PATH_BYTES
-                    {
-                        break 'name false;
+                let top_level_dir = Fs::FileSystem::get().top_level_dir();
+                let buster_name = bun_paths::Path::resolve(&[top_level_dir, entry_point, b".."]);
+                let mut busted = self.resolver.bust_dir_cache(&buster_name);
+                // `load_as_file` caches the listing under the entry point's own spelling.
+                if bun_paths::is_absolute(entry_point) {
+                    let as_spelled = bun_paths::dirname_or_root(entry_point);
+                    busted |= self.resolver.bust_dir_cache(as_spelled);
+                    if bun_paths::has_trailing_sep(entry_point) {
+                        let directory = bun_paths::Path::resolve(&[top_level_dir, entry_point]);
+                        busted |= self.resolver.bust_dir_cache(&directory);
                     }
-                    if bun_paths::is_absolute(entry_point) {
-                        let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
-                            entry_point,
-                        );
-                        if !dir.is_empty() {
-                            // Normalized with trailing slash
-                            let buster_name = bun_paths::string_paths::normalize_slashes_only(
-                                &mut cache_bust_buf[..],
-                                dir,
-                                bun_paths::SEP,
-                            );
-                            break 'name self.resolver.bust_dir_cache(
-                                bun_paths::string_paths::without_trailing_slash_windows_path(
-                                    buster_name,
-                                ),
-                            );
-                        }
-                    }
-
-                    // `".."` needs no platform separator rewrite.
-                    let parts: [&[u8]; 2] = [entry_point, b".."];
-                    let top_level_dir = Fs::FileSystem::get().top_level_dir();
-
-                    let Some(buster_name) =
-                        bun_paths::resolve_path::join_abs_string_buf_z_checked::<
-                            bun_paths::platform::Auto,
-                        >(top_level_dir, &mut cache_bust_buf[..], &parts)
-                    else {
-                        break 'name false;
-                    };
-                    self.resolver.bust_dir_cache(
-                        bun_paths::string_paths::without_trailing_slash_windows_path(
-                            buster_name.as_bytes(),
-                        ),
-                    )
-                };
+                }
 
                 // Only re-query if we previously had something cached.
                 if busted {
@@ -639,7 +609,6 @@ impl<'a> Transpiler<'a> {
 
 use crate::bun_node_fallbacks as NodeFallbackModules;
 use crate::entry_points as EntryPoints;
-use bun_ast::RuntimeTranspilerCache;
 use bun_core::strings;
 use bun_resolver::package_json::MacroMap as MacroRemap;
 use bun_sys::Fd as FD;
@@ -680,10 +649,6 @@ pub struct ParseResult<'a> {
     pub already_bundled: AlreadyBundled,
     pub empty: bool,
 
-    /// SAFETY: erased — bundler stores it
-    /// and hands it back to the runtime side; never dereferenced here.
-    pub(crate) runtime_transpiler_cache: Option<core::ptr::NonNull<RuntimeTranspilerCache>>,
-
     /// Owns the bytes that `source.contents` points into when they came from
     /// `cache::Fs::read_file_with_allocator` (non-shared-buffer path) or a
     /// decoded `data:` URL. That borrow is erased, so the backing must live at least as long as
@@ -708,7 +673,6 @@ impl<'a> ParseResult<'a> {
             ast: bun_ast::Ast::empty_in(arena),
             already_bundled: AlreadyBundled::None,
             empty: true,
-            runtime_transpiler_cache: None,
             source_contents_backing,
         }
     }
@@ -763,7 +727,7 @@ pub struct ParseOptions<'a, 'b> {
     /// See: https://nodejs.org/api/packages.html#type
     pub module_type: options::ModuleType,
 
-    pub runtime_transpiler_cache: Option<&'b mut RuntimeTranspilerCache>,
+    pub runtime_transpiler_cache: Option<&'b mut dyn js_ast::TranspilerCache>,
 
     pub keep_json_and_toml_as_one_statement: bool,
     pub allow_bytecode_cache: bool,
@@ -772,11 +736,10 @@ pub struct ParseOptions<'a, 'b> {
 use bun_options_types::schema::api;
 
 // ── type unification (parse_maybe Js/Ts arm) ─────────────────────────────
-// `ModuleType`, `Define`, `RuntimeTranspilerCache` are single nominal types
-// shared between `bun_js_parser` and this crate (canonical defs live in the
+// `ModuleType` and `Define` are shared with `bun_js_parser` (canonical defs live in the
 // lower-tier crate; bundler re-exports). There are no by-value conversion
 // shims — `to_parser_module_type` is an identity fn and `parse_maybe`
-// threads `self.options.define` / `runtime_transpiler_cache` directly.
+// threads `self.options.define` directly.
 //
 // D042 UNIFIED: `crate::options_impl::jsx::Pragma` IS
 // `js_ast::parser::options::JSX::Pragma` (both re-export
@@ -1108,7 +1071,7 @@ impl<'a> Transpiler<'a> {
         const DATA_ONLY: bool,
     >(
         &mut self,
-        mut this_parse: ParseOptions<'p, '_>,
+        this_parse: ParseOptions<'p, '_>,
         // The only caller passes `EntryPoints::ClientEntryPoint`, so the
         // param is typed concretely.
         client_entry_point_: Option<&mut EntryPoints::ClientEntryPoint<'p>>,
@@ -1223,7 +1186,7 @@ impl<'a> Transpiler<'a> {
                 }
             };
             if let Some(opened_file) = this_parse.opened_file
-                && let Some(resolver::cache::SourceFd::Owned(file)) = entry.file
+                && let Some(bun_sys::MaybeOwnedFile::Owned(file)) = entry.file
             {
                 *opened_file = Some(file);
             }
@@ -1342,18 +1305,6 @@ impl<'a> Transpiler<'a> {
                     .trim_unused_imports
                     .unwrap_or_else(|| loader.is_typescript());
                 opts.features.no_macros = self.options.no_macros;
-                // `bun_ast::RuntimeTranspilerCache` is the single nominal
-                // type on both sides; thread the pointer directly.
-                // The same `RuntimeTranspilerCache` raw pointer goes to BOTH
-                // `opts.features` and the returned `ParseResult`. Derive both
-                // from a single reborrow so they share one provenance tag —
-                // re-touching the parent `&mut` after the `*mut` cast would
-                // pop the raw pointer off the borrow stack (Stacked Borrows).
-                let rtc_ptr: Option<core::ptr::NonNull<RuntimeTranspilerCache>> = this_parse
-                    .runtime_transpiler_cache
-                    .as_deref_mut()
-                    .map(core::ptr::NonNull::from);
-                opts.features.runtime_transpiler_cache = rtc_ptr.map(core::ptr::NonNull::as_ptr);
 
                 // @bun annotation
                 opts.features.dont_bundle_twice = this_parse.dont_bundle_twice;
@@ -1361,6 +1312,10 @@ impl<'a> Transpiler<'a> {
                 opts.features.code_coverage = self.options.code_coverage;
 
                 opts.features.commonjs_at_runtime = this_parse.allow_commonjs;
+                opts.features.lists_loads =
+                    self.options.defers_requires && this_parse.allow_commonjs;
+                opts.features.defers_requires =
+                    opts.features.lists_loads && is_in_known_package(source.path.text);
 
                 opts.features.inlining = self.options.inlining;
                 opts.features.auto_import_jsx = self.options.auto_import_jsx;
@@ -1443,9 +1398,14 @@ impl<'a> Transpiler<'a> {
                 // the real `parse` lives on `crate::cache::JavaScript`. Both
                 // are stateless unit structs, so calling the bundler-crate one
                 // directly is equivalent.
-                let parsed = match crate::cache::JavaScript::init()
-                    .parse(arena, opts, define, log, source)
-                {
+                let parsed = match crate::cache::JavaScript::init().parse(
+                    arena,
+                    opts,
+                    define,
+                    log,
+                    source,
+                    this_parse.runtime_transpiler_cache,
+                ) {
                     Ok(Some(r)) => r,
                     Ok(None) | Err(_) => return None,
                 };
@@ -1454,14 +1414,12 @@ impl<'a> Transpiler<'a> {
                         ast: *value,
                         source: source.clone(),
                         loader,
-                        runtime_transpiler_cache: rtc_ptr,
                         already_bundled: AlreadyBundled::None,
                         empty: false,
                         source_contents_backing: source_backing,
                     },
                     js_ast::Result::Cached => ParseResult {
                         ast: bun_ast::Ast::empty_in(arena),
-                        runtime_transpiler_cache: rtc_ptr,
                         source: source.clone(),
                         loader,
                         already_bundled: AlreadyBundled::None,
@@ -1492,27 +1450,14 @@ impl<'a> Transpiler<'a> {
                                 {
                                     const BYTECODE_EXT: &[u8] =
                                         crate::bytecode_sidecar::EXTENSION.as_bytes();
-                                    let mut path_buf2 = bun_paths::path_buffer_pool::get();
-                                    let n = path.text.len();
-                                    let total = n + BYTECODE_EXT.len();
-                                    // `ZStr::from_buf` needs `buf[total] == 0`
-                                    // in-bounds; fall back to re-parsing the
-                                    // source instead of panicking on an
-                                    // over-long path.
-                                    if total >= path_buf2.len() {
-                                        break 'brk default_value;
-                                    }
-                                    path_buf2[..n].copy_from_slice(path.text);
-                                    path_buf2[n..][..BYTECODE_EXT.len()]
-                                        .copy_from_slice(BYTECODE_EXT);
-                                    path_buf2[total] = 0;
-                                    let zpath = bun_core::ZStr::from_buf(&path_buf2[..], total);
+                                    let mut bytecode_path = bun_paths::Path::from(path.text);
+                                    bytecode_path.extend_from_slice(BYTECODE_EXT);
                                     // `bun.sys.File.toSourceAt(...)` is
                                     // `read_from` + wrap-in-`bun_ast::Source`.
                                     // We only need `.contents`, so call
                                     // `read_from` directly.
                                     let dir = dirname_fd.unwrap_valid().unwrap_or_else(FD::cwd);
-                                    match bun_sys::File::read_from(dir, zpath) {
+                                    match bun_sys::File::read_from(dir, &bytecode_path) {
                                         Ok(mut contents) => {
                                             let Some(payload_len) =
                                                 crate::bytecode_sidecar::payload_len(&contents)
@@ -1538,7 +1483,6 @@ impl<'a> Transpiler<'a> {
                         },
                         source: source.clone(),
                         loader,
-                        runtime_transpiler_cache: None,
                         empty: false,
                         source_contents_backing: source_backing,
                     },
@@ -1862,7 +1806,6 @@ fn parse_data_loader<'a>(
         source: source.clone(),
         loader,
         already_bundled: AlreadyBundled::None,
-        runtime_transpiler_cache: None,
         empty: false,
         source_contents_backing: source_backing,
     });
@@ -1901,7 +1844,6 @@ fn parse_text_loader<'a>(
         source: source.clone(),
         loader,
         already_bundled: AlreadyBundled::None,
-        runtime_transpiler_cache: None,
         empty: false,
         source_contents_backing: source_backing,
     });
@@ -1953,7 +1895,6 @@ fn parse_md_loader<'a>(
         source: source.clone(),
         loader,
         already_bundled: AlreadyBundled::None,
-        runtime_transpiler_cache: None,
         empty: false,
         source_contents_backing: source_backing,
     });
@@ -1988,7 +1929,6 @@ fn parse_wasm_loader<'a>(
             source: source.clone(),
             loader,
             already_bundled: AlreadyBundled::None,
-            runtime_transpiler_cache: None,
             empty: false,
             source_contents_backing: source_backing,
         });
@@ -2016,7 +1956,7 @@ fn parse_unsupported_loader(loader: options::Loader, path: &bun_paths::fs::Path<
 // `format` is a runtime arg rather than a const generic —
 // `bun_js_printer::Format` doesn't derive `ConstParamTy` (and can't be added
 // from this crate). All callers pass a literal anyway; the inner
-// `print_ast::<_, ASCII_ONLY, ENABLE_SOURCE_MAP>` keeps both const-generic
+// `print_ast::<ASCII_ONLY, ENABLE_SOURCE_MAP>` keeps both const-generic
 // bools, so codegen monomorphizes the printer body identically.
 // PERF: outer `match format` is one extra branch — profile if hot.
 // ══════════════════════════════════════════════════════════════════════════
@@ -2068,7 +2008,6 @@ impl<'a> Transpiler<'a> {
         writer: &mut js_printer::BufferPrinter,
         format: js_printer::Format,
         source_map_context: Option<js_printer::SourceMapHandler<'_>>,
-        runtime_transpiler_cache: Option<core::ptr::NonNull<RuntimeTranspilerCache>>,
         module_info: Option<&mut analyze_transpiled_module::ModuleInfo>,
     ) -> crate::Result<usize> {
         // Routed through the T0 ftrace subset like the
@@ -2095,8 +2034,6 @@ impl<'a> Transpiler<'a> {
         // *does* affect the EsmAscii/bun-runtime path (js_printer/lib.rs:6872
         // gates the `var {require}=import.meta;` hoist on `target == Bun`;
         // regression of oven-sh/bun#15738 if left at the `Browser` default).
-        // `runtime_transpiler_cache` is now forwarded — js_printer holds the
-        // `NonNull<RuntimeTranspilerCache>` directly.
         // `module_info` is now forwarded — this fn's parameter is the
         // printer-crate `analyze_transpiled_module::ModuleInfo` (see the `use`
         // above), so the seam is gone (EsmAscii arm only).
@@ -2126,7 +2063,6 @@ impl<'a> Transpiler<'a> {
                 symbols,
                 source,
                 source_map_context,
-                runtime_transpiler_cache,
             ),
 
             js_printer::Format::EsmAscii => {
@@ -2142,7 +2078,6 @@ impl<'a> Transpiler<'a> {
                         source,
                         source_map_context,
                         exports_kind,
-                        runtime_transpiler_cache,
                         module_info,
                     )
                 } else {
@@ -2154,7 +2089,6 @@ impl<'a> Transpiler<'a> {
                         source,
                         source_map_context,
                         exports_kind,
-                        runtime_transpiler_cache,
                         module_info,
                     )
                 }
@@ -2164,7 +2098,7 @@ impl<'a> Transpiler<'a> {
 
     // PERF: cold thunk — see `print_with_source_map_maybe` comment. Body is
     // verbatim from the former `Format::Esm` match arm; `#[cold]` moves the
-    // `print_ast::<W,false,SM>` Printer<…> tree to `.text.unlikely`.
+    // `print_ast::<false,SM>` Printer<…> tree to `.text.unlikely`.
     #[cold]
     #[inline(never)]
     #[allow(clippy::too_many_arguments)]
@@ -2176,7 +2110,6 @@ impl<'a> Transpiler<'a> {
         symbols: bun_ast::symbol::Map,
         source: &bun_ast::Source,
         source_map_context: Option<js_printer::SourceMapHandler<'_>>,
-        runtime_transpiler_cache: Option<core::ptr::NonNull<RuntimeTranspilerCache>>,
     ) -> crate::Result<usize> {
         let opts = js_printer::Options {
             bundling: false,
@@ -2187,12 +2120,11 @@ impl<'a> Transpiler<'a> {
             minify_identifiers: self.options.minify_identifiers,
             import_meta_ref: ast.import_meta_ref,
             print_dce_annotations: self.options.emit_dce_annotations,
-            runtime_transpiler_cache,
             hmr_ref: ast.wrapper_ref,
             mangled_props: None,
             ..Default::default()
         };
-        js_printer::print_ast::<_, false, ENABLE_SOURCE_MAP>(
+        js_printer::print_ast::<false, ENABLE_SOURCE_MAP>(
             writer,
             print_arena,
             ast,
@@ -2219,7 +2151,6 @@ impl<'a> Transpiler<'a> {
         source: &bun_ast::Source,
         source_map_context: Option<js_printer::SourceMapHandler<'_>>,
         exports_kind: bun_ast::ExportsKind,
-        runtime_transpiler_cache: Option<core::ptr::NonNull<RuntimeTranspilerCache>>,
         module_info: Option<&mut analyze_transpiled_module::ModuleInfo>,
     ) -> crate::Result<usize> {
         self.print_ast_esm_ascii::<ENABLE_SOURCE_MAP, false>(
@@ -2230,7 +2161,6 @@ impl<'a> Transpiler<'a> {
             source,
             source_map_context,
             exports_kind,
-            runtime_transpiler_cache,
             module_info,
         )
     }
@@ -2247,7 +2177,6 @@ impl<'a> Transpiler<'a> {
         source: &bun_ast::Source,
         source_map_context: Option<js_printer::SourceMapHandler<'_>>,
         exports_kind: bun_ast::ExportsKind,
-        runtime_transpiler_cache: Option<js_printer::RuntimeTranspilerCacheRef>,
         module_info: Option<&mut analyze_transpiled_module::ModuleInfo>,
     ) -> crate::Result<usize> {
         let opts = js_printer::Options {
@@ -2270,7 +2199,6 @@ impl<'a> Transpiler<'a> {
             inline_require_and_import_errors: false,
             import_meta_ref: ast.import_meta_ref,
             print_dce_annotations: self.options.emit_dce_annotations,
-            runtime_transpiler_cache,
             module_info,
             hmr_ref: ast.wrapper_ref,
             mangled_props: None,
@@ -2281,7 +2209,7 @@ impl<'a> Transpiler<'a> {
             target: to_bundle_enums_target(self.options.target),
             ..Default::default()
         };
-        js_printer::print_ast::<_, IS_BUN, ENABLE_SOURCE_MAP>(
+        js_printer::print_ast::<IS_BUN, ENABLE_SOURCE_MAP>(
             writer,
             print_arena,
             ast,
@@ -2317,7 +2245,6 @@ impl<'a> Transpiler<'a> {
             format,
             None,
             None,
-            None,
         )
     }
 
@@ -2349,7 +2276,6 @@ impl<'a> Transpiler<'a> {
                 writer,
                 format,
                 Some(handler),
-                result.runtime_transpiler_cache,
                 module_info,
             );
         }
@@ -2360,24 +2286,27 @@ impl<'a> Transpiler<'a> {
             writer,
             format,
             Some(handler),
-            result.runtime_transpiler_cache,
             module_info,
         )
     }
 
     fn normalize_entry_point_path(_entry: &[u8]) -> &'static [u8] {
-        let fs = Fs::FileSystem::get();
-        let entry = fs.abs(&[_entry]);
+        let top_level_dir = Fs::FileSystem::get().top_level_dir();
+        let absolute = bun_resolver::resolve_keeping_sep(&[top_level_dir, _entry]);
 
         // If the absolutized path does not exist on disk, return the original
         // input unchanged so bare specifiers (`react`) and URLs are left alone.
-        if !bun_sys::exists(entry) {
+        if !bun_sys::exists_z(&absolute) {
             return crate::linker::dupe(_entry);
         }
 
-        let entry = fs.relative_to(entry);
+        let mut entry = bun_paths::Path::relative(top_level_dir, &absolute);
+        // `src/` can be `src.js`, and `js/` cannot be `js.js`.
+        if entry.len() <= 2 && entry.as_bytes() != b".." {
+            entry.copy_trailing_sep_from(&absolute);
+        }
 
-        if !strings::starts_with(entry, b"./") {
+        if !entry.starts_with(b"./") {
             // Entry point paths without a leading "./" are interpreted as package
             // paths. This happens because they go through general path resolution
             // like all other import paths so that plugins can run on them. Requiring
@@ -2390,12 +2319,9 @@ impl<'a> Transpiler<'a> {
             // a leading "./" because the path may not be a file system path. For
             // example, it may be a URL. So only insert a leading "./" when the path
             // is an exact match for an existing file.
-            let mut __entry = Vec::with_capacity(2 + entry.len());
-            __entry.extend_from_slice(b"./");
-            __entry.extend_from_slice(entry);
-            return crate::linker::dupe(&__entry);
+            entry.prepend(b"./");
         }
-        crate::linker::dupe(entry)
+        crate::linker::dupe(&entry)
     }
 
     /// Returns only the count and lets
@@ -2573,7 +2499,7 @@ impl<'a> Transpiler<'a> {
             }
             writeln!(&mut msg, "  {}:", bstr::BStr::new(dest_path))?;
             for &index in indices {
-                let input = bun_paths::resolve_path::relative(
+                let input: &[u8] = &bun_paths::Path::relative(
                     Fs::FileSystem::get().top_level_dir(),
                     &self.output_files[index].src_path,
                 );
@@ -2622,8 +2548,8 @@ impl<'a> Transpiler<'a> {
         let mut file_path = Fs::Path::init(file_path_text);
 
         let top_level_dir = Fs::FileSystem::get().top_level_dir();
-        let rel = bun_paths::resolve_path::relative(top_level_dir, file_path_text);
-        file_path.pretty = crate::linker::dupe(rel);
+        let rel = bun_paths::Path::relative(top_level_dir, file_path_text);
+        file_path.pretty = crate::linker::dupe(&rel);
 
         let mut output_file = options::OutputFile::zero_value();
         output_file.src_path = file_path_text.into();
@@ -2805,11 +2731,8 @@ impl<'a> Transpiler<'a> {
         loader: options::Loader,
         output: &[u8],
     ) -> Box<[u8]> {
-        let rel_to_root = bun_paths::resolve_path::relative_platform::<
-            bun_paths::resolve_path::platform::Auto,
-            false,
-        >(&self.options.root_dir, file_path_text);
-        let pathname = Fs::PathName::init(rel_to_root);
+        let rel_to_root = bun_paths::Path::relative(&self.options.root_dir, file_path_text);
+        let pathname = Fs::PathName::init(&rel_to_root);
 
         let ext: &[u8] = if loader == options::Loader::Css {
             b"css"
@@ -2819,6 +2742,9 @@ impl<'a> Transpiler<'a> {
 
         let mut template = self.entry_naming_template();
         template.placeholder.dir = pathname.dir.into();
+        if bun_paths::is_absolute(&rel_to_root) {
+            template.resolve_dir(&self.options.root_dir);
+        }
         template.placeholder.name = pathname.base.into();
         template.placeholder.ext = ext.into();
         if template.needs(options::PlaceholderField::Target) {
@@ -2833,7 +2759,7 @@ impl<'a> Transpiler<'a> {
         template
             .print(&mut dest_path, true)
             .expect("write to Vec<u8>");
-        bun_paths::resolve_path::platform_to_posix_in_place::<u8>(&mut dest_path);
+        bun_paths::to_portable_in_place::<u8>(&mut dest_path);
         dest_path.into_boxed_slice()
     }
 

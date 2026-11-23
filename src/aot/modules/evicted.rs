@@ -60,6 +60,10 @@ impl EvictedModules {
         self.is_every_module
     }
 
+    pub(super) fn is_any_module_taken_out(&self) -> bool {
+        self.is_any_module_taken_out
+    }
+
     pub(super) fn is_table_reached(&self) -> bool {
         self.is_table_reached
     }

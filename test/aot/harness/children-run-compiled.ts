@@ -1,6 +1,6 @@
 // Preloaded into one of Bun's own test files: whatever the file starts runs compiled. `bun test` gets `--aot` (./children-under-aot.ts); `bun <file>` and `bun run <file>` get `--debug-aot`,
 // which compiles the program and runs it where it lies; the text of `bun -e <text>` goes into a file in the child's working directory, and that file runs so; `bun build --compile` and
-// `Bun.build({ compile })` get `--aot`. A letter in the file AOT_CHILDREN_STARTED counts each: r | e | b | B.
+// `Bun.build({ compile })` get `--aot` in place of bytecode. A letter in the file AOT_CHILDREN_STARTED counts each: r | e | b | B.
 // The warnings of the build, which all bear a code (`warn: TS100064: ..`), go out of what the child writes to a pipe on stderr: a test that expects nothing there asks about the program.
 // A warning that the program itself gives at run time bears none and stays.
 import { isASAN } from "harness";
@@ -55,7 +55,10 @@ function compiled(cmd: string[], cwd: unknown): [string[], string] | undefined {
     return [cmd.toSpliced(at, 2, writeText(second, cwd)).toSpliced(bun + 1, 0, "--debug-aot"), "e"];
   if (isFile(first)) return [cmd.toSpliced(bun + 1, 0, "--debug-aot"), "r"];
   if (at > bun + 1) return;
-  if (first === "build") return cmd.includes("--compile") ? [cmd.toSpliced(bun + 2, 0, "--aot"), "b"] : undefined;
+  if (first === "build")
+    return cmd.includes("--compile")
+      ? [cmd.filter(word => word !== "--bytecode").toSpliced(bun + 2, 0, "--aot"), "b"]
+      : undefined;
   if (first === "run" && isFile(second)) return [cmd.toSpliced(bun + 2, 0, "--debug-aot"), "r"];
 }
 
@@ -149,5 +152,5 @@ Bun.build = function (this: unknown, options: any, ...rest: unknown[]) {
   if (!compile || (typeof compile === "object" && "aot" in compile)) return build.call(this, options, ...rest);
   appendFileSync(process.env.AOT_CHILDREN_STARTED!, "B");
   const asObject = typeof compile === "object" ? compile : typeof compile === "string" ? { target: compile } : {};
-  return build.call(this, { ...options, compile: { ...asObject, aot: true } }, ...rest);
+  return build.call(this, { ...options, bytecode: false, compile: { ...asObject, aot: true } }, ...rest);
 } as typeof Bun.build;

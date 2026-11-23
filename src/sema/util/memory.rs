@@ -704,10 +704,17 @@ impl<T> Clone for Elements<'_, T> {
 impl<T> Copy for Elements<'_, T> {}
 
 impl<T, A: Allocator + Clone> Segmented<'_, T, AtomicU32, A> {
-    /// Appends `count` placeholders made by `new`. Any thread may call this.
-    pub(crate) fn add_placeholders(&self, count: u32, new: impl Fn() -> T) -> Placeholders<'_> {
+    /// Appends `count` placeholders made by `new`. Any thread may call this. `when_reserved` is called as soon as the
+    /// length counts them, before they are written.
+    pub(crate) fn add_placeholders(
+        &self,
+        count: u32,
+        when_reserved: impl FnOnce(),
+        new: impl Fn() -> T,
+    ) -> Placeholders<'_> {
         // SAFETY: the loop below writes every reserved index before any of them escapes this call.
         let next = unsafe { self.reserve(count) };
+        when_reserved();
         for index in next..next + count {
             // SAFETY: the index was reserved above, so no other thread writes this slot, and it's
             // written exactly once.
@@ -1997,7 +2004,7 @@ mod tests {
                 let store = &store;
                 scope.spawn(move || {
                     for _ in 0..ROUNDS {
-                        let mut mine = store.add_placeholders(64, || u64::MAX);
+                        let mut mine = store.add_placeholders(64, || {}, || u64::MAX);
                         let first = mine.first().unwrap();
                         // The last placeholder is never replaced.
                         for index in first..first + 63 {
@@ -2026,7 +2033,7 @@ mod tests {
     fn replacing_a_placeholder_in_another_vector_panics() {
         let [one, other] = [(), ()].map(|()| Segmented::<u64, AtomicU32>::new_in(Global));
         other.push(1);
-        let placeholder = one.add_placeholders(1, || 0).take_first().unwrap();
+        let placeholder = one.add_placeholders(1, || {}, || 0).take_first().unwrap();
         other.replace(placeholder, 2);
     }
 

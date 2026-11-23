@@ -33,7 +33,7 @@ use crate::generated_bindgen::server::BinaryType;
 pub(crate) struct ServerWebSocket {
     // Lives in `ServerConfig.websocket` for the server's lifetime.
     handler: bun_ptr::BackRef<WebSocketServerHandler>,
-    this_value: JsCell<JsRef>,
+    pub(crate) this_value: JsCell<JsRef>,
     flags: Cell<Flags>,
     signal: Cell<Option<PendingAbortSignal>>,
 }
@@ -509,12 +509,7 @@ impl ServerWebSocket {
         }
         .into_js_wrapper(global_object);
         let js_value = this_value.to_js();
-        let this = this_value.payload_ptr().as_ptr();
-        // SAFETY: the struct is stored inline in the wrapper, which `this_value` keeps alive.
-        let this_ref = unsafe { &*this };
-        this_ref
-            .this_value
-            .set(JsRef::init_strong(js_value, global_object));
+        this_value.set_js_ref_strong(global_object);
         js::data_set_cached(js_value, global_object, data_value);
         // Both callers bail out when `handler.server.is_none()`,
         // so this is normally `Some`; keep the `and_then` as
@@ -525,7 +520,7 @@ impl ServerWebSocket {
         if let Some(server_js) = handler.server.and_then(|s| s.js_value_for_dispatch()) {
             js::server_set_cached(js_value, global_object, server_js);
         }
-        this
+        this_value.payload_ptr().as_ptr()
     }
 
     /// `init` for a `ws` package socket. `handler` holds the package's callbacks, which are

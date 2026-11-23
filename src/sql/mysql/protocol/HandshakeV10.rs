@@ -3,21 +3,19 @@
 use crate::mysql::Capabilities;
 use crate::mysql::StatusFlags;
 use crate::mysql::capabilities::MariaDBCapabilities;
-use crate::mysql::protocol::CharacterSet;
 use crate::mysql::protocol::any_mysql_error::Error as AnyMySQLError;
 use crate::mysql::protocol::auth::{NONCE_LENGTH, Nonce};
 use crate::mysql::protocol::packet_reader::PacketReader;
 
-pub struct HandshakeV10<'a> {
+pub(crate) struct HandshakeV10<'a> {
     pub(crate) protocol_version: u8,
-    pub server_version: &'a [u8],
-    pub connection_id: u32,
-    pub auth_plugin_data: Nonce,
-    pub capability_flags: Capabilities,
-    pub mariadb_capability_flags: MariaDBCapabilities,
-    pub(crate) character_set: CharacterSet,
-    pub status_flags: StatusFlags,
-    pub auth_plugin_name: &'a [u8],
+    pub(crate) server_version: &'a [u8],
+    pub(crate) connection_id: u32,
+    pub(crate) auth_plugin_data: Nonce,
+    pub(crate) capability_flags: Capabilities,
+    pub(crate) mariadb_capability_flags: MariaDBCapabilities,
+    pub(crate) status_flags: StatusFlags,
+    pub(crate) auth_plugin_name: &'a [u8],
 }
 
 impl Default for HandshakeV10<'_> {
@@ -29,7 +27,6 @@ impl Default for HandshakeV10<'_> {
             auth_plugin_data: [0u8; NONCE_LENGTH],
             capability_flags: Capabilities::default(),
             mariadb_capability_flags: MariaDBCapabilities::default(),
-            character_set: CharacterSet::default(),
             status_flags: StatusFlags::default(),
             auth_plugin_name: b"",
         }
@@ -37,7 +34,10 @@ impl Default for HandshakeV10<'_> {
 }
 
 impl<'a> HandshakeV10<'a> {
-    pub fn decode_internal(&mut self, reader: PacketReader<'a>) -> Result<(), AnyMySQLError> {
+    pub(crate) fn decode_internal(
+        &mut self,
+        reader: PacketReader<'a>,
+    ) -> Result<(), AnyMySQLError> {
         // Protocol version
         self.protocol_version = reader.int::<u8>()?;
         if self.protocol_version != 10 {
@@ -60,8 +60,8 @@ impl<'a> HandshakeV10<'a> {
         // Capability flags (lower 2 bytes)
         let capabilities_lower = reader.int::<u16>()?;
 
-        // Character set — any byte is valid; unknown collation ids are preserved.
-        self.character_set = CharacterSet::from_raw(reader.int::<u8>()?);
+        // Character set
+        let _ = reader.int::<u8>()?;
 
         // Status flags
         self.status_flags = StatusFlags::from_int(reader.int::<u16>()?);

@@ -3,7 +3,7 @@ use core::ptr::NonNull;
 
 use bun_jsc::JsCell;
 use bun_jsc::bindgen::{JsLocal, JsScope, JsStructure, JsWrapper};
-use bun_jsc::{AbortSignal, GlobalRef};
+use bun_jsc::{AbortSignal, GlobalRef, HasJsRef as _};
 use bun_ptr::RefPtr;
 
 use crate::webcore::jsc::{
@@ -175,7 +175,7 @@ impl bun_jsc::JsClass for Response {
         js::from_js_direct(value)
     }
     fn to_js(self, global: &JSGlobalObject) -> JSValue {
-        Response::to_js(RefPtr::new(self), global)
+        RefPtr::new(self).to_js(global)
     }
 }
 
@@ -200,7 +200,7 @@ pub(crate) struct Response {
     /// Response was GC'd (null) instead of dereferencing a freed pointer when
     /// backpressure lets GC run between `render()` and the async callback.
     weak_ptr_data: WeakPtrData,
-    js_ref: JsCell<JsRef>,
+    pub(crate) js_ref: JsCell<JsRef>,
 
     // We must report a consistent value for this
     reported_estimated_size: Cell<usize>,
@@ -437,15 +437,21 @@ impl Response {
     }
 
     /// The wrapper adopts the ref.
-    pub(crate) fn to_js(this: RefPtr<Self>, global_object: &JSGlobalObject) -> JSValue {
-        this.calculate_estimated_byte_size();
-        let js_value = js::to_js(this.as_ptr(), global_object);
-        this.js_ref.set(JsRef::init_weak(js_value));
+    pub(crate) fn to_js(self: RefPtr<Self>, global_object: &JSGlobalObject) -> JSValue {
+        self.wrap(global_object).to_js()
+    }
+
+    /// As `to_js`, for code that goes on to use the struct.
+    pub(crate) fn wrap(
+        self: RefPtr<Self>,
+        global_object: &JSGlobalObject,
+    ) -> bun_jsc::WrapperGuard<'_, Self> {
+        self.calculate_estimated_byte_size();
+        let this = js::wrap(self, global_object);
+        this.set_js_ref_weak();
 
         this.check_body_stream_ref(global_object);
-        // The wrapper has held this ref since `js::to_js`.
-        let _ = this.into_raw();
-        js_value
+        this
     }
 
     #[inline]
@@ -745,7 +751,7 @@ impl Response {
         self.throw_if_body_unusable(global_this)?;
         let cloned = self.clone(&cx)?;
 
-        let js_wrapper = Response::to_js(cloned, global_this);
+        let js_wrapper = cloned.to_js(global_this);
         self.sync_cloned_body_stream_caches(this_value.to_js(), js_wrapper, global_this);
         Ok(js_wrapper)
     }
@@ -764,10 +770,6 @@ impl Response {
 
     pub(crate) fn clone(&self, cx: &bun_jsc::JsThread<'_>) -> JsResult<RefPtr<Response>> {
         Ok(RefPtr::new(self.clone_value(cx)?))
-    }
-
-    pub(crate) fn finalize(&self) {
-        self.js_ref.with_mut(|r| r.finalize());
     }
 
     pub(crate) fn construct_json(cx: &mut JsScope<'_>, args: &[JsLocal<'_>]) -> JsResult<JSValue> {
@@ -816,7 +818,7 @@ impl Response {
             &StringView::ascii(json_mime.value.as_ref()),
             global_this,
         )?;
-        Ok(Response::to_js(RefPtr::new(response), global_this))
+        Ok(RefPtr::new(response).to_js(global_this))
     }
 
     /// `construct_json` on a value and the members of a literal. The value is serialized before the members are taken.
@@ -842,7 +844,7 @@ impl Response {
             &StringView::ascii(bun_http_types::MimeType::JSON.value.as_ref()),
             global_this,
         )?;
-        Ok(Response::to_js(RefPtr::new(response), global_this))
+        Ok(RefPtr::new(response).to_js(global_this))
     }
 
     #[inline(always)]
@@ -932,7 +934,7 @@ impl Response {
         // The JS string's own WTF string (no re-encode), same as `Headers.prototype.set`.
         let location = if href.is_empty() { &url_string } else { &href };
         headers.put(HTTPHeaderName::Location, location, global_this)?;
-        Ok(Response::to_js(RefPtr::new(response), global_this))
+        Ok(RefPtr::new(response).to_js(global_this))
     }
 
     pub(crate) fn error(cx: &mut JsScope<'_>) -> JSValue {
@@ -946,7 +948,7 @@ impl Response {
             ..Default::default()
         });
 
-        Response::to_js(response, global_this)
+        response.to_js(global_this)
     }
 
     pub(crate) fn constructor<'a>(
@@ -956,10 +958,9 @@ impl Response {
         init: JsLocal<'a>,
     ) -> JsResult<JsWrapper<'a, Self>> {
         let response = Self::construct_into(cx.global(), body.to_js(), init.to_js())?;
-        let this = response.this_ptr();
         let this_value = structure.create(&cx.heap, response);
-        this.js_ref.set(JsRef::init_weak(this_value.to_js()));
-        this.check_body_stream_ref(cx.global());
+        this_value.set_js_ref_weak();
+        Self::wrapped_by(this_value).check_body_stream_ref(cx.global());
         Ok(this_value)
     }
 
@@ -1096,7 +1097,7 @@ impl Response {
         }
         let init = Init::from_parts(global_this, parts)?;
         let response = Self::from_body_and_init(global_this, body, init)?;
-        Ok(Response::to_js(response, global_this))
+        Ok(response.to_js(global_this))
     }
 }
 

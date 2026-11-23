@@ -2,7 +2,8 @@ use crate::mal_prelude::*;
 use bun_ast::Source;
 use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags, import_record};
 use bun_collections::{HashMap, VecExt};
-use bun_core::FeatureFlags;
+use bun_core::{FeatureFlags, strings};
+use bun_resolver::package_json::Package;
 
 use crate::bundled_ast;
 use crate::options::{self, Format, Loader};
@@ -38,6 +39,22 @@ impl From<ScanImportsAndExportsError> for crate::linker_context_mod::LinkError {
             ScanImportsAndExportsError::ImportResolutionFailed => LinkError::ImportResolutionFailed,
         }
     }
+}
+
+/// Unlike `import`, `require()` does not read `\` as `/` everywhere the bundle may run.
+fn specifier_for_require<'a>(specifier: &'a [u8], arena: &'a bun_alloc::Arena) -> &'a [u8] {
+    let end = strings::index_of_char_usize(specifier, b'?').unwrap_or(specifier.len());
+    let name = Package::parse_name(specifier).unwrap_or_default();
+    // An absolute path, a key of package.json "imports", the name of a package and a URL stay.
+    if matches!(name, [] | [b'#', ..])
+        || strings::contains_any(name, b"\\:")
+        || !strings::contains_char(&specifier[..end], b'\\')
+    {
+        return specifier;
+    }
+    let text = arena.alloc_slice_copy(specifier);
+    strings::replace_char_in_place(&mut text[..end], b'\\', b'/');
+    text
 }
 
 pub(crate) fn scan_imports_and_exports(
@@ -1047,6 +1064,13 @@ pub(crate) fn scan_imports_and_exports(
                                 runtime_require_uses += 1;
                             }
 
+                            let record = &mut ast.import_records[id].as_mut_slice()
+                                [import_record_index as usize];
+                            if kind == ImportKind::Stmt && record.path.text == record.original_path
+                            {
+                                record.path.text = specifier_for_require(record.path.text, arena);
+                            }
+
                             // A split `require()` whose target is CommonJS at link
                             // time (for example a lifted `module.exports = require()`
                             // file the linker wrapped again): the chunk exports only
@@ -1630,6 +1654,7 @@ mod __css_validation {
     use crate::bun_css::{BundlerStyleSheet, PropertyIdTag};
     use bun_ast::Log;
     use bun_collections::{ArrayHashMap, StringArrayHashMap};
+    use strum::VariantArray as _;
 
     pub(super) fn validate_css_import_composes<'bump>(
         symbols: &symbol::Map,
@@ -1929,18 +1954,7 @@ mod __css_validation {
                 // Warn about cross-file composition with the same CSS properties
                 let mut iter = property_usage.bitset.iter_set();
                 while let Some(property_tag) = iter.next() {
-                    let property_id_tag: PropertyIdTag =
-                        // SAFETY: `PropertyBitset` is only ever populated via
-                        // `bitset.set(tag as u16 as usize)` where `tag: PropertyIdTag`
-                        // (see `bun_css::fill_property_bit_set`), so every set index is a
-                        // valid `#[repr(u16)]` discriminant. `PropertyIdTag` lives in
-                        // `bun_css` (generated) and exposes no `from_repr`; once it does,
-                        // replace this transmute with that accessor.
-                        unsafe {
-                            core::mem::transmute::<u16, PropertyIdTag>(
-                                u16::try_from(property_tag).expect("int cast"),
-                            )
-                        };
+                    let property_id_tag = PropertyIdTag::VARIANTS[property_tag];
                     debug_assert!(property_id_tag != PropertyIdTag::Custom);
                     debug_assert!(property_id_tag != PropertyIdTag::Unparsed);
                     self.add_property_or_warn(

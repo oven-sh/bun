@@ -1,3 +1,4 @@
+use crate::vm_handle::KeepAliveTicket;
 use crate::{JSGlobalObject, JsResult};
 use bun_event_loop::{TaskTag, Taskable, task_tag};
 use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
@@ -61,7 +62,7 @@ impl EventLoopTaskNoContext {
 #[repr(C)]
 pub struct ConcurrentCppTask {
     pub(crate) cpp_task: *mut EventLoopTaskNoContext,
-    pub(crate) ticket: crate::Ticket,
+    _ticket: KeepAliveTicket,
     pub(crate) workpool_task: WorkPoolTask,
 }
 
@@ -70,13 +71,9 @@ bun_threading::owned_task!(ConcurrentCppTask, workpool_task);
 impl ConcurrentCppTask {
     #[allow(clippy::boxed_local)] // `owned_task!`'s required signature
     fn run_owned(self: Box<Self>) {
-        let ConcurrentCppTask {
-            cpp_task, ticket, ..
-        } = *self;
         // SAFETY: `cpp_task` is the valid C++ handle stored by `ConcurrentCppTask__createAndRun`;
         // `run` consumes it here.
-        unsafe { EventLoopTaskNoContext::run(cpp_task) };
-        ticket.unref_keep_alive();
+        unsafe { EventLoopTaskNoContext::run(self.cpp_task) };
     }
 }
 
@@ -87,12 +84,9 @@ extern "C" fn ConcurrentCppTask__createAndRun(
     cpp_task: *mut EventLoopTaskNoContext,
 ) {
     crate::mark_binding!();
-    let vm = global.bun_vm();
-    vm.event_loop().ref_keep_alive();
-    let ticket = vm.ticket();
     WorkPool::schedule_new(ConcurrentCppTask {
         cpp_task,
-        ticket,
+        _ticket: global.bun_vm().keep_alive_ticket(),
         workpool_task: WorkPoolTask::default(),
     });
 }

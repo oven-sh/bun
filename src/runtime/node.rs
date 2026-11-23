@@ -16,7 +16,7 @@ pub(crate) mod assert {
 #[path = "node/types.rs"]
 pub(crate) mod types;
 pub(crate) use types::{
-    BlobOrStringOrBuffer, Dirent, Encoding, FileBlobs, PathLike, PathOrBlob, PathOrFileDescriptor,
+    BlobOrStringOrBuffer, Dirent, Encoding, PathLike, PathOrBlob, PathOrFileDescriptor,
     StringObjects, StringOrBuffer, ThreadIsolated,
 };
 
@@ -118,6 +118,9 @@ pub(crate) mod quic;
 
 #[path = "node/node_http_binding.rs"]
 pub(crate) mod node_http_binding;
+
+#[path = "node/node_http_parser.rs"]
+pub(crate) mod node_http_parser;
 
 #[path = "node/node_util_binding.rs"]
 pub(crate) mod node_util_binding;

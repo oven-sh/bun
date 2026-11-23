@@ -17,6 +17,9 @@ use crate::{
 
 #[path = "bindgen/extern_types.rs"]
 pub mod extern_types;
+#[path = "bindgen/reg_exp.rs"]
+mod reg_exp;
+pub use reg_exp::{Captures, JsRegExp};
 
 /// Makes `'a` invariant, so two calls' lifetimes never unify.
 type InvariantLifetime<'a> = PhantomData<fn(&'a ()) -> &'a ()>;
@@ -84,6 +87,12 @@ impl<'a> JsHeap<'a> {
             .report_extra_memory_allocated(owner.0, size);
     }
 
+    /// For a loop that can take long. `Err` once a timeout or `worker.terminate()` asks the script to stop.
+    #[inline]
+    pub fn check_termination(&self) -> Result<'a, ()> {
+        crate::call_check_slow(self.global_object(), || ()).map_err(Error::pending)
+    }
+
     /// An array of what `convert`, a function of [`to_js`], makes of each item.
     #[inline]
     pub fn create_array<I: IntoIterator>(
@@ -144,6 +153,29 @@ impl<'a> JsHeap<'a> {
             .ok_or_else(|| self.memory_allocation_failed())
     }
 
+    #[inline]
+    pub fn create_string(&self, string: bun_core::String) -> Result<'a, JsLocal<'a, JSString>> {
+        JsLocal::from_js_result(crate::StringJsc::into_js(string, self.global_object()))
+    }
+
+    /// A string with a copy of `text`.
+    #[inline]
+    pub fn try_create_string(
+        &self,
+        text: bun_core::EncodedSlice<'_>,
+    ) -> core::result::Result<JsLocal<'a, JSString>, bun_alloc::AllocError> {
+        if !text.is_16bit() && !text.is_utf8() && text.len <= JSString::MAX_LENGTH {
+            return self
+                .try_copy_latin1(text.slice())
+                .ok_or(bun_alloc::AllocError);
+        }
+        let string = extern_types::Bun__Bindgen__tryCopyString(self.global_object(), &text);
+        if string.is_empty() {
+            return Err(bun_alloc::AllocError);
+        }
+        Ok(JsLocal::from_raw(string))
+    }
+
     /// At most [`JSString::MAX_LENGTH`] characters. `None` when they cannot be allocated.
     #[inline]
     fn try_copy_latin1(&self, latin1: &[u8]) -> Option<JsLocal<'a, JSString>> {
@@ -194,6 +226,25 @@ impl<'a> JsHeap<'a> {
     #[inline]
     pub fn create_empty_object(&self) -> JsLocal<'a, JSObject> {
         JsLocal::from_raw(JSValue::create_empty_object(self.global_object(), 0))
+    }
+
+    /// An object with these properties. A key that comes again keeps its place and takes the new value.
+    #[inline]
+    pub fn create_object<'key>(
+        &self,
+        properties: impl IntoIterator<Item = Result<'a, (PropertyKey<'key>, JsLocal<'a>)>>,
+    ) -> Result<'a, JsLocal<'a, JSObject>> {
+        let global = self.global_object();
+        let object = self.create_empty_object();
+        for property in properties {
+            match property? {
+                (PropertyKey::Index(index), value) => object.0.put_index(global, index, value.0)?,
+                (PropertyKey::Name(name), value) => {
+                    object.0.put_may_be_index(global, name, value.0)?
+                }
+            }
+        }
+        Ok(object)
     }
 
     /// A `Uint8Array` whose bytes are whatever the allocator left there.
@@ -256,6 +307,12 @@ impl<'a> JsHeap<'a> {
         Error::unthrown(self.global_object().create_range_error_instance(args))
     }
 
+    /// As [`error`](Self::error), a `SyntaxError`.
+    #[cold]
+    pub fn syntax_error(&self, args: core::fmt::Arguments<'_>) -> Error<'a> {
+        Error::unthrown(self.global_object().create_syntax_error_instance(args))
+    }
+
     /// As [`error`](Self::error), with a `code`, which also picks the class.
     #[cold]
     pub fn error_with_code(&self, code: ErrorCode, args: core::fmt::Arguments<'_>) -> Error<'a> {
@@ -279,6 +336,13 @@ impl<'a> JsHeap<'a> {
     pub fn memory_allocation_failed(&self) -> Error<'a> {
         Error::unthrown(self.global_object().create_memory_allocation_failed_error())
     }
+}
+
+/// For [`JsHeap::create_object`].
+#[derive(Clone, Copy)]
+pub enum PropertyKey<'key> {
+    Index(u32),
+    Name(&'key bun_core::String),
 }
 
 impl<'a> JsScope<'a> {
@@ -752,15 +816,15 @@ impl<'a> JsLocal<'a, BufferSource> {
 }
 
 /// # Safety
-/// `wrapped` is the `T` that a cell wraps, and something holds that cell for the call `heap` belongs to.
+/// `wrapped` is the ref that a cell holds, or a copy of it, and something holds that cell for the call `heap` belongs to.
 #[doc(hidden)]
 #[inline(always)]
-pub unsafe fn class_ref_from_extern<'a, T: crate::JsClass>(
-    wrapped: *mut c_void,
+pub unsafe fn class_ref_from_extern<'a, T: bun_ptr::AnyRefCounted>(
+    wrapped: &'a *mut c_void,
     _: &JsHeap<'a>,
-) -> &'a T {
-    // SAFETY: forwarded.
-    unsafe { &*wrapped.cast::<T>() }
+) -> &'a bun_ptr::RefPtr<T> {
+    // SAFETY: forwarded. `RefPtr` is a transparent pointer.
+    unsafe { &*core::ptr::from_ref(wrapped).cast() }
 }
 
 /// `b.bytes` with `held: "handle"`, for a function that can run JavaScript, which can detach, resize or free a buffer.
@@ -1095,6 +1159,13 @@ impl<'a, T> JsWrapper<'a, T> {
         JsWrapper(cell, PhantomData, PhantomData)
     }
 
+    /// SAFETY: `T` is `refCounted`, and the object has its pointer at `offset`.
+    #[doc(hidden)]
+    pub unsafe fn wrapped_at(self, offset: usize) -> &'a T {
+        // SAFETY: forwarded. The object holds a ref.
+        unsafe { self.0.byte_add(offset).cast::<&'a T>().read() }
+    }
+
     #[inline(always)]
     pub fn as_value(self) -> JsLocal<'a, JSObject> {
         JsLocal::from_raw(self.to_js())
@@ -1103,6 +1174,13 @@ impl<'a, T> JsWrapper<'a, T> {
     #[inline(always)]
     pub fn to_js(self) -> JSValue {
         JSValue::from_cell(self.0.as_ptr())
+    }
+
+    /// `heap`, to allocate with the global object of the wrapper's class. The function that was called can be another realm's.
+    #[inline]
+    pub fn realm<'heap>(self, _: &'heap JsHeap<'a>) -> &'heap JsHeap<'a> {
+        // SAFETY: a `JsHeap` is a global object, and every structure that the cell takes holds this one.
+        unsafe { &*extern_types::Bun__Bindgen__globalObjectOf(self.0.as_ptr()).cast() }
     }
 }
 
@@ -1295,7 +1373,7 @@ pub mod to_js {
 
     #[inline]
     pub fn string<'a>(heap: &JsHeap<'a>, value: bun_core::String) -> Result<'a, JsLocal<'a>> {
-        JsLocal::from_js_result(crate::StringJsc::into_js(value, heap.global_object()))
+        heap.create_string(value).map(JsLocal::as_value)
     }
 
     #[inline]
@@ -1495,22 +1573,22 @@ pub fn hold_cached_to_declared_type(
     JSValue::ZERO
 }
 
-/// As [`host_fn_return`], for the constructor of a `refCounted` class: null if it failed.
+/// As [`host_fn_return`], for the constructor of a `refCounted` class: `None` if it failed.
 #[doc(hidden)]
 #[inline(always)]
-pub fn host_fn_construct_return<'a, T, E: IntoError<'a>>(
+pub fn host_fn_construct_return<'a, T: bun_ptr::AnyRefCounted, E: IntoError<'a>>(
     cx: &mut JsScope<'a>,
-    result: core::result::Result<*mut T, E>,
-) -> *mut c_void {
-    let wrapped: *mut c_void = match result {
-        Ok(wrapped) => wrapped.cast(),
+    result: core::result::Result<bun_ptr::RefPtr<T>, E>,
+) -> Option<bun_ptr::RefPtr<T>> {
+    let wrapped = match result {
+        Ok(wrapped) => Some(wrapped),
         Err(error) => {
             error.into_error(&cx.heap).into_host_fn_return(cx);
-            core::ptr::null_mut()
+            None
         }
     };
     debug_assert!(
-        cx.heap.exception_presence_matches(wrapped.is_null()),
+        cx.heap.exception_presence_matches(wrapped.is_none()),
         "a constructor fails exactly when an exception is pending",
     );
     wrapped

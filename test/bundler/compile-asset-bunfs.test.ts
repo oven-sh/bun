@@ -1,7 +1,7 @@
 // https://github.com/oven-sh/bun/issues/15734
 import { describe, expect, test } from "bun:test";
 import { writeFileSync } from "fs";
-import { bunEnv, bunExe, isLinux, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, substDrive, tempDir } from "harness";
 import { join, sep } from "path";
 
 // `bun build --compile` copies + rewrites the whole bun binary (~1GB under
@@ -384,6 +384,37 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
     TIMEOUT,
   );
 
+  test.skipIf(!isWindows)(
+    "node:fs reads what is named with [dir] on a drive that stands for a directory",
+    async () => {
+      using dir = tempDir("bunfs-subst-drive", {
+        "w/src/index.ts": /* ts */ `
+          import fs from "node:fs";
+          import beside from "./beside.txt" with { type: "file" };
+          import above from "../above.txt" with { type: "file" };
+          const { path } = await import("../in-memory/path.js");
+          console.log(fs.readFileSync(beside, "utf8"), fs.readFileSync(above, "utf8"), fs.statSync(path).isFile());
+        `,
+        "w/src/beside.txt": "beside",
+        "w/above.txt": "above",
+      });
+      {
+        using drive = substDrive(String(dir));
+        const inMemory = join(drive.root, "w", "in-memory", "path.js");
+        await Bun.build({
+          entrypoints: [join(drive.root, "w", "src", "index.ts"), inMemory],
+          files: { [inMemory]: `export const { path } = import.meta;` },
+          root: join(drive.root, "w", "src"),
+          naming: { asset: "[dir]/[name].[ext]" },
+          splitting: true,
+          compile: { outfile: join(String(dir), "app") },
+        });
+      }
+      expect(await run(String(dir))).toEqual({ stdout: "beside above true\n", stderr: "", code: 0 });
+    },
+    TIMEOUT,
+  );
+
   test(
     "--asset errors when its basename matches --outfile",
     async () => {
@@ -418,6 +449,10 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
           [
             ["build", "--compile", "./index.ts", "--outfile", "app", "--asset", "/dev/null"],
             "is not a regular file or directory",
+          ] as const,
+          [
+            ["build", "--compile", "./index.ts", "--outfile", "app", "--asset", "./public\\"],
+            "failed to read asset",
           ] as const,
         ]),
   ])(

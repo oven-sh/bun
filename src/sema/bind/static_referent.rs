@@ -113,6 +113,10 @@ pub trait ReferentContext<'s> {
 
     fn loaded_value(&self, file: FileId, call: ExprId) -> Option<LoadedValue<Self::Module>>;
 
+    fn may_replace_evaluators(&self) -> bool {
+        false
+    }
+
     /// What the body stores as its exports, or under `name` of them.
     fn inner_export(&self, _file: FileId, _body: FnId, _name: Option<Atom>) -> Option<ExprId> {
         None

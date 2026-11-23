@@ -4,7 +4,7 @@
 //! spawn/dispatch/shutdown mechanics.
 
 #[cfg(windows)]
-use core::ffi::c_void;
+use std::os::windows::io::OwnedHandle;
 
 #[cfg(unix)]
 use crate::api::bun::process::PosixStdio as Stdio;
@@ -12,7 +12,7 @@ use crate::api::bun::process::PosixStdio as Stdio;
 use crate::api::bun::process::SpawnResultExt as _;
 #[cfg(not(unix))]
 use crate::api::bun::process::WindowsStdio as Stdio;
-use crate::api::bun::process::{self as spawn, Process, Rusage, SpawnOptions, Status};
+use crate::api::bun::process::{self as spawn, Rusage, SpawnOptions, Status};
 use bun_core::{self, Output};
 use bun_io::max_buf::Kind;
 use bun_io::{BufferedReader, IoEvent, Owner, PollTag};
@@ -22,7 +22,6 @@ use bun_jsc::virtual_machine::VirtualMachine;
 use bun_spawn::RusageFields as _;
 
 use super::channel::Channel;
-use super::file_range::FileRange;
 use super::frame::{self, Frame};
 
 pub(crate) struct Worker {
@@ -39,41 +38,20 @@ pub(crate) struct Worker {
     pub(crate) out: BufferedReader,
     pub(crate) err: BufferedReader,
 
-    /// Index into `Coordinator.files` currently running on this worker.
-    pub(crate) inflight: Option<u32>,
-    /// Contiguous slice of `Coordinator.files` owned by this worker. `files`
-    /// is sorted lexicographically so adjacent indices share parent dirs (and
-    /// likely imports); each worker walks its range front-to-back. When the
-    /// range is empty the worker steals one file from the *end* of whichever
-    /// range has the most remaining — the end is furthest from that worker's
-    /// hot region.
-    pub(crate) range: FileRange,
-    /// Millisecond timestamp at the most recent dispatch; drives lazy
-    /// scale-up.
-    pub(crate) dispatched_at: i64,
     /// Worker stdout+stderr since the last `test_done`. Flushed atomically
     /// under the right file header so concurrent files don't interleave.
     pub(crate) captured: Vec<u8>,
     pub(crate) alive: bool,
-    /// Set when the process-exit notification arrives. Reaping waits for both
-    /// this and `ipc.done` so trailing IPC frames are decoded first.
-    pub(crate) exit_status: Option<Status>,
     /// Highest peak RSS among this slot's exited processes.
     pub(crate) peak_rss_mb: u32,
-    /// Set when this process sends `.ready`; reset before each respawn.
-    /// `inflight == None` with `!reached_ready` at reap distinguishes a
-    /// startup failure from a clean post-shutdown exit.
-    pub(crate) reached_ready: bool,
     /// Consecutive (re)spawns of this slot that exited before `.ready`;
     /// reset on `.ready`. Bounds the respawn loop in `reap_worker`.
     pub(crate) startup_failures: u8,
-    /// Only files that take over a gigabyte are left, and one of them runs.
-    pub(crate) waits_for_heavy_file_to_end: bool,
     /// `runner::first_loads` as of the last file that ran in this slot. The next process of the slot starts from there, as one process that ran all of them would.
     pub(crate) first_loads: Vec<u8>,
 }
 
-/// What `Worker::start` borrows from the `Coordinator`.
+/// What every `Worker::start` of a run needs.
 pub(crate) struct SpawnContext<'a> {
     pub(crate) vm: &'a VirtualMachine,
     pub(crate) cwd: &'a [u8],
@@ -83,7 +61,7 @@ pub(crate) struct SpawnContext<'a> {
     #[cfg_attr(windows, expect(dead_code))]
     pub(crate) compiled_program: Option<bun_sys::Fd>,
     #[cfg(windows)]
-    pub(crate) windows_job: Option<*mut c_void>,
+    pub(crate) windows_job: Option<&'a OwnedHandle>,
 }
 
 impl Worker {
@@ -122,7 +100,7 @@ impl Worker {
         self.err = BufferedReader::init();
     }
 
-    /// The caller counts the worker in `live_workers` on `Ok`.
+    /// On `Err` it has neither a process nor pipes.
     pub(crate) fn start(&mut self, coord: &SpawnContext<'_>) -> crate::Result<()> {
         debug_assert!(!self.alive);
 
@@ -184,9 +162,9 @@ impl Worker {
                 )),
             );
             for (reader, file) in [(&this.out, stdout), (&this.err, stderr)] {
-                if let Some(fd) = file.map(bun_sys::File::into_raw) {
+                if let Some(file) = file {
                     let _ = reader
-                        .start(this.event_loop.as_event_loop_ctx(), fd, true)
+                        .start(this.event_loop.as_event_loop_ctx(), file.into(), true)
                         .map_err(|_| crate::Error::PipeStartFailed)?;
                 }
             }
@@ -248,29 +226,26 @@ impl Worker {
             }
         }
 
-        let process = this.process.as_ref().expect("set above").this_ptr();
+        this.alive = true;
+        let worker = &raw mut **this;
+        let process = this.process.as_ref().expect("set above");
         #[cfg(windows)]
         {
             if let Some(job) = coord.windows_job {
                 if let Some(handle) = process.os_handle() {
-                    // SAFETY: FFI call; handles are valid (just spawned).
-                    unsafe {
-                        let _ = bun_sys::windows::AssignProcessToJobObject(job, handle);
-                    }
+                    let _ = bun_sys::windows::AssignProcessToJobObject(job, handle);
                 }
             }
         }
-        this.alive = true;
         // SAFETY: `this` is the live `Box<Worker>` slot in
         // `Coordinator.workers`; it outlives `process`.
         process.set_exit_handler(unsafe {
-            bun_spawn::ProcessExit::new(
-                bun_spawn::ProcessExitKind::TestParallelWorker,
-                &raw mut **this,
-            )
+            bun_spawn::ProcessExit::new(bun_spawn::ProcessExitKind::TestParallelWorker, worker)
         });
-        match Process::watch_or_reap(process) {
-            Ok(_) => {}
+        let mut rusage = bun_core::ffi::zeroed();
+        match process.watch_or_reap(&mut rusage) {
+            Ok(None) => {}
+            Ok(Some(exit)) => exit.dispatch(&rusage),
             Err(e) => {
                 // Resource cleanup is handled by the function-scope errdefer.
                 this.alive = false;
@@ -297,10 +272,9 @@ impl Worker {
         });
     }
 
-    pub(crate) fn on_process_exit(&mut self, status: Status, rusage: &Rusage) {
+    pub(crate) fn on_process_exit(&mut self, rusage: &Rusage) {
         self.alive = false;
         self.peak_rss_mb = (self.peak_rss_mb).max((rusage.maxrss() / (1024.0 * 1024.0)) as u32);
-        self.exit_status = Some(status);
     }
 
     /// The end of the channel can arrive ahead of the exit.
@@ -308,24 +282,31 @@ impl Worker {
         self.alive && !self.ipc.done.get()
     }
 
+    /// Lets go of the process once it has exited and all that it sent has been read.
+    pub(crate) fn take_exit(&mut self) -> Option<(bun_spawn::PidT, Status)> {
+        let process = self.process.as_ref()?;
+        let status = process.status().filter(|_| self.ipc.done.get())?;
+        let exit = (process.pid, status.clone());
+        self.process = None;
+        Some(exit)
+    }
+
     pub(crate) fn dispatch(
-        &mut self,
+        &self,
         f: &mut Frame,
-        file_idx: u32,
+        file_idx: usize,
         file: &[u8],
         is_growth_written: bool,
     ) {
         f.begin(frame::Kind::Run);
-        f.u32(file_idx);
+        f.u32(file_idx as u32);
         f.str(file);
         f.str(&self.first_loads);
         f.u32(u32::from(is_growth_written));
         self.ipc.send(f.finish());
-        self.inflight = Some(file_idx);
-        self.dispatched_at = bun_core::time::milli_timestamp();
     }
 
-    pub(crate) fn shutdown(&mut self, f: &mut Frame) {
+    pub(crate) fn shutdown(&self, f: &mut Frame) {
         f.begin(frame::Kind::Shutdown);
         self.ipc.send(f.finish());
         // Leave the channel open so the reader drains trailing
@@ -336,6 +317,6 @@ impl Worker {
 
 bun_spawn::link_impl_ProcessExit! {
     TestParallelWorker for Worker => |this| {
-        on_process_exit(status, rusage) => (*this).on_process_exit(status, rusage),
+        on_process_exit(_status, rusage) => (*this).on_process_exit(rusage),
     }
 }

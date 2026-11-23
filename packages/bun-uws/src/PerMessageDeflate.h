@@ -75,8 +75,8 @@ namespace uWS {
     };
 
     static inline CompressOptions compressOptionsFor(const PerMessageDeflateParams &params) {
-        /* zlib rejects an 8-bit window for raw deflate. A peer that negotiated 8 bits can still inflate
-         * 9-bit output, because zlib's match distances stay <= 512 - MIN_LOOKAHEAD = 250. npm ws on Node
+        /* There is no 8-bit window for raw deflate. A peer that negotiated 8 bits can still inflate
+         * 9-bit output, because match distances stay <= 512 - MIN_LOOKAHEAD = 250. npm ws on Node
          * does the same. */
         int deflateBits = std::clamp(params.serverMaxWindowBits, 9, 15);
         int compressor = deflateBits << 4 | (deflateBits - 7);
@@ -92,94 +92,69 @@ namespace uWS {
     }
 }
 
-#include <zlib.h>
 #include <memory>
-#include <string>
+#include <optional>
 #include <string_view>
-#include "libdeflate.h"
-#include "ReceiveBuffer.h"
 
 namespace uWS {
 
-#define LARGE_BUFFER_SIZE 1024 * 16 // todo: fix this
+/* src/http_jsc/permessage_deflate.rs */
+namespace zlib {
+
+struct Buffer;
+struct Deflater;
+struct Inflater;
+
+enum class InflateError : uint8_t { None, Corrupt, TooLarge, OutOfMemory };
+
+struct Output {
+    const char *bytes;
+    size_t length;
+    InflateError error;
+};
+
+extern "C" Buffer *Bun__DeflateBuffer__create();
+extern "C" void Bun__DeflateBuffer__destroy(Buffer *);
+extern "C" Deflater *Bun__Deflater__create(uint8_t windowBits, uint8_t memoryLevel);
+extern "C" void Bun__Deflater__destroy(Deflater *);
+extern "C" const char *Bun__Deflater__deflateMessage(Deflater *, Buffer *, const char *message, size_t *length, bool reset);
+extern "C" Inflater *Bun__Inflater__create(uint8_t windowBits);
+extern "C" void Bun__Inflater__destroy(Inflater *);
+extern "C" Output Bun__Inflater__inflateMessage(Inflater *, Buffer *, const char *payload, size_t length, size_t maxLength, bool reset);
+
+struct Destroy {
+    void operator()(Buffer *buffer) const { Bun__DeflateBuffer__destroy(buffer); }
+    void operator()(Deflater *deflater) const { Bun__Deflater__destroy(deflater); }
+    void operator()(Inflater *inflater) const { Bun__Inflater__destroy(inflater); }
+};
+
+}
 
 struct ZlibContext {
     /* Any returned data is valid until next same-class call.
      * We need to have two classes to allow inflation followed
      * by many deflations without modifying the inflation */
-    std::string dynamicDeflationBuffer;
-    ReceiveBuffer dynamicInflationBuffer;
-    const std::unique_ptr<char[]> deflationBuffer = std::make_unique_for_overwrite<char[]>(LARGE_BUFFER_SIZE);
-    const std::unique_ptr<char[]> inflationBuffer = std::make_unique_for_overwrite<char[]>(LARGE_BUFFER_SIZE);
-
-    struct DecompressorDeleter {
-        void operator()(libdeflate_decompressor *decompressor) const { libdeflate_free_decompressor(decompressor); }
-    };
-    const std::unique_ptr<libdeflate_decompressor, DecompressorDeleter> decompressor{libdeflate_alloc_decompressor()};
+    const std::unique_ptr<zlib::Buffer, zlib::Destroy> deflationBuffer{zlib::Bun__DeflateBuffer__create()};
+    const std::unique_ptr<zlib::Buffer, zlib::Destroy> inflationBuffer{zlib::Bun__DeflateBuffer__create()};
 };
 
 struct DeflationStream {
-    z_stream deflationStream = {};
+    /* Null if compression is disabled, or for want of memory */
+    const std::unique_ptr<zlib::Deflater, zlib::Destroy> deflater;
     const bool noContextTakeover;
 
-    DeflationStream(CompressOptions compressOptions) : noContextTakeover(compressOptions & COMPRESSOR_NO_CONTEXT_TAKEOVER) {
+    DeflationStream(CompressOptions compressOptions)
+        : deflater(zlib::Bun__Deflater__create((compressOptions & _COMPRESSOR_MASK) >> 4, compressOptions & 0xF))
+        , noContextTakeover(compressOptions & COMPRESSOR_NO_CONTEXT_TAKEOVER) {}
 
-        /* Sliding inflator should be about 44kb by default, less than compressor */
-
-        /* Memory usage is given by 2 ^ (windowBits + 2) + 2 ^ (memLevel + 9) */
-        int windowBits = -(int) ((compressOptions & _COMPRESSOR_MASK) >> 4), memLevel = compressOptions & 0xF;
-
-        //printf("windowBits: %d, memLevel: %d\n", windowBits, memLevel);
-
-        deflateInit2(&deflationStream, Z_DEFAULT_COMPRESSION, Z_DEFLATED, windowBits, memLevel, Z_DEFAULT_STRATEGY);
-    }
-
-    /* You must not deflate an empty string. */
-    std::string_view deflate(ZlibContext *zlibContext, std::string_view raw) {
-        /* Odd place to clear this one, fix */
-        zlibContext->dynamicDeflationBuffer.clear();
-
-        deflationStream.next_in = (Bytef *) raw.data();
-        deflationStream.avail_in = (unsigned int) raw.length();
-
-        /* This buffer size has to be at least 6 bytes for Z_SYNC_FLUSH to work */
-        const int DEFLATE_OUTPUT_CHUNK = LARGE_BUFFER_SIZE;
-
-        int err;
-        do {
-            deflationStream.next_out = (Bytef *) zlibContext->deflationBuffer.get();
-            deflationStream.avail_out = DEFLATE_OUTPUT_CHUNK;
-
-            err = ::deflate(&deflationStream, Z_SYNC_FLUSH);
-            if (Z_OK == err && deflationStream.avail_out == 0) {
-                zlibContext->dynamicDeflationBuffer.append(zlibContext->deflationBuffer.get(), DEFLATE_OUTPUT_CHUNK - deflationStream.avail_out);
-                continue;
-            } else {
-                break;
-            }
-        } while (true);
-
-        /* This must not change avail_out */
-        if (noContextTakeover) {
-            deflateReset(&deflationStream);
+    /* Without a result the message has to be sent as it is. */
+    std::optional<std::string_view> deflate(ZlibContext *zlibContext, std::string_view raw) {
+        size_t length = raw.length();
+        const char *bytes = deflater ? zlib::Bun__Deflater__deflateMessage(deflater.get(), zlibContext->deflationBuffer.get(), raw.data(), &length, noContextTakeover) : nullptr;
+        if (!bytes) {
+            return std::nullopt;
         }
-
-        if (zlibContext->dynamicDeflationBuffer.length()) {
-            zlibContext->dynamicDeflationBuffer.append(zlibContext->deflationBuffer.get(), DEFLATE_OUTPUT_CHUNK - deflationStream.avail_out);
-
-            return std::string_view((char *) zlibContext->dynamicDeflationBuffer.data(), zlibContext->dynamicDeflationBuffer.length() - 4);
-        }
-
-        /* Note: We will get an interger overflow resulting in heap buffer overflow if Z_BUF_ERROR is returned
-         * from passing 0 as avail_in. Therefore we must not deflate an empty string */
-        return {
-            zlibContext->deflationBuffer.get(),
-            DEFLATE_OUTPUT_CHUNK - deflationStream.avail_out - 4
-        };
-    }
-
-    ~DeflationStream() {
-        deflateEnd(&deflationStream);
+        return std::string_view(bytes, length);
     }
 };
 
@@ -191,117 +166,29 @@ struct InflateResult {
 };
 
 struct InflationStream {
-    z_stream inflationStream = {};
+    /* Null if decompression is disabled */
+    const std::unique_ptr<zlib::Inflater, zlib::Destroy> inflater;
 
-    InflationStream(CompressOptions compressOptions) {
-        inflateInit2(&inflationStream, -((compressOptions & _DECOMPRESSOR_MASK) >> 8));
-    }
-
-    ~InflationStream() {
-        inflateEnd(&inflationStream);
-    }
+    InflationStream(CompressOptions compressOptions)
+        : inflater(zlib::Bun__Inflater__create((compressOptions & _DECOMPRESSOR_MASK) >> 8)) {}
 
     /* Zero length inflates are possible and valid */
     InflateResult inflate(ZlibContext *zlibContext, std::string_view compressed, size_t maxPayloadLength, bool reset) {
-        /* The libdeflate fast path is stateless: it cannot resolve back-references into a
-         * previous message's sliding window, and whatever it inflates never reaches the zlib
-         * stream's window. Both are only correct without context takeover, i.e. when reset is set. */
-        if (reset) {
-            /* Try fast path first */
-            size_t written = 0;
-
-            /* We have to pad 9 bytes and restore those bytes when done since 9 is more than 6 of next WebSocket message */
-            char tmp[9];
-            memcpy(tmp, (char *) compressed.data() + compressed.length(), 9);
-            memcpy((char *) compressed.data() + compressed.length(), "\x00\x00\xff\xff\x01\x00\x00\xff\xff", 9);
-            libdeflate_result res = libdeflate_deflate_decompress(zlibContext->decompressor.get(), compressed.data(), compressed.length() + 9, zlibContext->inflationBuffer.get(), LARGE_BUFFER_SIZE, &written);
-            memcpy((char *) compressed.data() + compressed.length(), tmp, 9);
-
-            if (res == 0) {
-                /* Fast path wins */
-                if (written > maxPayloadLength) {
-                    return {{}, 1009};
-                }
-                return {{zlibContext->inflationBuffer.get(), written}, 0};
-            }
-        }
-
-        /* Save off the bytes we're about to overwrite */
-        char* tailLocation = (char*)compressed.data() + compressed.length();
-        char preTailBytes[4];
-        memcpy(preTailBytes, tailLocation, 4);
-
-        /* Append tail to chunk */
-        unsigned char tail[4] = {0x00, 0x00, 0xff, 0xff};
-        memcpy(tailLocation, tail, 4);
-        compressed = {compressed.data(), compressed.length() + 4};
-
-        /* We clear this one here, could be done better. clear() keeps the allocation for the next message. */
-        zlibContext->dynamicInflationBuffer.clear();
-
-        inflationStream.next_in = (Bytef *) compressed.data();
-        inflationStream.avail_in = (unsigned int) compressed.length();
-
-        int err;
-        bool outOfMemory = false;
-        do {
-            inflationStream.next_out = (Bytef *) zlibContext->inflationBuffer.get();
-            inflationStream.avail_out = LARGE_BUFFER_SIZE;
-
-            err = ::inflate(&inflationStream, Z_SYNC_FLUSH);
-            if (err == Z_STREAM_END) {
-                /* RFC 7692 7.2.3.4: a message may end with a BFINAL=1 block. The next message starts a new stream. */
-                inflateReset(&inflationStream);
-                inflationStream.avail_in = 0;
-                err = Z_OK;
-            }
-            if (err == Z_OK && inflationStream.avail_out) {
-                break;
-            }
-
-            /* Don't return here. The shared stream still has to be reset below. */
-            if (!zlibContext->dynamicInflationBuffer.tryAppend(zlibContext->inflationBuffer.get(), LARGE_BUFFER_SIZE - inflationStream.avail_out)) {
-                outOfMemory = true;
-                break;
-            }
-
-        } while (inflationStream.avail_out == 0 && zlibContext->dynamicInflationBuffer.length() <= maxPayloadLength);
-
-        if (reset) {
-            inflateReset(&inflationStream);
-        }
-
-        /* Restore the bytes we used for the tail */
-        memcpy(tailLocation, preTailBytes, 4);
-
-        if (outOfMemory) {
-            /* Every connection on this loop shares this buffer, so free it. */
-            zlibContext->dynamicInflationBuffer.release();
-            return {{}, 1011};
-        }
-
-        if (err != Z_BUF_ERROR && err != Z_OK) {
+        if (!inflater) {
             return {{}, 1007};
         }
-
-        if (zlibContext->dynamicInflationBuffer.length() > maxPayloadLength) {
+        zlib::Output output = zlib::Bun__Inflater__inflateMessage(inflater.get(), zlibContext->inflationBuffer.get(), compressed.data(), compressed.length(), maxPayloadLength, reset);
+        switch (output.error) {
+        case zlib::InflateError::None:
+            return {{output.bytes, output.length}, 0};
+        case zlib::InflateError::TooLarge:
             return {{}, 1009};
+        case zlib::InflateError::OutOfMemory:
+            return {{}, 1011};
+        case zlib::InflateError::Corrupt:
+            break;
         }
-
-        std::string_view inflated(zlibContext->inflationBuffer.get(), LARGE_BUFFER_SIZE - inflationStream.avail_out);
-        if (zlibContext->dynamicInflationBuffer.length()) {
-            if (!zlibContext->dynamicInflationBuffer.tryAppend(inflated.data(), inflated.length())) {
-                zlibContext->dynamicInflationBuffer.release();
-                return {{}, 1011};
-            }
-            inflated = {zlibContext->dynamicInflationBuffer.data(), zlibContext->dynamicInflationBuffer.length()};
-        }
-
-        if (inflated.length() > maxPayloadLength) {
-            return {{}, 1009};
-        }
-
-        return {inflated, 0};
+        return {{}, 1007};
     }
 
 };

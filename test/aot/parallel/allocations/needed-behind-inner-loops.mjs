@@ -2278,6 +2278,41 @@ async function f99(x, n) {
   return r;
 }
 await runLater("f99", () => f99(2, 4));
+function f100(x, n) {
+  let r = 1;
+  for (let k = 0; k < 6; k++) {
+    const b = () => x + k;
+    let s = list.reduce((a, v) => a + v, 0);
+    if (k === 2) {
+      const t2 = b;
+      for (let j = 0; j < 2; j++)
+        r = mix(r, take(t2) + s);
+    }
+  }
+  return r;
+}
+run("f100", () => f100(2, 4));
+run("f100b", () => f100(3, 0));
+class K_f101 {
+  m(x, n) {
+    let r = 1;
+    for (let k = 0; k < 6; k++) {
+      const b = [() => k, { x }];
+      let s = 0;
+      for (const v of list)
+        s += v;
+      if (s > 3 && same(b, b))
+        r = mix(r, 5);
+      if (k === 2) {
+        const t2 = b;
+        for (let j = 0; j < 2; j++)
+          r = mix(r, take(t2));
+      }
+    }
+    return r;
+  }
+}
+run("f101", () => new K_f101().m(2, 4));
 console.log(total);
 
 export {};

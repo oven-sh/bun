@@ -99,11 +99,11 @@ afterAll(() => {
   root?.[Symbol.dispose]();
 });
 
-async function diff(args: string[], cwd = String(root)) {
+async function diff(args: string[], cwd = String(root), env = {}) {
   await using p = Bun.spawn({
     cmd: [bunExe(), "pm", "diff", ...args],
     cwd,
-    env: { ...bunEnv, NPM_CONFIG_REGISTRY: registry, BUN_CONFIG_REGISTRY: registry, NO_COLOR: "1" },
+    env: { ...bunEnv, NPM_CONFIG_REGISTRY: registry, BUN_CONFIG_REGISTRY: registry, NO_COLOR: "1", ...env },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -1764,6 +1764,28 @@ describe.concurrent("bun pm diff (hostile and awkward inputs)", () => {
     expect(mixed.exitCode).toBe(0);
   });
 
+  test("a trailing slash makes ./x.tgz/ a folder", async () => {
+    using dir = tempDir("pm-diff-tgz-folder", { "one.tgz": v1, "two": { ...v1, "index.js": v2["index.js"] } });
+
+    const { stdout, stderr, exitCode } = await diff(["./one.tgz/", "./two", "--name-only"], String(dir));
+
+    expect(stderr).toBe("");
+    expect(stdout.split("\n").filter(l => /^[AMD] /.test(l))).toEqual(["M index.js"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test.each(["..\\one", "~/two\\..\\one"])("a backslash separates in %s", async side => {
+    const two = { ...v1, "index.js": v2["index.js"] };
+    using dir = tempDir("pm-diff-backslash", { one: v1, two: { ...two, ...(isWindows ? {} : { "..\\one": two }) } });
+
+    const home = { HOME: String(dir), USERPROFILE: String(dir) };
+    const { stdout, stderr, exitCode } = await diff([side, ".", "--name-only"], join(String(dir), "two"), home);
+
+    expect(stderr).toBe("");
+    expect(stdout.split("\n")).toContain("M index.js");
+    expect(exitCode).toBe(0);
+  });
+
   test("a tarball entry larger than 64 MiB is read whole", async () => {
     // The tarball reader used to reject any entry over 64 MiB as "invalid archive entry size". blob.bin is the same
     // bytes on both sides, so a tarball read that is short, skips the entry, or scrambles it shows up as a blob.bin line.
@@ -2307,6 +2329,50 @@ describe.concurrent("bun pm diff (engine invariants)", () => {
     expect(text).not.toContain("empty.js");
     expect(exitCode).toBe(0);
   }, 30_000);
+
+  const times = (text: string, n: number) => Buffer.alloc(text.length * n, text).toString();
+
+  // Under two seconds in a release build. With a pass over all removals for each join it takes minutes.
+  test.skipIf(isDebug).each([
+    [
+      "left",
+      () => times("c\nd\n", 200_000) + times("c\n", 200_000) + "e\np\n",
+      () => times("c\n", 200_000) + "e\nq\n",
+      "+1 -400001",
+    ],
+    [
+      "right",
+      () => "y\nz\n" + times("c\n", 800_000) + "w\n" + times("c\n", 800_000) + times("d\nc\n", 400_001),
+      () => "z\ny\n" + times("c\n", 800_000) + "w\n" + times("c\n", 400_001),
+      "+1 -1200002",
+    ],
+  ])(
+    "a removal that slides %s along many others joins them",
+    async (_, a, b, totals) => {
+      const { text, exitCode } = await pretty({ "a/data.txt": a(), "b/data.txt": b() }, ["--raw", "--stat"]);
+      expect(text).toContain("\n1 file  " + totals);
+      expect(exitCode).toBe(0);
+    },
+    15_000,
+  );
+
+  // Takes about a second in a release build.
+  test.skipIf(isDebug)(
+    "a long run of equal lines that only the reverse search reaches stays unchanged",
+    async () => {
+      const { text, exitCode } = await pretty(
+        {
+          "a/data.txt": times("c\n", 10_000) + times("x\n", 100_000) + "d\n",
+          "b/data.txt": "d\n" + times("x\n", 100_000) + "c\n",
+        },
+        ["--raw", "--stat"],
+      );
+      const added = Number(text.match(/\n1 file  \+(\d+) -\d+\n$/)?.[1]);
+      expect(added).toBeLessThan(100);
+      expect(exitCode).toBe(0);
+    },
+    30_000,
+  );
 
   test("un-minified display: a bare `if(x)a(),b()` body splits like a block one; minified CSS/JSON keep plain gutters", async () => {
     const pad = "/*" + Buffer.alloc(300, "x").toString() + "*/";

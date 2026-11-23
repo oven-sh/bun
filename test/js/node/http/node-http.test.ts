@@ -4008,6 +4008,41 @@ it("clientError after a kept-alive request reuses the connection's socket and un
   }
 });
 
+it.each([
+  ["100-Continue", "checkContinue"],
+  ["a, 1, 100-continue;b", "checkContinue"],
+  [Buffer.alloc(40, "1 ").toString() + Buffer.alloc(40, "a ") + "100-continue", "checkContinue"],
+  ["1100-continue", "checkExpectation"],
+  ["100-continue_", "checkExpectation"],
+  ["100-continu", "checkExpectation"],
+  ["\x11\x10\x10-continue", "checkExpectation"],
+])("Expect: %j emits %s", async (value, expected) => {
+  await using server = createServer({ insecureHTTPParser: true });
+  for (const event of ["checkContinue", "checkExpectation"]) server.on(event, (req, res) => res.end(event));
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const socket = connect((server.address() as AddressInfo).port, "127.0.0.1");
+  let received = "";
+  socket.on("data", chunk => (received += chunk));
+  socket.write(`GET / HTTP/1.1\r\nHost: localhost\r\nExpect: ${value}\r\nConnection: close\r\n\r\n`);
+  await once(socket, "close");
+  expect(received).toContain(expected);
+});
+
+it("rawPacket of 'clientError' has the method of a dispatched request as it was sent", async () => {
+  const payload = "POST / HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n\r\nzz\r\n";
+  await using server = createServer(req => req.resume());
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const errors: unknown[] = [];
+  server.on("clientError", (error: any, serverSocket) => {
+    errors.push({ code: error.code, rawPacket: String(error.rawPacket) });
+    serverSocket.end();
+  });
+  const socket = connect((server.address() as AddressInfo).port, "127.0.0.1");
+  socket.end(payload);
+  await once(socket.resume(), "close");
+  expect(errors).toEqual([{ code: "HPE_INVALID_CHUNK_SIZE", rawPacket: payload }]);
+});
+
 describe("malformed request line reaches 'connection' and 'clientError' with a writable socket", () => {
   it.each([
     ["method token followed by CRLF", "BOGUS\r\n\r\n"],
@@ -4016,6 +4051,7 @@ describe("malformed request line reaches 'connection' and 'clientError' with a w
     ["CONNECT-prefixed token followed by CRLF", "CONNECTX\r\n\r\n"],
     ["single method char followed by CRLF", "G\r\n\r\n"],
     ["single method char with full line", "G / HTTP/1.1\r\nHost: localhost\r\n\r\n"],
+    ["byte above 0x7f in the method", "G\u00c9T / HTTP/1.1\r\nHost: localhost\r\n\r\n"],
   ])("%s", async (_name, payload) => {
     const events: string[] = [];
     const { promise: errored, resolve: onErrored, reject: onErroredFail } = Promise.withResolvers<void>();

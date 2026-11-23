@@ -282,7 +282,7 @@ export interface BundlerTestInput {
   /** if set to true or false, create or edit tsconfig.json to set compilerOptions.useDefineForClassFields */
   useDefineForClassFields?: boolean;
   sourceMap?: "inline" | "external" | "linked" | "none";
-  plugins?: BunPlugin[] | ((builder: PluginBuilder) => void | Promise<void>);
+  plugins?: BunPlugin<PluginBuilder>[] | ((builder: PluginBuilder) => void | Promise<void>);
   install?: string[];
   production?: boolean;
 

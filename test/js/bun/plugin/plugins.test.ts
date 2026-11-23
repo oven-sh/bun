@@ -820,7 +820,7 @@ it("builder methods return the builder only when called as methods", () => {
   });
 });
 
-it("the builder has the members that the types declare, and the types have no build.config in Bun.plugin()", async () => {
+it("the builder has the members that the types declare, and a shared plugin cannot read build.config unchecked", async () => {
   let members: string[] = [];
   plugin({
     name: "members of the builder",
@@ -851,12 +851,15 @@ type Declared = {
 }[keyof RuntimePluginBuilder];
 export const members: Record<Declared, true> = ${JSON.stringify(Object.fromEntries(members.map(name => [name, true])))};
 `,
-    "runtime.ts": `Bun.plugin({
-  name: "runtime",
+    "shared.ts": `import type { BunPlugin } from "bun";
+export const shared: BunPlugin = {
+  name: "shared",
   setup(build) {
     console.log(build.config.target);
   },
-});
+};
+Bun.plugin(shared);
+await Bun.build({ entrypoints: ["./entry.ts"], plugins: [shared] });
 `,
   });
   await using proc = Bun.spawn({
@@ -868,7 +871,7 @@ export const members: Record<Declared, true> = ${JSON.stringify(Object.fromEntri
   });
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
   expect({ stdout: stdout.trim().split("\n"), exitCode }).toEqual({
-    stdout: ["runtime.ts(4,17): error TS18048: 'build.config' is possibly 'undefined'."],
+    stdout: ["shared.ts(5,17): error TS18048: 'build.config' is possibly 'undefined'."],
     exitCode: 1,
   });
 });

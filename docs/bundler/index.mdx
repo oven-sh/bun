@@ -1880,7 +1880,7 @@ interface BuildConfig {
   splitRequire?: boolean; // default true, with splitting and target "bun": require() of an ES module is a chunk too
   minChunkSize?: number; // default 0, also fold side-effect-free chunks smaller than this many source bytes
   modulePreload?: boolean; // default true, with splitting and target "browser": <link rel=modulepreload> the chunks an entrypoint or import() depends on
-  plugins?: BunPlugin[];
+  plugins?: BunPlugin<PluginBuilder>[];
   external?: string[];
   packages?: "bundle" | "external";
   publicPath?: string;

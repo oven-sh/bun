@@ -72,6 +72,40 @@ await Bun.build({
 });
 ```
 
+### The two builder objects
+
+`Bun.build` and `Bun.plugin` pass different objects to `setup`.
+
+| Caller       | Type of `build`        | Members                                                                              |
+| ------------ | ---------------------- | ------------------------------------------------------------------------------------ |
+| `Bun.build`  | `PluginBuilder`        | `config`, `onStart`, `onResolve`, `onLoad`, `onBeforeParse`, `onEnd`                 |
+| `Bun.plugin` | `RuntimePluginBuilder` | `onResolve`, `onLoad`, `module`, and `target`, which is always `"bun"`. No `config`. |
+
+A plugin typed as `BunPlugin` can go to both callers, so `setup` starts with what both builders support: `onResolve` and `onLoad`. Test `build.config` to use the rest:
+
+```ts title="myPlugin.ts" icon="/icons/typescript.svg"
+import type { BunPlugin } from "bun";
+
+const myPlugin: BunPlugin = {
+  name: "Custom loader",
+  setup(build) {
+    build.onLoad({ filter: /\.txt$/ }, async ({ path }) => {
+      return { contents: await Bun.file(path).text(), loader: "text" };
+    });
+
+    if (build.config) {
+      // Bun.build called setup(): `build` is a PluginBuilder
+      build.onEnd(result => console.log(`${result.outputs.length} outputs`));
+    }
+  },
+};
+
+Bun.plugin(myPlugin);
+await Bun.build({ entrypoints: ["./app.ts"], outdir: "./out", plugins: [myPlugin] });
+```
+
+For a plugin that only `Bun.build` runs, use the type `BunPlugin<PluginBuilder>`. `setup` then gets a `PluginBuilder`, and TypeScript rejects the plugin as an argument of `Bun.plugin`. `BunPlugin<RuntimePluginBuilder>` is the same for a plugin that only `Bun.plugin` runs.
+
 ## Plugin lifecycle
 
 ### Namespaces
@@ -146,7 +180,8 @@ In this example, Bun waits for both `onStart()` callbacks to complete: the 10-se
 
 <Note>
   `onStart()` callbacks (like every other lifecycle callback) cannot modify the `build.config` object. To mutate
-  `build.config`, do so directly in the `setup()` function.
+  `build.config`, do so directly in the `setup()` function. Only `Bun.build` sets `build.config`. In a plugin that
+  `Bun.plugin` registers, `build.config` is `undefined`.
 </Note>
 
 ### onResolve

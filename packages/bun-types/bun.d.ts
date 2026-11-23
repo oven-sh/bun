@@ -3375,7 +3375,7 @@ declare module "bun" {
           asset?: string;
         };
     root?: string; // project root
-    plugins?: BunPlugin[];
+    plugins?: BunPlugin<PluginBuilder>[];
     // manifest?: boolean; // whether to return manifest
     external?: string[];
     /**
@@ -7056,10 +7056,30 @@ declare module "bun" {
    * `Builder` is the type of the object that `setup` receives:
    * - {@link PluginBuilder} for a plugin that only {@link Bun.build} runs
    * - {@link RuntimePluginBuilder} for a plugin that only {@link Bun.plugin} runs
+   * - the union of the two, the default, for a plugin that both can run
+   *
+   * With the default, `setup` starts with what both builders support: `onLoad`
+   * and `onResolve`. Test `build.config` to use the rest.
+   *
+   * @example
+   * ```ts
+   * const plugin: Bun.BunPlugin = {
+   *   name: "my-plugin",
+   *   setup(build) {
+   *     build.onLoad({ filter: /\.txt$/ }, async ({ path }) => {
+   *       return { contents: await Bun.file(path).text(), loader: "text" };
+   *     });
+   *     if (build.config) {
+   *       // Bun.build: `build` is a PluginBuilder here
+   *       build.onEnd(result => console.log(result.outputs.length));
+   *     }
+   *   },
+   * };
+   * ```
    *
    * @category Bundler
    */
-  interface BunPlugin<Builder = PluginBuilder> {
+  interface BunPlugin<Builder = PluginBuilder | RuntimePluginBuilder> {
     /**
      * Human-readable name of the plugin
      *
@@ -7087,7 +7107,7 @@ declare module "bun" {
      * may be called later. It may be called multiple times for different
      * targets.
      */
-    setup(
+    setup: (
       /**
        * The builder object for registering plugin hooks
        * @example
@@ -7099,7 +7119,7 @@ declare module "bun" {
        * ```
        */
       build: Builder,
-    ): void | Promise<void>;
+    ) => void | Promise<void>;
   }
 
   /**
@@ -7143,7 +7163,6 @@ declare module "bun" {
    */
   interface BunRegisterPlugin {
     <T extends BunPlugin<RuntimePluginBuilder>>(options: T): ReturnType<T["setup"]>;
-    <T extends BunPlugin>(options: T): ReturnType<T["setup"]>;
 
     /**
      * Deactivate all plugins

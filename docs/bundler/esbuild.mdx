@@ -197,8 +197,8 @@ const myPlugin: BunPlugin = {
 The builder object's methods hook into parts of the bundling process. Bun implements `onStart`, `onEnd`, `onResolve`, and `onLoad`; it does not implement the esbuild hooks `onDispose` and `resolve`. Bun partially implements `initialOptions`: the object is read-only and exposes only a subset of esbuild's options. Use `config` (the same thing in Bun's `BuildConfig` format) instead.
 
 ```ts title="myPlugin.ts" icon="/icons/typescript.svg"
-import type { BunPlugin } from "bun";
-const myPlugin: BunPlugin = {
+import type { BunPlugin, PluginBuilder } from "bun";
+const myPlugin: BunPlugin<PluginBuilder> = {
   name: "my-plugin",
   setup(builder) {
     builder.onStart(() => {

@@ -29,7 +29,7 @@ declare module "bun" {
       /**
        * These plugins are applied after `framework.plugins`
        */
-      plugins?: BunPlugin[] | undefined;
+      plugins?: BunPlugin<PluginBuilder>[] | undefined;
     }
 
     /** Bake only allows a subset of options from `Bun.build` */
@@ -113,7 +113,7 @@ declare module "bun" {
        */
       reactFastRefresh?: boolean | ReactFastRefreshOptions | undefined;
       /** Framework bundler plugins load before the user-provided ones. */
-      plugins?: BunPlugin[];
+      plugins?: BunPlugin<PluginBuilder>[];
 
       // /**
       //  * Called after the list of routes is updated. This can be used to

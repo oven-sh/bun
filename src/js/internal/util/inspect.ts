@@ -175,25 +175,11 @@ const {
 const isMapIterator = $newCppFunction("NodeUtilTypesModule.cpp", "jsFunctionIsMapIterator", 1);
 const isSetIterator = $newCppFunction("NodeUtilTypesModule.cpp", "jsFunctionIsSetIterator", 1);
 
-// We need this duplicate here to avoid a circular dependency between node:assert and node:util.
-class AssertionError extends Error {
-  declare operator: string;
-  declare generatedMessage: boolean;
-  declare actual: unknown;
-  declare expected: unknown;
-
-  constructor(message?: string, isForced = false) {
-    super(message);
-    this.name = "AssertionError";
-    this.code = "ERR_ASSERTION";
-    this.operator = "==";
-    this.generatedMessage = !isForced;
-    this.actual = isForced && undefined;
-    this.expected = !isForced || undefined;
+// Node's inspect.js calls `internal/assert` with no message, so the text is the suffix without its leading newline.
+function assert(value: unknown) {
+  if (!value) {
+    throw $ERR_INTERNAL_ASSERTION(StringPrototypeSlice.$call(require("internal/shared").kInternalAssertionSuffix, 1));
   }
-}
-function assert(p: unknown, message?: string) {
-  if (!p) throw new AssertionError(message);
 }
 
 const { validateObject, kValidateObjectAllowArray } = require("internal/validators");
@@ -1597,7 +1583,8 @@ function formatRaw(ctx: Context, value, recurseTimes: number, typedArray?: boole
         "special",
       );
     }
-    throw new AssertionError("handleMaxCallStackSize assertion failed: " + String(err), true);
+    // Like Node.js, this leaves `ctx.seen` and `ctx.indentationLvl` as they are (nodejs/node#55544).
+    throw err;
   }
   const circular = ctx.circular;
   if (circular !== undefined) {
@@ -2532,7 +2519,13 @@ function formatProperty(
         }
         ctx.indentationLvl -= 2;
       } catch (err) {
-        const message = `<Inspection threw (${(err as Error).message})>`;
+        let thrown: string | undefined;
+        try {
+          thrown = `${err == null ? err : (err as Error).message}`;
+        } catch {
+          // Any value can be thrown: its message can throw when read, or not convert to a string.
+        }
+        const message = `<Inspection threw (${thrown})>`;
         str = `${s(`[${label}:`, sp)} ${message}${s("]", sp)}`;
       }
     } else {

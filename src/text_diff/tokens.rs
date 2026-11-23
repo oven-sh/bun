@@ -4,11 +4,15 @@
 //! wherever that still leads to a shortest script, else a deletion, else a match. That depends only on which tokens
 //! match, so whatever cannot change it is left out of the search: the common head, most of the common tail, and tokens
 //! that only one side has.
+//!
+//! Lines are first searched as text (`follow`). Other tokens, and lines if that gives up, get a number each
+//! ([`diff_ids`]). Past `WORK` the script can be longer than the shortest.
 
 use bun_core::slice_as_bytes;
 use bun_core::strings::{CodeUnits, PathByte, byte_bits, count_char, is_js_whitespace};
 
 use crate::bit_rows::{Matches, diff_short};
+use crate::lines::{Followed, Lines, follow};
 use crate::{EMPTY, Elem, Hunk, Interner, MAX_LEN, diff_shared_tokens, search_bounded};
 
 /// A code unit of a JS string: Latin-1 or UTF-16.
@@ -146,7 +150,7 @@ impl Split {
     }
 
     /// The length of the tokens that both texts start with.
-    fn common_head<T: Unit>(self, a: &[T], b: &[T]) -> usize {
+    pub(crate) fn common_head<T: Unit>(self, a: &[T], b: &[T]) -> usize {
         // `memcmp` is the fastest way through a long head.
         let blocks = a.as_chunks::<512>().0.iter().zip(b.as_chunks().0);
         let mut head = 512 * blocks.take_while(|(a, b)| a == b).count();
@@ -172,22 +176,20 @@ impl Split {
         a.len() - self.end(a, a.len() - tail)
     }
 
-    /// `from`, and where each token of `text[from..to]` ends.
-    fn offsets<T: Unit>(self, text: &[T], from: usize, to: usize) -> Vec<u32> {
-        if let Split::Lines | Split::Chars = self {
-            let mut offsets = Vec::with_capacity(16);
-            offsets.push(from as u32);
-            let mut at = from;
-            if let Split::Lines = self {
-                for_each_line_end(&text[from..to], |end| offsets.push((from + end) as u32));
-                at = offsets[offsets.len() - 1] as usize;
-            }
-            while at < to {
-                at = self.end(text, at);
-                offsets.push(at as u32);
-            }
-            return offsets;
+    /// `from`, and where each code point of `text[from..to]` ends.
+    fn char_offsets<T: Unit>(text: &[T], from: usize, to: usize) -> Vec<u32> {
+        let mut offsets = Vec::with_capacity(16);
+        offsets.push(from as u32);
+        let mut at = from;
+        while at < to {
+            at = Split::Chars.end(text, at);
+            offsets.push(at as u32);
         }
+        offsets
+    }
+
+    /// The same for the tokens of [`Split::Words`].
+    fn word_offsets<T: Unit>(text: &[T], from: usize, to: usize) -> Vec<u32> {
         let (mut offsets, mut tokens) = (Vec::with_capacity((to - from).min(256) + 16), 0);
         let mut joined = Self::joined(&text[from..to]);
         for start in (from..to).step_by(256) {
@@ -221,7 +223,8 @@ pub(crate) fn count_newlines<T: Unit>(text: &[T]) -> usize {
     }
 }
 
-const LONG_LINE: usize = 256;
+/// In units.
+pub(crate) const LONG_LINE: usize = 256;
 
 /// Calls `found` with the place after each `\n`. A search is the fastest way through a long line, and slow to start
 /// for each of many short ones.
@@ -337,10 +340,31 @@ pub fn diff_text<T: Unit>(split: Split, a: &[T], b: &[T], max_edits: usize) -> O
     let tail = split.common_tail(&a[head..], &b[head..]);
     let (end_a, end_b) = (a.len() - tail, b.len() - tail);
     let is_unit = |text: &[T]| split.count(text) == text.len();
-    let are_units =
-        matches!(split, Split::Chars) && is_unit(&a[head..end_a]) && is_unit(&b[head..end_b]);
-    let mut offsets =
-        (!are_units).then(|| [split.offsets(a, head, end_a), split.offsets(b, head, end_b)]);
+    let before = || split.count(&a[..head]);
+    // `None` if each token is one unit. A surrogate pair then has no number, so reading the tail stops at the first.
+    let mut offsets = match split {
+        Split::Lines => {
+            let mut lines_a = Lines::new(a, head..end_a);
+            let mut lines_b = Lines::new(b, head..end_b);
+            match follow(&mut lines_a, &mut lines_b, max_edits) {
+                Followed::Found(hunks) => {
+                    let starts = [lines_a.starts(), lines_b.starts()];
+                    return Some(edits(hunks, head, before(), Some(&starts)));
+                }
+                Followed::TooFar => return None,
+                Followed::GaveUp => Some([lines_a.offsets(), lines_b.offsets()]),
+            }
+        }
+        Split::Chars if is_unit(&a[head..end_a]) && is_unit(&b[head..end_b]) => None,
+        Split::Chars => Some([
+            Split::char_offsets(a, head, end_a),
+            Split::char_offsets(b, head, end_b),
+        ]),
+        Split::Words => Some([
+            Split::word_offsets(a, head, end_a),
+            Split::word_offsets(b, head, end_b),
+        ]),
+    };
 
     let tokens = match &offsets {
         Some([of_a, of_b]) => of_a.len() + of_b.len(),
@@ -398,8 +422,17 @@ pub fn diff_text<T: Unit>(split: Split, a: &[T], b: &[T], max_edits: usize) -> O
         }
         part = usize::MAX;
     };
-    let before = split.count(&a[..head]);
-    let unit = |side: usize, token: usize| match &offsets {
+    Some(edits(hunks, head, before(), offsets.as_ref()))
+}
+
+/// `hunks` and `offsets` count from the token at the unit `head`, which has `before` tokens before it.
+fn edits(
+    hunks: Vec<Hunk>,
+    head: usize,
+    before: usize,
+    offsets: Option<&[Vec<u32>; 2]>,
+) -> Vec<Edit> {
+    let unit = |side: usize, token: usize| match offsets {
         Some(offsets) => offsets[side][token] as usize,
         None => head + token,
     };
@@ -417,7 +450,7 @@ pub fn diff_text<T: Unit>(split: Split, a: &[T], b: &[T], max_edits: usize) -> O
             b_hi: before + h.b_hi,
         },
     };
-    Some(hunks.into_iter().map(edit).collect())
+    hunks.into_iter().map(edit).collect()
 }
 
 /// As [`diff_text`], of tokens that are numbers below `distinct`, at most `i32::MAX` on each side.

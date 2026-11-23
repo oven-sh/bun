@@ -395,6 +395,24 @@ test.each(["x", "\u0a00\u4e0a\u0a0a"])("all lines differ, and the last has no ne
   expect(short(diff.lines("", b))).toEqual([["+", b, 301]]);
 });
 
+test.each([
+  ["Latin-1", (i: number) => `${i}\n`],
+  ["UTF-16 with the byte of a newline in other characters", (i: number) => `\u0a00${i}\u4e0a\u0a0a\n`],
+  ["long lines", (i: number) => `${Buffer.alloc(300, "x")}${i}\n`],
+])("few edits between runs of equal lines, %s", (_, line) => {
+  const next = random(7);
+  for (let i = 0; i < 30; i++) {
+    const a = Array.from({ length: 150 }, (_, at) => line(at > 100 ? at % 2 : next(4) ? at : next(3)));
+    const b = a.slice();
+    for (let edit = next(6); edit >= 0; edit--) b.splice(next(110), next(3), ...a.slice(0, next(3)), line(next(2)));
+    if (i % 3 === 0) b.push("end");
+    const expected = reference(a, b);
+    const count = expected.reduce((n, [operation, , count]) => n + (operation === "=" ? 0 : count), 0);
+    expect(short(diff.lines(a.join(""), b.join(""), { maxEditLength: count }))).toEqual(expected);
+    if (count > 0) expect(diff.lines(a.join(""), b.join(""), { maxEditLength: count - 1 })).toBeUndefined();
+  }
+});
+
 describe("maxEditLength", () => {
   test.each([
     ["lines", (o: object) => diff.lines("a\nb\nc\n", "b\na\nd\n", o)],

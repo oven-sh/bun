@@ -18,6 +18,7 @@
 // licensed under the Apache License, Version 2.0.
 
 mod bit_rows;
+mod lines;
 pub mod patch;
 pub mod tokens;
 

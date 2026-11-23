@@ -1241,12 +1241,13 @@ test.concurrent("the error of a snapshot matcher has colors when colors are on",
       .split("\n")
       .filter(line => line.startsWith("["))
       .map(line => JSON.parse(line)[0])[0],
-    stderr,
+    stderr: exitCode ? stderr : "",
+    exitCode,
   }).toEqual({
     message: `${dim}expect(${reset}${red}received${reset}${dim}).${reset}toThrowErrorMatchingInlineSnapshot${dim}(${reset}${dim})${reset}\n\n${bold}Matcher error${reset}: Received function did not throw\n`,
-    stderr: expect.any(String),
+    stderr: "",
+    exitCode: 0,
   });
-  expect(exitCode).toBe(0);
 });
 test("error inline snapshots", () => {
   expect(() => {

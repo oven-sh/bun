@@ -18,10 +18,6 @@ import { quote, slash } from "./shell.ts";
 import { loadFeatures } from "./trim/features.ts";
 import { ucrtServicingLibDir } from "./winsysroot.ts";
 
-function usesSafeStack(c: Pick<Config, "hardened" | "x64" | "abi" | "asan">): boolean {
-  return c.hardened && c.x64 && c.abi === "gnu" && !c.asan;
-}
-
 /** What makes a translation unit report coverage to Fuzzilli: for Bun's own sources and, in an engine built from source, JavaScriptCore's. */
 export function fuzzilliCoverageFlags(cfg: Pick<Config, "cwd" | "fuzzilli" | "fuzzilliCompilerOnly">): string[] {
   if (!cfg.fuzzilli) return [];
@@ -713,11 +709,6 @@ export const bunOnlyFlags: Flag[] = [
     flag: "-DBUN_LOCKED_ENVIRONMENT=1",
     when: c => c.lockEnvironment,
     desc: "Hardened: an executable compiled ahead of time takes a short list of BUN_JSC_* options and starts with no other",
-  },
-  {
-    flag: "-DBUN_SAFE_STACK=1",
-    when: c => usesSafeStack(c),
-    desc: "Hardened: every thread gets the second stack that what is compiled with SafeStack keeps its arrays on",
   },
 
   // ─── Build profiling ───

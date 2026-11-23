@@ -22,19 +22,6 @@ async function run(cmd: string[], env: Record<string, string | undefined> = bunE
   return { stdout, stderr, exitCode };
 }
 
-const programThatCompresses = `import { readFileSync } from "node:fs";
-let state = 1;
-const literals = Uint8Array.from({ length: 1 << 16 }, () => (state = (Math.imul(state, 1103515245) + 12345) >>> 0) >>> 26);
-const onThisThread = Bun.zstdDecompressSync(Bun.zstdCompressSync(literals)).equals(literals);
-const onAnotherThread = Bun.zstdDecompressSync(await Bun.zstdCompress(literals)).equals(literals);
-const guards = readFileSync("/proc/self/maps", "utf8").split("\\n").filter(line => {
-  const [range, access] = line.split(" ");
-  const [from, to] = range.split("-").map(part => parseInt(part, 16));
-  return access === "---p" && to - from >= 256 * 1024 && to - from <= 1024 * 1024;
-});
-console.log(onThisThread, onAnotherThread, guards.length >= 2);
-`;
-
 // Counts the pages that can be written, the stack aside, with 64 or more words that point into the compiled code of the program.
 const programThatLooksForTablesOfCode = `import { openSync, readFileSync, readSync } from "node:fs";
 class Point {
@@ -216,20 +203,6 @@ describe.skipIf(!isHardened)("an executable of a Bun built with --hardened=on", 
       await withCompiledProgram(async (_, path) => {
         expect((await run([path], { ...bunEnv, MIMALLOC_VERBOSE: "1" })).stderr).toContain("secure level: 1");
       });
-    },
-    120_000,
-  );
-
-  test.skipIf(!isX64 || !isGlibc)(
-    "gives every thread a second stack between guards for the arrays of what is compiled with SafeStack",
-    async () => {
-      await withCompiledProgram(
-        file => {
-          for (const each of [runtime!, file]) expect(each.earlyInitializers).toBe(1);
-        },
-        programThatCompresses,
-        "true true true\n",
-      );
     },
     120_000,
   );

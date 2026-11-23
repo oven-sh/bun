@@ -51,6 +51,7 @@ console.log("Found release:", release.tag_name, "with commit hash:", full_commit
 console.log("Found build:", full_commit_hash);
 const isCanary = release.tag_name === "canary";
 
+let refused = 0;
 let paths: string[] = [];
 async function setPaths(revision: string, isCanary: boolean) {
   const releaseSha = `releases/${revision + (isCanary ? "-canary" : "")}`;
@@ -173,6 +174,10 @@ for (const asset of release.assets) {
   }
 }
 
+if (refused) {
+  throw new Error(`Uploads that S3 refused: ${refused}`);
+}
+
 if (!dryRun && process.env.BUN_REPORT_TOKEN) {
   await fetch(`https://bun.report/purge-cache/${full_commit_hash}`, {
     method: "POST",
@@ -197,7 +202,8 @@ async function uploadToS3({
     "Cache-Control"?: string;
   };
 }): Promise<void> {
-  const { href } = new URL(key, bucketUrl);
+  // aws4fetch signs a bare `+`, which the version of a canary has, as a space.
+  const { href } = new URL(key.split("/").map(encodeURIComponent).join("/"), bucketUrl);
   if (dryRun) {
     console.log("Would upload:", key, "to", href);
     return;
@@ -208,7 +214,15 @@ async function uploadToS3({
     headers,
   });
   if (!response.ok) {
-    throw new Error(`Failed to upload to S3: ${response.status} ${response.statusText}`);
+    // Only the code, because the body can echo the endpoint and the signature into a public log.
+    const code = /<Code>(\w+)<\/Code>/.exec(await response.text())?.[1];
+    const message = `Failed to upload "${key}" to S3: ${response.status} ${code ?? response.statusText}`;
+    // aws4fetch sent these eleven times, and would do so for every other key.
+    if (response.status >= 500 || response.status === 429) {
+      throw new Error(message);
+    }
+    console.error(message);
+    refused++;
   }
 }
 

@@ -3,6 +3,7 @@
 use std::collections::VecDeque;
 
 use bun_collections::OffsetByteList;
+use bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_REDIS_AUTO_PIPELINING as DISABLE_AUTO_PIPELINING;
 use bun_core::strings;
 
 use crate::command::{self, ACKS, Ack, Reply};
@@ -36,7 +37,7 @@ impl Default for Config {
             max_retries: 20,
             enable_auto_reconnect: true,
             enable_offline_queue: true,
-            enable_auto_pipelining: true,
+            enable_auto_pipelining: DISABLE_AUTO_PIPELINING.get() != Some(true),
         }
     }
 }

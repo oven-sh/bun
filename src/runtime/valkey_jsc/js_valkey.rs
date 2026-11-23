@@ -424,7 +424,7 @@ impl JSValkeyClient {
             match valkey::Protocol::MAP.get(protocol_slice) {
                 Some(v) => *v,
                 None => return Err(cx.global().throw(format_args!(
-                    "Expected url protocol to be one of redis, valkey, rediss, valkeys, redis+tls, redis+unix, redis+tls+unix",
+                    "Expected url protocol to be one of redis, valkey, rediss, valkeys, redis+tls, valkey+tls, redis+unix, valkey+unix, redis+tls+unix, valkey+tls+unix",
                 ))),
             }
         } else {
@@ -432,10 +432,11 @@ impl JSValkeyClient {
         };
 
         // Extract all URL components
-        let username_str = parsed_url.username();
+        // `username()` gives a null string for bytes that are not UTF-8.
+        let username_str = parsed_url.encoded_username();
         let username_utf8 = username_str.to_utf8();
 
-        let password_str = parsed_url.password();
+        let password_str = parsed_url.encoded_password();
         let password_utf8 = password_str.to_utf8();
 
         let hostname_str = parsed_url.host();
@@ -490,8 +491,8 @@ impl JSValkeyClient {
             Options::default()
         };
 
-        config.username = username_utf8.slice().into();
-        config.password = password_utf8.slice().into();
+        config.username = bun_url::PercentEncoding::decode_lenient_alloc(username_utf8.slice());
+        config.password = bun_url::PercentEncoding::decode_lenient_alloc(password_utf8.slice());
 
         // Parse database number from pathname (e.g., "/1" -> database 1)
         config.database = match uri {
@@ -1319,10 +1320,6 @@ struct Options {
 impl Options {
     fn from_js(global_object: &JSGlobalObject, options_obj: JSValue) -> JsResult<Options> {
         let mut this = Options::default();
-        this.config.enable_auto_pipelining =
-            !bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_REDIS_AUTO_PIPELINING
-                .get()
-                .unwrap_or(false);
 
         if let Some(idle_timeout) =
             options_obj.get_optional_int::<u32>(global_object, "idleTimeout")?

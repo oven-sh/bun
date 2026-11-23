@@ -505,6 +505,25 @@ describe("Valkey: Command Arguments", () => {
     expect(server.received).toEqual([["HELLO", "3"], ["SELECT", "5"], ["PING"]]);
   });
 
+  // One character is one byte on the wire.
+  test.each([
+    ["jos%C3%A9:pw", "jos\xc3\xa9", "pw"],
+    ["jos%E9:pw", "jos\xe9", "pw"],
+    ["user:p%E9ss", "user", "p\xe9ss"],
+    [":%ff%fe", "default", "\xff\xfe"],
+    ["us%00er:p%00w", "us\0er", "p\0w"],
+    ["a@b:%zz%4", "a@b", "%zz%4"],
+  ])("redis://%s@host logs in as %j with %j", async (credentials, username, password) => {
+    using server = await connect(port => `redis://${credentials}@127.0.0.1:${port}`);
+    expect(server.received).toEqual([["HELLO", "3", "AUTH", username, password]]);
+  });
+
+  test("the error for an unknown scheme names every scheme", () => {
+    expect(() => new RedisClient("http://localhost")).toThrow(
+      "Expected url protocol to be one of redis, valkey, rediss, valkeys, redis+tls, valkey+tls, redis+unix, valkey+unix, redis+tls+unix, valkey+tls+unix",
+    );
+  });
+
   // No arguments: the mode is checked before they are.
   for (const method of new Set(sent.map(row => row.call[0]))) {
     test(`${method}() throws in subscriber mode`, async () => {

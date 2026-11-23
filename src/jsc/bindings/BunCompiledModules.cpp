@@ -1705,25 +1705,6 @@ static void pushObservableChild(JSGlobalObject* realm, JSObject* parent, JSObjec
     call(realm, function, getCallData(function), jsUndefined(), arguments);
 }
 
-static void createChildrenArray(JSGlobalObject* realm, JSCommonJSModule* parent)
-{
-    auto& vm = getVM(realm);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    MarkedArgumentBuffer children;
-    for (WriteBarrier<Unknown> child : parent->m_children) {
-        bool isListed = false;
-        for (size_t index = 0; index < children.size(); ++index)
-            isListed |= children.at(index) == child.get();
-        if (!isListed)
-            children.append(child.get());
-    }
-    JSArray* list = constructArray(realm, static_cast<ArrayAllocationProfile*>(nullptr), children);
-    RETURN_IF_EXCEPTION(scope, void());
-    parent->m_childrenValue.set(vm, parent, list);
-    WTF::Locker locker { parent->cellLock() };
-    parent->m_children.clear();
-}
-
 bool appendNewChildrenOfCompiledModule(JSGlobalObject* realm, JSCommonJSModule* parent)
 {
     auto compiled = compiledModuleOfRequirer(parent);
@@ -1733,16 +1714,14 @@ bool appendNewChildrenOfCompiledModule(JSGlobalObject* realm, JSCommonJSModule* 
     auto scope = DECLARE_THROW_SCOPE(vm);
     bool areShown = AOT::forEachNewChild(parent->globalObject(), *compiled, [&](JSObject* child) {
         if (!parent->m_childrenValue && !child->inherits<JSCommonJSModule>()) {
-            createChildrenArray(realm, parent);
+            parent->createChildrenArray(realm);
             RETURN_IF_EXCEPTION(scope, void());
         }
         if (parent->m_childrenValue) {
             pushObservableChild(realm, parent, child);
             return;
         }
-        WTF::Locker locker { parent->cellLock() };
-        parent->m_children.append(WriteBarrier<Unknown>());
-        parent->m_children.last().set(vm, parent, child);
+        parent->addChild(vm, uncheckedDowncast<JSCommonJSModule>(child));
     });
     RETURN_IF_EXCEPTION(scope, false);
     return areShown;
@@ -1764,16 +1743,13 @@ static void appendModuleChildren(JSGlobalObject* realm, JSObject* module, JSObje
     bool hasLeftCompiledModule = parent->compiledModule == JSCommonJSModule::noCompiledModule;
     // m_children only has module objects. Stand-ins go into the array itself.
     if (!parent->m_childrenValue && childOrNull && hasLeftCompiledModule && !childOrNull->inherits<JSCommonJSModule>()) {
-        createChildrenArray(realm, parent);
+        parent->createChildrenArray(realm);
         RETURN_IF_EXCEPTION(scope, void());
     }
     // The array is created when it is first read: from the compiled module or, if the object was detached, from m_children.
     if (!parent->m_childrenValue) {
-        if (childOrNull && hasLeftCompiledModule) {
-            WTF::Locker locker { parent->cellLock() };
-            parent->m_children.append(WriteBarrier<Unknown>());
-            parent->m_children.last().set(vm, parent, childOrNull);
-        }
+        if (childOrNull && hasLeftCompiledModule)
+            parent->addChild(vm, uncheckedDowncast<JSCommonJSModule>(childOrNull));
         return;
     }
     scope.release();

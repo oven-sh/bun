@@ -756,6 +756,11 @@ int us_socket_ipc_write_fd(struct us_socket_t *s, const char *data, int length, 
             us_poll_change(&s->p, s->group->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
             return 0;
         }
+        if (us_internal_send_errno_is_peer_gone(errno)) {
+            /* The loop closes the socket once it has read what the peer wrote before it left. */
+            us_internal_socket_reject_send(s, errno);
+            return 0;
+        }
         return -1;
     }
 

@@ -668,9 +668,10 @@ ${act}
   return { stdout: stdout.trim().split("\n"), stderr, exitCode };
 }
 const whenDisconnected = `
+const deadline = Date.now() + 120_000;
 const disconnected = new Promise(function poll(resolve) {
   if (require("node:fs").existsSync("disconnected")) resolve();
-  else setImmediate(poll, resolve);
+  else if (Date.now() < deadline) setImmediate(poll, resolve);
 });`;
 
 describe.concurrent("worker.disconnect() right after fork()", () => {
@@ -747,6 +748,56 @@ test.skipIf(isWindows).concurrent("a worker keeps a net.Server for a first liste
     stderr: "",
     exitCode: 0,
   });
+});
+
+test.skipIf(isWindows).concurrent("a worker keeps a net.Socket for a first listener that comes late", async () => {
+  const send = `
+  worker.send("before");
+  const net = require("node:net");
+  const server = net.createServer(socket => {
+    server.close();
+    worker.send("socket", socket);
+    worker.send("behind");
+    worker.disconnect();
+  });
+  server.listen(0, "127.0.0.1", () => {
+    net.connect(server.address().port, "127.0.0.1").on("data", data => events.unshift(String(data)));
+  });`;
+  const job = {
+    "job.js": `${whenDisconnected}
+    disconnected.then(() => {
+      process.on("message", (message, handle) => {
+        console.log(message);
+        handle?.end("written by the worker");
+      });
+    });`,
+  };
+  expect(await runWorker(send, job)).toEqual({
+    stdout: ["before", "socket", "behind", "written by the worker, disconnect, exit 0"],
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+test.concurrent.each([
+  ["a message", "undefined", ["undefined", "disconnect, exit 0"]],
+  // node:net loads node:cluster.
+  ["a message with a handle", "server", ["Server", "online, disconnect, exit 0"]],
+])("an 'internalMessage' does not wait for a 'message' listener: %s", async (_, handle, stdout) => {
+  const send = `
+  const server = require("node:net").createServer().listen(0, "127.0.0.1", () => {
+    worker.send({ cmd: "NODE_example" }, ${handle}, () => server.close());
+  });`;
+  const job = {
+    "job.js": `
+    setTimeout(() => process.exit(1), 120_000);
+    process.on("internalMessage", (message, handle) => {
+      if (message.cmd !== "NODE_example") return;
+      console.log(String(handle?.constructor.name));
+      process.exit(0);
+    });`,
+  };
+  expect(await runWorker(send, job)).toEqual({ stdout, stderr: "", exitCode: 0 });
 });
 
 test.concurrent("a worker whose primary closed the channel exits when it loads node:cluster", async () => {

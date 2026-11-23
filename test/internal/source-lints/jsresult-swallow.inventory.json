@@ -9,7 +9,7 @@
     "discarded result of a call that enters script": 1
   },
   "src/runtime/ipc.rs": {
-    "discarded result of a call that enters script": 4
+    "discarded result of a call that enters script": 2
   },
   "src/runtime/napi/napi_body.rs": {
     "discarded result of a call that enters script": 2

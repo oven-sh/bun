@@ -40,7 +40,7 @@ export function serialize(message: unknown, handle: unknown, options: unknown) {
       const server = handle._server;
       if (server) {
         server._connections--;
-        server._emitCloseIfDrained();
+        server._emitCloseIfDrained?.();
         // node:http destroys the socket once its handle has gone out, which must not count again.
         handle._server = undefined;
       }

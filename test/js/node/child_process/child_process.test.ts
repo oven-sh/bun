@@ -302,7 +302,8 @@ describe("fork() IPC", () => {
     const shared = `
       const fs = require("node:fs");
       const log = line => fs.writeSync(1, line + "\\n");
-      const waitFor = file => { while (!fs.existsSync(file)); };
+      const deadline = Date.now() + 120_000;
+      const waitFor = file => { while (!fs.existsSync(file)) if (Date.now() > deadline) throw new Error("gave up waiting for " + file); };
       const callback = name => err => log(name + ": " + (err && [err.message, err.code, err.errno, err.syscall].join(", ")));`;
     const parent = (send: string, listensForErrors = true) => `${shared}
       const child = require("node:child_process").fork(__dirname + "/child.js");
@@ -389,11 +390,12 @@ describe("fork() IPC", () => {
       });
     });
 
-    it.concurrent("calls the callback of a message that was partly written, once", async () => {
+    it.concurrent("reports no error for the messages that wait for room in the channel, like Node", async () => {
       const files = {
         "parent.js": parent(`
           child.send(Buffer.alloc(8 << 20, "x").toString(), callback("large"));
           child.send("small", callback("small"));
+          child.send("without a callback");
           fs.writeFileSync("go", "");`),
         // Reads nothing more, and exits once the large message is stuck in the channel.
         "child.js": `${shared}
@@ -405,7 +407,47 @@ describe("fork() IPC", () => {
           process.send("ready");`,
       };
       expect(await run(files)).toEqual({
-        stdout: ["sent", `large: ${EPIPE}`, `small: ${EPIPE}`, "disconnect", "exit 0"],
+        stdout: ["sent", "large: null", "small: null", "disconnect", "exit 0"],
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    it.concurrent("reports no error for a message that arrived ahead of one that did not", async () => {
+      const files = {
+        "parent.js": parent(`
+          child.send(Buffer.alloc(4 << 20, "x").toString(), callback("first"));
+          child.send("arrives", callback("arrives"));
+          child.send(Buffer.alloc(8 << 20, "x").toString(), callback("last"));`),
+        "child.js": `${shared}
+          process.on("message", message => {
+            if (message === "leave") fs.writeFileSync("left", "");
+            if (message === "arrives") process.exit(0);
+          });
+          process.send("ready");`,
+      };
+      expect(await run(files)).toEqual({
+        stdout: ["sent", "first: null", "arrives: null", "last: null", "disconnect", "exit 0"],
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    it.concurrent.each([
+      ["a message", `child.send("late", callback("late"));`, `late: ${EPIPE}`],
+      ["a handle", `child.send("late", server, callback("late"));`, "late: null"],
+    ])("still delivers what the other end sent last, after %s", async (_, send, answer) => {
+      const files = {
+        "parent.js": `
+          const server = require("node:net").createServer().listen(0, "127.0.0.1", () => {
+            ${parent(`child.on("message", message => log(message)); ${send}`)}
+            child.on("close", () => server.close());
+          });`,
+        "child.js": `${closes} process.prependOnceListener("message", () => process.send("last words"));`,
+      };
+      const { stdout, stderr, exitCode } = await run(files);
+      expect({ stdout: stdout.sort(), stderr, exitCode }).toEqual({
+        stdout: ["disconnect", "exit 0", "last words", answer, "sent"],
         stderr: "",
         exitCode: 0,
       });
@@ -505,6 +547,22 @@ describe("fork() IPC", () => {
         exitCode: 0,
       });
     });
+
+    it.concurrent.each(["json", "advanced"])(
+      "calls the callback of the process.send() that opens the channel: %s",
+      async serialization => {
+        const files = {
+          "parent.js": `
+            const child = require("node:child_process").fork(__dirname + "/child.js", { serialization: "${serialization}" });
+            child.once("disconnect", () => require("node:fs").writeFileSync("left", ""));
+            child.disconnect();`,
+          "child.js": `${shared}
+            waitFor("left");
+            process.send("first", callback("first"));`,
+        };
+        expect(await run(files)).toEqual({ stdout: [`first: ${EPIPE}`], stderr: "", exitCode: 0 });
+      },
+    );
   });
 });
 

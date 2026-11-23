@@ -791,13 +791,14 @@ impl Subprocess<'_> {
 
         let event_loop = jsc_vm.event_loop();
 
+        // A channel that ended before this exit was seen reports its end first, in no context, as its task does.
+        if !is_sync && let Some(ipc_data) = self.ipc() {
+            ipc_data.run_pending();
+        }
+
         // The exit is reported to the script that spawned the child.
         let _context = jsc_vm.enter_context(self.context);
         if !is_sync {
-            // A channel that ended before this exit was seen reports its end first.
-            if let Some(ipc_data) = self.ipc() {
-                ipc_data.run_pending();
-            }
             if !this_jsvalue.is_empty() {
                 if let Some(promise) = js::exited_promise_take_cached(this_jsvalue, global_this) {
                     let _exit_guard = event_loop.enter_scope();

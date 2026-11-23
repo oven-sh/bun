@@ -3579,10 +3579,16 @@ mod windows_impl {
         made.map(super::File::from_fd).map(drop)
     }
     /// For a call that removes or replaces what `path` names. `a\.` and `a\b\..` are not the entry `a`.
-    fn nt_path_of_entry(path: &ZStr, syscall: Tag) -> Maybe<bun_paths::OSPath> {
-        match bun_paths::basename(path) {
-            b"." | b".." => Err(Error::from_code(E::ENOENT, syscall)),
-            _ => super::nt_path(path, syscall),
+    fn nt_path_of_entry(dir: Fd, path: &ZStr, syscall: Tag) -> Maybe<bun_paths::OSPath> {
+        if !matches!(bun_paths::basename(path), b"." | b"..") {
+            return super::nt_path(path, syscall);
+        }
+        let parent = bun_paths::dirname(path).map(bun_paths::Path::from);
+        match parent.map(|parent| super::exists_at_type(dir, &parent)) {
+            Some(Err(err)) if err.get_errno() == E::ENOENT => {
+                Err(Error::from_code(E::ENOENT, syscall))
+            }
+            _ => Err(Error::from_code(E::EINVAL, syscall)),
         }
     }
     pub fn renameat(from_dir: impl AsFd, from: &ZStr, to_dir: impl AsFd, to: &ZStr) -> Maybe<()> {
@@ -3593,7 +3599,7 @@ mod windows_impl {
             // Opening it normalizes it.
             false => super::win32_path(from, Tag::rename)?,
         };
-        let to_w = nt_path_of_entry(to, Tag::rename)?;
+        let to_w = nt_path_of_entry(to_dir, to, Tag::rename)?;
         super::windows::rename_at_w(from_dir, &from_w, to_dir, &to_w, true)
     }
     pub(crate) fn renameat2(
@@ -3612,7 +3618,7 @@ mod windows_impl {
         // Convert to NT path and call `DeleteFileBun`;
         // `remove_dir = flags & AT_REMOVEDIR != 0`.
         super::windows::DeleteFileBun(
-            &nt_path_of_entry(path, Tag::unlink)?,
+            &nt_path_of_entry(dir, path, Tag::unlink)?,
             super::windows::DeleteFileOptions {
                 dir: if dir.is_valid() {
                     Some(dir.native())
@@ -5587,19 +5593,15 @@ pub(crate) fn open_dir_at_windows_nt_path(
         && p[2] == b'.' as u16
         && p[3] == b'\\' as u16
     {
-        return open_windows_device_path(
-            path,
-            flags,
-            if options.op != WindowsOpenDirOp::OnlyOpen {
-                w::FILE_OPEN_IF
-            } else {
-                w::FILE_OPEN
-            },
-            w::FILE_DIRECTORY_FILE
-                | w::FILE_SYNCHRONOUS_IO_NONALERT
-                | windows::FILE_OPEN_FOR_BACKUP_INTENT
-                | open_reparse,
-        );
+        // `FILE_FLAG_OPEN_REPARSE_POINT` has the value of `FILE_OPEN_REPARSE_POINT`.
+        if let Ok(fd) = open_windows_device_path(path, flags, w::OPEN_EXISTING, open_reparse) {
+            let device = File::from_fd(fd);
+            if windows::GetFileType(fd.native()) != windows::FILE_TYPE_DISK {
+                return Ok(device.into_raw());
+            }
+        }
+        // What is on a disk gets the name that `unlinkat` and `renameat` give it.
+        return open_dir_at_windows_nt_path(dir_fd, &nt_path(p, Tag::open)?, options);
     }
 
     windows::NtCreateFile(

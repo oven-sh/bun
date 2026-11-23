@@ -78,6 +78,7 @@ pub mod task_tag {
         FetchTaskletDeinit,
         FetchTaskletPromiseSettle,
         FetchTaskletRequestDrain,
+        FetchTaskletTrace,
         FSWatchTask,
         GraphContextStopAgain,
         GraphContextStopAndFree,

@@ -4062,6 +4062,7 @@ test("ModuleGraph isolation: every property of Bun is classified", () => {
         "deepEquals",
         "deepMatch",
         "deflateSync",
+        "diff",
         "enableANSIColors",
         "escapeHTML",
         "fileURLToPath",
@@ -4175,6 +4176,7 @@ test("ModuleGraph isolation: every node: builtin module is classified", () => {
     bun: "pure",
     // Process-wide on purpose.
     cluster: "host", // forks the whole process
+    diagnostics_channel: "host",
     inspector: "host",
     "inspector/promises": "host",
     process: "host",
@@ -4198,7 +4200,6 @@ test("ModuleGraph isolation: every node: builtin module is classified", () => {
         "buffer",
         "console",
         "constants",
-        "diagnostics_channel",
         "domain",
         "events",
         "module",

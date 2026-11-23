@@ -4571,20 +4571,24 @@ it("http2 pushStream reports header values containing CR, LF, or NUL through the
 it("http2 pushStream failure reports only via callback, never via stream 'error'", async () => {
   // node creates the ServerHttp2Stream only after pushPromise succeeds, so a validation
   // failure never reaches a stream 'error' event. bun must create the stream first, but the
-  // teardown must stay silent: the callback is the sole error channel. The diagnostics_channel
-  // publish is the only way user code can observe the pushed stream before the callback, so use
-  // it to attach a listener and prove nothing is emitted.
+  // teardown must stay silent: the callback is the sole error channel. Nobody is handed that
+  // stream, so attach the listeners where pushStream() ends its readable side.
   const pushedStreams = [];
-  const onCreated = ({ stream, headers }) => {
-    if (headers[":path"] !== "/pushed") return;
-    stream.on("error", err => pushedStreams.push({ event: "error", code: err?.code }));
-    stream.on("close", () => pushedStreams.push({ event: "close", destroyed: stream.destroyed }));
-  };
-  dc.subscribe("http2.server.stream.created", onCreated);
+  const published = [];
+  const onPublish = ({ stream }, name) => published.push(`${name} ${stream.id}`);
+  const channels = ["created", "start", "error", "close"].map(event => `http2.server.stream.${event}`);
+  for (const name of channels) dc.subscribe(name, onPublish);
 
   const server = http2.createServer();
   const { promise: callbackResult, resolve: onCallback } = Promise.withResolvers();
   server.on("stream", stream => {
+    const prototype = Object.getPrototypeOf(stream);
+    prototype.push = function (chunk) {
+      delete prototype.push;
+      this.on("error", err => pushedStreams.push({ event: "error", code: err?.code }));
+      this.on("close", () => pushedStreams.push({ event: "close", destroyed: this.destroyed }));
+      return this.push(chunk);
+    };
     stream.pushStream({ ":path": "/pushed", "x-bad": "a\nb" }, (err, pushed) => {
       onCallback({ code: err?.code, pushed });
       stream.respond({ ":status": 200 });
@@ -4608,9 +4612,14 @@ it("http2 pushStream failure reports only via callback, never via stream 'error'
     // Let any scheduled 'error'/'close' emissions from destroy() run.
     await new Promise(resolve => setImmediate(resolve));
     expect(pushedStreams).toEqual([{ event: "close", destroyed: true }]);
+    expect(published).toEqual([
+      "http2.server.stream.created 1",
+      "http2.server.stream.start 1",
+      "http2.server.stream.close 1",
+    ]);
     client.close();
   } finally {
-    dc.unsubscribe("http2.server.stream.created", onCreated);
+    for (const name of channels) dc.unsubscribe(name, onPublish);
     server.close();
   }
 });

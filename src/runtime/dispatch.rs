@@ -367,6 +367,14 @@ pub(crate) fn run_task(
                 }
             )
         }
+        task_tag::FetchTaskletTrace => feature_arm!(
+            [Fetch],
+            |trace: crate::webcore::fetch::FetchTaskletTrace| -> JsResult<()> {
+                // SAFETY: §Dispatch — tag identifies pointee; the task owns a ref.
+                let tasklet = unsafe { bun_ptr::RefPtr::from_raw(trace.cast()) };
+                FetchTasklet::on_trace_events(&tasklet)
+            }
+        )?,
         task_tag::HTMLRewriterBackgroundPull => counted_arm!(
             task,
             [HtmlRewriter],
@@ -755,7 +763,7 @@ fn run_task_cold(task: &Task) {
 /// `release_task_unrun` track `bun_event_loop::task_tag::COUNT`. Bump when
 /// adding a variant — and give it an arm in both.
 const _: () = assert!(
-    task_tag::COUNT == 71,
+    task_tag::COUNT == 72,
     "dispatch::run_task / release_task_unrun arm count out of sync with bun_event_loop::task_tag",
 );
 
@@ -1622,6 +1630,9 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         }
         task_tag::FetchTaskletRequestDrain => {
             release_in!([Fetch], crate::webcore::fetch::FetchTaskletRequestDrain)
+        }
+        task_tag::FetchTaskletTrace => {
+            release_in!([Fetch], crate::webcore::fetch::FetchTaskletTrace)
         }
         task_tag::HTMLRewriterBackgroundPull => {
             release_counted_in!(

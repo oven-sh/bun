@@ -665,7 +665,9 @@ fn lay_link(
             sys::File::open(&real, sys::O::RDONLY | sys::O::CLOEXEC, 0)
                 .and_then(|from| {
                     let to = dest.create_file_z(name, Default::default())?;
-                    let _ = sys::fchmod(to.handle(), target.st_mode as sys::Mode);
+                    if cfg!(not(windows)) {
+                        let _ = sys::fchmod(to.handle(), target.st_mode as sys::Mode);
+                    }
                     sys::copy_file(from.handle(), to.handle())
                 })
                 .map_err(|_| "failed to copy target")

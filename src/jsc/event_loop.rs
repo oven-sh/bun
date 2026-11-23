@@ -445,12 +445,6 @@ impl EventLoop {
         Ok(())
     }
 
-    /// For a deferred task that keeps its entry for work that arrived while it ran: the loop does not
-    /// block before the checkpoint that runs the task again.
-    pub fn owe_checkpoint(&self) {
-        self.owes_checkpoint.set(true);
-    }
-
     /// Returns whether `bun test` has a test or hook to run next.
     #[inline(always)]
     fn drain_microtasks_once(
@@ -470,20 +464,13 @@ impl EventLoop {
             _ => unreachable!(),
         }
 
-        self.owes_checkpoint.set(false);
         {
             let _inside = vm.is_inside_deferred_task_queue.raise_for_scope();
             self.deferred_tasks.run();
         }
 
-        // Drain again, or the microtasks that JS queued wait for the next event and are lost if the loop exits first.
-        if vm.deferred_task_called_js.take() {
-            let _scope = self.enter_scope_without_checkpoint();
-            global_object.drain_microtasks_and_next_ticks()?;
-            if self.deferred_tasks.may_have_unrun_tasks() {
-                self.owes_checkpoint.set(true);
-            }
-        }
+        self.owes_checkpoint
+            .set(self.deferred_tasks.may_have_unrun_tasks());
 
         // Guard on `event_loop_handle` being set, but drain via `uws_loop()`:
         // on Windows the uSockets loop (`uws::Loop::get()`) is NOT

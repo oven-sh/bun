@@ -375,8 +375,6 @@ pub struct VirtualMachine {
     pub(crate) has_started_debugger: Cell<bool>,
 
     pub is_inside_deferred_task_queue: core::cell::Cell<bool>,
-    /// Set by a deferred task that can call JS, so the checkpoint drains microtasks again after the queue.
-    pub deferred_task_called_js: Cell<bool>,
     /// When true, drainMicrotasksWithGlobal is suppressed.
     pub(crate) suppress_microtask_drain: core::cell::Cell<bool>,
     /// Set when a `bun test` test or hook finishes. The next microtask drain with no JS on the stack runs the next one.
@@ -3124,7 +3122,6 @@ impl VirtualMachine {
             channel_ref: Default::default(),
             channel_ref_overridden: Cell::new(false),
             channel_ref_should_ignore_one_disconnect_event_listener: Cell::new(false),
-            deferred_task_called_js: Cell::new(false),
             commonjs_custom_extensions: JsCell::default(),
             has_mutated_built_in_extensions: Cell::new(0),
             initial_script_execution_context_identifier: context_id,

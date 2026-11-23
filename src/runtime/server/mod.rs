@@ -2478,17 +2478,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // current task and its microtasks), like the HTTP/1 sink's auto-flush.
         extern "C" fn schedule_h2_drain(app: *mut c_void, _ctx: *mut c_void) {
             extern "C" fn drain(app: *mut c_void) -> bool {
-                let vm = jsc::VirtualMachine::get();
-                // The sweep resumes parked streams: a `pull()`, or a promise that script awaits.
-                vm.deferred_task_called_js.set(true);
                 // S012: `h2::App` is an `opaque_ffi!` ZST — safe deref.
                 // Stay registered while streams are still queued.
-                let queued = bun_opaque::opaque_deref_mut(app.cast::<uws_sys::h2::App>()).drain();
-                if queued {
-                    // Script that this pass resumed wrote to another connection. That connection waits for the next pass.
-                    vm.event_loop().owe_checkpoint();
-                }
-                queued
+                bun_opaque::opaque_deref_mut(app.cast::<uws_sys::h2::App>()).drain()
             }
             jsc::VirtualMachine::get()
                 .event_loop()

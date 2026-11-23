@@ -2837,8 +2837,16 @@ it("http2 setNextStreamID at the edges of the id space does not overflow", async
       console.error(what, err);
       process.exit(1);
     };
+    // A session reports its error immediately before its 'close', so both sessions close before the result counts.
+    let open = 2;
+    const closed = () => {
+      if (--open > 0) return;
+      console.log(JSON.stringify(result));
+      process.exit(0);
+    };
     const server = http2.createServer();
     server.on("sessionError", fail("server session error"));
+    server.on("session", session => session.on("close", closed));
     server.on("stream", stream => {
       // ServerHttp2Session does not expose setNextStreamID; call the native setter it would wrap.
       const parser = stream.session[Symbol.for("::bunhttp2native::")];
@@ -2852,6 +2860,7 @@ it("http2 setNextStreamID at the edges of the id space does not overflow", async
     server.listen(0, "127.0.0.1", () => {
       const client = http2.connect("http://127.0.0.1:" + server.address().port);
       client.on("error", fail("client session error"));
+      client.on("close", closed);
       client.on("connect", () => {
         for (const id of [0.5, 1]) {
           client.setNextStreamID(id);
@@ -2863,10 +2872,7 @@ it("http2 setNextStreamID at the edges of the id space does not overflow", async
           result.response = { streamId: req.id, status: headers[":status"] };
         });
         req.resume();
-        req.on("close", () => {
-          console.log(JSON.stringify(result));
-          process.exit(0);
-        });
+        req.on("close", () => client.close());
         req.end();
       });
     });
@@ -4635,6 +4641,7 @@ async function pushedHeaderBlocks(onStream, serverOptions) {
   const server = http2.createServer(serverOptions);
   server.on("error", reject);
   server.on("sessionError", reject);
+  const serverSessionClosed = new Promise(closed => server.on("session", session => session.on("close", closed)));
   server.on("stream", onStream);
   let client;
   try {
@@ -4659,7 +4666,9 @@ async function pushedHeaderBlocks(onStream, serverOptions) {
     });
     const req = client.request({ ":path": "/" });
     req.on("error", reject);
-    req.on("end", resolve);
+    // A session reports its error immediately before its 'close': no session failed once both have closed.
+    req.on("end", () => client.close());
+    client.on("close", () => serverSessionClosed.then(resolve));
     req.resume();
     await promise;
     return blocks;
@@ -6282,6 +6291,261 @@ it("delivers the reserved push stream and fails the session when its headers can
   }
 });
 
+// Like node, a session that is destroyed with an error emits 'error' immediately before 'close'. Both come
+// behind the socket's 'close' when destroy() destroys a live socket, and from process.nextTick when the socket
+// is already gone. The fixture prints the events of each path, and Node.js is the reference.
+const sessionErrorOrderFixture = path.join(import.meta.dir, "node-http2-session-error-order.fixture.js");
+async function sessionErrorOrder(runtime, ...args) {
+  await using proc = Bun.spawn({
+    cmd: [runtime, sessionErrorOrderFixture, ...args],
+    env: { ...bunEnv, H2_ORDER_TLS: JSON.stringify({ key: TLS_CERT.key, cert: TLS_CERT.cert }) },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
+}
+// The paths on which Bun emits what Node.js emits.
+const sessionErrorOrderLikeNode = `a client receives GOAWAY(CANCEL):
+  session goaway 8
+  stream aborted
+  stream error ERR_HTTP2_SESSION_ERROR
+  stream close 8
+  a tick queued in the stream's 'close'
+  session error ERR_HTTP2_SESSION_ERROR, destroyed true, closed false
+  session close, ran since 'error': nothing
+a client receives GOAWAY(ENHANCE_YOUR_CALM):
+  session goaway 11
+  stream aborted
+  stream error ERR_HTTP2_SESSION_ERROR
+  stream close 11
+  a tick queued in the stream's 'close'
+  session error ERR_HTTP2_SESSION_ERROR, destroyed true, closed false
+  session close, ran since 'error': nothing
+a client that called close() receives GOAWAY(CANCEL):
+  session goaway 8
+  stream aborted
+  stream error ERR_HTTP2_SESSION_ERROR
+  stream close 8
+  a tick queued in the stream's 'close'
+  session error ERR_HTTP2_SESSION_ERROR, destroyed true, closed true
+  session close, ran since 'error': nothing
+a client that calls close() in its 'goaway' listener receives GOAWAY(CANCEL):
+  session goaway 8
+  stream aborted
+  stream error ERR_HTTP2_SESSION_ERROR
+  stream close 8
+  a tick queued in the stream's 'close'
+  socket close
+  session error ERR_HTTP2_SESSION_ERROR, destroyed true, closed true
+  session close, ran since 'error': nothing
+a client receives GOAWAY(NO_ERROR), then GOAWAY(CANCEL):
+  session goaway 0
+  session goaway 8
+  stream aborted
+  stream error ERR_HTTP2_SESSION_ERROR
+  stream close 8
+  a tick queued in the stream's 'close'
+  session error ERR_HTTP2_SESSION_ERROR, destroyed true, closed true
+  session close, ran since 'error': nothing
+a server receives GOAWAY(CANCEL):
+  session goaway 8
+  stream aborted
+  stream error ERR_HTTP2_SESSION_ERROR
+  stream close 8
+  a tick queued in the stream's 'close'
+  server sessionError ERR_HTTP2_SESSION_ERROR
+  session error ERR_HTTP2_SESSION_ERROR, destroyed true, closed false
+  session close, ran since 'error': nothing
+a server session is destroyed with an error:
+  stream aborted
+  destroy() returned
+  stream error boom
+  stream close 2
+  a tick queued in the stream's 'close'
+  server sessionError boom
+  session error boom, destroyed true, closed false
+  session close, ran since 'error': nothing
+a server session is destroyed with a code:
+  stream aborted
+  destroy() returned
+  stream error ERR_HTTP2_SESSION_ERROR
+  stream close 8
+  a tick queued in the stream's 'close'
+  server sessionError ERR_HTTP2_SESSION_ERROR
+  session error ERR_HTTP2_SESSION_ERROR, destroyed true, closed false
+  session close, ran since 'error': nothing
+the socket of a server session is destroyed with an error:
+  socket.destroy() returned
+  stream aborted
+  stream error boom
+  stream close 2
+  server sessionError boom
+  session error boom, destroyed true, closed false
+  session close, ran since 'error': nothing
+  a tick queued in the stream's 'close'
+a client session with no stream is destroyed with an error:
+  destroy() returned
+  session error boom, destroyed true, closed false
+  session close, ran since 'error': nothing
+the socket of a client session with no stream is destroyed with an error:
+  socket.destroy() returned
+  session error boom, destroyed true, closed false
+  session close, ran since 'error': nothing
+a client session that destroys itself with an error:
+  settings() threw ERR_HTTP2_INVALID_SESSION
+  session error ERR_HTTP2_MAX_PENDING_SETTINGS_ACK, destroyed true, closed false
+  session close, ran since 'error': nothing
+listeners that are added after destroy(error) returned:
+  session error boom, destroyed true, closed false
+  session close, ran since 'error': nothing
+a 'close' listener that the 'error' listener adds:
+  session error boom
+  session close
+destroy() with no error, then the socket fails:
+  session close
+a server session is destroyed with no error, then its socket fails:
+  session close
+a request() that throws, and destroy(error) in the catch:
+  request() threw toString boom
+  session error toString boom
+  session close
+a connect that fails, with a request that waits:
+  stream aborted
+  stream error ERR_HTTP2_STREAM_CANCEL
+  stream close 2
+  session error ENOTFOUND, destroyed true, closed false
+  session close, ran since 'error': nothing
+  a tick queued in the stream's 'close'
+a client session that is still connecting is destroyed with an error:
+  stream aborted
+  destroy() returned
+  stream error ERR_HTTP2_STREAM_CANCEL
+  stream close 2
+  a tick queued in the stream's 'close'
+  session error boom, destroyed true, closed false
+  session close, ran since 'error': nothing
+a client receives GOAWAY(CANCEL), over TLS:
+  session goaway 8
+  stream aborted
+  stream error ERR_HTTP2_SESSION_ERROR
+  stream close 8
+  a tick queued in the stream's 'close'
+  session error ERR_HTTP2_SESSION_ERROR, destroyed true, closed false
+  session close, ran since 'error': nothing
+destroy(error) with no 'error' listener:
+  destroy() returned
+  uncaughtException boom
+an 'error' listener that is removed after destroy(error) returned:
+  uncaughtException boom
+`;
+// The paths on which Bun does not emit what Node.js emits. Both texts are held, so a change of either is seen:
+// when a path turns into node's, its scenario moves to the list above.
+// - A client destroys its open streams one tick after destroy(), so 'aborted' is late, and with no live socket
+//   to wait for (a socket that failed, a Duplex) the session's events come ahead of the streams' 'error' and 'close'.
+// - A session whose socket failed while it had an 'error' listener does not throw when that listener is gone.
+// - A server session whose socket closes with no error emits 'close' ahead of its streams.
+const sessionErrorOrderUnlikeNode = {
+  node: `a client session with an open stream is destroyed with an error:
+  stream aborted
+  destroy() returned
+  stream error boom
+  stream close 2
+  a tick queued in the stream's 'close'
+  session error boom, destroyed true, closed false
+  session close, ran since 'error': nothing
+the socket of a client session with an open stream is destroyed with an error:
+  socket.destroy() returned
+  stream aborted
+  stream error boom
+  stream close 2
+  session error boom, destroyed true, closed false
+  session close, ran since 'error': nothing
+  a tick queued in the stream's 'close'
+a client session over a Duplex is destroyed with an error:
+  stream aborted
+  destroy() returned
+  stream error boom
+  stream close 2
+  a tick queued in the stream's 'close'
+  session error boom, destroyed true, closed false
+  session close, ran since 'error': nothing
+the socket of a client session fails, and its 'error' listener is removed before the emit:
+  uncaughtException boom
+the socket of a server session fails, and its 'error' listener is removed before the emit:
+  uncaughtException boom
+the socket of a server session is destroyed with no error:
+  socket.destroy() returned
+  stream aborted
+  stream close 8
+  session close
+  a tick queued in the stream's 'close'
+`,
+  bun: `a client session with an open stream is destroyed with an error:
+  destroy() returned
+  stream aborted
+  stream error boom
+  stream close 2
+  a tick queued in the stream's 'close'
+  session error boom, destroyed true, closed false
+  session close, ran since 'error': nothing
+the socket of a client session with an open stream is destroyed with an error:
+  socket.destroy() returned
+  stream aborted
+  session error boom, destroyed true, closed false
+  session close, ran since 'error': nothing
+  stream error boom
+  stream close 2
+  a tick queued in the stream's 'close'
+a client session over a Duplex is destroyed with an error:
+  destroy() returned
+  stream aborted
+  session error boom, destroyed true, closed false
+  session close, ran since 'error': nothing
+  stream error boom
+  stream close 2
+  a tick queued in the stream's 'close'
+the socket of a client session fails, and its 'error' listener is removed before the emit:
+  session close
+the socket of a server session fails, and its 'error' listener is removed before the emit:
+  session close
+the socket of a server session is destroyed with no error:
+  socket.destroy() returned
+  stream aborted
+  session close
+  stream close 8
+  a tick queued in the stream's 'close'
+`,
+};
+// Before v24 node emitted the 'close' of a server session a tick later on the last of these paths.
+const sessionErrorOrderNode = nodeExeAtLeast("24.0.0");
+
+for (const [name, runtime] of [
+  ["bun", bunExe()],
+  ["node", sessionErrorOrderNode],
+]) {
+  it.skipIf(!runtime)(
+    `a session that is destroyed with an error emits 'error' immediately before 'close' (${name})`,
+    async () => {
+      expect(await sessionErrorOrder(runtime)).toEqual({ stdout: sessionErrorOrderLikeNode, stderr: "", exitCode: 0 });
+    },
+    // A debug build needs 3 to 5 s to start and load node:http2. Every other build keeps the default.
+    isDebug ? 15_000 : undefined,
+  );
+
+  it.skipIf(!runtime)(
+    `the teardown paths on which a session's events are not in node's order yet (${name})`,
+    async () => {
+      expect(await sessionErrorOrder(runtime, "unlike-node")).toEqual({
+        stdout: sessionErrorOrderUnlikeNode[name],
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+    isDebug ? 15_000 : undefined,
+  );
+}
+
 it.skipIf(!isLinux)("a send that the kernel refuses, and takes in the same turn, hides no session error", async () => {
   const { symbols: libc } = dlopen(libcPathForDlopen(), {
     close: { args: ["int"], returns: "int" },
@@ -6347,12 +6611,13 @@ it.skipIf(!isLinux)("a send that the kernel refuses, and takes in the same turn,
     client.ping(() => {});
     neighbor.ping(() => {});
 
-    expect({ encodable: await encodable, unencodable: await unencodable, sessionErrors }).toEqual({
+    expect({ encodable: await encodable, unencodable: await unencodable }).toEqual({
       encodable: ["ERR_HTTP2_SESSION_ERROR"],
       unencodable: ["ERR_HTTP2_SESSION_ERROR"],
-      sessionErrors: ["ERR_HTTP2_SESSION_ERROR: Session closed with error code 9"],
     });
     await Promise.all([closed, peerClosed]);
+    // The session reports its error immediately before its 'close'.
+    expect(sessionErrors).toEqual(["ERR_HTTP2_SESSION_ERROR: Session closed with error code 9"]);
     neighbor.close();
     // Calls back only once every session is closed.
     await new Promise(resolve => server.close(resolve));

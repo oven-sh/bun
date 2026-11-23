@@ -6,7 +6,7 @@ use bun_lint::rule::Plugin;
 /// Disallow empty keys in JSON objects
 pub struct NoEmptyKeys;
 
-const EMPTY_KEY: Message = Message::new("emptyKey", "Empty key found.");
+const EMPTY_KEY: &Message = &Message::new("emptyKey", "Empty key found.");
 
 impl Rule for NoEmptyKeys {
     const META: Meta = Meta::plugin(Plugin::Json, "no-empty-keys", Kind::Problem)

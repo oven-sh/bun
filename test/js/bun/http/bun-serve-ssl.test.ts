@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync, symlinkSync } from "fs";
-import { bunEnv, bunExe, expiredTls, isWindows, tempDir, tls as tlsCert } from "harness";
+import { bunEnv, bunExe, bunRun, expiredTls, isWindows, tempDir, tls as tlsCert } from "harness";
 import { once } from "node:events";
 import net from "node:net";
 import tls from "node:tls";
@@ -653,11 +653,26 @@ test.skipIf(isWindows).each(["relative", "absolute"])(
   },
 );
 
-test.skipIf(isWindows)("a keyFile with a trailing slash is not the file without it", () => {
+test.skipIf(isWindows)("a backslash is part of a name in keyFile, certFile and the cwd", async () => {
+  using dir = tempDir("bun-serve-ssl-backslash", {
+    "a\\b": {
+      "key.pem": tlsCert.key,
+      "c\\cert.pem": tlsCert.cert,
+      "serve.js": String.raw`
+        const tls = { keyFile: import.meta.dir + "/key.pem", certFile: "c\\cert.pem" };
+        using server = Bun.serve({ port: 0, tls, fetch: () => new Response("served") });
+        console.log(await (await fetch(server.url, { tls: { rejectUnauthorized: false } })).text());
+      `,
+    },
+  });
+  expect(await bunRun(join(String(dir), "a\\b", "serve.js"))).toSpawn("served");
+});
+
+test.skipIf(isWindows).each(["/", "\\"])("keyFile with a trailing %s is rejected", sep => {
   using dir = tempDir("bun-serve-ssl-slash", { "key.pem": tlsCert.key, "cert.pem": tlsCert.cert });
   const certFile = join(String(dir), "cert.pem");
   expect(() =>
-    Bun.serve({ port: 0, tls: { keyFile: join(String(dir), "key.pem") + "/", certFile }, fetch: () => new Response() }),
+    Bun.serve({ port: 0, tls: { keyFile: join(String(dir), "key.pem") + sep, certFile }, fetch: () => new Response() }),
   ).toThrow("Unable to access keyFile path");
 });
 
@@ -724,4 +739,51 @@ describe.concurrent("client certificate policy", () => {
       });
     });
   });
+});
+
+// Sanitizer and debug builds do not hand freed memory back as it was, so only a release build can fail these.
+test.concurrent.each([
+  ["key", "{ key: latin1 }", "ERR_OSSL_PEM_NO_START_LINE"],
+  ["key in a 16-bit string", "{ key: utf16 }", "ERR_OSSL_PEM_NO_START_LINE"],
+  ["key in a Buffer", "{ key: bytes }", "ERR_OSSL_PEM_NO_START_LINE"],
+  ["key after a NUL", "{ key: afterNul }", "ERR_OSSL_PEM_NO_START_LINE"],
+  ["key in a file", `{ key: Bun.file("small") }`, "ERR_OSSL_PEM_NO_START_LINE"],
+  ["key in a file larger than the first read", `{ key: Bun.file("large") }`, "ERR_OSSL_PEM_NO_START_LINE"],
+  ["passphrase", `{ ...${JSON.stringify(tlsCert)}, passphrase: latin1 }`, undefined],
+])("a TLS %s leaves no copy in freed memory", async (_, options, error) => {
+  using dir = tempDir("tls-secret", { small: Buffer.alloc(3000, "K"), large: Buffer.alloc(300_000, "K") });
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const bytes = Buffer.alloc(3000, "K");
+        // Globals, so that they are never freed themselves.
+        globalThis.latin1 = bytes.toString("latin1");
+        globalThis.afterNul = Buffer.alloc(3000, "K").fill(0, 1, 2);
+        const utf16 = Buffer.alloc(6000, "K\\0").fill("\\u2603", 5998, 6000, "utf16le").toString("utf16le");
+        function isInFreedMemory() {
+          const blocks = [3000, 3001, 6000, 256 * 1024, 300_000].flatMap(size =>
+            Array.from({ length: 16 }, () => Buffer.allocUnsafeSlow(size)),
+          );
+          return blocks.some(block => block.includes(bytes.subarray(0, 100)));
+        }
+        const before = isInFreedMemory();
+        Bun.gc(true);
+        let error;
+        try {
+          Bun.serve({ port: 0, fetch() {}, tls: ${options} }).stop(true);
+        } catch (e) {
+          error = String(e.code);
+        }
+        console.log(JSON.stringify({ before, error, after: isInFreedMemory() }));
+      `,
+    ],
+    cwd: String(dir),
+    env: bunEnv,
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(JSON.parse(stdout)).toEqual({ before: false, error, after: false });
+  expect(exitCode).toBe(0);
 });

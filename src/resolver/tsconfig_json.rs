@@ -2,6 +2,8 @@ use bun_collections::ArrayHashMap;
 use bun_core::strings;
 use bun_js_parser::lexer as js_lexer;
 use bun_parsers::json_parser;
+use bun_paths::portable::{self, from_portable_rooted};
+use bun_sys::converted_spelling;
 use enumset::{EnumSet, EnumSetType};
 
 // D042: `options::jsx::{Pragma, Runtime, ImportSource, RUNTIME_MAP, ...}` is
@@ -163,6 +165,13 @@ pub struct TSConfigJSON {
     pub experimental_decorators: bool,
     /// `None` = unset (keeps native [[Define]] class-field semantics).
     pub use_define_for_class_fields: Option<bool>,
+    pub(crate) has_compiler_options: bool,
+}
+
+pub(crate) struct PathsWildcardMatch<'a> {
+    pub(crate) prefix: &'a [u8],
+    pub(crate) suffix: &'a [u8],
+    pub(crate) original_paths: &'a [Box<[u8]>],
 }
 
 impl Default for TSConfigJSON {
@@ -179,6 +188,7 @@ impl Default for TSConfigJSON {
             emit_decorator_metadata: false,
             experimental_decorators: false,
             use_define_for_class_fields: None,
+            has_compiler_options: false,
         }
     }
 }
@@ -224,6 +234,48 @@ impl TSConfigJSON {
 
     pub(crate) fn has_base_url(&self) -> bool {
         !self.base_url.is_empty()
+    }
+
+    pub(crate) fn abs_base_url_for_paths(&self) -> &[u8] {
+        // The explicit base URL should take precedence over the implicit base URL
+        // if present. This matters when a tsconfig.json file overrides "baseUrl"
+        // from another extended tsconfig.json file but doesn't override "paths".
+        if self.has_base_url() {
+            &self.base_url
+        } else {
+            &self.base_url_for_paths
+        }
+    }
+
+    pub(crate) fn match_paths_wildcard(&self, path: &[u8]) -> Option<PathsWildcardMatch<'_>> {
+        let mut longest_match: Option<PathsWildcardMatch> = None;
+
+        for (key, original_paths) in self.paths.keys().iter().zip(self.paths.values().iter()) {
+            if let Some(star) = strings::index_of_char_usize(key, b'*') {
+                let prefix = &key[..star];
+                let suffix = &key[star + 1..];
+
+                // Find the match with the longest prefix. If two matches have the same
+                // prefix length, pick the one with the longest suffix. This second edge
+                // case isn't handled by the TypeScript compiler, but we handle it
+                // because we want the output to always be deterministic
+                if path.len() >= prefix.len() + suffix.len()
+                    && path.starts_with(prefix)
+                    && path.ends_with(suffix)
+                    && longest_match.as_ref().is_none_or(|longest| {
+                        (prefix.len(), suffix.len()) > (longest.prefix.len(), longest.suffix.len())
+                    })
+                {
+                    longest_match = Some(PathsWildcardMatch {
+                        prefix,
+                        suffix,
+                        original_paths,
+                    });
+                }
+            }
+        }
+
+        longest_match
     }
 
     pub fn merge_jsx(&self, current: options::jsx::Pragma) -> options::jsx::Pragma {
@@ -307,11 +359,13 @@ impl TSConfigJSON {
         Ok(Box::from(&written[..len]))
     }
 
+    #[inline(never)]
     pub fn parse(
         log: &mut bun_ast::Log,
         source: &bun_ast::Source,
         json_cache: &mut JsonCache,
     ) -> Result<Option<Box<TSConfigJSON>>, crate::Error> {
+        bun_removable_features::removable_definition!(PackageFiles, Self::parse);
         // Unfortunately "tsconfig.json" isn't actually JSON. It's some other
         // format that appears to be defined by the implementation details of the
         // TypeScript compiler.
@@ -361,7 +415,7 @@ impl TSConfigJSON {
         if let Some(extends_value) = extends_value {
             if !source.path.is_node_module() {
                 if let Some(str) = extends_value.as_str() {
-                    result.extends = Box::from(str);
+                    result.extends = converted_spelling(str, from_portable_rooted).into();
                 }
             }
         }
@@ -369,6 +423,7 @@ impl TSConfigJSON {
 
         // Parse "compilerOptions"
         if let Some(compiler_opts) = compiler_opts {
+            result.has_compiler_options = true;
             // Single pass over `compilerOptions`' properties; first occurrence
             // of each key wins (matching `asProperty`).
             let mut base_url_v: Option<&bun_ast::E::JsonValue> = None;
@@ -423,6 +478,7 @@ impl TSConfigJSON {
             // Parse "baseUrl"
             if let Some(base_url_prop) = base_url_v {
                 if let Some(base_url) = base_url_prop.as_str() {
+                    let base_url = converted_spelling(base_url, from_portable_rooted);
                     result.base_url =
                         match Self::str_replacing_templates(Box::from(base_url), source) {
                             Ok(v) => v,
@@ -496,7 +552,8 @@ impl TSConfigJSON {
             // Parse "jsxImportSource"
             if let Some(jsx_prop) = jsx_import_source_v {
                 if let Some(str) = jsx_prop.as_str() {
-                    result.jsx.package_name = str.to_vec().into();
+                    result.jsx.package_name =
+                        portable::from_portable_specifier(str).into_owned().into();
                     result.jsx.set_import_source();
                     result.jsx_flags.insert(JsxField::ImportSource);
                 }
@@ -614,6 +671,8 @@ impl TSConfigJSON {
                                         });
                                         if let Some(str_) = item.as_str() {
                                             let item_loc = this_item_loc;
+                                            let str_ =
+                                                converted_spelling(str_, from_portable_rooted);
                                             let str = match Self::str_replacing_templates(
                                                 Box::from(str_),
                                                 source,
@@ -764,12 +823,12 @@ impl TSConfigJSON {
         }
 
         // Relative "./" or "../" or ".\\" or "..\\"
-        if c0 == b'.' && (bun_paths::is_sep_any(c1) || (c1 == b'.' && bun_paths::is_sep_any(c2))) {
+        if c0 == b'.' && (portable::is_sep(c1) || (c1 == b'.' && portable::is_sep(c2))) {
             return true;
         }
 
         // Absolute DOS "c:/" or "c:\\"
-        if c1 == b':' && bun_paths::is_sep_any(c2) {
+        if c1 == b':' && portable::is_sep(c2) {
             match c0 {
                 b'a'..=b'z' | b'A'..=b'Z' => {
                     return true;
@@ -779,7 +838,7 @@ impl TSConfigJSON {
         }
 
         // Absolute unix "/"
-        if bun_paths::is_sep_any(c0) {
+        if portable::is_sep(c0) {
             return true;
         }
 

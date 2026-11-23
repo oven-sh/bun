@@ -162,8 +162,6 @@ pub mod Runtime {
     use bun_core::strings;
     use bun_wyhash::Wyhash;
 
-    use bun_ast::RuntimeTranspilerCache;
-
     // ─────────────────────────── Runtime.Features ───────────────────────────
 
     pub struct Features {
@@ -192,12 +190,20 @@ pub mod Runtime {
         pub inlining: bool,
 
         pub inject_jest_globals: bool,
+        /// True for a `bun test` test file or preload, but not for the modules they import.
+        pub is_test_entry_point: bool,
+        /// Inject the globals from "vitest" instead of "bun:test".
+        pub vitest_globals: bool,
+        /// Bitset indexed like `Jest::GLOBALS`, set for the ones a script put on `globalThis` itself.
+        pub own_test_globals: u32,
 
         pub no_macros: bool,
 
         pub commonjs_named_exports: bool,
 
         pub minify_syntax: bool,
+        /// `--library` and `--dts`: the output has to type check once the types of its sources are put back.
+        pub is_library: bool,
         pub minify_identifiers: bool,
         /// Preserve function/class names during minification (CLI: --keep-names)
         pub minify_keep_names: bool,
@@ -232,6 +238,10 @@ pub mod Runtime {
         pub unwrap_commonjs_packages: &'static [&'static [u8]],
 
         pub commonjs_at_runtime: bool,
+        /// See `defer_requires::LOADS`.
+        pub lists_loads: bool,
+        /// See `defer_requires.rs`. Needs `lists_loads`.
+        pub defers_requires: bool,
         pub unwrap_commonjs_to_esm: bool,
 
         pub emit_decorator_metadata: bool,
@@ -241,14 +251,11 @@ pub mod Runtime {
         /// This is used for `--print` entry points so we can get the result.
         pub remove_cjs_module_wrapper: bool,
 
-        // `?*bun.jsc.RuntimeTranspilerCache` — raw `*mut` (not `&'a mut`)
-        // so `Features` stays `'static`-bounded inside `Parser::Options` and avoids
-        // the borrowck self-borrow that `&'a mut` would induce while `P` holds
-        // `&mut Options`.
-        pub runtime_transpiler_cache: Option<*mut RuntimeTranspilerCache>,
-
         // TODO: make this a bitset of all unsupported features
         pub lower_using: bool,
+
+        /// The printer escapes everything that is not ASCII.
+        pub ascii_only: bool,
 
         /// Feature flags for dead-code elimination via `import { feature } from "bun:bundle"`
         /// When `feature("FLAG_NAME")` is called, it returns true if FLAG_NAME is in this set.
@@ -288,9 +295,13 @@ pub mod Runtime {
                 allow_runtime: true,
                 inlining: false,
                 inject_jest_globals: false,
+                is_test_entry_point: false,
+                vitest_globals: false,
+                own_test_globals: 0,
                 no_macros: false,
                 commonjs_named_exports: true,
                 minify_syntax: false,
+                is_library: false,
                 minify_identifiers: false,
                 minify_keep_names: false,
                 minify_whitespace: false,
@@ -303,12 +314,14 @@ pub mod Runtime {
                 code_coverage: false,
                 unwrap_commonjs_packages: &[],
                 commonjs_at_runtime: false,
+                lists_loads: false,
+                defers_requires: false,
                 unwrap_commonjs_to_esm: false,
                 emit_decorator_metadata: false,
                 standard_decorators: false,
                 remove_cjs_module_wrapper: false,
-                runtime_transpiler_cache: None,
                 lower_using: true,
+                ascii_only: false,
                 bundler_feature_flags: None,
                 define_hash: None,
                 repl_mode: false,
@@ -318,22 +331,6 @@ pub mod Runtime {
     }
 
     impl Features {
-        /// Reborrow the optional `RuntimeTranspilerCache` back-pointer.
-        ///
-        /// `&self` receiver (not `&mut`) so call sites may hold other shared
-        /// borrows of `p.options.*` across the returned `&mut` (e.g.
-        /// `cache.get(p.source, &raw const p.options, p.options.jsx.parse)`).
-        /// Callers must not hold two results live at once. Centralises the raw
-        /// deref so the four parse-entry use sites stay safe.
-        #[inline]
-        #[allow(clippy::mut_from_ref)]
-        pub(crate) fn runtime_transpiler_cache_mut(&self) -> Option<&mut RuntimeTranspilerCache> {
-            // SAFETY: `runtime_transpiler_cache` is `Option<*mut _>` (see PORT
-            // NOTE on the field) — the caller that populated it guarantees the
-            // pointee is unique to this parse and outlives `Features`.
-            self.runtime_transpiler_cache.map(|p| unsafe { &mut *p })
-        }
-
         /// Initialize bundler feature flags for dead-code elimination via `import { feature } from "bun:bundle"`.
         /// Returns an owned `Box<StringSet>`, or `None` if no flags are provided.
         /// Keys are kept sorted so iteration order is deterministic (for RuntimeTranspilerCache hashing).
@@ -360,9 +357,7 @@ pub mod Runtime {
         //
         // Takes `Wyhash` (NOT `Wyhash11`).
         pub(crate) fn hash_for_runtime_transpiler(&self, hasher: &mut Wyhash) {
-            debug_assert!(self.runtime_transpiler_cache.is_some());
-
-            let bools: [bool; 18] = [
+            let bools: [bool; 19] = [
                 self.top_level_await,
                 self.auto_import_jsx,
                 self.allow_runtime,
@@ -381,13 +376,22 @@ pub mod Runtime {
                 self.standard_decorators,
                 self.lower_using,
                 self.repl_mode,
-                // note that we do not include .inject_jest_globals, as we bail out of the cache entirely if this is true
+                self.ascii_only,
+                // `hash_test_features_for_runtime_transpiler` hashes `inject_jest_globals` and `vitest_globals`.
             ];
 
             // `[bool; N]` is N bytes of 0x00/0x01.
-            // `bool: NoUninit`, `u8: AnyBitPattern` → `cast_slice` is statically sound.
-            hasher.update(bytemuck::cast_slice::<bool, u8>(&bools));
+            hasher.update(bun_core::slice_as_bytes(&bools));
             hasher.update(&[self.react_compiler as u8]);
+
+            // `P::runs_imports_in_turn` depends on both, even when `P::uses_test_api` is false. Other files hash nothing extra.
+            if self.is_test_entry_point {
+                hasher.update(&[b'e', u8::from(self.vitest_globals)]);
+            }
+
+            if self.lists_loads {
+                hasher.update(&[b'l', u8::from(self.defers_requires)]);
+            }
 
             // Hash --feature flags. These directly affect transpiled output via
             // feature("NAME") replacement in visit_expr.rs. When empty, we add
@@ -405,6 +409,15 @@ pub mod Runtime {
                 hasher.update(b"define");
                 hasher.update(&define_hash.to_le_bytes());
             }
+        }
+
+        /// Only part of the cache key for a file with `P::uses_test_api`.
+        pub(crate) fn hash_test_features_for_runtime_transpiler(&self, hasher: &mut Wyhash) {
+            hasher.update(&[
+                u8::from(self.inject_jest_globals),
+                u8::from(self.vitest_globals),
+            ]);
+            hasher.update(&self.own_test_globals.to_le_bytes());
         }
 
         pub(crate) fn should_unwrap_require(&self, package_name: &[u8]) -> bool {
@@ -515,7 +528,7 @@ pub struct JSXImportSymbols {
 }
 
 impl JSXImportSymbols {
-    fn get(&self, name: &[u8]) -> Option<Ref> {
+    pub(crate) fn get(&self, name: &[u8]) -> Option<Ref> {
         if name == b"jsx" {
             return self.jsx.map(|jsx| jsx.ref_);
         }
@@ -605,39 +618,14 @@ impl JSXImportSymbols {
     }
 }
 
-// ─── GenerateImportSymbols impls (for `P::generate_import_stmt`) ───
-// `generate_import_stmt` maps a key to its string name via this trait, with
-// `Key = u8` (index into `ALL`) for `RuntimeImports` and
-// `Key = &'static [u8]` (the alias string itself) for `JSXImportSymbols`.
+#[derive(Default)]
+pub(crate) struct ChaiImports(pub(crate) Vec<(&'static [u8], Ref)>);
 
-impl crate::p::GenerateImportSymbols for RuntimeImports {
-    /// Index into [`RuntimeImports::ALL`].
-    type Key = u8;
-
-    #[inline]
-    fn get(&self, key: &u8) -> Option<Ref> {
-        // Disambiguate from the trait method: call the inherent `get(usize)`.
-        RuntimeImports::get(self, *key as usize)
-    }
-
-    #[inline]
-    fn alias_name(&self, key: &u8) -> &'static [u8] {
-        RuntimeImports::ALL[*key as usize]
-    }
-}
-
-impl crate::p::GenerateImportSymbols for JSXImportSymbols {
-    type Key = &'static [u8];
-
-    #[inline]
-    fn get(&self, key: &&'static [u8]) -> Option<Ref> {
-        // Disambiguate from the trait method: call the inherent `get(&[u8])`.
-        JSXImportSymbols::get(self, *key)
-    }
-
-    #[inline]
-    fn alias_name(&self, key: &&'static [u8]) -> &'static [u8] {
-        *key
+impl ChaiImports {
+    pub(crate) fn name(alias: &[u8]) -> Option<&'static [u8]> {
+        [b"assert".as_slice(), b"should"]
+            .into_iter()
+            .find(|&name| name == alias)
     }
 }
 
@@ -1007,9 +995,12 @@ pub(crate) fn statement_cares_about_scope(stmt: &Stmt) -> bool {
     match stmt.data {
         SBlock(_) | SEmpty(_) | SDebugger(_) | SExpr(_) | SIf(_) | SFor(_) | SForIn(_)
         | SForOf(_) | SDoWhile(_) | SWhile(_) | SWith(_) | STry(_) | SSwitch(_) | SReturn(_)
-        | SThrow(_) | SBreak(_) | SContinue(_) | SDirective(_) | SLabel(_) => false,
+        | SThrow(_) | SBreak(_) | SContinue(_) | SLabel(_) => false,
 
         SLocal(ref local) => local.kind != js_ast::LocalKind::KVar,
+        // With `keep_directives` the string that starts a block is one. Outside the block it could become
+        // the directive of a function.
+        SDirective(_) => true,
         _ => true,
     }
 }
@@ -1057,6 +1048,8 @@ pub struct ExprIn {
 
     /// The parent only reads, calls or assigns a property of this: `x.a`, `x[a]`, `const { a } = x`, not `delete x.a`.
     pub(crate) is_property_access_target: bool,
+
+    pub(crate) is_object_keys_argument: bool,
 }
 
 /// This function exists to tie all of these checks together in one place
@@ -1108,8 +1101,10 @@ pub struct ParsedPath<'a> {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum StrictModeFeature {
+    DeleteBareName,
     EvalOrArguments,
     ReservedWord,
+    WithStatement,
 }
 
 #[derive(Clone, Copy)]
@@ -1162,12 +1157,6 @@ impl StringVoidMap {
         entry.found_existing
     }
 
-    fn init() -> Result<StringVoidMap, bun_core::Error> {
-        Ok(StringVoidMap {
-            map: StringHashMap::default(),
-        })
-    }
-
     fn reset(&mut self) {
         // We must reset or the hash table will contain invalid pointers
         self.map.clear();
@@ -1176,13 +1165,17 @@ impl StringVoidMap {
     /// Returns an RAII guard that derefs to `&mut StringVoidMap` and is
     /// returned to the pool on `Drop`.
     #[inline]
-    pub(crate) fn get() -> bun_collections::pool::PoolGuard<'static, StringVoidMap> {
+    pub(crate) fn get() -> bun_collections::pool::PoolGuard<StringVoidMap> {
         StringVoidMapPool::get()
     }
 }
 
 impl bun_collections::pool::ObjectPoolType for StringVoidMap {
-    const INIT: Option<fn() -> Result<Self, bun_core::Error>> = Some(StringVoidMap::init);
+    fn init() -> Self {
+        StringVoidMap {
+            map: StringHashMap::default(),
+        }
+    }
     #[inline]
     fn reset(&mut self) {
         StringVoidMap::reset(self)
@@ -1372,7 +1365,7 @@ pub struct PropertyOpts {
     pub(crate) class_has_extends: bool,
     pub(crate) allow_ts_decorators: bool,
     pub(crate) is_ts_abstract: bool,
-    pub(crate) ts_decorators: ExprNodeList,
+    pub(crate) ts_decorators: js_ast::StoreSlice<Expr>,
     pub(crate) has_argument_decorators: bool,
     pub(crate) has_class_decorators: bool,
 }
@@ -1388,7 +1381,7 @@ impl Default for PropertyOpts {
             class_has_extends: false,
             allow_ts_decorators: false,
             is_ts_abstract: false,
-            ts_decorators: bun_alloc::AstAlloc::vec(),
+            ts_decorators: js_ast::StoreSlice::EMPTY,
             has_argument_decorators: false,
             has_class_decorators: false,
         }
@@ -1518,7 +1511,12 @@ pub struct ParseStatementOptions<'a> {
     pub(crate) is_name_optional: bool,
     pub(crate) is_typescript_declare: bool,
     pub(crate) is_for_loop_init: bool,
+    /// The statement list is a module, function or namespace body, so it can start with a
+    /// directive prologue. `parse_stmts_up_to` reads it and does not pass it on.
+    pub(crate) allow_directive_prologue: bool,
 }
+
+const _: () = assert!(core::mem::size_of::<ParseStatementOptions>() == 32);
 
 impl<'a> ParseStatementOptions<'a> {
     pub(crate) fn has_decorators(&self) -> bool {
@@ -1605,62 +1603,60 @@ impl<'a> MacroState<'a> {
 }
 
 pub struct Jest {
-    pub(crate) test: Ref,
-    pub(crate) it: Ref,
-    pub(crate) describe: Ref,
-    pub(crate) expect: Ref,
-    pub(crate) expect_type_of: Ref,
-    pub(crate) before_all: Ref,
-    pub(crate) before_each: Ref,
-    pub(crate) after_each: Ref,
-    pub(crate) after_all: Ref,
-    pub(crate) jest: Ref,
-    pub(crate) vi: Ref,
-    pub(crate) xit: Ref,
-    pub(crate) xtest: Ref,
-    pub(crate) xdescribe: Ref,
+    /// Indexed like `Jest::GLOBALS`. `Ref::NONE` unless the file uses the name without binding it.
+    pub(crate) refs: [Ref; Jest::GLOBALS.len()],
 }
 
 impl Jest {
-    /// `_parse` iterates this static table. The `&str` is the *JavaScript*
-    /// global name, and the fn-ptr projects the corresponding `Ref` out of
-    /// the struct. The table order determines the emitted import-clause /
-    /// binding property order.
-    pub(crate) const FIELDS: &'static [(&'static str, fn(&Jest) -> Ref)] = &[
-        ("test", |j| j.test),
-        ("it", |j| j.it),
-        ("describe", |j| j.describe),
-        ("expect", |j| j.expect),
-        ("expectTypeOf", |j| j.expect_type_of),
-        ("beforeAll", |j| j.before_all),
-        ("beforeEach", |j| j.before_each),
-        ("afterEach", |j| j.after_each),
-        ("afterAll", |j| j.after_all),
-        ("jest", |j| j.jest),
-        ("vi", |j| j.vi),
-        ("xit", |j| j.xit),
-        ("xtest", |j| j.xtest),
-        ("xdescribe", |j| j.xdescribe),
+    /// The order sets both the emitted import clause order and the `own_test_globals` bit index.
+    pub const GLOBALS: &'static [&'static str] = &[
+        "test",
+        "it",
+        "describe",
+        "expect",
+        "expectTypeOf",
+        "beforeAll",
+        "beforeEach",
+        "afterEach",
+        "afterAll",
+        "jest",
+        "vi",
+        "xit",
+        "xtest",
+        "xdescribe",
+        "onTestFinished",
+        "suite",
+        "vitest",
+        "onTestFailed",
+        "assertType",
+        "aroundEach",
+        "aroundAll",
     ];
+
+    #[cold]
+    #[optimize(size)]
+    pub(crate) fn did_declare_unbound(&mut self, name: &[u8], symbol: Ref) {
+        if let Some(global) = Self::GLOBALS
+            .iter()
+            .position(|global| global.as_bytes() == name)
+        {
+            self.refs[global] = symbol;
+        }
+    }
+
+    pub fn is_of_bun_only(global: &str) -> bool {
+        matches!(global, "jest" | "xit" | "xtest" | "xdescribe")
+    }
+
+    pub fn is_of_vitest_only(global: &str) -> bool {
+        matches!(global, "suite" | "vitest" | "onTestFailed" | "assertType")
+    }
 }
 
 impl Default for Jest {
     fn default() -> Self {
         Self {
-            test: Ref::NONE,
-            it: Ref::NONE,
-            describe: Ref::NONE,
-            expect: Ref::NONE,
-            expect_type_of: Ref::NONE,
-            before_all: Ref::NONE,
-            before_each: Ref::NONE,
-            after_each: Ref::NONE,
-            after_all: Ref::NONE,
-            jest: Ref::NONE,
-            vi: Ref::NONE,
-            xit: Ref::NONE,
-            xtest: Ref::NONE,
-            xdescribe: Ref::NONE,
+            refs: [Ref::NONE; Jest::GLOBALS.len()],
         }
     }
 }
@@ -1742,7 +1738,8 @@ pub fn new_lazy_export_ast_impl<'bump>(
     // same pattern.
     let lexer = js_lexer::Lexer::init_without_reading(&mut temp_log, source, bump);
     let log_ptr = lexer.log;
-    let mut parser = Parser {
+    let range = lexer.range();
+    let parser = Parser {
         options: opts,
         bump,
         lexer,
@@ -1751,11 +1748,9 @@ pub fn new_lazy_export_ast_impl<'bump>(
         log: log_ptr,
         orig_error_count: 0,
     };
-    let result = match parser.to_lazy_export_ast(expr, runtime_api_call, symbols) {
+    let result = match parser.into_lazy_export_ast(expr, runtime_api_call, symbols) {
         Ok(r) => r,
         Err(err) => {
-            let range = parser.lexer.range();
-            drop(parser);
             if temp_log.errors == 0 {
                 log_to_copy_into.add_range_error(Some(source), range, err.name().as_bytes());
             }
@@ -1763,7 +1758,6 @@ pub fn new_lazy_export_ast_impl<'bump>(
             return Ok(None);
         }
     };
-    drop(parser);
 
     temp_log.append_to(log_to_copy_into);
     match result {
@@ -1771,8 +1765,8 @@ pub fn new_lazy_export_ast_impl<'bump>(
             ast.has_lazy_export = true;
             Ok(Some(*ast))
         }
-        // `to_lazy_export_ast` always returns `Result::Ast` (no parse pass runs).
-        _ => unreachable!("to_lazy_export_ast returns Result::Ast"),
+        // `into_lazy_export_ast` always returns `Result::Ast` (no parse pass runs).
+        _ => unreachable!("into_lazy_export_ast returns Result::Ast"),
     }
 }
 

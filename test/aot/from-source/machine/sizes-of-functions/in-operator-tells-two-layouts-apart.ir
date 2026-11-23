@@ -1,0 +1,20 @@
+# f1 = size
+# -- source: in-operator-tells-two-layouts-apart.ts
+# type Circle = { radius: number };
+# type Square = { side: number };
+# function size(shape: Circle | Square): number {
+#   if ("radius" in shape) return shape.radius;
+#   return shape.side;
+# }
+# declare const input: any;
+# const circle: Circle = { radius: +input };
+# const square: Square = { side: +input };
+# (globalThis as any).answer = size(input ? circle : square);
+# -- end of source
+# The compiler before this one: 3 instructions, 0 of them patches.
+# When the bound was taken: steps: operations 4, patches 0, moves 0, unlikely or rare 6.
+# Behind the test the other layout is proven: one test, no join, and both ways are likely: 18 bytes in place of 31.
+# RUN(X64): bytes f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64: unit f1:Body
+# X64-NEXT: size=18 frame=none

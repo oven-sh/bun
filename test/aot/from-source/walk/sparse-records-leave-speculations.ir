@@ -1,0 +1,80 @@
+# The literal of `missing` is said to be a Label and leaves out most of what a Tile has. The 65 other tiles are instances that fill their fields: a read off a Tile speculates on those alone.
+# -- source: main.ts
+# declare function print(value: any): void;
+# declare function parse(text: string): any;
+# interface Tile { weight: number; marks: number; below: Tile | undefined }
+# interface Label extends Tile { word: string }
+# class Tile1 implements Tile { below: Tile | undefined; weight: number; marks: number; constructor(below: Tile | undefined) { this.below = below; this.weight = 7; this.marks = 89; } }
+# class Tile2 implements Tile { below: Tile | undefined; weight: number; marks: number; constructor(below: Tile | undefined) { this.below = below; this.weight = 14; this.marks = 88; } }
+# class Tile3 implements Tile { below: Tile | undefined; weight: number; marks: number; constructor(below: Tile | undefined) { this.below = below; this.weight = 21; this.marks = 87; } }
+# class Tile4 implements Tile { below: Tile | undefined; weight: number; marks: number; constructor(below: Tile | undefined) { this.below = below; this.weight = 5; this.marks = 86; } }
+# class Tile5 implements Tile { below: Tile | undefined; weight: number; marks: number; constructor(below: Tile | undefined) { this.below = below; this.weight = 12; this.marks = 85; } }
+# class Tile6 implements Tile { below: Tile | undefined; weight: number; marks: number; constructor(below: Tile | undefined) { this.below = below; this.weight = 19; this.marks = 84; } }
+# class Tile7 implements Tile { below: Tile | undefined; weight: number; marks: number; constructor(below: Tile | undefined) { this.below = below; this.weight = 3; this.marks = 83; } }
+# class Tile8 implements Tile { below: Tile | undefined; weight: number; marks: number; constructor(below: Tile | undefined) { this.below = below; this.weight = 10; this.marks = 82; } }
+# class Tile9 implements Tile { below: Tile | undefined; weight: number; marks: number; constructor(below: Tile | undefined) { this.below = below; this.weight = 17; this.marks = 81; } }
+# class Tile10 implements Tile { below: Tile | undefined; weight: number; marks: number; constructor(below: Tile | undefined) { this.below = below; this.weight = 1; this.marks = 80; } }
+# class Tile11 implements Tile { below: Tile | undefined; weight: number; marks: number; constructor(below: Tile | undefined) { this.below = below; this.weight = 8; this.marks = 79; } }
+# class Tile12 implements Tile { below: Tile | undefined; weight: number; marks: number; constructor(below: Tile | undefined) { this.below = below; this.weight = 15; this.marks = 78; } }
+# class Tile13 implements Tile { below: Tile | undefined; weight: number; marks: number; constructor(below: Tile | undefined) { this.below = below; this.weight = 22; this.marks = 77; } }
+# class Tile14 implements Tile { below: Tile | undefined; weight: number; marks: number; constructor(below: Tile | undefined) { this.below = below; this.weight = 6; this.marks = 76; } }
+# class Tile15 implements Tile { below: Tile | undefined; weight: number; marks: number; constructor(below: Tile | undefined) { this.below = below; this.weight = 13; this.marks = 75; } }
+# class Tile16 implements Tile { below: Tile | undefined; weight: number; marks: number; constructor(below: Tile | undefined) { this.below = below; this.weight = 20; this.marks = 74; } }
+# class Tile17 implements Tile { below: Tile | undefined; weight: number; marks: number; constructor(below: Tile | undefined) { this.below = below; this.weight = 4; this.marks = 73; } }
+# class Tile18 implements Tile { below: Tile | undefined; weight: number; marks: number; constructor(below: Tile | undefined) { this.below = below; this.weight = 11; this.marks = 72; } }
+# class Tile19 implements Tile { below: Tile | undefined; weight: number; marks: number; constructor(below: Tile | undefined) { this.below = below; this.weight = 18; this.marks = 71; } }
+# class Tile20 implements Tile { below: Tile | undefined; weight: number; marks: number; constructor(below: Tile | undefined) { this.below = below; this.weight = 2; this.marks = 70; } }
+# class Tile21 implements Tile { below: Tile | undefined; weight: number; marks: number; constructor(below: Tile | undefined) { this.below = below; this.weight = 9; this.marks = 69; } }
+# class Tile22 implements Tile { below: Tile | undefined; weight: number; marks: number; constructor(below: Tile | undefined) { this.below = below; this.weight = 16; this.marks = 68; } }
+# class Tile23 implements Tile { below: Tile | undefined; weight: number; marks: number; constructor(below: Tile | undefined) { this.below = below; this.weight = 0; this.marks = 67; } }
+# class Tile24 implements Tile { below: Tile | undefined; weight: number; marks: number; constructor(below: Tile | undefined) { this.below = below; this.weight = 7; this.marks = 66; } }
+# class Tile25 implements Tile { below: Tile | undefined; weight: number; marks: number; constructor(below: Tile | undefined) { this.below = below; this.weight = 14; this.marks = 65; } }
+# class Tile26 implements Tile { below: Tile | undefined; weight: number; marks: number; constructor(below: Tile | undefined) { this.below = below; this.weight = 21; this.marks = 64; } }
+# class Tile27 implements Tile { below: Tile | undefined; weight: number; marks: number; constructor(below: Tile | undefined) { this.below = below; this.weight = 5; this.marks = 63; } }
+# class Tile28 implements Tile { below: Tile | undefined; weight: number; marks: number; constructor(below: Tile | undefined) { this.below = below; this.weight = 12; this.marks = 62; } }
+# class Tile29 implements Tile { below: Tile | undefined; weight: number; marks: number; constructor(below: Tile | undefined) { this.below = below; this.weight = 19; this.marks = 61; } }
+# class Tile30 implements Tile { below: Tile | undefined; weight: number; marks: number; constructor(below: Tile | undefined) { this.below = below; this.weight = 3; this.marks = 60; } }
+# class Tile31 implements Tile { below: Tile | undefined; weight: number; marks: number; constructor(below: Tile | undefined) { this.below = below; this.weight = 10; this.marks = 59; } }
+# class Tile32 implements Tile { below: Tile | undefined; weight: number; marks: number; constructor(below: Tile | undefined) { this.below = below; this.weight = 17; this.marks = 58; } }
+# class Tile33 implements Tile { below: Tile | undefined; weight: number; marks: number; constructor(below: Tile | undefined) { this.below = below; this.weight = 1; this.marks = 57; } }
+# class Tile34 implements Tile { below: Tile | undefined; weight: number; marks: number; constructor(below: Tile | undefined) { this.below = below; this.weight = 8; this.marks = 56; } }
+# class Tile35 implements Tile { below: Tile | undefined; weight: number; marks: number; constructor(below: Tile | undefined) { this.below = below; this.weight = 15; this.marks = 55; } }
+# class Tile36 implements Tile { below: Tile | undefined; weight: number; marks: number; constructor(below: Tile | undefined) { this.below = below; this.weight = 22; this.marks = 54; } }
+# class Tile37 implements Tile { below: Tile | undefined; weight: number; marks: number; constructor(below: Tile | undefined) { this.below = below; this.weight = 6; this.marks = 53; } }
+# class Tile38 implements Tile { below: Tile | undefined; weight: number; marks: number; constructor(below: Tile | undefined) { this.below = below; this.weight = 13; this.marks = 52; } }
+# class Tile39 implements Tile { below: Tile | undefined; weight: number; marks: number; constructor(below: Tile | undefined) { this.below = below; this.weight = 20; this.marks = 51; } }
+# class Tile40 implements Tile { below: Tile | undefined; weight: number; marks: number; constructor(below: Tile | undefined) { this.below = below; this.weight = 4; this.marks = 50; } }
+# class Tile41 implements Tile { below: Tile | undefined; weight: number; marks: number; constructor(below: Tile | undefined) { this.below = below; this.weight = 11; this.marks = 49; } }
+# class Tile42 implements Tile { below: Tile | undefined; weight: number; marks: number; constructor(below: Tile | undefined) { this.below = below; this.weight = 18; this.marks = 48; } }
+# class Tile43 implements Tile { below: Tile | undefined; weight: number; marks: number; constructor(below: Tile | undefined) { this.below = below; this.weight = 2; this.marks = 47; } }
+# class Tile44 implements Tile { below: Tile | undefined; weight: number; marks: number; constructor(below: Tile | undefined) { this.below = below; this.weight = 9; this.marks = 46; } }
+# class Tile45 implements Tile { below: Tile | undefined; weight: number; marks: number; constructor(below: Tile | undefined) { this.below = below; this.weight = 16; this.marks = 45; } }
+# class Tile46 implements Tile { below: Tile | undefined; weight: number; marks: number; constructor(below: Tile | undefined) { this.below = below; this.weight = 0; this.marks = 44; } }
+# class Tile47 implements Tile { below: Tile | undefined; weight: number; marks: number; constructor(below: Tile | undefined) { this.below = below; this.weight = 7; this.marks = 43; } }
+# class Tile48 implements Tile { below: Tile | undefined; weight: number; marks: number; constructor(below: Tile | undefined) { this.below = below; this.weight = 14; this.marks = 42; } }
+# class Tile49 implements Tile { below: Tile | undefined; weight: number; marks: number; constructor(below: Tile | undefined) { this.below = below; this.weight = 21; this.marks = 41; } }
+# class Tile50 implements Tile { below: Tile | undefined; weight: number; marks: number; constructor(below: Tile | undefined) { this.below = below; this.weight = 5; this.marks = 40; } }
+# class Tile51 implements Tile { below: Tile | undefined; weight: number; marks: number; constructor(below: Tile | undefined) { this.below = below; this.weight = 12; this.marks = 39; } }
+# class Tile52 implements Tile { below: Tile | undefined; weight: number; marks: number; constructor(below: Tile | undefined) { this.below = below; this.weight = 19; this.marks = 38; } }
+# class Tile53 implements Tile { below: Tile | undefined; weight: number; marks: number; constructor(below: Tile | undefined) { this.below = below; this.weight = 3; this.marks = 37; } }
+# class Tile54 implements Tile { below: Tile | undefined; weight: number; marks: number; constructor(below: Tile | undefined) { this.below = below; this.weight = 10; this.marks = 36; } }
+# class Tile55 implements Tile { below: Tile | undefined; weight: number; marks: number; constructor(below: Tile | undefined) { this.below = below; this.weight = 17; this.marks = 35; } }
+# class Tile56 implements Tile { below: Tile | undefined; weight: number; marks: number; constructor(below: Tile | undefined) { this.below = below; this.weight = 1; this.marks = 34; } }
+# class Tile57 implements Tile { below: Tile | undefined; weight: number; marks: number; constructor(below: Tile | undefined) { this.below = below; this.weight = 8; this.marks = 33; } }
+# class Tile58 implements Tile { below: Tile | undefined; weight: number; marks: number; constructor(below: Tile | undefined) { this.below = below; this.weight = 15; this.marks = 32; } }
+# class Tile59 implements Tile { below: Tile | undefined; weight: number; marks: number; constructor(below: Tile | undefined) { this.below = below; this.weight = 22; this.marks = 31; } }
+# class Tile60 implements Tile { below: Tile | undefined; weight: number; marks: number; constructor(below: Tile | undefined) { this.below = below; this.weight = 6; this.marks = 30; } }
+# class Tile61 implements Tile { below: Tile | undefined; weight: number; marks: number; constructor(below: Tile | undefined) { this.below = below; this.weight = 13; this.marks = 29; } }
+# class Tile62 implements Tile { below: Tile | undefined; weight: number; marks: number; constructor(below: Tile | undefined) { this.below = below; this.weight = 20; this.marks = 28; } }
+# class Tile63 implements Tile { below: Tile | undefined; weight: number; marks: number; constructor(below: Tile | undefined) { this.below = below; this.weight = 4; this.marks = 27; } }
+# class Tile64 implements Tile { below: Tile | undefined; weight: number; marks: number; constructor(below: Tile | undefined) { this.below = below; this.weight = 11; this.marks = 26; } }
+# class Tile65 implements Tile { below: Tile | undefined; weight: number; marks: number; constructor(below: Tile | undefined) { this.below = below; this.weight = 18; this.marks = 25; } }
+# function missing(word: string): Label { return { word } as Label; }
+# function hefts(tile: Tile): number { let sum = 1; for (let turn = 0; turn < 2; turn++) sum = sum * 3 + (tile.weight | 0); return sum - (tile.marks | 0) * 2; }
+# const tiles: Tile[] = [new Tile1(undefined), new Tile2(undefined), new Tile3(undefined), new Tile4(undefined), new Tile5(undefined), new Tile6(undefined), new Tile7(undefined), new Tile8(undefined), new Tile9(undefined), new Tile10(undefined), new Tile11(undefined), new Tile12(undefined), new Tile13(undefined), new Tile14(undefined), new Tile15(undefined), new Tile16(undefined), new Tile17(undefined), new Tile18(undefined), new Tile19(undefined), new Tile20(undefined), new Tile21(undefined), new Tile22(undefined), new Tile23(undefined), new Tile24(undefined), new Tile25(undefined), new Tile26(undefined), new Tile27(undefined), new Tile28(undefined), new Tile29(undefined), new Tile30(undefined), new Tile31(undefined), new Tile32(undefined), new Tile33(undefined), new Tile34(undefined), new Tile35(undefined), new Tile36(undefined), new Tile37(undefined), new Tile38(undefined), new Tile39(undefined), new Tile40(undefined), new Tile41(undefined), new Tile42(undefined), new Tile43(undefined), new Tile44(undefined), new Tile45(undefined), new Tile46(undefined), new Tile47(undefined), new Tile48(undefined), new Tile49(undefined), new Tile50(undefined), new Tile51(undefined), new Tile52(undefined), new Tile53(undefined), new Tile54(undefined), new Tile55(undefined), new Tile56(undefined), new Tile57(undefined), new Tile58(undefined), new Tile59(undefined), new Tile60(undefined), new Tile61(undefined), new Tile62(undefined), new Tile63(undefined), new Tile64(undefined), new Tile65(undefined), missing("x")];
+# parse(tiles as any);
+# for (const tile of tiles) print(hefts(tile));
+# -- end of source
+# RUN(LOOK): walk f2:Body mechanisms=all
+# LOOK: GetSlot {{*}}key="weight" receivers=[L0, L1, L2, L3, L4, L5, L6, L7, L8, L9, L10, L11, L12, L13, L14, L15, L16, L17, L18, L19, L20, L21, L22, L23, L24, L25, L26, L27, L28, L29, L30, L31, L32, L33, L34, L35, L36, L37, L38, L39, L40, L41, L42, L43, L44, L45, L46, L47, L48, L49, L50, L51, L52, L53, L54, L55, L56, L57, L58, L59, L60, L61, L62, L63, L64]
+# LOOK: GetSlot {{*}}key="marks" receivers=[L0, L1, L2, L3, L4, L5, L6, L7, L8, L9, L10, L11, L12, L13, L14, L15, L16, L17, L18, L19, L20, L21, L22, L23, L24, L25, L26, L27, L28, L29, L30, L31, L32, L33, L34, L35, L36, L37, L38, L39, L40, L41, L42, L43, L44, L45, L46, L47, L48, L49, L50, L51, L52, L53, L54, L55, L56, L57, L58, L59, L60, L61, L62, L63, L64]

@@ -1,0 +1,41 @@
+# -- source: marks.ts
+# // A comparison of two strings and a field that most objects lack: the field is asked first where that changes nothing. A getter, a prototype, a deleted field, a frozen object and a proxy are asked in order.
+# interface Lamp { burns: number; maker?: string; twin?: Lamp; watts: number; cord?: string }
+# function LampMaker(this: Lamp, watts: number, maker: string | undefined) { this.maker = maker; this.watts = watts; this.twin = undefined; this.burns = 0; }
+# const Lamp = LampMaker as unknown as { new (watts: number, maker: string | undefined): Lamp; prototype: any };
+# let turns = 0;
+# function brighter(lamp: Lamp, sought: Lamp): number {
+#   turns++;
+#   if (lamp.maker === sought.maker && lamp.twin) return lamp.twin.watts - sought.watts;
+#   return 0;
+# }
+# function wattsOfTwins(row: Lamp[], maker: string | undefined): number {
+#   const sought = new Lamp(4, maker);
+#   let sum = 0;
+#   for (let at = 0; at < row.length; at++) sum = sum * 3 + brighter(row[at], sought) & 0xffff;
+#   return sum;
+# }
+# function cords(row: Lamp[]): void { for (let at = 0; at < row.length; at += 5) row[at].cord = "c" + at; }
+# (globalThis as any).kept = [brighter, wattsOfTwins, cords, Lamp];
+# const row: Lamp[] = [];
+# for (let at = 0; at < 60; at++) row.push(new Lamp(at, at % 25 === 24 ? undefined : "shop" + (at % 4)));
+# cords(row);
+# for (let at = 3; at < 60; at += 14) row[at].twin = row[at - 2];
+# let said = "";
+# for (let shop = 0; shop < 5; shop++) said += wattsOfTwins(row, "sh" + "op" + String(shop)) + " ";
+# said += wattsOfTwins(row, undefined) + " | ";
+# const key: string = JSON.parse('["twin"]')[0], under = JSON.parse('{"watts":7}'); under[key] = row[2];
+# let got = 0;
+# Object.defineProperty(row[5], key, { get() { got++; return row[1]; }, configurable: true });
+# delete (row[9] as any)[key];
+# Object.freeze(row[13]);
+# Object.setPrototypeOf(row[17], under); delete (row[17] as any)[key];
+# row.push(new Proxy(row[21], { get(target: any, name: any) { said += String(name) + " "; return target[name]; } }));
+# for (let shop = 0; shop < 4; shop++) said += wattsOfTwins(row, "shop" + shop) + " ";
+# Lamp.prototype[key] = row[40];
+# console.log(said, wattsOfTwins(row, "shop1"), got, turns);
+# -- end of source
+# The field of the extension is tested before the strings are compared: where it is empty, both conditions are known.
+# RUN: walk f1:Body mechanisms=all
+# CHECK: IsSlotFilled {{*}} key="twin" {{*}} [holdsDeclaredType]
+# CHECK: StrictEq {{*}} form=NullableStrings

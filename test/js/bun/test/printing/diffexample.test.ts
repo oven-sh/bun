@@ -900,3 +900,107 @@ test("large diffs are exact rather than abandoned part-way", () => {
   expect(message.slice(-400)).toContain("\n-   49994,\n+   49995,\n    49995,\n");
   expect(message.slice(-120).trimEnd()).toEndWith(`\n\n- Expected  - ${changed}\n+ Received  + ${changed}`);
 });
+
+test.each([
+  ["within its limit", 3_000, 923, 890, "625f49296c562c4fa8047d64e1403379f0330fc0"],
+  ["past its limit", 30_000, 9176, 8962, "970415288248b05350a9c9399b4aff0e6f123478"],
+])(
+  "texts with many edits and few kinds of lines get the diff of Myers' search, %s",
+  (_, lines, removed, added, sha1) => {
+    let seed = 1;
+    const random = (below: number) => ((seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) >>> 8) % below;
+    const line = () => "line " + random(12);
+    const expected = Array.from({ length: lines }, line);
+    const received = expected.flatMap(it => [[it], [it], [it], [], [line()], [line(), it]][random(6)]);
+
+    let message = "";
+    try {
+      expect(received.join("\n")).toBe(expected.join("\n"));
+    } catch (e) {
+      message = cleanAnsiEscapes((e as Error).message);
+    }
+    expect(message.slice(-60).trimEnd()).toEndWith(`\n\n- Expected  - ${removed}\n+ Received  + ${added}`);
+    // How many unchanged lines are shown depends on the environment.
+    expect(Bun.SHA1.hash(message.match(/^[-+] .*/gm)!.join("\n"), "hex")).toBe(sha1);
+  },
+);
+
+test("prints a Response once", () => {
+  let message = "";
+  try {
+    expect<unknown>({ response: new Response("") }).toEqual({ response: 1 });
+  } catch (e) {
+    message = cleanAnsiEscapes((e as Error).message);
+  }
+  expect(message).toContain(`
+  {
+-   "response": 1,
++   "response": Response (0 KB) {
++     ok: true,
++     url: "",
++     status: 200,
++     statusText: "",
++     headers: Headers {},
++     redirected: false,
++     bodyUsed: false
++   },
+  }
+`);
+});
+
+test("a long run of equal characters that only the reverse search reaches stays unchanged", () => {
+  const times = (letter: string, n: number) => Buffer.alloc(n, letter).toString();
+  let message = "";
+  try {
+    expect("xd" + times("x", 100_000) + "c").toBe("x" + times("c", 10_000) + times("x", 100_000) + "d");
+  } catch (e) {
+    message = cleanAnsiEscapes((e as Error).message);
+  }
+  // Changed and unchanged parts are shortened one by one: the `c`, and the `x` on both sides.
+  expect(message.match(/bytes truncated/g)).toHaveLength(3);
+});
+
+test("prints a React 19 element as JSX, without the fiber in its _owner", () => {
+  const element = (type: string, props: object) => ({
+    $$typeof: Symbol.for("react.transitional.element"),
+    type,
+    key: null,
+    props,
+    _owner: { fiber: "not printed" },
+    _store: {},
+  });
+  let message = "";
+  try {
+    expect<unknown>({ icon: element("b", { children: ["icon ", element("i", { children: "in" })] }) }).toEqual({
+      icon: 1,
+    });
+  } catch (e) {
+    message = cleanAnsiEscapes((e as Error).message);
+  }
+  expect(message).toContain(`
+  {
+-   "icon": 1,
++   "icon": <b>
++     icon 
++     <i>in</i>
++   </b>,
+  }
+`);
+});
+
+test("stops printing deeper once a value has printed 1,000,000 characters", () => {
+  // Each level has the next one three times, so printed in full it would have 3 ** 40 leaves.
+  let value: object = { leaf: true };
+  for (let level = 0; level < 40; level++) value = { left: value, right: value, list: [value] };
+  let message = "";
+  try {
+    expect(value).toEqual({});
+  } catch (e) {
+    message = cleanAnsiEscapes((e as Error).message);
+  }
+  expect(message).toStartWith("expect(received).toEqual(expected)");
+  expect(message).toContain(`"leaf": true`);
+  expect(message).toContain(`"list": [Array],\n`);
+  expect(message).toContain(`"right": [Object],\n`);
+  expect(message.length).toBeWithin(1_000_000, 1_500_000);
+});

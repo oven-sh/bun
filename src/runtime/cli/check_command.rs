@@ -3,19 +3,37 @@
 //! bundling, after the bundler has read every file ([`check_for_build_command`],
 //! [`check_for_bun_build`]).
 
+use super::short_run;
 use bstr::BStr;
 
 use bun_bundler::options::{TypeChecked, loaders_from_transform_options};
 use bun_clap as clap;
 use bun_core::{Global, Output, ZStr, env_var};
+use bun_paths::Path;
 use bun_sema_driver::format::{self, Layout, Style};
-use bun_sema_driver::host::{AlreadyRead, BeforeRead, Provided};
+use bun_sema_driver::host::{AlreadyRead, BeforeRead, Provided, check_entry_point_dirs};
 use bun_sema_driver::{
-    Category, CommandLine, CompilerOption, Diagnostic, FlagError, Progress, RejectedFlag, Report,
-    Request, ScriptKind,
+    Category, CommandLine, CompilerOption, Diagnostic, FlagError, PlanOptions, Progress,
+    RejectedFlag, Report, Request, ScriptKind,
 };
+use bun_threading::ResetEvent;
 use core::sync::atomic::{AtomicBool, Ordering};
 use core::time::Duration;
+
+#[path = "check_command/compile_check.rs"]
+mod compile_check;
+#[path = "check_command/declarations.rs"]
+mod declarations;
+#[path = "check_command/typed_files.rs"]
+mod typed_files;
+
+pub(crate) use declarations::{
+    DeclarationFile, check_and_emit_declarations, take_declaration_files, take_module_types,
+};
+pub(crate) use typed_files::{
+    CompilerOptions, TypedFilesRequest, WrittenJavaScript, typed_files_for_build,
+    warn_about_skipped_typed_files, warn_unless_package_states,
+};
 
 pub(crate) struct CheckCommand;
 
@@ -29,6 +47,13 @@ struct Options {
     /// `--all`: never group identical errors.
     all: bool,
     timing: bool,
+    /// `--no-follow-imports`
+    only_named_files: bool,
+    aot: bool,
+    explain: Vec<&'static [u8]>,
+    code_generation_flag: Option<&'static [u8]>,
+    defines: Vec<&'static [u8]>,
+    trim: bool,
 }
 
 fn usage_error(args: core::fmt::Arguments<'_>) -> ! {
@@ -55,7 +80,21 @@ const OTHERS: &[clap::Param<clap::Help>] = &[
         "--all              Show every error <d>(above 50, identical errors are grouped)<r>"
     ),
     clap::param!("--threads <n>      Number of threads <d>(default: one per CPU core)<r>"),
-    clap::param!("--timing           Print load and check times"),
+    clap::param!(
+        "--no-follow-imports  Report only the errors of the files you name, not of the files they import"
+    ),
+    clap::param!("--timing           Print load and check times, and the slowest files"),
+    clap::param!(
+        "--aot              Also report the errors <b>bun compile<r> would report for these entry points"
+    ),
+    clap::param!(
+        "--explain <report>?...  With --aot: list the code that would compile to a slow path and how to fix it, worst first. Other reports: <b>guards<r>, <b>json<r>, <b>trim<r>"
+    ),
+    clap::param!(
+        "--define <k=v>...  With --aot: substitute k with v while parsing, like <b>bun compile --define<r>"
+    ),
+    clap::param!("--disallow-code-generation-from-strings <level>?"),
+    clap::param!("--trim"),
     clap::param!("--cwd <path>       Set the working directory"),
     // Handled by `script_or_command`.
     clap::param!(
@@ -111,9 +150,8 @@ fn parse(args: &[&ZStr]) -> Options {
         Global::exit(0);
     }
     if let Some(cwd) = parsed.option(b"--cwd") {
-        // The `ZBox` is a temporary so that it's freed before `exit`, which never returns.
-        let directory = super::script_or_command::directory_of_cwd(cwd);
-        let changed = bun_sys::chdir(&bun_core::ZBox::from_vec(directory));
+        // The path is a temporary so that it's freed before `exit`, which never returns.
+        let changed = bun_sys::chdir(&super::script_or_command::directory_of_cwd(cwd));
         if let bun_sys::Result::Err(err) = changed {
             Output::err(
                 err,
@@ -126,8 +164,17 @@ fn parse(args: &[&ZStr]) -> Options {
     let mut options = Options {
         all: parsed.flag(b"--all"),
         timing: parsed.flag(b"--timing"),
+        only_named_files: parsed.flag(b"--no-follow-imports"),
+        aot: parsed.flag(b"--aot"),
+        explain: parsed.options(b"--explain").to_vec(),
+        code_generation_flag: parsed.option(b"--disallow-code-generation-from-strings"),
+        defines: parsed.options(b"--define").to_vec(),
+        trim: parsed.flag(b"--trim"),
         ..Default::default()
     };
+    if !options.aot {
+        compile_check::reject_flags_requiring_aot(&options);
+    }
     if let Some(threads) = parsed.option(b"--threads") {
         match bun_core::fmt::parse_decimal::<usize>(threads) {
             Some(n) if n > 0 => options.threads = n,
@@ -162,10 +209,26 @@ fn parse(args: &[&ZStr]) -> Options {
     if command_line.build && projects > 1 {
         usage_error(format_args!("--build takes one project"));
     }
+    if options.only_named_files {
+        for (is_given, flag) in [(command_line.build, "--build"), (options.aot, "--aot")] {
+            if is_given {
+                usage_error(format_args!(
+                    "--no-follow-imports does not work with {flag}"
+                ));
+            }
+        }
+        // No path means the whole project. An `@file` without a line gives none.
+        if command_line.paths.is_empty() && command_line.errors.is_empty() {
+            usage_error(format_args!("--no-follow-imports needs the files to check"));
+        }
+    }
     options.pretty = match parsed.flag(b"--no-pretty") {
         true => Some(false),
         false => bun_sema_driver::tristate(&command_line.compiler_options, b"pretty"),
     };
+    if options.aot {
+        compile_check::check_arguments(&command_line);
+    }
     options.command_line = command_line;
     options
 }
@@ -197,17 +260,18 @@ pub(crate) fn working_directory() -> Vec<u8> {
     }
 }
 
-/// Displays `progress` on stderr until `is_done`, starting once the check has run long enough for a
-/// user to notice.
-fn show_progress(progress: &Progress, is_done: &AtomicBool, style: &Style) {
+/// Displays `progress` on stderr until `is_done`, starting after `initial_delay`. Sets
+/// `first_frame` once the line is on the screen.
+fn show_progress(
+    progress: &Progress,
+    is_done: &AtomicBool,
+    style: &Style,
+    initial_delay: Duration,
+    first_frame: &ResetEvent,
+) {
     const BETWEEN: Duration = Duration::from_millis(80);
     // `Output`'s writers are per-thread state, and this thread isn't from Bun's pool.
     Output::Source::configure_thread_no_js();
-    let initial_delay = Duration::from_millis(
-        env_var::BUN_DEBUG_TEST_CHECK_PROGRESS_DELAY_MS
-            .get()
-            .unwrap_or(300),
-    );
     let began = std::time::Instant::now();
     let mut tick = 0;
     while !is_done.load(Ordering::Acquire) {
@@ -216,6 +280,7 @@ fn show_progress(progress: &Progress, is_done: &AtomicBool, style: &Style) {
             format::write_progress(&mut line, progress, style, tick);
             let _ = Output::error_writer().write_all(&line);
             Output::flush();
+            first_frame.set();
             tick += 1;
         }
         std::thread::park_timeout(BETWEEN);
@@ -230,7 +295,7 @@ fn show_progress(progress: &Progress, is_done: &AtomicBool, style: &Style) {
 #[derive(Clone, Copy)]
 enum Paths<'a> {
     /// `bun check`'s arguments.
-    Arguments(&'a CommandLine),
+    Arguments(&'a Options),
     /// See `Request::are_entry_points`.
     EntryPoints(Entries<'a>),
 }
@@ -268,8 +333,21 @@ fn run<R>(
     }
     let (progress, is_done) = (Progress::default(), AtomicBool::new(false));
     let style = style_for(cwd, Some(true), Destination::stderr(), false);
+    // Long enough for a user to notice.
+    let initial_delay = Duration::from_millis(
+        env_var::BUN_DEBUG_TEST_CHECK_PROGRESS_DELAY_MS
+            .get()
+            .unwrap_or(300),
+    );
+    let first_frame = ResetEvent::default();
     std::thread::scope(|scope| {
-        let progress_thread = scope.spawn(|| show_progress(&progress, &is_done, &style));
+        let progress_thread = scope.spawn(|| {
+            show_progress(&progress, &is_done, &style, initial_delay, &first_frame);
+        });
+        // Without a delay, the check starts once the line is drawn, however late its thread runs.
+        if initial_delay.is_zero() {
+            first_frame.wait();
+        }
         let progress = Some(&progress);
         run_quietly(
             cwd,
@@ -329,15 +407,21 @@ fn request<'a>(
     threads: usize,
     progress: Option<&'a Progress>,
 ) -> Request<'a> {
-    let (entries, command_line) = match *paths {
-        Paths::Arguments(command_line) => {
+    let (entries, command_line, plan_options) = match *paths {
+        Paths::Arguments(options) => {
+            let command_line = &options.command_line;
             let paths = Entries {
                 paths: &command_line.paths,
                 ..Default::default()
             };
-            (paths, Some(command_line))
+            let plan_options = PlanOptions {
+                reports_only_requested_paths: options.only_named_files,
+                times_files: options.timing,
+                ..Default::default()
+            };
+            (paths, Some(command_line), plan_options)
         }
-        Paths::EntryPoints(entries) => (entries, None),
+        Paths::EntryPoints(entries) => (entries, None, PlanOptions::default()),
     };
     Request {
         cwd,
@@ -355,7 +439,7 @@ fn request<'a>(
         libs: bun_sema_driver::Libs::Bundled(super::typescript_libs::BUNDLED),
         progress,
         order: 1,
-        plan_options: bun_sema_driver::PlanOptions::default(),
+        plan_options,
         stops_like_tsc: true,
         uses_typescript_wording: false,
         after_file: None,
@@ -448,12 +532,16 @@ impl CheckCommand {
     }
 
     fn exec_with(options: &Options) -> ! {
+        if options.aot {
+            compile_check::exec(options)
+        }
+        short_run::expect_many_threads();
         let (cwd, command_line) = (working_directory(), &options.command_line);
         // The closure returns the report so that it's never dropped. The process exits instead.
         let (exit_code, _report) = run(
             &cwd,
             command_line.project.as_deref(),
-            &Paths::Arguments(command_line),
+            &Paths::Arguments(options),
             &command_line.compiler_options,
             options.threads,
             // Only set here, because this function never returns.
@@ -470,6 +558,16 @@ impl CheckCommand {
 /// Prints the report. Returns the exit code.
 fn print_report(report: &Report, options: &Options, cwd: &[u8]) -> u8 {
     let display_cwd = bun_sema_driver::host::from_native(cwd);
+    let summary_style = Style {
+        color: Output::enable_ansi_colors_stderr(),
+        is_case_sensitive: report.is_case_sensitive,
+        ..style_for(
+            &display_cwd,
+            options.pretty,
+            Destination::stderr(),
+            options.all,
+        )
+    };
     // Errors go to stdout, like `tsc`'s. The summary goes to stderr.
     let mut out = Vec::new();
     format::write_diagnostics(
@@ -486,29 +584,17 @@ fn print_report(report: &Report, options: &Options, cwd: &[u8]) -> u8 {
         },
     );
     let mut summary = Vec::new();
-    format::write_summary(
-        &mut summary,
-        report,
-        &Style {
-            color: Output::enable_ansi_colors_stderr(),
-            is_case_sensitive: report.is_case_sensitive,
-            ..style_for(
-                &display_cwd,
-                options.pretty,
-                Destination::stderr(),
-                options.all,
-            )
-        },
-    );
+    format::write_summary(&mut summary, report, &summary_style);
     if options.timing {
         use std::io::Write;
         let _ = writeln!(
             summary,
-            "  {} files loaded in {:.1}ms, {} checked in {:.1}ms, {} KB of stack at the most",
+            "  {} files loaded in {:.1}ms, {} checked in {:.1}ms, {} queries, {} KB of stack at the most",
             report.files_loaded,
             report.load_time.as_secs_f64() * 1000.0,
             report.files_checked,
             report.check_time.as_secs_f64() * 1000.0,
+            report.queries,
             report.deepest_stack / 1024,
         );
         if report.shared_parses > 0 {
@@ -518,6 +604,7 @@ fn print_report(report: &Report, options: &Options, cwd: &[u8]) -> u8 {
                 report.shared_parses,
             );
         }
+        format::write_slowest_files(&mut summary, report, &summary_style);
     }
     super::lint_command::print(&out, &summary, u8::from(!report.is_ok()))
 }
@@ -555,6 +642,11 @@ pub(crate) fn check_before(entry_points: &[EntryPoint], before_read: Option<Befo
         return true;
     };
     let mut in_memory = (entry_points.iter()).filter_map(|it| Some((it.path, it.text?)));
+    let mut on_disk = paths.clone();
+    on_disk.retain(|path| !in_memory.clone().any(|it| it.0 == &path[..]));
+    if !on_disk.is_empty() && !can_check(&cwd, &on_disk) {
+        return false;
+    }
     let provided = Provided {
         already_read: already_read(&cwd, &mut in_memory),
         before_read,
@@ -567,6 +659,14 @@ pub(crate) fn check_before(entry_points: &[EntryPoint], before_read: Option<Befo
         conditions: args.map_or(&[][..], |args| &args.conditions[..]),
     };
     check_and_report(&Paths::EntryPoints(entries), provided)
+}
+
+fn can_check(cwd: &[u8], entry_points: &[Vec<u8>]) -> bool {
+    let mut log = bun_ast::Log::init();
+    let can_check = check_entry_point_dirs(cwd, entry_points, &mut log);
+    let _ = log.print(Output::error_writer());
+    Output::flush();
+    can_check
 }
 
 fn script_kind_of(loader: bun_ast::Loader) -> Option<ScriptKind> {
@@ -601,13 +701,13 @@ fn has_types_with(by_extension: &[(Vec<u8>, ScriptKind)], path: &[u8]) -> bool {
 /// change. This covers every file outside `node_modules`, including type-only files and
 /// configuration files. Returns `None` if there's no file watcher.
 pub(crate) fn watching(vm: &bun_jsc::virtual_machine::VirtualMachine) -> Option<BeforeRead> {
-    use bun_paths::{platform::Auto, resolve_path::join_abs_string};
     use bun_sema_driver::host::to_native;
-    let (watch, cwd) = (vm.watcher_for_threads()?, working_directory());
+    let watcher = std::sync::Arc::clone(vm.bun_watcher.get().as_deref()?);
+    let cwd = working_directory();
     Some(Box::new(move |path| {
         if !bun_core::strings::contains(path, b"/node_modules/") {
             // The watcher keys files by their native path.
-            watch(join_abs_string::<Auto>(&cwd, &[to_native(path)]));
+            let _ = watcher.add_file_by_path_slow(&Path::resolve(&[&cwd, to_native(path)]));
         }
     }))
 }
@@ -616,13 +716,12 @@ pub(crate) fn watching(vm: &bun_jsc::virtual_machine::VirtualMachine) -> Option<
 /// may start with a byte order mark.
 fn already_read(cwd: &[u8], sources: &mut dyn Iterator<Item = (&[u8], &[u8])>) -> AlreadyRead {
     use bun_core::strings::without_utf8_bom;
-    use bun_paths::{platform::Auto, resolve_path::join_abs_string};
+    use bun_sema_driver::host::{from_native, is_below_backslash};
     sources
-        .map(|(path, text)| {
-            let path = join_abs_string::<Auto>(cwd, &[path]);
-            let text = without_utf8_bom(text).to_vec();
-            (bun_sema_driver::host::from_native(path), text)
-        })
+        .map(|(path, text)| (Path::resolve(&[cwd, path]), text))
+        // The checker would take `a\b/c.ts` for `a/b/c.ts`.
+        .filter(|(path, _)| !is_below_backslash(path) || !bun_sys::exists_z(path))
+        .map(|(path, text)| (from_native(&path), without_utf8_bom(text).to_vec()))
         .collect()
 }
 
@@ -671,6 +770,9 @@ fn check_for_build(checked: TypeChecked, log: &mut bun_ast::Log, shows_progress:
     // Only stylesheets and the like.
     if paths.is_empty() {
         return true;
+    }
+    if !check_entry_point_dirs(cwd, &paths, log) {
+        return false;
     }
     let paths = Paths::EntryPoints(Entries {
         paths: &paths,
@@ -802,9 +904,8 @@ fn pages_of(cwd: &[u8], page: &[u8]) -> Vec<Vec<u8>> {
         }
     }
     pages.retain(|page| {
-        let page =
-            bun_paths::resolve_path::join_abs_string::<bun_paths::platform::Auto>(cwd, &[page]);
-        !bun_core::strings::contains(page, bun_paths::NODE_MODULES_NEEDLE)
+        let page = Path::resolve(&[cwd, page]);
+        !bun_core::strings::contains(&page, bun_paths::NODE_MODULES_NEEDLE)
     });
     pages
 }
@@ -812,8 +913,7 @@ fn pages_of(cwd: &[u8], page: &[u8]) -> Vec<Vec<u8>> {
 /// Absolute paths of the local files that the HTML entry point `page` imports, found with the
 /// bundler's HTML scanner. Empty if the page can't be read or parsed. The bundler reports that.
 fn imports_of_page(cwd: &[u8], page: &[u8]) -> Vec<Vec<u8>> {
-    use bun_paths::{platform::Auto, resolve_path};
-    let page = resolve_path::join_abs_string::<Auto>(cwd, &[page]).to_vec();
+    let page = Path::resolve(&[cwd, page]);
     let Ok(contents) = bun_sys::File::read_from(bun_core::Fd::cwd(), &page) else {
         return Vec::new();
     };
@@ -825,23 +925,26 @@ fn imports_of_page(cwd: &[u8], page: &[u8]) -> Vec<Vec<u8>> {
         return Vec::new();
     }
     let records = bun_bundler::html_scanner::scan_import_records(&mut log, &source);
-    let directory = resolve_path::dirname::<Auto>(&page);
+    let directory = bun_paths::dirname_or_root(&page);
     let is_url = |path: &[u8]| path.starts_with(b"//") || bun_core::strings::contains(path, b"://");
     (records.unwrap_or_default().iter())
         .map(|record| record.path.text())
         .filter(|path| !is_url(path))
-        .map(|path| resolve_path::join_abs_string::<Auto>(directory, &[path]).to_vec())
+        .map(|path| Path::resolve(&[directory, path]).to_vec())
         .collect()
 }
 
 /// Type-checks the project containing the working directory, like `bun check`, before running one
 /// of its scripts or `bun bake`'s app. For `before_read`, see `watching`.
+#[inline(never)]
 pub(crate) fn check_project_before(before_read: Option<BeforeRead>) -> bool {
+    bun_removable_features::removable_definition!(Check, check_project_before);
     let provided = Provided {
         before_read,
         ..Default::default()
     };
-    check_and_report(&Paths::EntryPoints(Entries::default()), provided)
+    can_check(&working_directory(), &[])
+        && check_and_report(&Paths::EntryPoints(Entries::default()), provided)
 }
 
 /// `bun`'s `--tsconfig-override`. The runtime resolves with this tsconfig instead of any other.
@@ -853,7 +956,9 @@ fn tsconfig_override() -> Option<&'static [u8]> {
 }
 
 /// Returns true if there are no errors.
+#[inline(never)]
 fn check_and_report(paths: &Paths, provided: Provided) -> bool {
+    bun_removable_features::removable_definition!(Check, check_and_report);
     let cwd = working_directory();
     let then = |report| report;
     let report = run(&cwd, tsconfig_override(), paths, &[], 0, provided, then);

@@ -3,19 +3,19 @@ use bun_lint::prelude::*;
 /// Disallow comparing against `-0`.
 pub struct NoCompareNegZero;
 
-const UNEXPECTED: Message = Message::new(
+const UNEXPECTED: &Message = &Message::new(
     "unexpected",
     "Do not use the '{{operator}}' operator to compare against -0.",
 );
-const SUGGEST_REMOVE_MINUS: Message = Message::new(
+const SUGGEST_REMOVE_MINUS: &Message = &Message::new(
     "suggestRemoveMinus",
     "Replace '-0' with '0' (keeps the current comparison behavior).",
 );
-const SUGGEST_OBJECT_IS: Message = Message::new(
+const SUGGEST_OBJECT_IS: &Message = &Message::new(
     "suggestObjectIs",
     "Replace with 'Object.is()' (changes the comparison to distinguish -0 from +0).",
 );
-const SUGGEST_NOT_OBJECT_IS: Message = Message::new(
+const SUGGEST_NOT_OBJECT_IS: &Message = &Message::new(
     "suggestNotObjectIs",
     "Replace with '!Object.is()' (changes the comparison to distinguish -0 from +0).",
 );

@@ -1,0 +1,19 @@
+# `items[i].price * items[i].count` in a file without types. The function makes the list and fills it with one literal; the list is let go to the global object and unseen code runs: nothing is proven
+# of its elements. What the function's own text puts into the list is expected of them, and what its own literal writes into a field is expected of the field: one shape test, two slots, numbers.
+# f0 = the module
+# -- source: main.js
+# const items = [];
+# for (let i = 0; i < 8; i++) items.push({ price: i, count: i & 3 });
+# globalThis.items = items;
+# (0, eval)("1");
+# let total = 0;
+# for (let round = 0; round < 10; round++) for (let i = 0; i < items.length; i++) total += items[i].price * items[i].count;
+# print(total);
+# -- end of source
+# RUN(WALK): walk f0:Body mechanisms=all
+# WALK: ShapeTest {{*}} layouts=[L0]
+# WALK: GetSlot {{*}} key="price" receivers=[L0]
+# WALK: Mul {{*}} form=Numbers
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 520
+# ANSWERS-NEXT: exited with 0

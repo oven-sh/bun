@@ -1,0 +1,23 @@
+# Module._resolveFilename = function (request) { return this.createRequire(request); };
+# The loader calls what the program has laid in the place of its resolver, on the object that holds the place (the table's mark IsResolverThatLoaderCalls). So the function has the object of node:module for its `this`,
+# and the name that it spells off it finds node:module.createRequire. If nobody let the object go, the code behind it would be left out, and require.resolve() would stop with "A built-in function was not compiled"
+# OPTIONS: exclude=CodeOutsideImage
+# RUN: image
+# CHECK: flags {{*}}LoadsModulesByName
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=NodeModule
+    v1 = NewClosure function=f1
+    PropSet v0, v1 key="_resolveFilename"
+    v3 = Undefined
+    Return v3
+}
+function f1 module=m0 flags=[HasThis] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v0 key="createRequire"
+    v3 = Call v2, v0, v1 calleeKey="createRequire"
+    Return v3
+}

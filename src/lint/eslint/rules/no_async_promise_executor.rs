@@ -4,7 +4,7 @@ use bun_lint::utils::oxlint::is_global_by_name;
 /// Disallow using an async function as a Promise executor.
 pub struct NoAsyncPromiseExecutor;
 
-const ASYNC: Message = Message::new("async", "Promise executor functions should not be async.");
+const ASYNC: &Message = &Message::new("async", "Promise executor functions should not be async.");
 
 impl Rule for NoAsyncPromiseExecutor {
     const META: Meta = Meta::eslint("no-async-promise-executor", Kind::Problem).recommended().hints();

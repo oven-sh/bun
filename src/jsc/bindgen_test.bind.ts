@@ -221,6 +221,7 @@ export const fail = b.fn({ args: { how: TestFailure, value: b.any }, capability:
 
 export const TestCounter = b.class({
   rustPath: "crate::bindgen_test::TestCounter",
+  runsUnseenCode: false,
   construct: { args: { start: b.i32.default(0) }, capability: "heap", throws: true },
   internalFields: ["listener"],
   proto: {
@@ -253,6 +254,7 @@ export const TestCounter = b.class({
 /** `mutates`: `increment` and the setter take `&mut self`. */
 export const TestMutates = b.class({
   rustPath: "crate::bindgen_test::TestMutates",
+  runsUnseenCode: false,
   construct: { args: { count: b.i32 }, requiredArguments: 1 },
   proto: {
     count: { getter: b.i32 },
@@ -266,6 +268,7 @@ export const TestRefCounted = b.class({
   rustPath: "crate::bindgen_test::TestRefCounted",
   refCounted: true,
   finalize: true,
+  thisValue: "this_value",
   construct: { args: { value: b.i32.default(0) } },
   internalFields: ["listener"],
   proto: {
@@ -276,7 +279,7 @@ export const TestRefCounted = b.class({
     /** Calls the listener, which may call back into this object, then returns the value. */
     notify: { returns: b.i32, capability: "js", throws: true, passThis: true },
     /** Makes Rust hold a ref until `TestRefCounted.release()`. */
-    keep: {},
+    keep: { passThis: true },
     "@@dispose": {},
     "@@toPrimitive": { returns: b.i32, name: "", rustName: "get_value" },
     valueOrUndefined: { returns: b.i32, invalidThis: "undefined", rustName: "get_value" },
@@ -288,6 +291,8 @@ export const TestRefCounted = b.class({
   static: {
     /** The instance kept by `keep()`, as `[value, finalized]`. */
     kept: { returns: b.array(b.i32) },
+    /** The object of that instance, or `undefined` if it was collected. */
+    keptObject: { returns: b.any, capability: "heap" },
     release: {},
     alive: { returns: b.usize },
     /** `object.value` read through `from_js`, or `null` if `object` is not an instance. */
@@ -403,6 +408,36 @@ export const TestBoundThis = b.class({
   },
 });
 
+const calledByProtoCaller = { returns: b.any, capability: "js", throws: true } as const;
+
+/** `protoCaller`: a call returns `[this, callee, argument count, what the function returned]`. */
+export const TestProtoCaller = b.class({
+  rustPath: "crate::bindgen_test::TestProtoCaller",
+  construct: {},
+  protoCaller: "describe_call",
+  proto: {
+    /** How many calls `describe_call` made. */
+    calls: { getter: b.u32 },
+    first: { ...calledByProtoCaller, args: { first: b.any } },
+    /** How many arguments follow the first. */
+    rest: { ...calledByProtoCaller, args: { first: b.any, rest: b.any.variadic } },
+    fail: calledByProtoCaller,
+  },
+  static: {
+    second: { args: { first: b.i32, second: b.i32 }, returns: b.i32 },
+  },
+});
+
+/** `callInstance` */
+export const TestCallable = b.class({
+  rustPath: "crate::bindgen_test::TestCallable",
+  construct: { args: { value: b.i32 } },
+  callInstance: { args: { other: b.i32 }, returns: b.i32 },
+  proto: {
+    value: { getter: b.i32 },
+  },
+});
+
 /** `rustTraits`, `overridesToJS` and `final: false`. */
 export const TestNonFinal = b.class({
   rustPath: "crate::bindgen_test::TestNonFinal",
@@ -414,6 +449,39 @@ export const TestNonFinal = b.class({
   proto: { value: { getter: b.i32 } },
   static: { doubled: { args: { value: b.i32 }, returns: b.any, capability: "heap" } },
 });
+
+/** `final: false` of a class whose struct is in the object. The internal field comes before the struct. */
+export const TestShape = b.class({
+  rustPath: "crate::bindgen_test::TestShape",
+  final: false,
+  construct: "illegal",
+  estimatedSize: true,
+  internalFields: ["label"],
+  proto: {
+    sides: { getter: b.u32 },
+    label: { internalField: "label", setter: true },
+    describe: { returns: b.string.utf8 },
+    hasSidesOf: { args: { other: b.self }, returns: b.bool },
+  },
+});
+/** `extends`, and `@@inspectCustom`. */
+export const TestSquare = b.class({
+  extends: TestShape,
+  construct: "illegal",
+  proto: {
+    area: { getter: b.u32 },
+    scale: { args: { by: b.u32 }, returns: b.self, capability: "heap" },
+    "@@inspectCustom": { returns: b.string.utf8 },
+  },
+});
+export const makeShape = b.fn({ args: { sides: b.u32 }, returns: TestShape, capability: "heap" });
+export const makeSquare = b.fn({ args: { side: b.u32 }, returns: TestSquare, capability: "heap" });
+/** Made with the global object alone. */
+export const makeSquareWrapper = b.fn({ args: { side: b.u32 }, returns: b.any, capability: "js" });
+/** `[from_js of TestShape, from_js of TestSquare, from_js_direct of TestShape]`: whether each takes the value. */
+export const shapeFromJS = b.fn({ args: { shape: b.any }, returns: b.array(b.bool) });
+/** How many were dropped. */
+export const droppedShapes = b.fn({ returns: b.usize });
 
 /** `token.id` read through `from_js`, or `null` if `token` is not an instance. */
 export const tokenIdFromJS = b.fn({ args: { token: b.any }, returns: b.u32.nullable });
@@ -446,10 +514,10 @@ export const readPromisePtr = b.fn({
   args: { context: b.promisePtr("core::sync::atomic::AtomicI32") },
   returns: b.i32,
 });
-/** A new `NativePromiseContext` cell with a pointer to the same static. */
+/** A new `NativePromiseContext` cell with the only ref on a `TestRefCounted` that holds 42. */
 export const makeNativePromiseContext = b.fn({ returns: b.any, capability: "js" });
 export const readNativePromiseContext = b.fn({
-  args: { context: b.nativePromiseContext("core::sync::atomic::AtomicI32") },
+  args: { context: b.nativePromiseContext("crate::bindgen_test::TestRefCounted") },
   returns: b.i32.nullable,
 });
 export const primes = b.value({ returns: b.array(b.u32) });

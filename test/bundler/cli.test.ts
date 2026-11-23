@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, forEachLine, isLinux, isWindows, normalizeBunSnapshot, tempDir, tmpdirSync } from "harness";
 import fs, { mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import path, { join } from "node:path";
 
@@ -420,6 +420,59 @@ test("log case 2", async () => {
   `);
 });
 
+test("log with an entry point below --root and an asset", async () => {
+  using dir = tempDir("build-log-widths", {
+    "src/a.js": `import file from "./long-name.bin"; console.log(file);`,
+    "src/long-name.bin": "1",
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "./src/a.js", "--root=.", "--outdir=out", "--asset-naming=[name].[ext]", "--minify"],
+    env: bunEnv,
+    cwd: String(dir),
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout.replace(/in \d+ms/g, "in {time}ms").replaceAll("\\", "/")).toMatchInlineSnapshot(`
+    "Bundled 2 modules in {time}ms
+
+      src/a.js        41 bytes  (entry point)
+      long-name.bin   1 bytes   (asset)
+
+    "
+  `);
+  expect(exitCode).toBe(0);
+});
+
+test.skipIf(isWindows).each([
+  ["a", "long-name.js  16 bytes"],
+  ["a-b", "long-name.js   16 bytes"],
+])("log with nine outputs, the first below %s", async (first, row) => {
+  const names = [...Array.from({ length: 8 }, (_, i) => `${i ? "a-b" : first}/x${i}`), "long-name"];
+  using dir = tempDir("build-log-nine", Object.fromEntries(names.map(name => [`${name}.js`, "console.log(1);"])));
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", ...names.map(name => `./${name}.js`), "--root=.", "--outdir=out", "--minify"],
+    env: bunEnv,
+    cwd: String(dir),
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toContain(row);
+  expect(exitCode).toBe(0);
+});
+
+test.each([
+  ["a/y", "file"],
+  ["ab", isWindows ? "file" : "directory"],
+])("--no-bundle ./%s/ takes the %s", async (name, expected) => {
+  using dir = tempDir("no-bundle-trailing-slash", { [`${name}.js`]: `file();`, [`${name}/index.js`]: `directory();` });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "--no-bundle", `./${name}/`],
+    env: bunEnv,
+    cwd: String(dir),
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toBe(`${expected}();\n`);
+  expect(exitCode).toBe(0);
+});
+
 test("--outdir build succeeds when the output directory already exists with prior output", async () => {
   using dir = tempDir("build-outdir-reuse", {
     "entry.ts": `export const x: number = 1;\nconsole.log("built", x);`,
@@ -441,6 +494,26 @@ test("--outdir build succeeds when the output directory already exists with prio
   const out = await Bun.file(path.join(String(dir), "dist", "entry.js")).text();
   expect(out).toContain("built");
   expect(out).not.toContain("stale");
+});
+
+test("--outdir creates folders beside the working directory", async () => {
+  using dir = tempDir("build-outdir-beside", {
+    "project/entry.ts": `export const x: number = 1;\nconsole.log("built", x);`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "entry.ts", "--outdir", "../other/deep/dist"],
+    env: bunEnv,
+    cwd: path.join(String(dir), "project"),
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+
+  const out = await Bun.file(path.join(String(dir), "other", "deep", "dist", "entry.js")).text();
+  expect(out).toContain("built");
 });
 
 test("multi-entry build writes each entry point into the output directory", async () => {
@@ -507,6 +580,30 @@ describe.concurrent("--no-bundle with --outdir", () => {
     const out = await Bun.file(path.join(String(dir), "dist", "app.js")).text();
     expect(out).toContain("jsx");
     expect(out).toContain("app");
+  });
+
+  test.skipIf(!isLinux)("closes the files it has read", async () => {
+    using dir = tempDir("no-bundle-outdir-closes", { "src/a.ts": `console.log(1);`, "src/b.css": `a { color: red }` });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--no-bundle", "--watch", "./src/a.ts", "./src/b.css", "--outdir=dist"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    // A build that fails keeps watching, so wait for whichever stream prints first.
+    const first = await Promise.race([forEachLine(proc.stdout).next(), forEachLine(proc.stderr).next()]);
+    expect(first.value).toStartWith("Transpiled");
+    const open = fs.readdirSync(`/proc/${proc.pid}/fd`).flatMap(fd => {
+      try {
+        return fs.readlinkSync(`/proc/${proc.pid}/fd/${fd}`);
+      } catch {
+        return [];
+      }
+    });
+    expect(open.length).toBeGreaterThan(0);
+    expect(open.filter(target => /src\/(a\.ts|b\.css)$/.test(target))).toEqual([]);
   });
 
   test("reports the size of the written file", async () => {
@@ -1078,13 +1175,13 @@ describe.concurrent("modules that fail to print", () => {
   });
 
   test("bun build fails instead of emitting a truncated stylesheet when CSS cannot be generated", async () => {
-    // `composes` on a non-simple selector makes the CSS printer fail; the
-    // whole stylesheet body used to be dropped while the build exited 0.
+    // Compiling nesting away writes the parent selector for each `&`. With two per level the
+    // printer stops at its expansion limit.
     using dir = tempDir("build-css-print-err", {
-      "styles.module.css": ".b { color: blue }\n.a .c { composes: b; color: red }\n",
+      "styles.css": "&:is(.a, &.b) {\n".repeat(20) + "color: red;\n" + "}\n".repeat(20),
     });
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "build", "styles.module.css"],
+      cmd: [bunExe(), "build", "styles.css"],
       env: bunEnv,
       cwd: String(dir),
       stdout: "pipe",
@@ -1092,7 +1189,7 @@ describe.concurrent("modules that fail to print", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toContain("Failed to generate CSS for this file");
-    expect(stderr).toContain("styles.module.css");
+    expect(stderr).toContain("styles.css");
     expect(stdout).toBe("");
     expect(exitCode).toBe(1);
   });

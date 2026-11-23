@@ -5,7 +5,7 @@ pub struct NoEmptyPattern {
     allows_object_patterns_as_parameters: bool,
 }
 
-const UNEXPECTED: Message = Message::new("unexpected", "Unexpected empty {{type}} pattern.");
+const UNEXPECTED: &Message = &Message::new("unexpected", "Unexpected empty {{type}} pattern.");
 
 /// True for `{}` or `{} = {}` as a function parameter.
 fn is_allowed_parameter(pat: Pat) -> bool {

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug } from "harness";
+import { bunEnv, bunExe, expectRssDeltaBelow, isASAN, isDebug } from "harness";
 import { join } from "node:path";
 
 // Each method runs in its own leak-fixture.ts process, so that the memory it
@@ -94,5 +94,25 @@ describe("zlib compression does not leak memory", () => {
     // up to 12 s, and up to 38 s with the exception check validation that the
     // test runner turns on. No CI lane runs one, so each keeps its own timeout.
     isDebug ? 60_000 : undefined,
+  );
+});
+
+// One deflate state is 270 KB here, so 300 leaked ones are 80 MB.
+test.concurrent.each([
+  ["accepts", `const again = () => init(handle, 15);`],
+  ["rejects", `const again = () => init(zlib.createDeflate({ memLevel: 9 })._handle, 99);`],
+])("a second init() that zlib %s frees the first one's state", async (_, again) => {
+  await expectRssDeltaBelow(
+    [
+      "-e",
+      `const zlib = require("node:zlib");
+       const handle = zlib.createDeflate()._handle;
+       const init = (handle, windowBits) => handle.init(windowBits, 6, 9, 0, new Uint32Array(2), () => {}, undefined);
+       ${again}
+       const residentAfter = calls => { for (let i = 0; i < calls; i++) again(); Bun.gc(true); return process.memoryUsage.rss(); };
+       const before = residentAfter(50);
+       console.log(JSON.stringify({ deltaMiB: (residentAfter(300) - before) / 2 ** 20 }));`,
+    ],
+    { release: 25, debug: 40 },
   );
 });

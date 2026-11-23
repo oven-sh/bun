@@ -1217,7 +1217,7 @@ impl<'a> Parser<'a, '_> {
             }
             _ => None,
         };
-        Ok(only.map_or_else(|| Value::Parts(value), Value::Tag))
+        Ok(only.map_or(Value::Parts(value), Value::Tag))
     }
 
     fn is_done(&self, done: SequenceEnd) -> bool {

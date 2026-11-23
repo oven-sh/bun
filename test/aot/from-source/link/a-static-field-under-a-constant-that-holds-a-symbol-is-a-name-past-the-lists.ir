@@ -1,0 +1,14 @@
+# The front end lists no static field under a computed key. Link finds the key of the definition, and no list of the class names it: what a lookup from the class object does not find in the lists is not nothing.
+# A static field under a written name is in the list of its class.
+# -- source: main.js
+# const key = Symbol.hasInstance;
+# class Even { static [key] = (value) => value % 2 === 0; }
+# class Counted { static count = 0; }
+# class Last {}
+# print(2 instanceof Even, 2 instanceof Counted, 2 instanceof Last);
+# -- end of source
+# RUN: link layouts mechanisms=all
+# CHECK: layout L0 {{*}}names-defined-past-lists=[static]
+# CHECK: layout L1
+# CHECK-NOT: names-defined-past-lists
+# CHECK: layout L2

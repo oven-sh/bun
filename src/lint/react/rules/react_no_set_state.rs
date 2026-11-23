@@ -10,8 +10,8 @@ use rustc_hash::FxHashMap;
 /// Disallow usage of setState
 pub struct NoSetState;
 
-const NO_SET_STATE: Message = Message::new("noSetState", "Do not use setState");
-const OXLINT: Message = Message::new("", "Do not use `setState`.");
+const NO_SET_STATE: &Message = &Message::new("noSetState", "Do not use setState");
+const OXLINT: &Message = &Message::new("", "Do not use `setState`.");
 
 #[derive(Default)]
 pub struct State<'a> {

@@ -4,6 +4,7 @@ import { memoryUsage as jscMemoryUsage } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
 import { familySync } from "detect-libc";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, isMacOS, isRoot, isWindows, tempDir, tmpdirSync } from "harness";
+import { constants as zlibConstants } from "node:zlib";
 import { basename, join, resolve } from "path";
 import { getHeapStatistics } from "v8";
 
@@ -343,6 +344,17 @@ it("process.env defineProperty routes through the env setter for accessor-backed
   expect({ ny, utcAgain, exitCode }).toEqual({ ny: (utc + 24 - 5) % 24, utcAgain: utc, exitCode: 0 });
 });
 
+it.if(isWindows)("process.chdir() to the root of a share", () => {
+  const cwd = process.cwd();
+  const share = `\\\\LOCALHOST\\${import.meta.path[0]}$`;
+  try {
+    process.chdir(share);
+    expect(process.cwd()).toBe(share);
+  } finally {
+    process.chdir(cwd);
+  }
+});
+
 it("process.chdir() on root dir", () => {
   const cwd = process.cwd();
   try {
@@ -365,11 +377,11 @@ it("process.hrtime()", async () => {
   const end = process.hrtime(start);
   expect(end[0]).toBe(0);
 
-  // Flaky on Ubuntu & Windows.
   await Bun.sleep(16);
   const end2 = process.hrtime();
 
-  expect(end2[1] > start[1]).toBe(true);
+  // A second may begin in between.
+  expect(end2[0] * 1e9 + end2[1]).toBeGreaterThan(start[0] * 1e9 + start[1]);
 });
 
 it("process.hrtime.bigint()", () => {
@@ -457,6 +469,19 @@ it("process.env", () => {
   expect(process.env["LOL SMILE latin1 <abc>"]).toBe("<abc>");
   delete process.env["LOL SMILE latin1 <abc>"];
   expect(process.env["LOL SMILE latin1 <abc>"]).toBe(undefined);
+});
+
+it("reading process.env adds no property to Bun", () => {
+  const { stdout, exitCode } = spawnSync({
+    cmd: [
+      bunExe(),
+      "-e",
+      "const before = Object.keys(Bun).join(); globalThis.env = process.env; console.log(Object.keys({ ...Bun }).join() === before);",
+    ],
+    env: bunEnv,
+    stderr: "inherit",
+  });
+  expect({ stdout: stdout.toString(), exitCode }).toEqual({ stdout: "true\n", exitCode: 0 });
 });
 
 it("process.env is spreadable and editable", () => {
@@ -620,10 +645,10 @@ it("process.env reads are never stale after a write (JIT inline-cache soundness)
 const MIN_ICU_VERSIONS_BY_PLATFORM_ARCH = {
   "darwin-x64": "70.1",
   "darwin-arm64": "72.1",
-  "linux-x64": "78.3",
-  "linux-arm64": "78.3",
-  "win32-x64": "78.3",
-  "win32-arm64": "78.3",
+  "linux-x64": "79.1",
+  "linux-arm64": "79.1",
+  "win32-x64": "79.1",
+  "win32-arm64": "79.1",
 };
 
 it("ICU version does not regress", () => {
@@ -631,7 +656,9 @@ it("ICU version does not regress", () => {
   if (!min) {
     throw new Error(`Unknown platform/arch: ${process.platform}-${process.arch}`);
   }
-  expect(parseFloat(process.versions.icu, 10) || 0).toBeGreaterThanOrEqual(parseFloat(min, 10));
+  // As many parts as the floor has: macOS may report four, and Bun.semver.order reads a missing part as the highest.
+  const version = process.versions.icu.split(".").slice(0, 2).join(".");
+  expect(Bun.semver.order(version, min)).toBeGreaterThanOrEqual(0);
 });
 
 it("process.versions.icu and process.versions.unicode describe the ICU the process runs with", () => {
@@ -754,22 +781,16 @@ it("process.versions", async () => {
   const depsDir = resolve(import.meta.dir, "../../../../scripts/build/deps");
   const deps = {
     boringssl: "boringssl",
-    libarchive: "libarchive",
     mimalloc: "mimalloc",
-    picohttpparser: "picohttpparser",
-    zlib: "zlib",
     tinycc: "tinycc",
     lolhtml: "lolhtml",
     ares: "cares",
-    libdeflate: "libdeflate",
-    zstd: "zstd",
-    lshpack: "lshpack",
   };
 
   const expectedVersions = {};
   for (const [key, file] of Object.entries(deps)) {
     const src = await Bun.file(join(depsDir, `${file}.ts`)).text();
-    // No $ anchor: some pins carry a trailing comment (zlib.ts: `"; // 2.3.3`)
+    // No $ anchor: a pin can carry a trailing comment
     const match = src.match(/^const [A-Z_]+_COMMIT = "([0-9a-f]{40})";/m);
     expect(match, `failed to extract commit from ${file}.ts`).not.toBeNull();
     expectedVersions[key] = match[1];
@@ -779,6 +800,13 @@ it("process.versions", async () => {
     expect(process.versions).toHaveProperty(name);
     expect(process.versions[name]).toBe(expectedHash);
   }
+
+  // One hexadecimal digit for each part of the version.
+  const { ZLIB_VERNUM } = zlibConstants;
+  expect(process.versions.zlib).toStartWith([...ZLIB_VERNUM.toString(16)].slice(0, 3).join("."));
+
+  // Not linked. It is the version whose output src/zstd reproduces.
+  expect(process.versions.zstd).toBe("1.5.7");
 
   expect(process.versions).toHaveProperty("usockets");
   expect(process.versions).toHaveProperty("uwebsockets");
@@ -3290,6 +3318,36 @@ describe("default 'warning' listener is registered at startup", () => {
       /^\(node:\d+\) Warning: shown\n\(Use `.*--trace-warnings \.\.\.` to show where the warning was created\)\nuser-listener\n$/,
     );
     expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 0 });
+  });
+
+  it.concurrent("the first warning does not call a replaced path.basename", async () => {
+    const { stdout, exitCode } = await run([
+      "-e",
+      `const path = require("node:path");
+       const original = path.basename;
+       let calls = 0;
+       path.basename = function (...args) {
+         calls++;
+         return original.apply(this, args);
+       };
+       process.emitWarning("made up");
+       setImmediate(() => console.log(calls));`,
+    ]);
+    expect({ stdout, exitCode }).toEqual({ stdout: "0\n", exitCode: 0 });
+  });
+
+  it.concurrent("the first warning passes an argv0 that is not a string to path.basename", async () => {
+    const { stderr, exitCode } = await run([
+      "-e",
+      `const path = require("node:path");
+       path.basename = function (name) {
+         return this === path && name === 5 ? "REPLACED" : "WRONG";
+       };
+       process.argv0 = 5;
+       process.emitWarning("made up");`,
+    ]);
+    expect(stderr).toMatch(/^\(node:\d+\) Warning: made up\n\(Use `REPLACED --trace-warnings/);
+    expect(exitCode).toBe(0);
   });
 
   it.concurrent("a bare process.emit('warning') with no prior emitWarning() still prints", async () => {

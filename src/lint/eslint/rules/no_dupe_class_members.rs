@@ -5,7 +5,7 @@ use std::borrow::Cow;
 /// Disallow duplicate class members.
 pub struct NoDupeClassMembers;
 
-const UNEXPECTED: Message = Message::new("unexpected", "Duplicate name '{{name}}'.");
+const UNEXPECTED: &Message = &Message::new("unexpected", "Duplicate name '{{name}}'.");
 
 const INIT: u8 = 1 << 0;
 const GET: u8 = 1 << 1;

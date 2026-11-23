@@ -1,9 +1,17 @@
 // Hardcoded module "node:_http_client"
 // This is a port of Node.js's lib/_http_client.js built on top of node:net /
-// node:tls sockets and the llhttp HTTPParser binding, matching the upstream
+// node:tls sockets and the HTTPParser binding, matching the upstream
 // implementation as closely as possible.
 // https://github.com/nodejs/node/blob/v26.3.0/lib/_http_client.js
-const { kEmptyObject, once, ConnResetException, hasObserver, startPerf, stopPerf } = require("internal/shared");
+const {
+  kEmptyObject,
+  once,
+  ConnResetException,
+  hasObserver,
+  startPerf,
+  stopPerf,
+  builtinChannel,
+} = require("internal/shared");
 const kClientRequestStatistics = Symbol("ClientRequestStatistics");
 const {
   _checkIsHttpToken: checkIsHttpToken,
@@ -16,7 +24,7 @@ const {
 } = require("node:_http_common");
 const { kUniqueHeaders, parseUniqueHeadersOption, OutgoingMessage } = require("node:_http_outgoing");
 const Agent = require("node:_http_agent");
-const { urlToHttpOptions } = require("internal/url");
+const { isURL, urlToHttpOptions } = require("internal/url");
 const {
   kOutHeaders,
   kNeedDrain,
@@ -28,7 +36,6 @@ const { validateInteger, validateBoolean, validateString, validateOneOf } = requ
 const { getTimerDuration } = require("internal/timers");
 const { addAbortSignal } = require("internal/streams/add-abort-signal");
 const finished = require("internal/streams/end-of-stream");
-const dc = require("node:diagnostics_channel");
 
 const ObjectAssign = Object.assign;
 const ObjectDefineProperty = Object.defineProperty;
@@ -36,10 +43,10 @@ const ObjectKeys = Object.keys;
 const NumberIsFinite = Number.isFinite;
 const ArrayIsArray = Array.isArray;
 
-const onClientRequestCreatedChannel = dc.channel("http.client.request.created");
-const onClientRequestStartChannel = dc.channel("http.client.request.start");
-const onClientRequestErrorChannel = dc.channel("http.client.request.error");
-const onClientResponseFinishChannel = dc.channel("http.client.response.finish");
+const onClientRequestCreatedChannel = builtinChannel("http.client.request.created");
+const onClientRequestStartChannel = builtinChannel("http.client.request.start");
+const onClientRequestErrorChannel = builtinChannel("http.client.request.error");
+const onClientResponseFinishChannel = builtinChannel("http.client.response.finish");
 
 function emitErrorEvent(request, error) {
   if (onClientRequestErrorChannel.hasSubscribers) {
@@ -100,10 +107,6 @@ function closeRequest(req) {
   if (req[kClientAsyncContext] !== undefined) req[kClientAsyncContext] = undefined;
   req._closed = true;
   req.emit("close");
-}
-
-function isURLInstance(input) {
-  return input != null && typeof input === "object" && input instanceof URL;
 }
 
 // When proxying a HTTP request, the following needs to be done:
@@ -176,7 +179,7 @@ function ClientRequest(input?, options?, cb?): void {
   if (typeof input === "string") {
     const urlStr = input;
     input = urlToHttpOptions(new URL(urlStr));
-  } else if (isURLInstance(input)) {
+  } else if (isURL(input)) {
     // url.URL instance
     input = urlToHttpOptions(input);
   } else {

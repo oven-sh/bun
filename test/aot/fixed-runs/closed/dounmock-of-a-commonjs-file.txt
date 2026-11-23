@@ -1,0 +1,24 @@
+vi.doUnmock() of a CommonJS file that had run before vi.doMock().
+#### a.test.js
+import { test, vi } from "bun:test";
+const say = (...all) => console.log("| CASE", ...all);
+import { read } from "./old.js";
+test("t", async () => {
+  vi.doMock("./m.cjs", () => { console.log("| CASE factory runs"); return { who: "mock", count: () => "mock" }; });
+  say((await import("./m.cjs")).who);
+  vi.doUnmock("./m.cjs");
+  const back = await import("./m.cjs");
+  say(back.who, back.count(), import.meta.require("./m.cjs").count(), read());
+});
+#### m.cjs
+console.log("| CASE m runs");
+let n = 0;
+exports.who = "real";
+exports.count = () => ++n;
+#### old.js
+console.log("| CASE old runs");
+import { who, count } from "./m.cjs";
+import * as ns from "./m.cjs";
+export const read = () => [who, count(), ns.who, Object.keys(ns).sort().join("+")].join(" ");
+#### package.json
+{ "type": "module" }

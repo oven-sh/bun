@@ -4,12 +4,11 @@ pub mod error;
 pub use error::{Error, Result};
 
 use core::cell::RefCell;
-use core::mem::MaybeUninit;
 
 use bun_collections::bit_set::{ArrayBitSet, num_masks_for};
 use bun_core::{self, fmt as bun_fmt};
 use bun_core::{String as BunString, Tag as BunStringTag, strings};
-use bun_paths::resolve_path::{self, platform};
+use bun_paths::Path;
 use bun_wyhash::hash as wyhash;
 
 // `bun.schema.api.StringPointer` — canonical definition lives in `bun_core`
@@ -43,32 +42,43 @@ use route_param::List as ParamsList;
 // stay in tier-6 `bun_jsc` as extension methods — they need JSValue/JSGlobalObject.
 // Everything else is a thin extern-"C" wrapper around WTF::URL and is JSC-agnostic.
 pub mod whatwg {
-    use core::ptr::NonNull;
+    use core::marker::PhantomData;
+    use core::mem::MaybeUninit;
+
+    use bun_core::EncodedSlice;
 
     use super::BunString as String;
     use super::strings;
 
-    bun_opaque::opaque_ffi! {
-        /// Opaque handle to a heap-allocated `WTF::URL` (C++); owned via
-        /// [`Parsed`].
-        pub struct URL;
-    }
+    /// A `WTF::URL`, owned via [`Parsed`]: a ref on a string and offsets into it, so it moves as bytes.
+    #[repr(C)]
+    pub struct URL(MaybeUninit<[u64; 5]>, PhantomData<*mut ()>);
 
     // Getters take `&URL` (C++ never mutates on read). String inputs are
     // `const BunString*`; string returns are +1 (`Bun::toStringRef`), declared
-    // as owning `String`. `URL__deinit` frees the allocation, so it stays
+    // as owning `String`. `URL__deinit` releases the string, so it stays
     // `unsafe fn`. `URL__getHrefFromJS` lives in `bun_jsc::URLJsc`.
     unsafe extern "C" {
-        safe fn URL__fromString(str: &String) -> Option<NonNull<URL>>;
-        safe fn URL__protocol(url: &URL) -> String;
+        fn URL__fromString(storage: *mut URL, str: &String, base: Option<&URL>) -> bool;
+        safe fn URL__protocol(url: &URL) -> EncodedSlice<'_>;
         safe fn URL__href(url: &URL) -> String;
         safe fn URL__username(url: &URL) -> String;
         safe fn URL__password(url: &URL) -> String;
-        safe fn URL__host(url: &URL) -> String;
+        safe fn URL__encodedUsername(url: &URL) -> EncodedSlice<'_>;
+        safe fn URL__encodedPassword(url: &URL) -> EncodedSlice<'_>;
+        safe fn URL__host(url: &URL) -> EncodedSlice<'_>;
         safe fn URL__hostname(url: &URL) -> String;
         safe fn URL__port(url: &URL) -> u32;
-        safe fn URL__pathname(url: &URL) -> String;
-        safe fn URL__fragmentIdentifier(url: &URL) -> String;
+        safe fn URL__pathname(url: &URL) -> EncodedSlice<'_>;
+        safe fn URL__query(url: &URL) -> EncodedSlice<'_>;
+        safe fn URL__fragmentIdentifier(url: &URL) -> EncodedSlice<'_>;
+        safe fn URL__hasOpaquePath(url: &URL) -> bool;
+        safe fn URL__setUsername(url: &mut URL, value: &EncodedSlice<'_>);
+        safe fn URL__setPassword(url: &mut URL, value: &EncodedSlice<'_>);
+        safe fn URL__setHost(url: &mut URL, value: &EncodedSlice<'_>) -> bool;
+        safe fn URL__setPathname(url: &mut URL, value: &EncodedSlice<'_>);
+        safe fn URL__setQuery(url: &mut URL, value: &EncodedSlice<'_>);
+        safe fn URL__setFragmentIdentifier(url: &mut URL, value: &EncodedSlice<'_>);
         fn URL__deinit(url: *mut URL);
         safe fn URL__getHref(input: &String) -> String;
         safe fn URL__getFileURLString(input: &String) -> String;
@@ -108,29 +118,45 @@ pub mod whatwg {
         Some(&slice[..len])
     }
 
+    /// A part that is borrowed is ASCII, in 8-bit or in 16-bit code units.
     impl URL {
         /// The URL fragment (the part after `#`), excluding the leading '#'.
-        pub fn fragment_identifier(&self) -> String {
+        pub fn fragment_identifier(&self) -> EncodedSlice<'_> {
             URL__fragmentIdentifier(self)
         }
-        pub fn protocol(&self) -> String {
+        /// Without the leading '?'.
+        pub fn query(&self) -> EncodedSlice<'_> {
+            URL__query(self)
+        }
+        pub fn protocol(&self) -> EncodedSlice<'_> {
             URL__protocol(self)
         }
         pub fn href(&self) -> String {
             URL__href(self)
         }
+        /// Percent-decoded.
         pub fn username(&self) -> String {
             URL__username(self)
         }
+        /// Percent-decoded.
         pub fn password(&self) -> String {
             URL__password(self)
+        }
+        pub fn encoded_username(&self) -> EncodedSlice<'_> {
+            URL__encodedUsername(self)
+        }
+        pub fn encoded_password(&self) -> EncodedSlice<'_> {
+            URL__encodedPassword(self)
+        }
+        pub fn has_opaque_path(&self) -> bool {
+            URL__hasOpaquePath(self)
         }
         /// The host WITHOUT the port (JS `hostname`).
         ///
         /// ```text
         /// URL("http://example.com:8080").host() => "example.com"
         /// ```
-        pub fn host(&self) -> String {
+        pub fn host(&self) -> EncodedSlice<'_> {
             URL__host(self)
         }
         /// The host WITH the port (JS `host`).
@@ -145,35 +171,63 @@ pub mod whatwg {
         pub fn port(&self) -> u32 {
             URL__port(self)
         }
-        pub fn pathname(&self) -> String {
+        pub fn pathname(&self) -> EncodedSlice<'_> {
             URL__pathname(self)
         }
     }
 
-    /// A `URL` this handle owns; `Drop` frees it.
-    pub struct Parsed(NonNull<URL>);
+    /// An owned `URL`.
+    pub struct Parsed(URL);
 
     impl Parsed {
         pub fn from_string(str: &String) -> Option<Self> {
-            URL__fromString(str).map(Self)
+            Self::from_string_with_base(str, None)
         }
         pub fn from_utf8(input: &[u8]) -> Option<Self> {
             Self::from_string(&bun_core::StringView::borrow_utf8(input))
+        }
+        /// `new URL(str, base)`.
+        pub fn from_string_with_base(str: &String, base: Option<&URL>) -> Option<Self> {
+            let mut url = URL(MaybeUninit::uninit(), PhantomData);
+            // SAFETY: `url` has the size and alignment of a `WTF::URL`, and holds none yet.
+            unsafe { URL__fromString(&raw mut url, str, base) }.then(|| Self(url))
+        }
+    }
+
+    /// A setter takes Latin-1 or UTF-16 and parses the URL again. If that fails, every part is empty.
+    impl Parsed {
+        pub fn set_username(&mut self, value: EncodedSlice<'_>) {
+            URL__setUsername(&mut self.0, &value)
+        }
+        pub fn set_password(&mut self, value: EncodedSlice<'_>) {
+            URL__setPassword(&mut self.0, &value)
+        }
+        /// False if `value` is no host.
+        pub fn set_host(&mut self, value: EncodedSlice<'_>) -> bool {
+            URL__setHost(&mut self.0, &value)
+        }
+        pub fn set_pathname(&mut self, value: EncodedSlice<'_>) {
+            URL__setPathname(&mut self.0, &value)
+        }
+        pub fn set_query(&mut self, value: EncodedSlice<'_>) {
+            URL__setQuery(&mut self.0, &value)
+        }
+        pub fn set_fragment_identifier(&mut self, value: EncodedSlice<'_>) {
+            URL__setFragmentIdentifier(&mut self.0, &value)
         }
     }
 
     impl core::ops::Deref for Parsed {
         type Target = URL;
         fn deref(&self) -> &URL {
-            // SAFETY: `self.0` is a live heap `WTF::URL` that only `Drop` frees.
-            unsafe { self.0.as_ref() }
+            &self.0
         }
     }
 
     impl Drop for Parsed {
         fn drop(&mut self) {
-            // SAFETY: this handle is the only owner of the `WTF::URL`, so it is deleted once.
-            unsafe { URL__deinit(self.0.as_ptr()) }
+            // SAFETY: a `Parsed` is only made around a `WTF::URL` that was constructed, and is its only owner.
+            unsafe { URL__deinit(&raw mut self.0) }
         }
     }
 }
@@ -569,122 +623,28 @@ impl<'a> URL<'a> {
         !self.hostname.is_empty() && !self.pathname.is_empty()
     }
 
-    /// Stack scratch for `join_normalize`. Longer joins go to the heap.
-    const JOIN_STACK_BUF_LEN: usize = 2048;
-
-    /// Length bound of the unnormalized path `join_normalize` builds.
-    fn join_needed(prefix: &[u8], dirname: &[u8], basename: &[u8], extname: &[u8]) -> usize {
-        b"/".len() + prefix.len() + dirname.len() + b"/".len() + basename.len() + extname.len()
-    }
-
-    pub(crate) fn join_normalize<'b>(
-        out: &'b mut [u8],
-        prefix: &[u8],
-        dirname: &[u8],
-        basename: &[u8],
-        extname: &[u8],
-    ) -> &'b [u8] {
-        let mut path_parts: [&[u8]; 10] = [b""; 10];
-        let mut path_end: usize = 0;
-
-        path_parts[0] = b"/";
-        path_end += 1;
-
-        if !prefix.is_empty() {
-            path_parts[path_end] = prefix;
-            path_end += 1;
-        }
-
-        if !dirname.is_empty() {
-            path_parts[path_end] = strings::trim(dirname, b"/\\");
-            path_end += 1;
-        }
-
-        if !basename.is_empty() {
-            if !dirname.is_empty() {
-                path_parts[path_end] = b"/";
-                path_end += 1;
-            }
-
-            path_parts[path_end] = strings::trim(basename, b"/\\");
-            path_end += 1;
-        }
-
-        if !extname.is_empty() {
-            path_parts[path_end] = extname;
-            path_end += 1;
-        }
-
-        let mut total: usize = 0;
-        for part in &path_parts[0..path_end] {
-            total += part.len();
-        }
-        let mut buf_stack = [const { MaybeUninit::<u8>::uninit() }; Self::JOIN_STACK_BUF_LEN];
-        let mut buf_heap: Vec<u8> = Vec::new();
-        let buf: &mut [MaybeUninit<u8>] = if total <= Self::JOIN_STACK_BUF_LEN {
-            &mut buf_stack
-        } else {
-            buf_heap.reserve_exact(total);
-            buf_heap.spare_capacity_mut()
-        };
-        let mut buf_i: usize = 0;
-        for part in &path_parts[0..path_end] {
-            buf[buf_i..buf_i + part.len()].write_copy_of_slice(part);
-            buf_i += part.len();
-        }
-        // SAFETY: the loop above wrote every byte of `buf[..buf_i]`.
-        let joined = unsafe { buf[..buf_i].assume_init_ref() };
-        resolve_path::normalize_string_buf::<false, platform::Loose, false>(joined, out)
-    }
-
+    /// Writes the URL of the file at `path`, which is relative to what `prefix` serves.
     pub fn join_write(
         &self,
         writer: &mut impl bun_core::io::Write,
         prefix: &[u8],
-        dirname: &[u8],
-        basename: &[u8],
-        extname: &[u8],
+        path: &[u8],
     ) -> crate::Result<()> {
-        let needed = Self::join_needed(prefix, dirname, basename, extname);
-        let mut out_pooled: bun_paths::path_buffer_pool::Guard;
-        let mut out_heap: Vec<u8>;
-        let out: &mut [u8] = if needed <= bun_paths::MAX_PATH_BYTES {
-            out_pooled = bun_paths::path_buffer_pool::get();
-            &mut out_pooled[..]
-        } else {
-            out_heap = vec![0u8; needed];
-            &mut out_heap
-        };
-        let normalized_path = Self::join_normalize(out, prefix, dirname, basename, extname);
+        let mut joined = Path::from(&strings::replace_char(prefix, b'\\', b'/'));
+        joined.extend_from_slice(bun_paths::without_leading_sep(path));
+        let mut normalized = Path::from(b"/");
+        normalized.push_inside(&joined);
+        let normalized = normalized.into_portable();
 
         writer.write_all(self.origin)?;
-        writer.write_all(b"/")?;
-        writer.write_all(normalized_path)?;
-        Ok(())
-    }
-
-    pub fn join_alloc(
-        &self,
-        prefix: &[u8],
-        dirname: &[u8],
-        basename: &[u8],
-        extname: &[u8],
-        absolute_path: &[u8],
-    ) -> crate::Result<Box<[u8]>> {
-        let has_uplevels = strings::index_of(dirname, b"../").is_some();
-
-        if has_uplevels {
-            let mut v = Vec::with_capacity(self.origin.len() + 5 + absolute_path.len());
-            v.extend_from_slice(self.origin);
-            v.extend_from_slice(b"/abs:");
-            v.extend_from_slice(absolute_path);
-            Ok(v.into_boxed_slice())
-        } else {
-            let needed = Self::join_needed(prefix, dirname, basename, extname);
-            let mut v = Vec::with_capacity(self.origin.len() + 1 + needed);
-            self.join_write(&mut v, prefix, dirname, basename, extname)?;
-            Ok(v.into_boxed_slice())
+        // In a URL `\` is a separator.
+        for (i, part) in strings::split(&normalized, b"\\").enumerate() {
+            if i > 0 {
+                writer.write_all(b"%5C")?;
+            }
+            writer.write_all(part)?;
         }
+        Ok(())
     }
 
     /// Reads the authority as `new URL()` reads it. See [`URL::parse_single_reader`] for the other rule.
@@ -1631,7 +1591,7 @@ fn string_pointer_from_strings(parent: &[u8], in_: &[u8]) -> api::StringPointer 
         return api::StringPointer { offset, length };
     } else {
         if let Some(i) = strings::index_of(parent, in_) {
-            debug_assert!(strings::eql_long(&parent[i..][..in_.len()], in_, false));
+            debug_assert!(strings::eql_long(&parent[i..][..in_.len()], in_));
 
             return api::StringPointer {
                 offset: u32::try_from(i).unwrap(),
@@ -1829,16 +1789,12 @@ mod tests {
 
     const ORIGIN: &[u8] = b"http://localhost:3000";
 
-    fn join(prefix: &[u8], dirname: &[u8], basename: &[u8], extname: &[u8]) -> Vec<u8> {
+    fn join(prefix: &[u8], path: &[u8]) -> Vec<u8> {
         let url = URL::parse(b"http://localhost:3000/");
         assert_eq!(url.origin, ORIGIN);
         let mut out = Vec::new();
-        url.join_write(&mut out, prefix, dirname, basename, extname)
+        url.join_write(&mut out, prefix, path)
             .expect("Vec<u8> writes cannot fail");
-        let boxed = url
-            .join_alloc(prefix, dirname, basename, extname, b"/abs/unused")
-            .expect("Vec<u8> writes cannot fail");
-        assert_eq!(&*boxed, &*out, "join_alloc and join_write must agree");
         out
     }
 
@@ -1929,43 +1885,22 @@ mod tests {
     #[test]
     fn join_normalizes_the_path() {
         assert_eq!(
-            join(b"_next/", b"/pages//", b"index", b".js"),
+            join(b"_next/", b"/pages//index.js"),
             b"http://localhost:3000/_next/pages/index.js"
         );
-        assert_eq!(
-            join(b"", b"a/./b/..", b"d", b""),
-            b"http://localhost:3000/a/d"
-        );
-        assert_eq!(join(b"", b"", b"", b""), b"http://localhost:3000/");
+        assert_eq!(join(b"", b"a/./b/../d"), b"http://localhost:3000/a/d");
+        assert_eq!(join(b"", b""), b"http://localhost:3000/");
     }
 
     #[test]
-    fn join_alloc_uplevel_dirname_uses_the_absolute_path() {
-        let url = URL::parse(b"http://localhost:3000/");
-        let boxed = url
-            .join_alloc(b"", b"../pages", b"index", b".js", b"/srv/pages/index.js")
-            .expect("Vec<u8> writes cannot fail");
-        assert_eq!(&*boxed, b"http://localhost:3000/abs:/srv/pages/index.js");
+    #[cfg(unix)]
+    fn join_escapes_a_backslash_in_a_name() {
+        assert_eq!(join(b"a\\", b"b\\c"), b"http://localhost:3000/a/b%5Cc");
     }
 
     #[test]
-    fn join_at_the_stack_buffer_limit() {
-        // `/` plus the basename fills the scratch buffer exactly.
-        let basename = vec![b'a'; URL::JOIN_STACK_BUF_LEN - 1];
-        let mut expected = ORIGIN.to_vec();
-        expected.push(b'/');
-        expected.extend_from_slice(&basename);
-        assert_eq!(join(b"", b"", &basename, b""), expected);
-    }
-
-    #[test]
-    fn join_longer_than_every_stack_buffer() {
-        let len = URL::JOIN_STACK_BUF_LEN.max(bun_paths::MAX_PATH_BYTES) + 1;
-        let basename = vec![b'a'; len];
-        let mut expected = ORIGIN.to_vec();
-        expected.extend_from_slice(b"/dir/");
-        expected.extend_from_slice(&basename);
-        expected.extend_from_slice(b".js");
-        assert_eq!(join(b"", b"dir", &basename, b".js"), expected);
+    fn join_longer_than_a_path_buffer() {
+        let path = vec![b'a'; bun_paths::MAX_PATH_BYTES + 1];
+        assert_eq!(join(b"dir/", &path), [ORIGIN, b"/dir/", &path].concat());
     }
 }

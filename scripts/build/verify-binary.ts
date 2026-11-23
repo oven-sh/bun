@@ -6,7 +6,8 @@
  *       Static scans of the linked executable against the expectations
  *       configure wrote into <spec.json> (see binary-expectations.ts):
  *       exported symbols, dynamic libraries + symbol-version ceilings,
- *       forbidden imports, static initializers, hardening bits, debug info.
+ *       forbidden imports, static initializers, hardening bits, debug info,
+ *       and on Windows arm64 weak references that LLVM miscompiled.
  *
  *   verify-binary.ts duplicates <nm> <rspfile> <report>
  *       Every object and archive on bun's link line, scanned for a symbol
@@ -14,6 +15,7 @@
  *       when the other sits in an archive member it never loads). <report>
  *       also lists weak definitions whose sizes disagree across objects —
  *       the usual face of an ODR violation — without failing on them.
+ *       On Windows arm64, also for weak references to variables.
  *
  * Everything is read with the LLVM binutils the build already requires
  * (llvm-nm / llvm-readobj / llvm-objdump), so ELF, Mach-O and PE are all
@@ -74,7 +76,15 @@ function versionLeq(a: string, b: string): boolean {
 }
 
 type CheckName =
-  "exports" | "dynamic libraries" | "imports" | "static initializers" | "hardening" | "debug info" | "size";
+  | "exports"
+  | "dynamic libraries"
+  | "imports"
+  | "static initializers"
+  | "symbols"
+  | "hardening"
+  | "debug info"
+  | "size"
+  | "weak references";
 
 /**
  * What a violation of each check means for the shipped binary and what the
@@ -102,6 +112,8 @@ const GUIDANCE: Record<CheckName, string[]> = {
     "These imports mean a toolchain feature bun builds without has crept into some object",
     "(C++ exceptions / RTTI runtime, emulated TLS, libatomic calls). Find the object that",
     "references the symbol (llvm-nm -A over the link inputs) and fix its compile flags.",
+    "malloc, free, operator new and their relatives on macOS: MimallocOverrideDarwin.cpp defines",
+    "them for the whole link, so an import means it lacks the one that is listed. Add it there.",
   ],
   "static initializers": [
     "A static initializer runs before main() on every start of every bun process, in",
@@ -109,6 +121,12 @@ const GUIDANCE: Record<CheckName, string[]> = {
     "is never used. bun, JSC and WTF have none by policy: use a function-local static,",
     "WTF::LazyNeverDestroyed / NeverDestroyed, or constinit. The symbol name says which",
     "translation unit added it (_GLOBAL__sub_I_<file>).",
+  ],
+  symbols: [
+    "This code is there for tests and debugging and must not ship: the linker kept it because",
+    "something reachable refers to it. Find the caller (llvm-nm -A --undefined-only over the link",
+    "inputs) and compile the call out of this flavour, as binary-expectations.ts says for the list.",
+    "A highway_* function means that LTO does not inline C++ into Rust: -mllvm -pass-remarks-missed=inline says why.",
   ],
   hardening: [
     "These bits are process-wide exploit mitigations / layout guarantees (non-executable",
@@ -118,6 +136,12 @@ const GUIDANCE: Record<CheckName, string[]> = {
   size: [
     "This program is written to stay tiny (no CRT, no allocator, no formatting). A jump in size",
     "means one of those came in: look for a new panic message, a `core::fmt` use, or a new dependency.",
+  ],
+  "weak references": [
+    "For Windows arm64, ThinLTO in LLVM 23 marks a weak declaration dso_local when the definition is bitcode",
+    "from clang, and then loads from the symbol where it means to take its address. Addresses are in the .map",
+    "beside the executable. Drop __attribute__((weak)) from the declaration if the symbol is always there,",
+    "or compile the file that refers to it with -fno-lto.",
   ],
   "debug info": [
     "The profile binary is what crash reports and profilers are symbolized against; it",
@@ -220,7 +244,10 @@ const loadCommands = (priv: string): { cmd: string; text: string }[] =>
     .map(text => ({ cmd: text.match(/^\s*cmd (\S+)/m)?.[1] ?? "", text }));
 
 /** Symbol table as address-sorted [addr, name] for symbolizing initializer pointers. */
-function symbolTable(nm: string, exe: string): { lookup(addr: bigint): string | undefined; size: number } {
+function symbolTable(
+  nm: string,
+  exe: string,
+): { lookup(addr: bigint): string | undefined; size: number; names: string[] } {
   const text = run(nm, ["--defined-only", "--numeric-sort", "--no-demangle", exe]);
   const addrs: bigint[] = [];
   const names: string[] = [];
@@ -232,7 +259,14 @@ function symbolTable(nm: string, exe: string): { lookup(addr: bigint): string | 
   }
   const exact = new Map<bigint, string>();
   for (let i = 0; i < addrs.length; i++) if (!exact.has(addrs[i]!)) exact.set(addrs[i]!, names[i]!);
-  return { lookup: a => exact.get(a) ?? exact.get(a & ~1n), size: addrs.length };
+  return { lookup: a => exact.get(a) ?? exact.get(a & ~1n), size: addrs.length, names };
+}
+
+/** An executable without a symbol table would pass for the wrong reason. */
+function forbiddenSymbolViolations(names: string[], forbidden: string[]): string[] {
+  if (names.length === 0) return ["the executable has no symbol table, so nothing can be said"];
+  const pat = globToRegExp(forbidden);
+  return names.filter(name => pat.test(name)).map(name => `+ ${name} (forbidden symbol)`);
 }
 
 function readAt(path: string, offset: number, length: number): Buffer {
@@ -340,11 +374,11 @@ function verifyElf(spec: VerifySpec): void {
   {
     const pat = globToRegExp(expect.forbiddenImports);
     const bad = imported.filter(s => pat.test(s));
-    report(
-      "imports",
-      `${imported.length} imported symbols`,
-      bad.map(s => `+ ${s} (forbidden import)`),
-    );
+    const missing = (expect.requiredImports ?? []).filter(s => !imported.includes(s));
+    report("imports", `${imported.length} imported symbols`, [
+      ...bad.map(s => `+ ${s} (forbidden import)`),
+      ...missing.map(s => `- ${s} (required import)`),
+    ]);
   }
 
   const sections = blocks(info, "Section");
@@ -386,6 +420,11 @@ function verifyElf(spec: VerifySpec): void {
       }
     }
     report("static initializers", `${names.length} static initializers`, violations, names);
+  }
+
+  if (expect.forbiddenSymbols !== undefined) {
+    const { names } = symbolTable(nm, exe);
+    report("symbols", `${names.length} defined symbols`, forbiddenSymbolViolations(names, expect.forbiddenSymbols));
   }
 
   // 5. hardening
@@ -531,6 +570,11 @@ function verifyMachO(spec: VerifySpec): void {
     report("static initializers", `${names.length} static initializers`, violations, names);
   }
 
+  if (expect.forbiddenSymbols !== undefined) {
+    const { names } = symbolTable(nm, exe);
+    report("symbols", `${names.length} defined symbols`, forbiddenSymbolViolations(names, expect.forbiddenSymbols));
+  }
+
   // 5. hardening: header flags + segment protections
   if (expect.macho !== undefined) {
     const violations: string[] = [];
@@ -617,6 +661,56 @@ function verifyPE(spec: VerifySpec): void {
     const props = [...chars, `subsystem ${ver}`];
     report("hardening", `${props.length} hardening properties`, violations, props);
   }
+
+  // 6. weak references
+  if (readAt(exe, readAt(exe, 0x3c, 4).readUInt32LE() + 4, 2).readUInt16LE() === 0xaa64 /* ARM64 */) {
+    const { pointerLoads, fromCode } = arm64PointerLoads(readFileSync(exe));
+    report(
+      "weak references",
+      `${pointerLoads} loads of an address`,
+      pointerLoads > 0 ? fromCode : ["no code was found, so nothing can be said"],
+    );
+  }
+}
+
+/** Weak references to functions: every `adrp xN, page` with its `ldr xN, [xN, #offset]`, which is how LLVM reads an address out of a slot. */
+export function arm64PointerLoads(image: Buffer): { pointerLoads: number; fromCode: string[] } {
+  const header = image.readUInt32LE(0x3c);
+  const imageBase = image.readBigUInt64LE(header + 48);
+  const table = header + 24 + image.readUInt16LE(header + 20);
+  const code = Array.from({ length: image.readUInt16LE(header + 6) }, (_, index) => table + index * 40)
+    .filter(section => image.readUInt32LE(section + 36) & 0x20000000 /* IMAGE_SCN_MEM_EXECUTE */)
+    .map(section => ({
+      start: image.readUInt32LE(section + 12),
+      size: Math.min(image.readUInt32LE(section + 8), image.readUInt32LE(section + 16)),
+      offset: image.readUInt32LE(section + 20),
+    }));
+  // In the low bits a branch has its condition or offset, and a vector instruction a register of the other file.
+  const writes = (instruction: number, register: number) =>
+    (instruction & 31) === register &&
+    (instruction & 0x1c000000) !== 0x14000000 &&
+    (instruction & 0x0c000000) !== 0x0c000000;
+  const address = (rva: number) => `0x${(imageBase + BigInt(rva)).toString(16)}`;
+  let pointerLoads = 0;
+  const fromCode: string[] = [];
+  for (const { start, size, offset } of code) {
+    for (let at = 0; at + 8 <= size; at += 4) {
+      const adrp = image.readUInt32LE(offset + at);
+      if ((adrp & 0x9f000000) >>> 0 !== 0x90000000) continue;
+      const register = adrp & 31;
+      // The scheduler may put other instructions in between.
+      let next = at + 4;
+      while (next < at + 128 && next + 8 <= size && !writes(image.readUInt32LE(offset + next), register)) next += 4;
+      const ldr = image.readUInt32LE(offset + next);
+      if ((ldr & 0xffc003ff) >>> 0 !== (0xf9400000 | (register << 5) | register) >>> 0) continue;
+      pointerLoads++;
+      const pages = (((adrp << 8) >> 13) << 2) | ((adrp >>> 29) & 3);
+      const target = start + at - ((start + at) % 4096) + pages * 4096 + ((ldr >>> 10) & 0xfff) * 8;
+      if (code.some(section => target >= section.start && target < section.start + section.size))
+        fromCode.push(`${address(start + next)} loads from ${address(target)}`);
+    }
+  }
+  return { pointerLoads, fromCode };
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -732,7 +826,22 @@ function coffDefinitions(
   return { defs, objects };
 }
 
-function verifyDuplicates(nm: string, objdump: string | undefined, rspfile: string, reportPath: string): number {
+/** What arm64PointerLoads cannot tell from a load of the variable's value. From the output of `llvm-nm -A -m`. */
+export function weakReferencesToVariables(outputs: string[]): string[] {
+  const matches = (pattern: RegExp) => outputs.flatMap(output => [...output.matchAll(pattern)]);
+  const variables = new Set(matches(/ \(LTO,(?:RO)?DATA\) .* (\S+)$/gm).map(([, name]) => name));
+  return matches(/^(.*): +\(undefined\) weak external (\S+)$/gm)
+    .filter(([, , name]) => variables.has(name))
+    .map(([, obj, name]) => `${name} in ${obj}`);
+}
+
+function verifyDuplicates(
+  nm: string,
+  objdump: string | undefined,
+  rspfile: string,
+  reportPath: string,
+  windowsArm64: boolean,
+): number {
   // .res (compiled Windows resources) is a link input with no symbols and
   // no object format nm reads; everything else on the line must scan.
   const inputs = readFileSync(rspfile, "utf8")
@@ -756,11 +865,13 @@ function verifyDuplicates(nm: string, objdump: string | undefined, rspfile: stri
   // only one that says whether a definition is weak ("weak external"); ELF
   // objects ignore it and print the BSD form, whose type letter (W/V/C)
   // carries the same bit.
+  const outputs: string[] = [];
   for (const { stdout: out, stderr } of chunkedRun(
     nm,
-    ["-A", "-S", "-m", "--extern-only", "--defined-only", "--no-demangle"],
+    ["-A", "-S", "-m", "--extern-only", ...(windowsArm64 ? [] : ["--defined-only"]), "--no-demangle"],
     inputs,
   )) {
+    if (windowsArm64) outputs.push(out);
     errors.push(...toolErrors(stderr).filter(e => !/no symbols$/.test(e)));
     for (const line of out.split("\n")) {
       // Darwin form: `<obj>: <value> (<segment>,<section>) [weak] [private] external [<attrs>] <name>`
@@ -821,7 +932,10 @@ function verifyDuplicates(nm: string, objdump: string | undefined, rspfile: stri
   if (dups.length > 50) console.log(`  … ${dups.length - 50} more in ${reportPath}`);
   if (dups.length > 0)
     console.log(`  full report (and ${odr.length} weak definitions with differing sizes): ${reportPath}`);
-  return dups.length > 0 ? 1 : 0;
+  const weak = weakReferencesToVariables(outputs);
+  if (windowsArm64) console.log(`${weak.length} weak references to variables`);
+  for (const line of weak.length > 0 ? [...weak, ...GUIDANCE["weak references"]] : []) console.log(`  ${line}`);
+  return dups.length + weak.length > 0 ? 1 : 0;
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -876,15 +990,15 @@ function scan(argv: string[]): number {
     return failed > 0 ? 1 : 0;
   }
   if (mode === "duplicates") {
-    // duplicates <nm> <rspfile> <report> [<objdump, for a Windows target>]
-    const [nm, rspfile, reportPath, objdump] = args;
+    // duplicates <nm> <rspfile> <report> [<objdump> <arch>, for a Windows target]
+    const [nm, rspfile, reportPath, objdump, arch] = args;
     assert(
       nm !== undefined && rspfile !== undefined && reportPath !== undefined,
       "duplicates: missing <nm> <rspfile> <report>",
     );
-    return verifyDuplicates(nm, objdump, rspfile, reportPath);
+    return verifyDuplicates(nm, objdump, rspfile, reportPath, arch === "aarch64");
   }
-  console.error("usage: verify-binary.ts binary <spec.json> | duplicates <nm> <rspfile> <report> [objdump]");
+  console.error("usage: verify-binary.ts binary <spec.json> | duplicates <nm> <rspfile> <report> [objdump arch]");
   return 2;
 }
 

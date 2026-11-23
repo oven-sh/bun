@@ -1,0 +1,4 @@
+// The same lines; one row is answered by a getter that counts its reads and lays another row into the cloth in the middle of a loop.
+class Cloth { constructor(threads) { this.wide = threads.length; this.threads = threads; } seams() { const { wide, threads } = this; let worth = 0; const walked = stitch => { let from = 0; for (let at = 1; at <= wide; at++) { if (at < wide && stitch(at) === stitch(from)) continue; if (at - from > 2) worth += at - from; from = at; } }; for (let row = 0; row < wide; row++) { walked(at => threads[row][at]); walked(at => threads[at][row]); } return worth; } }
+const rows = JSON.parse("[[1,1,1,1,0,0],[0,1,1,1,1,0],[0,0,0,0,1,1],[1,0,1,0,1,0],[1,1,1,1,1,1],[0,0,0,1,1,1]]");
+const trapped = rows.map(row => row.slice()); let reads = 0; Object.defineProperty(trapped, 3, { get() { reads++; if (reads === 5) trapped[0] = [9, 9, 9, 9, 9, 9]; return rows[3]; } }); console.log(new Cloth(trapped).seams(), reads);

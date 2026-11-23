@@ -1,0 +1,17 @@
+# -- source: main.ts
+# declare function print(value: any): void;
+# class Shelf {
+#   static get 0(): number { return 7; }
+#   static 1(): number { return 8; }
+#   get 2(): number { return 9; }
+# }
+# const shelf: any = Shelf;
+# const made: any = new Shelf();
+# print(shelf[0] + shelf[1]() + made[2]);
+# print("went on");
+# -- end of source
+# A member of a class under an index is an element of the class object or of its prototype: DefineMethod writes ArrayStorage and Elements. testing=CheckEffectsAtRunTime stopped here:
+# "the rows of effects of operation:DefineMethod and of runtime:operationAOTDefineMethod say that the call will not write ArrayStorage, and those words of operand 0 are others behind it".
+# RUN: run-in-shell testing=CheckEffectsAtRunTime mechanisms=all
+# CHECK: 24
+# CHECK-NEXT: went on

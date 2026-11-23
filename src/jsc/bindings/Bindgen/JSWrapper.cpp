@@ -50,9 +50,9 @@ JSClassConstructor::JSClassConstructor(VM& vm, Structure* structure, NativeFunct
 {
 }
 
-JSClassConstructor* JSClassConstructor::create(VM& vm, JSGlobalObject* globalObject, ASCIILiteral name, NativeFunction call, NativeFunction construct, unsigned length, std::span<const HashTableValue> tableValues, JSObject* prototype)
+JSClassConstructor* JSClassConstructor::create(VM& vm, JSGlobalObject* globalObject, ASCIILiteral name, NativeFunction call, NativeFunction construct, unsigned length, std::span<const HashTableValue> tableValues, JSObject* prototype, JSObject* base)
 {
-    auto* structure = createStructure(vm, globalObject, globalObject->functionPrototype());
+    auto* structure = createStructure(vm, globalObject, base ? base : globalObject->functionPrototype());
     auto* constructor = new (NotNull, allocateCell<JSClassConstructor>(vm)) JSClassConstructor(vm, structure, call, construct);
     constructor->finishCreation(vm, length, name, PropertyAdditionMode::WithoutStructureTransition);
     // Reifying makes the structure a dictionary, even for no properties.
@@ -111,6 +111,11 @@ Structure* structureForNewTarget(JSGlobalObject* globalObject, CallFrame* callFr
 extern "C" JSC::EncodedJSValue Bun__Bindgen__constructorForClass(JSC::JSGlobalObject* globalObject, uint32_t classIndex)
 {
     return JSC::JSValue::encode(Bun::Bindgen::constructorForClass(globalObject, classIndex));
+}
+
+extern "C" JSC::JSGlobalObject* Bun__Bindgen__globalObjectOf(JSC::JSObject* wrapper)
+{
+    return wrapper->globalObject();
 }
 
 // The payload was written after `finishCreation`: the fence of ~ObjectInitializationScope.

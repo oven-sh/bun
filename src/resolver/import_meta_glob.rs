@@ -1,0 +1,120 @@
+use bun_core::strings;
+use bun_js_parser::ImportMetaGlobHost;
+use bun_paths::Path;
+
+use crate::dir_info::DirInfo;
+use crate::package_json::{ESModule, Status};
+use crate::resolver::Resolver;
+use crate::tsconfig_json::TSConfigJSON;
+
+/// (absolute directory, glob relative to it)
+type GlobInDir = (Vec<u8>, Vec<u8>);
+
+impl Resolver<'_> {
+    /// # Safety
+    /// `this` must outlive the parse, which may only call it from this thread.
+    pub unsafe fn import_meta_glob_host(this: *mut Self) -> ImportMetaGlobHost {
+        unsafe fn resolve_alias(
+            resolver: *mut (),
+            importer_dir: &[u8],
+            glob: &[u8],
+        ) -> Option<GlobInDir> {
+            // SAFETY: `resolver` is the `this` below.
+            unsafe { &mut *resolver.cast::<Resolver<'_>>() }
+                .import_meta_glob_alias(importer_dir, glob)
+        }
+        // SAFETY: the caller's contract.
+        unsafe { ImportMetaGlobHost::new(this.cast(), resolve_alias) }
+    }
+
+    /// Resolves a pattern like `@/pages/*.tsx` or `#pages/*.tsx`, in the same order as an import path.
+    pub fn import_meta_glob_alias(
+        &mut self,
+        importer_dir: &[u8],
+        glob: &[u8],
+    ) -> Option<GlobInDir> {
+        let dir_info = self.read_dir_info_ignore_error(importer_dir)?;
+        let tsconfig = self.enclosing_tsconfig_json(&dir_info);
+        if let Some(tsconfig) = &tsconfig
+            && let Some(found) = self.import_meta_glob_in_tsconfig_paths(tsconfig, glob)
+        {
+            return Some(found);
+        }
+        if glob.starts_with(b"#")
+            && let Some(found) = self.import_meta_glob_in_package_imports(&dir_info, glob)
+        {
+            return Some(found);
+        }
+        let tsconfig = tsconfig?;
+        tsconfig
+            .has_base_url()
+            .then(|| (tsconfig.base_url.to_vec(), glob.to_vec()))
+    }
+
+    /// Like Vite, only uses the first substitution.
+    fn import_meta_glob_in_tsconfig_paths(
+        &mut self,
+        tsconfig: &TSConfigJSON,
+        glob: &[u8],
+    ) -> Option<GlobInDir> {
+        let paths = &tsconfig.paths;
+        let (original_paths, matched_text): (&[Box<[u8]>], &[u8]) =
+            if let Some(exact) = paths.keys().iter().position(|key| **key == *glob) {
+                (&paths.values()[exact], b"")
+            } else {
+                let wildcard = tsconfig.match_paths_wildcard(glob)?;
+                (
+                    wildcard.original_paths,
+                    &glob[wildcard.prefix.len()..glob.len() - wildcard.suffix.len()],
+                )
+            };
+        let original_path = original_paths
+            .iter()
+            .find(|original_path| !self.is_type_only_tsconfig_path(original_path))?;
+
+        let (before, after) =
+            strings::split_once_char(original_path, b'*').unwrap_or((original_path, b""));
+        let name_start = (before.iter())
+            .rposition(|&byte| bun_paths::is_sep(byte))
+            .map_or(0, |slash| slash + 1);
+        let dir = Path::resolve(&[tsconfig.abs_base_url_for_paths(), &before[..name_start]]);
+        Some((
+            dir.to_vec(),
+            [&before[name_start..], matched_text, after].concat(),
+        ))
+    }
+
+    fn import_meta_glob_in_package_imports(
+        &self,
+        dir_info: &DirInfo,
+        glob: &[u8],
+    ) -> Option<GlobInDir> {
+        let package_json = dir_info.package_json_for_module_type?;
+        // Hides the glob's escapes while resolving, so that only the separators become `/`.
+        const ESCAPE: u8 = 1;
+        let swap = |bytes: &[u8], from: u8, to: u8| -> Vec<u8> {
+            let swapped = bytes
+                .iter()
+                .map(|&byte| if byte == from { to } else { byte });
+            swapped.collect()
+        };
+        let specifier = swap(glob, b'\\', ESCAPE);
+        let resolution = ESModule {
+            conditions: &self.opts.conditions.import,
+            debug_logs: None,
+            stack_check: bun_core::StackCheck::init(),
+        }
+        .resolve_imports(&specifier, &package_json.imports.as_ref()?.root);
+        matches!(
+            resolution.status,
+            Status::Exact | Status::ExactEndsWithStar | Status::Inexact
+        )
+        .then(|| {
+            let path = swap(&bun_paths::to_portable(&resolution.path), ESCAPE, b'\\');
+            (
+                package_json.source.path.name().dir.to_vec(),
+                bun_paths::without_leading_sep(&path).to_vec(),
+            )
+        })
+    }
+}

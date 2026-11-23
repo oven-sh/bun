@@ -1,0 +1,43 @@
+# f3 = ridge
+# -- source: counter-that-enters-as-an-optional-double-is-asked-for-an-int32-in-front.ts
+# declare function print(...values: unknown[]): void;
+# function climbs(text: string, at: any, end: any) {
+#   let last = -1;
+#   while (at < end) {
+#     const unit = text.charCodeAt(at);
+#     if (unit < last) return at;
+#     last = unit;
+#     at++;
+#   }
+#   return at;
+# }
+# function sums(text: string, at: any, end: any, most: any) {
+#   let sum = 0;
+#   while (at < end) {
+#     sum += text.charCodeAt(at) & 7;
+#     if (sum > most) break;
+#     at++;
+#   }
+#   return at;
+# }
+# function ridge(text: string, from: any) {
+#   const end = text.length;
+#   const top = climbs(text, from, end);
+#   const far = sums(text, top, end, 9);
+#   return String(top) + ":" + String(far) + ":" + text.slice(top, far);
+# }
+# (globalThis as any).texts = ["abcabcdefa", "plain", "ab;", "ab;cd", "zyxwvuts"];
+# const texts: string[] = (globalThis as any).texts;
+# print(ridge(texts[0], 0), ridge(texts[1], undefined), ridge(texts[2], 4294967296), ridge(texts[3], -2), ridge(texts[4], 3));
+# -- end of source
+# climbs() is called, and what it gives back is undefined or a whole number: it comes in an optional double. sums() is copied, and that value enters its loop as the counter.
+# It is asked for an int32 in front of the loop as a counter in a box is: the typed build compares, reads the character and steps by integers; whatever else enters (undefined, a number past the int32s) goes to the other build.
+# RUN: walk f3 mechanisms=all
+# CHECK: @OptionalDouble = CallDirect
+# CHECK: = TypeTest {{*}}testedType=i32
+# CHECK: isLoopHead=true
+# CHECK: = Less {{*}}form=Integers
+# CHECK: = GetStringCodeUnit
+# CHECK: = Increment {{*}}form=Integers
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 3:6:abc undefined:undefined:plain 4294967296:4294967296: 2:4:;c 4:5:v

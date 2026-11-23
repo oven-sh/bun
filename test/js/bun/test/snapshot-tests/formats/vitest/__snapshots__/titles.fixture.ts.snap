@@ -1,0 +1,695 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`$ > array: $0.d 1`] = `293`;
+
+exports[`$ > array: $1a 1`] = `289`;
+
+exports[`$ > array: $2.d 1`] = `291`;
+
+exports[`$ > array: $3.0 1`] = `292`;
+
+exports[`$ > array: $a 1`] = `290`;
+
+exports[`$ > array: $length 1`] = `294`;
+
+exports[`$ > array: [ 4 ] 1`] = `286`;
+
+exports[`$ > array: { d: 3 } 1`] = `285`;
+
+exports[`$ > array: 1 1`] = `283`;
+
+exports[`$ > array: two 1`] = `284`;
+
+exports[`$ > array: undefined 1`] = `287`;
+
+exports[`$ > array: undefined 2`] = `288`;
+
+exports[`$ > no object: $a 1`] = `302`;
+
+exports[`$ > no object: $a 2`] = `303`;
+
+exports[`$ > no object: $a 3`] = `304`;
+
+exports[`$ > no object: $a 4`] = `305`;
+
+exports[`$ > no object: $length 1`] = `306`;
+
+exports[`$ > no object: $length 2`] = `307`;
+
+exports[`$ > no object: $length 3`] = `308`;
+
+exports[`$ > no object: $length 4`] = `309`;
+
+exports[`$ > no object: 5 1`] = `298`;
+
+exports[`$ > no object: null 1`] = `300`;
+
+exports[`$ > no object: row 1`] = `299`;
+
+exports[`$ > no object: undefined 1`] = `301`;
+
+exports[`$ > object in an array: { '1': 'own', a: 1 } 1`] = `295`;
+
+exports[`$ > object in an array: 1 1`] = `296`;
+
+exports[`$ > object in an array: own 1`] = `297`;
+
+exports[`$ > object: $ 1`] = `252`;
+
+exports[`$ > object: 'two' 1`] = `260`;
+
+exports[`$ > object: (1) 1`] = `258`;
+
+exports[`$ > object: [ 10, { e: 'deep' } ] 1`] = `242`;
+
+exports[`$ > object: [ 10, { e: 'deep' } ][0] 1`] = `245`;
+
+exports[`$ > object: [Function f] 1`] = `271`;
+
+exports[`$ > object: [Function toString] 1`] = `274`;
+
+exports[`$ > object: { '0': 'zero', a: 1, b: 'two', …(9) }1 1`] = `277`;
+
+exports[`$ > object: { d: [ 10, { e: 'deep' } ] } 1`] = `241`;
+
+exports[`$ > object: { p: 'q' } 1`] = `273`;
+
+exports[`$ > object: 01 1`] = `279`;
+
+exports[`$ > object: 1 1`] = `239`;
+
+exports[`$ > object: 1 two 1`] = `256`;
+
+exports[`$ > object: 1% { '0': 'zero', a: 1, b: 'two', …(9) } 1`] = `278`;
+
+exports[`$ > object: 1,two 1`] = `257`;
+
+exports[`$ > object: 1{ '0': 'zero', a: 1, b: 'two', …(9) } 1`] = `276`;
+
+exports[`$ > object: 1-two 1`] = `259`;
+
+exports[`$ > object: 1a 1`] = `280`;
+
+exports[`$ > object: 3 1`] = `269`;
+
+exports[`$ > object: 10 1`] = `243`;
+
+exports[`$ > object: Object 1`] = `275`;
+
+exports[`$ > object: costs undefined 1`] = `281`;
+
+exports[`$ > object: costs undefined 2`] = `282`;
+
+exports[`$ > object: deep 1`] = `244`;
+
+exports[`$ > object: dollar 1`] = `253`;
+
+exports[`$ > object: dx 1`] = `254`;
+
+exports[`$ > object: ends with undefined 1`] = `249`;
+
+exports[`$ > object: f 1`] = `272`;
+
+exports[`$ > object: lllllllllllllllllllllllllllllllllllllll… 1`] = `265`;
+
+exports[`$ > object: null 1`] = `266`;
+
+exports[`$ > object: s 1`] = `270`;
+
+exports[`$ > object: two 1`] = `240`;
+
+exports[`$ > object: umlaut 1`] = `261`;
+
+exports[`$ > object: undefined 1`] = `246`;
+
+exports[`$ > object: undefined 2`] = `247`;
+
+exports[`$ > object: undefined 3`] = `248`;
+
+exports[`$ > object: undefined 4`] = `250`;
+
+exports[`$ > object: undefined 5`] = `251`;
+
+exports[`$ > object: undefined 6`] = `255`;
+
+exports[`$ > object: undefined 7`] = `263`;
+
+exports[`$ > object: undefined 8`] = `264`;
+
+exports[`$ > object: undefined 9`] = `267`;
+
+exports[`$ > object: undefined 10`] = `268`;
+
+exports[`$ > object: zero 1`] = `262`;
+
+exports[`%o and %O > { a: 'x' } is the same [ 'y' ] 1`] = `98`;
+
+exports[`%o and %O > array [ [  ] ] 1`] = `52`;
+
+exports[`%o and %O > array [ [ 1, , 3 ] ] 1`] = `51`;
+
+exports[`%o and %O > array [ [ 1, [ 2, [ 3 ] ] ] ] 1`] = `50`;
+
+exports[`%o and %O > array [ [ 1, 2, 3 ] ] 1`] = `49`;
+
+exports[`%o and %O > array [ [ undefined, null ] ] 1`] = `53`;
+
+exports[`%o and %O > array [ [] ] 1`] = `48`;
+
+exports[`%o and %O > array [] 1`] = `47`;
+
+exports[`%o and %O > boxed BigInt {} 1`] = `76`;
+
+exports[`%o and %O > boxed Boolean {} 1`] = `75`;
+
+exports[`%o and %O > boxed Number {} 1`] = `74`;
+
+exports[`%o and %O > boxed String { '0': 'b' } 1`] = `73`;
+
+exports[`%o and %O > collection Map { 'k' => 1 } 1`] = `60`;
+
+exports[`%o and %O > collection Map { { a: 1 } => [ 2 ] } 1`] = `61`;
+
+exports[`%o and %O > collection Map {} 1`] = `59`;
+
+exports[`%o and %O > collection Set { 1 } 1`] = `63`;
+
+exports[`%o and %O > collection Set {} 1`] = `62`;
+
+exports[`%o and %O > collection WeakMap {} 1`] = `64`;
+
+exports[`%o and %O > collection WeakSet {} 1`] = `65`;
+
+exports[`%o and %O > cycle [ { self: [Circular] } ] 1`] = `78`;
+
+exports[`%o and %O > cycle { a: { b: { self: [Circular] } } } 1`] = `79`;
+
+exports[`%o and %O > cycle { self: [Circular] } 1`] = `77`;
+
+exports[`%o and %O > function [Function Klass] 1`] = `28`;
+
+exports[`%o and %O > function [Function anonymous] 1`] = `26`;
+
+exports[`%o and %O > function [Function later] 1`] = `29`;
+
+exports[`%o and %O > function [Function max] 1`] = `30`;
+
+exports[`%o and %O > function [Function named] 1`] = `27`;
+
+exports[`%o and %O > function in a value [ [Function named] ] 1`] = `32`;
+
+exports[`%o and %O > function in a value { f: [Function f] } 1`] = `31`;
+
+exports[`%o and %O > getter { a: 1, toJSON: [Function toJSON] } 1`] = `82`;
+
+exports[`%o and %O > getter { g: 7 } 1`] = `80`;
+
+exports[`%o and %O > getter { json: true } 1`] = `81`;
+
+exports[`%o and %O > in a value [ 'a', 'b'c' ] 1`] = `21`;
+
+exports[`%o and %O > in a value [ { a: 1 }, 's' ] 1`] = `23`;
+
+exports[`%o and %O > in a value { s: 'it's "q"' } 1`] = `22`;
+
+exports[`%o and %O > in a value Map { 'k' => 'v' } 1`] = `25`;
+
+exports[`%o and %O > in a value Set { 'a' } 1`] = `24`;
+
+exports[`%o and %O > keys { '': 1 } 1`] = `41`;
+
+exports[`%o and %O > keys { '1': 'a', b2: 'c', _: 3, '$': 4 } 1`] = `40`;
+
+exports[`%o and %O > keys { 'a b': 1 } 1`] = `43`;
+
+exports[`%o and %O > keys { 'a-b': 1 } 1`] = `39`;
+
+exports[`%o and %O > keys { 'ä': 1 } 1`] = `42`;
+
+exports[`%o and %O > keys { a: 2, Symbol(k): 1 } 1`] = `44`;
+
+exports[`%o and %O > markup <a href='x' n={1}  /> 1`] = `95`;
+
+exports[`%o and %O > markup <b> <i /> t </b> 1`] = `97`;
+
+exports[`%o and %O > markup <div /> 1`] = `94`;
+
+exports[`%o and %O > markup <p> hi </p> 1`] = `96`;
+
+exports[`%o and %O > matcher Any<Number> 1`] = `87`;
+
+exports[`%o and %O > matcher Anything 1`] = `86`;
+
+exports[`%o and %O > matcher ArrayContaining [ 1, 'a' ] 1`] = `88`;
+
+exports[`%o and %O > matcher ArrayNotContaining [ 1 ] 1`] = `93`;
+
+exports[`%o and %O > matcher NumberCloseTo 1.23 (1 digit) 1`] = `92`;
+
+exports[`%o and %O > matcher ObjectContaining { z: 1, a: 's' } 1`] = `89`;
+
+exports[`%o and %O > matcher StringContaining 'it's' 1`] = `90`;
+
+exports[`%o and %O > matcher StringMatching /r.e/ 1`] = `91`;
+
+exports[`%o and %O > object { a: 1 } 1`] = `34`;
+
+exports[`%o and %O > object { a: 1, b: 'two', c: [ 3 ] } 1`] = `35`;
+
+exports[`%o and %O > object { a: undefined, b: null } 1`] = `36`;
+
+exports[`%o and %O > object {} 1`] = `33`;
+
+exports[`%o and %O > object {} 2`] = `37`;
+
+exports[`%o and %O > object Point { x: 1, y: 2 } 1`] = `38`;
+
+exports[`%o and %O > other /[$()]/ 1`] = `69`;
+
+exports[`%o and %O > other /a.b*/g 1`] = `68`;
+
+exports[`%o and %O > other [Error: boom] 1`] = `70`;
+
+exports[`%o and %O > other [TypeError: t] 1`] = `71`;
+
+exports[`%o and %O > other 1970-01-01T00:00:00.000Z 1`] = `66`;
+
+exports[`%o and %O > other Date { NaN } 1`] = `67`;
+
+exports[`%o and %O > other Promise {} 1`] = `72`;
+
+exports[`%o and %O > own order { '1': 'y', '2': 'x', b: 1, a: 2 } 1`] = `46`;
+
+exports[`%o and %O > own order { z: 1, y: 2, a: 3 } 1`] = `45`;
+
+exports[`%o and %O > primitive -0 1`] = `5`;
+
+exports[`%o and %O > primitive -Infinity 1`] = `8`;
+
+exports[`%o and %O > primitive 0 1`] = `4`;
+
+exports[`%o and %O > primitive 1.5 1`] = `6`;
+
+exports[`%o and %O > primitive 1e+21 1`] = `9`;
+
+exports[`%o and %O > primitive 10n 1`] = `10`;
+
+exports[`%o and %O > primitive NaN 1`] = `7`;
+
+exports[`%o and %O > primitive Symbol() 1`] = `12`;
+
+exports[`%o and %O > primitive Symbol(s) 1`] = `11`;
+
+exports[`%o and %O > primitive null 1`] = `2`;
+
+exports[`%o and %O > primitive true 1`] = `3`;
+
+exports[`%o and %O > primitive undefined 1`] = `1`;
+
+exports[`%o and %O > string '$a' 1`] = `20`;
+
+exports[`%o and %O > string '%s' 1`] = `19`;
+
+exports[`%o and %O > string '' 1`] = `14`;
+
+exports[`%o and %O > string 'a\\b' 1`] = `16`;
+
+exports[`%o and %O > string 'it's "q"' 1`] = `15`;
+
+exports[`%o and %O > string 'str' 1`] = `13`;
+
+exports[`%o and %O > string 'tab	here' 1`] = `17`;
+
+exports[`%o and %O > string '日本語' 1`] = `18`;
+
+exports[`%o and %O > tag [Object] 1`] = `83`;
+
+exports[`%o and %O > tag { constructor: 'x' } 1`] = `84`;
+
+exports[`%o and %O > tag Fake { constructor: [Function Fake] } 1`] = `85`;
+
+exports[`%o and %O > typed { type: 'Buffer', data: [ 97, 98 ] } 1`] = `58`;
+
+exports[`%o and %O > typed ArrayBuffer [ 1, -56 ] 1`] = `57`;
+
+exports[`%o and %O > typed BigInt64Array { '0': 1n } 1`] = `56`;
+
+exports[`%o and %O > typed Float64Array [ -0, 1.5 ] 1`] = `55`;
+
+exports[`%o and %O > typed Uint8Array [ 1, 2 ] 1`] = `54`;
+
+exports[`names > <anonymous> 1`] = `344`;
+
+exports[`names > 5 1`] = `345`;
+
+exports[`names > Klass 1`] = `343`;
+
+exports[`names > block > inner 1`] = `347`;
+
+exports[`names > named 'v' 1`] = `346`;
+
+exports[`names > named 1`] = `342`;
+
+exports[`rows > describe.each { a: 'x' } [ 'y' ] > inner 'z' 1`] = `328`;
+
+exports[`rows > describe.each { a: 'x' } [ 'y' ] > inner 1`] = `327`;
+
+exports[`rows > describe.each Map { 'k' => 1 } 2 > inner 'z' 1`] = `330`;
+
+exports[`rows > describe.each Map { 'k' => 1 } 2 > inner 1`] = `329`;
+
+exports[`rows > describe.for 's' undefined > inner 1`] = `332`;
+
+exports[`rows > describe.for { a: 'x' } [ 'y' ] > inner 1`] = `331`;
+
+exports[`rows > each 'a' undefined 1`] = `311`;
+
+exports[`rows > each [ 5 ] undefined 1`] = `316`;
+
+exports[`rows > each { a: 4 } undefined 1`] = `313`;
+
+exports[`rows > each 1 undefined 1`] = `310`;
+
+exports[`rows > each 2 3 1`] = `312`;
+
+exports[`rows > each null undefined 1`] = `314`;
+
+exports[`rows > each undefined undefined 1`] = `315`;
+
+exports[`rows > each undefined undefined 2`] = `317`;
+
+exports[`rows > for 'a' undefined 1`] = `319`;
+
+exports[`rows > for [ 5 ] undefined 1`] = `324`;
+
+exports[`rows > for { a: 4 } undefined 1`] = `321`;
+
+exports[`rows > for 1 undefined 1`] = `318`;
+
+exports[`rows > for 2 3 1`] = `320`;
+
+exports[`rows > for undefined undefined 1`] = `322`;
+
+exports[`rows > for undefined undefined 2`] = `323`;
+
+exports[`rows > for undefined undefined 3`] = `325`;
+
+exports[`rows > it.each { a: 'x' } 1`] = `326`;
+
+exports[`tables > { c: 'd' } and [ 'e' ], { a: { c: 'd' }, b: [ 'e' ] } 1`] = `334`;
+
+exports[`tables > 1 and x, { a: 1, b: 'x' } 1`] = `333`;
+
+exports[`tables > a row that is not complete: 1 and 2 1`] = `337`;
+
+exports[`tables > any array with arguments after it: 1 and 2 1`] = `341`;
+
+exports[`tables > describe.each: x { a: 'x' } > inner 1`] = `340`;
+
+exports[`tables > for: 1 and { c: 'd' } 1`] = `339`;
+
+exports[`tables > one line has a third heading: 1 and 2 1`] = `336`;
+
+exports[`tables > spaces are taken out of a heading: 1 and 2 1`] = `338`;
+
+exports[`tables > tabs stay in a heading: undefined and 2 1`] = `335`;
+
+exports[`the other placeholders > %  7i NaN 1`] = `184`;
+
+exports[`the other placeholders > % () => {}j undefined 1`] = `209`;
+
+exports[`the other placeholders > % .5f NaN 1`] = `196`;
+
+exports[`the other placeholders > % /x/gs of an object undefined 1`] = `153`;
+
+exports[`the other placeholders > % [ 1, [ 2, 3 ] ]s of an object undefined 1`] = `151`;
+
+exports[`the other placeholders > % [ 2.5, 1 ]f NaN 1`] = `205`;
+
+exports[`the other placeholders > % [ 5 ]d NaN 1`] = `175`;
+
+exports[`the other placeholders > % [ 5, 6 ]i NaN 1`] = `192`;
+
+exports[`the other placeholders > % [ undefined ]j undefined 1`] = `214`;
+
+exports[`the other placeholders > % [Error: boom]s of an object undefined 1`] = `154`;
+
+exports[`the other placeholders > % { a: 'x' }j undefined 1`] = `206`;
+
+exports[`the other placeholders > % { a: 'x' }s of an object undefined 1`] = `150`;
+
+exports[`the other placeholders > % { a: 1 }c <> 1`] = `219`;
+
+exports[`the other placeholders > % { self: [Circular] }j undefined 1`] = `212`;
+
+exports[`the other placeholders > % { toString: [Function toString] }s of an object undefined 1`] = `155`;
+
+exports[`the other placeholders > % { toString: [Function toString] }s of an object undefined 2`] = `156`;
+
+exports[`the other placeholders > % { valueOf: [Function valueOf] }d NaN 1`] = `176`;
+
+exports[`the other placeholders > % { valueOf: [Function valueOf] }d NaN 2`] = `177`;
+
+exports[`the other placeholders > % {}d NaN 1`] = `174`;
+
+exports[`the other placeholders > % {}i NaN 1`] = `191`;
+
+exports[`the other placeholders > % {}s of an object undefined 1`] = `157`;
+
+exports[`the other placeholders > % -.5e1xf NaN 1`] = `197`;
+
+exports[`the other placeholders > % -1.9i NaN 1`] = `180`;
+
+exports[`the other placeholders > % -Infinityxf NaN 1`] = `199`;
+
+exports[`the other placeholders > % 0d NaN 1`] = `164`;
+
+exports[`the other placeholders > % 0i NaN 1`] = `181`;
+
+exports[`the other placeholders > % 0s undefined 1`] = `143`;
+
+exports[`the other placeholders > % 0x1fi NaN 1`] = `183`;
+
+exports[`the other placeholders > % 1.5d NaN 1`] = `165`;
+
+exports[`the other placeholders > % 1.5f NaN 1`] = `193`;
+
+exports[`the other placeholders > % 1.5pxf NaN 1`] = `195`;
+
+exports[`the other placeholders > % 1.9i NaN 1`] = `179`;
+
+exports[`the other placeholders > % 1d NaN 1`] = `163`;
+
+exports[`the other placeholders > % 1e+21i NaN 1`] = `190`;
+
+exports[`the other placeholders > % 1e3i NaN 1`] = `185`;
+
+exports[`the other placeholders > % 1e400f NaN 1`] = `200`;
+
+exports[`the other placeholders > % 1s undefined 1`] = `142`;
+
+exports[`the other placeholders > % 10d NaN 1`] = `172`;
+
+exports[`the other placeholders > % 10f NaN 1`] = `203`;
+
+exports[`the other placeholders > % 10i NaN 1`] = `188`;
+
+exports[`the other placeholders > % 10s undefined 1`] = `144`;
+
+exports[`the other placeholders > % 12d NaN 1`] = `166`;
+
+exports[`the other placeholders > % 12pxd NaN 1`] = `167`;
+
+exports[`the other placeholders > % 12pxi NaN 1`] = `182`;
+
+exports[`the other placeholders > % 1970-01-01T00:00:00.000Zj undefined 1`] = `213`;
+
+exports[`the other placeholders > % 1970-01-01T00:00:00.000Zs of an object undefined 1`] = `152`;
+
+exports[`the other placeholders > % 1970-01-01T00:00:00.005Zd NaN 1`] = `178`;
+
+exports[`the other placeholders > % Any<Number>j undefined 1`] = `216`;
+
+exports[`the other placeholders > % Any<Number>s of a matcher undefined 1`] = `159`;
+
+exports[`the other placeholders > % Anythings of a matcher undefined 1`] = `160`;
+
+exports[`the other placeholders > % Infinityf NaN 1`] = `198`;
+
+exports[`the other placeholders > % Map { 1 => 2 }j undefined 1`] = `215`;
+
+exports[`the other placeholders > % NaNj undefined 1`] = `211`;
+
+exports[`the other placeholders > % NumberCloseTo 1 (2 digits)s of a matcher undefined 1`] = `162`;
+
+exports[`the other placeholders > % NumberCloseTo 1.5 (3 digits)j undefined 1`] = `217`;
+
+exports[`the other placeholders > % ObjectNotContaining {}s of a matcher undefined 1`] = `161`;
+
+exports[`the other placeholders > % Point { x: 1, y: 2 }s of an object undefined 1`] = `158`;
+
+exports[`the other placeholders > % Symbol(s)d NaN 1`] = `173`;
+
+exports[`the other placeholders > % Symbol(s)f NaN 1`] = `204`;
+
+exports[`the other placeholders > % Symbol(s)i NaN 1`] = `189`;
+
+exports[`the other placeholders > % Symbol(s)j undefined 1`] = `210`;
+
+exports[`the other placeholders > % Symbol(s)s undefined 1`] = `148`;
+
+exports[`the other placeholders > % color: redc <> 1`] = `218`;
+
+exports[`the other placeholders > % d NaN 1`] = `168`;
+
+exports[`the other placeholders > % f NaN 1`] = `201`;
+
+exports[`the other placeholders > % i NaN 1`] = `186`;
+
+exports[`the other placeholders > % nulld NaN 1`] = `169`;
+
+exports[`the other placeholders > % nullf NaN 1`] = `202`;
+
+exports[`the other placeholders > % nulli NaN 1`] = `187`;
+
+exports[`the other placeholders > % nulls undefined 1`] = `145`;
+
+exports[`the other placeholders > % s undefined 1`] = `141`;
+
+exports[`the other placeholders > % sj undefined 1`] = `207`;
+
+exports[`the other placeholders > % strs undefined 1`] = `140`;
+
+exports[`the other placeholders > % trued NaN 1`] = `171`;
+
+exports[`the other placeholders > % trues undefined 1`] = `147`;
+
+exports[`the other placeholders > % undefinedd NaN 1`] = `170`;
+
+exports[`the other placeholders > % undefinedj undefined 1`] = `208`;
+
+exports[`the other placeholders > % undefineds undefined 1`] = `146`;
+
+exports[`the other placeholders > % xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxs undefined 1`] = `149`;
+
+exports[`the other placeholders > %-0 NaN 1`] = `194`;
+
+exports[`the other placeholders > escaped % a# % undefined$ % undefined0 0 1`] = `231`;
+
+exports[`the other placeholders > escaped % b# % undefined$ % undefined1 1 1`] = `232`;
+
+exports[`the other placeholders > index 0 and 1 of a 1`] = `228`;
+
+exports[`the other placeholders > index 1 and 2 of b 1`] = `229`;
+
+exports[`the other placeholders > index 2 and 3 of c 1`] = `230`;
+
+exports[`the other placeholders > more than are taken 1 1`] = `234`;
+
+exports[`the other placeholders > none left 1 NaN NaN NaN undefined undefined undefined <> 1`] = `233`;
+
+exports[`the other placeholders > percent 100% { a: 1 } of b 1`] = `221`;
+
+exports[`the other placeholders > percent 100% 0 of 1 1`] = `224`;
+
+exports[`the other placeholders > percent 100% 10 of 1 1`] = `223`;
+
+exports[`the other placeholders > percent 100% Symbol(s) of 1 1`] = `222`;
+
+exports[`the other placeholders > percent 100% a of b 1`] = `220`;
+
+exports[`the other placeholders > percent at the end 100% 1 1`] = `226`;
+
+exports[`the other placeholders > percent at the end 100% undefined 1`] = `225`;
+
+exports[`the other placeholders > signs -0 -0 -0 1`] = `238`;
+
+exports[`the other placeholders > signs -0 1 2 1`] = `235`;
+
+exports[`the other placeholders > signs 1 -0 -2 1`] = `236`;
+
+exports[`the other placeholders > signs 1 2 0 1`] = `237`;
+
+exports[`the other placeholders > unknown %p %x %5d % 1`] = `227`;
+
+exports[`what is longer than 40 > array [ 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' ] 1`] = `109`;
+
+exports[`what is longer than 40 > array [ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11 ] 1`] = `105`;
+
+exports[`what is longer than 40 > array [ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, …(3) ] 1`] = `106`;
+
+exports[`what is longer than 40 > array [ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, …(4) ] 1`] = `107`;
+
+exports[`what is longer than 40 > array [ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, …(110) ] 1`] = `108`;
+
+exports[`what is longer than 40 > array [ 1, …(2) ] 1`] = `111`;
+
+exports[`what is longer than 40 > array [ …(1) ] 1`] = `110`;
+
+exports[`what is longer than 40 > collection Map { 0 => 0, 1 => 1, 2 => 2, …(97) } 1`] = `124`;
+
+exports[`what is longer than 40 > collection Map { …(1) } 1`] = `126`;
+
+exports[`what is longer than 40 > collection Set { 0, 1, 2, 3, 4, 5, 6, 7, 8, …(91) } 1`] = `123`;
+
+exports[`what is longer than 40 > collection Set { …(2) } 1`] = `125`;
+
+exports[`what is longer than 40 > deep [ [ [ [ [ [Array] ] ] ] ] ] 1`] = `121`;
+
+exports[`what is longer than 40 > deep { a: { a: [Object] } } 1`] = `122`;
+
+exports[`what is longer than 40 > depth { a: [Object], c: [Object], …(2) } 1`] = `120`;
+
+exports[`what is longer than 40 > depth { a: { b: [Object] } } 1`] = `118`;
+
+exports[`what is longer than 40 > depth { a: { b: [Object] }, d: [ 1, 2, 3 ] } 1`] = `119`;
+
+exports[`what is longer than 40 > many keys { k0: 0, k1: 1, k2: 2, k3: 3, …(26) } 1`] = `116`;
+
+exports[`what is longer than 40 > many keys { …(1) } 1`] = `117`;
+
+exports[`what is longer than 40 > markup <a> <b> <i … /> </b> </a> 1`] = `139`;
+
+exports[`what is longer than 40 > markup <div className='cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc'  /> 1`] = `138`;
+
+exports[`what is longer than 40 > matcher ArrayContaining [ 0, 1, 2, 3, 4, …(35) ] 1`] = `135`;
+
+exports[`what is longer than 40 > matcher ObjectContaining { …(1) } 1`] = `136`;
+
+exports[`what is longer than 40 > matcher StringContaining 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' 1`] = `137`;
+
+exports[`what is longer than 40 > not listed [Object] 1`] = `128`;
+
+exports[`what is longer than 40 > not listed [Uint8Array] 1`] = `129`;
+
+exports[`what is longer than 40 > not listed Point { x: 1, y: 2, …(1) } 1`] = `127`;
+
+exports[`what is longer than 40 > object { a: 1, …(1) } 1`] = `113`;
+
+exports[`what is longer than 40 > object { key: 'vvvvvvvvvvvvvvvvvvvvvvvvvvvvv' } 1`] = `114`;
+
+exports[`what is longer than 40 > object { …(1) } 1`] = `112`;
+
+exports[`what is longer than 40 > object { …(1) } 2`] = `115`;
+
+exports[`what is longer than 40 > string 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' 1`] = `99`;
+
+exports[`what is longer than 40 > string 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…' 1`] = `100`;
+
+exports[`what is longer than 40 > string 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…' 2`] = `101`;
+
+exports[`what is longer than 40 > string 'x😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀…' 1`] = `104`;
+
+exports[`what is longer than 40 > string '😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀' 1`] = `102`;
+
+exports[`what is longer than 40 > string '😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀…' 1`] = `103`;
+
+exports[`what is longer than 40 > whole /rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr/ 1`] = `131`;
+
+exports[`what is longer than 40 > whole [Error: mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm] 1`] = `130`;
+
+exports[`what is longer than 40 > whole [Function nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn] 1`] = `134`;
+
+exports[`what is longer than 40 > whole 1606938044258990275541962092341162602522202993782792835301376n 1`] = `133`;
+
+exports[`what is longer than 40 > whole Symbol(dddddddddddddddddddddddddddddddddddddddddddddddddd) 1`] = `132`;

@@ -1,0 +1,16 @@
+# f1 = sum
+# -- source: in-a-rare-block-that-keeps-its-sites-whether-a-name-is-there-is-asked-without-one.ts
+# declare function sink(...values: unknown[]): void;
+# type Shape = { kind: "circle"; r: number } | { kind: "rect"; w: number; h: number };
+# const list: Shape[] = JSON.parse('[{"kind":"circle","r":3},{"kind":"rect","w":4,"h":2}]');
+# function sum(t: number): number { let s = t & 1; for (const x of list) s = s + ("r" in x ? x.r : x.w * x.h); return s; }
+# sink(sum(1));
+# -- end of source
+# RUN(MARKED): walk f1 mechanisms=all
+# MARKED: frequency=Rare isInLoop=true keepsSitesThoughRare=true
+# MARKED: PropHas {{*}}key="r"
+# RUN(ASKED): bytes f1:Body mechanisms=all
+# ASKED: Stub InById
+# RUN(NOSITE): bytes f1:Body mechanisms=all
+# NOSITE: unit f1:Body
+# NOSITE-NOT: Stub FindsNameAtSite

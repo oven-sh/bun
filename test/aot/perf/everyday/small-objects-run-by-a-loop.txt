@@ -1,0 +1,225 @@
+//// a-member-under-a-key-joined-from-constants
+const family = `~library/Step`;
+const held = `${family}/held`;
+const shared: any = { kind: 1 };
+function make(value: number): any {
+  const self = Object.create(shared);
+  self[held] = value;
+  return self;
+}
+function turn(i: number): number {
+  return make(i)[held] & 1;
+}
+//// a-member-under-a-plain-name-of-an-object-made-under-a-prototype
+const shared: any = { kind: 1 };
+function make(value: number): any {
+  const self = Object.create(shared);
+  self.held = value;
+  return self;
+}
+function turn(i: number): number {
+  return make(i).held & 1;
+}
+//// a-method-under-a-key-joined-from-constants
+const family = `~library/Step`;
+const held = `${family}/held`;
+const run = `${family}/run`;
+const shared: any = {
+  [run](by: number) {
+    return this[held] + by;
+  },
+};
+const one = Object.create(shared);
+one[held] = 1;
+function turn(i: number): number {
+  return one[run](i) & 1;
+}
+//// steps-of-four-kinds-run-until-one-is-the-last
+const family = `~library/Step`;
+const held = `${family}/held`;
+const run = `${family}/run`;
+const kind = (step: (this: any, machine: any) => any) => {
+  const shared = { [run]: step };
+  return function (value: any): any {
+    const self = Object.create(shared);
+    self[held] = value;
+    return self;
+  };
+};
+const last = { done: true };
+const finish = kind(function (machine) {
+  machine.answer = this[held];
+  return last;
+});
+const add = kind(function (machine) {
+  machine.sum += this[held];
+  return machine.stack.pop();
+});
+const then = kind(function (machine) {
+  machine.stack.push(this[held][1]);
+  return this[held][0];
+});
+const twice = kind(function (machine) {
+  machine.sum *= 2;
+  return this[held];
+});
+const machine: any = { sum: 0, answer: 0, stack: [] };
+function turn(i: number): number {
+  machine.sum = i & 3;
+  let current = then([add(1), twice(then([add(2), finish(i & 1)]))]);
+  while (current !== last) current = current[run](machine);
+  return machine.answer + (machine.sum & 1);
+}
+//// the-arguments-kept-whole-in-a-new-object
+const shared: any = { kind: 1 };
+function make(this: any, a: number, b: number): any {
+  const self = Object.create(shared);
+  self.held = arguments;
+  return self;
+}
+function turn(i: number): number {
+  return make(i, 1).held[0] & 1;
+}
+//// a-stack-popped-until-an-entry-has-the-key
+const family = `~library/Step`;
+const onValue = `${family}/onValue`;
+const onError = `${family}/onError`;
+const always = `${family}/always`;
+const stack: any[] = [];
+function next(key: string): any {
+  while (true) {
+    const entry = stack.pop();
+    if (!entry) return undefined;
+    const both = entry[always] && entry[always](stack);
+    if (both) return both;
+    if (entry[key]) return entry;
+  }
+}
+const a = { [onValue]: (x: number) => x + 1 };
+const b = { [onError]: (x: number) => x + 2 };
+function turn(i: number): number {
+  stack.push(a, b, b);
+  return next(onValue)[onValue](i) & 1;
+}
+//// a-variable-of-the-global-object-under-a-key-set-and-put-back
+const current = `~library/current`;
+const world: any = globalThis;
+function inside(i: number): number {
+  return world[current].id + i;
+}
+const me = { id: 1 };
+function turn(i: number): number {
+  const before = world[current];
+  world[current] = me;
+  try {
+    return inside(i) & 1;
+  } finally {
+    world[current] = before;
+  }
+}
+//// a-key-joined-from-constants-asked-by-in
+const family = `~library/Step`;
+const mark = `${family}/mark`;
+const marked: any = Object.create({ [mark]: mark });
+const plain: any = { other: 1 };
+function turn(i: number): number {
+  return mark in (i & 1 ? marked : plain) ? 1 : 0;
+}
+//// two-callbacks-out-of-an-options-object-over-a-list
+const over = (options: { each: (state: any, item: number, index: number) => any; step: (state: any, item: number, got: any, index: number) => any }) => {
+  const each = options.each;
+  const step = options.step;
+  return (state: any, items: number[], more?: { start?: number; end?: number }) => {
+    let index = more?.start ?? 0;
+    const end = more?.end ?? items.length;
+    let terminal: any;
+    const go = () => {
+      for (; !terminal && index < end; index++) {
+        const item = items[index];
+        terminal = step(state, item, each(state, item, index), index);
+      }
+      return terminal;
+    };
+    return go() ?? state;
+  };
+};
+const sum = over({ each: (state, item) => ({ value: item }), step: (state, item, got) => void (state.total += got.value) });
+const list = [1, 2, 3, 4];
+function turn(i: number): number {
+  return sum({ total: i }, list).total & 1;
+}
+//// options-spread-over-options
+const fixed: any = { errors: "all" };
+function read(options: any): number {
+  options = { ...options, ...fixed };
+  return options.errors.length + options.depth;
+}
+function turn(i: number): number {
+  return read({ depth: i, exact: true }) & 1;
+}
+//// a-member-under-a-key-summed-from-constants
+const family = "~library/Step";
+const held = family + "/held";
+const shared: any = { kind: 1 };
+function make(value: number): any {
+  const self = Object.create(shared);
+  self[held] = value;
+  return self;
+}
+function turn(i: number): number {
+  return make(i)[held] & 1;
+}
+//// a-record-checked-field-by-field-by-closures-that-answer-with-small-objects
+const family = `~library/Step`;
+const held = `${family}/held`;
+const mark = `${family}/done`;
+const shared: any = { [mark]: mark, tag: "Done" };
+const done = (value: any): any => {
+  const self = Object.create(shared);
+  self[held] = value;
+  return self;
+};
+const isDone = (answer: any): boolean => mark in answer;
+type Check = (input: any, options: any) => any;
+const text: Check = input => done(typeof input === "string" ? input : undefined);
+const count: Check = input => done(typeof input === "number" ? input : undefined);
+const record = (fields: Record<string, Check>): Check => {
+  const names = Object.keys(fields);
+  return (input, options) => {
+    const out: any = {};
+    for (let i = 0; i < names.length; i++) {
+      const name = names[i];
+      const answer = fields[name](input[name], options);
+      if (isDone(answer)) out[name] = answer[held];
+    }
+    return done(out);
+  };
+};
+const check = record({ id: text, size: count, inner: record({ name: text, at: count }) });
+const input = { id: "a", size: 1, inner: { name: "b", at: 2 } };
+function turn(i: number): number {
+  input.size = i;
+  return check(input, undefined)[held].size & 1;
+}
+//// a-generator-driven-to-its-end-by-a-loop-that-unwraps-small-objects
+const family = `~library/Step`;
+const held = `${family}/held`;
+const shared: any = { tag: "Done" };
+const done = (value: any): any => {
+  const self = Object.create(shared);
+  self[held] = value;
+  return self;
+};
+function* body(a: any, b: any): Generator<any, number, number> {
+  const x = yield a;
+  const y = yield b;
+  return x + y;
+}
+function drive(iterator: Generator<any, number, number>): number {
+  let state = iterator.next();
+  while (!state.done) state = iterator.next(state.value[held]);
+  return state.value;
+}
+function turn(i: number): number {
+  return drive(body(done(i), done(1))) & 1;
+}

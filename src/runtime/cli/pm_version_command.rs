@@ -16,7 +16,7 @@ use bun_install::LogLevel;
 use bun_install::PackageManager;
 use bun_js_printer as JSPrinter;
 use bun_parsers::json as JSON;
-use bun_paths::{resolve_path as path, resolve_path::platform as path_platform};
+use bun_paths::Path;
 use bun_semver as Semver;
 use bun_sys::{self, Fd};
 use bun_which::which;
@@ -201,16 +201,11 @@ impl PmVersionCommand {
 
         // Bun's shell runs the scripts with the global `MiniEventLoop`'s environment, which only
         // the first `init_global` call sets. On Windows, spawning git would otherwise be that call.
-        bun_event_loop::MiniEventLoop::init_global(Some(pm.env_mut()), Some(&package_json_dir));
+        bun_event_loop::MiniEventLoop::init_global(Some(pm.env_mut()));
 
         Self::verify_git(&package_json_dir, pm);
 
-        let mut path_buf = bun_paths::path_buffer_pool::get();
-        let package_json_path = path::join_abs_string_buf_z::<path_platform::Auto>(
-            &package_json_dir,
-            &mut path_buf.0,
-            &[b"package.json"],
-        );
+        let package_json_path = &Path::from_parts(&[&package_json_dir, b"package.json"]);
 
         let package_json_contents = match bun_sys::File::read_from(Fd::cwd(), package_json_path) {
             Ok(c) => c,
@@ -372,25 +367,10 @@ impl PmVersionCommand {
     }
 
     fn find_package_dir(start_dir: &[u8]) -> Vec<u8> {
-        let mut path_buf = bun_paths::path_buffer_pool::get();
-        let mut current_dir = start_dir;
-
-        loop {
-            let package_json_path_z = path::join_abs_string_buf_z::<path_platform::Auto>(
-                current_dir,
-                &mut path_buf.0,
-                &[b"package.json"],
-            );
-            if bun_sys::exists_at(Fd::cwd(), package_json_path_z) {
-                return current_dir.to_vec();
-            }
-
-            let parent = path::dirname::<path_platform::Auto>(current_dir);
-            if parent == current_dir {
-                return start_dir.to_vec();
-            }
-            current_dir = parent;
-        }
+        bun_paths::ancestors(start_dir)
+            .find(|dir| bun_sys::exists_at(Fd::cwd(), &Path::from_parts(&[dir, b"package.json"])))
+            .unwrap_or(start_dir)
+            .to_vec()
     }
 
     fn verify_git(cwd: &[u8], pm: &mut PackageManager) {
@@ -398,11 +378,8 @@ impl PmVersionCommand {
             return;
         }
 
-        let mut path_buf = bun_paths::path_buffer_pool::get();
-        let git_dir_path =
-            path::join_abs_string_buf_z::<path_platform::Auto>(cwd, &mut path_buf.0, &[b".git"]);
         // `.git` is a file, not a directory, in a linked worktree or a submodule.
-        if !bun_sys::exists_z(git_dir_path) {
+        if !bun_sys::exists_z(&Path::from_parts(&[cwd, b".git"])) {
             pm.options.git_tag_version = false;
         } else if !pm.options.force && !Self::is_git_clean(cwd) {
             Output::err_generic("Git working directory not clean.", ());
@@ -427,12 +404,7 @@ impl PmVersionCommand {
     }
 
     fn get_current_version(ctx: &command::ContextData, cwd: &[u8]) -> Option<Vec<u8>> {
-        let mut path_buf = bun_paths::path_buffer_pool::get();
-        let package_json_path = path::join_abs_string_buf_z::<path_platform::Auto>(
-            cwd,
-            &mut path_buf.0,
-            &[b"package.json"],
-        );
+        let package_json_path = &Path::from_parts(&[cwd, b"package.json"]);
 
         let package_json_contents = bun_sys::File::read_from(Fd::cwd(), package_json_path).ok()?;
 
@@ -549,20 +521,15 @@ impl PmVersionCommand {
         next.to_bytes()
     }
 
-    fn find_git<'a>(
-        path_buf: &'a mut bun_paths::PathBuffer,
-        cwd: &[u8],
-        used_for: &str,
-    ) -> &'a [u8] {
-        let Some(git_path) = which(path_buf, env_var::PATH.get().unwrap_or(b""), cwd, b"git")
-        else {
+    fn find_git(cwd: &[u8], used_for: &str) -> bun_paths::Path {
+        let Some(git_path) = which(env_var::PATH.get().unwrap_or(b""), cwd, b"git") else {
             Output::err_generic(
                 "git must be installed to use `bun pm version {}`",
                 (used_for,),
             );
             Global::exit(1);
         };
-        git_path.as_bytes()
+        git_path
     }
 
     /// Runs `argv` in `cwd` with its stdout buffered.
@@ -585,8 +552,7 @@ impl PmVersionCommand {
     }
 
     fn is_git_clean(cwd: &[u8]) -> bool {
-        let mut path_buf = bun_paths::path_buffer_pool::get();
-        let git_path = Self::find_git(&mut path_buf, cwd, "--git-tag-version");
+        let git_path: &[u8] = &Self::find_git(cwd, "--git-tag-version");
 
         match Self::spawn_git(&[git_path, b"status", b"--porcelain"], cwd, Stdio::Ignore) {
             Ok(Ok(result)) => result.is_ok() && result.stdout.is_empty(),
@@ -602,8 +568,7 @@ impl PmVersionCommand {
     }
 
     fn get_version_from_git(cwd: &[u8]) -> Vec<u8> {
-        let mut path_buf = bun_paths::path_buffer_pool::get();
-        let git_path = Self::find_git(&mut path_buf, cwd, "from-git");
+        let git_path: &[u8] = &Self::find_git(cwd, "from-git");
 
         // Like `npm version from-git`, `--match` skips tags that are not versions, like `nightly`.
         let argv: [&[u8]; 5] = [
@@ -666,8 +631,7 @@ impl PmVersionCommand {
     }
 
     fn git_commit_and_tag(version: &[u8], custom_message: Option<&[u8]>, cwd: &[u8]) {
-        let mut path_buf = bun_paths::path_buffer_pool::get();
-        let git_path = Self::find_git(&mut path_buf, cwd, "--git-tag-version");
+        let git_path: &[u8] = &Self::find_git(cwd, "--git-tag-version");
 
         let staged = Self::run_git("add", &[git_path, b"add", b"package.json"], cwd);
         if !staged.is_ok() {
@@ -710,7 +674,7 @@ fn fmt_bytes(args: core::fmt::Arguments<'_>) -> Vec<u8> {
 fn spawn_windows_options() -> crate::api::bun::process::WindowsOptions {
     crate::api::bun::process::WindowsOptions {
         loop_: bun_jsc::EventLoopHandle::init_mini(bun_event_loop::MiniEventLoop::init_global(
-            None, None,
+            None,
         )),
         ..Default::default()
     }

@@ -1,5 +1,6 @@
 use bun_collections::VecExt;
 use std::io::Write as _;
+use std::sync::LazyLock;
 
 use crate::Error;
 use crate::bun_json as JSON;
@@ -9,10 +10,10 @@ use bun_collections::{HashMap, IdentityContext, index_sort};
 use bun_core::{Global, Output, fmt as bun_fmt};
 use bun_core::{MutableString, strings};
 use bun_dotenv::Loader as DotEnv;
-use bun_http::{self as http, AsyncHTTP, HeaderBuilder};
-use bun_picohttp as picohttp;
+use bun_http::{self as http, HeaderBuilder};
 use bun_semver::{self as Semver, ExternalString, SlicedString, String as SemverString};
 use bun_sys::{self, Fd, File};
+use bun_threading::ThreadPool;
 use bun_url::{OwnedURL, URL};
 use bun_wyhash::Wyhash11;
 
@@ -20,7 +21,8 @@ use crate::bin::{self, Bin};
 use crate::bun_fs::FileSystem;
 use crate::external_slice::ExternalPackageNameHashList;
 use crate::integrity::Integrity;
-use crate::package_manager::directories;
+use crate::package_manager::THREAD_POOL;
+use crate::package_manager::directories::TemporaryDirectory;
 use crate::{
     Aligner, ExternalSlice, ExternalStringList, ExternalStringMap, PackageManager, PackageNameHash,
     VersionSlice, initialize_mini_store as initialize_store,
@@ -94,12 +96,12 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
 
     let mut response_buf = MutableString::init(1024)?;
     let url = URL::parse(&print_buf);
+    let href = url.href;
     let header_buf: &[u8] = headers.content.written_slice();
 
-    let mut req =
-        manager.registry_request(http::Method::GET, url, headers.entries, header_buf, b"");
+    let req = manager.registry_request(http::Method::GET, url, headers.entries, header_buf, b"");
 
-    let res = match manager.send_with_retries(&mut req, &mut response_buf) {
+    let res = match manager.send_with_retries(req, &mut response_buf) {
         Ok(res) => res,
         Err(bun_http::Error::Alloc(bun_alloc::AllocError)) => {
             return Err(WhoamiError::OutOfMemory);
@@ -112,7 +114,7 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
 
     if res.status_code() >= 400 {
         const OTP_RESPONSE: bool = false;
-        response_error::<OTP_RESPONSE>(&req, &res, None, &mut response_buf)?;
+        response_error::<OTP_RESPONSE>(href, &res, None, &mut response_buf)?;
     }
 
     if let Some(notice) = res.header_if_other_is_absent(b"npm-notice", b"x-local-cache") {
@@ -151,7 +153,7 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
 }
 
 pub fn response_error<const OTP_RESPONSE: bool>(
-    req: &AsyncHTTP,
+    url: &[u8],
     res: &bun_http::HTTPResponseMetadata,
     // `<name>@<version>`
     pkg_id: Option<(&[u8], &[u8])>,
@@ -184,7 +186,7 @@ pub fn response_error<const OTP_RESPONSE: bool>(
             ""
         },
         bun_fmt::escape_control_chars(res.status_text()),
-        bun_fmt::EscapeControlChars(bun_fmt::redacted_npm_url(req.url.href)),
+        bun_fmt::EscapeControlChars(bun_fmt::redacted_npm_url(url)),
     );
 
     if res.status_code() == 404
@@ -241,6 +243,7 @@ pub mod registry {
         pub(crate) auth: Box<[u8]>,
         pub url: OwnedURL,
         pub url_hash: u64,
+        pub(crate) folder_cache_key: FolderCacheKey,
         pub(crate) token: Box<[u8]>,
 
         // username and password combo, `user:pass`
@@ -251,6 +254,22 @@ pub mod registry {
 
         /// The `.npmrc` key this registry's URL resolves to, once every source was applied.
         pub(crate) url_auth_key: Option<Box<[u8]>>,
+    }
+
+    /// What a cached manifest records about the registry's URL.
+    #[derive(Clone, Copy)]
+    pub struct ManifestCacheKey {
+        pub(crate) url_hash: u64,
+        pub(crate) url_len: u64,
+    }
+
+    /// What the name of a cache folder records about the registry's URL.
+    #[derive(Clone, Copy, Default)]
+    pub(crate) struct FolderCacheKey {
+        pub(crate) hostname: &'static [u8],
+        pub(crate) href_hash: u64,
+        /// `https://host/`. With a port, a path or http, it's a different registry on that host.
+        pub(crate) is_host_only: bool,
     }
 
     /// After `:` in yarn's shape (`/api/:_authToken=T`), after `/` in JFrog's (`/npm/_auth=<b64>`).
@@ -380,6 +399,21 @@ pub mod registry {
             self.url = URL::from_string(&bun_core::StringView::borrow_utf8(&href))
                 .unwrap_or_else(|_| OwnedURL::from_href(href));
             self.url_hash = Self::hash(strings::without_trailing_slash(self.url.href()));
+            let url = self.url.url();
+            self.folder_cache_key = FolderCacheKey {
+                hostname: bun_core::handle_oom(
+                    FileSystem::get().dirname_store().append(url.hostname),
+                ),
+                href_hash: Self::hash(url.href),
+                is_host_only: url.is_https() && url.port.is_empty() && url.pathname.len() <= 1,
+            };
+        }
+
+        pub fn manifest_cache_key(&self) -> ManifestCacheKey {
+            ManifestCacheKey {
+                url_hash: self.url_hash,
+                url_len: strings::without_trailing_slash(self.url.href()).len() as u64,
+            }
         }
 
         pub(crate) fn has_credentials(&self) -> bool {
@@ -708,9 +742,9 @@ pub mod registry {
             && expiry > seconds_from_now(MAX_MANIFEST_AGE)
     }
 
-    pub(crate) fn manifest_expiry(headers: &picohttp::HeaderList) -> u32 {
+    pub(crate) fn manifest_expiry(response: &http::HTTPResponseMetadata) -> u32 {
         let mut max_age = u64::from(MAX_MANIFEST_AGE);
-        for directive in strings::split(headers.get(b"cache-control").unwrap_or(b""), b",") {
+        for directive in strings::split(response.header(b"cache-control").unwrap_or(b""), b",") {
             let directive = directive.trim_ascii();
             if strings::eql_case_insensitive_ascii(directive, b"no-cache", true)
                 || strings::eql_case_insensitive_ascii(directive, b"no-store", true)
@@ -725,16 +759,16 @@ pub mod registry {
     }
 
     pub(crate) fn get_package_metadata(
-        scope: &Scope,
-        response: picohttp::Response,
+        registry: ManifestCacheKey,
+        response: &bun_http::HTTPResponseMetadata,
         body: &[u8],
         log: &mut bun_ast::Log,
         package_name: &[u8],
         loaded_manifest: Option<PackageManifest>,
-        package_manager: &mut PackageManager,
+        temp_dir: Option<&'static TemporaryDirectory>,
         is_extended_manifest: bool,
     ) -> Result<PackageVersionResponse, Error> {
-        match response.status_code {
+        match response.status_code() {
             400 => return Err(crate::Error::BadRequest),
             429 => return Err(crate::Error::TooManyRequests),
             404 => return Ok(PackageVersionResponse::NotFound),
@@ -746,8 +780,8 @@ pub mod registry {
             _ => {}
         }
 
-        let newly_last_modified: &[u8] = response.headers.get(b"last-modified").unwrap_or(b"");
-        let mut new_etag: &[u8] = response.headers.get(b"etag").unwrap_or(b"");
+        let newly_last_modified: &[u8] = response.header(b"last-modified").unwrap_or(b"");
+        let mut new_etag: &[u8] = response.header(b"etag").unwrap_or(b"");
 
         let mut new_etag_buf = [0u8; 64];
 
@@ -757,25 +791,17 @@ pub mod registry {
         }
 
         if let Some(package) = PackageManifest::parse(
-            scope,
+            registry,
             log,
             body,
             package_name,
             newly_last_modified,
             new_etag,
-            manifest_expiry(&response.headers),
+            manifest_expiry(response),
             is_extended_manifest,
         )? {
-            // If the cache cannot be written, the manifest is still used. It is just not saved.
-            if package_manager.options.enable.manifest_cache()
-                && let Ok(temp_dir) = directories::try_get_temporary_directory(package_manager)
-            {
-                package_manifest::Serializer::save_async(
-                    &package,
-                    scope,
-                    temp_dir.handle.fd,
-                    package_manager.get_cache_directory(),
-                );
+            if let Some(temp_dir) = temp_dir {
+                package_manifest::Serializer::save_async(&package, registry, temp_dir);
             }
 
             return Ok(PackageVersionResponse::Fresh(package));
@@ -885,7 +911,7 @@ pub struct PackageVersion {
     pub(crate) integrity: Integrity,
 
     // Explicit padding so this struct has no implicit (uninitialized) padding
-    // bytes — `Serializer::write_array` reinterprets the whole slice as `&[u8]`,
+    // bytes — `Serializer::write` reinterprets the whole slice as `&[u8]`,
     // and reading uninitialized padding as `u8` is UB. With explicit `[u8; N]`
     // fields, `Default` zero-fills them and every byte of the struct is
     // initialized. Layout (size=248, align=8) is unchanged; see the
@@ -1009,8 +1035,7 @@ const _: () = assert!(
 
 // Compile-time proof that the explicit `_padding_*` fields above leave no
 // implicit padding gaps in `PackageVersion` (so `&[PackageVersion] as &[u8]`
-// in `Serializer::write_array` reads only initialized bytes). Mirrors the
-// `NpmPackage` checks below and `padding_checker.rs`.
+// in `Serializer::write` reads only initialized bytes). See `padding_checker.rs`.
 const _: () = {
     use core::mem::{offset_of, size_of};
     // gap between `integrity` (size 65, align 1) and `dependencies` (align 4 → 68)
@@ -1063,12 +1088,7 @@ pub struct NpmPackage {
     /// "modified" in the JSON
     pub(crate) modified: SemverString,
     pub(crate) public_max_age: u32,
-    // Explicit padding so this struct has no implicit (uninitialized) padding
-    // bytes — `Serializer::write` reinterprets the whole struct as `&[u8]`,
-    // and reading uninitialized padding as `u8` is UB. With explicit `[u8; N]`
-    // fields, `Default` zero-fills them and every byte of the struct is
-    // initialized. Layout (size=120, align=8) is unchanged; see the
-    // `offset_of!` asserts below and `padding_checker.rs` for the contract.
+    // Explicit, because `impl_pod!` below rejects implicit padding.
     pub(crate) _padding_after_max_age: [u8; 4],
 
     pub(crate) name: ExternalString,
@@ -1080,30 +1100,18 @@ pub struct NpmPackage {
     pub(crate) versions_buf: VersionSlice,
     pub(crate) string_lists_buf: ExternalStringList,
 
-    // True if the full document was fetched, so `publish_timestamp_ms` and `libc` are populated.
-    pub(crate) has_extended_manifest: bool,
+    // 1 if the full document was fetched, so `publish_timestamp_ms` and `libc` are populated. A `bool` could not be read from disk bytes.
+    pub(crate) has_extended_manifest: u8,
     pub(crate) _padding_tail: [u8; 7],
 }
 
-// Compile-time proof that the explicit `_padding_*` fields above leave no
-// implicit padding gaps in `NpmPackage` (so `&NpmPackage as &[u8]` reads only
-// initialized bytes). Mirrors the per-field-gap check documented in
-// `padding_checker.rs`.
-const _: () = {
-    use core::mem::{offset_of, size_of};
-    // gap between `public_max_age` (u32, ends at 28) and `name` (align 8 → 32)
-    assert!(
-        offset_of!(NpmPackage, _padding_after_max_age)
-            == offset_of!(NpmPackage, public_max_age) + size_of::<u32>()
-    );
-    assert!(offset_of!(NpmPackage, name) == offset_of!(NpmPackage, _padding_after_max_age) + 4);
-    // tail gap after `has_extended_manifest` (bool, at 112) → struct end (120)
-    assert!(
-        offset_of!(NpmPackage, _padding_tail)
-            == offset_of!(NpmPackage, has_extended_manifest) + size_of::<bool>()
-    );
-    assert!(offset_of!(NpmPackage, _padding_tail) + 7 == size_of::<NpmPackage>());
-};
+bun_core::impl_pod!(NpmPackage);
+
+impl NpmPackage {
+    pub(crate) fn has_extended_manifest(&self) -> bool {
+        self.has_extended_manifest != 0
+    }
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -1127,9 +1135,9 @@ impl PackageManifest {
         self.pkg.name.slice(&self.string_buf)
     }
 
-    pub(crate) fn byte_length(&self, scope: &registry::Scope) -> usize {
+    pub(crate) fn byte_length(&self, registry: registry::ManifestCacheKey) -> usize {
         let mut counter = bun_io::DiscardingWriter::new();
-        match package_manifest::Serializer::write(self, scope, &mut counter) {
+        match package_manifest::Serializer::write(self, registry, &mut counter) {
             Ok(()) => counter.count,
             Err(_) => 0,
         }
@@ -1138,7 +1146,7 @@ impl PackageManifest {
 
 pub mod package_manifest {
     use super::*;
-    use bun_io::Write as _;
+    use bun_paths::Path;
 
     pub struct Serializer;
 
@@ -1165,15 +1173,19 @@ pub mod package_manifest {
     );
 
     impl Serializer {
-        pub(crate) fn write_array<W: bun_io::Write, T: Copy>(
+        pub(crate) fn write_array<W: bun_io::Write, T: bun_core::NoUninit>(
             writer: &mut W,
             array: &[T],
             pos: &mut u64,
         ) -> Result<(), Error> {
-            // SAFETY: T is Copy POD; sliceAsBytes equivalent
-            let bytes = unsafe {
-                bun_core::ffi::slice(array.as_ptr().cast::<u8>(), core::mem::size_of_val(array))
-            };
+            Self::write_array_bytes::<W, T>(writer, bun_core::slice_as_bytes(array), pos)
+        }
+
+        fn write_array_bytes<W: bun_io::Write, T>(
+            writer: &mut W,
+            bytes: &[u8],
+            pos: &mut u64,
+        ) -> Result<(), Error> {
             if bytes.is_empty() {
                 writer.write_int_le::<u64>(0)?;
                 *pos += 8;
@@ -1189,7 +1201,7 @@ pub mod package_manifest {
             Ok(())
         }
 
-        fn read_array_bytes<'a, T: Copy>(
+        fn read_array_bytes<'a, T>(
             stream: &mut bun_io::FixedBufferStream<&'a [u8]>,
         ) -> Result<&'a [u8], Error> {
             let byte_len = stream.read_int_le::<u64>()?;
@@ -1207,40 +1219,24 @@ pub mod package_manifest {
             Ok(result_bytes)
         }
 
-        fn array_from_bytes<T: Copy>(result_bytes: &[u8]) -> &[T] {
-            if result_bytes.is_empty() {
-                return &[];
-            }
-            // SAFETY: alignment was advanced by Aligner::skip_amount; T is POD
-            unsafe {
-                bun_core::ffi::slice(
-                    result_bytes.as_ptr().cast::<T>(),
-                    result_bytes.len() / core::mem::size_of::<T>(),
-                )
-            }
-        }
-
-        pub fn read_array<'a, T: Copy>(
+        pub fn read_array<'a, T: bun_core::AnyBitPattern>(
             stream: &mut bun_io::FixedBufferStream<&'a [u8]>,
         ) -> Result<&'a [T], Error> {
-            Ok(Self::array_from_bytes::<T>(Self::read_array_bytes::<T>(
-                stream,
-            )?))
+            bun_core::try_cast_slice(Self::read_array_bytes::<T>(stream)?)
+                .ok_or(crate::Error::BufferTooSmall)
         }
 
         pub(crate) fn write<W: bun_io::Write>(
             this: &PackageManifest,
-            scope: &registry::Scope,
+            registry: registry::ManifestCacheKey,
             writer: &mut W,
         ) -> Result<(), Error> {
             let mut pos: u64 = 0;
             writer.write_all(Self::HEADER_BYTES.as_bytes())?;
             pos += Self::HEADER_BYTES.len() as u64;
 
-            writer.write_int_le::<u64>(scope.url_hash)?;
-            writer.write_int_le::<u64>(
-                strings::without_trailing_slash(scope.url.href()).len() as u64
-            )?;
+            writer.write_int_le::<u64>(registry.url_hash)?;
+            writer.write_int_le::<u64>(registry.url_len)?;
 
             pos += 128 / 8;
 
@@ -1248,19 +1244,7 @@ pub mod package_manifest {
             // if the layout changes.
             {
                 // "pkg"
-                // SAFETY: NpmPackage is `#[repr(C)]`, `Copy`, and has **no
-                // implicit padding** — the two layout gaps are filled by
-                // explicit `_padding_*: [u8; N]` fields (zero-initialized via
-                // `Default`), and the `const _ = { offset_of!… }` block at the
-                // struct definition statically asserts no gap remains. Every
-                // byte of `this.pkg` is therefore initialized, so viewing it
-                // as `&[u8]` is sound.
-                let bytes = unsafe {
-                    bun_core::ffi::slice(
-                        (&raw const this.pkg).cast::<u8>(),
-                        core::mem::size_of::<NpmPackage>(),
-                    )
-                };
+                let bytes = bun_core::bytes_of(&this.pkg);
                 pos += Aligner::write::<NpmPackage, W>(writer, pos)? as u64;
                 writer.write_all(bytes)?;
                 pos += bytes.len() as u64;
@@ -1269,7 +1253,16 @@ pub mod package_manifest {
             Self::write_array(writer, &this.versions, &mut pos)?;
             Self::write_array(writer, &this.external_strings, &mut pos)?;
             Self::write_array(writer, &this.external_strings_for_versions, &mut pos)?;
-            Self::write_array(writer, &this.package_versions, &mut pos)?;
+            // SAFETY: the asserts at `PackageVersion` rule out padding. `impl_no_uninit!`
+            // rejects it for `bin::Value`, a union whose arms differ in size;
+            // `Value::init_*` sets every byte.
+            let package_versions = unsafe {
+                core::slice::from_raw_parts(
+                    this.package_versions.as_ptr().cast::<u8>(),
+                    core::mem::size_of_val::<[PackageVersion]>(&this.package_versions),
+                )
+            };
+            Self::write_array_bytes::<W, PackageVersion>(writer, package_versions, &mut pos)?;
             Self::write_array(writer, &this.extern_strings_bin_entries, &mut pos)?;
             Self::write_array(writer, &this.bundled_deps_buf, &mut pos)?;
 
@@ -1278,15 +1271,14 @@ pub mod package_manifest {
 
         fn write_file(
             this: &PackageManifest,
-            scope: &registry::Scope,
+            registry: registry::ManifestCacheKey,
             tmp_path: &bun_core::ZStr,
-            tmpdir: Fd,
-            cache_dir: Fd,
+            temp_dir: &TemporaryDirectory,
             outpath: &bun_core::ZStr,
         ) -> Result<(), Error> {
             // 64 KB sounds like a lot but when you consider that this is only about 6 levels deep in the stack, it's not that much.
-            let mut buffer: Vec<u8> = Vec::with_capacity(this.byte_length(scope) + 64);
-            Serializer::write(this, scope, &mut buffer)?;
+            let mut buffer: Vec<u8> = Vec::with_capacity(this.byte_length(registry) + 64);
+            Serializer::write(this, registry, &mut buffer)?;
             // --- Perf Improvement #1 ----
             // Do not forget to buffer writes!
             //
@@ -1294,25 +1286,14 @@ pub mod package_manifest {
             // GetFinalPathnameByHandle is very expensive if called many times
             // We skip calling it when we are giving an absolute file path.
             // This needs many more call sites, doesn't have much impact on this location.
-            let mut realpath_buf = bun_paths::path_buffer_pool::get();
-            // SAFETY: `crate::package_manager::get()` returns the live
-            // singleton; `get_temporary_directory` only mutates its
-            // lazy-init state and is called from the install thread.
-            #[cfg(windows)]
-            let tmpdir_stub = unsafe { (*crate::package_manager::get()).get_temporary_directory() };
             #[cfg(windows)]
             let path_to_use_for_opening_file =
-                bun_paths::resolve_path::join_abs_string_buf_z::<bun_paths::platform::Auto>(
-                    &tmpdir_stub.path,
-                    &mut realpath_buf[..],
-                    &[tmp_path.as_bytes()],
-                );
+                &bun_paths::Path::resolve(&[&temp_dir.path, tmp_path]);
             #[cfg(not(windows))]
             let path_to_use_for_opening_file = tmp_path;
+            let tmpdir = temp_dir.handle.fd();
             #[cfg(not(windows))]
-            let _ = &mut realpath_buf;
-            #[cfg(windows)]
-            let _ = cache_dir;
+            let cache_dir = temp_dir.cache.handle.fd();
 
             #[cfg(any(target_os = "linux", target_os = "android"))]
             let mut is_using_o_tmpfile = false;
@@ -1374,19 +1355,8 @@ pub mod package_manifest {
 
             #[cfg(windows)]
             {
-                let mut realpath2_buf = bun_paths::path_buffer_pool::get();
-                let cache_dir_abs = &PackageManager::get().cache_directory_path;
-                let cache_path_abs =
-                    bun_paths::resolve_path::join_abs_string_buf_z::<bun_paths::platform::Auto>(
-                        cache_dir_abs,
-                        &mut realpath2_buf[..],
-                        &[cache_dir_abs, outpath.as_bytes()],
-                    );
-                // The close error is discarded — the renameat immediately
-                // below surfaces a usable error if the temp file is in a
-                // bad state, and on POSIX the close cannot fail for a
-                // regular-file fd we just wrote.
-                let _ = file.close();
+                let cache_path_abs = &bun_paths::Path::resolve(&[&temp_dir.cache.path, outpath]);
+                drop(file);
                 bun_sys::renameat(
                     Fd::cwd(),
                     path_to_use_for_opening_file,
@@ -1458,7 +1428,7 @@ pub mod package_manifest {
         /// The next run, `--offline` above all, reads what this one fetched. A pool thread must not wait for its own pool.
         pub(crate) extern "C" fn finish_saves_at_exit() {
             if bun_crash_handler::cli_state::is_main_thread()
-                && PackageManager::get().thread_pool.has_workers()
+                && LazyLock::get(&THREAD_POOL).is_some_and(ThreadPool::has_workers)
             {
                 SAVES.wait();
             }
@@ -1468,121 +1438,72 @@ pub mod package_manifest {
         /// `finish_saves_at_exit`.
         pub(crate) fn save_async(
             this: &PackageManifest,
-            scope: &registry::Scope,
-            tmpdir: Fd,
-            cache_dir: Fd,
+            registry: registry::ManifestCacheKey,
+            temp_dir: &'static TemporaryDirectory,
         ) {
-            use bun_threading::thread_pool::{
-                Batch as PoolBatch, Node as PoolNode, Task as PoolTask,
-            };
+            use bun_threading::thread_pool::{Batch as PoolBatch, Task as PoolTask};
+            use bun_threading::wait_group::{Pending, WaitGroup};
+            use bun_threading::work_pool::OwnedTask;
 
             struct SaveTask {
                 manifest: PackageManifest,
-                // Owned: the thread-pool task can outlive the caller's borrow
-                // of the Registry.Scope, so it owns a clone.
-                scope: registry::Scope,
-                tmpdir: Fd,
-                cache_dir: Fd,
+                registry: registry::ManifestCacheKey,
+                temp_dir: &'static TemporaryDirectory,
 
                 task: PoolTask,
+                _pending: Pending<&'static WaitGroup>,
             }
 
             bun_threading::intrusive_work_task!(SaveTask, task);
 
-            impl SaveTask {
-                fn new(init: SaveTask) -> Box<SaveTask> {
-                    Box::new(init)
-                }
-
-                // Safe-fn: only ever invoked by `ThreadPool` via the `callback`
-                // fn-pointer with the `*mut PoolTask` we registered below
-                // (`heap::into_raw(SaveTask { task: .. })`). The thread-pool
-                // contract — not the Rust caller — guarantees `task` is live
-                // and points at `SaveTask.task`, so the precondition is
-                // discharged locally (matches `HardLinkWindowsInstallTask::
-                // run_from_thread_pool` in PackageInstall.rs). Safe `fn`
-                // coerces to the `unsafe fn(*mut Task)` field type.
-                fn run(task: *mut PoolTask) {
-                    use bun_threading::IntrusiveWorkTask as _;
+            impl OwnedTask for SaveTask {
+                fn run(self: Box<Self>) {
                     let _tracer = bun_core::perf::trace("PackageManifest.Serializer.save");
 
-                    // SAFETY: thread-pool callback contract — `task` points to
-                    // `SaveTask.task`; allocated via `heap::into_raw` in `save_async`.
-                    let save_task = unsafe { bun_core::heap::take(SaveTask::from_task_ptr(task)) };
-
-                    if let Err(err) = Serializer::save(
-                        &save_task.manifest,
-                        &save_task.scope,
-                        save_task.tmpdir,
-                        save_task.cache_dir,
-                    ) {
+                    if let Err(err) = Serializer::save(&self.manifest, self.registry, self.temp_dir)
+                    {
                         if PackageManager::verbose_install() {
                             bun_core::warn!(
                                 "Error caching manifest for {}: {}",
-                                bstr::BStr::new(save_task.manifest.name()),
+                                bstr::BStr::new(self.manifest.name()),
                                 err.name(),
                             );
                             Output::flush();
                         }
                     }
-                    drop(save_task);
-                    SAVES.finish();
                 }
             }
 
-            SAVES.add_one();
-            let task = bun_core::heap::into_raw(SaveTask::new(SaveTask {
+            let batch = PoolBatch::from_owned(Box::new(SaveTask {
                 manifest: this.clone(),
-                scope: scope.clone(),
-                tmpdir,
-                cache_dir,
-                task: PoolTask {
-                    node: PoolNode::default(),
-                    callback: SaveTask::run,
-                },
+                registry,
+                temp_dir,
+                task: PoolTask::default(),
+                _pending: Pending::new(&SAVES),
             }));
-
-            // SAFETY: task is a valid Box-allocated SaveTask
-            let batch = PoolBatch::from(unsafe { core::ptr::addr_of_mut!((*task).task) });
-            PackageManager::get().thread_pool.schedule(batch);
+            THREAD_POOL.schedule(batch);
         }
 
-        fn manifest_file_name<'b>(
-            buf: &'b mut [u8],
-            file_id: u64,
-            scope: &registry::Scope,
-        ) -> Result<&'b bun_core::ZStr, Error> {
-            let file_id_hex_fmt = bun_fmt::hex_int_lower::<16>(file_id);
-            let mut stream = bun_io::FixedBufferStream::new_mut(buf);
-            if scope.url_hash == *registry::DEFAULT_URL_HASH {
-                write!(stream, "{}.npm", file_id_hex_fmt)?;
-            } else {
-                write!(
-                    stream,
-                    "{}-{}.npm",
-                    file_id_hex_fmt,
-                    bun_fmt::hex_int_lower::<16>(scope.url_hash),
-                )?;
+        fn manifest_file_name(file_id: u64, url_hash: u64) -> Path {
+            let mut name = Path::new();
+            write!(name, "{}", bun_fmt::hex_int_lower::<16>(file_id));
+            if url_hash != *registry::DEFAULT_URL_HASH {
+                write!(name, "-{}", bun_fmt::hex_int_lower::<16>(url_hash));
             }
-            stream.write_byte(0)?;
-            let len = stream.pos;
-            // We wrote `len` bytes ending in a NUL into `buf`.
-            Ok(bun_core::ZStr::from_buf_mut(buf, len - 1))
+            name.extend_from_slice(b".npm");
+            name
         }
 
         pub(crate) fn save(
             this: &PackageManifest,
-            scope: &registry::Scope,
-            tmpdir: Fd,
-            cache_dir: Fd,
+            registry: registry::ManifestCacheKey,
+            temp_dir: &TemporaryDirectory,
         ) -> Result<(), Error> {
             let file_id = Wyhash11::hash(0, this.name());
             let mut tmp_path_buf = [0u8; 64];
             let tmp_path = FileSystem::tmpname(b"npm", &mut tmp_path_buf, bun_core::fast_random())?;
-            let mut out_path_buf =
-                [0u8; ("18446744073709551615".len() * 2) + "_".len() + ".npm".len() + 1];
-            let out_path = Self::manifest_file_name(&mut out_path_buf, file_id, scope)?;
-            Self::write_file(this, scope, tmp_path, tmpdir, cache_dir, out_path)
+            let out_path = Self::manifest_file_name(file_id, registry.url_hash);
+            Self::write_file(this, registry, tmp_path, temp_dir, &out_path)
         }
 
         pub(crate) fn load_by_file_id(
@@ -1590,19 +1511,17 @@ pub mod package_manifest {
             cache_dir: Fd,
             name: &[u8],
             file_id: u64,
-        ) -> Result<Option<PackageManifest>, Error> {
-            let mut file_path_buf = [0u8; 512 + 64];
-            let file_name = Self::manifest_file_name(&mut file_path_buf, file_id, scope)?;
-            let Ok(cache_file) = File::openat(cache_dir, file_name, bun_sys::O::RDONLY, 0) else {
-                return Ok(None);
-            };
+        ) -> Option<PackageManifest> {
+            let file_name = Self::manifest_file_name(file_id, scope.url_hash);
+            let cache_file = bun_sys::openat(cache_dir, &file_name, bun_sys::O::RDONLY, 0);
+            let cache_file = File::from_fd(cache_file.ok()?);
 
             // A file that cannot be used is not deleted. Another version of bun may have written
             // it, and the next download of the manifest replaces it.
-            Ok(Self::load_by_file(scope, &cache_file)
+            Self::load_by_file(scope, &cache_file)
                 .ok()
                 .flatten()
-                .filter(|manifest| manifest.name() == name))
+                .filter(|manifest| manifest.name() == name)
         }
 
         pub fn load_by_file(
@@ -1640,13 +1559,14 @@ pub mod package_manifest {
             let mut pkg_stream = bun_io::FixedBufferStream::new(bytes);
             pkg_stream.pos = Self::HEADER_BYTES.len();
 
+            let key = scope.manifest_cache_key();
             let registry_hash = pkg_stream.read_int_le::<u64>()?;
-            if scope.url_hash != registry_hash {
+            if key.url_hash != registry_hash {
                 return Ok(None);
             }
 
             let registry_length = pkg_stream.read_int_le::<u64>()?;
-            if strings::without_trailing_slash(scope.url.href()).len() as u64 != registry_length {
+            if key.url_len != registry_length {
                 return Ok(None);
             }
 
@@ -1655,12 +1575,10 @@ pub mod package_manifest {
                 pkg_stream.pos = pkg_stream
                     .pos
                     .next_multiple_of(core::mem::align_of::<NpmPackage>());
-                let flag_at =
-                    pkg_stream.pos + core::mem::offset_of!(NpmPackage, has_extended_manifest);
-                if !matches!(bytes.get(flag_at).copied(), Some(0 | 1)) {
-                    return Ok(None);
+                match pkg_stream.read_struct::<NpmPackage>() {
+                    Ok(pkg) if pkg.has_extended_manifest <= 1 => pkg,
+                    _ => return Ok(None),
                 }
-                pkg_stream.read_struct::<NpmPackage>()?
             };
             let string_buf = Self::read_array::<u8>(&mut pkg_stream)?;
             let versions = Self::read_array::<Semver::Version>(&mut pkg_stream)?;
@@ -1698,7 +1616,13 @@ pub mod package_manifest {
                         return Ok(None);
                     }
                 }
-                Self::array_from_bytes::<PackageVersion>(raw_package_versions)
+                // SAFETY: the loop above checked the fields that do not take any bytes.
+                let (misaligned, package_versions, _) =
+                    unsafe { raw_package_versions.align_to::<PackageVersion>() };
+                if !misaligned.is_empty() {
+                    return Ok(None);
+                }
+                package_versions
             };
             let version_map = |map: &ExternVersionMap| {
                 map.keys.len == map.values.len
@@ -2087,18 +2011,21 @@ impl PackageManifest {
         minimum_release_age_ms: Option<f64>,
         exclusions: Option<&MinimumReleaseAgeExcludes>,
     ) -> FindVersionResult<'_> {
+        use crate::dependency::Value;
         let literal = version.literal.slice(buf);
-        if version.tag == crate::dependency::Tag::Npm {
-            if is_any_version_range(literal) {
-                return self.find_any_version(minimum_release_age_ms, exclusions);
+        let dist_tag = match &version.value {
+            Value::Npm(npm) => {
+                return self.find_for_range(
+                    literal,
+                    &npm.version,
+                    buf,
+                    minimum_release_age_ms,
+                    exclusions,
+                );
             }
-            return self.find_best_version_with_filter(
-                &version.npm().version,
-                buf,
-                minimum_release_age_ms,
-                exclusions,
-            );
-        }
+            Value::DistTag(dist_tag) => dist_tag,
+            _ => return FindVersionResult::Err(FindVersionError::NotFound),
+        };
         // Nobody wrote `latest` explicitly (`bun add pkg`), so like npm, don't follow the tag to a
         // deprecated version.
         if literal.is_empty()
@@ -2108,10 +2035,24 @@ impl PackageManifest {
             return self.find_any_version(minimum_release_age_ms, exclusions);
         }
         self.find_by_dist_tag_with_filter(
-            version.dist_tag().tag.slice(buf),
+            dist_tag.tag.slice(buf),
             minimum_release_age_ms,
             exclusions,
         )
+    }
+
+    pub(crate) fn find_for_range(
+        &self,
+        literal: &[u8],
+        range: &Semver::query::Group,
+        buf: &[u8],
+        minimum_release_age_ms: Option<f64>,
+        exclusions: Option<&MinimumReleaseAgeExcludes>,
+    ) -> FindVersionResult<'_> {
+        if is_any_version_range(literal) {
+            return self.find_any_version(minimum_release_age_ms, exclusions);
+        }
+        self.find_best_version_with_filter(range, buf, minimum_release_age_ms, exclusions)
     }
 
     /// Resolves npm's `*`: `latest`, even if it's a prerelease, unless it's deprecated. Otherwise
@@ -2266,7 +2207,7 @@ impl PackageManifest {
             return (self.find_best_version(group, group_buf))
                 .map_or(NOT_FOUND, FindVersionResult::Found);
         };
-        debug_assert!(self.pkg.has_extended_manifest);
+        debug_assert!(self.pkg.has_extended_manifest());
 
         let left = group.head.head.range.left;
         let mut newest_filtered: Option<Semver::Version> = None;
@@ -2430,7 +2371,7 @@ fn publish_timestamp_ms(time: &JSON::E::JsonValue) -> f64 {
 impl PackageManifest {
     /// This parses [Abbreviated metadata](https://github.com/npm/registry/blob/master/docs/responses/package-metadata.md#abbreviated-metadata-format)
     pub fn parse(
-        scope: &registry::Scope,
+        registry: registry::ManifestCacheKey,
         log: &mut bun_ast::Log,
         json_buffer: &[u8],
         expected_name: &[u8],
@@ -2490,8 +2431,8 @@ impl PackageManifest {
                 // If this manifest is coming from the default registry, make sure it's the expected one. If it's not
                 // from the default registry we don't check because the registry might have a different name in the manifest.
                 // https://github.com/oven-sh/bun/issues/4925
-                if scope.url_hash == *registry::DEFAULT_URL_HASH
-                    && !strings::eql_long(expected_name, received_name, true)
+                if registry.url_hash == *registry::DEFAULT_URL_HASH
+                    && !strings::eql_long(expected_name, received_name)
                 {
                     bun_core::warn!(
                         "Package name mismatch. Expected <b>\"{}\"<r> but received <red>\"{}\"<r>",
@@ -3513,7 +3454,7 @@ impl PackageManifest {
         };
         result.bundled_deps_buf = bundled_deps_buf;
         result.pkg.public_max_age = public_max_age;
-        result.pkg.has_extended_manifest = is_extended_manifest;
+        result.pkg.has_extended_manifest = u8::from(is_extended_manifest);
 
         if let Some(buf) = string_builder.ptr.take() {
             let mut v = buf.into_vec();

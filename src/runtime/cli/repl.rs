@@ -14,9 +14,11 @@
 #[cfg(unix)]
 use core::ffi::c_int;
 use core::fmt::Arguments;
+use core::ops::{Deref, DerefMut};
 
 use bstr::BStr;
 
+use bun_bundler::transpiler::{MacroJSCtx, Transpiler};
 use bun_collections::VecExt;
 use bun_core::strings;
 #[cfg(unix)]
@@ -198,17 +200,10 @@ impl History {
             return Ok(());
         }
 
-        let mut path_buf = bun_paths::path_buffer_pool::get();
-        // Skip the history file if `$HOME` is too long.
-        let Some(path) = path::resolve_path::join_z_buf_checked::<path::platform::Auto>(
-            &mut path_buf[..],
-            &[home_path, HISTORY_FILENAME],
-        ) else {
-            return Ok(());
-        };
+        let path = path::Path::join(&[home_path, HISTORY_FILENAME]);
         self.file_path = Some(Box::<[u8]>::from(path.as_bytes()));
 
-        let content: Box<[u8]> = match sys::File::read_from(Fd::cwd(), path) {
+        let content: Box<[u8]> = match sys::File::read_from(Fd::cwd(), &path) {
             sys::Result::Ok(bytes) => bytes.into(),
             sys::Result::Err(_) => return Ok(()),
         };
@@ -270,7 +265,7 @@ impl History {
 
         // Don't add duplicates of the last entry
         if let Some(last) = self.entries.last() {
-            if strings::eql_long(last, line, true) {
+            if strings::eql_long(last, line) {
                 self.position = self.entries.len();
                 return Ok(());
             }
@@ -578,8 +573,7 @@ impl ReplCommand {
 
     fn find(name: &[u8]) -> Option<&'static ReplCommand> {
         Self::ALL.iter().find(|&cmd| {
-            strings::eql_long(cmd.name, name, true)
-                || (name.len() > 1 && cmd.name.starts_with(name))
+            strings::eql_long(cmd.name, name) || (name.len() > 1 && cmd.name.starts_with(name))
         })
     }
 }
@@ -979,7 +973,7 @@ pub(super) struct Repl<'a> {
 
     // Windows: saved console mode for restoration
     #[cfg(windows)]
-    original_windows_mode: Option<bun_sys::windows::DWORD>,
+    stdin_mode_guard: Option<bun_sys::windows::StdinModeGuard>,
 
     // POSIX: the REPL's own stdin raw-mode state
     #[cfg(unix)]
@@ -1004,12 +998,10 @@ impl<'a> Repl<'a> {
             stdin_buf_end: 0,
             vm: None,
             global: None,
-            // `adopt(UNDEFINED)`: no protect taken; drop's unprotect() is a
-            // C++-side no-op for non-cell values.
-            last_result: ProtectedJSValue::adopt(JSValue::UNDEFINED),
-            last_error: ProtectedJSValue::adopt(JSValue::UNDEFINED),
+            last_result: JSValue::UNDEFINED.protected(),
+            last_error: JSValue::UNDEFINED.protected(),
             #[cfg(windows)]
-            original_windows_mode: None,
+            stdin_mode_guard: None,
             #[cfg(unix)]
             tty_state: tty::State::new(),
         }
@@ -1048,16 +1040,14 @@ impl<'a> Repl<'a> {
         }
         #[cfg(windows)]
         {
-            self.original_windows_mode = bun_sys::windows::update_stdio_mode_flags(
-                bun_sys::Stdio::StdIn,
+            self.stdin_mode_guard = Some(bun_sys::windows::StdinModeGuard::set(
                 bun_sys::windows::UpdateStdioModeFlagsOpts {
                     set: bun_sys::windows::ENABLE_VIRTUAL_TERMINAL_INPUT
                         | bun_sys::windows::ENABLE_PROCESSED_INPUT,
                     unset: bun_sys::windows::ENABLE_LINE_INPUT
                         | bun_sys::windows::ENABLE_ECHO_INPUT,
                 },
-            )
-            .ok();
+            ));
         }
     }
 
@@ -1070,18 +1060,12 @@ impl<'a> Repl<'a> {
         }
         #[cfg(windows)]
         {
-            if let Some(mode) = self.original_windows_mode {
-                // SAFETY: stdin handle is valid console handle
-                unsafe {
-                    let _ = bun_sys::windows::SetConsoleMode(Fd::stdin().native(), mode);
-                }
-                self.original_windows_mode = None;
-            }
+            self.stdin_mode_guard = None;
         }
     }
 
     /// Temporarily enable SIGINT delivery during blocking promise waits
-    fn enable_signals_during_wait(&mut self) {
+    fn enable_signals_during_wait(&mut self) -> SignalsEnabled<'_, 'a> {
         SIGINT_ARMED.store(true, core::sync::atomic::Ordering::Release);
 
         #[cfg(unix)]
@@ -1102,6 +1086,7 @@ impl<'a> Repl<'a> {
             }
         }
         // On Windows, ENABLE_PROCESSED_INPUT is already set so Ctrl+C works
+        SignalsEnabled(self)
     }
 
     /// Drive the loop until `promise` settles; `true` if a SIGINT (see `sigint_handler`) cut the wait short.
@@ -1112,37 +1097,14 @@ impl<'a> Repl<'a> {
             if SIGINT_DURING_WAIT.swap(false, Ordering::AcqRel) {
                 return true;
             }
-            vm.as_mut().event_loop_mut().tick();
+            vm.event_loop().tick();
             if jsc::JSPromise::opaque_mut(promise).status() == PromiseStatus::Pending
                 && !SIGINT_DURING_WAIT.load(Ordering::Acquire)
             {
-                vm.as_mut().event_loop_mut().auto_tick();
+                vm.event_loop().auto_tick();
             }
         }
         false
-    }
-
-    /// Restore raw terminal mode after promise wait
-    fn disable_signals_during_wait(&mut self) {
-        SIGINT_ARMED.store(false, core::sync::atomic::Ordering::Release);
-
-        #[cfg(unix)]
-        {
-            // Back to raw mode
-            let _ = self
-                .tty_state
-                .set_mode(0, tty::Mode::Raw, tty::SetAttrWhen::Drain);
-
-            // Restore default SIGINT handling
-            // SAFETY: zeroed `sigaction` is a valid empty mask + null restorer; SIG_DFL
-            // restores the default disposition. `act` is valid for the duration of the call.
-            unsafe {
-                let mut act: bun_sys::posix::Sigaction = bun_core::ffi::zeroed();
-                act.sa_sigaction = libc::SIG_DFL;
-                act.sa_flags = 0;
-                bun_sys::posix::sigaction(libc::SIGINT, &raw const act, core::ptr::null_mut());
-            }
-        }
     }
 
     fn write(&self, data: &[u8]) {
@@ -1170,10 +1132,7 @@ impl<'a> Repl<'a> {
             self.stdin_buf_start += 1;
             return Some(b);
         }
-        // Refill buffer (stdio fd: `File::Drop` is a no-op, so this is safe to
-        // re-create on every call).
-        let stdin = sys::File::stdin();
-        let n = match stdin.read(&mut self.stdin_buf) {
+        let n = match sys::read(Fd::stdin(), &mut self.stdin_buf) {
             sys::Result::Ok(n) => n,
             sys::Result::Err(_) => return None,
         };
@@ -1658,13 +1617,11 @@ impl<'a> Repl<'a> {
 
             // Temporarily re-enable signal delivery so Ctrl+C can interrupt
             // the blocking waitForPromise call
-            self.enable_signals_during_wait();
-            // Note: reshaped for borrowck — call disable_signals_during_wait() explicitly on each return path below
+            let mut this = self.enable_signals_during_wait();
 
             // Wait for the promise to settle, or for a SIGINT.
             if Self::wait_for_promise_or_sigint(vm, promise) {
-                self.print(format_args!("\n"));
-                self.disable_signals_during_wait();
+                this.print(format_args!("\n"));
                 return;
             }
 
@@ -1677,22 +1634,19 @@ impl<'a> Repl<'a> {
                 }
                 PromiseStatus::Rejected => {
                     let rejection = jsc::JSPromise::opaque_mut(promise).result(jsc_vm_ref);
-                    self.set_last_error(rejection);
+                    this.set_last_error(rejection);
                     // Set _error on the global object
                     let global_this = global.to_js_value();
                     global_this.put(global, b"_error", rejection);
-                    self.print_js_error(rejection);
-                    self.disable_signals_during_wait();
+                    this.print_js_error(rejection);
                     return;
                 }
                 PromiseStatus::Pending => {
                     // Interrupted by signal or timed out
-                    self.print(format_args!("\n"));
-                    self.disable_signals_during_wait();
+                    this.print(format_args!("\n"));
                     return;
                 }
             }
-            self.disable_signals_during_wait();
         }
 
         // Extract the value from the result wrapper { value: expr }
@@ -1708,7 +1662,7 @@ impl<'a> Repl<'a> {
                         let exc = global.take_exception(err);
                         self.set_last_error(exc);
                         self.print_js_error(exc);
-                        vm.as_mut().tick();
+                        vm.tick();
                         return;
                     }
                 };
@@ -1738,7 +1692,7 @@ impl<'a> Repl<'a> {
         }
 
         // Tick the event loop to handle any pending work
-        vm.as_mut().tick();
+        vm.tick();
     }
 
     /// Evaluate a script from `bun repl -e/--eval` or `-p/--print` non-interactively.
@@ -1818,9 +1772,7 @@ impl<'a> Repl<'a> {
             // owning JSC VM handle for this thread.
             jsc::JSPromise::opaque_mut(promise).set_handled();
             // Interrupted (SIGINT forbids execution) ⇒ handled just below.
-            let _ = vm
-                .as_mut()
-                .wait_for_promise(jsc::AnyPromise::Normal(promise));
+            let _ = vm.wait_for_promise(jsc::AnyPromise::Normal(promise));
             let jsc_vm_ref = vm.jsc_vm();
             match jsc::JSPromise::opaque_mut(promise).status() {
                 PromiseStatus::Fulfilled => {
@@ -1855,10 +1807,10 @@ impl<'a> Repl<'a> {
         let _prot = actual_result.protected();
 
         // Drain the event loop (timers, I/O, etc.) before printing / exiting
-        vm.as_mut().tick();
+        vm.tick();
         while vm.is_event_loop_alive() {
-            vm.as_mut().tick();
-            vm.as_mut().auto_tick_active();
+            vm.tick();
+            vm.auto_tick_active();
         }
 
         if print_result {
@@ -1914,7 +1866,7 @@ impl<'a> Repl<'a> {
         }
 
         if let Some(vm) = self.vm {
-            vm.as_mut().tick();
+            vm.tick();
         }
     }
 
@@ -1957,11 +1909,10 @@ impl<'a> Repl<'a> {
             // SAFETY: `promise` is a live JSC heap cell; `vm.jsc_vm` is the
             // owning JSC VM handle for this thread.
             jsc::JSPromise::opaque_mut(promise).set_handled();
-            self.enable_signals_during_wait();
+            let mut this = self.enable_signals_during_wait();
             // Wait for the promise to settle, or for a SIGINT.
             if Self::wait_for_promise_or_sigint(vm, promise) {
-                self.print(format_args!("\n"));
-                self.disable_signals_during_wait();
+                this.print(format_args!("\n"));
                 return;
             }
             let jsc_vm_ref = vm.jsc_vm();
@@ -1971,17 +1922,12 @@ impl<'a> Repl<'a> {
                 }
                 PromiseStatus::Rejected => {
                     let rejection = jsc::JSPromise::opaque_mut(promise).result(jsc_vm_ref);
-                    self.set_last_error(rejection);
-                    self.print_js_error(rejection);
-                    self.disable_signals_during_wait();
+                    this.set_last_error(rejection);
+                    this.print_js_error(rejection);
                     return;
                 }
-                PromiseStatus::Pending => {
-                    self.disable_signals_during_wait();
-                    return;
-                }
+                PromiseStatus::Pending => return,
             }
-            self.disable_signals_during_wait();
         }
 
         let mut actual_result = resolved_result;
@@ -1993,7 +1939,7 @@ impl<'a> Repl<'a> {
                         let exc = global.take_exception(err);
                         self.set_last_error(exc);
                         self.print_js_error(exc);
-                        vm.as_mut().tick();
+                        vm.tick();
                         return;
                     }
                 };
@@ -2013,7 +1959,7 @@ impl<'a> Repl<'a> {
             self.set_last_error(exc);
             self.print_js_error(exc);
         }
-        vm.as_mut().tick();
+        vm.tick();
     }
 
     /// Format a JS value as a string suitable for clipboard.
@@ -2143,7 +2089,7 @@ impl<'a> Repl<'a> {
 
         // Set up parser options with repl_mode enabled
         let mut opts = bun_js_parser::ParserOptions::init(
-            vm.transpiler.options.jsx.clone(),
+            vm.transpiler.get().options.jsx.clone(),
             bun_ast::Loader::Tsx,
         );
         opts.repl_mode = true;
@@ -2157,13 +2103,17 @@ impl<'a> Repl<'a> {
         // until that pass. Lowering wraps the declaration in `try/finally` first,
         // which the REPL transform passes through intact.
 
-        // Initialize macro context from transpiler (required for import processing).
-        if vm.transpiler.macro_context.is_none() {
-            vm.as_mut().transpiler.macro_context = Some(bun_js_parser::Macro::MacroContext::init(
-                &mut vm.as_mut().transpiler,
-            ));
-        }
-        opts.macro_context = vm.as_mut().transpiler.macro_context.as_mut();
+        let define = &vm.transpiler.get().options.define;
+        opts.macro_remap = Some(&vm.transpiler.get().options.macro_remap);
+        // SAFETY: JS thread; the VM outlives the parse. Does not hold for a macro: `enable_macro_mode`
+        // borrows the transpiler mutably while the parser holds `define` and `macro_remap`.
+        opts.macro_context = Some(unsafe {
+            Transpiler::macro_context(
+                vm.transpiler.as_ptr(),
+                &vm.module_loader.macro_load_states,
+                MacroJSCtx::ZERO,
+            )
+        });
 
         // Create log for errors
         let mut log = bun_ast::Log::init();
@@ -2172,13 +2122,7 @@ impl<'a> Repl<'a> {
         let source = bun_ast::Source::init_path_string(b"[repl]", processed_code);
 
         // Parse with REPL transforms
-        let parser = match bun_js_parser::Parser::init(
-            opts,
-            &mut log,
-            &source,
-            &vm.transpiler.options.define,
-            &arena,
-        ) {
+        let parser = match bun_js_parser::Parser::init(opts, &mut log, &source, define, &arena) {
             Ok(p) => p,
             Err(_) => return None,
         };
@@ -2211,7 +2155,6 @@ impl<'a> Repl<'a> {
         );
 
         if bun_js_printer::print_ast::<
-            _,
             /* ASCII_ONLY */ true,
             /* GENERATE_SOURCE_MAP */ false,
         >(
@@ -2243,12 +2186,10 @@ impl<'a> Repl<'a> {
     fn print_js_error_to(
         &self,
         error_value: JSValue,
-        writer: &mut bun_core::io::Writer,
+        writer: &bun_core::io::Writer,
         enable_colors: bool,
     ) {
-        // Note: the `bun_core::io::Writer` vtable doesn't implement
-        // `bun_io::Write`, so buffer through a `Vec<u8>` (which does) and
-        // flush in one shot — REPL error output is tiny.
+        // Buffered: none of the value is printed if formatting throws.
         let Some(global) = self.global else {
             return;
         };
@@ -2285,8 +2226,7 @@ impl<'a> Repl<'a> {
             return;
         };
         let writer = Output::writer();
-        // Note: see `print_js_error_to` — buffer because
-        // `bun_core::io::Writer` doesn't implement `bun_io::Write`.
+        // Buffered: none of the value is printed if formatting throws.
         let mut buf: Vec<u8> = Vec::new();
         if let Err(err) = jsc::ConsoleObject::format2(
             jsc::ConsoleObject::MessageLevel::Log,
@@ -2833,6 +2773,47 @@ impl<'a> Repl<'a> {
                 Color::RESET
             ));
             self.refresh_line();
+        }
+    }
+}
+
+/// Restores raw terminal mode on drop.
+#[must_use]
+struct SignalsEnabled<'r, 'a>(&'r mut Repl<'a>);
+
+impl<'a> Deref for SignalsEnabled<'_, 'a> {
+    type Target = Repl<'a>;
+    fn deref(&self) -> &Repl<'a> {
+        self.0
+    }
+}
+
+impl<'a> DerefMut for SignalsEnabled<'_, 'a> {
+    fn deref_mut(&mut self) -> &mut Repl<'a> {
+        self.0
+    }
+}
+
+impl Drop for SignalsEnabled<'_, '_> {
+    fn drop(&mut self) {
+        SIGINT_ARMED.store(false, core::sync::atomic::Ordering::Release);
+
+        #[cfg(unix)]
+        {
+            // Back to raw mode
+            let _ = self
+                .tty_state
+                .set_mode(0, tty::Mode::Raw, tty::SetAttrWhen::Drain);
+
+            // Restore default SIGINT handling
+            // SAFETY: zeroed `sigaction` is a valid empty mask + null restorer; SIG_DFL
+            // restores the default disposition. `act` is valid for the duration of the call.
+            unsafe {
+                let mut act: bun_sys::posix::Sigaction = bun_core::ffi::zeroed();
+                act.sa_sigaction = libc::SIG_DFL;
+                act.sa_flags = 0;
+                bun_sys::posix::sigaction(libc::SIGINT, &raw const act, core::ptr::null_mut());
+            }
         }
     }
 }

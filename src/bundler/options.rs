@@ -39,34 +39,49 @@ mod bun_http {
 /// `bun.StringSet` (re-exported for `BundleOptions.bundler_feature_flags`).
 pub use bun_collections::StringSet;
 
-pub(crate) fn validate_path(
-    log: &mut bun_ast::Log,
-    _fs: &mut Fs::Implementation,
-    cwd: &[u8],
-    rel_path: &[u8],
-    path_kind: &[u8],
-) -> Box<[u8]> {
-    if rel_path.is_empty() {
-        return Box::default();
+/// The root of a build that names none. Outputs are named from it, so another answer moves them.
+pub fn default_root_dir(entry_points: &[Box<[u8]>]) -> &[u8] {
+    let root = match entry_points {
+        [] if cfg!(windows) => None,
+        [] => return b"",
+        [only] => bun_paths::dirname(only),
+        [first, rest @ ..] => shared_root_dir(first, rest),
+    };
+    match root {
+        None => b".",
+        // No drive, so nothing to open. `/a.js` is what a plugin's entry point looks like.
+        Some([b'/' | b'\\']) if cfg!(windows) => b".",
+        Some(root) => root,
     }
-    // TODO: switch to getFdPath()-based implementation
-    // `join_abs_string` resolves `.`/`..` against `cwd` into a threadlocal
-    // buffer which is then boxed.
-    let out =
-        bun_paths::resolve_path::join_abs_string::<bun_paths::platform::Auto>(cwd, &[rel_path]);
-    if out.is_empty() {
-        log.add_error_fmt(
-            None,
-            bun_ast::Loc::EMPTY,
-            format_args!(
-                "Invalid {}: {}",
-                bstr::BStr::new(path_kind),
-                bstr::BStr::new(rel_path),
-            ),
-        );
-        return Box::default();
+}
+
+/// Compares the entry points as they are written, so it is not always a directory that holds them all.
+fn shared_root_dir<'a>(first: &'a [u8], rest: &'a [Box<[u8]>]) -> Option<&'a [u8]> {
+    let all = || core::iter::once(first).chain(rest.iter().map(|it| &it[..]));
+    let shortest = all().map(<[u8]>::len).min()?;
+    let shared_len = |other: &[u8]| {
+        (first[..shortest].iter().zip(other))
+            .take_while(|(a, b)| a == b)
+            .count()
+    };
+    let shared = all().map(shared_len).min()?;
+    let is_many = rest.len() >= 8;
+    if shortest == 0 || (is_many && shortest == 1 && shared == 1) {
+        return Some(bun_paths::SEP_STR.as_bytes());
     }
-    Box::from(out)
+    // Nine or more nearly always get the working directory, and builds depend on that.
+    if is_many {
+        let start = &first[..shortest];
+        let is_dir = shared_len(&rest[0]) == shortest && bun_paths::has_trailing_sep(start);
+        return is_dir.then_some(start);
+    }
+    let sep = first[..shared]
+        .iter()
+        .rposition(|&c| bun_paths::is_sep(c))?;
+    match all().find(|it| bun_paths::has_leading_sep(&it[shared..])) {
+        Some(it) => Some(&it[..=shared]),
+        None => Some(&first[..=sep]),
+    }
 }
 
 // `AllowUnresolved` is defined canonically in
@@ -91,7 +106,7 @@ pub(crate) fn is_node_builtin(str: &[u8]) -> bool {
     bun_resolve_builtins::Alias::has(str, bun_ast::Target::Node, Default::default())
 }
 
-const DEFAULT_WILDCARD_PATTERNS: &[(&[u8], &[u8])] = &[
+pub(crate) const DEFAULT_WILDCARD_PATTERNS: &[(&[u8], &[u8])] = &[
     (b"/bun:", b""),
     // (b"/src:", b""),
     // (b"/blob:", b""),
@@ -109,9 +124,8 @@ fn default_wildcard_patterns() -> Vec<WildcardPattern> {
 
 /// Free fn for the same orphan-rule
 /// reason as [`is_node_builtin`]; stays at bundler tier because it needs
-/// `Fs`/`logger`/`NODE_BUILTIN_PATTERNS`.
+/// `logger`/`NODE_BUILTIN_PATTERNS`.
 pub(crate) fn init_external_modules(
-    fs: &mut Fs::Implementation,
     cwd: &[u8],
     externals: &[&[u8]],
     log: &mut bun_ast::Log,
@@ -168,9 +182,13 @@ pub(crate) fn init_external_modules(
         } else if bun_paths::is_package_path(external) {
             result.node_modules.insert(external).expect("unreachable");
         } else {
-            let normalized = validate_path(log, fs, cwd, external, b"external path");
-
-            if !normalized.is_empty() {
+            // On POSIX `import` reads `\` as `/`, and `require()` does not.
+            let mut imported = path.to_vec();
+            let below_cwd = bun_paths::strip_prefix(path, cwd).unwrap_or(path);
+            let start = path.len() - below_cwd.len();
+            strings::replace_char_in_place(&mut imported[start..], b'\\', bun_paths::SEP);
+            for spelling in [path, &imported] {
+                let normalized = bun_resolver::resolve_keeping_sep(&[cwd, spelling]);
                 result.abs_paths.insert(&normalized).expect("unreachable");
             }
         }
@@ -469,6 +487,107 @@ pub struct LoaderResult<'a> {
     pub package_json: Option<&'a PackageJSON>,
 }
 
+/// Vite's import path suffixes, as in `./icon.svg?raw`.
+#[derive(Clone, Copy)]
+pub enum ImportSuffix {
+    Raw,
+    Url,
+    Inline,
+    Init,
+    Worker(&'static str),
+}
+
+impl ImportSuffix {
+    /// Parameter precedence matches Vite.
+    pub fn find(query: &[u8], by_extension: Option<Loader>) -> Option<Self> {
+        let (mut raw, mut url, mut inline, mut init, mut worker) =
+            (false, false, false, false, None);
+        for parameter in strings::split(query.strip_prefix(b"?")?, b"&") {
+            match parameter {
+                b"raw" => raw = true,
+                b"url" => url = true,
+                // On WebAssembly, whichever of `init` and `inline` comes first wins.
+                b"init" => init = !inline,
+                b"worker" => worker = worker.or(Some("Worker")),
+                b"sharedworker" => worker = worker.or(Some("SharedWorker")),
+                // Vite matches `/[?&]inline\b/`.
+                _ => {
+                    inline |= parameter.strip_prefix(b"inline").is_some_and(|rest| {
+                        !matches!(
+                            rest.first(),
+                            Some(b'0'..=b'9' | b'A'..=b'Z' | b'a'..=b'z' | b'_')
+                        )
+                    });
+                }
+            }
+        }
+        let init = init && by_extension == Some(Loader::Wasm);
+        let is_asset = matches!(
+            by_extension,
+            None | Some(Loader::File | Loader::Wasm | Loader::Text)
+        );
+        match worker {
+            Some(_) if url => Some(Self::Url),
+            Some(constructor) => Some(Self::Worker(constructor)),
+            None if raw => Some(Self::Raw),
+            None if inline && is_asset && !init => Some(Self::Inline),
+            None if url => Some(Self::Url),
+            None if inline && by_extension == Some(Loader::Css) => Some(Self::Raw),
+            None if init => Some(Self::Init),
+            None => None,
+        }
+    }
+
+    pub fn loader(self) -> Loader {
+        match self {
+            Self::Raw => Loader::Text,
+            Self::Url => Loader::File,
+            Self::Inline | Self::Init | Self::Worker(_) => Loader::Js,
+        }
+    }
+
+    /// Loaded instead of `file`. Named `specifier` so an error in it isn't shown with `file`'s source.
+    pub fn module<'a>(self, file: &[u8], specifier: &'a [u8]) -> Option<bun_ast::Source<'a>> {
+        let quoted = bun_core::fmt::format_json_string_utf8(file, Default::default());
+        let contents = match self {
+            Self::Raw | Self::Url => return None,
+            Self::Inline => match bun_sys::File::read_from(bun_sys::Fd::cwd(), file) {
+                Ok(bytes) => {
+                    use bun_resolver::data_url::DataURL;
+                    let extension = Fs::PathName::init(file).ext_without_leading_dot();
+                    let mime_type = bun_http_types::MimeType::by_extension(extension).value;
+                    let mime_type =
+                        strings::split_once_char(&mime_type, b';').map_or(&*mime_type, |it| it.0);
+                    let url = match mime_type {
+                        b"image/svg+xml" => DataURL::encode_svg_as_data_url(&bytes),
+                        _ => DataURL::encode_as_base64_data_url(mime_type, &bytes),
+                    };
+                    let url = bun_core::fmt::format_json_string_utf8(&url, Default::default());
+                    format!("export default {url};\n")
+                }
+                Err(err) => {
+                    let message = err.to_string();
+                    let message = bun_core::fmt::format_json_string_utf8(
+                        message.as_bytes(),
+                        Default::default(),
+                    );
+                    format!("throw new Error({message});\n")
+                }
+            },
+            Self::Init => format!(
+                "export default async function init(imports) {{\n  return (await WebAssembly.instantiate(await Bun.file({quoted}).arrayBuffer(), imports)).instance;\n}}\n"
+            ),
+            Self::Worker(constructor) => format!(
+                "export default function WorkerWrapper(options) {{\n  return new {constructor}({quoted}, {{ type: \"module\", name: options?.name }});\n}}\n"
+            ),
+        };
+        Some(bun_ast::Source::init_path_string_owned(
+            specifier,
+            contents.into_bytes(),
+        ))
+    }
+}
+
 pub fn get_loader_and_virtual_source<'a>(
     specifier_str: &'a [u8],
     jsc_vm: &'a VmLoaderCtx,
@@ -483,22 +602,17 @@ pub fn get_loader_and_virtual_source<'a>(
     // SAFETY: loaders() returns a borrow tied to jsc_vm.owner
     let mut loader: Option<Loader> = path.loader(unsafe { &*jsc_vm.loaders() });
     let mut virtual_source: Option<&'a bun_ast::Source<'a>> = None;
+    let attribute_loader = type_attribute_str.and_then(Loader::from_string);
+    let suffix = match attribute_loader {
+        Some(_) => None,
+        None => ImportSuffix::find(query, loader),
+    };
 
     if let Some(eval_source) = jsc_vm.eval_source() {
         // SAFETY: eval_source outlives jsc_vm
         let eval_source: &'a bun_ast::Source<'a> = unsafe { &*eval_source };
-        // The eval/stdin entry path uses the platform path separator
-        // (`/` becomes `\` on Windows), so the suffix is per-platform.
-        const EVAL_SUFFIX: &[u8] = if cfg!(windows) {
-            b"\\[eval]"
-        } else {
-            b"/[eval]"
-        };
-        const STDIN_SUFFIX: &[u8] = if cfg!(windows) {
-            b"\\[stdin]"
-        } else {
-            b"/[stdin]"
-        };
+        const EVAL_SUFFIX: &[u8] = bun_paths::path_literal!("/[eval]").as_bytes();
+        const STDIN_SUFFIX: &[u8] = bun_paths::path_literal!("/[stdin]").as_bytes();
         if strings::ends_with(specifier, EVAL_SUFFIX) {
             virtual_source = Some(eval_source);
             loader = Some(Loader::Tsx);
@@ -533,31 +647,26 @@ pub fn get_loader_and_virtual_source<'a>(
         } else {
             return Err(GetLoaderAndVirtualSourceErr::BlobNotFound);
         }
+    } else if let Some(module) = suffix.and_then(|suffix| suffix.module(path.text, specifier)) {
+        *virtual_source_to_use = Some(module);
+        virtual_source = virtual_source_to_use.as_ref();
+        path = Fs::Path::init(specifier);
     }
 
-    if query == b"?raw" {
-        loader = Some(Loader::Text);
-    }
-    if let Some(attr_str) = type_attribute_str {
-        if let Some(attr_loader) = Loader::from_string(attr_str) {
-            loader = Some(attr_loader);
-        }
-    }
+    loader = attribute_loader
+        .or_else(|| suffix.map(ImportSuffix::loader))
+        .or(loader);
 
     let is_main = jsc_vm
         .main()
-        .is_some_and(|main| strings::eql_long(specifier, main, true));
+        .is_some_and(|main| strings::eql_long(specifier, main));
 
     let dir = path.name().dir;
     // NOTE: we cannot trust `path.isFile()` since it's not always correct
     // NOTE: assume we may need a package.json when no loader is specified
     let is_js_like = loader.map(|l| l.is_js_like()).unwrap_or(true);
     let package_json: Option<&PackageJSON> = if is_js_like && bun_paths::is_absolute(dir) {
-        jsc_vm
-            .read_dir_info_package_json(dir)
-            // SAFETY: the vtable returns a pointer into the resolver's DirInfo
-            // cache owned by `jsc_vm.owner`, which outlives `'a`.
-            .map(|p| unsafe { &*p })
+        jsc_vm.read_dir_info_package_json(dir)
     } else {
         None
     };
@@ -1219,6 +1328,8 @@ pub struct BundleOptions<'a> {
     pub react_fast_refresh: bool,
     pub react_compiler: bun_ast::runtime::ReactCompilerMode,
     pub react_compiler_parse_test_pragmas: bool,
+    /// Set by `bun test`: returns whether to compile the file at this path. The bundler leaves it `None`.
+    pub react_compiler_filter: Option<&'static (dyn Fn(&[u8]) -> bool + Sync)>,
     pub(crate) inject: Option<Box<[Box<[u8]>]>>,
     // `bun_url::URL<'a>` borrows its input string; the owned variant keeps the
     // struct self-contained.
@@ -1274,6 +1385,12 @@ pub struct BundleOptions<'a> {
     pub(crate) load_package_json: bool,
 
     pub rewrite_jest_for_tests: bool,
+    /// `bun test --globals=vitest`
+    pub vitest_globals: bool,
+    /// Same effect as `vitest_globals`, for everything loaded by a test file that imports "vitest".
+    pub test_file_imports_vitest: bool,
+    /// See `RuntimeFeatures::own_test_globals`.
+    pub own_test_globals: u32,
 
     pub macro_remap: MacroRemap,
     pub no_macros: bool,
@@ -1306,6 +1423,8 @@ pub struct BundleOptions<'a> {
     pub inline_entrypoint_import_meta_main: bool,
     pub minify_whitespace: bool,
     pub minify_syntax: bool,
+    /// See `Features::is_library` of the parser.
+    pub is_library: bool,
     pub minify_identifiers: bool,
     pub keep_names: bool,
     pub dead_code_elimination: bool,
@@ -1349,6 +1468,8 @@ pub struct BundleOptions<'a> {
     pub compile_target_builtins: CompileTargetBuiltins,
 
     pub code_coverage: bool,
+    /// For a linter's configuration and plugins. See `Features::lists_loads` and `Features::defers_requires`.
+    pub defers_requires: bool,
     pub debugger: bool,
 
     pub compile_mode: CompileMode,
@@ -1365,7 +1486,7 @@ pub struct BundleOptions<'a> {
     // directly — all access goes through crate::dispatch::DevServerVTable.
     pub dev_server: *const (),
     /// Set when Bake is bundling. Affects module resolution.
-    pub framework: Option<&'a crate::bake_types::Framework>,
+    pub framework: Option<std::sync::Arc<crate::bake_types::Framework>>,
 
     pub serve_plugins: Option<Box<[Box<[u8]>]>>,
     pub bunfig_path: Box<[u8]>,
@@ -1414,6 +1535,11 @@ fn clone_macro_remap(src: &MacroRemap) -> MacroRemap {
 }
 
 impl<'a> BundleOptions<'a> {
+    pub(crate) fn clear_output_dir(&mut self) {
+        self.output_dir = Box::default();
+        self.output_dir_handle = None;
+    }
+
     pub(crate) fn is_test(&self) -> bool {
         self.rewrite_jest_for_tests
     }
@@ -1476,6 +1602,7 @@ impl<'a> BundleOptions<'a> {
             react_fast_refresh: self.react_fast_refresh,
             react_compiler: self.react_compiler,
             react_compiler_parse_test_pragmas: self.react_compiler_parse_test_pragmas,
+            react_compiler_filter: self.react_compiler_filter,
             inject: self.inject.clone(),
             origin: self.origin.clone(),
             // The owning handle stays with the parent; copying it here would
@@ -1512,6 +1639,9 @@ impl<'a> BundleOptions<'a> {
             load_tsconfig_json: self.load_tsconfig_json,
             load_package_json: self.load_package_json,
             rewrite_jest_for_tests: self.rewrite_jest_for_tests,
+            vitest_globals: self.vitest_globals,
+            test_file_imports_vitest: self.test_file_imports_vitest,
+            own_test_globals: self.own_test_globals,
             macro_remap: clone_macro_remap(&self.macro_remap),
             no_macros: self.no_macros,
             conditions: ESMConditions {
@@ -1534,6 +1664,7 @@ impl<'a> BundleOptions<'a> {
             inline_entrypoint_import_meta_main: self.inline_entrypoint_import_meta_main,
             minify_whitespace: self.minify_whitespace,
             minify_syntax: self.minify_syntax,
+            is_library: self.is_library,
             minify_identifiers: self.minify_identifiers,
             keep_names: self.keep_names,
             dead_code_elimination: self.dead_code_elimination,
@@ -1553,6 +1684,7 @@ impl<'a> BundleOptions<'a> {
             bytecode_order: self.bytecode_order.clone(),
             compile_target_builtins: self.compile_target_builtins.clone(),
             code_coverage: self.code_coverage,
+            defers_requires: self.defers_requires,
             debugger: self.debugger,
             compile_mode: self.compile_mode,
             compile_entry_point_name: self.compile_entry_point_name.clone(),
@@ -1560,7 +1692,7 @@ impl<'a> BundleOptions<'a> {
             metafile_json_path: self.metafile_json_path.clone(),
             metafile_markdown_path: self.metafile_markdown_path.clone(),
             dev_server: self.dev_server,
-            framework: self.framework,
+            framework: self.framework.clone(),
             serve_plugins: self.serve_plugins.clone(),
             bunfig_path: self.bunfig_path.clone(),
             unwrap_commonjs_packages: self.unwrap_commonjs_packages,
@@ -1573,9 +1705,9 @@ impl<'a> BundleOptions<'a> {
 
     /// Shared-borrow the per-Transpiler `Log`.
     ///
-    /// SAFETY: `self.log` is non-null: `Transpiler::init_in_place` validates
+    /// SAFETY: `self.log` is non-null: `Transpiler::init` validates
     /// the pointer via `NonNull::new(log).expect(..)` before storing it and
-    /// before calling `from_api` (which has no other callers).
+    /// before calling `from_api`.
     /// The pointee is the caller-owned arena `Log` which outlives `self`. The
     /// same allocation is aliased into `Transpiler.log` / `Resolver.log` /
     /// `Linker.log` as raw `*mut`; a `&` here is sound so long as no caller
@@ -1685,7 +1817,6 @@ impl<'a> BundleOptions<'a> {
     }
 
     pub(crate) fn from_api(
-        fs: &mut Fs::FileSystem,
         log: *mut bun_ast::Log,
         transform: api::TransformOptions,
     ) -> Result<BundleOptions<'a>, crate::Error> {
@@ -1745,6 +1876,7 @@ impl<'a> BundleOptions<'a> {
             react_fast_refresh: false,
             react_compiler: bun_ast::runtime::ReactCompilerMode::Disabled,
             react_compiler_parse_test_pragmas: false,
+            react_compiler_filter: None,
             inject: None,
             origin: bun_url::OwnedURL::from_href(Box::default()),
             output_dir_handle: None,
@@ -1770,6 +1902,9 @@ impl<'a> BundleOptions<'a> {
             load_tsconfig_json: true,
             load_package_json: true,
             rewrite_jest_for_tests: false,
+            vitest_globals: false,
+            test_file_imports_vitest: false,
+            own_test_globals: 0,
             macro_remap: MacroRemap::default(),
             no_macros: false,
             conditions: ESMConditions {
@@ -1792,6 +1927,7 @@ impl<'a> BundleOptions<'a> {
             inline_entrypoint_import_meta_main: false,
             minify_whitespace: false,
             minify_syntax: false,
+            is_library: false,
             minify_identifiers: false,
             keep_names: false,
             dead_code_elimination: true,
@@ -1805,6 +1941,7 @@ impl<'a> BundleOptions<'a> {
             bytecode_order: Vec::new(),
             compile_target_builtins: CompileTargetBuiltins::Host,
             code_coverage: false,
+            defers_requires: false,
             debugger: false,
             compile_mode: CompileMode::None,
             compile_entry_point_name: Box::default(),
@@ -1921,10 +2058,8 @@ impl<'a> BundleOptions<'a> {
 
         // Reborrow the raw `*mut Log`
         // for the duration of this call only.
-        let top_level_dir = fs.top_level_dir();
         opts.external = init_external_modules(
-            &mut fs.fs,
-            top_level_dir,
+            Fs::FileSystem::get().top_level_dir(),
             &transform
                 .external
                 .iter()
@@ -1980,15 +2115,6 @@ impl<'a> BundleOptions<'a> {
     }
 }
 
-impl Drop for BundleOptions<'_> {
-    fn drop(&mut self) {
-        // self.define dropped automatically (Box<Define>).
-        //
-        // bundler_feature_flags is `Option<Box<StringSet>>`; `None` ≡ the static
-        // empty set (nothing to free), `Some` drops the Box here automatically.
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ImportPathFormat {
     Relative,
@@ -1998,7 +2124,7 @@ pub enum ImportPathFormat {
     PackagePath,
 }
 
-pub(crate) mod bundle_options_defaults {
+pub mod bundle_options_defaults {
     pub(crate) const EXTENSION_ORDER: &[&[u8]] = &[
         b".tsx", b".ts", b".jsx", b".cts", b".cjs", b".js", b".mjs", b".mts", b".json",
     ];
@@ -2006,7 +2132,7 @@ pub(crate) mod bundle_options_defaults {
     pub(crate) const MAIN_FIELD_EXTENSION_ORDER: &[&[u8]] =
         &[b".js", b".cjs", b".cts", b".tsx", b".ts", b".jsx", b".json"];
 
-    pub(crate) const MODULE_EXTENSION_ORDER: &[&[u8]] = &[
+    pub const MODULE_EXTENSION_ORDER: &[&[u8]] = &[
         b".tsx", b".jsx", b".mts", b".ts", b".mjs", b".js", b".cts", b".cjs", b".json",
     ];
 
@@ -2029,13 +2155,8 @@ pub(crate) fn open_output_dir(output_dir: &[u8]) -> Result<Dir, crate::Error> {
             // Single-level mkdir
             // (fails ENOENT if parent missing). Do NOT use `make_path` (the
             // recursive `mkdir -p` variant) here.
-            let mut buf = bun_paths::path_buffer_pool::get();
-            let len = output_dir.len().min(buf.0.len() - 1);
-            buf.0[..len].copy_from_slice(&output_dir[..len]);
-            buf.0[len] = 0;
-            // SAFETY: NUL-terminated above; `buf` outlives the `mkdirat` call.
-            let z = bun_core::ZStr::from_buf(&buf.0[..], len);
-            if let Err(err) = bun_sys::mkdirat(bun_sys::Fd::cwd(), z, 0o755) {
+            let path = bun_paths::Path::from(output_dir);
+            if let Err(err) = bun_sys::mkdirat(bun_sys::Fd::cwd(), &path, 0o755) {
                 let err: crate::Error = err.into();
                 Output::print_errorln(format_args!(
                     "error: Unable to mkdir \"{}\": \"{}\"",
@@ -2125,6 +2246,19 @@ pub enum PlaceholderField {
     Ext,
     Hash,
     Target,
+}
+
+impl Placeholder {
+    /// For an output that is referenced by URL, where a `\` in the name of its source would be `/`.
+    pub(crate) fn replace_backslashes(&mut self) {
+        for text in [&mut self.dir, &mut self.name, &mut self.ext] {
+            if cfg!(not(windows))
+                && let Cow::Owned(replaced) = strings::replace_char(text, b'\\', b'_')
+            {
+                *text = replaced.into();
+            }
+        }
+    }
 }
 
 // Shared body for PathTemplate::needs / PathTemplateConst::needs (D064).
@@ -2294,13 +2428,17 @@ pub fn write_sanitized_parent_dirs<W: bun_io::Write>(
     writer: &mut W,
     dir: &[u8],
 ) -> bun_io::Result<()> {
-    let mut rest: &[u8] = dir;
+    // The path from one drive or share to another is absolute. `D:\a` becomes `D_\a`.
+    let (volume, mut rest) = dir.split_at(bun_paths::volume(dir).len());
+    for byte in volume {
+        let is_name = !matches!(byte, b'\\' | b'/' | b':' | b'?');
+        writer.write_all(&[if is_name { *byte } else { b'_' }])?;
+    }
+    if bun_paths::root(dir).len() == dir.len() {
+        return Ok(());
+    }
     loop {
-        // On POSIX `\` is a legal filename byte, not a separator, so only split
-        // on it under Windows (matches `write_replacing_slashes_on_windows`).
-        let sep = rest
-            .iter()
-            .position(|&b| b == b'/' || (cfg!(windows) && b == b'\\'));
+        let sep = rest.iter().position(|&b| bun_paths::is_sep(b));
         let seg = sep.map_or(rest, |i| &rest[..i]);
         PathTemplate::write_replacing_slashes_on_windows(
             writer,
@@ -2388,6 +2526,26 @@ impl PathTemplate {
         path_template_needs(&self.data, field)
     }
 
+    /// Makes `[dir]` lead to a real path, as `root_dir` is. On Windows the working directory keeps junctions and `subst` drives.
+    pub(crate) fn resolve_dir(&mut self, root_dir: &[u8]) {
+        use bun_paths::Path;
+        if !cfg!(windows) || !self.needs(PlaceholderField::Dir) {
+            return;
+        }
+        let dir = Path::resolve(&[root_dir, &self.placeholder.dir]);
+        if !matches!(bun_paths::volume(&dir), [_, b':']) {
+            return;
+        }
+        let mut buf = bun_paths::path_buffer_pool::get();
+        for ancestor in bun_paths::ancestors(&dir) {
+            if let Ok(real) = bun_sys::realpath(&Path::from(ancestor), &mut buf) {
+                let real = Path::join(&[real, &dir[ancestor.len()..]]);
+                self.placeholder.dir = Path::relative(root_dir, &real).as_bytes().into();
+                return;
+            }
+        }
+    }
+
     /// The width this template's `[hash]`/`[hashN]` asks for.
     pub(crate) fn hash_len(&self) -> usize {
         path_template_hash_len(&self.data).unwrap_or(bun_core::fmt::ContentHash::DEFAULT_LEN)
@@ -2409,21 +2567,7 @@ impl PathTemplate {
         w: &mut W,
         slice: &[u8],
     ) -> bun_io::Result<()> {
-        #[cfg(windows)]
-        {
-            let mut remain = slice;
-            while let Some(i) = strings::index_of_char(remain, b'/') {
-                let i = i as usize;
-                w.write_all(&remain[0..i])?;
-                w.write_all(&[b'\\'])?;
-                remain = &remain[i + 1..];
-            }
-            w.write_all(remain)
-        }
-        #[cfg(not(windows))]
-        {
-            w.write_all(slice)
-        }
+        w.write_all(&bun_paths::to_native(slice))
     }
 
     pub const CHUNK: PathTemplateConst = PathTemplateConst {

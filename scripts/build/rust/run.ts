@@ -213,6 +213,7 @@ function runRustc(unit: RustcUnitManifest): void {
       if (earlyOutputPrefix === undefined) continue;
       stampOutput(unit.rmeta);
       emit(1, `${earlyOutputPrefix}${unit.rmetaNinjaName}\n`);
+      emit(1, `${earlyOutputPrefix}${unit.rmeta}\n`);
     }
   });
   child.on("error", e => {

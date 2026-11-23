@@ -1,0 +1,9 @@
+{
+  "compilerOptions": {
+    "strict": true,
+    "typeRoots": ["./no-types-here"],
+    "noUncheckedIndexedAccess": true,
+    "noImplicitReturns": true,
+    "noUnusedLocals": true
+  }
+}

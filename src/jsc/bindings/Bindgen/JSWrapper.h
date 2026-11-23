@@ -5,6 +5,7 @@
 #include "Bindgen/IDLConvert.h"
 #include "ErrorCode.h"
 #include "JSDOMWrapper.h"
+#include "JSDOMWrapperCache.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/InternalFunction.h>
@@ -62,7 +63,8 @@ public:
         return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
     }
 
-    static JSClassConstructor* create(JSC::VM&, JSC::JSGlobalObject*, WTF::ASCIILiteral name, JSC::NativeFunction call, JSC::NativeFunction construct, unsigned length, std::span<const JSC::HashTableValue>, JSC::JSObject* prototype);
+    // It inherits from `base`, the constructor of the class that this one extends, or from `Function.prototype`.
+    static JSClassConstructor* create(JSC::VM&, JSC::JSGlobalObject*, WTF::ASCIILiteral name, JSC::NativeFunction call, JSC::NativeFunction construct, unsigned length, std::span<const JSC::HashTableValue>, JSC::JSObject* prototype, JSC::JSObject* base = nullptr);
 
 private:
     JSClassConstructor(JSC::VM&, JSC::Structure*, JSC::NativeFunction call, JSC::NativeFunction construct);
@@ -87,5 +89,14 @@ template<typename T> JSC::JSObject* constructorForClass(JSC::JSGlobalObject* glo
 template<typename T> T* createWrapper(JSC::JSGlobalObject* globalObject, void* wrapped) { return T::create(JSC::getVM(globalObject), structureForClass<T>(globalObject), wrapped); }
 // The class's own, or one for `new.target` (a subclass, Reflect.construct). May throw.
 JSC::Structure* structureForNewTarget(JSC::JSGlobalObject*, JSC::CallFrame*, unsigned classIndex);
+// The same for a `webIDL` class, which also throws if `new.target` is a revoked Proxy.
+template<typename T> JSC::Structure* structureForNewTargetAsWebIDL(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
+{
+    auto structureIn = [](JSC::VM&, Zig::GlobalObject& realm) { return realm.m_bindgenAdditions.m_classes[T::classIndex].get(&realm); };
+    JSC::JSObject* constructor = callFrame->jsCallee();
+    if (callFrame->newTarget() != constructor) [[unlikely]]
+        return WebCore::subclassStructure(globalObject, callFrame, structureIn);
+    return structureIn(JSC::getVM(globalObject), *uncheckedDowncast<Zig::GlobalObject>(constructor->globalObject()));
+}
 
 }

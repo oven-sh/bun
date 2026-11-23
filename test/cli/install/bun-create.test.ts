@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from "bun";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "bun:test";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, jest } from "bun:test";
 import { chmodSync, lstatSync, mkdirSync, readdirSync, statSync, symlinkSync } from "fs";
 import { exists, stat } from "fs/promises";
 import { bunExe, bunEnv as env, githubTarball, isASAN, isPosix, tempDir, tls, tmpdirSync } from "harness";
@@ -205,6 +205,32 @@ it("keeps tarball entry paths within the destination when checking for conflicti
   expect(out).toContain("Success! owner/conflict-check-template loaded into dest");
   expect(await Bun.file(join(x_dir, "outside.txt")).text()).toBe("keep me");
   expect(exitCode).toBe(0);
+});
+
+it.each([
+  ["cut short", (gz: Buffer) => gz.subarray(0, -1)],
+  ["damaged", (gz: Buffer) => gz.fill(0, gz.length - 8)],
+])("extracts nothing from a template tarball that is %s", async (_, spoil) => {
+  const gz = spoil(gzipSync(Buffer.concat([tarEntry("pkg/file.txt", Buffer.from("template")), Buffer.alloc(1024)])));
+  const fetch = jest.fn(() => new Response(gz, { headers: { "content-type": "application/x-gzip" } }));
+  using server = Bun.serve({
+    tls,
+    port: 0,
+    fetch,
+  });
+  const { out, err, exitCode } = await create(
+    x_dir,
+    ["github.com/owner/template", "dest", "--no-install", "--no-git"],
+    {
+      NODE_TLS_REJECT_UNAUTHORIZED: "0",
+      GITHUB_API_DOMAIN: `${server.hostname}:${server.port}`,
+    },
+  );
+  expect(fetch).toHaveBeenCalledTimes(1);
+  expect(err).toContain("error:");
+  expect(out).not.toContain("Success!");
+  expect(readdirSync(x_dir)).toEqual([]);
+  expect(exitCode).toBe(1);
 });
 
 // `\` separates as well, so this entry is `nested.txt` in `sub`.
@@ -843,6 +869,45 @@ describe.concurrent("template given as a path", () => {
     expect(err).toContain(`error: "${name}" is not a template name.`);
     expect(await tree(root)).toEqual(before);
     expect(exitCode).toBe(1);
+  });
+
+  it.each([".\\templates", "<dir>\\templates"])("finds a template in BUN_CREATE_DIR=%s", async value => {
+    using dir = tempDir("create-dir-backslash", { "templates/tmpl/index.js": "hi" });
+    const root = String(dir);
+
+    const { err, exitCode } = await create(root, ["tmpl", "out", "--no-git", "--no-install"], {
+      BUN_CREATE_DIR: value.replace("<dir>", () => root),
+      BUN_CONFIG_REGISTRY: "http://127.0.0.1:1/",
+    });
+
+    expect(err).not.toContain("error:");
+    expect(await tree(join(root, "out"))).toEqual(await tree(join(root, "templates", "tmpl")));
+    expect(exitCode).toBe(0);
+  });
+
+  it.each([
+    ["./group\\tmpl", "bun-create/group/tmpl", ""],
+    ["<dir>/bun-create\\group\\tmpl", "bun-create/group/tmpl", ""],
+    ...(isPosix
+      ? [
+          ["./group\\tmpl", "bun-create/group\\tmpl", ""],
+          ["group\\tmpl", "home/.bun-create/group/tmpl", ".bun-create/group\\tmpl"],
+          ["\\<dir>/tmpl", "tmpl", ""],
+        ]
+      : []),
+  ])("finds the template %s in %s", async (name, folder, planted) => {
+    using dir = tempDir("create-name-backslash", {
+      [`${folder}/index.js`]: "hi",
+      ...(planted ? { [`${planted}/planted.js`]: "" } : {}),
+    });
+    const root = String(dir);
+
+    const args = [name.replace("<dir>", () => root).replace("\\/", "\\"), "o\\ut", "--no-git", "--no-install"];
+    const { err, exitCode } = await create(root, args, { GITHUB_API_DOMAIN: "127.0.0.1:1", HOME: join(root, "home") });
+
+    expect(err).not.toContain("error:");
+    expect(await tree(join(root, "o", "ut"))).toEqual({ "index.js": "hi" });
+    expect(exitCode).toBe(0);
   });
 
   // A path on Windows holds more than a command line.

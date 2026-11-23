@@ -17,36 +17,36 @@ pub struct NoMisusedSpread {
     allow: Vec<TypeOrValueSpecifier>,
 }
 
-const ADD_AWAIT: Message = Message::new("addAwait", "Add await operator.");
-const NO_ARRAY_SPREAD_IN_OBJECT: Message = Message::new(
+const ADD_AWAIT: &Message = &Message::new("addAwait", "Add await operator.");
+const NO_ARRAY_SPREAD_IN_OBJECT: &Message = &Message::new(
     "noArraySpreadInObject",
     "Using the spread operator on an array in an object will result in a list of indices.",
 );
-const NO_CLASS_DECLARATION_SPREAD_IN_OBJECT: Message = Message::new(
+const NO_CLASS_DECLARATION_SPREAD_IN_OBJECT: &Message = &Message::new(
     "noClassDeclarationSpreadInObject",
     "Using the spread operator on class declarations will spread only their static properties, and will lose their class prototype.",
 );
-const NO_CLASS_INSTANCE_SPREAD_IN_OBJECT: Message = Message::new(
+const NO_CLASS_INSTANCE_SPREAD_IN_OBJECT: &Message = &Message::new(
     "noClassInstanceSpreadInObject",
     "Using the spread operator on class instances will lose their class prototype.",
 );
-const NO_FUNCTION_SPREAD_IN_OBJECT: Message = Message::new(
+const NO_FUNCTION_SPREAD_IN_OBJECT: &Message = &Message::new(
     "noFunctionSpreadInObject",
     "Using the spread operator on a function without additional properties can cause unexpected behavior. Did you forget to call the function?",
 );
-const NO_ITERABLE_SPREAD_IN_OBJECT: Message = Message::new(
+const NO_ITERABLE_SPREAD_IN_OBJECT: &Message = &Message::new(
     "noIterableSpreadInObject",
     "Using the spread operator on an Iterable in an object can cause unexpected behavior.",
 );
-const NO_MAP_SPREAD_IN_OBJECT: Message = Message::new(
+const NO_MAP_SPREAD_IN_OBJECT: &Message = &Message::new(
     "noMapSpreadInObject",
     "Using the spread operator on a Map in an object will result in an empty object. Did you mean to use `Object.fromEntries(map)` instead?",
 );
-const NO_PROMISE_SPREAD_IN_OBJECT: Message = Message::new(
+const NO_PROMISE_SPREAD_IN_OBJECT: &Message = &Message::new(
     "noPromiseSpreadInObject",
     "Using the spread operator on Promise in an object can cause unexpected behavior. Did you forget to await the promise?",
 );
-const NO_STRING_SPREAD: Message = Message::new(
+const NO_STRING_SPREAD: &Message = &Message::new(
     "noStringSpread",
     "Using the spread operator on a string can mishandle special characters, as can `.split(\"\")`.\n\
      - `...` produces Unicode code points, which will decompose complex emojis into individual emojis\n\
@@ -54,7 +54,7 @@ const NO_STRING_SPREAD: Message = Message::new(
      Consider using `Intl.Segmenter` for locale-aware string decomposition.\n\
      Otherwise, if you don't need to preserve emojis or other non-Ascii characters, disable this lint rule on this line or configure the 'allow' rule option.",
 );
-const REPLACE_MAP_SPREAD_IN_OBJECT: Message = Message::new(
+const REPLACE_MAP_SPREAD_IN_OBJECT: &Message = &Message::new(
     "replaceMapSpreadInObject",
     "Replace map spread in object with `Object.fromEntries()`",
 );

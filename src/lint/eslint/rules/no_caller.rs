@@ -3,7 +3,7 @@ use bun_lint::prelude::*;
 /// Disallow the use of `arguments.caller` or `arguments.callee`.
 pub struct NoCaller;
 
-const UNEXPECTED: Message = Message::new("unexpected", "Avoid arguments.{{prop}}.");
+const UNEXPECTED: &Message = &Message::new("unexpected", "Avoid arguments.{{prop}}.");
 
 impl Rule for NoCaller {
     const META: Meta = Meta::eslint("no-caller", Kind::Suggestion);

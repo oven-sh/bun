@@ -1,4 +1,4 @@
-use bun_paths::AutoAbsPathChecked;
+use bun_paths::Path;
 
 use crate::isolated_install::installer::{is_link, remove_link};
 use crate::lockfile::Lockfile;
@@ -9,7 +9,7 @@ use crate::resolution::Tag as ResolutionTag;
 /// The linkers only visit the names in the new lockfile, so the link of a workspace that's no
 /// longer in it is removed here.
 pub(crate) fn remove_stale_workspace_links(previous: &Lockfile, current: &Lockfile) {
-    let previous_packages = previous.packages.slice();
+    let previous_packages = &previous.packages;
     let resolutions = previous_packages.items_resolution();
     let name_hashes = previous_packages.items_name_hash();
 
@@ -34,18 +34,17 @@ pub(crate) fn remove_stale_workspace_links(previous: &Lockfile, current: &Lockfi
 
 /// `readlink` only succeeds for a symlink or a junction, so a real directory or file is left alone.
 fn remove_link_in(package_dir: &[u8], name: &[u8]) {
-    let mut path = AutoAbsPathChecked::init_top_level_dir();
-    if path.append(package_dir).is_err()
-        || path.append(b"node_modules").is_err()
-        // Nothing is removed from a `node_modules` that is a symlink. See `LinkedNodeModules`.
-        || is_link(path.slice_z()) == Some(true)
-        || path.append(name).is_err()
-    {
+    let mut path = Path::from_top_level_dir();
+    path.push(package_dir);
+    path.push(b"node_modules");
+    // Nothing is removed from a `node_modules` that is a symlink. See `LinkedNodeModules`.
+    if is_link(&path) == Some(true) {
         return;
     }
+    path.push(name);
 
     let mut link_target = bun_paths::path_buffer_pool::get();
-    if bun_sys::readlink(path.slice_z(), &mut link_target).is_ok() {
-        let _ = remove_link(path.slice_z());
+    if bun_sys::readlink(&path, &mut link_target).is_ok() {
+        let _ = remove_link(&path);
     }
 }

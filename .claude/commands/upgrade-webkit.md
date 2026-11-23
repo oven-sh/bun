@@ -17,9 +17,9 @@ To do that:
 - Preview mode: create a working branch (e.g. `bun/upgrade-to-<upstream-short-sha>`) instead of staying on main
 - git merge upstream/main
 - Fix the merge conflicts (preserve the fork's Bun-specific changes)
-- bun run jsc:build:debug — from the bun repo root, builds just JSC
+- bun run jsc:build:debug — from the bun repo root, builds just JSC (and its `jsc` shell), in bun's own build graph. File lists come from the checkout, but `scripts/build/deps/webkit.ts` restates WebKit's generator commands, compiler flags and option values by hand, and nothing checks them. Read `git diff $OLD_BASE upstream/main -- Source/cmake Source/JavaScriptCore/CMakeLists.txt Source/WTF/wtf/CMakeLists.txt Source/bmalloc/CMakeLists.txt` for changed `add_custom_command`s (→ `gen()`), compiler flags (→ `webkitFlags()`) and `WEBKIT_OPTION_*` / `SET_AND_EXPOSE_TO_BUILD` (→ `rows`), and carry them over in the bun PR
 - While it compiles, in another task review the JSC commits between $OLD_BASE and upstream/main (Source/JavaScriptCore, Source/WTF, Source/bmalloc). Write up a summary in a file called "webkit-changes.md"
-- bun run build:local — full Bun build against the local WebKit (reuses the JSC build above)
+- bun run build:local — full Bun build with the local WebKit (same build directory and objects as the JSC build above)
 - After it compiles, run some code to make sure things work: `bun run build:local -p '42'`
 - Publish the new WebKit:
   - Direct: cd vendor/WebKit, commit, `git push origin main`. The push triggers a release tagged `autobuild-<full-sha>`.
@@ -28,6 +28,7 @@ To do that:
 - cd back to bun and update WEBKIT_VERSION in scripts/build/deps/webkit.ts:
   - Direct: the new vendor/WebKit commit sha
   - Preview: the full preview tag (`autobuild-preview-pr-...`)
+- bun run pin-webkit — writes the sha256 of the release's tarballs to scripts/build/deps/webkit.sha256. Commit it with WEBKIT_VERSION, every time that changes
 - git checkout -b claude/webkit-upgrade-<sha> (branch must start with `claude/` for CI)
 - commit + push (without adding the webkit-changes.md file)
 - create a PR titled "Upgrade WebKit to <upstream-short-sha>", paste webkit-changes.md into the description
@@ -37,5 +38,6 @@ To do that:
 Things to check for a successful upgrade:
 
 - Did Source/JavaScriptCore/runtime/JSType.h change? The enum values must align with Bun's mirror in src/jsc/JSType.rs.
+- Do JavaScriptCore or WTF call ICU in another way (functions, arguments, number skeletons, pattern letters), or did icu/source.json change? src/icu has only what is called: see src/icu/README.md.
 - Were there any changes to the WebCore code generator? If there are C++ compilation errors, check for differences in the generated reference code in vendor/WebKit/Source/WebCore/bindings/scripts/test/JS/
 - If the merge touched the fork's .github/workflows, the release tarball names must still match prebuiltSuffix() in scripts/build/deps/webkit.ts

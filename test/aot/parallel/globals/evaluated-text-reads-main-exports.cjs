@@ -1,0 +1,16 @@
+"use strict";
+const lines = [];
+const tell = (...values) => lines.push(values.map(String).join(" "));
+exports.held = 1;
+exports.fetch = undefined;
+delete exports.fetch;
+tell((() => {}) instanceof Function);
+const Evaluator = Function;
+const readMain = new Evaluator("return Object.keys(process.mainModule.exports).join()");
+const store = Evaluator("value", "process.mainModule.exports.held = value; return typeof process.mainModule.exports.later");
+tell(readMain(), store("by text"), exports.held);
+exports.later = () => exports.held;
+tell(readMain(), store(2.5), exports.later());
+tell((0, eval)("process.mainModule.exports.held"), Reflect.apply(eval, null, ["1 + 1"]));
+tell([Function].map(Made => Made("return this === globalThis")())[0]);
+console.log(lines.join("\n"));

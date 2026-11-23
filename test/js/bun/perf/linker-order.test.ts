@@ -68,6 +68,7 @@ const cfg = (overrides: Partial<Config> = {}) =>
     release: true,
     asan: false,
     valgrind: false,
+    linkerMap: true,
     windows: false,
     freebsd: false,
     canary: true,
@@ -278,6 +279,19 @@ describe("deciding whether a build links with an inherited order file", () => {
 
   it("nothing happens off Buildkite", () => {
     expect(orderFileEligible(cfg(), ctx({ buildkite: false }))).toBe(false);
+  });
+});
+
+describe("a link that --trim can remove features from", () => {
+  const targets = [cfg(), cfg({ abi: "musl" }), cfg(darwinArm64), cfg(windowsX64), cfg(windowsArm64)];
+
+  it("reads no file of an earlier build but the order file", () => {
+    for (const target of targets)
+      expect(linkDepends({ ...target, trimmable: true })).toEqual(linkDepends({ ...target, trimmable: false }));
+  });
+
+  it("still relinks when the order file changes", () => {
+    expect(linkDepends(cfg({ trimmable: true }))).toContain(orderFilePath(cfg()));
   });
 });
 

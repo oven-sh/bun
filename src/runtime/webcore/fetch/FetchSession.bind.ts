@@ -6,11 +6,12 @@ export const FetchSession = b.class({
   rustPath: "crate::webcore::fetch::FetchSession",
   refCounted: true,
   finalize: true,
+  thisValue: "this_value",
   construct: { args: { init: b.any }, ...js, passStructure: true, length: 0 },
   internalFields: ["checkServerIdentity"],
   proto: {
     close: {},
-    fetch: { getter: b.any, cache: true, passThis: true, ...js },
+    fetch: { getter: b.any.returning("object"), cache: true, passThis: true, ...js },
     "@@dispose": { rustName: "close" },
   },
 });

@@ -12,7 +12,7 @@ enum CheckLoops {
     None,
 }
 
-const UNEXPECTED: Message = Message::new("unexpected", "Unexpected constant condition.");
+const UNEXPECTED: &Message = &Message::new("unexpected", "Unexpected constant condition.");
 
 /// True if the generator that contains `statement` can be suspended between `from` and the end of `statement`.
 fn has_yield_from(statement: Stmt, from: u32) -> bool {

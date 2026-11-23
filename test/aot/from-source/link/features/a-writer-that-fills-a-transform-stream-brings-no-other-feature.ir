@@ -1,0 +1,10 @@
+# getWriter(), write() and close() are found by their names; none of their rows prints an operand or makes what nobody knows
+# -- source: a-writer-that-fills-a-transform-stream-brings-no-other-feature.ts
+# Bun.serve({ port: 0, fetch() { const { readable, writable } = new TransformStream(); const writer = writable.getWriter(); writer.write("a").then(() => writer.close()); return new Response(readable); } });
+# -- end of source
+# OPTIONS: exclude=FeaturesNamedAtRunTime,CodeOutsideImage
+# RUN: features
+# CHECK: by TransformStream
+# RUN(NEVER): features
+# NEVER-NOT: feature Interpreter
+# NEVER-NOT: by BunTranspiler

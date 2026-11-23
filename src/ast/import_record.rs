@@ -103,10 +103,23 @@ bitflags::bitflags! {
         /// `IS_UNUSED` for its own reasons (an unused TypeScript import, a macro
         /// import), and those records must never be resolved.
         const IS_BARREL_DEFERRED = 1 << 18;
+
+        /// The bundler's onResolve plugins have this record and have not answered. Only their answer gives it a module.
+        const AT_ON_RESOLVE_PLUGINS = 1 << 19;
+
+        /// The bundler keyed this record's module by (path, loader), not by path alone.
+        const KEYED_BY_LOADER = 1 << 20;
+
+        /// The resolver made the import external. A module of the bundle can have the same path: it is not that module.
+        const IS_EXTERNAL = 1 << 21;
     }
 }
 
 pub type List<'a> = bun_alloc::ArenaVec<'a, ImportRecord<'a>>;
+
+pub const fn is_test_module(path: &[u8]) -> bool {
+    matches!(path, b"bun:test" | b"vitest" | b"@jest/globals")
+}
 
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
@@ -126,13 +139,6 @@ pub enum Tag {
     /// For Bun Kit, if a module in the server graph should actually
     /// crossover to the SSR graph. See bake.Framework.ServerComponents.separate_ssr_graph
     BakeResolveToSsrGraph,
-}
-
-impl Tag {
-    #[inline]
-    pub fn is_internal(self) -> bool {
-        (self as u8) >= (Tag::Runtime as u8)
-    }
 }
 
 // NOTE: no `impl Default for ImportRecord` — `range`, `path`, `kind` have no

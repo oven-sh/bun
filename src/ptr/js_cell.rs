@@ -72,6 +72,12 @@ impl<T> JsCell<T> {
         unsafe { &mut *self.0.get() }
     }
 
+    /// Mutable reference for a caller that borrows the cell exclusively, like `Cell::get_mut`.
+    #[inline(always)]
+    pub fn as_mut(&mut self) -> &mut T {
+        self.0.get_mut()
+    }
+
     /// Closure-scoped mutable access. The `&mut T` cannot escape `f`, so the
     /// only way to violate the aliasing invariant is for `f` itself to
     /// re-enter a path that touches this same cell — which the

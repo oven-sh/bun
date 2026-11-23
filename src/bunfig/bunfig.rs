@@ -15,11 +15,16 @@ use bun_alloc::Arena as Bump;
 use bun_ast::{E, Expr, ExprTag, expr::Data as ExprData};
 use bun_parsers::json as json_parser;
 use bun_parsers::toml::TOML;
+use bun_paths::from_portable;
+use bun_paths::portable::from_portable_specifier;
 
 use bun_install_types::NodeLinker::FromExprError;
 use bun_options_types::LoaderExt as _;
 use bun_options_types::code_coverage_options::Reporters as CoverageReporters;
-use bun_options_types::context::{MacroImportReplacementMap, MacroMap, MacroOptions};
+use bun_options_types::context::{
+    MacroImportReplacementMap, MacroMap, MacroOptions, RESETS_BEFORE_EACH_TEST, ReactCompilerScope,
+    TestEnvironment, TestGlobals,
+};
 use bun_options_types::global_cache::GlobalCache;
 use bun_options_types::offline_mode::PREFER as OFFLINE_PREFER;
 use bun_options_types::schema::api;
@@ -34,6 +39,17 @@ pub(crate) struct Bunfig;
 #[inline]
 fn estring_to_owned(s: &E::EString, bump: &Bump) -> Box<[u8]> {
     Box::<[u8]>::from(s.string(bump).expect("OOM"))
+}
+
+fn estring_to_path(s: &E::EString, bump: &Bump) -> Box<[u8]> {
+    from_portable(s.string(bump).expect("OOM")).into()
+}
+
+fn estring_to_specifier(s: &E::EString, bump: &Bump) -> Box<[u8]> {
+    let text = s.string(bump).expect("OOM");
+    let query = bun_core::strings::index_of_char_usize(text, b'?').unwrap_or(text.len());
+    let (path, query) = text.split_at(query);
+    [&from_portable_specifier(path), query].concat().into()
 }
 
 /// Macro-remap parsing (the `PackageJSON.parseMacrosJSON` shape),
@@ -105,7 +121,7 @@ fn parse_macros_json(
                 continue;
             };
             let remap_value_str = match &remap_value.data {
-                ExprData::EString(s) if s.len() > 0 => estring_to_owned(s, bump),
+                ExprData::EString(s) if s.len() > 0 => estring_to_specifier(s, bump),
                 _ => {
                     log.add_warning_fmt(
                         Some(json_source),
@@ -169,6 +185,28 @@ pub(crate) enum Counts {
 }
 
 impl<'a> Parser<'a, '_> {
+    /// A string or an array of strings.
+    fn strings(&mut self, expr: &Expr, error: &'static [u8]) -> crate::Result<Vec<Box<[u8]>>> {
+        match &expr.data {
+            ExprData::EString(s) => Ok(vec![estring_to_owned(s, self.bump)]),
+            ExprData::EArray(array) => {
+                let mut strings = Vec::with_capacity(array.items.slice().len());
+                for item in array.items.slice() {
+                    let ExprData::EString(s) = &item.data else {
+                        self.add_error(item.loc, error)?;
+                        unreachable!();
+                    };
+                    strings.push(estring_to_owned(s, self.bump));
+                }
+                Ok(strings)
+            }
+            _ => {
+                self.add_error(expr.loc, error)?;
+                unreachable!();
+            }
+        }
+    }
+
     fn add_error(&mut self, loc: bun_ast::Loc, text: &'static [u8]) -> crate::Result<()> {
         self.log.add_error_opts(
             text,
@@ -268,7 +306,7 @@ impl<'a> Parser<'a, '_> {
                     self.expect_string(item)?;
                     if let ExprData::EString(s) = &item.data {
                         if s.len() > 0 {
-                            preloads.push(estring_to_owned(s, self.bump));
+                            preloads.push(estring_to_specifier(s, self.bump));
                         }
                     }
                 }
@@ -276,7 +314,7 @@ impl<'a> Parser<'a, '_> {
             }
             ExprData::EString(s) => {
                 if s.len() > 0 {
-                    self.ctx.preloads = vec![estring_to_owned(s, self.bump)];
+                    self.ctx.preloads = vec![estring_to_specifier(s, self.bump)];
                 }
             }
             ExprData::ENull(_) => {}
@@ -450,7 +488,8 @@ impl<'a> Parser<'a, '_> {
         if cmd == CommandTag::TestCommand {
             if let Some(test) = json.get(b"test") {
                 if let Some(root) = test.get(b"root") {
-                    self.ctx.debug.test_directory = root.as_string(self.bump).unwrap_or(b"").into();
+                    self.ctx.debug.test_directory =
+                        from_portable(root.as_string(self.bump).unwrap_or(b"")).into();
                 }
 
                 if let Some(expr) = test.get(b"preload") {
@@ -461,6 +500,79 @@ impl<'a> Parser<'a, '_> {
                     self.expect(&expr, ExprTag::EBoolean)?;
                     self.ctx.runtime_options.smol =
                         expr.as_bool().expect("infallible: type checked");
+                }
+
+                if let Some(expr) = test.get(b"environment") {
+                    self.expect_string(&expr)?;
+                    let name = expr.as_string(self.bump).unwrap_or(b"");
+                    let Some(environment) = TestEnvironment::from_name(name) else {
+                        return self.add_error_format(
+                            expr.loc,
+                            format_args!(
+                                "expected \"environment\" to be \"node\", \"jsdom\" or \"happy-dom\" but received \"{}\"",
+                                bstr::BStr::new(name)
+                            ),
+                        );
+                    };
+                    // --environment is parsed first and wins.
+                    if self.ctx.test_options.environment.is_none() {
+                        self.ctx.test_options.environment = Some(environment);
+                    }
+                }
+
+                // Vitest's `globals` is a boolean, and Bun always defines the globals.
+                if let Some(expr) = test.get(b"globals")
+                    && !matches!(expr.data, ExprData::EBoolean(_))
+                {
+                    self.expect_string(&expr)?;
+                    let name = expr.as_string(self.bump).unwrap_or(b"");
+                    let Some(globals) = TestGlobals::from_name(name) else {
+                        return self.add_error_format(
+                            expr.loc,
+                            format_args!(
+                                "expected \"globals\" to be \"bun\" or \"vitest\" but received \"{}\"",
+                                bstr::BStr::new(name)
+                            ),
+                        );
+                    };
+                    // --globals is parsed first and wins.
+                    if self.ctx.test_options.globals.is_none() {
+                        self.ctx.test_options.globals = Some(globals);
+                    }
+                }
+
+                if let Some(expr) = test.get(b"reactCompiler") {
+                    let mut scope = ReactCompilerScope::default();
+                    match &expr.data {
+                        // --react-compiler is parsed first and wins.
+                        ExprData::EBoolean(enabled) => {
+                            if enabled.value && self.ctx.test_options.react_compiler.is_none() {
+                                self.ctx.test_options.react_compiler = Some(scope);
+                            }
+                        }
+                        ExprData::EObject(_) => {
+                            if let Some(include) = expr.get(b"include") {
+                                scope.include = self.strings(
+                                    &include,
+                                    b"reactCompiler.include must be a string or array of strings",
+                                )?;
+                            }
+                            if let Some(exclude) = expr.get(b"exclude") {
+                                scope.exclude = self.strings(
+                                    &exclude,
+                                    b"reactCompiler.exclude must be a string or array of strings",
+                                )?;
+                            }
+                            self.ctx.test_options.react_compiler = Some(scope);
+                        }
+                        _ => {
+                            scope.include = self.strings(
+                                &expr,
+                                b"reactCompiler must be a boolean, an array of folders, or a table with \"include\" and \"exclude\"",
+                            )?;
+                            self.ctx.test_options.react_compiler = Some(scope);
+                        }
+                    }
                 }
 
                 if let Some(expr) = test.get(b"coverage") {
@@ -483,9 +595,29 @@ impl<'a> Parser<'a, '_> {
                             if s.len() > 0 {
                                 self.ctx.test_options.reporters.junit = true;
                                 self.ctx.test_options.reporter_outfile =
-                                    Some(estring_to_owned(s, self.bump));
+                                    Some(estring_to_path(s, self.bump));
                             }
                         }
+                    }
+                    if let Some(suites_expr) = expr.get(b"junitSuites") {
+                        self.expect_string(&suites_expr)?;
+                        let name = suites_expr.as_string(self.bump).unwrap_or(b"");
+                        let Some(suites) = bun_options_types::context::JunitSuites::from_name(name)
+                        else {
+                            return self.add_error_format(
+                                suites_expr.loc,
+                                format_args!(
+                                    "expected \"junitSuites\" to be \"nested\" or \"flat\" but received \"{}\"",
+                                    bstr::BStr::new(name)
+                                ),
+                            );
+                        };
+                        // --reporter-junit-suites is parsed first and wins.
+                        self.ctx
+                            .test_options
+                            .reporters
+                            .junit_suites
+                            .get_or_insert(suites);
                     }
                     if let Some(dots_expr) = expr.get(b"dots").or_else(|| expr.get(b"dot")) {
                         self.expect(&dots_expr, ExprTag::EBoolean)?;
@@ -517,7 +649,7 @@ impl<'a> Parser<'a, '_> {
 
                 if let Some(expr) = test.get(b"coverageDir") {
                     self.expect_string(&expr)?;
-                    self.ctx.test_options.coverage.reports_directory = estring_to_owned(
+                    self.ctx.test_options.coverage.reports_directory = estring_to_path(
                         expr.data
                             .e_string()
                             .expect("infallible: variant checked")
@@ -570,6 +702,13 @@ impl<'a> Parser<'a, '_> {
                     self.expect(&expr, ExprTag::EBoolean)?;
                     self.ctx.test_options.coverage.skip_test_files =
                         expr.as_bool().expect("infallible: type checked");
+                }
+
+                for (index, name) in RESETS_BEFORE_EACH_TEST.iter().enumerate() {
+                    if let Some(expr) = test.get(name.as_bytes()) {
+                        self.expect(&expr, ExprTag::EBoolean)?;
+                        self.ctx.test_options.resets_before_each_test[index] = expr.as_bool();
+                    }
                 }
 
                 let mut randomize_from_config: Option<bool> = None;
@@ -906,12 +1045,13 @@ impl<'a> Parser<'a, '_> {
 
         if let Some(_bun) = json.get(b"bundle") {
             if cmd == CommandTag::BuildCommand
+                || cmd == CommandTag::CompileCommand
                 || cmd == CommandTag::RunCommand
                 || cmd == CommandTag::AutoCommand
             {
                 if let Some(dir) = _bun.get(b"outdir") {
                     self.expect_string(&dir)?;
-                    self.ctx.args.output_dir = Some(estring_to_owned(
+                    self.ctx.args.output_dir = Some(estring_to_path(
                         dir.data
                             .e_string()
                             .expect("infallible: variant checked")
@@ -921,7 +1061,7 @@ impl<'a> Parser<'a, '_> {
                 }
             }
 
-            if cmd == CommandTag::BuildCommand {
+            if matches!(cmd, CommandTag::BuildCommand | CommandTag::CompileCommand) {
                 if let Some(expr2) = _bun.get(b"logLevel") {
                     self.load_log_level(&expr2)?;
                 }
@@ -1027,7 +1167,7 @@ impl<'a> Parser<'a, '_> {
         }
         if let Some(expr) = json.get(b"jsxImportSource") {
             if let Some(value) = expr.as_string(self.bump) {
-                jsx_import_source = Box::<[u8]>::from(value);
+                jsx_import_source = from_portable_specifier(value).into();
             }
         }
         if let Some(expr) = json.get(b"jsxFragment") {
@@ -1327,7 +1467,7 @@ impl<'a> Parser<'a, '_> {
     /// Resolves a relative path in `[install]` against the directory that contains the bunfig.toml.
     fn install_path(&self, path: &[u8]) -> Box<[u8]> {
         let dir = bun_paths::dirname(self.source.path.text).unwrap_or_default();
-        api::BunInstall::resolve_path(dir, path)
+        api::BunInstall::resolve_path(dir, &from_portable(path))
     }
 
     fn parse_install(&mut self, install_obj: &Expr) -> crate::Result<()> {
@@ -1560,14 +1700,15 @@ impl<'a> Parser<'a, '_> {
             if let ExprData::EObject(_) = security_obj.data {
                 if let Some(scanner) = security_obj.get(b"scanner") {
                     self.expect_string(&scanner)?;
-                    install.security_scanner = scanner.as_string(self.bump).map(|name| {
+                    install.security_scanner = scanner.data.e_string().map(|name| {
                         // The scanner process runs in the project directory, so a relative path
                         // from the project's own bunfig.toml already resolves correctly.
-                        if self.is_project_file || bun_paths::is_package_path(name) {
-                            return name.into();
+                        let name = estring_to_specifier(name.get(), self.bump);
+                        if self.is_project_file || bun_paths::is_package_path(&name) {
+                            return name;
                         }
-                        let mut path = self.install_path(name);
-                        bun_paths::resolve_path::platform_to_posix_in_place(&mut path[..]);
+                        let mut path = self.install_path(&name);
+                        bun_paths::to_portable_in_place(&mut path[..]);
                         path
                     });
                 }
@@ -1677,7 +1818,7 @@ impl<'a> Parser<'a, '_> {
                     let mut plugins: Vec<Box<[u8]>> = Vec::with_capacity(raw.len());
                     for p in raw {
                         self.expect_string(p)?;
-                        plugins.push(estring_to_owned(
+                        plugins.push(estring_to_specifier(
                             p.data
                                 .e_string()
                                 .expect("infallible: variant checked")
@@ -1692,7 +1833,7 @@ impl<'a> Parser<'a, '_> {
                         .data
                         .e_string()
                         .expect("infallible: variant checked");
-                    break 'plugins Some(vec![estring_to_owned(s.get(), self.bump)]);
+                    break 'plugins Some(vec![estring_to_specifier(s.get(), self.bump)]);
                 }
             };
             // TODO: accept entire config object.

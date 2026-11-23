@@ -1,21 +1,20 @@
 use super::any_mysql_error::Error as AnyMySQLError;
-use super::stack_reader::PacketReader;
-use crate::shared::Data;
+use super::packet_reader::PacketReader;
 
-pub struct ErrorPacket {
-    pub header: u8,
+pub struct ErrorPacket<'a> {
+    pub(crate) header: u8,
     pub error_code: u16,
     pub sql_state: Option<[u8; 5]>,
-    pub error_message: Data,
+    pub error_message: &'a [u8],
 }
 
-impl Default for ErrorPacket {
+impl Default for ErrorPacket<'_> {
     fn default() -> Self {
         Self {
             header: 0xff,
             error_code: 0,
             sql_state: None,
-            error_message: Data::empty(),
+            error_message: b"",
         }
     }
 }
@@ -30,8 +29,11 @@ pub struct MySQLErrorOptions {
 
 // `createMySQLError` lives in bun_sql_jsc::mysql::protocol::error_packet_jsc — *_jsc alias deleted.
 
-impl ErrorPacket {
-    pub fn decode_internal(&mut self, reader: PacketReader<'_>) -> Result<(), AnyMySQLError> {
+impl<'a> ErrorPacket<'a> {
+    pub(crate) fn decode_internal(
+        &mut self,
+        reader: PacketReader<'a>,
+    ) -> Result<(), AnyMySQLError> {
         self.header = reader.int::<u8>()?;
         if self.header != 0xff {
             return Err(AnyMySQLError::InvalidErrorPacket);
@@ -43,12 +45,7 @@ impl ErrorPacket {
         let next_byte = reader.int::<u8>()?;
         if next_byte == b'#' {
             let sql_state_data = reader.read(5)?;
-            // `defer sql_state_data.deinit()` — Drop handles it.
-            self.sql_state = Some(
-                sql_state_data.slice()[0..5]
-                    .try_into()
-                    .expect("unreachable"),
-            );
+            self.sql_state = Some(sql_state_data[0..5].try_into().expect("unreachable"));
         } else {
             // No SQL state, rewind one byte
             reader.skip(-1);

@@ -1,0 +1,13 @@
+"use strict";
+const names = () => Array.from(module.children, (child) => child.exports).join();
+const list = module.children;
+let inside = false, entered = 0;
+list.indexOf = function (child) { entered++; if (!inside) { inside = true; void module.children; inside = false; } return Array.prototype.indexOf.call(this, child); };
+require("./a.cjs");
+console.log("SAID", "behind a", names());
+require("./b.cjs");
+console.log("SAID", "behind b", names());
+delete list.indexOf;
+require("./c.cjs");
+console.log("SAID", "behind c", names());
+console.log("NOTE", "entered", entered);

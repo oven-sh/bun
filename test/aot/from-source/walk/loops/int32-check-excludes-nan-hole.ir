@@ -1,0 +1,16 @@
+# -- source: main.cjs
+# "use strict";
+# const told = [];
+# function turn(rows, at, sine, cosine) { let held; for (let k = 0; k < rows.length; k++) { held = rows[k][at + 1]; rows[k][at + 1] = sine * rows[k][at] + cosine * held; rows[k + 1][at] = cosine * rows[k][at] - sine * held; told.push(held | 0); } }
+# const rows = JSON.parse("[[0.5,1.5,2.5],[3.5,4.5,5.5],[6.5,7.5,8.5]]");
+# try { turn(rows, 0, 0.6, 0.8); } catch { }
+# print(rows.join(";"), told.join());
+# -- end of source
+# f1 = turn. The program only does arithmetic on `held`, so the version of its read that finds an array of doubles returns NaN for a hole. After the two products the versions have merged in a block parameter,
+# and `held | 0` checks whether it is an int32. A value that passes is used as it is by the push that ends the block. The verifier traced that value back through the narrowed value to the read, and a correct build stopped.
+# NaN and undefined both fail the check, so no hole takes that edge. (`walk` verifies what it prints.)
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = GetArrayElement {{*}}readsHoleAsNaN
+# CHECK: = TypeTest {{*}}testedType=i32
+# CHECK: TryCallInline {{*}}inlineBuiltin=ArrayPush

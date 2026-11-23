@@ -6,6 +6,7 @@ import {
   chmodSync,
   copyFileSync,
   existsSync,
+  linkSync,
   lstatSync,
   lutimesSync,
   mkdirSync,
@@ -92,7 +93,7 @@ describe.concurrent("auto-install", () => {
   test("symlinks (and junctions) are created correctly in the install cache", async () => {
     const { packageDir, env } = await setupTest();
     const { stdout, stderr, exited } = spawn({
-      cmd: [bunExe(), "--print", "require('is-number')"],
+      cmd: [bunExe(), "--install=fallback", "--print", "require('is-number')"],
       cwd: packageDir,
       stdout: "pipe",
       stderr: "pipe",
@@ -5143,6 +5144,7 @@ describe.concurrent("binaries", () => {
     test.each([
       ["package directory", "has-bin", join("node_modules", "has-bin")],
       [".bin directory", "a", join("node_modules", ".bin")],
+      ["link in .bin", "a", join("node_modules", ".bin", "a")],
     ])("install reports a %s that does not fit as ENAMETOOLONG", async (_, name, subpath) => {
       const { packageDir, env } = await setupTest();
       await writeBinPackage(packageDir, name);
@@ -5545,6 +5547,38 @@ describe.concurrent("binaries", () => {
       } finally {
         await shortenBinChain(pkgDir, chain);
       }
+    });
+
+    // On POSIX a `\` is part of a directory name, so it adds no `..` to the link. With one `..`
+    // for each `a` below, the link target is longer than the path buffer.
+    test.skipIf(isWindows)("bun link into a bin directory with backslashes in its names", async () => {
+      const { packageDir, env, run } = await setupLongBinTest();
+      const pkgDir = join(packageDir, "backslash-bin");
+      // A name is 255 bytes at most: 128 times `a`.
+      const names: string[] = [];
+      for (let count = Math.ceil(maxPathBytes / 3); count > 0; count -= 128) {
+        names.push(Array(Math.min(count, 128)).fill("a").join("\\"));
+      }
+      const binDir = join(packageDir, "bin", ...names);
+      await Promise.all([
+        mkdir(binDir, { recursive: true }),
+        write(join(pkgDir, "package.json"), JSON.stringify({ name: "backslash-bin", version: "1.0.0", bin: "cli.js" })),
+        write(join(pkgDir, "cli.js"), script("backslash-bin")),
+      ]);
+
+      const { out, err, exitCode } = await run(["link"], {
+        cwd: pkgDir,
+        env: { ...env, BUN_INSTALL: join(packageDir, "global"), BUN_INSTALL_BIN: binDir },
+      });
+      expect(err).not.toContain("error:");
+      expect(out).toContain('Success! Registered "backslash-bin"');
+      expect(exitCode).toBe(0);
+      const bin = join(binDir, "backslash-bin");
+      // One `..` for each directory, and one for `bin`.
+      expect(bin).toBeValidBin(
+        join(...names.map(() => ".."), "..", "global", "install", "global", "node_modules", "backslash-bin", "cli.js"),
+      );
+      expect(await file(bin).text()).toBe(script("backslash-bin"));
     });
 
     test("bun link and bun unlink", async () => {
@@ -13748,6 +13782,56 @@ describe.concurrent("windows bin linking shim should work", async () => {
       target: "bunx-bins\\bin-bun.ts",
       isAbsoluteTarget: false,
       versionBits: BUNX_VERSION_BITS,
+    });
+  });
+
+  test("a .bunx file with an odd number of bytes is corrupt", async () => {
+    const binDir = join(packageDir, "node_modules", ".bin");
+    using dir = tempDir("odd-bunx", {
+      "odd.exe": readFileSync(join(binDir, "native.exe")),
+      "odd.bunx": Buffer.concat([Buffer.from("a"), readFileSync(join(binDir, "native.bunx"))]),
+    });
+
+    await using proc = spawn({
+      cmd: [join(String(dir), "odd.exe"), "中"],
+      stdout: "pipe",
+      stderr: "pipe",
+      env: shimEnv,
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(err).toStartWith("error: bin metadata is corrupt (validate)");
+    expect(out).toBe("");
+    expect(exitCode).toBe(255);
+  });
+
+  const onlyBunDir = join(packageDir, "only-bun");
+  mkdirSync(onlyBunDir);
+  linkSync(join(temp_bin_dir, "a.exe"), join(onlyBunDir, "bun.exe"));
+  async function runWithOnlyBunInPath(bin: string) {
+    await using proc = spawn({
+      cmd: [join(packageDir, "node_modules", ".bin", bin + ".exe"), "arg1", "arg2"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: mergeWindowEnvs([bunEnv, { PATH: onlyBunDir }]),
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { out: out.trim(), firstErrorLine: err.split("\n")[0], exitCode };
+  }
+
+  test("a missing interpreter is named", async () => {
+    expect(await runWithOnlyBunInPath("bin3")).toEqual({
+      out: "",
+      firstErrorLine: 'error: interpreter executable "aaa" not found in %PATH%',
+      exitCode: 255,
+    });
+  });
+
+  test("bun runs the bin if node is missing", async () => {
+    expect(await runWithOnlyBunInPath("bin-node")).toEqual({
+      out: "i am bin-node arg1 arg2",
+      firstErrorLine: "",
+      exitCode: 0,
     });
   });
 

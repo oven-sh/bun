@@ -182,11 +182,7 @@ void InspectorTestReporterAgent::reportTestFound(int testId, const String& name,
 
             // Sometimes, the sourceURL is empty.
             // For example, pages in Next.js.
-            if (sourceURLForFrame.isEmpty()) {
-                auto* codeBlock = visitor->codeBlock();
-                ASSERT(codeBlock);
-
-                // hasLineAndColumnInfo() checks codeBlock(), so this is safe to access here.
+            if (auto* codeBlock = sourceURLForFrame.isEmpty() ? visitor->codeBlock() : nullptr) {
                 const auto& source = codeBlock->source();
 
                 // source.isNull() is true when the SourceProvider is a null pointer.
@@ -208,13 +204,12 @@ void InspectorTestReporterAgent::reportTestFound(int testId, const String& name,
         OrdinalNumber originalLine = OrdinalNumber::fromOneBasedInt(lineColumn.line);
         OrdinalNumber originalColumn = OrdinalNumber::fromOneBasedInt(lineColumn.column);
 
-        Bun::OwnedZigStackFrames remappedFrames(1);
-        ZigStackFrame& remappedFrame = remappedFrames[0];
+        ZigStackFrame remappedFrame;
         remappedFrame.position.line_zero_based = originalLine.zeroBasedInt();
         remappedFrame.position.column_zero_based = originalColumn.zeroBasedInt();
         remappedFrame.source_url = Bun::toStringRef(sourceURL);
 
-        remappedFrames.remap(Bun::vm(globalObject));
+        Bun__remapStackFramePositions(Bun::vm(globalObject), &remappedFrame, 1);
 
         sourceURL = remappedFrame.source_url.toWTFString();
         lineColumn.line = OrdinalNumber::fromZeroBasedInt(remappedFrame.position.line_zero_based).oneBasedInt();

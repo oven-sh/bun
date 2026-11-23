@@ -237,6 +237,38 @@ test("error.stack throwing an error doesn't lead to a crash", () => {
   }).toThrow();
 });
 
+// Once script has read error.stack, the frames are read back from that text.
+test("a folder named in parentheses, in the stack of an error whose stack was read", async () => {
+  using dir = tempDir("inspect-error-parentheses", {
+    "(group)/throws.js": `throw new Error("at the top level");`,
+    "(group)/fails.js": `export function fails() { throw new Error("in a function"); }`,
+    "index.js": `
+      for (const run of [() => import("./(group)/throws.js"), async () => (await import("./(group)/fails.js")).fails()]) {
+        try {
+          await run();
+        } catch (error) {
+          void error.stack;
+          console.log(Bun.inspect(error).split("\\n").find(line => /^\\s+at /.test(line)).trim());
+        }
+      }
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout.replaceAll("\\", "/").replaceAll(String(dir).replaceAll("\\", "/"), "[dir]").split("\n")).toEqual([
+    "at [dir]/(group)/throws.js:1:11",
+    "at fails ([dir]/(group)/fails.js:1:37)",
+    "",
+  ]);
+  expect(exitCode).toBe(0);
+});
+
 test("an uncaught error whose message getter throws exits with code 1", async () => {
   await using proc = Bun.spawn({
     cmd: [
@@ -674,5 +706,39 @@ code();`;
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stdout).toBe("");
   expect(stderr).toMatch(/error: boom\n +at code \(.*:3:9\)\n/);
+  expect(exitCode).toBe(1);
+});
+
+test("a long source line that is cut inside a character is printed as valid UTF-8", async () => {
+  const text = Buffer.alloc(1600, "é").toString();
+  // The two lines are one byte apart, so one of them has a character across the cut.
+  using dir = tempDir("inspect-error-long-line", { "index.js": `//${text}\n// ${text}\nthrow new Error("boom");` });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.js"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.bytes(), proc.exited]);
+  expect(new TextDecoder("utf-8", { fatal: true }).decode(stderr)).toContain("error: boom");
+  expect(exitCode).toBe(1);
+});
+
+test.concurrent.each(["relative", "rooted"])("a %s source with backslashes in an external map", async kind => {
+  using dir = tempDir("inspect-error-source-backslashes", {
+    "src/o.ts": '// original\nthrow new Error("from the source");\n',
+    "out/o.js": '// @bun\nthrow new Error("x");\n//# sourceMappingURL=o.js.map\n',
+  });
+  const original = `${dir}/src/o.ts`.replaceAll("\\", "/");
+  const source = (kind === "relative" ? "../src/o.ts" : original.replace(/^[a-z]:/i, "")).replaceAll("/", "\\");
+  const map = { version: 3, sources: [source], sourcesContent: [null], names: [], mappings: ";AACA,MAAM" };
+  await Bun.write(`${dir}/out/o.js.map`, JSON.stringify(map));
+
+  await using proc = Bun.spawn({ cmd: [bunExe(), "out/o.js"], cwd: String(dir), env: bunEnv, stderr: "pipe" });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toContain('2 | throw new Error("from the source");');
+  expect(stderr.replaceAll("\\", "/")).toContain(`at ${original}:2:7`);
   expect(exitCode).toBe(1);
 });

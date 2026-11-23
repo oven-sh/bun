@@ -1,0 +1,24 @@
+# -- source: main.js
+# function sum(a, i) { return i === a.length ? 0 : a[i] + sum(a, i + 1); }
+# function root(i) { return order[i] === i ? i : root(order[i]); }
+# function fill(n) { const made = []; for (let i = 0; i < n; ++i) made.push(i >> 1); return made; }
+# const order = fill(4);
+# print(sum([1, 2, 3], 0), sum([4, , 6], 0), sum([], 0), root(3), root(0));
+# -- end of source
+# LIBRARY: own
+# Where Link sees nothing but integers in an array, a function that calls itself guards its storage, whoever declares it: an array that arrives, and one that a variable of the module holds.
+# RUN: walk f1 mechanisms=all
+# CHECK: code f1:Body
+# CHECK: IsPristine v0 builtinClass=Array
+# CHECK: HasArrayStorage {{*}} arrayStorage=Int32
+# CHECK: IsElementPresent {{*}} arrayStorage=Int32
+# CHECK: GetArrayElement {{*}} arrayStorage=Int32 level=Proven [keyIsIntegral, isPresent]
+# CHECK: GetArrayElement {{*}} mayHaveNumberNames
+# RUN(ROOT): walk f2 mechanisms=all
+# ROOT: code f2:Body
+# ROOT: GetModuleVariable
+# ROOT: HasArrayStorage {{*}} arrayStorage=Int32
+# ROOT: IsElementPresent {{*}} arrayStorage=Int32
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 6 NaN 0 0 0
+# ANSWERS-NEXT: exited with 0

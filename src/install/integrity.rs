@@ -18,9 +18,7 @@ pub struct Integrity {
     /// We transform it though.
     pub value: [u8; DIGEST_BUF_LEN],
 }
-// SAFETY: `#[repr(C)]` with a `#[repr(transparent)] u8` tag + `[u8; 64]` →
-// size 65, align 1, no padding bytes, `Copy + 'static`. Every byte initialized.
-unsafe impl bytemuck::NoUninit for Integrity {}
+bun_core::impl_no_uninit!(Integrity);
 
 impl Default for Integrity {
     fn default() -> Self {
@@ -171,16 +169,12 @@ impl Integrity {
     pub(crate) fn for_bytes(bytes: &[u8]) -> Integrity {
         const LEN: usize = SHA512_DIGEST_LEN;
         let mut value: [u8; DIGEST_BUF_LEN] = EMPTY_DIGEST_BUF;
-        // SAFETY: engine is null (default).
-        unsafe {
-            Crypto::SHA512::hash(
-                bytes,
-                (&mut value[0..LEN])
-                    .try_into()
-                    .expect("infallible: size matches"),
-                core::ptr::null_mut(),
-            )
-        };
+        Crypto::SHA512::hash(
+            bytes,
+            (&mut value[0..LEN])
+                .try_into()
+                .expect("infallible: size matches"),
+        );
         Integrity {
             tag: Tag::SHA512,
             value,
@@ -206,36 +200,32 @@ impl Integrity {
                 let ptr: &mut [u8; LEN] = (&mut digest[0..LEN])
                     .try_into()
                     .expect("infallible: size matches");
-                // SAFETY: engine is null (default).
-                unsafe { Crypto::SHA1::hash(bytes, ptr, core::ptr::null_mut()) };
-                strings::eql_long(ptr, &sum[0..LEN], true)
+                Crypto::SHA1::hash(bytes, ptr);
+                strings::eql_long(ptr, &sum[0..LEN])
             }
             Tag::SHA512 => {
                 const LEN: usize = SHA512_DIGEST_LEN;
                 let ptr: &mut [u8; LEN] = (&mut digest[0..LEN])
                     .try_into()
                     .expect("infallible: size matches");
-                // SAFETY: engine is null (default).
-                unsafe { Crypto::SHA512::hash(bytes, ptr, core::ptr::null_mut()) };
-                strings::eql_long(ptr, &sum[0..LEN], true)
+                Crypto::SHA512::hash(bytes, ptr);
+                strings::eql_long(ptr, &sum[0..LEN])
             }
             Tag::SHA256 => {
                 const LEN: usize = SHA256_DIGEST_LEN;
                 let ptr: &mut [u8; LEN] = (&mut digest[0..LEN])
                     .try_into()
                     .expect("infallible: size matches");
-                // SAFETY: engine is null (default).
-                unsafe { Crypto::SHA256::hash(bytes, ptr, core::ptr::null_mut()) };
-                strings::eql_long(ptr, &sum[0..LEN], true)
+                Crypto::SHA256::hash(bytes, ptr);
+                strings::eql_long(ptr, &sum[0..LEN])
             }
             Tag::SHA384 => {
                 const LEN: usize = SHA384_DIGEST_LEN;
                 let ptr: &mut [u8; LEN] = (&mut digest[0..LEN])
                     .try_into()
                     .expect("infallible: size matches");
-                // SAFETY: engine is null (default).
-                unsafe { Crypto::SHA384::hash(bytes, ptr, core::ptr::null_mut()) };
-                strings::eql_long(ptr, &sum[0..LEN], true)
+                Crypto::SHA384::hash(bytes, ptr);
+                strings::eql_long(ptr, &sum[0..LEN])
             }
             _ => false,
         }
@@ -272,9 +262,6 @@ impl fmt::Display for Integrity {
 #[repr(transparent)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Tag(pub u8);
-// SAFETY: `#[repr(transparent)]` newtype over `u8` — same layout as `u8`,
-// no padding, `Copy + 'static`.
-unsafe impl bytemuck::NoUninit for Tag {}
 
 impl Tag {
     pub(crate) const UNKNOWN: Tag = Tag(0);
@@ -452,7 +439,7 @@ impl Streaming {
             return false;
         }
         let len = self.expected.tag.digest_len();
-        strings::eql_long(&computed.value[0..len], &self.expected.value[0..len], true)
+        strings::eql_long(&computed.value[0..len], &self.expected.value[0..len])
     }
 }
 

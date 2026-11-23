@@ -19,24 +19,14 @@ namespace Bun {
 
 extern "C" SYSV_ABI JSC::EncodedJSValue Bun__JSRequest__createForBake(Zig::GlobalObject* globalObject, void* requestPtr)
 {
-    auto& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
     auto* structure = globalObject->m_JSBunRequestStructure.get(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-
     auto* paramsPrototype = globalObject->m_JSBunRequestParamsPrototype.get(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
 
     // the params are passed into the page component as a prop so we'll make
     // this empty for now
     auto* emptyParams = JSC::constructEmptyObject(globalObject, paramsPrototype);
-    RETURN_IF_EXCEPTION(scope, {});
 
-    JSBunRequest* request
-        = JSBunRequest::create(vm, structure, requestPtr, emptyParams);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    return JSValue::encode(request);
+    return JSValue::encode(JSBunRequest::create(globalObject->vm(), structure, requestPtr, emptyParams));
 }
 
 static JSC_DECLARE_CUSTOM_GETTER(jsJSBunRequestGetParams);
@@ -92,7 +82,7 @@ JSObject* JSBunRequest::cookies() const
 }
 
 extern "C" void* Request__clone(void* internalZigRequestPointer, JSGlobalObject* globalObject);
-extern "C" void Request__syncClonedBodyStreamCaches(void* self, JSGlobalObject* globalObject, EncodedJSValue thisValue, void* cloned, EncodedJSValue jsWrapper);
+extern "C" void Request__syncClonedBodyStreamCaches(void* self, JSGlobalObject* globalObject, EncodedJSValue thisValue, void* cloned, JSBunRequest* jsWrapper);
 
 JSBunRequest* JSBunRequest::clone(JSC::VM& vm, JSGlobalObject* globalObject)
 {
@@ -103,7 +93,7 @@ JSBunRequest* JSBunRequest::clone(JSC::VM& vm, JSGlobalObject* globalObject)
     EXCEPTION_ASSERT(!!raw == !throwScope.exception());
     RETURN_IF_EXCEPTION(throwScope, nullptr);
     auto* clone = this->create(vm, structure, raw, nullptr);
-    Request__syncClonedBodyStreamCaches(this->wrapped(), globalObject, JSValue::encode(this), clone->wrapped(), JSValue::encode(clone));
+    Request__syncClonedBodyStreamCaches(this->wrapped(), globalObject, JSValue::encode(this), clone->wrapped(), clone);
 
     // Cookies and params are deep copied as they can be changed between the clone and original
     if (auto* params = this->params()) {
@@ -229,6 +219,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsJSBunRequestGetParams, (JSC::JSGlobalObject * globalO
 
 JSC_DEFINE_CUSTOM_GETTER(jsJSBunRequestGetCookies, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(Cookie, jsJSBunRequestGetCookies);
     JSBunRequest* request = dynamicDowncast<JSBunRequest>(JSValue::decode(thisValue));
     if (!request)
         return JSValue::encode(jsUndefined());

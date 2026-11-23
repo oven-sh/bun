@@ -5,7 +5,7 @@ use super::*;
 /// unsafe function, must be run outside of the event loop
 /// fails with `JSError` on exception
 pub(super) fn load_module(
-    vm: *mut VirtualMachine,
+    vm: &VirtualMachine,
     global: &JSGlobalObject,
     key: JSValue,
 ) -> crate::Result<JSValue> {
@@ -18,29 +18,21 @@ pub(super) fn load_module(
     // S012: `JSInternalPromise` (= `JSPromise`) is an `opaque_ffi!` ZST —
     // safe `*mut → &mut` deref via the const-asserted accessor.
     jsc::JSInternalPromise::opaque_mut(promise).set_handled();
-    // Note: we take `*mut VirtualMachine` (not `&VirtualMachine`) so the provenance
-    // permits mutation — casting a `&T` to `*mut T` and writing through it is
-    // UB. The raw pointer flows from `VirtualMachine::init_bake` unchanged.
-    //
-    let _ = vm;
-    let vm_ref = VirtualMachine::get();
-    vm_ref
-        .as_mut()
-        .wait_for_promise(AnyPromise::Internal(promise))
-        .map_err(|stopped| js_err(stopped.throw(vm_ref.global())))?;
+    vm.wait_for_promise(AnyPromise::Internal(promise))
+        .map_err(|stopped| js_err(stopped.throw(vm.global())))?;
     // TODO: Specially draining microtasks here because `waitForPromise` has a
     //       bug which forgets to do it, but I don't want to fix it right now as it
     //       could affect a lot of the codebase. This should be removed.
-    if vm_ref.event_loop_mut().drain_microtasks().is_err() {
+    if vm.event_loop().drain_microtasks().is_err() {
         Global::crash();
     }
-    let jsc_vm = vm_ref.as_mut().jsc_vm_mut();
+    let jsc_vm = vm.jsc_vm();
     match jsc::JSInternalPromise::opaque_mut(promise).unwrap(jsc_vm, UnwrapMode::MarkHandled) {
         Unwrapped::Pending => unreachable!(),
         Unwrapped::Fulfilled(_) => {
             jsc::from_js_host_call(global, || BakeGetModuleNamespace(global, key)).map_err(js_err)
         }
-        Unwrapped::Rejected(err) => Err(js_err(vm_ref.global().throw_value(err))),
+        Unwrapped::Rejected(err) => Err(js_err(vm.global().throw_value(err))),
     }
 }
 
@@ -121,11 +113,9 @@ extern "C" fn BakeToWindowsPath(input: &BunString) -> BunString {
     }
     #[cfg(not(unix))]
     {
-        let input_utf8 = input.to_utf8();
-        let input_slice = input_utf8.slice();
-        let mut output = bun_paths::w_path_buffer_pool::get();
-        let output_slice = strings::to_w_path_normalize_auto_extend(&mut output[..], input_slice);
-        BunString::clone_utf16(output_slice.as_slice())
+        let mut path = bun_paths::Path::from(input.to_utf8().slice());
+        path.make_long_path();
+        BunString::clone_utf8(&path)
     }
 }
 
@@ -158,18 +148,17 @@ extern "C" fn BakeProdResolve(
 
     debug_assert!(strings::has_prefix(referrer.slice(), b"bake:"));
 
-    // dirname semantics: returns None for the root / no-parent.
-    let after_scheme = &referrer.slice()[5..];
-    let dir = bun_paths::Dirname::dirname(after_scheme).unwrap_or(after_scheme);
-
-    BunString::create_format(format_args!(
-        "bake:{}",
-        BStr::new(resolve_path::join_abs::<platform::Posix>(
-            dir,
-            // force posix paths in bake
-            specifier.slice(),
-        ))
-    ))
+    // A key is the path of a URL, so nothing in it is a drive or a share.
+    let specifier = specifier.slice();
+    let importer = match specifier.starts_with(b"/") {
+        true => b"",
+        false => &referrer.slice()["bake:".len()..],
+    };
+    let mut key = Path::from(b"/");
+    key.push_inside(&Path::join(&[b".", importer, b"..", specifier]));
+    key.copy_trailing_sep_from(specifier);
+    let key = key.into_portable();
+    BunString::create_format(format_args!("bake:{}", BStr::new(key.as_bytes())))
 }
 
 /// Given a key, returns the source code to load.

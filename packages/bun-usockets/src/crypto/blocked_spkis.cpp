@@ -1,4 +1,4 @@
-// The public keys no peer's chain may hold. us_x509_verify_chain (openssl.c) asks after every chain it verifies.
+// The public keys no peer's chain may hold. us_x509_verify_chain (openssl.cpp) asks after every chain it verifies.
 #include "./root_certs_header.h"
 #include <array>
 #include <string.h>
@@ -56,12 +56,12 @@ static std::vector<us_spki_hash> us_blocked_spkis_for_testing;
 
 // A key that cannot be encoded is X509_V_ERR_UNSPECIFIED rather than X509_V_OK, so that it is not let through.
 static int us_x509_blocked_key_error(X509 *cert) {
-  uint8_t *spki = nullptr;
-  int spki_len = i2d_X509_PUBKEY(X509_get_X509_PUBKEY(cert), &spki);
+  uint8_t *out = nullptr;
+  int spki_len = i2d_X509_PUBKEY(X509_get_X509_PUBKEY(cert), &out);
+  us_unique_ptr<uint8_t, OPENSSL_free> spki{out};
   if (spki_len <= 0) return X509_V_ERR_UNSPECIFIED;
   us_spki_hash digest;
-  SHA256(spki, static_cast<size_t>(spki_len), digest.data());
-  OPENSSL_free(spki);
+  SHA256(spki.get(), static_cast<size_t>(spki_len), digest.data());
   for (const us_spki_hash &blocked : us_blocked_spkis) {
     if (digest == blocked) return X509_V_ERR_CERT_REVOKED;
   }

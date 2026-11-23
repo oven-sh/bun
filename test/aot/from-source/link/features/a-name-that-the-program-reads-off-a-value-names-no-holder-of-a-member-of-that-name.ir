@@ -1,0 +1,11 @@
+# `length` stands on every constructor: that the program reads it off a value names neither Intl nor Temporal nor WebAssembly
+# -- source: a-name-that-the-program-reads-off-a-value-names-no-holder-of-a-member-of-that-name.ts
+# declare const input: any;
+# declare const table: any;
+# new Function(input)();
+# export const size = table.length;
+# -- end of source
+# RUN(NEVER): features
+# NEVER-NOT: by Intl{{*}} named
+# NEVER-NOT: by Temporal{{*}} named
+# NEVER-NOT: by WebAssembly{{*}} named

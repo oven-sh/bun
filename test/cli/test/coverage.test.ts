@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, MAX_PATH_BYTES, normalizeBunSnapshot, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, MAX_PATH_BYTES, normalizeBunSnapshot, tempDir } from "harness";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "path";
 
@@ -55,6 +55,25 @@ export class Y {
   expect(normalizeBunSnapshot(readFileSync(path.join(dir, "coverage", "lcov.info"), "utf-8"), dir)).toMatchSnapshot(
     "lcov-coverage-reporter-output",
   );
+});
+
+test("a backslash separates in --coverage-dir", async () => {
+  using dir = tempDir("cov-dir-backslash", {
+    "lib.ts": `export const one = () => 1;`,
+    "a.test.ts": `import { test } from "bun:test"; import { one } from "./lib"; test("t", () => { one(); });`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=lcov", "--coverage-dir=cv\\r", "./a.test.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("1 pass");
+  expect(readdirSync(String(dir)).sort()).toEqual(["a.test.ts", "cv", "lib.ts"]);
+  expect(readdirSync(path.join(String(dir), "cv", "r"))).toEqual(["lcov.info"]);
+  expect(exitCode).toBe(0);
 });
 
 // https://github.com/oven-sh/bun/issues/17502
@@ -133,6 +152,98 @@ test("coverage excludes node_modules directory", () => {
   expect(result.signalCode).toBeUndefined();
 });
 
+test("coverage leaves out the modules generated for ?worker, ?init and ?inline, and nothing else that has a query", async () => {
+  using dir = tempDir("cov", {
+    "bunfig.toml": `[test]\ncoverageSkipTestFiles = true\n`,
+    "echo.ts": `postMessage("started");`,
+    "empty.wasm": Buffer.from("0061736d01000000", "hex"),
+    "lib.ts": `export const used = () => 1;`,
+    "preload.ts": `
+      Bun.plugin({
+        name: "supplies a module",
+        setup(build) {
+          build.onLoad({ filter: /\\?supplied$/ }, () => ({ contents: "export const supplied = () => 2;", loader: "ts" }));
+        },
+      });
+    `,
+    "generated.test.ts": `
+      import { expect, test, vi } from "bun:test";
+      import EchoWorker from "./echo.ts?worker";
+      import EchoSharedWorker from "./echo.ts?sharedworker";
+      import init from "./empty.wasm?init";
+      import url from "./empty.wasm?inline";
+      import { used } from "./lib.ts?again";
+      import { supplied } from "./lib.ts?supplied";
+      test("uses them", () => {
+        vi.stubGlobal("Worker", class {});
+        new EchoWorker();
+        expect([used(), supplied(), typeof init, typeof EchoSharedWorker, url]).toEqual([1, 2, "function", "function", "data:application/wasm;base64,AGFzbQEAAAA="]);
+      });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--preload", "./preload.ts", "--coverage", "--coverage-reporter=lcov"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("1 pass");
+  expect(readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf-8").match(/^SF:.*$/gm)).toEqual([
+    "SF:lib.ts",
+    "SF:lib.ts?supplied",
+    "SF:preload.ts",
+  ]);
+  expect(exitCode).toBe(0);
+});
+
+// Windows doesn't allow `?` in a file name.
+test.skipIf(isWindows)("a file with ? in its name is not left out of coverage: it cannot be loaded", async () => {
+  using dir = tempDir("cov", {
+    "bunfig.toml": `[test]\ncoverageSkipTestFiles = true\n`,
+    "named.ts": `export const file = "named.ts";`,
+    "named.ts?worker": `export const file = "named.ts?worker";`,
+    "only?init.ts": `export const file = "only?init.ts";`,
+    "names.test.ts": `
+      const results = {};
+      for (const specifier of ["./named.ts?x", "./only?init.ts", "./only%3Finit.ts", new URL("./only%3Finit.ts", import.meta.url).href]) {
+        results[specifier.replace(/^file:.*\\//, "file:")] = await import(specifier).then(({ file }) => file, error => error.code);
+      }
+      results.glob = Object.keys(import.meta.glob("./named*"));
+      results.worker = typeof (await import("./named.ts?worker")).default;
+      console.log("@" + JSON.stringify(results));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=lcov"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(
+    JSON.parse(
+      stdout
+        .split("\n")
+        .find(line => line.startsWith("@"))!
+        .slice(1),
+    ),
+  ).toEqual({
+    "./named.ts?x": "named.ts",
+    "./only?init.ts": "ERR_MODULE_NOT_FOUND",
+    "./only%3Finit.ts": "ERR_MODULE_NOT_FOUND",
+    "file:only%3Finit.ts": "ERR_MODULE_NOT_FOUND",
+    glob: ["./named.ts"],
+    worker: "function",
+  });
+  expect(readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf-8").match(/^SF:.*$/gm)).toEqual([
+    "SF:named.ts",
+  ]);
+  expect(exitCode).toBe(0);
+});
+
 test("coveragePathIgnorePatterns - single pattern string", () => {
   using dir = tempDir("cov", {
     "bunfig.toml": `
@@ -188,6 +299,62 @@ All files      |  100.00 |  100.00 |
  1 pass
  0 fail
  2 expect() calls
+Ran 1 test across 1 file."
+`);
+  expect(result.exitCode).toBe(0);
+});
+
+test("a directive in a function body is a line of that function", () => {
+  using dir = tempDir("cov", {
+    "bunfig.toml": `
+[test]
+coverageSkipTestFiles = true
+`,
+    "lib.cjs": `"use strict";
+function called() {
+  "use strict";
+  return 1;
+}
+function notCalled() {
+  "use strict";
+  return 2;
+}
+module.exports = { called, notCalled };
+`,
+    "lib.test.js": `
+import { test, expect } from "bun:test";
+const { called } = require("./lib.cjs");
+test("calls one function", () => {
+  expect(called()).toBe(1);
+});
+`,
+  });
+
+  const result = Bun.spawnSync([bunExe(), "test", "--coverage"], {
+    cwd: dir,
+    env: {
+      ...bunEnv,
+    },
+    stdio: [null, null, "pipe"],
+  });
+
+  let stderr = result.stderr.toString("utf-8");
+  // Normalize output for cross-platform consistency
+  stderr = normalizeBunSnapshot(stderr, dir);
+
+  expect(stderr).toMatchInlineSnapshot(`
+"lib.test.js:
+(pass) calls one function
+-----------|---------|---------|-------------------
+File       | % Funcs | % Lines | Uncovered Line #s
+-----------|---------|---------|-------------------
+All files  |   50.00 |   62.50 |
+ lib.cjs   |   50.00 |   62.50 | 6-8
+-----------|---------|---------|-------------------
+
+ 1 pass
+ 0 fail
+ 1 expect() calls
 Ran 1 test across 1 file."
 `);
   expect(result.exitCode).toBe(0);

@@ -1,6 +1,7 @@
 import jsc from "bun:jsc";
 import { describe, expect, it, mock, test } from "bun:test";
 import { bunEnv, bunExe, bunRun, isWindows } from "harness";
+import { AsyncLocalStorage } from "node:async_hooks";
 import path from "node:path";
 import { clearInterval, clearTimeout, promises, setImmediate, setInterval, setTimeout } from "node:timers";
 import { promisify } from "util";
@@ -277,6 +278,70 @@ describe("clear", () => {
   });
 });
 
+/** What `script` printed by the time its process ended by itself. */
+async function runToExit(script: string) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    // A test that times out does not end its child.
+    timeout: 20_000,
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode, signalCode: proc.signalCode };
+}
+const printed = (stdout: string) => ({ stdout: stdout + "\n", stderr: "", exitCode: 0, signalCode: null });
+
+describe.concurrent("Immediate.ref() holds the event loop only while the immediate is queued", () => {
+  it.each([
+    ["unref() and ref() in the callback", "const i = setImmediate(() => report(i.unref().ref()));"],
+    [
+      "process.unref() and process.ref() in the callback",
+      "const i = setImmediate(() => { process.unref(i); process.ref(i); report(i); });",
+    ],
+    [
+      "unref() in the queue, ref() in the callback",
+      "const i = setImmediate(() => report(i.ref())).unref(); setImmediate(() => {});",
+    ],
+    [
+      "ref() after the queue dropped it",
+      `const i = setImmediate(() => {}).unref(); process.once("beforeExit", () => report(i.ref()));`,
+    ],
+  ])("%s", async (_, script) => {
+    // The global keeps the collector from releasing a ref that leaked.
+    const report = `function report(i) { console.log((globalThis.kept = i).hasRef()); }`;
+    expect(await runToExit(report + script)).toEqual(printed("false"));
+  });
+
+  it("unref() and ref() in the queue", async () => {
+    const script = `
+      const i = setImmediate(() => console.log("ran"));
+      console.log("after unref:", i.unref().hasRef());
+      console.log("after ref:", i.ref().hasRef());`;
+    expect(await runToExit(script)).toEqual(printed("after unref: false\nafter ref: true\nran"));
+  });
+});
+
+describe.concurrent("writes to _repeat, _onTimeout and _idleTimeout in the first callback", () => {
+  it.each([
+    {
+      set: "setTimeout",
+      writes: "t._repeat = 1; t._onTimeout = null; clearTimeout(t); t._onTimeout = callback",
+      fires: 2,
+    },
+    { set: "setInterval", writes: "t._idleTimeout = undefined; t._repeat = null; t.refresh()", fires: 1 },
+    { set: "setInterval", writes: "t._idleTimeout = undefined; t.refresh(); t._repeat = null", fires: 1 },
+  ])("$set: $writes", async ({ set, writes, fires }) => {
+    const script = `
+      let fires = 0;
+      const callback = () => { if (++fires === 1) { ${writes} } else clearTimeout(t); };
+      const t = ${set}(callback, 1);
+      process.on("exit", () => console.log(fires));`;
+    expect(await runToExit(script)).toEqual(printed(String(fires)));
+  });
+});
+
 describe("_idleStart", () => {
   // https://github.com/oven-sh/bun/issues/26508
   // Next.js 16 Cache Components writes `t2._idleStart = t1._idleStart` so two
@@ -413,4 +478,87 @@ describe.each(["with", "without"])("setImmediate %s timers running", mode => {
 
 it("should defer microtasks when an exception is thrown in an immediate", async () => {
   expect(await bunRun(["run", path.join(import.meta.dir, "timers-immediate-exception-fixture.js")])).toSpawn();
+});
+
+it("a promise assigned to _onTimeout resolves to undefined, not the timer's arguments", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const results = [];
+        const thenable = { get then() { results.push("then was read"); } };
+        for (const args of [[], [1], [thenable], [1, 2], [1, 2, 3]]) {
+          const { promise } = Promise.withResolvers();
+          setTimeout(() => {}, 1, ...args)._onTimeout = promise;
+          const value = await promise;
+          results.push(Object.prototype.toString.call(value));
+        }
+        console.log(results.join());
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+    stdout: Array(5).fill("[object Undefined]").join() + "\n",
+    stderr: "",
+    exitCode: 0,
+    signalCode: null,
+  });
+});
+
+it("_onTimeout is the callback inside AsyncLocalStorage.run()", () => {
+  const callback = () => {};
+  const timer = new AsyncLocalStorage().run(1, () => setTimeout(callback, 100_000, 1, 2));
+  try {
+    expect((timer as any)._onTimeout).toBe(callback);
+  } finally {
+    clearTimeout(timer);
+  }
+});
+
+it("timers/promises clears its timers with the globals that were there when it set them", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const live = new Set();
+        const set = () => {
+          const timer = { ref: () => timer, unref: () => timer, hasRef: () => true };
+          live.add(timer);
+          return timer;
+        };
+        const clear = timer => void live.delete(timer);
+        Object.assign(globalThis, { setTimeout: set, setInterval: set, setImmediate: set });
+        Object.assign(globalThis, { clearTimeout: clear, clearInterval: clear, clearImmediate: clear });
+
+        const promises = require("node:timers/promises");
+        const counts = [];
+        for (const start of [promises.setTimeout, promises.setImmediate]) {
+          const controller = new AbortController();
+          const options = { signal: controller.signal };
+          const aborted = (start === promises.setTimeout ? start(1000, null, options) : start(null, options)).catch(() => {});
+          counts.push(live.size);
+          controller.abort();
+          await aborted;
+          counts.push(live.size);
+        }
+        const iterator = promises.setInterval(1000)[Symbol.asyncIterator]();
+        iterator.next();
+        counts.push(live.size);
+        await iterator.return();
+        counts.push(live.size);
+        console.log(counts.join());
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "1,0,1,0,1,0\n", stderr: "", exitCode: 0 });
 });

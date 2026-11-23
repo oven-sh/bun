@@ -1,4 +1,4 @@
-//! The script of [`tokens`](crate::tokens) for sequences that are far apart, where Myers' search is slow.
+//! The script of [`tokens`](crate::tokens) for sequences that are far apart, where its search is slow.
 //!
 //! A row of the table of longest common subsequences goes up by 0 or 1 from one token of `b` to the next, so it is one
 //! bit per token. A token of `a` that is frequent in `b` makes the next row 64 bits at a time (Hyyrö, "Bit-parallel

@@ -22,6 +22,7 @@ pub mod patch;
 pub mod tokens;
 
 use core::ops::Range;
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 
 use bun_core::strings::{
@@ -637,14 +638,11 @@ impl<'a, 's, T: Elem> Myers<'a, 's, T> {
                     let hi = $v[i + 1];
                     // Furthest of: step right from diagonal k-1, step down from
                     // k+1. NONE stays negative through the +1.
+                    // Next to a diagonal that has come to the edge of the grid, the
+                    // edge takes one step more. No shortest path goes there.
                     let mut $x = if lo + 1 > hi { lo + 1 } else { hi };
                     if $x > lim {
-                        // The further move runs off the grid; take the other,
-                        // or failing that leave this diagonal where it was.
-                        $x = if lo + 1 < hi { lo + 1 } else { hi };
-                        if $x < 0 || $x > lim {
-                            $x = $v[i];
-                        }
+                        $x = lim;
                     }
                     if $x >= 0 {
                         let y = $x - $k;
@@ -890,9 +888,8 @@ fn push_trimmed<T: Elem>(a: &[T], b: &[T], mut h: Hunk, out: &mut Vec<Hunk>) {
 
 // ───────────────────────────── line mode ─────────────────────────────
 
-/// Open-addressing table from line content to dense id. Sized up front where
-/// the tokens are lines, so that it never rehashes; a slot is the top 32 bits of
-/// the hash plus the id, and candidates are confirmed by comparing bytes.
+/// Open-addressing table from line content to dense id. A slot is the top 32 bits
+/// of the hash plus the id, and candidates are confirmed by comparing bytes.
 struct Interner<'a> {
     slots: Vec<(u32, u32)>,
     mask: usize,
@@ -1123,27 +1120,8 @@ fn diff_shared_tokens(
     }
     let mut changed = vec![false; na + nb];
     let (changed_a, changed_b) = changed.split_at_mut(na);
-    // Surviving tokens and their original indices.
-    let mut ra: Vec<u32> = Vec::with_capacity(na);
-    let mut map_a: Vec<u32> = Vec::with_capacity(na);
-    for (i, &t) in ta.iter().enumerate() {
-        if occurs[t as usize][1] {
-            ra.push(t);
-            map_a.push(i as u32);
-        } else {
-            changed_a[i] = true;
-        }
-    }
-    let mut rb: Vec<u32> = Vec::with_capacity(nb);
-    let mut map_b: Vec<u32> = Vec::with_capacity(nb);
-    for (j, &t) in tb.iter().enumerate() {
-        if occurs[t as usize][0] {
-            rb.push(t);
-            map_b.push(j as u32);
-        } else {
-            changed_b[j] = true;
-        }
-    }
+    let ra = shared_tokens(ta, &occurs, changed_a);
+    let rb = shared_tokens(tb, &occurs, changed_b);
     drop(occurs);
 
     // A token that survives does so on both sides.
@@ -1151,21 +1129,35 @@ fn diff_shared_tokens(
         let mut rchanged = vec![false; ra.len() + rb.len()];
         let (rchanged_a, rchanged_b) = rchanged.split_at_mut(ra.len());
         search(&ra, &rb, rchanged_a, rchanged_b);
-        for (ri, &c) in rchanged_a.iter().enumerate() {
-            if c {
-                changed_a[map_a[ri] as usize] = true;
-            }
-        }
-        for (rj, &c) in rchanged_b.iter().enumerate() {
-            if c {
-                changed_b[map_b[rj] as usize] = true;
-            }
+        for (changed, rchanged) in [(&mut *changed_a, rchanged_a), (changed_b, rchanged_b)] {
+            let survivors = changed.iter_mut().filter(|changed| !**changed);
+            survivors.zip(rchanged).for_each(|(to, from)| *to = *from);
         }
     }
 
     let mut hunks = Vec::with_capacity(16);
     hunks_from_changed(ta, tb, changed_a, changed_b, &mut hunks);
     hunks
+}
+
+/// Marks the tokens that only one side has, and returns the others.
+fn shared_tokens<'a>(
+    tokens: &'a [u32],
+    occurs: &[[bool; 2]],
+    changed: &mut [bool],
+) -> Cow<'a, [u32]> {
+    let mut shared = 0;
+    for (&t, changed) in tokens.iter().zip(&mut *changed) {
+        *changed = occurs[t as usize] != [true; 2];
+        shared += usize::from(!*changed);
+    }
+    if shared == tokens.len() {
+        return Cow::Borrowed(tokens);
+    }
+    let mut survivors = Vec::with_capacity(shared);
+    let pairs = tokens.iter().zip(&*changed);
+    survivors.extend(pairs.filter_map(|(&t, &changed)| (!changed).then_some(t)));
+    Cow::Owned(survivors)
 }
 
 fn search_bounded(a: &[u32], b: &[u32], changed_a: &mut [bool], changed_b: &mut [bool]) {

@@ -2221,6 +2221,7 @@ void test_v8_cpu_profiler_title_api(const FunctionCallbackInfo<Value> &info) {
 }
 
 static CpuProfiler *idle_test_profiler = nullptr;
+static uint64_t last_profile_started_at = 0;
 
 void start_cpu_profile(const FunctionCallbackInfo<Value> &info) {
   if (idle_test_profiler == nullptr) {
@@ -2228,76 +2229,118 @@ void start_cpu_profile(const FunctionCallbackInfo<Value> &info) {
     idle_test_profiler->SetSamplingInterval(10000);
   }
   idle_test_profiler->StartProfiling(info[0].As<String>(), true);
+  last_profile_started_at = uv_hrtime();
 }
 
 // @datadog/pprof takes duration / hit count for the time a sample stands for,
-// so without these hits every function is billed a share of the idle time.
+// so without these hits every function is billed a share of their time.
+static void log_node_without_script(Isolate *isolate, CpuProfile *profile,
+                                    const std::string &name) {
+  // Found through the samples: V8's tree can have a hit from just before the
+  // profile started.
+  const CpuProfileNode *root = profile->GetTopDownRoot();
+  const CpuProfileNode *node = nullptr;
+  int node_samples = 0;
+  int root_samples = 0;
+  for (int i = 0; i < profile->GetSamplesCount(); i++) {
+    const CpuProfileNode *sample = profile->GetSample(i);
+    root_samples += sample == root;
+    if (name == sample->GetFunctionNameStr() && sample->GetScriptId() == 0) {
+      node = sample;
+      node_samples++;
+    }
+  }
+
+  LOG_EXPR(describe(isolate, profile->GetTitle()));
+  LOG_EXPR(root_samples);
+  LOG_EXPR(root->GetHitCount());
+  LOG_EXPR(node != nullptr);
+  if (node != nullptr) {
+    bool is_child_of_root = false;
+    for (int i = 0; i < root->GetChildrenCount(); i++) {
+      is_child_of_root |= root->GetChild(i) == node;
+    }
+    LOG_EXPR(is_child_of_root);
+    LOG_EXPR(describe(isolate, node->GetScriptResourceName()));
+    LOG_EXPR(node->GetLineNumber());
+    LOG_EXPR(node->GetColumnNumber());
+    LOG_EXPR(node->GetChildrenCount());
+    bool has_most_samples = node_samples > profile->GetSamplesCount() / 2;
+    LOG_EXPR(has_most_samples);
+    LOG_EXPR((int)node->GetHitCount() >= node_samples);
+  }
+}
+
 void stop_cpu_profile_and_log_idle_node(
     const FunctionCallbackInfo<Value> &info) {
   CpuProfile *profile =
       idle_test_profiler->StopProfiling(info[0].As<String>());
-
-  // Found through the samples: V8's tree can have a hit from just before the
-  // profile started.
-  const CpuProfileNode *idle = nullptr;
-  int idle_samples = 0;
-  for (int i = 0; i < profile->GetSamplesCount(); i++) {
-    if (std::string("(idle)") == profile->GetSample(i)->GetFunctionNameStr()) {
-      idle = profile->GetSample(i);
-      idle_samples++;
-    }
-  }
-
-  LOG_EXPR(describe(info.GetIsolate(), profile->GetTitle()));
-  LOG_EXPR(idle != nullptr);
-  if (idle != nullptr) {
-    const CpuProfileNode *root = profile->GetTopDownRoot();
-    bool is_child_of_root = false;
-    for (int i = 0; i < root->GetChildrenCount(); i++) {
-      is_child_of_root |= root->GetChild(i) == idle;
-    }
-    LOG_EXPR(is_child_of_root);
-    LOG_EXPR(describe(info.GetIsolate(), idle->GetScriptResourceName()));
-    LOG_EXPR(idle->GetScriptId());
-    LOG_EXPR(idle->GetLineNumber());
-    LOG_EXPR(idle->GetColumnNumber());
-    LOG_EXPR(idle->GetChildrenCount());
-    LOG_EXPR(idle_samples > profile->GetSamplesCount() / 2);
-    LOG_EXPR((int)idle->GetHitCount() >= idle_samples);
-    int last = profile->GetSamplesCount() - 1;
-    int64_t last_duration =
-        profile->GetEndTime() - profile->GetSampleTimestamp(last);
-    LOG_EXPR(last_duration >= (profile->GetSample(last) == idle ? 1 : 0));
-    LOG_EXPR(profile->GetEndTime() - profile->GetStartTime() > 100000);
-  }
-
+  log_node_without_script(info.GetIsolate(), profile, "(idle)");
   profile->Delete();
 }
 
-void stop_cpu_profile_and_log_root_node(
-    const FunctionCallbackInfo<Value> &info) {
-  CpuProfile *profile =
-      idle_test_profiler->StopProfiling(info[0].As<String>());
-
-  const CpuProfileNode *root = profile->GetTopDownRoot();
-  unsigned root_samples = 0;
-  for (int i = 0; i < profile->GetSamplesCount(); i++) {
-    root_samples += profile->GetSample(i) == root;
-  }
-  LOG_EXPR(root_samples);
-  LOG_EXPR(root->GetHitCount());
-
-  profile->Delete();
-}
-
-void dispose_cpu_profiler(const FunctionCallbackInfo<Value> &info) {
-  Local<String> most_recent =
-      String::NewFromUtf8(info.GetIsolate(), "").ToLocalChecked();
+static void dispose_idle_test_profiler(Isolate *isolate) {
+  Local<String> most_recent = String::NewFromUtf8(isolate, "").ToLocalChecked();
   while (CpuProfile *profile = idle_test_profiler->StopProfiling(most_recent)) {
     profile->Delete();
   }
   idle_test_profiler->Dispose();
   idle_test_profiler = nullptr;
+}
+
+void dispose_cpu_profiler(const FunctionCallbackInfo<Value> &info) {
+  dispose_idle_test_profiler(info.GetIsolate());
+}
+
+static void spin(uint64_t milliseconds) {
+  uint64_t end = uv_hrtime() + milliseconds * 1000 * 1000;
+  while (uv_hrtime() < end) {
+  }
+}
+
+static void spin_then_stop_cpu_profile_and_log_program_node(Isolate *isolate) {
+  spin(300);
+  HandleScope scope(isolate);
+  int64_t elapsed = (uv_hrtime() - last_profile_started_at) / 1000;
+  CpuProfile *profile = idle_test_profiler->StopProfiling(
+      String::NewFromUtf8(isolate, "").ToLocalChecked());
+  log_node_without_script(isolate, profile, "(program)");
+  LOG_EXPR(profile->GetEndTime() - profile->GetStartTime() + 1000 >= elapsed);
+  profile->Delete();
+  dispose_idle_test_profiler(isolate);
+}
+
+void finish_cpu_profile_in_uv_timer(const FunctionCallbackInfo<Value> &info) {
+  static uv_timer_t timer;
+  uv_timer_init(node::GetCurrentEventLoop(info.GetIsolate()), &timer);
+  timer.data = info.GetIsolate();
+  uv_timer_start(
+      &timer,
+      [](uv_timer_t *timer) {
+        // The first call can come before Node's first uv_check_cb, which ends
+        // the (idle) state that the main script left behind.
+        static int calls = 0;
+        if (++calls < 2) {
+          return;
+        }
+        uv_close(reinterpret_cast<uv_handle_t *>(timer), nullptr);
+        spin_then_stop_cpu_profile_and_log_program_node(
+            static_cast<Isolate *>(timer->data));
+      },
+      25, 25);
+}
+
+void finish_cpu_profile_in_uv_after_work(
+    const FunctionCallbackInfo<Value> &info) {
+  static uv_work_t work;
+  work.data = info.GetIsolate();
+  uv_queue_work(
+      node::GetCurrentEventLoop(info.GetIsolate()), &work,
+      [](uv_work_t *) { spin(50); },
+      [](uv_work_t *work, int) {
+        spin_then_stop_cpu_profile_and_log_program_node(
+            static_cast<Isolate *>(work->data));
+      });
 }
 
 void initialize(Local<Object> exports, Local<Value> module,
@@ -2412,9 +2455,11 @@ void initialize(Local<Object> exports, Local<Value> module,
   NODE_SET_METHOD(exports, "start_cpu_profile", start_cpu_profile);
   NODE_SET_METHOD(exports, "stop_cpu_profile_and_log_idle_node",
                   stop_cpu_profile_and_log_idle_node);
-  NODE_SET_METHOD(exports, "stop_cpu_profile_and_log_root_node",
-                  stop_cpu_profile_and_log_root_node);
   NODE_SET_METHOD(exports, "dispose_cpu_profiler", dispose_cpu_profiler);
+  NODE_SET_METHOD(exports, "finish_cpu_profile_in_uv_timer",
+                  finish_cpu_profile_in_uv_timer);
+  NODE_SET_METHOD(exports, "finish_cpu_profile_in_uv_after_work",
+                  finish_cpu_profile_in_uv_after_work);
 
   // without this, node hits a UAF deleting the Global
   // (Context::GetIsolate was removed in V8 14.6; the module initializer runs

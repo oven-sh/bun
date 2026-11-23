@@ -532,14 +532,17 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
     });
     it("reports the time the event loop waits as (idle)", async () => {
       const output = await checkSameOutput("test_v8_cpu_profiler_idle");
-      expect(output.match(/(?<=^idle != nullptr = )\d/gm)).toEqual(["1", "1", "0"]);
+      expect(output.match(/(?<=^node != nullptr = )\d/gm)).toEqual(["1", "1", "0"]);
     });
-    it("leaves work that the sampler cannot see before the last wait with (root)", async () => {
-      const output = await runOn(Runtime.bun, BuildMode.release, "test_v8_cpu_profiler_work_without_samples");
-      const [samples, hitCount] = output.match(/(?<=^root.* = )\d+/gm)!.map(Number);
-      // 300ms at 10ms for each sample.
-      expect(samples).toBeGreaterThan(25);
-      expect(hitCount).toBe(samples);
+    it("reports native code before the end of the profile as (program)", async () => {
+      const output = await checkSameOutput("test_v8_cpu_profiler_program_in_uv_timer");
+      expect(output).toContain("has_most_samples = 1");
+    });
+    // Node reports it as (idle), like all native code between uv_prepare_cb and uv_check_cb:
+    // https://github.com/nodejs/node/blob/v26.12.1/src/env.cc#L1489-L1498
+    it("does not report native code in an I/O callback as (idle)", async () => {
+      const output = await runOn(Runtime.bun, BuildMode.release, "test_v8_cpu_profiler_program_in_uv_after_work");
+      expect(output).toContain("has_most_samples = 1");
     });
   });
 

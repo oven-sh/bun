@@ -458,6 +458,8 @@ describe("node:inspector", () => {
             isChildOfRoot: !!nodes[0].children?.includes(idleNode?.id),
             idleSamples: samples.filter(id => id === idleNode?.id).length,
             idle,
+            sampleCount: samples.length,
+            duration: (endTime - startTime) / 1000,
           };
         }
 
@@ -509,9 +511,35 @@ describe("node:inspector", () => {
         console.log(JSON.stringify({ first, second: await stop() }));
       `);
       expect(first.idleSamples).toBeGreaterThan(0);
-      expect(second).toEqual({ isChildOfRoot: false, idleSamples: 0, idle: 0 });
+      expect(second.idleSamples).toBe(0);
     });
 
+    test("a profile ends when it is stopped, not with its last sample", async () => {
+      const { elapsed, duration } = await run(`
+        session.post("Profiler.setSamplingInterval", { interval: 60_000_000 });
+        session.post("Profiler.start");
+        const start = performance.now();
+        busy(100);
+        const elapsed = performance.now() - start;
+        console.log(JSON.stringify({ elapsed, ...(await stop()) }));
+      `);
+      expect(duration).toBeGreaterThan(elapsed - 1);
+    });
+
+    test("a call that the sampler misses is not (program)", async () => {
+      const { sampleCount, duration } = await run(`
+        session.post("Profiler.start");
+        // Pauses the sampler.
+        require("bun:jsc").profile(() => {});
+        busy(100);
+        console.log(JSON.stringify(await stop()));
+      `);
+      expect(sampleCount).toBe(0);
+      expect(duration).toBeGreaterThan(99);
+    });
+
+    // Node reports most of this as (idle), like all native code after a callback:
+    // https://github.com/nodejs/node/blob/v26.12.1/src/api/callback.cc#L156
     test("is not the time of a poll that cannot block", async () => {
       const { polling, waiting } = await run(`
         session.post("Profiler.start");
@@ -522,7 +550,7 @@ describe("node:inspector", () => {
         await sleep(200);
         console.log(JSON.stringify({ polling, waiting: await stop() }));
       `);
-      expect(polling).toEqual({ isChildOfRoot: false, idleSamples: 0, idle: 0 });
+      expect(polling.idleSamples).toBe(0);
       expect(waiting.idleSamples).toBeGreaterThan(0);
     });
 

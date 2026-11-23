@@ -20,8 +20,10 @@
 #include <wtf/URL.h>
 #include <wtf/WallTime.h>
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <limits>
+#include <utility>
 
 extern "C" void Bun__startCPUProfiler(JSC::VM* vm);
 extern "C" void Bun__stopCPUProfiler(JSC::VM* vm, BunString* outJSON, BunString* outText);
@@ -63,7 +65,7 @@ void startCPUProfiler(JSC::VM& vm)
     samplingProfiler.setTimingInterval(WTF::Seconds::fromMicroseconds(s_samplingInterval));
     samplingProfiler.noticeCurrentThreadAsJSCExecutionThread();
     samplingProfiler.start();
-    IdleTime::startRecording(vm, WTF::Seconds::fromMicroseconds(s_samplingInterval));
+    UnsampledTime::startRecording(vm, WTF::Seconds::fromMicroseconds(s_samplingInterval));
     s_isProfilerRunning = true;
 }
 
@@ -107,7 +109,7 @@ void IdleTimeRecorder::didWait()
     m_spans.append({ begin, end, idle });
 }
 
-void IdleTime::startRecording(JSC::VM& vm, Seconds samplingInterval)
+void UnsampledTime::startRecording(JSC::VM& vm, Seconds samplingInterval)
 {
     auto& recorder = WebCore::clientData(vm)->idleTimeRecorder;
     if (!recorder)
@@ -115,12 +117,12 @@ void IdleTime::startRecording(JSC::VM& vm, Seconds samplingInterval)
     recorder->m_samplingInterval = samplingInterval;
 }
 
-void IdleTime::stopRecording(JSC::VM& vm)
+void UnsampledTime::stopRecording(JSC::VM& vm)
 {
     WebCore::clientData(vm)->idleTimeRecorder = nullptr;
 }
 
-IdleTime IdleTime::release(JSC::VM& vm, MonotonicTime profileStart, const Vector<MonotonicTime>& sampleTimes)
+UnsampledTime UnsampledTime::release(JSC::VM& vm, MonotonicTime profileStart, MonotonicTime profileEnd, const Vector<MonotonicTime>& sampleTimes)
 {
     auto* recorder = WebCore::clientData(vm)->idleTimeRecorder.get();
     Vector<IdleTimeRecorder::Span> spans;
@@ -146,60 +148,77 @@ IdleTime IdleTime::release(JSC::VM& vm, MonotonicTime profileStart, const Vector
     };
     takeIdleTimeUntil(profileStart);
 
-    IdleTime result;
+    UnsampledTime result;
     result.m_gaps.reserveInitialCapacity(sampleTimes.size() + 1);
     MonotonicTime gapEnd = profileStart;
     auto appendGapUntil = [&](MonotonicTime time) {
         gapEnd = std::max(gapEnd, time);
         result.m_gaps.append({ gapEnd, takeIdleTimeUntil(gapEnd) });
-        result.m_total += result.m_gaps.last().idle;
+        result.m_idle += result.m_gaps.last().idle;
     };
     for (MonotonicTime sampleTime : sampleTimes)
         appendGapUntil(sampleTime);
     appendGapUntil(spans.isEmpty() ? gapEnd : spans.last().end);
 
-    if (result.m_total)
-        result.placeSamples(profileStart, recorder->m_samplingInterval);
+    if (!recorder) {
+        // Another user of the sampler stopped it. What came after the last sample is unknown.
+        result.m_profileEnd = gapEnd;
+        return result;
+    }
+    result.m_profileEnd = std::max(gapEnd, profileEnd);
+    result.placeSamples(profileStart, recorder->m_samplingInterval, vm.isEntered());
     return result;
 }
 
 // Some viewers count samples and others measure from each sample to the next. Both have to find the idle time.
-void IdleTime::placeSamples(MonotonicTime profileStart, Seconds samplingInterval)
+void UnsampledTime::placeSamples(MonotonicTime profileStart, Seconds samplingInterval, bool wasStoppedByScript)
 {
-    // A process that waits for days still has to be able to write its profile.
+    // V8 has no limit. A process that waits for days still has to be able to write its profile.
     static constexpr double maxSampleCount = 1'000'000;
 
+    const Gap& lastGap = m_gaps.last();
     size_t busySampleCount = m_gaps.size() - 1;
     MonotonicTime lastBusySample = busySampleCount ? m_gaps[busySampleCount - 1].end : profileStart;
-    Seconds idleBeforeIt = m_total - m_gaps.last().idle;
-    Seconds timeAfterIt = profileEnd() - lastBusySample;
+    Seconds idleBeforeIt = m_idle - lastGap.idle;
 
-    Seconds timePerSample = std::max(samplingInterval, (idleBeforeIt + timeAfterIt) / maxSampleCount);
+    Seconds timePerSample = std::max(samplingInterval, (idleBeforeIt + (m_profileEnd - lastBusySample)) / maxSampleCount);
     if (busySampleCount)
         timePerSample = std::max(timePerSample, (lastBusySample - profileStart - idleBeforeIt) / busySampleCount);
+    auto sampleCountFor = [&](Seconds time) { return static_cast<size_t>(std::llround(time / timePerSample)); };
 
     Seconds idle;
-    Seconds sampledTime;
+    Seconds sampledIdle;
     MonotonicTime gapBegin = profileStart;
     for (Gap& gap : m_gaps) {
         idle += gap.idle;
-        gap.sampleCount = static_cast<size_t>(std::llround(idle / timePerSample)) - m_sampleCount;
-        if (gap.sampleCount) {
-            gap.sampledTime = std::min(idle - sampledTime, gap.end - gapBegin);
-            sampledTime += gap.sampledTime;
-            m_sampleCount += gap.sampleCount;
+        if (size_t count = sampleCountFor(idle) - m_idleSampleCount) {
+            gap.idleSamples = { gap.end, std::min(idle - sampledIdle, gap.end - gapBegin), count };
+            sampledIdle += gap.idleSamples.duration;
+            m_idleSampleCount += count;
         }
         gapBegin = gap.end;
     }
 
-    if (!m_sampleCount && m_total >= samplingInterval) {
+    if (!m_idleSampleCount && m_idle >= samplingInterval) {
         Gap& gap = *std::ranges::max_element(m_gaps, {}, &Gap::idle);
-        gap.sampledTime = gap.idle;
-        gap.sampleCount = m_sampleCount = 1;
+        gap.idleSamples = { gap.end, gap.idle, 1 };
+        m_idleSampleCount = 1;
     }
 
-    Seconds unattributed = std::max(0_s, timeAfterIt - m_gaps.last().sampledTime);
-    m_unattributed = { lastBusySample, unattributed, static_cast<size_t>(std::llround(unattributed / timePerSample)) };
+    // Nothing suggests that the VM was left since the last sample.
+    if (wasStoppedByScript && !lastGap.idle)
+        return;
+
+    MonotonicTime idleBegin = m_profileEnd;
+    if (lastGap.idleSamples.count) {
+        idleBegin = lastGap.end - lastGap.idleSamples.duration;
+        if (size_t count = sampleCountFor(m_profileEnd - lastGap.end))
+            m_programAfterLastWait = { m_profileEnd, m_profileEnd - lastGap.end, count };
+    }
+    // The first part belongs to the last sample.
+    Seconds busy = std::max(0_s, idleBegin - lastBusySample);
+    if (size_t partCount = sampleCountFor(busy); partCount > 1)
+        m_programBeforeLastWait = { idleBegin, busy - busy / partCount, partCount - 1 };
 }
 
 static long long microsecondsSinceProfileStart(MonotonicTime time)
@@ -441,7 +460,7 @@ static WTF::String formatCodeSpan(const WTF::String& str)
 }
 
 // Helper to generate a minimal valid cpuprofile JSON with no samples
-static WTF::String generateEmptyProfileJSON()
+static WTF::String generateEmptyProfileJSON(long long durationUs)
 {
     // Return a minimal valid Chrome DevTools CPU profile format
     // Use s_profilingStartWallTime if available, otherwise fall back to current time
@@ -452,7 +471,7 @@ static WTF::String generateEmptyProfileJSON()
     sb.append("{\"nodes\":[{\"id\":1,\"callFrame\":{\"functionName\":\"(root)\",\"scriptId\":\"0\",\"url\":\"\",\"lineNumber\":-1,\"columnNumber\":-1},\"hitCount\":0,\"children\":[]}],\"startTime\":"_s);
     sb.append(timestamp);
     sb.append(",\"endTime\":"_s);
-    sb.append(timestamp);
+    sb.append(timestamp + durationUs);
     sb.append(",\"samples\":[],\"timeDeltas\":[]}"_s);
     return sb.toString();
 }
@@ -461,6 +480,8 @@ static WTF::String generateEmptyProfileJSON()
 void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
 {
     s_isProfilerRunning = false;
+    // https://github.com/nodejs/node/blob/v26.12.1/deps/v8/src/profiler/profile-generator.cc#L793-L794
+    MonotonicTime stopTime = MonotonicTime::now();
 
     JSC::SamplingProfiler* profiler = vm.samplingProfiler();
     if (!profiler) {
@@ -494,20 +515,20 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
         return stackTraces[a].timestamp < stackTraces[b].timestamp;
     });
 
-    auto idleTime = IdleTime::release(vm, s_profilingStartTime, sortedIndices.map([&](size_t idx) { return stackTraces[idx].timestamp; }));
-    IdleTime::stopRecording(vm);
+    auto unsampledTime = UnsampledTime::release(vm, s_profilingStartTime, stopTime, sortedIndices.map([&](size_t idx) { return stackTraces[idx].timestamp; }));
+    UnsampledTime::stopRecording(vm);
 
     // If neither output is requested, we're done
     if (!outJSON && !outText)
         return;
 
-    if (stackTraces.isEmpty() && !idleTime.sampleCount()) {
-        if (outJSON) *outJSON = generateEmptyProfileJSON();
+    long long totalTimeUs = microsecondsSinceProfileStart(unsampledTime.profileEnd());
+
+    if (stackTraces.isEmpty() && !unsampledTime.sampleCount()) {
+        if (outJSON) *outJSON = generateEmptyProfileJSON(totalTimeUs);
         if (outText) *outText = "No samples collected.\n"_s;
         return;
     }
-
-    long long totalTimeUs = microsecondsSinceProfileStart(idleTime.profileEnd());
 
     // Generate JSON format if requested
     if (outJSON) {
@@ -532,7 +553,7 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
 
         WTF::Vector<int> samples;
         WTF::Vector<long long> timeDeltas;
-        samples.reserveInitialCapacity(stackTraces.size() + idleTime.sampleCount());
+        samples.reserveInitialCapacity(stackTraces.size() + unsampledTime.sampleCount());
         timeDeltas.reserveInitialCapacity(samples.capacity());
 
         long long lastTimeUs = 0;
@@ -543,24 +564,23 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
             lastTimeUs = currentTimeUs;
         };
 
-        std::optional<int> idleNodeId;
-        auto appendIdleSamplesBefore = [&](size_t sampleIndex) {
-            idleTime.forEachSampleBefore(sampleIndex, [&](MonotonicTime timestamp) {
-                if (!idleNodeId) {
-                    idleNodeId = appendNodeWithoutScript(IdleTime::functionName);
-                    nodes[0].children.append(*idleNodeId);
-                }
-                nodes[*idleNodeId - 1].hitCount++;
-                appendSample(*idleNodeId, timestamp);
-            });
+        std::array<int, UnsampledTime::kindCount> nodeIdByKind {};
+        auto appendSampleWithoutFrames = [&](UnsampledTime::Kind kind, MonotonicTime timestamp) {
+            int& nodeId = nodeIdByKind[std::to_underlying(kind)];
+            if (!nodeId) {
+                nodeId = appendNodeWithoutScript(UnsampledTime::functionName(kind));
+                nodes[0].children.append(nodeId);
+            }
+            nodes[nodeId - 1].hitCount++;
+            appendSample(nodeId, timestamp);
         };
 
         for (size_t sampleIndex = 0; sampleIndex < sortedIndices.size(); sampleIndex++) {
-            appendIdleSamplesBefore(sampleIndex);
+            unsampledTime.forEachSampleBefore(sampleIndex, appendSampleWithoutFrames);
 
             auto& stackTrace = stackTraces[sortedIndices[sampleIndex]];
             if (stackTrace.frames.isEmpty()) {
-                appendSample(1, stackTrace.timestamp);
+                appendSampleWithoutFrames(UnsampledTime::Kind::Program, stackTrace.timestamp);
                 continue;
             }
 
@@ -718,14 +738,10 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
 
             appendSample(currentParentId, stackTrace.timestamp);
         }
-        idleTime.forEachUnattributedSample([&](MonotonicTime timestamp) {
-            nodes[0].hitCount++;
-            appendSample(1, timestamp);
-        });
-        appendIdleSamplesBefore(sortedIndices.size());
+        unsampledTime.forEachSampleBefore(sortedIndices.size(), appendSampleWithoutFrames);
 
-        double startTime = s_profilingStartWallTime.secondsSinceEpoch().microseconds();
-        double endTime = startTime + totalTimeUs;
+        long long startTime = s_profilingStartWallTime.secondsSinceEpoch().microsecondsAs<long long>();
+        long long endTime = startTime + totalTimeUs;
 
         // Build JSON
         using namespace WTF;
@@ -790,18 +806,30 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
     if (outText) {
         WTF::HashMap<WTF::String, FunctionStats> functionStatsMap;
 
+        FunctionStats idleStats;
+        idleStats.functionName = UnsampledTime::functionName(UnsampledTime::Kind::Idle);
+        idleStats.selfTimeUs = unsampledTime.idle().microsecondsAs<long long>();
+        FunctionStats programStats;
+        programStats.functionName = UnsampledTime::functionName(UnsampledTime::Kind::Program);
+        programStats.selfTimeUs = unsampledTime.program().microsecondsAs<long long>();
+
         long long lastTimeUs = 0;
+        auto sampledTimeUntil = [&](long long timeUs, size_t sampleIndex) {
+            return std::max(0LL, timeUs - std::exchange(lastTimeUs, timeUs) - unsampledTime.before(sampleIndex).microsecondsAs<long long>());
+        };
         int totalSamples = static_cast<int>(stackTraces.size());
 
         for (size_t sampleIndex = 0; sampleIndex < sortedIndices.size(); sampleIndex++) {
             auto& stackTrace = stackTraces[sortedIndices[sampleIndex]];
 
-            long long currentTimeUs = std::max(lastTimeUs, microsecondsSinceProfileStart(stackTrace.timestamp));
-            long long deltaUs = std::max(0LL, currentTimeUs - lastTimeUs - idleTime.before(sampleIndex).microsecondsAs<long long>());
-            lastTimeUs = currentTimeUs;
+            long long deltaUs = sampledTimeUntil(std::max(lastTimeUs, microsecondsSinceProfileStart(stackTrace.timestamp)), sampleIndex);
+            if (sampleIndex == sortedIndices.size() - 1)
+                deltaUs += sampledTimeUntil(totalTimeUs, sortedIndices.size());
 
-            if (stackTrace.frames.isEmpty())
+            if (stackTrace.frames.isEmpty()) {
+                programStats.selfTimeUs += deltaUs;
                 continue;
+            }
 
             WTF::String previousKey;
 
@@ -886,17 +914,15 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
             }
         }
 
-        FunctionStats idleStats;
-        idleStats.functionName = IdleTime::functionName;
-        idleStats.selfTimeUs = idleTime.total().microsecondsAs<long long>();
-        idleStats.totalTimeUs = idleStats.selfTimeUs;
-
         // Sort functions by self time
         WTF::Vector<std::pair<WTF::String, FunctionStats*>> sortedBySelf;
         for (auto& entry : functionStatsMap)
             sortedBySelf.append({ entry.key, &entry.value });
-        if (idleStats.selfTimeUs)
-            sortedBySelf.append({ idleStats.functionName, &idleStats });
+        for (FunctionStats* stats : { &idleStats, &programStats }) {
+            stats->totalTimeUs = stats->selfTimeUs;
+            if (stats->selfTimeUs)
+                sortedBySelf.append({ stats->functionName, stats });
+        }
         std::sort(sortedBySelf.begin(), sortedBySelf.end(), [](const auto& a, const auto& b) {
             return a.second->selfTimeUs > b.second->selfTimeUs;
         });
@@ -993,7 +1019,7 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
             // Skip functions with no self time and no interesting relationships
             if (stats->selfTimeUs == 0 && stats->callers.isEmpty() && stats->callees.isEmpty())
                 continue;
-            if (stats == &idleStats)
+            if (stats == &idleStats || stats == &programStats)
                 continue;
 
             // Header: ### `functionName`
@@ -1116,7 +1142,7 @@ static ALWAYS_INLINE Bun::IdleTimeRecorder* idleTimeRecorder(JSC::VM* vm)
     return uncheckedDowncast<WebCore::JSVMClientData>(vm->clientData)->idleTimeRecorder.get();
 }
 
-// Like v8::Isolate::SetIdle(), a wait beneath a JavaScript frame is not idle time: the sampler finds that frame.
+// A wait beneath a JavaScript frame belongs to that frame: https://github.com/nodejs/node/blob/v26.12.1/deps/v8/src/execution/isolate.cc#L7677-L7686
 #if OS(WINDOWS)
 extern "C" void Bun__CPUProfiler__willPoll(JSC::VM* vm, uv_loop_t* loop)
 {

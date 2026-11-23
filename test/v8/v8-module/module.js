@@ -57,17 +57,14 @@ module.exports = debugMode => {
       })(0);
     },
 
-    test_v8_cpu_profiler_work_without_samples() {
+    test_v8_cpu_profiler_program_in_uv_timer() {
       nativeModule.start_cpu_profile("profile");
-      // Pauses the sampler, which makes the loop look like native code outside the VM.
-      require("bun:jsc").profile(() => {});
-      const end = performance.now() + 300;
-      while (performance.now() < end);
-      // This timer is the wait being profiled.
-      setTimeout(() => {
-        nativeModule.stop_cpu_profile_and_log_root_node("profile");
-        nativeModule.dispose_cpu_profiler();
-      }, 100);
+      nativeModule.finish_cpu_profile_in_uv_timer();
+    },
+
+    test_v8_cpu_profiler_program_in_uv_after_work() {
+      nativeModule.start_cpu_profile("profile");
+      nativeModule.finish_cpu_profile_in_uv_after_work();
     },
 
     test_v8_value_to_int32() {

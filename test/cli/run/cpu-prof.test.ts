@@ -555,56 +555,57 @@ describe.concurrent("--cpu-prof", () => {
         return Number(value) * { us: 0.001, ms: 1, s: 1000 }[unit]!;
       };
       const [header, hotFunctions] = markdown.split("\n## ");
-      let idle = 0;
-      let functions = 0;
-      for (const [, self, name] of hotFunctions.matchAll(/^\| [\d.]+% \| (\S+) \| \S+ \| \S+ \| `([^`]+)` \|/gm)) {
-        if (name === "(idle)") idle += milliseconds(self);
-        else functions += milliseconds(self);
+      const self = { idle: 0, program: 0, functions: 0 };
+      const rows = hotFunctions.matchAll(/^\| [\d.]+% \| (\S+) \| \S+ \| \S+ \| `([^`]+)` \| (.*) \|$/gm);
+      for (const [, time, name, location] of rows) {
+        self[location ? "functions" : (name.slice(1, -1) as "idle" | "program")] += milliseconds(time);
       }
-      return { duration: milliseconds(header.match(/^\| ([\d.]+(?:us|ms|s)) \|/m)![1]), idle, functions };
+      return { duration: milliseconds(header.match(/^\| ([\d.]+(?:us|ms|s)) \|/m)![1]), ...self };
     }
     // From one second on, times are cut off after two decimals.
     const markdownPrecision = 10;
 
     function readJSON(json: string) {
       const { nodes, samples, timeDeltas, startTime, endTime } = JSON.parse(json);
-      const idleNode = nodes.find((node: any) => node.callFrame.functionName === "(idle)");
-      expect(idleNode).toEqual({
-        id: expect.any(Number),
-        callFrame: { functionName: "(idle)", scriptId: "0", url: "", lineNumber: -1, columnNumber: -1 },
-        hitCount: samples.filter((id: number) => id === idleNode?.id).length,
+      const [root] = nodes;
+      const [idleNode, programNode] = ["(idle)", "(program)"].map(functionName => {
+        const node = nodes.find((node: any) => node.callFrame.functionName === functionName && !node.callFrame.url);
+        if (!node) return;
+        expect(node).toEqual({
+          id: expect.any(Number),
+          callFrame: { functionName, scriptId: "0", url: "", lineNumber: -1, columnNumber: -1 },
+          hitCount: samples.filter((id: number) => id === node.id).length,
+        });
+        expect(root.children).toContain(node.id);
+        return node;
       });
-      expect(nodes[0].children).toContain(idleNode.id);
+      expect(idleNode).toBeDefined();
+      expect(root.hitCount).toBe(0);
+      expect(samples).not.toContain(root.id);
       expect(timeDeltas).toHaveLength(samples.length);
       expect(timeDeltas.filter((delta: number) => delta < 0)).toEqual([]);
+      expect(startTime).toBeInteger();
+      expect(endTime).toBeInteger();
 
       const untilEnd = endTime - startTime - timeDeltas.reduce((sum: number, delta: number) => sum + delta, 0);
       expect(untilEnd).toBeGreaterThanOrEqual(0);
-      let idleByTimestamps = 0;
-      let functionsByTimestamps = 0;
-      let now = 0;
-      let lastFunctionSample = 0;
+      // DevTools' flame chart: a sample lasts until the next one.
+      const byTimestamps = { idle: 0, programBeforeLastWait: 0, programAfterLastWait: 0, functions: 0 };
+      const lastIdleSample = samples.lastIndexOf(idleNode.id);
       samples.forEach((id: number, i: number) => {
-        now += timeDeltas[i] / 1000;
-        const untilNext = (timeDeltas[i + 1] ?? untilEnd) / 1000;
-        if (id === idleNode.id) {
-          idleByTimestamps += untilNext;
-        } else if (id !== nodes[0].id) {
-          functionsByTimestamps += untilNext;
-          lastFunctionSample = now;
-        }
+        const program = i < lastIdleSample ? "programBeforeLastWait" : "programAfterLastWait";
+        const kind = id === idleNode.id ? "idle" : id === programNode?.id ? program : "functions";
+        byTimestamps[kind] += (timeDeltas[i + 1] ?? untilEnd) / 1000;
       });
 
       const duration = (endTime - startTime) / 1000;
-      const timePerSample = duration / nodes.reduce((sum: number, node: any) => sum + node.hitCount, 0);
+      const timePerSample = duration / samples.length;
       return {
         duration,
         timePerSample,
-        lastFunctionSample,
+        byTimestamps,
+        untilFirstProgramSample: timeDeltas[samples.indexOf(programNode?.id)],
         idleSamples: idleNode.hitCount,
-        // DevTools' flame chart: a sample lasts until the next one.
-        idleByTimestamps,
-        functionsByTimestamps,
         // DevTools' ProfileNode.self and pprof: every sample weighs the same.
         idleByCount: idleNode.hitCount * timePerSample,
       };
@@ -612,15 +613,17 @@ describe.concurrent("--cpu-prof", () => {
 
     function expectBothFormatsToAgree(
       json: ReturnType<typeof readJSON>,
-      { idle, functions }: ReturnType<typeof readMarkdown>,
+      { idle, program, functions }: ReturnType<typeof readMarkdown>,
       interval: number,
     ) {
       const precision = 3 * json.timePerSample + markdownPrecision;
-      expect(json.idleByTimestamps).toBeWithin(idle - precision, idle + markdownPrecision);
+      const { programBeforeLastWait, programAfterLastWait } = json.byTimestamps;
+      expect(json.byTimestamps.idle).toBeWithin(idle - precision, idle + json.timePerSample + markdownPrecision);
       // The interval is the limit when the sampler happened to find functions more often than that.
       expect(Math.max(json.idleByCount, json.idleSamples * interval)).toBeWithin(idle - precision, idle + precision);
-      expect(functions).toBeWithin(json.lastFunctionSample - idle - precision, json.duration - idle + 1);
-      expect(json.functionsByTimestamps).toBeLessThan(functions + 2 * precision);
+      expect(programBeforeLastWait + programAfterLastWait).toBeWithin(program - 1, program + markdownPrecision);
+      expect(json.byTimestamps.functions).toBeLessThan(functions + precision);
+      expect(idle + program + functions).toBeWithin(json.duration - precision, json.duration + json.timePerSample);
     }
 
     test.each([1000, 5000])("a wait between two calls, --cpu-prof-interval=%d", async interval => {
@@ -679,11 +682,19 @@ describe.concurrent("--cpu-prof", () => {
       expect(markdown.idle).toBeWithin(250, markdown.duration - 100 + markdownPrecision);
     });
 
+    test("the time after the last sample belongs to that sample", async () => {
+      const profile = await run(["--cpu-prof-md", "--cpu-prof-interval=200000"], `busy(700);`);
+      const markdown = readMarkdown(profile.markdown);
+
+      expect(markdown.duration).toBeGreaterThanOrEqual(700);
+      expect(markdown.functions + markdown.program).toBeGreaterThan(markdown.duration - 2 * markdownPrecision);
+    });
+
     test("nothing but a wait", async () => {
       const profile = await run(["--cpu-prof"], `setTimeout(() => {}, 500);`);
       const json = readJSON(profile.json);
 
-      expect(json.idleByTimestamps).toBeWithin(250, json.duration);
+      expect(json.byTimestamps.idle).toBeWithin(250, json.duration);
     });
 
     test("a wait after another thread ended the one before it", async () => {
@@ -718,22 +729,59 @@ describe.concurrent("--cpu-prof", () => {
     });
 
     // bun:jsc drives the same sampler. Keeping it from sampling makes busy() look like native code outside the VM.
+    const stopSampling = `busy(250); startSamplingProfiler(undefined, 60_000_000);`;
     test.each([
-      { name: "after the last sample", script: `busy(250); startSamplingProfiler(undefined, 60_000_000);` },
-      { name: "without any sample", script: `profile(() => {});` },
-    ])("work the sampler cannot see is neither idle nor billed to a function: $name", async ({ script }) => {
+      {
+        name: "before the last wait",
+        script: `${stopSampling} busy(400); setTimeout(() => process.exit(), 300);`,
+        position: "programBeforeLastWait",
+      },
+      {
+        name: "after the last wait",
+        script: `${stopSampling} setTimeout(() => busy(400), 300);`,
+        position: "programAfterLastWait",
+      },
+      {
+        name: "without a wait since the last sample",
+        script: `setTimeout(() => { ${stopSampling} busy(400); }, 300);`,
+        position: "programAfterLastWait",
+      },
+      {
+        name: "without any sample",
+        script: `profile(() => {}); busy(400); setTimeout(() => {}, 300);`,
+        position: "programBeforeLastWait",
+      },
+    ] as const)("what the sampler cannot see at the end is (program): $name", async ({ name, script, position }) => {
       const profile = await run(
         ["--cpu-prof", "--cpu-prof-md"],
-        `import { profile, startSamplingProfiler } from "bun:jsc";
-         ${script}
-         busy(400);
-         setTimeout(() => {}, 300);`,
+        `import { profile, startSamplingProfiler } from "bun:jsc"; ${script}`,
       );
       const json = readJSON(profile.json);
       const markdown = readMarkdown(profile.markdown);
 
+      expect(json.byTimestamps[position]).toBeGreaterThan(200);
+      if (name !== "after the last wait") expect(json.untilFirstProgramSample).toBeGreaterThan(0);
       expect(markdown.idle).toBeWithin(100, json.duration - 400);
       expectBothFormatsToAgree(json, markdown, 1);
+      expect(profile.markdown).not.toContain("### `(program)`");
+    });
+
+    test("a wait that was not recorded is not billed to the last sample", async () => {
+      const profile = await run(
+        ["--cpu-prof-md"],
+        `import { startSamplingProfiler } from "bun:jsc";
+         import { Session } from "node:inspector";
+         const session = new Session();
+         session.connect();
+         session.post("Profiler.enable");
+         session.post("Profiler.stop", () => {});
+         startSamplingProfiler();
+         ${stopSampling}
+         console.log(performance.now());
+         setTimeout(() => {}, 400);`,
+      );
+
+      expect(readMarkdown(profile.markdown).functions).toBeWithin(100, Number(profile.stdout) + 200);
     });
 
     test("a wait that is much shorter than what the only sample stands for", async () => {
@@ -748,7 +796,7 @@ describe.concurrent("--cpu-prof", () => {
       );
       const { idle } = readMarkdown(profile.markdown);
 
-      expect(readJSON(profile.json).idleByTimestamps).toBeWithin(idle - markdownPrecision, idle + markdownPrecision);
+      expect(readJSON(profile.json).byTimestamps.idle).toBeGreaterThan(idle - markdownPrecision);
     });
 
     const cc = Bun.which("cc") || Bun.which("clang") || Bun.which("gcc");

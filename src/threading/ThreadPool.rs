@@ -91,7 +91,7 @@ impl Sync {
     //   summoned: u14  bits 32..46
     //
     // `idle + summoned` threads are idle in `wait()`. `schedule_all_at_once` has claimed `summoned` of them.
-    // `wants_spare`: a `schedule` sets it, and a `schedule_lone` that finds no thread notified clears it.
+    // `wants_spare`: a `schedule` sets it, and a `schedule_lone` that finds no thread notified or on its way clears it.
     const IDLE_MASK: u64 = 0x3FFF;
     const SPAWNED_SHIFT: u32 = 14;
     const SPAWNED_MASK: u64 = 0x3FFF << Self::SPAWNED_SHIFT;
@@ -921,12 +921,8 @@ impl ThreadPool {
             // pushed. A plain load (even .seq_cst) allows "we see stale notified=true AND
             // worker sees run_queue empty" → task stranded
             let sync = self.sync.fetch_or(Sync::zero(), Ordering::Release);
-            if sync.notified() {
-                if by == Notifier::Scheduler && !sync.wants_spare() {
-                    // A second RMW, so that the first stays a load: `schedule` writes `sync` only after a `schedule_lone`.
-                    self.sync
-                        .fetch_or(Sync(Sync::WANTS_SPARE_BIT), Ordering::Release);
-                }
+            // After a `schedule_lone`, a `schedule` still has to ask for the spare thread.
+            if sync.notified() && (by != Notifier::Scheduler || sync.wants_spare()) {
                 return;
             }
         }
@@ -1074,8 +1070,11 @@ impl ThreadPool {
             new_sync.set_notified(true);
             match by {
                 Notifier::Scheduler => new_sync.set_wants_spare(true),
-                Notifier::LoneScheduler => new_sync.set_wants_spare(false),
-                Notifier::WakingThread => {}
+                // A thread that is on its way keeps what the scheduler before this one asked for.
+                Notifier::LoneScheduler if can_wake && !sync.notified() => {
+                    new_sync.set_wants_spare(false);
+                }
+                Notifier::LoneScheduler | Notifier::WakingThread => {}
             }
             if can_wake && sync.idle() > 0 {
                 // wake up an idle thread
@@ -1091,7 +1090,7 @@ impl ThreadPool {
                     // No task waits. The next scheduler has to see that nobody has been notified.
                     new_sync.set_notified(false);
                 }
-            } else if sync.notified() {
+            } else if new_sync == sync {
                 // nothing to update
                 return;
             }

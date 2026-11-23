@@ -102,8 +102,14 @@ export const mimalloc: Dependency = {
     //            malloc zone or interposes, which also changes the allocator
     //            under NAPI addons and system frameworks. bun's override
     //            (overridesDarwinAllocator above) covers the executable only.
-    //   Linux:   ON — the main win. All malloc/free routes through mimalloc,
-    //            including WebKit's bmalloc when it falls back to system malloc.
+    //   Linux:   ON — the main win. malloc/free are mimalloc's for every object
+    //            in the link, including WebKit's bmalloc when it falls back to
+    //            system malloc. They are not exported (`local: *` in
+    //            src/linker.lds), so libc and native addons keep libc's
+    //            allocator. Unlike MimallocOverrideDarwin.cpp, this free() has
+    //            no ownership check: a block that libc allocates, such as the
+    //            result of realpath(path, NULL) or getcwd(NULL, 0), must never
+    //            reach it.
     //   Windows: OFF — Bun links the static CRT and calls mi_* directly;
     //            alloc-override.c emits _expand/_msize/free which duplicate
     //            against libucrt(d) at link time. The C deps that would

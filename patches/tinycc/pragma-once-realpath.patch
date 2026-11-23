@@ -1,0 +1,65 @@
+normalized_PATHCMP() called realpath(path, NULL) and released the result with
+free(). On Linux, free() in bun is mimalloc's and stays local to the executable,
+so libc allocates that result with its own malloc. mi_free() then gets a block
+that it does not own, and bun:ffi cc() crashes. Resolve into two PATH_MAX
+buffers: realpath() allocates nothing. Windows is unchanged.
+
+This is the diff of https://github.com/oven-sh/tinycc/pull/7. Delete this file
+when TINYCC_COMMIT contains that commit: the patch does not apply on it.
+
+--- a/libtcc.c
++++ b/libtcc.c
+@@ -259,10 +259,12 @@ static void *default_reallocator(void *ptr, unsigned long size)
+     return ptr1;
+ }
+ 
++#ifdef _WIN32
+ ST_FUNC void libc_free(void *ptr)
+ {
+     free(ptr);
+ }
++#endif
+ 
+ /* defined to be not used */
+ #define free(p) use_tcc_free(p)
+@@ -496,6 +498,7 @@ PUB_FUNC void tcc_memcheck(int d)
+ #endif
+ 
+ /* for #pragma once */
++#ifdef _WIN32
+ ST_FUNC int normalized_PATHCMP(const char *f1, const char *f2)
+ {
+     char *p1, *p2;
+@@ -509,6 +512,20 @@ ST_FUNC int normalized_PATHCMP(const char *f1, const char *f2)
+     }
+     return ret;
+ }
++#else
++# include <limits.h> /* PATH_MAX */
++/* No realpath(path, NULL): libc would allocate the result, and the free()
++   that an embedding program links can belong to another allocator.
++   No inlining: keep the buffers out of search_cached_include(). */
++ST_FUNC __attribute__((__noinline__))
++int normalized_PATHCMP(const char *f1, const char *f2)
++{
++    char p1[PATH_MAX], p2[PATH_MAX];
++    if (realpath(f1, p1) && realpath(f2, p2))
++        return PATHCMP(p1, p2);
++    return 1;
++}
++#endif
+ 
+ /********************************************************/
+ /* dynarrays */
+--- a/tcc.h
++++ b/tcc.h
+@@ -1252,7 +1252,9 @@ PUB_FUNC void *tcc_realloc_debug(void *ptr, unsigned long size, const char *file
+ PUB_FUNC char *tcc_strdup_debug(const char *str, const char *file, int line);
+ #endif
+ 
++#ifdef _WIN32
+ ST_FUNC void libc_free(void *ptr);
++#endif
+ /* defined to be not used */
+ #define free(p) use_tcc_free(p)
+ #define malloc(s) use_tcc_malloc(s)

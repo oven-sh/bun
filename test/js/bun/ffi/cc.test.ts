@@ -1755,6 +1755,75 @@ describe("cc() called by several Workers at once", () => {
   });
 });
 
+// TinyCC calls realpath() to find out whether two spellings name one
+// `#pragma once` file, and only for files with the same base name. On Linux
+// without ASan the result was a block from libc's malloc that went to
+// mimalloc's free(): a segfault. With ASan, realpath() is the sanitizer's
+// interceptor and allocates the result itself, so nothing failed.
+it("`#pragma once` tells apart headers that share a base name", async () => {
+  using dir = tempDir("bun-ffi-cc-pragma-once", {
+    "once/shape.h": "#pragma once\nstruct shape { int sides; };\n",
+    "plain/shape.h": "#define PLAIN 2\n",
+    "once2/shape.h": "#pragma once\n#define ONCE2 4\n",
+    "guarded/shape.h": "#ifndef GUARDED_SHAPE_H\n#define GUARDED_SHAPE_H\n#define GUARDED 8\n#endif\n",
+    "main.c": /* c */ `
+      #include "once/shape.h"
+      // Other files with the same base name: each one is parsed.
+      #include "plain/shape.h"
+      #include "once2/shape.h"
+      #include "guarded/shape.h"
+      // The first file under other spellings: each one is skipped, because a
+      // second definition of struct shape does not compile.
+      #include "./once/shape.h"
+      #include "plain/../once/shape.h"
+      #include <shape.h>
+      #if __has_include("guarded/../once/shape.h")
+      #define HAS_INCLUDE 16
+      #endif
+
+      int sum(void) {
+        struct shape line = { 1 };
+        return line.sides + PLAIN + ONCE2 + GUARDED + HAS_INCLUDE;
+      }
+    `,
+    "fixture.mjs": /* js */ `
+      import { cc } from "bun:ffi";
+      import { join } from "node:path";
+      import { isMainThread, parentPort, Worker } from "node:worker_threads";
+
+      function sum() {
+        const lib = cc({
+          source: join(import.meta.dirname, "main.c"),
+          include: ["./once"],
+          symbols: { sum: { args: [], returns: "int" } },
+        });
+        const result = lib.symbols.sum();
+        lib.close();
+        return result;
+      }
+
+      if (isMainThread) {
+        console.log("main thread:", sum());
+        new Worker(import.meta.filename).on("message", result => console.log("Worker:", result));
+      } else {
+        parentPort.postMessage(sum());
+      }
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.mjs"],
+    // glibc: give every block a mapping of its own. mimalloc's free() ignored a
+    // libc block that its page map covered, as libc's main heap is in some runs.
+    env: { ...bunEnv, GLIBC_TUNABLES: "glibc.malloc.mmap_threshold=0" },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toBe("main thread: 31\nWorker: 31\n");
+  expect(exitCode).toBe(0);
+});
+
 // The gate runs before any option is read or any C is compiled, so these do
 // not need a working TinyCC and run under ASan too. Without the gate, the
 // empty `symbols` object makes cc() fail with a plain validation error, which

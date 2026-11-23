@@ -296,11 +296,7 @@ impl<'a, const IS_NODE: bool> Read<'a, IS_NODE> {
 
         let content_length = request.content_length()?;
         let framing = request.decide_framing::<IS_NODE>(content_length.is_some(), self.options)?;
-        // Node emits 'connect' and 'upgrade' before it looks for the host.
-        if self.options.requires_host
-            && !request.is_http_1_0()
-            && request.field(b"host").is_none()
-            && !(IS_NODE && (request.is_connect() || request.field(b"upgrade").is_some()))
+        if self.options.requires_host && !request.is_http_1_0() && request.field(b"host").is_none()
         {
             return Err(RequestError::MissingHost.into());
         }

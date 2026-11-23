@@ -505,21 +505,16 @@ fn host() {
         requires_host: true,
         ..setup
     });
-    for (bytes, for_serve, for_node) in [
-        (&b"GET / HTTP/1.1\r\nhost: a\r\n\r\n"[..], ")", ")"),
-        (b"GET / HTTP/1.1\r\nHost:\r\n\r\n", ")", ")"),
-        (b"GET / HTTP/1.0\r\n\r\n", ")", ")"),
-        (b"GET / HTTP/1.1\r\n\r\n", "!MissingHost", "!MissingHost"),
-        (b"GET / HTTP/1.1\r\nUpgrade:\r\n\r\n", "!MissingHost", ")"),
-        (b"CONNECT a HTTP/1.1\r\n\r\n", "!MissingHost", "..body"),
-        (
-            b"CONNECT / HTTP/1.1\r\n\r\n",
-            "!MissingHost",
-            "!MissingHost",
-        ),
+    for (bytes, expected) in [
+        (&b"GET / HTTP/1.1\r\nhost: a\r\n\r\n"[..], ")"),
+        (b"GET / HTTP/1.1\r\nHost:\r\n\r\n", ")"),
+        (b"GET / HTTP/1.0\r\n\r\n", ")"),
+        (b"GET / HTTP/1.1\r\n\r\n", "!MissingHost"),
+        (b"GET / HTTP/1.1\r\nUpgrade:\r\n\r\n", "!MissingHost"),
+        (b"CONNECT a HTTP/1.1\r\n\r\n", "!MissingHost"),
     ] {
-        assert_eq!(serve.end(bytes), for_serve, "{}", show(bytes));
-        assert_eq!(node.end(bytes), for_node, "{}", show(bytes));
+        assert_eq!(serve.end(bytes), expected, "{}", show(bytes));
+        assert_eq!(node.end(bytes), expected, "{}", show(bytes));
     }
 }
 

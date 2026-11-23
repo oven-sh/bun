@@ -326,3 +326,9 @@ const server = Bun.serve({
   },
 });
 ```
+
+### `req.url`
+
+Bun builds `req.url` from the protocol of the server, the `Host` header, and the path and query of the request target. If `Host` is missing or invalid, `req.url` holds only the path and query.
+
+An HTTP/1 client can also send a full URL as the target (`GET http://example.com/path HTTP/1.1`). Then `req.url` takes its host from that URL instead of the `Host` header, so the two can differ. If you check the host of a request, check the value that you act on. Bun responds with `400 Bad Request` if the URL contains credentials, has no host, or has a malformed host or port.

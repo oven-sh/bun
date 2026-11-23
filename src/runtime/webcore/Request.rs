@@ -706,10 +706,10 @@ impl Request {
         if let Some(req) = self.request_context.get().get_request() {
             // S008: `uws::Request` is an `opaque_ffi!` ZST handle — safe deref.
             let req = bun_opaque::opaque_deref(req);
-            let req_url = Self::request_target_path(req.url());
+            let (authority, req_url) = Self::split_request_target(req.url());
             if !req_url.is_empty() && req_url[0] == b'/' {
-                if let Some(host) = req
-                    .header(b"host")
+                if let Some(host) = authority
+                    .or_else(|| req.header(b"host"))
                     .filter(|host| Self::is_valid_host_header(host))
                 {
                     // With `port: None`, HostFormatter always emits exactly `host`, so the
@@ -733,30 +733,35 @@ impl Request {
         b"http://"
     }
 
-    fn request_target_path(target: &[u8]) -> Cow<'_, [u8]> {
+    /// The authority of an absolute-form target replaces Host (RFC 9112 3.2.2). Its scheme is
+    /// dropped: the listener decides that.
+    #[inline(always)]
+    fn split_request_target(target: &[u8]) -> (Option<&[u8]>, Cow<'_, [u8]>) {
+        if target.first() == Some(&b'/') {
+            return (None, Cow::Borrowed(target));
+        }
+        Self::split_absolute_form(target)
+    }
+
+    #[cold]
+    fn split_absolute_form(target: &[u8]) -> (Option<&[u8]>, Cow<'_, [u8]>) {
         let scheme_len = if strings::has_prefix_case_insensitive(target, b"https://") {
             b"https://".len()
         } else if strings::has_prefix_case_insensitive(target, b"http://") {
             b"http://".len()
         } else {
-            return Cow::Borrowed(target);
+            return (None, Cow::Borrowed(target));
         };
 
-        let path_start = strings::index_of_char_pos(target, b'/', scheme_len);
-        let query_start = strings::index_of_char_pos(target, b'?', scheme_len);
-        match (path_start, query_start) {
-            (Some(path_start), None) => Cow::Borrowed(&target[path_start..]),
-            (Some(path_start), Some(query_start)) if path_start < query_start => {
-                Cow::Borrowed(&target[path_start..])
-            }
-            (_, Some(query_start)) => {
-                let mut path = Vec::with_capacity(1 + target.len() - query_start);
-                path.push(b'/');
-                path.extend_from_slice(&target[query_start..]);
-                Cow::Owned(path)
-            }
-            _ => Cow::Borrowed(b"/"),
-        }
+        let rest = &target[scheme_len..];
+        let (authority, path) =
+            rest.split_at(strings::index_of_any(rest, b"/?").unwrap_or(rest.len()));
+        let path = match path.first() {
+            Some(b'/') => Cow::Borrowed(path),
+            Some(_) => Cow::Owned([b"/", path].concat()),
+            None => Cow::Borrowed(&b"/"[..]),
+        };
+        (Some(authority), path)
     }
 
     /// RFC 3986 3.2.2 `uri-host [ ":" port ]` byte set. A Host value outside it, or an empty
@@ -798,10 +803,10 @@ impl Request {
         if let Some(req) = self.request_context.get().get_request() {
             // S008: `uws::Request` is an `opaque_ffi!` ZST handle — safe deref.
             let req = bun_opaque::opaque_deref(req);
-            let req_url = Self::request_target_path(req.url());
+            let (authority, req_url) = Self::split_request_target(req.url());
             if !req_url.is_empty() && req_url[0] == b'/' {
-                if let Some(host) = req
-                    .header(b"host")
+                if let Some(host) = authority
+                    .or_else(|| req.header(b"host"))
                     .filter(|host| Self::is_valid_host_header(host))
                 {
                     // With `port: None`, HostFormatter always emits exactly `host`. Compute the

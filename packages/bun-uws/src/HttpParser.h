@@ -517,25 +517,68 @@ struct HttpResponseData;
             return headers->value;
         }
 
+        static size_t absoluteFormSchemeLength(std::string_view url)
+        {
+            if (url.length() && url[0] != '/') {
+                if (url.length() >= 7 && strncasecmp(url.data(), "http://", 7) == 0) {
+                    return 7;
+                }
+                if (url.length() >= 8 && strncasecmp(url.data(), "https://", 8) == 0) {
+                    return 8;
+                }
+            }
+            return 0;
+        }
+
         std::string_view getUrlForRouting()
         {
             std::string_view url = getUrl();
-            if (url.length() && url[0] != '/') {
-                size_t schemeLength = 0;
-                if (url.length() >= 7 && strncasecmp(url.data(), "http://", 7) == 0) {
-                    schemeLength = 7;
-                } else if (url.length() >= 8 && strncasecmp(url.data(), "https://", 8) == 0) {
-                    schemeLength = 8;
+            if (size_t schemeLength = absoluteFormSchemeLength(url)) {
+                size_t pathStart = url.find('/', schemeLength);
+                if (pathStart == std::string_view::npos) {
+                    return "/";
                 }
-                if (schemeLength) {
-                    size_t pathStart = url.find('/', schemeLength);
-                    if (pathStart == std::string_view::npos) {
-                        return "/";
-                    }
-                    return url.substr(pathStart);
-                }
+                return url.substr(pathStart);
             }
             return url;
+        }
+
+        /* RFC 3986 3.2.2: unreserved, sub-delims and the '%' of pct-encoded. */
+        static bool isRegNameByte(unsigned char c)
+        {
+            return (unsigned char) ((c | 32) - 'a') < 26 || (c >= '0' && c <= '9') || (c >= '$' && c <= '.')
+                || c == '_' || c == '~' || c == '!' || c == ';' || c == '=';
+        }
+
+        /* The authority of an absolute-form target is a non-empty uri-host [ ":" port ] (RFC 9110 4.2.1, 4.2.4). */
+        bool hasValidTargetAuthority()
+        {
+            std::string_view url = getUrl();
+            size_t hostStart = absoluteFormSchemeLength(url);
+            if (!hostStart) {
+                return true;
+            }
+
+            const bool isIPLiteral = hostStart < url.length() && url[hostStart] == '[';
+            hostStart += isIPLiteral;
+            size_t i = hostStart;
+            while (i < url.length() && (isRegNameByte(url[i]) || (isIPLiteral && url[i] == ':'))) {
+                i++;
+            }
+            if (i == hostStart || (isIPLiteral && (i == url.length() || url[i++] != ']'))) {
+                return false;
+            }
+
+            if (i < url.length() && url[i] == ':') {
+                unsigned int port = 0;
+                for (i++; i < url.length() && url[i] >= '0' && url[i] <= '9'; i++) {
+                    port = port * 10 + (unsigned int) (url[i] - '0');
+                    if (port > 65535) {
+                        return false;
+                    }
+                }
+            }
+            return i == url.length() || url[i] == '/';
         }
 
         /* Hack: this should be getMethod */
@@ -1454,6 +1497,11 @@ struct HttpResponseData;
             /* Parse query */
             const char *querySeparatorPtr = (const char *) memchr(req->headers->value.data(), '?', req->headers->value.length());
             req->querySeparator = (unsigned int) ((querySeparatorPtr ? querySeparatorPtr : req->headers->value.data() + req->headers->value.length()) - req->headers->value.data());
+
+            /* node:http hands the raw target to the listener. */
+            if (!IsNodeHttp && req->headers->value.data()[0] != '/' && !req->hasValidTargetAuthority()) [[unlikely]] {
+                return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_INVALID_REQUEST);
+            }
 
             // lets check if content len is valid before calling requestHandler
             if(contentLengthStringLen) {

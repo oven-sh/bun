@@ -385,6 +385,16 @@ describe("a long common end", () => {
   });
 });
 
+test.each(["x", "\u0a00\u4e0a\u0a0a"])("all lines differ, and the last has no newline: %j", unit => {
+  const a = numbered(200, i => `a${i}${unit}`) + unit;
+  const b = numbered(300, i => `b${i}${unit}`) + unit + unit;
+  expect(short(diff.lines(a, b))).toEqual([
+    ["-", a, 201],
+    ["+", b, 301],
+  ]);
+  expect(short(diff.lines("", b))).toEqual([["+", b, 301]]);
+});
+
 describe("maxEditLength", () => {
   test.each([
     ["lines", (o: object) => diff.lines("a\nb\nc\n", "b\na\nd\n", o)],

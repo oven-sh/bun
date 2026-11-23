@@ -6,7 +6,7 @@
 //! that only one side has.
 
 use bun_core::slice_as_bytes;
-use bun_core::strings::{CodeUnits, PathByte, count_char, is_js_whitespace};
+use bun_core::strings::{CodeUnits, PathByte, byte_bits, count_char, is_js_whitespace};
 
 use crate::bit_rows::{Matches, diff_short};
 use crate::{EMPTY, Elem, Hunk, Interner, MAX_LEN, diff_shared_tokens, search_bounded};
@@ -178,6 +178,10 @@ impl Split {
             let mut offsets = Vec::with_capacity(16);
             offsets.push(from as u32);
             let mut at = from;
+            if let Split::Lines = self {
+                for_each_line_end(&text[from..to], |end| offsets.push((from + end) as u32));
+                at = offsets[offsets.len() - 1] as usize;
+            }
             while at < to {
                 at = self.end(text, at);
                 offsets.push(at as u32);
@@ -214,6 +218,41 @@ pub(crate) fn count_newlines<T: Unit>(text: &[T]) -> usize {
             })
             .map(usize::from)
             .sum(),
+    }
+}
+
+const LONG_LINE: usize = 256;
+
+/// Calls `found` with the place after each `\n`. A search is the fastest way through a long line, and slow to start
+/// for each of many short ones.
+pub(crate) fn for_each_line_end<T: Unit>(text: &[T], mut found: impl FnMut(usize)) {
+    let newline = T::from_u8(b'\n');
+    let (mut from, mut bits, mut narrow) = (0, Vec::new(), Vec::new());
+    while let Some(length) = T::index_of_unit(&text[from..], newline) {
+        from += length + 1;
+        found(from);
+        if length >= LONG_LINE || text.len() - from < LONG_LINE {
+            continue;
+        }
+        let block = &text[from..text.len().min(from + 4096)];
+        let bytes = match T::units(block) {
+            CodeUnits::U8(bytes) => bytes,
+            // A unit above 0xFF becomes 0xFF, so U+010A is not a newline. The bytes of the units are not searched because
+            // every letter of Gujarati and Punjabi has a 0x0A.
+            CodeUnits::U16(units) => {
+                narrow.clear();
+                narrow.extend(units.iter().map(|&unit| unit.min(0xFF) as u8));
+                &narrow
+            }
+        };
+        byte_bits(bytes, b'\n', &mut bits);
+        for (mut word, start) in bits.iter().copied().zip((from + 1..).step_by(64)) {
+            while word != 0 {
+                found(start + word.trailing_zeros() as usize);
+                word &= word - 1;
+            }
+        }
+        from += block.len();
     }
 }
 

@@ -34,19 +34,32 @@ if (isFlaky && isLinux) {
   });
 }
 
-test("test timeout keeps processes spawned in beforeAll and beforeEach", async () => {
+// Only the processes the timed-out test or hook spawned are killed, not the ones from earlier hooks.
+test.concurrent.each([
+  [
+    "test",
+    "process-kill-beforeall-fixture.ts",
+    "test timeout kills the processes this test spawned",
+    "process spawned in beforeAll and beforeEach survives the timeout",
+  ],
+  [
+    "beforeEach",
+    "process-kill-hook-timeout-fixture.ts",
+    "hook timeout kills the processes the hook spawned",
+    "process spawned in beforeAll survives the hook timeout",
+  ],
+])("%s timeout keeps processes spawned in earlier hooks", async (_, fixture, failing, passing) => {
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "test", path.join(import.meta.dir, "process-kill-beforeall-fixture.ts")],
+    cmd: [bunExe(), "test", path.join(import.meta.dir, fixture)],
     stdout: "pipe",
     stderr: "pipe",
     env: bunEnv,
   });
   const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   const combined = out + err;
-  // only the process the timed-out test spawned is killed, not the one from the hook
   expect(combined).toContain("killed 1 dangling process");
-  expect(combined).toContain("(fail) test timeout kills the processes this test spawned");
-  expect(combined).toContain("(pass) process spawned in beforeAll and beforeEach survives the timeout");
+  expect(combined).toContain(`(fail) ${failing}`);
+  expect(combined).toContain(`(pass) ${passing}`);
   expect(combined).toContain(" 1 pass");
   expect(combined).toContain(" 1 fail");
   expect(exitCode).toBe(1);

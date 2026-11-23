@@ -38,8 +38,8 @@ struct Server {
     port: Rc<Port>,
     name: Vec<u16>,
     on_connection: Rc<dyn Fn(Pipe)>,
-    /// One for each instance that a client can connect to.
-    accepts: [Cell<Option<Request>>; 4],
+    /// One for each instance that a client can connect to, which is how many a turn of the loop lets in.
+    accepts: [Cell<Option<Request>>; 16],
 }
 
 enum Previous {

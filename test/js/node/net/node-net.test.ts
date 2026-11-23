@@ -3709,6 +3709,13 @@ describe.concurrent.skipIf(!isWindows)("named pipes", () => {
     expect(await Promise.all(answers)).toEqual(range(200));
   });
 
+  it("let 16 clients in while the server is busy", async () => {
+    using pipe = await listen(socket => socket.on("error", () => {}).resume());
+    const clients: number[] = [];
+    using _ = { [Symbol.dispose]: () => clients.forEach(fd => fs.closeSync(fd)) };
+    expect(() => range(16).forEach(() => clients.push(fs.openSync(pipe.name, "r+")))).not.toThrow();
+  });
+
   it("serve bursts from several processes", async () => {
     using pipe = await listen(echo);
     const burst = `

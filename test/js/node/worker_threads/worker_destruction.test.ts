@@ -161,7 +161,7 @@ describe.concurrent.skipIf(!isWindows)("a Worker that ends with something open g
     ["a named pipe whose write waits", `(await pair(local("c")))[0].write(big)`],
     [
       "named pipes that are connecting",
-      `await once(net.createServer().listen(local("d")), "listening"); for (let i = 0; i < 12; i++) net.connect(local("d")).on("error", () => {})`,
+      `await once(net.createServer().listen(local("d")), "listening"); for (let i = 0; i < 24; i++) net.connect(local("d")).on("error", () => {})`,
     ],
     ["a child", `spawn(idle, { stdio: ["ignore", "ignore", "ignore"] })`],
     [

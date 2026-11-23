@@ -4008,6 +4008,26 @@ it("clientError after a kept-alive request reuses the connection's socket and un
   }
 });
 
+it.each([
+  ["100-Continue", "checkContinue"],
+  ["a, 1, 100-continue;b", "checkContinue"],
+  [Buffer.alloc(40, "1 ").toString() + Buffer.alloc(40, "a ") + "100-continue", "checkContinue"],
+  ["1100-continue", "checkExpectation"],
+  ["100-continue_", "checkExpectation"],
+  ["100-continu", "checkExpectation"],
+  ["\x11\x10\x10-continue", "checkExpectation"],
+])("Expect: %j emits %s", async (value, expected) => {
+  await using server = createServer({ insecureHTTPParser: true });
+  for (const event of ["checkContinue", "checkExpectation"]) server.on(event, (req, res) => res.end(event));
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const socket = connect((server.address() as AddressInfo).port, "127.0.0.1");
+  let received = "";
+  socket.on("data", chunk => (received += chunk));
+  socket.write(`GET / HTTP/1.1\r\nHost: localhost\r\nExpect: ${value}\r\nConnection: close\r\n\r\n`);
+  await once(socket, "close");
+  expect(received).toContain(expected);
+});
+
 it("rawPacket of 'clientError' has the method of a dispatched request as it was sent", async () => {
   const payload = "POST / HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n\r\nzz\r\n";
   await using server = createServer(req => req.resume());

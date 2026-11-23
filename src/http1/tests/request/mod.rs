@@ -500,26 +500,43 @@ fn lookups() {
 }
 
 #[test]
+fn elements_of_any_length() {
+    for padding in paddings() {
+        let long = format!("a{}", show(&padding));
+        for (end, is_element) in [(",", true), ("", false)] {
+            let fields = format!("Connection: {long}{end}close\r\n");
+            NODE.with_request(&post(&fields, b""), |request| {
+                let has_close = request.has_in_connection_or_proxy_connection(b"close");
+                assert_eq!(has_close, is_element, "{fields}");
+            });
+            let fields = format!("Transfer-Encoding: {long}{end}chunked\r\n");
+            let expected = if is_element {
+                ")"
+            } else {
+                "!InvalidTransferEncoding"
+            };
+            assert_eq!(NODE.end(&post(&fields, b"0\r\n\r\n")), expected, "{fields}");
+        }
+    }
+}
+
+#[test]
 fn host() {
     let [serve, node] = [SERVE, NODE].map(|setup| Setup {
         requires_host: true,
         ..setup
     });
-    for (bytes, for_serve, for_node) in [
-        (&b"GET / HTTP/1.1\r\nhost: a\r\n\r\n"[..], ")", ")"),
-        (b"GET / HTTP/1.1\r\nHost:\r\n\r\n", ")", ")"),
-        (b"GET / HTTP/1.0\r\n\r\n", ")", ")"),
-        (b"GET / HTTP/1.1\r\n\r\n", "!MissingHost", "!MissingHost"),
-        (b"GET / HTTP/1.1\r\nUpgrade:\r\n\r\n", "!MissingHost", ")"),
-        (b"CONNECT a HTTP/1.1\r\n\r\n", "!MissingHost", "..body"),
-        (
-            b"CONNECT / HTTP/1.1\r\n\r\n",
-            "!MissingHost",
-            "!MissingHost",
-        ),
+    for (bytes, expected) in [
+        (&b"GET / HTTP/1.1\r\nhost: a\r\n\r\n"[..], ")"),
+        (b"GET / HTTP/1.1\r\nHost:\r\n\r\n", ")"),
+        (b"GET / HTTP/1.0\r\n\r\n", ")"),
+        (b"GET / HTTP/1.1\r\n\r\n", "!MissingHost"),
+        (b"GET / HTTP/1.1\r\nUpgrade:\r\n\r\n", "!MissingHost"),
+        (b"CONNECT a HTTP/1.1\r\n\r\n", "!MissingHost"),
+        (b"CONNECT / HTTP/1.1\r\n\r\n", "!MissingHost"),
     ] {
-        assert_eq!(serve.end(bytes), for_serve, "{}", show(bytes));
-        assert_eq!(node.end(bytes), for_node, "{}", show(bytes));
+        assert_eq!(serve.end(bytes), expected, "{}", show(bytes));
+        assert_eq!(node.end(bytes), expected, "{}", show(bytes));
     }
 }
 

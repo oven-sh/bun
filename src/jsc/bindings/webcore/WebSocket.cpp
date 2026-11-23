@@ -460,14 +460,22 @@ __attribute__((minsize)) ExceptionOr<void> WebSocket::connect(const String& url,
     auto headers = headersOrException.releaseReturnValue();
     headerNameStrings.reserveInitialCapacity(headers.get().internalHeaders().size());
     headerValueStrings.reserveInitialCapacity(headers.get().internalHeaders().size());
-    headerNames.reserveInitialCapacity(headers.get().internalHeaders().size());
-    headerValues.reserveInitialCapacity(headers.get().internalHeaders().size());
     // lowerCaseKeys = false so we dont touch the keys casing
     auto iterator = headers.get().createIterator(false);
     while (auto value = iterator.next()) {
         headerNameStrings.append(value->key);
         headerValueStrings.append(value->value);
     }
+
+    String targetAuthorization = basicAuthorization(m_url);
+    if (options.requestTracer) [[unlikely]] {
+        auto published = publishRequest(options, hostString, resource, protocolString, targetAuthorization, headerNameStrings, headerValueStrings);
+        if (published.hasException() || m_state == CLOSED)
+            return published;
+    }
+
+    headerNames.reserveInitialCapacity(headerNameStrings.size());
+    headerValues.reserveInitialCapacity(headerNameStrings.size());
     for (size_t i = 0; i < headerNameStrings.size(); ++i) {
         headerNames.unsafeAppendWithoutCapacityCheck(Bun::toString(headerNameStrings[i]));
         headerValues.unsafeAppendWithoutCapacityCheck(Bun::toString(headerValueStrings[i]));
@@ -535,7 +543,6 @@ __attribute__((minsize)) ExceptionOr<void> WebSocket::connect(const String& url,
         }
     }
 
-    String targetAuthorization = basicAuthorization(m_url);
     BunString targetAuth = Bun::toString(targetAuthorization);
     BunString extensions = Bun::toString(options.extensions);
 
@@ -660,7 +667,7 @@ void WebSocket::terminate()
         return;
     if (m_state == CONNECTING) {
         cancelUpgradeClient();
-        didFail("WebSocket is closed before the connection is established"_s);
+        finish(0, 1006, {}, false, Failure { "WebSocket is closed before the connection is established"_s, {}, {}, true });
         return;
     }
     m_state = CLOSING;
@@ -774,6 +781,7 @@ void WebSocket::stop()
         break;
     }
     m_asyncContext.clear();
+    m_requestTracer.clear();
     m_pendingActivity = nullptr;
 }
 
@@ -897,6 +905,8 @@ void* WebSocket::didConnect()
     if (m_unref)
         setRef(false);
     m_state = OPEN;
+    if (m_acceptedHandshake) [[unlikely]]
+        m_acceptedHandshake->localAddress = addressOfSocket(usSocket(), true);
 
     // Native callback: fire synchronously, skip Event construction +
     // dispatchEvent + the postTask deferral. The m_state = OPEN above is
@@ -915,6 +925,7 @@ void* WebSocket::didConnect()
             ws.dispatchEvent(Event::create(eventNames().openEvent, Event::CanBubble::No, Event::IsCancelable::No));
         });
     }
+    publishOpen();
 
     switch (m_connectedWebSocketKind) {
     case ConnectedWebSocketKind::Client:
@@ -966,10 +977,23 @@ void WebSocket::didReceiveFrame(Opcode opcode, std::span<const uint8_t> payload)
     auto& names = eventNames();
     const bool isMessage = opcode == Opcode::Text || opcode == Opcode::Binary;
     const AtomString& name = isMessage ? names.messageEvent : (opcode == Opcode::Ping ? names.pingEvent : names.pongEvent);
-    if (isWsMode())
+    if (isWsMode()) {
         callHandlerWithBuffer(JSC::Identifier::fromString(scriptExecutionContext()->vm(), name), payload, isMessage ? JSC::jsBoolean(opcode == Opcode::Binary) : JSC::JSValue());
-    else
+        return;
+    }
+    if (isMessage || !diagnosticsHook()) [[likely]] {
         didReceiveBinaryData(name, payload);
+        return;
+    }
+
+    // Script can close the socket, which frees `payload`.
+    auto* globalObject = scriptExecutionContext()->jsGlobalObject();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm());
+    JSC::EnsureStillAliveScope copy(createBuffer(globalObject, payload));
+    scope.clearExceptionExceptTermination();
+    didReceiveBinaryData(name, payload);
+    if (copy.value())
+        publishPingOrPong(opcode, copy.value());
 }
 
 void WebSocket::didReceiveBinaryData(const AtomString& eventName, const std::span<const uint8_t> binaryData)
@@ -1086,6 +1110,10 @@ void WebSocket::streamDestroy()
 
 WebSocket::HandshakeResult WebSocket::didReceiveHandshakeResponse(uint16_t statusCode, std::span<const uint8_t> statusMessage, std::span<const HandshakeRawHeader> headers, bool isUpgrade, std::span<const uint8_t> body)
 {
+    publishResponse(statusCode, statusMessage, headers);
+    if (m_state != CONNECTING)
+        return {};
+
     // Only the `ws` module and tests use this. Skip the work for a plain WebSocket.
     if (!isWsMode() && !this->hasEventListeners(eventNames().handshakeEvent))
         return {};
@@ -1236,8 +1264,10 @@ void WebSocket::finish(size_t bufferedAmount, unsigned short code, String&& reas
             arguments.append(JSC::jsString(vm, reason));
             arguments.append(JSC::jsBoolean(wasClean));
             ws.callHandler(JSC::Identifier::fromString(vm, eventNames().closeEvent), arguments);
-        } else
+        } else {
             ws.dispatchEvent(CloseEvent::create(wasClean, code, reason));
+            ws.publishClose(code, reason);
+        }
         ws.m_asyncContext.clear();
     };
 
@@ -1278,6 +1308,7 @@ void WebSocket::reportFailure(const Failure& failure)
         callHandler(vm.propertyNames->error, arguments);
         return;
     }
+    publishRequestError(failure, error);
     init.error = error;
     dispatchEvent(ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes));
 }
@@ -1362,6 +1393,16 @@ struct FfiRawHeaderSlice {
 extern "C" WebCore::WebSocket::HandshakeResult WebSocket__didReceiveHandshakeResponse(WebCore::WebSocket* webSocket, uint16_t statusCode, WebCore::WebSocket::FfiSlice statusMessage, FfiRawHeaderSlice headers, bool isUpgrade, WebCore::WebSocket::FfiSlice body)
 {
     return webSocket->didReceiveHandshakeResponse(statusCode, statusMessage.span(), std::span(headers.ptr, headers.len), isUpgrade, body.span());
+}
+
+extern "C" void WebSocket__willSendRequest(WebCore::WebSocket* webSocket, WebCore::WebSocket::FfiSlice request, us_socket_t* socket)
+{
+    webSocket->willSendRequest(request.span(), socket);
+}
+
+extern "C" void WebSocket__socketDidFail(WebCore::WebSocket* webSocket, int32_t closeCode, bool isWrite, Bun::OwnedString tlsReason)
+{
+    webSocket->socketDidFail(closeCode, isWrite, tlsReason.transferToWTFString());
 }
 
 extern "C" bool WebSocket__isWsMode(WebCore::WebSocket* webSocket)

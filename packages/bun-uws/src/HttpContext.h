@@ -869,9 +869,10 @@ private:
         return s;
     }
 
-    /* JavaScript closed the socket, or upgraded it after the peer's FIN, which the loop reports only once. */
+    /* JavaScript closed the socket, or upgraded it after the peer's FIN, which the loop reports only once.
+     * A WebSocket drops what it has not sent at the FIN, so with bytes left it stays open. */
     static us_socket_t *passOnEnd(us_socket_t *s) {
-        return us_socket_is_closed(s) ? s : us_dispatch_end(s);
+        return us_socket_is_closed(s) || !((AsyncSocket<SSL> *) s)->hasFullyDrained() ? s : us_dispatch_end(s);
     }
 
     template <bool IsNodeHttp>

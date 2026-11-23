@@ -1,7 +1,8 @@
 use bun_core::strings::{self, eql_case_insensitive_ascii_check_length as eql_ignoring_case};
 
-use super::head::BLANKS;
+use super::head::{BLANKS, split_short_run};
 use super::{Request, RequestError, RequestOptions};
+use crate::byte_sets::NOT_COMMA;
 
 const MAX_CONTENT_LENGTH_DIGITS: usize = 18;
 const MAX_CONTENT_LENGTH: u64 = (1 << 59) - 1;
@@ -46,11 +47,8 @@ impl TransferEncoding {
             this.has_more_after_chunked |= this.is_chunked;
             let mut list = (!field.value.is_empty()).then_some(field.value);
             while let Some(elements) = list {
-                let (element, rest) = match strings::split_once_char(elements, b',') {
-                    Some((element, rest)) => (element, Some(rest)),
-                    None => (elements, None),
-                };
-                list = rest;
+                let (element, rest) = split_short_run(elements, &NOT_COMMA);
+                list = rest.strip_prefix(b",");
                 let coding = strings::trim(element, BLANKS);
                 this.has_value = true;
                 this.ends_in_chunked = eql_ignoring_case(coding, b"chunked");

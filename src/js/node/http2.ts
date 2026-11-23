@@ -27,7 +27,13 @@
  * Modifications were made to the original code.
  */
 const { isTypedArray } = require("node:util/types");
-const { hideFromStack, hasObserver, enqueueNodeEntry, PerformanceNodeEntry } = require("internal/shared");
+const {
+  hideFromStack,
+  hasObserver,
+  enqueueNodeEntry,
+  PerformanceNodeEntry,
+  builtinChannel,
+} = require("internal/shared");
 const { STATUS_CODES, utcDate } = require("internal/http");
 const { kTimeout, getTimerDuration } = require("internal/timers");
 const tls = require("node:tls");
@@ -46,21 +52,20 @@ const kOptions = Symbol("options");
 const kQuotedString = /^[\x09\x20-\x5b\x5d-\x7e\x80-\xff]*$/;
 const MAX_ADDITIONAL_SETTINGS = 10;
 const Stream = require("node:stream");
-const dc = require("node:diagnostics_channel");
 
 // Built-in HTTP/2 diagnostics channels (mirror node's lib/internal/http2/core.js).
-const onClientStreamCreatedChannel = dc.channel("http2.client.stream.created");
-const onClientStreamStartChannel = dc.channel("http2.client.stream.start");
-const onClientStreamErrorChannel = dc.channel("http2.client.stream.error");
-const onClientStreamBodyChunkSentChannel = dc.channel("http2.client.stream.bodyChunkSent");
-const onClientStreamBodySentChannel = dc.channel("http2.client.stream.bodySent");
-const onClientStreamFinishChannel = dc.channel("http2.client.stream.finish");
-const onClientStreamCloseChannel = dc.channel("http2.client.stream.close");
-const onServerStreamCreatedChannel = dc.channel("http2.server.stream.created");
-const onServerStreamStartChannel = dc.channel("http2.server.stream.start");
-const onServerStreamErrorChannel = dc.channel("http2.server.stream.error");
-const onServerStreamFinishChannel = dc.channel("http2.server.stream.finish");
-const onServerStreamCloseChannel = dc.channel("http2.server.stream.close");
+const onClientStreamCreatedChannel = builtinChannel("http2.client.stream.created");
+const onClientStreamStartChannel = builtinChannel("http2.client.stream.start");
+const onClientStreamErrorChannel = builtinChannel("http2.client.stream.error");
+const onClientStreamBodyChunkSentChannel = builtinChannel("http2.client.stream.bodyChunkSent");
+const onClientStreamBodySentChannel = builtinChannel("http2.client.stream.bodySent");
+const onClientStreamFinishChannel = builtinChannel("http2.client.stream.finish");
+const onClientStreamCloseChannel = builtinChannel("http2.client.stream.close");
+const onServerStreamCreatedChannel = builtinChannel("http2.server.stream.created");
+const onServerStreamStartChannel = builtinChannel("http2.server.stream.start");
+const onServerStreamErrorChannel = builtinChannel("http2.server.stream.error");
+const onServerStreamFinishChannel = builtinChannel("http2.server.stream.finish");
+const onServerStreamCloseChannel = builtinChannel("http2.server.stream.close");
 const { Readable } = Stream;
 type Http2ConnectOptions = {
   settings?: Settings;
@@ -383,12 +388,11 @@ const kSessionDestroyError = Symbol("sessionDestroyError");
 // responsible for closing it exactly once. respondWithFD() descriptors belong to the caller.
 const kOwnsFd = Symbol("ownsFd");
 const kRequestHeaders = Symbol("requestHeaders");
-// True only for the synchronous extent of Http2Stream#sendTrailers()'s native call. node submits
-// trailers on a later turn (finishSendTrailers via setImmediate), so a stream never observes its
-// own close from inside sendTrailers() — the streamEnd(closed) dispatch is re-queued when this is
-// set so a second sendTrailers() in the same tick reports ERR_HTTP2_TRAILERS_ALREADY_SENT, not
-// ERR_HTTP2_INVALID_STREAM.
-const kSendingTrailers = Symbol("sendingTrailers");
+// True only for the synchronous extent of the native call in respond() and sendTrailers(). node
+// sends the frame on a later turn, so a stream never observes its own close from inside these
+// calls — the streamEnd(closed) dispatch is re-queued when this is set so a second sendTrailers()
+// in the same tick reports ERR_HTTP2_TRAILERS_ALREADY_SENT, not ERR_HTTP2_INVALID_STREAM.
+const kSendingHeaders = Symbol("sendingHeaders");
 const kSettingsAckGraceTimer = Symbol("settingsAckGraceTimer");
 // node: a socket can be bound to at most one Http2Session (ERR_HTTP2_SOCKET_BOUND).
 const kBoundSession = Symbol("boundSession");
@@ -2126,9 +2130,35 @@ function publishStreamCloseChannel(stream: Http2Stream) {
   stream[kCloseChannelPublished] = true;
   if (stream instanceof ClientHttp2Stream) {
     if (onClientStreamCloseChannel.hasSubscribers) onClientStreamCloseChannel.publish({ stream });
-  } else if (onServerStreamCloseChannel.hasSubscribers) {
+  } else if (
+    onServerStreamCloseChannel.hasSubscribers &&
+    (stream[bunHTTP2StreamStatus] & StreamState.Delivered) !== 0
+  ) {
     onServerStreamCloseChannel.publish({ stream });
   }
+}
+function publishClientStreamCreated(stream: ClientHttp2Stream, headers: HeadersObject) {
+  if (onClientStreamCreatedChannel.hasSubscribers) onClientStreamCreatedChannel.publish({ stream, headers });
+}
+function publishClientStreamStart(stream: ClientHttp2Stream, headers: HeadersObject) {
+  if (onClientStreamStartChannel.hasSubscribers && !stream.destroyed) {
+    onClientStreamStartChannel.publish({ stream, headers });
+  }
+}
+function startQueuedRequest(stream: ClientHttp2Stream, headers: HeadersObject) {
+  process.nextTick(emitEventNT, stream, "ready");
+  publishClientStreamStart(stream, headers);
+}
+function deliverPushedStreamNT(callback, stream: ServerHttp2Stream, headers: HeadersObject) {
+  if (onServerStreamStartChannel.hasSubscribers) onServerStreamStartChannel.publish({ stream, headers });
+  callback(null, stream, headers);
+}
+// The flags of a stream in node's lib/internal/http2/core.js.
+const enum NodeStreamFlags {
+  Ready = 0x1,
+  HeadersSent = 0x4,
+  HeadRequest = 0x8,
+  HasTrailers = 0x20,
 }
 // Set across end(chunk)'s synchronous super.end() only: bridges the window where the final
 // chunk dispatches before Writable marks the stream ending.
@@ -2362,7 +2392,7 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
   [bunHTTP2Headers]: any;
   [kInfoHeaders]: any;
   #sentTrailers: any;
-  [kSendingTrailers]: boolean = false;
+  [kSendingHeaders]: boolean = false;
   [kAborted]: boolean = false;
   [kHeadRequest]: boolean = false;
   constructor(streamId, session, headers) {
@@ -2485,7 +2515,7 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
     // coercion hits ERR_HTTP2_TRAILERS_ALREADY_SENT, but clear it if validation throws
     // (no frame is written then) so a corrected retry succeeds like node.
     this.#sentTrailers = headers;
-    this[kSendingTrailers] = true;
+    this[kSendingHeaders] = true;
     try {
       if (ObjectKeys(headers).length === 0) {
         session[bunHTTP2Native]?.noTrailers(this.#id);
@@ -2496,7 +2526,7 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
       this.#sentTrailers = undefined;
       throw error;
     } finally {
-      this[kSendingTrailers] = false;
+      this[kSendingHeaders] = false;
     }
   }
 
@@ -3273,7 +3303,7 @@ function maybeCloseUnreadServerStream(stream: ServerHttp2Stream) {
   if (stream[kFileResponseFinal] !== undefined) return;
   // Node holds the auto-close while trailers are pending: its HAS_TRAILERS flag is set by
   // respond({waitForTrailers}) and only cleared once sendTrailers() has submitted them.
-  if (stream[kSendingTrailers]) return;
+  if (stream[kSendingHeaders]) return;
   if ((stream[bunHTTP2StreamStatus] & StreamState.WantTrailer) !== 0 && stream.sentTrailers === undefined) return;
   if (!stream.readableDidRead && stream.readableFlowing === null) {
     setImmediate(callStreamClose, stream);
@@ -3375,12 +3405,6 @@ class ServerHttp2Stream extends Http2Stream {
       pushedStream[bunHTTP2Headers] = headers;
     }
     if (pushedStream) endInboundHalf(pushedStream);
-    if (onServerStreamCreatedChannel.hasSubscribers) {
-      onServerStreamCreatedChannel.publish({ stream: pushedStream, headers });
-    }
-    if (onServerStreamStartChannel.hasSubscribers) {
-      onServerStreamStartChannel.publish({ stream: pushedStream, headers });
-    }
     let pushResult;
     try {
       pushResult = parser.pushPromise(this.id, pushId, headers, sensitiveNames);
@@ -3408,13 +3432,10 @@ class ServerHttp2Stream extends Http2Stream {
         pushedStream[kNeverAnnounced] = true;
         pushedStream[bunHTTP2StreamStatus] |= StreamState.Delivered;
       }
-      process.nextTick(callback, null, pushedStream, headers);
-      return;
-    }
-    // node: a HEAD push (or options.endStream) carries no response body, so the pushed stream's
-    // writable side is already ended when the callback runs; respond() then forces endStream so
-    // END_STREAM rides on the response HEADERS frame.
-    if (pushedStream) {
+    } else if (pushedStream) {
+      // node: a HEAD push (or options.endStream) carries no response body, so the pushed stream's
+      // writable side is already ended when the callback runs; respond() then forces endStream so
+      // END_STREAM rides on the response HEADERS frame.
       // The callback is how user code receives the pushed stream; from here on it may have an
       // 'error' listener.
       pushedStream[bunHTTP2StreamStatus] |= StreamState.Delivered;
@@ -3425,7 +3446,10 @@ class ServerHttp2Stream extends Http2Stream {
         pushedStream.end();
       }
     }
-    process.nextTick(callback, null, pushedStream, headers);
+    process.nextTick(deliverPushedStreamNT, callback, pushedStream, headers);
+    if (onServerStreamCreatedChannel.hasSubscribers) {
+      onServerStreamCreatedChannel.publish({ stream: pushedStream, headers });
+    }
   }
 
   respondWithFile(path, headers?: HeadersObject | null, options?) {
@@ -3736,27 +3760,38 @@ class ServerHttp2Stream extends Http2Stream {
     }
 
     const wireHeaders = rawHeadersList !== null ? rawHeadersList : headers;
-    if (typeof options === "undefined") {
-      session[bunHTTP2Native]?.request(this.id, undefined, wireHeaders, sensitiveNames);
-    } else {
-      session[bunHTTP2Native]?.request(this.id, undefined, wireHeaders, sensitiveNames, options);
-      // Only track waitForTrailers when the HEADERS frame above did NOT end
-      // the stream. Status codes 204/205/304 and HEAD requests force
-      // endStream=true earlier in this method, which means the native
-      // request() already wrote END_STREAM on the HEADERS frame — driving
-      // the wantTrailers path from `_final` on such a stream would call
-      // `noTrailers`/`emit("wantTrailers")` on an already-half-closed
-      // stream and corrupt state. Use optional chaining: `options` may be
-      // `null` here (typeof null === "object" enters this else branch).
-      if (options?.waitForTrailers && !endStream) {
-        this[bunHTTP2WaitForTrailers] = true;
+    this[kSendingHeaders] = true;
+    try {
+      if (typeof options === "undefined") {
+        session[bunHTTP2Native]?.request(this.id, undefined, wireHeaders, sensitiveNames);
+      } else {
+        session[bunHTTP2Native]?.request(this.id, undefined, wireHeaders, sensitiveNames, options);
+        // Only track waitForTrailers when the HEADERS frame above did NOT end
+        // the stream. Status codes 204/205/304 and HEAD requests force
+        // endStream=true earlier in this method, which means the native
+        // request() already wrote END_STREAM on the HEADERS frame — driving
+        // the wantTrailers path from `_final` on such a stream would call
+        // `noTrailers`/`emit("wantTrailers")` on an already-half-closed
+        // stream and corrupt state. Use optional chaining: `options` may be
+        // `null` here (typeof null === "object" enters this else branch).
+        if (options?.waitForTrailers && !endStream) {
+          this[bunHTTP2WaitForTrailers] = true;
+        }
       }
+    } finally {
+      this[kSendingHeaders] = false;
     }
     this.headersSent = true;
-    if (onServerStreamFinishChannel.hasSubscribers) {
-      onServerStreamFinishChannel.publish({ stream: this, headers, flags: 0 });
-    }
     this[bunHTTP2Headers] = headers;
+    if ((this[bunHTTP2StreamStatus] & StreamState.NativeClosed) !== 0) {
+      this[bunHTTP2StreamStatus] |= StreamState.EndStreamSent | StreamState.WritableClosed;
+    }
+    if (onServerStreamFinishChannel.hasSubscribers) {
+      let flags = NodeStreamFlags.Ready | NodeStreamFlags.HeadersSent;
+      if (this.headRequest) flags |= NodeStreamFlags.HeadRequest;
+      if (this[bunHTTP2WaitForTrailers]) flags |= NodeStreamFlags.HasTrailers;
+      onServerStreamFinishChannel.publish({ stream: this, headers, flags });
+    }
     if (endStream) {
       this.end();
     }
@@ -4165,10 +4200,10 @@ class ServerHttp2Session extends Http2Session {
     },
     streamEnd(self: ServerHttp2Session, stream: ServerHttp2Stream, state: number) {
       if (!self || typeof stream !== "object") return;
-      if (state === 7 && stream[kSendingTrailers]) {
-        // The trailer frame submitted by an in-flight sendTrailers() fully closed the stream:
-        // re-queue the close so it is not observable from inside sendTrailers() (node defers the
-        // submission itself via setImmediate, see kSendingTrailers).
+      if (state === 7 && stream[kSendingHeaders]) {
+        // The frame submitted by an in-flight respond() or sendTrailers() fully closed the stream:
+        // re-queue the close so it is not observable from inside the call, see kSendingHeaders.
+        stream[bunHTTP2StreamStatus] |= StreamState.NativeClosed;
         process.nextTick(ServerHttp2Session.#Handlers.streamEnd, self, stream, state);
         return;
       }
@@ -5165,12 +5200,11 @@ class ClientHttp2Session extends Http2Session {
       });
       self.#connections++;
       self.#parser?.setStreamContext(pushId, pushedStream);
-      if (onClientStreamCreatedChannel.hasSubscribers) {
-        onClientStreamCreatedChannel.publish({ stream: pushedStream, headers });
-      }
-      if (onClientStreamStartChannel.hasSubscribers) {
-        onClientStreamStartChannel.publish({ stream: pushedStream, headers });
-      }
+      // The server made up the request: there is nothing to send.
+      pushedStream[bunHTTP2StreamStatus] |= StreamState.EndStreamSent | StreamState.WritableClosed;
+      publishClientStreamCreated(pushedStream, headers);
+      publishClientStreamStart(pushedStream, headers);
+      pushedStream.end();
       self.emit("stream", pushedStream, headers, flags, rawheaders);
     },
     frameError: withStreamFrame(
@@ -5200,10 +5234,10 @@ class ClientHttp2Session extends Http2Session {
     }),
     streamEnd: withStreamFrame((self: ClientHttp2Session, stream: ClientHttp2Stream, state: number) => {
       if (!self || typeof stream !== "object") return;
-      if (state === 7 && stream[kSendingTrailers]) {
+      if (state === 7 && stream[kSendingHeaders]) {
         // The trailer frame submitted by an in-flight sendTrailers() fully closed the stream:
         // re-queue the close so it is not observable from inside sendTrailers() (node defers the
-        // submission itself via setImmediate, see kSendingTrailers).
+        // submission itself via setImmediate, see kSendingHeaders).
         process.nextTick(ClientHttp2Session.#Handlers.streamEnd, self, stream, state);
         return;
       }
@@ -5300,7 +5334,7 @@ class ClientHttp2Session extends Http2Session {
               // 421 Misdirected Request
               removeOriginFromSet(self, stream);
             }
-            if (onClientStreamFinishChannel.hasSubscribers) {
+            if (onClientStreamFinishChannel.hasSubscribers && !stream.destroyed) {
               onClientStreamFinishChannel.publish({ stream, headers, flags });
             }
             if (endOfStream) endInboundHalf(stream);
@@ -6086,17 +6120,7 @@ class ClientHttp2Session extends Http2Session {
         if (options.exclusive !== undefined) validateBoolean(options.exclusive, "options.exclusive");
         if (options.silent !== undefined) validateBoolean(options.silent, "options.silent");
       }
-      if (this.destroyed) {
-        const req = new ClientHttp2Stream(undefined, this, headers);
-        process.nextTick(destroyWithInvalidSessionNT, req);
-        return req;
-      }
-      if (this[kReceivedGoaway]) {
-        const err = new Error("New streams cannot be created after receiving a GOAWAY");
-        err.code = "ERR_HTTP2_GOAWAY_SESSION";
-        throw err;
-      }
-      if (this.closed) {
+      if (!this.destroyed && (this[kReceivedGoaway] || this.closed)) {
         // node: a closed (close() called / GOAWAY pending) session reports
         // ERR_HTTP2_GOAWAY_SESSION on the stream (verified node v26.3.0); the test
         // contract accepts a synchronous throw of the same error.
@@ -6287,6 +6311,13 @@ class ClientHttp2Session extends Http2Session {
         }
       }
 
+      if (this.destroyed) {
+        const req = new ClientHttp2Stream(undefined, this, headers);
+        process.nextTick(destroyWithInvalidSessionNT, req);
+        publishClientStreamCreated(req, headers);
+        return req;
+      }
+
       let rejectContentLengthOnNoPayload = false;
       if (NoPayloadMethods.has(method.toUpperCase())) {
         // Like Node, a payload-meaningless method only defaults endStream to
@@ -6325,6 +6356,7 @@ class ClientHttp2Session extends Http2Session {
               req[kHeadRequest] = method === HTTP2_METHOD_HEAD;
               process.nextTick(rejectRequestNT, this, req);
               process.nextTick(emitEventNT, req, "ready");
+              publishClientStreamCreated(req, headers);
               return req;
             }
           }
@@ -6340,6 +6372,7 @@ class ClientHttp2Session extends Http2Session {
         req[kHeadRequest] = method === HTTP2_METHOD_HEAD;
         process.nextTick(rejectRequestNT, this, req);
         process.nextTick(emitEventNT, req, "ready");
+        publishClientStreamCreated(req, headers);
         return req;
       }
 
@@ -6361,6 +6394,7 @@ class ClientHttp2Session extends Http2Session {
           // The writable side is ended first (endStream requests), so the stream is destroyed
           // without counting as aborted — only the AbortError is reported.
           if (options.endStream) req.end();
+          publishClientStreamCreated(req, headers);
           req.destroy($makeAbortError(undefined, { cause: signal.reason }));
           return req;
         }
@@ -6380,9 +6414,6 @@ class ClientHttp2Session extends Http2Session {
         const req = new ClientHttp2Stream(undefined, this, headers);
         req.authority = authority;
         req[kHeadRequest] = method === HTTP2_METHOD_HEAD;
-        if (onClientStreamCreatedChannel.hasSubscribers) {
-          onClientStreamCreatedChannel.publish({ stream: req, headers });
-        }
         if (this.#pendingRequests === null) {
           this.#pendingRequests = [];
         }
@@ -6400,6 +6431,7 @@ class ClientHttp2Session extends Http2Session {
         req.cork();
         process.nextTick(uncorkNT, req);
         setupRequestEndAndSignal(req, options, signal);
+        publishClientStreamCreated(req, headers);
         return req;
       }
 
@@ -6408,25 +6440,23 @@ class ClientHttp2Session extends Http2Session {
       if (stream_id < 0) {
         const req = new ClientHttp2Stream(undefined, this, headers);
         process.nextTick(emitOutofStreamErrorNT, req);
+        publishClientStreamCreated(req, headers);
         return req;
       }
       const req = new ClientHttp2Stream(stream_id, this, headers);
       req.authority = authority;
       req[kHeadRequest] = method === HTTP2_METHOD_HEAD;
-      if (onClientStreamCreatedChannel.hasSubscribers) {
-        onClientStreamCreatedChannel.publish({ stream: req, headers });
-      }
       const wireHeaders = rawHeadersList !== null ? rawHeadersList : headers;
       this.#parser!.request(stream_id, req, wireHeaders, sensitiveNames, options);
-      if (onClientStreamStartChannel.hasSubscribers) {
-        onClientStreamStartChannel.publish({ stream: req, headers });
-      }
       this.#trackActiveRequest(req);
       // node corks every Http2Stream until its native handle is assigned (always at least one tick
       // after request() returns), so body chunks written synchronously after request() are buffered
       // and flushed together through _writev.
       req.cork();
       process.nextTick(uncorkNT, req);
+      // On a connected session Node publishes `bodySent`, `start` and `created`, in that order.
+      publishClientStreamCreated(req, headers);
+      publishClientStreamStart(req, headers);
       setupRequestEndAndSignal(req, options, signal);
       process.nextTick(emitEventNT, req, "ready");
       return req;
@@ -6497,11 +6527,8 @@ class ClientHttp2Session extends Http2Session {
         if (!req.destroyed) req.destroy(err as Error);
         continue;
       }
-      if (onClientStreamStartChannel.hasSubscribers) {
-        onClientStreamStartChannel.publish({ stream: req, headers });
-      }
       this.#trackActiveRequest(req);
-      process.nextTick(emitEventNT, req, "ready");
+      runInFrame(req[bunHTTP2AsyncContextFrame], startQueuedRequest, undefined, req, headers);
     }
   }
   static connect(url: string | URL, options?: Http2ConnectOptions, listener?: Function) {
@@ -6767,6 +6794,7 @@ class Http2SecureServer extends (tls.Server as unknown as Http2SecureServerBase)
   declare insecureHTTPParser: boolean | undefined;
   declare httpValidation: string | undefined;
   declare joinDuplicateHeaders: boolean | undefined;
+  declare requireHostHeader: boolean | undefined;
   timeout = 0;
   [kSessions] = new SafeSet();
   constructor(options, onRequestHandler) {
@@ -6791,6 +6819,9 @@ class Http2SecureServer extends (tls.Server as unknown as Http2SecureServerBase)
       const joinDuplicateHeaders = http1Options.joinDuplicateHeaders;
       if (joinDuplicateHeaders !== undefined) validateBoolean(joinDuplicateHeaders, "options.joinDuplicateHeaders");
       this.joinDuplicateHeaders = joinDuplicateHeaders;
+      const { requireHostHeader = true } = http1Options;
+      validateBoolean(requireHostHeader, "options.requireHostHeader");
+      this.requireHostHeader = requireHostHeader;
       // connectionListenerHTTP1 reads these off the server when initializing
       // the per-connection parser, matching Node's storeHTTPOptions.
       this.maxHeaderSize = http1Options.maxHeaderSize;

@@ -1223,6 +1223,9 @@ describe.concurrent.each(["http", "https"])("handleUpgrade() from a callback of 
     "GET /ws HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\n" +
     `Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n${fields}\r\n`;
 
+  const RESPONSE_HEAD = 129;
+  const FRAME_HEAD = 10;
+
   async function open(serverOptions: http.ServerOptions = {}) {
     const server =
       protocol === "https" ? https.createServer({ ...options, ...serverOptions }) : http.createServer(serverOptions);
@@ -1232,8 +1235,10 @@ describe.concurrent.each(["http", "https"])("handleUpgrade() from a callback of 
     const switched = Promise.withResolvers<void>();
     const firstEvent = Promise.withResolvers<string>();
     let tail = "";
+    let received = 0;
     client.on("error", () => {});
     client.on("data", chunk => {
+      received += chunk.length;
       tail = (tail + chunk.subarray(-256).toString("latin1")).slice(-256);
       if (tail.includes("101 Switching Protocols")) switched.resolve();
     });
@@ -1242,10 +1247,12 @@ describe.concurrent.each(["http", "https"])("handleUpgrade() from a callback of 
       client,
       switched: switched.promise,
       firstEvent: firstEvent.promise,
-      upgrade(req: http.IncomingMessage) {
+      received: () => received,
+      upgrade(req: http.IncomingMessage, onOpen?: (ws: WsWebSocket) => void) {
         wss.handleUpgrade(req, req.socket, Buffer.alloc(0), ws => {
           ws.on("message", message => firstEvent.resolve("message " + message));
           ws.on("close", code => firstEvent.resolve("close " + code));
+          onOpen?.(ws);
         });
       },
       [Symbol.dispose]() {
@@ -1279,6 +1286,34 @@ describe.concurrent.each(["http", "https"])("handleUpgrade() from a callback of 
     c.client.write("GET /ahead HTTP/1.1\r\nHost: localhost\r\n\r\n" + upgradeRequest("Connection: Upgrade\r\n"));
     await once(c.client.end(), "close");
     expect(await c.firstEvent).toBe("close 1006");
+  });
+
+  // TLS has a second end, the FIN behind the close_notify.
+  test.skipIf(protocol === "https")("a long message is sent after the FIN", async () => {
+    using c = await open();
+    c.client.write(upgradeRequest("Connection: Upgrade\r\n") + "GET /next HT");
+    const [req] = await once(c.server, "request");
+    c.server.on("clientError", () =>
+      c.upgrade(req, ws => ws.send(Buffer.alloc(16 * 1024 * 1024, "m"), () => req.socket.end())),
+    );
+    await once(c.client.end(), "close");
+    expect(c.received()).toBe(RESPONSE_HEAD + FRAME_HEAD + 16 * 1024 * 1024);
+  });
+
+  test("destroySoon() after the FIN keeps what is no longer buffered", async () => {
+    using c = await open();
+    c.client.write(upgradeRequest("Connection: Upgrade\r\n") + "GET /next HT");
+    const [req] = await once(c.server, "request");
+    let sent = 0;
+    c.server.on("clientError", () =>
+      c.upgrade(req, ws => {
+        ws.send(Buffer.alloc(16 * 1024 * 1024, "m"));
+        sent = FRAME_HEAD + 16 * 1024 * 1024 - ws.bufferedAmount;
+        req.socket.destroySoon();
+      }),
+    );
+    await once(c.client.end(), "close");
+    expect(c.received()).toBeGreaterThanOrEqual(RESPONSE_HEAD + sent);
   });
 
   test("'clientError' for bytes behind a request that closes the connection", async () => {

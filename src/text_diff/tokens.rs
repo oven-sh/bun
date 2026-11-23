@@ -151,12 +151,16 @@ pub fn diff_text<T: Unit>(split: Split, a: &[T], b: &[T], max_edits: usize) -> O
     }
     let tail = split.common_tail(&a[head..], &b[head..]);
     let (end_a, end_b) = (a.len() - tail, b.len() - tail);
+    if let (Split::Chars, CodeUnits::U8(a), CodeUnits::U8(b)) = (split, T::units(a), T::units(b)) {
+        return diff_latin1_chars(a, b, head, tail, max_edits);
+    }
     let mut offsets_a = split.offsets(a, head, end_a);
     let mut offsets_b = split.offsets(b, head, end_b);
 
     let tokens = offsets_a.len() + offsets_b.len();
     let mut interner = Interner::with_capacity(match split {
-        Split::Lines => tokens,
+        // Short lines are repeats.
+        Split::Lines => tokens.min((end_a + end_b - 2 * head) / 4),
         // Most are repeats.
         Split::Words | Split::Chars => tokens.min(1024),
     });
@@ -202,6 +206,42 @@ pub fn diff_text<T: Unit>(split: Split, a: &[T], b: &[T], max_edits: usize) -> O
     Some(hunks.into_iter().map(edit).collect())
 }
 
+/// A token is a code unit, and that is its number.
+fn diff_latin1_chars(
+    a: &[u8],
+    b: &[u8],
+    head: usize,
+    tail: usize,
+    max_edits: usize,
+) -> Option<Vec<Edit>> {
+    let (end_a, end_b) = (a.len() - tail, b.len() - tail);
+    let mut is_seen = [false; 256];
+    for text in [&a[head..end_a], &b[head..end_b]] {
+        text.iter()
+            .for_each(|&unit| is_seen[usize::from(unit)] = true);
+    }
+    let in_tail = a[end_a..]
+        .iter()
+        .take_while(|&&unit| is_seen[usize::from(unit)]);
+    let reach = in_tail.count();
+    let [ids_a, ids_b] = [&a[head..end_a + reach], &b[head..end_b + reach]]
+        .map(|text| text.iter().map(|&unit| unit.into()).collect::<Vec<u32>>());
+    let edit = |h: Hunk| {
+        let units = Hunk {
+            a_lo: head + h.a_lo,
+            a_hi: head + h.a_hi,
+            b_lo: head + h.b_lo,
+            b_hi: head + h.b_hi,
+        };
+        Edit {
+            units,
+            tokens: units,
+        }
+    };
+    let hunks = diff_ids(&ids_a, &ids_b, is_seen.len(), max_edits)?;
+    Some(hunks.into_iter().map(edit).collect())
+}
+
 /// As [`diff_text`], of tokens that are numbers below `distinct`, at most `i32::MAX` on each side.
 pub fn diff_ids(a: &[u32], b: &[u32], distinct: usize, max_edits: usize) -> Option<Vec<Hunk>> {
     let hunks = diff_shared_tokens(
@@ -220,13 +260,16 @@ pub fn diff_ids(a: &[u32], b: &[u32], distinct: usize, max_edits: usize) -> Opti
     (edits <= max_edits).then_some(hunks)
 }
 
-/// Enough for Myers' search to find 8,192 insertions and as many deletions, and for 70,000 rows of 70,000 bits.
-const WORK: usize = 80_000_000;
-const WORK_PER_TOKEN: usize = 32;
+/// Enough for 70,000 rows of 70,000 bits.
+const ROW_WORK: usize = 80_000_000;
+const ROW_WORK_PER_TOKEN: usize = 32;
+/// Enough for 8,300 insertions and as many deletions.
+const SEARCH_WORK: usize = 70_000_000;
+const SEARCH_WORK_PER_TOKEN: usize = 16;
 /// About what it takes to find out what else there is to try.
 const FIRST_WORK_PER_TOKEN: usize = 8;
 
-/// Myers' search is fast if the sequences are close, which only running it tells. What rows of bits cost is known before.
+/// The search is fast if the sequences are close, which only running it tells. What rows of bits cost is known before.
 fn mark(
     a: &[u32],
     b: &[u32],
@@ -235,18 +278,18 @@ fn mark(
     changed_a: &mut [bool],
     changed_b: &mut [bool],
 ) {
-    let all = WORK + WORK_PER_TOKEN * (a.len() + b.len());
-    let first = FIRST_WORK_PER_TOKEN * (a.len() + b.len());
+    let tokens = a.len() + b.len();
+    let first = FIRST_WORK_PER_TOKEN * tokens;
     let mut rows = None;
     let mut is_too_far = false;
     let mut more = || {
         let matches = Matches::new(b, distinct);
         let cost = matches.cost(a);
-        let more = if cost <= all {
+        let more = if cost <= ROW_WORK + ROW_WORK_PER_TOKEN * tokens {
             rows = Some((matches, cost));
-            (cost / 2).saturating_sub(first)
+            (cost / 3).saturating_sub(first)
         } else {
-            all - first
+            SEARCH_WORK + SEARCH_WORK_PER_TOKEN * tokens - first
         };
         let reach = edits_within(a.len().abs_diff(b.len()), first + more).min(max_edits);
         if more > 0 && is_further_than(a, b, reach) {
@@ -401,106 +444,108 @@ impl Script {
     }
 }
 
-/// A script has as many edits as the lengths differ by, and some pairs of an insertion and a deletion. Looking for one
-/// with at most `pairs` of those takes (`pairs` + 1) × (`pairs` + difference + 1) steps.
+/// A script has as many edits as the lengths differ by, and some pairs of an insertion and a deletion. Each round allows
+/// one more pair (Wu, Manber, Myers and Miller, "An O(NP) sequence comparison algorithm", 1990).
 fn search(a: &[u32], b: &[u32], max_edits: usize, mut work: Work<'_>) -> Search {
     let Some(spare) = max_edits.checked_sub(a.len().abs_diff(b.len())) else {
         return Search::TooFar;
     };
-    let max_pairs = (spare / 2).min(a.len()).min(b.len());
-    let mut pairs = 2;
-    loop {
-        match search_within(a, b, pairs.min(max_pairs), &mut work) {
-            Search::TooFar if pairs < max_pairs => pairs *= 4,
-            done => return done,
-        }
-    }
-}
-
-// Inlined, its inner loop runs out of registers.
-#[inline(never)]
-fn search_within(a: &[u32], b: &[u32], pairs: usize, work: &mut Work<'_>) -> Search {
-    let (n, m) = (a.len() as isize, b.len() as isize);
-    let goal = n - m;
-    let max_edits = goal.abs() + 2 * pairs as isize;
-    let origin = (max_edits - goal) / 2 + 1;
-    // By diagonal k = x - y: one more than the furthest x, so that 0 loses to every path.
-    let mut furthest = vec![0u32; max_edits as usize + 3];
+    let goal = a.len() as isize - b.len() as isize;
+    // Of the diagonals k = x - y from the goal outwards: the furthest y of those below it, the furthest x of those above.
+    let mut below = vec![NOWHERE; goal.max(0) as usize + 1];
+    let mut above = vec![NOWHERE; (-goal).max(0) as usize + 1];
+    let mut start = if goal > 0 { (0, NOWHERE) } else { (NOWHERE, 0) };
     let mut trace = Trace::default();
 
-    let start = u32::common_prefix(a, b) as isize;
-    if start == n && start == m {
-        return Search::Found(Script(Vec::new()));
-    }
-    furthest[origin as usize] = start as u32 + 1;
-    // A step past a path that has reached the end of `b` (of `a`) would leave the grid.
-    let mut lowest = if start == m { 1 } else { isize::MIN };
-    let mut highest = if start == n { -1 } else { isize::MAX };
-
-    for d in 1..=max_edits {
-        let lo = (-d).max(goal - (max_edits - d)).max(lowest);
-        let hi = d.min(goal + (max_edits - d)).min(highest);
-        let bits_before = trace.bits;
-        let steps = (hi - lo) as usize / 2 + 1;
-        let (before, from_lo) = furthest.split_at_mut((origin + lo) as usize);
-        let mut below = before[before.len() - 1];
-        let mut k = lo;
-        'round: for diagonals in from_lo.as_chunks_mut::<2>().0[..steps].chunks_mut(64) {
-            let mut word = 0u64;
-            for [here, above] in diagonals.iter_mut() {
-                let is_insertion = below < *above;
-                word = word << 1 | u64::from(is_insertion);
-                let mut x = if is_insertion { *above - 1 } else { below } as usize;
-                let mut y = (x as isize - k) as usize;
-                below = *above;
-                if let (Some(in_a), Some(in_b)) = (a.get(x), b.get(y)) {
-                    if in_a != in_b {
-                        *here = x as u32 + 1;
-                        k += 2;
-                        continue;
-                    }
-                    let from = x;
-                    (x, y) = (x + 1, y + 1);
-                    while x < a.len() && y < b.len() && a[x] == b[y] {
-                        (x, y) = (x + 1, y + 1);
-                    }
-                    if !work.spend((x - from) as isize) {
-                        return Search::OutOfWork;
-                    }
-                }
-                *here = x as u32 + 1;
-                if x == a.len() {
-                    trace.push(word, (k - lo) as usize / 2 % 64 + 1);
-                    if y == b.len() {
-                        trace.end_round(lo, bits_before);
-                        return Search::Found(trace.backtrack(k));
-                    }
-                    highest = k - 1;
-                    break 'round;
-                }
-                if y == b.len() {
-                    lowest = k + 1;
-                }
-                k += 2;
-            }
-            trace.push(word, diagonals.len());
+    for pairs in 0..=spare / 2 {
+        let y = sweep(b, a, &mut below, start.0, 1, &mut trace, &mut work);
+        let x = sweep(a, b, &mut above, start.1, 0, &mut trace, &mut work);
+        let (Some(x), Some(y)) = (x, y) else {
+            return Search::OutOfWork;
+        };
+        start = (NOWHERE, NOWHERE);
+        let (inserted, deleted) = (x as isize, y as isize + goal);
+        trace.push(u64::from(inserted >= deleted), 1);
+        let x = inserted.max(deleted);
+        let matches = u32::common_prefix(&a[x as usize..], &b[(x - goal) as usize..]) as isize;
+        if x + matches == a.len() as isize {
+            return Search::Found(trace.backtrack(goal, pairs as isize));
         }
-        trace.end_round(lo, bits_before);
-        if !work.spend((k - lo) / 2 + 1) {
+        if !work.spend(matches + 1) {
             return Search::OutOfWork;
         }
+        (below[0], above[0]) = ((x + matches - goal) as i32, (x + matches) as i32);
+        below.push(NOWHERE);
+        above.push(NOWHERE);
     }
     Search::TooFar
 }
 
-/// For each step of [`search_within`], whether it is an insertion. There can be a round for each token.
+/// Loses to every place, even after a step.
+const NOWHERE: i32 = -3;
+
+/// The diagonals on one side of the goal, towards it. `furthest` has places in `own`. A step towards the goal, from
+/// `outer`, skips a token of `other`. A step away from it skips one of `own`, and gets `tie` on top of where it leads.
+fn sweep(
+    own: &[u32],
+    other: &[u32],
+    furthest: &mut [i32],
+    mut outer: i32,
+    tie: i32,
+    trace: &mut Trace,
+    work: &mut Work<'_>,
+) -> Option<i32> {
+    let mut end = furthest.len();
+    while end > 1 {
+        let steps = (end - 1).min(64);
+        let shift = other.len() as isize - own.len() as isize - (end as isize - 1);
+        let some = &mut furthest[end - 1 - steps..end];
+        let (word, matches) = sweep_some(own, other, some, shift, outer, tie);
+        outer = some[1];
+        trace.push(word, steps);
+        if !work.spend((steps + matches) as isize) {
+            return None;
+        }
+        end -= steps;
+    }
+    Some(outer)
+}
+
+/// All but the first of `furthest`, from the last. There, `own[at]` is next to `other[at + shift]`. The steps, and the
+/// number of matches: no more than `own` has tokens, because each step starts where the last has ended.
+// Inlined, its loop runs out of registers.
+#[inline(never)]
+fn sweep_some(
+    own: &[u32],
+    other: &[u32],
+    furthest: &mut [i32],
+    mut shift: isize,
+    mut outer: i32,
+    tie: i32,
+) -> (u64, usize) {
+    let (mut word, mut matches) = (0u64, 0);
+    for i in (1..furthest.len()).rev() {
+        let inner = furthest[i - 1] + 1;
+        word = word << 1 | u64::from(inner > outer - tie);
+        outer = inner.max(outer);
+        while let Some(one) = own.get(outer as usize)
+            && other.get((outer as isize + shift) as usize) == Some(one)
+        {
+            outer += 1;
+            matches += 1;
+        }
+        furthest[i] = outer;
+        shift += 1;
+    }
+    (word, matches)
+}
+
+/// For each step of [`search`], whether it leads away from the goal. On the goal, whether it is an insertion.
 #[derive(Default)]
 struct Trace {
     /// From the highest bit of each.
     words: Vec<u64>,
     bits: usize,
-    /// The first diagonal, and the number of bits.
-    rounds: Vec<(i32, u32)>,
 }
 
 impl Trace {
@@ -519,20 +564,23 @@ impl Trace {
         }
     }
 
-    fn end_round(&mut self, lo: isize, bits_before: usize) {
-        let count = self.bits - bits_before;
-        self.rounds.push((lo as i32, count as u32));
-    }
-
-    fn backtrack(&self, mut k: isize) -> Script {
-        let mut start = self.bits;
-        let step = |&(lo, count): &(i32, u32)| {
-            start -= count as usize;
-            let at = start + (k - lo as isize) as usize / 2;
-            let is_insertion = self.words[at / 64] << (at % 64) >> 63 == 1;
+    fn backtrack(&self, goal: isize, mut pairs: isize) -> Script {
+        let mut script = Vec::with_capacity((goal.abs() + 2 * pairs) as usize);
+        let mut k = goal;
+        while pairs > 0 || k != 0 {
+            let (below, above) = (goal.max(0) + pairs, (-goal).max(0) + pairs);
+            let in_round = if k < goal {
+                below - (goal - k)
+            } else {
+                below + above - (k - goal)
+            };
+            let at = (pairs * (goal.abs() + pairs) + in_round) as usize;
+            let bit = self.words[at / 64] << (at % 64) >> 63 == 1;
+            let is_insertion = bit != (k > goal);
+            script.push(is_insertion);
+            pairs -= isize::from(bit && k != goal);
             k += if is_insertion { 1 } else { -1 };
-            is_insertion
-        };
-        Script(self.rounds.iter().rev().map(step).collect())
+        }
+        Script(script)
     }
 }

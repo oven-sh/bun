@@ -83,9 +83,18 @@ pub trait Elem: Copy + Eq {
     /// nothing.
     fn find(hay: &[Self], needle: &[Self], budget: &mut isize) -> Option<usize> {
         let (first, rest) = needle.split_first()?;
-        let last = hay.len().checked_sub(needle.len())?;
+        let places = hay.len().checked_sub(needle.len())? + 1;
         let mut at = 0;
-        while at <= last && *budget > 0 {
+        while at < places && *budget > 0 {
+            if at % LANES == 0
+                && at + LANES <= places
+                && let Some(cost) = cost_of_misses(&hay[at..], needle)
+                && cost < *budget
+            {
+                *budget -= cost;
+                at += LANES;
+                continue;
+            }
             *budget -= 1;
             if hay[at] == *first {
                 let same = Self::common_prefix(&hay[at + 1..], rest);
@@ -114,6 +123,51 @@ pub trait Elem: Copy + Eq {
         }
         i
     }
+}
+
+/// Places that `cost_of_misses` compares at once, in vector registers.
+const LANES: usize = 32;
+/// Elements of the needle that `cost_of_misses` compares. If one place matches them all, the work is lost.
+const ROUNDS: usize = 16;
+
+/// What `Elem::find` charges for the first `LANES` places of `hay`, if the start of `needle` is at none of them.
+/// `memmem16` cannot give this: partial matches are charged too.
+#[inline(always)]
+fn cost_of_misses<T: Elem>(hay: &[T], needle: &[T]) -> Option<isize> {
+    let mut cost = LANES as isize;
+    let mut same = [true; LANES];
+    for (places, &e) in hay.array_windows::<LANES>().zip(needle).take(ROUNDS) {
+        same = core::array::from_fn(|i| same[i] & (places[i] == e));
+        let count: u8 = same.iter().map(|&it| u8::from(it)).sum();
+        if count == 0 {
+            return Some(cost);
+        }
+        cost += isize::from(count);
+    }
+    None
+}
+
+/// How much of a needle is looked for first. `MemMemPickAnchors` (highway_strings.cpp) reads a longer one three times.
+const NEEDLE_START: usize = 16;
+
+fn index_of_by_start(hay: &[u8], needle: &[u8]) -> Option<usize> {
+    // In a far longer `hay`, the rare bytes that `index_of` picks from the whole needle save more than they cost.
+    // 4, because `half_match_around` looks for a quarter of the longer side.
+    if needle.len() <= NEEDLE_START || hay.len() / 4 > needle.len() {
+        return index_of(hay, needle);
+    }
+    let (start, rest) = needle.split_at(NEEDLE_START);
+    let starts = &hay[..hay.len().checked_sub(rest.len())?];
+    let mut from = 0;
+    // Each try can read all of `rest`: without a limit this is quadratic if `start` is everywhere.
+    for _ in 0..8 {
+        let at = from + index_of(&starts[from..], start)?;
+        if hay[at + start.len()..].starts_with(rest) {
+            return Some(at);
+        }
+        from = at + 1;
+    }
+    Some(from + index_of(&hay[from..], needle)?)
 }
 
 impl Elem for u32 {
@@ -153,7 +207,7 @@ impl Elem for u8 {
         if *budget <= 0 {
             return None;
         }
-        let found = index_of(hay, needle);
+        let found = index_of_by_start(hay, needle);
         *budget -= found.map_or(hay.len(), |at| at + needle.len()) as isize;
         found
     }
@@ -2535,6 +2589,51 @@ mod tests {
         fn below(&mut self, n: u64) -> u64 {
             self.next() % n
         }
+    }
+
+    #[test]
+    fn find_gives_the_first_place_and_charges_for_it() {
+        let mut rng = Rng(1977);
+        let mut found = 0;
+        for iter in 0..4000 {
+            let (letters, run) = ([1, 2, 3, 40][iter % 4], [1, 4, 40][iter % 3]);
+            let mut hay = Vec::new();
+            for _ in 0..rng.below(120) {
+                let letter = rng.below(letters) as u8;
+                hay.resize(hay.len() + 1 + rng.below(run) as usize, letter);
+            }
+            let from = rng.below(hay.len() as u64 + 1) as usize;
+            let mut needle = hay[from..hay.len().min(from + rng.below(60) as usize)].to_vec();
+            needle.push(rng.below(letters) as u8);
+            let budget = rng.below(6 * hay.len() as u64 + 2) as isize - 1;
+
+            let starts = (hay.len() + 1).saturating_sub(needle.len());
+            let places = || (0..starts).map(|at| &hay[at..at + needle.len()]);
+            let first = places().position(|place| place == needle);
+            let mut left = budget;
+            let expected = first.filter(|_| budget > 0);
+            assert_eq!(u8::find(&hay, &needle, &mut left), expected);
+            let read = first.map_or(hay.len(), |at| at + needle.len()) as isize;
+            assert_eq!(left, budget - if budget > 0 { read } else { 0 });
+
+            let mut expected_left = budget;
+            let expected = places().position(|place| {
+                let same = place.iter().zip(&needle).take_while(|(x, y)| x == y);
+                let same = same.count();
+                let is_paid = expected_left > 0;
+                expected_left -= if is_paid { 1 + same as isize } else { 0 };
+                is_paid && same == needle.len()
+            });
+            let units = |it: &[u8]| it.iter().map(|&e| u16::from(e) << 8).collect::<Vec<_>>();
+            let mut left = budget;
+            let at = u16::find(&units(&hay), &units(&needle), &mut left);
+            assert_eq!((at, left), (expected, expected_left));
+            found += usize::from(at.is_some());
+        }
+        assert!((1000..3000).contains(&found));
+
+        let hay = [&[b'a'; 18][..], b"b"].concat();
+        assert_eq!(u8::find(&hay, &hay[1..], &mut 100), Some(1));
     }
 
     #[test]

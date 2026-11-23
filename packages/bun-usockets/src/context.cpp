@@ -407,6 +407,10 @@ struct us_listen_socket_t *us_socket_group_listen(struct us_socket_group_t *grou
     return ls;
 }
 
+#ifdef LIBUS_USE_LIBUV
+extern "C" void uv__poll_set_shared(uv_poll_t *handle);
+#endif
+
 struct us_listen_socket_t *us_socket_group_listen_fd(struct us_socket_group_t *group,
         unsigned char kind, struct ssl_ctx_st *ssl_ctx,
         LIBUS_SOCKET_DESCRIPTOR fd, int backlog, int options, int socket_ext_size, int *error) {
@@ -421,6 +425,7 @@ struct us_listen_socket_t *us_socket_group_listen_fd(struct us_socket_group_t *g
     }
     apple_no_sigpipe(fd);
     bsd_set_nonblocking(fd);
+    bsd_socket_listener_is_shared();
 
     struct us_poll_t *p = us_internal_start_poll(group->loop, fd, POLL_TYPE_SEMI_SOCKET,
                                                  sizeof(struct us_listen_socket_t), LIBUS_SOCKET_READABLE);
@@ -428,6 +433,9 @@ struct us_listen_socket_t *us_socket_group_listen_fd(struct us_socket_group_t *g
         *error = LIBUS_ERR;
         return 0;
     }
+#ifdef LIBUS_USE_LIBUV
+    uv__poll_set_shared(p->uv_p);
+#endif
 
     struct us_listen_socket_t *ls = (struct us_listen_socket_t *) p;
     us_internal_init_listen_socket(ls, group, kind, ssl_ctx, options, socket_ext_size);

@@ -1,0 +1,36 @@
+--- a/src/win/poll.c
++++ b/src/win/poll.c
+@@ -75,4 +75,13 @@
+ 
+ 
++/* An exclusive poll also ends the one of another process that holds the same
++ * socket, which asks again and ends this one, without pause. Listeners only. */
++#define UV_HANDLE_POLL_SHARED 0x02000000
++
++void uv__poll_set_shared(uv_poll_t* handle) {
++  handle->flags |= UV_HANDLE_POLL_SHARED;
++}
++
++
+ static void uv__fast_poll_submit_poll_req(uv_loop_t* loop, uv_poll_t* handle) {
+   uv_req_t* req;
+@@ -104,5 +113,5 @@
+   /* Setting Exclusive to TRUE makes the other poll request return if there is
+    * any. */
+-  afd_poll_info->Exclusive = TRUE;
++  afd_poll_info->Exclusive = !(handle->flags & UV_HANDLE_POLL_SHARED);
+   afd_poll_info->NumberOfHandles = 1;
+   afd_poll_info->Timeout.QuadPart = INT64_MAX;
+@@ -599,4 +608,12 @@
+     return 0;
+ 
++  if (handle->flags & UV_HANDLE_POLL_SHARED) {
++    if (handle->submitted_events_1 != 0)
++      CancelIoEx((HANDLE) handle->peer_socket, &handle->poll_req_1.u.io.overlapped);
++    if (handle->submitted_events_2 != 0)
++      CancelIoEx((HANDLE) handle->peer_socket, &handle->poll_req_2.u.io.overlapped);
++    return 0;
++  }
++
+   /* Cancel outstanding poll requests by executing another, unique poll
+    * request that forces the outstanding ones to return. */

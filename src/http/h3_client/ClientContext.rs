@@ -116,6 +116,8 @@ impl ClientContext {
             }
         }
 
+        client.trace(|_| crate::request_trace::Event::Connecting);
+
         // Owned NUL-terminated buffer: copy the bytes
         // verbatim (interior NUL allowed) then append a sentinel; lsquic reads
         // it as a C string so an interior NUL truncates on the C side. This is

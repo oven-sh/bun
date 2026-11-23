@@ -3092,6 +3092,15 @@ test.concurrent('an alias to a package with "extends" in its tsconfig.json loads
   expect(await bunRun(join(String(dir), "entry.js"))).toSpawn("main main");
 });
 
+test.skipIf(!isWindows)("resolving a missing name below a device path creates nothing", () => {
+  using dir = tempDir("resolve-device-path", { "a.js": "" });
+  expect(() => require.resolve(`\\\\.\\${dir}\\missing`)).toThrow(
+    expect.objectContaining({ code: "MODULE_NOT_FOUND" }),
+  );
+  expect(require.resolve(`\\\\.\\${dir}\\a`)).toEndWith("\\a.js");
+  expect(readdirSync(String(dir))).toEqual(["a.js"]);
+});
+
 test.concurrent.each(["/./", "//"])("finds a worker that is created later and written with %s", async separator => {
   using dir = tempDir("resolve-worker-spelling", {
     "w/old.js": `postMessage("old");`,

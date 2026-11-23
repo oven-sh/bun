@@ -83,6 +83,7 @@ typedef int (*lazy_sqlite3_stmt_readonly_type)(sqlite3_stmt* pStmt);
 typedef int (*lazy_sqlite3_stmt_busy_type)(sqlite3_stmt* pStmt);
 typedef int (*lazy_sqlite3_compileoption_used_type)(const char* zOptName);
 typedef int64_t (*lazy_sqlite3_last_insert_rowid_type)(sqlite3* db);
+typedef int (*lazy_sqlite3_trace_v2_type)(sqlite3*, unsigned uMask, int (*xCallback)(unsigned, void*, void*, void*), void* pCtx);
 typedef int (*lazy_sqlite3_set_authorizer_type)(sqlite3*, int (*xAuth)(void*, int, const char*, const char*, const char*, const char*), void* pUserData);
 typedef void* (*lazy_sqlite3_update_hook_type)(sqlite3*, void (*)(void*, int, const char*, const char*, sqlite3_int64), void*);
 typedef int (*lazy_sqlite3_create_function_v2_type)(sqlite3* db, const char* zFunctionName, int nArg, int eTextRep, void* pApp,
@@ -188,6 +189,7 @@ inline lazy_sqlite3_limit_type lazy_sqlite3_limit;
 inline lazy_sqlite3_sleep_type lazy_sqlite3_sleep;
 inline lazy_sqlite3_stmt_status_type lazy_sqlite3_stmt_status;
 inline lazy_sqlite3_set_authorizer_type lazy_sqlite3_set_authorizer;
+inline lazy_sqlite3_trace_v2_type lazy_sqlite3_trace_v2;
 inline lazy_sqlite3_update_hook_type lazy_sqlite3_update_hook;
 inline lazy_sqlite3_create_function_v2_type lazy_sqlite3_create_function_v2;
 inline lazy_sqlite3_create_window_function_type lazy_sqlite3_create_window_function;
@@ -283,6 +285,7 @@ inline lazy_sqlite3changeset_apply_type lazy_sqlite3changeset_apply;
 #define sqlite3_sleep lazy_sqlite3_sleep
 #define sqlite3_stmt_status lazy_sqlite3_stmt_status
 #define sqlite3_set_authorizer lazy_sqlite3_set_authorizer
+#define sqlite3_trace_v2 lazy_sqlite3_trace_v2
 #define sqlite3_update_hook lazy_sqlite3_update_hook
 #define sqlite3_create_function_v2 lazy_sqlite3_create_function_v2
 #define sqlite3_create_window_function lazy_sqlite3_create_window_function
@@ -434,6 +437,7 @@ inline int lazyLoadSQLiteUnlocked(WTF::String* errorMessage = nullptr)
     lazy_sqlite3_sleep = (lazy_sqlite3_sleep_type)dlsym(sqlite3_handle, "sqlite3_sleep");
     lazy_sqlite3_stmt_status = (lazy_sqlite3_stmt_status_type)dlsym(sqlite3_handle, "sqlite3_stmt_status");
     lazy_sqlite3_set_authorizer = (lazy_sqlite3_set_authorizer_type)dlsym(sqlite3_handle, "sqlite3_set_authorizer");
+    lazy_sqlite3_trace_v2 = (lazy_sqlite3_trace_v2_type)dlsym(sqlite3_handle, "sqlite3_trace_v2");
     lazy_sqlite3_update_hook = (lazy_sqlite3_update_hook_type)dlsym(sqlite3_handle, "sqlite3_update_hook");
     lazy_sqlite3_create_function_v2 = (lazy_sqlite3_create_function_v2_type)dlsym(sqlite3_handle, "sqlite3_create_function_v2");
     lazy_sqlite3_create_window_function = (lazy_sqlite3_create_window_function_type)dlsym(sqlite3_handle, "sqlite3_create_window_function");

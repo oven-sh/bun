@@ -519,3 +519,31 @@ test("removes a directory that is written with ./", async () => {
   expect(readdirSync(String(dir))).toEqual([]);
   expect(exitCode).toBe(0);
 });
+
+test.skipIf(!isWindows)("-f forgives a name that ends in . or .. only if its parent is not there", async () => {
+  using dir = tempDir("rm-dot", { "sub/b.txt": "" });
+  const results: Record<string, [string, number]> = {};
+  for (const operand of [".", "sub/.", "sub/b.txt/.", "sub/b.txt/..", "missing/.", "missing/..", "sub/missing/."]) {
+    const { exitCode, stderr } = await $`rm -rf ${operand}`.cwd(String(dir)).quiet();
+    results[operand] = [stderr.toString(), exitCode];
+  }
+  expect(results).toEqual({
+    ".": ["rm: .: Invalid argument\n", 1],
+    "sub/.": ["rm: sub/.: Invalid argument\n", 1],
+    "sub/b.txt/.": ["rm: sub/b.txt/.: Invalid argument\n", 1],
+    "sub/b.txt/..": ["rm: sub/b.txt/..: Invalid argument\n", 1],
+    "missing/.": ["", 0],
+    "missing/..": ["", 0],
+    "sub/missing/.": ["", 0],
+  });
+  expect(existsSync(path.join(String(dir), "sub", "b.txt"))).toBe(true);
+});
+
+test.skipIf(!isWindows)("refuses an operand that starts with two slashes", async () => {
+  using dir = tempDir("rm-two-slashes", { "sub/deep/b.txt": "" });
+  const operand = "//./" + path.join(String(dir), "sub").replaceAll("\\", "/");
+  const { exitCode, stderr } = await $`rm -rf ${operand}`.quiet();
+  expect(stderr.toString()).toBe(`rm: ${operand}: Invalid argument\n`);
+  expect(existsSync(path.join(String(dir), "sub", "deep", "b.txt"))).toBe(true);
+  expect(exitCode).toBe(1);
+});

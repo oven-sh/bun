@@ -130,6 +130,9 @@ pub(crate) const U_RIGHT_TO_LEFT_ARABIC: UCharDirection = 13;
 pub(crate) const U_DIR_NON_SPACING_MARK: UCharDirection = 17;
 pub(crate) const U_BOUNDARY_NEUTRAL: UCharDirection = 18;
 
+pub(crate) const U_BPT_OPEN: i32 = 1;
+pub(crate) const U_BPT_CLOSE: i32 = 2;
+
 pub(crate) type UJoiningType = i32;
 pub(crate) const U_JT_DUAL_JOINING: UJoiningType = 2;
 pub(crate) const U_JT_LEFT_JOINING: UJoiningType = 3;

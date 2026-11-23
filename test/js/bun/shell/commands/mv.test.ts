@@ -363,3 +363,28 @@ describe("mv", async () => {
     });
   });
 });
+
+test.skipIf(!isWindows)("refuses a target that starts with two slashes", async () => {
+  using dir = tempDir("mv-two-slashes", { "new.txt": "new", "keep.txt": "keep" });
+  const slashes = "//./" + String(dir).replaceAll("\\", "/");
+  const { exitCode, stderr } = await $`mv -n new.txt ${slashes}/keep.txt`.cwd(String(dir)).quiet();
+  expect(stderr.toString()).toBe(`mv: ${slashes}/keep.txt: Invalid argument\n`);
+  expect(readFileSync(join(String(dir), "keep.txt"), "utf8")).toBe("keep");
+  expect(exitCode).not.toBe(0);
+
+  // The system alone reads a source.
+  await $`mv ${slashes}/new.txt moved.txt`.cwd(String(dir)).throws(true);
+  expect(readFileSync(join(String(dir), "moved.txt"), "utf8")).toBe("new");
+});
+
+test.concurrent.skipIf(!isWindows).each([
+  ["keep.txt/.", "Invalid argument\n"],
+  ["missing/.", "No such file or directory\n"],
+])("refuses the target %s", async (target, message) => {
+  using dir = tempDir("mv-dot", { "new.txt": "new", "keep.txt": "keep" });
+  const { exitCode, stderr } = await $`mv new.txt ${target}`.cwd(String(dir)).quiet();
+  expect(stderr.toString()).toEndWith(message);
+  expect(readFileSync(join(String(dir), "keep.txt"), "utf8")).toBe("keep");
+  expect(readFileSync(join(String(dir), "new.txt"), "utf8")).toBe("new");
+  expect(exitCode).not.toBe(0);
+});

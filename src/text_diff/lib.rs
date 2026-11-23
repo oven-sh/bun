@@ -948,6 +948,13 @@ impl<'a> Interner<'a> {
         })
     }
 
+    /// The next id, for a line that is new and that the caller finds again by itself.
+    #[inline]
+    fn push_new(&mut self, line: &'a [u8]) -> u32 {
+        self.lines.push(line);
+        self.lines.len() as u32 - 1
+    }
+
     #[cold]
     fn grow(&mut self) {
         let mut grown = Self::with_capacity(self.lines.len() * 2);

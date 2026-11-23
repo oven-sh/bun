@@ -9,7 +9,7 @@ use bun_core::slice_as_bytes;
 use bun_core::strings::{CodeUnits, PathByte, count_char, is_js_whitespace};
 
 use crate::bit_rows::Matches;
-use crate::{Elem, Hunk, Interner, MAX_LEN, diff_shared_tokens, search_bounded};
+use crate::{EMPTY, Elem, Hunk, Interner, MAX_LEN, diff_shared_tokens, search_bounded};
 
 /// A code unit of a JS string: Latin-1 or UTF-16.
 pub trait Unit: PathByte + Into<u32> {}
@@ -32,43 +32,93 @@ pub enum Split {
     Chars,
 }
 
-/// `extendedWordChars` of https://github.com/kpdecker/jsdiff/blob/v9.0.0/src/diff/word.ts
-#[inline]
-fn is_word(unit: u32) -> bool {
-    match unit {
-        0..0x80 => (unit as u8).is_ascii_alphanumeric() || unit == u32::from(b'_'),
-        0xD7 | 0xF7 | 0x2C7 | 0x2D8..=0x2DD => false,
-        0xAD | 0xC0..=0x2FF | 0x1E00..=0x1EFF => true,
-        _ => false,
+fn is_high<T: Unit>(unit: T) -> bool {
+    unit.into() & 0xFC00 == 0xD800
+}
+
+fn is_low<T: Unit>(unit: T) -> bool {
+    unit.into() & 0xFC00 == 0xDC00
+}
+
+/// What a unit is to [`Split::Words`].
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Class {
+    Word,
+    Space,
+    Return,
+    Newline,
+    HighSurrogate,
+    LowSurrogate,
+    Other,
+}
+
+impl Class {
+    /// `Word` is `extendedWordChars` in https://github.com/kpdecker/jsdiff/blob/v9.0.0/src/diff/word.ts
+    const fn new(unit: u32) -> Self {
+        match unit {
+            0x0A => Self::Newline,
+            0x0D => Self::Return,
+            0xD7 | 0xF7 | 0x2C7 | 0x2D8..=0x2DD => Self::Other,
+            0x30..=0x39 | 0x41..=0x5A | 0x5F | 0x61..=0x7A => Self::Word,
+            0xAD | 0xC0..=0x2FF | 0x1E00..=0x1EFF => Self::Word,
+            0xD800..=0xDBFF => Self::HighSurrogate,
+            0xDC00..=0xDFFF => Self::LowSurrogate,
+            _ if is_js_whitespace(unit) => Self::Space,
+            _ => Self::Other,
+        }
+    }
+
+    /// The class of `unit`, and the class that the next unit needs to be in the same token.
+    #[inline]
+    fn of(unit: u32) -> (Self, Option<Self>) {
+        const fn both(unit: u32) -> (Class, Option<Class>) {
+            let class = Class::new(unit);
+            let next = match class {
+                Class::Word | Class::Space => Some(class),
+                Class::Return => Some(Class::Newline),
+                Class::HighSurrogate => Some(Class::LowSurrogate),
+                Class::Newline | Class::LowSurrogate | Class::Other => None,
+            };
+            (class, next)
+        }
+        static LATIN1: [(Class, Option<Class>); 256] = {
+            let (mut table, mut unit) = ([both(0); 256], 0);
+            while unit < table.len() {
+                table[unit] = both(unit as u32);
+                unit += 1;
+            }
+            table
+        };
+        match LATIN1.get(unit as usize) {
+            Some(&known) => known,
+            None => both(unit),
+        }
     }
 }
 
-#[inline]
-fn is_space(unit: u32) -> bool {
-    unit != u32::from(b'\n') && unit != u32::from(b'\r') && is_js_whitespace(unit)
-}
-
 impl Split {
+    /// For each unit, whether it is in the same token of [`Split::Words`] as the one before it.
+    #[inline]
+    fn joined<T: Unit>(text: &[T]) -> impl Iterator<Item = bool> {
+        let mut expected = None;
+        text.iter().map(move |&unit| {
+            let (class, next) = Class::of(unit.into());
+            core::mem::replace(&mut expected, next) == Some(class)
+        })
+    }
+
     /// The end of the token that `text[at]` is in.
     #[inline]
     pub(crate) fn end<T: Unit>(self, text: &[T], at: usize) -> usize {
         let rest = &text[at..];
-        let first: u32 = rest[0].into();
-        let run = |of: fn(u32) -> bool| rest.iter().take_while(|&&unit| of(unit.into())).count();
         at + match self {
             Split::Lines => {
                 T::index_of_unit(rest, T::from_u8(b'\n')).map_or(rest.len(), |at| at + 1)
             }
-            Split::Words if is_word(first) => run(is_word),
-            Split::Words if is_space(first) => run(is_space),
-            Split::Words if first == u32::from(b'\r') && is(rest.get(1), b'\n') => 2,
-            Split::Words | Split::Chars => {
-                let is_pair = first & 0xFC00 == 0xD800
-                    && rest
-                        .get(1)
-                        .is_some_and(|&low| low.into() & 0xFC00 == 0xDC00);
-                1 + usize::from(is_pair)
+            Split::Chars => {
+                1 + usize::from(is_high(rest[0]) && rest.get(1).is_some_and(|&low| is_low(low)))
             }
+            Split::Words => 1 + Self::joined(rest).skip(1).take_while(|&it| it).count(),
         }
     }
 
@@ -77,14 +127,17 @@ impl Split {
         match (self, T::units(text)) {
             (Split::Lines, _) => count_newlines(text) + unterminated,
             (Split::Chars, CodeUnits::U8(text)) => text.len(),
-            _ => {
-                let (mut at, mut count) = (0, 0);
-                while at < text.len() {
-                    at = self.end(text, at);
-                    count += 1;
-                }
-                count
+            (Split::Chars, CodeUnits::U16(text)) => {
+                // A sum as wide as a unit fills the lanes of a vector.
+                let pairs = |(these, next): (&[u16], &[u16])| {
+                    let is_pair = |(&one, &next)| u16::from(is_high(one) & is_low(next));
+                    usize::from(these.iter().zip(next).map(is_pair).sum::<u16>())
+                };
+                let next = text.get(1..).unwrap_or_default();
+                let parts = text.chunks(1 << 15).zip(next.chunks(1 << 15));
+                text.len() - parts.map(pairs).sum::<usize>()
             }
+            (Split::Words, _) => Self::joined(text).filter(|joined| !joined).count(),
         }
     }
 
@@ -117,12 +170,29 @@ impl Split {
 
     /// `from`, and where each token of `text[from..to]` ends.
     fn offsets<T: Unit>(self, text: &[T], from: usize, to: usize) -> Vec<u32> {
-        let mut offsets = vec![from as u32];
-        let mut at = from;
-        while at < to {
-            at = self.end(text, at);
-            offsets.push(at as u32);
+        if let Split::Lines | Split::Chars = self {
+            let mut offsets = Vec::with_capacity(16);
+            offsets.push(from as u32);
+            let mut at = from;
+            while at < to {
+                at = self.end(text, at);
+                offsets.push(at as u32);
+            }
+            return offsets;
         }
+        let (mut offsets, mut tokens) = (Vec::with_capacity((to - from).min(256) + 16), 0);
+        let mut joined = Self::joined(&text[from..to]);
+        for start in (from..to).step_by(256) {
+            let end = to.min(start + 256);
+            offsets.resize(tokens + end - start + 1, 0);
+            // Written whether or not a token starts here: no branch to predict.
+            for (at, joined) in (start..end).zip(&mut joined) {
+                offsets[tokens] = at as u32;
+                tokens += usize::from(!joined);
+            }
+        }
+        offsets.truncate(tokens);
+        offsets.push(to as u32);
         offsets
     }
 }
@@ -155,6 +225,66 @@ pub struct Edit {
     pub tokens: Hunk,
 }
 
+/// Numbers tokens in the order in which they first come.
+struct Ids<'a> {
+    /// By the low bits of a token that is one code point: the first such point and its number. Empty for lines.
+    points: Vec<(u32, u32)>,
+    hashed: Interner<'a>,
+}
+
+impl<'a> Ids<'a> {
+    fn new(split: Split, tokens: usize) -> Self {
+        let (points, hashed) = match split {
+            Split::Lines => (0, tokens),
+            // Most are repeats.
+            Split::Words | Split::Chars => (
+                (tokens / 4).next_power_of_two().clamp(128, 1 << 16),
+                tokens.min(1024),
+            ),
+        };
+        Self {
+            points: vec![(0, EMPTY); points],
+            hashed: Interner::with_capacity(hashed),
+        }
+    }
+
+    /// If `token` is one code point: a number that is unique to it, and its slot.
+    #[inline]
+    fn slot<T: Unit>(&mut self, token: &[T]) -> Option<(u32, &mut (u32, u32))> {
+        let point = match *token {
+            // First, so that a line takes one test.
+            [_, _, _, ..] => return None,
+            [unit] => unit.into(),
+            [high, low] if is_high(high) => (high.into() << 10) + low.into(),
+            _ => return None,
+        };
+        let mask = self.points.len().wrapping_sub(1);
+        Some((point, self.points.get_mut(point as usize & mask)?))
+    }
+
+    #[inline]
+    fn intern<T: Unit>(&mut self, token: &'a [T]) -> u32 {
+        let next = self.hashed.lines.len() as u32;
+        match self.slot(token) {
+            Some((point, slot)) if slot.1 == EMPTY => {
+                *slot = (point, next);
+                self.hashed.push_new(slice_as_bytes(token))
+            }
+            Some((point, &mut (owner, id))) if owner == point => id,
+            _ => self.hashed.intern(slice_as_bytes(token)),
+        }
+    }
+
+    #[inline]
+    fn find<T: Unit>(&mut self, token: &[T]) -> Option<u32> {
+        match self.slot(token) {
+            Some((_, &mut (_, EMPTY))) => None,
+            Some((point, &mut (owner, id))) if owner == point => Some(id),
+            _ => self.hashed.find(slice_as_bytes(token)),
+        }
+    }
+}
+
 /// `None`: it takes more than `max_edits` insertions and deletions. The texts are no longer than a JS string.
 pub fn diff_text<T: Unit>(split: Split, a: &[T], b: &[T], max_edits: usize) -> Option<Vec<Edit>> {
     let head = split.common_head(a, b);
@@ -163,20 +293,34 @@ pub fn diff_text<T: Unit>(split: Split, a: &[T], b: &[T], max_edits: usize) -> O
     }
     let tail = split.common_tail(&a[head..], &b[head..]);
     let (end_a, end_b) = (a.len() - tail, b.len() - tail);
-    let mut offsets_a = split.offsets(a, head, end_a);
-    let mut offsets_b = split.offsets(b, head, end_b);
+    let is_unit = |text: &[T]| split.count(text) == text.len();
+    let are_units =
+        matches!(split, Split::Chars) && is_unit(&a[head..end_a]) && is_unit(&b[head..end_b]);
+    let mut offsets =
+        (!are_units).then(|| [split.offsets(a, head, end_a), split.offsets(b, head, end_b)]);
 
-    let tokens = offsets_a.len() + offsets_b.len();
-    let mut interner = Interner::with_capacity(match split {
-        Split::Lines => tokens,
-        // Most are repeats.
-        Split::Words | Split::Chars => tokens.min(1024),
-    });
-    let [mut ids_a, mut ids_b] = [(a, &offsets_a), (b, &offsets_b)].map(|(text, offsets)| {
-        offsets
-            .array_windows()
-            .map(|&[from, to]| interner.intern(slice_as_bytes(&text[from as usize..to as usize])))
-            .collect::<Vec<u32>>()
+    let tokens = match &offsets {
+        Some([of_a, of_b]) => of_a.len() + of_b.len(),
+        None => end_a + end_b - 2 * head,
+    };
+    let mut interner = Ids::new(split, tokens);
+    let [mut ids_a, mut ids_b] = [(0, &a[..end_a]), (1, &b[..end_b])].map(|(side, text)| {
+        // With room for the few tokens of the tail that most diffs add.
+        let mut ids = Vec::new();
+        if let Some(offsets) = &offsets {
+            let token = |&[from, to]: &[u32; 2]| &text[from as usize..to as usize];
+            ids.reserve_exact(offsets[side].len() + 8);
+            ids.extend(
+                offsets[side]
+                    .array_windows()
+                    .map(|it| interner.intern(token(it))),
+            );
+        } else {
+            let (units, _) = text[head..].as_chunks::<1>();
+            ids.reserve_exact(units.len() + 8);
+            ids.extend(units.iter().map(|unit| interner.intern(unit)));
+        }
+        ids
     });
 
     // An edit can move into the tail (`x a` → `a a` is `-x a +a`), but not past a token that nothing before it equals,
@@ -189,16 +333,18 @@ pub fn diff_text<T: Unit>(split: Split, a: &[T], b: &[T], max_edits: usize) -> O
     let hunks = loop {
         while at < a.len() && part > 0 {
             let end = split.end(a, at);
-            let Some(id) = interner.find(slice_as_bytes(&a[at..end])) else {
+            let Some(id) = interner.find(&a[at..end]) else {
                 break;
             };
             ids_a.push(id);
             ids_b.push(id);
-            offsets_a.push(end as u32);
-            offsets_b.push((end - end_a + end_b) as u32);
+            if let Some([of_a, of_b]) = &mut offsets {
+                of_a.push(end as u32);
+                of_b.push((end - end_a + end_b) as u32);
+            }
             (at, part) = (end, part - 1);
         }
-        let distinct = interner.lines.len();
+        let distinct = interner.hashed.lines.len();
         if part > 0 || at == a.len() {
             drop(interner);
             break diff_ids(&ids_a, &ids_b, distinct, max_edits)?;
@@ -210,12 +356,16 @@ pub fn diff_text<T: Unit>(split: Split, a: &[T], b: &[T], max_edits: usize) -> O
         part = usize::MAX;
     };
     let before = split.count(&a[..head]);
+    let unit = |side: usize, token: usize| match &offsets {
+        Some(offsets) => offsets[side][token] as usize,
+        None => head + token,
+    };
     let edit = |h: Hunk| Edit {
         units: Hunk {
-            a_lo: offsets_a[h.a_lo] as usize,
-            a_hi: offsets_a[h.a_hi] as usize,
-            b_lo: offsets_b[h.b_lo] as usize,
-            b_hi: offsets_b[h.b_hi] as usize,
+            a_lo: unit(0, h.a_lo),
+            a_hi: unit(0, h.a_hi),
+            b_lo: unit(1, h.b_lo),
+            b_hi: unit(1, h.b_hi),
         },
         tokens: Hunk {
             a_lo: before + h.a_lo,

@@ -142,6 +142,56 @@ describe("words", () => {
   });
 });
 
+test("words and chars count the tokens of long texts", () => {
+  const text = repeat("one  two,\r\n😀é\u00a0\u3000世", 5000);
+  for (const [fn, count] of [
+    [diff.words, 9 * 5000],
+    [diff.chars, 16 * 5000],
+  ] as const) {
+    expect(short(fn(text + "(" + text, text + ")" + text))).toEqual([
+      ["=", text, count],
+      ["-", "(", 1],
+      ["+", ")", 1],
+      ["=", text, count],
+    ]);
+    expect(short(fn(text, ""))).toEqual([["-", text, count]]);
+  }
+});
+
+test("words splits code units as the regular expression of diff does", () => {
+  const word = String.raw`a-zA-Z0-9_\u{AD}\u{C0}-\u{D6}\u{D8}-\u{F6}\u{F8}-\u{2C6}\u{2C8}-\u{2D7}\u{2DE}-\u{2FF}\u{1E00}-\u{1EFF}`;
+  const token = new RegExp(String.raw`(\r?\n)|[${word}]+|[^\S\n\r]+|[^${word}]`, "ug");
+  const wrong: number[] = [];
+  for (let unit = 0; unit <= 0xffff; unit += unit > 0x3100 && unit < 0xd700 ? 0x100 : 1) {
+    const c = String.fromCharCode(unit);
+    // Each neighbor comes a different number of times, so the count tells which one it is joined to.
+    const text = ["a" + c, " " + c, c + "\n", "\ud83d" + c, c + "\ude00"].map((it, i) => (it + ".").repeat(i + 1));
+    for (const part of [text.slice(0, 3).join(""), text.join("")]) {
+      if (diff.words(part, "")[0].count !== part.match(token)!.length) wrong.push(unit);
+    }
+  }
+  expect(wrong).toEqual([]);
+});
+
+test("chars counts surrogate pairs at odd and even offsets of a long text", () => {
+  for (const first of ["", "世"]) {
+    const text = first + repeat("😀", 40_000);
+    expect(diff.chars(text + "a", text + "b")[0].count).toBe(40_000 + first.length);
+  }
+});
+
+// The single unit is the low 16 bits of `(first << 10) + second`.
+test.each([
+  ["words, CRLF", diff.words, "\r\n", "\u340a"],
+  ["words, surrogate pair", diff.words, "😀", "\ud200"],
+  ["chars, surrogate pair", diff.chars, "😀", "\ud200"],
+])("%s: a token of two code units differs from a single unit", (_, fn, a, b) => {
+  expect(short(fn(a, b))).toEqual([
+    ["-", a, 1],
+    ["+", b, 1],
+  ]);
+});
+
 describe("chars", () => {
   // prettier-ignore
   test.each([
@@ -150,6 +200,8 @@ describe("chars", () => {
     ["same low surrogate", "\u{1F600}", "\u{1FA00}", [["-", "\u{1F600}", 1], ["+", "\u{1FA00}", 1]]],
     ["a pair and its first half", "😀", "\ud83d", [["-", "😀", 1], ["+", "\ud83d", 1]]],
     ["a pair and its second half", "😀", "\ude00", [["-", "😀", 1], ["+", "\ude00", 1]]],
+    ["lone surrogates count once each", "\ude00\ud83d\ud83d😀\ude00a", "\ude00\ud83d\ud83d😀\ude00b", [["=", "\ude00\ud83d\ud83d😀\ude00", 5], ["-", "a", 1], ["+", "b", 1]]],
+    ["a pair only in the common end", "ab😀", "ba😀", [["-", "a", 1], ["=", "b", 1], ["+", "a", 1], ["=", "😀", 1]]],
     ["a pair counts once", "😀😀a", "😀😀b", [["=", "😀😀", 2], ["-", "a", 1], ["+", "b", 1]]],
   ])("%s", (_, a, b, expected) => {
     expect(short(diff.chars(a, b))).toEqual(expected);
@@ -234,6 +286,8 @@ describe("of several shortest diffs, the one that diff picks", () => {
     ["words", diff.words, [".", ",", "\n", "(", "\r\n", "世"]],
     ["chars", diff.chars, ["a", "b", "c", "é", "\n"]],
     ["chars, UTF-16", diff.chars, ["a", "😀", "😁", "\u{1FA00}", "世"]],
+    ["chars, same low bits", diff.chars, ["a", "\u0161", "\u6161", "\ud861", "\u{1F461}", "\u{1F861}"]],
+    ["words, same low bits", diff.words, [".", "\u4e2e", "\u4f2e", "\u{1F42E}", "\u{1F82E}"]],
   ])("%s", (_, fn, alphabet) => {
     const next = random(1);
     for (let i = 0; i < 150; i++) {
@@ -407,6 +461,15 @@ describe("large inputs, on which diff is quadratic", () => {
     const a = "x" + times("c", 20_000) + times("x", 100_000) + "d";
     const b = "xd" + times("x", 100_000) + times("c", 20_000);
     expect(edits(diff.chars(a, b))).toBeLessThan(41_000);
+  });
+
+  test.skipIf(isDebug)("a long common end counts for the limit of the search", () => {
+    const next = random(5);
+    const text = (length: number) => String.fromCharCode(...Array.from({ length }, () => 97 + (next(10_000) % 26)));
+    const [shared, inserted] = [4000, 450].map(length => Array.from({ length: 40 }, () => text(length)));
+    const [a, b] = [0, 1].map(side => shared.map((part, i) => (i % 2 === side ? inserted[i] + part : part)).join(""));
+    const end = repeat(text(1000), 3000);
+    expect(edits(diff.chars(a + "." + end, b + "," + end))).toBeLessThanOrEqual(40 * 450 + 2);
   });
 });
 

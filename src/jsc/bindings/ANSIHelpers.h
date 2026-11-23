@@ -5,12 +5,7 @@
 #include <span>
 #include <unicode/utf16.h>
 
-// Runtime-dispatched (HWY_DYNAMIC_DISPATCH) escape scan, defined in
-// highway_strings.cpp. Picks AVX2/AVX-512/SVE at runtime, so the no-escape fast
-// path keeps wide vectors where the WTF SIMD helpers below (compiled for the
-// -march=nehalem target) would otherwise be pinned to SSE width.
-extern "C" size_t highway_index_of_escape_char8(const uint8_t* input, size_t len);
-extern "C" size_t highway_index_of_escape_char16(const uint16_t* input, size_t len);
+#include "bun_simd.h"
 
 namespace Bun {
 namespace ANSI {
@@ -47,7 +42,7 @@ static auto exactEscapeMatch(std::conditional_t<sizeof(SIMDType) == 1, simde_uin
         return SIMD::equal<u'\x1b', u'\x90', u'\x98', u'\x9b', u'\x9c', u'\x9d', u'\x9e', u'\x9f'>(chunk);
 }
 
-// A long no-escape scan delegates to the runtime-dispatched Highway kernel so
+// A long no-escape scan delegates to the runtime-dispatched kernel so
 // it uses the widest SIMD the CPU supports at runtime rather than the build's
 // static -march=nehalem (the 16 KB no-ANSI stripANSI regression). The inlined
 // WTF SIMD scan below stays the path for everything else.
@@ -74,7 +69,7 @@ static const Char* findEscapeCharacter(const Char* start, const Char* end)
     auto it = start;
     const size_t len = static_cast<size_t>(end - start);
 
-    // Long scans delegate to the runtime-dispatched Highway kernel so the
+    // Long scans delegate to the runtime-dispatched kernel so the
     // nehalem target isn't pinned to SSE width — but only once the first chunk
     // is confirmed clean. When an escape sits at/near the start (e.g. dense SGR
     // input, where stripANSI re-scans the still-large remainder after each
@@ -85,9 +80,9 @@ static const Char* findEscapeCharacter(const Char* start, const Char* end)
         if (!SIMD::findFirstNonZeroIndex(SIMD::equal(SIMD::bitAnd(chunk, escMask), escVector))) {
             size_t idx;
             if constexpr (sizeof(Char) == 1)
-                idx = highway_index_of_escape_char8(reinterpret_cast<const uint8_t*>(start), len);
+                idx = bun_simd_index_of_escape_char8(reinterpret_cast<const uint8_t*>(start), len);
             else
-                idx = highway_index_of_escape_char16(reinterpret_cast<const uint16_t*>(start), len);
+                idx = bun_simd_index_of_escape_char16(reinterpret_cast<const uint16_t*>(start), len);
             return idx < len ? start + idx : nullptr;
         }
     }

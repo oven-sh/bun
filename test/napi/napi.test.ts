@@ -443,6 +443,13 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     });
   });
 
+  describe("node_api_create_external_string_utf16", () => {
+    it("copies from an odd address", async () => {
+      const output = await runOn(bunExe(), "test_external_string_utf16_unaligned", []);
+      expect(output).toContain("odd address copied=1 finalized=1");
+    });
+  });
+
   describe("napi_get_boolean", () => {
     // Node returns no boolean for these.
     it("treats any non-zero byte as true", async () => {

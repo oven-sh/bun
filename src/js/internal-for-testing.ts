@@ -40,24 +40,27 @@ export const takeBoringSSLErrorQueueForTesting: () => string[] = $newCppFunction
   0,
 );
 
-// Runtime-dispatched SIMD xxHash3 kernel (src/jsc/bindings/xxhash3.cpp), driven
-// directly so tests can exercise the Highway path independent of Bun.hash.
+// Runtime-dispatched SIMD xxHash3 kernel (src/hash/xxhash3.rs), driven
+// directly so tests can exercise it independent of Bun.hash.
 export const xxHash3ForTesting: (view: ArrayBufferView, seed?: number | bigint) => bigint = $newCppFunction(
   "xxhash3_testing.cpp",
   "Bun__xxhash3_64_forTesting",
   2,
 );
 
-// Runtime-dispatched SIMD byte-search kernels (src/jsc/bindings/highway_strings.cpp)
-// behind `bun_core::strings`, driven directly so tests can sweep lengths and
+// Runtime-dispatched SIMD byte-search kernels (src/simd_kernels) behind
+// `bun_core::strings`, driven directly so tests can sweep lengths and
 // alignments. Returns the kernel's raw result: an index (`haystack.length` =
 // not found), a count, or for memmem/memrmem the offset with -1 = not found.
+// indexOfChar, lastIndexOfChar and the mem* ops run both the kernel for buffers
+// and the one for `bun_core::strings`, and return NaN if the two differ.
 // scannerRunStops fills `arg` with its three bitmaps and returns 0. lineStarts
 // fills `arg` with uint32 offsets and returns how many. oddBlocks fills `arg`
 // with uint64 words and returns 0, and so does byteBits, for `byte`.
-// byteSetPrefixLength takes a set of 32 bytes.
+// byteSetPrefixLength takes a set of 32 bytes. isLevel tells whether `haystack`
+// is the name of the level in use (src/simd_kernels/level.rs).
 // Those for zstd are only there on x64, and return 1 or 0.
-export const highwayStringsForTesting: (
+export const simdStringsForTesting: (
   op:
     | "indexOfChar"
     | "lastIndexOfChar"
@@ -80,13 +83,14 @@ export const highwayStringsForTesting: (
     | "oddBlocks"
     | "byteBits"
     | "byteSetPrefixLength"
+    | "isLevel"
     | "zstdIsQuicker"
     | "zstdCountBytes"
     | "zstdWriteCodes",
   haystack: Uint8Array,
   arg: number | Uint8Array,
   byte?: number,
-) => number = $newCppFunction("highway_strings_testing.cpp", "Bun__highwayStringsForTesting", 3);
+) => number = $newCppFunction("simd_strings_testing.cpp", "Bun__simdStringsForTesting", 3);
 
 export const SQL = $cpp("JSSQLStatement.cpp", "createJSSQLStatementConstructor");
 export const setSQLiteColumnNameTransform = (

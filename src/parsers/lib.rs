@@ -8,9 +8,6 @@ pub mod json_index;
 mod json_stage2;
 pub mod xml_index;
 
-#[cfg(test)]
-mod native_test_shims;
-
 #[path = "json.rs"]
 pub mod json;
 

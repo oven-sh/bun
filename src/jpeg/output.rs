@@ -2,8 +2,8 @@
 
 use crate::block::{Block, Zigzag};
 use crate::header::{ColorSpace, Component, Frame};
+use crate::simd::{self, Chroma, GROUP};
 use crate::{Error, MAX_COMPONENTS, Result, fill_up, filled};
-use bun_highway::{JPEG_PIXEL_GROUP, JPEG_ROW_SLACK, JpegChroma};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Upsampling {
@@ -19,6 +19,8 @@ enum Upsampling {
 
 /// Room for a copy of the first sample of a row.
 const LEFT_MARGIN: usize = 16;
+/// Room for a copy of the last, and for the kernels, which need up to 7 bytes.
+const RIGHT_MARGIN: usize = 16;
 
 /// The rows of a component that wait for color conversion.
 pub(crate) struct Plane {
@@ -66,8 +68,8 @@ impl Plane {
         let out = self.rows_from_mut(y * size).get_mut(x * size..);
         let out = out.unwrap_or_default();
         if size > 1 {
-            bun_highway::jpeg_inverse_transform(blocks, quant, size, out, stride)?;
-            return Ok(());
+            return simd::inverse_transform(blocks, quant, size, out, stride)
+                .ok_or(Error::Internal);
         }
         let out = out.get_mut(..blocks.len()).ok_or(Error::Internal)?;
         for (sample, block) in out.iter_mut().zip(blocks) {
@@ -205,7 +207,7 @@ impl Output {
         let mcus_wide = frame.size_in_mcus().wide;
         let image = frame.size_in_units(mcu_width, mcu_height);
         let (width, height) = (image.wide, image.high);
-        let padded_width = width.next_multiple_of(JPEG_PIXEL_GROUP);
+        let padded_width = width.next_multiple_of(GROUP);
 
         let mut planes = Vec::new();
         planes.try_reserve_exact(MAX_COMPONENTS)?;
@@ -227,9 +229,8 @@ impl Output {
                 (2, 2) if scale > 1 && plane.wide > 2 => Upsampling::BlendH2V2,
                 (h, v) => Upsampling::Repeat { h, v },
             };
-            let stride = LEFT_MARGIN
-                + (mcus_wide * h * size).next_multiple_of(JPEG_PIXEL_GROUP)
-                + JPEG_ROW_SLACK;
+            let stride =
+                LEFT_MARGIN + (mcus_wide * h * size).next_multiple_of(GROUP) + RIGHT_MARGIN;
             let upsampled_len = match upsampling {
                 Upsampling::Repeat { h: 1, .. } => 0,
                 // Rounded up to whole triples.
@@ -249,7 +250,7 @@ impl Output {
         }
 
         let mut pixels = Vec::new();
-        pixels.try_reserve_exact(width * height + JPEG_PIXEL_GROUP)?;
+        pixels.try_reserve_exact(width * height + GROUP)?;
         Ok(Self {
             width,
             height,
@@ -317,20 +318,21 @@ impl Output {
             }
             (ColorSpace::Ycc | ColorSpace::Ycck, [luma, cb, cr, k @ ..]) => {
                 let chroma = match (cb.upsampling, cr.upsampling) {
-                    (Upsampling::BlendH2V1, Upsampling::BlendH2V1) => JpegChroma::HalfWidth {
+                    (Upsampling::BlendH2V1, Upsampling::BlendH2V1) => Chroma::HalfWidth {
                         cb: cb.row(y, 1),
                         cr: cr.row(y, 1),
                     },
-                    (Upsampling::BlendH2V2, Upsampling::BlendH2V2) => JpegChroma::HalfSize {
+                    (Upsampling::BlendH2V2, Upsampling::BlendH2V2) => Chroma::HalfSize {
                         cb: cb.nearest_rows(y, 1),
                         cr: cr.nearest_rows(y, 1),
                     },
-                    _ => JpegChroma::Full {
+                    _ => Chroma::Full {
                         cb: cb.full_row(y),
                         cr: cr.full_row(y),
                     },
                 };
-                bun_highway::jpeg_ycc_to_rgba(luma.full_row(y), chroma, width, pixels)?;
+                simd::ycc_to_rgba(luma.full_row(y), &chroma, width, pixels)
+                    .ok_or(Error::Internal)?;
                 if let [k] = k {
                     let row = pixels.get_mut(y * width..).unwrap_or_default();
                     for (pixel, &k) in row.iter_mut().zip(k.full_row(y)) {

@@ -19,6 +19,7 @@ mod error;
 mod lossless;
 mod lossy;
 mod riff;
+mod simd;
 mod slice;
 mod vec;
 

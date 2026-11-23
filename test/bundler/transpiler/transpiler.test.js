@@ -6674,10 +6674,10 @@ describe("parse error flood", () => {
 
 describe("multi-line comment scanning", () => {
   // The lexer's block-comment scanner switches to a SIMD skip
-  // (bun_highway::index_of_interesting_character_in_multiline_comment) when at
+  // (bun_simd_kernels::index_of_interesting_character_in_multiline_comment) when at
   // least 512 bytes of input remain, so cover sizes on both sides of that
   // threshold and around vector-width boundaries, plus every byte class the
-  // skip has to stop at ('*', '\r', '\n', non-ASCII).
+  // skip has to stop at ('*', '\r', '\n', 0xE2).
   const transpiler = new Bun.Transpiler({ loader: "js" });
   const xPad = Buffer.alloc(8193, "x").toString();
   const pad600 = xPad.slice(0, 600);
@@ -6737,6 +6737,36 @@ describe("multi-line comment scanning", () => {
     expect(transpiler.transformSync(`/*${"é".repeat(400)}*/ pass();`)).toBe("pass();\n");
     expect(transpiler.transformSync(`/*${"🦊".repeat(200)}*/ pass();`)).toBe("pass();\n");
     expect(transpiler.transformSync(`/* ${pad600} 日本語のコメント ${pad600} */ pass();`)).toBe("pass();\n");
+  });
+
+  it("finds what ends a comment or a string behind non-ASCII text", () => {
+    for (const text of ["é", "─", "日本語", "🦊"].flatMap(it => [it, it.repeat(40) + " a", it.repeat(300)])) {
+      for (const after of ["", "\n//" + pad600]) {
+        for (const newline of ["\n", "\r", "\u2028", "\u2029"]) {
+          expect(transpiler.transformSync(`//${text}${newline}a${after}`)).toBe("a;\n");
+          expect(transpiler.transformSync(`a /*${text}${newline}${text}*/ b${after}`)).toBe("a;\nb;\n");
+        }
+        expect(() => transpiler.transformSync(`a /*${text}*/ b${after}`)).toThrow();
+        for (const end of "\r\n") expect(() => transpiler.transformSync(`a("${text}${end}")${after}`)).toThrow();
+        for (const end of "\r\n") expect(() => transpiler.transformSync(`a('${text}${end}')${after}`)).toThrow();
+        const code = `x = ["${text}\\"'", '${text}\\'"', \`${text}\\\`${text}$${text}\r\n${text}\${1}\`]${after}`;
+        let x;
+        expect(eval(transpiler.transformSync(code))).toEqual(eval(code));
+      }
+    }
+  });
+
+  it("reports where a comment is cut", () => {
+    const all = Buffer.from("/*" + pad600 + "🦊");
+    for (const cut of [1, 2, 3]) {
+      let at;
+      try {
+        transpiler.transformSync(all.subarray(0, -cut));
+      } catch (e) {
+        at = e.position.offset;
+      }
+      expect(at).toBe(602);
+    }
   });
 
   it("does not corrupt code around a large comment", () => {

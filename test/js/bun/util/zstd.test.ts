@@ -691,7 +691,7 @@ describe.skipIf(!isASAN)("a failed allocation is an error, not a crash", () => {
   });
 });
 
-// From Zen 4 and Sapphire Rapids on, src/jsc/bindings/highway_zstd.cpp takes blocks with 4096 or more. It counts them
+// From Zen 4 and Sapphire Rapids on, src/simd_kernels/zstd.rs takes blocks with 4096 or more. It counts them
 // in batches of 3712 and groups of 128, by their 2 highest bits, and writes 64 codes at a time to each of 4 streams.
 describe("literals compress to what zstd 1.5.7 makes of them", () => {
   function generate(length: number, byte: (below: (limit: number) => number) => number) {

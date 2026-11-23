@@ -2,7 +2,7 @@
 
 use core::hint::select_unpredictable;
 
-use bun_highway::with_bmi2;
+use bun_simd::kernel;
 
 use super::Stop;
 use super::bit_reader::{BitReader, Bits, REFILLED};
@@ -211,19 +211,19 @@ struct SymbolLengths {
     run: u32,
 }
 
-with_bmi2! {
-    fn read_symbol_lengths(
-        lengths: &mut SymbolLengths,
-        alphabet_size: u32,
-        table: &CodeLengthTable,
-        reader: &mut BitReader<'_>,
-        symbols: &mut SymbolLists,
-    ) -> Result<(), Stop> {
-        let (mut state, mut local) = (*lengths, *reader);
-        let result = state.read_all(alphabet_size, table, &mut local, symbols);
-        (*lengths, *reader) = (state, local);
-        result
-    }
+#[kernel(sse4 + bmi)]
+#[inline(never)]
+fn read_symbol_lengths(
+    lengths: &mut SymbolLengths,
+    alphabet_size: u32,
+    table: &CodeLengthTable,
+    reader: &mut BitReader<'_>,
+    symbols: &mut SymbolLists,
+) -> Result<(), Stop> {
+    let (mut state, mut local) = (*lengths, *reader);
+    let result = state.read_all(alphabet_size, table, &mut local, symbols);
+    (*lengths, *reader) = (state, local);
+    result
 }
 
 impl SymbolLengths {

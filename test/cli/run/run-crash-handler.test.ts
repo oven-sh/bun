@@ -279,6 +279,20 @@ test("the crash report lists the CPU features", async () => {
   } else {
     expect(cpuLine).toMatch(/^CPU: neon fp( \w+)*$/);
   }
+  expect(stderr).toMatch(process.arch === "x64" ? /^SIMD: (sse4|avx2|avx512|icelake)\b/m : /^SIMD: neon(82)?\b/m);
+  expect(exitCode).not.toBe(0);
+});
+
+test("BUN_FEATURE_FLAG_DISABLE_SIMD_DISPATCH keeps the kernels at the baseline", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), path.join(import.meta.dir, "fixture-crash.js"), "panic", "--debug-crash-handler-use-trace-string"],
+    env: { ...noReportEnv, BUN_FEATURE_FLAG_DISABLE_SIMD_DISPATCH: "1" },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const baseline = process.arch === "x64" ? "sse4" : process.platform === "darwin" ? "neon82" : "neon";
+  expect(stderr.split(/\r?\n/)).toContain("SIMD: " + baseline);
   expect(exitCode).not.toBe(0);
 });
 

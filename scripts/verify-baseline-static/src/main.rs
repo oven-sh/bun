@@ -646,22 +646,70 @@ fn symbol_for(syms: &[Sym], ip: u64) -> Option<&Sym> {
 /// checkpoint where someone asks "did the gate also get updated?"
 type Allowlist = HashMap<String, Option<HashSet<String>>>;
 
-/// The name of the entry for a symbol: its canonical form or, for an instance of a generic function, what precedes
-/// the arguments followed by `<generic-args>`.
-fn allowlist_key(symbol: &str, allowlist: &Allowlist) -> String {
-    let canon = canonicalize_symbol(symbol);
-    if allowlist.contains_key(&canon) {
-        return canon;
-    }
-    let generic = allowlist.keys().find(|key| {
-        let args = key.strip_suffix("<generic-args>");
-        let args = args.and_then(|function| canon.strip_prefix(function));
-        // A mangled name follows its length.
-        args.is_some_and(|args| {
-            key.starts_with("_R") || args.trim_start_matches("::").starts_with('<')
-        })
-    });
-    generic.cloned().unwrap_or(canon)
+/// Whether `name` matches `pattern`, in which `*` stands for any text.
+fn matches(pattern: &str, name: &str) -> bool {
+    let mut parts = pattern.split('*');
+    let (first, last) = (parts.next().unwrap_or(""), parts.next_back());
+    let Some(last) = last else {
+        return pattern == name;
+    };
+    let Some(mut rest) = name
+        .strip_prefix(first)
+        .and_then(|it| it.strip_suffix(last))
+    else {
+        return false;
+    };
+    parts.all(|part| {
+        rest.split_once(part)
+            .map(|(_, after)| rest = after)
+            .is_some()
+    })
+}
+
+/// The entry for a canonical name: its own, or else the pattern with the fewest features that matches.
+fn entry_for<'a>(allowlist: &'a Allowlist, name: &str) -> Option<&'a Option<HashSet<String>>> {
+    allowlist.get(name).or_else(|| {
+        // Only the names of Rust have patterns.
+        if !name.starts_with("_R") && !name.contains("::") {
+            return None;
+        }
+        allowlist
+            .iter()
+            .filter(|(key, _)| key.contains('*') && matches(key, name))
+            .map(|(_, ceiling)| ceiling)
+            .min_by_key(|ceiling| ceiling.as_ref().map_or(usize::MAX, HashSet::len))
+    })
+}
+
+#[test]
+fn patterns() {
+    assert!(matches("a*c*e", "abcde") && matches("a*c*e", "ace") && matches("a*", "a"));
+    assert!(!matches("a*c*e", "abde") && !matches("ab*bc", "abc") && !matches("a*c*b*e", "abce"));
+    assert!(matches("abc", "abc") && !matches("abc", "abcd"));
+}
+
+#[test]
+fn patterns_of_the_lists_have_ceilings() {
+    let allows = |list: &str, path: &str, feature: &str| {
+        let file = format!("{}/allowlist-{list}.txt", env!("CARGO_MANIFEST_DIR"));
+        let mut list = Allowlist::new();
+        load_allowlist_into(file.as_ref(), &mut list).unwrap();
+        let name = format!("_RINvXNtNtNt<rust-hash>8bun_simd4gate{path}NtNtNtNtB7_6tokens");
+        entry_for(&list, &name).is_some_and(|it| it.as_ref().unwrap().contains(feature))
+    };
+    assert!(allows("x64", "7entries4avx2", "AVX2"));
+    assert!(!allows("x64", "7entries4avx2", "AES"));
+    assert!(!allows("x64", "7entries8avx2_aes", "AVX512F"));
+    assert!(!allows("x64", "7entries10avx512_aes", "AVX512_VBMI"));
+    assert!(!allows("x64", "6plain2", "AVX2"));
+    assert!(allows("x64", "7entries7icelake", "ZMM"));
+    assert!(!allows("x64", "7entries10avx512_aes", "ZMM"));
+    assert!(!allows("x64", "7entries14icelake_narrow", "ZMM"));
+    assert!(!allows("x64", "7entries17avx512_aes_narrow", "ZMM"));
+    assert!(allows("aarch64", "7entries12neon_aes_crc", "AES"));
+    assert!(!allows("aarch64", "7entries12neon_aes_crc", "SHA3"));
+    assert!(!allows("aarch64", "7entries6neon82", "AES"));
+    assert!(!allows("aarch64", "6plain2", "AES"));
 }
 
 fn load_allowlist_into(path: &Path, out: &mut Allowlist) -> Result<(), String> {
@@ -764,7 +812,7 @@ fn record(
         .unwrap_or_else(|| format!("<no-symbol@{ip:#x}>"));
     // Compare canonical forms (Rust hash stripped) but report the raw name —
     // devs grepping objdump need the real mangled string.
-    let canon = allowlist_key(&raw_sym, allowlist);
+    let canon = canonicalize_symbol(&raw_sym);
 
     // Three-way outcome:
     //   not in allowlist                           → violation
@@ -772,7 +820,7 @@ fn record(
     //   in allowlist, ceiling contains this feat   → suppressed
     //   in allowlist, ceiling DOESN'T contain it   → violation (the
     //     "symbol grew past its gate" case — the whole point of ceilings)
-    let bucket = match allowlist.get(&canon) {
+    let bucket = match entry_for(allowlist, &canon) {
         None => violations,
         Some(None) => allowlisted,
         Some(Some(ceiling)) if ceiling.contains(feature) => allowlisted,
@@ -846,6 +894,21 @@ fn scan_x86_64(bytes: &[u8], sec_addr: u64, syms: &[Sym], allowlist: &Allowlist)
         // accessor. Leak the Debug repr once per hit — tiny volume (tens of
         // thousands of hits max, each a few bytes; a KB or so for a full scan).
         let mnem: &'static str = Box::leak(format!("{:?}", insn.mnemonic()).into_boxed_str());
+        // Vectors of 64 bytes lower the clock of some CPUs, so they count as a feature too.
+        let is_wide = (0..insn.op_count()).any(|i| insn.op_register(i).is_zmm())
+            || insn.memory_index().is_zmm()
+            || insn.memory_size().size() == 64;
+        if is_wide && symbol_for(syms, ip).is_some_and(|it| it.name.contains("bun_simd")) {
+            record(
+                ip,
+                mnem,
+                "ZMM",
+                syms,
+                allowlist,
+                &mut violations,
+                &mut allowlisted,
+            );
+        }
         // Record EVERY post-baseline feature, not just the first one found.
         // Multi-feature instructions (e.g. VPCLMULQDQ requires AVX+PCLMULQDQ)
         // must check each feature against the ceiling independently — if the
@@ -1212,11 +1275,11 @@ fn run() -> Result<bool, String> {
     let hit_canon: HashSet<_> = allowlisted
         .keys()
         .chain(violations.keys())
-        .map(|s| allowlist_key(s, &allowlist))
+        .map(|s| canonicalize_symbol(s))
         .collect();
     let mut stale: Vec<_> = allowlist
         .keys()
-        .filter(|k| !hit_canon.contains(*k))
+        .filter(|k| !k.contains('*') && !hit_canon.contains(*k))
         .collect();
     stale.sort();
     if !stale.is_empty() {
@@ -1259,53 +1322,6 @@ fn main() -> ExitCode {
         Err(e) => {
             eprintln!("error: {e}");
             ExitCode::from(2)
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn generic_args_stand_for_the_instances_of_one_function() {
-        let generic = "_RINvNv<rust-hash>3foo4gate4fast<generic-args>";
-        let keys = [generic, "foo::gate::fast<generic-args>", "plain"];
-        let allowlist = Allowlist::from(keys.map(|key| (key.into(), None)));
-        let is_listed = |symbol| allowlist.contains_key(&allowlist_key(symbol, &allowlist));
-        assert!(is_listed(
-            "_RINvNvCs1a_3foo4gate4fastmNCNvCs2b_3bar3run0EB4_"
-        ));
-        assert!(is_listed("foo::gate::fast<u32>"));
-        assert!(is_listed("foo::gate::fast::<u32>"));
-        assert!(!is_listed("foo::gate::faster<u32>"));
-        assert!(!is_listed("foo::gate::fast::inner<u32>"));
-        assert!(is_listed("plain"));
-        assert!(!is_listed(
-            "_RINvNvCs1a_3foo4gate8baselinemNCNvCs2b_3bar3run0EB4_"
-        ));
-        assert!(!is_listed("_RNvCs2b_3bar3run"));
-        assert!(!is_listed("plain_too"));
-    }
-
-    #[test]
-    fn nothing_else_matches_by_a_part_of_the_name() {
-        let keys = [
-            "fast<generic-args>",
-            "fast<u8>",
-            "_xR<generic-args>",
-            "plain",
-        ];
-        let allowlist = Allowlist::from(keys.map(|key| (key.into(), None)));
-        assert_eq!(allowlist_key("fast<u16>", &allowlist), keys[0]);
-        for symbol in [
-            "fast<u8>",
-            "not::fast<u16>",
-            "fast:<u16>",
-            "_xRy",
-            "plain<u8>",
-        ] {
-            assert_eq!(allowlist_key(symbol, &allowlist), symbol);
         }
     }
 }

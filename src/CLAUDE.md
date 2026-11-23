@@ -183,17 +183,20 @@ let js: JSValue = s.into_js(global)?;      // hands `s`'s ref to the JSString
 let s = bun_core::String::from_js(value, global)?;
 ```
 
-`bun_core::strings` is the SIMD-backed `&[u8]` toolkit (Google Highway kernels
+`bun_core::strings` is the SIMD-backed `&[u8]` toolkit (the kernels of `bun_simd_kernels`,
 with runtime CPU dispatch). Byte and substring search **must** go through it —
 `str::find`/`contains`/`split*`, `slice::windows`, `memchr::*` and
 `bstr::ByteSlice::find*` are denied in `clippy.toml`, and the byte-literal forms
 of `<[u8]>::contains`, `iter().position/rposition/any(|b| b == b'x')` and
 `.split(|b| ..)` are rejected by `test/internal/source-lints/byte-search.test.ts`.
-Highway is the only SIMD in the Rust sources: both also ban `std::simd`, and the
-source lint bans the `core::arch` intrinsics. A new kernel goes in
-`src/jsc/bindings/highway_strings.cpp`, or in a `highway_*.cpp` of its own beside it, which
-`noUnify` in `scripts/build/unified.ts` has to list. Its safe wrapper goes in `src/highway/lib.rs`,
-or in a module of that crate if it brings types or code of its own (`webp.rs`, `checksums.rs`).
+`bun_simd` (start with `src/simd/CLAUDE.md`) is the only SIMD in the Rust sources:
+both also ban `std::simd`, and the source lint bans the `core::arch` intrinsics. A new kernel is safe
+Rust with `#[kernel]`, and `#[simd]` on its helpers, in the crate that calls it, or in `src/simd_kernels` if several do.
+`targets!(..)` is for a file that the default targets do not fit, such as `Upto<B32>`. The crate needs `opt-level = 3` in the dev profile (`Cargo.toml`),
+and a generic kernel a plain function around it: else a debug build compiles it in the crate of the caller.
+`#[bun_simd::kernel(sse4 + bmi)]` compiles a scalar function a second time. With `avx2`, short calls after a pause are slower.
+A new target, or a kernel with features in quotes, needs lines in `scripts/verify-baseline-static/allowlist-*.txt`. C++ calls kernels through
+`src/simd_kernels/ffi.rs` and `src/jsc/bindings/bun_simd.h`.
 
 ```rust
 use bun_core::strings;

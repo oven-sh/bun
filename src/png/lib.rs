@@ -1,5 +1,5 @@
 //! PNG to and from 8-bit RGBA, for `Bun.Image`. Parts derive from libspng (LICENSE.md). DEFLATE comes from
-//! `bun_zlib`, and the loops of the scanline filters from src/jsc/bindings/highway_png.cpp through `bun_highway`.
+//! `bun_zlib`.
 #![forbid(unsafe_code)]
 // Images come from anywhere and a panic aborts the process.
 #![deny(
@@ -19,6 +19,8 @@ mod encoder;
 mod error;
 mod filter;
 mod header;
+#[expect(clippy::indexing_slicing, reason = "the rows have one length")]
+mod simd;
 
 pub use decoder::{Decoder, Image};
 pub use encoder::{Palette, encode};

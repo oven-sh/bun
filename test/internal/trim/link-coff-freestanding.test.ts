@@ -452,7 +452,10 @@ describe.concurrent.each(machines)("a trimmable link with lld-link and no librar
   testLink(
     "puts what the command's order file lists of the features between the features and the rest of the list",
     async () => {
-      using dir = tempDir("trim-coff-freestanding", { ...sources, "mine.txt": "retained\nentered\nmain\n" });
+      using dir = tempDir("trim-coff-freestanding", {
+        ...sources,
+        "mine.txt": "retained.llvm.1\nentered.llvm.2\nmain\n",
+      });
       const folder = String(dir);
       const { addressOf, featuresOf } = await linked(folder, optionsWith({ linkFlags: ["/order:@mine.txt"] }));
       const orderedNames = readFileSync(join(folder, "work/order.txt"), "latin1").split("\n").filter(Boolean);

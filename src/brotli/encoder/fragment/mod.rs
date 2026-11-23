@@ -5,9 +5,10 @@ mod two_pass;
 
 use core::ops::{ControlFlow, Range};
 
-use bun_highway::with_bmi2;
 use one_pass::OnePass;
 use two_pass::TwoPass;
+
+use bun_simd::kernel;
 
 use super::bit_stream::{write_empty_last, write_uncompressed};
 use super::bit_writer::{BitWriter, Code};
@@ -118,18 +119,18 @@ impl ItemCodes {
     }
 }
 
-with_bmi2! {
-    fn write_literals(literals: &[u8], codes: &ItemCodes, writer: &mut BitWriter) {
-        writer.write_codes::<5, _>(literals, |literal| codes.0[usize::from(literal)]);
-    }
+#[kernel(sse4 + bmi)]
+#[inline(never)]
+fn write_literals(literals: &[u8], codes: &ItemCodes, writer: &mut BitWriter) {
+    writer.write_codes::<5, _>(literals, move |literal| codes.0[usize::from(literal)]);
 }
 
-with_bmi2! {
-    fn write_items(items: &[Item], codes: &ItemCodes, writer: &mut BitWriter) {
-        writer.write_codes::<4, _>(items, |item| {
-            codes.0[item.index()].plus(u64::from(item.0) << (u64::BITS - Item::EXTRA_BITS))
-        });
-    }
+#[kernel(sse4 + bmi)]
+#[inline(never)]
+fn write_items(items: &[Item], codes: &ItemCodes, writer: &mut BitWriter) {
+    writer.write_codes::<4, _>(items, move |item| {
+        codes.0[item.index()].plus(u64::from(item.0) << (u64::BITS - Item::EXTRA_BITS))
+    });
 }
 
 trait Sink {

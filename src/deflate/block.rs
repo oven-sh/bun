@@ -10,7 +10,7 @@ use crate::format::{
 use crate::huffman::{codeword_lens, codewords};
 use crate::output::Sink;
 use crate::{Error, Result, copy_prefix, wrapped, wrapped_mut};
-use bun_highway::with_bmi2;
+use bun_simd::kernel;
 use core::array::from_fn;
 use core::hint::{cold_path, select_unpredictable};
 
@@ -357,16 +357,15 @@ struct OffsetCode {
     len: u16,
 }
 
-with_bmi2! {
-    fn write_body(
-        writer: BitWriter,
-        output: &mut [u8],
-        data: &[u8],
-        sequences: &[Sequence],
-        codewords: &Codewords,
-    ) -> BitWriter {
-        write_symbols(writer, output, data, sequences, codewords)
-    }
+#[kernel(sse4 + bmi)]
+fn write_body(
+    writer: BitWriter,
+    output: &mut [u8],
+    data: &[u8],
+    sequences: &[Sequence],
+    codewords: &Codewords,
+) -> BitWriter {
+    write_symbols(writer, output, data, sequences, codewords)
 }
 
 #[inline(always)]

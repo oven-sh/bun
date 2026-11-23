@@ -7,7 +7,7 @@ mod singles;
 mod streams;
 mod weights;
 
-use bun_highway::with_bmi2;
+use crate::calls::with_bmi2;
 
 use crate::array::{get_or_allocate, grow};
 use crate::bits::bits_below_mark;

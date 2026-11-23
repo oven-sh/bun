@@ -36,7 +36,7 @@ pub(crate) fn header(level: u8) -> [u8; HEADER_LEN] {
 }
 
 pub(crate) fn trailer(data: &[u8]) -> [u8; TRAILER_LEN] {
-    trailer_for(bun_highway::crc32(0, data), data.len() as u32)
+    trailer_for(bun_hash::crc32(0, data), data.len() as u32)
 }
 
 /// Returns what follows the header.
@@ -54,13 +54,13 @@ pub(crate) fn skip_header(input: &[u8]) -> Result<&[u8]> {
     }
     for flag in [HAS_NAME, HAS_COMMENT] {
         if flags & flag != 0 {
-            let len = bun_highway::index_of_char(rest, 0).ok_or(Error::BadData)?;
+            let len = bun_simd_kernels::index_of_char(rest, 0).ok_or(Error::BadData)?;
             rest = rest.get(len + 1..).unwrap_or_default();
         }
     }
     if flags & HAS_HEADER_CRC != 0 {
         let header = input.get(..input.len() - rest.len()).unwrap_or_default();
-        let [low, high, ..] = bun_highway::crc32(0, header).to_le_bytes();
+        let [low, high, ..] = bun_hash::crc32(0, header).to_le_bytes();
         rest = rest.strip_prefix(&[low, high]).ok_or(Error::BadData)?;
     }
     Ok(rest)

@@ -484,7 +484,7 @@ pub fn copy_u16_into_u8(output: &mut [u8], input: &[u16]) {
     debug_assert!(input.len() <= output.len());
     let count = input.len().min(output.len());
 
-    bun_highway::copy_u16_to_u8(&input[..count], output);
+    bun_simd_kernels::copy_u16_to_u8(&input[..count], output);
 }
 
 pub fn copy_latin1_into_ascii(dest: &mut [u8], src: &[u8]) {

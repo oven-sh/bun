@@ -14,7 +14,7 @@
 //! What stays byte-level: names (they have to be validated character by
 //! character anyway), the document type declaration, and entity replacement
 //! text, which is not part of the indexed buffer — an included entity (§4.4)
-//! is pushed as a new input frame and scanned with the scalar classifier the
+//! is pushed as a new input frame and scanned with the byte classes the
 //! index is built from. Tokens carry the id of the frame they came from so
 //! the parser can enforce that elements and declarations start and end in
 //! the same entity.
@@ -32,15 +32,15 @@ use bun_ast::{self as ast, E, Expr, Loc, Log, Source, StoreRef};
 use bun_collections::HashMap;
 use bun_core::vec::BorrowedBuf;
 use bun_core::{StackCheck, strings};
+use bun_simd_kernels::xml::{ALWAYS, ANGLE, BYTE_CLASS, State, TAG};
 use bun_simdutf_sys::simdutf::{self, WithUtf8Len};
 
 use crate::xml_index::StructuralIndex;
-use crate::xml_index::byte_class::{CLASS_ALWAYS, CLASS_GT, CLASS_LT, CLASS_TAG, XML_BYTE_CLASS};
 
 /// Scalar stop classes for the contexts that skip ahead (see `Scanner::next_stop`).
-const STOP_CONTENT: u8 = CLASS_LT | CLASS_GT | CLASS_ALWAYS;
-const STOP_ATT_VALUE: u8 = CLASS_LT | CLASS_GT | CLASS_ALWAYS | CLASS_TAG;
-const STOP_SKIPPED: u8 = CLASS_ALWAYS;
+const STOP_CONTENT: u8 = ANGLE | ALWAYS;
+const STOP_ATT_VALUE: u8 = ANGLE | ALWAYS | TAG;
+const STOP_SKIPPED: u8 = ALWAYS;
 
 // ── public entry point ──────────────────────────────────────────────────────
 
@@ -177,13 +177,8 @@ pub trait Unit: Copy + Eq + Ord + core::hash::Hash + Default + 'static {
     fn bytes(units: &[Self]) -> &[u8];
     /// Bytes (a transcoded document) as the unit type, which is `u8` wherever this is reached.
     fn from_bytes(bytes: &[u8]) -> &[Self];
-    /// The highway structural-index kernel for this width.
-    fn structural_index_chunk(
-        chunk: &[Self],
-        base_offset: usize,
-        out: &mut [core::mem::MaybeUninit<u32>],
-        state: &mut [u64; 3],
-    ) -> usize;
+    /// The structural-index kernel for this width.
+    fn structural_index_chunk(chunk: &[Self], base: u32, out: &mut Vec<u32>, state: &mut State);
     /// The fixed keys of the two output shapes, in this unit type.
     const KEY_TEXT: &'static [Self];
     const KEY_NAME: &'static [Self];
@@ -219,13 +214,8 @@ impl Unit for u8 {
     fn from_bytes(bytes: &[u8]) -> &[Self] {
         bytes
     }
-    fn structural_index_chunk(
-        chunk: &[Self],
-        base_offset: usize,
-        out: &mut [core::mem::MaybeUninit<u32>],
-        state: &mut [u64; 3],
-    ) -> usize {
-        bun_highway::xml_structural_index_chunk(chunk, base_offset, out, state)
+    fn structural_index_chunk(chunk: &[Self], base: u32, out: &mut Vec<u32>, state: &mut State) {
+        bun_simd_kernels::xml::index_chunk(chunk, base, out, state)
     }
     const KEY_TEXT: &'static [Self] = b"#text";
     const KEY_NAME: &'static [Self] = b"name";
@@ -279,13 +269,8 @@ impl Unit for u16 {
     fn from_bytes(_: &[u8]) -> &[Self] {
         unreachable!("Unit::from_bytes on u16")
     }
-    fn structural_index_chunk(
-        chunk: &[Self],
-        base_offset: usize,
-        out: &mut [core::mem::MaybeUninit<u32>],
-        state: &mut [u64; 3],
-    ) -> usize {
-        bun_highway::xml_structural_index16_chunk(chunk, base_offset, out, state)
+    fn structural_index_chunk(chunk: &[Self], base: u32, out: &mut Vec<u32>, state: &mut State) {
+        bun_simd_kernels::xml::index16_chunk(chunk, base, out, state)
     }
     const KEY_TEXT: &'static [Self] = utf16!(b"#text");
     const KEY_NAME: &'static [Self] = utf16!(b"name");
@@ -858,7 +843,7 @@ impl<'a, 'log, U: Unit> Scanner<'a, 'log, U> {
     #[inline]
     fn scalar_stop(&self, mask: u8) -> usize {
         let mut p = self.pos;
-        while p < self.src.len() && XML_BYTE_CLASS[self.src[p].low() as usize] & mask == 0 {
+        while p < self.src.len() && BYTE_CLASS[self.src[p].low() as usize] & mask == 0 {
             p += 1;
         }
         p

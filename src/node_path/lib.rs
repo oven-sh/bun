@@ -1022,8 +1022,14 @@ pub fn join_windows_t<'a, T: PathCharCwd>(
 /// `res` and returns `(res.len, lastSegmentLength)`. Kept out of line so the
 /// per-byte loop in the caller stays call-free.
 #[inline(never)]
-fn pop_last_segment_t<T: PathCharCwd>(res: &[T], separator: T) -> (usize, usize) {
-    match strings::last_index_of_char_t(res, separator) {
+fn pop_last_segment_t<T: PathCharCwd>(
+    res: &[T],
+    last_segment_length: usize,
+    separator: T,
+) -> (usize, usize) {
+    let last_separator = res.len().checked_sub(last_segment_length + 1);
+    debug_assert!(last_separator == strings::last_index_of_char_t(res, separator));
+    match last_separator {
         None => (0, 0),
         Some(idx) => {
             // Translated from the following JS code:
@@ -1092,7 +1098,7 @@ fn normalize_string_t<T: PathCharCwd, const IS_WINDOWS: bool>(
                 {
                     if buf_size > 2 {
                         (buf_size, last_segment_length) =
-                            pop_last_segment_t(&buf[0..buf_size], separator);
+                            pop_last_segment_t(&buf[0..buf_size], last_segment_length, separator);
                         last_slash = Some(i);
                         dots = Some(0);
                         continue;

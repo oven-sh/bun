@@ -10,6 +10,7 @@ on:
       - "src/**/*.rs"
       - "src/**/Cargo.toml"
       - "src/pod/README.md"
+      - "src/simd/**/*.md"
       - "src/**/*.bind.ts"
       - "src/codegen/**"
       - "scripts/build/**"
@@ -73,7 +74,7 @@ jobs:
         # tests, nothing builds the rest.
         env:
           BUN_CODEGEN_DIR: ${{ github.workspace }}/build/debug/codegen
-        run: cargo check --workspace --all-targets --keep-going
+        run: cargo check --workspace --all-targets --keep-going --features bun_simd/slow-tests
 
   miri:
     name: cargo miri test
@@ -98,6 +99,79 @@ jobs:
         env:
           BUN_CODEGEN_DIR: ${{ github.workspace }}/build/debug/codegen
         run: bun run rust:miri
+
+  simd-changed:
+    name: simd changed
+    if: github.event_name != 'merge_group'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pull-requests: read
+    outputs:
+      parts: ${{ steps.files.outputs.parts }}
+    steps:
+      - id: files
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          [ -z "$NUMBER" ] || gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$NUMBER/files?per_page=100" --jq '.[].filename' > files
+          # The list ends at 3000 files.
+          if [ -z "$NUMBER" ] || [ "$(wc -l < files)" -ge 3000 ] || grep -qE '^(src/simd(_macros)?/|rust-toolchain.toml|scripts/build/cargo-config.ts|.github/(workflows/rust-lints.yml|actions/rust-lint-setup/))' files; then
+            echo 'parts=["users", "lib", 0, 1, 2, 3]' >> "$GITHUB_OUTPUT"
+          elif grep -qE '^(Cargo.toml|src/(simd_kernels|hash|image_ops|jpeg|png|webp|brotli|deflate|zlib|zstd|node_path|paths)/)' files; then
+            echo 'parts=["users"]' >> "$GITHUB_OUTPUT"
+          fi
+
+  simd:
+    # The tests of src/simd that take too long to compile for `bun run rust:test`, and tests on arm64.
+    name: simd cargo test (${{ matrix.os }}, ${{ matrix.part }})
+    needs: simd-changed
+    if: needs.simd-changed.outputs.parts
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm]
+        part: ${{ fromJSON(needs.simd-changed.outputs.parts) }}
+    env:
+      PART: ${{ matrix.part }}
+      PARTS: 4
+      # A test takes up to 7.5 GB to compile, the next 6 GB, and `lib` 13 GB.
+      CARGO_BUILD_JOBS: 2
+      CARGO_INCREMENTAL: 0
+      CARGO_PROFILE_DEV_DEBUG: 0
+      BUN_CODEGEN_DIR: ${{ github.workspace }}/build/debug/codegen
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup
+        uses: ./.github/actions/rust-lint-setup
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+          llvm-version: ${{ env.LLVM_VERSION_MAJOR }}
+          toolchain: ${{ env.RUSTUP_TOOLCHAIN }}
+          ninja-targets: codegen clone-lolhtml clone-rust-argon2
+          webkit-generators-only: "1"
+
+      - name: cargo test
+        run: |
+          case $PART in
+            users) # For the CPUs of a release build. These also fail where a kernel has lost the instructions of its target.
+              [ "$RUNNER_ARCH" = X64 ] && cpu=target-cpu=nehalem || cpu=target-feature=+crc
+              check="target.'cfg(all())'.rustflags = ['-C$cpu', '--cfg=bun_simd_check']"
+              grep -c lacks_the_instructions <(cargo test --release --config "$check" -p bun_simd --test unmarked 2>&1) # It has to be refused.
+              cargo test --release --no-fail-fast --config "$check" \
+                $(printf -- '-p bun_%s ' simd_kernels hash image_ops jpeg png webp brotli deflate zlib zstd_decoder zstd_encoder node_path paths) ;;
+            lib) cargo test -p bun_simd --features slow-tests --lib && cargo test -p bun_simd --doc &&
+              cargo test -p bun_simd --features slow-tests --test 'misfits*' --config "target.'cfg(all())'.rustflags = ['--cfg=bun_simd_misfits_panic']" ;;
+            *) cargo test -p bun_simd --features slow-tests --no-fail-fast \
+                $(basename -s .rs src/simd/tests/*.rs | awk "NR % $PARTS == $PART { print \"--test\", \$0 }") ;;
+          esac
 
   lolhtml:
     # The vendored lol-html is a fork (oven-sh/lol-html, `bun` branch) carrying

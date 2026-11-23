@@ -12,29 +12,6 @@ extern "Rust" fn __bun_crash_handler_out_of_memory() -> ! {
     panic!("out of memory");
 }
 
-/// Stands in for highway_strings.cpp.
-#[unsafe(no_mangle)]
-unsafe extern "C" fn highway_index_of_char(text: *const u8, len: usize, byte: u8) -> usize {
-    // SAFETY: the caller passes a slice, as a pointer and a length.
-    let text = unsafe { core::slice::from_raw_parts(text, len) };
-    text.iter().take_while(|&&other| other != byte).count()
-}
-
-/// Stands in for highway_strings.cpp.
-#[unsafe(no_mangle)]
-unsafe extern "C" fn highway_memmem(
-    text: *const u8,
-    len: usize,
-    part: *const u8,
-    part_len: usize,
-) -> *const u8 {
-    use core::slice::from_raw_parts;
-    // SAFETY: the caller passes two slices.
-    let (text, part) = unsafe { (from_raw_parts(text, len), from_raw_parts(part, part_len)) };
-    let mut rests = (0..len).map(|start| &text[start..]);
-    (rests.find(|rest| rest.starts_with(part))).map_or(core::ptr::null(), <[u8]>::as_ptr)
-}
-
 /// Stands in for simdutf.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn simdutf__validate_utf8(text: *const u8, len: usize) -> bool {

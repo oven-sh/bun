@@ -10,10 +10,10 @@ path = "lib.rs"
 workspace = true
 
 [dependencies]
+bun_simd.workspace = true
 thiserror.workspace = true
 bun_alloc.workspace = true
 bun_core.workspace = true
-bun_highway.workspace = true
 bun_removable_features.workspace = true
 
 [dev-dependencies]

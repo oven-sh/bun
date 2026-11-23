@@ -2,13 +2,16 @@
 
 use core::cell::Cell;
 use core::hint::cold_path;
+use core::sync::atomic::{Ordering, compiler_fence};
 
 use bun_deflate::format::MAX_MATCH_LEN;
-use bun_highway::with_bmi2;
-use bun_highway::zlib::{Appender, Span, copy_match};
+use bun_simd::kernel;
+use bun_simd::mem::{Appending, Output, Piece, Room};
+use bun_simd::target::Baseline;
 
 use super::Status;
 use super::bits::{BitReader, REFILLED_BITS};
+use super::matches::{MAX_LEN, Span, copy_match};
 use super::tables::{DISTANCE_BITS, Entry, LITERAL_LENGTH_BITS, Special, Tables};
 use super::window::{LAP, SLACK};
 use crate::error::{Damage, Error, Result};
@@ -43,34 +46,72 @@ pub(super) const FAST_ROOM: usize = 4;
 pub(super) const FAST_INPUT: usize = 16;
 
 /// What symbols are decoded to.
-pub(super) trait Tape {
+pub(super) trait Reel {
     fn position(&self) -> usize;
     /// With less than `SLACK` nothing more is to be written.
-    fn room(&self) -> usize;
+    fn round(&mut self) -> Option<impl Tape>;
+}
+
+/// The room of a `Reel` for one round of a loop.
+pub(super) trait Tape {
+    fn position(&self) -> usize;
     fn push(&mut self, bytes: [u8; 4], count: usize);
     /// `false` if that is out of bounds.
     fn copy(&mut self, distance: usize, len: usize) -> bool;
 }
 
-impl Tape for Appender<'_> {
+/// Matches copy from no more than the last `history` bytes. It does not allocate.
+#[inline(always)]
+pub(super) fn end_of(vec: &mut Vec<u8>, history: usize, room: usize) -> impl Reel {
+    let room = room.min(vec.capacity() - vec.len());
+    Output::resume(vec, history, room)
+}
+
+impl Reel for Appending<'_, u8, Vec<u8>> {
     #[inline(always)]
     fn position(&self) -> usize {
-        self.position()
+        self.len()
     }
 
     #[inline(always)]
-    fn room(&self) -> usize {
-        self.room()
+    fn round(&mut self) -> Option<impl Tape> {
+        self.room_for(SLACK)
+    }
+}
+
+impl Reel for Lap<'_> {
+    #[inline(always)]
+    fn position(&self) -> usize {
+        self.rest_end - self.rest.len()
+    }
+
+    #[inline(always)]
+    fn round(&mut self) -> Option<impl Tape> {
+        if self.room() < SLACK {
+            cold_path();
+            return None;
+        }
+        Some(self)
+    }
+}
+
+impl Tape for Room<'_, '_, u8> {
+    #[inline(always)]
+    fn position(&self) -> usize {
+        self.len()
     }
 
     #[inline(always)]
     fn push(&mut self, bytes: [u8; 4], count: usize) {
-        self.push(bytes, count);
+        // For speed: the next lookup stays before this store.
+        compiler_fence(Ordering::SeqCst);
+        _ = self.try_push(bytes.first_n(count));
     }
 
     #[inline(always)]
     fn copy(&mut self, distance: usize, len: usize) -> bool {
-        self.copy(distance, len)
+        let len = len.min(MAX_LEN);
+        self.extend_from_back::<Baseline>(distance, len).is_some()
     }
 }
 
@@ -104,6 +145,11 @@ impl<'a> Lap<'a> {
     }
 
     #[inline(always)]
+    pub(super) fn room(&self) -> usize {
+        self.rest.len()
+    }
+
+    #[inline(always)]
     fn match_source(&self, distance: usize) -> Option<&'a Span> {
         let (from, is_in_last_lap) = (self.position() as u32).overflowing_sub(distance as u32);
         let from = if is_in_last_lap {
@@ -118,15 +164,10 @@ impl<'a> Lap<'a> {
     }
 }
 
-impl Tape for Lap<'_> {
+impl Tape for &mut Lap<'_> {
     #[inline(always)]
     fn position(&self) -> usize {
-        self.rest_end - self.rest.len()
-    }
-
-    #[inline(always)]
-    fn room(&self) -> usize {
-        self.rest.len()
+        Reel::position(*self)
     }
 
     #[inline(always)]
@@ -159,43 +200,21 @@ impl Drop for Lap<'_> {
 }
 
 macro_rules! fast_decoder {
-    ($(#[$meta:meta])* $name:ident($($arg:ident: $type:ty),*; $reach:ident) => $tape:expr) => {
+    ($(#[$meta:meta])* $name:ident($($arg:ident: $type:ty),*) => $kernel:ident) => {
         $(#[$meta])*
         #[inline(always)]
         pub(super) fn $name(
             tables: &Tables,
             bits: &mut BitReader<'_>,
             $($arg: $type,)*
-            $reach: Reach,
+            reach: Reach,
             last_distance: &Cell<usize>,
         ) -> Result<Stop> {
-            with_bmi2! {
-                /// The mask takes a register, of which there are too few.
-                fn unmasked(
-                    tables: &Tables,
-                    bits: &mut BitReader<'_>,
-                    $($arg: $type,)*
-                    $reach: Reach,
-                    last_distance: &Cell<usize>,
-                ) -> Result<Stop> {
-                    decode_fast::<false>(tables, bits, $tape, $reach, last_distance)
-                }
-            }
-            with_bmi2! {
-                fn masked(
-                    tables: &Tables,
-                    bits: &mut BitReader<'_>,
-                    $($arg: $type,)*
-                    $reach: Reach,
-                    last_distance: &Cell<usize>,
-                ) -> Result<Stop> {
-                    decode_fast::<true>(tables, bits, $tape, $reach, last_distance)
-                }
-            }
+            // The mask takes a register, of which there are too few.
             if tables.literal_length_mask == u64::MAX {
-                unmasked(tables, bits, $($arg,)* $reach, last_distance)
+                $kernel::<false>(tables, bits, $($arg,)* reach, last_distance)
             } else {
-                masked(tables, bits, $($arg,)* $reach, last_distance)
+                $kernel::<true>(tables, bits, $($arg,)* reach, last_distance)
             }
         }
     };
@@ -203,14 +222,41 @@ macro_rules! fast_decoder {
 
 fast_decoder! {
     /// The arguments of `Lap::new()`.
-    decode_to_slice(slice: (&mut [u8], &mut usize), limit: usize, output_offset: usize; reach)
-        => Lap::new(slice, limit, Some(output_offset))?
+    decode_to_slice(slice: (&mut [u8], &mut usize), limit: usize, output_offset: usize) => to_slice
+}
+
+/// Without AVX, here and below: 32 bytes at a time are slower after a pause, and wait more often for the stores before.
+#[kernel(sse4 + bmi)]
+fn to_slice<const MASK: bool>(
+    tables: &Tables,
+    bits: &mut BitReader<'_>,
+    slice: (&mut [u8], &mut usize),
+    limit: usize,
+    output_offset: usize,
+    reach: Reach,
+    last_distance: &Cell<usize>,
+) -> Result<Stop> {
+    let tape = Lap::new(slice, limit, Some(output_offset))?;
+    decode_fast::<MASK>(tables, bits, tape, reach, last_distance)
 }
 
 fast_decoder! {
     /// Positions count from the first byte that is within reach.
-    decode_to_vec(vec: &mut Vec<u8>, room: usize; reach)
-        => Appender::new(vec, reach.from, room)
+    decode_to_vec(vec: &mut Vec<u8>, room: usize) => to_vec
+}
+
+#[kernel(sse4 + bmi)]
+#[inline(never)]
+fn to_vec<const MASK: bool>(
+    tables: &Tables,
+    bits: &mut BitReader<'_>,
+    vec: &mut Vec<u8>,
+    room: usize,
+    reach: Reach,
+    last_distance: &Cell<usize>,
+) -> Result<Stop> {
+    let tape = end_of(vec, reach.from, room);
+    decode_fast::<MASK>(tables, bits, tape, reach, last_distance)
 }
 
 enum Exit {
@@ -226,7 +272,7 @@ enum Exit {
 fn decode_fast<const MASK: bool>(
     tables: &Tables,
     bits: &mut BitReader<'_>,
-    mut tape: impl Tape,
+    mut reel: impl Reel,
     reach: Reach,
     last_distance: &Cell<usize>,
 ) -> Result<Stop> {
@@ -238,7 +284,7 @@ fn decode_fast<const MASK: bool>(
     } else {
         u64::MAX
     };
-    let surely_in_reach = reach.max.min(reach.available_at(tape.position()));
+    let surely_in_reach = reach.max.min(reach.available_at(reel.position()));
 
     macro_rules! skip {
         ($bits:expr) => {
@@ -255,12 +301,6 @@ fn decode_fast<const MASK: bool>(
         };
     }
 
-    macro_rules! write_literals {
-        ($entry:expr) => {
-            tape.push($entry.literals(), $entry.literal_count());
-        };
-    }
-
     refill!(input.first_chunk().ok_or(Error::Internal)?);
     let mut entry = tables.literal_length.look_up(buffer & mask);
     let exit = loop {
@@ -273,8 +313,13 @@ fn decode_fast<const MASK: bool>(
         let Some(mut word) = input.first_chunk() else {
             stop!(Exit::LittleInput);
         };
-        if tape.room() < SLACK {
+        let Some(mut tape) = reel.round() else {
             stop!(Exit::LittleRoom);
+        };
+        macro_rules! write_literals {
+            ($entry:expr) => {
+                tape.push($entry.literals(), $entry.literal_count());
+            };
         }
         // The lookup comes first as all else waits for it.
         macro_rules! take_literals {
@@ -447,7 +492,7 @@ pub(super) enum Step {
 pub(super) fn decode_one(
     tables: &Tables,
     bits: &mut BitReader<'_>,
-    tape: &mut impl Tape,
+    mut tape: impl Tape,
     reach: Reach,
 ) -> Result<Step> {
     let Some((symbol, used)) = peek(tables, bits)? else {
@@ -476,11 +521,11 @@ pub(super) fn decode_one(
 pub(super) fn decode_slowly(
     tables: &Tables,
     bits: &mut BitReader<'_>,
-    mut tape: impl Tape,
+    mut reel: impl Reel,
     reach: Reach,
 ) -> Result<Option<Status>> {
-    while tape.room() >= SLACK {
-        match decode_one(tables, bits, &mut tape, reach)? {
+    while let Some(tape) = reel.round() {
+        match decode_one(tables, bits, tape, reach)? {
             Step::NeedsInput => return Ok(Some(Status::NeedsInput)),
             Step::EndOfBlock => return Ok(Some(Status::BlockEnd)),
             Step::Literal | Step::Match(_) => {}

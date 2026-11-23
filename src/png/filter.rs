@@ -1,10 +1,14 @@
-//! The five scanline filters, whose loops are in src/jsc/bindings/highway_png.cpp. Above the image (or pass) are zeros.
+//! The five scanline filters, whose loops are in simd.rs. Above the image (or pass) are zeros.
 //!
 //! A line is a row behind the byte that says which filter it has, its filter type.
 
 use crate::error::{Error, Result};
+use crate::header::Header;
+use crate::simd;
+pub(crate) use crate::simd::{SLACK, set_alpha};
 
 const NONE: u8 = 0;
+const AVERAGE: u8 = 3;
 const PAETH: u8 = 4;
 
 /// What is above the first row.
@@ -25,34 +29,102 @@ pub(crate) fn unfilter(
     if filter_type > PAETH {
         return Err(Error::InvalidFilterType);
     }
-    // 3 is not among them: see `push_rgb_as_rgba()`.
-    if !matches!(bytes_per_pixel, 1 | 2 | 4 | 6 | 8) || row.len() != above.len() {
+    // 3 and 8 are not among them: see `push_as_rgba()`.
+    if !matches!(bytes_per_pixel, 1 | 2 | 4 | 6) || row.len() != above.len() {
         return Err(Error::Internal);
     }
     if filter_type != NONE {
-        bun_highway::png_unfilter(filter_type, bytes_per_pixel, row, above);
+        simd::unfilter(filter_type, bytes_per_pixel, row, above);
     }
     Ok(())
 }
 
-/// The alpha does not count: see `make_opaque()`.
-pub(crate) fn push_rgb_as_rgba(rgb: &[u8], rgba: &mut Vec<u8>) -> Result<()> {
-    rgba.try_reserve(rgb.len() / 3 * 4)?;
-    // Four pixels at a time.
-    let (fours, rest) = rgb.as_chunks::<12>();
-    for &[r0, g0, b0, r1, g1, b1, r2, g2, b2, r3, g3, b3] in fours {
-        rgba.extend_from_slice(&[r0, g0, b0, 0, r1, g1, b1, 0, r2, g2, b2, 0, r3, g3, b3, 0]);
-    }
-    for &[r, g, b] in rest.as_chunks().0 {
-        rgba.extend_from_slice(&[r, g, b, 0]);
-    }
-    Ok(())
+/// The filter types of rows of 4-byte pixels that wait for more, as Average and Paeth are turned back faster for several.
+#[derive(Default)]
+pub(crate) struct WaitingRows {
+    types: [u8; simd::ROWS],
+    len: usize,
 }
 
-pub(crate) fn make_opaque(rgba: &mut [u8]) {
-    for [.., alpha] in rgba.as_chunks_mut::<4>().0 {
-        *alpha = 255;
+impl WaitingRows {
+    /// Whether rows of such an image ever wait.
+    pub(crate) fn pay(header: Header) -> bool {
+        !header.interlaced && header.width as usize * 4 >= simd::LONG
     }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    /// For the last row of `image`.
+    #[inline(always)]
+    pub(crate) fn push(
+        &mut self,
+        filter_type: u8,
+        image: &mut [u8],
+        stride: usize,
+        more_to_come: bool,
+    ) -> Result<()> {
+        let start = image.len().saturating_sub(stride);
+        if start == 0 || stride < simd::LONG || (self.len == 0 && filter_type < AVERAGE) {
+            let (done, row) = image.split_at_mut_checked(start).unwrap_or_default();
+            return match start.checked_sub(stride).and_then(|at| done.get(at..)) {
+                Some(above) => unfilter(filter_type, 4, row, above),
+                None => unfilter(filter_type, 4, row, &zeros(stride)?),
+            };
+        }
+        self.wait(filter_type, image, stride, more_to_come)
+    }
+
+    #[inline(never)]
+    fn wait(
+        &mut self,
+        filter_type: u8,
+        image: &mut [u8],
+        stride: usize,
+        more_to_come: bool,
+    ) -> Result<()> {
+        if filter_type > PAETH {
+            return Err(Error::InvalidFilterType);
+        }
+        *self.types.get_mut(self.len).ok_or(Error::Internal)? = filter_type;
+        self.len += 1;
+        if self.len < simd::ROWS && more_to_come {
+            return Ok(());
+        }
+        let Self { mut types, len } = core::mem::take(self);
+        // The last ones go with rows that are done, as if those had no filter.
+        let done = if image.len() >= (1 + simd::ROWS) * stride {
+            simd::ROWS - len
+        } else {
+            0
+        };
+        types.rotate_right(done);
+        let start = image.len() - (1 + done + len) * stride;
+        let all = image.get_mut(start..).ok_or(Error::Internal)?;
+        simd::unfilter_rows(types.get(..done + len).unwrap_or_default(), all, stride);
+        Ok(())
+    }
+}
+
+/// For samples of 8 or 16 bits, which lose their low byte. An alpha that `row` lacks is zero. `row` has `SLACK` bytes more.
+#[inline]
+pub(crate) fn push_as_rgba(
+    row: &[u8],
+    width: usize,
+    header: Header,
+    rgba: &mut Vec<u8>,
+) -> Result<()> {
+    let bytes_per_pixel = header.bytes_per_pixel();
+    if row.len() != width * bytes_per_pixel + SLACK {
+        return Err(Error::Internal);
+    }
+    rgba.try_reserve(width * 4 + SLACK)?;
+    match header.bit_depth {
+        8 => simd::push_as_rgba::<1>(row, width, bytes_per_pixel, rgba),
+        _ => simd::push_as_rgba::<2>(row, width, bytes_per_pixel / 2, rgba),
+    }
+    Ok(())
 }
 
 /// A line for each filter type, to pick one from.
@@ -89,7 +161,7 @@ impl CandidateLines {
         let filtered = filtered
             .each_mut()
             .map(|line| line.get_mut(1..).unwrap_or_default());
-        let sums = bun_highway::png_filter_rgba(row, above, filtered);
+        let sums = simd::filter_rgba(row.as_chunks().0, above.as_chunks().0, filtered);
         // The first of equals.
         let best = self.lines.iter().zip(sums).min_by_key(|&(_, sum)| sum);
         best.map(|(line, _)| line.as_slice()).unwrap_or_default()

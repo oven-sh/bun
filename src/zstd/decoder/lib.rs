@@ -9,12 +9,13 @@
     clippy::unreachable
 )]
 #![warn(unused_must_use)]
-#![feature(allocator_ext, const_trait_impl, hint_prefetch)]
+#![feature(allocator_ext, const_trait_impl, fn_align, hint_prefetch)]
 
 pub mod array;
 mod bits;
 mod block;
 pub mod bounded;
+pub mod calls;
 mod decompress;
 mod destination;
 mod dictionary;

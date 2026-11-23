@@ -195,7 +195,7 @@ struct Idat<'a> {
     inflater: Inflater,
     /// How many bytes are still to be inflated of the lines that are read ahead.
     ahead_left: usize,
-    /// Inflated for the reads to come, and how much of it they have had.
+    /// Inflated for the reads to come and followed by `filter::SLACK` zeros, and how much of it they have had.
     ahead: Vec<u8>,
     ahead_read: usize,
 }
@@ -227,12 +227,16 @@ impl<'a> Idat<'a> {
         }
     }
 
-    /// From now on `read()` inflates `AHEAD_LEN` bytes at a time, up to the first pass of whose lines no two fit in it.
-    fn read_ahead(&mut self, header: Header) {
+    /// From now on `AHEAD_LEN` bytes are inflated at a time, up to the first pass of whose lines no two fit in it.
+    fn read_ahead(&mut self, header: Header) -> Result<()> {
         let passes = header
             .passes()
             .take_while(|pass| pass.row_bytes < AHEAD_LEN / 2);
         self.ahead_left = passes.map(|pass| (pass.row_bytes + 1) * pass.height).sum();
+        if self.ahead_left != 0 {
+            self.inflate_ahead()?;
+        }
+        Ok(())
     }
 
     /// Appends the next `len` bytes of the lines to `out`.
@@ -240,7 +244,11 @@ impl<'a> Idat<'a> {
         out.try_reserve(len)?;
         let end = out.len() + len;
         loop {
-            let ahead = self.ahead.get(self.ahead_read..).unwrap_or_default();
+            let inflated = self.ahead.len().saturating_sub(filter::SLACK);
+            let ahead = self
+                .ahead
+                .get(self.ahead_read..inflated)
+                .unwrap_or_default();
             let ahead = ahead.get(..end - out.len()).unwrap_or(ahead);
             out.extend_from_slice(ahead);
             self.ahead_read += ahead.len();
@@ -251,13 +259,38 @@ impl<'a> Idat<'a> {
             if self.ahead_left == 0 {
                 return self.inflate(out, missing);
             }
-            let mut ahead = core::mem::take(&mut self.ahead);
-            ahead.clear();
-            let more = AHEAD_LEN.min(self.ahead_left);
-            self.ahead_left -= more;
-            self.inflate(&mut ahead, more)?;
-            (self.ahead, self.ahead_read) = (ahead, 0);
+            self.inflate_ahead()?;
         }
+    }
+
+    fn inflate_ahead(&mut self) -> Result<()> {
+        let mut ahead = core::mem::take(&mut self.ahead);
+        ahead.clear();
+        let more = AHEAD_LEN.min(self.ahead_left);
+        self.ahead_left -= more;
+        ahead.try_reserve_exact(more + filter::SLACK)?;
+        self.inflate(&mut ahead, more)?;
+        ahead.extend([0; filter::SLACK]);
+        (self.ahead, self.ahead_read) = (ahead, 0);
+        Ok(())
+    }
+
+    /// The filter type and the `len` bytes of the next line, with `filter::SLACK` more.
+    #[inline(always)]
+    fn line<'b>(&'b mut self, spare: &'b mut Vec<u8>, len: usize) -> Result<(u8, &'b [u8])> {
+        let range = self.ahead_read..self.ahead_read + 1 + len + filter::SLACK;
+        let line = if range.end <= self.ahead.len() {
+            self.ahead_read += 1 + len;
+            self.ahead.get(range).unwrap_or_default()
+        } else {
+            spare.clear();
+            spare.try_reserve_exact(range.len())?;
+            self.read(spare, 1 + len)?;
+            spare.extend_from_slice(&[0; filter::SLACK]);
+            spare
+        };
+        let (&filter_type, row) = line.split_first().ok_or(Error::Internal)?;
+        Ok((filter_type, row))
     }
 
     /// Appends the next `len` bytes of the stream to `out`.
@@ -279,22 +312,23 @@ impl<'a> Idat<'a> {
 }
 
 /// How a row of the file becomes a row of RGBA.
+#[repr(C, align(4))]
 struct Expander {
-    layout: Layout,
-    /// For `Layout::Lookup`: the color of each sample value.
+    /// For `Layout::Lookup`: the color of each sample value. Aligned, so that none crosses a cache line.
     table: [Rgba; 256],
+    layout: Layout,
 }
 
 #[derive(Clone, Copy)]
 enum Layout {
-    Rgba8,
-    Rgba16,
+    /// The filters treat each byte of a pixel apart from the others. So a row of these becomes RGBA before it is unfiltered,
+    /// which is faster on 4-byte pixels.
+    WithAlpha,
+    /// The same, with the color that tRNS makes transparent.
+    WithoutAlpha(Option<[u8; 3]>),
     /// The pixel that tRNS makes transparent, as it is in the file.
-    Rgb8(Option<[u8; 3]>),
-    Rgb16(Option<[u8; 6]>),
-    Gray16(Option<[u8; 2]>),
-    GrayAlpha8,
-    GrayAlpha16,
+    Rgb16([u8; 6]),
+    Gray16([u8; 2]),
     /// Palette indices or gray samples of so many bits, at most 8.
     Lookup(u8),
 }
@@ -305,17 +339,25 @@ impl Expander {
         let mut table = [[0, 0, 0, 255]; 256];
         let transparency = chunks.transparency.unwrap_or_default();
         let layout = match (chunks.header.color_type, chunks.header.bit_depth) {
-            (ColorType::TruecolorAlpha, 8) => Layout::Rgba8,
-            (ColorType::TruecolorAlpha, _) => Layout::Rgba16,
+            (ColorType::TruecolorAlpha | ColorType::GrayscaleAlpha, _) => Layout::WithAlpha,
             // Only the low byte of each 16-bit sample in tRNS counts.
-            (ColorType::Truecolor, 8) => Layout::Rgb8(match *transparency {
+            (ColorType::Truecolor, 8) => Layout::WithoutAlpha(match *transparency {
                 [_, r, _, g, _, b] => Some([r, g, b]),
                 _ => None,
             }),
-            (ColorType::Truecolor, _) => Layout::Rgb16(transparency.try_into().ok()),
-            (ColorType::GrayscaleAlpha, 8) => Layout::GrayAlpha8,
-            (ColorType::GrayscaleAlpha, _) => Layout::GrayAlpha16,
-            (ColorType::Grayscale, 16) => Layout::Gray16(transparency.try_into().ok()),
+            // Else by the table: Paeth for a row alone is faster on single bytes.
+            (ColorType::Grayscale, 8) if filter::WaitingRows::pay(chunks.header) => {
+                Layout::WithoutAlpha(match *transparency {
+                    [_, gray] => Some([gray; 3]),
+                    _ => None,
+                })
+            }
+            (ColorType::Truecolor, _) => {
+                (transparency.try_into()).map_or(Layout::WithoutAlpha(None), Layout::Rgb16)
+            }
+            (ColorType::Grayscale, 16) => {
+                (transparency.try_into()).map_or(Layout::WithoutAlpha(None), Layout::Gray16)
+            }
             (ColorType::Grayscale, depth) => {
                 let max = u8::MAX >> (8 - depth);
                 // Of the 16 bits in tRNS, only as many as a sample has count. libspng compared all 16.
@@ -350,35 +392,27 @@ impl Expander {
             .unwrap_or_default()
     }
 
-    /// Of RGBA that came as 8-bit RGB.
-    fn apply_transparent_color(&self, rgba: &mut [u8]) {
-        if let Layout::Rgb8(Some(transparent)) = self.layout {
-            for pixel in rgba.as_chunks_mut().0 {
-                if let [r, g, b, _] = *pixel
-                    && [r, g, b] == transparent
-                {
-                    *pixel = [r, g, b, 0];
-                }
-            }
+    fn expands_first(&self) -> bool {
+        matches!(self.layout, Layout::WithAlpha | Layout::WithoutAlpha(_))
+    }
+
+    /// Of RGBA that came without.
+    fn set_alpha(&self, rgba: &mut [u8]) {
+        if let Layout::WithoutAlpha(transparent) = self.layout {
+            filter::set_alpha(rgba, transparent);
         }
     }
 
     /// `row` is what `filter::unfilter()` gave. 16-bit samples lose their low byte.
     fn expand_row(&self, row: &[u8], rgba: &mut [u8]) {
-        fn alpha<const N: usize>(pixel: &[u8; N], transparent: Option<[u8; N]>) -> u8 {
-            if transparent == Some(*pixel) { 0 } else { 255 }
+        fn alpha<const N: usize>(pixel: &[u8; N], transparent: [u8; N]) -> u8 {
+            if transparent == *pixel { 0 } else { 255 }
         }
         let out = rgba.as_chunks_mut::<4>().0;
         match self.layout {
-            Layout::Rgba8 | Layout::Rgb8(_) => {
+            Layout::WithAlpha | Layout::WithoutAlpha(_) => {
                 for (out, pixel) in out.iter_mut().zip(row.as_chunks().0) {
                     *out = *pixel;
-                }
-                self.apply_transparent_color(out.as_flattened_mut());
-            }
-            Layout::Rgba16 => {
-                for (out, &[r, _, g, _, b, _, a, _]) in out.iter_mut().zip(row.as_chunks().0) {
-                    *out = [r, g, b, a];
                 }
             }
             Layout::Rgb16(transparent) => {
@@ -391,16 +425,6 @@ impl Expander {
                 for (out, pixel) in out.iter_mut().zip(row.as_chunks().0) {
                     let [gray, _] = *pixel;
                     *out = [gray, gray, gray, alpha(pixel, transparent)];
-                }
-            }
-            Layout::GrayAlpha8 => {
-                for (out, &[gray, a]) in out.iter_mut().zip(row.as_chunks().0) {
-                    *out = [gray, gray, gray, a];
-                }
-            }
-            Layout::GrayAlpha16 => {
-                for (out, &[gray, _, a, _]) in out.iter_mut().zip(row.as_chunks().0) {
-                    *out = [gray, gray, gray, a];
                 }
             }
             Layout::Lookup(8) => self.expand_packed_row::<8>(row, out),
@@ -420,17 +444,6 @@ impl Expander {
     }
 }
 
-/// The last row of `rows`, of 4-byte pixels.
-fn unfilter_last_row(filter_type: u8, rows: &mut [u8], stride: usize) -> Result<&mut [u8]> {
-    let start = rows.len().saturating_sub(stride);
-    let (done, row) = rows.split_at_mut_checked(start).unwrap_or_default();
-    match start.checked_sub(stride).and_then(|at| done.get(at..)) {
-        Some(above) => filter::unfilter(filter_type, 4, row, above)?,
-        None => filter::unfilter(filter_type, 4, row, &filter::zeros(stride)?)?,
-    }
-    Ok(row)
-}
-
 /// Inflates lines to the end of the image and moves each row up over the filter types: no copy to memory that is cold.
 fn read_rgba8(header: Header, size: usize, idat: &mut Idat) -> Result<Vec<u8>> {
     let stride = header.width as usize * 4;
@@ -441,6 +454,7 @@ fn read_rgba8(header: Header, size: usize, idat: &mut Idat) -> Result<Vec<u8>> {
     // With room for the filter types of the last lines.
     image.try_reserve_exact(size + lines_at_a_time)?;
     let capacity = image.capacity();
+    let mut waiting = filter::WaitingRows::default();
     while lines_left != 0 {
         let lines = lines_at_a_time.min(lines_left);
         lines_left -= lines;
@@ -456,7 +470,7 @@ fn read_rgba8(header: Header, size: usize, idat: &mut Idat) -> Result<Vec<u8>> {
             };
             image.copy_within(from + 1..from + line_len, to);
             let rows = image.get_mut(..to + stride).unwrap_or_default();
-            unfilter_last_row(filter_type, rows, stride)?;
+            waiting.push(filter_type, rows, stride, i + 1 < lines + lines_left)?;
         }
         image.truncate(start + lines * stride);
     }
@@ -464,27 +478,28 @@ fn read_rgba8(header: Header, size: usize, idat: &mut Idat) -> Result<Vec<u8>> {
     Ok(image)
 }
 
-/// A row becomes RGBA before it is unfiltered, because that is faster on 4-byte pixels.
-fn read_rgb8(
+fn read_expanding_first(
     header: Header,
     expander: &Expander,
     idat: &mut Idat,
     image: &mut Vec<u8>,
 ) -> Result<()> {
-    let (line_len, stride) = (header.width as usize * 3 + 1, header.width as usize * 4);
+    let width = header.width as usize;
+    let (row_bytes, stride) = (width * header.bytes_per_pixel(), width * 4);
     let mut line: Vec<u8> = Vec::new();
-    line.try_reserve_exact(line_len)?;
-    for _ in 0..header.height {
-        line.clear();
-        idat.read(&mut line, line_len)?;
-        let Some((&filter_type, filtered)) = line.split_first() else {
-            return Err(Error::Internal);
-        };
-        filter::push_rgb_as_rgba(filtered, image)?;
-        let row = unfilter_last_row(filter_type, image, stride)?;
-        filter::make_opaque(row);
-        expander.apply_transparent_color(row);
+    let (mut waiting, mut finished) = (filter::WaitingRows::default(), 0);
+    for lines_left in (0..header.height).rev() {
+        let (filter_type, filtered) = idat.line(&mut line, row_bytes)?;
+        let start = image.len();
+        filter::push_as_rgba(filtered, width, header, image)?;
+        waiting.push(filter_type, image, stride, lines_left != 0)?;
+        // Not yet for the newest row: while all alphas are zero, what is flat looks flat.
+        if waiting.is_empty() && start - finished >= PAGE_LEN {
+            expander.set_alpha(image.get_mut(finished..start).unwrap_or_default());
+            finished = start;
+        }
     }
+    expander.set_alpha(image.get_mut(finished..).unwrap_or_default());
     Ok(())
 }
 
@@ -494,15 +509,16 @@ fn read_pixels(header: Header, expander: &Expander, idat: &mut Idat) -> Result<V
     let size = stride
         .checked_mul(header.height as usize)
         .ok_or(Error::ImageTooLarge)?;
-    let image = if matches!(expander.layout, Layout::Rgba8) && !header.interlaced {
+    let image = if header.is_rgba8() && !header.interlaced {
         read_rgba8(header, size, idat)?
     } else {
-        idat.read_ahead(header);
         let mut image: Vec<u8> = Vec::new();
-        image.try_reserve_exact(size)?;
-        match expander.layout {
-            Layout::Rgb8(_) if !header.interlaced => read_rgb8(header, expander, idat, &mut image)?,
-            _ => read_any_layout(header, expander, idat, &mut image)?,
+        image.try_reserve_exact(size.saturating_add(filter::SLACK))?;
+        idat.read_ahead(header)?;
+        if expander.expands_first() && !header.interlaced {
+            read_expanding_first(header, expander, idat, &mut image)?;
+        } else {
+            read_any_layout(header, expander, idat, &mut image)?;
         }
         image
     };
@@ -523,12 +539,11 @@ fn read_any_layout(
     let longest = header.passes().map(|pass| pass.row_bytes).max();
     let mut line_len = longest.unwrap_or_default().saturating_add(1);
     let mut bytes_per_pixel = header.bytes_per_pixel();
-    // A line that came as RGB, which becomes RGBA as in `read_rgb8()`.
-    let is_rgb8 = matches!(expander.layout, Layout::Rgb8(_));
-    let mut rgb_line: Vec<u8> = Vec::new();
-    if is_rgb8 {
-        rgb_line.try_reserve_exact(line_len)?;
-        (line_len, bytes_per_pixel) = (stride + 1, 4);
+    // A line as it came, which becomes RGBA as in `read_expanding_first()`.
+    let expands_first = expander.expands_first() && !header.is_rgba8();
+    let mut raw_line: Vec<u8> = Vec::new();
+    if expands_first {
+        (line_len, bytes_per_pixel) = (stride + 1 + filter::SLACK, 4);
     }
     let mut line: Vec<u8> = Vec::new();
     line.try_reserve_exact(line_len)?;
@@ -537,18 +552,17 @@ fn read_any_layout(
 
     // For the passes that do not have every pixel of a row.
     let mut pass_rgba: Vec<u8> = Vec::new();
-    if header.interlaced {
+    if header.interlaced && !expander.expands_first() {
         pass_rgba.try_reserve_exact(header.width.div_ceil(2) as usize * 4)?;
     }
 
     for pass in header.passes() {
         for y in 0..pass.height {
             line.clear();
-            if is_rgb8 {
-                rgb_line.clear();
-                idat.read(&mut rgb_line, pass.row_bytes + 1)?;
-                line.extend(rgb_line.first());
-                filter::push_rgb_as_rgba(rgb_line.get(1..).unwrap_or_default(), &mut line)?;
+            if expands_first {
+                let (filter_type, filtered) = idat.line(&mut raw_line, pass.row_bytes)?;
+                line.push(filter_type);
+                filter::push_as_rgba(filtered, pass.width, header, &mut line)?;
             } else {
                 idat.read(&mut line, pass.row_bytes + 1)?;
             }
@@ -556,7 +570,7 @@ fn read_any_layout(
             if y == 0 {
                 line_above.clear();
                 line_above.resize(line.len(), 0);
-                if pass.x_step != 1 {
+                if pass.x_step != 1 && !expander.expands_first() {
                     pass_rgba.resize(pass.width * 4, 0);
                 }
             }
@@ -565,9 +579,6 @@ fn read_any_layout(
             };
             let above = line_above.get(1..).unwrap_or_default();
             filter::unfilter(filter_type, bytes_per_pixel, row, above)?;
-            if is_rgb8 {
-                filter::make_opaque(row);
-            }
 
             let start = (pass.y_start + y * pass.y_step) * stride;
             if image.len() < start + stride {
@@ -577,10 +588,15 @@ fn read_any_layout(
             if pass.x_step == 1 {
                 expander.expand_row(row, image_row);
             } else {
-                expander.expand_row(row, &mut pass_rgba);
+                let rgba: &[u8] = if expander.expands_first() {
+                    row
+                } else {
+                    expander.expand_row(row, &mut pass_rgba);
+                    &pass_rgba
+                };
                 let places = image_row.as_chunks_mut::<4>().0.get_mut(pass.x_start..);
                 let places = places.unwrap_or_default().chunks_mut(pass.x_step);
-                for (place, from) in places.zip(pass_rgba.as_chunks().0) {
+                for (place, from) in places.zip(rgba.as_chunks().0) {
                     if let Some(to) = place.first_mut() {
                         *to = *from;
                     }
@@ -589,5 +605,6 @@ fn read_any_layout(
             core::mem::swap(&mut line, &mut line_above);
         }
     }
+    expander.set_alpha(image);
     Ok(())
 }

@@ -9,6 +9,7 @@ leak:Zig__GlobalObject__create
 leak:_objc_msgSend_uncached
 leak:WTF::AutomaticThread::start
 leak:Bun__transpileFile
+leak:jsc_hooks::transpile_file
 leak:WTF::SymbolRegistry::symbolForKey
 leak:js_printer.js_printer.printAst__anon
 leak:Bun__resolveSync

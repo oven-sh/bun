@@ -2,8 +2,6 @@
 
 use core::hint::{cold_path, select_unpredictable};
 
-use bun_highway::webp::MAX_SYMBOL;
-
 use super::bool_writer::{BoolWriter, Symbol};
 use super::cost::{LEVELS, bit_cost};
 use crate::array::At;
@@ -13,6 +11,7 @@ use crate::lossy::tables::{
     ZIGZAG,
 };
 use crate::lossy::{BlockType, CoefficientProbabilities};
+use crate::simd::MAX_SYMBOL;
 use crate::slice::{InBounds, known};
 use crate::vec;
 
@@ -21,9 +20,9 @@ use crate::vec;
 pub(super) struct Residual {
     /// By row.
     pub(super) levels: [i16; 16],
-    /// As in `bun_highway::webp::Candidates`.
+    /// As in `crate::simd::Candidates`.
     pub(super) symbols: [u8; 16],
-    /// As in `bun_highway::webp::LumaCandidates`.
+    /// As in `crate::simd::LumaCandidates`.
     pub(super) end: u8,
 }
 

@@ -7,7 +7,6 @@
 #![feature(adt_const_params)]
 #![feature(arbitrary_self_types)]
 #![feature(core_io_borrowed_buf, borrowed_buf_init)]
-#![feature(vec_fallible_shrink)]
 // The unit-test harness leaves out `bin_entry` (below), the root that keeps
 // this crate's `pub(crate)` items alive, so in a test build most of the crate
 // reads as dead code. `dead_code` is checked by the crate's own build.

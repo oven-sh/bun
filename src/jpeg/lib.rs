@@ -32,6 +32,11 @@ mod scan;
 mod segment_writer;
 mod sequential;
 mod sequential_encoder;
+#[expect(
+    clippy::indexing_slicing,
+    reason = "only arrays, and rows that were cut to one length"
+)]
+mod simd;
 mod smoothing;
 mod strips;
 
@@ -79,8 +84,9 @@ fn batches(len: usize, size: usize) -> impl Iterator<Item = [usize; 2]> {
     starts.map(move |start| [start, size.min(len - start)])
 }
 
-/// What `Bun.Image` cannot reach. The kernels are only linked into the full binary, so this runs under Miri and calls none.
+/// What `Bun.Image` cannot reach, and enough of the kernels for Miri.
 #[cfg(test)]
+#[expect(clippy::indexing_slicing, reason = "a panic fails the test")]
 mod tests {
     use super::*;
     use crate::header::{ColorSpace, Segments};
@@ -111,6 +117,106 @@ mod tests {
             assert_eq!(image.rgba, [133, 133, 133, 255]);
         }
         Ok(())
+    }
+
+    #[test]
+    fn a_flat_image_stays_flat_at_all_scales() -> Result<()> {
+        for &progressive in &[false, true][cfg!(miri) as usize..] {
+            let file = encode(&[90; 4 * 9 * 3], 9, 3, 100, progressive, None)?;
+            for eighths in (2..=8).step_by(if cfg!(miri) { 7 } else { 1 }) {
+                let image = Decoder::new(&file)?.decode(eighths)?;
+                let pixels = image.rgba.as_chunks().0;
+                assert!(pixels.iter().all(|&pixel| pixel == [90, 90, 90, 255]));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn the_kernels_refuse_what_is_too_short() {
+        use simd::{Chroma, GROUP};
+        let zero = block::ZERO;
+        for size in (0..=16).step_by(if cfg!(miri) { 7 } else { 1 }) {
+            let last = if size <= 8 { 8 } else { 16 };
+            let len = size.max(1) * 64 - 64 + size + last;
+            let fits = |len, stride| {
+                simd::inverse_transform(&[zero; 2], &zero, size, &mut [0; 1024][..len], stride)
+            };
+            assert_eq!(
+                fits(len, 64).is_some(),
+                matches!(size, 2..=8 | 10 | 12 | 14)
+            );
+            assert_eq!(
+                [fits(len - 1, 64), fits(len, usize::MAX), fits(len, 0)],
+                [None; 3]
+            );
+        }
+
+        let (full, half) = (&[0; 2 * GROUP][..], &[0; GROUP + 8][..]);
+        let fits = |y: &[u8], chroma, room| {
+            let mut out = Vec::new();
+            out.try_reserve_exact(room).ok()?;
+            simd::ycc_to_rgba(y, &chroma, GROUP + 1, &mut out).map(|()| out.len())
+        };
+        let kinds = |[cb, cr]: [&'static [u8]; 2], [a, b, c, d]: [&'static [u8]; 4]| {
+            [
+                Chroma::Full { cb, cr },
+                Chroma::HalfWidth { cb: a, cr: b },
+                Chroma::HalfSize {
+                    cb: [a, b],
+                    cr: [c, d],
+                },
+            ]
+        };
+        for chroma in kinds([full; 2], [half; 4]) {
+            assert_eq!(fits(full, chroma, 2 * GROUP), Some(GROUP + 1));
+            assert_eq!(
+                [
+                    fits(&full[1..], chroma, 2 * GROUP),
+                    fits(full, chroma, 2 * GROUP - 1)
+                ],
+                [None; 2]
+            );
+        }
+        for chroma in kinds([full, &full[1..]], [half, &half[..GROUP], half, half]) {
+            assert_eq!(fits(full, chroma, 2 * GROUP), None);
+        }
+
+        let fits = |[rgba, y, cb, cr]: [usize; 4]| {
+            let [mut a, mut b, mut c] = [[0; 4 * GROUP]; 3];
+            let rgba = &[[0; 4]; 4 * GROUP][..rgba];
+            simd::rgba_to_ycc420(
+                rgba,
+                GROUP,
+                1,
+                2,
+                &mut a[..y],
+                &mut b[..cb],
+                &mut c[..cr],
+                GROUP / 2,
+            )
+        };
+        let lens = [4 * GROUP, 4 * GROUP, GROUP, GROUP];
+        assert_eq!(fits(lens), Some(()));
+        for i in 0..4 {
+            let mut lens = lens;
+            lens[i] -= 1;
+            assert_eq!(fits(lens), None);
+        }
+
+        let fits = |len, masks| {
+            simd::forward_transform(
+                &[0; 128][..len],
+                16,
+                &[zero; 2],
+                &mut [zero; 2],
+                &mut [[0; 1]; 2][..masks],
+            )
+        };
+        assert_eq!(
+            [fits(128, 2), fits(127, 2), fits(128, 1)],
+            [Some(()), None, None]
+        );
     }
 
     #[test]

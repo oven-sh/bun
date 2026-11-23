@@ -1,13 +1,12 @@
 //! Sorts the macroblocks into segments by how well they take being quantized.
 
-use bun_highway::webp::{self, Block, Histograms, Macroblock};
-
 use super::border::{self, Border};
 use super::memo::Memo;
 use super::picture::Picture;
 use crate::array::At;
 use crate::error::Result;
 use crate::lossy::SEGMENTS;
+use crate::simd::{self, Block, Histograms, Macroblock};
 use crate::vec;
 
 pub(super) struct Analysis {
@@ -33,7 +32,7 @@ pub(super) fn analyze(picture: &Picture) -> Result<Analysis> {
             let &[luma, chroma] = last.get(samples, &[above, left, above_left], |it| {
                 let luma = border::luma_edges(above[0], left[0], above_left[0]);
                 let chroma = border::chroma_edges(above[1], left[1], above_left[1]);
-                *it = webp::analyze(samples, &luma, &chroma).map(susceptibility);
+                *it = simd::analyze(samples, &luma, &chroma).map(susceptibility);
             });
             let mixed = 255_u32.saturating_sub((3 * luma + chroma + 2) >> 2) as u8;
             *histogram.at_mut(mixed.into()) += 1;

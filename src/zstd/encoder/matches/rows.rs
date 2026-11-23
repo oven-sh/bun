@@ -3,8 +3,8 @@
 use core::hint::{black_box, cold_path};
 use core::ops::Range;
 
-use bun_highway::with_bmi2;
 use bun_zstd_decoder::array::At;
+use bun_zstd_decoder::calls::with_bmi2;
 
 use super::hash::Hasher;
 use super::lazy::{Finder, Longest, Match};

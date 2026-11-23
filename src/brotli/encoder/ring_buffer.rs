@@ -1,4 +1,4 @@
-use bun_highway::brotli::Place;
+use super::simd::Place;
 
 use super::matching::bytes_at;
 use crate::memory::{self, Result};

@@ -13,6 +13,7 @@
     allocator_ext,
     borrowed_buf_init,
     core_io_borrowed_buf,
+    hint_prefetch,
     stmt_expr_attributes
 )]
 

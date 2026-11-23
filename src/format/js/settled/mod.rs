@@ -35,7 +35,7 @@ pub struct Scratch {
     tree: Tree,
     parser: parser::Buffers,
     lexer: lexer::Buffers,
-    stops: bun_highway::ScannerStopsBuffer,
+    stops: bun_simd_kernels::ScannerStopsBuffer,
     holes: Vec<Hole>,
     cache: emit::Cache,
     follow: emit::Follow,

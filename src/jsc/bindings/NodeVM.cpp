@@ -164,7 +164,7 @@ JSC::JSUint8Array* createCachedDataBuffer(JSGlobalObject* globalObject, std::spa
         return nullptr;
     }
 
-    const uint64_t hash = highway_xxhash3_64(bytecode.data(), bytecode.size(), 0);
+    const uint64_t hash = bun_hash_xxhash3_64(bytecode.data(), bytecode.size(), 0);
     auto bytes = buffer->typedSpan();
     WTF::memcpySpan(bytes, WTF::asByteSpan(hash));
     WTF::memcpySpan(bytes.subspan(sizeof(hash)), bytecode);
@@ -180,7 +180,7 @@ RefPtr<JSC::CachedBytecode> unwrapCachedData(std::span<const uint8_t> cachedData
 
     memcpy(&hash, cachedData.data(), sizeof(hash));
     auto bytecode = cachedData.subspan(sizeof(hash));
-    if (hash != highway_xxhash3_64(bytecode.data(), bytecode.size(), 0)) {
+    if (hash != bun_hash_xxhash3_64(bytecode.data(), bytecode.size(), 0)) {
         return nullptr;
     }
 

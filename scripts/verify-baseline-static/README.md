@@ -6,7 +6,7 @@ Static ISA verifier for Bun baseline builds. Disassembles every instruction in
 | Target  | Baseline                           | Flags                                                                        |
 | ------- | ---------------------------------- | ---------------------------------------------------------------------------- |
 | x86-64  | Nehalem (`-march=nehalem`)         | AVX, AVX2, AVX-512, BMI1/2, FMA, AES-NI, PCLMULQDQ, ADX, SHA-NI, RDRAND, ... |
-| aarch64 | armv8-a+crc (`-march=armv8-a+crc`) | LSE atomics, SVE, DotProd, RCPC, JSCVT, RDM, non-hint PAC                    |
+| aarch64 | armv8-a+crc (`-march=armv8-a+crc`) | LSE atomics, SVE, DotProd, RCPC, JSCVT, RDM, non-hint PAC, AES, SHA          |
 
 Architecture and format (ELF/PE) are auto-detected from the binary header.
 
@@ -119,8 +119,8 @@ across CI runs, allowlist both forms.
 
 Rust v0 mangled names carry a crate-hash (`Cs[base62]_`) that changes across
 target triples and toolchain versions. The allowlist uses `<rust-hash>` as a
-placeholder; the tool canonicalizes both sides before comparing. An entry that
-ends in `<generic-args>` covers every instance of a generic function.
+placeholder; the tool canonicalizes both sides before comparing. In the names
+of Rust, a `*` stands for any text.
 
 ## Allowlist format
 

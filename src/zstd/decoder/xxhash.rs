@@ -1,4 +1,4 @@
-//! XXH64. Unlike that of `bun_highway`, it links without the C++ objects and inlines into the search for long matches.
+//! XXH64. Unlike that of `bun_hash`, it inlines into the search for long matches.
 
 const PRIME_1: u64 = 0x9E37_79B1_85EB_CA87;
 const PRIME_2: u64 = 0xC2B2_AE3D_27D4_EB4F;

@@ -1,7 +1,5 @@
 //! What was done to the pixels to make them compress better, and how it is undone.
 
-use bun_highway::webp::{undo_cross_color, undo_prediction};
-
 use super::Rgba;
 use super::bit_reader::BitReader;
 use super::pixels;
@@ -10,6 +8,7 @@ use crate::error::Result;
 use crate::lossless::{
     BLACK, MAX_PALETTE_LEN, MIN_TILE_BITS, TILE_BITS_BITS, TransformType, bundle_bits, subsampled,
 };
+use crate::simd::{undo_cross_color, undo_prediction};
 use crate::slice::{self, InBounds, known};
 use crate::vec;
 

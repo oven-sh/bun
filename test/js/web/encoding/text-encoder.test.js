@@ -646,6 +646,21 @@ describe("TextEncoder latin1 ASCII fast path boundaries", () => {
   });
 });
 
+it("encodeInto fills a short buffer with whole Latin-1 characters", () => {
+  const a = n => Buffer.alloc(n, "a");
+  for (const unit of ["é", "aé", "é" + a(6), "é" + a(30), "é" + a(90), a(300) + Buffer.alloc(800, "é")]) {
+    const text = Buffer.alloc(700, unit, "latin1").latin1Slice();
+    const all = Buffer.from(text);
+    for (let size = (all.length - 1) % 5; size < all.length + 200; size += 5) {
+      const into = Buffer.alloc(size + 64, 1);
+      const written = Math.min(size, all.length) - ((all[size] & 0xc0) === 0x80);
+      const read = all.utf8Slice(0, written).length;
+      expect(new TextEncoder().encodeInto(text, into.subarray(0, size))).toEqual({ read, written });
+      expect(into.equals(Buffer.concat([all.subarray(0, written), Buffer.alloc(size + 64 - written, 1)]))).toBe(true);
+    }
+  }
+});
+
 describe("TextEncoder rope fast path", () => {
   const encoder = new TextEncoder();
 

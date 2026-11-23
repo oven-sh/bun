@@ -1,7 +1,7 @@
 //! Level 1: one candidate for a match, written at once with the fixed codes.
 
 use bun_deflate::format::STATIC;
-use bun_highway::with_bmi2;
+use bun_simd::kernel;
 
 use super::chains::HASHED_LEN;
 use super::encoding::FIXED;
@@ -79,15 +79,19 @@ impl Deflater {
     }
 }
 
-with_bmi2! {
-    /// Or until `pending` is almost full.
-    fn compress_up_to(this: &mut Deflater, stop: u32) -> () {
-        let (mut position, end) = (this.window.position, this.window.end);
-        let max_distance = this.window.max_distance();
-        let window = this.window.scannable_below(stop);
-        let mut index = this.chains.over(window);
-        let max_len = (end - position) as usize * 9 / 8 + 1;
-        this.pending.write_some(max_len, #[inline(always)] |writer| {
+/// Stops early if `pending` is almost full.
+#[kernel(sse4 + bmi)]
+#[inline(never)]
+fn compress_up_to(this: &mut Deflater, stop: u32) {
+    let (mut position, end) = (this.window.position, this.window.end);
+    let max_distance = this.window.max_distance();
+    let window = this.window.scannable_below(stop);
+    let mut index = this.chains.over(window);
+    let max_len = (end - position) as usize * 9 / 8 + 1;
+    this.pending.write_some(
+        max_len,
+        #[inline(always)]
+        |writer| {
             while let Some::<&Scan>(scan) = chunk(window, position) {
                 let lookahead = end - position;
                 if lookahead >= HASHED_LEN {
@@ -111,7 +115,7 @@ with_bmi2! {
                     break;
                 }
             }
-        });
-        this.window.position = position;
-    }
+        },
+    );
+    this.window.position = position;
 }

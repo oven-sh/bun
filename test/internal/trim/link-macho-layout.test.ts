@@ -544,11 +544,11 @@ describeEachMachine("Mach-O $name", machine => {
         ...sources,
         "entry.c": entryCalling("early"),
         "early.c": `
-          int promoted(int) __asm__("_promoted.llvm.123");
+          int promoted(int) __asm__("__RNvCs1_1c1p.llvm.123");
           ${mixingFunction("promoted", 5)}
           int early(int x) { return promoted(x) + 1; }
         `,
-        "own-order.txt": "_retained\n_promoted.llvm.456\n_main\n",
+        "own-order.txt": "_retained\n__RNvCs2_1c1p.llvm.456\n_main\n",
       });
       const { table, addressOf, programResult, trimmedResult } = await linked(machine, String(dir), {
         objects: ["early", "feature_code", "entry", "table", "embedder", "main"],
@@ -557,7 +557,7 @@ describeEachMachine("Mach-O $name", machine => {
       const pieces = codeThatCanBeCut(table);
       expect(pieces.map(({ set }) => featureSetNames(table, set))).toEqual([[Extra]]);
       expect(Math.max(...["retained", "main"].map(addressOf))).toBeLessThan(pieces[0]!.start);
-      expect(addressOf("promoted.llvm.123")).toBeWithin(addressOf(`feature_code_${count - 1}`), pieces[0]!.end);
+      expect(addressOf("_RNvCs1_1c1p.llvm.123")).toBeWithin(addressOf(`feature_code_${count - 1}`), pieces[0]!.end);
       expectCleanRuns({ programResult, trimmedResult });
     });
 

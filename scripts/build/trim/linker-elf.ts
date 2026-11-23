@@ -19,7 +19,13 @@ import { nameSections, splitMergeableSections } from "./elf-object-editor.ts";
 import { isCode, isMovable } from "./elf-objects.ts";
 import type { SectionGraph } from "./graph.ts";
 import { namedBytesOfElf } from "./icu-data.ts";
-import { createSectionOrder, findCompiledObjects, groupOfNode, writeTableIntoSection } from "./linker-common.ts";
+import {
+  createSectionOrder,
+  findCompiledObjects,
+  groupOfNode,
+  underCurrentNames,
+  writeTableIntoSection,
+} from "./linker-common.ts";
 import type { Linker, LinkerFormat, SectionOrder } from "./linker.ts";
 import type { Partition } from "./partition.ts";
 
@@ -133,12 +139,12 @@ export function elf(linker: Linker): LinkerFormat {
       replaced: new Map(),
       without: debuggerOnlyFlags,
     }),
-    secondLinkArguments(order) {
+    secondLinkArguments(order, graph) {
       // What the command's file lists lies together: first of every group, then of no group.
       const names = order.groups.flatMap(group => group.names);
-      const listed = new Set(commandOrder.split("\n"));
+      const listed = new Set(underCurrentNames(commandOrder, graph));
       const isListed = (name: string) => listed.has(name);
-      const lines = [...names.filter(isListed), commandOrder, ...names.filter(name => !isListed(name))];
+      const lines = [...names.filter(isListed), ...listed, ...names.filter(name => !isListed(name))];
       writeFileSync(orderFile, lines.join("\n") + "\n", "latin1");
       if (orderAt >= 0) return { last: [...commonFlags], replaced: new Map([[orderAt, orderFlag + orderFile]]) };
       return { last: [...commonFlags, orderFlag + orderFile, "-Wl,--no-warn-symbol-ordering"], replaced: new Map() };

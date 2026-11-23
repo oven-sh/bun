@@ -1,13 +1,12 @@
 //! How coarsely the macroblocks of each segment are quantized, and how much they are filtered afterwards.
 
-use bun_highway::webp::Quantizer;
-
 use super::analysis::Analysis;
 use super::cost::bit_cost;
 use crate::array::At;
 use crate::error::Result;
 use crate::lossy::SEGMENTS;
 use crate::lossy::tables::{AC_QUANTIZERS, DC_QUANTIZERS};
+use crate::simd::Quantizer;
 use crate::vec;
 
 const MAX_FILTER_LEVEL: i32 = 63;

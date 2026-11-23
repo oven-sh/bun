@@ -275,5 +275,6 @@ mod tests {
             assert_eq!(window.record(&[7; 2000], MAX_DISTANCE), Ok(()));
         }
         assert_eq!(window.end, 17 * 2000 - LAP);
+        assert_eq!(window.limit(), LAP_END);
     }
 }

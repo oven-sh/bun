@@ -15,7 +15,6 @@ use crate::{MAX_PATH_BYTES, NameTooLong, PATH_MAX_WIDE, Path, StackPath, portabl
 
 /// Stand in for the C++ functions, which are not linked into this test binary.
 mod ffi_stubs {
-    use bun_core::strings;
     use bun_simdutf_sys::simdutf::{SIMDUTFResult, Status};
 
     const SURROGATE: Status = Status(6);
@@ -23,60 +22,6 @@ mod ffi_stubs {
     unsafe fn slice_from_raw<'a, T>(units: *const T, len: usize) -> &'a [T] {
         // SAFETY: the callers of the stubs pass a slice as a pointer and a length.
         unsafe { core::slice::from_raw_parts(units, len) }
-    }
-
-    #[unsafe(no_mangle)]
-    unsafe extern "C" fn highway_index_of_untidy_slash(path: *const u8, len: usize) -> usize {
-        // SAFETY: see `slice_from_raw`.
-        let path = unsafe { slice_from_raw(path, len) };
-        let is_untidy = |at: &usize| {
-            matches!(
-                path[*at..],
-                [b'/', b'/', ..]
-                    | [b'/', b'.']
-                    | [b'/', b'.', b'/', ..]
-                    | [b'/', b'.', b'.']
-                    | [b'/', b'.', b'.', b'/', ..]
-            )
-        };
-        (0..len).find(is_untidy).unwrap_or(len)
-    }
-
-    #[unsafe(no_mangle)]
-    unsafe extern "C" fn highway_last_index_of_slash(path: *const u8, len: usize) -> usize {
-        // SAFETY: see `slice_from_raw`.
-        strings::last_index_of_char(unsafe { slice_from_raw(path, len) }, b'/').unwrap_or(len)
-    }
-
-    #[unsafe(no_mangle)]
-    unsafe extern "C" fn highway_count_slashes(path: *const u8, len: usize) -> usize {
-        // SAFETY: see `slice_from_raw`.
-        strings::count_char(unsafe { slice_from_raw(path, len) }, b'/')
-    }
-
-    #[unsafe(no_mangle)]
-    unsafe extern "C" fn highway_common_prefix_length(
-        a: *const u8,
-        b: *const u8,
-        len: usize,
-    ) -> usize {
-        // SAFETY: see `slice_from_raw`.
-        let (a, b) = unsafe { (slice_from_raw(a, len), slice_from_raw(b, len)) };
-        (0..len).find(|&at| a[at] != b[at]).unwrap_or(len)
-    }
-
-    #[unsafe(no_mangle)]
-    unsafe extern "C" fn highway_memmem16(
-        h: *const u16,
-        n: usize,
-        nd: *const u16,
-        k: usize,
-    ) -> usize {
-        // SAFETY: see `slice_from_raw`.
-        let (h, nd) = unsafe { (slice_from_raw(h, n), slice_from_raw(nd, k)) };
-        (0..n)
-            .find(|&at| h[at..].starts_with(nd))
-            .unwrap_or(usize::MAX)
     }
 
     #[unsafe(no_mangle)]
@@ -115,68 +60,6 @@ mod ffi_stubs {
             status: Status::SUCCESS,
             count,
         }
-    }
-
-    #[unsafe(no_mangle)]
-    unsafe extern "C" fn highway_index_of_char(
-        haystack: *const u8,
-        haystack_len: usize,
-        needle: u8,
-    ) -> usize {
-        // SAFETY: see `slice_from_raw`.
-        let haystack = unsafe { slice_from_raw(haystack, haystack_len) };
-        haystack
-            .iter()
-            .position(|&b| b == needle)
-            .unwrap_or(haystack_len)
-    }
-
-    #[unsafe(no_mangle)]
-    unsafe extern "C" fn highway_index_of_any_char(
-        text: *const u8,
-        text_len: usize,
-        chars: *const u8,
-        chars_len: usize,
-    ) -> usize {
-        // SAFETY: see `slice_from_raw`.
-        let (text, chars) = unsafe {
-            (
-                slice_from_raw(text, text_len),
-                slice_from_raw(chars, chars_len),
-            )
-        };
-        text.iter()
-            .position(|b| chars.contains(b))
-            .unwrap_or(text_len)
-    }
-
-    #[unsafe(no_mangle)]
-    unsafe extern "C" fn highway_last_index_of_char(h: *const u8, n: usize, c: u8) -> usize {
-        // SAFETY: see `slice_from_raw`.
-        let h = unsafe { slice_from_raw(h, n) };
-        h.iter().rposition(|&b| b == c).unwrap_or(n)
-    }
-
-    #[unsafe(no_mangle)]
-    unsafe extern "C" fn highway_count_char(h: *const u8, n: usize, c: u8) -> usize {
-        // SAFETY: see `slice_from_raw`.
-        let h = unsafe { slice_from_raw(h, n) };
-        h.iter().filter(|&&b| b == c).count()
-    }
-
-    #[unsafe(no_mangle)]
-    unsafe extern "C" fn highway_memrmem16(
-        h: *const u16,
-        n: usize,
-        nd: *const u16,
-        k: usize,
-    ) -> usize {
-        // SAFETY: see `slice_from_raw`.
-        let (h, nd) = unsafe { (slice_from_raw(h, n), slice_from_raw(nd, k)) };
-        let last = n
-            .checked_sub(k)
-            .and_then(|end| (0..=end).rev().find(|&i| h[i..i + k] == *nd));
-        last.unwrap_or(usize::MAX)
     }
 
     #[unsafe(no_mangle)]

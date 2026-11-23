@@ -24,6 +24,7 @@ import {
   type Layout,
   type LinkSession,
 } from "../../../scripts/build/trim/link.ts";
+import { underCurrentNames } from "../../../scripts/build/trim/linker-common.ts";
 import { machO } from "../../../scripts/build/trim/linker-macho.ts";
 import type { LinkerFormat, LinkName, LinkRequest } from "../../../scripts/build/trim/linker.ts";
 import type { RemovableRange } from "../../../scripts/build/trim/ranges.ts";
@@ -729,4 +730,17 @@ describe("layOut", () => {
       ]);
     });
   });
+});
+
+test("finds the names of an order file from another build", () => {
+  const names = [
+    ["a.llvm.2"],
+    ["a.llvm.5", "b", "b.llvm.3"],
+    ["_RINvCs12_1c1fNtB2_1TECs4_1d"],
+    ["_RNvCs12_1c1g", "eCs1_"],
+  ];
+  const aliases = new Map<number, [string, string][]>([[0, [["object", "f.llvm.4"]]]]);
+  const file = "# x\r\n_RINvCs345_1c1fNtB13_1TECs67_1d.llvm.8\nb\na.llvm.1\na\n\ngone\neCs2_\nf\n__RNvCs5_1h";
+  const found = underCurrentNames(file, { names, section: ["__RNvCs6_1h"], aliases });
+  expect(found).toEqual(["# x", names[2][0], "b", "a.llvm.2", "a.llvm.5", "gone", "eCs2_", "f.llvm.4", "__RNvCs6_1h"]);
 });

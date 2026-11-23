@@ -2,7 +2,6 @@
 name = "bun_parsers"
 version.workspace = true
 edition.workspace = true
-build = "build.rs"
 
 [lib]
 path = "lib.rs"
@@ -17,13 +16,14 @@ bstr.workspace = true
 bun_alloc.workspace = true
 bun_core.workspace = true
 bun_collections.workspace = true
-bun_highway.workspace = true
+bun_simd_kernels.workspace = true
 bun_ptr.workspace = true
 bun_ast.workspace = true
 bun_wyhash.workspace = true
 bun_simdutf_sys.workspace = true
 
 [dev-dependencies]
+bun_sema_standalone = { path = "../sema/standalone" }
 criterion = "0.5"
 quick-xml = "0.38"
 roxmltree = "0.20"

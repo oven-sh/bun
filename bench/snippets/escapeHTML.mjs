@@ -3,7 +3,7 @@
 // Run the same file with each binary to compare:
 //   bun-1.3.14  (Zig)   vs
 //   main        (Rust)  vs
-//   this branch (C++ + Highway SIMD)
+//   this branch (C++ + SIMD)
 //
 //   path/to/bun run bench/snippets/escapeHTML.mjs
 //

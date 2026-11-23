@@ -1,12 +1,11 @@
 //! Access to what the kernels make of a block with each prediction mode.
 
-use bun_highway::webp::Candidates;
-
 use super::border::{Border, joined};
 use super::cost::LevelCosts;
 use super::tokens::Residual;
 use crate::array::At;
 use crate::lossy::MacroblockMode;
+use crate::simd::Candidates;
 
 pub(super) const MACROBLOCK_MODES: [MacroblockMode; 4] = {
     use MacroblockMode::*;

@@ -1,13 +1,12 @@
 //! The frame header, RFC 6386 sections 9 and 19.2.
 
-use bun_highway::webp::FilterStrength;
-
 use super::bool_reader::BoolReader;
 use super::residuals::{Probabilities, Quantizers};
 use crate::array::At;
 use crate::error::{Error, Result};
 use crate::lossy::tables::{AC_QUANTIZERS, DC_QUANTIZERS};
 use crate::lossy::{FRAME_HEADER_LEN, SEGMENTS, SIGNATURE};
+use crate::simd::FilterStrength;
 
 const MAX_PARTITIONS: usize = 8;
 

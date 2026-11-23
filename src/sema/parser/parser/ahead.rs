@@ -8,8 +8,8 @@
 use super::*;
 use crate::summarize::with_scratch;
 use bun_core::strings;
-use bun_highway::ScannerStops;
 use bun_sema::util::{has_helpers, with_helpers};
+use bun_simd_kernels::ScannerStops;
 use bun_threading::Guarded;
 use std::collections::VecDeque;
 

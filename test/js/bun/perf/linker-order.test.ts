@@ -34,6 +34,7 @@ import {
   runCommandAsync,
   runGroup,
   sameCode,
+  withKernelsForAllCpus,
   writeStarts as writeStartsFile,
   type GroupPolicy,
 } from "../../../../scripts/orderfile/generate.ts";
@@ -430,6 +431,25 @@ describe("order file generator", () => {
     // The tracers are x86-64 INT3 / arm64 BRK on linux and windows, arm64 BRK on macOS.
     await expect(generateOrderFile({ buildDir: "/tmp/build" })).rejects.toThrow(/linux|macOS|Windows/);
   });
+});
+
+it("puts the copies of a SIMD kernel for all CPUs in its place", () => {
+  const gate = "Cs1a_8bun_simd4gate";
+  const entry = (target: string, kernel: string, back: string) =>
+    `_RINvXNtNtNt${gate}7entries${target}NtB7_5Enter6apart1INtB7_7NativesINtCs2b_1a${kernel}ERSh${back}E${back}`;
+  const plain = (which: string) =>
+    `_RINvNt${gate}6plain1INtB2_${which}INtB2_7NativesINtCs2b_1a14___KernelOfFindKb0_EERShB2_EB17_`;
+  const find = [
+    plain("4Last"),
+    entry("7icelake", "3mod14___KernelOfFindKb0_", "B21_"),
+    entry("8avx2_aes", "14___KernelOfFindKb0_", "BV_") + ".llvm.2",
+  ];
+  const rest = [entry("7icelake", "4Rest3B64", "B21_"), entry("8avx2_aes", "4Rest3B32", "B28_")];
+  const others = ["_RNv3map7entries4next", plain("5First"), entry("4sse4", "14___KernelOfFindKb1_", "B1V_")];
+  const current = [...others, ...rest, ...find, "a", "b"].reverse();
+  for (const cpu of [0, 1]) {
+    expect(withKernelsForAllCpus(["b", rest[cpu], "a", find[cpu + 1]], current)).toEqual(["b", ...rest, "a", ...find]);
+  }
 });
 
 /**

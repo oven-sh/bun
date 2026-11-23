@@ -2,7 +2,7 @@
 
 use core::array::from_fn;
 
-use bun_highway::brotli::find_switches;
+use super::simd::find_switches;
 
 use super::cluster::{BATCH, Clusters, Combiner, max_at_once, renumber};
 use super::histogram::{DISTANCE_SYMBOLS, Indexed, count_symbols};

@@ -106,9 +106,8 @@ pub struct ParseFail {
 /// The sourcemap spec says line and column offsets are zero-based.
 ///
 /// `repr(C)` pins the field order to `[lines, columns]` so the SIMD mappings
-/// decoder (highway_sourcemap.cpp) can write `[i32; 2]` pairs that are
-/// byte-compatible with this struct and bulk-copy them into the
-/// `MultiArrayList` column.
+/// decoder (`bun_simd_kernels::sourcemap`) can write `[i32; 2]` pairs straight into
+/// the `MultiArrayList` column.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct LineColumnOffset {
@@ -1122,4 +1121,23 @@ fn find_source_mapping_url_u16(source: &[u16]) -> Option<bun_core::Utf8Bytes<'st
     Some(bun_core::Utf8Bytes::Owned(
         bun_core::strings::to_utf8_alloc(url),
     ))
+}
+
+#[cfg(all(test, not(miri)))]
+mod tests {
+    use super::*;
+    use bun_sema_standalone as _;
+
+    #[test]
+    fn the_last_url_counts() {
+        for end in ["", " \r\n;"] {
+            let source = format!("\n//# sourceMappingURL=a\n//# sourceMappingURL=世{end}");
+            let wide: Vec<u16> = source.encode_utf16().collect();
+            let found = find_source_mapping_url_u16(&wide).unwrap();
+            assert_eq!(found.slice(), "世".as_bytes());
+            let found = find_source_mapping_url_u8(source.as_bytes()).unwrap();
+            assert_eq!(found.slice(), "世".as_bytes());
+            assert!(find_source_mapping_url_u16(&wide[24..]).is_none());
+        }
+    }
 }

@@ -15,7 +15,7 @@ const_format.workspace = true
 bun_alloc.workspace = true
 bun_core.workspace = true
 bun_errno.workspace = true
-bun_highway.workspace = true
+bun_simd_kernels.workspace = true
 
 [dev-dependencies]
 # Nominal `SIMDUTFResult`/`Status` for the test-only simdutf stubs in

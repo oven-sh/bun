@@ -82,7 +82,7 @@ impl Neighbors {
                 for (left, row) in left[1..].iter_mut().zip(&*y) {
                     *left = row[15];
                 }
-                bun_highway::webp::reconstruct_subblocks(
+                crate::simd::reconstruct_subblocks(
                     &above.y,
                     &[a, b, c, d],
                     &left,

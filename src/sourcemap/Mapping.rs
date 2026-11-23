@@ -1,5 +1,6 @@
 use bun_collections::VecExt;
 use core::mem::size_of;
+use core::slice::from_raw_parts_mut;
 
 use bun_ast::Loc;
 use bun_collections::MultiArrayList;
@@ -7,6 +8,7 @@ use bun_core::{self, Utf8Bytes};
 use bun_core::{declare_scope, scoped_log};
 use bun_paths::portable::from_portable_rooted;
 use bun_semver::String as SemverString;
+use bun_simd_kernels::sourcemap as simd;
 
 use crate::vlq::decode as decode_vlq;
 use crate::{LineColumnOffset, Ordinal, ParseFail, ParseResult, ParsedSourceMap};
@@ -103,6 +105,36 @@ impl ListValue {
     fn ensure_total_capacity(&mut self, count: usize) -> Result<(), bun_alloc::AllocError> {
         both_lists!(self, |list| list.ensure_total_capacity(count))
     }
+
+    /// Empties the list and lends the whole capacity of each column.
+    fn clear_columns(&mut self) -> simd::Columns<'_> {
+        const _: () = assert!(size_of::<LineColumnOffset>() == size_of::<[i32; 2]>());
+        const _: () = assert!(align_of::<LineColumnOffset>() == align_of::<[i32; 2]>());
+
+        let name = match self {
+            ListValue::WithoutNames(_) => None,
+            ListValue::WithNames(list) => Some(list.items_raw::<"name_index", i32>()),
+        };
+        let (generated, original, source, rows) = both_lists!(self, |list| {
+            list.clear_retaining_capacity();
+            (
+                list.items_raw::<"generated", LineColumnOffset>(),
+                list.items_raw::<"original", LineColumnOffset>(),
+                list.items_raw::<"source_index", i32>(),
+                list.capacity(),
+            )
+        });
+        // SAFETY: the columns are disjoint, aligned and have `rows` slots each, which `&mut self`
+        // lends exclusively. `LineColumnOffset` is `repr(C)` over two `repr(transparent)` `i32`s.
+        unsafe {
+            simd::Columns {
+                generated: from_raw_parts_mut(generated.cast(), rows),
+                original: from_raw_parts_mut(original.cast(), rows),
+                source: from_raw_parts_mut(source.cast(), rows),
+                name: name.map(|name| from_raw_parts_mut(name.cast(), rows)),
+            }
+        }
+    }
 }
 
 #[derive(Default)]
@@ -197,10 +229,6 @@ impl List {
             }
         }
         Ok(())
-    }
-
-    pub(crate) fn len(&self) -> usize {
-        both_lists!(&self.r#impl, |list| list.len())
     }
 
     pub fn find(&self, line: Ordinal, column: Ordinal) -> Option<Mapping> {
@@ -393,9 +421,7 @@ const HALF_USIZE: usize = size_of::<usize>() / 2;
 const SEMICOLON_RUN: [u8; HALF_USIZE] = [b';'; HALF_USIZE];
 
 /// Below this input size the scalar loop is used unconditionally; above it,
-/// the Highway kernel classifies whole blocks and the scalar loop only
-/// handles the tail / anomalies. One block is 16–64 bytes depending on the
-/// runtime-dispatched ISA; 128 bytes guarantees at least two full blocks.
+/// the scalar loop only handles the last segment and anomalies.
 const SIMD_THRESHOLD: usize = 128;
 
 pub fn parse(
@@ -436,35 +462,29 @@ pub fn parse(
         && !bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_SIMD_SOURCEMAP::get()
             .unwrap_or(false)
     {
-        match parse_simd(bytes, &mut mapping, sources_count, options) {
-            SimdResult::Done {
-                resume_at,
-                state,
-                has_names: simd_has_names,
-            } => {
-                generated.lines = Ordinal::from_zero_based(state.gen_line);
-                generated.columns = Ordinal::from_zero_based(state.gen_col);
-                original.lines = Ordinal::from_zero_based(state.orig_line);
-                original.columns = Ordinal::from_zero_based(state.orig_col);
-                source_index = state.src_idx;
-                name_index = state.name_idx;
-                needs_sort = state.needs_sort != 0;
-                has_names = simd_has_names;
-                remain = &bytes[resume_at..];
-                scoped_log!(
-                    SourceMap,
-                    "simd consumed {}/{} bytes",
-                    resume_at,
-                    bytes.len()
-                );
-            }
-            SimdResult::OutOfMemory => {
-                return Err(ParseFail {
-                    err: crate::Error::Alloc(bun_alloc::AllocError),
-                    loc: Loc::default(),
-                });
-            }
+        let Ok(parsed) = parse_simd(bytes, &mut mapping, sources_count, options) else {
+            return Err(ParseFail {
+                err: crate::Error::Alloc(bun_alloc::AllocError),
+                loc: Loc::default(),
+            });
+        };
+        generated.lines = Ordinal::from_zero_based(parsed.generated_line);
+        generated.columns = Ordinal::from_zero_based(parsed.generated_column);
+        original.lines = Ordinal::from_zero_based(parsed.original_line);
+        original.columns = Ordinal::from_zero_based(parsed.original_column);
+        source_index = parsed.source;
+        needs_sort = parsed.needs_sort;
+        if options.allow_names {
+            name_index = parsed.name;
+            has_names = parsed.has_names;
         }
+        remain = &bytes[parsed.resume_at..];
+        scoped_log!(
+            SourceMap,
+            "simd consumed {}/{} bytes",
+            parsed.resume_at,
+            bytes.len()
+        );
     }
 
     while remain.len() > 0 {
@@ -690,37 +710,18 @@ pub fn parse(
     Ok(psm)
 }
 
-enum SimdResult {
-    Done {
-        resume_at: usize,
-        state: bun_highway::ParseMappingsState,
-        has_names: bool,
-    },
-    OutOfMemory,
-}
-
 /// SIMD fast path for `parse`: count delimiters to bound the row count,
 /// reserve the `MultiArrayList` once, then decode the whole input in one
-/// `bun_highway::parse_mappings` call that writes directly into the
-/// column arrays (no intermediate buffer, no chunking, no
-/// geometric-growth reallocs). Returns the byte offset and accumulator
-/// state at which the scalar loop should take over (the tail, or the
-/// first anomaly).
+/// call that writes directly into the column arrays (no intermediate buffer,
+/// no chunking, no geometric-growth reallocs). Returns the byte offset and
+/// accumulator state at which the scalar loop should take over (the last
+/// segment, or the first anomaly).
 fn parse_simd(
     bytes: &[u8],
     mapping: &mut List,
     sources_count: i32,
     options: ParseOptions,
-) -> SimdResult {
-    use bun_highway::{ParseMappingsOut, ParseMappingsState};
-
-    // `LineColumnOffset` is `#[repr(C)]` over two `#[repr(transparent)]`
-    // i32s, so its column storage is byte-identical to `[[i32; 2]]`. That
-    // lets the kernel write `{line, col}` pairs straight into the SoA
-    // column with no per-row Rust copy.
-    const _: () = assert!(size_of::<LineColumnOffset>() == size_of::<[i32; 2]>());
-    const _: () = assert!(align_of::<LineColumnOffset>() == align_of::<[i32; 2]>());
-
+) -> Result<simd::Parsed, bun_alloc::AllocError> {
     // Segments on a line are comma-separated and lines are semicolon-
     // separated, so `delims + 1` upper-bounds the segment count (and
     // therefore the row count). This is within a few percent of the
@@ -728,7 +729,7 @@ fn parse_simd(
     // of paying ~log1.5(N) geometric-growth memcpys (the dominant cost of
     // the scalar path on large inputs). The final list is the same size
     // the scalar path ends up at; we just skip the intermediate copies.
-    let seg_bound = bun_highway::count_mapping_delims(bytes).saturating_add(1);
+    let seg_bound = simd::count_delimiters(bytes) + 1;
 
     // When the caller wants names, switch to the with-names variant
     // before reserving so the reserve lands on the right list. This uses
@@ -738,109 +739,73 @@ fn parse_simd(
     // 5-field segment still get name_index == -1 (the kernel writes -1
     // until has_names flips), matching scalar's `to_named()` behaviour.
     if options.allow_names {
-        if mapping.ensure_with_names().is_err() {
-            return SimdResult::OutOfMemory;
-        }
+        mapping.ensure_with_names()?;
     }
+    mapping.ensure_total_capacity(seg_bound)?;
 
-    let mut state = ParseMappingsState::default();
-    let mut err_at: usize = 0;
-
-    let base = mapping.len();
-    let rows = match &mut mapping.r#impl {
-        ListValue::WithoutNames(list) => {
-            if list
-                .ensure_total_capacity(base.saturating_add(seg_bound))
-                .is_err()
-            {
-                return SimdResult::OutOfMemory;
-            }
-            // SAFETY: `ensure_total_capacity(base + seg_bound)` guarantees
-            // every column has at least that many slots. `items_raw`
-            // returns the column base; the kernel writes only indices
-            // [base, base + cap). `LineColumnOffset` is repr(C) over two
-            // i32s so reinterpreting as `*mut [i32; 2]` is sound. The
-            // three column ranges are disjoint (separate SoA columns).
-            let r = unsafe {
-                bun_highway::parse_mappings(
-                    bytes,
-                    &ParseMappingsOut {
-                        generated: list
-                            .items_raw::<"generated", LineColumnOffset>()
-                            .add(base)
-                            .cast::<[i32; 2]>(),
-                        original: list
-                            .items_raw::<"original", LineColumnOffset>()
-                            .add(base)
-                            .cast::<[i32; 2]>(),
-                        src_idx: list.items_raw::<"source_index", i32>().add(base),
-                        name_idx: core::ptr::null_mut(),
-                        cap: seg_bound,
-                    },
-                    sources_count,
-                    &mut state,
-                    &mut err_at,
-                )
-            };
-            // SAFETY: capacity reserved above; every slot in
-            // `base..base+r` was just initialized by the kernel.
-            unsafe { list.set_len(base + r) };
-            r
-        }
-        ListValue::WithNames(list) => {
-            if list
-                .ensure_total_capacity(base.saturating_add(seg_bound))
-                .is_err()
-            {
-                return SimdResult::OutOfMemory;
-            }
-            // SAFETY: as above, plus the name_index column.
-            let r = unsafe {
-                bun_highway::parse_mappings(
-                    bytes,
-                    &ParseMappingsOut {
-                        generated: list
-                            .items_raw::<"generated", LineColumnOffset>()
-                            .add(base)
-                            .cast::<[i32; 2]>(),
-                        original: list
-                            .items_raw::<"original", LineColumnOffset>()
-                            .add(base)
-                            .cast::<[i32; 2]>(),
-                        src_idx: list.items_raw::<"source_index", i32>().add(base),
-                        name_idx: list.items_raw::<"name_index", i32>().add(base),
-                        cap: seg_bound,
-                    },
-                    sources_count,
-                    &mut state,
-                    &mut err_at,
-                )
-            };
-            // SAFETY: capacity reserved above; every slot in
-            // `base..base+r` was just initialized by the kernel.
-            unsafe { list.set_len(base + r) };
-            r
-        }
-    };
+    let parsed = simd::parse_mappings(bytes, mapping.r#impl.clear_columns(), sources_count);
+    // SAFETY: the kernel initialized this many rows of every column.
+    both_lists!(&mut mapping.r#impl, |list| unsafe {
+        list.set_len(parsed.rows)
+    });
 
     scoped_log!(
         SourceMap,
-        "simd rows={} seg_bound={} fast={} slow={} blocks",
-        rows,
-        seg_bound,
-        state.fast_blocks,
-        state.slow_blocks
+        "simd rows={} seg_bound={}",
+        parsed.rows,
+        seg_bound
     );
+    Ok(parsed)
+}
 
-    // When !allow_names, the scalar path never accumulates name_index (it
-    // decodes the 5th field but discards it), so it stays 0.
-    if !options.allow_names {
-        state.name_idx = 0;
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn long_mappings_fill_the_columns() {
+        for allow_names in [false, true] {
+            let bytes = [&b"CAAC,".repeat(40)[..], b"CACAE;;AAAC,AAAC"].concat();
+            let options = ParseOptions {
+                allow_names,
+                sort: true,
+            };
+            let Ok(parsed) = parse(&bytes, None, 1, options) else {
+                panic!("does not parse");
+            };
+            let list = &parsed.mappings;
+            assert_eq!(list.source_index(), [0; 43]);
+            let name_at = |line, column| {
+                let found = list.find(Ordinal(line), Ordinal(column)).unwrap();
+                (
+                    found.original_line(),
+                    found.original_column(),
+                    found.name_index,
+                )
+            };
+            let name = if allow_names { 2 } else { -1 };
+            assert_eq!(name_at(0, 40), (0, 40, -1));
+            assert_eq!(name_at(0, 41), (1, 40, name));
+            assert_eq!(name_at(2, 0), (1, 42, name));
+        }
     }
 
-    SimdResult::Done {
-        resume_at: err_at,
-        state,
-        has_names: options.allow_names && state.has_names != 0,
+    #[test]
+    #[cfg_attr(miri, ignore = "takes too long")]
+    fn the_last_segment_goes_on_from_the_one_before() {
+        let bytes = [b"ECAA,DAAA,", &b"EAAA,".repeat(30)[..], b"CAAA"].concat();
+        let options = ParseOptions {
+            allow_names: false,
+            sort: true,
+        };
+        let Ok(parsed) = parse(&bytes, None, 2, options) else {
+            panic!("does not parse");
+        };
+        let columns = parsed.mappings.generated().iter().map(|it| it.columns.0);
+        assert!(columns.eq((1..3).chain((3..62).step_by(2)).chain([62])));
+        assert_eq!(parsed.mappings.source_index(), [1; 33]);
+        let quick = parse_simd(&bytes, &mut List::default(), 2, options);
+        assert!(quick.is_ok_and(|it| it.rows == 32));
+        assert!(parse(&[b'A'; 130], None, 1, options).is_ok());
     }
 }

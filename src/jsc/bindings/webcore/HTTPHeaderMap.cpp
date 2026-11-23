@@ -34,13 +34,9 @@
 
 #include "StringSizeLimit.h"
 #include "VectorSizeLimit.h"
+#include "bun_simd.h"
 #include <utility>
 #include <wtf/text/StringView.h>
-
-extern "C" size_t highway_index_of_first_ascii_upper(const uint8_t* input, size_t len);
-extern "C" void highway_lower_ascii(const uint8_t* src, size_t len, uint8_t* dst);
-extern "C" size_t highway_index_of_first_ascii_upper16(const uint16_t* input, size_t len);
-extern "C" void highway_lower_ascii16(const uint16_t* src, size_t len, uint16_t* dst);
 
 namespace WebCore {
 
@@ -57,23 +53,23 @@ String lowercaseHeaderName(const String& name)
     if (name.is8Bit()) {
         auto span = name.span8();
         size_t length = span.size();
-        if (highway_index_of_first_ascii_upper(byteCast<uint8_t>(span.data()), length) == length)
+        if (bun_simd_index_of_first_ascii_upper8(byteCast<uint8_t>(span.data()), length) == length)
             return name;
 
         std::span<Latin1Character> data;
         String result = String::createUninitialized(static_cast<unsigned>(length), data);
-        highway_lower_ascii(byteCast<uint8_t>(span.data()), length, byteCast<uint8_t>(data.data()));
+        bun_simd_lower_ascii8(byteCast<uint8_t>(span.data()), length, byteCast<uint8_t>(data.data()));
         return result;
     }
 
     auto span = name.span16();
     size_t length = span.size();
-    if (highway_index_of_first_ascii_upper16(reinterpret_cast<const uint16_t*>(span.data()), length) == length)
+    if (bun_simd_index_of_first_ascii_upper16(reinterpret_cast<const uint16_t*>(span.data()), length) == length)
         return name;
 
     std::span<char16_t> data;
     String result = String::createUninitialized(static_cast<unsigned>(length), data);
-    highway_lower_ascii16(reinterpret_cast<const uint16_t*>(span.data()), length, reinterpret_cast<uint16_t*>(data.data()));
+    bun_simd_lower_ascii16(reinterpret_cast<const uint16_t*>(span.data()), length, reinterpret_cast<uint16_t*>(data.data()));
     return result;
 }
 

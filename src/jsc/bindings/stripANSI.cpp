@@ -30,6 +30,7 @@ static std::optional<WTF::String> stripANSI(const std::span<const Char> input)
     std::span<Char> output;
     Char* cursor = nullptr;
     bool foundANSI = false;
+    int nearby = 0;
 
     while (start != end) {
         const auto* escPos = ANSI::findEscapeCharacter(start, end);
@@ -54,6 +55,22 @@ static std::optional<WTF::String> stripANSI(const std::span<const Char> input)
             if (buffer.isNull()) [[unlikely]]
                 return WTF::String();
             cursor = output.data();
+        }
+
+        // After some ESC [ sequences that are close come more: these, and the text between them, in one pass.
+        if (end - escPos < 96 || escPos - start >= 48 || escPos[0] != 0x1b || escPos[1] != '[')
+            nearby = std::min(nearby, 0);
+        else if (++nearby == 3) {
+            const auto remaining = static_cast<size_t>(end - start);
+            size_t written = 0;
+            if constexpr (sizeof(Char) == 1)
+                start += bun_simd_strip_csi8(reinterpret_cast<const uint8_t*>(start), remaining, reinterpret_cast<uint8_t*>(cursor), &written);
+            else
+                start += bun_simd_strip_csi16(reinterpret_cast<const uint16_t*>(start), remaining, reinterpret_cast<uint16_t*>(cursor), &written);
+            cursor += written;
+            // Other kinds of sequences are near, at which it would stop again.
+            nearby = start - escPos < 64 ? -16 : 0;
+            continue;
         }
 
         // Copy everything before the escape sequence.

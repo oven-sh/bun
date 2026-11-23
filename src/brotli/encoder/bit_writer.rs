@@ -133,7 +133,7 @@ impl BitWriter {
     pub(super) fn write_codes<const N: usize, T: Copy>(
         &mut self,
         items: &[T],
-        code_of: impl Fn(T) -> Code,
+        code_of: impl Fn(T) -> Code + Copy,
     ) {
         let (groups, rest) = items.as_chunks::<N>();
         let mut groups = groups.iter();
@@ -147,15 +147,15 @@ impl BitWriter {
             });
             self.position = end;
             let Some(group) = misfit else {
-                return self.write_each(rest, &code_of);
+                return self.write_each(rest, code_of);
             };
-            self.write_each(group, &code_of);
+            self.write_each(group, code_of);
         }
     }
 
     #[cold]
     #[inline(never)]
-    fn write_each<T: Copy>(&mut self, items: &[T], code_of: &impl Fn(T) -> Code) {
+    fn write_each<T: Copy>(&mut self, items: &[T], code_of: impl Fn(T) -> Code) {
         for &item in items {
             self.write_bits(code_of(item).bits());
         }

@@ -24,7 +24,13 @@ import {
 import { nameSections } from "./coff-object-editor.ts";
 import { builtinModulesSection, CoffObject, IMAGE_SYM_CLASS_EXTERNAL } from "./coff-objects.ts";
 import type { SectionGraph } from "./graph.ts";
-import { createSectionOrder, findCompiledObjects, groupOfNode, writeTableIntoSection } from "./linker-common.ts";
+import {
+  createSectionOrder,
+  findCompiledObjects,
+  groupOfNode,
+  underCurrentNames,
+  writeTableIntoSection,
+} from "./linker-common.ts";
 import type { Link, Linker, LinkerFormat, SectionOrder } from "./linker.ts";
 import type { Partition } from "./partition.ts";
 
@@ -261,12 +267,12 @@ export function coff(linker: Linker): LinkerFormat {
       replaced: new Map([[symbolMapAt, symbolMapFlag + firstSymbolMap]]),
       without: /^\/(debug|pdb)(:|$)/i,
     }),
-    secondLinkArguments(order) {
+    secondLinkArguments(order, graph) {
       // What the command's file lists stays where it lay, behind the features. Of that, what belongs to a feature comes first, so
       // it can be cut with the rest of the features. lld-link places a name by the last line that has it: each name gets one line.
       const names = order.groups.flatMap(group => group.names);
       const grouped = new Set(names);
-      const commandNames = commandOrder.split(/\r?\n/).filter(name => name !== "");
+      const commandNames = underCurrentNames(commandOrder, graph);
       const listed = new Set(commandNames);
       const lines = [
         ...names.filter(name => !listed.has(name)),

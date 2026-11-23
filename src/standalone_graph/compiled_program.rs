@@ -845,7 +845,8 @@ fn is_normalized_posix_path(name: &[u8]) -> bool {
         return false;
     }
     let name = name.strip_suffix(b"/").unwrap_or(name);
-    name.is_empty() || (!name.ends_with(b"/") && bun_highway::index_of_untidy_slash(name).is_none())
+    name.is_empty()
+        || (!name.ends_with(b"/") && bun_simd_kernels::index_of_untidy_slash(name).is_none())
 }
 
 /// The keys of what the program has removed from the disk or renamed there.

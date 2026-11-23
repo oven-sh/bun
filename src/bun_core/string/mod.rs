@@ -24,7 +24,7 @@ pub mod wtf;
 pub mod write;
 pub use write::Write;
 
-// SIMD-backed scanners over highway/simdutf FFI. Public as
+// SIMD-backed scanners over bun_simd_kernels and simdutf FFI. Public as
 // `bun_core::strings` (the alias in lib.rs); `immutable` is the module name.
 #[path = "immutable.rs"]
 pub mod immutable;
@@ -1405,6 +1405,7 @@ impl<'a> EncodedSlice<'a> {
 
     /// First index whose code unit matches any byte in `chars`. The 16-bit
     /// branch narrows each unit to the Latin-1 range before comparing.
+    #[inline(always)]
     pub fn index_of_any(self, chars: &[u8]) -> Option<usize> {
         if self.is_16bit() {
             self.utf16_slice()

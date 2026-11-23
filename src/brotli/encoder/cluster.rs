@@ -2,7 +2,7 @@
 
 use core::ops::RangeInclusive;
 
-use bun_highway::brotli::{PAIR_GROUP, remove_pairs};
+use super::simd::{PAIR_GROUP, remove_pairs};
 
 use super::histogram::{Estimator, Histogram, Indexed, IndexedList};
 use super::log2::fast_log2;

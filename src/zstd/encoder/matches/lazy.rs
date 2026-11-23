@@ -2,7 +2,7 @@
 
 use core::convert::Infallible;
 
-use bun_highway::with_bmi2;
+use bun_zstd_decoder::calls::with_bmi2;
 
 use super::chain::Chains;
 use super::lazy_tree::LazyTree;

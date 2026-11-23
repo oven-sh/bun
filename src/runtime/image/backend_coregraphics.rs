@@ -231,7 +231,7 @@ pub(crate) fn encode(
 
 // ── vImage geometry ────────────────────────────────────────────────────────
 // AMX-backed kernels for the common pipeline ops. Signatures mirror the
-// Highway path in `codecs.rs` so the dispatch site is `system_backend.x()
+// portable path in `codecs.rs` so the dispatch site is `system_backend.x()
 // .or_else(|_| fallback.x())`.
 
 unsafe extern "C" {
@@ -261,7 +261,7 @@ unsafe extern "C" {
 
 /// vImageScale's default kernel is Lanczos-3 (the HQ flag widens to L5), so
 /// we only take this path for the `.lanczos3` default — explicit non-Lanczos
-/// filters fall through to the Highway kernel which honours them exactly.
+/// filters fall through to the portable kernel which honours them exactly.
 pub(crate) fn scale(
     src: &[u8],
     sw: u32,

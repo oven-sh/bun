@@ -2,7 +2,7 @@
 
 use core::hint::select_unpredictable;
 
-use bun_highway::brotli::{LEAF_SLACK, sort_leaves};
+use super::simd::{LEAF_SLACK, sort_leaves};
 
 use super::bit_writer::{BitWriter, Code};
 use super::matching::put_bytes;

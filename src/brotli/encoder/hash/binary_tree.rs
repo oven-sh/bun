@@ -1,6 +1,6 @@
 use core::hint::{Locality, prefetch_read, select_unpredictable};
 
-use bun_highway::brotli::LENGTH_SHIFT;
+use super::super::simd::LENGTH_SHIFT;
 
 use super::slots::{Linked, Slots};
 use super::{Search, is_within};

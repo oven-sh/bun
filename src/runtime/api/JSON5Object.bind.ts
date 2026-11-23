@@ -9,6 +9,7 @@ export const JSON5 = b.namespace({
         from: ["string", "buffer", "blob"],
         otherwise: "toString",
         refuse: ["undefined", "null"],
+        shared: "copied",
       }),
     },
     returns: b.any,

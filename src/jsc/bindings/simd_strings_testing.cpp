@@ -1,0 +1,192 @@
+// Testing-only JS binding for the byte-search kernels in src/simd_kernels. It forwards
+// to the C entry points and returns their raw result.
+
+#include "root.h"
+
+#include "bun_simd.h"
+#include "simd_strings_testing.h"
+
+#include "ZigGlobalObject.h"
+#include <JavaScriptCore/JSArrayBufferView.h>
+#include <JavaScriptCore/JSCJSValue.h>
+#include <JavaScriptCore/JSCast.h>
+
+// src/simd_kernels/ffi_testing.rs
+extern "C" size_t bun_simd_index_of_not_char(const uint8_t* haystack, size_t haystack_len, uint8_t value);
+extern "C" size_t bun_simd_count_char(const uint8_t* haystack, size_t haystack_len, uint8_t needle);
+extern "C" size_t bun_simd_line_starts(const uint8_t* text, size_t text_len, uint32_t* out);
+extern "C" size_t bun_simd_index_of_any_char(const uint8_t* text, size_t text_len, const uint8_t* chars, size_t chars_len);
+extern "C" size_t bun_simd_last_index_of_any_char(const uint8_t* text, size_t text_len, const uint8_t* chars, size_t chars_len);
+extern "C" size_t bun_simd_index_of_untidy_slash(const uint8_t* path, size_t len);
+extern "C" size_t bun_simd_index_of_untidy_slash_or_non_ascii(const uint8_t* path, size_t len);
+extern "C" size_t bun_simd_last_index_of_slash(const uint8_t* path, size_t len);
+extern "C" size_t bun_simd_last_index_of_slash_or_dot(const uint8_t* path, size_t len);
+extern "C" size_t bun_simd_common_prefix_length(const uint8_t* a, size_t a_len, const uint8_t* b, size_t b_len);
+extern "C" size_t bun_simd_count_slashes(const uint8_t* path, size_t len);
+extern "C" size_t bun_simd_is_level(const uint8_t* name, size_t len);
+extern "C" void bun_simd_scanner_run_stops(const uint8_t* text, size_t text_len, uint8_t* out, size_t plane_len);
+extern "C" void bun_simd_odd_blocks(const uint8_t* text, size_t text_len, uint64_t* out);
+extern "C" void bun_simd_byte_bits(const uint8_t* text, size_t text_len, uint8_t byte, uint64_t* out);
+extern "C" size_t bun_simd_byte_set_prefix_length(const uint8_t* text, size_t len, const uint8_t* set);
+extern "C" size_t bun_simd_plain_index_of_char(const uint8_t* haystack, size_t haystack_len, uint8_t needle);
+extern "C" size_t bun_simd_plain_last_index_of_char(const uint8_t* haystack, size_t haystack_len, uint8_t needle);
+extern "C" size_t bun_simd_plain_memmem(const uint8_t* haystack, size_t haystack_len, const uint8_t* needle, size_t needle_len);
+extern "C" size_t bun_simd_plain_memrmem(const uint8_t* haystack, size_t haystack_len, const uint8_t* needle, size_t needle_len);
+extern "C" size_t bun_simd_plain_memmem16(const uint8_t* haystack, size_t haystack_len, const uint8_t* needle, size_t needle_len);
+extern "C" size_t bun_simd_plain_memrmem16(const uint8_t* haystack, size_t haystack_len, const uint8_t* needle, size_t needle_len);
+#if CPU(X86_64)
+extern "C" bool bun_simd_zstd_is_quicker();
+extern "C" bool bun_simd_zstd_count_bytes(const uint8_t* bytes, size_t len, uint32_t* counts);
+extern "C" bool bun_simd_zstd_write_codes(const uint8_t* symbols, size_t count, const uint16_t* codes, uint8_t* out, size_t room, uint64_t* written);
+#endif
+
+namespace Bun {
+
+//   (op: string, haystack: Uint8Array, arg: number | Uint8Array) -> number
+//
+// `arg` is the byte for the *Char ops and the needle / char-set view for the
+// others. Returns exactly what the kernel returns: an index (with
+// `haystack.length` meaning "not found" for the index_of family), a count, or
+// for memmem/memrmem the match offset with -1 for "not found". scannerRunStops
+// writes its three bitmaps into `arg`, a third of the view each, and returns 0.
+// lineStarts writes uint32 offsets into `arg` and returns how many.
+// oddBlocks writes its uint64 words into `arg` and returns 0. So does byteBits, for the byte in a fourth argument.
+// byteSetPrefixLength takes the 16 rows and the 16 columns of the set in `arg`.
+// The kernels that look for slashes ignore `arg`. commonPrefixLength compares `haystack` with `arg`.
+// zstdCountBytes adds to 256 uint32 in `arg`. zstdWriteCodes takes 3 uint64 to set, 256 uint16 and the room. Only on x64.
+// A search that has a kernel for buffers and one for `bun_core::strings` runs both, and returns NaN if they differ.
+BUN_DEFINE_HOST_FUNCTION(Bun__simdStringsForTesting, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto op = callFrame->argument(0).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    auto* view = dynamicDowncast<JSC::JSArrayBufferView>(callFrame->argument(1));
+    if (!view || view->isDetached() || view->isShared()) {
+        throwTypeError(globalObject, scope, "haystack must be an attached ArrayBufferView that is not shared"_s);
+        return {};
+    }
+    const uint8_t* haystack = static_cast<const uint8_t*>(view->vector());
+    size_t len = view->byteLength();
+
+    JSC::JSValue arg = callFrame->argument(2);
+    uint8_t byte = 0;
+    const uint8_t* needle = nullptr;
+    size_t needle_len = 0;
+    if (arg.isNumber()) {
+        byte = static_cast<uint8_t>(arg.toUInt32(globalObject));
+        RETURN_IF_EXCEPTION(scope, {});
+    } else if (auto* needleView = dynamicDowncast<JSC::JSArrayBufferView>(arg); needleView && !needleView->isDetached() && !needleView->isShared()) {
+        needle = static_cast<const uint8_t*>(needleView->vector());
+        needle_len = needleView->byteLength();
+    } else {
+        throwTypeError(globalObject, scope, "arg must be a byte (number) or an attached ArrayBufferView that is not shared"_s);
+        return {};
+    }
+
+    auto agreed = [](size_t shared, size_t plain) {
+        if (shared != plain)
+            return JSC::JSValue::encode(JSC::jsNaN());
+        return JSC::JSValue::encode(JSC::jsNumber(shared == kSimdNotFound ? -1.0 : static_cast<double>(shared)));
+    };
+    if (op == "indexOfChar"_s)
+        return agreed(bun_simd_index_of_char(haystack, len, byte), bun_simd_plain_index_of_char(haystack, len, byte));
+    if (op == "lastIndexOfChar"_s)
+        return agreed(bun_simd_last_index_of_char(haystack, len, byte), bun_simd_plain_last_index_of_char(haystack, len, byte));
+    if (op == "memmem"_s)
+        return agreed(bun_simd_memmem(haystack, len, needle, needle_len), bun_simd_plain_memmem(haystack, len, needle, needle_len));
+    if (op == "memrmem"_s)
+        return agreed(bun_simd_memrmem(haystack, len, needle, needle_len), bun_simd_plain_memrmem(haystack, len, needle, needle_len));
+    // Byte views read as UTF-16 code units (any alignment, odd byte
+    // dropped, as JSBuffer.cpp does); result is in code units.
+    if (op == "memmem16"_s)
+        return agreed(bun_simd_memmem16(haystack, len / 2, needle, needle_len / 2), bun_simd_plain_memmem16(haystack, len / 2, needle, needle_len / 2));
+    if (op == "memrmem16"_s)
+        return agreed(bun_simd_memrmem16(haystack, len / 2, needle, needle_len / 2), bun_simd_plain_memrmem16(haystack, len / 2, needle, needle_len / 2));
+
+    size_t result;
+    if (op == "indexOfNotChar"_s) {
+        result = bun_simd_index_of_not_char(haystack, len, byte);
+    } else if (op == "isLevel"_s) {
+        result = bun_simd_is_level(haystack, len);
+    } else if (op == "countChar"_s) {
+        result = bun_simd_count_char(haystack, len, byte);
+    } else if (op == "indexOfAny"_s || op == "lastIndexOfAny"_s) {
+        if (needle_len < 2 || needle_len > 16) {
+            throwRangeError(globalObject, scope, "char set must have 2..=16 bytes"_s);
+            return {};
+        }
+        result = op == "indexOfAny"_s
+            ? bun_simd_index_of_any_char(haystack, len, needle, needle_len)
+            : bun_simd_last_index_of_any_char(haystack, len, needle, needle_len);
+    } else if (op == "indexOfUntidySlash"_s) {
+        result = bun_simd_index_of_untidy_slash(haystack, len);
+    } else if (op == "indexOfUntidySlashOrNonAscii"_s) {
+        result = bun_simd_index_of_untidy_slash_or_non_ascii(haystack, len);
+    } else if (op == "lastIndexOfSlash"_s) {
+        result = bun_simd_last_index_of_slash(haystack, len);
+    } else if (op == "lastIndexOfSlashOrDot"_s) {
+        result = bun_simd_last_index_of_slash_or_dot(haystack, len);
+    } else if (op == "commonPrefixLength"_s) {
+        result = bun_simd_common_prefix_length(haystack, len, needle, needle_len);
+    } else if (op == "countSlashes"_s) {
+        result = bun_simd_count_slashes(haystack, len);
+    } else if (op == "scannerRunStops"_s) {
+        size_t plane_len = needle_len / 3;
+        if (plane_len < (len + 63) / 64 * 8) {
+            throwRangeError(globalObject, scope, "each bitmap needs 8 bytes per 64 bytes of text"_s);
+            return {};
+        }
+        bun_simd_scanner_run_stops(haystack, len, const_cast<uint8_t*>(needle), plane_len);
+        result = 0;
+    } else if (op == "lineStarts"_s) {
+        if (reinterpret_cast<uintptr_t>(needle) % alignof(uint32_t) || needle_len / sizeof(uint32_t) < bun_simd_count_char(haystack, len, '\n')) {
+            throwRangeError(globalObject, scope, "needs an aligned uint32 per line feed"_s);
+            return {};
+        }
+        result = bun_simd_line_starts(haystack, len, reinterpret_cast<uint32_t*>(const_cast<uint8_t*>(needle)));
+    } else if (op == "oddBlocks"_s) {
+        if (reinterpret_cast<uintptr_t>(needle) % alignof(uint64_t) || needle_len / sizeof(uint64_t) < (len + 4095) / 4096) {
+            throwRangeError(globalObject, scope, "needs an aligned uint64 per 4096 bytes of text"_s);
+            return {};
+        }
+        bun_simd_odd_blocks(haystack, len, reinterpret_cast<uint64_t*>(const_cast<uint8_t*>(needle)));
+        result = 0;
+    } else if (op == "byteBits"_s) {
+        if (reinterpret_cast<uintptr_t>(needle) % alignof(uint64_t) || needle_len / sizeof(uint64_t) < (len + 63) / 64 || !callFrame->argument(3).isInt32()) {
+            throwRangeError(globalObject, scope, "needs an aligned uint64 per 64 bytes of text, and a byte"_s);
+            return {};
+        }
+        bun_simd_byte_bits(haystack, len, static_cast<uint8_t>(callFrame->argument(3).asInt32()), reinterpret_cast<uint64_t*>(const_cast<uint8_t*>(needle)));
+        result = 0;
+    } else if (op == "byteSetPrefixLength"_s) {
+        if (len < 16 || needle_len != 32) {
+            throwRangeError(globalObject, scope, "needs 16 bytes of text and a set of 32 bytes"_s);
+            return {};
+        }
+        result = bun_simd_byte_set_prefix_length(haystack, len, needle);
+#if CPU(X86_64)
+    } else if (op == "zstdIsQuicker"_s) {
+        result = bun_simd_zstd_is_quicker();
+    } else if (op == "zstdCountBytes"_s || op == "zstdWriteCodes"_s) {
+        constexpr size_t codes = 3 * sizeof(uint64_t), room = codes + 256 * sizeof(uint16_t);
+        const bool counts = op == "zstdCountBytes"_s;
+        if (reinterpret_cast<uintptr_t>(needle) % alignof(uint64_t) || needle_len < (counts ? 256 * sizeof(uint32_t) : room)) {
+            throwRangeError(globalObject, scope, "arg is too short, or not aligned"_s);
+            return {};
+        }
+        auto* bytes = const_cast<uint8_t*>(needle);
+        result = counts
+            ? bun_simd_zstd_count_bytes(haystack, len, reinterpret_cast<uint32_t*>(bytes))
+            : bun_simd_zstd_write_codes(haystack, len, reinterpret_cast<uint16_t*>(bytes + codes), bytes + room, needle_len - room, reinterpret_cast<uint64_t*>(bytes));
+#endif
+    } else {
+        throwTypeError(globalObject, scope, "unknown op"_s);
+        return {};
+    }
+    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::jsNumber(static_cast<double>(result))));
+}
+
+} // namespace Bun

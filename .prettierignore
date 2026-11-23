@@ -1,4 +1,6 @@
 vendor
+# rustdoc reads these, and runs their examples as they are written
+src/simd/**/*.md
 test/snapshots
 # written by Jest and Vitest, and compared byte for byte
 test/js/bun/test/snapshot-tests/formats

@@ -68,9 +68,11 @@ pub(crate) fn encode(
     writer.append_flag(has_alpha);
     writer.append(0, VERSION_BITS);
 
-    let to_argb = |[red, green, blue, alpha]: [u8; 4]| match alpha {
-        0 => 0,
-        _ => Argb::from_le_bytes([blue, green, red, alpha]),
+    // Written so that the loop below takes vectors.
+    let to_argb = |rgba| {
+        let abgr = u32::from_le_bytes(rgba);
+        let argb = (abgr & 0xff00_ff00) | (abgr & 0x00ff_00ff).rotate_left(16);
+        if abgr >> 24 == 0 { 0 } else { argb }
     };
     if let Some((bytes, colors, used)) = palette::index(rgba, to_argb)? {
         return stream.finish_with_bytes(&bytes, &colors, used);

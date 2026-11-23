@@ -41,6 +41,7 @@ const crates = [
   "bun_cron",
   "bun_deflate",
   "bun_dispatch",
+  "bun_dotenv",
   "bun_errno",
   "bun_exe_format",
   "bun_hash",
@@ -49,10 +50,15 @@ const crates = [
   "bun_http_types",
   "bun_icu",
   "bun_icu_data",
+  "bun_image_ops",
+  "bun_jpeg",
   "bun_lint_react_compiler",
   "bun_md",
+  "bun_node_path",
   "bun_options_types",
+  "bun_parsers",
   "bun_paths",
+  "bun_png",
   "bun_pod",
   "bun_removable_features",
   "bun_resolve_builtins",
@@ -64,7 +70,10 @@ const crates = [
   "bun_sema_standalone",
   "bun_shell_parser",
   "bun_shim_impl",
+  "bun_simd",
+  "bun_simd_kernels",
   "bun_sort_by_number",
+  "bun_sourcemap",
   "bun_sql",
   "bun_sql_jsc",
   "bun_standalone_graph",
@@ -184,7 +193,7 @@ if (extraArgs.length) {
 }
 
 // The crates of the list whose documentation has examples that run. `--no-run` builds none of them.
-const cratesWithExamples = ["bun_collections", "bun_pod"];
+const cratesWithExamples = ["bun_collections", "bun_pod", "bun_simd"];
 
 // It asks for a path below `/` that a test cannot create.
 const programArgs = ["--skip", "realpath_under_the_marked_root_stays_under_it"];

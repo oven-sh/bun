@@ -1,0 +1,17 @@
+[package]
+name = "bun_simd_kernels"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[features]
+# For the tests of the encoder of zstd: its kernels run on all CPUs.
+test_support = []
+
+[lints]
+workspace = true
+
+[dependencies]
+bun_simd.workspace = true

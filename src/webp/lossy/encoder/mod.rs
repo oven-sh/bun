@@ -13,8 +13,6 @@ mod picture;
 mod segments;
 mod tokens;
 
-use bun_highway::webp::Scratch;
-
 use self::bool_writer::BoolWriter;
 use self::cost::Costs;
 use self::header::Modes;
@@ -25,6 +23,7 @@ use self::tokens::Tokens;
 use super::{BlockType, CoefficientProbabilities, FRAME_HEADER_LEN, SEGMENTS};
 use crate::array::At;
 use crate::error::{Error, Result};
+use crate::simd::Scratch;
 use crate::slice::InBounds;
 use crate::vec;
 
@@ -211,6 +210,27 @@ mod tests {
                 max_edges: [0; SEGMENTS],
             };
             assert_eq!(pass.has_subblock_modes(), expected);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn modes_cost_as_recorded() -> Result<()> {
+        let pixel = |i| ((i * i) as u32).wrapping_mul(0x9e37_79b9).to_le_bytes();
+        let rgba: [_; 128 * 128] = core::array::from_fn(pixel);
+        let picture = Picture::new(&rgba, 128, 128, false)?;
+        let mut segments = Segments::new(analysis::analyze(&picture)?, 80);
+        segments.start_pass();
+        for (max, cost) in [(15_001, 547_539), (15_002, 562_089)] {
+            let mut pass = Pass {
+                tokens: Tokens::new(64)?,
+                modes: Vec::new(),
+                modes_cost: 0,
+                max_edges: [0; SEGMENTS],
+            };
+            let codings = segments.codings(max)?;
+            pass.run(&picture, &segments.map, &codings, &mut Costs::new()?)?;
+            assert_eq!(pass.modes_cost, cost);
         }
         Ok(())
     }

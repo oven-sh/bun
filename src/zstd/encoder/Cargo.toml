@@ -11,14 +11,14 @@ workspace = true
 
 [dependencies]
 bun_core.workspace = true
-bun_highway.workspace = true
 bun_pod.workspace = true
 bun_removable_features.workspace = true
+bun_simd_kernels.workspace = true
 bun_threading.workspace = true
 bun_zstd_decoder.workspace = true
 
 [dev-dependencies]
-bun_highway = { workspace = true, features = ["test_support"] }
+bun_simd_kernels = { workspace = true, features = ["test_support"] }
 
 [[test]]
 name = "encode"

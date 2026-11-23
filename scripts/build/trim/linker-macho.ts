@@ -13,7 +13,13 @@ import { join, resolve } from "node:path";
 import { BuildError } from "../error.ts";
 import { fixedName, readAt } from "./binary-reader.ts";
 import type { SectionGraph } from "./graph.ts";
-import { createSectionOrder, groupOfNode, writeTableIntoSection, type FileRange } from "./linker-common.ts";
+import {
+  createSectionOrder,
+  groupOfNode,
+  underCurrentNames,
+  writeTableIntoSection,
+  type FileRange,
+} from "./linker-common.ts";
 import type { LinkArguments, Linker, LinkerFormat, OrderGroup, SectionOrder } from "./linker.ts";
 import { isOneUnitOfAssembly, readMachOGraph } from "./macho-graph.ts";
 import { LC_SEGMENT_64, MH_MAGIC_64 } from "./macho-objects.ts";
@@ -189,7 +195,7 @@ export function machO(linker: Linker): LinkerFormat {
     relinksSameInputs: () => false,
     compiledObjects: listCompiledObjects,
     firstLinkArguments: () => createLinkArguments(compiled),
-    secondLinkArguments(order) {
+    secondLinkArguments(order, graph) {
       const linesAfterGroupNames = [
         ...order.retainedFirst,
         ...[...order.groups].reverse().flatMap(group => group.afterRetained),
@@ -198,7 +204,7 @@ export function machO(linker: Linker): LinkerFormat {
       // groups that are removed together, from the last to the first, then the rest of those from the first to the
       // last. Each later group stays one piece, with what is listed at the end that meets the listed end of a neighbor.
       // ld64.lld places a name by its first line.
-      const commandLines = commandOrder.split("\n").filter(line => line !== "");
+      const commandLines = underCurrentNames(commandOrder, graph);
       const listed = new Set(commandLines.map(stemOfLine));
       const isListed = (line: string) => listed.has(stemOfLine(line));
       const grouped = new Set(order.groups.flatMap(group => [...group.names, ...group.afterRetained].map(stemOfLine)));

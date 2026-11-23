@@ -47,11 +47,6 @@ impl ColorBox {
     }
 }
 
-unsafe extern "C" {
-    fn bun_image_nearest_palette(palette: *const u8, k: u32, r: i32, g: i32, b: i32, a: i32)
-    -> u32;
-}
-
 #[derive(Clone, Copy)]
 pub(crate) struct Options {
     pub(crate) max_colors: u16,
@@ -73,12 +68,13 @@ pub(crate) fn quantize(
     let n: u32 = u32::try_from(rgba.len() / 4).expect("int cast");
     let want: u16 = 1.max(max_colors.min(256));
 
-    // `order` is a permutation of pixel indices that we partition in-place;
-    // each Box owns a contiguous [lo,hi) slice of it.
-    let mut order: Vec<u32> = (0..n).collect();
+    // A copy of the pixels that we partition in-place; each Box owns a
+    // contiguous [lo,hi) slice of it.
+    let pixels = rgba.as_chunks().0.iter();
+    let mut order: Vec<u32> = pixels.map(|&px| u32::from_le_bytes(px)).collect();
 
     let mut boxes: Vec<ColorBox> = Vec::with_capacity(want as usize);
-    boxes.push(shrink(rgba, &order, 0, n));
+    boxes.push(shrink(&order, 0, n));
 
     while boxes.len() < want as usize {
         // Pick the box with the largest single-channel range — the one that
@@ -104,12 +100,10 @@ pub(crate) fn quantize(
         let ch = b.widest_channel();
         // Partial sort by the chosen channel, then cut at the midpoint.
         let slice = &mut order[b.lo as usize..b.hi as usize];
-        // u32 ×4 overflows past ~1.07B pixels (allowed when the user raises
-        // `maxPixels`); the other order-index sites already widen first.
-        slice.sort_unstable_by_key(|&p| rgba[p as usize * 4 + ch as usize]);
+        slice.sort_unstable_by_key(|&px| (px >> (8 * ch)) as u8);
         let mid = b.lo + (b.hi - b.lo) / 2;
-        boxes[pick] = shrink(rgba, &order, b.lo, mid);
-        boxes.push(shrink(rgba, &order, mid, b.hi));
+        boxes[pick] = shrink(&order, b.lo, mid);
+        boxes.push(shrink(&order, mid, b.hi));
     }
 
     let k: u16 = u16::try_from(boxes.len()).expect("int cast");
@@ -119,7 +113,7 @@ pub(crate) fn quantize(
         let mut sum: [u64; 4] = [0, 0, 0, 0];
         for &px in &order[b.lo as usize..b.hi as usize] {
             for c in 0..4usize {
-                sum[c] += u64::from(rgba[px as usize * 4 + c]);
+                sum[c] += u64::from(px.to_le_bytes()[c]);
             }
         }
         let cnt: u64 = u64::from(b.hi - b.lo);
@@ -131,28 +125,9 @@ pub(crate) fn quantize(
         }
     }
 
-    let mut indices = vec![0u8; n as usize];
-    if opts.dither {
-        map_floyd_steinberg(rgba, w, h, &palette, k, &mut indices)?;
-    } else {
-        // Direct nearest-entry mapping. k ≤ 256; the inner search is the
-        // highway-dispatched kernel so it runs under the best -march.
-        for px in 0..n as usize {
-            let p = &rgba[px * 4..][..4];
-            // SAFETY: palette is a valid `[k*4]u8` buffer; FFI fn is pure.
-            indices[px] = u8::try_from(unsafe {
-                bun_image_nearest_palette(
-                    palette.as_ptr(),
-                    u32::from(k),
-                    i32::from(p[0]),
-                    i32::from(p[1]),
-                    i32::from(p[2]),
-                    i32::from(p[3]),
-                )
-            })
-            .unwrap();
-        }
-    }
+    let indices = bun_image_ops::Image::new(rgba, w, h)
+        .and_then(|image| image.to_indices(palette.as_chunks().0, opts.dither))
+        .map_err(|_| AllocError)?;
 
     Ok(QuantizeResult {
         palette: palette.into_boxed_slice(),
@@ -161,118 +136,8 @@ pub(crate) fn quantize(
     })
 }
 
-/// Floyd–Steinberg error diffusion. Serial in raster order — each pixel's
-/// quantisation error is pushed to its yet-unvisited neighbours with the
-/// classic 7/3/5/1 ÷16 kernel:
-///
-/// ```text
-/// ·   X   7
-/// 3   5   1
-/// ```
-///
-/// Serpentine scan (alternate L→R / R→L per row) so the diffusion direction
-/// flips each row, avoiding the directional artefacts a fixed scan produces.
-/// The diffusion itself can't be vectorised (data dependence on the previous
-/// pixel), but the per-pixel palette search goes through the highway kernel.
-fn map_floyd_steinberg(
-    rgba: &[u8],
-    w: u32,
-    h: u32,
-    palette: &[u8],
-    k: u16,
-    indices: &mut [u8],
-) -> Result<(), AllocError> {
-    // Two rows of accumulated error, ×4 channels. i32 not i16: when the
-    // palette doesn't span the source range (e.g. colors:2, both entries near
-    // 0, source has 255s) the residual grows without bound across the row —
-    // each pixel's error is `cand − nearest`, and `cand = src + carried` keeps
-    // climbing. i16 overflows there; two w×4 i32 rows are still negligible.
-    // `cur` carries error pushed *into* the current row from the row above;
-    // `nxt` collects error for the row below.
-    let stride: usize = w as usize * 4;
-    let mut cur: Vec<i32> = vec![0i32; stride];
-    let mut nxt: Vec<i32> = vec![0i32; stride];
-
-    let mut y: u32 = 0;
-    while y < h {
-        let ltr = (y & 1) == 0;
-        let step: i64 = if ltr { 1 } else { -1 };
-        let mut x: i64 = if ltr { 0 } else { i64::from(w) - 1 };
-        while x >= 0 && x < i64::from(w) {
-            let px: usize = y as usize * w as usize + usize::try_from(x).expect("int cast");
-            let off: usize = usize::try_from(x).expect("int cast") * 4;
-
-            // Candidate colour = source + accumulated error (clamped for the
-            // search; the *unclamped* error is what propagates so rounding
-            // doesn't accumulate bias).
-            let mut cand: [i32; 4] = [0; 4];
-            for c in 0..4usize {
-                cand[c] = i32::from(rgba[px * 4 + c]) + cur[off + c];
-            }
-
-            // SAFETY: palette is a valid `[k*4]u8` buffer; FFI fn is pure.
-            let idx: u8 = u8::try_from(unsafe {
-                bun_image_nearest_palette(
-                    palette.as_ptr(),
-                    u32::from(k),
-                    clamp255(cand[0]),
-                    clamp255(cand[1]),
-                    clamp255(cand[2]),
-                    clamp255(cand[3]),
-                )
-            })
-            .unwrap();
-            indices[px] = idx;
-
-            for c in 0..4usize {
-                let err: i32 = cand[c] - i32::from(palette[idx as usize * 4 + c]);
-                // Push to the four neighbours. `dir` is +1 for L→R, −1 for R→L.
-                let dir = step;
-                let xr = x + dir;
-                let xl = x - dir;
-                if xr >= 0 && xr < i64::from(w) {
-                    cur[usize::try_from(xr).expect("int cast") * 4 + c] += (err * 7) >> 4;
-                }
-                if xl >= 0 && xl < i64::from(w) {
-                    nxt[usize::try_from(xl).expect("int cast") * 4 + c] += (err * 3) >> 4;
-                }
-                nxt[off + c] += (err * 5) >> 4;
-                if xr >= 0 && xr < i64::from(w) {
-                    nxt[usize::try_from(xr).expect("int cast") * 4 + c] += err >> 4;
-                }
-            }
-
-            x += step;
-        }
-        // Slide: next row's error becomes current; clear next.
-        core::mem::swap(&mut cur, &mut nxt);
-        nxt.fill(0);
-
-        y += 1;
-    }
-
-    Ok(())
-}
-
-#[inline]
-fn clamp255(v: i32) -> i32 {
-    v.clamp(0, 255)
-}
-
 /// Recompute a box's tight min/max over its pixel slice.
-fn shrink(rgba: &[u8], order: &[u32], lo: u32, hi: u32) -> ColorBox {
-    let mut min: [u8; 4] = [255, 255, 255, 255];
-    let mut max: [u8; 4] = [0, 0, 0, 0];
-    for &px in &order[lo as usize..hi as usize] {
-        for c in 0..4usize {
-            let v = rgba[px as usize * 4 + c];
-            if v < min[c] {
-                min[c] = v;
-            }
-            if v > max[c] {
-                max[c] = v;
-            }
-        }
-    }
+fn shrink(order: &[u32], lo: u32, hi: u32) -> ColorBox {
+    let [min, max] = bun_image_ops::extremes(&order[lo as usize..hi as usize]);
     ColorBox { lo, hi, min, max }
 }

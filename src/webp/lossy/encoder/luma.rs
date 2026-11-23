@@ -2,10 +2,6 @@
 
 use core::hint::select_unpredictable;
 
-use bun_highway::webp::{
-    self, Edges, IS_FLAT, LumaCandidates, LumaSaturation, Macroblock, Scratch, SubblockCandidates,
-};
-
 use super::border::{self, Border, joined};
 use super::candidates::{MACROBLOCK_MODES, add_costs, bottom, edges, residual, right};
 use super::cost::{
@@ -16,6 +12,9 @@ use super::segments::Coding;
 use super::tokens::Residual;
 use crate::array::At;
 use crate::lossy::{BlockType, MacroblockMode, SUBBLOCK_MODES, SubblockMode};
+use crate::simd::{
+    self, Edges, IS_FLAT, LumaCandidates, LumaSaturation, Macroblock, Scratch, SubblockCandidates,
+};
 
 #[derive(Clone, Copy)]
 pub(super) enum Mode {
@@ -105,12 +104,13 @@ pub(super) fn choose(
 ) {
     let (above, left) = (&around.above, &around.left);
     let edges = border::luma_edges(above.samples, left.samples, around.above_left);
-    let saturation = webp::try_luma_modes(
+    let saturation = simd::try_luma_modes(
         samples,
         &edges,
         [above.non_zero, left.non_zero],
         u8::from(above.y2_non_zero) + u8::from(left.y2_non_zero),
-        [&coding.luma_without_dc, &coding.y2],
+        &coding.luma_without_dc,
+        &coding.y2,
         &mut scratch.source,
         &mut scratch.luma,
     );
@@ -305,27 +305,39 @@ fn choose_subblocks(
             if !is_better(score, modes_cost) {
                 return false;
             }
-            let block = webp::Subblock {
-                index: 4 * y + x,
-                edge: u128::from(left)
-                    | u128::from(corner) << 32
-                    | u128::from(*above.at(x)) << 40
-                    | u128::from(*above.at(x + 1)) << 72,
-                context: u8::from(*above_non_zero.at(x)) + u8::from(left_non_zero),
-            };
+            let edge = u128::from(left)
+                | u128::from(corner) << 32
+                | u128::from(*above.at(x)) << 40
+                | u128::from(*above.at(x + 1)) << 72;
+            let context = u8::from(*above_non_zero.at(x)) + u8::from(left_non_zero);
             let (above_mode, texture_lambda) = (*modes.at(y).at(x), coding.texture_lambda);
             let mode_costs = SUBBLOCK_MODE_COSTS
                 .at(above_mode as usize)
                 .at(left_mode as usize);
-            let last = webp::try_straight_modes(block, source, quantizer, texture_lambda, subblock);
+            let last = simd::try_straight_modes(
+                edge,
+                context,
+                4 * y + x,
+                source,
+                quantizer,
+                texture_lambda,
+                subblock,
+            );
             let mut best = best_subblock_mode::<2>(subblock, 0, last, mode_costs, costs, lambda);
             // What is not flat costs more than the penalty for the signs alone.
             let lowest = MIN_DIAGONAL_MODE_COSTS
                 .at(above_mode as usize)
                 .at(left_mode as usize);
             if best.score > (i32::from(*lowest) + FLATNESS_PENALTY) * lambda {
-                let last =
-                    webp::try_diagonal_modes(block, source, quantizer, texture_lambda, subblock);
+                let last = simd::try_diagonal_modes(
+                    edge,
+                    context,
+                    4 * y + x,
+                    source,
+                    quantizer,
+                    texture_lambda,
+                    subblock,
+                );
                 let other = best_subblock_mode::<3>(subblock, 2, last, mode_costs, costs, lambda);
                 best = best.or_better(other);
             }

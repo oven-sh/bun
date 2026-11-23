@@ -526,7 +526,7 @@ fn gzip_sync<'a>(heap: &JsHeap<'a>, data: &[u8], options: &ZlibCompressionOption
 | `refuse`    | `"undefined"`, `"null"`                              | with `"toString"`: these throw, and are not `"undefined"` and `"null"` |
 | `refuse`    | `"stringObject"`                                     | with `"throw"`: `"string"` is only a string                            |
 | `string`    | **`"utf8"`**, `"asIs"`                               | a string is its UTF-8, or stays a `bun_core::String`                   |
-| `shared`    | **`"borrowed"`**, `"copied"`                         | the bytes of a shared buffer                                           |
+| `shared`    | **`"borrowed"`**, `"copied"`, `"atomic"`             | the bytes of a shared buffer                                           |
 | `held`      | **`"borrowed"`**, `"handle"`, `"copied"`, `"pinned"` | what the body gets                                                     |
 
 `"string"` is a string or a `String` object. `"buffer"` is a typed array, `DataView`,
@@ -567,7 +567,9 @@ thread.
 another thread that writes it during the call changes what the body reads. `shared: "copied"` is
 for a body that reads a byte again and counts on what it was, such as a parser that scans ahead
 and comes back. JSC's `sort` copies for the same reason. With `string: "asIs"` the body calls
-`JsBytes::get_or_copy_if_shared` instead.
+`JsBytes::get_or_copy_if_shared` instead. With `shared: "atomic"` the body gets a
+`bun_simd_kernels::SharedBytes`, which reads atomically and does not write, so its crate has to depend on
+`bun_simd_kernels`. Such an argument is `held: "borrowed"`, takes nothing but a buffer, and cannot be absent.
 
 The kind of the value is checked, and a string converted, in the order of the arguments. The
 bytes of a buffer are read, copied or pinned after every argument is converted. It is not a

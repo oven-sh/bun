@@ -208,7 +208,7 @@ let md = `# Bun.Image vs Sharp — visual comparison
 ${PICS.length} CC0 photos from [picsum.photos](https://picsum.photos) (2400×1600
 source) + 2 synthetic torture patterns. Every pair is **left = sharp, right =
 Bun.Image**, with the encoded byte size under each. Bun.Image runs the i16
-fixed-point Highway path; sharp is libvips ${sharp.versions.vips}.
+fixed-point SIMD path; sharp is libvips ${sharp.versions.vips}.
 
 `;
 

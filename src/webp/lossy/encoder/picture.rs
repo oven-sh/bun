@@ -1,9 +1,8 @@
 //! RGBA to YUV 4:2:0, cut into macroblocks.
 
-use bun_highway::webp::{self, Block, GammaTable, LinearColors, Macroblock};
-
 use crate::array::At;
 use crate::error::Result;
+use crate::simd::{self, Block, GammaTable, LinearColors, Macroblock};
 use crate::slice::{self, InBounds, known};
 use crate::vec;
 
@@ -50,7 +49,7 @@ impl Picture {
                     } else {
                         average(&pixels, &mut colors, sums);
                     }
-                    webp::convert(&pixels, &colors, &LINEAR_TO_GAMMA, &mut converted);
+                    simd::convert(&pixels, &colors, &LINEAR_TO_GAMMA, &mut converted);
                 }
                 let samples = macroblocks.push_mut(converted);
                 if is_translucent {

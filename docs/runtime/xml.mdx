@@ -291,7 +291,7 @@ The parser is run against the [W3C XML Conformance Test Suite](https://www.w3.or
 
 ## Performance
 
-The parser works in two stages, like Bun's JSON parser. A SIMD pass (runtime-dispatched AVX2/AVX-512/NEON/SVE kernels) finds the bytes that can change the parse, so the parser never scans character data, attribute values, comments and CDATA sections a byte at a time. Element and attribute names reuse JavaScriptCore's atom-string cache the same way `JSON.parse` does.
+The parser works in two stages, like Bun's JSON parser. A SIMD pass (runtime-dispatched AVX2/AVX-512/NEON kernels) finds the bytes that can change the parse, so the parser never scans character data, attribute values, comments and CDATA sections a byte at a time. Element and attribute names reuse JavaScriptCore's atom-string cache the same way `JSON.parse` does.
 
 [`bench/xml/xml.mjs`](https://github.com/oven-sh/bun/blob/main/bench/xml/xml.mjs) compares `Bun.XML.parse` with popular npm parsers on the same documents (lower is better; Linux x64, one core):
 

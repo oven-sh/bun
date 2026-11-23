@@ -5,7 +5,7 @@ mod common;
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 
-use bun_highway::zstd::COUNT_MIN;
+use bun_simd_kernels::zstd::COUNT_MIN;
 use bun_zstd_decoder::{Dictionary, Error, Output, Result, Status, XxHash64, decompress};
 use bun_zstd_encoder::EndDirective::{Continue, End, Flush};
 use bun_zstd_encoder::{DEFAULT_LEVEL, Encoder, compress, compress_bound};

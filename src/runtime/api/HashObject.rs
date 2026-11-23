@@ -18,11 +18,11 @@ pub(crate) fn wyhash(data: &[u8], seed: JsLocal<'_>) -> u64 {
 }
 
 pub(crate) fn adler32(data: &[u8]) -> u32 {
-    bun_highway::adler32(data)
+    bun_hash::adler32(data)
 }
 
 pub(crate) fn crc32(data: &[u8], seed: JsLocal<'_>) -> u32 {
-    bun_highway::crc32(seed_of(seed) as u32, data)
+    bun_hash::crc32(seed_of(seed) as u32, data)
 }
 
 pub(crate) fn city_hash32(data: &[u8]) -> u32 {
@@ -41,9 +41,9 @@ pub(crate) fn xx_hash64(data: &[u8], seed: JsLocal<'_>) -> u64 {
     bun_hash::XxHash64::hash(seed_of(seed), data)
 }
 
-/// Runtime-dispatched SIMD (Highway): src/jsc/bindings/xxhash3.cpp. The seed is truncated to 32 bits.
+/// The seed is truncated to 32 bits.
 pub(crate) fn xx_hash3(data: &[u8], seed: JsLocal<'_>) -> u64 {
-    bun_highway::xxhash3_64(u64::from(seed_of(seed) as u32), data)
+    bun_hash::xxhash3_64(u64::from(seed_of(seed) as u32), data)
 }
 
 pub(crate) fn murmur32v2(data: &[u8], seed: JsLocal<'_>) -> u32 {

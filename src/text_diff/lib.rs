@@ -121,7 +121,7 @@ pub trait Elem: Copy + Eq {
     }
 }
 
-/// How much of a needle is looked for first. `MemMemPickAnchors` (highway_strings.cpp) reads a longer one three times.
+/// How much of a needle is looked for first. `rarest` (src/simd_kernels/substring.rs) reads a longer one three times.
 const NEEDLE_START: usize = 16;
 
 fn index_of_by_start(hay: &[u8], needle: &[u8]) -> Option<usize> {

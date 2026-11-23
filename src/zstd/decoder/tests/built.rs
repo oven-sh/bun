@@ -315,8 +315,8 @@ impl Frame {
             self.history
                 .extend(literals.split_off(..sequence.literal_len).unwrap());
             for _ in 0..sequence.match_len {
-                self.history
-                    .push(self.history[self.history.len() - self.repeat_offsets[0]]);
+                let from = self.history.len().saturating_sub(self.repeat_offsets[0]);
+                self.history.push(self.history[from]);
             }
         }
         self.history.extend(literals);
@@ -584,6 +584,21 @@ fn a_large_sequence_does_not_fit_behind_the_last_that_does() {
     frame.bytes.extend([1, 0, 0]);
     let result = decompress(&frame.bytes, &mut Output::slice(&mut [0; 20]), None);
     assert_eq!(result, Err(Error::DstSizeTooSmall));
+}
+
+#[test]
+fn the_first_of_two_errors_counts() {
+    let sequence = Sequence {
+        literal_len: 1,
+        offset_value: 4,
+        match_len: 9,
+    };
+    // A little more than the window, and then more than the room.
+    let mut frame = Frame::new(10, Vec::new());
+    frame.compressed(&raw(vec![1; 600]), &[sequence; 103]);
+    frame.bytes.extend([1, 0, 0]);
+    let result = decompress(&frame.bytes, &mut Output::slice(&mut [0; 1100]), None);
+    assert_eq!(result, Err(Error::CorruptionDetected));
 }
 
 #[test]
@@ -953,6 +968,29 @@ fn what_does_not_add_up_is_refused() {
         for count in [500, 899] {
             let fewer = [&repeated(0, count).section, &block[4..]].concat();
             assert_eq!(decode(&fewer, 3600), Err(Error::CorruptionDetected));
+        }
+    }
+}
+
+#[test]
+fn what_reaches_too_far_is_refused_among_others() {
+    let far = [
+        (1 << 31, 9),
+        ((1 << 31) + 9, 9),
+        ((1 << 32) - 1, 9),
+        (9, 900),
+    ];
+    for (offset_value, match_len) in far {
+        for at in 0..70 {
+            let new = |index| Sequence {
+                literal_len: 1,
+                offset_value: if index == at { offset_value } else { 9 },
+                match_len: if index == at { match_len } else { 9 },
+            };
+            let mut frame = Frame::new(10, Vec::new());
+            frame.raw(b"12345678");
+            frame.compressed(&repeated(0, 70), &(0..70).map(new).collect::<Vec<_>>());
+            assert!(frame.check().is_err());
         }
     }
 }

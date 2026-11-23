@@ -1,7 +1,8 @@
 //! The input that is being compressed, behind what matches are looked for in.
 
 use bun_deflate::format::{MAX_MATCH_LEN, MIN_MATCH_LEN};
-use bun_highway::common_prefix_length;
+use bun_simd::target::Baseline;
+use bun_simd::{B16, B32, Simd, Width};
 
 use crate::checksum::Checksum;
 use crate::error::Result;
@@ -141,13 +142,16 @@ pub(super) fn word(bytes: &[u8], at: u32) -> Option<u64> {
     chunk(bytes, at).copied().map(u64::from_le_bytes)
 }
 
+#[inline(always)]
+fn first_difference<W: Width>(a: &[u8], b: &[u8]) -> Option<u32> {
+    let differ = Simd::<u8, W, Baseline>::load(a).simd_ne(Simd::load(b));
+    differ.first_set().map(|at| at as u32)
+}
+
 /// How many bytes are equal at the start, at most `MAX_MATCH_LEN`.
 #[inline(always)]
 pub(super) fn match_len(a: &Scan, b: &Scan) -> u32 {
-    match common_prefix_length(&a[..16], &b[..16]) {
-        16 => long_match_len(a, b),
-        len => len as u32,
-    }
+    first_difference::<B16>(a, b).unwrap_or_else(|| long_match_len(a, b))
 }
 
 #[inline(never)]
@@ -155,7 +159,8 @@ fn long_match_len(a: &Scan, b: &Scan) -> u32 {
     let mut len = 16;
     while let (Some(a), Some(b)) = (chunk::<32>(a, len), chunk::<32>(b, len)) {
         if a != b {
-            return (len + common_prefix_length(a, b) as u32).min(MAX_MATCH_LEN as u32);
+            let equal = first_difference::<B32>(a, b).unwrap_or_default();
+            return (len + equal).min(MAX_MATCH_LEN as u32);
         }
         len += 32;
     }

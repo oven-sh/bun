@@ -5736,6 +5736,16 @@ describe("read*/write* after JIT tier-up", () => {
   });
 });
 
+it("toString('hex') reads a SharedArrayBuffer", () => {
+  const plain = Buffer.from(Array.from({ length: 300 }, (_, i) => (i * 37) & 255));
+  const shared = Buffer.from(new SharedArrayBuffer(plain.length));
+  plain.copy(shared);
+  const digits = [...plain].map(byte => byte.toString(16).padStart(2, "0")).join("");
+  for (const end of [1, 64, 65, 66, 128, 129, 200, 300]) {
+    expect(shared.toString("hex", 1, end)).toBe(digits.slice(2, 2 * end));
+  }
+});
+
 // The length pass doesn't count a UTF-16 unit for a 0x80 byte. If the byte is 0x61 by the conversion pass, that pass
 // writes one more unit than was allocated.
 it("UTF-8 decoders don't write out of bounds while another thread writes to the SharedArrayBuffer input", async () => {

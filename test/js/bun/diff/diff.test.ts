@@ -10,6 +10,7 @@ const short = (changes: Changes | undefined) =>
 const edits = (changes: Changes) => changes.reduce((n, c) => n + (c.added || c.removed ? c.count : 0), 0);
 const numbered = (count: number, line: (i: number) => unknown) =>
   Array.from({ length: count }, (_, i) => `${line(i)}\n`).join("");
+const repeat = (text: string, count: number) => Buffer.alloc(Buffer.byteLength(text) * count, text).toString();
 
 function random(seed: number) {
   return (below: number) => ((seed = (Math.imul(seed, 1103515245) + 12345) >>> 0) >>> 8) % below;
@@ -250,6 +251,41 @@ test("of several shortest diffs of unrelated inputs, the one that diff picks", (
     const [a, b] = [0, 1].map(() => Array.from({ length: 300 + next(40) }, () => `${next(1000) % distinct}\n`));
     expect(short(diff.lines(a.join(""), b.join("")))).toEqual(reference(a, b));
   }
+});
+
+describe("a long common end", () => {
+  const splits = [
+    ["lines", diff.lines, "x\n", "a\n", "y\n"],
+    ["words", diff.words, ",", ".", ";"],
+    ["chars", diff.chars, "x", "a", "y"],
+    ["chars, UTF-16", diff.chars, "世", "😀", "😁"],
+  ] as const;
+
+  test.each(splits)("%s: an edit moves into it as far as it can", (_, fn, removed, repeated, last) => {
+    // About 1,024 tokens of the end are tried first.
+    for (const count of [10, ...Array.from({ length: 8 }, (_, i) => 1024 + i), 5000]) {
+      const end = repeat(repeated, count);
+      expect(short(fn(removed + end + last, repeated + end + last))).toEqual([
+        ["-", removed, 1],
+        ["=", end, count],
+        ["+", repeated, 1],
+        ["=", last, 1],
+      ]);
+    }
+  });
+
+  test.each(splits)("%s: the part that no edit reaches is kept", (_, fn, ...alphabet) => {
+    const next = random(3);
+    const some = (length: number) => Array.from({ length }, () => alphabet[next(3)]);
+    const [a, b, near, far] = [some(20), some(20), some(200), some(5000)];
+    const expected = reference([...a, ...near], [...b, ...near]);
+    const [operation, value, count] = expected.pop()!;
+    expect(operation).toBe("=");
+    expect(short(fn([...a, ...near, ...far].join(""), [...b, ...near, ...far].join("")))).toEqual([
+      ...expected,
+      ["=", value + far.join(""), count + far.length],
+    ]);
+  });
 });
 
 describe("maxEditLength", () => {

@@ -179,23 +179,36 @@ pub fn diff_text<T: Unit>(split: Split, a: &[T], b: &[T], max_edits: usize) -> O
             .collect::<Vec<u32>>()
     });
 
-    // An edit can move into the tail (`x a` → `a a` is `-x a +a`), but not past a token that nothing before it equals.
-    let mut at = end_a;
-    while at < a.len() {
-        let end = split.end(a, at);
-        let Some(id) = interner.find(slice_as_bytes(&a[at..end])) else {
-            break;
-        };
-        ids_a.push(id);
-        ids_b.push(id);
-        offsets_a.push(end as u32);
-        offsets_b.push((end - end_a + end_b) as u32);
-        at = end;
+    // An edit can move into the tail (`x a` → `a a` is `-x a +a`), but not past a token that nothing before it equals,
+    // and not past one that the shortest script keeps when the texts are cut off after it. So a part of the tail is
+    // tried first, if that is within `WORK` and so is sure to give the shortest.
+    let (mut at, mut part) = (end_a, tokens + 1024);
+    if (ids_a.len() + part) * (ids_b.len() + part).div_ceil(64) > WORK {
+        part = usize::MAX;
     }
-
-    let distinct = interner.lines.len();
-    drop(interner);
-    let hunks = diff_ids(&ids_a, &ids_b, distinct, max_edits)?;
+    let hunks = loop {
+        while at < a.len() && part > 0 {
+            let end = split.end(a, at);
+            let Some(id) = interner.find(slice_as_bytes(&a[at..end])) else {
+                break;
+            };
+            ids_a.push(id);
+            ids_b.push(id);
+            offsets_a.push(end as u32);
+            offsets_b.push((end - end_a + end_b) as u32);
+            (at, part) = (end, part - 1);
+        }
+        let distinct = interner.lines.len();
+        if part > 0 || at == a.len() {
+            drop(interner);
+            break diff_ids(&ids_a, &ids_b, distinct, max_edits)?;
+        }
+        let hunks = diff_ids(&ids_a, &ids_b, distinct, max_edits)?;
+        if hunks.last().is_none_or(|last| last.a_hi < ids_a.len()) {
+            break hunks;
+        }
+        part = usize::MAX;
+    };
     let before = split.count(&a[..head]);
     let edit = |h: Hunk| Edit {
         units: Hunk {

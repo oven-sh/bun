@@ -5,8 +5,20 @@
  *
  * A handful of older tests do not run in Node in this file. These tests should be updated to run in Node, or deleted.
  */
-import { bunEnv, bunExe, exampleSite, isASAN, isCI, isDebug, isWindows, randomPort, tls as tlsCert } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  exampleSite,
+  isASAN,
+  isCI,
+  isDebug,
+  isWindows,
+  nodeExe,
+  randomPort,
+  tls as tlsCert,
+} from "harness";
 import { createTest } from "node-harness";
+import { createPrivateKey, X509Certificate } from "node:crypto";
 import { EventEmitter, once } from "node:events";
 import nodefs from "node:fs";
 import http, {
@@ -1538,6 +1550,331 @@ describe("node https server", async () => {
       });
     });
   };
+
+  it("constructs HTTPS servers through both public entry points", () => {
+    for (const server of [new https.Server(httpsOptions), createHttpsServer(httpsOptions)]) {
+      expect(server).toBeInstanceOf(https.Server);
+      expect(server.constructor).toBe(https.Server);
+      expect(typeof server.setSecureContext).toBe("function");
+      expect(() => server.setSecureContext(httpsOptions)).not.toThrow();
+    }
+  });
+
+  it("setSecureContext updates future handshakes without closing existing connections", async () => {
+    const replacement = {
+      key: nodefs.readFileSync(path.join(import.meta.dir, "../tls/fixtures/agent1-key.pem")),
+      cert: nodefs.readFileSync(path.join(import.meta.dir, "../tls/fixtures/agent1-cert.pem")),
+      minVersion: "TLSv1.2" as const,
+    };
+    const server = createHttpsServer(httpsOptions, (_req, res) => res.end("ok"));
+    const url = await listen(server, "https");
+    const connect = async (servername?: string) => {
+      const socket = tlsConnect({
+        host: "127.0.0.1",
+        port: Number(url.port),
+        servername,
+        rejectUnauthorized: false,
+      });
+      await once(socket, "secureConnect");
+      return socket;
+    };
+    let existing;
+    let renewed;
+    try {
+      existing = await connect();
+      const originalFingerprint = existing.getPeerCertificate().fingerprint256;
+
+      server.setSecureContext(replacement);
+      renewed = await connect("localhost");
+
+      const replacementFingerprint = renewed.getPeerCertificate().fingerprint256;
+      expect(replacementFingerprint).not.toBe(originalFingerprint);
+      expect(existing.getPeerCertificate().fingerprint256).toBe(originalFingerprint);
+      expect(existing.destroyed).toBe(false);
+      renewed.destroy();
+      renewed = undefined;
+
+      for (let iteration = 0; iteration < 8; iteration++) {
+        const useReplacement = iteration % 2 === 0;
+        server.setSecureContext(useReplacement ? replacement : httpsOptions);
+        const probe = await connect(iteration % 2 === 0 ? undefined : "localhost");
+        try {
+          expect(probe.getPeerCertificate().fingerprint256).toBe(
+            useReplacement ? replacementFingerprint : originalFingerprint,
+          );
+          expect(existing.destroyed).toBe(false);
+        } finally {
+          probe.destroy();
+        }
+      }
+    } finally {
+      existing?.destroy();
+      renewed?.destroy();
+      server.close();
+    }
+  });
+
+  it("setSecureContext rotates the configured servername", async () => {
+    const replacement = {
+      key: nodefs.readFileSync(path.join(import.meta.dir, "../tls/fixtures/agent1-key.pem")),
+      cert: nodefs.readFileSync(path.join(import.meta.dir, "../tls/fixtures/agent1-cert.pem")),
+    };
+    const options = { ...httpsOptions, servername: "localhost" };
+    const server = createHttpsServer(options);
+    const url = await listen(server, "https");
+    try {
+      for (const context of [httpsOptions, replacement]) {
+        if (context === replacement) server.setSecureContext(context);
+        const socket = tlsConnect({
+          host: "127.0.0.1",
+          port: Number(url.port),
+          servername: "localhost",
+          rejectUnauthorized: false,
+        });
+        try {
+          await once(socket, "secureConnect");
+          expect(socket.getPeerCertificate().fingerprint256).toBe(new X509Certificate(context.cert).fingerprint256);
+        } finally {
+          socket.destroy();
+        }
+      }
+    } finally {
+      server.close();
+    }
+  });
+
+  it("setSecureContext normalizes encrypted PEM key entries before and after listen", async () => {
+    const cert = nodefs.readFileSync(path.join(import.meta.dir, "../tls/fixtures/agent1-cert.pem"));
+    const key = nodefs.readFileSync(path.join(import.meta.dir, "../tls/fixtures/agent1-key.pem"));
+    const passphrase = "replacement-key-password";
+    const pem = createPrivateKey(key).export({ type: "pkcs8", format: "pem", cipher: "aes-256-cbc", passphrase });
+    const replacement = { key: [{ pem, passphrase }], cert, passphrase: "unused-context-password" };
+    for (const beforeListen of [true, false]) {
+      const server = createHttpsServer(httpsOptions);
+      let socket;
+      try {
+        if (beforeListen) server.setSecureContext(replacement);
+        const url = await listen(server, "https");
+        if (!beforeListen) server.setSecureContext(replacement);
+        socket = tlsConnect({ host: "127.0.0.1", port: Number(url.port), rejectUnauthorized: false });
+        await once(socket, "secureConnect");
+        expect(socket.getPeerCertificate().fingerprint256).toBe(new X509Certificate(cert).fingerprint256);
+      } finally {
+        socket?.destroy();
+        server.close();
+      }
+    }
+  });
+
+  it("setSecureContext normalizes TLS 1.3 cipher lists before and after listen", async () => {
+    const key = nodefs.readFileSync(path.join(import.meta.dir, "../tls/fixtures/agent1-key.pem"));
+    const cert = nodefs.readFileSync(path.join(import.meta.dir, "../tls/fixtures/agent1-cert.pem"));
+    const cases = [
+      { ciphers: "TLS_AES_256_GCM_SHA384", version: "TLSv1.3" as const },
+      { ciphers: "TLS_AES_256_GCM_SHA384:ECDHE-RSA-AES128-GCM-SHA256", version: "TLSv1.2" as const },
+    ];
+    for (const beforeListen of [true, false]) {
+      for (const { ciphers, version } of cases) {
+        const server = createHttpsServer(httpsOptions);
+        let socket;
+        try {
+          if (beforeListen) server.setSecureContext({ key, cert, ciphers });
+          const url = await listen(server, "https");
+          if (!beforeListen) server.setSecureContext({ key, cert, ciphers });
+          socket = tlsConnect({
+            host: "127.0.0.1",
+            port: Number(url.port),
+            minVersion: version,
+            maxVersion: version,
+            rejectUnauthorized: false,
+          });
+          await once(socket, "secureConnect");
+          expect(socket.getPeerCertificate().fingerprint256).toBe(new X509Certificate(cert).fingerprint256);
+          expect(socket.getProtocol()).toBe(version);
+        } finally {
+          socket?.destroy();
+          server.close();
+        }
+      }
+    }
+  });
+
+  it("setSecureContext preserves the requested cipher order", async () => {
+    const key = nodefs.readFileSync(path.join(import.meta.dir, "../tls/fixtures/agent1-key.pem"));
+    const cert = nodefs.readFileSync(path.join(import.meta.dir, "../tls/fixtures/agent1-cert.pem"));
+    const ciphers = "ECDHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384";
+    for (const honorCipherOrder of [undefined, false]) {
+      const options = { key, cert, ciphers, honorCipherOrder };
+      const server = createHttpsServer(options);
+      const url = await listen(server, "https");
+      try {
+        for (const update of [false, true]) {
+          if (update) server.setSecureContext(options);
+          const socket = tlsConnect({
+            host: "127.0.0.1",
+            port: Number(url.port),
+            minVersion: "TLSv1.2",
+            maxVersion: "TLSv1.2",
+            ciphers: "ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256",
+            rejectUnauthorized: false,
+          });
+          try {
+            await once(socket, "secureConnect");
+            expect(socket.getCipher().standardName).toBe(
+              honorCipherOrder === false
+                ? "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384"
+                : "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256",
+            );
+          } finally {
+            socket.destroy();
+          }
+        }
+      } finally {
+        server.close();
+      }
+    }
+  });
+
+  it("preserves static ALPN protocols after setSecureContext", async () => {
+    const replacement = {
+      key: nodefs.readFileSync(path.join(import.meta.dir, "../tls/fixtures/agent1-key.pem")),
+      cert: nodefs.readFileSync(path.join(import.meta.dir, "../tls/fixtures/agent1-cert.pem")),
+    };
+    const protocol = "openclaw-test";
+    const server = createHttpsServer({ ...httpsOptions, ALPNProtocols: [protocol] });
+    const url = await listen(server, "https");
+    const connect = async () => {
+      const socket = tlsConnect({
+        host: "127.0.0.1",
+        port: Number(url.port),
+        servername: "localhost",
+        ALPNProtocols: [protocol],
+        rejectUnauthorized: false,
+      });
+      await once(socket, "secureConnect");
+      return socket;
+    };
+    let socket;
+    let rejected;
+    try {
+      rejected = tlsConnect({
+        host: "127.0.0.1",
+        port: Number(url.port),
+        servername: "localhost",
+        ALPNProtocols: ["unsupported"],
+        rejectUnauthorized: false,
+      });
+      const rejectedOutcome = await new Promise<string>(resolve => {
+        rejected.once("secureConnect", () => resolve("connected"));
+        rejected.once("error", error => resolve(error.code));
+      });
+      expect(rejectedOutcome).toBe("ERR_SSL_TLSV1_ALERT_NO_APPLICATION_PROTOCOL");
+      rejected.destroy();
+
+      socket = await connect();
+      expect(socket.alpnProtocol).toBe(protocol);
+      socket.destroy();
+
+      server.setSecureContext(replacement);
+      socket = await connect();
+      expect(socket.alpnProtocol).toBe(protocol);
+    } finally {
+      rejected?.destroy();
+      socket?.destroy();
+      server.close();
+    }
+  });
+
+  it("setSecureContext preserves an empty ALPN protocol list", async () => {
+    const server = createHttpsServer({ ...httpsOptions, ALPNProtocols: [] });
+    const url = await listen(server, "https");
+    let socket;
+    try {
+      for (const update of [false, true]) {
+        if (update) server.setSecureContext(httpsOptions);
+        socket = tlsConnect({
+          host: "127.0.0.1",
+          port: Number(url.port),
+          servername: "localhost",
+          ALPNProtocols: ["http/1.1"],
+          rejectUnauthorized: false,
+        });
+        await once(socket, "secureConnect");
+        expect(socket.alpnProtocol).toBe(false);
+        socket.destroy();
+      }
+    } finally {
+      socket?.destroy();
+      server.close();
+    }
+  });
+
+  it("setSecureContext accepts a PFX-only replacement and its embedded CA", async () => {
+    const fixtures = path.join(import.meta.dir, "../test/fixtures/keys");
+    const clientKey = nodefs.readFileSync(path.join(fixtures, "agent1-key.pem"));
+    const clientCert = nodefs.readFileSync(path.join(fixtures, "agent1-cert.pem"));
+    const server = createHttpsServer({ ...httpsOptions, requestCert: true, rejectUnauthorized: false }, (_req, res) =>
+      res.end("ok"),
+    );
+    const url = await listen(server, "https");
+    const controller = new AbortController();
+    const accepted = once(server, "secureConnection", { signal: controller.signal });
+    let client;
+    try {
+      server.setSecureContext({
+        pfx: nodefs.readFileSync(path.join(fixtures, "agent1.pfx")),
+        passphrase: "sample",
+      });
+      client = tlsConnect({
+        host: "127.0.0.1",
+        port: Number(url.port),
+        key: clientKey,
+        cert: clientCert,
+        rejectUnauthorized: false,
+      });
+      const [, [serverSocket]] = await Promise.all([once(client, "secureConnect"), accepted]);
+
+      expect(client.getPeerCertificate().fingerprint256).toBe(new X509Certificate(clientCert).fingerprint256);
+      expect(serverSocket.authorized).toBe(true);
+    } finally {
+      controller.abort();
+      client?.destroy();
+      server.close();
+    }
+  });
+
+  const systemNode = nodeExe();
+  const pfxDefaultCARuntimes: Array<[string, string]> = [["Bun", bunExe()]];
+  if (systemNode) pfxDefaultCARuntimes.push(["Node", systemNode]);
+  describe.each(pfxDefaultCARuntimes)("PFX CA handling across HTTPS server lifecycles in %s", (runtime, executable) => {
+    it("keeps embedded CAs additive to default CAs", async () => {
+      const fixtures = path.join(import.meta.dir, "../test/fixtures/keys");
+      await using proc = Bun.spawn({
+        cmd: [executable, path.join(import.meta.dir, "node-http-set-secure-context-pfx.node.mjs")],
+        env: {
+          ...bunEnv,
+          NODE_EXTRA_CA_CERTS: path.join(fixtures, "ca2-cert.pem"),
+          TLS_FIXTURES_DIR: fixtures,
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect({ runtime, result: stdout.trim(), exitCode, failureDetail: exitCode === 0 ? "" : stderr }).toEqual({
+        runtime,
+        result: JSON.stringify({
+          liveTrust: { pfxCA: true, defaultCA: true },
+          relistenTrust: { pfxCA: true, defaultCA: true },
+          beforeListenTrust: { pfxCA: true, defaultCA: true },
+          initialTrust: { pfxCA: true, defaultCA: true },
+          explicitTrust: { pfxCA: true, defaultCA: false },
+        }),
+        exitCode: 0,
+        failureDetail: "",
+      });
+    });
+  });
   it("is marked encrypted (#5867)", async () => {
     const { server, url, done } = await createServer(async (req, res) => {
       expect(req.connection.encrypted).toBe(true);

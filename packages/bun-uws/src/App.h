@@ -116,8 +116,11 @@ private:
     struct PendingServerName {
         std::string hostname;
         SslCtxPtr ctx;
+        /* The server's own hostname follows replacements; explicit SNI entries do not. */
+        bool inheritDefaultContext;
     };
     std::vector<PendingServerName> pendingServerNames;
+    std::vector<unsigned char> alpnProtocols;
     /* No raw us_listen_socket_t* cache here. src/runtime/server/mod.rs's stop calls
      * us_listen_socket_close(ls) directly; the listener is queued for free in
      * loop_post, so any vector we kept would dangle by the time the deferred
@@ -157,6 +160,10 @@ public:
             if (applyClientCertPolicy) {
                 us_ssl_ctx_set_sni_policy(domainCtx.get(), options.request_cert, options.reject_unauthorized);
             }
+            if (!alpnProtocols.empty() && !us_ssl_ctx_set_alpn_protocols(domainCtx.get(), alpnProtocols.data(), static_cast<unsigned int>(alpnProtocols.size()))) {
+                if (success) *success = false;
+                return std::move(*this);
+            }
             if (httpContext->getSocketContextData()->http2Context) {
                 us_ssl_ctx_enable_http2_alpn(domainCtx.get(), httpContext->getSocketContextData()->allowHttp1);
             }
@@ -165,7 +172,7 @@ public:
             });
             /* Queue for any listeners not yet created. We hold one SSL_CTX ref;
              * each listen socket took its own via SSL_CTX_up_ref. */
-            pendingServerNames.push_back({hostname_pattern, std::move(domainCtx)});
+            pendingServerNames.push_back({hostname_pattern, std::move(domainCtx), !applyClientCertPolicy});
             if (success) *success = true;
         }
 
@@ -185,6 +192,56 @@ public:
     /* Returns the SSL_CTX* of this app, or nullptr. */
     void *getNativeHandle() {
         return sslCtx.get();
+    }
+
+    bool setALPNProtocols(const unsigned char *protocols, unsigned int protocolsLength) {
+        if constexpr (!SSL) {
+            return false;
+        } else {
+            if (!us_ssl_ctx_set_alpn_protocols(sslCtx.get(), protocols, protocolsLength)) {
+                return false;
+            }
+            alpnProtocols.assign(protocols, protocols + protocolsLength);
+            return true;
+        }
+    }
+
+    bool setSecureContext(SocketContextOptions options, const char *const *additionalCa, unsigned int additionalCaCount, const unsigned char *alpnProtocols, unsigned int alpnProtocolsLength) {
+        if constexpr (!SSL) {
+            return false;
+        } else {
+            enum create_bun_socket_error_t err = CREATE_BUN_SOCKET_ERROR_NONE;
+            SslCtxPtr next{us_ssl_ctx_from_options(options, &err)};
+            if (!next) return false;
+
+            for (unsigned int i = 0; i < additionalCaCount; i++) {
+                if (!us_ssl_ctx_add_ca_cert(next.get(), additionalCa[i])) {
+                    return false;
+                }
+            }
+            if (alpnProtocolsLength && !us_ssl_ctx_set_alpn_protocols(next.get(), alpnProtocols, alpnProtocolsLength)) {
+                return false;
+            }
+            if (httpContext->getSocketContextData()->http2Context) {
+                us_ssl_ctx_enable_http2_alpn(next.get(), httpContext->getSocketContextData()->allowHttp1);
+            }
+            for (auto &entry : pendingServerNames) {
+                if (entry.inheritDefaultContext) {
+                    us_internal_ssl_ctx_up_ref(next.get());
+                    entry.ctx.reset(next.get());
+                }
+            }
+            forEachListenSocket([&](us_listen_socket_t *ls) {
+                us_listen_socket_set_default_ssl_ctx(ls, next.get());
+                /* Replay in registration order so an explicit entry for the same name still wins. */
+                for (auto &entry : pendingServerNames) {
+                    us_listen_socket_add_server_name(ls, entry.hostname.c_str(), entry.ctx.get());
+                }
+            });
+
+            sslCtx = std::move(next);
+            return true;
+        }
     }
 
     /* Attaches a "filter" function to track socket connections/disconnections */

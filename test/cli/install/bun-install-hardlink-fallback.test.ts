@@ -30,7 +30,7 @@ int link(const char *oldpath, const char *newpath) {
 
 // bun-musl is statically linked, so LD_PRELOAD cannot intercept linkat.
 describe.skipIf(!isLinux || isMusl || !cc)("hardlink backend falls back to copyfile", () => {
-  for (const errno of ["EACCES", "EPERM"]) {
+  for (const errno of ["EACCES", "EPERM", "EOPNOTSUPP"]) {
     for (const linker of ["hoisted", "isolated"]) {
       test.concurrent(`linkat fails with ${errno}, ${linker} linker`, async () => {
         using dir = tempDir(`hardlink-${errno}-${linker}`, {

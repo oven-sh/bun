@@ -1195,7 +1195,6 @@ fn sentence_of(verdict: ImageVerdict) -> Option<&'static str> {
         ImageVerdict::NotAnImage => "the file is corrupt (bad header)",
         ImageVerdict::Truncated => "the file is truncated. Copy or download it again",
         ImageVerdict::Misaligned => "the code isn't page-aligned. Something modified the executable after it was built",
-        ImageVerdict::LowPagesAccessible => "it needs the lowest pages of the address space to be unmapped, and this system maps them",
         ImageVerdict::NoCode => "it contains no code",
         ImageVerdict::CannotMapCode => "its code could not be mapped as executable memory",
         ImageVerdict::NeedsCellCage => "it needs a reserved address range for the JavaScript heap, and this process doesn't have one. Rebuild with --aot-huge-heap to remove the heap limit",

@@ -103,34 +103,34 @@ const stubGlobal = [
 // create_mock_objects() in src/runtime/test_runner/jest.rs and the functions that it calls put these on `jest` and `vi`, beside what has a row of its own below.
 // One function lies under the name on both.
 const sharedByJestAndVi = [
-  "advanceTimersByTime",
-  "advanceTimersToNextFrame",
-  "advanceTimersToNextTimer",
   "clearAllTimers",
   "getMockedSystemTime",
   "getRealSystemTime",
-  "getTimerCount",
   "isFakeTimers",
   "isMockFunction",
   "mocked",
   "resetAllMocks",
   "runAllImmediates",
-  "runAllTicks",
-  "runAllTimers",
-  "runOnlyPendingTimers",
-  "setTimerTickMode",
   "useRealTimers",
 ];
 
 // Each of the two has a function of its own under the name.
 const onJestAndOnVi = [
+  "advanceTimersByTime",
   "advanceTimersByTimeAsync",
+  "advanceTimersToNextFrame",
+  "advanceTimersToNextTimer",
   "advanceTimersToNextTimerAsync",
   "doMock",
   "fn",
+  "getTimerCount",
   "mock",
+  "runAllTicks",
+  "runAllTimers",
   "runAllTimersAsync",
+  "runOnlyPendingTimers",
   "runOnlyPendingTimersAsync",
+  "setTimerTickMode",
   "unmock",
 ];
 

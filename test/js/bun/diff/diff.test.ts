@@ -533,6 +533,14 @@ describe("options that ignore a difference", () => {
     expect(diff.hunks(a, b, options)).toEqual(diff.parsePatch(expected)[0].hunks);
   });
 
+  test.skipIf(isDebug)("a long common end of lines that are also before it", () => {
+    const next = random(7);
+    const text = (length: number) => numbered(length, () => next(10_000) % 26);
+    const [a, b, end] = [text(20_000), text(20_000), repeat(text(1000), 200)];
+    const maxEditLength = edits(diff.lines(a + end, b + end));
+    expect(edits(diff.lines(a + end, b + end, { ignoreWhitespace: true, maxEditLength }))).toBe(maxEditLength);
+  });
+
   test.each(["", "世"])("long texts have the edits of the same texts in one spelling: %j", wide => {
     const next = random(11);
     const alphabet = Array.from({ length: 40 }, (_, i) => `line${wide}${i}\n`);

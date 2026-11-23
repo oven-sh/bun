@@ -2758,6 +2758,7 @@ describe.concurrent("bun pm diff (engine invariants)", () => {
     expect(exitCode).toBe(0);
   });
 
+  // Only a file of 64 MB reaches the limit. A debug build takes several seconds to scan it.
   test("style sheets under the size limit are normalized whatever they add up to", async () => {
     const { text, exitCode } = await pretty(
       {

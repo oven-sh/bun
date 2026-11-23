@@ -434,13 +434,7 @@ pub fn diff_text<T: Unit>(split: Split, a: &[T], b: &[T], max_edits: usize) -> O
         ids
     });
 
-    // An edit can move into the tail (`x a` → `a a` is `-x a +a`), but not past a token that nothing before it equals,
-    // and not past one that the shortest script keeps when the texts are cut off after it. So a part of the tail is
-    // tried first, if that is within `ROW_WORK` and so is sure to give the shortest.
-    let (mut at, mut part) = (end_a, tokens + 1024);
-    if (ids_a.len() + part) * (ids_b.len() + part).div_ceil(64) > ROW_WORK {
-        part = usize::MAX;
-    }
+    let (mut at, mut part) = (end_a, part_of_tail(&ids_a, &ids_b, tokens));
     let hunks = loop {
         while at < a.len() && part > 0 {
             let end = split.end(a, at);
@@ -467,6 +461,17 @@ pub fn diff_text<T: Unit>(split: Split, a: &[T], b: &[T], max_edits: usize) -> O
         part = usize::MAX;
     };
     Some(edits(hunks, head, before(), offsets.as_ref()))
+}
+
+/// An edit can move into the tail (`x a` → `a a` is `-x a +a`), but not past a token that nothing before it equals,
+/// and not past one that the shortest script keeps when the texts are cut off after it. So this many tokens of the
+/// tail are tried first, if that is within `ROW_WORK` and so is sure to give the shortest.
+fn part_of_tail(ids_a: &[u32], ids_b: &[u32], tokens: usize) -> usize {
+    let part = tokens + 1024;
+    if (ids_a.len() + part) * (ids_b.len() + part).div_ceil(64) > ROW_WORK {
+        return usize::MAX;
+    }
+    part
 }
 
 /// What tokens can differ in and still match.
@@ -535,28 +540,32 @@ fn diff_keys<T: Unit>(
         };
         offsets.array_windows().map(id).collect::<Vec<_>>()
     });
-    // As far into the tail as an edit can move.
-    let (mut at, mut lower) = (end_a, Vec::new());
-    while at < a.len() {
-        let end = split.end(a, at);
-        let mut key = &a[at..end];
-        if ignore.case {
-            lower.clear();
-            T::push_lowercase(key, &mut lower);
-            key = &lower;
+    let (mut at, mut part) = (end_a, part_of_tail(&ids_a, &ids_b, tokens));
+    let mut lower = Vec::new();
+    let hunks = loop {
+        while at < a.len() && part > 0 {
+            let end = split.end(a, at);
+            let mut key = &a[at..end];
+            if ignore.case {
+                lower.clear();
+                T::push_lowercase(key, &mut lower);
+                key = &lower;
+            }
+            let Some(id) = interner.find(ignore.trim(key)) else {
+                break;
+            };
+            ids_a.push(id);
+            ids_b.push(id);
+            offsets[0].push(end as u32);
+            offsets[1].push((end - end_a + end_b) as u32);
+            (at, part) = (end, part - 1);
         }
-        let Some(id) = interner.find(ignore.trim(key)) else {
-            break;
-        };
-        ids_a.push(id);
-        ids_b.push(id);
-        offsets[0].push(end as u32);
-        offsets[1].push((end - end_a + end_b) as u32);
-        at = end;
-    }
-    let distinct = interner.hashed.lines.len();
-    drop(interner);
-    let hunks = diff_ids(&ids_a, &ids_b, distinct, max_edits)?;
+        let hunks = diff_ids(&ids_a, &ids_b, interner.hashed.lines.len(), max_edits)?;
+        if part > 0 || at == a.len() || hunks.last().is_none_or(|last| last.a_hi < ids_a.len()) {
+            break hunks;
+        }
+        part = usize::MAX;
+    };
     Some(edits(hunks, head, split.count(&a[..head]), Some(&offsets)))
 }
 

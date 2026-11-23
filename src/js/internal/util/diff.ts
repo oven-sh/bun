@@ -13,6 +13,8 @@ function validateInput(value, name) {
 
 // About four times what `nativeDiff` takes.
 const STEPS_PER_ITEM = 32;
+// `Bun.diff.arrays` throws for more.
+const MAX_NATIVE_LENGTH = 2 ** 28;
 
 // Myers' algorithm as in Node's lib/internal/assert/myers_diff.js, so that ties come out in the same order.
 // Node copies every diagonal at every level. A level here leaves out diagonals that no shortest path can still use:
@@ -27,6 +29,7 @@ function myersDiff(actual, expected) {
   let low = 0;
   let high = 0;
   let stepsLeft = STEPS_PER_ITEM * (actualLength + expectedLength + 1);
+  if (actualLength > MAX_NATIVE_LENGTH || expectedLength > MAX_NATIVE_LENGTH) stepsLeft = Infinity;
 
   search: while ((stepsLeft -= (high - low) / 2 + 1) >= 0) {
     const current = new Int32Array((high - low) / 2 + 1);

@@ -1,2 +1,2 @@
 import { bench } from "./run";
-bench("three.js", "ipcbig.js", "before;");
+bench("cond.js", "all", "ipc,process.stdout,lines into,named pipe,spawn,file.stream,shell", "before;", "7");

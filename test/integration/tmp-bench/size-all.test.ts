@@ -1,2 +1,2 @@
 import { bench } from "./run";
-bench("three.js", "busywrite.js", "before;");
+bench("three.js", "share.js", "before;");

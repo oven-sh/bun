@@ -26,7 +26,7 @@ export function bench(script: string, ...args: string[]) {
       }
       let before = process.env.BEFORE_BUN;
       if (!before) {
-        const [build, step] = [143695, name.slice(4) + "-build-bun"];
+        const [build, step] = [143740, name.slice(4) + "-build-bun"];
         const json = (url: string) => fetch("https://buildkite.com" + url).then(it => it.json());
         const { records } = await json(`/bun/bun/builds/${build}/data/jobs?page=1`);
         const job = records.findLast(it => it.step_key === step && it.exit_status === 0);

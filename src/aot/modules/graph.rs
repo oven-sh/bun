@@ -816,16 +816,6 @@ impl ModuleGraph {
             || matches!(module, ModuleRef::File(file) if is_left_to_loader(file))
     }
 
-    /// Whether require() of data of the file under a type may answer with the exports of this code.
-    pub fn answers_for_typed_form(&self, file: FileId) -> bool {
-        let is_data = |file: FileId| {
-            self.find_row(file)
-                .is_some_and(|row| row.interop.kind == ModuleKind::Data)
-        };
-        let mut forms = self.forms_require_checks_first.iter();
-        forms.any(|&(form, code)| code == file && is_data(form) && !is_data(code))
-    }
-
     pub fn synthetic_export(&self, id: SyntheticExportId) -> &SyntheticExport {
         &self.synthetic_exports[id.0 as usize]
     }

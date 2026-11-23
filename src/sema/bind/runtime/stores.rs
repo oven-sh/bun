@@ -422,9 +422,7 @@ fn may_modify_import_meta(hir: &File<'_>, bound: &BoundBuilder, import_meta: Exp
         }) => true,
         Some(ExprKind::TaggedTemplate(call)) => hir[call].callee == access,
         Some(ExprKind::Call(call)) if hir[call].callee == access => {
-            !name.is_some_and(|name| {
-                name == known::require || name == known::resolve || name == known::resolveSync
-            })
+            !name.is_some_and(|name| name == known::require || name == known::resolve)
         }
         _ => false,
     }

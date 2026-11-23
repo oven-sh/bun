@@ -1,1 +1,0 @@
-exports.total = 7;

@@ -506,19 +506,10 @@ static std::optional<AOT::ModuleID> findDefaultForm(const String& path)
     return findModuleForPath(pathOfForm.transferToWTFString());
 }
 
-// A form stands under the path of its file, a question mark and the name of the form. `bun run` takes that name for a query, which makes another instance of the file.
-bool namesFormByQuery(const String& key, AOT::ModuleID named)
-{
-    size_t mark = key.reverseFind('?');
-    return mark != notFound && !Bun__compiledProgramRunsInPlace() && AOT::isDataFile(named) && AOT::hasAttributeVariant(key.left(mark));
-}
-
 // The resolver ignores import attributes and finds a file in any form. A require() or an import() without a type treats it as missing, but its path can still be resolved and read.
 void throwIfOnlyTyped(Zig::GlobalObject* globalObject, const String& key, const String& specifier, const String& importer, bool isForRequire)
 {
-    auto named = findModuleForPath(key);
-    bool namesForm = named && namesFormByQuery(key, *named);
-    if (!namesForm && (Bun__compiledProgramRunsInPlace() || named || findDefaultForm(key) || !AOT::hasAttributeVariant(key)))
+    if (Bun__compiledProgramRunsInPlace() || findModuleForPath(key) || findDefaultForm(key) || !AOT::hasAttributeVariant(key))
         return;
     auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
     BunString specifierString = Bun::toString(specifier);
@@ -2779,7 +2770,6 @@ using namespace JSC;
 const AOT::ModuleHost compiledModuleHost {};
 
 std::optional<AOT::ModuleID> compiledModuleForPath(const String&) { return std::nullopt; }
-bool namesFormByQuery(const String&, AOT::ModuleID) { return false; }
 std::optional<bool> isHiddenFromRequireCache(const String&) { return false; }
 std::optional<AOT::ModuleID> findMockedModule(const String&) { return std::nullopt; }
 JSPromise* compiledModuleSource(Zig::GlobalObject*, const String&, const ScriptFetchParameters*, const String&) { return nullptr; }

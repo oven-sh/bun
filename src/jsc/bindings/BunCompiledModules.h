@@ -61,7 +61,6 @@ const WTF::String& requesterForUncompiledImportCall(const WTF::String& origin);
 const WTF::String& uncompiledImportReferrer(const WTF::String& origin);
 // The loader resolves an import from its registry without calling the host. Throws if the importer may not load the file under the key.
 void willResolveImport(Zig::GlobalObject*, const WTF::String& key, JSC::JSValue importer);
-bool namesFormByQuery(const WTF::String& key, JSC::AOT::ModuleID named);
 void throwIfOnlyTyped(Zig::GlobalObject*, const WTF::String& key, const WTF::String& specifier, const WTF::String& importer, bool isForRequire);
 bool evaluateCompiledFileForDefaultLoader(Zig::GlobalObject*, JSCommonJSModule* target, const WTF::String& path, bool isTypeScriptLoader);
 // require() passed the object of a compiled file to the program's extension loader, which delegates to a default loader.

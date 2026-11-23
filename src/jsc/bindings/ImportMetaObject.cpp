@@ -216,7 +216,7 @@ static void throwIfResolvedFileIsRefused(JSC::JSGlobalObject* globalObject, JSC:
     auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
     auto resolved = resolvedPath.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, );
-    if (auto module = Bun::compiledModuleForPath(resolved); module && !Bun::namesFormByQuery(resolved, *module)) {
+    if (auto module = Bun::compiledModuleForPath(resolved)) {
         if (Bun::isModuleRefusedByName(resolved)) [[unlikely]] {
             JSC::throwException(globalObject, scope, Bun::createCodeGenerationFromStringsError(globalObject));
             return;

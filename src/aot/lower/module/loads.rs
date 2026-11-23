@@ -3042,7 +3042,7 @@ pub(crate) fn has_settled_type(
 ) -> bool {
     let is_known = |name: &ImportSpecifier| matches!(name, ImportSpecifier::Constant(_));
     given.len() == 2
-        && hir.ids(given).nth(1).map(|it| hir.skip_type_assertions(it)) == site.attributes.some()
+        && hir.ids(given).nth(1) == site.attributes.some()
         && names.iter().all(is_known)
         && hir.is_import_attribute_settled(site.attributes, known::r#type)
 }

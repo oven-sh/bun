@@ -76,8 +76,6 @@ const project = {
     });`,
 };
 
-// `bun run` reads require("fs") as require("node:fs") in a CommonJS file that an import loads, and as it is written in one that require() loads. The first load counts.
-// A build that does not see the test files hears from the scan of them how they load each file.
 const loadedByImports = {
   "package.json": `{}`,
   "imported.cjs": `exports.fs = () => typeof require("fs").readFileSync; exports.byName = name => typeof require(name).readFileSync;`,
@@ -122,10 +120,10 @@ for (const [way, env] of ways) {
 }
 
 for (const [way, env] of ways) {
-  test.concurrent(`a CommonJS file that an import loads asks for the module, ${way}`, async () => {
+  test.concurrent(`a CommonJS file that an import loads gets the entry too, ${way}`, async () => {
     using dir = tempDir("an-entry-beside-a-file-that-an-import-loads", loadedByImports);
     const plain = await runTests(String(dir), {});
-    expect(plain.printed).toContain("imported: function number function function function number");
+    expect(plain.printed).toContain("imported: number number number number number number");
     expect(await runTests(String(dir), env, "--aot")).toEqual(plain);
   });
 }

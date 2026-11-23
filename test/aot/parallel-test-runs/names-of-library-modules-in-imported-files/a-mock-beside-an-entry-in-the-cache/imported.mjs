@@ -1,0 +1,1 @@
+export const read = () => [require("os").from, require("node:os").from, require("sys").from, require("util").from, require(process.argv.length > 99 ? "path" : "os").from, require.resolve("os").endsWith("other.cjs")].join();

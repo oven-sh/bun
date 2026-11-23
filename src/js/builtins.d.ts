@@ -570,6 +570,7 @@ declare interface Function {
 
 interface String {
   $charCodeAt: String["charCodeAt"];
+  $substr: String["substr"];
   // add others as needed
 }
 

@@ -7514,3 +7514,99 @@ test.concurrent.skipIf(isWindows)("supports module names with a % that isn't a v
   expect(stderr).toContain(" 4 pass\n 0 fail");
   expect(exitCode).toBe(0);
 });
+
+test.concurrent.each(isolationFlags)("a factory requires the builtin that it mocks %j", async flags => {
+  const lay = (name: string) => `() => {
+    mock.module("${name}", () => ({ of: typeof require("${name}").parse }));
+    return require("${name}").of;
+  }`;
+  using dir = tempDir("mock-module-factory-requires-builtin", {
+    "imported.mjs": `import { mock } from "bun:test"; export default ${lay("path")};`,
+    "required.cjs": `const { mock } = require("bun:test"); module.exports = ${lay("url")};`,
+    "a.test.mjs": `
+      import { beforeAll, describe, expect, mock, test } from "bun:test";
+      import Module from "node:module";
+      import imported from "./imported.mjs";
+
+      test("past an entry under the prefixed name in require.cache", () => {
+        mock.module("querystring", () => {
+          require.cache["node:querystring"] = { exports: { parse: 1 } };
+          return { of: typeof require("node:querystring").parse };
+        });
+        expect(require("querystring").of).toBe("function");
+      });
+      describe("with Module._resolveFilename overridden", () => {
+        beforeAll(() => {
+          const original = Module._resolveFilename;
+          Module._resolveFilename = function () {
+            return original.apply(this, arguments);
+          };
+        });
+        test("in an imported file", () => expect(imported()).toBe("function"));
+        test("in a required file", () => expect(require("./required.cjs")()).toBe("function"));
+      });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", ...flags, "./a.test.mjs"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain(" 3 pass\n 0 fail");
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent.each(isolationFlags)("beside a mock, a builtin is required like a file %j", async flags => {
+  const read = `() => [require("os"), require("sys"), require("./file.cjs"), require("node:os")].map(it => it.from).join()`;
+  using dir = tempDir("mock-module-builtin-like-a-file", {
+    "file.cjs": `exports.from = "file";`,
+    "other.cjs": `exports.from = "resolver";`,
+    "imported.cjs": `exports.read = ${read};`,
+    "imported.mjs": `export const read = ${read};`,
+    "required.cjs": `exports.read = ${read};`,
+    "a.test.mjs": `
+      import { expect, mock, test } from "bun:test";
+      import Module from "node:module";
+      import { read as cjs } from "./imported.cjs";
+      import { read as mjs } from "./imported.mjs";
+      const reads = () => [...new Set([cjs(), mjs(), require("./required.cjs").read()])];
+      const names = ["os", "sys", "./file.cjs"];
+
+      test("the mock", () => {
+        for (const name of names) mock.module(name, () => ({ from: "mock" }));
+        expect(reads()).toEqual(["mock,mock,mock,mock"]);
+      });
+      test("a later entry in require.cache", () => {
+        for (const name of names) require.cache[require.resolve(name)] = { exports: { from: "entry" } };
+        expect(reads()).toEqual(["entry,entry,entry,mock"]);
+      });
+      test("what Module._resolveFilename answers", () => {
+        const original = Module._resolveFilename;
+        Module._resolveFilename = function (request, ...rest) {
+          return original.call(this, names.includes(request) ? "./other.cjs" : request, ...rest);
+        };
+        expect(reads()).toEqual(["resolver,resolver,resolver,mock"]);
+      });
+      test("what Module.prototype.require returns", () => {
+        const original = Module.prototype.require;
+        Module.prototype.require = function (id) {
+          return names.includes(id) ? { from: "require" } : original.apply(this, arguments);
+        };
+        expect(reads()).toEqual(["require,require,require,mock"]);
+      });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", ...flags, "./a.test.mjs"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain(" 4 pass\n 0 fail");
+  expect(exitCode).toBe(0);
+});

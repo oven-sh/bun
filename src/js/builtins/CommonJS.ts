@@ -36,7 +36,8 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
       // A terrible special case where Node.js allows non-prefixed built-ins to
       // read the require cache. Though they never write to it, which is so silly.
       const existing = requireMap.$get(originalId);
-      if (existing) {
+      // A prefixed name gets here too: "node:sys" resolves to "node:util".
+      if (existing && !(typeof originalId === "string" && originalId.$substr(0, 5) === "node:")) {
         const c = $evaluateCommonJSModule(existing, this);
         if (c && c.indexOf(existing) === -1) {
           c.push(existing);

@@ -54,10 +54,7 @@ enum ModuleOperation {
 
 #[derive(Copy, Clone)]
 enum ComputedLoad {
-    Require {
-        looks_in_cache: bool,
-        is_read_by_transpiler: bool,
-    },
+    Require { looks_in_cache: bool },
     Import,
     Resolve,
 }
@@ -83,13 +80,6 @@ enum CalleeKnowledge {
 }
 
 #[derive(Copy, Clone)]
-struct NameLookedUpInCache {
-    text: ValueId,
-    is_node_builtin: bool,
-    name_for_host: Option<&'static [u8]>,
-}
-
-#[derive(Copy, Clone)]
 struct PlannedSite {
     target: ModuleRef,
     is_bare: bool,
@@ -106,7 +96,6 @@ struct AnsweredSite<'g> {
     plan: Option<PlannedSite>,
     resolved_from: Option<FileId>,
     looks_in_cache: bool,
-    is_read_by_transpiler: bool,
     has_arm_for_transpiler_alone: bool,
     maker_of_asked_require: Option<FileId>,
 }
@@ -245,10 +234,6 @@ impl FileLowering<'_, '_, '_, '_> {
     fn builtin_name_as_asked(&self, name: Atom, module: ModuleRef) -> Option<&[u8]> {
         let (name, alias) = self.builtin_named(name, module)?;
         alias.node_builtin.then_some(name)
-    }
-
-    fn is_read_by_transpiler(&self, callee: ExprId, name: ExprId) -> bool {
-        self.is_callee_read_by_transpiler(callee) && self.is_name_read_by_transpiler(name)
     }
 
     fn has_arm_for_transpiler_alone(&self, name: ExprId) -> bool {
@@ -711,9 +696,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             ),
             resolved_from,
             looks_in_cache: !matches!(site.kind, ImportSiteKind::GetBuiltinModule(_)),
-            is_read_by_transpiler: matches!(site.kind, ImportSiteKind::Require(_))
-                && require_call.is_none_or(|found| matches!(found.form, RequireCallForm::Direct))
-                && self.file.is_read_by_transpiler(callee, site.specifier_node),
             has_arm_for_transpiler_alone: matches!(answer, SiteAnswer::Computed(_))
                 && require_call.is_none_or(|found| matches!(found.form, RequireCallForm::Direct))
                 && match (site.kind, hir.member_key(callee)) {
@@ -1300,7 +1282,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             plan: None,
             resolved_from: None,
             looks_in_cache: true,
-            is_read_by_transpiler: false,
             has_arm_for_transpiler_alone: false,
             maker_of_asked_require: None,
         };
@@ -1347,7 +1328,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             plan: None,
             resolved_from: None,
             looks_in_cache: false,
-            is_read_by_transpiler: false,
             has_arm_for_transpiler_alone: false,
             maker_of_asked_require: None,
         };
@@ -1388,7 +1368,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             }),
             resolved_from: None,
             looks_in_cache: true,
-            is_read_by_transpiler: true,
             has_arm_for_transpiler_alone: false,
             maker_of_asked_require: None,
         };
@@ -1824,25 +1803,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             ModuleRef::Runtime(_) => self.file.builtin_named(written, module),
             _ => None,
         };
-        let Some((name, alias)) = read else {
+        let Some((name, _)) = read else {
             return self.emit_name_as_given(written, given);
         };
-        let is_as_written = name == self.file.queries.atom_bytes(written);
         let name = name.to_vec();
-        let gets_prefix = is_as_written
-            && alias.node_builtin
-            && !name.starts_with(b"node:")
-            && self.file.inputs.modules.tracks_first_load(self.file.file);
-        if !gets_prefix {
-            return self.emit_text(&name);
-        }
-        let file = self.file.module_id();
-        let reads_as_written = self.builder.was_loaded_synchronously(file);
-        self.emit_one_of(
-            reads_as_written,
-            &mut |this| this.emit_text(&name),
-            &mut |this| this.emit_text(alias.path.as_bytes()),
-        )
+        self.emit_text(&name)
     }
 
     fn emit_one_of(
@@ -1899,12 +1864,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             && let Some(name) = self.try_emit_name_that_entry_in_cache_may_answer(module, written)
         {
             let referrer = self.referrer_of(site);
-            if !site.is_read_by_transpiler {
-                return self.emit_require_by_name(name.text, referrer);
-            }
-            return self.emit_require_beside_entry_in_cache(name, referrer, |this| {
-                this.emit_require_of_answer(&site.in_one_arm(true), specifier)
-            });
+            return self.emit_require_by_name(name, referrer);
         }
         self.emit_require_of_answer(site, specifier)
     }
@@ -1913,53 +1873,17 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         &mut self,
         module: ModuleRef,
         written: Atom,
-    ) -> Option<NameLookedUpInCache> {
+    ) -> Option<ValueId> {
         let modules = self.file.inputs.modules;
         if !modules.is_code_of_program(self.current_module()) {
             return None;
         }
-        let (name, alias) = self.file.builtin_named(written, module)?;
+        let (name, _) = self.file.builtin_named(written, module)?;
         if !modules.may_entry_in_cache_stand_under(name) {
             return None;
         }
         let name = name.to_vec();
-        let is_left_to_host = alias.node_builtin && matches!(module, ModuleRef::External { .. });
-        Some(NameLookedUpInCache {
-            text: self.emit_text(&name),
-            is_node_builtin: alias.node_builtin,
-            name_for_host: is_left_to_host.then(|| alias.path.as_bytes()),
-        })
-    }
-
-    fn emit_require_beside_entry_in_cache(
-        &mut self,
-        name: NameLookedUpInCache,
-        referrer: ModuleId,
-        mut emit_past_cache: impl FnMut(&mut Self) -> ValueId,
-    ) -> ValueId {
-        if !name.is_node_builtin || !self.file.inputs.modules.tracks_first_load(self.file.file) {
-            return self.emit_require_by_name(name.text, referrer);
-        }
-        let file = self.file.module_id();
-        let reads_as_written = self.builder.was_loaded_synchronously(file);
-        self.emit_one_of(
-            reads_as_written,
-            &mut |this| this.emit_require_by_name(name.text, referrer),
-            &mut |this| match name.name_for_host {
-                Some(with_prefix) => {
-                    let with_prefix = this.emit_text(with_prefix);
-                    this.emit_require_by_name(with_prefix, referrer)
-                }
-                None => emit_past_cache(this),
-            },
-        )
-    }
-
-    pub(in crate::lower) fn note_first_load(&mut self) {
-        if self.file.inputs.modules.tracks_first_load(self.file.file) {
-            let file = self.file.module_id();
-            self.builder.was_loaded_synchronously(file);
-        }
+        Some(self.emit_text(&name))
     }
 
     fn try_emit_call_of_get_builtin_module(
@@ -2011,7 +1935,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 let name = (node, site.specifier);
                 let load = ComputedLoad::Require {
                     looks_in_cache: site.looks_in_cache,
-                    is_read_by_transpiler: site.is_read_by_transpiler,
                 };
                 self.emit_computed_load(load, referrer, name, specifier, candidates)
             }
@@ -2327,8 +2250,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             load,
             ComputedLoad::Import
                 | ComputedLoad::Require {
-                    looks_in_cache: false,
-                    ..
+                    looks_in_cache: false
                 }
         );
         // `require(flag ? "./a" : "node:os")`: the transpiler reads each name as it reads a single literal. A library module's stays a call of require().
@@ -2496,10 +2418,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
     fn emit_load_of_candidate(&mut self, load: ComputedLoad, spelled: &SpelledModule) -> ValueId {
         match load {
-            ComputedLoad::Require {
-                looks_in_cache,
-                is_read_by_transpiler,
-            } => {
+            ComputedLoad::Require { looks_in_cache } => {
                 let (module, written) = (spelled.module, spelled.spelling);
                 if !looks_in_cache
                     && let Some(found) = self.try_emit_call_of_get_builtin_module(module, written)
@@ -2511,13 +2430,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                         self.try_emit_name_that_entry_in_cache_may_answer(module, written)
                 {
                     let referrer = self.file.module_id();
-                    if !is_read_by_transpiler {
-                        return self.emit_require_by_name(name.text, referrer);
-                    }
-                    return self.emit_require_beside_entry_in_cache(name, referrer, |this| {
-                        let spelling = this.file.intern_atom(written);
-                        this.emit_require_of_candidate(module, spelling)
-                    });
+                    return self.emit_require_by_name(name, referrer);
                 }
                 let spelling = self.file.intern_atom(written);
                 self.emit_require_of_candidate(module, spelling)

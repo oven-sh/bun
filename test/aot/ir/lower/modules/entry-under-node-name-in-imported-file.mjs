@@ -1,27 +1,19 @@
-// `bun run` reads require("fs") as require("node:fs") in a CommonJS file that an import has loaded, and as it is written in one that require() has loaded. The first load of the file counts.
-// The program spells the key "fs" in require.cache, so the two differ: each CommonJS file asks at its head how it is loaded, and each require("fs") goes by the answer.
-// A file that was loaded by require() asks the host, which looks in the table. Any other gets the module. An ES module reads the name as it is written.
+// The program spells the key "fs" in require.cache, so each require("fs") asks the host, which looks in the table. How the file was loaded does not count.
 // RUN: link
 // OPTIONS: builtin-modules
-// CHECK-LABEL: function {{*}}kind=CommonJsModule
-// CHECK: = WasLoadedSynchronously module=[[file]]
 // CHECK-LABEL: function {{*}}name="imported"
+// CHECK-NOT: Branch
 // CHECK: [[name]] = String string="fs"
-// CHECK: [[answer]] = WasLoadedSynchronously module=[[file]]
-// CHECK: Branch [[answer]]
+// CHECK-NOT: Branch
 // CHECK: = RequireDynamic [[name]]
-// CHECK: = RequireModule {{*}}specifier="fs"
-// CHECK-LABEL: function {{*}}kind=CommonJsModule
-// CHECK: = WasLoadedSynchronously
+// CHECK-NOT: RequireModule
 // CHECK-LABEL: function {{*}}name="required"
+// CHECK-NOT: Branch
 // CHECK: [[other]] = String string="fs"
-// CHECK: [[second]] = WasLoadedSynchronously
-// CHECK: Branch [[second]]
+// CHECK-NOT: Branch
 // CHECK: = RequireDynamic [[other]]
-// CHECK: = RequireModule {{*}}specifier="fs"
+// CHECK-NOT: RequireModule
 // CHECK-LABEL: function {{*}}kind=Module flags=[IsAsync]
-// CHECK-NOT: WasLoadedSynchronously
-// CHECK-LABEL: function {{*}}role=Signature
 
 // FILE: main.mjs
 import { createRequire } from "node:module";

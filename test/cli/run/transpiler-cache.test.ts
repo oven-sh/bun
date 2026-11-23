@@ -518,6 +518,18 @@ describe("transpiler cache", () => {
     });
   });
 
+  test("an entry that an import wrote reads require() as it is written", async () => {
+    writeFileSync(join(temp_dir, "a.cjs"), dummyFile(50 * 1024, "1", { code: `require.resolve("os")` }));
+    writeFileSync(join(temp_dir, "imports.mjs"), `import "./a.cjs";`);
+    writeFileSync(join(temp_dir, "requires.cjs"), `require("./a.cjs");`);
+
+    expect(await bunRun(join(temp_dir, "imports.mjs"), env)).toSpawn("os");
+    expect(newCacheCount()).toBe(1);
+
+    expect(await bunRun(join(temp_dir, "requires.cjs"), env)).toSpawn("os");
+    expect(newCacheCount()).toBe(0);
+  });
+
   // Serving the entry point from the cache must not change how the modules it
   // loads are resolved. Both of these are gated on the `has_loaded` flag, which
   // used to be set only on the path that runs the printer.

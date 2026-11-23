@@ -92,22 +92,22 @@ async function runTests(directory: string, env: Record<string, string>, ...flags
 
 for (const [way, env, isolations] of ways) {
   for (const isolation of isolations) {
-    const name = `each load of a CommonJS file decides how that load reads require("fs"), and the last one for the test files to come, ${way}`;
+    const name = `each load of a CommonJS file reads require("fs") as it is written, ${way}`;
     test.concurrent(isolation.length ? `${name}, isolated` : name, async () => {
       using dir = tempDir("a-commonjs-file-taken-out-of-require-cache-and-loaded-again", project);
       const plain = await runTests(String(dir), {}, ...isolation);
       expect(plain.printed).toEqual([
-        "require(), then import(): number function false",
-        "import(), then import(): function function false",
-        "import(), then require(): function number false",
+        "require(), then import(): number number false",
+        "import(), then import(): number number false",
+        "import(), then require(): number number false",
         "require(), then require(): number number false",
-        "require(), then a module that exports it: number function false",
-        "require(), then a module that imports from it: number function false",
+        "require(), then a module that exports it: number number false",
+        "require(), then a module that imports from it: number number false",
         "below a module that is required: number",
-        "first test file: number function",
-        "last loaded by import(), by require(), by nobody: function number function",
-        "second test file: number function number",
-        "third test file: number function function number function",
+        "first test file: number number",
+        "last loaded by import(), by require(), by nobody: number number number",
+        "second test file: number number number",
+        "third test file: number number number number number",
       ]);
       expect(await runTests(String(dir), env, "--aot", ...isolation)).toEqual(plain);
     });

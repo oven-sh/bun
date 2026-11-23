@@ -1029,6 +1029,22 @@ describe.concurrent("module.*", () => {
     ]);
   });
 
+  test("require() in a file that an import loads", async () => {
+    using dir = tempDir("dc-require-in-imported", { "imported.cjs": `require("fs"); require("node:path");` });
+    expect(
+      await run(`${trace("module.require", "[message.parentFilename, message.id]")} import("./imported.cjs");`, {
+        cwd: String(dir),
+      }).then(lines => lines.map(line => line.trimEnd())),
+    ).toEqual([
+      "start undefined imported.cjs",
+      "start imported.cjs fs",
+      "end imported.cjs fs",
+      "start imported.cjs node:path",
+      "end imported.cjs node:path",
+      "end undefined imported.cjs",
+    ]);
+  });
+
   test("require() under a replaced Module.prototype.require", async () => {
     expect(
       await run(`

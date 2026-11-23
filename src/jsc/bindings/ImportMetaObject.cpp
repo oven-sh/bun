@@ -324,9 +324,15 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
                         Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "path"_s, string, "must be a string, Uint8Array, or URL without null bytes"_s);
                         return {};
                     }
-                    WTF::String prefixed = Bun::isUnprefixedNodeBuiltin(str);
-                    if (!prefixed.isNull()) {
-                        return JSValue::encode(jsString(vm, prefixed));
+                    if (WTF::String builtin = Bun::keyOfNodeBuiltin(str); !builtin.isNull()) {
+                        string = jsString(vm, builtin);
+                        throwIfResolvedFileIsRefused(lexicalGlobalObject, string, moduleName, from);
+                        RETURN_IF_EXCEPTION(scope, {});
+                        if (globalObject->onLoadPlugins.runningModuleMocks.isEmpty()) [[likely]]
+                            return JSValue::encode(string);
+                        auto fromString = from.toWTFString(globalObject);
+                        RETURN_IF_EXCEPTION(scope, {});
+                        return JSValue::encode(jsString(vm, Bun::keyOfImportWhileModuleMocksRun(globalObject, builtin, fromString, false)));
                     }
                     // In an ahead-of-time executable Module._resolveFilename() answers, as require.resolve() does, with where the file lay when the program was built.
                     if (Bun::hasCompiledModules()) [[unlikely]] {

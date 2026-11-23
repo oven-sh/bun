@@ -47,8 +47,6 @@ pub(crate) struct Worker {
     /// Consecutive (re)spawns of this slot that exited before `.ready`;
     /// reset on `.ready`. Bounds the respawn loop in `reap_worker`.
     pub(crate) startup_failures: u8,
-    /// `runner::first_loads` as of the last file that ran in this slot. The next process of the slot starts from there, as one process that ran all of them would.
-    pub(crate) first_loads: Vec<u8>,
 }
 
 /// What every `Worker::start` of a run needs.
@@ -301,7 +299,6 @@ impl Worker {
         f.begin(frame::Kind::Run);
         f.u32(file_idx as u32);
         f.str(file);
-        f.str(&self.first_loads);
         f.u32(u32::from(is_growth_written));
         self.ipc.send(f.finish());
     }

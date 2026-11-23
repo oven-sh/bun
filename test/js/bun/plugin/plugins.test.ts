@@ -1642,6 +1642,35 @@ it.concurrent("an onLoad in the namespace of builtins leaves their aliases alone
   expect({ stdout, stderr, exitCode }).toEqual({ stdout: "function function\n", stderr: "", exitCode: 0 });
 });
 
+it.concurrent("an onResolve in the namespace of builtins is asked about require() as it is written", async () => {
+  const names = `[require("os"), require("node:os")].map(it => it.from ?? "builtin").join()`;
+  using dir = tempDir("plugin-builtin-namespace-require", {
+    "swapped.cjs": `exports.from = "plugin";`,
+    "imported.cjs": `console.log(${names});`,
+    "required.cjs": `console.log(${names});`,
+    "main.mjs": `
+      Bun.plugin({ name: "swap", setup(build) {
+        build.onResolve({ filter: /^os$/, namespace: "node" }, () => ({ path: import.meta.dir + "/swapped.cjs" }));
+      } });
+      await import("./imported.cjs");
+      require("./required.cjs");
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.mjs"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "builtin,plugin\nbuiltin,plugin\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 describe.concurrent("onResolve", () => {
   const files = {
     "a.mjs": `export const from = "a.mjs";`,

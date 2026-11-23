@@ -66,6 +66,7 @@ export const jscNames = {
     "resolve",
     "set",
     "size",
+    "substr",
     "then",
   ],
 };

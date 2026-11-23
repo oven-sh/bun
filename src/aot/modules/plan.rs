@@ -708,8 +708,7 @@ impl ModuleGraph {
             records: shows_mark
                 || is_child_of_referrer
                 || self.keeps_module_object(site.target)
-                || (self.plan.is_every_require_seen && matches!(site.target, ModuleRef::File(_)))
-                || matches!(site.target, ModuleRef::File(file) if self.tracks_first_load(file)),
+                || (self.plan.is_every_require_seen && matches!(site.target, ModuleRef::File(_))),
         }
     }
 
@@ -1086,12 +1085,6 @@ impl ModuleGraph {
         let stored = &self.plan.library_modules_stored_in_cache;
         !stored.is_empty()
             && find_module_looked_up_in_cache(name).is_some_and(|module| stored.contains(&module))
-    }
-
-    pub fn tracks_first_load(&self, file: FileId) -> bool {
-        (!self.plan.library_modules_stored_in_cache.is_empty() || self.plan.asks_loader_functions)
-            && self.kind(file) == ModuleKind::CommonJs
-            && self.is_code_of_program(ModuleRef::File(file))
     }
 
     pub fn rejects_require_cache_override(&self, module: RuntimeModule) -> bool {

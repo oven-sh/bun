@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/builtins/CommonJS.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 643ce52f6598e6a7708c4c4fc250e007bf615ea9dcd36d131e20351f10496ff3.
+// Written against that file with the SHA-256 f6c72d77f859d0ca70314c65d08bfb96f2f673cd4af258a783b6fda4253b8ab3.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // This file contains functions used for the CommonJS module loader
@@ -36,7 +36,8 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
       // A terrible special case where Node.js allows non-prefixed built-ins to
       // read the require cache. Though they never write to it, which is so silly.
       const existing = requireMap.$get(originalId);
-      if (existing) {
+      // A prefixed name gets here too: "node:sys" resolves to "node:util".
+      if (existing && !(typeof originalId === "string" && originalId.$substr(0, 5) === "node:")) {
         const c = $evaluateCommonJSModule(existing, this);
         if (c && c.indexOf(existing) === -1) {
           c.push(existing);

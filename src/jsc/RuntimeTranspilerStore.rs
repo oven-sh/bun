@@ -847,8 +847,11 @@ impl TranspilerJob {
                     rewrite_jest_for_tests: transpiler.options.rewrite_jest_for_tests,
                 },
             ) {
-                // The `module.import` tracing channel publishes it as it is written.
-                if replacement.node_builtin && import_record.kind == bun_ast::ImportKind::Dynamic {
+                // `require.cache`, a replaced `require` and the `module.*` tracing channels go by the name as it is written.
+                if replacement.node_builtin
+                    && (import_record.kind.is_common_js()
+                        || import_record.kind == bun_ast::ImportKind::Dynamic)
+                {
                     continue;
                 }
                 import_record.path.text = replacement.path.as_bytes();

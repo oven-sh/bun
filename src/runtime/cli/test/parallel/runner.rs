@@ -114,7 +114,6 @@ pub(crate) fn run_as_coordinator(
             alive: false,
             peak_rss_mb: 0,
             startup_failures: 0,
-            first_loads: Vec::new(),
         });
     }
 
@@ -496,12 +495,7 @@ struct RunningFile {
 
 impl RunningFile {
     /// Says what the file has counted.
-    fn emit_done(
-        mut self,
-        link: &CoordinatorLink,
-        reporter: &CommandLineReporter,
-        vm: &VirtualMachine,
-    ) {
+    fn emit_done(mut self, link: &CoordinatorLink, reporter: &CommandLineReporter) {
         let mut growth = self.resident_at_start.map(growth_since).unwrap_or_default();
         if self.resident_at_start.is_none() && crate::cli::run_compiled::logs_accounts() {
             growth.peak = crate::cli::run_compiled::peak_of_this_process_mb();
@@ -515,7 +509,6 @@ impl RunningFile {
         for refusal in crate::cli::run_compiled::refused_changes() {
             link.emit(frame::Kind::RefusedChange, |wf| wf.str(&refusal));
         }
-        let first_loads = first_loads(vm);
         link.emit(frame::Kind::FileDone, |wf| {
             wf.u32(link.file_idx.get());
             let before = frame::counters(&mut self.before);
@@ -527,7 +520,6 @@ impl RunningFile {
             wf.u32(growth.of_worker);
             wf.u32(growth.largest_child);
             wf.u32(growth.peak);
-            wf.str(&first_loads);
         });
     }
 }
@@ -563,11 +555,8 @@ fn run_files(
     let mut commands = Commands::default();
     let mut files_run = 0;
     while let Some(mut run) = commands.wait_for_run(&link.channel, vm) {
-        let (idx, path, first_loads) = (run.u32(), run.str(), run.str());
+        let (idx, path) = (run.u32(), run.str());
         let is_growth_written = run.u32() != 0;
-        if files_run == 0 {
-            note_first_loads_of_earlier_process(vm, first_loads);
-        }
         files_run += 1;
 
         link.file_idx.set(idx);
@@ -600,36 +589,9 @@ fn run_files(
             Global::mimalloc_cleanup(false);
         }
         reporter.jest.default_timeout_override.set(u32::MAX);
-        running.emit_done(link, reporter, vm);
+        running.emit_done(link, reporter);
     }
     files_run
-}
-
-/// For each file of `compiled_program::for_each_first_load`: u32, 1 where the load was synchronous, and str path.
-fn first_loads(vm: &VirtualMachine) -> Vec<u8> {
-    let mut list = Vec::new();
-    bun_jsc::compiled_program::for_each_first_load(vm.global(), &mut |path, was_synchronous| {
-        list.extend_from_slice(&u32::from(was_synchronous).to_le_bytes());
-        list.extend_from_slice(&(path.len() as u32).to_le_bytes());
-        list.extend_from_slice(path);
-    });
-    list
-}
-
-fn note_first_loads_of_earlier_process(vm: &VirtualMachine, list: &[u8]) {
-    let mut rd = frame::Reader { p: list };
-    while !rd.p.is_empty() {
-        let was_synchronous = rd.u32() != 0;
-        let path = rd.str();
-        if path.is_empty() {
-            break;
-        }
-        bun_jsc::compiled_program::note_first_load_in_earlier_process(
-            vm.global(),
-            path,
-            was_synchronous,
-        );
-    }
 }
 
 /// Lines of /proc/self/status, in kilobytes.

@@ -887,6 +887,69 @@ console.log("survived", require("./late.js"));`,
     expect(exitCode).toBe(0);
   });
 
+  test.each([
+    ["what the original returns", `original.apply(this, arguments)`],
+    ["the request", `request`],
+    ["a 16-bit copy of the request", `Buffer.from(request, "utf16le").toString("utf16le")`],
+  ])(
+    "require() loads a builtin by any of its names when an overridden _resolveFilename returns %s",
+    async (_, answer) => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "--experimental-stream-iter",
+          "--no-warnings",
+          "-e",
+          `
+          const Module = require("node:module");
+          const names = ["os", "node:os", "sys", "node:sys", "stream/iter"];
+          const before = names.map(name => require(name));
+          const original = Module._resolveFilename;
+          Module._resolveFilename = function (request) {
+            return ${answer};
+          };
+          const differ = names.filter((name, i) => {
+            try {
+              return require(name) !== before[i];
+            } catch {
+              return true;
+            }
+          });
+          console.log(JSON.stringify({ differ, cached: names.filter(name => name in require.cache) }));
+        `,
+        ],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({ differ: [], cached: [] });
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  test("require.cache answers for all but node: names when an overridden _resolveFilename returns the request", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          require("node:module")._resolveFilename = request => request;
+          for (const name of ["os", "sys", "node:sys", "ffi", "ws/lib/websocket"]) require.cache[name] = { exports: name };
+          console.log(require("os"), require("sys"), typeof require("node:sys"), require("ffi"), require("ws/lib/websocket"));
+        `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "os sys object ffi ws/lib/websocket\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   test("Overridden _resolveFilename receives a parent Module for createRequire from ESM", async () => {
     using dir = tempDir("resolve-filename-args-esm", {
       "real.cjs": "module.exports = 'REAL';",
@@ -1327,6 +1390,64 @@ console.log("survived", require("./late.js"));`,
     } finally {
       delete require.cache["util/types"];
     }
+  });
+  test("require() of a builtin goes by the name in the source, however the file was loaded", async () => {
+    const body = `{
+      loaded: [require("os"), require("node:os"), require("sys"), require("node:sys")].map(it => it.entry ?? "module"),
+      resolved: [require.resolve("os"), require.resolve("node:os"), require.resolve("sys"), require.resolve("node:sys")],
+      asked: asked.splice(0).filter(id => !id.endsWith("js")),
+    }`;
+    const files = {};
+    for (const way of ["required", "called", "imported"]) {
+      files[`${way}.cjs`] = `exports.default = ${body}; exports.__esModule = true;`;
+      files[`${way}.mjs`] = `export default ${body};`;
+    }
+    using dir = tempDir("builtin-name-as-written", {
+      ...files,
+      "hooks.cjs": `
+        const { prototype } = require("node:module");
+        const original = prototype.require;
+        globalThis.asked = [];
+        prototype.require = function (id) {
+          asked.push(id);
+          return original.apply(this, arguments);
+        };
+        for (const name of ["os", "node:os", "sys", "node:sys"]) require.cache[name] = { exports: { entry: name } };
+      `,
+      "statements.mjs": `
+        export { default as cjs } from "./imported.cjs";
+        export { default as mjs } from "./imported.mjs";
+      `,
+      "main.mjs": `
+        import "./hooks.cjs";
+        const { cjs, mjs } = await import("./statements.mjs");
+        console.log(JSON.stringify({
+          "import statement, cjs": cjs.default ?? cjs,
+          "import statement, mjs": mjs,
+          "import(), cjs": await import("./called.cjs").then(it => it.default.default ?? it.default),
+          "import(), mjs": (await import("./called.mjs")).default,
+          "require(), cjs": require("./required.cjs").default,
+          "require(), mjs": require("./required.mjs").default,
+        }));
+      `,
+    });
+    await using proc = Bun.spawn({ cmd: [bunExe(), "main.mjs"], env: bunEnv, cwd: String(dir), stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const expected = {
+      loaded: ["os", "module", "sys", "module"],
+      resolved: ["os", "node:os", "sys", "node:sys"],
+      asked: ["os", "node:os", "sys", "node:sys"],
+    };
+    expect(JSON.parse(stdout)).toEqual({
+      "import statement, cjs": expected,
+      "import statement, mjs": expected,
+      "import(), cjs": expected,
+      "import(), mjs": expected,
+      "require(), cjs": expected,
+      "require(), mjs": expected,
+    });
+    expect(exitCode).toBe(0);
   });
   // https://github.com/oven-sh/bun/issues/40551
   test("require.cache does not expose builtins from the ESM registry", () => {

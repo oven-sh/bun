@@ -772,10 +772,10 @@ The renamed symbols are then used during final code generation to produce output
 
 **Key functions**:
 
-- One walk per entry point, depth first from the entry point's file. The result is the CSS files that JS imports, in the order the JS files run
-- A CSS file is in the result only if a JS file that runs imports it. A file runs if it is live and the load that reaches it loads it (`files_live` and the loader's bit in `entry_bits`, the test `load_rank` and `EntryWalk` use). The CSS file's own `sideEffects` flag and liveness are not read
-- The walk goes through a file that does not run along its `import` statements only, so a barrel that tree shaking removed leads to the files behind it. It follows a `require()` or an `import()` only from a part that runs (`edge_of_record`)
-- With code splitting, a split `import()` or `require()` that runs continues the walk as the load of its target: no code adds a stylesheet when a chunk loads, so the stylesheet of the entry point holds the CSS of the chunks it loads later
+- One walk per entry point, depth first from the entry point's file, along every import record of every file. The walk gives each CSS file that JS imports its place: the order is the one without tree shaking
+- A CSS file stays in the result only if a JS file that runs imports it, with an `import` statement, or with a `require()` or an `import()` in a part that runs (`edge_of_record`). A file runs if it is live and the entry point loads it (`files_live` and the entry point's bit in `entry_bits`). The CSS file's own `sideEffects` flag and liveness are not read
+- With code splitting, the entry points that an entry point loads on demand count as that entry point (`CssWalkPlan`): no code adds a stylesheet when a chunk loads, so the stylesheet of the entry point holds the CSS of the chunks it loads later
+- The walks read `entry_bits` before `merge_small_chunks` changes them. They ask which files a load evaluates, not which chunk holds a file
 
 #### `findImportedFilesInCSSOrder.rs`
 

@@ -225,6 +225,97 @@ describe("bundler", () => {
     },
     run: { file: "/out/e1.js", env, stdout: "f\ng" },
   });
+  // The loads go e1.js, lazy1.js, lazy2.js, lazy3.js, and only lazy3.js uses x1.js.
+  itBundled("splitting/CSSOfFileOnlyTheThirdChunkLoadedLaterRuns", {
+    files: {
+      "/e1.js": `import { f } from "./lib/f.js"; console.log(f); import("./lazy1.js");`,
+      "/lazy1.js": `import { x3 } from "./lib/f.js"; x3();`,
+      "/lazy2.js": `import { x2 } from "./lib/f.js"; x2();`,
+      "/lazy3.js": `import { x1 } from "./lib/f.js"; console.log(x1);`,
+      "/lib/package.json": JSON.stringify({ name: "lib", sideEffects: ["*.css"] }),
+      "/lib/f.js": `export const f = "f"; export { x1 } from "./x1.js"; export { x2 } from "./x2.js"; export { x3 } from "./x3.js";`,
+      "/lib/x1.js": `import "./x1.css"; export const x1 = "x1";`,
+      "/lib/x2.js": `export const x2 = () => import("../lazy3.js");`,
+      "/lib/x3.js": `export const x3 = () => import("../lazy2.js");`,
+      "/lib/x1.css": `.x1 { color: red }`,
+    },
+    entryPoints: ["/e1.js"],
+    splitting: true,
+    outdir: "/out",
+    onAfterBundle(api) {
+      expect(stylesheets(api)).toEqual({ "e1.css": ["lib/x1.css"] });
+    },
+    run: { file: "/out/e1.js", env, stdout: "f\nx1" },
+  });
+  // l1.js and l2.js load each other.
+  itBundled("splitting/CSSOfChunksThatLoadEachOtherLater", {
+    files: {
+      "/e.js": `import("./l1.js");`,
+      "/l1.js": `import("./l2.js"); import("./l3.js");`,
+      "/l2.js": `import "./l2.css"; import("./l1.js");`,
+      "/l3.js": `import "./l3.css";`,
+      "/l2.css": `.l2 { color: red }`,
+      "/l3.css": `.l3 { color: blue }`,
+    },
+    entryPoints: ["/e.js"],
+    splitting: true,
+    outdir: "/out",
+    onAfterBundle(api) {
+      expect(stylesheets(api)).toEqual({ "e.css": ["l2.css", "l3.css"], "l3-[hash].css": ["l3.css"] });
+    },
+  });
+  // More entry points than an inline bit set holds.
+  itBundled("splitting/CSSOfChunkLoadedLaterWithManyEntryPoints", {
+    files: {
+      ...Object.fromEntries(
+        Array.from({ length: 130 }, (_, i) => [
+          [`/e${i}.js`, `import "./s${i}.css"; import("./lazy.js");`],
+          [`/s${i}.css`, `.s${i} { color: red }`],
+        ]).flat(),
+      ),
+      "/lazy.js": `import "./lazy.css"; console.log("lazy.js runs");`,
+      "/lazy.css": `.lazy { color: blue }`,
+    },
+    entryPoints: Array.from({ length: 130 }, (_, i) => `/e${i}.js`),
+    splitting: true,
+    outdir: "/out",
+    onAfterBundle(api) {
+      expect(stylesheets(api)).toEqual({
+        ...Object.fromEntries(Array.from({ length: 130 }, (_, i) => [`e${i}.css`, [`s${i}.css`, "lazy.css"]])),
+        "lazy-[hash].css": ["lazy.css"],
+      });
+    },
+  });
+  // minChunkSize folds b.js into a chunk that e1.js imports. e1.js still does not run b.js.
+  itBundled("splitting/CSSOfFileFoldedIntoAChunkTheEntryPointImports", {
+    files: {
+      ...cssBehindBarrel,
+      "/lib/a.js": `import "./a.css"; export function A() { return "A"; }`,
+      "/lib/b.js": `import "./b.css"; export function B() { return "B"; }`,
+      "/common.js":
+        `export function c() { return "c"; }\n` + `export function pad() { return "${"s".repeat(60)}"; }\n`.repeat(64),
+      ...Object.fromEntries(
+        [
+          ["e1", "A"],
+          ["e2", "B"],
+          ["e3", "B"],
+        ].map(([entry, name]) => [
+          `/${entry}.js`,
+          `import { ${name} } from "./lib/index.js"; import { c } from "./common.js"; console.log("${entry}", ${name}(), c());\n` +
+            `console.log("${"a".repeat(72)}");\n`.repeat(256),
+        ]),
+      ),
+    },
+    entryPoints: ["/e1.js", "/e2.js", "/e3.js"],
+    splitting: true,
+    minChunkSize: 100_000,
+    outdir: "/out",
+    onAfterBundle(api) {
+      const imported = api.readFile("/out/e1.js").match(/from "\.\/(.+?\.js)"/)![1];
+      api.expectFile("/out/" + imported).toContain(`return "B"`);
+      expect(stylesheets(api)).toEqual({ "e1.css": ["lib/a.css"], "e2.css": ["lib/b.css"] });
+    },
+  });
   itBundled("splitting/CSSOfSplitRequire", {
     files: {
       ...cssBehindBarrel,

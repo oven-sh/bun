@@ -3659,9 +3659,10 @@ describe("bundler", () => {
     ["SideEffectsOnlyCSSExportStar", { sideEffects: ["*.css"] }, starBarrel, "a.js runs\nA"],
     ["SideEffectsFalseExportStar", { sideEffects: false }, starBarrel, "a.js runs\nA"],
     [
-      "SideEffectsFalseBarrelWithSideEffect",
+      // With an export of its own, the barrel is not one that barrel optimization reads only in part.
+      "SideEffectsFalseBarrelWithOwnExport",
       { sideEffects: false },
-      `console.log("barrel runs"); ` + namedBarrel,
+      `console.log("barrel runs"); export const version = 1; ` + namedBarrel,
       "a.js runs\nbarrel runs\nA",
     ],
   ] as const) {
@@ -3733,20 +3734,21 @@ describe("bundler", () => {
       });
     }
   }
-  // A stylesheet goes where the first file that runs imports it. unused.js does not run.
-  itBundled("dce/CSSOfTreeShakenFileDoesNotSetTheOrder", {
+  // unused.js does not run. Its CSS goes, and shared.css keeps the place that the import in unused.js gives it.
+  itBundled("dce/CSSOfTreeShakenFileKeepsTheOrder", {
     files: {
       "/entry.js": `import { unused } from "./lib/unused.js"; import "./lib/used.js";`,
       "/lib/package.json": JSON.stringify({ name: "lib", sideEffects: ["*.css", "./used.js"] }),
-      "/lib/unused.js": `import "./shared.css"; export const unused = 1;`,
+      "/lib/unused.js": `import "./shared.css"; import "./unused.css"; export const unused = 1;`,
       "/lib/used.js": `import "./used.css"; import "./shared.css"; console.log("used.js runs");`,
       "/lib/shared.css": `.shared { color: red }`,
+      "/lib/unused.css": `.unused { color: green }`,
       "/lib/used.css": `.used { color: blue }`,
     },
     entryPoints: ["/entry.js"],
     outdir: "/out",
     onAfterBundle(api) {
-      expect(cssFilesIn(api, "/out/entry.css")).toEqual(["lib/used.css", "lib/shared.css"]);
+      expect(cssFilesIn(api, "/out/entry.css")).toEqual(["lib/shared.css", "lib/used.css"]);
     },
     run: { file: "/out/entry.js", stdout: "used.js runs" },
   });

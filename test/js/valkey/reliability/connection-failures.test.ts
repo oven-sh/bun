@@ -655,7 +655,7 @@ describe("Valkey: Recovering After fail()", () => {
   // as the exit code instead of waiting for the test to time out. The payload
   // runs in well under a second on a debug build; the exit itself is what an
   // ASAN build makes slow.
-  async function exitOutcome(proc: Bun.Subprocess<"ignore", "pipe", "pipe">) {
+  async function exitOutcome(proc: Bun.Subprocess<"ignore" | "pipe", "pipe", "pipe">) {
     const output = Promise.all([proc.stdout.text(), proc.stderr.text()]);
     const budget = isASAN || isDebug ? 15_000 : 3_000;
     const exitCode = await Promise.race([proc.exited, delay(budget).then(() => "still running" as const)]);
@@ -2088,6 +2088,161 @@ describe("Valkey: Recovering After fail()", () => {
       stderr: "",
       exitCode: 0,
     });
+  });
+
+  describe("--redis-preconnect against a server that refuses HELLO", () => {
+    test.concurrent.each([
+      { program: `await Bun.stdin.text(); console.log("done")`, stdout: "done\n", stderr: "", exitCode: 0 },
+      { program: `Bun.redis.ping().catch(() => console.log("caught"))`, stdout: "caught\n", stderr: "", exitCode: 0 },
+      {
+        program: `Bun.redis.onclose = () => Bun.redis.ping().catch(e => console.log(e.message))`,
+        stdout: "Connection has failed\n",
+        stderr: "",
+        exitCode: 0,
+      },
+      { program: `Bun.redis.connect()`, stdout: "", stderr: expect.stringContaining("ERR_REDIS_"), exitCode: 1 },
+    ])("$program exits $exitCode", async ({ program, ...outcome }) => {
+      const fake = helloServer({ HELLO: () => "-WRONGPASS invalid username-password pair\r\n" });
+      const port = await fake.listen();
+      try {
+        const refused = once(fake.server, "connection").then(([socket]) => closedOnServer(socket));
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "--redis-preconnect", "-e", program],
+          env: { ...bunEnv, REDIS_URL: `redis://127.0.0.1:${port}` },
+          stdin: "pipe",
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        await Promise.race([refused, proc.exited]);
+        proc.stdin.end();
+        expect({ ...(await exitOutcome(proc)), dialed: fake.connections > 0 }).toEqual({ ...outcome, dialed: true });
+      } finally {
+        fake.server.close();
+      }
+    });
+  });
+
+  test.concurrent("--redis-preconnect dials once, and the first command dials again", async () => {
+    const fake = helloServer({
+      HELLO: (connection, socket) => (connection === 1 ? (socket.destroy(), null) : "+OK\r\n"),
+    });
+    const port = await fake.listen();
+    try {
+      const lost = once(fake.server, "connection").then(([socket]) => closedOnServer(socket));
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "--redis-preconnect",
+          "-e",
+          // A retry would have come after 50 ms.
+          `await Bun.stdin.text(); await Bun.sleep(150); console.log(Bun.redis.connected, await Bun.redis.ping());`,
+        ],
+        env: { ...bunEnv, REDIS_URL: `redis://127.0.0.1:${port}` },
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      await Promise.race([lost, proc.exited]);
+      proc.stdin.end();
+      expect(await exitOutcome(proc)).toEqual({ stdout: "false PONG\n", stderr: "", exitCode: 0 });
+    } finally {
+      fake.server.close();
+    }
+  });
+
+  test.concurrent("connect() on a --redis-preconnect that is connected makes the client script's", async () => {
+    const fake = helloServer({ HELLO: connection => (connection === 1 ? "+OK\r\n" : "-WRONGPASS\r\n") });
+    const port = await fake.listen();
+    try {
+      const first = once(fake.server, "connection");
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "--redis-preconnect",
+          "-e",
+          `while (!Bun.redis.connected) await new Promise(setImmediate);
+           await Bun.redis.connect();
+           console.error("connected");
+           await new Promise(resolve => (Bun.redis.onclose = resolve, setInterval(() => {}, 1000)));
+           console.log(await Bun.redis.ping().catch(err => err.message));
+           process.exit(0);`,
+        ],
+        env: { ...bunEnv, REDIS_URL: `redis://127.0.0.1:${port}` },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      await proc.stderr.getReader().read();
+      (await first)[0].destroy();
+      expect(await proc.stdout.text()).toBe("Connection has failed\n");
+      expect(await proc.exited).toBe(0);
+    } finally {
+      fake.server.close();
+    }
+  });
+
+  test.concurrent.each([
+    { refused: "HELLO once", path: "", first: "-ERR max clients\r\n", second: "+OK\r\n", ping: "PONG" },
+    { refused: "HELLO twice", path: "", first: "-WRONGPASS\r\n", second: "-WRONGPASS\r\n", ping: "WRONGPASS" },
+    { refused: "SELECT once", path: "/1", first: "+OK\r\n-ERR db\r\n", second: "+OK\r\n+OK\r\n", ping: "PONG" },
+  ])(
+    "the first command after a failed --redis-preconnect dials again when the server refuses $refused",
+    async ({ path, first, second, ping }) => {
+      const fake = helloServer({ HELLO: connection => (connection === 1 ? first : second) });
+      const port = await fake.listen();
+      try {
+        const preconnectFailed = once(fake.server, "connection").then(([socket]) => closedOnServer(socket));
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "--redis-preconnect",
+            "-e",
+            `await Bun.stdin.text(); console.log(await Bun.redis.ping().catch(err => err.message));`,
+          ],
+          env: { ...bunEnv, REDIS_URL: `redis://127.0.0.1:${port}${path}` },
+          stdin: "pipe",
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        await Promise.race([preconnectFailed, proc.exited]);
+        proc.stdin.end();
+        expect({ ...(await exitOutcome(proc)), connections: fake.connections }).toEqual({
+          stdout: `${ping}\n`,
+          stderr: "",
+          exitCode: 0,
+          connections: 2,
+        });
+      } finally {
+        fake.server.close();
+      }
+    },
+  );
+
+  test.concurrent.each([
+    { program: `console.log("done")`, server: "drops every connection", stdout: "done\n" },
+    { program: `console.log("done")`, server: "is not there", stdout: "done\n" },
+    { program: `Bun.redis.onclose = null`, server: "is not there", stdout: "" },
+    { program: `Bun.redis.onconnect = () => console.log("connected")`, server: "accepts", stdout: "connected\n" },
+    { program: `Bun.redis.onclose = e => console.log(e.message)`, server: "refuses", stdout: "WRONGPASS\n" },
+  ] as const)("--redis-preconnect: $program exits when the server $server", async ({ program, server, stdout }) => {
+    const fake = helloServer({
+      HELLO: (_, socket) => {
+        if (server === "drops every connection") socket.destroy();
+        return server === "accepts" ? "+OK\r\n" : server === "refuses" ? "-WRONGPASS\r\n" : null;
+      },
+    });
+    const port = await fake.listen();
+    if (server === "is not there") fake.server.close();
+    try {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "--redis-preconnect", "-e", program],
+        env: { ...bunEnv, REDIS_URL: `redis://127.0.0.1:${port}` },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      expect(await exitOutcome(proc)).toEqual({ stdout, stderr: "", exitCode: 0 });
+    } finally {
+      fake.server.close();
+    }
   });
 
   // A TLS stub run under Node in its own process, so it can read while this

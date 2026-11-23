@@ -352,6 +352,34 @@ it("import override to bun:test", async () => {
   expect(await import("#bun_test")).toBeDefined();
 });
 
+it("the debug log of a lookup starts at the same indentation after an imports lookup", async () => {
+  using dir = tempDir("resolver-imports-log-indent", {
+    "bunfig.toml": `logLevel = "debug"`,
+    "package.json": JSON.stringify({ imports: { "#found": "./found.js" } }),
+    "found.js": `export const found = () => 1;`,
+    "index.js": `
+      import { found } from "#found" with { type: "macro" };
+      import { missing } from "#missing" with { type: "macro" };
+      console.log(found(), missing());
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "--no-bundle", "index.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(stderr.match(/note: +(Searching|Looking) for #\w+/g)).toEqual([
+    "note: Searching for #found",
+    "note:  Looking for #found",
+    "note: Searching for #missing",
+    "note:  Looking for #missing",
+  ]);
+  expect(exitCode).toBe(1);
+});
+
 it.if(isWindows)("directory cache key computation", () => {
   expect(import(`${process.cwd()}\\\\doesnotexist.ts`)).rejects.toThrow();
   expect(import(`${process.cwd()}\\\\\\doesnotexist.ts`)).rejects.toThrow();
@@ -3062,6 +3090,15 @@ test.concurrent('an alias to a package with "extends" in its tsconfig.json loads
     "entry.js": `import first from "lib"; import second from "./other.js"; console.log(first, second);`,
   });
   expect(await bunRun(join(String(dir), "entry.js"))).toSpawn("main main");
+});
+
+test.skipIf(!isWindows)("resolving a missing name below a device path creates nothing", () => {
+  using dir = tempDir("resolve-device-path", { "a.js": "" });
+  expect(() => require.resolve(`\\\\.\\${dir}\\missing`)).toThrow(
+    expect.objectContaining({ code: "MODULE_NOT_FOUND" }),
+  );
+  expect(require.resolve(`\\\\.\\${dir}\\a`)).toEndWith("\\a.js");
+  expect(readdirSync(String(dir))).toEqual(["a.js"]);
 });
 
 test.concurrent.each(["/./", "//"])("finds a worker that is created later and written with %s", async separator => {

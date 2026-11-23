@@ -25,6 +25,9 @@ pub(crate) fn fetch_type_error_string(value: bun_jsc::JSValue) -> &'static str {
 #[path = "fetch/FetchTasklet.rs"]
 pub(crate) mod fetch_tasklet;
 
+#[path = "fetch/FetchTrace.rs"]
+pub(crate) mod fetch_trace;
+
 #[path = "fetch/FetchRequestBodySink.rs"]
 pub(crate) mod fetch_request_body_sink;
 pub(crate) use self::fetch_request_body_sink::FetchRequestBodySink;
@@ -79,7 +82,7 @@ use bun_url::URL as ZigURL;
 
 use self::fetch_tasklet::{FetchOptions, HTTPRequestBody};
 pub(crate) use self::fetch_tasklet::{
-    FetchTasklet, FetchTaskletDeinitHop, FetchTaskletRequestDrain,
+    FetchTasklet, FetchTaskletDeinitHop, FetchTaskletRequestDrain, FetchTaskletTrace,
 };
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -206,7 +209,7 @@ fn data_url_response(url: BunString, global_this: &JSGlobalObject) -> JSValue {
         false,
     ));
 
-    JSPromise::resolved_promise_value(global_this, Response::to_js(response, global_this))
+    JSPromise::resolved_promise_value(global_this, response.to_js(global_this))
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1298,7 +1301,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
         return Ok(JSPromise::resolved_promise_value(
             global_this,
-            Response::to_js(response, global_this),
+            response.to_js(global_this),
         ));
     }
 
@@ -1771,15 +1774,14 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         session_check_server_identity,
     };
 
-    let _ = FetchTasklet::queue(
+    FetchTasklet::queue(
         &global_this.js_thread(context),
         fetch_options,
         // Pass the Strong value instead of creating a new one, or else we
         // will leak it
         // see https://github.com/oven-sh/bun/issues/2985
         promise,
-    );
-    // `catch |err| bun.handleOom(err)` — FetchTasklet::queue aborts on OOM.
+    )?;
 
     // `body` has been *moved* into `FetchOptions`; the FetchTasklet now owns
     // the single live reference.
@@ -1812,7 +1814,7 @@ impl S3StreamWrapper {
                     self.url,
                     false,
                 ));
-                let response_js = Response::to_js(response, global);
+                let response_js = response.to_js(global);
                 response_js.ensure_still_alive();
                 self.promise.resolve(global, response_js)?;
             }
@@ -1832,7 +1834,7 @@ impl S3StreamWrapper {
                     false,
                 ));
 
-                let response_js = Response::to_js(response, global);
+                let response_js = response.to_js(global);
                 response_js.ensure_still_alive();
                 self.promise.resolve(global, response_js)?;
             }

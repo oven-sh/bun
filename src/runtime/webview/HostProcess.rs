@@ -27,8 +27,7 @@ use {
     bun_jsc::virtual_machine::VirtualMachine,
     bun_ptr::{AliasableBox, CellExt as _},
     bun_spawn::{
-        EventLoopHandle, Process, ProcessExit, ProcessExitKind, SpawnOptions, SpawnResultExt as _,
-        Stdio,
+        EventLoopHandle, ProcessExit, ProcessExitKind, SpawnOptions, SpawnResultExt as _, Stdio,
     },
     bun_sys::{self, Fd},
 };
@@ -188,7 +187,7 @@ fn spawn(vm: &VirtualMachine, stdout_inherit: bool, stderr_inherit: bool) -> Res
     let process = &host.process;
     // SAFETY: `host` owns `process`, whose `Drop` detaches the handler.
     let handler = unsafe { ProcessExit::new(ProcessExitKind::HostProcess, host.as_ptr()) };
-    Process::set_exit_handler(process, handler);
+    process.set_exit_handler(handler);
     match process.watch() {
         Ok(()) => {
             // Weak handle: parent exits when no views + nothing pending,

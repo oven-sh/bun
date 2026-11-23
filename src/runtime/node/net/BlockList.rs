@@ -3,8 +3,8 @@ use core::sync::atomic::{AtomicU32, Ordering as AtomicOrdering};
 
 use bun_core::{String as BunString, ZStr};
 use bun_jsc::bindgen::{JsLocal, JsScope};
-use bun_jsc::{CloneSerializer, JSGlobalObject, JSValue, JsResult, StringJsc as _};
-use bun_ptr::{RefPtr, ThisPtr};
+use bun_jsc::{JSGlobalObject, JSValue, JsResult, StringJsc as _};
+use bun_ptr::RefPtr;
 use bun_threading::Guarded;
 
 /// The `BlockList` instances, by `serialize_nonce`, currently embedded in
@@ -328,17 +328,16 @@ impl BlockList {
     }
 }
 
+// HOST_EXPORT(BlockList__onStructuredCloneSerialize, c)
 /// Adds the entry that [`BlockList__onStructuredCloneDestroy`] removes.
-#[unsafe(no_mangle)]
-pub(crate) extern "C" fn BlockList__onStructuredCloneSerialize(
-    this: ThisPtr<BlockList>,
-    serializer: &mut CloneSerializer,
+pub(crate) fn on_structured_clone_serialize(
+    this: RefPtr<crate::node::block_list_impl::BlockList>,
+    serializer: &mut bun_jsc::CloneSerializer,
 ) {
     use bun_io::Write as _;
-    SERIALIZED_REFS
-        .lock()
-        .push((this.serialize_nonce, RefPtr::from_this(this)));
-    _ = serializer.write_int_le(this.serialize_nonce);
+    let nonce = this.serialize_nonce;
+    SERIALIZED_REFS.lock().push((nonce, this));
+    _ = serializer.write_int_le(nonce);
 }
 
 /// `JSValue::ZERO`: the bytes are not a valid record (the deserializer reports its usual error).
@@ -375,7 +374,7 @@ pub(crate) unsafe extern "C" fn BlockList__onStructuredCloneDeserialize(
     js::to_js(this, global)
 }
 
-/// `~SerializedScriptValue` removes the entry that [`BlockList__onStructuredCloneSerialize`] added.
+/// `~SerializedScriptValue` removes the entry that [`on_structured_clone_serialize`] added.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn BlockList__onStructuredCloneDestroy(this: *mut BlockList) {
     let mut refs = SERIALIZED_REFS.lock();

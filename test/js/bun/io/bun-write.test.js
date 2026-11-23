@@ -1764,6 +1764,16 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
     ["an empty Blob written to a directory", `Bun.write(dir, new Blob([]))`, isWindows ? "EINVAL" : "EISDIR"],
     ["a string written to a read-only file descriptor", `Bun.write(Bun.file(fs.openSync(file, "r")), "x")`, "EBADF"],
     [
+      "a stream written to a read-only file descriptor",
+      `Bun.write(Bun.file(fs.openSync(file, "r")), new ReadableStream({ pull: c => (c.enqueue(new Uint8Array(1)), c.close()) }))`,
+      "EBADF",
+    ],
+    [
+      "the output of a child written to a read-only file descriptor",
+      `Bun.write(Bun.file(fs.openSync(file, "r")), Bun.spawn([process.execPath, "--version"]).stdout)`,
+      "EBADF",
+    ],
+    [
       "a TypedArray written to a read-only file descriptor",
       `Bun.write(Bun.file(fs.openSync(file, "r")), new Uint8Array(4))`,
       "EBADF",

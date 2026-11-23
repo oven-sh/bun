@@ -1310,10 +1310,6 @@ impl WindowsStreamingWriter {
         }
         match self.base.end_write(handler, event) {
             Some(Ok(written)) => self.on_write_complete(handler, written),
-            Some(Err(err)) if self.base.with_source(WriteSource::is_file) == Some(true) => {
-                self.close(handler);
-                handler.on_error(err);
-            }
             Some(Err(err)) => self.report_error_and_close(handler, err),
             None => {}
         }

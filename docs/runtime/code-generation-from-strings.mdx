@@ -89,6 +89,8 @@ These keep working at both levels:
 - `import()` of a `data:` or `blob:` URL that holds data, such as JSON, and of a `blob:` URL made from `Bun.file()`, which Bun reads from the file.
 - `vm.createContext()` and `new vm.SyntheticModule()`. Neither one compiles a string.
 
+A `vm.SyntheticModule` runs a function of the program's own, so `=strict` does not let `node:vm` stop it part-way. `module.evaluate()` with `timeout` or `breakOnSigint: true` rejects with a `TypeError` whose code is `ERR_INVALID_ARG_VALUE`, and the module does not run.
+
 A compiled executable with `=strict` loads modules, Workers and `require()`d files from the executable only. See [Files on disk are not part of the program](#files-on-disk-are-not-part-of-the-program).
 
 ## The inspector

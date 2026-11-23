@@ -589,7 +589,7 @@ impl Connection {
 
     #[inline]
     fn probe_mtu(&mut self, now: Instant, batch: &mut Batch) {
-        if let Some(len) = self.path.mtu.next_probe()
+        if let Some(len) = self.path.mtu.next_probe(now)
             && self.spaces.data.next_number >= PACKETS_BEFORE_MTU_PROBE
             && self.phase == Phase::Confirmed
             && self.pto_count == 0
@@ -605,7 +605,7 @@ impl Connection {
             out.push(kind::PING as u8);
             out.resize(end, 0);
             self.spaces.data.sent.frames.push(SentFrame::MtuProbe);
-            self.path.mtu.on_probe_sent(len);
+            self.path.mtu.on_probe_sent(now, draft.packet.number);
             draft.is_eliciting = true;
             self.send(now, &draft.end(out), out);
             batch.commit(&self.path.addresses, start, 0);

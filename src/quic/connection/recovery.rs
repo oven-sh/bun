@@ -66,6 +66,7 @@ impl Connection {
         space.received.forget_old_gaps(now, patience);
         let oldest = now - self.rtt.smoothed * MAX_LATENESS;
         let late = space.sent.find_late(oldest, ack.ranges());
+        self.path.mtu.find_late_probe(ack.ranges());
         if let Some(late) = &late {
             let distance = previous_largest.unwrap_or(0).saturating_sub(late.number) + 1;
             self.packet_threshold = self.packet_threshold.max(distance);
@@ -119,7 +120,7 @@ impl Connection {
                             (self.streams.state.events).push_back(Event::DatagramAcked(id));
                         }
                         SentFrame::MtuProbe => {
-                            self.path.mtu.on_probe_acked(packet.flight.len);
+                            (self.path.mtu).on_probe_acked(packet.number, packet.flight.len);
                             self.congestion.set_datagram_len(self.path.mtu.current);
                         }
                         SentFrame::Owed(..) | SentFrame::NewConnectionId(_) => {}
@@ -270,7 +271,7 @@ impl Connection {
         let is_queue_short = self.congestion.is_queue_short(&self.rtt);
         let next_number = self.spaces.data.next_number;
         (self.runs).on_lost(packet, ends_run, is_queue_short, next_number);
-        self.path.mtu.on_lost(&packet.flight);
+        self.path.mtu.on_lost(packet.number, &packet.flight);
         self.spaces.open(id).sent.remember_lost(packet);
         true
     }
@@ -290,7 +291,7 @@ impl Connection {
                     (self.streams.state.events).push_back(Event::DatagramLost(id));
                 }
                 SentFrame::MtuProbe if fate == Fate::Lost => {
-                    self.path.mtu.on_probe_lost(packet.flight.len);
+                    (self.path.mtu).on_probe_lost(packet.number, packet.flight.len);
                     is_mtu_probe = true;
                 }
                 SentFrame::Datagram(_) | SentFrame::MtuProbe => {}

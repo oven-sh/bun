@@ -460,3 +460,21 @@ fn keeps_its_window_for_another_port_of_the_server() {
     assert_eq!(raw.connection().addresses().peer.port(), 444);
     assert_eq!(raw.connection().stats().congestion_window, window);
 }
+
+#[test]
+fn probes_the_datagram_size_again_for_another_port_of_the_server() {
+    let raw = Raw::server().config(|it| it.uses_preferred_address = true);
+    let same_host = format!("{}1{}", &PREFERRED[..26], &PREFERRED[27..]);
+    let raw = raw.with(&same_host).with("max_udp_payload_size=");
+    let mut raw = raw.connected();
+    raw.request_packets(&"a".repeat(10));
+    raw.advance(RTT);
+    for (port, frames) in [(443, "ack"), (444, "respond")] {
+        raw.addresses.peer.set_port(port);
+        raw.send(frames);
+        raw.forget();
+        raw.send("ping");
+        raw.send("ping");
+        assert_eq!(raw.sizes()[0], 1472);
+    }
+}

@@ -412,6 +412,7 @@ impl Connection {
         let new = self.candidates.remove(at);
         let (from, to) = (self.path.addresses, new.addresses);
         let is_other_port = from.local == to.local && from.peer.ip() == to.peer.ip();
+        self.path.mtu.end_round();
         if self.side.is_server() || !is_other_port {
             self.lose_all(now);
         }

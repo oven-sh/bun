@@ -1224,7 +1224,7 @@ fn stream_that_leaves_the_line_passes_nothing_on() {
     assert_eq!(written, Some(0));
 }
 
-/// Returns how many KiB the long streams get in the second period.
+/// Returns how many KiB the younger long streams get in the second period, unless they are over by then.
 fn progress(count: usize, short: usize, window: u64, seconds: [u64; 2]) -> Vec<usize> {
     let mut network = Network::new(1);
     network.config(|it| {
@@ -1247,7 +1247,8 @@ fn progress(count: usize, short: usize, window: u64, seconds: [u64; 2]) -> Vec<u
         let streams = network.server.streams.values().take(count);
         Vec::from_iter(streams.map(|it| it.received.len() >> 10))
     });
-    Vec::from_iter(after.iter().zip(before).map(|it| it.0 - it.1))
+    let younger = after.iter().zip(before).skip(12);
+    Vec::from_iter((younger.filter(|it| it.1 < 200_000 >> 10)).map(|it| it.0 - it.1))
 }
 
 #[test]
@@ -1259,8 +1260,8 @@ fn streams_are_not_silent_for_long() {
         (20, 75, 90_000_000, [2, 3], 2..3),
     ] {
         let progress = progress(count, short, window, seconds);
-        let is_expected = progress[12..].iter().all(|it| expected.contains(it));
-        assert!(is_expected, "{progress:?}");
+        let is_expected = progress.iter().all(|it| expected.contains(it));
+        assert!(is_expected && !progress.is_empty(), "{progress:?}");
     }
 }
 
@@ -1434,19 +1435,19 @@ fn ends(piece_len: Option<usize>, lens: &[usize]) -> Vec<usize> {
 #[test]
 fn streams_end_one_after_the_other() {
     for (piece_len, lens, mean) in [
-        (None, &[100_000; 8][..], 480..490),
+        (None, &[100_000; 8][..], 470..480),
         (None, &[200_000; 8], 895..905),
-        (None, &[600_000; 4], 1605..1620),
-        (None, &[1_500_000; 2], 2435..2445),
+        (None, &[600_000; 4], 1600..1615),
+        (None, &[1_500_000; 2], 2475..2485),
         (
             None,
             &[400_000, 200_000, 150_000, 120_000, 50_000],
             495..505,
         ),
-        (Some(65_536), &[200_000; 8], 1225..1235),
-        (Some(65_536), &[600_000; 4], 1795..1805),
-        (Some(65_536), &[2_500_000; 2], 4675..4685),
-        (Some(65_536), &[1_000_000, 100_000, 200_000], 715..725),
+        (Some(65_536), &[200_000; 8], 1230..1240),
+        (Some(65_536), &[600_000; 4], 1785..1795),
+        (Some(65_536), &[2_500_000; 2], 4690..4700),
+        (Some(65_536), &[1_000_000, 100_000, 200_000], 722..732),
         (Some(4096), &[300_000; 4], 950..960),
     ] {
         let ends = ends(piece_len, lens);

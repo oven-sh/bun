@@ -47,6 +47,20 @@ impl Raw {
         self.sizes()[1]
     }
 
+    /// In steps of 100 ms. Returns how long that took.
+    fn wait_for_probe(&mut self) -> Option<u64> {
+        (0..700u64).find_map(|step| {
+            self.process();
+            self.inbox.retain(|it| it.datagram.len() > 1200);
+            if self.inbox.is_empty() {
+                self.advance(100 * step.min(1));
+                self.send_and_ask_for_ack("ack");
+                return None;
+            }
+            Some(100 * step.saturating_sub(1))
+        })
+    }
+
     fn send_and_ask_for_ack(&mut self, frames: &str) {
         self.send(&format!("{frames}, ping"));
         self.send("ping");
@@ -57,12 +71,12 @@ impl Raw {
 #[test]
 fn sizes_depend_on_the_address_and_the_limit_of_the_peer() {
     for (address, limit, probes, last) in [
-        ("192.0.2.1:1", "65527", &[1472][..], 1472),
-        ("192.0.2.1:1", "", &[1472], 1472),
-        ("[::ffff:192.0.2.1]:1", "65527", &[1472], 1472),
-        ("[2001:db8::1]:1", "65527", &[1452], 1452),
-        ("192.0.2.1:1", "1400", &[1400], 1400),
-        ("192.0.2.1:1", "1213", &[1213], 1213),
+        ("192.0.2.1:1", "65527", &[1472; 2][..], 1472),
+        ("192.0.2.1:1", "", &[1472; 2], 1472),
+        ("[::ffff:192.0.2.1]:1", "65527", &[1472; 2], 1472),
+        ("[2001:db8::1]:1", "65527", &[1452; 2], 1452),
+        ("192.0.2.1:1", "1400", &[1400; 2], 1400),
+        ("192.0.2.1:1", "1213", &[1213; 2], 1213),
         ("192.0.2.1:1", "1212", &[], 1200),
     ] {
         let new = || {
@@ -80,16 +94,13 @@ fn sizes_depend_on_the_address_and_the_limit_of_the_peer() {
 #[test]
 fn searches_below_what_did_not_get_through() {
     for (mtu, probes, last) in [
-        (1471, "3x1472 1336 1404 1438 1455 1463", 1463),
-        (1400, "3x1472 1336 3x1404 1370 1387 1395", 1395),
+        (1471, "3x1472 2x1336 2x1404 2x1438 2x1455 2x1463", 1463),
+        (1400, "3x1472 2x1336 3x1404 2x1370 2x1387 2x1395", 1395),
         (1200, "3x1472 3x1336 3x1268 3x1234 3x1217 3x1208", 1200),
     ] {
         let mut raw = client().warmed_up();
         let sizes = raw.probes(mtu);
-        let runs = sizes.chunk_by(|a, b| a == b).map(|run| match run.len() {
-            1 => format!("{}", run[0]),
-            count => format!("{count}x{}", run[0]),
-        });
+        let runs = (sizes.chunk_by(|a, b| a == b)).map(|run| format!("{}x{}", run.len(), run[0]));
         assert_eq!(runs.collect::<Vec<_>>().join(" "), probes);
         assert_eq!(raw.mtu(), last);
     }
@@ -107,18 +118,136 @@ fn loss_of_a_probe_is_not_congestion() {
 }
 
 #[test]
-fn probe_that_gets_through_at_last() {
+fn probes_that_are_lost_before_a_timeout() {
     let mut raw = client().warmed_up();
-    for _ in 0..2 {
+    for size in [1472, 1472, 1472, 1336] {
         raw.send_and_ask_for_ack("ack");
         raw.process();
-        assert_eq!(raw.inbox[0].datagram.len(), 1472);
+        assert_eq!(raw.inbox[0].datagram.len(), size);
         assert_eq!(raw.lose(), "ping");
         raw.wait();
         assert_eq!(raw.frames(), "ping, ping");
     }
-    assert_eq!(raw.probes(1472), [1472]);
-    assert_eq!(raw.mtu(), 1472);
+}
+
+/// A probe is acknowledged, lost, lost like the packet before it (<), the second (=) or the third (>) after it, or lost
+/// because the client moves to another port (capital M). The first (?) or the last (!) that was lost arrives after all,
+/// there is none for so many seconds, the client moves, or nothing arrives for two timeouts.
+#[test]
+fn search_rests_if_only_some_probes_get_through() {
+    for (steps, last) in [
+        ("a", 1200),
+        ("aa", 1472),
+        ("al1aaaaa", 1200),
+        ("al1aaaaaa", 1472),
+        ("la1aaaaaa", 1472),
+        ("lla1aaaaaa", 1472),
+        ("al1al2aaaaaaa", 1200),
+        ("al1al2aaaaaaaa", 1472),
+        ("al1la2al4al8al16al32al64al64aaaaaaaa", 1472),
+        ("al1lllaaaaa", 1200),
+        ("al1lllaaaaaaa", 1336),
+        ("al1lllaaaaaaaa", 1404),
+        ("al1al2lllaaaaaaaaaaaaa", 1336),
+        ("al1al2lllaaaaaaaaaaaaaa", 1404),
+        ("al1al2aaaaaaaataa", 1472),
+        ("al!a", 1472),
+        ("la!a", 1472),
+        ("l!aa", 1472),
+        ("ll?aa", 1472),
+        ("ll!a1aaaaa", 1200),
+        ("al!l1aaaaa", 1200),
+        ("l!l!l!aa", 1336),
+        ("a=a", 1472),
+        ("=aa", 1472),
+        ("l=a1aaaaa", 1200),
+        ("===aa", 1336),
+        ("==a=====a", 1472),
+        ("==a======1aaaaa", 1200),
+        ("a<1aaaaa", 1200),
+        ("a>1aaaaa", 1200),
+        ("ama", 1200),
+        ("llmlmaa", 1472),
+        ("llMaa", 1472),
+        ("almaaaaa", 1200),
+        ("almaaaaaa", 1472),
+        ("ata", 1200),
+        ("lltltaa", 1472),
+        ("altaaaaa", 1200),
+        ("altaaaaaa", 1472),
+        ("altaltaaaaaaa", 1200),
+    ] {
+        let raw = client().config(|it| it.progress_timeout = Duration::ZERO);
+        let (mut raw, mut rest, mut lost) = (raw.warmed_up(), 0, Vec::new());
+        for step in steps.bytes() {
+            if step.is_ascii_digit() {
+                rest = 10 * rest + u64::from(step - b'0');
+                continue;
+            }
+            if step == b'<' {
+                raw.request_packets("a");
+                raw.received[2].pop_last();
+            }
+            if b"al<=>M".contains(&step) {
+                let millis = 1000 * std::mem::take(&mut rest);
+                assert_eq!(raw.wait_for_probe(), Some(millis), "{steps}");
+            }
+            if b"l<=>M".contains(&step) {
+                lost.push(raw.inbox[0].number);
+                raw.lose();
+            }
+            match step {
+                b'?' | b'!' => {
+                    let at = usize::from(step == b'!') * (lost.len() - 1);
+                    raw.received[2].insert(lost[at]);
+                    raw.send("ack");
+                }
+                b'm' | b'M' => {
+                    let port = raw.addresses.peer.port();
+                    raw.addresses.peer.set_port(port + 1);
+                    raw.send_expanded("ping");
+                    raw.send("respond");
+                }
+                b't' => {
+                    raw.request_packets("a");
+                    for _ in 0..2 {
+                        raw.wait();
+                        raw.forget();
+                    }
+                }
+                _ => {
+                    raw.request_packets("abcde");
+                    if b"=>".contains(&step) {
+                        let number = lost[lost.len() - 1] + 2 + u64::from(step == b'>');
+                        raw.received[2].remove(&number);
+                    }
+                    raw.advance(RTT);
+                    raw.send("ack");
+                }
+            }
+        }
+        assert_eq!(raw.mtu(), last, "{steps}");
+    }
+}
+
+#[test]
+fn probe_from_before_a_fall_back_does_not_count() {
+    for is_lost in [false, true] {
+        let mut raw = client().warmed_up();
+        raw.send_and_ask_for_ack("ack 0-5");
+        let old = raw.take().remove(0);
+        for _ in 0..2 {
+            raw.wait();
+            raw.forget();
+        }
+        raw.send_and_ask_for_ack("ack 0-9");
+        let new = raw.take().remove(0);
+        assert_eq!([old.datagram.len(), new.datagram.len()], [1472; 2]);
+        let (first, last) = (old.number + u64::from(is_lost), new.number - 1);
+        raw.send_and_ask_for_ack(&format!("ack {first}-{last}"));
+        assert_eq!(raw.outline(), "1[ack]");
+        assert_eq!(raw.probes(1472), [1472]);
+    }
 }
 
 #[test]
@@ -225,7 +354,7 @@ fn falls_back_when_only_small_packets_get_through() {
         raw.probes(max);
         for round in rounds.bytes() {
             if round == b'P' {
-                assert_eq!(raw.probes(max), [max]);
+                assert_eq!(raw.probes(max), [max; 2]);
                 continue;
             }
             raw.advance(RTT / 2);
@@ -305,4 +434,21 @@ fn search_starts_over_after_a_fall_back() {
     }
     raw.send("ack");
     assert_eq!(raw.probes(1400)[..4], [1472, 1472, 1472, 1336]);
+}
+
+#[test]
+fn lost_probe_does_not_make_a_connection_stale() {
+    let mut raw = Raw::server().with("max_udp_payload_size=").connected();
+    raw.request_packets(&"a".repeat(10));
+    raw.advance(RTT);
+    for _ in 0..3 {
+        assert_eq!(raw.wait_for_probe(), Some(0));
+        raw.lose();
+        raw.wait();
+        raw.advance(RTT);
+        let [now, later] = [0, 5].map(|it| raw.now + Duration::from_secs(it));
+        assert!(!raw.connection().is_stale(now));
+        raw.send("ack");
+        assert!(!raw.connection().is_stale(later));
+    }
 }

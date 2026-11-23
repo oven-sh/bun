@@ -1152,6 +1152,7 @@ describe.concurrent("absolute-form request target and the Host header", () => {
     ["http://a.example\\/route", "a.example\\"],
     ["http:///route", ""],
     ["http://:80/route", ":80"],
+    ["http://:8080/route", ":8080"],
   ])("rejects %s with Host: %j", async (target, host) => {
     const seen: string[] = [];
     await using server = serve(seen);

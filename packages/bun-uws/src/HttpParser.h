@@ -568,7 +568,7 @@ struct HttpResponseData;
                 }
             }
             std::string_view authority = withoutDefaultPort(url.substr(schemeLength, authorityEnd - schemeLength));
-            if (authority.empty()) {
+            if (authority.empty() || authority[0] == ':') {
                 return false;
             }
             for (Header *h = headers; (++h)->key.length();) {

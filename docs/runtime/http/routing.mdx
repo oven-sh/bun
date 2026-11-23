@@ -331,4 +331,4 @@ const server = Bun.serve({
 
 Bun builds `req.url` from the protocol of the server, the `Host` header, and the path and query of the request target. If `Host` is missing or invalid, `req.url` holds only the path and query.
 
-An HTTP/1 client can also send a full URL as the target (`GET http://example.com/path HTTP/1.1`). Bun responds with `400 Bad Request` and does not run any handler if the host or port in that URL differs from the `Host` header, or if the URL contains credentials. To receive these requests, use `node:http`, which puts the raw target in `req.url`.
+An HTTP/1 client can also send a full URL as the target (`GET http://example.com/path HTTP/1.1`). Bun responds with `400 Bad Request` and does not run any handler if the host or port in that URL differs from the `Host` header, or if the URL contains credentials, has no host, or has `#` or `\` before the path. To receive these requests, use `node:http`, which puts the raw target in `req.url`.

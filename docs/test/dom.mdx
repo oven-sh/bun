@@ -86,7 +86,7 @@ new TextEncoder().encode("a") instanceof Uint8Array; // true (false in Vitest)
 (await new Response("a").arrayBuffer()) instanceof ArrayBuffer; // true
 ```
 
-With jsdom and happy-dom, `reportError()` dispatches an `error` event at `window`, as in a browser. React 19 reports what a component throws through it, so an `error` listener on `window` hears those errors too.
+With jsdom and happy-dom, `reportError()` dispatches an `error` event at `window`, as in a browser. React 19 reports through it what an event handler or `startTransition()` throws, and what a component throws outside `act()` when no error boundary catches it. An `error` listener on `window` hears those errors too. From jsdom 31, the window has a `reportError()` of its own, and the global one is the window's, as in Vitest.
 
 ## Registering happy-dom in a preload
 

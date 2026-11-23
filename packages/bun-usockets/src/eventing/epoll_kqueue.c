@@ -114,8 +114,8 @@ static int has_epoll_pwait2 = -1;
 extern ssize_t sys_epoll_pwait2(int epfd, struct epoll_event* events, int maxevents,
                               const struct timespec* timeout, const sigset_t* sigmask);
 
-
-static int bun_epoll_pwait2(int epfd, struct epoll_event *events, int maxevents, const struct timespec *timeout) {
+/* Not static: ThinLTO would add a suffix to the name once us_internal_loop_wait is inlined into loop.c. */
+int bun_epoll_pwait2(int epfd, struct epoll_event *events, int maxevents, const struct timespec *timeout) {
     int ret;
     sigset_t mask;
     sigemptyset(&mask);

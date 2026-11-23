@@ -9,8 +9,8 @@ use crate::node::fs::{is_on_disk_at, note_moved_shell_operand, refuse_move};
 use crate::shell::ExitCode;
 use crate::shell::builtin::{BadFlag, Builtin, IoKind, Kind, State};
 use crate::shell::interpreter::{
-    Interpreter, NodeId, OwnedFd, PoolTask, ShellTask, ShellWork, shell_lstatat, shell_openat,
-    shell_statat,
+    Interpreter, NodeId, OwnedFd, PoolTask, ShellTask, ShellWork, names_two_files, shell_lstatat,
+    shell_openat, shell_statat,
 };
 use crate::shell::yield_::Yield;
 
@@ -230,6 +230,9 @@ impl ShellMvBatchedTask {
 
         if let Some(error) = refuse_move((src_dir, src.as_bytes()), (dst_dir, dst.as_bytes())) {
             return Err(error);
+        }
+        if names_two_files(dst) {
+            return Err(bun_sys::Error::from_code(E::EINVAL, bun_sys::Tag::rename).with_path(dst));
         }
         if no_clobber {
             if shell_lstatat(dst_dir, dst).is_ok() {

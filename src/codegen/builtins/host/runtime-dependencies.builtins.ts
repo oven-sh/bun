@@ -670,6 +670,11 @@ const nativeCalls = [
       },
       { file: "src/runtime/ipc.rs", caller: "on_ack_nack", onBehalfOf: channelUsers },
       { file: "src/runtime/timer/Timer.rs", caller: "warn_invalid_countdown", onBehalfOf: timersWithOtherDelays },
+      {
+        file: "src/runtime/valkey_jsc/js_valkey.rs",
+        caller: "dispatch",
+        onBehalfOf: ["Bun.RedisClient.prototype.subscribe"],
+      },
     ],
   }),
   b.nativeCalls({

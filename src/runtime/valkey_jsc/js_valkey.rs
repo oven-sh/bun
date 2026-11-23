@@ -8,6 +8,7 @@ use bun_core::{Utf8Bytes, strings};
 use bun_event_loop::EventLoopTimer as Timer;
 use bun_io::JsKeepAlive;
 use bun_jsc::bindgen::{JsLocal, JsScope, JsStructure, JsWrapper};
+use bun_jsc::bun_string_jsc::create_utf8_for_js;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     self as jsc, GlobalRef, JSArray, JSGlobalObject, JSMap, JSPromise, JSPromiseStrong, JSValue,
@@ -28,6 +29,7 @@ use bun_valkey::client::{
     Acked, Attempt, Awaited, Client, Close, Config, Event, Lost, Reason, Sent,
 };
 use bun_valkey::command::Reply;
+use bun_valkey::listeners::{Name, Undo};
 use bun_valkey::valkey_protocol::{RESPValue, RedisError};
 
 bun_output::define_scoped_log!(debug, RedisJS, visible);
@@ -62,38 +64,23 @@ impl<'a> Object<'a> {
         promise.as_promise().map(JSPromise::opaque_mut)
     }
 
-    pub(crate) fn clear_receive_handlers(
-        self,
-        global_object: &JSGlobalObject,
-        channel_name: JSValue,
-    ) -> JsResult<()> {
-        if let Some(map) = self.subscription_callback_map() {
-            map.remove(global_object, channel_name)?;
-        }
-        Ok(())
-    }
-
-    pub(crate) fn clear_all_receive_handlers(self, global_object: &JSGlobalObject) -> JsResult<()> {
-        self.subscription_callback_map()
-            .map_or(Ok(()), |map| map.clear(global_object))
-    }
-
-    /// Remove a specific receive handler.
+    /// Remove the receive handlers that `keep` turns down.
     ///
     /// Returns: The total number of remaining handlers for this channel, or null if there were no
     /// listeners originally registered.
     ///
     /// Note: This function will empty out the map entry if there are no more handlers registered.
-    pub(crate) fn remove_receive_handler(
+    fn retain_receive_handlers(
         self,
         global_object: &JSGlobalObject,
-        channel_name: JSValue,
-        callback: JSValue,
+        channel: &[u8],
+        mut keep: impl FnMut(usize, JSValue) -> bool,
     ) -> JsResult<Option<usize>> {
         let Some(map) = self.subscription_callback_map() else {
             return Ok(None);
         };
 
+        let channel_name = create_utf8_for_js(global_object, channel)?;
         let existing = map.get(global_object, channel_name)?;
         if existing.is_undefined_or_null() {
             // Nothing to remove.
@@ -108,11 +95,12 @@ impl<'a> Object<'a> {
         // sets (and surprisingly fast for small sets of callbacks).
         let mut array_it = existing.array_iterator(global_object)?;
         let updated_array = JSArray::create_empty(global_object, 0)?;
+        let mut index = 0;
         while let Some(iter) = array_it.next()? {
-            if iter == callback {
-                continue;
+            if keep(index, iter) {
+                updated_array.push(global_object, iter)?;
             }
-            updated_array.push(global_object, iter)?;
+            index += 1;
         }
 
         // Otherwise, we have ourselves an array of callbacks. We need to remove the element in the
@@ -128,15 +116,74 @@ impl<'a> Object<'a> {
 
         Ok(Some(new_length as usize))
     }
+
+    fn undo(self, global_object: &JSGlobalObject, undo: Vec<Undo>) -> JsResult<()> {
+        for Undo { channel, listeners } in undo {
+            if global_object.has_exception() {
+                return Err(bun_jsc::JsError::Thrown);
+            }
+            self.retain_receive_handlers(global_object, &channel, |index, _| {
+                !listeners.contains(&index)
+            })?;
+        }
+        Ok(())
+    }
 }
 
 impl JSValkeyClient {
+    pub(crate) fn clear_receive_handlers(
+        &self,
+        object: Object<'_>,
+        global_object: &JSGlobalObject,
+        channel: &[u8],
+    ) -> JsResult<()> {
+        if let Some(map) = object.subscription_callback_map() {
+            map.remove(global_object, create_utf8_for_js(global_object, channel)?)?;
+        }
+        self.client
+            .with_mut(|client| client.retain_listeners(channel, |_| false));
+        Ok(())
+    }
+
+    pub(crate) fn clear_all_receive_handlers(
+        &self,
+        object: Object<'_>,
+        global_object: &JSGlobalObject,
+    ) -> JsResult<()> {
+        if let Some(map) = object.subscription_callback_map() {
+            map.clear(global_object)?;
+        }
+        self.client.with_mut(Client::clear_listeners);
+        Ok(())
+    }
+
+    /// As [`Object::retain_receive_handlers`].
+    pub(crate) fn remove_receive_handler(
+        &self,
+        object: Object<'_>,
+        global_object: &JSGlobalObject,
+        channel: &[u8],
+        callback: JSValue,
+    ) -> JsResult<Option<usize>> {
+        let mut removed = Vec::new();
+        let left = object.retain_receive_handlers(global_object, channel, |index, it| {
+            if it == callback {
+                removed.push(index);
+            }
+            it != callback
+        })?;
+        let keep = |index| removed.binary_search(&index).is_err();
+        self.client
+            .with_mut(|client| client.retain_listeners(channel, keep));
+        Ok(left)
+    }
+
     /// Add a handler for receiving messages on a specific channel
     pub(crate) fn upsert_receive_handler(
         &self,
         object: Object<'_>,
         global_object: &JSGlobalObject,
-        channel_name: JSValue,
+        channel: &[u8],
         callback: JSValue,
     ) -> JsResult<()> {
         let _guard = scopeguard::guard(self, |this| {
@@ -150,6 +197,7 @@ impl JSValkeyClient {
         let Some(map) = object.subscription_callback_map() else {
             return Ok(());
         };
+        let channel_name = create_utf8_for_js(global_object, channel)?;
         let mut handlers = map.get(global_object, channel_name)?;
         if handlers.is_undefined() {
             handlers = JSArray::create_empty(global_object, 0)?;
@@ -567,6 +615,10 @@ impl JSValkeyClient {
         self.client.get().is_subscriber()
     }
 
+    pub(crate) fn may_unsubscribe(&self) -> bool {
+        self.client.get().may_unsubscribe()
+    }
+
     pub(crate) fn get_connected(&self) -> bool {
         self.client.get().is_connected()
     }
@@ -849,6 +901,7 @@ impl JSValkeyClient {
         Some(valkey_error_to_js(global, message.as_bytes(), error))
     }
 
+    #[inline(never)]
     pub(crate) fn send<A: AsRef<[u8]>>(
         self: &RefPtr<Self>,
         this: JsWrapper<'_, Self>,
@@ -856,6 +909,28 @@ impl JSValkeyClient {
         name: &[u8],
         args: &[A],
         reply: Reply,
+    ) -> JSValue {
+        self.send_with(this, global, |client, promise| {
+            client.send(name, args, reply, promise)
+        })
+    }
+
+    pub(crate) fn send_subscribe(
+        self: &RefPtr<Self>,
+        this: JsWrapper<'_, Self>,
+        global: &JSGlobalObject,
+        channels: &[Name],
+    ) -> JSValue {
+        self.send_with(this, global, |client, promise| {
+            client.subscribe(channels, promise)
+        })
+    }
+
+    fn send_with(
+        self: &RefPtr<Self>,
+        this: JsWrapper<'_, Self>,
+        global: &JSGlobalObject,
+        send: impl FnOnce(&mut Client<JSPromiseStrong>, JSPromiseStrong) -> Sent,
     ) -> JSValue {
         let object = Object::from(this);
         self.ensure_dialing(object);
@@ -865,10 +940,7 @@ impl JSValkeyClient {
         if let Some(error) = self.rejection(global) {
             let _ = promise.reject(global, Ok(error));
         } else {
-            match self
-                .client
-                .with_mut(|client| client.send(name, args, reply, promise))
-            {
+            match self.client.with_mut(|client| send(client, promise)) {
                 Sent::Buffered => self.flush(),
                 Sent::Batched => {
                     AutoFlusher::register_deferred_microtask_with_type(&**self, self.vm)
@@ -917,6 +989,13 @@ impl JSValkeyClient {
                 let error = RedisError::ConnectionClosed;
                 self.fail_for_now(valkey_error_to_js(global, &message, error))
             }
+            Event::NotRestored { channel, message } => {
+                let (channel, message) = (bstr::BStr::new(&channel), bstr::BStr::new(&message));
+                let text = format!("Redis refused to subscribe to {channel:?} again: {message:?}");
+                let text = create_utf8_for_js(global, text.as_bytes())?;
+                let code = create_utf8_for_js(global, b"ERR_REDIS_SERVER_ERROR")?;
+                global.emit_warning(text, JSValue::UNDEFINED, code, JSValue::UNDEFINED)
+            }
             Event::Connected(mut hello) => self.on_connected(object, &mut hello),
             Event::Resolved {
                 mut promise,
@@ -930,21 +1009,19 @@ impl JSValkeyClient {
             Event::Rejected {
                 mut promise,
                 message,
+                undo,
             } => {
+                let undone = object.undo(global, undo);
                 let error = valkey_error_to_js(global, &message, RedisError::ServerError);
-                promise.reject(global, Ok(error))
+                let rejected = promise.reject(global, Ok(error));
+                undone.and(rejected)
             }
             Event::Message(mut data) => self.on_message(object, &mut data),
             Event::Subscribed(acked) => {
                 let count = object.subscription_count();
                 self.on_acked(acked, JSValue::js_number(f64::from(count)))
             }
-            Event::Unsubscribed(acked) => {
-                if object.subscription_count() == 0 {
-                    self.client.with_mut(Client::leave_subscriber_mode);
-                }
-                self.on_acked(acked, JSValue::UNDEFINED)
-            }
+            Event::Unsubscribed(acked) => self.on_acked(acked, JSValue::UNDEFINED),
         }
     }
 
@@ -968,6 +1045,8 @@ impl JSValkeyClient {
     ) -> JsResult<()> {
         // Now counting idle time, not connect time.
         self.reset_connection_timeout();
+        // The channels to restore, ahead of the microtasks that the caller's scope drains.
+        self.flush();
 
         let global_object = &self.global_object;
         let this_value = object.to_js();
@@ -1052,7 +1131,12 @@ impl JSValkeyClient {
         self.timer.disarm();
         let closed = || self.closed_error("Connection closed");
         match lost {
-            Lost::ForGood { reason, pending } => {
+            Lost::ForGood {
+                reason,
+                pending,
+                undo,
+            } => {
+                let undone = object.undo(&self.global_object, undo);
                 let failure = || failure.map_or_else(closed, Strong::get);
                 let error = match reason {
                     Reason::Requested => closed(),
@@ -1064,15 +1148,19 @@ impl JSValkeyClient {
                     }
                 };
                 self.reject_all(pending, error)?;
+                undone?;
                 self.on_closed(object, error)
             }
             Lost::Retry {
                 delay_ms,
                 in_flight,
+                undo,
             } => {
+                let undone = object.undo(&self.global_object, undo);
                 if !in_flight.is_empty() {
                     self.reject_all(in_flight, closed())?;
                 }
+                undone?;
                 debug!("reconnect in {}ms", delay_ms);
                 self.reconnect_timer
                     .arm(self, delay_ms, || Hold::new(self, object));

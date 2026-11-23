@@ -1625,6 +1625,65 @@ describe("bundler", () => {
     run: { file: "/out/a.js", stdout: "a APP" },
   });
 
+  // In the order of b.js, the require() in x.js puts y.js between two statements of x.js, and e.js can read w.
+  // f names both w and w2, so that the check of this order comes to f from x.js first.
+  itBundled("splitting/SharedChunkOwnerWithRequireInsideReadingFile", {
+    files: {
+      "/a.js": `import "./y.js"; console.log("a");`,
+      "/b.js": `import "./g.js"; console.log("b");`,
+      "/e.js": `import { w } from "./y.js"; console.log("e", typeof w); export const e = 1;`,
+      "/y.js": `import "./x.js"; export let w = String("w"); console.log("y");`,
+      "/g.js": /* js */ `
+        import { w2 } from "./x.js"; import { w } from "./y.js";
+        export function f(k) { return k ? w + w2 : 0 }
+        console.log("g");
+      `,
+      "/x.js": /* js */ `
+        import { f } from "./g.js";
+        console.log("x reads", f(globalThis.k));
+        console.log(require("./e.js").e);
+        export let w2 = String("w2");
+        console.log("x");
+      `,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    splitting: true,
+    target: "bun",
+    outdir: "/out",
+    format: "esm",
+    run: { file: "/out/b.js", stdout: "x reads 0\ny\ne string\n1\nx\ng\nb" },
+  });
+
+  // import("bun:wrap") makes the runtime an entry point. x.js and y.js fold into the chunk of the runtime.
+  itBundled("splitting/SharedChunkOwnerWithRuntimeAsEntryPoint", {
+    files: {
+      "/a.js": /* js */ `
+        import { vx } from "./x.js"; import c from "./c.cjs";
+        globalThis.z = () => import("bun:wrap");
+        globalThis.d = () => import("./d.js");
+        console.log("a", JSON.stringify(c), vx);
+      `,
+      "/b.js":
+        `import c from "./c2.cjs"; console.log("b", JSON.stringify(c));` +
+        Array.from({ length: 2000 }, (_, i) => `globalThis.q${i} = ${i};`).join("\n"),
+      "/d.js": `import { vx } from "./x.js"; console.log("d", vx);`,
+      "/x.js": `import { vy } from "./y.js"; export var vx = /* @__PURE__ */ String(vy);`,
+      "/y.js": `import { vx } from "./x.js"; export var vy = /* @__PURE__ */ String(vx);`,
+      "/c.cjs": `exports.x = 1;`,
+      "/c2.cjs": `exports.x = 2;`,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    splitting: true,
+    minChunkSize: 1000,
+    target: "bun",
+    outdir: "/out",
+    format: "esm",
+    run: [
+      { file: "/out/a.js", stdout: 'a {"x":1} undefined' },
+      { file: "/out/b.js", stdout: 'b {"x":2}' },
+    ],
+  });
+
   // Ported from Rolldown's code_splitting/issue_5276_2.
   itBundled("splitting/NamespaceImportAndDynamicImportOfSameModule", {
     files: {

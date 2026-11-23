@@ -1,3 +1,5 @@
+use core::ops::Range;
+
 use crate::mal_prelude::*;
 use bun_ast::{ImportKind, ImportRecord, StmtData, StmtOrExpr};
 use bun_collections::{AutoBitSet, HashMap, StringHashMap, VecExt};
@@ -35,7 +37,7 @@ pub(crate) fn find_all_imported_parts_in_js_order<'a>(
     }
 
     let mut plan = WalkPlan::new(this, chunks);
-    let mut walks = plan.create_walks(this);
+    let mut walks = plan.create_walks(this, 0..chunks.len());
     run_walks(this, &plan, chunks, &mut walks);
     let safe_walks = plan.find_safe_walks(this, chunks, &walks);
     walks.extend(safe_walks);
@@ -227,9 +229,12 @@ impl WalkOrder {
 struct WalkPlan {
     /// With code splitting, per file: the JS chunk that holds it (`u32::MAX`: none).
     chunk_of_file: Vec<u32>,
+    /// With code splitting, per chunk: how many files it holds, without the runtime.
+    files_to_place: Vec<u32>,
     /// Per chunk: the entry point id of the walk that lays it out (`u32::MAX`: not a JS chunk).
+    /// `find_safe_walks` keeps one such list per round here, one after the other (`u32::MAX`: not tried in the round).
     owner_of_chunk: Vec<u32>,
-    /// Per chunk: its index in `EntryWalk::owned` of its owner.
+    /// Same layout as `owner_of_chunk`: the index of the chunk in `EntryWalk::owned` of its owner.
     slot_of_chunk: Vec<u32>,
     /// With code splitting: the entry point id of each entry point's file, `u32::MAX` for the others.
     entry_id_of_file: Vec<u32>,
@@ -245,6 +250,7 @@ impl WalkPlan {
         let code_splitting = c.graph.code_splitting;
         let mut plan = WalkPlan {
             chunk_of_file: Vec::new(),
+            files_to_place: vec![0; chunks.len()],
             owner_of_chunk: vec![u32::MAX; chunks.len()],
             slot_of_chunk: vec![0; chunks.len()],
             entry_id_of_file: Vec::new(),
@@ -274,6 +280,9 @@ impl WalkPlan {
                         chunk_of_key.get(file_entry_bits[file].bytes(entry_points.len()))
                 {
                     plan.chunk_of_file[file] = chunk_index;
+                    if *source_index != Index::RUNTIME {
+                        plan.files_to_place[chunk_index as usize] += 1;
+                    }
                 }
             }
         }
@@ -309,11 +318,12 @@ impl WalkPlan {
         plan
     }
 
-    /// One walk per entry point that owns a chunk.
-    fn create_walks(&mut self, c: &LinkerContext) -> Vec<EntryWalk> {
+    /// One walk per entry point that owns a chunk in `owner_of_chunk[owners]`.
+    fn create_walks(&mut self, c: &LinkerContext, owners: Range<usize>) -> Vec<EntryWalk> {
+        let owners_start = owners.start;
         let mut walk_of_entry = vec![u32::MAX; c.graph.entry_points.len()];
         let mut walks: Vec<EntryWalk> = Vec::new();
-        for (chunk_index, &owner) in self.owner_of_chunk.iter().enumerate() {
+        for (chunk_index, &owner) in self.owner_of_chunk[owners].iter().enumerate() {
             if owner == u32::MAX {
                 continue;
             }
@@ -322,12 +332,15 @@ impl WalkPlan {
                 *walk_index = walks.len() as u32;
                 walks.push(EntryWalk {
                     entry_id: owner,
+                    owners_start,
                     owned: Vec::new(),
                     entered: Vec::new(),
+                    unplaced: 0,
                 });
             }
             let walk = &mut walks[*walk_index as usize];
-            self.slot_of_chunk[chunk_index] = walk.owned.len() as u32;
+            walk.unplaced += self.files_to_place[chunk_index];
+            self.slot_of_chunk[owners_start + chunk_index] = walk.owned.len() as u32;
             walk.owned.push(OwnedChunk {
                 chunk_index: chunk_index as u32,
                 runs: Vec::new(),
@@ -347,15 +360,15 @@ impl WalkPlan {
         walks: &[EntryWalk],
     ) -> Vec<EntryWalk> {
         let mut reads: Option<LoadTimeReads> = None;
-        // With the other entry points of the chunk, last by rank first.
+        // With the other entry points of the chunk, by rank.
         let mut unsafe_chunks: Vec<(usize, Vec<u32>)> = Vec::new();
         for owned in walks.iter().flat_map(|walk| &walk.owned) {
             let chunk_index = owned.chunk_index as usize;
             if !owned.has_cycle || chunks[chunk_index].entry_bits().count() < 2 {
                 continue;
             }
-            let reads = reads.get_or_insert_with(|| LoadTimeReads::new(this));
-            if !reads.is_broken_by(this, &owned.runs) {
+            let reads = reads.get_or_insert_with(|| LoadTimeReads::new(this, chunks.len()));
+            if !reads.is_broken_by(this, owned) {
                 continue;
             }
             let mut candidates: Vec<u32> = Vec::new();
@@ -365,8 +378,7 @@ impl WalkPlan {
                     candidates.push(entry_id as u32);
                 }
             }
-            candidates
-                .sort_unstable_by_key(|&entry_id| core::cmp::Reverse(self.rank[entry_id as usize]));
+            candidates.sort_unstable_by_key(|&entry_id| self.rank[entry_id as usize]);
             unsafe_chunks.push((chunk_index, candidates));
         }
 
@@ -375,28 +387,51 @@ impl WalkPlan {
             return safe_walks;
         };
         // One round tries the next entry point of every chunk, so chunks with the same entry points share a walk.
-        let mut is_safe = vec![false; chunks.len()];
+        // A chunk that no order suits takes a round per entry point, so several rounds run at once. The rounds after one
+        // that finds a safe order are thrown away and run again: the order of a walk depends on the chunks that it owns.
+        const ROUNDS_AT_ONCE_MAX: usize = 32;
+        const WALKS_AT_ONCE_MAX: usize = 64;
+        let chunks_len = chunks.len();
+        let mut is_safe = vec![false; chunks_len];
+        let mut first_round = 0;
+        let mut rounds = 1;
         loop {
-            self.owner_of_chunk.fill(u32::MAX);
-            unsafe_chunks.retain_mut(|(chunk_index, candidates)| {
-                if is_safe[*chunk_index] {
-                    return false;
-                }
-                let Some(candidate) = candidates.pop() else {
-                    return false;
-                };
-                self.owner_of_chunk[*chunk_index] = candidate;
-                true
+            unsafe_chunks.retain(|(chunk_index, candidates)| {
+                !is_safe[*chunk_index] && first_round < candidates.len()
             });
             if unsafe_chunks.is_empty() {
                 return safe_walks;
             }
-            let mut trials = self.create_walks(this);
+            self.owner_of_chunk.clear();
+            self.owner_of_chunk.resize(rounds * chunks_len, u32::MAX);
+            self.slot_of_chunk.resize(rounds * chunks_len, 0);
+            let mut trials: Vec<EntryWalk> = Vec::new();
+            for round in 0..rounds {
+                let owners_start = round * chunks_len;
+                for (chunk_index, candidates) in &unsafe_chunks {
+                    if let Some(&candidate) = candidates.get(first_round + round) {
+                        self.owner_of_chunk[owners_start + chunk_index] = candidate;
+                    }
+                }
+                let walks = self.create_walks(this, owners_start..owners_start + chunks_len);
+                if round > 0 && trials.len() + walks.len() > WALKS_AT_ONCE_MAX {
+                    rounds = round;
+                    break;
+                }
+                trials.extend(walks);
+            }
             run_walks(this, self, chunks, &mut trials);
+            let mut safe_round = None;
             for mut trial in trials {
-                trial
-                    .owned
-                    .retain(|owned| !reads.is_broken_by(this, &owned.runs));
+                let round = trial.owners_start / chunks_len;
+                if safe_round.is_some_and(|safe_round| round > safe_round) {
+                    break;
+                }
+                trial.owned.retain(|owned| !reads.is_broken_by(this, owned));
+                if trial.owned.is_empty() {
+                    continue;
+                }
+                safe_round = Some(round);
                 for owned in &trial.owned {
                     is_safe[owned.chunk_index as usize] = true;
                 }
@@ -405,6 +440,10 @@ impl WalkPlan {
                     .retain(|&file| is_safe[self.chunk_of_file[file as usize] as usize]);
                 safe_walks.push(trial);
             }
+            (first_round, rounds) = match safe_round {
+                Some(round) => (first_round + round + 1, 1),
+                None => (first_round + rounds, (rounds * 2).min(ROUNDS_AT_ONCE_MAX)),
+            };
         }
     }
 }
@@ -422,10 +461,14 @@ struct LoadTimeReads {
     /// Scratch for `is_broken_by`. Per part of the chunk that is not hoisted: the index of its run.
     position: Vec<u32>,
     visited: Vec<bool>,
+    /// Per chunk, the reads that broke an order so far: the last non-hoisted part of the reading file, then the part
+    /// that gives the value. With the first ahead of the second, the search is sure to find a read, so it does not run.
+    /// The reading part itself is no such proof: a later part of its file can hide the read through `visited`.
+    known_reads: Vec<Vec<(u32, u32)>>,
 }
 
 impl LoadTimeReads {
-    fn new(c: &LinkerContext) -> LoadTimeReads {
+    fn new(c: &LinkerContext, chunks_len: usize) -> LoadTimeReads {
         let all_parts = c.graph.ast.items_parts();
         let flags = c.graph.meta.items_flags();
         let css = &c.parse_graph().css_asts;
@@ -488,6 +531,7 @@ impl LoadTimeReads {
             dependents,
             position: vec![u32::MAX; parts_len],
             visited: vec![false; parts_len],
+            known_reads: vec![Vec::new(); chunks_len],
         }
     }
 
@@ -510,46 +554,68 @@ impl LoadTimeReads {
         false
     }
 
-    /// Some part of `runs` that evaluates code names, itself or through the functions that it names, a binding that a
-    /// later part of another file of `runs` gives its value.
-    fn is_broken_by(&mut self, c: &LinkerContext, runs: &[PartRun]) -> bool {
+    /// Some part of `owned.runs` that evaluates code names, itself or through the functions that it names, a binding that a
+    /// later part of another file of `owned.runs` gives its value.
+    fn is_broken_by(&mut self, c: &LinkerContext, owned: &OwnedChunk) -> bool {
+        let runs: &[PartRun] = &owned.runs;
         let mut position = core::mem::take(&mut self.position);
         let mut visited = core::mem::take(&mut self.visited);
         self.for_each_part_backward(c, runs, |run_index, id| {
             position[id as usize] = run_index;
             false
         });
+        let known_reads = &self.known_reads[owned.chunk_index as usize];
+        let breaks_known_read = known_reads.iter().any(|&(reader_end, written)| {
+            let written_at = position[written as usize];
+            written_at != u32::MAX && position[reader_end as usize] < written_at
+        });
         // Last run first: the first search that comes to a function is the one from the latest binding that it leads to.
         // `import` statements are hoisted, so a file that a part can name does not print between two parts of its file.
         let mut queue: Vec<u32> = Vec::new();
-        let is_broken = self.for_each_part_backward(c, runs, |run_index, written| {
-            queue.push(written);
-            while let Some(id) = queue.pop() {
-                let (start, end) = (
-                    self.dependents_start[id as usize] as usize,
-                    self.dependents_start[id as usize + 1] as usize,
-                );
-                for &dependent in &self.dependents[start..end] {
-                    if self.effects[dependent as usize] == LoadEffect::Evaluates {
-                        if position[dependent as usize] < run_index
-                            && self.file_of_part[dependent as usize]
-                                != self.file_of_part[written as usize]
-                        {
-                            return true;
+        let mut new_read = None;
+        let is_broken = breaks_known_read
+            || self.for_each_part_backward(c, runs, |run_index, written| {
+                queue.push(written);
+                while let Some(id) = queue.pop() {
+                    let (start, end) = (
+                        self.dependents_start[id as usize] as usize,
+                        self.dependents_start[id as usize + 1] as usize,
+                    );
+                    for &dependent in &self.dependents[start..end] {
+                        if self.effects[dependent as usize] == LoadEffect::Evaluates {
+                            if position[dependent as usize] < run_index
+                                && self.file_of_part[dependent as usize]
+                                    != self.file_of_part[written as usize]
+                            {
+                                new_read = Some((dependent, written));
+                                return true;
+                            }
+                        } else if !visited[dependent as usize] {
+                            visited[dependent as usize] = true;
+                            queue.push(dependent);
                         }
-                    } else if !visited[dependent as usize] {
-                        visited[dependent as usize] = true;
-                        queue.push(dependent);
                     }
                 }
+                false
+            });
+        if let Some((reader, written)) = new_read {
+            let file = self.file_of_part[reader as usize];
+            let reader_end = (reader..self.file_of_part.len() as u32)
+                .take_while(|&id| self.file_of_part[id as usize] == file)
+                .filter(|&id| self.effects[id as usize] != LoadEffect::Hoisted)
+                .last()
+                .unwrap_or(reader);
+            if position[reader_end as usize] < position[written as usize] {
+                self.known_reads[owned.chunk_index as usize].push((reader_end, written));
             }
-            false
-        });
+        }
         self.for_each_part_backward(c, runs, |_, id| {
             position[id as usize] = u32::MAX;
             false
         });
-        visited.fill(false);
+        if !breaks_known_read {
+            visited.fill(false);
+        }
         self.position = position;
         self.visited = visited;
         is_broken
@@ -923,9 +989,13 @@ struct OwnedChunk {
 /// One walk from an entry point. It lays out the chunks that the entry point owns.
 struct EntryWalk {
     entry_id: u32,
+    /// Where the round of this walk starts in `WalkPlan::owner_of_chunk`.
+    owners_start: usize,
     owned: Vec<OwnedChunk>,
     /// With code splitting: the files placed, in the order the walk entered them.
     entered: Vec<IndexInt>,
+    /// With code splitting: how many files of `owned` the walk has not left, without the runtime. It stops at 0.
+    unplaced: u32,
 }
 
 impl EntryWalk {
@@ -948,6 +1018,9 @@ impl EntryWalk {
         // Chunk folding can move a file into a chunk whose entry points do not import it. It goes last there.
         let runtime = Index::RUNTIME.value();
         for slot in 0..self.owned.len() {
+            if c.graph.code_splitting && self.unplaced == 0 {
+                break;
+            }
             let chunk = &chunks[self.owned[slot].chunk_index as usize];
             for &source_index in chunk.files_with_parts_in_chunk.keys() {
                 if source_index != runtime && !seen.is_set(source_index as usize) {
@@ -977,6 +1050,7 @@ impl EntryWalk {
         root: IndexInt,
     ) {
         let entry_id = self.entry_id;
+        let owners_start = self.owners_start;
         let files_live = &c.graph.files_live;
         let entry_bits = c.graph.files.items_entry_bits();
         let flags = c.graph.meta.items_flags();
@@ -994,8 +1068,11 @@ impl EntryWalk {
                 return None;
             }
             let chunk_index = plan.chunk_of_file[source_index as usize];
-            (chunk_index != u32::MAX && plan.owner_of_chunk[chunk_index as usize] == entry_id)
-                .then(|| plan.slot_of_chunk[chunk_index as usize])
+            if chunk_index == u32::MAX {
+                return None;
+            }
+            let at = owners_start + chunk_index as usize;
+            (plan.owner_of_chunk[at] == entry_id).then(|| plan.slot_of_chunk[at])
         };
 
         debug_assert!(stack.is_empty());
@@ -1009,6 +1086,13 @@ impl EntryWalk {
                     self.owned[slot as usize].runs.push(run);
                     if run.end == u32::MAX {
                         left.set(run.source_index as usize);
+                        // `import("bun:wrap")` makes the runtime the root of a walk.
+                        if c.graph.code_splitting && run.source_index != Index::RUNTIME.value() {
+                            self.unplaced -= 1;
+                            if self.unplaced == 0 {
+                                stack.clear();
+                            }
+                        }
                     }
                     continue;
                 }

@@ -63,7 +63,6 @@
 "generic_body_not_generic:src/install/extract_tarball.rs" = 1
 "generic_body_not_generic:src/install/lockfile/Tree.rs" = 1
 "generic_body_not_generic:src/install/lockfile/printer/Yarn.rs" = 1
-"interchangeable_aliases:src/install/lockfile/Tree.rs" = 1
 "safe_fn_returns_shared_mut:src/install/PackageManager.rs" = 2
 
 [bun_io]

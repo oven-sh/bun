@@ -17,7 +17,8 @@ use crate::windows_format::reparse::{self, JunctionError, LinkTarget};
 use crate::windows_format::wide::{self, EncodeError};
 use crate::windows_format::{file_time, names, open_flags};
 use crate::{
-    Error, FILE_SHARE, Fd, IoVec, IoVecMut, Maybe, Mode, NtCreateFileOptions, Tag, TimeLike, syslog,
+    Error, FILE_SHARE, Fd, FdKind, IoVec, IoVecMut, Maybe, Mode, NtCreateFileOptions, Tag,
+    TimeLike, syslog,
 };
 
 type Result<T> = core::result::Result<T, Win32Error>;
@@ -249,9 +250,13 @@ impl At {
 }
 
 fn read_at(fd: Fd, vecs: &[IoVecMut<'_>], at: At) -> Maybe<usize> {
-    let result = match at.run(fd, |handle, offset| sync_io::readv(handle, vecs, offset)) {
-        Err(Win32Error::HANDLE_EOF | Win32Error::BROKEN_PIPE) => Ok(0),
-        result => result,
+    let result = loop {
+        match at.run(fd, |handle, offset| sync_io::readv(handle, vecs, offset)) {
+            Err(Win32Error::HANDLE_EOF | Win32Error::BROKEN_PIPE) => break Ok(0),
+            Err(Win32Error::OPERATION_ABORTED)
+                if fd.kind() == FdKind::System && !sync_io::is_interruptible() => {}
+            result => break result,
+        }
     };
     of_fd(result, Tag::read, fd)
 }

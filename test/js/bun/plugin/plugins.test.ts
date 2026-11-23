@@ -820,6 +820,59 @@ it("builder methods return the builder only when called as methods", () => {
   });
 });
 
+it("the builder has the members that the types declare, and the types have no build.config in Bun.plugin()", async () => {
+  let members: string[] = [];
+  plugin({
+    name: "members of the builder",
+    setup(builder) {
+      members = Object.keys(builder).sort();
+    },
+  });
+  expect(members).toEqual(["module", "onLoad", "onResolve", "target"]);
+
+  using dir = tempDir("plugin-builder-types", {
+    "tsconfig.json": JSON.stringify({
+      compilerOptions: {
+        strict: true,
+        noEmit: true,
+        target: "esnext",
+        module: "esnext",
+        moduleResolution: "bundler",
+        lib: ["esnext"],
+        typeRoots: [resolve(import.meta.dir, "..", "..", "..", "..", "packages")],
+        types: ["bun-types"],
+        skipLibCheck: true,
+      },
+    }),
+    // An object literal for `Record<Declared, true>` must have each declared member and no other.
+    "members.ts": `import type { RuntimePluginBuilder } from "bun";
+type Declared = {
+  [K in keyof RuntimePluginBuilder]-?: undefined extends RuntimePluginBuilder[K] ? never : K;
+}[keyof RuntimePluginBuilder];
+export const members: Record<Declared, true> = ${JSON.stringify(Object.fromEntries(members.map(name => [name, true])))};
+`,
+    "runtime.ts": `Bun.plugin({
+  name: "runtime",
+  setup(build) {
+    console.log(build.config.target);
+  },
+});
+`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "check"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect({ stdout: stdout.trim().split("\n"), exitCode }).toEqual({
+    stdout: ["runtime.ts(4,17): error TS18048: 'build.config' is possibly 'undefined'."],
+    exitCode: 1,
+  });
+});
+
 it("recursion throws stack overflow", () => {
   expect(() => {
     require("recursion:recursion");
@@ -4593,7 +4646,7 @@ describe("namespace validation", () => {
   const accepted = { onLoad: null, onResolve: null };
   const rejected = { onLoad: rejection, onResolve: rejection };
 
-  function thrownBy(setup: (build: import("bun").PluginBuilder) => void) {
+  function thrownBy(setup: (build: import("bun").RuntimePluginBuilder) => void) {
     try {
       plugin({ name: "namespace validation", setup });
     } catch (error: any) {

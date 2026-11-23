@@ -6853,7 +6853,11 @@ declare module "bun" {
   };
 
   /**
-   * The builder object passed to `Bun.plugin`
+   * The builder object that {@link Bun.build} passes to the `setup` function
+   * of a plugin.
+   *
+   * {@link Bun.plugin} passes a {@link RuntimePluginBuilder}. That object has
+   * no `config`, `onStart`, `onEnd` or `onBeforeParse`.
    *
    * @category Bundler
    */
@@ -6864,13 +6868,14 @@ declare module "bun" {
      *
      * @example
      * ```ts
-     * Bun.plugin({
+     * const plugin: Bun.BunPlugin<Bun.PluginBuilder> = {
+     *   name: "my-plugin",
      *   setup(builder) {
      *     builder.onStart(() => {
      *       console.log("bundle just started!!")
      *     });
      *   },
-     * });
+     * };
      * ```
      *
      * @returns `this` for method chaining
@@ -6882,7 +6887,7 @@ declare module "bun" {
      *
      * @example
      * ```ts
-     * const plugin: Bun.BunPlugin = {
+     * const plugin: Bun.BunPlugin<Bun.PluginBuilder> = {
      *   name: "my-plugin",
      *   setup(builder) {
      *     builder.onEnd((result) => {
@@ -6935,8 +6940,67 @@ declare module "bun" {
     /**
      * The config object passed to `Bun.build` as is. Can be mutated.
      */
-    config: BuildConfig & { plugins: BunPlugin[] };
+    config: BuildConfig & { plugins: BunPlugin<PluginBuilder>[] };
 
+    /**
+     * Not supported in {@link Bun.build}: the call throws. Only a plugin
+     * registered with {@link Bun.plugin} can create a virtual module. See
+     * {@link RuntimePluginBuilder.module}.
+     */
+    module(specifier: string, callback: () => OnLoadResult | Promise<OnLoadResult>): this;
+  }
+
+  /**
+   * The builder object that {@link Bun.plugin} passes to the `setup` function
+   * of a plugin.
+   *
+   * {@link Bun.build} passes a {@link PluginBuilder}.
+   *
+   * @category Bundler
+   */
+  interface RuntimePluginBuilder {
+    /**
+     * Always `"bun"`.
+     */
+    target: "bun";
+    /**
+     * Register a callback to load imports with a specific import specifier
+     * @param constraints The constraints to apply the plugin to
+     * @param callback The callback to handle the import
+     * @example
+     * ```ts
+     * Bun.plugin({
+     *   name: "hello-world",
+     *   setup(builder) {
+     *     builder.onLoad({ filter: /^hello:world$/ }, (args) => {
+     *       return { exports: { foo: "bar" }, loader: "object" };
+     *     });
+     *   },
+     * });
+     * ```
+     *
+     * @returns `this` for method chaining
+     */
+    onLoad(constraints: PluginConstraints, callback: OnLoadCallback): this;
+    /**
+     * Register a callback to resolve imports matching a filter and/or namespace
+     * @param constraints The constraints to apply the plugin to
+     * @param callback The callback to handle the import
+     * @example
+     * ```ts
+     * Bun.plugin({
+     *   name: "wat",
+     *   setup(builder) {
+     *     builder.onResolve({ filter: /^wat$/ }, (args) => {
+     *       return { path: "/tmp/woah.js" };
+     *     });
+     *   },
+     * });
+     * ```
+     *
+     * @returns `this` for method chaining
+     */
+    onResolve(constraints: PluginConstraints, callback: OnResolveCallback): this;
     /**
      * Create a lazy-loaded virtual module that can be `import`ed or `require`d from other modules
      *
@@ -6946,6 +7010,7 @@ declare module "bun" {
      * @example
      * ```ts
      * Bun.plugin({
+     *   name: "hello-world",
      *   setup(builder) {
      *     builder.module("hello:world", () => {
      *       return { exports: { foo: "bar" }, loader: "object" };
@@ -6965,14 +7030,36 @@ declare module "bun" {
      * @returns `this` for method chaining
      */
     module(specifier: string, callback: () => OnLoadResult | Promise<OnLoadResult>): this;
+    /**
+     * Never set. Only the {@link PluginBuilder} of {@link Bun.build} has a
+     * `config`. A plugin that both callers run can test `build.config` to
+     * learn which builder it has.
+     */
+    config?: undefined;
+    /**
+     * Never set. A runtime plugin has no bundle to start.
+     */
+    onStart?: undefined;
+    /**
+     * Never set. A runtime plugin has no bundle to end.
+     */
+    onEnd?: undefined;
+    /**
+     * Never set. Only {@link Bun.build} runs native `onBeforeParse` plugins.
+     */
+    onBeforeParse?: undefined;
   }
 
   /**
    * A Bun plugin. Used for extending Bun's behavior at runtime, or with {@link Bun.build}
    *
+   * `Builder` is the type of the object that `setup` receives:
+   * - {@link PluginBuilder} for a plugin that only {@link Bun.build} runs
+   * - {@link RuntimePluginBuilder} for a plugin that only {@link Bun.plugin} runs
+   *
    * @category Bundler
    */
-  interface BunPlugin {
+  interface BunPlugin<Builder = PluginBuilder> {
     /**
      * Human-readable name of the plugin
      *
@@ -6981,14 +7068,15 @@ declare module "bun" {
     name: string;
 
     /**
-     * The target JavaScript environment the plugin should be applied to.
+     * The target JavaScript environment the plugin is intended for.
      * - `bun`: The default environment when using `bun run` or `bun` to load a script
-     * - `browser`: The plugin is applied to browser builds
-     * - `node`: The plugin is applied to Node.js builds
+     * - `browser`: Browser builds
+     * - `node`: Node.js builds
      *
-     * If unspecified, the plugin is assumed to be compatible with all targets.
-     *
-     * This field is not read by {@link Bun.plugin}, only {@link Bun.build} and `bun build`
+     * {@link Bun.plugin} validates this value but does not filter on it, and
+     * {@link Bun.build} does not read it: the plugin runs for every target.
+     * To apply a `Bun.build` plugin conditionally, check `build.config.target`
+     * inside `setup` (`build.config` is only set for `Bun.build` plugins).
      */
     target?: Target;
 
@@ -7010,7 +7098,7 @@ declare module "bun" {
        * }));
        * ```
        */
-      build: PluginBuilder,
+      build: Builder,
     ): void | Promise<void>;
   }
 
@@ -7054,6 +7142,7 @@ declare module "bun" {
    * ```
    */
   interface BunRegisterPlugin {
+    <T extends BunPlugin<RuntimePluginBuilder>>(options: T): ReturnType<T["setup"]>;
     <T extends BunPlugin>(options: T): ReturnType<T["setup"]>;
 
     /**

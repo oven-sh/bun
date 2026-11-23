@@ -6797,8 +6797,7 @@ pub(crate) mod __gated_printer {
             folded
         }
 
-        /// Prints a statement of a statement list. There, what the late fold left of a statement
-        /// can be several statements, or none.
+        /// Prints a statement of a list, where the late fold can leave several statements or none.
         #[inline]
         pub(crate) fn print_stmt_in_list(&mut self, stmt: Stmt) -> crate::Result<()> {
             if self.options.late_fold

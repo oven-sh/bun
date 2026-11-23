@@ -273,8 +273,7 @@ impl LinkerContext<'_, '_> {
 
             // TODO: inline function calls here
 
-            // A read of a leaf constant is not a use of its declaration: the printer prints the
-            // value (`late_fold::inlined_const` selects the same reads).
+            // The printer prints these reads as values (`late_fold::inlined_const`).
             if imports_leaf_const {
                 let uses = part.symbol_uses.count();
                 part.symbol_uses.retain(|ref_, _| {

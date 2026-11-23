@@ -152,8 +152,7 @@ pub mod js_meta {
         pub(crate) needs_synthetic_default_export: bool,
         /// The printer inlines a value of another file here, so it runs `bun_ast::late_fold`.
         pub(crate) late_fold: bool,
-        /// Step 5 dropped a use of a constant in `LinkerGraph::const_values` from this file, so
-        /// the printer must print the value. Neither may happen without the other.
+        /// Step 5 dropped the use of a leaf constant here, so the printer must print its value.
         pub(crate) inlines_const: bool,
         pub(crate) wrap: WrapKind,
     }
@@ -680,8 +679,7 @@ fn fills_enum(value: &bun_ast::Expr, symbols: &symbol::Map) -> bool {
             .is_some_and(|symbol| symbol.kind == symbol::Kind::TsEnum)
 }
 
-/// Records the exported constants in esbuild's "const local prefix" of a file that imports
-/// nothing. `P::const_values` is a looser list, for reads in the same file.
+/// Records the exported constants in esbuild's "const local prefix" of an import-free file.
 fn collect_leaf_const_values(
     parts: &[bun_ast::Part],
     named_exports: &bundled_ast::NamedExports,

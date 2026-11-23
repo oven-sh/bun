@@ -88,6 +88,11 @@ describe("lines", () => {
     expect(short(diff.lines(a, b))).toEqual(expected);
   });
 
+  test("more than 65,535 UTF-16 lines are kept", () => {
+    const kept = "世" + Buffer.alloc(200_000, "\n").toString();
+    expect(diff.lines(kept + "a", kept + "b").map(change => change.count)).toEqual([200_000, 1, 1]);
+  });
+
   test("ropes and substrings", () => {
     const base = numbered(50, i => `line ${i}`);
     const rope = base.slice(7) + "tail\n";

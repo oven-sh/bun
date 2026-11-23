@@ -75,11 +75,7 @@ impl Split {
     pub fn count<T: Unit>(self, text: &[T]) -> usize {
         let unterminated = usize::from(!text.is_empty() && !is(text.last(), b'\n'));
         match (self, T::units(text)) {
-            (Split::Lines, CodeUnits::U8(text)) => count_char(text, b'\n') + unterminated,
-            (Split::Lines, CodeUnits::U16(text)) => {
-                let newline = u16::from(b'\n');
-                text.iter().filter(|&&unit| unit == newline).count() + unterminated
-            }
+            (Split::Lines, _) => count_newlines(text) + unterminated,
             (Split::Chars, CodeUnits::U8(text)) => text.len(),
             _ => {
                 let (mut at, mut count) = (0, 0);
@@ -128,6 +124,22 @@ impl Split {
             offsets.push(at as u32);
         }
         offsets
+    }
+}
+
+pub(crate) fn count_newlines<T: Unit>(text: &[T]) -> usize {
+    match T::units(text) {
+        CodeUnits::U8(text) => count_char(text, b'\n'),
+        // A sum as wide as a unit fills the lanes of a vector.
+        CodeUnits::U16(text) => text
+            .chunks(usize::from(u16::MAX))
+            .map(|part| {
+                part.iter()
+                    .map(|&unit| u16::from(unit == 0x0A))
+                    .sum::<u16>()
+            })
+            .map(usize::from)
+            .sum(),
     }
 }
 

@@ -1,0 +1,23 @@
+# f1 = step, f2 = choose
+# -- source: main.ts
+# function step(grid: number[][], n: number): number { let sum = 0; for (let i = 0; i < n; i++) { const x = (i * 5) % 4, y = (i * 3) % 4; grid[y]![x]! += i; sum += grid[y]![x]!; } return sum; }
+# function choose(grid: number[][], n: number): number { let sum = 0; for (let i = 0; i < n; i++) { const x = (i * 5) % 4, y = (i * 3) % 4; if (grid[y]![x]! > 7) grid[y]![x] = grid[y]![x]! - 5; else grid[y]![x] = grid[y]![x]! + 3; sum += grid[y]![x]!; } return sum; }
+# function make(): number[][] { const grid: number[][] = []; for (let y = 0; y < 4; y++) { const row: number[] = []; for (let x = 0; x < 4; x++) row.push(y * 4 + x); grid.push(row); } return grid; }
+# print(step(make(), 9), choose(make(), 9));
+# const shared = make(); shared[1] = shared[2]!; shared[0] = shared[3]!;
+# print(step(shared, 9), choose(shared, 9), String(shared));
+# -- end of source
+# A row of numbers holds no rows: the read after the store finds the row that was read before it.
+# RUN: walk f1 mechanisms=all
+# CHECK: = GetArrayElement {{*}} arrayStorage=Contiguous
+# CHECK: PutContiguousIndex {{*}} hasNumericStorage
+# CHECK-NOT: = GetArrayElement {{*}} arrayStorage=Contiguous
+# So does the read behind two arms that store.
+# RUN(ARMS): walk f2 mechanisms=all
+# ARMS: = GetArrayElement {{*}} arrayStorage=Contiguous
+# ARMS-NOT: = GetArrayElement {{*}} arrayStorage=Contiguous
+# ARMS: PutContiguousIndex {{*}} hasNumericStorage
+# ARMS-NOT: = GetArrayElement {{*}} arrayStorage=Contiguous
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 106 57
+# ANSWERS-NEXT: 150 113 9,9,14,15,8,9,8,11,8,9,8,11,9,9,14,15

@@ -1,0 +1,20 @@
+const xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx = graphql(
+  /* GraphQL */ `
+    query Q {
+      x
+    }
+  `
+);
+const xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx = foo(
+  `
+    query Q {
+      x
+    }
+  `
+);
+const xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx = foo(`
+    query Q {
+  `);
+const xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx = foo(gql`
+    query Q {x}
+  `);

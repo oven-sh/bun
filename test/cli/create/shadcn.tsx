@@ -1,6 +1,10 @@
+// @ts-expect-error installed by `bun create`
 import { Button } from "@/components/ui/button";
+// @ts-expect-error installed by `bun create`
 import { Badge } from "@/components/ui/badge";
+// @ts-expect-error installed by `bun create`
 import { Card } from "@/components/ui/card";
+// @ts-expect-error installed by `bun create`
 import { CheckCircle } from "lucide-react";
 
 export default function LandingPage() {

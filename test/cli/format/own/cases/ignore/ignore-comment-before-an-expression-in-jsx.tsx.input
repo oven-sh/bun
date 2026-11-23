@@ -1,0 +1,12 @@
+const a = (
+  <div>
+    {/* prettier-ignore */}
+    {([b, c] as const).map((d, e) => <F key={d}   g={d} />)}
+    {/* prettier-ignore */}
+    <G   h={1} />
+    {/* prettier-ignore */}
+    {i.map((d) => <F   key={d} />)}
+    {/* prettier-ignore */}
+    text {j   }
+  </div>
+);

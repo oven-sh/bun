@@ -22,6 +22,7 @@
 // Tests adapted from https://github.com/nodejs/node/blob/main/test/parallel/test-util.js
 
 import assert from "assert";
+import { exposedInternals } from "bun:internal-for-testing";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import util from "util";
@@ -383,6 +384,97 @@ describe("util", () => {
   it("format", () => {
     expect(util.format("%s:%s", "foo")).toBe("foo:%s");
   });
+  it("the first inspect does not call a replaced Function.prototype.bind", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const util = require("node:util");
+         const original = Function.prototype.bind;
+         let calls = 0;
+         Function.prototype.bind = function (...args) {
+           calls++;
+           return original.apply(this, args);
+         };
+         util.inspect({ count: 1, list: [new Map([[1, 2]])], set: new Set([1]), error: new Error("made up") });
+         Function.prototype.bind = original;
+         console.log(calls);`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "0\n", stderr: "", exitCode: 0 });
+  });
+  // Messages verified against the node v26.3.0 binary.
+  const invalidArgType = message =>
+    expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE", name: "TypeError", message });
+  it("formatWithOptions and inspect.defaultOptions validate their options like Node", () => {
+    function opts() {}
+    // Arrays are allowed for formatWithOptions (kValidateObjectAllowArray), functions and null are not.
+    expect(util.formatWithOptions([], "%s", 1)).toBe("1");
+    expect(() => util.formatWithOptions(opts, "x")).toThrow(
+      invalidArgType('The "inspectOptions" argument must be of type object. Received function opts'),
+    );
+    expect(() => util.formatWithOptions(null, "x")).toThrow(
+      invalidArgType('The "inspectOptions" argument must be of type object. Received null'),
+    );
+    const saved = { ...util.inspect.defaultOptions };
+    try {
+      expect(() => (util.inspect.defaultOptions = opts)).toThrow(
+        invalidArgType('The "options" argument must be of type object. Received function opts'),
+      );
+      expect(() => (util.inspect.defaultOptions = [])).toThrow(
+        invalidArgType('The "options" argument must be of type object. Received an instance of Array'),
+      );
+      expect(() => (util.inspect.defaultOptions = { depth: 3 })).not.toThrow();
+    } finally {
+      util.inspect.defaultOptions = saved;
+    }
+    expect(() => util.stripVTControlCharacters(1)).toThrow(
+      invalidArgType('The "str" argument must be of type string. Received type number (1)'),
+    );
+  });
+  // Ported from the validateObject block of node's test/parallel/test-validators.js (v26.3.0).
+  it("validateObject honors the kValidateObject* flags like Node", () => {
+    const { validateObject, kValidateObjectAllowNullable, kValidateObjectAllowArray, kValidateObjectAllowFunction } =
+      exposedInternals["internal/validators"];
+    const err = expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE", name: "TypeError" });
+    function fn() {}
+    const allFlags = kValidateObjectAllowNullable | kValidateObjectAllowArray | kValidateObjectAllowFunction;
+
+    validateObject({}, "foo");
+    validateObject({ a: 42, b: "foo" }, "foo");
+    for (const val of [undefined, null, true, false, 0, 0.0, 42, "", "string", [], fn]) {
+      expect(() => validateObject(val, "foo")).toThrow(err);
+    }
+
+    validateObject(null, "foo", kValidateObjectAllowNullable);
+    validateObject([], "foo", kValidateObjectAllowArray);
+    validateObject(fn, "foo", kValidateObjectAllowFunction);
+    for (const val of [{}, null, [], fn]) {
+      expect(() => validateObject(val, "foo", allFlags)).not.toThrow();
+    }
+
+    // Each flag only admits its own kind of value.
+    expect(() => validateObject(null, "foo", kValidateObjectAllowArray | kValidateObjectAllowFunction)).toThrow(
+      invalidArgType('The "foo" argument must be of type object. Received null'),
+    );
+    expect(() => validateObject([], "foo", kValidateObjectAllowNullable | kValidateObjectAllowFunction)).toThrow(
+      invalidArgType('The "foo" argument must be of type object. Received an instance of Array'),
+    );
+    expect(() => validateObject(fn, "foo", kValidateObjectAllowNullable | kValidateObjectAllowArray)).toThrow(
+      invalidArgType('The "foo" argument must be of type object. Received function fn'),
+    );
+    expect(() => validateObject(undefined, "foo", allFlags)).toThrow(
+      invalidArgType('The "foo" argument must be of type object. Received undefined'),
+    );
+    expect(() => validateObject("string", "foo", allFlags)).toThrow(
+      invalidArgType("The \"foo\" argument must be of type object. Received type string ('string')"),
+    );
+  });
+
   it("formatWithOptions", () => {
     expect(util.formatWithOptions({ colors: true }, "%s:%s", "foo")).toBe("foo:%s");
     expect(util.formatWithOptions({ colors: true }, "wow(%o)", { obj: true })).toBe(
@@ -481,6 +573,76 @@ describe("util", () => {
     assert.strictEqual(util.styleText("red", "test", { validateStream: false }), "\u001b[31mtest\u001b[39m");
   });
 
+  // Expected values are from Node 26.
+  describe("diff", () => {
+    it("compares two strings by code unit", () => {
+      expect(util.diff("12345678", "12!!5!7!")).toEqual([
+        [0, "1"],
+        [0, "2"],
+        [1, "3"],
+        [1, "4"],
+        [-1, "!"],
+        [-1, "!"],
+        [0, "5"],
+        [1, "6"],
+        [-1, "!"],
+        [0, "7"],
+        [1, "8"],
+        [-1, "!"],
+      ]);
+      expect(util.diff("", "a")).toEqual([[-1, "a"]]);
+      expect(util.diff("a", "")).toEqual([[1, "a"]]);
+      expect(util.diff("😀a", "😀b")).toEqual([
+        [0, "\ud83d"],
+        [0, "\ude00"],
+        [1, "a"],
+        [-1, "b"],
+      ]);
+    });
+
+    it("compares two arrays of strings by item", () => {
+      expect(util.diff(["1", "2", "3"], ["1", "3", "4"])).toEqual([
+        [0, "1"],
+        [1, "2"],
+        [0, "3"],
+        [-1, "4"],
+      ]);
+      expect(util.diff(["ab"], "ab")).toEqual([
+        [1, "ab"],
+        [-1, "a"],
+        [-1, "b"],
+      ]);
+    });
+
+    it("returns an empty array for the same value", () => {
+      const lines = ["a"];
+      expect(util.diff("abc", "abc")).toEqual([]);
+      expect(util.diff(lines, lines)).toEqual([]);
+      expect(util.diff(1, 1)).toEqual([]);
+    });
+
+    it("throws for anything but strings", () => {
+      expect(() => util.diff(1, 2)).toThrow(
+        expect.objectContaining({
+          code: "ERR_INVALID_ARG_TYPE",
+          message: 'The "actual" argument must be of type string. Received type number (1)',
+        }),
+      );
+      expect(() => util.diff("a")).toThrow(
+        expect.objectContaining({
+          code: "ERR_INVALID_ARG_TYPE",
+          message: 'The "expected" argument must be of type string. Received undefined',
+        }),
+      );
+      expect(() => util.diff(["a", 1], ["a"])).toThrow(
+        expect.objectContaining({
+          code: "ERR_INVALID_ARG_TYPE",
+          message: 'The "actual[1]" argument must be of type string. Received type number (1)',
+        }),
+      );
+    });
+  });
+
   describe("getCallSites", () => {
     it("restores Error state when stackTraceLimit is non-writable", () => {
       const desc = Object.getOwnPropertyDescriptor(Error, "stackTraceLimit");
@@ -495,6 +657,32 @@ describe("util", () => {
         Object.defineProperty(Error, "stackTraceLimit", desc);
         Error.prepareStackTrace = savedPrepare;
       }
+    });
+
+    it.concurrent("keeps honoring frameCount after many calls", async () => {
+      // getCallSites assigns Error.stackTraceLimit from one site. Runs in a fresh process so
+      // that the JIT state of that site starts cold.
+      const fixture = `
+        import util from "node:util";
+        // try/finally keeps each call out of tail position, so every frame stays on the stack.
+        function deep(n, k) { try { return n <= 0 ? util.getCallSites(k).length : deep(n - 1, k); } finally {} }
+        const failures = [];
+        for (let i = 0; i < 400 && failures.length === 0; i++) {
+          const k = 1 + (i % 5);
+          const got = deep(8, k);
+          if (got !== k) failures.push({ call: i, frameCount: k, callSites: got });
+        }
+        process.stdout.write(JSON.stringify(failures));
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", fixture],
+        // Without compiler threads getCallSites reaches the optimizing JIT at a fixed call.
+        env: { ...bunEnv, BUN_JSC_useConcurrentJIT: "0" },
+        stderr: "inherit",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(stdout).toBe("[]");
+      expect(exitCode).toBe(0);
     });
 
     it("each frame has the node v26 shape", () => {
@@ -523,6 +711,18 @@ describe("util", () => {
         expect(() => util.getSystemErrorName(item)).toThrowWithCode(RangeError, "ERR_OUT_OF_RANGE");
       });
     }
+
+    it("reports a number that no int32 holds as it is", () => {
+      expect(util.getSystemErrorName(-4294967297)).toBe("Unknown system error -4294967297");
+      expect(util.getSystemErrorName(-2147483649)).toBe("Unknown system error -2147483649");
+      expect(util.getSystemErrorName(Number.MIN_SAFE_INTEGER)).toBe("Unknown system error -9007199254740991");
+    });
+
+    it("reports -0 with its sign", () => {
+      expect(() => util.getSystemErrorName(-0)).toThrow(
+        'The value of "err" is out of range. It must be a negative integer. Received -0',
+      );
+    });
 
     // Batch all node lookups into a single subprocess instead of one per code (was 74 spawns).
     const negativeSpaceCodes = [];
@@ -563,8 +763,91 @@ describe("util", () => {
   });
 });
 
+it("inspect() does not use isMapIterator and isSetIterator of the writable node:util/types", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const types = require("node:util/types");
+        const calls = { isMapIterator: 0, isSetIterator: 0 };
+        for (const name of Object.keys(calls)) {
+          const original = types[name];
+          types[name] = value => (calls[name]++, original(value));
+        }
+        // Loaded after the replacement.
+        const { inspect } = require("node:util");
+        const map = new Map([["a", 1]]);
+        const set = new Set([1]);
+        const inspected = [map.keys(), map.entries(), set.values(), set.entries(), { [Symbol.iterator]() {} }].map(v => inspect(v));
+        console.log(JSON.stringify({ inspected, calls }));
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ out: JSON.parse(stdout.trim() || "null"), stderr: exitCode === 0 ? "" : stderr, exitCode }).toEqual({
+    out: {
+      inspected: [
+        "[Map Iterator] { 'a' }",
+        "[Map Entries] { [ 'a', 1 ] }",
+        "[Set Iterator] { 1 }",
+        "[Set Entries] { [ 1, 1 ] }",
+        "{ Symbol(Symbol.iterator): [Function: [Symbol.iterator]] }",
+      ],
+      calls: { isMapIterator: 0, isSetIterator: 0 },
+    },
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 describe("util.parseEnv", () => {
   it("accepts a String object without crashing", () => {
     expect(util.parseEnv(new String("FOO=bar"))).toEqual({ FOO: "bar" });
+  });
+
+  it.each([
+    [undefined, "undefined"],
+    [null, "null"],
+    [1, "type number (1)"],
+    [{}, "an instance of Object"],
+  ])("says what Node says of %p", (content, received) => {
+    expect(() => util.parseEnv(content)).toThrow(
+      expect.objectContaining({
+        name: "TypeError",
+        code: "ERR_INVALID_ARG_TYPE",
+        message: `The "content" argument must be of type string. Received ${received}`,
+      }),
+    );
+  });
+
+  it("stores array-index keys as indexed properties", () => {
+    // 4294967295 is 2^32 - 1, the first integer that is not an array index.
+    const parsed = util.parseEnv("A=1\n0=zero\n2023=y\n4294967295=notidx\n");
+    expect(parsed[0]).toBe("zero");
+    expect(parsed["0"]).toBe("zero");
+    expect(0 in parsed).toBe(true);
+    expect(parsed[2023]).toBe("y");
+    expect(parsed[4294967295]).toBe("notidx");
+    expect(Object.getOwnPropertyDescriptor(parsed, "0")).toEqual({
+      value: "zero",
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    });
+    // Index keys come first, in ascending order. The rest keep file order.
+    expect(Object.entries(parsed)).toEqual([
+      ["0", "zero"],
+      ["2023", "y"],
+      ["A", "1"],
+      ["4294967295", "notidx"],
+    ]);
+
+    parsed[0] = "set";
+    expect(parsed[0]).toBe("set");
+    expect(JSON.parse(JSON.stringify(parsed))).toEqual({ 0: "set", 2023: "y", A: "1", 4294967295: "notidx" });
   });
 });

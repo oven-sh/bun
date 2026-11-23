@@ -9,11 +9,13 @@
 
 use core::cmp::Ordering;
 use core::fmt;
+use core::ops::DerefMut;
 
 use bun_alloc::AllocError;
 use bun_ast::{self, E, Expr, G};
 use bun_ast::{self as ast, Loc};
 use bun_collections::{StringHashMap, VecExt};
+use bun_core::scoped::SetForScope;
 use bun_core::{self, StackCheck};
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -78,6 +80,72 @@ impl YAML {
     }
 }
 
+/// A token of a stream, as a range of its text. What is between two tokens is white space.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct SourceToken {
+    pub kind: SourceTokenKind,
+    pub start: u32,
+    pub end: u32,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum SourceTokenKind {
+    Comment,
+    /// The `%` of a directive.
+    Directive,
+    DocumentStart,
+    DocumentEnd,
+    SequenceEntry,
+    MappingKey,
+    MappingValue,
+    CollectEntry,
+    SequenceStart,
+    SequenceEnd,
+    MappingStart,
+    MappingEnd,
+    Anchor,
+    Alias,
+    Tag,
+    /// With its quotes. Of a block scalar: from its `|` or `>` to where the next token can start.
+    Scalar,
+}
+
+impl YAML {
+    /// For who wants a stream as it is written: calls `read` with its documents and its tokens, comments among them, in
+    /// the order of the text. The syntax is what [`YAML::parse`] takes. What it means is not looked at: a scalar is
+    /// `true`, an alias is `false` and need not resolve, a node that is not written is `null`, a tag changes nothing, `<<`
+    /// is a key like another, an escape can be half of a surrogate pair. `Err`: what is wrong, and at which byte.
+    pub fn parse_as_written<T>(
+        text: &[u8],
+        read: impl FnOnce(&[Expr], &[SourceToken]) -> T,
+    ) -> Result<T, (ParseError, usize)> {
+        let bump = bun_alloc::Arena::new();
+        let mut allocator = ast::ASTMemoryAllocator::borrowing(&bump);
+        let _scope = allocator.enter();
+        let mut parser: Parser<Utf8> = Parser::init(&bump, text, CyclicAliases::Reject);
+        parser.written = Some(Vec::new());
+        match parser.parse() {
+            Ok(stream) => {
+                let documents: Vec<Expr> = stream.docs.iter().map(|doc| doc.root).collect();
+                Ok(read(
+                    &documents,
+                    parser.written.as_deref().unwrap_or_default(),
+                ))
+            }
+            Err(error) => Err((
+                error,
+                match error {
+                    ParseError::UnexpectedCharacter
+                    | ParseError::UnresolvedTagHandle
+                    | ParseError::UnexpectedDocumentStart
+                    | ParseError::UnexpectedDocumentEnd => parser.pos.cast(),
+                    _ => parser.token.start.cast(),
+                },
+            )),
+        }
+    }
+}
+
 #[derive(Debug, thiserror::Error, strum::IntoStaticStr)]
 pub enum YamlParseError {
     #[error("out of memory")]
@@ -122,31 +190,6 @@ pub enum Context {
     // BlockKey,
     FlowIn,
     FlowKey,
-}
-
-pub(crate) struct ContextStack {
-    list: Vec<Context>,
-}
-
-impl ContextStack {
-    pub(crate) fn init() -> Self {
-        Self { list: Vec::new() }
-    }
-
-    pub(crate) fn set(&mut self, context: Context) -> Result<(), AllocError> {
-        self.list.push(context);
-        Ok(())
-    }
-
-    pub(crate) fn unset(&mut self, context: Context) {
-        let prev_context = self.list.pop();
-        debug_assert!(prev_context.is_some() && prev_context.unwrap() == context);
-    }
-
-    pub(crate) fn get(&self) -> Context {
-        // top level context is always BLOCK-OUT
-        self.list.last().copied().unwrap_or(Context::BlockOut)
-    }
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -255,30 +298,6 @@ impl IndentIndicator {
             // after a `b'1'..=b'9'` guard, so this arm is unreachable.
             _ => panic!("invalid IndentIndicator"),
         }
-    }
-}
-
-pub(crate) struct IndentStack {
-    list: Vec<Indent>,
-}
-
-impl IndentStack {
-    pub(crate) fn init() -> Self {
-        Self { list: Vec::new() }
-    }
-
-    pub(crate) fn push(&mut self, indent: Indent) -> Result<(), AllocError> {
-        self.list.push(indent);
-        Ok(())
-    }
-
-    pub(crate) fn pop(&mut self) {
-        debug_assert!(!self.list.is_empty());
-        self.list.pop();
-    }
-
-    pub(crate) fn get(&self) -> Option<Indent> {
-        self.list.last().copied()
     }
 }
 
@@ -532,7 +551,7 @@ impl Encoding for Utf16 {
         // Reinterpret `&[u16]` as `&[u8]` of `len * 2` for byte-keyed hashing.
         // Uniqueness is preserved (equal u16 slices ⇔ equal byte slices). Same
         // pattern as `bun_ast::E::EString::hash()` for the utf16 arm.
-        bytemuck::cast_slice(s)
+        bun_core::slice_as_bytes(s)
     }
     #[inline]
     fn unit_from_u16(u: u16) -> u16 {
@@ -711,8 +730,6 @@ pub enum ParseError {
     UnexpectedDocumentEnd,
     #[error("MultipleYamlDirectives")]
     MultipleYamlDirectives,
-    #[error("InvalidIndentation")]
-    InvalidIndentation,
     #[error("StackOverflow")]
     StackOverflow,
     #[error("ExcessiveAliasing")]
@@ -1258,7 +1275,7 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
                 }
 
                 0x2C | 0x5D | 0x7D /* , ] } */ => {
-                    match parser.context.get() {
+                    match parser.context {
                         // it's valid for ',' ']' '}' to end the scalar
                         // in flow context
                         Context::FlowIn | Context::FlowKey => break 'end (parser.pos, true),
@@ -1590,15 +1607,7 @@ impl<Enc: Encoding> NodeScalar<Enc> {
                     YamlString::List(list) => bump.alloc_slice_copy(list.as_slice()),
                 };
                 let estring = match Enc::KIND {
-                    EncodingKind::Utf16 => {
-                        // SAFETY: `Enc::Unit == u16` when `KIND == Utf16`;
-                        // reinterpret with the same element count for
-                        // `E::String::init_utf16` (which sets `is_utf16`).
-                        let s16 = unsafe {
-                            core::slice::from_raw_parts(s.as_ptr().cast::<u16>(), s.len())
-                        };
-                        E::String::init_utf16(s16)
-                    }
+                    EncodingKind::Utf16 => E::String::init_utf16(Enc::as_u16_slice(s)),
                     _ => E::String::init(Enc::key_bytes(s)),
                 };
                 Expr::init(estring, pos.loc())
@@ -1941,7 +1950,6 @@ pub enum ParseResultError {
     UnexpectedDocumentStart { pos: Pos },
     UnexpectedDocumentEnd { pos: Pos },
     MultipleYamlDirectives { pos: Pos },
-    InvalidIndentation { pos: Pos },
     ExcessiveAliasing { pos: Pos },
     CyclicAlias { pos: Pos },
     CyclicMerge { pos: Pos },
@@ -1998,9 +2006,6 @@ impl ParseResultError {
             }
             ParseResultError::MultipleYamlDirectives { pos } => {
                 log.add_error(Some(source), pos.loc(), b"Multiple YAML directives");
-            }
-            ParseResultError::InvalidIndentation { pos } => {
-                log.add_error(Some(source), pos.loc(), b"Invalid indentation");
             }
             ParseResultError::ExcessiveAliasing { pos } => {
                 log.add_error(Some(source), pos.loc(), b"Excessive aliasing");
@@ -2075,9 +2080,6 @@ impl ParseResultError {
             ParseError::MultipleYamlDirectives => ParseResultError::MultipleYamlDirectives {
                 pos: parser.token.start,
             },
-            ParseError::InvalidIndentation => {
-                ParseResultError::InvalidIndentation { pos: parser.pos }
-            }
             ParseError::ExcessiveAliasing => ParseResultError::ExcessiveAliasing {
                 pos: parser.token.start,
             },
@@ -2127,12 +2129,14 @@ pub struct Parser<'i, Enc: Encoding> {
     /// `NodeScalar::to_expr`).
     pub(crate) bump: &'i bun_alloc::Arena,
 
-    pub(crate) context: ContextStack,
-    pub(crate) block_indents: IndentStack,
+    pub(crate) context: Context,
+    /// Of the innermost block collection.
+    pub(crate) block_indent: Option<Indent>,
 
     pub(crate) explicit_document_start_line: Option<Line>,
 
-    pub(crate) anchors: StringHashMap<Expr>,
+    /// The node of each anchor and the stack it took to parse it; see `parse_node`.
+    pub(crate) anchors: StringHashMap<(Expr, usize)>,
     /// Anchored collections enclosing the current position, innermost last.
     /// Pushed/popped only by `parse_collection`.
     pub(crate) open_collections: Vec<OpenCollection>,
@@ -2146,9 +2150,14 @@ pub struct Parser<'i, Enc: Encoding> {
     pub(crate) whitespace_buf: Vec<Whitespace<Enc>>,
 
     pub(crate) stack_check: StackCheck,
+    /// Since the innermost `PendingAnchor` was scanned; an alias counts as its target's stack.
+    least_stack_left: usize,
 
     pub(crate) merge_props_budget: usize,
     pub(crate) alias_expansion_budget: usize,
+
+    /// The tokens so far, for [`YAML::parse_as_written`].
+    pub(crate) written: Option<Vec<SourceToken>>,
 }
 
 impl<'i, Enc: Encoding> Parser<'i, Enc> {
@@ -2180,8 +2189,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 indent: Indent::NONE,
                 line: Line::from(1),
             }),
-            context: ContextStack::init(),
-            block_indents: IndentStack::init(),
+            context: Context::BlockOut,
+            block_indent: None,
             explicit_document_start_line: None,
             anchors: StringHashMap::default(),
             open_collections: Vec::new(),
@@ -2190,8 +2199,10 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             tag_handles: StringHashMap::default(),
             whitespace_buf: Vec::new(),
             stack_check: StackCheck::init(),
+            least_stack_left: usize::MAX,
             merge_props_budget: MappingProps::MAX_MERGED_PROPERTIES,
             alias_expansion_budget: Self::MAX_ALIAS_EXPANSION,
+            written: None,
         }
     }
 
@@ -2432,21 +2443,24 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
     /// [149] c-ns-flow-map-json-key-entry — when a JSON-style key (quoted
     /// scalar, flow sequence, flow mapping) appears in flow context, the scan
     /// for a following `:` is in `flow-key` (per [150] c-s-implicit-json-key),
-    /// so an adjacent `:` with no separation is recognized. Returns true iff
-    /// FlowKey was pushed; the caller must then `unset_json_key()` once after
-    /// the relevant scan, regardless of its result.
-    fn maybe_set_json_key(&mut self, allowed: bool) -> Result<bool, ParseError> {
-        if allowed && self.context.get() == Context::FlowIn {
-            self.context.set(Context::FlowKey)?;
-            return Ok(true);
+    /// so an adjacent `:` with no separation is recognized.
+    #[must_use]
+    fn maybe_in_json_key(&mut self, allowed: bool) -> impl DerefMut<Target = Self> {
+        let mut this = SetForScope::saving(self, |this| &mut this.context);
+        if allowed && this.context == Context::FlowIn {
+            this.context = Context::FlowKey;
         }
-        Ok(false)
+        this
     }
 
-    fn unset_json_key(&mut self, was_set: bool) {
-        if was_set {
-            self.context.unset(Context::FlowKey);
-        }
+    #[must_use]
+    fn in_context(&mut self, context: Context) -> impl DerefMut<Target = Self> {
+        SetForScope::new(self, |this| &mut this.context, context)
+    }
+
+    #[must_use]
+    fn in_block(&mut self, indent: Indent) -> impl DerefMut<Target = Self> {
+        SetForScope::new(self, |this| &mut this.block_indent, Some(indent))
     }
 
     /// [142]/[143] Consume the `?` and parse the flow explicit-entry key.
@@ -2488,7 +2502,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         loop {
             match self.token.data {
                 TokenData::Anchor(name) if scanned_anchor.is_none() => {
-                    scanned_anchor = Some(PendingAnchor::new(&self.token, name));
+                    scanned_anchor = Some(self.pending_anchor(name, self.stack_check.remaining()));
                 }
                 TokenData::Tag(_) if scanned_tag.is_none() => {
                     scanned_tag = Some(self.token.clone());
@@ -2517,15 +2531,13 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             }
         }
 
-        self.context.set(Context::FlowKey)?;
-        let k = self.parse_node(ParseNodeOptions {
-            explicit_mapping_key: true,
-            scanned_tag,
-            scanned_anchor,
-            ..Default::default()
-        });
-        self.context.unset(Context::FlowKey);
-        k
+        self.in_context(Context::FlowKey)
+            .parse_node(ParseNodeOptions {
+                explicit_mapping_key: true,
+                scanned_tag,
+                scanned_anchor,
+                ..Default::default()
+            })
     }
 
     fn parse_flow_sequence(&mut self, anchor: Option<PendingAnchor>) -> Result<Expr, ParseError> {
@@ -2540,41 +2552,39 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
     fn parse_flow_sequence_entries(&mut self) -> Result<E::Array, ParseError> {
         let mut seq: ast::ExprNodeList = bun_alloc::AstAlloc::vec();
 
-        self.context.set(Context::FlowIn)?;
-
-        // Capture the fallible body's result and unset `FlowIn` on EVERY exit
-        // (including `?` paths). The post-`]` scan happens AFTER `FlowIn` is
-        // popped, so only the loop body lives inside the closure.
-        let result: Result<(), ParseError> = (|| {
-            self.scan(ScanOptions::default())?;
-            while !matches!(self.token.data, TokenData::SequenceEnd) {
-                let item = if matches!(self.token.data, TokenData::MappingKey) {
+        // The scan after `]` is outside of `FlowIn`.
+        {
+            let mut scope = self.in_context(Context::FlowIn);
+            let this = &mut *scope;
+            this.scan(ScanOptions::default())?;
+            while !matches!(this.token.data, TokenData::SequenceEnd) {
+                let item = if matches!(this.token.data, TokenData::MappingKey) {
                     // [150] ns-flow-pair ::= '?' s-separate ns-flow-map-explicit-entry
-                    let pair_start = self.token.start;
-                    let key = self.parse_flow_explicit_key()?;
-                    let value = if matches!(self.token.data, TokenData::MappingValue) {
-                        self.scan(ScanOptions::default())?;
+                    let pair_start = this.token.start;
+                    let key = this.parse_flow_explicit_key()?;
+                    let value = if matches!(this.token.data, TokenData::MappingValue) {
+                        this.scan(ScanOptions::default())?;
                         if matches!(
-                            self.token.data,
+                            this.token.data,
                             TokenData::CollectEntry | TokenData::SequenceEnd
                         ) {
-                            Expr::init(E::Null {}, self.token.start.loc())
+                            Expr::init(E::Null {}, this.token.start.loc())
                         } else {
                             // [147] the value is ns-flow-node; threading the
                             // value's own indent as current_mapping_indent
                             // makes the Scalar arm's cmi==scalar_indent check
                             // return the bare scalar instead of consuming a
                             // trailing `: …` as a nested mapping.
-                            self.parse_node(ParseNodeOptions {
-                                current_mapping_indent: Some(self.token.indent),
+                            this.parse_node(ParseNodeOptions {
+                                current_mapping_indent: Some(this.token.indent),
                                 ..Default::default()
                             })?
                         }
                     } else {
-                        Expr::init(E::Null {}, self.token.start.loc())
+                        Expr::init(E::Null {}, this.token.start.loc())
                     };
                     let mut props = MappingProps::init();
-                    self.append_entry(&mut props, key, value)?;
+                    this.append_entry(&mut props, key, value)?;
                     Expr::init(
                         E::Object {
                             properties: props.move_list(),
@@ -2583,29 +2593,24 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         pair_start.loc(),
                     )
                 } else {
-                    self.parse_node(ParseNodeOptions {
+                    this.parse_node(ParseNodeOptions {
                         flow_pair_allowed: true,
                         ..Default::default()
                     })?
                 };
                 seq.push(item);
 
-                if matches!(self.token.data, TokenData::SequenceEnd) {
+                if matches!(this.token.data, TokenData::SequenceEnd) {
                     break;
                 }
 
-                if !matches!(self.token.data, TokenData::CollectEntry) {
+                if !matches!(this.token.data, TokenData::CollectEntry) {
                     return Err(Self::unexpected_token());
                 }
 
-                self.scan(ScanOptions::default())?;
+                this.scan(ScanOptions::default())?;
             }
-
-            Ok(())
-        })();
-
-        self.context.unset(Context::FlowIn);
-        result?;
+        }
 
         self.scan(ScanOptions::default())?;
 
@@ -2627,53 +2632,40 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
     fn parse_flow_mapping_entries(&mut self) -> Result<E::Object, ParseError> {
         let mut props = MappingProps::init();
 
-        self.context.set(Context::FlowIn)?;
+        // The scan after `}` is outside of `FlowIn`.
+        {
+            let mut scope = self.in_context(Context::FlowIn);
+            let this = &mut *scope;
+            this.scan(ScanOptions::default())?;
 
-        // Capture the fallible body's result and unset `FlowIn` on EVERY exit
-        // (including `?` paths). The post-`}` scan happens AFTER `FlowIn` is
-        // popped, so only the loop body lives inside the closure.
-        let result: Result<(), ParseError> = (|| {
-            {
-                // Unset `FlowKey` before propagating.
-                self.context.set(Context::FlowKey)?;
-                let r = self.scan(ScanOptions::default());
-                self.context.unset(Context::FlowKey);
-                r?;
-            }
-
-            while !matches!(self.token.data, TokenData::MappingEnd) {
+            while !matches!(this.token.data, TokenData::MappingEnd) {
                 // [142] `? …` and bare `:` are handled here so the key parse
                 // never reaches parse_node's MappingKey arm (which routes
                 // through block-mapping logic).
-                let key = if matches!(self.token.data, TokenData::MappingKey) {
-                    self.parse_flow_explicit_key()?
-                } else if matches!(self.token.data, TokenData::MappingValue) {
+                let key = if matches!(this.token.data, TokenData::MappingKey) {
+                    this.parse_flow_explicit_key()?
+                } else if matches!(this.token.data, TokenData::MappingValue) {
                     // [147] e-node key followed by `:`
-                    Expr::init(E::Null {}, self.token.start.loc())
+                    Expr::init(E::Null {}, this.token.start.loc())
                 } else {
-                    self.context.set(Context::FlowKey)?;
-                    let k = self.parse_node(ParseNodeOptions::default());
-                    self.context.unset(Context::FlowKey);
-                    k?
+                    this.in_context(Context::FlowKey)
+                        .parse_node(ParseNodeOptions::default())?
                 };
 
-                match self.token.data {
+                match this.token.data {
                     TokenData::CollectEntry => {
-                        let value = Expr::init(E::Null {}, self.token.start.loc());
+                        let value = Expr::init(E::Null {}, this.token.start.loc());
                         props.append(G::Property {
                             key: Some(key),
                             value: Some(value),
                             ..Default::default()
                         })?;
 
-                        self.context.set(Context::FlowKey)?;
-                        let r = self.scan(ScanOptions::default());
-                        self.context.unset(Context::FlowKey);
-                        r?;
+                        this.scan(ScanOptions::default())?;
                         continue;
                     }
                     TokenData::MappingEnd => {
-                        let value = Expr::init(E::Null {}, self.token.start.loc());
+                        let value = Expr::init(E::Null {}, this.token.start.loc());
                         props.append(G::Property {
                             key: Some(key),
                             value: Some(value),
@@ -2687,13 +2679,13 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     }
                 }
 
-                self.scan(ScanOptions::default())?;
+                this.scan(ScanOptions::default())?;
 
                 if matches!(
-                    self.token.data,
+                    this.token.data,
                     TokenData::MappingEnd | TokenData::CollectEntry
                 ) {
-                    let value = Expr::init(E::Null {}, self.token.start.loc());
+                    let value = Expr::init(E::Null {}, this.token.start.loc());
                     props.append(G::Property {
                         key: Some(key),
                         value: Some(value),
@@ -2705,31 +2697,23 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     // arm's cmi==scalar_indent check return the bare scalar
                     // instead of consuming a trailing `: …` as a nested
                     // mapping (`{a: b: c}`).
-                    let value = self.parse_node(ParseNodeOptions {
-                        current_mapping_indent: Some(self.token.indent),
+                    let value = this.parse_node(ParseNodeOptions {
+                        current_mapping_indent: Some(this.token.indent),
                         ..Default::default()
                     })?;
-                    self.append_entry(&mut props, key, value)?;
+                    this.append_entry(&mut props, key, value)?;
                 }
 
                 // [140] ns-s-flow-map-entries: after an entry, only `,` or `}`.
-                match self.token.data {
+                match this.token.data {
                     TokenData::CollectEntry => {
-                        self.context.set(Context::FlowKey)?;
-                        let r = self.scan(ScanOptions::default());
-                        self.context.unset(Context::FlowKey);
-                        r?;
+                        this.scan(ScanOptions::default())?;
                     }
                     TokenData::MappingEnd => {}
                     _ => return Err(Self::unexpected_token()),
                 }
             }
-
-            Ok(())
-        })();
-
-        self.context.unset(Context::FlowIn);
-        result?;
+        }
 
         self.scan(ScanOptions::default())?;
 
@@ -2760,56 +2744,49 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             }
         }
 
-        self.block_indents.push(sequence_indent)?;
+        let mut scope = self.in_block(sequence_indent);
+        let this = &mut *scope;
 
-        // Capture the fallible body's result and pop `block_indents` on EVERY
-        // exit (including `?` paths).
-        let result: Result<E::Array, ParseError> = (|| {
-            let mut seq: ast::ExprNodeList = bun_alloc::AstAlloc::vec();
+        let mut seq: ast::ExprNodeList = bun_alloc::AstAlloc::vec();
 
-            let mut prev_line = Line::from(0);
+        let mut prev_line = Line::from(0);
 
-            while matches!(self.token.data, TokenData::SequenceEntry)
-                && self.token.indent == sequence_indent
-            {
-                // [184] each `-` sits at s-indent(n) (spaces only).
-                if self.tab_after_indent {
-                    return Err(ParseError::TabIndentation);
-                }
-                let entry_line = self.token.line;
-                let entry_start = self.token.start;
+        while matches!(this.token.data, TokenData::SequenceEntry)
+            && this.token.indent == sequence_indent
+        {
+            // [184] each `-` sits at s-indent(n) (spaces only).
+            if this.tab_after_indent {
+                return Err(ParseError::TabIndentation);
+            }
+            let entry_line = this.token.line;
+            let entry_start = this.token.start;
 
-                if !seq.is_empty() && prev_line == entry_line {
-                    // only the first entry can be another sequence entry on the
-                    // same line
-                    break;
-                }
-
-                prev_line = entry_line;
-
-                self.scan(ScanOptions {
-                    additional_parent_indent: Some(sequence_indent.add(1)),
-                    ..Default::default()
-                })?;
-
-                let item = self.parse_block_indented(
-                    sequence_indent,
-                    entry_line,
-                    entry_start.add(2),
-                    BlockIndentedKind::SeqEntry,
-                )?;
-
-                seq.push(item);
+            if !seq.is_empty() && prev_line == entry_line {
+                // only the first entry can be another sequence entry on the same line
+                break;
             }
 
-            Ok(E::Array {
-                items: seq,
-                ..Default::default()
-            })
-        })();
+            prev_line = entry_line;
 
-        self.block_indents.pop();
-        result
+            this.scan(ScanOptions {
+                additional_parent_indent: Some(sequence_indent.add(1)),
+                ..Default::default()
+            })?;
+
+            let item = this.parse_block_indented(
+                sequence_indent,
+                entry_line,
+                entry_start.add(2),
+                BlockIndentedKind::SeqEntry,
+            )?;
+
+            seq.push(item);
+        }
+
+        Ok(E::Array {
+            items: seq,
+            ..Default::default()
+        })
     }
 
     /// [190] c-l-block-map-explicit-key. The current token is the `?`.
@@ -2819,24 +2796,19 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         mapping_indent: Indent,
         mapping_line: Line,
     ) -> Result<Expr, ParseError> {
-        self.block_indents.push(mapping_indent)?;
+        let mut this = self.in_block(mapping_indent);
 
-        let key: Result<Expr, ParseError> = (|| {
-            self.scan(ScanOptions {
-                additional_parent_indent: Some(mapping_indent.add(1)),
-                ..Default::default()
-            })?;
+        this.scan(ScanOptions {
+            additional_parent_indent: Some(mapping_indent.add(1)),
+            ..Default::default()
+        })?;
 
-            self.parse_block_indented(
-                mapping_indent,
-                mapping_line,
-                mapping_start,
-                BlockIndentedKind::MapExplicitKey,
-            )
-        })();
-
-        self.block_indents.pop();
-        key
+        this.parse_block_indented(
+            mapping_indent,
+            mapping_line,
+            mapping_start,
+            BlockIndentedKind::MapExplicitKey,
+        )
     }
 
     /// `anchor` is the [200] block collection's own anchor; an anchor on
@@ -2875,228 +2847,204 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             }
         }
 
-        // The block_indents stack drives scan()'s flow-context indent guard
+        // `block_indent` drives scan()'s flow-context indent guard
         // (continuation lines in a flow collection must be at indent > the
         // enclosing block's). When reached via the implicit-pair path from a
         // flow collection (`["a": b]`), the key's column is not a block
-        // boundary — pushing it would reject `["a":\nb]` per [149]/[80].
-        let pushed_block_indent = !matches!(self.context.get(), Context::FlowIn | Context::FlowKey);
-        if pushed_block_indent {
-            self.block_indents.push(mapping_indent)?;
+        // boundary — setting it would reject `["a":\nb]` per [149]/[80].
+        let mut block = SetForScope::saving(self, |this| &mut this.block_indent);
+        let this = &mut *block;
+        if !matches!(this.context, Context::FlowIn | Context::FlowKey) {
+            this.block_indent = Some(mapping_indent);
         }
 
-        // Capture the fallible body's result and pop `block_indents` on EVERY
-        // exit (including `?` paths).
-        let result: Result<E::Object, ParseError> = (|| {
-            let mut props = MappingProps::init();
-            let mut first_entry_end_line = mapping_line;
+        let mut props = MappingProps::init();
+        let mut first_entry_end_line = mapping_line;
 
-            {
-                // get the first value
-                let mapping_value_start = self.token.start;
-                let mapping_value_line = self.token.line;
+        {
+            // get the first value
+            let mapping_value_start = this.token.start;
+            let mapping_value_line = this.token.line;
 
-                let value: Expr = match self.token.data {
-                    // it's a !!set entry
-                    TokenData::MappingKey => {
-                        if self.token.line == mapping_line {
-                            return Err(Self::unexpected_token());
-                        }
-                        Expr::init(E::Null {}, mapping_value_start.loc())
+            let value: Expr = match this.token.data {
+                // it's a !!set entry
+                TokenData::MappingKey => {
+                    if this.token.line == mapping_line {
+                        return Err(Self::unexpected_token());
                     }
-                    TokenData::MappingValue => 'value: {
-                        first_entry_end_line = mapping_value_line;
-                        // [191] l-block-map-explicit-value(n) ::= s-indent(n) ':' …
-                        // The `:` must be at exactly the `?` indent (block ctx).
-                        if mapping_value_line != mapping_line
-                            && !matches!(self.context.get(), Context::FlowIn | Context::FlowKey)
-                            && (self.token.indent != mapping_indent || self.tab_after_indent)
-                        {
-                            if self.token.indent.is_less_than(mapping_indent) {
-                                // [189] e-node — `:` belongs to an outer
-                                // construct; this entry has no value.
-                                break 'value Expr::init(E::Null {}, mapping_value_start.loc());
-                            }
-                            return Err(if self.tab_after_indent {
-                                ParseError::TabIndentation
-                            } else {
-                                Self::unexpected_token()
-                            });
+                    Expr::init(E::Null {}, mapping_value_start.loc())
+                }
+                TokenData::MappingValue => 'value: {
+                    first_entry_end_line = mapping_value_line;
+                    // [191] in block context, the `:` must be at exactly the `?` indent.
+                    if mapping_value_line != mapping_line
+                        && !matches!(this.context, Context::FlowIn | Context::FlowKey)
+                        && (this.token.indent != mapping_indent || this.tab_after_indent)
+                    {
+                        if this.token.indent.is_less_than(mapping_indent) {
+                            // [189] e-node: the `:` belongs to an outer construct.
+                            break 'value Expr::init(E::Null {}, mapping_value_start.loc());
                         }
-                        // [191] explicit `:` is on a new line at mapping_indent;
-                        // a same-line `- ` after it is a compact sequence whose
-                        // indent is column-based, not line-based.
-                        let parent_indent = if mapping_value_line != mapping_line {
-                            Some(mapping_indent.add(1))
+                        return Err(if this.tab_after_indent {
+                            ParseError::TabIndentation
                         } else {
-                            None
-                        };
-                        self.scan(ScanOptions {
-                            additional_parent_indent: parent_indent,
-                            ..Default::default()
-                        })?;
-
-                        break 'value self.parse_block_indented(
-                            mapping_indent,
-                            mapping_value_line,
-                            mapping_value_start,
-                            BlockIndentedKind::MapValue { flow_pair_allowed },
-                        )?;
+                            Self::unexpected_token()
+                        });
                     }
-                    // [189] explicit-value is optional; the current token is the
-                    // next entry (or end of mapping). Implicit first entries
-                    // always arrive here with `:` so this arm is explicit-only.
-                    _ => Expr::init(E::Null {}, mapping_value_start.loc()),
-                };
-
-                self.append_entry(&mut props, first_key, value)?;
-            }
-
-            if self.context.get() == Context::FlowIn {
-                return Ok(E::Object {
-                    properties: props.move_list(),
-                    ..Default::default()
-                });
-            }
-
-            self.context.set(Context::BlockIn)?;
-
-            // Same capture-then-unset pattern, nested.
-            let inner: Result<(), ParseError> = (|| {
-                let mut previous_line = first_entry_end_line;
-
-                while !matches!(
-                    self.token.data,
-                    TokenData::Eof | TokenData::DocumentStart | TokenData::DocumentEnd
-                ) && self.token.indent == mapping_indent
-                    && self.token.line != previous_line
-                {
-                    // [192]/[195] each entry sits at s-indent(n) (spaces only).
-                    if self.tab_after_indent {
-                        return Err(ParseError::TabIndentation);
-                    }
-                    let key_line = self.token.line;
-                    previous_line = key_line;
-                    let explicit_key = matches!(self.token.data, TokenData::MappingKey);
-
-                    let key = self.parse_node(ParseNodeOptions {
-                        current_mapping_indent: Some(mapping_indent),
+                    // [191] `- ` after an explicit `:` is a compact sequence, indented by column.
+                    let parent_indent = if mapping_value_line != mapping_line {
+                        Some(mapping_indent.add(1))
+                    } else {
+                        None
+                    };
+                    this.scan(ScanOptions {
+                        additional_parent_indent: parent_indent,
                         ..Default::default()
                     })?;
 
-                    match self.token.data {
-                        TokenData::Eof => {
-                            if explicit_key {
-                                let value = Expr::init(E::Null {}, self.pos.loc());
-                                props.append(G::Property {
-                                    key: Some(key),
-                                    value: Some(value),
-                                    ..Default::default()
-                                })?;
-                                continue;
-                            }
-                            return Err(Self::unexpected_token());
-                        }
-                        TokenData::MappingValue if explicit_key => {
-                            // [191] l-block-map-explicit-value ::= s-indent(n) ':' …
-                            if self.token.indent != mapping_indent || self.tab_after_indent {
-                                if self.token.indent.is_less_than(mapping_indent) {
-                                    // [189] e-node — `:` belongs to an outer
-                                    // construct; this entry has no value.
-                                    let value = Expr::init(E::Null {}, self.pos.loc());
-                                    props.append(G::Property {
-                                        key: Some(key),
-                                        value: Some(value),
-                                        ..Default::default()
-                                    })?;
-                                    continue;
-                                }
-                                return Err(if self.tab_after_indent {
-                                    ParseError::TabIndentation
-                                } else {
-                                    Self::unexpected_token()
-                                });
-                            }
-                        }
-                        TokenData::MappingValue => {
-                            if key_line != self.token.line {
-                                return Err(ParseError::MultilineImplicitKey);
-                            }
-                        }
-                        TokenData::MappingKey => {}
-                        _ => {
-                            if explicit_key {
-                                // [189] explicit-value is optional; the current
-                                // token is the next entry's key.
-                                let value = Expr::init(E::Null {}, self.pos.loc());
-                                props.append(G::Property {
-                                    key: Some(key),
-                                    value: Some(value),
-                                    ..Default::default()
-                                })?;
-                                continue;
-                            }
-                            return Err(Self::unexpected_token());
-                        }
-                    }
-
-                    let mapping_value_line = self.token.line;
-                    let mapping_value_start = self.token.start;
-                    // Mirrors first_entry_end_line: when this entry has an
-                    // explicit `:`, the next entry must start on a later line.
-                    if matches!(self.token.data, TokenData::MappingValue) {
-                        previous_line = mapping_value_line;
-                    }
-
-                    let value: Expr = match self.token.data {
-                        // it's a !!set entry
-                        TokenData::MappingKey => {
-                            if self.token.line == key_line {
-                                return Err(Self::unexpected_token());
-                            }
-                            Expr::init(E::Null {}, mapping_value_start.loc())
-                        }
-                        _ => {
-                            let parent_indent = if mapping_value_line != key_line {
-                                Some(mapping_indent.add(1))
-                            } else {
-                                None
-                            };
-                            self.scan(ScanOptions {
-                                additional_parent_indent: parent_indent,
-                                ..Default::default()
-                            })?;
-
-                            self.parse_block_indented(
-                                mapping_indent,
-                                mapping_value_line,
-                                mapping_value_start,
-                                BlockIndentedKind::MapValue {
-                                    flow_pair_allowed: false,
-                                },
-                            )?
-                        }
-                    };
-
-                    self.append_entry(&mut props, key, value)?;
+                    break 'value this.parse_block_indented(
+                        mapping_indent,
+                        mapping_value_line,
+                        mapping_value_start,
+                        BlockIndentedKind::MapValue { flow_pair_allowed },
+                    )?;
                 }
+                // [189] an explicit key with no value. An implicit one always arrives with `:`.
+                _ => Expr::init(E::Null {}, mapping_value_start.loc()),
+            };
 
-                Ok(())
-            })();
+            this.append_entry(&mut props, first_key, value)?;
+        }
 
-            self.context.unset(Context::BlockIn);
-            inner?;
-
-            Ok(E::Object {
+        if this.context == Context::FlowIn {
+            return Ok(E::Object {
                 properties: props.move_list(),
                 ..Default::default()
-            })
-        })();
-
-        if pushed_block_indent {
-            self.block_indents.pop();
+            });
         }
-        result
+
+        let mut scope = this.in_context(Context::BlockIn);
+        let this = &mut *scope;
+
+        let mut previous_line = first_entry_end_line;
+
+        while !matches!(
+            this.token.data,
+            TokenData::Eof | TokenData::DocumentStart | TokenData::DocumentEnd
+        ) && this.token.indent == mapping_indent
+            && this.token.line != previous_line
+        {
+            // [192]/[195] each entry sits at s-indent(n) (spaces only).
+            if this.tab_after_indent {
+                return Err(ParseError::TabIndentation);
+            }
+            let key_line = this.token.line;
+            previous_line = key_line;
+            let explicit_key = matches!(this.token.data, TokenData::MappingKey);
+
+            let key = this.parse_node(ParseNodeOptions {
+                current_mapping_indent: Some(mapping_indent),
+                ..Default::default()
+            })?;
+
+            match this.token.data {
+                TokenData::Eof => {
+                    if explicit_key {
+                        let value = Expr::init(E::Null {}, this.pos.loc());
+                        props.append(G::Property {
+                            key: Some(key),
+                            value: Some(value),
+                            ..Default::default()
+                        })?;
+                        continue;
+                    }
+                    return Err(Self::unexpected_token());
+                }
+                TokenData::MappingValue if explicit_key => {
+                    // [191] l-block-map-explicit-value ::= s-indent(n) ':' …
+                    if this.token.indent != mapping_indent || this.tab_after_indent {
+                        if this.token.indent.is_less_than(mapping_indent) {
+                            // [189] e-node: the `:` belongs to an outer construct.
+                            let value = Expr::init(E::Null {}, this.pos.loc());
+                            props.append(G::Property {
+                                key: Some(key),
+                                value: Some(value),
+                                ..Default::default()
+                            })?;
+                            continue;
+                        }
+                        return Err(if this.tab_after_indent {
+                            ParseError::TabIndentation
+                        } else {
+                            Self::unexpected_token()
+                        });
+                    }
+                }
+                TokenData::MappingValue => {
+                    if key_line != this.token.line {
+                        return Err(ParseError::MultilineImplicitKey);
+                    }
+                }
+                TokenData::MappingKey => {}
+                _ => {
+                    if explicit_key {
+                        // [189] no explicit value: the token is the next entry's key.
+                        let value = Expr::init(E::Null {}, this.pos.loc());
+                        props.append(G::Property {
+                            key: Some(key),
+                            value: Some(value),
+                            ..Default::default()
+                        })?;
+                        continue;
+                    }
+                    return Err(Self::unexpected_token());
+                }
+            }
+
+            let mapping_value_line = this.token.line;
+            let mapping_value_start = this.token.start;
+            // The next entry must start on a later line than the `:`.
+            if matches!(this.token.data, TokenData::MappingValue) {
+                previous_line = mapping_value_line;
+            }
+
+            let value: Expr = match this.token.data {
+                // it's a !!set entry
+                TokenData::MappingKey => {
+                    if this.token.line == key_line {
+                        return Err(Self::unexpected_token());
+                    }
+                    Expr::init(E::Null {}, mapping_value_start.loc())
+                }
+                _ => {
+                    let parent_indent = if mapping_value_line != key_line {
+                        Some(mapping_indent.add(1))
+                    } else {
+                        None
+                    };
+                    this.scan(ScanOptions {
+                        additional_parent_indent: parent_indent,
+                        ..Default::default()
+                    })?;
+
+                    this.parse_block_indented(
+                        mapping_indent,
+                        mapping_value_line,
+                        mapping_value_start,
+                        BlockIndentedKind::MapValue {
+                            flow_pair_allowed: false,
+                        },
+                    )?
+                }
+            };
+
+            this.append_entry(&mut props, key, value)?;
+        }
+
+        Ok(E::Object {
+            properties: props.move_list(),
+            ..Default::default()
+        })
     }
 }
 
@@ -3159,15 +3107,7 @@ impl MappingProps {
                 }
             }
             *budget = budget.checked_sub(1).ok_or(AllocError)?;
-            // `G::Property` is not `Clone`; reconstruct from its `Copy` fields.
-            self.list.push(G::Property {
-                key: merge_prop.key,
-                value: merge_prop.value,
-                kind: merge_prop.kind,
-                flags: merge_prop.flags,
-                initializer: merge_prop.initializer,
-                ..Default::default()
-            });
+            self.list.push(*merge_prop);
             self.merge_index
                 .get_or_put(merge_hash)?
                 .value_ptr
@@ -3252,16 +3192,10 @@ pub(crate) struct PendingAnchor {
     name: StringRange,
     start: Pos,
     line: Line,
-}
-
-impl PendingAnchor {
-    fn new<Enc: Encoding>(token: &Token<Enc>, name: StringRange) -> Self {
-        Self {
-            name,
-            start: token.start,
-            line: token.line,
-        }
-    }
+    /// `stack_check.remaining()` where the annotated node begins.
+    stack_left: usize,
+    /// `Parser::least_stack_left` as it was; see `Parser::close_anchor`.
+    outer_least_stack_left: usize,
 }
 
 /// An anchored collection whose entries are being parsed: `node` is allocated
@@ -3318,11 +3252,40 @@ impl CollectionData for E::Object {
 }
 
 impl<'i, Enc: Encoding> Parser<'i, Enc> {
+    /// The `&name` at `self.token`.
+    fn pending_anchor(&mut self, name: StringRange, stack_left: usize) -> PendingAnchor {
+        PendingAnchor {
+            name,
+            start: self.token.start,
+            line: self.token.line,
+            stack_left,
+            outer_least_stack_left: core::mem::replace(&mut self.least_stack_left, stack_left),
+        }
+    }
+
+    /// The stack used since `anchor` was scanned. Every anchor must come here: outer ones count it.
+    fn close_anchor(&mut self, anchor: &PendingAnchor) -> usize {
+        let stack = anchor.stack_left.saturating_sub(self.least_stack_left);
+        self.least_stack_left = self.least_stack_left.min(anchor.outer_least_stack_left);
+        stack
+    }
+
+    /// For an alias returned as it is: the anchors on the lines before it annotate nothing.
+    fn drop_anchors(&mut self, props: NodeProperties<Enc>) {
+        for anchor in [props.has_anchor, props.has_mapping_anchor]
+            .into_iter()
+            .flatten()
+        {
+            self.close_anchor(&anchor);
+        }
+    }
+
     // By value so binding consumes the `#[must_use]` anchor token.
     #[allow(clippy::needless_pass_by_value)]
     fn bind_anchor(&mut self, anchor: PendingAnchor, node: Expr) -> Result<(), AllocError> {
+        let stack = self.close_anchor(&anchor);
         self.anchors
-            .put(Enc::key_bytes(anchor.name.slice(self.input)), node)
+            .put(Enc::key_bytes(anchor.name.slice(self.input)), (node, stack))
     }
 
     /// Parses a collection node: it is allocated (empty) before `body` parses
@@ -3363,10 +3326,13 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
     /// resolves exactly as it would without cycle support. Only a name that
     /// would otherwise be unresolved is looked up among the enclosing
     /// collections still being parsed (innermost first): a cyclic alias.
-    fn resolve_alias(&mut self, name: StringRange) -> Result<Expr, ParseError> {
+    fn resolve_alias(&mut self, name: StringRange) -> Result<(Expr, usize), ParseError> {
+        if self.written.is_some() {
+            return Ok((Expr::init(E::Boolean { value: false }, Loc::EMPTY), 0));
+        }
         let name = name.slice(self.input);
-        if let Some(node) = self.anchors.get(Enc::key_bytes(name)) {
-            return Ok(*node);
+        if let Some(anchored) = self.anchors.get(Enc::key_bytes(name)) {
+            return Ok(*anchored);
         }
         let Some(OpenCollection { node, .. }) = self
             .open_collections
@@ -3381,7 +3347,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             CyclicAliases::Reject => Err(ParseError::CyclicAlias),
             CyclicAliases::Allow => {
                 self.has_cyclic_alias = true;
-                Ok(node)
+                Ok((node, 0))
             }
         }
     }
@@ -3652,7 +3618,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         // a continuation line) it does not apply. Reached via the
         // implicit-pair fallthrough when `parse_block_mapping` is entered
         // from a flow-seq item (`["a":\nb]`).
-        let in_flow = matches!(self.context.get(), Context::FlowIn | Context::FlowKey);
+        let in_flow = matches!(self.context, Context::FlowIn | Context::FlowKey);
 
         loop {
             // [196] s-l+block-node(n) reaches content via [197] flow-in-block
@@ -3704,7 +3670,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
             match self.token.data {
                 TokenData::Anchor(name) if value_anchor.is_none() => {
-                    value_anchor = Some(PendingAnchor::new(&self.token, name));
+                    value_anchor = Some(self.pending_anchor(name, self.stack_check.remaining()));
                 }
                 TokenData::Tag(_) if value_tag.is_none() => {
                     value_tag = Some(self.token.clone());
@@ -3733,7 +3699,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         BlockIndentedKind::MapValue {
                             flow_pair_allowed: true
                         }
-                    ) && matches!(self.context.get(), Context::FlowIn | Context::FlowKey) =>
+                    ) && matches!(self.context, Context::FlowIn | Context::FlowKey) =>
                 {
                     return self.props_to_e_node(&value_tag, value_anchor, indicator_start.loc());
                 }
@@ -3843,6 +3809,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
     }
 
     fn charge_alias_node(&mut self) -> Result<(), ParseError> {
+        if self.written.is_some() {
+            return Ok(());
+        }
         self.alias_expansion_budget = self
             .alias_expansion_budget
             .checked_sub(1)
@@ -3850,10 +3819,13 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         Ok(())
     }
 
+    /// Walkers of the tree recurse through aliases, so an alias is charged its target's stack.
     fn parse_node(&mut self, opts: ParseNodeOptions<Enc>) -> Result<Expr, ParseError> {
-        if !self.stack_check.is_safe_to_recurse() {
+        let stack_left = self.stack_check.remaining();
+        if stack_left == 0 {
             return Err(ParseError::StackOverflow);
         }
+        self.least_stack_left = self.least_stack_left.min(stack_left);
 
         // c-ns-properties
         let mut node_props: NodeProperties<Enc> = NodeProperties::default();
@@ -3874,7 +3846,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 }
 
                 TokenData::Anchor(name) => {
-                    node_props.set_anchor(PendingAnchor::new(&self.token, *name))?;
+                    let name = *name;
+                    node_props.set_anchor(self.pending_anchor(name, stack_left))?;
                     self.scan(ScanOptions {
                         tag: node_props.tag(),
                         ..Default::default()
@@ -3910,8 +3883,13 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         }
                     }
 
-                    let mut copy = self.resolve_alias(alias)?;
+                    let (mut copy, stack) = self.resolve_alias(alias)?;
 
+                    self.least_stack_left = stack_left
+                        .checked_sub(stack)
+                        .filter(|stack_left| *stack_left > 0)
+                        .ok_or(ParseError::StackOverflow)?
+                        .min(self.least_stack_left);
                     self.charge_alias_expansion(copy)?;
 
                     // update position from the anchor node to the alias node.
@@ -3927,9 +3905,24 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         {
                             break 'node copy;
                         }
-                        if self.context.get() == Context::FlowKey {
+                        if self.context == Context::FlowKey {
+                            self.drop_anchors(node_props);
                             return Ok(copy);
                         }
+                        // [192] implicit key sits at s-indent(n) (spaces only).
+                        if alias_tab_after_indent
+                            && matches!(self.context, Context::BlockOut | Context::BlockIn)
+                        {
+                            return Err(ParseError::TabIndentation);
+                        }
+
+                        if let Some(current_mapping_indent) = opts.current_mapping_indent {
+                            if current_mapping_indent == alias_indent {
+                                self.drop_anchors(node_props);
+                                return Ok(copy);
+                            }
+                        }
+
                         // [154] ns-s-implicit-yaml-key uses s-separate-in-line
                         // (same line only); [145] in flow-map uses s-separate
                         // (spans lines, per yaml-test-suite 4MUZ etc.),
@@ -3938,21 +3931,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                             return Err(ParseError::MultilineImplicitKey);
                         }
 
-                        // [192] implicit key sits at s-indent(n) (spaces only).
-                        if alias_tab_after_indent
-                            && matches!(self.context.get(), Context::BlockOut | Context::BlockIn)
-                        {
-                            return Err(ParseError::TabIndentation);
-                        }
-
-                        if let Some(current_mapping_indent) = opts.current_mapping_indent {
-                            if current_mapping_indent == alias_indent {
-                                return Ok(copy);
-                            }
-                        }
-
                         // [147] flow-map value is ns-flow-node, not a pair.
-                        if self.context.get() == Context::FlowIn && !opts.flow_pair_allowed {
+                        if self.context == Context::FlowIn && !opts.flow_pair_allowed {
+                            self.drop_anchors(node_props);
                             return Ok(copy);
                         }
 
@@ -3975,11 +3956,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     let sequence_indent = self.token.indent;
                     let sequence_line = self.token.line;
                     let sequence_tab_after_indent = self.tab_after_indent;
-                    let anchor = node_props.take_flow_node_anchor(sequence_line);
-                    let json_key = self.maybe_set_json_key(opts.flow_pair_allowed)?;
-                    let seq = self.parse_flow_sequence(anchor);
-                    self.unset_json_key(json_key);
-                    let seq = seq?;
+                    let seq = self
+                        .maybe_in_json_key(opts.flow_pair_allowed)
+                        .parse_flow_sequence(node_props.take_flow_node_anchor(sequence_line))?;
 
                     if matches!(self.token.data, TokenData::MappingValue) {
                         if self.token.indent.is_less_than(sequence_indent)
@@ -3989,16 +3968,12 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         {
                             break 'node seq;
                         }
-                        if self.context.get() == Context::FlowKey {
+                        if self.context == Context::FlowKey {
                             break 'node seq;
                         }
-                        if sequence_line != self.token.line && !opts.explicit_mapping_key {
-                            return Err(ParseError::MultilineImplicitKey);
-                        }
-
                         // [192] implicit key sits at s-indent(n) (spaces only).
                         if sequence_tab_after_indent
-                            && matches!(self.context.get(), Context::BlockOut | Context::BlockIn)
+                            && matches!(self.context, Context::BlockOut | Context::BlockIn)
                         {
                             return Err(ParseError::TabIndentation);
                         }
@@ -4009,8 +3984,12 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                             }
                         }
 
+                        if sequence_line != self.token.line && !opts.explicit_mapping_key {
+                            return Err(ParseError::MultilineImplicitKey);
+                        }
+
                         // [147] flow-map value is ns-flow-node, not a pair.
-                        if self.context.get() == Context::FlowIn && !opts.flow_pair_allowed {
+                        if self.context == Context::FlowIn && !opts.flow_pair_allowed {
                             break 'node seq;
                         }
 
@@ -4055,12 +4034,10 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     let mapping_indent = self.token.indent;
                     let mapping_line = self.token.line;
                     let mapping_tab_after_indent = self.tab_after_indent;
-                    let anchor = node_props.take_flow_node_anchor(mapping_line);
 
-                    let json_key = self.maybe_set_json_key(opts.flow_pair_allowed)?;
-                    let map = self.parse_flow_mapping(anchor);
-                    self.unset_json_key(json_key);
-                    let map = map?;
+                    let map = self
+                        .maybe_in_json_key(opts.flow_pair_allowed)
+                        .parse_flow_mapping(node_props.take_flow_node_anchor(mapping_line))?;
 
                     if matches!(self.token.data, TokenData::MappingValue) {
                         if self.token.indent.is_less_than(mapping_indent)
@@ -4070,16 +4047,12 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         {
                             break 'node map;
                         }
-                        if self.context.get() == Context::FlowKey {
+                        if self.context == Context::FlowKey {
                             break 'node map;
                         }
-                        if mapping_line != self.token.line && !opts.explicit_mapping_key {
-                            return Err(ParseError::MultilineImplicitKey);
-                        }
-
                         // [192] implicit key sits at s-indent(n) (spaces only).
                         if mapping_tab_after_indent
-                            && matches!(self.context.get(), Context::BlockOut | Context::BlockIn)
+                            && matches!(self.context, Context::BlockOut | Context::BlockIn)
                         {
                             return Err(ParseError::TabIndentation);
                         }
@@ -4090,8 +4063,12 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                             }
                         }
 
+                        if mapping_line != self.token.line && !opts.explicit_mapping_key {
+                            return Err(ParseError::MultilineImplicitKey);
+                        }
+
                         // [147] flow-map value is ns-flow-node, not a pair.
-                        if self.context.get() == Context::FlowIn && !opts.flow_pair_allowed {
+                        if self.context == Context::FlowIn && !opts.flow_pair_allowed {
                             break 'node map;
                         }
 
@@ -4110,7 +4087,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 }
 
                 TokenData::MappingKey => {
-                    if matches!(self.context.get(), Context::FlowIn | Context::FlowKey) {
+                    if matches!(self.context, Context::FlowIn | Context::FlowKey) {
                         // Only reachable when a flow `?` appears in a position
                         // where ns-flow-pair is not allowed (e.g. as a flow-map
                         // value, or after another `?`). Both parse_flow_mapping
@@ -4160,11 +4137,11 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 }
 
                 TokenData::MappingValue => {
-                    if self.context.get() == Context::FlowKey {
+                    if self.context == Context::FlowKey {
                         break 'node Expr::init(E::Null {}, self.token.start.loc());
                     }
                     // [195] block `:` (e-node key) sits at s-indent(n) only.
-                    if self.tab_after_indent && !matches!(self.context.get(), Context::FlowIn) {
+                    if self.tab_after_indent && !matches!(self.context, Context::FlowIn) {
                         return Err(ParseError::TabIndentation);
                     }
                     if let Some(current_mapping_indent) = opts.current_mapping_indent {
@@ -4218,18 +4195,13 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         _ => unreachable!("token.data was Scalar at match guard"),
                     };
 
-                    let json_key = if scalar.style == ScalarStyle::Quoted {
-                        self.maybe_set_json_key(opts.flow_pair_allowed)?
-                    } else {
-                        false
-                    };
-                    let r = self.scan(ScanOptions {
+                    let can_be_json_key =
+                        scalar.style == ScalarStyle::Quoted && opts.flow_pair_allowed;
+                    self.maybe_in_json_key(can_be_json_key).scan(ScanOptions {
                         tag: node_props.tag(),
                         outside_context: true,
                         ..Default::default()
-                    });
-                    self.unset_json_key(json_key);
-                    r?;
+                    })?;
 
                     if matches!(self.token.data, TokenData::MappingValue) {
                         // this might be the start of a new object with an implicit key
@@ -4249,7 +4221,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         // entry; in compact position ([185]) it cannot be the
                         // compact mapping's first key either.
                         if scalar_tab_after_indent
-                            && matches!(self.context.get(), Context::BlockOut | Context::BlockIn)
+                            && matches!(self.context, Context::BlockOut | Context::BlockIn)
                         {
                             return Err(ParseError::TabIndentation);
                         }
@@ -4264,7 +4236,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                             }
                         }
 
-                        match self.context.get() {
+                        match self.context {
                             Context::FlowKey => {
                                 // 1
                                 break 'node scalar.data.to_expr(
@@ -4286,7 +4258,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         // above already handles the same-line case; this
                         // covers the multiline-property case where they
                         // diverge.
-                        if self.context.get() == Context::FlowIn && !opts.flow_pair_allowed {
+                        if self.context == Context::FlowIn && !opts.flow_pair_allowed {
                             break 'node scalar.data.to_expr(scalar_start, self.input, self.bump);
                         }
 
@@ -4506,7 +4478,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         return Ok(ctx.done(self));
                     }
 
-                    match self.context.get() {
+                    match self.context {
                         Context::BlockOut | Context::BlockIn => {}
                         // [130] `:` is ns-plain-char only when followed by
                         // ns-plain-safe(c); in flow context that excludes
@@ -4544,7 +4516,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 }
 
                 0x2C | 0x5B | 0x5D | 0x7B | 0x7D /* , [ ] { } */ => {
-                    match self.context.get() {
+                    match self.context {
                         Context::BlockIn | Context::BlockOut => {}
                         Context::FlowIn | Context::FlowKey => {
                             return Ok(ctx.done(self));
@@ -4580,7 +4552,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
                     let lines = self.fold_lines();
 
-                    if let Some(block_indent) = self.block_indents.get() {
+                    if let Some(block_indent) = self.block_indent {
                         match self.line_indent.cmp(block_indent) {
                             Ordering::Greater => {
                                 // continue (whitespace already stripped)
@@ -4825,6 +4797,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     self.inc(1);
                     self.skip_s_white();
                     if Enc::wide(self.next()) == 0x23 /* '#' */ {
+                        let start = self.pos;
                         self.inc(1);
                         while !self.is_b_char_or_eof() {
                             if Enc::wide(self.next()) == 0 {
@@ -4832,6 +4805,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                             }
                             self.inc(1);
                         }
+                        self.note_written(SourceTokenKind::Comment, start);
                     }
                     __c = Enc::wide(self.next());
                     continue;
@@ -4988,7 +4962,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         let explicit_indent: Option<Indent> = match indent_indicator {
             IndentIndicator::Auto => None,
             n => {
-                let parent = self.block_indents.get().map(Indent::cast).unwrap_or(0);
+                let parent = self.block_indent.map(Indent::cast).unwrap_or(0);
                 Some(Indent::from(parent + usize::from(n.get())))
             }
         };
@@ -5097,7 +5071,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         // A line is part of the body iff its indentation is >= content_indent
         // and strictly > the parent block's indent. Collapse both into one
         // bound so the per-character body loop does a single comparison.
-        let min_indent = match self.block_indents.get() {
+        let min_indent = match self.block_indent {
             Some(b) => Indent::from(content_indent.cast().max(b.cast() + 1)),
             None => content_indent,
         };
@@ -5227,7 +5201,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
     }
 
     fn scan_literal_scalar(&mut self) -> Result<Token<Enc>, ParseError> {
-        // defer self.whitespace_buf.clearRetainingCapacity();
         let start = self.pos;
         let line = self.line;
 
@@ -5291,7 +5264,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                             }
                         }
                     }
-                    if let Some(block_indent) = self.block_indents.get() {
+                    if let Some(block_indent) = self.block_indent {
                         if self.line_indent.is_less_than_or_equal(block_indent) {
                             return Err(ParseError::UnexpectedCharacter);
                         }
@@ -5372,7 +5345,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                             }
                         }
                     }
-                    if let Some(block_indent) = self.block_indents.get() {
+                    if let Some(block_indent) = self.block_indent {
                         if self.line_indent.is_less_than_or_equal(block_indent) {
                             return Err(ParseError::UnexpectedCharacter);
                         }
@@ -5405,7 +5378,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                             self.newline();
                             self.inc(1);
                             let lines = self.fold_lines();
-                            if let Some(block_indent) = self.block_indents.get() {
+                            if let Some(block_indent) = self.block_indent {
                                 if self.line_indent.is_less_than_or_equal(block_indent) {
                                     return Err(ParseError::UnexpectedCharacter);
                                 }
@@ -5491,6 +5464,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
         if cp > 0x10_FFFF {
             return Err(ParseError::UnexpectedCharacter);
+        }
+        if self.written.is_some() {
+            return Ok(());
         }
 
         // JSON encodes supplementary code points as a `\uD8xx\uDCxx` surrogate
@@ -5601,7 +5577,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 // s-separate
                 match Enc::wide(self.next()) {
                     0 | 0x20 | 0x09 | 0x0D | 0x0A => {}
-                    0x2C | 0x5B | 0x5D | 0x7B | 0x7D => match self.context.get() {
+                    0x2C | 0x5B | 0x5D | 0x7B | 0x7D => match self.context {
                         Context::BlockOut | Context::BlockIn => {
                             return Err(ParseError::UnexpectedCharacter);
                         }
@@ -5735,7 +5711,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     match Enc::wide(self.peek(1)) {
                         0 | 0x0A | 0x0D | 0x20 | 0x09 => {
                             self.inc(1);
-                            match self.context.get() {
+                            match self.context {
                                 Context::BlockOut | Context::BlockIn => {}
                                 Context::FlowIn | Context::FlowKey => {
                                     self.token.start = start;
@@ -5744,7 +5720,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                             }
                             break 'next Token::sequence_entry(self.token_init(start));
                         }
-                        0x2C | 0x5D | 0x5B | 0x7D | 0x7B => match self.context.get() {
+                        0x2C | 0x5D | 0x5B | 0x7D | 0x7B => match self.context {
                             Context::FlowIn | Context::FlowKey => {
                                 self.inc(1);
                                 self.token = Token::sequence_entry(self.token_init(start));
@@ -5779,7 +5755,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                             self.inc(1);
                             break 'next Token::mapping_key(self.token_init(start));
                         }
-                        0x2C | 0x5D | 0x5B | 0x7D | 0x7B => match self.context.get() {
+                        0x2C | 0x5D | 0x5B | 0x7D | 0x7B => match self.context {
                             Context::BlockIn | Context::BlockOut => {}
                             Context::FlowIn | Context::FlowKey => {
                                 self.inc(1);
@@ -5797,14 +5773,14 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                             self.inc(1);
                             break 'next Token::mapping_value(self.token_init(start));
                         }
-                        0x2C | 0x5D | 0x5B | 0x7D | 0x7B => match self.context.get() {
+                        0x2C | 0x5D | 0x5B | 0x7D | 0x7B => match self.context {
                             Context::BlockIn | Context::BlockOut => {}
                             Context::FlowIn | Context::FlowKey => {
                                 self.inc(1);
                                 break 'next Token::mapping_value(self.token_init(start));
                             }
                         },
-                        _ => match self.context.get() {
+                        _ => match self.context {
                             Context::BlockIn | Context::BlockOut | Context::FlowIn => {}
                             Context::FlowKey => {
                                 self.inc(1);
@@ -5816,7 +5792,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 }
                 0x2C /* ',' */ => {
                     let start = self.pos;
-                    match self.context.get() {
+                    match self.context {
                         Context::FlowIn | Context::FlowKey => {
                             self.inc(1);
                             break 'next Token::collect_entry(self.token_init(start));
@@ -5863,6 +5839,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         }
                         self.inc(1);
                     }
+                    self.note_written(SourceTokenKind::Comment, start);
                     continue;
                 }
                 0x26 /* '&' */ => {
@@ -5878,7 +5855,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     });
                     match Enc::wide(self.next()) {
                         0 | 0x20 | 0x09 | 0x0A | 0x0D => break 'next anchor,
-                        0x2C | 0x5D | 0x5B | 0x7D | 0x7B => match self.context.get() {
+                        0x2C | 0x5D | 0x5B | 0x7D | 0x7B => match self.context {
                             Context::BlockIn | Context::BlockOut => {}
                             Context::FlowKey | Context::FlowIn => break 'next anchor,
                         },
@@ -5899,7 +5876,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     });
                     match Enc::wide(self.next()) {
                         0 | 0x20 | 0x09 | 0x0A | 0x0D => break 'next alias,
-                        0x2C | 0x5D | 0x5B | 0x7D | 0x7B => match self.context.get() {
+                        0x2C | 0x5D | 0x5B | 0x7D | 0x7B => match self.context {
                             Context::BlockIn | Context::BlockOut => {}
                             Context::FlowKey | Context::FlowIn => break 'next alias,
                         },
@@ -5912,7 +5889,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 }
                 0x7C /* '|' */ => {
                     let start = self.pos;
-                    match self.context.get() {
+                    match self.context {
                         Context::BlockOut | Context::BlockIn => {
                             let indicator_indent = self.line_indent;
                             self.inc(1);
@@ -5932,7 +5909,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 }
                 0x3E /* '>' */ => {
                     let start = self.pos;
-                    match self.context.get() {
+                    match self.context {
                         Context::BlockOut | Context::BlockIn => {
                             let indicator_indent = self.line_indent;
                             self.inc(1);
@@ -6002,7 +5979,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 0x09 /* '\t' */ => {
                     if count_indentation
                         && additional_parent_indent.is_none()
-                        && self.context.get() == Context::BlockIn
+                        && self.context == Context::BlockIn
                     {
                         return Err(ParseError::TabIndentation);
                     }
@@ -6028,14 +6005,21 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             }
         };
         self.token = token;
+        if self.written.is_some() {
+            self.note_written_token();
+        }
 
-        match self.context.get() {
+        match self.context {
             Context::BlockOut | Context::BlockIn => {}
             Context::FlowIn | Context::FlowKey => {
-                if let Some(block_indent) = self.block_indents.get() {
+                if let Some(block_indent) = self.block_indent {
                     if !opts.outside_context
                         && self.token.line != previous_token_line
                         && self.token.indent.is_less_than_or_equal(block_indent)
+                        && !matches!(
+                            self.token.data,
+                            TokenData::SequenceEnd | TokenData::MappingEnd
+                        )
                     {
                         return Err(Self::unexpected_token());
                     }
@@ -6044,6 +6028,55 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         }
 
         Ok(())
+    }
+
+    /// Lists a token from `start` to the cursor, in the place of one that starts there too: that has been scanned again.
+    /// The comment behind the header of a block scalar has been listed before the scalar.
+    fn note_written(&mut self, kind: SourceTokenKind, start: Pos) {
+        let (start, end) = (start.cast() as u32, self.pos.cast() as u32);
+        let token = SourceToken { kind, start, end };
+        if let Some(tokens) = &mut self.written {
+            let behind = tokens.iter().rev().take_while(|it| it.start >= start);
+            let at = tokens.len() - behind.count();
+            match tokens.get_mut(at) {
+                Some(same) if same.start == start => *same = token,
+                _ => tokens.insert(at, token),
+            }
+        }
+    }
+
+    /// Lists the token that has been scanned, and takes from it what it means.
+    #[cold]
+    fn note_written_token(&mut self) {
+        let mut start = self.token.start;
+        let kind = match &mut self.token.data {
+            TokenData::Eof | TokenData::Reserved => return,
+            TokenData::SequenceEntry => SourceTokenKind::SequenceEntry,
+            TokenData::MappingKey => SourceTokenKind::MappingKey,
+            TokenData::MappingValue => SourceTokenKind::MappingValue,
+            TokenData::CollectEntry => SourceTokenKind::CollectEntry,
+            TokenData::SequenceStart => SourceTokenKind::SequenceStart,
+            TokenData::SequenceEnd => SourceTokenKind::SequenceEnd,
+            TokenData::MappingStart => SourceTokenKind::MappingStart,
+            TokenData::MappingEnd => SourceTokenKind::MappingEnd,
+            TokenData::Anchor(_) => SourceTokenKind::Anchor,
+            TokenData::Alias(_) => SourceTokenKind::Alias,
+            TokenData::Tag(tag) => {
+                *tag = NodeTag::None;
+                SourceTokenKind::Tag
+            }
+            TokenData::Directive => SourceTokenKind::Directive,
+            TokenData::DocumentStart => SourceTokenKind::DocumentStart,
+            TokenData::DocumentEnd => SourceTokenKind::DocumentEnd,
+            TokenData::Scalar(scalar) => {
+                scalar.data = NodeScalar::Boolean(true);
+                if !matches!(scalar.style, ScalarStyle::Plain { .. }) {
+                    start = start.sub(1);
+                }
+                SourceTokenKind::Scalar
+            }
+        };
+        self.note_written(kind, start);
     }
 
     // ── character predicates / skip helpers ─────────────────────────────────
@@ -6149,6 +6182,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             if !whitespace {
                 return Err(ParseError::UnexpectedCharacter);
             }
+            let start = self.pos;
             self.inc(1);
             while !self.is_b_char_or_eof() {
                 if Enc::wide(self.next()) == 0 {
@@ -6156,6 +6190,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 }
                 self.inc(1);
             }
+            self.note_written(SourceTokenKind::Comment, start);
         }
 
         if self.pos.is_less_than(self.input.len())

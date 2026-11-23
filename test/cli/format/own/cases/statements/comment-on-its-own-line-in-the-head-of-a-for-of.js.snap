@@ -1,0 +1,33 @@
+------------------
+{ printWidth: 80 }
+------------------
+// comment
+for (const a of b) c;
+// comment
+for (const d of e) f;
+for (const g in h
+// comment
+)
+  i;
+for (const j of k
+/* comment */
+) {
+}
+
+-------------------
+{ printWidth: 100 }
+-------------------
+// comment
+for (const a of b) c;
+// comment
+for (const d of e) f;
+for (const g in h
+// comment
+)
+  i;
+for (const j of k
+/* comment */
+) {
+}
+
+===================== End =====================

@@ -1,0 +1,17 @@
+A CommonJS package is required early and mocked by a factory that awaits importOriginal(): the file runs once and the early require() has the original.
+#### a.test.js
+import { test, vi } from "bun:test";
+import early from "./early.cjs";
+import * as it from "pkg";
+const seen = vi.hoisted(() => ({}));
+vi.mock("pkg", async importOriginal => ({ ...(seen.original = await importOriginal()), hello: () => "mocked" }));
+test("t", () => {
+  console.log("| CASE loads", globalThis.loadsOfThePackage, "| early", early.hello(), "| it", it.hello(), "| same function", early.hello === seen.original.hello);
+  console.log("| CASE same class", early.Klass === seen.original.Klass, it.Klass === seen.original.Klass);
+});
+#### early.cjs
+module.exports = require("pkg");
+#### node_modules/pkg/index.js
+globalThis.loadsOfThePackage = (globalThis.loadsOfThePackage ?? 0) + 1; exports.hello = function hello() { return "real"; }; exports.Klass = class Klass {};
+#### node_modules/pkg/package.json
+{ "name": "pkg", "main": "index.js" }

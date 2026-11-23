@@ -19,9 +19,7 @@ mod zig_std_debug {
     // D104: relocated to `bun_crash_handler::debug` (lower-tier crate, also
     // needed by the crash handler's stack-trace printer). Re-export so the
     // in-file callers below compile unchanged.
-    pub(super) use bun_crash_handler::debug::{
-        Module, SelfInfo, SourceLocation, SymbolInfo, get_self_debug_info,
-    };
+    pub(super) use bun_crash_handler::debug::{Module, SelfInfo, SourceLocation, SymbolInfo};
 }
 #[cfg(debug_assertions)]
 use zig_std_debug::{Module, SelfInfo, SourceLocation, StackIterator, SymbolInfo};
@@ -47,13 +45,6 @@ mod tty {
             // CRT keeps its own narrow-string env cache that is not updated by
             // `SetEnvironmentVariableW`, which is how Bun mutates env vars at
             // runtime — so `libc::getenv` would silently miss those.
-            unsafe extern "system" {
-                fn GetEnvironmentVariableW(
-                    lpName: *const u16,
-                    lpBuffer: *mut u16,
-                    nSize: u32,
-                ) -> u32;
-            }
             // `name` is a compile-time ASCII C string (c"NO_COLOR" / c"CLICOLOR_FORCE");
             // widen byte-by-byte into a NUL-terminated WCHAR buffer on the stack.
             let bytes = name.to_bytes();
@@ -64,16 +55,12 @@ mod tty {
             for (i, &b) in bytes.iter().enumerate() {
                 name_w[i] = b as u16;
             }
-            let mut buf = [0u16; 2];
-            // SAFETY: `name_w` is NUL-terminated; `buf` is a valid 2-WCHAR out-param.
+            let name_w = bun_core::WStr::from_buf(&name_w, bytes.len());
             // With nSize=2: empty value copies successfully and returns 0 (chars
             // written, excluding NUL); not-found also returns 0; any non-empty
             // value returns >=1 (either chars written, or required size if it
             // didn't fit). So `rc != 0` ⇔ "exists and non-empty".
-            let rc = unsafe {
-                GetEnvironmentVariableW(name_w.as_ptr(), buf.as_mut_ptr(), buf.len() as u32)
-            };
-            return rc != 0;
+            return bun_sys::windows::GetEnvironmentVariableW(name_w, &mut [0; 2]) != 0;
         }
         #[cfg(not(windows))]
         {
@@ -147,9 +134,8 @@ fn dump_btjs_trace_debug_impl() -> *const c_char {
     let mut result_writer: Vec<u8> = Vec::new();
     let w = &mut result_writer;
 
-    let debug_info: &mut SelfInfo = match get_self_debug_info() {
-        // SAFETY: lazy debug-only singleton; lldb stopped-process, sole `&mut`.
-        Ok(di) => unsafe { &mut *di },
+    let debug_info = &mut match SelfInfo::open() {
+        Ok(di) => di,
         Err(err) => {
             if write!(
                 w,
@@ -208,7 +194,7 @@ fn print_source_at_address(
     }
     let module = match get_module_for_address(debug_info, address) {
         Ok(m) => m,
-        Err(Error::MissingDebugInfo) | Err(Error::InvalidDebugInfo) => {
+        Err(Error::MissingDebugInfo) => {
             return print_unknown_source(debug_info, out_stream, address, tty_config);
         }
         Err(e) => return Err(e),
@@ -216,12 +202,11 @@ fn print_source_at_address(
 
     let symbol_info: SymbolInfo = match get_symbol_at_address(module, address) {
         Ok(s) => s,
-        Err(Error::MissingDebugInfo) | Err(Error::InvalidDebugInfo) => {
+        Err(Error::MissingDebugInfo) => {
             return print_unknown_source(debug_info, out_stream, address, tty_config);
         }
         Err(e) => return Err(e),
     };
-    // defer free(sl.file_name) — handled by Drop on SourceLocation.file_name: Box<[u8]>
 
     // jsc_llint_begin/end are link-time symbols; `&raw const` avoids creating a reference to extern static
     let llint_begin = (&raw const jsc_llint_begin) as usize;
@@ -390,7 +375,6 @@ fn print_line_from_file_any_os(
         0,
     )
     .map_err(Into::<Error>::into)?;
-    // defer f.close() — handled by Drop
     // TODO fstat and make sure that the file has the correct size
 
     let mut buf = [0u8; 4096];
@@ -459,11 +443,6 @@ fn replace_scalar(slice: &mut [u8], from: u8, to: u8) {
 // ──────────────────────────────────────────────────────────────────────────
 // Thin forwarders to `zig_std_debug`.
 // ──────────────────────────────────────────────────────────────────────────
-#[cfg(debug_assertions)]
-#[inline]
-fn get_self_debug_info() -> Result<*mut SelfInfo, Error> {
-    zig_std_debug::get_self_debug_info()
-}
 #[cfg(debug_assertions)]
 #[inline]
 fn get_module_for_address<'a>(di: &'a mut SelfInfo, addr: usize) -> Result<&'a mut Module, Error> {

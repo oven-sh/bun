@@ -1,0 +1,209 @@
+//! Glue between the file system router and the dev server.
+
+use super::*;
+
+pub(super) enum OpaqueFileIdOrOptional {
+    Id(OpaqueFileId),
+    Optional(router::OpaqueFileIdOptional),
+}
+
+impl From<router::OpaqueFileIdOptional> for OpaqueFileIdOrOptional {
+    fn from(v: router::OpaqueFileIdOptional) -> Self {
+        Self::Optional(v)
+    }
+}
+
+#[repr(transparent)]
+#[derive(Copy, Clone)]
+struct SafeFileId(u32);
+
+impl SafeFileId {
+    fn new(side: bake::Side, index: u32) -> Self {
+        SafeFileId((side as u32) | (index << 1))
+    }
+    fn side(self) -> bake::Side {
+        if (self.0 & 1) == 0 {
+            bake::Side::Client
+        } else {
+            bake::Side::Server
+        }
+    }
+    fn index(self) -> u32 {
+        (self.0 >> 1) & 0x3FFF_FFFF
+    }
+}
+
+/// The page and layout files of a route whose router type also runs them in the browser
+/// (`client_pages`), as absolute paths. Empty for any other route.
+#[derive(Default)]
+pub(crate) struct ClientPageFiles {
+    pub(crate) page: Option<Box<[u8]>>,
+    /// From the inner-most layout to the root one.
+    pub(crate) layouts: Vec<Box<[u8]>>,
+}
+
+impl ClientPageFiles {
+    pub(super) fn iter(&self) -> impl Iterator<Item = &[u8]> {
+        self.page.iter().chain(self.layouts.iter()).map(|p| &**p)
+    }
+}
+
+/// The server matches its own routes first, so it never serves this page.
+fn report_hidden_page(route_path: &[u8], rel_path: &[u8]) {
+    Output::err_generic(
+        "The server has a route \"{}\", which hides the page {}",
+        (bstr::BStr::new(route_path), bstr::BStr::new(rel_path)),
+    );
+    Output::flush();
+}
+
+impl DevServer {
+    /// Reports each page that a route of the server hides: a route with the same path as a page
+    /// that has no parameter.
+    pub(super) fn report_pages_hidden_by_server_routes(&self) {
+        let Some(server) = self.server else { return };
+        let keys = self.graphs.server.bundled_files.keys();
+        for (route_path, route_index) in self.router.static_routes.iter() {
+            if !server.has_route(route_path) {
+                continue;
+            }
+            let Some(page) = self.router.route_ptr(*route_index).file_page else {
+                continue;
+            };
+            let mut buf = paths::Path::new();
+            let rel_path = self.relative_path(
+                &mut buf,
+                &keys[from_opaque_file_id::<{ bake::Side::Server }>(page).get() as usize],
+            );
+            report_hidden_page(route_path, rel_path);
+        }
+    }
+
+    pub(super) fn client_page_files(&self, route_index: router::RouteIndex) -> ClientPageFiles {
+        let mut route = self.router.route_ptr(route_index);
+        if !self.router.type_ptr_const(route.r#type).client_pages {
+            return ClientPageFiles::default();
+        }
+        let keys = self.graphs.server.bundled_files.keys();
+        let path = |id: OpaqueFileId| -> Box<[u8]> {
+            Box::from(&*keys[from_opaque_file_id::<{ bake::Side::Server }>(id).get() as usize])
+        };
+        let mut files = ClientPageFiles {
+            page: route.file_page.map(path),
+            layouts: Vec::new(),
+        };
+        loop {
+            if let Some(id) = route.file_layout {
+                files.layouts.push(path(id));
+            }
+            let Some(parent) = route.parent else { break };
+            route = self.router.route_ptr(parent);
+        }
+        files
+    }
+}
+
+impl router::InsertionHandler for Graphs {
+    fn get_file_id_for_router(
+        &mut self,
+        abs_path: &[u8],
+        associated_route: router::RouteIndex,
+        file_kind: router::FileKind,
+    ) -> Result<OpaqueFileId, AllocError> {
+        let index = self.insert_stale_extra::<{ Side::Server }>(
+            abs_path,
+            bake::Graph::Server,
+            incremental_graph::RouteKind::Route,
+        )?;
+        self.route_lookup.put(
+            index,
+            RouteIndexAndRecurseFlag::new(associated_route, file_kind == router::FileKind::Layout),
+        )?;
+        Ok(to_opaque_file_id::<{ bake::Side::Server }>(index))
+    }
+
+    fn on_router_syntax_error(
+        &mut self,
+        rel_path: &[u8],
+        log: router::TinyLog,
+    ) -> Result<(), AllocError> {
+        // TODO: maybe this should track the error, send over HmrSocket?
+        log.print(rel_path);
+        Ok(())
+    }
+
+    fn on_router_collision_error(
+        &mut self,
+        rel_path: &[u8],
+        other_id: OpaqueFileId,
+        ty: router::FileKind,
+    ) -> Result<(), AllocError> {
+        // TODO: maybe this should track the error, send over HmrSocket?
+        Output::err_generic(
+            "Multiple {} matching the same route pattern is ambiguous",
+            (ty.collision_noun(),),
+        );
+        bun_core::pretty_errorln!("  - <blue>{}<r>", bstr::BStr::new(rel_path));
+        let mut buf = paths::Path::new();
+        bun_core::pretty_errorln!(
+            "  - <blue>{}<r>",
+            bstr::BStr::new(relative_path(
+                &self.root,
+                &mut buf,
+                &self.server.bundled_files.keys()
+                    [from_opaque_file_id::<{ bake::Side::Server }>(other_id).get() as usize]
+            ))
+        );
+        Output::flush();
+        Ok(())
+    }
+}
+
+pub(super) fn to_opaque_file_id<const SIDE: bake::Side>(
+    index: incremental_graph::FileIndex<SIDE>,
+) -> OpaqueFileId {
+    if cfg!(debug_assertions) {
+        return OpaqueFileId::init(SafeFileId::new(SIDE, index.get()).0);
+    }
+    OpaqueFileId::init(index.get())
+}
+
+pub(super) fn from_opaque_file_id<const SIDE: bake::Side>(
+    id: OpaqueFileId,
+) -> incremental_graph::FileIndex<SIDE> {
+    if cfg!(debug_assertions) {
+        let safe = SafeFileId(id.get());
+        debug_assert!(SIDE == safe.side());
+        return incremental_graph::FileIndex::<SIDE>::init(safe.index());
+    }
+    incremental_graph::FileIndex::<SIDE>::init(id.get())
+}
+
+impl DevServer {
+    /// Returns posix style path, suitible for URLs and reproducible hashes.
+    pub(crate) fn relative_path<'a>(
+        &self,
+        relative_path_buf: &'a mut paths::Path,
+        path: &'a [u8],
+    ) -> &'a [u8] {
+        relative_path(&self.graphs.root, relative_path_buf, path)
+    }
+}
+
+/// `DevServer::relative_path`, given `Graphs::root`.
+pub(super) fn relative_path<'a>(
+    root: &[u8],
+    relative_path_buf: &'a mut paths::Path,
+    path: &'a [u8],
+) -> &'a [u8] {
+    if !paths::is_absolute(path) {
+        return path;
+    }
+
+    if path.len() > root.len() && path[root.len()] == b'/' && path.starts_with(root) {
+        return &path[root.len() + 1..];
+    }
+
+    *relative_path_buf = paths::Path::relative(root, path).into_portable();
+    relative_path_buf
+}

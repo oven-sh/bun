@@ -841,9 +841,7 @@ export namespace V8 {
       request?: AffectedRequest | undefined;
     };
     export type MixedContentResolutionStatus =
-      | "MixedContentBlocked"
-      | "MixedContentAutomaticallyUpgraded"
-      | "MixedContentWarning";
+      "MixedContentBlocked" | "MixedContentAutomaticallyUpgraded" | "MixedContentWarning";
     export type MixedContentResourceType =
       | "AttributionSrc"
       | "Audio"
@@ -7084,13 +7082,7 @@ export namespace V8 {
        * physiologically accurate emulations for medically recognized color vision deficiencies.
        */
       type:
-        | "none"
-        | "blurredVision"
-        | "reducedContrast"
-        | "achromatopsia"
-        | "deuteranopia"
-        | "protanopia"
-        | "tritanopia";
+        "none" | "blurredVision" | "reducedContrast" | "achromatopsia" | "deuteranopia" | "protanopia" | "tritanopia";
     };
     /**
      * Emulates the given vision deficiency.
@@ -10203,11 +10195,7 @@ export namespace V8 {
       maskColor?: DOM.RGBA | undefined;
     };
     export type InspectMode =
-      | "searchForNode"
-      | "searchForUAShadowDOM"
-      | "captureAreaScreenshot"
-      | "showDistances"
-      | "none";
+      "searchForNode" | "searchForUAShadowDOM" | "captureAreaScreenshot" | "showDistances" | "none";
     /**
      * Fired when the node should be inspected. This happens after call to `setInspectMode` or when
      * user manually inspects an element.
@@ -10812,10 +10800,7 @@ export namespace V8 {
      */
     export type CrossOriginIsolatedContextType = "Isolated" | "NotIsolated" | "NotIsolatedFeatureDisabled";
     export type GatedAPIFeatures =
-      | "SharedArrayBuffers"
-      | "SharedArrayBuffersTransferAllowed"
-      | "PerformanceMeasureMemory"
-      | "PerformanceProfile";
+      "SharedArrayBuffers" | "SharedArrayBuffersTransferAllowed" | "PerformanceMeasureMemory" | "PerformanceProfile";
     /**
      * All Permissions Policy features. This enum should match the one defined
      * in third_party/blink/renderer/core/permissions_policy/permissions_policy_features.json5.
@@ -14038,12 +14023,7 @@ export namespace V8 {
     };
     export type ServiceWorkerVersionRunningStatus = "stopped" | "starting" | "running" | "stopping";
     export type ServiceWorkerVersionStatus =
-      | "new"
-      | "installing"
-      | "installed"
-      | "activating"
-      | "activated"
-      | "redundant";
+      "new" | "installing" | "installed" | "activating" | "activated" | "redundant";
     /**
      * ServiceWorker version.
      */
@@ -14301,15 +14281,7 @@ export namespace V8 {
      * Enum of interest group access types.
      */
     export type InterestGroupAccessType =
-      | "join"
-      | "leave"
-      | "update"
-      | "loaded"
-      | "bid"
-      | "win"
-      | "additionalBid"
-      | "additionalBidWin"
-      | "clear";
+      "join" | "leave" | "update" | "loaded" | "bid" | "win" | "additionalBid" | "additionalBidWin" | "clear";
     /**
      * Ad advertising element inside an interest group.
      */

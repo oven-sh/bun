@@ -1,6 +1,7 @@
 use crate::jsc::{JSGlobalObject, JSValue};
 use bun_core::String;
 use bun_core::StringBuilder;
+use bun_core::Utf8Bytes;
 use bun_sql::postgres::protocol::error_response::ErrorResponse;
 use bun_sql::postgres::protocol::field_message::FieldMessage;
 
@@ -86,67 +87,38 @@ pub(crate) fn to_js(this: &ErrorResponse, global_object: &JSGlobalObject) -> JSV
     }
     let _ = needs_newline;
 
-    fn maybe_slice(s: &String) -> Option<&[u8]> {
-        if s.is_empty() {
-            None
-        } else {
-            Some(s.byte_slice())
-        }
+    fn utf8(s: &String) -> Option<Utf8Bytes<'_>> {
+        (!s.is_empty()).then(|| s.to_utf8())
     }
 
-    let errno = maybe_slice(code);
     // syntax error - https://www.postgresql.org/docs/8.1/errcodes-appendix.html
-    let error_code: &'static [u8] = if code.eql_comptime(b"42601") {
+    let error_code: &'static [u8] = if code.eq_ascii(b"42601") {
         b"ERR_POSTGRES_SYNTAX_ERROR"
     } else {
         b"ERR_POSTGRES_SERVER_ERROR"
     };
 
-    let detail_slice = maybe_slice(detail);
-    let hint_slice = maybe_slice(hint);
-    let severity_slice = maybe_slice(severity);
-    let position_slice = maybe_slice(position);
-    let internal_position_slice = maybe_slice(internal_position);
-    let internal_query_slice = maybe_slice(internal);
-    let where_slice = maybe_slice(where_);
-    let schema_slice = maybe_slice(schema);
-    let table_slice = maybe_slice(table);
-    let column_slice = maybe_slice(column);
-    let data_type_slice = maybe_slice(datatype);
-    let constraint_slice = maybe_slice(constraint);
-    let file_slice = maybe_slice(file);
-    let line_slice = maybe_slice(line);
-    let routine_slice = maybe_slice(routine);
-
-    // Capture `b.len` first: `b.allocated_slice()` borrows `b` mutably.
-    let len = b.len;
-    let error_message: &[u8] = if len > 0 {
-        &b.allocated_slice()[..len]
-    } else {
-        b""
-    };
-
     create_postgres_error(
         global_object,
-        error_message,
+        b.written_slice(),
         &PostgresErrorOptions {
             code: error_code,
-            errno,
-            detail: detail_slice,
-            hint: hint_slice,
-            severity: severity_slice,
-            position: position_slice,
-            internal_position: internal_position_slice,
-            internal_query: internal_query_slice,
-            r#where: where_slice,
-            schema: schema_slice,
-            table: table_slice,
-            column: column_slice,
-            data_type: data_type_slice,
-            constraint: constraint_slice,
-            file: file_slice,
-            line: line_slice,
-            routine: routine_slice,
+            errno: utf8(code).as_deref(),
+            detail: utf8(detail).as_deref(),
+            hint: utf8(hint).as_deref(),
+            severity: utf8(severity).as_deref(),
+            position: utf8(position).as_deref(),
+            internal_position: utf8(internal_position).as_deref(),
+            internal_query: utf8(internal).as_deref(),
+            r#where: utf8(where_).as_deref(),
+            schema: utf8(schema).as_deref(),
+            table: utf8(table).as_deref(),
+            column: utf8(column).as_deref(),
+            data_type: utf8(datatype).as_deref(),
+            constraint: utf8(constraint).as_deref(),
+            file: utf8(file).as_deref(),
+            line: utf8(line).as_deref(),
+            routine: utf8(routine).as_deref(),
         },
     )
     .unwrap_or_else(|e| global_object.take_error(e))

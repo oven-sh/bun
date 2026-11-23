@@ -1,7 +1,32 @@
 import { pathToFileURL } from "bun";
 import { describe, expect, it, test } from "bun:test";
-import { chmodSync, chownSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, bunRun, isLinux, isMacOS, isWindows, joinP, tempDir, tempDirWithFiles } from "harness";
+import {
+  chmodSync,
+  chownSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "fs";
+import {
+  autoInstallTempDir,
+  bunEnv,
+  bunExe,
+  bunRun,
+  type DirectoryTree,
+  isASAN,
+  isDebug,
+  isLinux,
+  isMacOS,
+  isRoot,
+  isWindows,
+  joinP,
+  tempDir,
+  tempDirWithFiles,
+} from "harness";
 import { join, resolve, sep } from "path";
 
 const fixture = (...segs: string[]) => resolve(import.meta.dir, "fixtures", ...segs);
@@ -299,6 +324,19 @@ it("import long string should not segfault", async () => {
   } catch {}
 });
 
+it.skipIf(isWindows)("resolves an absolute specifier that is longer than a path buffer until it is normalized", () => {
+  using dir = tempDir("resolve-long-specifier", { "index.js": "" });
+  expect(Bun.resolveSync(`${dir}${Buffer.alloc(5000, "/").toString()}index.js`, String(dir))).toBe(
+    join(String(dir), "index.js"),
+  );
+});
+
+it("Bun.resolveSync takes undefined for its third argument", () => {
+  using dir = tempDir("resolve-undefined-esm", { "index.js": "" });
+  // @ts-expect-error
+  expect(Bun.resolveSync("./index.js", String(dir), undefined)).toBe(join(String(dir), "index.js"));
+});
+
 it("import override to node builtin", async () => {
   // @ts-expect-error
   expect(await import("#async_hooks")).toBeDefined();
@@ -312,6 +350,34 @@ it("import override to bun", async () => {
 it("import override to bun:test", async () => {
   // @ts-expect-error
   expect(await import("#bun_test")).toBeDefined();
+});
+
+it("the debug log of a lookup starts at the same indentation after an imports lookup", async () => {
+  using dir = tempDir("resolver-imports-log-indent", {
+    "bunfig.toml": `logLevel = "debug"`,
+    "package.json": JSON.stringify({ imports: { "#found": "./found.js" } }),
+    "found.js": `export const found = () => 1;`,
+    "index.js": `
+      import { found } from "#found" with { type: "macro" };
+      import { missing } from "#missing" with { type: "macro" };
+      console.log(found(), missing());
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "--no-bundle", "index.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(stderr.match(/note: +(Searching|Looking) for #\w+/g)).toEqual([
+    "note: Searching for #found",
+    "note:  Looking for #found",
+    "note: Searching for #missing",
+    "note:  Looking for #missing",
+  ]);
+  expect(exitCode).toBe(1);
 });
 
 it.if(isWindows)("directory cache key computation", () => {
@@ -332,6 +398,15 @@ it.if(isWindows)("directory cache key computation", () => {
   expect(import(`\\\\Test\\\\\\\\doesnotexist.ts\\\\` as any)).rejects.toThrow();
   expect(import(`\\\\Test\\doesnotexist.ts\\\\` as any)).rejects.toThrow();
   expect(import(`\\\\\\Test\\doesnotexist.ts\\\\` as any)).rejects.toThrow();
+});
+
+// The failed resolution busts the directory cache for the dirname, which for `C:\\\x` is `C:\\`.
+it.if(isWindows)("import() of a missing file at the drive root rejects", async () => {
+  const drive = process.cwd().slice(0, 2);
+  for (const separators of [2, 3, 4]) {
+    await expect(import(drive + "\\".repeat(separators) + "doesnotexist.ts")).rejects.toThrow();
+  }
+  await expect(import(`${drive}///doesnotexist.ts`)).rejects.toThrow();
 });
 
 describe("NODE_PATH test", () => {
@@ -734,6 +809,166 @@ describe("package.json exports target percent-encoding", () => {
   });
 });
 
+describe.concurrent("an absolute specifier about as long as a path buffer", () => {
+  const limit = isWindows ? 32767 * 3 + 1 : isLinux ? 4096 : 1024;
+  // The parent directory exists, so the resolver goes on to append each extension to the long name.
+  const specifiers = `
+    const root = import.meta.dir + require("node:path").sep;
+    const specifiers = [];
+    for (let length = ${limit} - 16; length <= ${limit} + 4; length++) {
+      for (const suffix of ["", ".js", ".mjs", ".css", "/"]) {
+        specifiers.push(root + Buffer.alloc(length - root.length - suffix.length, "c").toString() + suffix);
+      }
+    }
+  `;
+
+  it("is not found", async () => {
+    using dir = tempDir("resolver-long-absolute-specifier", {
+      "index.js": `
+        ${specifiers}
+        const outcomes = {};
+        for (const specifier of specifiers) {
+          const ways = {
+            "Bun.resolveSync()": () => Bun.resolveSync(specifier, root),
+            "require.resolve()": () => require.resolve(specifier),
+            "require()": () => require(specifier),
+            "import()": () => import(specifier),
+          };
+          for (const [way, resolve] of Object.entries(ways)) {
+            try {
+              await resolve();
+              outcomes[way + " resolved"] = true;
+            } catch (e) {
+              outcomes[way + " " + e.name + " " + e.code] = true;
+            }
+          }
+        }
+        console.log(Object.keys(outcomes).join("\\n"));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.split("\n"), stderr, exitCode }).toEqual({
+      stdout: [
+        "Bun.resolveSync() ResolveMessage ERR_MODULE_NOT_FOUND",
+        "require.resolve() ResolveMessage MODULE_NOT_FOUND",
+        "require() ResolveMessage MODULE_NOT_FOUND",
+        "import() ResolveMessage ERR_MODULE_NOT_FOUND",
+        "",
+      ],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("is an entry point that Bun.build() does not find", async () => {
+    using dir = tempDir("resolver-long-absolute-entry-point", {
+      "index.js": `
+        ${specifiers}
+        const { success, logs } = await Bun.build({ entrypoints: specifiers, throw: false });
+        const notFound = specifiers.filter(specifier =>
+          logs.some(log => log.message === 'ModuleNotFound resolving "' + specifier + '" (entry point)'),
+        );
+        console.log(success, notFound.length === specifiers.length);
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "false true\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("is not found when it comes from appending a require.extensions key that long", async () => {
+    using dir = tempDir("resolver-long-extension", {
+      "directory/other.js": "",
+      "index.js": `
+        require.extensions["." + Buffer.alloc(${limit}, "x")] = require.extensions[".js"];
+        for (const specifier of ["./missing", "./directory"]) {
+          try {
+            require(specifier);
+            console.log(specifier, "resolved");
+          } catch (e) {
+            console.log(specifier, e.name, e.code);
+          }
+        }
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "./missing ResolveMessage MODULE_NOT_FOUND\n./directory ResolveMessage MODULE_NOT_FOUND\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it.skipIf(isWindows)(
+    "is not found either when it is a directory whose index.js path is longer than the buffer",
+    async () => {
+      using dir = tempDir("resolver-long-directory", {
+        "index.js": `
+        const { mkdirSync, writeFileSync } = require("node:fs");
+        const outcomes = {};
+        for (let length = ${limit} - "index.js".length; length < ${limit} - 1; length++) {
+          let directory = import.meta.dir + "/" + length;
+          while (directory.length < length) {
+            directory += "/" + Buffer.alloc(Math.min(200, length - directory.length - 1), "c");
+          }
+          mkdirSync(directory, { recursive: true });
+          // No system call takes the path of this file.
+          process.chdir(directory);
+          writeFileSync("index.js", "");
+          process.chdir(import.meta.dir);
+          for (const suffix of ["", "/", "/index", "/index.js"]) {
+            try {
+              Bun.resolveSync(directory + suffix, import.meta.dir);
+              outcomes["resolved"] = true;
+            } catch (e) {
+              outcomes[e.name + " " + e.code] = true;
+            }
+          }
+        }
+        console.log(Object.keys(outcomes).join("\\n"));
+      `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "index.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: "ResolveMessage ERR_MODULE_NOT_FOUND\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
+});
+
 describe("package.json exports targets longer than the maximum path length", () => {
   it.concurrent("reports a resolution error for an oversized string exports target", async () => {
     using dir = tempDir("resolver-exports-long-target", {
@@ -841,6 +1076,81 @@ describe("package.json exports targets longer than the maximum path length", () 
   );
 });
 
+describe("package.json sideEffects entries longer than the maximum path length", () => {
+  // Parsing a package.json joins every "sideEffects" entry onto the package directory.
+  const longSegment = Buffer.alloc(100_000, "s").toString();
+
+  it.concurrent.each([
+    ["exact", [`./${longSegment}.js`]],
+    ["glob", [`./${longSegment}/*.js`]],
+    ["mixed", ["./index.js", `./${longSegment}.js`, `./${longSegment}/*.js`]],
+  ])("requires a package whose sideEffects array has an oversized %s entry", async (_kind, sideEffects) => {
+    using dir = tempDir("resolver-side-effects-long-entry", {
+      "node_modules/long-side-effects/package.json": JSON.stringify({
+        name: "long-side-effects",
+        main: "index.js",
+        sideEffects,
+      }),
+      "node_modules/long-side-effects/index.js": "module.exports = 3;\n",
+      "index.js": `console.log(require("long-side-effects"));\n`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "3\n", stderr: "", exitCode: 0 });
+  });
+});
+
+// The resolver uses more stack per nesting level of an `exports` target than the JSON parser does.
+describe("package.json exports targets nested too deeply", () => {
+  const targets = {
+    array: Buffer.alloc(40000, "[").toString() + '"./t.js"' + Buffer.alloc(40000, "]").toString(),
+    conditions:
+      Array.from({ length: 30000 }, (_, i) => (i % 2 ? '{"node":' : '{"default":')).join("") +
+      '"./t.js"' +
+      Buffer.alloc(30000, "}").toString(),
+  };
+
+  it.concurrent.each(Object.entries(targets))("nested %s doesn't overflow the stack", async (shape, target) => {
+    using dir = tempDir(`resolver-exports-deep-${shape}`, {
+      "package.json": JSON.stringify({ name: "host" }),
+      "node_modules/test-pkg/package.json": `{"name":"test-pkg","exports":{".":${target}}}`,
+      "node_modules/test-pkg/t.js": "module.exports = 1;\n",
+      "index.js": `
+        try {
+          require.resolve("test-pkg");
+          console.log("resolved");
+        } catch (e) {
+          console.log("caught " + e.code);
+        }
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // The target resolves if the stack is large enough.
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: expect.stringMatching(/^(caught MODULE_NOT_FOUND|resolved)\n$/),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
 // A package.json `imports` entry whose value is a bare package specifier
 // (e.g. `"#res": "@myproject/resolver"`) is handed back to package-resolve
 // for a second pass. Per the Node.js packages spec these are URL-like
@@ -899,6 +1209,141 @@ describe.if(isWindows)("#30839 - imports entry pointing at a scoped package", ()
   });
 });
 
+// A symlink in node_modules whose target no longer exists (for example an
+// optional dependency that was removed after its install script failed) is
+// not a module. Like Node, the resolver treats it as if the entry did not
+// exist and keeps looking, instead of resolving to it and failing to read it.
+describe("dangling symlinks in node_modules", () => {
+  const codeOf = (fn: () => unknown) => {
+    try {
+      fn();
+      return "resolved";
+    } catch (e: any) {
+      return { name: e.name, code: e.code };
+    }
+  };
+
+  it.concurrent("are reported as a missing module", async () => {
+    using dir = tempDir("resolver-dangling-node-modules-link", {
+      "package.json": JSON.stringify({ name: "host" }),
+      "node_modules/.keep": "",
+      "index.js": `
+        const codes = { require: null, import: null, resolve: null };
+        try {
+          require("dangling-pkg");
+        } catch (e) {
+          codes.require = e.code;
+        }
+        try {
+          require.resolve("dangling-pkg");
+        } catch (e) {
+          codes.resolve = e.code;
+        }
+        try {
+          await import("dangling-pkg");
+        } catch (e) {
+          codes.import = e.code;
+        }
+        console.log(JSON.stringify(codes));
+      `,
+    });
+    const root = String(dir);
+    symlinkSync(join("..", "does-not-exist"), join(root, "node_modules", "dangling-pkg"));
+
+    expect(codeOf(() => Bun.resolveSync("dangling-pkg", root))).toEqual({
+      name: "ResolveMessage",
+      code: "ERR_MODULE_NOT_FOUND",
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      env: bunEnv,
+      cwd: root,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      require: "MODULE_NOT_FOUND",
+      resolve: "MODULE_NOT_FOUND",
+      import: "ERR_MODULE_NOT_FOUND",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  it.concurrent("are reported as a missing module when a package.json exports target points at one", async () => {
+    using dir = tempDir("resolver-dangling-exports-target", {
+      "package.json": JSON.stringify({ name: "host" }),
+      "node_modules/exports-pkg/package.json": JSON.stringify({
+        name: "exports-pkg",
+        version: "1.0.0",
+        exports: { ".": "./index.js", "./sub": "./sub.js" },
+      }),
+      "node_modules/exports-pkg/sub.js": `module.exports = "sub";`,
+      "index.js": `
+        try {
+          require("exports-pkg");
+        } catch (e) {
+          console.log(e.code);
+        }
+        console.log(require("exports-pkg/sub"));
+      `,
+    });
+    const root = String(dir);
+    symlinkSync("removed.js", join(root, "node_modules", "exports-pkg", "index.js"));
+
+    expect(codeOf(() => Bun.resolveSync("exports-pkg", root))).toEqual({
+      name: "ResolveMessage",
+      code: "ERR_MODULE_NOT_FOUND",
+    });
+    expect(Bun.resolveSync("exports-pkg/sub", root)).toBe(join(root, "node_modules", "exports-pkg", "sub.js"));
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      env: bunEnv,
+      cwd: root,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(stdout).toBe("MODULE_NOT_FOUND\nsub\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it.concurrent("do not shadow the same package in a parent node_modules", async () => {
+    using dir = tempDir("resolver-dangling-node-modules-link-shadow", {
+      "package.json": JSON.stringify({ name: "host" }),
+      "node_modules/shadowed-pkg/package.json": JSON.stringify({ name: "shadowed-pkg", version: "1.0.0" }),
+      "node_modules/shadowed-pkg/index.js": `module.exports = "from the parent node_modules";`,
+      "app/node_modules/.keep": "",
+      "app/index.js": `console.log(require("shadowed-pkg"));`,
+    });
+    const root = String(dir);
+    symlinkSync(join("..", "..", "removed-pkg"), join(root, "app", "node_modules", "shadowed-pkg"));
+
+    expect(Bun.resolveSync("shadowed-pkg", join(root, "app"))).toBe(
+      join(root, "node_modules", "shadowed-pkg", "index.js"),
+    );
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      env: bunEnv,
+      cwd: join(root, "app"),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(stdout).toBe("from the parent node_modules\n");
+    expect(exitCode).toBe(0);
+  });
+});
+
 // dirInfoCachedMaybeLog reads the rfs.entries cache without checking the union
 // tag. If readDirectory() previously failed with a non-ENOENT error (e.g.
 // EACCES), a `.err` variant is stored there; re-resolving the directory after
@@ -908,7 +1353,6 @@ describe.if(isWindows)("#30839 - imports entry pointing at a scoped package", ()
   // Root bypasses DAC, so chmod 0 won't yield EACCES. When running as root on
   // Linux we drop to `nobody` via runuser (and chown the temp dir so the
   // fixture can chmod it back). Otherwise we run the fixture directly.
-  const isRoot = !isWindows && process.getuid?.() === 0;
   const nobody = (() => {
     try {
       // /etc/passwd format: name:x:uid:gid:gecos:home:shell
@@ -1005,7 +1449,7 @@ describe.if(isWindows)("#30839 - imports entry pointing at a scoped package", ()
   // script must live in a readable directory so the resolver reaches the
   // auto-install path at all.
   it.skipIf(!canTriggerEACCES)("auto-install init failure from an unreadable cwd is a catchable error", async () => {
-    using dir = tempDir("autoinstall-unreadable-cwd", {
+    using dir = autoInstallTempDir("autoinstall-unreadable-cwd", {
       // Dynamic specifier so the transpiler can't resolve it at build time;
       // the resolve must happen at runtime, through the auto-install path.
       "app/main.js": `
@@ -1363,11 +1807,10 @@ describe("wildcard exports with extensionless target", () => {
 });
 
 // https://github.com/oven-sh/bun/issues/10001
-// Wildcard `imports`/`exports` that point at a `.js` target should also
-// pick up `.ts`/`.tsx`/`.mts` the same way Bun already does for plain
-// file loads (e.g. `import './foo.js'` finds `./foo.ts`). The rewrite
-// is gated on wildcard patterns only — users writing an explicit
-// `"./foo": "./foo.js"` target still get exactly what they asked for.
+// `imports`/`exports` that point at a `.js` target should also pick up
+// `.ts`/`.tsx`/`.mts` the same way Bun already does for plain file loads
+// (e.g. `import './foo.js'` finds `./foo.ts`). Wildcard and exact targets
+// alike, as in esbuild. A target that exists on disk is never rewritten.
 describe("wildcard imports/exports with `.js` → `.ts` rewrite", () => {
   test.concurrent("package.json `imports` wildcard with `.js` target resolves `.ts` file", async () => {
     using dir = tempDir("wildcard-imports-ts", {
@@ -1485,8 +1928,8 @@ describe("wildcard imports/exports with `.js` → `.ts` rewrite", () => {
     });
   });
 
-  test.concurrent("exact (non-wildcard) `.js` target is not rewritten to `.ts`", async () => {
-    using dir = tempDir("exact-no-rewrite", {
+  test.concurrent("exact (non-wildcard) `.js` target is rewritten to `.ts` too", async () => {
+    using dir = tempDir("exact-rewrite", {
       "package.json": JSON.stringify({
         name: "exact-pkg",
         type: "module",
@@ -1499,8 +1942,262 @@ describe("wildcard imports/exports with `.js` → `.ts` rewrite", () => {
       `,
     });
 
+    expect(await runWildcardScript(String(dir), "index.ts")).toEqual({
+      stdout: "ts feature",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
+// The TypeScript extension rewrite (`import "./x.js"` finds `x.ts`) uses the
+// same table as esbuild's `rewrittenFileExtensions`, plus Bun's `.js` → `.mts`.
+// It applies to relative imports and to every `exports`/`imports` target,
+// exact or wildcard.
+const tsExtensionRewrites: [from: string, to: string][] = [
+  ["js", "ts"],
+  ["js", "tsx"],
+  ["jsx", "ts"],
+  ["jsx", "tsx"],
+  ["mjs", "mts"],
+  ["cjs", "cts"],
+  // Bun-specific (oven-sh/bun#12580). esbuild and tsc only try `.ts`/`.tsx` here.
+  ["js", "mts"],
+];
+
+describe("TypeScript extension rewrite matrix", () => {
+  test.concurrent.each(tsExtensionRewrites)("`.%s` specifier resolves a `.%s` file everywhere", async (from, to) => {
+    using dir = tempDir(`ts-rewrite-${from}-${to}`, {
+      "package.json": JSON.stringify({
+        name: "rewrite-pkg",
+        type: "module",
+        exports: {
+          "./exact": `./src/exports-exact.${from}`,
+          "./wild/*": `./src/exports-wild/*.${from}`,
+        },
+        imports: {
+          "#exact": `./src/imports-exact.${from}`,
+          "#wild/*": `./src/imports-wild/*.${from}`,
+        },
+      }),
+      [`src/relative.${to}`]: `export const relative = "relative.${to}";`,
+      [`src/exports-exact.${to}`]: `export const exportsExact = "exports-exact.${to}";`,
+      [`src/exports-wild/a.${to}`]: `export const exportsWild = "exports-wild.${to}";`,
+      [`src/imports-exact.${to}`]: `export const importsExact = "imports-exact.${to}";`,
+      [`src/imports-wild/a.${to}`]: `export const importsWild = "imports-wild.${to}";`,
+      "src/entry.ts": `
+        import { relative } from "./relative.${from}";
+        import { exportsExact } from "rewrite-pkg/exact";
+        import { exportsWild } from "rewrite-pkg/wild/a";
+        import { importsExact } from "#exact";
+        import { importsWild } from "#wild/a";
+        console.log(JSON.stringify({ relative, exportsExact, exportsWild, importsExact, importsWild }));
+      `,
+    });
+
+    expect(await runWildcardScript(String(dir), "src/entry.ts")).toEqual({
+      stdout: JSON.stringify({
+        relative: `relative.${to}`,
+        exportsExact: `exports-exact.${to}`,
+        exportsWild: `exports-wild.${to}`,
+        importsExact: `imports-exact.${to}`,
+        importsWild: `imports-wild.${to}`,
+      }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent.each([
+    ["cjs", ["ts", "tsx", "mts"]],
+    ["mjs", ["ts", "tsx", "cts"]],
+    ["js", ["cts"]],
+  ] as [from: string, present: string[]][])("`.%s` specifier does not pick up %j files", async (from, present) => {
+    using dir = tempDir(`ts-rewrite-negative-${from}`, {
+      ...Object.fromEntries(present.map(ext => [`lib.${ext}`, `export const lib = "${ext}";`])),
+      "entry.ts": `
+          import { lib } from "./lib.${from}";
+          console.log(lib);
+        `,
+    });
+
+    const result = await runWildcardScript(String(dir), "entry.ts");
+    expect(result.stderr).toContain(`Cannot find module './lib.${from}'`);
+    expect(result.exitCode).not.toBe(0);
+  });
+
+  test.concurrent("an exact target that exists on disk is never rewritten", async () => {
+    using dir = tempDir("ts-rewrite-exact-js-wins", {
+      "package.json": JSON.stringify({
+        name: "exact-js-wins",
+        type: "module",
+        exports: { "./feature": "./src/feature.js" },
+        imports: { "#feature": "./src/feature.js" },
+      }),
+      "src/feature.js": `export const feature = "js file";`,
+      "src/feature.ts": `export const feature = "ts file";`,
+      "index.ts": `
+        import { feature } from "exact-js-wins/feature";
+        import { feature as feature2 } from "#feature";
+        console.log(feature, feature2);
+      `,
+    });
+
+    expect(await runWildcardScript(String(dir), "index.ts")).toEqual({
+      stdout: "js file js file",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("an exact target with no extension is not probed", async () => {
+    using dir = tempDir("ts-rewrite-exact-extensionless", {
+      "package.json": JSON.stringify({
+        name: "exact-extensionless",
+        type: "module",
+        imports: { "#feature": "./src/feature" },
+      }),
+      "src/feature.ts": `export const feature = "ts file";`,
+      "index.ts": `
+        import { feature } from "#feature";
+        console.log(feature);
+      `,
+    });
+
     const result = await runWildcardScript(String(dir), "index.ts");
     expect(result.stderr).toContain("Cannot find");
+    expect(result.exitCode).not.toBe(0);
+  });
+
+  // Inside node_modules the `.mjs` → `.mts` and `.cjs` → `.cts` rewrites are
+  // off (`DISABLE_AUTO_JS_TO_TS_IN_NODE_MODULES`); `.js` → `.ts` stays on.
+  test.concurrent.each([
+    ["dep/c", null],
+    ["dep/m", null],
+    ["dep/j", "ts"],
+  ] as [specifier: string, resolved: string | null][])(
+    "`%s` inside node_modules resolves to %j",
+    async (specifier, resolved) => {
+      using dir = tempDir("ts-rewrite-node-modules-gate", {
+        "node_modules/dep/package.json": JSON.stringify({
+          name: "dep",
+          exports: { "./c": "./c.cjs", "./m": "./m.mjs", "./j": "./j.js" },
+        }),
+        "node_modules/dep/c.cts": `export const c = "cts";`,
+        "node_modules/dep/m.mts": `export const m = "mts";`,
+        "node_modules/dep/j.ts": `export const j = "ts";`,
+        "index.ts": `
+          import * as dep from "${specifier}";
+          console.log(Object.values(dep)[0]);
+        `,
+      });
+
+      const result = await runWildcardScript(String(dir), "index.ts");
+      if (resolved === null) {
+        expect(result.stderr).toContain(`Cannot find module '${specifier}'`);
+        expect(result.exitCode).not.toBe(0);
+      } else {
+        expect(result).toEqual({ stdout: resolved, stderr: "", exitCode: 0 });
+      }
+    },
+  );
+});
+
+// A tsconfig `paths` substitution that names a declaration file (`.d.ts`,
+// `.d.mts`, `.d.cts`, any case) is there for type checking only. The resolver
+// skips it, like esbuild does for `.d.ts`, and falls through to the next
+// substitution or to node_modules.
+describe("tsconfig paths skip `.d.ts` substitutions", () => {
+  test.concurrent("exact, wildcard, upper-case, `.d.mts` and `.d.cts` entries fall through", async () => {
+    using dir = tempDir("tsconfig-paths-dts", {
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: {
+          baseUrl: ".",
+          paths: {
+            "foo": ["./types/foo.d.ts"],
+            "bar/*": ["./types/*.d.ts"],
+            "upper": ["./types/upper.D.TS"],
+            "upper-star/*": ["./types/*.D.TS"],
+            "fallback": ["./types/fallback.d.ts", "./src/fallback.ts"],
+            "esm-types": ["./types/esm-types.d.mts"],
+            "cjs-types/*": ["./types/*.d.cts"],
+          },
+        },
+      }),
+      "types/foo.d.ts": `export declare const x: number;`,
+      "types/lib.d.ts": `export declare const y: number;`,
+      "types/upper.D.TS": `export declare const u: number;`,
+      "types/up.D.TS": `export declare const v: number;`,
+      "types/fallback.d.ts": `export declare const f: string;`,
+      "types/esm-types.d.mts": `export declare const m: number;`,
+      "types/lib.d.cts": `export declare const c: number;`,
+      "src/fallback.ts": `export const f = "fallback.ts";`,
+      "node_modules/foo/package.json": JSON.stringify({ name: "foo", type: "module", main: "index.js" }),
+      "node_modules/foo/index.js": `export const x = 123;`,
+      "node_modules/bar/package.json": JSON.stringify({ name: "bar", type: "module" }),
+      "node_modules/bar/lib.js": `export const y = 456;`,
+      "node_modules/upper/package.json": JSON.stringify({ name: "upper", type: "module", main: "index.js" }),
+      "node_modules/upper/index.js": `export const u = 7;`,
+      "node_modules/upper-star/package.json": JSON.stringify({ name: "upper-star", type: "module" }),
+      "node_modules/upper-star/up.js": `export const v = 8;`,
+      "node_modules/esm-types/package.json": JSON.stringify({ name: "esm-types", main: "index.mjs" }),
+      "node_modules/esm-types/index.mjs": `export const m = 9;`,
+      "node_modules/cjs-types/package.json": JSON.stringify({ name: "cjs-types" }),
+      "node_modules/cjs-types/lib.js": `module.exports.c = 10;`,
+      "entry.ts": `
+        import { x } from "foo";
+        import { y } from "bar/lib";
+        import { u } from "upper";
+        import { v } from "upper-star/up";
+        import { f } from "fallback";
+        import { m } from "esm-types";
+        import { c } from "cjs-types/lib";
+        console.log(x, y, u, v, f, m, c);
+      `,
+    });
+
+    expect(await runWildcardScript(String(dir), "entry.ts")).toEqual({
+      stdout: "123 456 7 8 fallback.ts 9 10",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // Only the tsconfig text counts. A catch-all alias still resolves a specifier
+  // that names a declaration file itself.
+  test.concurrent("a `.d.ts` specifier through a catch-all alias still resolves", async () => {
+    using dir = tempDir("tsconfig-paths-dts-specifier", {
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: { baseUrl: ".", paths: { "@/*": ["./src/*"] } },
+      }),
+      "src/env.d.ts": `declare global { interface Env { FOO: string } }\nexport {};`,
+      "entry.ts": `
+        import "@/env.d.ts";
+        console.log("ok");
+      `,
+    });
+
+    expect(await runWildcardScript(String(dir), "entry.ts")).toEqual({
+      stdout: "ok",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("a `.d.ts`-only alias with no real module still reports the original specifier", async () => {
+    using dir = tempDir("tsconfig-paths-dts-missing", {
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: { baseUrl: ".", paths: { "types-only": ["./types/types-only.d.ts"] } },
+      }),
+      "types/types-only.d.ts": `export declare const z: number;`,
+      "entry.ts": `
+        import { z } from "types-only";
+        console.log(z);
+      `,
+    });
+
+    const result = await runWildcardScript(String(dir), "entry.ts");
+    expect(result.stderr).toContain(`Cannot find package 'types-only'`);
     expect(result.exitCode).not.toBe(0);
   });
 });
@@ -1548,6 +2245,43 @@ it.skipIf(isWindows)("reports a resolution error for an absolute specifier of th
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stdout).toBe("ResolveMessage ERR_MODULE_NOT_FOUND\n");
+  expect(exitCode).toBe(0);
+});
+
+it.skipIf(isWindows)("does not find a file whose folder fits a path buffer and whose own path does not", async () => {
+  using dir = tempDir("resolver-deep-folder", {});
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const fs = require("fs");
+      fs.mkdirSync("pages");
+      process.chdir("pages");
+      const root = process.cwd();
+      let folder = root;
+      for (let rest = ${isMacOS ? 1024 : 4096} - 4 - root.length; rest > 0; ) {
+        const name = Buffer.alloc((rest > 201 ? 100 : rest) - 1, "d").toString();
+        fs.mkdirSync(name);
+        process.chdir(name);
+        folder += "/" + name;
+        rest -= name.length + 1;
+      }
+      fs.writeFileSync("index.js", "");
+      for (const load of [
+        () => require(folder + "/index.js"),
+        () => require(folder),
+        () => new Bun.FileSystemRouter({ dir: root, style: "nextjs" }),
+      ]) {
+        try { load(); console.log("loaded"); } catch (e) { console.log(e.code ?? e.message.slice(0, 27)); }
+      }`,
+    ],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("MODULE_NOT_FOUND\nMODULE_NOT_FOUND\nENAMETOOLONG opening route:\n");
   expect(exitCode).toBe(0);
 });
 
@@ -1688,4 +2422,713 @@ describe.concurrent("dot specifiers resolve to the directory index, not a siblin
     expect(stdout).toBe("index\n");
     expect(exitCode).toBe(0);
   });
+
+  it('".." segments that reach the filesystem root are a resolve error in a browser build', async () => {
+    // More ".." segments than any temp directory is deep, so the specifier names the root on every platform.
+    const specifier = Buffer.alloc(64 * 3, "../").toString() + "..";
+    using dir = tempDir("resolve-dotdot-root", {
+      "run.ts": `import ${JSON.stringify(specifier)};`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "run.ts", "--target=browser"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain(`error: Could not resolve: ${JSON.stringify(specifier)}`);
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+  });
 });
+
+// On Windows these are not how the resolver spells the path, and it was asked again about its own spelling.
+test.concurrent.each(["import", "require"])(
+  "%s() of a file written after its directory was read, by an absolute path with forward slashes",
+  async load => {
+    using dir = tempDir("resolve-written-later", {
+      "src/entry.mjs": `
+        import { writeFileSync } from "node:fs";
+        import { basename, dirname, join } from "node:path";
+        writeFileSync(join(import.meta.dir, "later.mjs"), "export default import.meta.path;");
+        const root = dirname(import.meta.dir);
+        for (const path of [root + "/src/later.mjs", (root + "/src/later.mjs").replaceAll("\\\\", "/")])
+          console.log(basename((await ${load}(path)).default));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "src/entry.mjs"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "later.mjs\nlater.mjs\n", stderr: "", exitCode: 0 });
+  },
+);
+
+describe.concurrent.skipIf(isWindows).each(["a\\b", "a\\"])("in a directory named %s", name => {
+  async function run(files: Record<string, string>, ...args: string[]) {
+    using dir = tempDir("resolve-backslash", { "up.cjs": `module.exports = "up";`, [name]: files });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      cwd: join(String(dir), name),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(readdirSync(String(dir)).sort()).toEqual([name, "up.cjs"]);
+    return { stdout: stdout.replaceAll(join(String(dir), name), "<dir>"), stderr, exitCode };
+  }
+
+  const project = {
+    "package.json": JSON.stringify({ imports: { "#x": "./lib/x.js" }, scripts: { where: "pwd" } }),
+    "tsconfig.json": JSON.stringify({ extends: "./config/base.json" }),
+    "config/base.json": JSON.stringify({ compilerOptions: { paths: { "@/*": ["../lib/*"] } } }),
+    "lib/x.js": `export default "x";`,
+    "lib/index.cjs": `module.exports = __filename;`,
+    "node_modules/main/package.json": JSON.stringify({ name: "main", main: "lib/main.js" }),
+    "node_modules/main/lib/main.js": `module.exports = "main";`,
+    "node_modules/exports/package.json": JSON.stringify({ name: "exports", exports: { "./sub": "./dist/sub.mjs" } }),
+    "node_modules/exports/dist/sub.mjs": `export default "exports";`,
+    "index.ts": `
+      import relative from "./lib/x";
+      import imports from "#x";
+      import paths from "@/x";
+      import up from "../up.cjs";
+      import main from "main";
+      import exports from "exports/sub";
+      console.log(relative, imports, paths, up, main, exports);
+    `,
+  };
+
+  test.each(["index.ts", "run ./index.ts", "."])("bun %s", async args => {
+    expect(await run(project, ...args.split(" "))).toEqual({
+      stdout: "x x x up main exports\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test.each(["system", "bun"])("bun run --shell=%s", async shell => {
+    expect(await run(project, "run", "--silent", `--shell=${shell}`, "where")).toEqual({
+      stdout: "<dir>\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("resolves a file created after the directory was cached", async () => {
+    const entry = `
+      await Bun.write(import.meta.dir + "/late.cjs", "module.exports = 1");
+      console.log(require(import.meta.dir + "/late.cjs"));
+      await Bun.write(import.meta.dir + "/worker.js", "console.log(2)");
+      new Worker(import.meta.dir + "/worker.js");
+    `;
+    expect(await run({ "entry.ts": entry }, "entry.ts")).toEqual({ stdout: "1\n2\n", stderr: "", exitCode: 0 });
+  });
+
+  test("cwd, import.meta.path, Bun.main and __filename keep the backslash", async () => {
+    const entry = `
+      process.chdir("lib");
+      process.chdir("..");
+      console.log(process.cwd());
+      console.log(import.meta.path, Bun.main, require("./lib/index.cjs"), require.resolve("main"));
+      console.log((await import(import.meta.dir + "/config/../lib/x")).default);
+      console.log((await import(new URL("./lib/x.js", import.meta.url).href)).default);
+    `;
+    expect(await run({ ...project, "entry.ts": entry }, "entry.ts")).toEqual({
+      stdout: "<dir>\n<dir>/entry.ts <dir>/entry.ts <dir>/lib/index.cjs <dir>/node_modules/main/lib/main.js\nx\nx\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("backslashes in import specifiers, main and tsconfig paths are separators", async () => {
+    const files = {
+      ...project,
+      "tsconfig.json": JSON.stringify({ compilerOptions: { paths: { "@/*": ["${configDir}\\lib\\*"] } } }),
+      "node_modules/main/package.json": JSON.stringify({ name: "main", main: "lib\\main.js" }),
+      "entry.ts": String.raw`
+        console.log(require.resolve("@/x"), require.resolve("main"));
+        console.log(Bun.resolveSync("./lib\\x", __dirname), Bun.resolveSync("main/lib\\main", __dirname));
+        for (const bare of [".\\lib\\x", "..\\up.cjs"])
+          try {
+            console.log(require.resolve(bare));
+          } catch (error) {
+            console.log(error.code);
+          }
+      `,
+    };
+    expect(await run(files, "entry.ts")).toEqual({
+      stdout: [
+        "<dir>/lib/x.js <dir>/node_modules/main/lib/main.js",
+        "<dir>/lib/x.js <dir>/node_modules/main/lib/main.js",
+        "MODULE_NOT_FOUND",
+        "MODULE_NOT_FOUND\n",
+      ].join("\n"),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("backslashes in absolute paths are part of a name", async () => {
+    const files = {
+      ...project,
+      "pages/index.js": "",
+      "entry.ts": String.raw`
+        for (const resolve of [
+          () => require.resolve(import.meta.dir + "\\lib\\x"),
+          () => require.resolve(import.meta.dir + "/pages\\..\\lib/x"),
+          () => Bun.resolveSync("./lib/x", import.meta.dir + "\\"),
+          () => new Bun.FileSystemRouter({ style: "nextjs", dir: import.meta.dir + "\\pages" }).routes["/"],
+        ]) {
+          try {
+            console.log(resolve());
+          } catch {
+            console.log("not found");
+          }
+        }
+      `,
+    };
+    expect(await run(files, "entry.ts")).toEqual({
+      stdout: "not found\nnot found\nnot found\nnot found\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("a file with a backslash in its own name", async () => {
+    const files = {
+      "lib/x.cjs": `module.exports = "separator";`,
+      "lib\\x.cjs": `module.exports = "literal";`,
+      "d/e\\..\\..\\lib\\x.cjs": `module.exports = "literal";`,
+      "entry.ts": String.raw`
+        require("fs").symlinkSync(".", "link");
+        for (const path of ["/lib\\x.cjs", "/link/lib\\x.cjs", "/d/e\\..\\..\\lib\\x.cjs"])
+          console.log((await import(import.meta.dir + path)).default, require("." + path));
+      `,
+    };
+    expect(await run(files, "entry.ts")).toEqual({
+      stdout: "literal literal\nliteral literal\nliteral literal\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("resolves after process.chdir() out of it", async () => {
+    const entry = `process.chdir(".."); console.log(require("./lib/index.cjs"), (await import("@/x")).default);`;
+    expect(await run({ ...project, "entry.ts": entry }, "entry.ts")).toEqual({
+      stdout: "<dir>/lib/index.cjs x\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("Bun.build({ files })", async () => {
+    const entry = `
+      const { outputs } = await Bun.build({
+        entrypoints: ["./disk.js"],
+        files: {
+          [process.cwd() + "/a.js"]: "import './lib/b.js'",
+          [process.cwd() + "/lib/b.js"]: "import x from './x.js'; console.log(x)",
+        },
+      });
+      eval(await outputs[0].text());
+    `;
+    expect(await run({ ...project, "entry.ts": entry, "disk.js": `import "./a.js";` }, "entry.ts")).toEqual({
+      stdout: "x\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("bun build --no-bundle with an absolute entry point in HOME", async () => {
+    using dir = tempDir("resolve-backslash-no-bundle", { [name]: { "x.js": "console.log(1);" }, app: {} });
+    const HOME = join(String(dir), name);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--no-bundle", join(HOME, "x.js")],
+      cwd: join(String(dir), "app"),
+      env: { ...bunEnv, HOME },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "console.log(1);\n", stderr: "", exitCode: 0 });
+  });
+
+  test("resolves after process.chdir() into it and back", async () => {
+    using dir = tempDir("resolve-backslash-chdir", {
+      [name]: { "lazy.cjs": `module.exports = () => require("./x.cjs");`, "x.cjs": `module.exports = "there";` },
+      [`${name.replace("\\", "/")}/x.cjs`]: `module.exports = "elsewhere";`,
+      "entry.cjs": `
+        process.chdir(${JSON.stringify(name)});
+        const lazy = require(process.cwd() + "/lazy.cjs");
+        process.chdir(__dirname);
+        console.log(lazy());
+      `,
+    });
+    expect(await bunRun(join(String(dir), "entry.cjs"))).toSpawn("there");
+  });
+
+  test.each(["home", "scratch"])("runs from another cwd when HOME has the same name (%s)", async parent => {
+    using dir = tempDir("resolve-backslash-home", {
+      home: { [name]: project },
+      scratch: { [name]: project },
+      [`${parent}/up.cjs`]: `module.exports = "up";`,
+    });
+    const HOME = join(String(dir), "home", name);
+    expect(await bunRun([join(String(dir), parent, name, "index.ts")], { HOME })).toSpawn("x x x up main exports");
+  });
+
+  test("macros", async () => {
+    const files = {
+      "macro.ts": `export const value = () => "inlined";`,
+      "entry.ts": `import { value } from "./macro.ts" with { type: "macro" }; console.log(value());`,
+    };
+    expect(await run(files, "entry.ts")).toEqual({
+      stdout: expect.stringMatching(/^inlined$/m),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("Bun.build", async () => {
+    const build = `
+      const { outputs } = await Bun.build({ entrypoints: ["./index.ts"], outdir: "out", sourcemap: "linked" });
+      console.log(outputs.map(output => output.path).join());
+      console.log((await outputs[0].text()).match(/^\\/\\/ .*/gm).join());
+      console.log((await outputs[1].json()).sources.join());
+      await import("./out/index.js");
+    `;
+    expect(await run({ ...project, "build.ts": build }, "build.ts")).toEqual({
+      stdout: [
+        "<dir>/out/index.js,<dir>/out/index.js.map",
+        "// ../up.cjs,// node_modules/main/lib/main.js,// lib/x.js,// index.ts,// node_modules/exports/dist/sub.mjs,// index.ts",
+        "../../up.cjs,../node_modules/main/lib/main.js,../lib/x.js,../index.ts,../node_modules/exports/dist/sub.mjs",
+        "x x x up main exports\n",
+      ].join("\n"),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("bun test", async () => {
+    const files = {
+      ...project,
+      "test/a.test.ts": `import x from "@/x"; test("runs", () => console.log(x));`,
+    };
+    const { stdout, stderr, exitCode } = await run(files, "test");
+    expect(stdout).toEndWith("\nx\n");
+    expect(stderr).toContain("test/a.test.ts:\n(pass) runs");
+    expect(stderr).toContain("Ran 1 test across 1 file.");
+    expect(exitCode).toBe(0);
+  });
+});
+
+test.concurrent.skipIf(isWindows)('require() with a backslash does not get past "exports"', async () => {
+  using dir = tempDir("resolve-backslash-exports", {
+    "node_modules/pk/package.json": JSON.stringify({ name: "pk", exports: { ".": "./index.js" } }),
+    "node_modules/pk/index.js": `module.exports = "index";`,
+    "node_modules/pk/secret.js": `module.exports = "secret";`,
+    "entry.cjs": String.raw`
+      for (const specifier of ["pk/secret.js", "pk\\secret.js", "pk\\.\\secret.js"]) {
+        try {
+          require(specifier);
+          console.log("loaded");
+        } catch {
+          console.log("refused");
+        }
+      }
+    `,
+  });
+  expect(await bunRun(join(String(dir), "entry.cjs"))).toSpawn("refused\nrefused\nrefused");
+});
+
+// What Node does, and TypeScript for `paths` and `baseUrl`. Node refuses to import `plain\a.js`. An absolute specifier is a path in Bun.
+describe.concurrent.skipIf(isWindows)("a backslash in a specifier", () => {
+  const rows = [
+    // specifier, the file if `\` is `/`, the file if it is part of a name, import, require
+    ["./a\\b.js", "a/b.js", "a\\b.js", "separator", "literal"],
+    ["./a\\..\\c.js", "c.js", "a\\..\\c.js", "separator", "literal"],
+    ["<dir>/a\\b.js", "a/b.js", "a\\b.js", "literal", "literal"],
+    ["plain/a\\b.js", "node_modules/plain/a/b.js", "node_modules/plain/a\\b.js", "separator", "literal"],
+    ["plain\\a.js", "node_modules/plain/a.js", "node_modules/plain\\a.js", "separator", "literal"],
+    ["@s/p\\a.js", "node_modules/@s/p/a.js", "node_modules/@s/p\\a.js", "separator", "literal"],
+    ["ex/exact\\key", "node_modules/ex/exact/key.js", "node_modules/ex/exact\\key.js", undefined, undefined],
+    ["ex/f/a\\b", "node_modules/ex/f/a/b.js", "node_modules/ex/f/a\\b.js", "separator", "separator"],
+    ["#l/a\\b", "l/a/b.js", "l/a\\b.js", "separator", "separator"],
+    ["#p/a\\b", "node_modules/plain/a/b.js", "node_modules/plain/a\\b.js", "separator", "separator"],
+    ["@/a\\b.js", "src/a/b.js", "src/a\\b.js", "separator", "separator"],
+    ["base\\b.js", "src/base/b.js", "src/base\\b.js", "separator", "separator"],
+  ] as const;
+
+  test.each(["separator", "literal", "both"])("with these files: %s", async present => {
+    const app: DirectoryTree = {
+      "package.json": JSON.stringify({ imports: { "#l/*": "./l/*.js", "#p/*": "plain/*.js" } }),
+      "tsconfig.json": JSON.stringify({ compilerOptions: { baseUrl: "./src", paths: { "@/*": ["./*"] } } }),
+      "node_modules/ex/package.json": JSON.stringify({
+        exports: { "./exact/key": "./exact/key.js", "./f/*": "./f/*.js" },
+      }),
+      "entry.js": ({ root }) =>
+        rows
+          .map(([written]) => JSON.stringify(written.replace("<dir>", root)))
+          .map(
+            specifier => `
+              console.log((await import(${specifier}).catch(() => {}))?.default);
+              try { console.log(require(${specifier})); } catch { console.log(undefined); }`,
+          )
+          .join(""),
+    };
+    for (const [, separator, literal] of rows) {
+      if (present !== "literal") app[separator] = `module.exports = "separator";`;
+      if (present !== "separator") app[literal] = `module.exports = "literal";`;
+    }
+    using dir = tempDir("resolve-backslash-specifier", { app });
+    const [entry, bundle] = [join(String(dir), "app", "entry.js"), join(String(dir), "bundle.js")];
+    const loaded = async (file: string) => {
+      const { stdout, stderr, exitCode } = await bunRun(["--no-install", file]);
+      const lines = stdout.split("\n");
+      return { rows: rows.map(([specifier]) => [specifier, ...lines.splice(0, 2)]), stderr, exitCode };
+    };
+    const expected = {
+      rows: rows.map(([specifier, , , ...files]) => [
+        specifier,
+        ...files.map(file => String(present === "both" || present === file ? file : undefined)),
+      ]),
+      stderr: "",
+      exitCode: 0,
+    };
+
+    expect(await loaded(entry)).toEqual(expected);
+    expect(await bunRun(["build", "--target=bun", "--outfile", bundle, entry])).toMatchObject({ exitCode: 0 });
+    rmSync(join(String(dir), "app"), { recursive: true });
+    expect(await loaded(bundle)).toEqual(expected);
+  });
+
+  test.each(["--preload", "--import"])("%s is an import", async flag => {
+    using dir = tempDir("resolve-backslash-preload", {
+      "a\\b/c\\d.js": `console.log("literal");`,
+      "a\\b/c/d.js": `console.log("separator");`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), flag, "./c\\d.js", "-e", "0"],
+      cwd: join(String(dir), "a\\b"),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "separator\n", stderr: "", exitCode: 0 });
+  });
+});
+
+test.concurrent.each(["require", "import"])('%s() of a path that "imports" writes with backslashes', async load => {
+  using dir = tempDir("resolve-backslash-imports", {
+    "package.json": JSON.stringify({
+      imports: {
+        "#file": "plain/a\\b.js",
+        "#pattern/*": "plain\\a\\*.js",
+        "#scoped": "@scope\\pk",
+        "#util": ".\\util",
+        "#here": ".\\src\\here.js",
+        "#here/*": ".\\src\\*.js",
+        "#alias": "@/u\\x.js",
+        "#exported/*": "*\\index.js",
+      },
+    }),
+    "tsconfig.json": JSON.stringify({
+      compilerOptions: { baseUrl: ".", paths: { "src/*": ["aliased/*"], "@/*": ["aliased/*"] } },
+    }),
+    "util.js": `module.exports = "util";`,
+    "src/here.js": `module.exports = "here";`,
+    "aliased/here.js": `module.exports = "aliased";`,
+    "aliased/u/x.js": `module.exports = "alias";`,
+    "node_modules/ex/package.json": JSON.stringify({ name: "ex", exports: { "./*": "./dist/*" } }),
+    "node_modules/ex/dist/a/index.js": `module.exports = "exported";`,
+    "node_modules/plain/a/b.js": `module.exports = "plain";`,
+    "node_modules/@scope/pk/package.json": JSON.stringify({ name: "@scope/pk", main: "main.js" }),
+    "node_modules/@scope/pk/main.js": `module.exports = "scoped";`,
+    "entry.cjs": `
+      (async () => {
+        for (const specifier of ["#file", "#pattern/b", "#scoped", "#util", "#here", "#here/here", "#alias", "#exported/ex/a"]) {
+          const loaded = await ${load}(specifier);
+          console.log(loaded.default ?? loaded);
+        }
+      })();
+    `,
+  });
+  expect(await bunRun(join(String(dir), "entry.cjs"))).toSpawn(
+    "plain\nplain\nscoped\nutil\nhere\nhere\nalias\nexported",
+  );
+});
+
+test.concurrent.each([
+  ["#a", ".\\src\\a.js", "#a"],
+  ["#a", "src\\a.js", "#a"],
+  ["#a", "@src\\a", "#a"],
+  ["#a", "x/../src\\a.js", "#a"],
+  ["#a/*", "*", "#a/src\\a.js"],
+])('auto-install does not ask for what "imports" makes of %s: %s', async (key, target, specifier) => {
+  const requests: string[] = [];
+  using registry = Bun.serve({
+    port: 0,
+    fetch(request) {
+      requests.push(new URL(request.url).pathname);
+      return new Response(null, { status: 404 });
+    },
+  });
+  using dir = autoInstallTempDir("resolve-backslash-imports-install", {
+    "package.json": JSON.stringify({ imports: { [key]: target } }),
+    "entry.js": `await import(${JSON.stringify(specifier)}).catch(() => console.log("not found"));`,
+  });
+  const env = { BUN_CONFIG_REGISTRY: registry.url.href, BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache") };
+  expect(await bunRun(join(String(dir), "entry.js"), env)).toSpawn("not found");
+  expect(requests).toEqual([]);
+});
+
+test.concurrent.each([
+  [".\\src", "lib/sub/mod", "local"],
+  ["src\\", "lib/sub/mod", "local"],
+  ["<dir>\\src", "lib/sub/mod", "local"],
+  ["./src", "lib/sub\\mod", isWindows ? "local" : "not found"],
+])("auto-install does not ask for what NODE_PATH=%s has: %s", async (NODE_PATH, specifier, expected) => {
+  const requests: string[] = [];
+  using registry = Bun.serve({
+    port: 0,
+    fetch(request) {
+      requests.push(new URL(request.url).pathname);
+      return new Response(null, { status: 404 });
+    },
+  });
+  using dir = autoInstallTempDir("resolve-backslash-node-path", {
+    "src/lib/sub/mod.js": `module.exports = "local";`,
+    "entry.js": `try { console.log(require(${JSON.stringify(specifier)})); } catch { console.log("not found"); }`,
+  });
+  const result = await bunRun(join(String(dir), "entry.js"), {
+    BUN_CONFIG_REGISTRY: registry.url.href,
+    BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache"),
+    NODE_PATH: NODE_PATH.replace("<dir>", () => String(dir)),
+  });
+  expect(result).toSpawn(expected);
+  expect(requests).toEqual([]);
+});
+
+test.concurrent.skipIf(isWindows).each([
+  ["bun a\\b.js", ["a\\b.js"]],
+  ["bun run ./a\\b.js", ["run", "./a\\b.js"]],
+  ["bun .\\f.js", [".\\f.js"]],
+  ["new Worker()", ["-e", String.raw`new Worker("./a\\b.js")`]],
+  ["createRequire()", ["-e", String.raw`require("module").createRequire(process.cwd() + "/c\\d/x.js")("./e.js")`]],
+  ["NODE_PATH", ["-e", `require("e.js")`]],
+])("a backslash is part of a name: %s", async (_, args) => {
+  using dir = tempDir("resolve-backslash-name", {
+    "a\\b.js": `console.log("literal");`,
+    "a/b.js": `console.log("separator");`,
+    "c\\d/e.js": `console.log("literal");`,
+    "c/d/e.js": `console.log("separator");`,
+    ".\\f.js": `console.log("literal");`,
+    "f.js": `console.log("separator");`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), ...args],
+    cwd: String(dir),
+    env: { ...bunEnv, NODE_PATH: join(String(dir), "c\\d") },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "literal\n", stderr: "", exitCode: 0 });
+});
+
+test.concurrent.skipIf(isWindows).each([{ baseUrl: "." }, { paths: { "*": ["./*"] } }])(
+  "a backslash is part of the name of an entry point that goes through %j",
+  async compilerOptions => {
+    using dir = tempDir("resolve-backslash-entry-point", {
+      "tsconfig.json": JSON.stringify({ compilerOptions }),
+      "a\\b.js": `console.log("literal");`,
+      "a/b.js": `console.log("separator");`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--minify", "a\\b.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: `console.log("literal");\n`, stderr: "", exitCode: 0 });
+  },
+);
+
+test.concurrent("an import that starts with ..\\ finds the file in the parent directory", async () => {
+  using dir = tempDir("resolve-backslash-parent", {
+    "node_modules/.keep": "",
+    "lib/y.js": `export default "y";`,
+    "src/entry.js": String.raw`import y from "..\\lib\\y.js"; console.log(y);`,
+  });
+  expect(await bunRun(join(String(dir), "src", "entry.js"))).toSpawn("y");
+});
+
+test.concurrent.skipIf(isWindows).each([
+  [{ compilerOptions: { baseUrl: "./src/", paths: { "@": [""] } } }, "index"],
+  [{ extends: "./base.json/", compilerOptions: { baseUrl: "./fallback" } }, "fallback"],
+])("tsconfig.json %j", async (tsconfig, expected) => {
+  using dir = tempDir("resolve-tsconfig-spelling", {
+    "tsconfig.json": JSON.stringify(tsconfig),
+    "base.json": JSON.stringify({ compilerOptions: { paths: { "@": ["./src.js"] } } }),
+    "src.js": `export default "sibling";`,
+    "src/index.js": `export default "index";`,
+    "fallback/@.js": `export default "fallback";`,
+    "fallback/src.js": `export default "extended";`,
+    "entry.js": `import which from "@"; console.log(which);`,
+  });
+  expect(await bunRun(join(String(dir), "entry.js"))).toSpawn(expected);
+});
+
+test.concurrent.each([
+  ["tsconfig.json", { compilerOptions: { baseUrl: "<dir>\\src" } }],
+  ["tsconfig.json", { compilerOptions: { paths: { which: ["<dir>\\src\\which.js"] } } }],
+  ["tsconfig.json", { compilerOptions: { paths: { "*": ["<dir>\\src\\*"] } } }],
+  ["tsconfig.json", { extends: "<dir>\\src\\base.json" }],
+  ["package.json", { browser: { which: "<dir>\\src\\which.js" } }],
+  ["package.json", { browser: { "./node_modules/which/index.js": "<dir>\\src\\which.js" } }],
+  ["node_modules/which/package.json", { main: "<dir>\\src\\which.js" }],
+])("a backslash separates behind an absolute path in %s: %j", async (file, contents) => {
+  using dir = tempDir("resolve-config-absolute-backslash", {
+    "src/base.json": JSON.stringify({ compilerOptions: { baseUrl: "." } }),
+    "src/which.js": `export default "local";`,
+    "node_modules/which/index.js": `export default "installed";`,
+    "entry.js": `import which from "which"; console.log(which);`,
+  });
+  const text = JSON.stringify(contents).replace("<dir>", () => JSON.stringify(String(dir)).slice(1, -1));
+  await Bun.write(join(String(dir), file), text);
+  const { outputs } = await Bun.build({ entrypoints: [join(String(dir), "entry.js")], minify: true });
+  expect(await outputs[0].text()).toContain(`"local"`);
+});
+
+test.concurrent.each([
+  { extends: "<dir>\\src\\base.json" },
+  { compilerOptions: { baseUrl: "<dir>\\src" } },
+  { compilerOptions: { paths: { which: ["<dir>\\src\\which.js"] } } },
+  { compilerOptions: { paths: { "*": ["<dir>\\src\\*"] } } },
+  { compilerOptions: { baseUrl: ".", paths: { "w*": ["<dir>\\src\\which.js"] } } },
+])("a leading backslash is the root in tsconfig.json: %j", async tsconfig => {
+  using dir = tempDir("resolve-tsconfig-leading-backslash", {
+    "src/base.json": JSON.stringify({ compilerOptions: { paths: { which: ["./which.js"] } } }),
+    "src/which.js": `export default "local";`,
+    "node_modules/which/index.js": `export default "installed";`,
+    "entry.js": `import which from "which"; console.log(which);`,
+  });
+  const rooted = JSON.stringify(String(dir).replaceAll("/", "\\")).slice(1, -1);
+  await Bun.write(
+    join(String(dir), "tsconfig.json"),
+    JSON.stringify(tsconfig).replace("<dir>", () => rooted),
+  );
+  expect(await bunRun(join(String(dir), "entry.js"))).toSpawn("local");
+});
+
+test.concurrent.each([
+  ["pkg\\jsx", "node_modules/pkg/jsx"],
+  [".\\lib\\jsx", "lib/jsx"],
+  ["key\\jsx", "aliased"],
+])("jsxImportSource %s is %s", async (jsxImportSource, folder) => {
+  const paths = { "key\\jsx/*": ["./aliased/*"] };
+  using dir = tempDir("resolve-tsconfig-jsx-import-source", {
+    "tsconfig.json": JSON.stringify({ compilerOptions: { jsx: "react-jsx", jsxImportSource, paths } }),
+    [`${folder}/jsx-runtime.js`]: `export const jsx = () => "jsx";`,
+    "entry.jsx": `console.log(<a />);`,
+  });
+  expect(await bunRun(join(String(dir), "entry.jsx"))).toSpawn("jsx");
+});
+
+test.concurrent.each([
+  ["bunfig.toml", String.raw`preload = ['lib\pre.js']`],
+  ["bunfig.toml", String.raw`jsxImportSource = 'lib\jsx'`],
+  ["tsconfig.json", JSON.stringify({ compilerOptions: { jsx: "react-jsx", jsxImportSource: "@lib\\jsx" } })],
+])("auto-install does not ask for what %s names with %s", async (file, text) => {
+  const requests: string[] = [];
+  using registry = Bun.serve({
+    port: 0,
+    fetch(request) {
+      requests.push(new URL(request.url).pathname);
+      return new Response(null, { status: 404 });
+    },
+  });
+  using dir = autoInstallTempDir("resolve-backslash-config-install", {
+    [file]: text,
+    "entry.jsx": `console.log(<a />);`,
+  });
+  const env = { BUN_CONFIG_REGISTRY: registry.url.href, BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache") };
+  const { exitCode } = await bunRun(join(String(dir), "entry.jsx"), env);
+  expect({ requests, exitCode }).toEqual({ requests: [], exitCode: 1 });
+});
+
+// A build with assertions refuses an empty `baseUrl`.
+test.concurrent.skipIf(isDebug || isASAN)("an empty baseUrl is the directory of tsconfig.json", async () => {
+  using dir = tempDir("resolve-tsconfig-empty-base-url", {
+    "src.js": `export default "sibling";`,
+    "src/tsconfig.json": JSON.stringify({ compilerOptions: { baseUrl: "", paths: { "@": [""] } } }),
+    "src/index.js": `export default "index";`,
+    "src/entry.js": `import which from "@"; console.log(which);`,
+  });
+  expect(await bunRun(join(String(dir), "src", "entry.js"))).toSpawn("index");
+});
+
+test.concurrent('an alias to a package with "extends" in its tsconfig.json loads "main"', async () => {
+  using dir = tempDir("resolve-tsconfig-alias-extends", {
+    "tsconfig.json": JSON.stringify({ compilerOptions: { paths: { lib: ["./packages/lib"] } } }),
+    "base.json": "{}",
+    "packages/lib/tsconfig.json": JSON.stringify({ extends: "../../base.json" }),
+    "packages/lib/package.json": JSON.stringify({ name: "lib", main: "dist/index.js" }),
+    "packages/lib/index.ts": `export default "index";`,
+    "packages/lib/dist/index.js": `export default "main";`,
+    "other.js": `export { default } from "lib";`,
+    "entry.js": `import first from "lib"; import second from "./other.js"; console.log(first, second);`,
+  });
+  expect(await bunRun(join(String(dir), "entry.js"))).toSpawn("main main");
+});
+
+test.concurrent.each(["/./", "//"])("finds a worker that is created later and written with %s", async separator => {
+  using dir = tempDir("resolve-worker-spelling", {
+    "w/old.js": `postMessage("old");`,
+    "entry.js": `
+      const start = name =>
+        new Promise((resolve, reject) => {
+          const worker = new Worker(import.meta.dir + ${JSON.stringify(separator)} + "w/" + name);
+          worker.onmessage = event => resolve(event.data);
+          worker.onerror = event => reject(event.message);
+        });
+      console.log(await start("old.js"));
+      await Bun.write(import.meta.dir + "/w/new.js", 'postMessage("new");');
+      console.log(await start("new.js"));
+      process.exit(0);
+    `,
+  });
+  expect(await bunRun(join(String(dir), "entry.js"))).toSpawn("old\nnew");
+});
+
+test.concurrent(
+  "finds a worker in a directory that is created later and written with a separator at the end",
+  async () => {
+    using dir = tempDir("resolve-worker-directory", {
+      "entry.js": `
+      const directory = require("path").join(import.meta.dir, "w/");
+      const start = () =>
+        new Promise(resolve => {
+          const worker = new Worker(directory);
+          worker.onmessage = event => resolve(event.data);
+          worker.onerror = () => resolve("missing");
+        });
+      console.log(await start());
+      await Bun.write(directory + "index.js", 'postMessage("found");');
+      console.log(await start());
+      process.exit(0);
+    `,
+    });
+    expect(await bunRun(join(String(dir), "entry.js"))).toSpawn("missing\nfound");
+  },
+);

@@ -6,9 +6,9 @@
 #include "BunStandaloneTextSink.h"
 #include "BunStreamSource.h"
 #include "JSCrossRealmTransformState.h"
-#include "JSDirectSinkCloseState.h"
 #include "JSAsyncIteratorSourceOperation.h"
 #include "JSDirectStreamController.h"
+#include "JSDirectStreamSource.h"
 #include "JSOneShotDirectSink.h"
 #include "JSReadableStreamIntoArrayOperation.h"
 #include "JSPullIntoDescriptor.h"
@@ -44,6 +44,7 @@ struct HandlerTableEntry {
 static constexpr HandlerTableEntry handlerTable[] = {
     FOR_EACH_WEB_STREAMS_REACTION_HANDLER(WEB_STREAMS_HANDLER_TABLE_ENTRY)
     FOR_EACH_WEB_STREAMS_BOUND_HANDLER_TARGET(WEB_STREAMS_HANDLER_TABLE_ENTRY)
+    FOR_EACH_WEB_STREAMS_METHOD_HANDLER(WEB_STREAMS_HANDLER_TABLE_ENTRY)
 };
 // clang-format on
 #undef WEB_STREAMS_HANDLER_TABLE_ENTRY
@@ -98,11 +99,11 @@ void JSStreamsRuntime::initialize(Zig::GlobalObject* globalObject)
         auto* structure = globalObject->structureCache().emptyObjectStructureForPrototype(globalObject, globalObject->objectPrototype(), 3);
         JSC::PropertyOffset offset;
         structure = Structure::addPropertyTransition(vm, structure, vm.propertyNames->value, 0, offset);
-        RELEASE_ASSERT(offset == 0);
+        RELEASE_ASSERT(offset == readManyResultValueOffset);
         structure = Structure::addPropertyTransition(vm, structure, WebCore::builtinNames(vm).sizePublicName(), 0, offset);
-        RELEASE_ASSERT(offset == 1);
+        RELEASE_ASSERT(offset == readManyResultSizeOffset);
         structure = Structure::addPropertyTransition(vm, structure, vm.propertyNames->done, 0, offset);
-        RELEASE_ASSERT(offset == 2);
+        RELEASE_ASSERT(offset == readManyResultDoneOffset);
         init.set(structure);
     });
 }

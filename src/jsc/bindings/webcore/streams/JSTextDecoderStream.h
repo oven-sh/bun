@@ -10,14 +10,19 @@
 #include "JSTransformStream.h"
 #include "StreamConstructor.h"
 
+// TextDecoder.rs
+BUN_DECLARE_FFI_DELETER(TextDecoderForStream, TextDecoder__destroyForStream);
+
 namespace WebCore {
 
 class JSTextDecoderStream final : public JSTransformStream {
 public:
     using Base = JSTransformStream;
     static constexpr unsigned StructureFlags = Base::StructureFlags;
+    static constexpr JSC::DestructionMode needsDestruction = JSC::NeedsDestruction;
 
     static JSTextDecoderStream* create(JSC::VM&, JSC::Structure*);
+    static void destroy(JSC::JSCell* cell) { static_cast<JSTextDecoderStream*>(cell)->~JSTextDecoderStream(); }
 
     static JSC::JSObject* createPrototype(JSC::VM&, JSDOMGlobalObject&);
     static JSC::JSObject* prototype(JSC::VM&, JSDOMGlobalObject&);
@@ -35,14 +40,10 @@ public:
     }
     static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM&);
 
-    // the Rust TextDecoder (encoding state, BOM / partial-sequence buffering). Null for
-    // the utf-8 non-fatal fast path, which uses m_utf8State instead. Freed eagerly at
-    // ClearAlgorithms; a vm.heap.addFinalizer registered in the constructor (non-utf8
-    // only) is the idempotent fallback for an abandoned stream.
-    void* m_decoder { nullptr };
-    // Immutable for the cell's lifetime (the .encoding getter reads this, never
-    // m_decoder which the eager release nulls). Static-tagged: no refcount to drop.
-    BunString m_encodingLabel {};
+    // Null for the utf-8 non-fatal fast path, which uses m_utf8State instead. Freed eagerly at ClearAlgorithms.
+    std::unique_ptr<TextDecoderForStream> m_decoder;
+    // The Rust `EncodingLabel`. The .encoding getter reads this, never m_decoder.
+    uint8_t m_encoding { 0 };
     // utf-8 non-fatal fast path (shared with Body.textStream()).
     Bun::WebStreams::StreamingUTF8DecodeState m_utf8State;
     bool m_fatal { false };

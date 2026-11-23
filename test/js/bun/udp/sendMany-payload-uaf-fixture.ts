@@ -31,7 +31,7 @@ const server = await Bun.udpSocket({
   socket: {
     data(_socket, data) {
       if (received) return;
-      const chunk = Buffer.from(data as ArrayBuffer);
+      const chunk = Buffer.from(data);
       // In `send` mode the first call captures the payload from the
       // now-detached view (length 0). On Linux that surfaces as EFAULT and
       // nothing is sent; on Windows it succeeds and a 0-byte packet arrives
@@ -92,7 +92,7 @@ try {
   // this catch ever runs.
   try {
     if (mode === "sendMany") {
-      client.sendMany([payload, evilPort, "127.0.0.1"]);
+      client.sendMany([payload, evilPort as any, "127.0.0.1"]);
     } else if (mode === "sendMany-stringobj") {
       // Second payload is a DerivedStringObject whose `toString()` detaches
       // the first payload's backing store. If sendMany deferred the

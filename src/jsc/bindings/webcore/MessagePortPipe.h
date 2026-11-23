@@ -63,11 +63,11 @@ public:
     // Attach this side to a context + port. Schedules a drain if messages are
     // already queued (e.g. after transfer). Passing a null port is allowed and
     // means "just buffer, don't dispatch" (used before start()).
-    void attach(uint8_t side, ScriptExecutionContextIdentifier, ThreadSafeWeakPtr<MessagePort>);
+    void attach(uint8_t side, ScriptExecutionContext&, ThreadSafeWeakPtr<MessagePort>);
     // Like attach() but only records ctxId/port so the peer's close() can deliver
     // a 'close' event to a port that never started (no 'message' listener). Does
     // NOT enable drains. No-op if already attached/registered/closed.
-    void registerCloseContext(uint8_t side, ScriptExecutionContextIdentifier, ThreadSafeWeakPtr<MessagePort>);
+    void registerCloseContext(uint8_t side, ScriptExecutionContext&, ThreadSafeWeakPtr<MessagePort>);
     void detach(uint8_t side);
     // Explicit == a real, permanent close: close(), context teardown, or an orphaned
     // transferred endpoint. Collected == the owning MessagePort's wrapper was garbage
@@ -89,7 +89,7 @@ public:
 private:
     MessagePortPipe() = default;
 
-    void scheduleDrain(uint8_t side, ScriptExecutionContextIdentifier);
+    void scheduleDrain(uint8_t side, ScriptExecutionContextIdentifier, BunLoopKind);
     void notifyPeerClosed(uint8_t peerSide);
     void drainAndDispatch(uint8_t side, ScriptExecutionContextIdentifier expectedCtx);
 
@@ -102,6 +102,9 @@ private:
         // so the next owner sees everything, in order; close() drops them with the rest.
         WTF::Deque<MessageWithMessagePorts> draining WTF_GUARDED_BY_LOCK(lock);
         ScriptExecutionContextIdentifier ctxId WTF_GUARDED_BY_LOCK(lock) { 0 };
+        // The loop `ctxId` was running when this side attached there; drains and the peer-close
+        // notification are posted to it.
+        BunLoopKind ctxLoopKind WTF_GUARDED_BY_LOCK(lock) { BunLoopKind::Regular };
         ThreadSafeWeakPtr<MessagePort> port WTF_GUARDED_BY_LOCK(lock);
         // Packed flags + count. Written only while holding `lock`; read locklessly.
         std::atomic<uint64_t> state { 0 };

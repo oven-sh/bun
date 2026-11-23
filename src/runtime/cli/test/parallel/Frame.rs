@@ -2,57 +2,79 @@
 //!   [u32 LE payload_len][u8 kind][payload]
 //! Strings within a payload are [u32 LE len][bytes].
 
+use crate::test_runner::jest::Summary;
+
 #[repr(u8)]
-#[derive(Copy, Clone, Eq, PartialEq)]
-pub enum Kind {
+#[derive(Copy, Clone, Eq, PartialEq, strum::FromRepr)]
+pub(crate) enum Kind {
     // worker → coordinator
     /// (empty)
     Ready,
     /// u32 file_idx
     FileStart,
-    /// u32 file_idx, str formatted_line (ANSI included; printed verbatim)
+    /// u32 file_idx, str formatted_line (ANSI included; printed verbatim);
+    /// then, only when the worker runs with `--reporter`, the structured
+    /// result (`runner::encode_test_case`): u32 status, u32 assertions,
+    /// u64 elapsed_ns, u32 line, str name, u32 n × {str scope_name,
+    /// u32 scope_line}, u32 has_failure [, str name, str message, str body, u32 uncaught]
     TestDone,
-    /// 9 × u32: file_idx, pass, fail, skip, todo, expectations, skipped_label, files, unhandled
+    /// 10 × u32: file_idx, pass, fail, skip, todo, expectations, skipped_label,
+    /// files, shuffled, unhandled; u64 elapsed_ns; 3 × u32, 0 where nobody measures: the megabytes by which the worker grew at most, those of its largest child,
+    /// and the worker's peak RSS so far
+    /// then str: `runner::first_loads`
     FileDone,
     /// 3 × str: failures, skips, todos (verbatim repeat-buffer bytes)
     RepeatBufs,
     // coordinator → worker
-    /// u32 file_idx, str path
+    /// u32 file_idx, str path, str: what the last FileDone of the worker's slot said of first loads, u32: 1 where growth is written
     Run,
     /// (empty)
     Shutdown,
-    /// u32 file_idx, str xml — one file's completed <testsuite> element(s).
-    /// Workers never write reports to disk; the coordinator files chunks by
-    /// index and emits them in the run's canonical file order, so the merged
-    /// document is identical regardless of which worker finishes first.
-    JunitChunk,
-    /// str lcov — this worker's coverage data, sent at exit; the coordinator
-    /// merges every worker's into the one report it writes.
-    CoverageChunk,
+    /// str report — one source file's coverage from this worker, sent at exit
+    /// as `bun_sourcemap_jsc::code_coverage::wire`. The coordinator merges
+    /// every worker's per file and writes the one report.
+    CoverageFile,
+    /// str line — one write to a read-only built-in that failed in a file that ran compiled, sent ahead of the file's FileDone
+    RefusedChange,
 }
 
 impl TryFrom<u8> for Kind {
     type Error = ();
     fn try_from(v: u8) -> Result<Self, ()> {
-        // Int → enum: valid only for declared discriminants.
-        Ok(match v {
-            0 => Kind::Ready,
-            1 => Kind::FileStart,
-            2 => Kind::TestDone,
-            3 => Kind::FileDone,
-            4 => Kind::RepeatBufs,
-            5 => Kind::Run,
-            6 => Kind::Shutdown,
-            7 => Kind::JunitChunk,
-            8 => Kind::CoverageChunk,
-            _ => return Err(()),
-        })
+        Kind::from_repr(v).ok_or(())
     }
 }
 
+/// In the order in which `FileDone` has them.
+pub(crate) fn counters(summary: &mut Summary) -> [&mut u32; 8] {
+    let Summary {
+        pass,
+        fail,
+        skip,
+        todo,
+        expectations,
+        skipped_because_label: skipped,
+        files,
+        shuffled,
+    } = summary;
+    [
+        pass,
+        fail,
+        skip,
+        todo,
+        expectations,
+        skipped,
+        files,
+        shuffled,
+    ]
+}
+
+/// `payload_len` and `kind`.
+pub(crate) const HEADER_LEN: usize = 5;
+
 /// Upper bound on a single IPC frame payload. The protocol is internal but
 /// fd 3 is reachable from test JS via `fs.writeSync(3, ...)`; rejecting
-/// nonsensical lengths up-front prevents both a `5 + len` u32 overflow and
+/// nonsensical lengths up-front prevents both a `HEADER_LEN + len` u32 overflow and
 /// an unbounded allocation.
 pub(crate) const MAX_PAYLOAD: u32 = 64 * 1024 * 1024;
 
@@ -60,13 +82,11 @@ pub(crate) const MAX_PAYLOAD: u32 = 64 * 1024 * 1024;
 /// then flush in a single write so partial reads on the other side never see a
 /// torn header.
 #[derive(Default)]
-pub struct Frame {
+pub(crate) struct Frame {
     buf: Vec<u8>,
 }
 
 impl Frame {
-    pub(crate) const DEFAULT: Self = Self { buf: Vec::new() };
-
     pub(crate) fn begin(&mut self, kind: Kind) {
         self.buf.clear();
         // reserve header; payload_len patched in send()
@@ -78,68 +98,66 @@ impl Frame {
         self.buf.extend_from_slice(&v.to_le_bytes());
     }
 
+    pub(crate) fn u64(&mut self, v: u64) {
+        self.buf.extend_from_slice(&v.to_le_bytes());
+    }
+
     pub(crate) fn str(&mut self, s: &[u8]) {
         // Never let a single frame exceed `MAX_PAYLOAD` — the receiver treats that
         // as a corrupt-channel signal and closes, which would surface as a spurious
-        // worker crash. Truncate the string in place instead. Leave a small
-        // headroom so a few following u32s/short paths in the same frame still fit.
+        // worker crash. Truncate the string in place instead. Leave headroom
+        // so the fixed-size tail of the frame (u32s, short paths, and the
+        // 4-byte prefixes of any further strings, which go empty) still fits.
         const TRUNC: &[u8] = b"\n... [output truncated: would exceed --parallel IPC frame limit]\n";
-        const HEADROOM: usize = 256;
-        let used: usize = (self.buf.len() - 5) + 4; // current payload + str-len prefix
-        let room: usize = if (MAX_PAYLOAD as usize) > used + HEADROOM {
-            (MAX_PAYLOAD as usize) - used - HEADROOM
+        const HEADROOM: usize = 4096;
+        let used: usize = (self.buf.len() - HEADER_LEN) + 4; // current payload + str-len prefix
+        let room: usize = ((MAX_PAYLOAD as usize) - HEADROOM).saturating_sub(used);
+        let (keep, marker): (usize, &[u8]) = if s.len() <= room {
+            (s.len(), b"")
+        } else if room >= TRUNC.len() {
+            (room - TRUNC.len(), TRUNC)
         } else {
-            0
+            (0, b"")
         };
-        if s.len() <= room {
-            self.u32(u32::try_from(s.len()).unwrap());
-            self.buf.extend_from_slice(s);
-            return;
-        }
-        let keep: usize = if room > TRUNC.len() {
-            room - TRUNC.len()
-        } else {
-            0
-        };
-        self.u32(u32::try_from(keep + TRUNC.len()).unwrap());
+        self.u32(u32::try_from(keep + marker.len()).unwrap());
         self.buf.extend_from_slice(&s[0..keep]);
-        self.buf.extend_from_slice(TRUNC);
+        self.buf.extend_from_slice(marker);
     }
 
     /// Finalize the header and return the encoded bytes. Caller hands them to
     /// `Channel.send`. Valid until the next `begin()`.
     pub(crate) fn finish(&mut self) -> &[u8] {
-        let payload_len: u32 = u32::try_from(self.buf.len() - 5).unwrap();
+        let payload_len: u32 = u32::try_from(self.buf.len() - HEADER_LEN).unwrap();
         debug_assert!(payload_len <= MAX_PAYLOAD);
         self.buf[0..4].copy_from_slice(&payload_len.to_le_bytes());
         &self.buf
     }
 }
 
-// `deinit` dropped: `Vec<u8>` frees on Drop.
-
 /// Payload reader; bounds-checked, returns zero/empty on truncation.
-pub struct Reader<'a> {
+pub(crate) struct Reader<'a> {
     pub p: &'a [u8],
 }
 
 impl<'a> Reader<'a> {
+    fn bytes<const N: usize>(&mut self) -> [u8; N] {
+        let Some((bytes, rest)) = self.p.split_first_chunk() else {
+            return [0; N];
+        };
+        self.p = rest;
+        *bytes
+    }
+
     pub(crate) fn u32(&mut self) -> u32 {
-        if self.p.len() < 4 {
-            return 0;
-        }
-        let v = u32::from_le_bytes(self.p[0..4].try_into().unwrap());
-        self.p = &self.p[4..];
-        v
+        u32::from_le_bytes(self.bytes())
+    }
+
+    pub(crate) fn u64(&mut self) -> u64 {
+        u64::from_le_bytes(self.bytes())
     }
 
     pub(crate) fn str(&mut self) -> &'a [u8] {
         let n = self.u32() as usize;
-        if self.p.len() < n {
-            return b"";
-        }
-        let s = &self.p[0..n];
-        self.p = &self.p[n..];
-        s
+        self.p.split_off(..n).unwrap_or_default()
     }
 }

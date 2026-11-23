@@ -16,10 +16,16 @@ pub enum Error {
     UnknownEncoding,
     #[error("WriteFailed")]
     WriteFailed,
+    #[error("MaxPathExceeded")]
+    MaxPathExceeded,
     #[error("MissingData")]
     MissingData,
     #[error("InvalidHash")]
     InvalidHash,
+    #[error("InvalidSourceMap")]
+    InvalidSourceMap,
+    #[error("NotARegularFile")]
+    NotARegularFile,
     #[error("CacheDisabled")]
     CacheDisabled,
     #[error("InvalidInputHash")]
@@ -38,18 +44,12 @@ pub enum Error {
     TarballFailedToExtract,
     #[error("ServerEntryPointGenerate")]
     ServerEntryPointGenerate,
-    #[error("UnexpectedPendingResolution")]
-    UnexpectedPendingResolution,
     #[error("WorkerTerminated")]
     WorkerTerminated,
-    #[error("JSErrorObject")]
-    JSErrorObject,
     #[error("ThreadSpawnFailed")]
     ThreadSpawnFailed,
     #[error("MissingDebugInfo")]
     MissingDebugInfo,
-    #[error("InvalidDebugInfo")]
-    InvalidDebugInfo,
     #[error("EndOfFile")]
     EndOfFile,
     #[error("FailedToOpenSocket")]
@@ -65,8 +65,6 @@ pub enum Error {
     #[error(transparent)]
     MakeLibUvOwned(#[from] bun_sys::MakeLibUvOwnedError),
     #[error(transparent)]
-    Path(#[from] bun_paths::path_options::Error),
-    #[error(transparent)]
     Bundler(#[from] bun_bundler::Error),
     #[error(transparent)]
     Watcher(#[from] bun_watcher::Error),
@@ -80,8 +78,6 @@ pub enum Error {
     ToJS(#[from] bun_ast::ToJSError),
     #[error(transparent)]
     Url(#[from] bun_url::Error),
-    #[error(transparent)]
-    Paths(#[from] bun_paths::Error),
     #[error("{0}")]
     ErrorCode(crate::error_code::ErrorCode),
 }
@@ -98,8 +94,11 @@ impl Error {
             Self::InvalidModuleType => "InvalidModuleType",
             Self::UnknownEncoding => "UnknownEncoding",
             Self::WriteFailed => "WriteFailed",
+            Self::MaxPathExceeded => "MaxPathExceeded",
             Self::MissingData => "MissingData",
             Self::InvalidHash => "InvalidHash",
+            Self::InvalidSourceMap => "InvalidSourceMap",
+            Self::NotARegularFile => "NotARegularFile",
             Self::CacheDisabled => "CacheDisabled",
             Self::InvalidInputHash => "InvalidInputHash",
             Self::MismatchedFeatureHash => "MismatchedFeatureHash",
@@ -109,12 +108,9 @@ impl Error {
             Self::JSError => "JSError",
             Self::TarballFailedToExtract => "TarballFailedToExtract",
             Self::ServerEntryPointGenerate => "ServerEntryPointGenerate",
-            Self::UnexpectedPendingResolution => "UnexpectedPendingResolution",
             Self::WorkerTerminated => "WorkerTerminated",
-            Self::JSErrorObject => "JSErrorObject",
             Self::ThreadSpawnFailed => "ThreadSpawnFailed",
             Self::MissingDebugInfo => "MissingDebugInfo",
-            Self::InvalidDebugInfo => "InvalidDebugInfo",
             Self::EndOfFile => "EndOfFile",
             Self::FailedToOpenSocket => "FailedToOpenSocket",
             Self::Sys(e) => <&'static str>::from(e),
@@ -122,7 +118,6 @@ impl Error {
             Self::Core(e) => e.name(),
             Self::Resolver(e) => e.name(),
             Self::MakeLibUvOwned(e) => <&'static str>::from(e),
-            Self::Path(e) => <&'static str>::from(e),
             Self::Bundler(e) => e.name(),
             Self::Watcher(e) => e.name(),
             Self::Install(e) => e.name(),
@@ -130,7 +125,6 @@ impl Error {
             Self::Patch(e) => e.name(),
             Self::ToJS(e) => <&'static str>::from(e),
             Self::Url(e) => e.name(),
-            Self::Paths(e) => e.name(),
             Self::ErrorCode(e) => <&'static str>::from(*e),
         }
     }

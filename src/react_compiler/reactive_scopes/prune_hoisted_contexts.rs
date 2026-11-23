@@ -50,7 +50,7 @@ enum UninitializedKind {
 }
 
 struct VisitorState {
-    active_scopes: Vec<std::collections::HashSet<IdentifierId>>,
+    active_scopes: Vec<crate::collections::FxHashSet<IdentifierId>>,
     uninitialized: IdMap<IdentifierId, UninitializedKind>,
 }
 
@@ -82,7 +82,7 @@ impl<'a> ReactiveFunctionTransform for Transform<'a> {
         state: &mut VisitorState,
     ) -> Result<(), CompilerError> {
         let scope_data = &self.env.scopes[scope.scope.0 as usize];
-        let decl_ids: std::collections::HashSet<IdentifierId> =
+        let decl_ids: crate::collections::FxHashSet<IdentifierId> =
             scope_data.declarations.iter().map(|(id, _)| *id).collect();
 
         // Add declared but not initialized variables

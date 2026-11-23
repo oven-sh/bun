@@ -6,8 +6,9 @@ use core::ptr::NonNull;
 
 use bun_core::strings;
 
-use crate::HTTPClient;
+use crate::InFlightRequest;
 use crate::NewHTTPContext;
+use crate::PeerVerification;
 use crate::ssl_config::SSLConfig;
 
 #[derive(Default)]
@@ -16,15 +17,13 @@ pub struct PendingConnect {
     pub(crate) port: u16,
     // Compared by pointer identity only, never derefed/freed here; lifetime-erased.
     pub(crate) ssl_config: Option<NonNull<SSLConfig>>,
-    /// Whether the client that initiated this in-flight TLS connect requested
-    /// `rejectUnauthorized`. The eventual `ClientSession` records this as
-    /// `established_with_reject_unauthorized`; mirroring it here lets the
-    /// coalescing path apply the same strictness guard *before* the session
+    /// How the client that initiated this in-flight TLS connect will verify
+    /// the peer. The eventual `ClientSession` records the same value; mirroring
+    /// it here lets the coalescing path apply the guard *before* the session
     /// exists, so a strict caller never waits on a connect started by a lax one.
-    pub(crate) reject_unauthorized: bool,
-    pub(crate) host_header_hash: u64,
-    // BACKREF: waiters are borrowed HTTP clients owned elsewhere; lifetime-erased.
-    pub(crate) waiters: Vec<NonNull<HTTPClient<'static>>>,
+    pub(crate) verification: PeerVerification,
+    pub(crate) pool_id: u64,
+    pub(crate) waiters: Vec<InFlightRequest>,
 }
 
 impl PendingConnect {
@@ -32,30 +31,17 @@ impl PendingConnect {
         Box::new(init)
     }
 
-    /// Upgrade a `waiters` back-ref to `&mut HTTPClient`.
-    ///
-    /// INVARIANT: every entry in `waiters` is a back-ref to a live
-    /// `HTTPClient` embedded in its `AsyncHTTP`, registered via
-    /// `HTTPContext::connect` and removed before that client's terminal
-    /// callback. HTTP-thread-only, so the returned `&mut` is the sole live
-    /// borrow. Routes through the crate-wide
-    /// [`HTTPClient::from_erased_backref`] accessor.
-    #[inline]
-    pub(crate) fn waiter_mut<'a>(p: NonNull<HTTPClient<'static>>) -> &'a mut HTTPClient<'static> {
-        HTTPClient::from_erased_backref(p)
-    }
-
     pub(crate) fn matches(
         &self,
         hostname: &[u8],
         port: u16,
         ssl_config: Option<NonNull<SSLConfig>>,
-        host_header_hash: u64,
+        pool_id: u64,
     ) -> bool {
         self.port == port
+            && self.pool_id == pool_id
             && self.ssl_config == ssl_config
-            && self.host_header_hash == host_header_hash
-            && strings::eql_long(&self.hostname, hostname, true)
+            && strings::eql_long(&self.hostname, hostname)
     }
 
     /// Remove `this` from `ctx.pending_h2_connects` and hand the owning
@@ -73,8 +59,4 @@ impl PendingConnect {
             .position(|p| core::ptr::eq(&raw const **p, this))
             .map(|i| list.swap_remove(i))
     }
-
-    // Cleanup is handled by dropping `Box<PendingConnect>` — `Box<[u8]>`
-    // and `Vec<_>` fields free themselves, and the Box frees the allocation.
-    // No explicit `Drop` impl needed.
 }

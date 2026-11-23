@@ -15,11 +15,10 @@ void NapiRef::ref()
     }
     NAPI_LOG("ref %p %u -> %u", this, refCount, refCount + 1);
     ++refCount;
-    if (refCount == 1 && !weakValueRef.isClear()) {
+    if (refCount == 1) {
         auto& vm = globalObject.get()->vm();
         strongRef.set(vm, weakValueRef.get());
 
-        // .setString/.setObject/.setPrimitive will assert fail if called more than once (even after clear())
         // We should not clear the weakValueRef here because we need to keep it if we call NapiRef::unref()
         // so we can call the finalizer
     }
@@ -37,13 +36,30 @@ void NapiRef::unref()
     }
 }
 
-void NapiRef::clear()
+void NapiRef::callFinalizerFromGC()
 {
-    NAPI_LOG("ref clear %p", this);
-    finalizer.call(env.ptr(), nativeObject);
-    globalObject.clear();
-    weakValueRef.clear();
-    strongRef.clear();
+    if (!finalizer.callback()) {
+        return;
+    }
+    if (!env->mustDeferFinalizers() || !env->inGC()) {
+        callFinalizer();
+        return;
+    }
+    NAPI_LOG("queue finalizer of ref %p", this);
+    env->enqueueRefFinalizer(this);
 }
 
+}
+
+void NapiEnv::drainOneRefFinalizer(napi_env env, void*, void*)
+{
+    if (env->m_pendingRefFinalizers.isEmpty()) {
+        return;
+    }
+    Zig::NapiRef* ref = env->m_pendingRefFinalizers.takeFirst();
+    if (!env->m_pendingRefFinalizers.isEmpty()) {
+        Bun__napi_enqueue_finalizer(env, drainOneRefFinalizer, env, nullptr);
+    }
+    // May delete `ref` and enqueue or delete other refs.
+    ref->callFinalizer();
 }

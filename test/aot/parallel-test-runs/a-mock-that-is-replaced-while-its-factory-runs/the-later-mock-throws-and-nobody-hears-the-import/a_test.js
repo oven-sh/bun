@@ -1,0 +1,21 @@
+import { test, vi } from "bun:test";
+const log = [];
+const jobs = async n => { for (let job = 0; job < n; job++) await 0; };
+const said = load => Promise.resolve(load).then(it => String(it.level ?? it.seen), error => "threw " + error.message.slice(0, 30));
+globalThis.readerRuns = Promise.withResolvers();
+const hold = Promise.withResolvers();
+globalThis.hold = hold.promise;
+test("what a later import gets", async () => {
+  const called = Promise.withResolvers(), gate = Promise.withResolvers();
+  vi.doMock("./vat.js", () => { log.push("first called"); called.resolve(); return gate.promise; });
+  const reader = said(import("./reader.js"));
+  await called.promise;
+  vi.doMock("./vat.js", () => { log.push("second called"); throw new Error("boom"); });
+  gate.resolve({ level: "first stand-in" });
+  await globalThis.readerRuns.promise;
+  import("./vat.js");
+  await jobs(40);
+  hold.resolve();
+  log.push("reader " + (await reader), "ran " + (globalThis.ran ?? 0));
+  console.log("SAID " + log.join(" > "));
+});

@@ -16,12 +16,6 @@ use crate as sys;
 
 bun_core::define_scoped_log!(log, SYS, visible);
 
-#[derive(Copy, Clone, Eq, PartialEq)]
-pub enum ErrorCase {
-    CloseOnFail,
-    LeakFdOnFail,
-}
-
 #[derive(thiserror::Error, Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
 pub enum MakeLibUvOwnedError {
     #[error("SystemFdQuotaExceeded")]
@@ -58,11 +52,7 @@ pub trait FdExt: Copy + Sized {
     fn close_allowing_standard_io(self, return_address: Option<usize>) -> Option<sys::Error>;
     /// Assumes given a valid file descriptor. If error, the handle has not been closed.
     fn make_lib_uv_owned(self) -> Result<Fd, MakeLibUvOwnedError>;
-    fn make_lib_uv_owned_for_syscall(
-        self,
-        syscall_tag: sys::Tag,
-        error_case: ErrorCase,
-    ) -> sys::Result<Fd>;
+    fn make_lib_uv_owned_for_syscall(self, syscall_tag: sys::Tag) -> sys::Result<Fd>;
     fn make_path_u8(self, subpath: &[u8]) -> sys::Maybe<()>;
     fn delete_tree(self, subpath: &[u8]) -> sys::Maybe<()>;
 }
@@ -145,8 +135,16 @@ impl FdExt for Fd {
             }
             #[cfg(windows)]
             {
-                use sys::windows::{NTSTATUS, Win32Error, Win32ErrorExt as _, libuv as uv};
+                use sys::ReturnCodeExt as _;
+                use sys::windows::{NTSTATUS, libuv as uv};
                 match self.decode_windows() {
+                    // It decodes to ntdll's handle; `close(AT_FDCWD)` is EBADF too.
+                    _ if self == Fd::cwd() => Some(sys::Error {
+                        errno: sys::E::EBADF as _,
+                        syscall: sys::Tag::CloseHandle,
+                        fd: self,
+                        ..Default::default()
+                    }),
                     DecodeWindows::Uv(file_number) => {
                         let mut req = uv::fs_t::uninitialized();
                         // SAFETY: synchronous libuv fs call (cb = None); req lives on the
@@ -154,20 +152,7 @@ impl FdExt for Fd {
                         let rc = unsafe {
                             uv::uv_fs_close(uv::Loop::get(), &mut req, file_number, None)
                         };
-                        // fs_t has no Drop impl, so cleanup
-                        // must be explicit (uv_fs_req_cleanup).
-                        req.deinit();
-                        if let Some(errno) = rc.errno() {
-                            Some(sys::Error {
-                                errno,
-                                syscall: sys::Tag::close,
-                                fd: self,
-                                from_libuv: true,
-                                ..Default::default()
-                            })
-                        } else {
-                            None
-                        }
+                        rc.to_error(sys::Tag::close).map(|e| e.with_fd(self))
                     }
                     DecodeWindows::Windows(handle) => {
                         unsafe extern "system" {
@@ -179,14 +164,7 @@ impl FdExt for Fd {
                         }
                         match NtClose(handle) {
                             NTSTATUS::SUCCESS => None,
-                            rc => Some(sys::Error {
-                                errno: Win32Error::from_nt_status(rc)
-                                    .to_system_errno()
-                                    .map_or(1, |e| e as _),
-                                syscall: sys::Tag::CloseHandle,
-                                fd: self,
-                                ..Default::default()
-                            }),
+                            rc => Some(sys::Error::new(rc, sys::Tag::CloseHandle).with_fd(self)),
                         }
                     }
                 }
@@ -241,30 +219,21 @@ impl FdExt for Fd {
         }
     }
 
-    fn make_lib_uv_owned_for_syscall(
-        self,
-        syscall_tag: sys::Tag,
-        error_case: ErrorCase,
-    ) -> sys::Result<Fd> {
+    fn make_lib_uv_owned_for_syscall(self, syscall_tag: sys::Tag) -> sys::Result<Fd> {
         #[cfg(not(windows))]
         {
-            let _ = (syscall_tag, error_case);
+            let _ = syscall_tag;
             Ok(self)
         }
         #[cfg(windows)]
         {
             match self.make_lib_uv_owned() {
                 Ok(fd) => Ok(fd),
-                Err(MakeLibUvOwnedError::SystemFdQuotaExceeded) => {
-                    if matches!(error_case, ErrorCase::CloseOnFail) {
-                        self.close();
-                    }
-                    Err(sys::Error {
-                        errno: sys::E::EMFILE as _,
-                        syscall: syscall_tag,
-                        ..Default::default()
-                    })
-                }
+                Err(MakeLibUvOwnedError::SystemFdQuotaExceeded) => Err(sys::Error {
+                    errno: sys::E::EMFILE as _,
+                    syscall: syscall_tag,
+                    ..Default::default()
+                }),
             }
         }
     }
@@ -321,8 +290,3 @@ fn uv_open_osfhandle(in_: *mut c_void) -> Result<c_int, MakeLibUvOwnedError> {
     }
     Ok(out)
 }
-
-// fd → path bodies moved down to `bun_core::fd_path_raw[_w]` (libc/kernel32-
-// only; PORTING.md "move storage down"). `bun_sys` keeps the richer
-// `get_fd_path[_w]` returning `Maybe<&mut [u8/u16]>` for callers that want
-// `bun_sys::Error` with a syscall tag.

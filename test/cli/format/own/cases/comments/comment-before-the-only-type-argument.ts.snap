@@ -1,0 +1,37 @@
+------------------
+{ printWidth: 80 }
+------------------
+const matcher: Pattern<// a comment about the type
+{ hash: string | null }> = {
+  a: 1,
+};
+foo<// comment
+Type>(
+  // comment
+  value,
+);
+foo<
+  Type
+  // comment
+>(value);
+foo</* comment */ Type>(value);
+
+-------------------
+{ printWidth: 100 }
+-------------------
+const matcher: Pattern<// a comment about the type
+{ hash: string | null }> = {
+  a: 1,
+};
+foo<// comment
+Type>(
+  // comment
+  value,
+);
+foo<
+  Type
+  // comment
+>(value);
+foo</* comment */ Type>(value);
+
+===================== End =====================

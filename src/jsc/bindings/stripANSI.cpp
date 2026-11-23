@@ -2,12 +2,15 @@
 #include "stripANSI.h"
 #include "ANSIHelpers.h"
 
-#include <wtf/Vector.h>
+#include <JavaScriptCore/ExceptionHelpers.h>
 #include <wtf/text/WTFString.h>
+
+extern "C" size_t Bun__stringSyntheticAllocationLimit;
 
 namespace Bun {
 using namespace WTF;
 
+// std::nullopt: the caller reuses the input string. A null String: out of memory.
 template<typename Char>
 static std::optional<WTF::String> stripANSI(const std::span<const Char> input)
 {
@@ -22,7 +25,9 @@ static std::optional<WTF::String> stripANSI(const std::span<const Char> input)
     // Lazy flat-buffer allocation: don't touch the buffer until we find an
     // escape. For no-escape input we return std::nullopt and the caller
     // reuses the original JSString with zero copies.
-    Vector<Char> buffer;
+    // A String, not a Vector<Char>: a Vector holds INT32_MAX bytes, half of the longest 16-bit string.
+    WTF::String buffer;
+    std::span<Char> output;
     Char* cursor = nullptr;
     bool foundANSI = false;
 
@@ -43,10 +48,12 @@ static std::optional<WTF::String> stripANSI(const std::span<const Char> input)
         // on `cursor == nullptr` (not `!foundANSI`) so a broad-mask false
         // positive that allocates the buffer doesn't reset the cursor on the
         // next iteration when a real escape is finally found.
-        // POD types skip per-element initialization in Vector::grow.
         if (cursor == nullptr) {
-            buffer.grow(input.size());
-            cursor = buffer.begin();
+            if (input.size() <= Bun__stringSyntheticAllocationLimit)
+                buffer = String::tryCreateUninitialized(input.size(), output);
+            if (buffer.isNull()) [[unlikely]]
+                return WTF::String();
+            cursor = output.data();
         }
 
         // Copy everything before the escape sequence.
@@ -75,19 +82,14 @@ static std::optional<WTF::String> stripANSI(const std::span<const Char> input)
     if (!foundANSI)
         return std::nullopt;
 
-    const size_t reserved = buffer.size();
-    const size_t outputLen = static_cast<size_t>(cursor - buffer.begin());
-    const size_t waste = reserved - outputLen;
-    buffer.shrink(outputLen);
-
-    // Free the slack only if we wasted significantly: capacity > 2 * length OR
-    // waste > 1 KB. shrinkToFit() reallocates, so for small over-allocations
-    // the realloc cost outweighs the memory saved.
-    if (reserved > 2 * outputLen || waste * sizeof(Char) > 1024) {
-        buffer.shrinkToFit();
-    }
-
-    return String::adopt(std::move(buffer));
+    // The buffer has the length of the input. A copy of the part that was written keeps no slack.
+    const std::span<const Char> written { output.data(), cursor };
+    std::span<Char> copy;
+    WTF::String result = String::tryCreateUninitialized(written.size(), copy);
+    // `copy` is empty for a failed allocation (a null String) and for an empty output.
+    if (!copy.empty())
+        memcpySpan(copy, written);
+    return result;
 }
 
 struct BunANSIIterator {
@@ -159,6 +161,10 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionBunStripANSI, (JSC::JSGlobalObject * globalOb
     if (!result) {
         // If no ANSI sequences were found, return the original string
         return JSC::JSValue::encode(jsString);
+    }
+    if (result->isNull()) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return {};
     }
     return JSC::JSValue::encode(JSC::jsString(vm, *result));
 }

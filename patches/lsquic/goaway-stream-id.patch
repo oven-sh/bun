@@ -1,0 +1,51 @@
+--- a/include/lsquic.h
++++ b/include/lsquic.h
+@@ -2212,6 +2212,14 @@ uint64_t
+ lsquic_conn_pings_received (const lsquic_conn_t *);
+ 
+ /**
++ * The stream ID in the server's last GOAWAY frame: it did not process the
++ * requests at or above this ID (RFC 9114, Section 5.2).  UINT64_MAX until a
++ * client connection receives a GOAWAY frame.
++ */
++lsquic_stream_id_t
++lsquic_conn_goaway_stream_id (const lsquic_conn_t *);
++
++/**
+  * Set this connection's keep-alive PING cadence in microseconds,
+  * overriding the engine-wide settings.  0 disables keep-alive PINGs.
+  */
+--- a/src/liblsquic/lsquic_full_conn_ietf.c
++++ b/src/liblsquic/lsquic_full_conn_ietf.c
+@@ -9627,6 +9627,8 @@ on_goaway_client (void *ctx, uint64_t st
+                 conn->ifc_u.cli.ifcli_min_goaway_stream_id);
+             return;
+         }
++        /* bun: a server that shuts down in two steps lowers the ID. */
++        conn->ifc_u.cli.ifcli_min_goaway_stream_id = stream_id;
+     }
+     else
+     {
+@@ -9649,6 +9651,22 @@ on_goaway_client (void *ctx, uint64_t st
+ }
+ 
+ 
++/* bun: on_goaway_received() does not pass the ID.  Draft 27 gave it another
++ * meaning and on_goaway_client_27() does not store it. */
++lsquic_stream_id_t
++lsquic_conn_goaway_stream_id (const struct lsquic_conn *lconn)
++{
++    const struct ietf_full_conn *conn;
++
++    if ((lconn->cn_flags & (LSCONN_MINI|LSCONN_IETF|LSCONN_PEER_GOING_AWAY))
++                                    != (LSCONN_IETF|LSCONN_PEER_GOING_AWAY)
++        || lconn->cn_version == LSQVER_ID27)
++        return UINT64_MAX;
++    conn = (const struct ietf_full_conn *) lconn;
++    return conn->ifc_u.cli.ifcli_min_goaway_stream_id;
++}
++
++
+ static void
+ on_goaway_server (void *ctx, uint64_t max_push_id)
+ {

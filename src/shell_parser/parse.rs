@@ -3,27 +3,15 @@
 //! `bun_shell_parser` crate (no `bun_jsc` dependency). `Interpreter::parse`
 //! in `bun_runtime` consumes these via `bun_shell_parser::*`.
 
-#![allow(non_camel_case_types, non_snake_case, clippy::too_many_arguments)]
-
 use core::fmt;
 use std::io::Write as _;
 
 use bun_alloc::Arena as Bump;
 use bun_alloc::ArenaVecExt as _;
-use bun_core::{String as BunString, strings};
+use bun_core::{StackCheck, String as BunString, strings};
 
 // `strings::Cursor` aliased as `CodepointCursor` for readability.
 type CodepointCursor = strings::Cursor;
-
-/// Opaque stand-in for `bun_jsc::JSValue` — the parser only *stores* the
-/// jsobjs slice (never inspects it), so the lower-tier crate can stay
-/// JSC-free. `bun_jsc::JSValue` is `#[repr(transparent)] usize`, so callers
-/// in `bun_runtime` may safely reinterpret `&mut [JSValue]` ↔ `&mut [JSValueRaw]`
-/// via a typed pointer cast.
-#[repr(transparent)]
-#[derive(Clone, Copy)]
-pub struct JSValueRaw(pub usize);
-type JSValue = JSValueRaw;
 
 bun_core::define_scoped_log!(log, SHELL, hidden);
 
@@ -39,6 +27,8 @@ pub enum ParseError {
     Unknown,
     #[error("Lex")]
     Lex,
+    #[error("NestingTooDeep")]
+    NestingTooDeep,
 }
 
 impl From<ParseError> for crate::Error {
@@ -49,6 +39,7 @@ impl From<ParseError> for crate::Error {
             ParseError::Unexpected => crate::Error::Unexpected,
             ParseError::Unknown => crate::Error::Unknown,
             ParseError::Lex => crate::Error::Lex,
+            ParseError::NestingTooDeep => crate::Error::NestingTooDeep,
         }
     }
 }
@@ -57,10 +48,6 @@ impl From<ParseError> for crate::Error {
 
 pub mod ast {
     use super::*;
-
-    // AST nodes hold `&'arena [T]` slices so the whole tree is
-    // `Clone`/`Copy`-able — required by `Atom::merge` and
-    // `SmolList::init_with_slice`.
 
     #[derive(Copy, Clone)]
     pub struct Script<'arena> {
@@ -120,10 +107,22 @@ pub mod ast {
     /// https://www.gnu.org/software/bash/manual/bash.html#Bash-Conditional-Expressions
     pub struct CondExpr<'arena> {
         pub op: CondExprOp,
-        pub args: CondExprArgList<'arena>,
+        pub args: CondExprArgs<'arena>,
     }
 
-    pub(crate) type CondExprArgList<'arena> = SmolList<Atom<'arena>, 2>;
+    pub enum CondExprArgs<'arena> {
+        Unary(Atom<'arena>),
+        Binary([Atom<'arena>; 2]),
+    }
+
+    impl<'arena> CondExprArgs<'arena> {
+        pub fn slice(&self) -> &[Atom<'arena>] {
+            match self {
+                CondExprArgs::Unary(arg) => core::slice::from_ref(arg),
+                CondExprArgs::Binary(args) => args,
+            }
+        }
+    }
 
     impl<'arena> CondExpr<'arena> {
         pub(crate) fn to_expr(
@@ -327,8 +326,8 @@ pub mod ast {
 
     /// TODO: If we know cond/then/elif/else is just a single command we don't need to store the stmt
     pub struct If<'arena> {
-        pub cond: SmolList<Stmt<'arena>, 1>,
-        pub then: SmolList<Stmt<'arena>, 1>,
+        pub cond: SmolList<'arena, Stmt<'arena>>,
+        pub then: SmolList<'arena, Stmt<'arena>>,
         /// From the spec:
         ///
         /// else_part        : Elif compound_list Then else_part
@@ -339,7 +338,7 @@ pub mod ast {
         /// - 1                                   => just else
         /// - 2n (n is # of elif/then branches)   => n elif/then branches
         /// - 2n + 1                              => n elif/then branches and an else branch
-        pub else_parts: SmolList<SmolList<Stmt<'arena>, 1>, 1>,
+        pub else_parts: SmolList<'arena, SmolList<'arena, Stmt<'arena>>>,
     }
 
     impl<'arena> If<'arena> {
@@ -565,7 +564,6 @@ pub mod ast {
         JsBuf(JSBuf),
     }
 
-    #[derive(Clone)]
     pub enum Atom<'arena> {
         Simple(SimpleAtom<'arena>),
         Compound(CompoundAtom<'arena>),
@@ -698,7 +696,6 @@ pub mod ast {
         }
     }
 
-    #[derive(Copy, Clone)]
     pub struct CompoundAtom<'arena> {
         pub atoms: &'arena [SimpleAtom<'arena>],
         pub(crate) brace_expansion_hint: bool,
@@ -715,10 +712,11 @@ pub struct Parser<'bump> {
     /// refs). See `Lexer::js_string_ranges`.
     pub(crate) js_string_ranges: &'bump [TextRange],
     pub(crate) alloc: &'bump Bump,
-    pub(crate) jsobjs: &'bump mut [JSValue],
     pub(crate) current: u32,
     pub errors: bun_alloc::ArenaVec<'bump, ParserError<'bump>>,
     pub(crate) inside_subshell: Option<SubshellKind>,
+    /// `if`, subshell and command substitution all recurse through `parse_stmt`, which checks this.
+    stack_check: StackCheck,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -744,21 +742,17 @@ pub struct ParserError<'bump> {
 type ParseResult<T> = crate::Result<T>;
 
 impl<'bump> Parser<'bump> {
-    pub fn new(
-        bump: &'bump Bump,
-        lex_result: LexResult<'bump>,
-        jsobjs: &'bump mut [JSValue],
-    ) -> ParseResult<Parser<'bump>> {
-        Ok(Parser {
+    pub fn new(bump: &'bump Bump, lex_result: LexResult<'bump>) -> Parser<'bump> {
+        Parser {
             strpool: lex_result.strpool,
             tokens: lex_result.tokens,
             js_string_ranges: lex_result.js_string_ranges,
             alloc: bump,
-            jsobjs,
             current: 0,
             errors: bun_alloc::ArenaVec::new_in(bump),
             inside_subshell: None,
-        })
+            stack_check: StackCheck::init(),
+        }
     }
 
     /// __WARNING__:
@@ -772,12 +766,10 @@ impl<'bump> Parser<'bump> {
             tokens: self.tokens,
             js_string_ranges: self.js_string_ranges,
             alloc: self.alloc,
-            // reshaped for borrowck — move the
-            // exclusive borrow into the subparser and restore it in continue_from_subparser.
-            jsobjs: core::mem::take(&mut self.jsobjs),
             current: self.current,
             errors: core::mem::replace(&mut self.errors, bun_alloc::ArenaVec::new_in(self.alloc)),
             inside_subshell: Some(kind),
+            stack_check: self.stack_check,
         }
     }
 
@@ -791,7 +783,6 @@ impl<'bump> Parser<'bump> {
             &mut subparser.errors,
             bun_alloc::ArenaVec::new_in(self.alloc),
         );
-        self.jsobjs = core::mem::take(&mut subparser.jsobjs);
     }
 
     /// Main parse function
@@ -837,6 +828,11 @@ impl<'bump> Parser<'bump> {
     }
 
     pub(crate) fn parse_stmt(&mut self) -> ParseResult<ast::Stmt<'bump>> {
+        if !self.stack_check.is_safe_to_recurse() {
+            self.add_error(format_args!("Nesting depth exceeded"))?;
+            return Err(ParseError::NestingTooDeep.into());
+        }
+
         let mut exprs = bun_alloc::ArenaVec::new_in(self.alloc);
 
         while if self.inside_subshell.is_none() {
@@ -1072,7 +1068,7 @@ impl<'bump> Parser<'bump> {
 
                         return Ok(ast::CondExpr {
                             op,
-                            args: ast::CondExprArgList::init_with(arg),
+                            args: ast::CondExprArgs::Unary(arg),
                         });
                     }
                 }
@@ -1151,7 +1147,7 @@ impl<'bump> Parser<'bump> {
 
                 return Ok(ast::CondExpr {
                     op,
-                    args: ast::CondExprArgList::init_with_slice(&[arg1, arg2], self.alloc),
+                    args: ast::CondExprArgs::Binary([arg1, arg2]),
                 });
             }
         }
@@ -1166,8 +1162,8 @@ impl<'bump> Parser<'bump> {
     fn parse_if_body(
         &mut self,
         until: &[IfClauseTok],
-    ) -> ParseResult<SmolList<ast::Stmt<'bump>, 1>> {
-        let mut ret: SmolList<ast::Stmt<'bump>, 1> = SmolList::zeroes();
+    ) -> ParseResult<SmolList<'bump, ast::Stmt<'bump>>> {
+        let mut ret: SmolList<'bump, ast::Stmt<'bump>> = SmolList::EMPTY;
         while if self.inside_subshell.is_none() {
             !self.peek_any_comptime_ifclausetok(until) && !self.peek_any_comptime(&[TokenTag::Eof])
         } else {
@@ -1203,7 +1199,7 @@ impl<'bump> Parser<'bump> {
 
         let then = self.parse_if_body(&[IfClauseTok::Else, IfClauseTok::Elif, IfClauseTok::Fi])?;
 
-        let mut else_parts: SmolList<SmolList<ast::Stmt<'bump>, 1>, 1> = SmolList::zeroes();
+        let mut else_parts: SmolList<'bump, SmolList<'bump, ast::Stmt<'bump>>> = SmolList::EMPTY;
 
         let if_clause_tok = match IfClauseTok::from_tok(self, self.peek()) {
             Some(t) => t,
@@ -1290,7 +1286,7 @@ impl<'bump> Parser<'bump> {
                 Ok(ast::If {
                     cond,
                     then,
-                    else_parts: SmolList::zeroes(),
+                    else_parts: SmolList::EMPTY,
                 })
             }
         }
@@ -1648,8 +1644,6 @@ impl<'bump> Parser<'bump> {
                     | Token::Ampersand
                     | Token::DoubleAmpersand
                     | Token::Redirect(_)
-                    | Token::Dollar
-                    | Token::Eq
                     | Token::Semicolon
                     | Token::Newline
                     | Token::CmdSubstQuoted
@@ -1968,10 +1962,8 @@ pub enum TokenTag {
     Ampersand,
     DoubleAmpersand,
     Redirect,
-    Dollar,
     Asterisk,
     DoubleAsterisk,
-    Eq,
     Semicolon,
     Newline,
     BraceBegin,
@@ -2008,14 +2000,10 @@ pub enum Token {
 
     Redirect(ast::RedirectFlags),
 
-    /// $
-    Dollar,
     /// `*`
     Asterisk,
     DoubleAsterisk,
 
-    /// =
-    Eq,
     /// ;
     Semicolon,
     /// \n (unescaped newline)
@@ -2083,10 +2071,8 @@ impl Token {
             Token::Ampersand => b"`&`",
             Token::DoubleAmpersand => b"`&&`",
             Token::Redirect(_) => b"`>`",
-            Token::Dollar => b"`$`",
             Token::Asterisk => b"`*`",
             Token::DoubleAsterisk => b"`**`",
-            Token::Eq => b"`=`",
             Token::Semicolon => b"`;`",
             Token::Newline => b"`\\n`",
             Token::BraceBegin => b"`{`",
@@ -2221,7 +2207,7 @@ pub struct Lexer<'bump, const ENCODING: StringEncoding> {
 
     /// Contains a list of strings we need to escape
     /// Not owned by this struct
-    pub(crate) string_refs: &'bump mut [BunString],
+    pub(crate) string_refs: &'bump [BunString],
 
     /// Number of JS object references expected (for bounds validation)
     pub(crate) jsobjs_len: u32,
@@ -2231,7 +2217,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
     pub fn new(
         bump: &'bump Bump,
         src: &'bump [u8],
-        strings_to_escape: &'bump mut [BunString],
+        strings_to_escape: &'bump [BunString],
         jsobjs_len: u32,
     ) -> Self {
         Self {
@@ -2290,9 +2276,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
             word_start: self.word_start,
             j: self.j,
             delimit_quote: false,
-            // reshaped for borrowck — move the exclusive borrow into the sublexer
-            // and restore it in continue_from_sublexer (avoids aliased &mut).
-            string_refs: core::mem::take(&mut self.string_refs),
+            string_refs: self.string_refs,
             jsobjs_len: self.jsobjs_len,
         };
         sublexer.chars.state = CharState::Normal;
@@ -2314,7 +2298,6 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         self.word_start = sublexer.word_start;
         self.j = sublexer.j;
         self.delimit_quote = sublexer.delimit_quote;
-        self.string_refs = core::mem::take(&mut sublexer.string_refs);
     }
 
     fn make_snapshot(&self) -> BacktrackSnapshot<'bump, ENCODING> {
@@ -2996,9 +2979,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                 | TokenTag::Ampersand
                 | TokenTag::DoubleAmpersand
                 | TokenTag::Redirect
-                | TokenTag::Dollar
                 | TokenTag::DoubleAsterisk
-                | TokenTag::Eq
                 | TokenTag::Semicolon
                 | TokenTag::Newline
                 | TokenTag::CmdSubstBegin
@@ -3158,7 +3139,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         Ok(())
     }
 
-    fn append_string_to_str_pool(&mut self, bunstr: BunString) -> Result<(), LexerError> {
+    fn append_string_to_str_pool(&mut self, bunstr: &BunString) -> Result<(), LexerError> {
         let start = self.strpool.len();
         if bunstr.is_utf16() {
             let utf16 = bunstr.utf16();
@@ -3199,7 +3180,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         Ok(())
     }
 
-    fn handle_js_string_ref(&mut self, bunstr: BunString) -> Result<(), LexerError> {
+    fn handle_js_string_ref(&mut self, bunstr: &bun_core::String) -> Result<(), LexerError> {
         if bunstr.length() == 0 {
             // Empty JS string ref: emit a zero-length DoubleQuotedText token directly.
             // The parser converts this to a quoted_empty atom, preserving the empty arg.
@@ -3370,14 +3351,13 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         None
     }
 
-    /// __NOTE__: Do not store references to the returned BunString, it does not have its ref count incremented
-    fn eat_js_string_ref(&mut self) -> Option<BunString> {
+    fn eat_js_string_ref(&mut self) -> Option<&'bump BunString> {
         if let Some(idx) = self.eat_js_substitution_idx(
             LEX_JS_STRING_PREFIX,
             "JS string ref",
             Self::validate_js_string_ref_idx,
         ) {
-            return Some(self.string_refs[idx]);
+            return Some(&self.string_refs[idx]);
         }
         None
     }
@@ -3956,7 +3936,7 @@ pub(crate) const SPECIAL_CHARS_TABLE: ByteTable = {
 pub(crate) const BACKSLASHABLE_CHARS: [u8; 4] = *b"$`\"\\";
 
 pub fn escape_bun_str<const ADD_QUOTES: bool>(
-    bunstr: BunString,
+    bunstr: &BunString,
     outbuf: &mut Vec<u8>,
 ) -> Result<bool, bun_alloc::AllocError> {
     if bunstr.is_utf16() {
@@ -4061,7 +4041,7 @@ pub(crate) fn escape_utf16<const ADD_QUOTES: bool>(
     Ok(EscapeUtf16Result { is_invalid: false })
 }
 
-pub fn needs_escape_bunstr(bunstr: BunString) -> bool {
+pub fn needs_escape_bunstr(bunstr: &BunString) -> bool {
     if bunstr.is_utf16() {
         return needs_escape_utf16(bunstr.utf16());
     }
@@ -4098,225 +4078,47 @@ pub fn needs_escape_utf8_ascii_latin1(str: &[u8]) -> bool {
     false
 }
 
-pub fn is_if_clause_keyword_bunstr(bunstr: BunString) -> bool {
+pub fn is_if_clause_keyword_bunstr(bunstr: &BunString) -> bool {
     use IfClauseTok::{Elif, Else, Fi, If, Then};
     [If, Else, Elif, Then, Fi]
         .iter()
-        .any(|&kw| bunstr.eql_comptime(<&'static str>::from(kw)))
+        .any(|&kw| bunstr.eq_ascii(<&'static str>::from(kw).as_bytes()))
 }
 
 // ───────────────────────────── SmolList ─────────────────────────────
 
-/// `Allocator` routing `SmolList::Heap` through the parser arena. Must not outlive the arena.
-#[derive(Clone, Copy)]
-pub struct SmolListAlloc(core::ptr::NonNull<Bump>);
-
-// SAFETY: just a pointer to a `Send + Sync` `MimallocArena`.
-unsafe impl Send for SmolListAlloc {}
-// SAFETY: just a pointer to a `Send + Sync` `MimallocArena`.
-unsafe impl Sync for SmolListAlloc {}
-
-impl SmolListAlloc {
-    #[inline]
-    fn new(bump: &Bump) -> Self {
-        Self(core::ptr::NonNull::from(bump))
-    }
-    #[inline]
-    fn arena(&self) -> &Bump {
-        // SAFETY: the arena outlives `self`.
-        unsafe { self.0.as_ref() }
-    }
+/// A list that holds one item inline, and more than one in the arena.
+pub enum SmolList<'a, T> {
+    Inlined(Option<T>),
+    Heap(Vec<T, &'a Bump>),
 }
 
-// SAFETY: forwards every method to `&Bump`'s `Allocator` impl; clones hold the
-// same arena pointer, so blocks stay valid across clones until the arena drops.
-unsafe impl core::alloc::Allocator for SmolListAlloc {
-    #[inline]
-    fn allocate(
-        &self,
-        layout: core::alloc::Layout,
-    ) -> Result<core::ptr::NonNull<[u8]>, core::alloc::AllocError> {
-        core::alloc::Allocator::allocate(&self.arena(), layout)
-    }
-    #[inline]
-    unsafe fn deallocate(&self, ptr: core::ptr::NonNull<u8>, layout: core::alloc::Layout) {
-        // SAFETY: caller upholds `deallocate`'s contract; `ptr`/`layout` came from this arena.
-        unsafe { core::alloc::Allocator::deallocate(&self.arena(), ptr, layout) }
-    }
-    #[inline]
-    unsafe fn grow(
-        &self,
-        ptr: core::ptr::NonNull<u8>,
-        old: core::alloc::Layout,
-        new: core::alloc::Layout,
-    ) -> Result<core::ptr::NonNull<[u8]>, core::alloc::AllocError> {
-        // SAFETY: caller upholds `grow`'s contract; `ptr`/`old` came from this arena.
-        unsafe { core::alloc::Allocator::grow(&self.arena(), ptr, old, new) }
-    }
-    #[inline]
-    unsafe fn shrink(
-        &self,
-        ptr: core::ptr::NonNull<u8>,
-        old: core::alloc::Layout,
-        new: core::alloc::Layout,
-    ) -> Result<core::ptr::NonNull<[u8]>, core::alloc::AllocError> {
-        // SAFETY: caller upholds `shrink`'s contract; `ptr`/`old` came from this arena.
-        unsafe { core::alloc::Allocator::shrink(&self.arena(), ptr, old, new) }
-    }
-}
+impl<'a, T> SmolList<'a, T> {
+    const EMPTY: Self = SmolList::Inlined(None);
 
-pub(crate) type SmolListHeap<T> = Vec<T, SmolListAlloc>;
-
-/// A list that can store its items inlined, and promote itself to an
-/// arena-backed heap list.
-pub enum SmolList<T, const INLINED_MAX: usize> {
-    Inlined(SmolListInlined<T, INLINED_MAX>),
-    Heap(SmolListHeap<T>),
-}
-
-pub struct SmolListInlined<T, const INLINED_MAX: usize> {
-    pub(crate) items: [core::mem::MaybeUninit<T>; INLINED_MAX],
-    pub(crate) len: u32,
-}
-
-impl<T, const INLINED_MAX: usize> Default for SmolListInlined<T, INLINED_MAX> {
-    fn default() -> Self {
-        Self {
-            // `MaybeUninit::uninit()` is `const fn`; an inline-const array
-            // repeat avoids the `assume_init`-on-array-of-MU trick.
-            items: [const { core::mem::MaybeUninit::uninit() }; INLINED_MAX],
-            len: 0,
-        }
-    }
-}
-
-impl<T, const INLINED_MAX: usize> SmolListInlined<T, INLINED_MAX> {
-    fn slice(&self) -> &[T] {
-        // SAFETY: first `len` elements are initialized
-        unsafe { core::slice::from_raw_parts(self.items.as_ptr().cast::<T>(), self.len as usize) }
-    }
-
-    fn slice_mut(&mut self) -> &mut [T] {
-        // SAFETY: first `self.len` elements are initialized; pointer is valid for `len` reads/writes.
-        unsafe {
-            core::slice::from_raw_parts_mut(self.items.as_mut_ptr().cast::<T>(), self.len as usize)
-        }
-    }
-
-    fn promote(&mut self, n: usize, new: T, bump: &Bump) -> SmolListHeap<T> {
-        let mut list = Vec::with_capacity_in(n + 1, SmolListAlloc::new(bump));
-        for i in 0..INLINED_MAX {
-            // SAFETY: all INLINED_MAX slots are initialized when promote is called (len == INLINED_MAX)
-            let v = unsafe { self.items[i].assume_init_read() };
-            list.push(v);
-        }
-        self.len = 0;
-        list.push(new);
-        list
-    }
-}
-
-impl<T, const INLINED_MAX: usize> SmolList<T, INLINED_MAX> {
-    pub(crate) fn zeroes() -> Self {
-        SmolList::Inlined(SmolListInlined::default())
-    }
-
-    pub(crate) fn init_with(val: T) -> Self {
-        let mut inlined = SmolListInlined::<T, INLINED_MAX>::default();
-        inlined.items[0].write(val);
-        inlined.len = 1;
-        SmolList::Inlined(inlined)
-    }
-
-    pub(crate) fn init_with_slice(vals: &[T], bump: &Bump) -> Self
-    where
-        T: Clone,
-    {
-        debug_assert!(vals.len() <= u32::MAX as usize);
-        if vals.len() <= INLINED_MAX {
-            let mut inlined = SmolListInlined::<T, INLINED_MAX>::default();
-            for (i, v) in vals.iter().enumerate() {
-                inlined.items[i].write(v.clone());
-            }
-            inlined.len = u32::try_from(vals.len()).expect("int cast");
-            return SmolList::Inlined(inlined);
-        }
-        let mut heap = Vec::with_capacity_in(vals.len(), SmolListAlloc::new(bump));
-        heap.extend_from_slice(vals);
-        SmolList::Heap(heap)
-    }
-
-    // JSON serialization lives in `json_fmt.rs` (`write_stmt_smol` writes the
-    // slice as a JSON array).
-
-    #[inline]
-    pub fn len(&self) -> usize {
+    fn append(&mut self, new: T, bump: &'a Bump) {
         match self {
-            SmolList::Inlined(i) => i.len as usize,
-            SmolList::Heap(h) => h.len(),
-        }
-    }
-
-    #[inline]
-    pub(crate) fn slice(&self) -> &[T] {
-        match self {
-            SmolList::Inlined(i) => {
-                if i.len == 0 {
-                    return &[];
+            SmolList::Inlined(inlined) => match inlined.take() {
+                None => *inlined = Some(new),
+                Some(first) => {
+                    let mut heap = Vec::with_capacity_in(2, bump);
+                    heap.extend([first, new]);
+                    *self = SmolList::Heap(heap);
                 }
-                i.slice()
-            }
-            SmolList::Heap(h) => {
-                if h.is_empty() {
-                    return &[];
-                }
-                h.as_slice()
-            }
-        }
-    }
-
-    #[inline]
-    pub fn get_const(&self, idx: usize) -> &T {
-        &self.slice()[idx]
-    }
-
-    pub(crate) fn append(&mut self, new: T, bump: &Bump) {
-        match self {
-            SmolList::Inlined(inlined) => {
-                if inlined.len as usize == INLINED_MAX {
-                    let promoted = inlined.promote(INLINED_MAX, new, bump);
-                    *self = SmolList::Heap(promoted);
-                    return;
-                }
-                inlined.items[inlined.len as usize].write(new);
-                inlined.len += 1;
-            }
-            SmolList::Heap(heap) => {
-                heap.push(new);
-            }
+            },
+            SmolList::Heap(heap) => heap.push(new),
         }
     }
 }
 
-impl<T, const N: usize> core::ops::Index<usize> for SmolList<T, N> {
-    type Output = T;
-    #[inline]
-    fn index(&self, idx: usize) -> &T {
-        self.get_const(idx)
-    }
-}
+impl<T> core::ops::Deref for SmolList<'_, T> {
+    type Target = [T];
 
-impl<T, const N: usize> Drop for SmolList<T, N> {
-    fn drop(&mut self) {
-        // Heap: the Vec drops itself.
-        // Inlined: drop the initialized prefix so `T: Drop` elements are not
-        // leaked.
-        if let SmolList::Inlined(i) = self {
-            // SAFETY: `slice_mut` covers exactly the initialized prefix
-            // (first `len` elements); we are in `drop`, so nothing observes
-            // the elements afterwards.
-            unsafe { core::ptr::drop_in_place(i.slice_mut()) };
-            i.len = 0;
+    #[inline]
+    fn deref(&self) -> &[T] {
+        match self {
+            SmolList::Inlined(inlined) => inlined.as_slice(),
+            SmolList::Heap(heap) => heap,
         }
     }
 }

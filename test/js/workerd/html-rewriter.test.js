@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "async_hooks";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { once } from "events";
 import fs from "fs";
@@ -13,9 +14,10 @@ import {
   tls,
   tmpdirSync,
 } from "harness";
-import { createServer as createTcpServer } from "net";
+import { createConnection, createServer as createTcpServer } from "net";
 import path, { join } from "path";
 import { setImmediate as setImmediatePromise } from "timers/promises";
+import { asyncIterableBodyShapes, settled as settledBody } from "../web/streams/async-iterable-body-shapes";
 var setTimeoutAsync = (fn, delay) => {
   return new Promise((resolve, reject) => {
     setTimeout(() => {
@@ -99,6 +101,28 @@ describe("HTMLRewriter", () => {
       .transform(new Response("<div>hello</div>"));
     expect(res).toBeInstanceOf(Response);
     await expect(res.text()).rejects.toThrow("test");
+  });
+
+  // `.body` exists but nothing reads it when the handler throws, so the failure
+  // waits inside the output stream. A read that starts afterwards used to see a
+  // complete, empty document.
+  it("error inside element handler rejects a .body that is read only afterwards", async () => {
+    let input;
+    const threw = Promise.withResolvers();
+    const res = new HTMLRewriter()
+      .on("div", {
+        element(element) {
+          threw.resolve();
+          throw new Error("test");
+        },
+      })
+      .transform(new Response(new ReadableStream({ start: controller => void (input = controller) })));
+    const body = res.body;
+    input.enqueue(new TextEncoder().encode("<div>hello</div>"));
+    await threw.promise;
+    // One turn later the call that ran the handler has returned and failed the output.
+    await setImmediatePromise();
+    await expect(body.getReader().read()).rejects.toThrow("test");
   });
 
   // Inputs that go through the JS stream pump with data already queued are
@@ -471,10 +495,9 @@ describe("HTMLRewriter", () => {
     });
 
     // `rsisAbrupt` calls `controller.close(error)` synchronously before
-    // rejecting the pump promise, and the generated `__close` drops its error
-    // argument. The pipe must defer its terminal step to the reject reaction
-    // so the real error reaches the output body instead of resolving with
-    // truncated HTML.
+    // rejecting the pump promise. The pipe must defer its terminal step to the
+    // reject reaction so the real error reaches the output body instead of
+    // resolving with truncated HTML.
     it.each(["default", "pull"])(
       "a JS ReadableStream (%s) input that errors mid-stream rejects the body",
       async kind => {
@@ -501,9 +524,85 @@ describe("HTMLRewriter", () => {
       },
     );
 
+    // The input is already errored when transform() runs: the pump's first
+    // read throws, so `controller.close(error)` and the pump rejection both
+    // happen inside transform(), before any reject reaction is attached. The
+    // close must carry the error to the pipe, or the body resolves to "".
+    // `error()` with no reason errors the stream with `undefined`; that must
+    // not read as a clean close either.
+    it.each([
+      ["an Error", new Error("upstream boom")],
+      ["undefined", undefined],
+    ])("a JS ReadableStream input that is already errored (%s) rejects the body", async (_, reason) => {
+      const encoder = new TextEncoder();
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(encoder.encode("<p>partial"));
+          controller.error(reason);
+        },
+      });
+      const res = new HTMLRewriter().on("p", { element() {} }).transform(new Response(stream));
+      const settled = await res.text().then(
+        text => ({ resolved: text }),
+        err => ({ rejected: err }),
+      );
+      expect(settled).toEqual({ rejected: reason });
+    });
+
+    // A `type: 'direct'` pull() ends the input through the sink controller's
+    // own `close(error?)`. The argument is optional: a falsy one is the same
+    // clean close as `close()` and the body resolves with the rewritten HTML.
+    // Only a truthy error fails the rewrite.
+    it.each([
+      ["close()", c => c.close(), { resolved: "<p>hello</p>" }],
+      ["close(undefined)", c => c.close(undefined), { resolved: "<p>hello</p>" }],
+      ["close(null)", c => c.close(null), { resolved: "<p>hello</p>" }],
+      ["close(false)", c => c.close(false), { resolved: "<p>hello</p>" }],
+      ['close("")', c => c.close(""), { resolved: "<p>hello</p>" }],
+      ["close(error)", c => c.close(new Error("source boom")), { rejected: "source boom" }],
+    ])("a direct ReadableStream input whose pull() ends with %s", async (_, close, expected) => {
+      const stream = new ReadableStream({
+        type: "direct",
+        pull(controller) {
+          controller.write("<p>hello</p>");
+          close(controller);
+        },
+      });
+      const res = new HTMLRewriter().on("p", { element() {} }).transform(new Response(stream));
+      const settled = await res.text().then(
+        text => ({ resolved: text }),
+        err => ({ rejected: err instanceof Error ? err.message : err }),
+      );
+      expect(settled).toEqual(expected);
+    });
+
+    // The input is over when the controller closes. The rewrite used to wait
+    // for pull() to return as well, so a pull() that keeps running after its
+    // own end()/close(error) left the body pending.
+    it.each([
+      ["end()", c => c.end(), { resolved: "<p>hello</p>" }],
+      ["close(error)", c => c.close(new Error("source boom")), { rejected: "source boom" }],
+    ])("a direct ReadableStream input whose pull() never returns after %s", async (_, close, expected) => {
+      const stream = new ReadableStream({
+        type: "direct",
+        async pull(controller) {
+          controller.write("<p>hello</p>");
+          await new Promise(resolve => setImmediate(resolve));
+          close(controller);
+          await new Promise(() => {});
+        },
+      });
+      const res = new HTMLRewriter().on("p", { element() {} }).transform(new Response(stream));
+      const settled = await res.text().then(
+        text => ({ resolved: text }),
+        err => ({ rejected: err instanceof Error ? err.message : err }),
+      );
+      expect(settled).toEqual(expected);
+    });
+
     // A `type: 'direct'` source whose `pull()` throws synchronously leaves the
-    // JS controller's `m_sinkPtr` set after `readDirectStream` returns with an
-    // exception; `end_from_stream` must null it (via `JSSink::detach`) before
+    // JS controller attached to the pipe after `readDirectStream` returns with an
+    // exception; `end_from_stream` must detach it (via `SourceHandle::detach`) before
     // the pipe can be freed so the controller's destructor doesn't dispatch
     // into freed memory.
     it("a direct ReadableStream whose pull() throws synchronously rejects the body", async () => {
@@ -549,6 +648,143 @@ describe("HTMLRewriter", () => {
       expect(afterFlush).toBe(1);
     });
 
+    // The rewrite's consumer going away while a `type: 'direct'` input is
+    // still open is a cancel of that input: its `cancel(reason)` runs once,
+    // and a later write() reports 0 bytes instead of throwing. A detach alone
+    // (what the source's own close() does) no longer calls cancel(), so the
+    // failed or cancelled pipe has to close the controller itself.
+    describe("a still-open direct ReadableStream input is cancelled when", () => {
+      function directInput(events) {
+        const hold = Promise.withResolvers();
+        const settled = Promise.withResolvers();
+        const stream = new ReadableStream({
+          type: "direct",
+          async pull(controller) {
+            try {
+              controller.write("<p>one</p>");
+              controller.flush();
+              await hold.promise;
+              events.push("write after: " + controller.write("<p>two</p>"));
+            } catch (e) {
+              events.push("pull threw: " + e.message);
+            } finally {
+              settled.resolve();
+            }
+          },
+          cancel(reason) {
+            events.push("cancel: " + (reason instanceof Error ? `${reason.name}: ${reason.message}` : reason));
+          },
+        });
+        return { response: new Response(stream), hold, settled: settled.promise };
+      }
+
+      it("the output reader cancels", async () => {
+        const events = [];
+        const { response, hold, settled } = directInput(events);
+        const res = new HTMLRewriter().on("p", { element() {} }).transform(response);
+        const reader = res.body.getReader();
+        const first = await reader.read();
+        expect(new TextDecoder().decode(first.value)).toBe("<p>one</p>");
+        await reader.cancel(new Error("reader went away"));
+        hold.resolve();
+        await settled;
+        expect(events).toEqual(["cancel: AbortError: The operation was aborted.", "write after: 0"]);
+      });
+
+      it("a handler throws", async () => {
+        const events = [];
+        const { response, hold, settled } = directInput(events);
+        const res = new HTMLRewriter()
+          .on("p", {
+            element() {
+              throw new Error("handler threw");
+            },
+          })
+          .transform(response);
+        await expect(res.text()).rejects.toThrow("handler threw");
+        hold.resolve();
+        await settled;
+        expect(events).toEqual(["cancel: Error: handler threw", "write after: 0"]);
+      });
+
+      it("the HTTP client disconnects from a Bun.serve response", async () => {
+        const events = [];
+        const flushed = Promise.withResolvers();
+        let settled;
+        using server = Bun.serve({
+          port: 0,
+          idleTimeout: 0,
+          fetch() {
+            const input = directInput(events);
+            settled = input.settled;
+            flushed.resolve(input.hold);
+            return new HTMLRewriter().on("p", { element() {} }).transform(input.response);
+          },
+        });
+        const socket = createConnection(server.port, "127.0.0.1");
+        await once(socket, "connect");
+        socket.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+        await once(socket, "data");
+        const hold = await flushed.promise;
+        socket.destroy();
+        while (server.pendingRequests > 0) await setImmediatePromise();
+        hold.resolve();
+        await settled;
+        expect(events).toEqual(["cancel: AbortError: The operation was aborted.", "write after: 0"]);
+      });
+
+      // A default ReadableStream input was already cancelled here (the pump
+      // cancels its stream on any close), but with `undefined`; it gets the
+      // same reason now.
+      it("the output reader cancels (default ReadableStream input gets the reason too)", async () => {
+        const cancelled = [];
+        const stream = new ReadableStream({
+          start(controller) {
+            controller.enqueue("<p>one</p>");
+          },
+          cancel(reason) {
+            cancelled.push(reason instanceof Error ? `${reason.name}: ${reason.message}` : reason);
+          },
+        });
+        const res = new HTMLRewriter().on("p", { element() {} }).transform(new Response(stream));
+        const reader = res.body.getReader();
+        const first = await reader.read();
+        expect(new TextDecoder().decode(first.value)).toBe("<p>one</p>");
+        await reader.cancel();
+        expect(cancelled).toEqual(["AbortError: The operation was aborted."]);
+      });
+    });
+
+    // An async-iterable input gets the same cancel, with the same reason. It is closed
+    // the way `for await` leaves an iterator: return(). The reason is not thrown into it.
+    describe.each(asyncIterableBodyShapes)(
+      "a still-open async-iterable input (%s) is closed with return() when",
+      (_, make) => {
+        it("the output reader cancels", async () => {
+          const shape = make({ chunk: "<p>one</p>" });
+          const res = new HTMLRewriter().on("p", { element() {} }).transform(new Response(shape.body));
+          const reader = res.body.getReader();
+          const first = await reader.read();
+          expect(new TextDecoder().decode(first.value)).toBe("<p>one</p>");
+          await reader.cancel(new Error("reader went away"));
+          expect(await settledBody(shape)).toEqual(shape.expected);
+        });
+
+        it("a handler throws", async () => {
+          const shape = make({ chunk: "<p>one</p>" });
+          const res = new HTMLRewriter()
+            .on("p", {
+              element() {
+                throw new Error("handler threw");
+              },
+            })
+            .transform(new Response(shape.body));
+          await expect(res.text()).rejects.toThrow("handler threw");
+          expect(await settledBody(shape)).toEqual(shape.expected);
+        });
+      },
+    );
+
     // Two rewriters chained, both suspending: `init()`'s own comment names
     // "another transform()" as a supported consumer of a pending body.
     it("chained suspending transforms", async () => {
@@ -584,7 +820,56 @@ describe("HTMLRewriter", () => {
       await expect(second.text()).rejects.toThrow("inner boom");
     });
 
-    // The resume path's own `handler_callback` sees a Fulfilled promise only
+    it.concurrent("an element can be modified while the output before it is being delivered", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          /* js */ `
+            let release = null;
+            // The document arrives after both rewriters exist, so the first pipes its output straight into the second.
+            const wired = Promise.withResolvers();
+            const input = new ReadableStream({
+              async pull(controller) {
+                await wired.promise;
+                controller.enqueue(new TextEncoder().encode("<p>intro</p><b>one</b><p>tail</p>"));
+                controller.close();
+              },
+            });
+            const first = new HTMLRewriter().on("b", {
+              async element(el) {
+                await new Promise(resolve => {
+                  release = resolve;
+                  setImmediate(resolve);
+                });
+                el.setAttribute("seen", "1");
+              },
+            });
+            // The first rewriter's handler resumes before this one returns.
+            const second = new HTMLRewriter().on("p", {
+              async element() {
+                if (!release) return;
+                release();
+                release = null;
+                await 0;
+              },
+            });
+            const out = second.transform(first.transform(new Response(input)));
+            wired.resolve();
+            console.log(await out.text());
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe('<p>intro</p><b seen="1">one</b><p>tail</p>\n');
+      expect(exitCode).toBe(0);
+    });
+
+    // The resume path's own `run_handler` sees a Fulfilled promise only
     // when a microtask-only handler follows a real-await one.
     it("a microtask-only handler after a suspending one", async () => {
       const order = [];
@@ -1171,6 +1456,27 @@ describe("HTMLRewriter", () => {
       });
     });
 
+    it("a first read on .body after the upstream failed rejects", async () => {
+      await withPartialBodyServer(async (url, release) => {
+        const res = await fetch(url);
+        // `.body` is taken before the upstream fails and read only after it. The
+        // output stream holds the failure meanwhile; it used to read as a
+        // complete, empty document. The rewriter is given a wrapper so that
+        // `res` itself still shows when the failure has landed.
+        const body = rewriter().transform(new Response(res.body, res)).body;
+        release();
+        // Bun.inspect(res) lists the body stream while the body is pending and
+        // stops once the body holds the error. By then the error has gone
+        // through the rewriter into its output.
+        const deadline = Date.now() + 10_000;
+        while (Bun.inspect(res).includes("ReadableStream")) {
+          if (Date.now() > deadline) throw new Error("the upstream failure never reached the body");
+          await Bun.sleep(1);
+        }
+        expect(await settle(body.getReader().read())).toEqual(rejectedWithConnectionError);
+      });
+    });
+
     it(".clone() after a failed read throws", async () => {
       await withPartialBodyServer(async (url, release) => {
         const res = await fetch(url);
@@ -1539,6 +1845,19 @@ describe("HTMLRewriter", () => {
       return rw;
     }));
 
+  it("rejects a selector that is nested too deeply", async () => {
+    const nested = (open, depth) => open.repeat(depth) + "b" + ")".repeat(depth);
+    for (const open of [":not(", ":not(/*)*/", ":not(.a\\)", `:not([a=")"]`, `:not([a='\\')']`]) {
+      expect(() => new HTMLRewriter().on(nested(open, 10_000), {})).toThrow("Selector is nested too deeply.");
+    }
+    expect(() => new HTMLRewriter().on(nested(":not(", 32), {})).not.toThrow();
+    const selector = `b:not(p:nth-child(2)), ${Array(100).fill("p:nth-child(1)").join(", ")}, [a="${"(".repeat(100)}"]`;
+    const res = new HTMLRewriter()
+      .on(selector, { element: e => void e.remove() })
+      .transform(new Response("<b></b><i></i>"));
+    expect(await res.text()).toBe("<i></i>");
+  });
+
   it("selector tests", async () => {
     const checkSelector = async (selector, input, expected) => {
       const res = new HTMLRewriter()
@@ -1894,9 +2213,9 @@ const request_types = ["/", "/gzip", "/chunked/gzip", "/chunked", "/file", "/fil
 
 // An async handler suspends mid-input; once resumed it emits more output than
 // RewriterPipe's high-water mark (16 KiB) into the already-realised ByteStream
-// and parks on output backpressure with `input_ended` set. Wiring a native sink
+// and parks on output backpressure with the input ended. Wiring a native sink
 // afterwards must re-signal the rewriter once the buffered bytes are in the
-// sink so `end_rewrite` runs.
+// sink so the rewrite ends.
 describe("output ByteStream backpressured when a native sink is wired", () => {
   const prefix = "<p>" + Buffer.alloc(100, "A").toString() + "</p>";
   const suffix = "<q>" + Buffer.alloc(30_000, "B").toString() + "</q>";
@@ -1905,7 +2224,7 @@ describe("output ByteStream backpressured when a native sink is wired", () => {
 
   // Return a ReadableStream whose ByteStream buffer already holds the full
   // rewritten output while the rewriter itself is still parked on
-  // `output_backpressured()` with `input_ended = true`.
+  // its reader with the input ended.
   async function makeParked() {
     const gate = Promise.withResolvers();
     const res = new HTMLRewriter()
@@ -1918,7 +2237,7 @@ describe("output ByteStream backpressured when a native sink is wired", () => {
       .transform(new Response(html));
     const body = res.body;
     gate.resolve();
-    // Let the handler-promise reaction run so `resume_rewrite` emits `suffix`
+    // Let the handler-promise reaction run so the resume emits `suffix`
     // into the ByteStream buffer.
     await 0;
     return { body, res };
@@ -1993,10 +2312,10 @@ describe("output ByteStream backpressured when a native sink is wired", () => {
     expect(exitCode).toBe(0);
   });
 
-  // Streaming input, `input_ended=false`: the handler itself emits the >16 KiB
+  // Streaming input, still open: the handler itself emits the >16 KiB
   // output chunk, and the direct-stream's `pull()` is parked on `flush(true)`
   // with more bytes to write. `signal_drained()` must wake the rewriter into
-  // `drain_pending_input()`'s upstream-`src.ready()` + `pending.run()` tail
+  // `advance()`, which settles that promise,
   // so the direct stream's second `c.write()` is delivered.
   const streamed = prefix + "<x>" + suffix.slice(3, -4) + "</x>" + suffix;
   async function makeParkedStreaming() {
@@ -2419,6 +2738,445 @@ describe("streamed input pacing", () => {
   });
 });
 
+function directInput() {
+  const { promise, resolve } = Promise.withResolvers();
+  const stream = new ReadableStream({ type: "direct", pull: resolve });
+  return { input: new Response(stream), controller: promise };
+}
+
+// Keeps a handler's microtask checkpoint open until the rewriter has heard of a close().
+async function inputClosed() {
+  for (let i = 0; i < 3; i++) await null;
+}
+
+const wholeBody = {
+  ".text()": res => res.text(),
+  "a reader": async res => Buffer.concat(await Array.fromAsync(res.body)).toString(),
+};
+
+describe.each(Object.entries(wholeBody))("input that arrives while the parser runs, read by %s", (_, read) => {
+  it("a handler writes to the input", async () => {
+    const { input, controller } = directInput();
+    const res = new HTMLRewriter().on("p", { element: () => void c.write("[inner]") }).transform(input);
+    const c = await controller;
+    const text = read(res);
+    c.write("<p>1</p>");
+    c.write("[after]");
+    c.close();
+    expect(await text).toBe("<p>1</p>[inner][after]");
+  });
+
+  it("a handler closes the input", async () => {
+    const { input, controller } = directInput();
+    const res = new HTMLRewriter()
+      .on("p", {
+        async element() {
+          c.close();
+          await inputClosed();
+        },
+      })
+      .transform(input);
+    const c = await controller;
+    const text = read(res);
+    c.write("<p>1</p>");
+    expect(await text).toBe("<p>1</p>");
+  });
+
+  it("a handler of held input writes to the input and closes it", async () => {
+    const { input, controller } = directInput();
+    const gate = Promise.withResolvers();
+    const res = new HTMLRewriter()
+      .on("a", { element: () => gate.promise })
+      .on("p", {
+        async element() {
+          c.write("[inner]");
+          c.close();
+          await inputClosed();
+        },
+      })
+      .transform(input);
+    const c = await controller;
+    const text = read(res);
+    c.write("<a></a>");
+    c.write("<p>1</p>");
+    gate.resolve();
+    expect(await text).toBe("<a></a><p>1</p>[inner]");
+  });
+
+  // The microtask checkpoint of the second rewriter's handler resumes the first one.
+  it.each([
+    ["more output", (rewriter, promise) => rewriter.on("y", { element: () => promise })],
+    ["its end", (rewriter, promise) => rewriter.onDocument({ end: () => promise })],
+  ])("an upstream rewriter delivers %s", async (_, waitAgain) => {
+    const html = "<b></b><x></x><p>1</p><y></y><p>2</p>";
+    const early = Promise.withResolvers();
+    const shared = Promise.withResolvers();
+    const first = waitAgain(new HTMLRewriter().on("x", { element: () => early.promise }), shared.promise);
+    const second = new HTMLRewriter()
+      .on("b", { element: () => shared.promise })
+      .on("p", { element: async () => void (await null) });
+    const text = read(second.transform(first.transform(new Response(html))));
+    early.resolve();
+    await setImmediatePromise();
+    shared.resolve();
+    expect(await text).toBe(html);
+  });
+
+  it("each handler releases the upstream rewriter", async () => {
+    const count = 50;
+    const html = "<b></b>" + Buffer.alloc(count * 7, "<p></p>").toString();
+    const gates = Array.from({ length: count + 1 }, () => Promise.withResolvers());
+    const start = Promise.withResolvers();
+    let awaited = 0;
+    let opened = 0;
+    const first = new HTMLRewriter().on("p", { element: () => gates[awaited++].promise });
+    const second = new HTMLRewriter().on("b", { element: () => start.promise }).on("p", {
+      async element() {
+        gates[++opened].resolve();
+        await null;
+      },
+    });
+    const text = read(second.transform(first.transform(new Response(html))));
+    gates[0].resolve();
+    await setImmediatePromise();
+    start.resolve();
+    expect(await text).toBe(html);
+  });
+});
+
+it.concurrent.each([
+  { put: "enqueue", make: "new Uint8Array(new ArrayBuffer(n, { maxByteLength: n }))", free: "resize(0)" },
+  { put: "enqueue", make: "new Uint8Array(new ArrayBuffer(n))", free: "transfer(8)" },
+  { put: "enqueue", make: "new Uint8Array(n)", free: "transfer(8)" },
+  { put: "write", make: "new Uint8Array(n)", free: "transfer(8)" },
+])(
+  "a handler calls $free on the buffer of the chunk that is being parsed: $put($make)",
+  async ({ put, make, free }) => {
+    const script = `
+    const html = "<p>1</p>" + Buffer.alloc(300_000, "<i>abcdefgh</i>").toString(), n = html.length;
+    const chunk = ${make};
+    new TextEncoder().encodeInto(html, chunk);
+    const type = ${put === "write" ? '"direct"' : undefined};
+    const input = new ReadableStream({ type, async pull(c) { await null; c.${put}(chunk); c.close(); } });
+    const element = () => {
+      chunk.buffer.${free};
+      Bun.gc(true);
+      globalThis.other = Buffer.alloc(n, "other ");
+    };
+    console.log((await new HTMLRewriter().on("p", { element }).transform(new Response(input)).text()) === html);
+  `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stderr: "inherit" });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect({ stdout, exitCode }).toEqual({ stdout: "true\n", exitCode: 0 });
+  },
+);
+
+it("input that a handler writes or closes is not processed inside the outer write()", async () => {
+  const order = [];
+  let c;
+  const input = new ReadableStream({
+    type: "direct",
+    pull(controller) {
+      c = controller;
+      order.push(`write returned ${c.write("<p>1</p>")}`);
+    },
+  });
+  const res = new HTMLRewriter()
+    .on("p", { element: () => void (c.write("<b>"), c.close()) })
+    .on("b", { element: () => void order.push("b") })
+    .onDocument({ end: () => void order.push("end") })
+    .transform(new Response(input));
+  order.push("transform returned");
+  expect(await res.text()).toBe("<p>1</p><b>");
+  expect(order).toEqual(["write returned 8", "transform returned", "b", "end"]);
+});
+
+describe("input that a handler writes waits for a late reader", () => {
+  async function unread(b) {
+    const { input, controller } = directInput();
+    const res = new HTMLRewriter()
+      .on("p", { element: () => void c.write("<b>") })
+      .on("b", { element: b })
+      .transform(input);
+    const c = await controller;
+    c.write("<p>");
+    await setImmediatePromise();
+    return { res, c };
+  }
+
+  it("its handlers run in the reader's async context", async () => {
+    const storage = new AsyncLocalStorage();
+    const seen = [];
+    const { res, c } = await unread(() => void seen.push(storage.getStore()));
+    const text = storage.run("reader", () => res.text());
+    c.close();
+    expect(await text).toBe("<p><b>");
+    expect(seen).toEqual(["reader"]);
+  });
+
+  it("earlier output comes before its error", async () => {
+    const { res } = await unread(() => new Error("failed"));
+    const reader = res.body.getReader();
+    expect(Buffer.from((await reader.read()).value).toString()).toBe("<p>");
+    await expect(reader.read()).rejects.toThrow("failed");
+  });
+});
+
+it("input that a handler of held input writes before close() is rewritten without a reader", async () => {
+  const { input, controller } = directInput();
+  const gate = Promise.withResolvers();
+  const ended = Promise.withResolvers();
+  const res = new HTMLRewriter()
+    .on("a", { element: () => gate.promise })
+    .on("p", {
+      async element() {
+        c.write("[inner]");
+        c.close();
+        await inputClosed();
+      },
+    })
+    .onDocument({ end: () => ended.resolve() })
+    .transform(input);
+  const c = await controller;
+  c.write("<a></a>");
+  c.write("<p>1</p>");
+  gate.resolve();
+  await ended.promise;
+  expect(await res.text()).toBe("<a></a><p>1</p>[inner]");
+});
+
+// The upstream stream is delivering the chunk, and only the downstream rewriter refers to it. ASAN reports the freed stream.
+it.concurrent.each([
+  { it: "ends", action: "upstream.resolve()", prints: "complete" },
+  { it: "fails", action: "upstream.reject(new Error('failed'))", prints: "failed" },
+  { it: "is cancelled", action: "reader.cancel(), upstream.resolve()", prints: "cut short" },
+])("the input stream survives a GC when it $it during its own write", async ({ action, prints }) => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const html = "<b></b><x></x><p>1</p><q></q>";
+       const early = Promise.withResolvers(), start = Promise.withResolvers(), upstream = Promise.withResolvers();
+       const first = new HTMLRewriter().on("x", { element: () => early.promise }).onDocument({ end: () => upstream.promise });
+       const second = new HTMLRewriter()
+         .on("b", { element: () => start.promise })
+         .on("p", { async element() { ${action}; await null; await null; } })
+         .on("q", { element: () => void Bun.gc(true) });
+       const reader = second.transform(first.transform(new Response(html))).body.getReader();
+       early.resolve();
+       await new Promise(setImmediate);
+       start.resolve();
+       let text = "";
+       try {
+         for (let r; !(r = await reader.read()).done; ) text += Buffer.from(r.value);
+         console.log(text === html ? "complete" : "cut short");
+       } catch (e) {
+         console.log(e.message);
+       }`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: prints + "\n", stderr: "", exitCode: 0 });
+});
+
+it("a write follows input that was held for a reader that has let go", async () => {
+  const { input, controller } = directInput();
+  const seen = [];
+  const res = new HTMLRewriter().on("p", { element: e => void seen.push(e.getAttribute("id")) }).transform(input);
+  const c = await controller;
+  const filler = Buffer.alloc(40_000, "x").toString();
+  const reader = res.body.getReader();
+  c.write(filler);
+  c.write("<p id=a>");
+  reader.releaseLock();
+  c.write("<p id=b>");
+  c.close();
+  expect(await wholeBody["a reader"](res)).toBe(filler + "<p id=a><p id=b>");
+  expect(seen).toEqual(["a", "b"]);
+});
+
+describe("flush(true) of a direct input settles", () => {
+  it("when a handler's microtask checkpoint called it", async () => {
+    const { input, controller } = directInput();
+    const entered = Promise.withResolvers();
+    const res = new HTMLRewriter()
+      .on("p", {
+        async element() {
+          entered.resolve();
+          await null;
+        },
+      })
+      .transform(input);
+    const c = await controller;
+    const text = res.text();
+    const flushed = entered.promise.then(() => c.flush(true));
+    c.write("<p>1</p>");
+    expect(await flushed).toBe(0);
+    c.close();
+    expect(await text).toBe("<p>1</p>");
+  });
+
+  it("when the input closes before the suspended handler resumes", async () => {
+    const { input, controller } = directInput();
+    const gate = Promise.withResolvers();
+    const res = new HTMLRewriter().on("p", { element: () => gate.promise }).transform(input);
+    const c = await controller;
+    c.write("<p>1</p>");
+    const flushed = c.flush(true);
+    c.close();
+    await setImmediatePromise();
+    gate.resolve();
+    expect(await res.text()).toBe("<p>1</p>");
+    expect(await flushed).toBe(0);
+  });
+});
+
+// https://github.com/oven-sh/bun/issues/44756
+describe("a used output body stays used", () => {
+  const throws = message => () => {
+    throw new Error(message);
+  };
+
+  it("a consumer fails on the output of end()", async () => {
+    const { input, controller } = directInput();
+    const mid = new HTMLRewriter().onDocument({ end: e => void e.append("<p>", { html: true }) }).transform(input);
+    const out = new HTMLRewriter().on("p", { element: throws("consumer failed") }).transform(mid);
+    (await controller).close();
+    await expect(out.text()).rejects.toThrow("consumer failed");
+    expect(mid.bodyUsed).toBe(true);
+    await expect(mid.text()).rejects.toThrow("Body already used");
+  });
+
+  describe.each(["rejects", "is collected"])("a suspended handler's promise %s", how => {
+    function parked() {
+      const gate = Promise.withResolvers();
+      let element;
+      return {
+        handler: { element: e => ((element = e), how === "rejects" ? gate.promise : new Promise(() => {})) },
+        async settle() {
+          expect(element.tagName).toBe("b");
+          if (how === "rejects") gate.reject(new Error("late"));
+          for (let i = 0; i < 100 && element.tagName; i++) {
+            Bun.gc(true);
+            await setImmediatePromise();
+          }
+          expect(element.tagName).toBeUndefined();
+        },
+      };
+    }
+
+    it("after the consumer failed", async () => {
+      const { handler, settle } = parked();
+      const { input, controller } = directInput();
+      const mid = new HTMLRewriter().on("b", handler).transform(input);
+      const out = new HTMLRewriter().on("p", { element: throws("consumer failed") }).transform(mid);
+      (await controller).write("<p></p><b></b>");
+      await expect(out.text()).rejects.toThrow("consumer failed");
+      await settle();
+      expect(mid.bodyUsed).toBe(true);
+      await expect(mid.text()).rejects.toThrow("Body already used");
+    });
+
+    it("after the input failed", async () => {
+      const { handler, settle } = parked();
+      const { input, controller } = directInput();
+      const res = new HTMLRewriter().on("b", handler).transform(input);
+      const c = await controller;
+      c.write("<b></b>");
+      c.close(new Error("input failed"));
+      await expect(res.text()).rejects.toThrow("input failed");
+      await settle();
+      expect(res.bodyUsed).toBe(true);
+    });
+
+    it("after the input failed under .text() of an existing .body", async () => {
+      const { handler, settle } = parked();
+      const { input, controller } = directInput();
+      const res = new HTMLRewriter().on("b", handler).transform(input);
+      const c = await controller;
+      expect(res.body).toBeInstanceOf(ReadableStream);
+      const text = res.text();
+      c.write("<b></b>");
+      c.close(new Error("input failed"));
+      await expect(text).rejects.toThrow("input failed");
+      await settle();
+      expect(res.bodyUsed).toBe(true);
+    });
+  });
+});
+
+it.each([
+  { handler: "resolves", settle: gate => gate.resolve(), answer: "200 <p>1</p>" },
+  { handler: "rejects", settle: gate => gate.reject(new Error("failed")), answer: "500 failed" },
+])("Bun.serve answers a GET after a HEAD that came before the handler $handler", async ({ settle, answer }) => {
+  const gate = Promise.withResolvers();
+  const res = new HTMLRewriter().on("p", { element: () => gate.promise }).transform(new Response("<p>1</p>"));
+  await using server = Bun.serve({
+    port: 0,
+    fetch: () => res,
+    error: e => new Response(e.message, { status: 500 }),
+  });
+  await fetch(server.url, { method: "HEAD" });
+  settle(gate);
+  const get = await fetch(server.url);
+  expect(`${get.status} ${await get.text()}`).toBe(answer);
+});
+
+describe("a rewrite that is stopped during a handler", () => {
+  it("Bun.serve refuses a body that its end handler cancelled", async () => {
+    const { input, controller } = directInput();
+    const res = new HTMLRewriter().onDocument({ end: () => void res.body.cancel() }).transform(input);
+    const c = await controller;
+    c.write("<p></p>");
+    c.close();
+    await setImmediatePromise();
+    await using server = Bun.serve({
+      port: 0,
+      fetch: () => res,
+      error: e => new Response(e.code, { status: 500 }),
+    });
+    expect(await (await fetch(server.url)).text()).toBe("ERR_BODY_ALREADY_USED");
+  });
+
+  it("an input that fails during a handler leaves the body on its stream", async () => {
+    const { input, controller } = directInput();
+    const res = new HTMLRewriter()
+      .on("p", {
+        async element() {
+          c.close(new Error("input failed"));
+          await inputClosed();
+        },
+      })
+      .transform(input);
+    const c = await controller;
+    const reader = res.body.getReader();
+    const read = reader.read();
+    c.write("<p></p>");
+    await expect(read).rejects.toThrow("input failed");
+    reader.releaseLock();
+    expect(() => new HTMLRewriter().transform(res)).toThrow("Stream already used");
+  });
+
+  it("a later handler's error replaces the input's in a body that nobody read", async () => {
+    const { input, controller } = directInput();
+    const res = new HTMLRewriter()
+      .on("p", {
+        async element() {
+          c.close(new Error("input failed"));
+          await inputClosed();
+        },
+      })
+      .on("b", { element: () => new Error("late") })
+      .transform(input);
+    const c = await controller;
+    c.write("<p></p><b></b>");
+    await expect(res.text()).rejects.toThrow("late");
+  });
+});
+
 const payloads = [
   {
     name: "direct",
@@ -2677,6 +3435,25 @@ describe("doctype publicId/systemId distinguish empty from absent", () => {
   });
 });
 
+it("element.attributes[Symbol.iterator] is named [Symbol.iterator], and is writable, configurable and not enumerable", () => {
+  let descriptor;
+  new HTMLRewriter()
+    .on("p", {
+      element(el) {
+        descriptor = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el.attributes), Symbol.iterator);
+      },
+    })
+    .transform("<p a=b></p>");
+  const { value, ...attributes } = descriptor;
+  expect({ name: value.name, length: value.length, ...attributes }).toEqual({
+    name: "[Symbol.iterator]",
+    length: 0,
+    writable: true,
+    enumerable: false,
+    configurable: true,
+  });
+});
+
 describe("invalid arguments throw instead of returning an error value", () => {
   it("setAttribute with a forbidden character in the name rejects the body", async () => {
     const res = new HTMLRewriter()
@@ -2744,6 +3521,53 @@ describe("invalid arguments throw instead of returning an error value", () => {
     expect(err).toBeInstanceOf(TypeError);
     expect(err.message).toBe("Expected a function");
   });
+});
+
+it("a missing argument is treated as undefined", () => {
+  const outcome = fn => {
+    try {
+      return { returned: fn() };
+    } catch (e) {
+      return { name: e.name, code: e.code, message: e.message };
+    }
+  };
+  const missing = {};
+  const given = {};
+  const compare = (name, object, methods, ...first) => {
+    for (const method of methods) {
+      const label = `${name}.${method}(${first})`;
+      missing[label] = outcome(() => object[method](...first));
+      given[label] = outcome(() => object[method](...first, undefined));
+    }
+  };
+  let detached;
+  new HTMLRewriter()
+    .on("p", {
+      element(el) {
+        detached = el;
+        compare("element", el, ["before", "after", "replace", "prepend", "append", "setInnerContent"]);
+        compare("element", el, ["getAttribute", "hasAttribute", "removeAttribute", "setAttribute", "onEndTag"]);
+        compare("element", el, ["setAttribute"], "a");
+        el.onEndTag(tag => compare("endTag", tag, ["before", "after"]));
+      },
+      text: chunk => compare("text", chunk, ["before", "after", "replace"]),
+      comments: comment => compare("comment", comment, ["before", "after", "replace"]),
+    })
+    .onDocument({ end: end => compare("end", end, ["append"]) })
+    .transform("<p>t<!--c--></p>");
+  compare("detached", detached, ["onEndTag"]);
+
+  expect(missing).toEqual(given);
+  expect(new Set(Object.keys(missing).map(label => label.split(".")[0]))).toEqual(
+    new Set(["element", "endTag", "text", "comment", "end", "detached"]),
+  );
+  expect(missing["element.before()"]).toEqual({
+    name: "TypeError",
+    code: "ERR_INVALID_ARG_TYPE",
+    message: "Expected string",
+  });
+  expect(missing["element.onEndTag()"]).toEqual({ name: "TypeError", code: undefined, message: "Expected a function" });
+  expect(missing["detached.onEndTag()"]).toEqual({ returned: null });
 });
 
 describe("tagName, endTag.name, and comment.text setters", () => {

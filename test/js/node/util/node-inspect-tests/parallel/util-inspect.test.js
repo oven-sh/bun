@@ -20,7 +20,7 @@
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 import assert from "assert";
-import { isWindows } from "harness";
+import { isDebug, isWindows } from "harness";
 import util, { inspect } from "util";
 import vm from "vm";
 import { MessageChannel } from "worker_threads";
@@ -238,7 +238,6 @@ test("inspect from a different context", () => {
 
 test("no assertion failures 2", () => {
   [
-    Float16Array,
     Float32Array,
     Float64Array,
     Int16Array,
@@ -268,9 +267,17 @@ test("no assertion failures 2", () => {
     assert.strictEqual(util.inspect(array, false), `${constructor.name}(${length}) [ 65, 97 ]`);
   });
 
+  // Float16Array is absent from Node's bootstrap-time `builtInObjects`, so
+  // showHidden walks into its prototype and the output diverges from the
+  // other typed arrays. Lock that in so it is not silently re-added.
+  assert.match(
+    util.inspect(new Float16Array(2), { showHidden: true }),
+    /\[Symbol\(Symbol\.toStringTag\)\]: \[Getter\]/,
+  );
+  assert.strictEqual(util.inspect(new Float16Array([65, 97]), false), "Float16Array(2) [ 65, 97 ]");
+
   // Now check that declaring a TypedArray in a different context works the same.
   [
-    Float16Array,
     Float32Array,
     Float64Array,
     Int16Array,
@@ -629,6 +636,40 @@ test("no assertion failures 2", () => {
   }
 
   {
+    // Four or more frames that an error shares with its cause are printed once, under the cause.
+    const frames = ["one", "two", "three", "four", "five", "six"].map(name => `    at ${name} (file.js:1:1)`);
+    const print = shared => {
+      const cause = new Error("inner");
+      cause.stack = ["Error: inner", "    at inner (file.js:1:1)", ...frames.slice(0, shared)].join("\n");
+      const error = new Error("outer", { cause });
+      error.stack = ["Error: outer", "    at outer (file.js:1:1)", ...frames.slice(0, shared)].join("\n");
+      return util.inspect(error).split("\n");
+    };
+    const underCause = shared => [
+      "  [cause]: Error: inner",
+      "      at inner (file.js:1:1)",
+      ...frames.slice(0, shared).map(frame => "  " + frame),
+      "}",
+    ];
+    assert.deepStrictEqual(print(6), [
+      "Error: outer",
+      "    at outer (file.js:1:1)",
+      frames[0],
+      "    ... 4 lines matching cause stack trace ...",
+      frames[5] + " {",
+      ...underCause(6),
+    ]);
+    assert.deepStrictEqual(print(3), [
+      "Error: outer",
+      "    at outer (file.js:1:1)",
+      frames[0],
+      frames[1],
+      frames[2] + " {",
+      ...underCause(3),
+    ]);
+  }
+
+  {
     const tmp = Error.stackTraceLimit;
     Error.stackTraceLimit = 0;
     const err = new Error("foo");
@@ -773,39 +814,6 @@ test("no assertion failures 2", () => {
       "{ '\\\\': 1, '\\\\\\\\': 2, '\\\\\\\\\\\\': 3, " + "'\\\\\\\\\\\\\\\\': 4, '\\n': 5, '\\r': 6 }",
     );
     assert.strictEqual(util.inspect(y), "[ 'a', 'b', 'c', '\\\\\\\\': 'd', " + "'\\n': 'e', '\\r': 'f' ]");
-  }
-
-  // Escape unpaired surrogate pairs.
-  {
-    const edgeChar = String.fromCharCode(0xd799);
-
-    for (let charCode = 0xd800; charCode < 0xdfff; charCode++) {
-      const surrogate = String.fromCharCode(charCode);
-
-      assert.strictEqual(util.inspect(surrogate), `'\\u${charCode.toString(16)}'`);
-      assert.strictEqual(
-        util.inspect(`${"a".repeat(200)}${surrogate}`),
-        `'${"a".repeat(200)}\\u${charCode.toString(16)}'`,
-      );
-      assert.strictEqual(
-        util.inspect(`${surrogate}${"a".repeat(200)}`),
-        `'\\u${charCode.toString(16)}${"a".repeat(200)}'`,
-      );
-      if (charCode < 0xdc00) {
-        const highSurrogate = surrogate;
-        const lowSurrogate = String.fromCharCode(charCode + 1024);
-        assert(!util.inspect(`${edgeChar}${highSurrogate}${lowSurrogate}${edgeChar}`).includes("\\u"));
-        assert.strictEqual(
-          (util.inspect(`${highSurrogate}${highSurrogate}${lowSurrogate}`).match(/\\u/g) ?? []).length,
-          1,
-        );
-      } else {
-        assert.strictEqual(
-          util.inspect(`${edgeChar}${surrogate}${edgeChar}`),
-          `'${edgeChar}\\u${charCode.toString(16)}${edgeChar}'`,
-        );
-      }
-    }
   }
 
   // Test util.inspect.styles and util.inspect.colors.
@@ -1813,6 +1821,39 @@ test("no assertion failures 2", () => {
   }
 });
 
+test("escape unpaired surrogate pairs", () => {
+  const edgeChar = String.fromCharCode(0xd799);
+  const step = isDebug ? 17 : 1;
+
+  for (let charCode = 0xd800; charCode < 0xdfff; charCode += step) {
+    const surrogate = String.fromCharCode(charCode);
+
+    assert.strictEqual(util.inspect(surrogate), `'\\u${charCode.toString(16)}'`);
+    assert.strictEqual(
+      util.inspect(`${"a".repeat(200)}${surrogate}`),
+      `'${"a".repeat(200)}\\u${charCode.toString(16)}'`,
+    );
+    assert.strictEqual(
+      util.inspect(`${surrogate}${"a".repeat(200)}`),
+      `'\\u${charCode.toString(16)}${"a".repeat(200)}'`,
+    );
+    if (charCode < 0xdc00) {
+      const highSurrogate = surrogate;
+      const lowSurrogate = String.fromCharCode(charCode + 1024);
+      assert(!util.inspect(`${edgeChar}${highSurrogate}${lowSurrogate}${edgeChar}`).includes("\\u"));
+      assert.strictEqual(
+        (util.inspect(`${highSurrogate}${highSurrogate}${lowSurrogate}`).match(/\\u/g) ?? []).length,
+        1,
+      );
+    } else {
+      assert.strictEqual(
+        util.inspect(`${edgeChar}${surrogate}${edgeChar}`),
+        `'${edgeChar}\\u${charCode.toString(16)}${edgeChar}'`,
+      );
+    }
+  }
+});
+
 test("util.inspect stack overflow handling", () => {
   // Test that a long linked list can be inspected without throwing an error.
   const list = {};
@@ -1938,7 +1979,7 @@ test("no assertion failures 3", () => {
     ],
     [
       class // Random { // comments /* */ are part of the toString() result
-        äß /**/
+      äß /**/
         extends /*{*/ TypeError {},
       "[class äß extends TypeError]",
     ],

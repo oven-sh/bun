@@ -4,14 +4,8 @@
 // All wire-protocol bytes come from test/js/sql/wire-frames.ts; do not inline
 // Buffer.alloc frame construction here.
 //
-// MySQLRequestQueue.clean() iterated the live queue while running reject
-// callbacks. rejectWithJSValue() runs JS via event_loop.runCallback(), whose
-// exit() drains microtasks when the outer entered_event_loop_count is 0.
-// User code reachable from that drain can call MySQLConnection.close(),
-// which re-enters clean(). The inner call deref()'d + discard()'d the same
-// requests out from under the outer loop; when the outer loop resumed it
-// called LinearFifo.discard(1) on an empty fifo (debug assert -> panic) and
-// deref() on an already-deref'd request (release -> double free / UAF).
+// MySQLRequestQueue.clean() runs JS for each request it rejects. That JS can call
+// MySQLConnection.close() while clean() still has requests to reject.
 
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
@@ -21,9 +15,7 @@ import path from "node:path";
 // the shared frame builders instead of inlining Buffer construction.
 const wireFrames = path.join(import.meta.dir, "wire-frames.ts");
 
-// The failure mode is a debug assert in LinearFifo.discard() (and a UAF under
-// ASAN); in release builds the underflow is UB and may not crash, so only run
-// where it is observable.
+// The failure mode is a debug assert or a UAF under ASAN, so only run where it is observable.
 test.skipIf(!isDebug && !isASAN)(
   "MySQL: clean() is safe when reject callback re-enters via connection.close()",
   async () => {
@@ -31,7 +23,7 @@ test.skipIf(!isDebug && !isASAN)(
       "fixture.ts": /* js */ `
       import net from "node:net";
       import { SQL } from "bun";
-      import { mysqlHandshakeV10, mysqlOkPacket } from ${JSON.stringify(wireFrames)};
+      import { mysqlAckSessionSetup, mysqlHandshakeV10, mysqlOkPacket } from ${JSON.stringify(wireFrames)};
 
       let socketRef;
       const server = net.createServer(socket => {
@@ -44,9 +36,11 @@ test.skipIf(!isDebug && !isASAN)(
             const len = buffered[0] | (buffered[1] << 8) | (buffered[2] << 16);
             if (buffered.length < 4 + len) break;
             const seq = buffered[3];
+            const payload = buffered.subarray(4, 4 + len);
             buffered = buffered.subarray(4 + len);
             if (!authed) { authed = true; socket.write(mysqlOkPacket(seq + 1)); }
-            // Never respond to queries -> they stay in the native request queue.
+            else mysqlAckSessionSetup(socket, payload);
+            // Never respond to user queries -> they stay in the native request queue.
           }
         });
         socket.on("error", () => {});
@@ -65,8 +59,15 @@ test.skipIf(!isDebug && !isASAN)(
       let runCount = 0;
       let protoRun;
       const queries = [sql\`select 0\`, sql\`select 1\`, sql\`select 2\`, sql\`select 3\`, sql\`select 4\`];
+      // Starting a query makes its native MySQLQuery handle. run() comes when the pool has dialed.
+      const settled = queries.map(q =>
+        q.catch(err => {
+          // Runs in the microtask drain that follows each rejection inside clean().
+          try { nativeConnection?.close(); } catch {}
+          return err?.code ?? String(err);
+        })
+      );
       for (const q of queries) {
-        q.values(); // force lazy creation of the native MySQLQuery handle
         const handleSym = Object.getOwnPropertySymbols(q).find(s => s.description === "handle");
         const handle = q[handleSym];
         protoRun ??= Object.getPrototypeOf(handle).run;
@@ -81,35 +82,18 @@ test.skipIf(!isDebug && !isASAN)(
         });
       }
 
-      const settled = queries.map(q =>
-        q.catch(err => {
-          // Re-enter clean() synchronously: this runs in the microtask drain that
-          // follows each rejectWithJSValue() call inside the outer clean().
-          try { nativeConnection?.close(); } catch {}
-          return err?.code ?? String(err);
-        })
-      );
-
       // Wait until the pool has handed the native connection to every query
       // (requires real event-loop ticks, not just microtasks).
       while (runCount < queries.length) await new Promise(r => setImmediate(r));
 
-      // Replace the pool's JS onclose handler with a no-op so it does not
-      // pre-emptively reject the queries before native clean() runs. That leaves
-      // failWithJSValue's deferred clean() to do the rejecting at elc==0, where
-      // runCallback.exit() drains microtasks between requests and lets the
-      // .catch() handlers above re-enter clean().
-      nativeConnection.onclose = () => {};
-
-      // Drop the socket -> onClose -> failWithJSValue -> defer cleanQueueAndClose
+      // Drop the socket -> on_close -> fail_with_js_value
       // -> MySQLRequestQueue.clean() with all 5 requests still pending.
       socketRef.destroy();
 
       const codes = await Promise.all(settled);
 
       // Yield to the event loop so the native clean() stack frame that invoked
-      // our .catch() handlers resumes and finishes (this is where the old code
-      // would discard(1) on the now-empty fifo and panic).
+      // our .catch() handlers resumes and finishes.
       await new Promise(r => setImmediate(r));
 
       console.log("ok", JSON.stringify(codes));

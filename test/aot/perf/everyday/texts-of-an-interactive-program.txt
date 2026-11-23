@@ -1,0 +1,23 @@
+//// a-word-looked-for-in-a-paragraph
+const paragraph = "the quick brown fox jumps over the lazy dog and goes on for a while, as a line of a file or of an answer does; ".repeat(2) + "needle in it";
+const wanted = ["needle", "answers", "lazy dog", "nothing"];
+function turn(i: number): number {
+  return paragraph.indexOf(wanted[i & 3]!) & 7;
+}
+//// a-few-short-texts-joined
+const parts = [["usr", "local", "bin"], ["home", "me", "src", "app"], ["a", "b"], ["tmp"]];
+function turn(i: number): number {
+  return parts[i & 3]!.join("/").length;
+}
+//// the-flat-lines-of-a-screen-joined
+const rows: string[] = JSON.parse(JSON.stringify(Array.from({ length: 24 }, (_, i) => "row " + i + " ".repeat(i) + "|")));
+function turn(i: number): number {
+  rows[i % 24] = rows[(i + 1) % 24]!;
+  return rows.join("\n").length;
+}
+//// words-of-a-line-joined-without-anything-between
+const words: string[] = JSON.parse('["the"," ","quick"," ","brown"," ","fox"," ","jumps"," ","over"," ","it"]');
+function turn(i: number): number {
+  words[0] = words[(i & 3) * 2]!;
+  return words.join("").length;
+}

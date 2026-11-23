@@ -1,0 +1,18 @@
+# `super.__proto__` in a static method looks the name up from the class above and comes to the engine's accessor, which answers for `this`: with `Top.make()` the class above Top, not the class above that. Nobody follows it: the construction is not listed, and nothing is proven of what it makes.
+# f1 = Low, f2 = Mid, f4 = make
+# -- source: super-proto-in-a-static-method-is-the-link-of-the-receiver.js
+# class Low { constructor() { this.kind = "low"; } }
+# class Mid extends Low { constructor() { super(); this.kind = "mid"; } }
+# class Top extends Mid {
+#   static make() { const Above = super.__proto__; return new Above().kind; }
+# }
+# Top.make();
+# -- end of source
+# RUN(LINK): link functions mechanisms=all
+# LINK: function f2
+# LINK-NOT: unreached
+# LINK: function f4
+# LINK-NOT: result=
+# LINK: function f5
+# RUN(CALLS): link calls mechanisms=all
+# CALLS-NOT: call f4

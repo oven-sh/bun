@@ -1,0 +1,15 @@
+# A closure has no element but what the program has laid there, and nothing above it answers to a number. So the read runs no code, and neither the closures nor what else stands at the subject escape.
+# RUN: link layouts mechanisms=all
+# CHECK: layout L0 changes=[] stays-with-compiled-code
+# RUN(ALL): run-in-shell mechanisms=all
+# ALL: undefined undefined undefined
+# ALL-NEXT: 1 2
+# ALL-NEXT: exited with 0
+# -- source: main.mjs
+# function one() { return 1; }
+# function two() { return 2; }
+# class A { x = 1; }
+# function first(holder) { let found; for (let i = 0; i < 1; i++) found = holder[i]; return found; }
+# print(first(one) + " " + first(two) + " " + first(new A));
+# print(one() + " " + two());
+# -- end of source

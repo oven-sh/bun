@@ -19,24 +19,14 @@ namespace Bun {
 
 extern "C" SYSV_ABI JSC::EncodedJSValue Bun__JSRequest__createForBake(Zig::GlobalObject* globalObject, void* requestPtr)
 {
-    auto& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
     auto* structure = globalObject->m_JSBunRequestStructure.get(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-
     auto* paramsPrototype = globalObject->m_JSBunRequestParamsPrototype.get(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
 
     // the params are passed into the page component as a prop so we'll make
     // this empty for now
     auto* emptyParams = JSC::constructEmptyObject(globalObject, paramsPrototype);
-    RETURN_IF_EXCEPTION(scope, {});
 
-    JSBunRequest* request
-        = JSBunRequest::create(vm, structure, requestPtr, emptyParams);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    return JSValue::encode(request);
+    return JSValue::encode(JSBunRequest::create(globalObject->vm(), structure, requestPtr, emptyParams));
 }
 
 static JSC_DECLARE_CUSTOM_GETTER(jsJSBunRequestGetParams);
@@ -65,7 +55,7 @@ JSBunRequest* JSBunRequest::create(JSC::VM& vm, JSC::Structure* structure, void*
 
 JSC::Structure* JSBunRequest::createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
 {
-    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(static_cast<JSC::JSType>(0b11101110), StructureFlags), info());
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(static_cast<JSC::JSType>(WebCore::JSDOMWrapperType), StructureFlags), info());
 }
 
 JSC::GCClient::IsoSubspace* JSBunRequest::subspaceForImpl(JSC::VM& vm)
@@ -92,7 +82,7 @@ JSObject* JSBunRequest::cookies() const
 }
 
 extern "C" void* Request__clone(void* internalZigRequestPointer, JSGlobalObject* globalObject);
-extern "C" void Request__syncClonedBodyStreamCaches(void* self, JSGlobalObject* globalObject, EncodedJSValue thisValue, void* cloned, EncodedJSValue jsWrapper);
+extern "C" void Request__syncClonedBodyStreamCaches(void* self, JSGlobalObject* globalObject, EncodedJSValue thisValue, void* cloned, JSBunRequest* jsWrapper);
 
 JSBunRequest* JSBunRequest::clone(JSC::VM& vm, JSGlobalObject* globalObject)
 {
@@ -103,7 +93,7 @@ JSBunRequest* JSBunRequest::clone(JSC::VM& vm, JSGlobalObject* globalObject)
     EXCEPTION_ASSERT(!!raw == !throwScope.exception());
     RETURN_IF_EXCEPTION(throwScope, nullptr);
     auto* clone = this->create(vm, structure, raw, nullptr);
-    Request__syncClonedBodyStreamCaches(this->wrapped(), globalObject, JSValue::encode(this), clone->wrapped(), JSValue::encode(clone));
+    Request__syncClonedBodyStreamCaches(this->wrapped(), globalObject, JSValue::encode(this), clone->wrapped(), clone);
 
     // Cookies and params are deep copied as they can be changed between the clone and original
     if (auto* params = this->params()) {
@@ -119,7 +109,9 @@ JSBunRequest* JSBunRequest::clone(JSC::VM& vm, JSGlobalObject* globalObject)
         for (auto& property : propertyNames) {
             auto value = params->get(globalObject, property);
             RETURN_IF_EXCEPTION(throwScope, nullptr);
-            paramsClone->putDirect(vm, property, value);
+            // User code can add an array-index key like "0" to `params`.
+            paramsClone->putDirectMayBeIndex(globalObject, property, value);
+            RETURN_IF_EXCEPTION(throwScope, nullptr);
         }
 
         clone->setParams(paramsClone);
@@ -150,15 +142,6 @@ JSBunRequest::JSBunRequest(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr
     , m_params(params, JSC::WriteBarrierEarlyInit)
     , m_cookies(nullptr, JSC::WriteBarrierEarlyInit)
 {
-}
-extern SYSV_ABI "C" size_t Request__estimatedSize(void* requestPtr);
-extern "C" void Bun__JSRequest__calculateEstimatedByteSize(void* requestPtr);
-void JSBunRequest::finishCreation(JSC::VM& vm)
-{
-    Base::finishCreation(vm);
-
-    auto size = Request__estimatedSize(this->wrapped());
-    vm.heap.reportExtraMemoryAllocated(this, size);
 }
 
 template<typename Visitor>
@@ -215,6 +198,8 @@ private:
 
 const JSC::ClassInfo JSBunRequestPrototype::s_info = { "BunRequest"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSBunRequestPrototype) };
 const JSC::ClassInfo JSBunRequest::s_info = { "BunRequest"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSBunRequest) };
+// `destroy` is JSRequest's.
+STATIC_ASSERT_IS_TRIVIALLY_DESTRUCTIBLE(JSBunRequest);
 
 JSC_DEFINE_CUSTOM_GETTER(jsJSBunRequestGetParams, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {
@@ -234,6 +219,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsJSBunRequestGetParams, (JSC::JSGlobalObject * globalO
 
 JSC_DEFINE_CUSTOM_GETTER(jsJSBunRequestGetCookies, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(Cookie, jsJSBunRequestGetCookies);
     JSBunRequest* request = dynamicDowncast<JSBunRequest>(JSValue::decode(thisValue));
     if (!request)
         return JSValue::encode(jsUndefined());
@@ -279,8 +265,8 @@ JSC_DEFINE_HOST_FUNCTION(jsJSBunRequestClone, (JSC::JSGlobalObject * globalObjec
 
     auto* request = dynamicDowncast<JSBunRequest>(callFrame->thisValue());
     if (!request) {
-        throwScope.throwException(globalObject, Bun::createInvalidThisError(globalObject, request, "BunRequest"));
-        RETURN_IF_EXCEPTION(throwScope, {});
+        Bun::throwInvalidThisError(globalObject, throwScope, callFrame->thisValue(), "BunRequest"_s);
+        return {};
     }
 
     auto clone = request->clone(vm, globalObject);
@@ -290,7 +276,7 @@ JSC_DEFINE_HOST_FUNCTION(jsJSBunRequestClone, (JSC::JSGlobalObject * globalObjec
 
 Structure* createJSBunRequestStructure(JSC::VM& vm, Zig::GlobalObject* globalObject)
 {
-    auto prototypeStructure = JSBunRequestPrototype::createStructure(vm, globalObject, globalObject->JSRequestPrototype());
+    auto prototypeStructure = JSBunRequestPrototype::createStructure(vm, globalObject, Bun::Bindgen::prototypeForClass<JSBunRequest::Base>(globalObject));
     auto* prototype = JSBunRequestPrototype::create(vm, globalObject, prototypeStructure);
     return JSBunRequest::createStructure(vm, globalObject, prototype);
 }

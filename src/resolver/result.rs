@@ -1,12 +1,12 @@
 //! Resolver output and bookkeeping types: `Result`, `MatchResult`, `LoadResult`,
-//! `PathPair`, `PendingResolution`, `DebugLogs`, and friends. These are the
+//! `PathPair`, `DebugLogs`, and friends. These are the
 //! value types the [`crate::Resolver`] state machine produces and threads
 //! through `resolve_without_remapping` / `load_as_file_or_directory`.
 
+use core::ops::{Deref, DerefMut};
 use std::io::Write as _;
 
 use ::bun_ast::import_record as ast;
-use ::bun_install_types::resolver_hooks as Install;
 use bun_alloc as allocators;
 use bun_core::MutableString;
 use bun_sys::Fd as FD;
@@ -14,19 +14,18 @@ use bun_sys::Fd as FD;
 use crate::dir_info::DirInfoRef;
 use crate::options;
 use crate::package_json::PackageJSON;
-use crate::resolver::Dependency;
 
 // NOTE: `Path` in the body is the `'static`-interned variant (paths borrow
 // DirnameStore/FilenameStore). Alias here so the bare-`Path` use sites resolve
 // without a per-site lifetime annotation.
 type Path = crate::fs::Path<'static>;
 
-pub struct PathPair {
-    pub primary: Path,
-    pub secondary: Option<Path>,
+pub struct PathPair<'r> {
+    pub primary: crate::fs::Path<'r>,
+    pub secondary: Option<crate::fs::Path<'r>>,
 }
 
-impl Default for PathPair {
+impl Default for PathPair<'_> {
     fn default() -> Self {
         Self {
             primary: Path::empty(),
@@ -35,47 +34,11 @@ impl Default for PathPair {
     }
 }
 
-pub(crate) struct PathPairIter<'a> {
-    index: u8,
-    ctx: &'a mut PathPair,
-}
-
-impl<'a> PathPairIter<'a> {
-    pub(crate) fn next(&mut self) -> Option<&mut Path> {
-        if let Some(path_) = self.next_() {
-            let p: *mut Path = path_;
-            // SAFETY: `p` is the exclusive `&mut Path` just returned by `next_()`,
-            // coerced to a raw pointer so `self` can be re-borrowed for the
-            // recursive call; `p` is not dereferenced after that call, so no two
-            // live `&mut` into `self.ctx` overlap.
-            unsafe {
-                if (*p).is_disabled {
-                    return self.next();
-                }
-                return Some(&mut *p);
-            }
-        }
-        None
-    }
-
-    fn next_(&mut self) -> Option<&mut Path> {
-        let ind = self.index;
-        self.index = self.index.saturating_add(1);
-
-        match ind {
-            0 => Some(&mut self.ctx.primary),
-            1 => self.ctx.secondary.as_mut(),
-            _ => None,
-        }
-    }
-}
-
-impl PathPair {
-    pub(crate) fn iter(&mut self) -> PathPairIter<'_> {
-        PathPairIter {
-            ctx: self,
-            index: 0,
-        }
+impl<'r> PathPair<'r> {
+    pub(crate) fn iter_mut(&mut self) -> impl Iterator<Item = &mut crate::fs::Path<'r>> {
+        core::iter::once(&mut self.primary)
+            .chain(&mut self.secondary)
+            .filter(|path| !path.is_disabled)
     }
 }
 
@@ -85,12 +48,12 @@ impl PathPair {
 // `result.primary_side_effects_data = loader.side_effects()` type-checks.
 use bun_ast::SideEffects;
 
-pub struct Result {
-    pub path_pair: PathPair,
+pub struct Result<'r> {
+    pub path_pair: PathPair<'r>,
 
     pub jsx: options::jsx::Pragma,
 
-    pub package_json: Option<*const PackageJSON>,
+    pub package_json: Option<&'static PackageJSON>,
 
     // If present, any ES6 imports to this file can be considered to have no side
     // effects. This means they should be removed if unused.
@@ -108,7 +71,7 @@ pub struct Result {
     pub flags: ResultFlags,
 }
 
-impl Default for Result {
+impl Default for Result<'_> {
     fn default() -> Self {
         Self {
             path_pair: PathPair::default(),
@@ -217,40 +180,15 @@ impl ResultFlags {
     }
 }
 
-pub enum ResultUnion {
-    Success(Result),
+#[expect(clippy::large_enum_variant, reason = "`Success` is the common case")]
+pub enum ResultUnion<'r> {
+    Success(Result<'r>),
     Failure(crate::Error),
-    Pending(PendingResolution),
     NotFound,
 }
 
-impl Result {
-    /// Read-only view of `package_json`. The field stores `Option<*const _>`
-    /// (rather than `Option<&'static _>`) so [`Default`] / zeroed-init stays
-    /// bit-valid; callers that only read go through here. Single deref site
-    /// for the ARENA-backed pointer — same invariant as
-    /// [`dir_info::DirInfo::package_json`].
-    #[inline]
-    pub(crate) fn package_json_ref(&self) -> Option<&'static PackageJSON> {
-        Self::deref_package_json(self.package_json)
-    }
-
-    /// Field-value form of [`package_json_ref`] for sites where `self` is
-    /// already mutably borrowed (e.g. while iterating `path_pair`). Takes the
-    /// `Copy` field directly so the borrow checker only sees a field read.
-    #[inline]
-    pub(crate) fn deref_package_json(
-        ptr: Option<*const PackageJSON>,
-    ) -> Option<&'static PackageJSON> {
-        // SAFETY: ARENA — every `*const PackageJSON` stored in
-        // `Result::package_json` is interned in the resolver's process-lifetime
-        // PackageJSON cache (or a `'static` fallback-module literal); never
-        // freed while a `Result` is live (see LIFETIMES.tsv). No
-        // `&mut PackageJSON` is ever materialized concurrently with a read.
-        ptr.map(|p| unsafe { &*p })
-    }
-
-    pub fn path(&mut self) -> Option<&mut Path> {
+impl<'r> Result<'r> {
+    pub fn path(&mut self) -> Option<&mut crate::fs::Path<'r>> {
         if !self.path_pair.primary.is_disabled {
             return Some(&mut self.path_pair.primary);
         }
@@ -264,7 +202,7 @@ impl Result {
         None
     }
 
-    pub fn path_const(&self) -> Option<&Path> {
+    pub fn path_const(&self) -> Option<&crate::fs::Path<'r>> {
         if !self.path_pair.primary.is_disabled {
             return Some(&self.path_pair.primary);
         }
@@ -281,14 +219,10 @@ impl Result {
 
 pub struct DirEntryResolveQueueItem {
     pub(crate) result: allocators::Result,
-    // NOTE: `RawSlice<u8>` (not `&'static [u8]`) — these point into the
-    // threadlocal `dir_info_uncached_path` buffer and are consumed before
-    // `dir_info_cached_maybe_log` returns. `RawSlice` is `repr(transparent)`
-    // over `*const [u8]` so the bit-level zero-init invariant for `Bufs` is
-    // unchanged (the array slot is `MaybeUninit`-wrapped), and read sites use
-    // safe `.slice()` instead of an open-coded raw-ptr deref.
+    /// A slice of the threadlocal `dir_info_uncached_path` buffer, so not `'static`.
     pub(crate) unsafe_path: bun_ptr::RawSlice<u8>,
-    pub(crate) safe_path: bun_ptr::RawSlice<u8>,
+    /// Empty, or a `DirEntry::dir` from the dirname store.
+    pub(crate) safe_path: &'static [u8],
     pub(crate) fd: FD,
 }
 
@@ -334,12 +268,12 @@ impl DebugLogs {
     // deinit → Drop (only frees `notes`)
 
     #[cold]
-    pub(crate) fn increase_indent(&mut self) {
+    fn increase_indent(&mut self) {
         self.indent.append(b" ").expect("unreachable");
     }
 
     #[cold]
-    pub(crate) fn decrease_indent(&mut self) {
+    fn decrease_indent(&mut self) {
         let new_len = self.indent.list.len() - 1;
         self.indent.list.truncate(new_len);
     }
@@ -369,12 +303,50 @@ impl DebugLogs {
     }
 }
 
+pub(crate) trait HasDebugLogs {
+    fn debug_logs(&mut self) -> Option<&mut DebugLogs>;
+}
+
+/// `&mut T`, whose debug logs are indented until this drops.
+#[must_use]
+pub(crate) struct Indented<'a, T: HasDebugLogs>(&'a mut T);
+
+impl<'a, T: HasDebugLogs> Indented<'a, T> {
+    pub(crate) fn new(target: &'a mut T) -> Self {
+        if let Some(debug) = target.debug_logs() {
+            debug.increase_indent();
+        }
+        Self(target)
+    }
+}
+
+impl<T: HasDebugLogs> Deref for Indented<'_, T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        self.0
+    }
+}
+
+impl<T: HasDebugLogs> DerefMut for Indented<'_, T> {
+    fn deref_mut(&mut self) -> &mut T {
+        self.0
+    }
+}
+
+impl<T: HasDebugLogs> Drop for Indented<'_, T> {
+    fn drop(&mut self) {
+        if let Some(debug) = self.0.debug_logs() {
+            debug.decrease_indent();
+        }
+    }
+}
+
 pub struct MatchResult {
-    pub(crate) path_pair: PathPair,
+    pub(crate) path_pair: PathPair<'static>,
     pub(crate) dirname_fd: FD,
     pub(crate) file_fd: FD,
     pub(crate) is_node_module: bool,
-    pub(crate) package_json: Option<*const PackageJSON>,
+    pub(crate) package_json: Option<&'static PackageJSON>,
     pub(crate) dir_info: Option<DirInfoRef>,
     pub(crate) module_type: options::ModuleType,
     pub(crate) is_external: bool,
@@ -399,12 +371,11 @@ impl Default for MatchResult {
 /// payload (~300 bytes) is written through an `out: &mut MatchResult` parameter
 /// instead of being moved by value through every nested level. **`out` is only
 /// valid to read when the returned status is `Success`**; on `NotFound` /
-/// `Pending` / `Failure` it may hold partially-written state from an earlier
+/// `Failure` it may hold partially-written state from an earlier
 /// attempt and must be ignored.
 pub enum MatchStatus {
     NotFound,
     Success,
-    Pending(Box<PendingResolution>),
     Failure(crate::Error),
 }
 
@@ -413,35 +384,6 @@ impl MatchStatus {
     pub(crate) fn is_success(&self) -> bool {
         matches!(self, MatchStatus::Success)
     }
-}
-
-pub struct PendingResolution {
-    pub esm: crate::package_json::PackageExternal,
-    pub dependency: Dependency::Version,
-    pub root_dependency_id: Install::DependencyID,
-    pub import_record_id: u32,
-    pub string_buf: Vec<u8>,
-    pub tag: PendingResolutionTag,
-}
-
-impl Default for PendingResolution {
-    fn default() -> Self {
-        Self {
-            esm: Default::default(),
-            dependency: Default::default(),
-            root_dependency_id: Install::INVALID_PACKAGE_ID,
-            import_record_id: u32::MAX,
-            string_buf: Vec::new(),
-            tag: PendingResolutionTag::Download,
-        }
-    }
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum PendingResolutionTag {
-    Download,
-    Resolve,
-    Done,
 }
 
 pub struct LoadResult {

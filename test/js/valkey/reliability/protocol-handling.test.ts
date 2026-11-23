@@ -194,7 +194,7 @@ describe.skipIf(!isEnabled)("Valkey: Protocol Handling", () => {
 
       // Add many members (in chunks to avoid huge command)
       for (let i = 0; i < itemCount; i += 100) {
-        const members = [];
+        const members: string[] = [];
         for (let j = 0; j < 100 && i + j < itemCount; j++) {
           members.push(`member-${i + j}`);
         }
@@ -286,7 +286,7 @@ describe.skipIf(!isEnabled)("Valkey: Protocol Handling", () => {
           const result = await ctx.redis.get(key);
           expect(result).toBe(value);
         }
-      } catch (error) {
+      } catch (error: any) {
         console.warn("RESP delimiter test failed:", error.message);
         throw error;
       }
@@ -311,7 +311,7 @@ describe.skipIf(!isEnabled)("Valkey: Protocol Handling", () => {
           const result = await client.get(key);
           expect(result).toBe(value);
         }
-      } catch (error) {
+      } catch (error: any) {
         console.warn("RESP types in data test failed:", error.message);
         throw error;
       }
@@ -351,7 +351,7 @@ describe.skipIf(!isEnabled)("Valkey: Protocol Handling", () => {
         }
 
         // If we got here without protocol parse errors, test passes
-      } catch (error) {
+      } catch (error: any) {
         console.warn("Rapid command switching test failed:", error.message);
 
         throw error;
@@ -369,7 +369,7 @@ describe.skipIf(!isEnabled)("Valkey: Protocol Handling", () => {
         const prefix = testKey("parallel");
 
         const allPromises = clients.flatMap((client, clientIndex) => {
-          const promises = [];
+          const promises: Promise<unknown>[] = [];
 
           for (let i = 0; i < operationsPerClient; i++) {
             const key = `${prefix}-c${clientIndex}-${i}`;
@@ -388,7 +388,7 @@ describe.skipIf(!isEnabled)("Valkey: Protocol Handling", () => {
         await Promise.all(allPromises);
 
         // If we got here without errors, test passes
-      } catch (error) {
+      } catch (error: any) {
         console.warn("Parallel client test failed:", error.message);
 
         throw error;

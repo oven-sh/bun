@@ -1,9 +1,17 @@
-declare const self: typeof globalThis;
-type WebWorker = InstanceType<typeof globalThis.Worker>;
+declare const self: Omit<typeof globalThis, "onmessage"> & {
+  onmessage: ((this: typeof globalThis, ev: MessageEvent) => unknown) | null;
+  onmessageerror: ((this: typeof globalThis, ev: MessageEvent) => unknown) | null;
+};
+type WebWorker = InstanceType<typeof globalThis.Worker> & {
+  getHeapSnapshot(options: unknown): Promise<string>;
+  getHeapStatistics(): Promise<Record<string, number | boolean>>;
+  startCpuProfileInternal(): Promise<void>;
+  stopCpuProfileInternal(): Promise<string>;
+  cpuUsageInternal(): Promise<{ user: number; system: number }>;
+};
 
 const EventEmitter = require("node:events");
 const { SafeMap } = require("internal/primordials");
-const Readable = require("internal/streams/readable");
 const { throwNotImplemented, warnNotImplementedOnce } = require("internal/shared");
 const {
   validateString,
@@ -28,12 +36,13 @@ const { isAbsolute: pathIsAbsolute } = require("node:path");
 // node's filename validation for non-eval workers: absolute or "./"/"../"-relative
 // paths and file: URL objects; bare specifiers and string URLs are rejected.
 function validateWorkerFilename(filename) {
-  if (filename instanceof URL) {
-    if (filename.protocol === "data:") return `${filename}`;
-    // throws ERR_INVALID_URL_SCHEME (TypeError) for non-file: URLs
-    return Bun.fileURLToPath(filename);
-  }
   if (typeof filename !== "string") {
+    const { isURL, toPathIfFileURL } = require("internal/url");
+    if (isURL(filename)) {
+      if (filename.protocol === "data:") return `${filename}`;
+      // throws ERR_INVALID_URL_SCHEME (TypeError) for non-file: URLs
+      return toPathIfFileURL(filename);
+    }
     // Not a string or URL: defer to the native Worker constructor, which
     // throws the canonical ERR_INVALID_ARG_TYPE with the exact node message.
     return filename;
@@ -53,16 +62,6 @@ function validateWorkerFilename(filename) {
   throw $ERR_WORKER_PATH(message);
 }
 
-const {
-  MessageChannel,
-  BroadcastChannel,
-  Worker: WebWorker,
-} = globalThis as typeof globalThis & {
-  // The Worker constructor secretly takes an extra parameter to provide the node:worker_threads
-  // instance. This is so that it can emit the `worker` event on the process with the
-  // node:worker_threads instance instead of the Web Worker instance.
-  Worker: new (...args: [...ConstructorParameters<typeof globalThis.Worker>, nodeWorker: Worker]) => WebWorker;
-};
 const SHARE_ENV = Symbol.for("nodejs.worker_threads.SHARE_ENV");
 
 const isMainThread = Bun.isMainThread;
@@ -80,6 +79,13 @@ const {
   10: _isNodeWorker,
   11: _setParentPort,
   12: _setStdioPorts,
+  // The intrinsic web constructors, captured natively so user code replacing the
+  // globals (e.g. happy-dom's registrator) before this module loads cannot break
+  // worker_threads (#40268).
+  13: _MessagePort,
+  14: MessageChannel,
+  15: BroadcastChannel,
+  16: WebWorker,
 } = $cpp("Worker.cpp", "createNodeWorkerThreadsBinding") as [
   unknown,
   number,
@@ -94,6 +100,13 @@ const {
   boolean,
   (port: MessagePort) => void,
   (ports: object) => void,
+  typeof globalThis.MessagePort,
+  typeof globalThis.MessageChannel,
+  typeof globalThis.BroadcastChannel,
+  // The Worker constructor secretly takes an extra parameter to provide the node:worker_threads
+  // instance. This is so that it can emit the `worker` event on the process with the
+  // node:worker_threads instance instead of the Web Worker instance.
+  new (...args: [...ConstructorParameters<typeof globalThis.Worker>, nodeWorker: Worker]) => WebWorker,
 ];
 
 type NodeWorkerOptions = import("node:worker_threads").WorkerOptions;
@@ -282,7 +295,6 @@ function injectFakeEmitter(Class) {
   Object.setPrototypeOf(proto, inherited);
 }
 
-const _MessagePort = globalThis.MessagePort;
 injectFakeEmitter(_MessagePort);
 
 const MessagePort = _MessagePort;
@@ -344,7 +356,7 @@ function setupWorkerStdio(stdio) {
   // node routes console.log through process.stdout/stderr; Bun's global console
   // writes the fd directly, so rebind it to the port-backed streams.
   const { Console } = require("node:console");
-  globalThis.console = new Console(stdoutStream, stderrStream);
+  (globalThis as { console: unknown }).console = new Console(stdoutStream, stderrStream);
 }
 
 // Emulation of Node's JSTransferable protocol (kTransfer/kTransferList/kDeserialize) for
@@ -581,7 +593,7 @@ function packJSTransferables(options: NodeWorkerOptions): NodeWorkerOptions {
   return packed;
 }
 
-let workerData = unpackJSTransferables(_workerData);
+let workerData: any = unpackJSTransferables(_workerData);
 let threadId = _threadId;
 // node: main-thread and unspecified-worker name are both "" (trimmed).
 const threadName = isMainThread ? "" : (_threadName ?? "");
@@ -592,7 +604,7 @@ let parentPort: MessagePort | null = null;
 // postMessageToThread (Node 22+): the Worker ctor always smuggles a control
 // MessagePort to the worker by wrapping workerData; unwrap it here.
 const messaging = require("internal/worker/messaging");
-messaging.initThreadInfo(threadId, isMainThread);
+messaging.initThreadInfo(threadId, isMainThread, MessageChannel);
 // Captured stdio + the messaging control port ride inside workerData (wrapped;
 // ports transferred). Unwrap and bind the worker's stdio / messaging hub.
 // Gate on _isNodeWorker so a raw `new globalThis.Worker` that loads this module
@@ -608,7 +620,7 @@ if (
 ) {
   const stdioPorts = workerData[BUN_WORKER_STDIO_KEY];
   const controlPort = workerData[BUN_WORKER_MESSAGING_KEY];
-  const transferredParentPort = workerData[BUN_WORKER_PARENT_PORT_KEY];
+  const transferredParentPort: MessagePort | undefined = workerData[BUN_WORKER_PARENT_PORT_KEY];
   workerData = workerData.data;
   if (stdioPorts) setupWorkerStdio(stdioPorts);
   if (controlPort) messaging.setupMainThreadPort(controlPort, _setEntryEvaluatedHook);
@@ -815,6 +827,8 @@ class Worker extends EventEmitter {
   // this is used by terminate();
   // either is the exit code if exited, a promise resolving to the exit code, or undefined if we haven't sent .terminate() yet
   #onExitPromise: Promise<number> | number | undefined = undefined;
+  // Resolves that promise. #onClose calls it, so a terminate() from a listener that #onClose itself calls is answered too.
+  #resolveOnExit: ((exitCode: number) => void) | undefined = undefined;
   #urlToRevoke = "";
   // threadId captured for cleaning up the messaging control port on close.
   #messagingThreadId: number | undefined = undefined;
@@ -928,8 +942,8 @@ class Worker extends EventEmitter {
       // Create the readables eagerly so the worker's writev is ack'd even when
       // worker.stdout/stderr is never touched; only captured streams ref their
       // port on first read (node's kIncrementsPortRef).
-      this.#stdout = makePortReadable(this.#stdoutPort, !stdoutAutoPipe);
-      this.#stderr = makePortReadable(this.#stderrPort, !stderrAutoPipe);
+      this.#stdout = makePortReadable(this.#stdoutPort, !stdoutAutoPipe, _receiveMessageOnPort);
+      this.#stderr = makePortReadable(this.#stderrPort, !stderrAutoPipe, _receiveMessageOnPort);
       // 'data' instead of pipe(): pipe() adds an error listener on the shared
       // process.stdout per worker, tripping MaxListenersExceededWarning.
       if (stdoutAutoPipe) this.#stdout.on("data", chunk => process.stdout.write(chunk));
@@ -1040,17 +1054,18 @@ class Worker extends EventEmitter {
     });
   }
 
-  terminate(callback: unknown) {
+  terminate(callback?: (error: null, exitCode: number) => unknown) {
+    const onExitPromise = this.#onExitPromise;
     if (typeof callback === "function") {
       process.emitWarning(
         "Passing a callback to worker.terminate() is deprecated. It returns a Promise instead.",
         "DeprecationWarning",
         "DEP0132",
       );
-      this.#worker.addEventListener("close", event => callback(null, event.code), { once: true });
+      // node: a one-time 'exit' listener, and nothing once the worker has exited.
+      if (typeof onExitPromise !== "number") this.once("exit", (exitCode: number) => callback(null, exitCode));
     }
 
-    const onExitPromise = this.#onExitPromise;
     // Not a truthy test: after exit #onExitPromise is the exit code, which can be 0;
     // falling through would wait on a 'close' event that never fires again.
     if (onExitPromise !== undefined) {
@@ -1059,7 +1074,7 @@ class Worker extends EventEmitter {
       return $isPromise(onExitPromise) ? onExitPromise : Promise.$resolve(undefined);
     }
 
-    const { resolve, promise } = Promise.withResolvers();
+    const { resolve, promise } = Promise.withResolvers<number>();
     this.#worker.addEventListener(
       "close",
       event => {
@@ -1067,6 +1082,7 @@ class Worker extends EventEmitter {
       },
       { once: true },
     );
+    this.#resolveOnExit = resolve;
     // Keep the event loop alive until termination completes so the returned
     // promise still resolves even if the worker was unref()'ed.
     this.#worker.ref();
@@ -1082,7 +1098,7 @@ class Worker extends EventEmitter {
 
   getHeapSnapshot(options: unknown) {
     const stringPromise = this.#worker.getHeapSnapshot(options);
-    return stringPromise.then(s => new HeapSnapshotStream(s));
+    return stringPromise.then(makeHeapSnapshotStream);
   }
 
   getHeapStatistics() {
@@ -1168,35 +1184,45 @@ class Worker extends EventEmitter {
       messaging.destroyMainThreadPort(this.#messagingThreadId);
       this.#messagingThreadId = undefined;
     }
-    // End captured stdio readables when the worker exits, even if it was
-    // terminated before its own streams finished.
-    if (this.#stdout) {
-      this.#stdout.endFromOwner();
-    }
-    if (this.#stderr) {
-      this.#stderr.endFromOwner();
-    }
-    // Close the captured stdout/stderr control ports so worker.ref() can't pin the
-    // parent loop after exit (mirrors #stdinPort below).
-    this.#stdoutPort?.close();
-    this.#stderrPort?.close();
-    // Tear down the parent-side stdin Writable + port so post-exit writes fail
-    // (ERR_STREAM_DESTROYED) instead of silently no-oping into a closed peer.
-    if (this.#stdin) {
-      this.#stdin.destroy();
-    }
-    this.#stdinPort?.close();
-    // node delivers everything the worker posted before it exited ahead of
-    // 'exit' (kOnExit drains the public port), then closes the port.
-    {
-      let entry;
-      while ((entry = _receiveMessageOnPort(this.#publicPort)) !== undefined) {
-        this.emit("message", entry.message);
+    // The listeners of 'data' and 'message' are called from here. Whatever they do, the
+    // rest follows, 'exit' is emitted and the promise of terminate() resolves.
+    try {
+      // End captured stdio readables when the worker exits, even if it was
+      // terminated before its own streams finished.
+      if (this.#stdout) {
+        this.#stdout.endFromOwner!();
       }
-      this.#publicPort.close();
+      if (this.#stderr) {
+        this.#stderr.endFromOwner!();
+      }
+    } finally {
+      // Close the captured stdout/stderr control ports so worker.ref() can't pin the
+      // parent loop after exit (mirrors #stdinPort below).
+      this.#stdoutPort?.close();
+      this.#stderrPort?.close();
+      // Tear down the parent-side stdin Writable + port so post-exit writes fail
+      // (ERR_STREAM_DESTROYED) instead of silently no-oping into a closed peer.
+      if (this.#stdin) {
+        this.#stdin.destroy();
+      }
+      this.#stdinPort?.close();
+      // node delivers everything the worker posted before it exited ahead of
+      // 'exit' (kOnExit drains the public port), then closes the port.
+      try {
+        let entry;
+        while ((entry = _receiveMessageOnPort(this.#publicPort)) !== undefined) {
+          this.emit("message", entry.message);
+        }
+      } finally {
+        this.#publicPort.close();
+        this.#onExitPromise = e.code;
+        try {
+          this.emit("exit", e.code);
+        } finally {
+          this.#resolveOnExit?.(e.code);
+        }
+      }
     }
-    this.#onExitPromise = e.code;
-    this.emit("exit", e.code);
   }
 
   #onError(event: ErrorEvent) {
@@ -1206,10 +1232,6 @@ class Worker extends EventEmitter {
     const message = event.message;
     if (message !== "") {
       error = new Error(message, { cause: event });
-      const stack = event?.stack;
-      if (stack) {
-        error.stack = stack;
-      }
     }
     // Reshape the native 'ModuleNotFound ... (entry point)' error into node's
     // "Cannot find module '<path>'" (MODULE_NOT_FOUND).
@@ -1224,12 +1246,12 @@ class Worker extends EventEmitter {
     this.emit("error", error);
   }
 
-  #onMessage(event: MessageEvent) {
+  #onMessage(event: Pick<MessageEvent, "data">) {
     // TODO: is this right?
     this.emit("message", event.data);
   }
 
-  #onMessageError(event: MessageEvent) {
+  #onMessageError(event: Pick<MessageEvent, "data">) {
     // TODO: is this right?
     this.emit("messageerror", (event as any).error ?? event.data ?? event);
   }
@@ -1243,21 +1265,25 @@ class Worker extends EventEmitter {
   }
 }
 
-class HeapSnapshotStream extends Readable {
-  #json: string | undefined;
+let _HeapSnapshotStream;
+function makeHeapSnapshotStream(json: string) {
+  _HeapSnapshotStream ??= class HeapSnapshotStream extends require("internal/streams/readable") {
+    #json: string | undefined;
 
-  constructor(json: string) {
-    super();
-    this.#json = json;
-  }
-
-  _read() {
-    if (this.#json !== undefined) {
-      this.push(this.#json);
-      this.push(null);
-      this.#json = undefined;
+    constructor(json: string) {
+      super();
+      this.#json = json;
     }
-  }
+
+    _read() {
+      if (this.#json !== undefined) {
+        this.push(this.#json);
+        this.push(null);
+        this.#json = undefined;
+      }
+    }
+  };
+  return new _HeapSnapshotStream(json);
 }
 
 export default {

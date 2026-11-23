@@ -1,4 +1,3 @@
-#![allow(clippy::single_match)]
 #![warn(unused_must_use)]
 use bun_collections::VecExt;
 
@@ -44,7 +43,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(p.new_expr(E::Super {}, loc))
     }
 
-    fn pfx_t_open_paren(p: &mut Self, level: Level) -> PResult<Expr> {
+    fn pfx_t_open_paren(p: &mut Self, level: Level, flags: EFlags) -> PResult<Expr> {
         let loc = p.lexer.loc();
         p.lexer.next()?;
 
@@ -62,7 +61,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return Ok(value);
         }
 
-        p.parse_paren_expr(loc, level, ParenExprOpts::default())
+        p.parse_paren_expr(
+            loc,
+            level,
+            ParenExprOpts {
+                is_after_question_and_before_colon: flags == EFlags::AfterQuestionAndBeforeColon,
+                ..Default::default()
+            },
+        )
     }
 
     #[inline]
@@ -119,7 +125,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(p.new_expr(E::PrivateIdentifier { ref_ }, loc))
     }
 
-    fn pfx_t_identifier(p: &mut Self, level: Level) -> PResult<Expr> {
+    fn pfx_t_identifier(p: &mut Self, level: Level, flags: EFlags) -> PResult<Expr> {
         let loc = p.lexer.loc();
         let name = p.lexer.identifier;
 
@@ -143,7 +149,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if (raw.as_ptr() == name.as_ptr() && raw.len() == name.len())
                     || AsyncPrefixExpression::find(raw) == AsyncPrefixExpression::IsAsync
                 {
-                    return p.parse_async_prefix_expr(name_range, level);
+                    return p.parse_async_prefix_expr(name_range, level, flags);
                 }
             }
 
@@ -253,9 +259,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if p.lexer.token == T::TEqualsGreaterThan && level.lte(Level::Assign) {
             let ref_ = p.store_name_in_ref(name);
             // reshaped for borrowck — build binding before borrowing arena.
-            // `Arg` is non-Copy (owns Vec) → use fill_iter instead of alloc_slice_copy.
             let binding = p.b(B::Identifier { r#ref: ref_ }, loc);
-            let args = p.arena.alloc_slice_fill_iter([Arg {
+            let args = p.arena.alloc_slice_copy(&[Arg {
                 binding,
                 ..Default::default()
             }]);
@@ -636,19 +641,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             )?;
         }
 
-        // spec passes the arena-backed `[]ExprNodeIndex` slice directly into
-        // `ParseClassOptions{.ts_decorators = ts_decorators}`. `ParseClassOptions::ts_decorators`
-        // is currently typed `&'a [Expr]` (parser.rs), so until that field is widened to
-        // `ExprNodeList` we copy into the arena (Expr is `Copy`) and let `ts_decorators` drop
-        // normally — no `mem::forget` / `from_raw_parts` lifetime laundering (forbidden per
-        // PORTING.md §Forbidden patterns; would leak heap when origin is `Owned`).
-        let ts_decorators_slice: &'a [Expr] = p.arena.alloc_slice_copy(ts_decorators.slice());
-
         let class = p.parse_class(
             class_keyword,
             name,
             &ParseClassOptions {
-                ts_decorators: ts_decorators_slice,
+                ts_decorators,
                 allow_ts_decorators: true,
                 ..Default::default()
             },
@@ -687,7 +684,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if Self::IS_TYPESCRIPT_ENABLED {
             // Skip over TypeScript type arguments here if there are any
             if p.lexer.token == T::TLessThan {
-                let _ = p.try_skip_type_script_type_arguments_with_backtracking();
+                let _ = p.try_skip_type_script_type_arguments_with_backtracking()?;
             }
         }
 
@@ -956,7 +953,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             // "<T>(x)"
             // "<T>(x) => {}"
-            match p.try_skip_type_script_type_parameters_then_open_paren_with_backtracking() {
+            match p.try_skip_type_script_type_parameters_then_open_paren_with_backtracking()? {
                 SkipTypeParameterResult::DidNotSkipAnything => {}
                 result => {
                     p.lexer.expect(T::TOpenParen)?;
@@ -1003,9 +1000,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             T::TOpenBrace => Self::pfx_t_open_brace(p, errors),
             T::TLessThan => Self::pfx_t_less_than(p, level, errors, flags),
             T::TImport => Self::pfx_t_import(p, level),
-            T::TOpenParen => Self::pfx_t_open_paren(p, level),
+            T::TOpenParen => Self::pfx_t_open_paren(p, level, flags),
             T::TPrivateIdentifier => Self::pfx_t_private_identifier(p, level),
-            T::TIdentifier => Self::pfx_t_identifier(p, level),
+            T::TIdentifier => Self::pfx_t_identifier(p, level, flags),
             T::TFalse => Self::pfx_t_false(p),
             T::TTrue => Self::pfx_t_true(p),
             T::TNull => Self::pfx_t_null(p),

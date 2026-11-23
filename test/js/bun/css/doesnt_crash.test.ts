@@ -19,7 +19,7 @@ describe("doesnt_crash", async () => {
     absolute = absolute.replaceAll("\\", "/");
     const file = path.basename(absolute);
 
-    const configs: { target: string; minify: boolean }[] = [
+    const configs: { target: Bun.Target; minify: boolean }[] = [
       { target: "bun", minify: false },
       { target: "bun", minify: true },
       { target: "browser", minify: false },

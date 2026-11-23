@@ -1,0 +1,13 @@
+# the generator arrives from outside. A written type says which members it has, not what made it or what was stored on it since, so next is read and called as written
+# f1 = firstTwo
+# -- source: next-of-a-generator-from-outside-is-called-as-written.ts
+# declare function sink(...values: unknown[]): void;
+# function firstTwo(g: Generator<number, void, unknown>) { const a = g.next(); const b = g.next(); return [a.value, b.done]; }
+# sink(firstTwo);
+# -- end of source
+# LIBRARY: own
+# RUN: walk f1 mechanisms=none+DirectCalls+BuiltinCalls
+# CHECK-LABEL: code f1:Body
+# CHECK: = PropGet {{*}}key="next"
+# RUN(NEVER): walk f1 mechanisms=none+DirectCalls+BuiltinCalls
+# NEVER-NOT: = StepGenerator

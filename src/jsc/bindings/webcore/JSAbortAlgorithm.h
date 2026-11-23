@@ -37,7 +37,6 @@ public:
     ScriptExecutionContext* scriptExecutionContext() const { return ContextDestructionObserver::scriptExecutionContext(); }
 
     ~JSAbortAlgorithm() final;
-    JSCallbackData* callbackData() { return m_data; }
 
     // Functions
     CallbackResult<typename IDLUndefined::ImplementationType> handleEvent(JSValue) override;
@@ -48,10 +47,7 @@ private:
     void visitJSFunction(JSC::AbstractSlotVisitor&) override;
     void visitJSFunction(JSC::SlotVisitor&) override;
 
-    JSCallbackData* m_data;
+    std::unique_ptr<JSCallbackData> m_data;
 };
-
-JSC::JSValue toJS(AbortAlgorithm&);
-inline JSC::JSValue toJS(AbortAlgorithm* impl) { return impl ? toJS(*impl) : JSC::jsNull(); }
 
 } // namespace WebCore

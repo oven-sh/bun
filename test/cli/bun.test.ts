@@ -1,6 +1,7 @@
 import { spawnSync } from "bun";
+import { dlopen, FFIType } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, isMusl, isWindows, tempDir } from "harness";
 import fs from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -34,6 +35,120 @@ describe("bun", () => {
         expect(stdout.toString()).toMatch(/\u001b\[\d+m/);
       });
     }
+  });
+
+  // #39762: a piped stream must not get ANSI codes because the other stream
+  // is a TTY. `bun test | pbcopy` copied raw escape codes to the clipboard
+  // since stderr (a TTY) forced colors onto the piped stdout.
+  //
+  // openpty via bun:ffi so one stdio fd can be a real TTY while the other is
+  // a pipe. glibc keeps openpty in libutil; musl and macOS keep everything in
+  // libc. Same pattern as test/js/bun/terminal/terminal-spawn.test.ts.
+  describe.skipIf(isWindows)("per-stream color detection", () => {
+    const colorEnv = {
+      ...bunEnv,
+      NO_COLOR: undefined,
+      FORCE_COLOR: undefined,
+      TERM: "xterm-256color",
+    };
+
+    const openptyDecl = {
+      openpty: {
+        args: [FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr],
+        returns: FFIType.i32,
+      },
+    } as const;
+    const closeDecl = {
+      close: { args: [FFIType.i32], returns: FFIType.i32 },
+    } as const;
+
+    function openPty(): { slave: number; close(): void } {
+      const lib =
+        process.platform === "darwin"
+          ? dlopen("libc.dylib", { ...openptyDecl, ...closeDecl })
+          : isMusl
+            ? dlopen(process.arch === "arm64" ? "libc.musl-aarch64.so.1" : "libc.musl-x86_64.so.1", {
+                ...openptyDecl,
+                ...closeDecl,
+              })
+            : dlopen("libutil.so.1", openptyDecl);
+      const libc = process.platform === "darwin" || isMusl ? lib : dlopen("libc.so.6", closeDecl);
+
+      const masterBuf = new Int32Array(1);
+      const slaveBuf = new Int32Array(1);
+      expect((lib.symbols as any).openpty(masterBuf, slaveBuf, null, null, null)).toBe(0);
+      return {
+        slave: slaveBuf[0],
+        close() {
+          (libc.symbols as any).close(masterBuf[0]);
+          (libc.symbols as any).close(slaveBuf[0]);
+        },
+      };
+    }
+
+    test.concurrent("piped stdout stays plain when stderr is a tty", async () => {
+      const pty = openPty();
+      try {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", "console.log({ a: 1 })"],
+          env: colorEnv,
+          stdin: "ignore",
+          stdout: "pipe",
+          stderr: pty.slave,
+        });
+        const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+        expect(stdout).not.toMatch(/\u001b\[/);
+        expect(stdout).toContain("a: 1");
+        expect(exitCode).toBe(0);
+      } finally {
+        pty.close();
+      }
+    });
+
+    test.concurrent("piped stderr stays plain when stdout is a tty", async () => {
+      const pty = openPty();
+      try {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", "console.error({ a: 1 })"],
+          env: colorEnv,
+          stdin: "ignore",
+          stdout: pty.slave,
+          stderr: "pipe",
+        });
+        const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+        expect(stderr).not.toMatch(/\u001b\[/);
+        expect(stderr).toContain("a: 1");
+        expect(exitCode).toBe(0);
+      } finally {
+        pty.close();
+      }
+    });
+
+    // Guard against overcorrection: a stream that is itself a TTY keeps
+    // colors.
+    test.concurrent("a tty stdout still gets colors", async () => {
+      let output = "";
+      const decoder = new TextDecoder();
+      await using terminal = new Bun.Terminal({
+        data(_t, chunk: Uint8Array) {
+          output += decoder.decode(chunk, { stream: true });
+        },
+      });
+      const proc = Bun.spawn({
+        cmd: [bunExe(), "-e", "console.log({ a: 1 })"],
+        env: colorEnv,
+        terminal,
+      });
+      await proc.exited;
+      // PTY data can still be in flight after waitpid. Poll with a deadline
+      // (below the 5s test timeout) so a regression fails here with the
+      // captured output, not by timeout.
+      const deadline = Date.now() + 2_000;
+      while (!/\u001b\[\d+m/.test(output) && Date.now() < deadline) {
+        await Bun.sleep(10);
+      }
+      expect(output).toMatch(/\u001b\[\d+m/);
+    });
   });
 
   describe("revision", () => {
@@ -183,6 +298,141 @@ describe("bun", () => {
       // 4. $HOME/.local/bin, once $HOME/.bun/bin does not exist.
       await installBunx({ HOME: join(String(dir), "home-local") });
       expect(fs.readlinkSync(join(String(dir), "home-local", ".local", "bin", bunxName))).toBe(exeRealpath);
+
+      // 5. A directory that is too long to exist is passed over.
+      fs.unlinkSync(join(String(dir), "home-bun", ".bun", "bin", bunxName));
+      await installBunx({ HOME: join(String(dir), "home-bun"), BUN_INSTALL: "/" + Buffer.alloc(5000, "a").toString() });
+      expect(fs.readlinkSync(join(String(dir), "home-bun", ".bun", "bin", bunxName))).toBe(exeRealpath);
+    });
+
+    test("reports that PowerShell completions do not exist when $SHELL is pwsh", async () => {
+      // An empty home keeps the bunx symlink fallbacks ($HOME/.bun/bin, $HOME/.local/bin) out of the
+      // real home directory. The first candidate, the executable's own directory, is unaffected.
+      using home = tempDir("completions-pwsh-home", {});
+
+      async function run(env: Record<string, string>) {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "completions"],
+          env: { ...bunEnv, HOME: String(home), BUN_INSTALL: undefined, ...env },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stdout).toBe("");
+        expect(stderr).toContain("PowerShell completions are not yet written for Bun.");
+        expect(stderr).toContain("https://github.com/oven-sh/bun/issues/8939");
+        return exitCode;
+      }
+
+      expect(await run({ SHELL: "/usr/local/bin/pwsh" })).toBe(1);
+      expect(await run({ SHELL: "/usr/bin/powershell" })).toBe(1);
+
+      // `bun upgrade` runs `bun completions` with IS_BUN_AUTO_UPDATE=true. That skips the "stdout is a
+      // pipe" shortcut and makes a failure exit 0. Without the Pwsh arm this path went on to the
+      // directory search and its `unreachable!()`.
+      expect(await run({ SHELL: "/usr/local/bin/pwsh", IS_BUN_AUTO_UPDATE: "true" })).toBe(0);
+
+      // When getcwd fails, the "stdout is a pipe" shortcut runs before the shell check. For a shell
+      // without a script it must report the failure instead of writing nothing and exiting 0. The cwd
+      // has to go away after the process starts, so a shell wrapper removes it and then execs bun.
+      using cwdDir = tempDir("completions-pwsh-gone-cwd", {});
+      const gone = String(cwdDir);
+      await using proc = Bun.spawn({
+        cmd: ["/bin/sh", "-c", `cd "${gone}" && rmdir "${gone}" && exec "${bunExe()}" completions`],
+        env: { ...bunEnv, HOME: String(home), BUN_INSTALL: undefined, SHELL: "/usr/local/bin/pwsh" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout).toBe("");
+      expect(stderr).toContain("Could not get current working directory");
+      expect(exitCode).toBe(1);
+    });
+
+    // IS_BUN_AUTO_UPDATE is what `bun upgrade` sets: the file is installed although stdout is a pipe.
+    async function installCompletions(args: string[], env: Record<string, string | undefined>, cwd?: string) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "completions", ...args],
+        cwd,
+        env: {
+          ...bunEnv,
+          BUN_INSTALL: undefined,
+          XDG_CONFIG_HOME: undefined,
+          XDG_DATA_HOME: undefined,
+          fpath: undefined,
+          IS_BUN_AUTO_UPDATE: "true",
+          ...env,
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout).toBe("");
+      return { stderr, exitCode };
+    }
+
+    // A fresh fish setup has `fish/` and no `fish/completions/`. The search then ended at /etc/fish/completions.
+    test.concurrent.each([
+      ["$HOME/.config", { ".config": { fish: {} } }, [".config", "fish", "completions"], "HOME"],
+      ["$XDG_CONFIG_HOME", { fish: {} }, ["fish", "completions"], "XDG_CONFIG_HOME"],
+    ])("fish: makes the completions directory of the fish config in %s", async (_, files, path, variable) => {
+      using dir = tempDir("completions-fish", files);
+      using empty = tempDir("completions-fish-home", {});
+      const completions = join(String(dir), ...path);
+
+      const { stderr, exitCode } = await installCompletions([], {
+        SHELL: "/usr/bin/fish",
+        HOME: String(empty),
+        [variable]: String(dir),
+      });
+      expect(stderr).toContain(`Installed completions to ${completions}/bun.fish`);
+      expect(fs.readFileSync(join(completions, "bun.fish"), "utf8")).toContain("bun");
+      expect(exitCode).toBe(0);
+    });
+
+    describe("zsh", () => {
+      const zsh = (home: string) =>
+        installCompletions([join(home, ".bun")], { HOME: home, ZDOTDIR: home, SHELL: "/bin/zsh" });
+
+      test.concurrent.each([
+        '[ -s "$HOME/.bun/_bun" ] && source "$HOME/.bun/_bun"',
+        '[ -s "${HOME}/.bun/_bun" ] && source "${HOME}/.bun/_bun"',
+        '[ -s "~/.bun/_bun" ] && source "~/.bun/_bun"',
+        '# bun completions\r\n[ -s "$BUN_INSTALL/_bun" ] && source "$BUN_INSTALL/_bun"\r',
+      ])("leaves a .zshrc alone that already has %j", async snippet => {
+        const zshrc = `export PATH="/usr/local/bin:$PATH"\n\n${snippet}\n`;
+        using dir = tempDir("completions-zshrc", { ".bun/.keep": "", ".zshrc": zshrc });
+
+        const { exitCode } = await zsh(String(dir));
+        expect(fs.readFileSync(join(String(dir), ".zshrc"), "utf8")).toBe(zshrc);
+        expect(exitCode).toBe(0);
+      });
+
+      test.concurrent("adds its line to a .zshrc once", async () => {
+        const zshrc = 'export PATH="/usr/local/bin:$PATH"\n';
+        using dir = tempDir("completions-zshrc-fresh", { ".bun/.keep": "", ".zshrc": zshrc });
+        const path = join(fs.realpathSync(String(dir)), ".bun", "_bun");
+        const added = `${zshrc}\n# bun completions\n[ -s "${path}" ] && source "${path}"\n`;
+
+        expect((await zsh(String(dir))).exitCode).toBe(0);
+        expect(fs.readFileSync(join(String(dir), ".zshrc"), "utf8")).toBe(added);
+        expect((await zsh(String(dir))).exitCode).toBe(0);
+        expect(fs.readFileSync(join(String(dir), ".zshrc"), "utf8")).toBe(added);
+      });
+
+      test.concurrent.each([
+        ["empty", ""],
+        ["too long", "/" + Buffer.alloc(5000, "a").toString()],
+      ])("leaves the .zshrc of the cwd alone when $ZDOTDIR is %s", async (_, ZDOTDIR) => {
+        using dir = tempDir("completions-zdotdir", { "home/.bun/.keep": "", "home/.zshrc": "", "cwd/.zshrc": "" });
+        const HOME = join(String(dir), "home");
+
+        const env = { HOME, ZDOTDIR, SHELL: "/bin/zsh" };
+        const { exitCode } = await installCompletions([join(HOME, ".bun")], env, join(String(dir), "cwd"));
+        expect(fs.readFileSync(join(HOME, ".zshrc"), "utf8")).toContain("# bun completions");
+        expect(fs.readFileSync(join(String(dir), "cwd", ".zshrc"), "utf8")).toBe("");
+        expect(exitCode).toBe(0);
+      });
     });
   });
   describe("--help preserves <placeholder> text", () => {
@@ -195,7 +445,7 @@ describe("bun", () => {
       ["link", "bun link [flags] [<packages>]"],
       ["patch", "bun patch [flags or options] <package>@<version>"],
       ["patch-commit", "bun patch-commit [flags or options] <directory>"],
-      ["info", "bun info [flags] <package>[@<version>]"],
+      ["info", "bun info [flags] <package>[@<version>] [<property>...]"],
     ];
     test.concurrent.each(usage)("bun %s --help usage line", async (cmd, expected) => {
       await using proc = Bun.spawn({ cmd: [bunExe(), cmd, "--help"], env, stderr: "pipe" });
@@ -259,7 +509,7 @@ describe("bun", () => {
         "bun pm --help",
         ["pm"],
         [
-          /^ {2}bun pm ls +list the dependency tree according to the current lockfile$/m,
+          /^ {2}bun pm ls +list the tree of installed dependencies$/m,
           /^ {2}bun pm licenses +list installed packages grouped by license$/m,
         ],
       ],
@@ -269,6 +519,16 @@ describe("bun", () => {
         [
           /^ {2}Add a dependency to a specific workspace in a monorepo\n {2}bun add zod --filter api$/m,
           /^ {2}Add to the workspace catalog instead of pinning a version\n {2}bun add --catalog react\n {2}bun add --catalog=testing vitest$/m,
+        ],
+      ],
+      // The bare form only installs the symlink; package.json is written with --save (see the --save
+      // flag row), so the examples must say which form does what.
+      [
+        "bun link --help",
+        ["link"],
+        [
+          /^ {2}Link a previously-registered linkable package into the current project's node_modules\.\n {2}bun link <package>$/m,
+          /^ {2}Also add it to the current project's package\.json as a link: dependency\.\n {2}bun link --save <package>$/m,
         ],
       ],
       [
@@ -293,6 +553,31 @@ describe("bun", () => {
   });
 
   describe("test command line arguments", () => {
+    test
+      .skipIf(isWindows)
+      .each([
+        [{ "cfg\\x.toml": `preload = ["./real.ts"]` }],
+        [{ "cfg/x.toml": `preload = ["./real.ts"]`, "cfg\\x.toml": `preload = ["./decoy.ts"]` }],
+      ])("a backslash in --config separates unless that leads nowhere: %j", async files => {
+      using dir = tempDir("config-backslash", {
+        ...files,
+        "real.ts": `console.log("real");`,
+        "decoy.ts": `console.log("decoy");`,
+        "main.ts": `console.log("main");`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "--config=cfg\\x.toml", "main.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("real\nmain\n");
+      expect(exitCode).toBe(0);
+    });
+
     test("test --config, issue #4128", () => {
       const path = `${tmpdir()}/bunfig-${Date.now()}.toml`;
       fs.writeFileSync(path, "[debug]");
@@ -308,5 +593,32 @@ describe("bun", () => {
         fs.unlinkSync(path);
       }
     });
+
+    const files = {
+      "other.toml": `preload = ["./preload.js"]`,
+      "preload.js": `console.log("preload");`,
+      "index.js": `console.log("index");`,
+    };
+
+    test.concurrent.each(["--config=", "-c="])("%sother.toml is read", async flag => {
+      using dir = tempDir("config-flag", files);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), flag + "other.toml", "index.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr }).toEqual({ stdout: "preload\nindex\n", stderr: "" });
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  test("--help lists check, lint and fmt", async () => {
+    await using proc = Bun.spawn({ cmd: [bunExe(), "--help"], env: bunEnv, stderr: "pipe" });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const listed = stdout.split(/\r?\n/).flatMap(line => /^ {2}(check|lint|fmt) /.exec(line)?.[1] ?? []);
+    expect(listed).toEqual(["check", "lint", "fmt"]);
+    expect(exitCode).toBe(0);
   });
 });

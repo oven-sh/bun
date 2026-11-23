@@ -1,16 +1,18 @@
 ## Rust
 
 `src/` is a Cargo workspace (rooted at the repo's top-level `Cargo.toml`, ~200
-member crates). The runtime is built as `libbun_rust.a` via `cargo build -p
-bun_bin` (driven by `scripts/build/rust.ts`). Key crates:
+member crates). Each crate is one rustc invocation producing an rlib,
+planned by cargo and run by ninja (`scripts/build/rust.ts`, `scripts/build/rust/`). Key crates:
 
 - `bun_core` (`src/bun_core/`) — strings, formatting, logging, env vars, allocator/heap helpers, the foundation everything else uses
 - `bun_sys` (`src/sys/`) — cross-platform syscall wrappers (`File`, `Fd`, `Dir`, `Error`)
-- `bun_paths` (`src/paths/`) — path joining/normalization, the path-buffer pool
-- `bun_jsc` (`src/jsc/`) — JSC value types, `Strong`/`Weak`, FFI imports, `URL`
+- `bun_paths` (`src/paths/`) — `Path`, `dirname` and friends, the path-buffer pool
+- `bun_jsc` (`src/jsc/`) — JSC value types, `Strong`/`Weak`, FFI imports
 - `bun_runtime` (`src/runtime/`) — JS-visible APIs (server, fetch, node compat, crypto)
 - `bun_js_parser`, `bun_js_printer`, `bun_resolver`, `bun_bundler`, `bun_install`, `bun_collections`, `bun_threading`, `bun_alloc` — the rest of the pipeline
-- `bun_bin` (`src/bun_bin/`) — the staticlib root that `cargo build` links
+- `bun_runtime::bin_entry` (`src/runtime/bin_entry/`) — the process entry point (`main`) and the
+  C-ABI symbols the C++ side and the C runtime look up; `bun_runtime` is the root of the crate graph, and the
+  final link takes every crate's rlib beside the C/C++ objects.
 
 Conventions:
 
@@ -31,14 +33,15 @@ or don't match the cross-platform behavior the runtime needs.
 | --------------------------------------- | ------------------------------------------------------------------------------------ |
 | `std::fs::File`                         | `bun_sys::File` (owns the fd; closes on `Drop`)                                      |
 | `std::fs::read` / `write`               | `bun_sys::File::read_from` / `File::create` + `write_all`                            |
-| `std::path::Path::join`                 | `bun_paths::resolve_path::join` / `join_string_buf`                                  |
+| `std::path::PathBuf` / `Path::join`     | `bun_paths::Path` (`push`, `join`, `resolve`)                                        |
 | `std::path::Path::parent`/`file_name`   | `bun_paths::dirname` / `bun_paths::basename`                                         |
 | `std::env::var`                         | `bun_core::env_var::*::get()` (typed + cached)                                       |
-| `String::from_utf8` for JS-visible strs | `bun_core::String::clone_utf8` / `borrow_utf8`                                       |
+| `String::from_utf8` for JS-visible strs | `bun_core::String::clone_utf8` / `StringView::borrow_utf8`                           |
 | `&str` operations on byte slices        | `bun_core::strings::*` (SIMD-backed `&[u8]` ops)                                     |
 | `eprintln!` for debug logging           | `bun_core::declare_scope!` + `scoped_log!`                                           |
 | `std::process::Command`                 | `bun_core::util::spawn_sync_inherit` (CLI helpers) or `bun_spawn_sys` (full control) |
 | `Box::new` + raw ptr round-trip         | `bun_core::heap::{into_raw, take, destroy}`                                          |
+| `from_raw_parts` / `transmute` on bytes | `bun_core::{bytes_of, slice_as_bytes, cast_slice, read_prefix}` (see below)          |
 
 ## `bun_sys` — System Calls (`src/sys/`)
 
@@ -57,8 +60,9 @@ Key types and functions:
 
 - `Fd` (`bun_core::Fd`, re-exported) — cross-platform file descriptor. `Fd::cwd()`, `Fd::stdin()/stdout()/stderr()`, `fd.close()`.
 - `File::open(path: &ZStr, flags, mode)` / `File::openat(dir: Fd, path: &[u8], flags, mode)` / `File::make_open(...)` (creates parent dirs) / `File::create(dir, path, truncate)`
-- `file.read(buf)` / `read_all(buf)` / `read_to_end()` / `read_to_end_small()` / `write(buf)` / `write_all(buf)`
+- `file.read(buf)` / `read_all(buf)` / `read_to_end()` / `read_to_end_small()` / `write_all(buf)`
 - `bun_sys::open`, `read`, `write`, `pread`, `pwrite`, `stat`, `fstat`, `lstat`, `mkdir`, `unlink`, `rename`, `symlink`, `chmod` — free fns over `Fd`
+- `bun_sys::read_buf(fd, cursor)` / `file.read_all_buf(cursor)` / `pread_all_buf(cursor, offset)` — fill uninitialized memory through a `BorrowedCursor`; `bun_core::vec::append_with` lends one over the spare capacity of a `Vec`
 - Open flags: `bun_sys::O::RDONLY`, `O::WRONLY | O::CREAT | O::TRUNC`, etc.
 
 `bun_sys::Error` carries `errno`, `syscall: Tag`, `path: Box<[u8]>`. Convert
@@ -75,30 +79,108 @@ match File::openat(Fd::cwd(), path, O::RDONLY, 0) {
 
 ## Strings (`bun_core::String` and `bun_core::strings`)
 
-`bun_core::String` is the FFI-compatible 5-variant tagged union shared with C++
+`bun_core::String` is the FFI-compatible 6-variant tagged union shared with C++
 (`BunString` in `BunString.cpp`). It bridges Rust and JSC and can hold a
 `WTFStringImpl` (Latin-1 or UTF-16). **Latin-1 is NOT UTF-8** — bytes 128–255
 are single chars in Latin-1 but invalid UTF-8 — so converting either direction
 requires a real encoder, not a cast.
 
+`String` owns one ref when WTF-backed: `Drop` derefs, `Clone` refs, it is
+not `Copy`. Borrow with `&String` (or `StringView<'_>` when a by-value borrow
+is needed). Rust cannot build a `String` that borrows: `StringView<'a>`
+wraps a `&'a [u8]` without copying. It derefs to `&String`,
+`StringView::as_strings` lends a slice of them as `&[String]`, and
+`String::clone(&view)` copies the bytes into an owned `String`. A field that
+holds either an owned `String` or borrowed bytes is a `StringOrView<'a>` (the
+`ZigException<'a>` / `ZigStackFrame<'a>` strings: C++ fills them with refs, the
+dev server with slices of a request body); it drops the ref if it has one and
+also derefs to `&String`. In an `extern "C"` signature a by-value `String` means ownership
+crosses the boundary (C++ `Bun::toStringRef` return / `transferToWTFString()`
+consumer); `&String` ⇔ `const BunString*`.
+
 ```rust
-use bun_core::String;
+use bun_core::{EncodedSlice, String, StringOrView, StringView, Utf8Bytes};   // the only import path for all five
 
 let s = String::clone_utf8(utf8_bytes);    // copies into a WTFStringImpl
-let s = String::borrow_utf8(utf8_bytes);   // no copy; caller keeps slice alive
-let s = String::static_(b"literal");       // 'static slice, never freed
+let s = String::static_("literal");        // 'static ASCII slice, never freed
+let s = String::from_static_bytes(bytes);  // 'static UTF-8: ASCII is not copied, anything else is clone_utf8
+let v = StringView::borrow_utf8(utf8_bytes); // no copy; `v` cannot outlive the slice
+let v = StringView::from_bytes(bytes);       // borrow arbitrary bytes; tags UTF-8 if non-ASCII
+let f: StringOrView<'_> = StringOrView::from_bytes(bytes); // same borrow, for a field that `owned.into()` also fits
+s.eq_ascii(b"lit") / s.starts_with_ascii(b"lit")  // encoding-aware ASCII compare without transcoding
 
-let utf8: ZigStringSlice = s.to_utf8();    // ref-holding view; falls back to allocating a copy
-let owned: Vec<u8>       = s.to_utf8_bytes();
+let utf8: Utf8Bytes<'_>      = s.to_utf8();             // borrows `s` (ASCII/UTF-8) or transcodes; for locals
+let utf8: Utf8Bytes<'static> = s.into_utf8();           // moves `s`'s ref in / copies; for storing in fields
+let utf8: Utf8Bytes<'static> = s.clone().into_utf8();   // from `&String`: shares the WTF ref when 8-bit ASCII, else transcodes
+let utf8: Utf8Bytes<'static> = x.to_utf8().into_owned(); // from a borrowed view: always an independent copy
+let owned: Vec<u8>           = s.to_owned_slice();
 ```
+
+Rule: a `Utf8Bytes<'static>` field/element must come from an owning producer
+(`into_utf8()`, `value.to_utf8(global)?`, `x.to_utf8().into_owned()`,
+`Utf8Bytes::Owned(..)`) — never from `to_utf8()` on a `&String`/`StringView`
+reached through a `&'static` accessor. Prefer `s.clone().into_utf8()` when
+you hold a `&String` (no copy for ASCII); use `.into_owned()` only when the
+source is a bare `&[u8]`/`EncodedSlice` view.
+
+`Utf8Bytes<'a>` is `Borrowed(&'a [u8]) | Owned(Vec<u8>) | Shared(String)`
+(`Shared` holds an 8-bit all-ASCII WTF-backed `String` and reads its buffer);
+it derefs to `[u8]`; `is_owned()` ⇔ the bytes were transcoded/copied.
+`Utf8WithString` (`String::into_utf8_with_string[_thread_isolated]()`) keeps the
+UTF-8 bytes _and_ the source `String` so the value can go back to JS without
+re-encoding; `Utf8WithString::js_only(string)` wraps an output-only string.
+`PathLike<'a>` / `StringOrBuffer<'a>` arms: `String`/`ThreadIsolatedString`
+(`Utf8WithString` from a JS string), `Utf8(Utf8Bytes<'a>)` (transcoded JS
+string, or Rust-side bytes: `PathLike::borrowed(bytes)` lends `&'a [u8]` to a
+synchronous call, `PathLike::owned(vec)` when the value must own them),
+`Buffer` (`PathLike`: a `PinnedArrayBuffer`, GC-rooted too when parsed for an
+async call; `StringOrBuffer`: borrowed for a sync call) and
+`StringOrBuffer::PinnedBuffer` (pinned and GC-rooted, parsed for an async
+call). Values parsed from JS for an async call, stored, or sent to another thread (the
+`from_js_async` parsers, which return `ThreadIsolated<T>`;
+`PathLike::thread_isolated_copy` for a `Blob` store) is `'static`.
+
+`EncodedSlice<'a>` is the `{ptr, len}` + encoding-bits (Latin-1/UTF-8/UTF-16)
+borrowed view handed to C++. Constructors name the encoding of the bytes:
+`utf8(bytes)` for Rust text (`&str`, `format!` output, anything known
+UTF-8); `from_bytes(bytes)` for arbitrary bytes (OS paths, env values, user
+buffers — scans and tags UTF-8 if non-ASCII); `latin1(bytes)` only for
+ASCII literals / `&'static` ASCII tables, bytes already validated as ASCII,
+or bytes that really are Latin-1; `utf16(units)`.
+`String::to_encoded_slice()` borrows any `String` as one;
+`EncodedSlice::to_utf8() -> Utf8Bytes<'a>`; `bun_jsc::EncodedSliceJsc` adds
+`to_js`, `to_error_instance` / `to_syntax_error_instance`, `to_json_object`, and
+`to_external_value` / `external` (hand a globally-allocated buffer to JSC).
+
+Bytes → JS string: `bun_string_jsc::create_utf8_for_js(global, bytes)?`
+(copies; ASCII stays 8-bit). An owned `Vec<u8>` that JS should adopt:
+`bun_string_jsc::owned_utf8_into_js(global, vec)?`; an owned `Vec<u16>`:
+`bun_string_jsc::owned_utf16_into_js(global, vec)?` (or `owned_latin1_into_js` for a
+known-Latin-1/ASCII `Vec<u8>`); all three hand the allocation to JSC in one call. An ASCII literal or
+`&'static` ASCII: `String::static_("lit").to_js(global)?`. → `Error` (one
+C++ entry each): `global.create_error_instance(format_args!(..))` (with
+`type_error`/`range_error`/`syntax_error` siblings; argument-free ASCII
+literal → atomized; formatted → copied once), `string.to_error_instance(global)`
+(plus `to_type_error_instance`; WTF-backed shares the impl, static atomizes,
+borrowed `EncodedSlice` copies), `EncodedSlice::utf8(bytes).to_error_instance(global)`
+(plus `to_syntax_error_instance`) for raw UTF-8 bytes (copied). The infallible
+`EncodedSlice::…(bytes).to_js(global)` is only for callbacks that cannot
+return `JsResult`, or for bytes already validated as ASCII where a rescan
+is unwanted (`EncodedSlice::latin1(bytes).to_js(global)`).
+
+JSValue → string: `value.to_bun_string(global)?` (owned `String`),
+`value.to_utf8(global)?` (owned UTF-8 `Utf8Bytes<'static>`), or
+`value.to_js_string_view(global)?` (borrowed `JSStringView` guard; derefs to
+`&String` and keeps the `JSString` cell alive while it is in scope; its
+`to_utf8()` is tied to the guard).
 
 To/from JS values, use the `bun_jsc::StringJsc` extension trait:
 
 ```rust
 use bun_jsc::StringJsc;
-let js: JSValue = s.to_js(global)?;
+let js: JSValue = s.to_js(global)?;        // JS takes its own ref; `s` still usable
+let js: JSValue = s.into_js(global)?;      // hands `s`'s ref to the JSString
 let s = bun_core::String::from_js(value, global)?;
-let err = s.to_error_instance(global);
 ```
 
 `bun_core::strings` is the SIMD-backed `&[u8]` toolkit (Google Highway kernels
@@ -106,7 +188,12 @@ with runtime CPU dispatch). Byte and substring search **must** go through it —
 `str::find`/`contains`/`split*`, `slice::windows`, `memchr::*` and
 `bstr::ByteSlice::find*` are denied in `clippy.toml`, and the byte-literal forms
 of `<[u8]>::contains`, `iter().position/rposition/any(|b| b == b'x')` and
-`.split(|b| ..)` are rejected by `test/internal/source-lints/byte-search.test.ts`:
+`.split(|b| ..)` are rejected by `test/internal/source-lints/byte-search.test.ts`.
+Highway is the only SIMD in the Rust sources: both also ban `std::simd`, and the
+source lint bans the `core::arch` intrinsics. A new kernel goes in
+`src/jsc/bindings/highway_strings.cpp`, or in a `highway_*.cpp` of its own beside it, which
+`noUnify` in `scripts/build/unified.ts` has to list. Its safe wrapper goes in `src/highway/lib.rs`,
+or in a module of that crate if it brings types or code of its own (`webp.rs`, `checksums.rs`).
 
 ```rust
 use bun_core::strings;
@@ -127,56 +214,104 @@ strings::to_utf16_alloc(...)             // encoding conversions
 
 ## Paths (`bun_paths`)
 
-Path helpers operate on `&[u8]` and are platform-parameterized via the
-`Platform` const-generic (`Posix`, `Windows`, `Loose`, `Nt`; `platform::Auto`
-picks the host). Never use `std::path` for runtime path logic.
+Never use `std::path`. Build paths with `bun_paths::Path`. It has the syntax and the separator of the
+platform it runs on. It is NUL-terminated and derefs to `ZStr` (then `[u8]`), so `&path` goes straight
+into `bun_sys`. No content or length makes it panic.
 
 ```rust
-use bun_paths::{dirname, basename};
-use bun_paths::resolve_path::{self, platform};
+use bun_paths::Path;
 
-let dir  = dirname(path);                               // Option<&[u8]>
-let name = basename(path);                              // &[u8]
-let joined = resolve_path::join::<platform::Auto>(&[a, b]);   // &'static [u8] (threadlocal buf)
-let joined = resolve_path::join_string_buf::<platform::Auto>(&mut buf, &[a, b]);  // caller buf
-let rel    = resolve_path::relative(from, to);
+let json = Path::from_parts(&[dir, b"package.json"]); // dir + separator + name
+let abs  = Path::resolve(&[cwd, arg]);                // path.resolve
+let rel  = Path::relative(from, to);                  // path.relative
+
+let mut path = Path::from_top_level_dir();
+path.push(b"node_modules");
+for name in names {
+    bun_sys::unlink(&path.push_scoped(name))?;        // `name` is removed when the guard drops
+}
+write!(path, "-{hash:x}");                            // no separator; `push_fmt` adds one
 ```
 
-Use the path-buffer pool to avoid 64 KB stack allocations on Windows
-(`PathBuffer` is `[u8; PATH_MAX_BYTES]`, ~64 KB on Windows):
+| Type           | Storage      | When to use                                    |
+| -------------- | ------------ | ---------------------------------------------- |
+| `Path`         | heap         | default                                        |
+| `OSPath`       | heap         | with `OSPathSlice`, which is UTF-16 on Windows |
+| `StackPath<N>` | inline array | signal handlers, statics that must not move    |
+
+They have the same methods, but `into_portable` and `add_current_drive` are not for `OSPath`. `StackPath`
+returns `Result<T, NameTooLong>` and is unchanged on `Err`. `from`, `set`, `extend_from_slice`, `prepend`
+and `write!` never allocate on it for `&[u8]`. The rest can. The others grow, and the
+syscall returns `ENAMETOOLONG`. Call `check_len()` where no syscall would say so, as with `exists`. They
+allocate 256 units or more: to store many paths, store `to_vec()` or `to_zbox()`.
+
+- `from`, `set`, `extend_from_slice` and `prepend` copy as is.
+- `push` and `from_parts` add one separator, and trim the part's outer separators, a leading `./` and a
+  lone `.`. On an empty path a root and a lone `.` stay. `..` is kept, and an absolute part does not
+  replace the path.
+- `push_inside` resolves `.` and `..`, and `..` cannot leave the path it is pushed onto. It does not look
+  for a NUL.
+- `join`, `resolve` and `relative` are like Node's, but `resolve` does not fall back to the cwd, and on
+  Windows they read roots as Win32 does. `resolve` drops a trailing separator: `copy_trailing_sep_from`
+  puts it back, and `bun_resolver::resolve_keeping_sep` keeps only the platform's own. `resolve_in_place` uses the path as the first part. `bun_node_path` is `node:path`.
+- `push_scoped` and `save` truncate when the guard drops. Only append through the guard.
+- Arguments can be `&[u8]` or `&[u16]` and are transcoded (WTF-8/WTF-16), except for `relative` and
+  `prepend`.
+
+To inspect a slice use `bun_paths::{dirname, basename, extension, stem, components, ancestors,
+strip_prefix, climbs_out, without_trailing_sep}`. `strip_prefix(path, dir)` ends at a component: `/ab`
+is not in `/a`. It does not normalize. A share is `\\s\h\` (`dirname`, `join`, `resolve`) or `\\s\h` (the
+cwd, `without_trailing_sep`): two directories are equal if `strip_prefix(a, b) == Some(b"")`.
+
+On POSIX `\` is part of a name. Only text that moves between platforms (package.json, tsconfig.json,
+lockfiles, bundles, hashes, URLs) needs a conversion, once, where it is read or written:
+
+| Text                                        | Call                                               |
+| ------------------------------------------- | -------------------------------------------------- |
+| JS APIs, syscall results, entry points      | nothing, unless it is written to such a file       |
+| read from a file                            | `from_portable(text)`: `\a` is `./a`               |
+| the same, where `\a` starts at the root     | `portable::from_portable_rooted(text)`: it is `/a` |
+| a glob                                      | nothing: `\` escapes                               |
+| written to a file, hashed, used as a URL    | `path.into_portable()`, `to_portable(slice)`       |
+| portable, and shown or compared with a path | `to_native(slice)`                                 |
+| untrusted, has to stay inside a directory   | reject `portable::climbs_out(text)`                |
+| an import specifier                         | `bun_resolver::path_of_specifier(specifier, kind)` |
+| an import specifier, read from a file       | `portable::from_portable_specifier(text)`          |
+| either a real name or portable text         | `bun_sys::existing_spelling(dir, path)`            |
+| a flag or variable that names an input      | `bun_sys::typed_spelling(base, path, convert)`     |
+| the same, for an output                     | `bun_sys::converted_spelling(path, convert)`       |
+| the same, for a cache or install directory  | `from_portable(text)`: what exists must not decide |
+
+The tool that defines a file decides what `\a` is in it: the root for `tsc` and in a URL, `./a` for npm's `bin`.
+The one glob that is converted is `packages\*` in "workspaces": `workspace_selection::workspaces_entry`.
+`convert` is `from_portable` or `from_portable_rooted`, and `base` is where the text was typed.
+`portable::climbs_out` goes with `from_portable`, not with `from_portable_rooted`. On Windows reject `:` too.
+
+For a buffer that the OS fills, use `path_buffer_pool::get()` or `w_path_buffer_pool::get()`, not the
+stack: a `PathBuffer` is 96 KB on Windows.
+
+## URL Parsing (`bun_url::whatwg`)
+
+WHATWG-compliant, backed by WebKit's URL parser. `Parsed` owns the C++
+`WTF::URL` (released on `Drop`) and derefs to `URL` for the getters; parsing
+returns `None` for invalid input. `bun_jsc::url` re-exports both; the
+JS-value entry point (`URL::href_from_js`) comes from the `bun_jsc::URLJsc`
+trait.
 
 ```rust
-use bun_paths::path_buffer_pool;
+use bun_url::whatwg::Parsed;
 
-let mut buf = path_buffer_pool::get();        // PoolGuard<PathBuffer>, returns to pool on Drop
-let joined  = resolve_path::join_string_buf::<platform::Auto>(&mut *buf, &[a, b]);
-```
+let url: Parsed = Parsed::from_utf8(href)?;       // or Parsed::from_string(&bun_string)?
 
-`bun_paths::os_path_buffer_pool` selects the wide (`u16`) variant on Windows
-and the narrow (`u8`) variant on POSIX.
-
-## URL Parsing (`bun_jsc::URL`)
-
-WHATWG-compliant, backed by WebKit's URL parser. Returns `None` for invalid input.
-
-```rust
-use bun_jsc::URL;
-
-let url = URL::from_utf8(href)?;                  // Option<NonNull<URL>>
-// caller owns the C++ object — destroy it when done:
-// unsafe { URL::destroy(url.as_ptr()) }
-
-url.protocol()   // bun_core::String
-url.pathname()   // bun_core::String
-url.host()       // bun_core::String — the hostname WITHOUT the port (opposite of JS `host`!)
+url.protocol()   // EncodedSlice<'_>, borrowed from `url`
+url.pathname()   // EncodedSlice<'_>
+url.host()       // EncodedSlice<'_> — the hostname WITHOUT the port (opposite of JS `host`!)
+url.hostname()   // bun_core::String — the host WITH the port (opposite of JS `hostname`!)
 url.port()       // u32 (u32::MAX = unset; otherwise u16 range)
 ```
 
-`URL::href_from_js`, `URL::file_url_from_string`, `URL::path_from_file_url`
-do whole-string conversions. The JSC-free shim `bun_url::whatwg::URL` exposes
-`hostname()`, which returns the host WITH the port (also the opposite of JS
-`hostname`) — so `bun_jsc::URL::host` and `bun_url::whatwg::URL::hostname`
-are effectively swapped relative to their JS namesakes.
+`bun_url::href_from_string`, `file_url_from_string`, `path_from_file_url`,
+`join` do whole-string conversions.
 
 ## MIME Types (`bun_http_types::MimeType`)
 
@@ -187,7 +322,6 @@ let mime = mime_type::by_extension(b"html");            // MimeType
 let mime = mime_type::by_extension_no_default(b"xyz");  // Option<MimeType>
 
 mime.category   // Category::Javascript | Css | Html | Json | Image | Text | Wasm | ...
-mime.category.is_text_like()
 ```
 
 Common constants: `JAVASCRIPT`, `JSON`, `HTML`, `CSS`, `TEXT`, `WASM`, `ICO`, `OTHER`.
@@ -224,6 +358,40 @@ allocator and similar) do **not** run `Drop` when the arena resets — the
 backing pages are bulk-freed. If a type owns a heap allocation, refcount, or
 fd, free it explicitly before the arena resets. Don't rely on `Drop` for
 correctness in arena-backed code.
+
+## Bytes ↔ values (`bun_pod`, re-exported by `bun_core`)
+
+Viewing a value as bytes, or bytes as a value, is safe code. Four marker traits
+say which types allow it, and `impl_*!` macros implement them only if rustc can
+prove the claim from the type's layout (padding, a `bool`, an enum or a pointer
+in the wrong place is a compile error at the macro call). The `#[repr(..)]` is
+required: without one rustc picks the field order, and so the byte order:
+
+```rust
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct Header { magic: u32, len: u16, flags: u16 }
+bun_core::impl_pod!(Header);            // NoUninit + AnyBitPattern + Zeroable
+// impl_no_uninit!(T)        every byte initialized:  &T → &[u8]   (enums and bool qualify)
+// impl_any_bit_pattern!(T)  every byte pattern valid: &[u8] → T   (padding is fine)
+// impl_zeroable!(T)         all-zero valid: bun_core::ffi::zeroed::<T>()
+
+bun_core::bytes_of(&header)                  // &[u8]
+bun_core::slice_as_bytes(utf16)              // &[T] → &[u8], cannot fail
+bun_core::read_prefix::<Header>(bytes)       // Option<Header>, any alignment
+bun_core::vec_from_bytes::<Header>(bytes)    // Option<Vec<Header>>, any alignment
+bun_core::try_cast_slice::<u8, u16>(bytes)   // Option<&[u16]>: None if misaligned or a partial element
+bun_core::cast_slice::<u8, u16>(bytes)       // same, panics: only for layouts Bun itself established
+bun_core::Unaligned::<u16>::slice_of(bytes)  // &[Unaligned<u16>], cannot fail; `.get()` each element
+```
+
+Memory whose address JS controls (an `ArrayBuffer` can wrap any `bun:ffi` or
+N-API pointer) is not aligned to anything: never `cast_slice` it. Use
+`Unaligned::slice_of`, `read_prefix`, `vec_from_bytes` or `try_cast_slice`. A
+hand-written `unsafe impl` of these traits is only for what rustc cannot analyze
+(generic parameters, associated-type fields such as `bitflags!` storage, types
+over 4 KiB, and pointers for `Zeroable`). If a function is generic over "`u8` or
+`u16`", dispatch with a trait method (`PathByte::units`), not a cast.
 
 ## Environment Variables (`bun_core::env_var`)
 
@@ -316,13 +484,24 @@ non-transferring path UAFs at GC.
 
 ### Cross-thread string hazards
 
-`AtomString`s live in a per-thread table. Never deref one from another thread —
-it trips `wasRemoved` in `AtomStringImpl::remove()`. If a `bun_core::String`
-may be dropped from a non-JS thread (HTTP worker, threadpool, dying VM), build
-it via `String::clone_utf8` (a plain `WTFStringImpl` with an atomic refcount),
-not from an interned/atomized JS string. See the comment in
-`src/runtime/webcore/fetch/FetchTasklet.rs` near `Response::init` for the
-canonical example of this bug class and its fix.
+`StringImpl` refcounts are atomic; two things are per-thread: using a string as
+a property key (`Identifier::fromString`) atomizes a non-atom impl _in place_
+into the current thread's atom table, and the last `deref()` of an atom removes
+it from the _current_ thread's table (`RELEASE_ASSERT(wasRemoved)`). The lazily
+computed hash/flags word is also unsynchronized. Rules:
+
+- Handing a value to one other thread (work pool, HTTP thread):
+  `String::thread_isolated_copy()`, `ThreadIsolated<T>`, or own bytes
+  (`Box<[u8]>`, `clone_utf8` on arrival).
+- Letting several VMs reach one impl (process-global registry, one
+  `SerializedScriptValue` with many receivers): `String::make_thread_shareable()`
+  (C++ `Bun::makeThreadShareable` / `threadShareableCopy` /
+  `toCrossThreadShareable`) once — pre-hashed, never atomized in place, so each
+  receiver's atom table takes its own copy — then hand out plain `clone()`s.
+  Static strings already qualify.
+
+Worked examples: `ObjectURLRegistry`, `StandaloneModuleGraph::File`, the
+structured-clone object fast paths.
 
 ## Common Patterns
 

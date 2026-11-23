@@ -499,12 +499,49 @@ fn build_symbol_table_pdb(pdb_path: &Path, file: &object::File) -> Result<Vec<Sy
         raw.push((va, 0, p.name.to_string().into_owned()));
     }
 
+    // DBI section contributions: one record per (output section, source
+    // object) pair — "module M contributed bytes [offset, offset+size) of
+    // section S". Used twice: to bound a zero-size public's synthesized range
+    // to the object it came from (below), and to name code no symbol covers
+    // (pass 3).
+    let mut contribs_in_text: Vec<(u64, u64, usize)> = Vec::new();
+    {
+        let mut contribs = dbi
+            .section_contributions()
+            .map_err(|e| format!("pdb section_contributions: {e}"))?;
+        while let Some(c) = contribs
+            .next()
+            .map_err(|e| format!("pdb contrib iter: {e}"))?
+        {
+            let Some(rva) = c.offset.to_rva(&address_map) else {
+                continue;
+            };
+            let begin = image_base + u64::from(rva.0);
+            if c.size == 0 || !in_text(begin) {
+                continue;
+            }
+            contribs_in_text.push((begin, begin + u64::from(c.size), c.module));
+        }
+        contribs_in_text.sort_by_key(|c| c.0);
+    }
+    // End of the contribution containing `addr` (the object's last byte in
+    // this section), if any.
+    let contribution_end = |addr: u64| -> Option<u64> {
+        let i = contribs_in_text.partition_point(|c| c.0 <= addr);
+        (i > 0 && addr < contribs_in_text[i - 1].1).then(|| contribs_in_text[i - 1].1)
+    };
+
     // Finalize the PDB-named symbols FIRST, without .pdata entries in the mix.
     // Zero-size S_PUB32 markers for hand-written asm need their synthetic end
     // to reach the next *named* symbol. A .pdata entry nested inside such a
     // routine (covering an inner loop with its own unwind info) would
     // otherwise truncate the public's range and strand the rest of the
-    // function as <no-symbol>.
+    // function as <no-symbol>. The synthetic end never crosses into the next
+    // object, though: an asm file whose first routine is a local label (no
+    // PUBLIC record — aesni-gcm-x86_64's _aesni_ctr32_ghash_6x) would
+    // otherwise be attributed to whichever public the linker happened to lay
+    // out before it, and that changes with link order. Pass 3 names such
+    // code by its object instead.
     raw.sort_by(|a, b| a.0.cmp(&b.0).then(b.1.cmp(&a.1)));
     raw.dedup_by(|later, earlier| later.0 == earlier.0);
 
@@ -523,7 +560,8 @@ fn build_symbol_table_pdb(pdb_path: &Path, file: &object::File) -> Result<Vec<Sy
                 .copied()
                 .find(|&e| e > addr)
                 .unwrap_or(u64::MAX);
-            next_sym.min(sec_end)
+            let obj_end = contribution_end(addr).unwrap_or(u64::MAX);
+            next_sym.min(sec_end).min(obj_end)
         };
         if end > addr {
             syms.push(Sym { addr, end, name });
@@ -531,51 +569,43 @@ fn build_symbol_table_pdb(pdb_path: &Path, file: &object::File) -> Result<Vec<Sy
     }
 
     // ---- Pass 3: DBI section contributions — ONLY where nothing above reaches ----
-    // One record per (output section, source object) pair: "module M contributed
-    // bytes [offset, offset+size) of section S". This is the linker-map data in
-    // structured form — it tells you which .obj/.lib every byte came from, even
-    // when that .obj shipped no per-function symbols (stripped CRT, Rust
-    // staticlib std helpers that LTO anonymized).
+    // This is the linker-map data in structured form — it tells you which
+    // .obj/.lib every byte came from, even when that .obj shipped no
+    // per-function symbols (stripped CRT, Rust staticlib std helpers that LTO
+    // anonymized, an asm file's leading local routine).
     //
-    // Attribution is by library basename: <lib:foo.lib>. That name is stable
-    // across link reorderings and unrelated code changes — it only moves if
-    // the archive itself gets renamed.
+    // Attribution is by library / object basename: <lib:foo.lib>,
+    // <lib:bar.asm.obj>. That name is stable across link reorderings and
+    // unrelated code changes — it only moves if the file itself is renamed.
     //
-    // Multiple contributions from the same library collapse to one allowlist
+    // Multiple contributions from the same file collapse to one allowlist
     // entry. Unlike the .pdata-RVA approach this replaces, the result doesn't
     // churn when addresses shift.
     // Collect gap-fillers into a scratch vec so symbol_for() keeps operating
     // on the sorted pass-1/2 table. Pushing directly into `syms` mid-iteration
     // would break the binary search invariant.
     let mut gap_fillers: Vec<Sym> = Vec::new();
-    let mut contribs = dbi
-        .section_contributions()
-        .map_err(|e| format!("pdb section_contributions: {e}"))?;
-    while let Some(c) = contribs
-        .next()
-        .map_err(|e| format!("pdb contrib iter: {e}"))?
-    {
-        let Some(rva) = c.offset.to_rva(&address_map) else {
-            continue;
-        };
-        let begin = image_base + u64::from(rva.0);
-        let end = begin + u64::from(c.size);
-        if c.size == 0 || !in_text(begin) {
-            continue;
+    for &(begin, end, module) in &contribs_in_text {
+        // The leading part a named symbol covers needs nothing; the filler
+        // starts at the contribution's first byte no pass-1/2 symbol reaches
+        // (usually the first byte, or none at all).
+        let mut start = begin;
+        while start < end {
+            match symbol_for(&syms, start) {
+                Some(sym) => start = sym.end,
+                None => break,
+            }
         }
-        // Already covered by a named symbol? symbol_for() is the same lookup
-        // the scan loop uses, so this is exactly "would this address get a
-        // real name or <no-symbol>".
-        if symbol_for(&syms, begin).is_some() {
+        if start >= end {
             continue;
         }
         let lib = module_names
-            .get(c.module)
+            .get(module)
             .map(String::as_str)
             .filter(|s| !s.is_empty())
             .unwrap_or("unknown");
         gap_fillers.push(Sym {
-            addr: begin,
+            addr: start,
             end,
             name: format!("<lib:{lib}>"),
         });
@@ -615,6 +645,24 @@ fn symbol_for(syms: &[Sym], ip: u64) -> Option<&Sym> {
 /// previously ceilinged at [AVX, AVX2]. Widening the bracket is the explicit
 /// checkpoint where someone asks "did the gate also get updated?"
 type Allowlist = HashMap<String, Option<HashSet<String>>>;
+
+/// The name of the entry for a symbol: its canonical form or, for an instance of a generic function, what precedes
+/// the arguments followed by `<generic-args>`.
+fn allowlist_key(symbol: &str, allowlist: &Allowlist) -> String {
+    let canon = canonicalize_symbol(symbol);
+    if allowlist.contains_key(&canon) {
+        return canon;
+    }
+    let generic = allowlist.keys().find(|key| {
+        let args = key.strip_suffix("<generic-args>");
+        let args = args.and_then(|function| canon.strip_prefix(function));
+        // A mangled name follows its length.
+        args.is_some_and(|args| {
+            key.starts_with("_R") || args.trim_start_matches("::").starts_with('<')
+        })
+    });
+    generic.cloned().unwrap_or(canon)
+}
 
 fn load_allowlist_into(path: &Path, out: &mut Allowlist) -> Result<(), String> {
     let text = match fs::read_to_string(path) {
@@ -716,7 +764,7 @@ fn record(
         .unwrap_or_else(|| format!("<no-symbol@{ip:#x}>"));
     // Compare canonical forms (Rust hash stripped) but report the raw name —
     // devs grepping objdump need the real mangled string.
-    let canon = canonicalize_symbol(&raw_sym);
+    let canon = allowlist_key(&raw_sym, allowlist);
 
     // Three-way outcome:
     //   not in allowlist                           → violation
@@ -745,14 +793,40 @@ fn scan_x86_64(bytes: &[u8], sec_addr: u64, syms: &[Sym], allowlist: &Allowlist)
     let mut allowlisted = Buckets::new();
     let mut total_insns = 0u64;
 
-    // Linear sweep. iced handles variable-length encoding; on undecodable
-    // bytes (data-in-text) it returns Code::INVALID and we skip. False
-    // positives from data-in-text are rare in practice — LLVM puts jump
-    // tables in .rodata, not inline.
+    // Linear sweep, resynchronised at every symbol start. iced handles
+    // variable-length encoding; on undecodable bytes it returns Code::INVALID
+    // and we skip. Data in .text (JSC's LLInt puts a 4-byte opcode id in front
+    // of every llint_op_* label; hand-written asm occasionally has constants
+    // after a ret) desyncs a pure linear sweep, and what the following bytes
+    // then decode as depends on link layout. Every symbol start is a real
+    // instruction boundary, so an instruction that would straddle one is
+    // garbage: drop it and restart decoding at the symbol.
+    let sec_end = sec_addr + bytes.len() as u64;
+    let mut starts: Vec<u64> = syms
+        .iter()
+        .map(|s| s.addr)
+        .filter(|&a| a > sec_addr && a < sec_end)
+        .collect();
+    starts.sort_unstable();
+    starts.dedup();
+    let mut next_start = 0usize;
+
     let mut decoder = Decoder::with_ip(64, bytes, sec_addr, DecoderOptions::NONE);
     let mut insn = Instruction::default();
     while decoder.can_decode() {
         decoder.decode_out(&mut insn);
+        let (ip, next_ip) = (insn.ip(), decoder.ip());
+        while next_start < starts.len() && starts[next_start] <= ip {
+            next_start += 1;
+        }
+        if next_start < starts.len() && starts[next_start] < next_ip {
+            let resync = starts[next_start];
+            decoder
+                .set_position((resync - sec_addr) as usize)
+                .expect("symbol start inside section");
+            decoder.set_ip(resync);
+            continue;
+        }
         if insn.is_invalid() {
             continue;
         }
@@ -1138,7 +1212,7 @@ fn run() -> Result<bool, String> {
     let hit_canon: HashSet<_> = allowlisted
         .keys()
         .chain(violations.keys())
-        .map(|s| canonicalize_symbol(s))
+        .map(|s| allowlist_key(s, &allowlist))
         .collect();
     let mut stale: Vec<_> = allowlist
         .keys()
@@ -1185,6 +1259,53 @@ fn main() -> ExitCode {
         Err(e) => {
             eprintln!("error: {e}");
             ExitCode::from(2)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn generic_args_stand_for_the_instances_of_one_function() {
+        let generic = "_RINvNv<rust-hash>3foo4gate4fast<generic-args>";
+        let keys = [generic, "foo::gate::fast<generic-args>", "plain"];
+        let allowlist = Allowlist::from(keys.map(|key| (key.into(), None)));
+        let is_listed = |symbol| allowlist.contains_key(&allowlist_key(symbol, &allowlist));
+        assert!(is_listed(
+            "_RINvNvCs1a_3foo4gate4fastmNCNvCs2b_3bar3run0EB4_"
+        ));
+        assert!(is_listed("foo::gate::fast<u32>"));
+        assert!(is_listed("foo::gate::fast::<u32>"));
+        assert!(!is_listed("foo::gate::faster<u32>"));
+        assert!(!is_listed("foo::gate::fast::inner<u32>"));
+        assert!(is_listed("plain"));
+        assert!(!is_listed(
+            "_RINvNvCs1a_3foo4gate8baselinemNCNvCs2b_3bar3run0EB4_"
+        ));
+        assert!(!is_listed("_RNvCs2b_3bar3run"));
+        assert!(!is_listed("plain_too"));
+    }
+
+    #[test]
+    fn nothing_else_matches_by_a_part_of_the_name() {
+        let keys = [
+            "fast<generic-args>",
+            "fast<u8>",
+            "_xR<generic-args>",
+            "plain",
+        ];
+        let allowlist = Allowlist::from(keys.map(|key| (key.into(), None)));
+        assert_eq!(allowlist_key("fast<u16>", &allowlist), keys[0]);
+        for symbol in [
+            "fast<u8>",
+            "not::fast<u16>",
+            "fast:<u16>",
+            "_xRy",
+            "plain<u8>",
+        ] {
+            assert_eq!(allowlist_key(symbol, &allowlist), symbol);
         }
     }
 }

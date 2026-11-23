@@ -47,6 +47,11 @@ pub struct DiskCacheCtx {
     /// branch that reads it is gated on that flag).
     pub(crate) cache_directory: Option<Fd>,
     pub(crate) timestamp_for_manifest_cache_control: u32,
+    /// `--prefer-offline` / `--offline`: a cached manifest counts as fresh regardless of
+    /// its age (stored as `Value::Manifest`), so resolution can use it without a
+    /// revalidation request. It is still stored as `Value::Expired` when the caller needs
+    /// the extended manifest and the cached one lacks it — age is waived, content is not.
+    pub(crate) accept_expired: bool,
 }
 
 impl PackageManifestMap {
@@ -144,7 +149,7 @@ impl PackageManifestMap {
                 let demote = matches!(
                     value_ptr,
                     Value::Manifest(m)
-                        if needs_extended_manifest && !m.pkg.has_extended_manifest
+                        if needs_extended_manifest && !m.pkg.has_extended_manifest()
                 );
                 if demote {
                     let Value::Manifest(m) = core::mem::replace(value_ptr, Value::NotFound) else {
@@ -171,11 +176,8 @@ impl PackageManifestMap {
                     let cache_fd = ctx.cache_directory.expect("cache_directory");
                     if let Some(manifest) = npm::package_manifest::Serializer::load_by_file_id(
                         scope, cache_fd, name, name_hash,
-                    )
-                    .ok()
-                    .flatten()
-                    {
-                        if needs_extended_manifest && !manifest.pkg.has_extended_manifest {
+                    ) {
+                        if needs_extended_manifest && !manifest.pkg.has_extended_manifest() {
                             let value_ptr = vac.insert(Value::Expired(manifest));
                             if let Some(expiry) = is_expired {
                                 *expiry = true;
@@ -187,9 +189,14 @@ impl PackageManifestMap {
                             return None;
                         }
 
-                        if ctx.enable_manifest_cache_control
-                            && manifest.pkg.public_max_age
-                                > ctx.timestamp_for_manifest_cache_control
+                        if ctx.accept_expired
+                            || (ctx.enable_manifest_cache_control
+                                && manifest.pkg.public_max_age
+                                    > ctx.timestamp_for_manifest_cache_control
+                                && !npm::registry::expires_too_late(
+                                    manifest.pkg.public_max_age,
+                                    ctx.timestamp_for_manifest_cache_control,
+                                ))
                         {
                             let value_ptr = vac.insert(Value::Manifest(manifest));
                             let Value::Manifest(m) = value_ptr else {

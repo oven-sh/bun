@@ -10,7 +10,7 @@ import path from "node:path";
 
 // Relies on the StandaloneModuleGraph scoped logger which is compiled out in
 // release builds.
-test.skipIf(isWindows || !isDebug)(
+test.concurrent.skipIf(isWindows || !isDebug)(
   "standalone madvise hint fires with top-level await entrypoint",
   async () => {
     using dir = tempDir("standalone-madvise-tla", {
@@ -82,6 +82,49 @@ test.skipIf(isWindows || !isDebug)(
       expect(stderr).not.toContain("hintSourcePagesDontNeed:");
       expect(exitCode).toBe(0);
     }
+  },
+  30_000,
+);
+
+// The hint must cover only the source text, not the bytecode JSC keeps
+// decoding from. The string literal below lands in both the source and the
+// bytecode cache, so a hint spanning both reports at least double its size.
+test.concurrent.skipIf(isWindows || !isDebug)(
+  "standalone madvise hint covers only the embedded source text",
+  async () => {
+    const literalBytes = 64 * 1024;
+    using dir = tempDir("standalone-madvise-range", {
+      "entry.ts": `const s = "${Buffer.alloc(literalBytes, "a").toString()}";\nconsole.log("len=" + s.length);\n`,
+    });
+
+    const out = path.join(String(dir), "compiled");
+    const build = Bun.spawnSync({
+      cmd: [bunExe(), "build", "--compile", "--bytecode", path.join(String(dir), "entry.ts"), "--outfile", out],
+      env: bunEnv,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    expect(build.stderr.toString()).not.toContain("error:");
+    expect(build.exitCode).toBe(0);
+
+    await using proc = Bun.spawn({
+      cmd: [out],
+      env: { ...bunEnv, BUN_DEBUG_StandaloneModuleGraph: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toContain(`len=${literalBytes}`);
+    const hinted = stdout.match(/hintSourcePagesDontNeed: MADV_DONTNEED (\d+) bytes/);
+    expect(hinted).not.toBeNull();
+    const bytes = Number(hinted![1]);
+    // Whole pages inside the source run: at most the literal plus the small
+    // bundler wrapper around it, never the bytecode as well.
+    expect(bytes).toBeLessThan(literalBytes + 16 * 1024);
+    expect(bytes).toBeGreaterThan(literalBytes / 2);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
   },
   30_000,
 );

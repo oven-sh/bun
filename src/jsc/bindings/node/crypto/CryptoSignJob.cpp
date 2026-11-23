@@ -1,4 +1,5 @@
 #include "CryptoSignJob.h"
+#include "NodeCryptoJob.h"
 #include "NodeValidator.h"
 #include "KeyObject.h"
 #include "JSVerify.h"
@@ -25,7 +26,7 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyOneShot, (JSGlobalObject * lexicalGlobalObject,
     RETURN_IF_EXCEPTION(scope, {});
 
     if (!callbackValue.isUndefined()) {
-        SignJob::createAndSchedule(lexicalGlobalObject, WTF::move(*ctx), callbackValue);
+        NodeCryptoJob::schedule<SignJobCtx>(lexicalGlobalObject, callbackValue, WTF::move(*ctx));
         return JSValue::encode(jsUndefined());
     }
 
@@ -56,7 +57,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSignOneShot, (JSGlobalObject * lexicalGlobalObject, C
     RETURN_IF_EXCEPTION(scope, {});
 
     if (!callbackValue.isUndefined()) {
-        SignJob::createAndSchedule(lexicalGlobalObject, WTF::move(*ctx), callbackValue);
+        NodeCryptoJob::schedule<SignJobCtx>(lexicalGlobalObject, callbackValue, WTF::move(*ctx));
         return JSValue::encode(jsUndefined());
     }
 
@@ -74,25 +75,12 @@ JSC_DEFINE_HOST_FUNCTION(jsSignOneShot, (JSGlobalObject * lexicalGlobalObject, C
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
 
     auto sigBuf = ArrayBuffer::createUninitialized(result.size(), 1);
-    memcpy(sigBuf->data(), result.data(), result.size());
+    memcpy(sigBuf->data(), result.get(), result.size());
     auto* signature = JSUint8Array::create(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), WTF::move(sigBuf), 0, result.size());
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(signature);
 }
 
-extern "C" void Bun__SignJobCtx__deinit(SignJobCtx* ctx)
-{
-    ctx->deinit();
-}
-void SignJobCtx::deinit()
-{
-    delete this;
-}
-
-extern "C" void Bun__SignJobCtx__runTask(SignJobCtx* ctx, JSGlobalObject* globalObject)
-{
-    ctx->runTask(globalObject);
-}
 void SignJobCtx::runTask(JSGlobalObject* globalObject)
 {
     if (m_unsupportedContext) {
@@ -155,15 +143,13 @@ void SignJobCtx::runTask(JSGlobalObject* globalObject)
                 return;
             }
 
-            m_signResult = ByteSource::allocated(data.release());
+            m_signResult = WTF::move(data);
         } else {
             auto data = context.sign(dataBuf);
             if (!data) {
                 m_opensslError = ERR_get_error();
                 return;
             }
-
-            auto bs = ByteSource::allocated(data.release());
 
             if (key.isSigVariant() && m_dsaSigEnc == DSASigEnc::P1363) {
                 uint32_t n = key.getBytesOfRS().value_or(NoDsaSignature);
@@ -180,19 +166,14 @@ void SignJobCtx::runTask(JSGlobalObject* globalObject)
 
                 p1363Buffer.zero();
 
-                ncrypto::Buffer<const uint8_t> sigBuf {
-                    .data = reinterpret_cast<const uint8_t*>(bs.data()),
-                    .len = bs.size(),
-                };
-
-                if (!ncrypto::extractP1363(sigBuf, reinterpret_cast<uint8_t*>(p1363Buffer.get()), n)) {
+                if (!ncrypto::extractP1363(data, reinterpret_cast<uint8_t*>(p1363Buffer.get()), n)) {
                     m_opensslError = ERR_get_error();
                     return;
                 }
 
-                m_signResult = ByteSource::allocated(p1363Buffer.release());
+                m_signResult = WTF::move(p1363Buffer);
             } else {
-                m_signResult = WTF::move(bs);
+                m_signResult = WTF::move(data);
             }
         }
         break;
@@ -209,16 +190,14 @@ void SignJobCtx::runTask(JSGlobalObject* globalObject)
         m_verifyResult = context.verify(dataBuf, sigBuf);
         if (!m_verifyResult.has_value()) {
             m_opensslError = ERR_get_error();
+        } else if (*m_verifyResult && key.hasSmallOrderEdDsaPoint(sigBuf)) {
+            m_verifyResult = false;
         }
         break;
     }
     }
 }
 
-extern "C" void Bun__SignJobCtx__runFromJS(SignJobCtx* ctx, JSGlobalObject* globalObject, JSCallbackArgs* out)
-{
-    *out = ctx->runFromJS(globalObject);
-}
 JSCallbackArgs SignJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject)
 {
     auto& vm = lexicalGlobalObject->vm();
@@ -237,7 +216,7 @@ JSCallbackArgs SignJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject)
         auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
 
         auto sigBuf = ArrayBuffer::createUninitialized(m_signResult->size(), 1);
-        memcpy(sigBuf->data(), m_signResult->data(), m_signResult->size());
+        memcpy(sigBuf->data(), m_signResult->get(), m_signResult->size());
         auto* signature = JSUint8Array::create(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), WTF::move(sigBuf), 0, m_signResult->size());
         RETURN_IF_EXCEPTION(scope, {});
 
@@ -256,13 +235,6 @@ JSCallbackArgs SignJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject)
     }
     }
     return {};
-}
-
-extern "C" void Bun__SignJob__createAndSchedule(JSGlobalObject* globalObject, SignJobCtx* ctx, EncodedJSValue callback);
-void SignJob::createAndSchedule(JSGlobalObject* globalObject, SignJobCtx&& ctx, JSValue callback)
-{
-    SignJobCtx* ctxCopy = new SignJobCtx(WTF::move(ctx));
-    Bun__SignJob__createAndSchedule(globalObject, ctxCopy, JSValue::encode(callback));
 }
 
 std::optional<int32_t> getPadding(JSGlobalObject* globalObject, ThrowScope& scope, JSValue options)
@@ -286,8 +258,8 @@ std::optional<SignJobCtx> SignJobCtx::fromJS(JSGlobalObject* globalObject, Throw
     auto dataView = getArrayBufferOrView2(globalObject, scope, dataValue, "data"_s, jsUndefined());
     RETURN_IF_EXCEPTION(scope, {});
 
-    Vector<uint8_t> data;
-    data.append(std::span { dataView->data(), dataView->size() });
+    auto data = copyArgumentBytes(globalObject, scope, std::span { dataView->data(), dataView->size() }, "data"_s);
+    if (!data) return std::nullopt;
 
     if (mode == Mode::Sign) {
         if (keyValue.pureToBoolean() == TriState::False) {
@@ -319,9 +291,11 @@ std::optional<SignJobCtx> SignJobCtx::fromJS(JSGlobalObject* globalObject, Throw
 
     Vector<uint8_t> signatureData;
     if (mode == Mode::Verify) {
-        auto signatureView = getArrayBufferOrView2(globalObject, scope, signatureValue, "signature"_s, jsUndefined(), true);
+        auto signatureView = getArrayBufferOrView2(globalObject, scope, signatureValue, "signature"_s, jsUndefined());
         RETURN_IF_EXCEPTION(scope, {});
-        signatureData.append(std::span { signatureView->data(), signatureView->size() });
+        auto copy = copyArgumentBytes(globalObject, scope, std::span { signatureView->data(), signatureView->size() }, "signature"_s);
+        if (!copy) return std::nullopt;
+        signatureData = WTF::move(*copy);
     }
 
     auto prepareResult = mode == Mode::Verify
@@ -391,22 +365,26 @@ std::optional<SignJobCtx> SignJobCtx::fromJS(JSGlobalObject* globalObject, Throw
         //              return 0;
         //      }
         //
+        //    EC and DSA providers do the same thing:
+        //    - providers/implementations/keymgmt/ec_kmgmt.c returns "SHA256"
+        //    - providers/implementations/keymgmt/dsa_kmgmt.c returns DSA_DEFAULT_MD ("SHA256")
+        //
         // BoringSSL Difference:
         // =====================
         // BoringSSL (used by Bun) does not have this automatic default mechanism.
-        // When NULL is passed as the digest to EVP_DigestVerifyInit for RSA keys,
+        // When NULL is passed as the digest to EVP_DigestVerifyInit for RSA/EC/DSA keys,
         // BoringSSL returns error 0x06000077 (NO_DEFAULT_DIGEST).
         //
         // This Fix:
         // =========
         // To achieve Node.js/OpenSSL compatibility, we explicitly set SHA256 as the
-        // default digest for RSA keys when no algorithm is specified, matching the
-        // OpenSSL behavior documented above.
+        // default digest for RSA, EC, and DSA keys when no algorithm is specified,
+        // matching the OpenSSL behavior documented above.
         //
         // For Ed25519/Ed448 keys (one-shot variants), we intentionally leave digest
         // as null since these algorithms perform their own hashing internally and
         // don't require a separate digest algorithm.
-        if (keyObject.asymmetricKey().isRsaVariant()) {
+        if (keyObject.asymmetricKey().isRsaVariant() || keyObject.asymmetricKey().isSigVariant()) {
             digest = Digest::FromName("SHA256"_s);
         }
     }
@@ -428,7 +406,7 @@ std::optional<SignJobCtx> SignJobCtx::fromJS(JSGlobalObject* globalObject, Throw
         return SignJobCtx(
             mode,
             keyObject.data(),
-            WTF::move(data),
+            WTF::move(*data),
             digest,
             padding,
             pssSaltLength,
@@ -440,7 +418,7 @@ std::optional<SignJobCtx> SignJobCtx::fromJS(JSGlobalObject* globalObject, Throw
     return SignJobCtx(
         mode,
         keyObject.data(),
-        WTF::move(data),
+        WTF::move(*data),
         digest,
         padding,
         pssSaltLength,

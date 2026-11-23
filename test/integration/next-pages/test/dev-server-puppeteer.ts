@@ -2,8 +2,15 @@ import assert from "assert";
 import { which } from "bun";
 import { copyFileSync } from "fs";
 import { join } from "path";
+// @ts-expect-error installed by the test
 import type { ConsoleMessage, Page } from "puppeteer";
+// @ts-expect-error installed by the test
 import { launch } from "puppeteer";
+
+// Used inside callbacks that run in the browser. There is no lib.dom here.
+declare const document: any, getComputedStyle: any;
+type HTMLElement = any;
+
 const root = join(import.meta.dir, "../");
 
 copyFileSync(join(root, "src/Counter1.txt"), join(root, "src/Counter.tsx"));

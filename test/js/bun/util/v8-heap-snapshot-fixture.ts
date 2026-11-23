@@ -20,7 +20,7 @@ function describeSnapshot(json: any) {
 }
 
 // Runs the snapshot through a third-party parser, then walks every node and edge.
-async function parseAndWalk(json: unknown) {
+async function parseAndWalk(json: object) {
   const v8HeapSnapshot: typeof import("v8-heapsnapshot") = require("v8-heapsnapshot");
   const parsed = await v8HeapSnapshot.parseSnapshot(json);
 
@@ -117,7 +117,7 @@ switch (mode) {
 
     const json = JSON.parse(Bun.generateHeapSnapshot("v8"));
     // Referenced after the snapshot so nothing above is dead before it runs.
-    void (rs, reader, ws, writer, ts, pipePromise);
+    void (rs as unknown, reader, ws, writer, ts, pipePromise);
 
     const meta = json.snapshot.meta;
     const nodeStride = meta.node_fields.length;
@@ -161,6 +161,34 @@ switch (mode) {
     }
     for (const name of wanted) edgesByClass[name].sort();
     result = edgesByClass;
+    break;
+  }
+
+  case "wrapper-names": {
+    const held = {
+      heldAbortController: new AbortController(),
+      heldAbortSignal: AbortSignal.abort(),
+      heldCustomEvent: new CustomEvent("x"),
+      heldEvent: new Event("x"),
+      heldEventTarget: new EventTarget(),
+      heldFormData: new FormData(),
+      heldHeaders: new Headers(),
+      heldPerformance: performance,
+      heldPerformanceMark: new PerformanceMark("x"),
+      heldProcess: process,
+      heldSubtleCrypto: crypto.subtle,
+      heldTextEncoder: new TextEncoder(),
+      heldURL: new URL("http://localhost/"),
+    };
+    const { snapshot, nodes, edges, strings } = JSON.parse(Bun.generateHeapSnapshot("v8"));
+    const { node_fields, edge_fields, edge_types } = snapshot.meta;
+    const [type, name, to] = ["type", "name_or_index", "to_node"].map(field => edge_fields.indexOf(field));
+    result = {};
+    for (let e = 0; e < edges.length; e += edge_fields.length) {
+      const property = strings[edges[e + name]];
+      if (edge_types[type][edges[e + type]] !== "property" || !Object.hasOwn(held, property)) continue;
+      result[property] = strings[nodes[edges[e + to] + node_fields.indexOf("name")]];
+    }
     break;
   }
 

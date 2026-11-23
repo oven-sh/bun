@@ -5,7 +5,7 @@ import os from "node:os";
 // https://github.com/oven-sh/bun/issues/38931
 // Creating a native error whose message exceeds ~2^30 bytes of non-ASCII
 // UTF-8 used to abort the process: the UTF-8 -> UTF-16 conversion behind
-// ZigString__toErrorInstance sized an intermediate WTF::Vector<char16_t> by
+// EncodedSlice__toErrorInstance sized an intermediate WTF::Vector<char16_t> by
 // the byte count, which CRASH()es past ~2^30 entries. A failing expect
 // matcher with a huge message (or received value) is the userland door into
 // that path. The message must be non-ASCII: all-ASCII messages stay 8-bit
@@ -51,7 +51,7 @@ console.log(JSON.stringify({
       exitCode: 0,
       signalCode: null,
     });
-    expect(parsed.length).toBeGreaterThan(540_000_000);
+    expect(parsed.length).toBe(540_000_000);
   },
   300_000,
 );

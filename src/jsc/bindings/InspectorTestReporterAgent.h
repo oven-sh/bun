@@ -16,11 +16,14 @@ class BackendDispatcher;
 class TestReporterFrontendDispatcher;
 enum class DisconnectReason;
 
-class InspectorTestReporterAgent final : public InspectorAgentBase, public Inspector::TestReporterBackendDispatcherHandler {
+class InspectorTestReporterAgent final : public InspectorAgentBase, public Inspector::TestReporterBackendDispatcherHandler, public CanMakeThreadSafeCheckedPtr<InspectorTestReporterAgent> {
     WTF_MAKE_NONCOPYABLE(InspectorTestReporterAgent);
     WTF_MAKE_TZONE_ALLOCATED(InspectorTestReporterAgent);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(InspectorTestReporterAgent);
 
 public:
+    OVERRIDE_ABSTRACT_CAN_MAKE_CHECKEDPTR(CanMakeThreadSafeCheckedPtr);
+
     InspectorTestReporterAgent(JSC::JSGlobalObject&);
     virtual ~InspectorTestReporterAgent();
 
@@ -33,7 +36,7 @@ public:
     virtual Protocol::ErrorStringOr<void> disable() final;
 
     // Public API for reporting test events
-    void reportTestFound(JSC::CallFrame*, int testId, const String& name, Protocol::TestReporter::TestType type = Protocol::TestReporter::TestType::Test, int parentId = -1);
+    void reportTestFound(int testId, const String& name, Protocol::TestReporter::TestType type = Protocol::TestReporter::TestType::Test, int parentId = -1);
     void reportTestFoundWithLocation(int testId, const String& name, Protocol::TestReporter::TestType type, int parentId, const String& sourceURL, int line);
     void reportTestStart(int testId);
     void reportTestEnd(int testId, Protocol::TestReporter::TestStatus status, double elapsed);

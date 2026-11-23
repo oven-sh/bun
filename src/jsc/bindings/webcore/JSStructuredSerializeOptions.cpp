@@ -25,6 +25,7 @@
 #include "ErrorCode.h"
 #include "JSDOMExceptionHandling.h"
 #include "JSDOMException.h"
+#include "ObjectBindings.h"
 #include "ZigGlobalObject.h"
 #include "JSDOMConvertSequences.h"
 #include <JavaScriptCore/JSArray.h>
@@ -66,12 +67,10 @@ Vector<JSC::Strong<JSC::JSObject>> convertTransferList(JSGlobalObject& lexicalGl
         RETURN_IF_EXCEPTION(throwScope, {});
         if (!step.isObject())
             return notIterable();
-        JSValue done = step.get(&lexicalGlobalObject, vm.propertyNames->done);
+        auto [done, element] = Bun::getIteratorResult(&lexicalGlobalObject, asObject(step), Bun::IteratorDoneValue::Skip);
         RETURN_IF_EXCEPTION(throwScope, {});
         if (done.toBoolean(&lexicalGlobalObject))
             break;
-        JSValue element = step.get(&lexicalGlobalObject, vm.propertyNames->value);
-        RETURN_IF_EXCEPTION(throwScope, {});
         // The arg IS iterable, so a bad *element* is not a "must be an iterable" error.
         // node: DataCloneError from port.postMessage(), TypeError from structuredClone().
         if (!element.isObject()) {
@@ -90,25 +89,16 @@ template<> StructuredSerializeOptions convertDictionary<StructuredSerializeOptio
 {
     auto& vm = JSC::getVM(&lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    bool isNullOrUndefined = value.isUndefinedOrNull();
-    auto* object = isNullOrUndefined ? nullptr : value.getObject();
-    if (!isNullOrUndefined && !object) [[unlikely]] {
-        throwTypeError(&lexicalGlobalObject, throwScope);
-        return {};
-    }
     StructuredSerializeOptions result;
-    JSValue transferValue;
-    if (isNullOrUndefined)
-        transferValue = jsUndefined();
-    else {
-        transferValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "transfer"_s));
-        RETURN_IF_EXCEPTION(throwScope, {});
-    }
+    auto* object = dictionaryObject(lexicalGlobalObject, throwScope, value);
+    if (!object)
+        return result;
+    JSValue transferValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "transfer"_s));
+    RETURN_IF_EXCEPTION(throwScope, {});
     if (!transferValue.isUndefined()) {
         result.transfer = convertTransferList(lexicalGlobalObject, transferValue, "Optional options.transfer argument must be an iterable"_s, BadTransferElement::ThrowTypeError);
         RETURN_IF_EXCEPTION(throwScope, {});
-    } else
-        result.transfer = Converter<IDLSequence<IDLObject>>::ReturnType {};
+    }
     return result;
 }
 

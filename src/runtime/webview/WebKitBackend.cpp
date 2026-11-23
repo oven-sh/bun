@@ -12,6 +12,8 @@
 #include "ipc_protocol.h"
 #include "ZigGlobalObject.h"
 #include "BunClientData.h"
+#include "GeneratedBlob.h"
+#include "OwnedFd.h"
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/TopExceptionScope.h>
 #include <JavaScriptCore/JSPromise.h>
@@ -24,6 +26,7 @@
 #include <JavaScriptCore/Strong.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/Base64.h>
+#include <wtf/MmapSpan.h>
 #include <wtf/NeverDestroyed.h>
 #include <mutex>
 
@@ -41,10 +44,10 @@ using namespace WebViewProto;
 
 // Spawn + process-exit watch implemented in HostProcess.rs (EVFILT_PROC).
 extern "C" int32_t Bun__WebViewHost__ensure(Zig::GlobalObject*, bool stdoutInherit, bool stderrInherit);
+// Unpublishes and kills the host without reporting its exit back here.
+extern "C" void Bun__WebViewHost__retire();
 extern "C" void* Blob__fromMmapWithType(JSC::JSGlobalObject*, uint8_t* ptr, size_t len, const char* mime);
-extern "C" JSC::EncodedJSValue SYSV_ABI Blob__create(Zig::GlobalObject*, void* impl);
 extern "C" JSC::EncodedJSValue JSBuffer__fromMmap(Zig::GlobalObject*, void* ptr, size_t length);
-extern "C" void Bun__VmHandle__refKeepAlive(const ::BunVmHandleRef*, int delta);
 // Bracket the whole onData batch. exit() drains microtasks when outermost,
 // so all the promise reactions from this batch run before we return to usockets.
 extern "C" void Bun__EventLoop__enter(Zig::GlobalObject*);
@@ -124,7 +127,7 @@ void HostClient::updateKeepAlive()
     if (want == sockRefd || !global) return;
     sockRefd = want;
     Bun__VmHandle__refKeepAlive(
-        WebCore::clientData(global->vm())->vmHandle, want ? 1 : -1);
+        WebCore::clientData(global->vm())->vmHandle.get(), BunLoopKind::Regular, want ? 1 : -1);
 }
 
 bool HostClient::ensureSpawned(Zig::GlobalObject* zig, bool stdoutInherit, bool stderrInherit)
@@ -142,8 +145,8 @@ bool HostClient::ensureSpawned(Zig::GlobalObject* zig, bool stdoutInherit, bool 
         txQueue.clear();
     }
 
-    int fd = Bun__WebViewHost__ensure(zig, stdoutInherit, stderrInherit);
-    if (fd < 0) {
+    OwnedFd fd { Bun__WebViewHost__ensure(zig, stdoutInherit, stderrInherit) };
+    if (!fd) {
         dead = true;
         return false;
     }
@@ -160,15 +163,12 @@ bool HostClient::ensureSpawned(Zig::GlobalObject* zig, bool stdoutInherit, bool 
     // READABLE|WRITABLE. ipc=0 — we're not doing SCM_RIGHTS fd passing.
     // us_poll_start_rc doesn't touch loop.active; updateKeepAlive is the
     // sole ref manager. kind=1 (.dynamic) → dispatch via s_hostVTable.
-    sock = us_socket_from_fd(&s_hostGroup, BUN_SOCKET_KIND_DYNAMIC, nullptr, sizeof(void*), fd, 0, 0);
+    sock = us_socket_from_fd(&s_hostGroup, BUN_SOCKET_KIND_DYNAMIC, nullptr, sizeof(void*), fd.get(), 0, 0);
     if (!sock) {
-        // us_socket_from_fd calls us_poll_free on failure but doesn't close
-        // the fd (ownership was ours). Leak it and the child stays alive
-        // forever with a dead read end.
-        ::close(fd);
         dead = true;
         return false;
     }
+    fd.leak();
     return true;
 }
 
@@ -212,23 +212,18 @@ void HostClient::onWritable()
 
 // Open + mmap the child-written shm segment. The child already munmapped
 // its side before sendReply, so we're the sole mapper. O_RDWR + PROT_WRITE
-// because the child's allocator poisons the buffer in
-// safe builds BEFORE the vtable free (which munmap's) — a PROT_READ
-// mapping SIGBUS'd on that poison. MAP_SHARED is required for POSIX shm
+// because JS can be given the pages to write to. MAP_SHARED is required for POSIX shm
 // objects on macOS — MAP_PRIVATE returns EINVAL (the kernel's posix_shm
-// vfs doesn't implement VM_BEHAVIOR_COPY). Returns nullptr on failure
-// with errno set; caller reports it.
-static void* mapShm(const char* zname, size_t byteLen, int& outErr)
+// vfs doesn't implement VM_BEHAVIOR_COPY).
+static MmapSpan<uint8_t> mapShm(const char* zname, size_t byteLen, int& outErr)
 {
-    int fd = shm_open(zname, O_RDWR, 0);
-    if (fd < 0) {
+    OwnedFd fd { shm_open(zname, O_RDWR, 0) };
+    if (!fd) {
         outErr = errno;
-        return nullptr;
+        return {};
     }
-    void* map = mmap(nullptr, byteLen, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-    outErr = (map == MAP_FAILED) ? errno : 0;
-    ::close(fd); // after capturing errno
-    if (map == MAP_FAILED) return nullptr;
+    auto map = MmapSpan<uint8_t>::mmap(nullptr, byteLen, PROT_READ | PROT_WRITE, MAP_SHARED, fd.get());
+    outErr = map ? 0 : errno;
     return map;
 }
 
@@ -259,13 +254,13 @@ static JSValue openShmScreenshot(JSGlobalObject* g, const char* name, uint32_t n
         auto* obj = JSC::constructEmptyObject(g);
         obj->putDirect(vm, Identifier::fromString(vm, "name"_s),
             jsString(vm, WTF::String::fromUTF8(std::span<const char>(name, nameLen))));
-        obj->putDirect(vm, Identifier::fromString(vm, "size"_s), jsNumber(byteLen));
+        Bun::putDirectNamed(vm, obj, "size"_s, jsNumber(byteLen));
         ok = true;
         return obj;
     }
 
     int shmErr = 0;
-    void* map = mapShm(zname.span().data(), byteLen, shmErr);
+    auto map = mapShm(zname.span().data(), byteLen, shmErr);
     // Unlink after we have a mapping — the name can go away, the physical
     // pages live until the last mapping drops. For the error path
     // (map==null), we still unlink to avoid leaking the name; the user
@@ -276,12 +271,11 @@ static JSValue openShmScreenshot(JSGlobalObject* g, const char* name, uint32_t n
 
     switch (enc) {
     case ScreenshotEncoding::Blob: {
-        // Blob adopts the mapping — no copy. Store's allocator.free
-        // munmap's when the Blob's refcount drops to zero.
+        // Blob adopts the mapping — no copy. Its store munmap's when dropped.
         // `await blob.bytes()` reads directly from these pages.
-        void* impl = Blob__fromMmapWithType(g, static_cast<uint8_t*>(map), byteLen, mime);
+        void* impl = Blob__fromMmapWithType(g, map.leakSpan().data(), byteLen, mime);
         ok = true;
-        return JSValue::decode(Blob__create(defaultGlobalObject(g), impl));
+        return Bun::Bindgen::createWrapper<Bun::Bindgen::Generated::JSBlob>(g, impl);
     }
     case ScreenshotEncoding::Buffer: {
         // ArrayBuffer adopts the mapping — createFromBytes + a
@@ -289,18 +283,15 @@ static JSValue openShmScreenshot(JSGlobalObject* g, const char* name, uint32_t n
         // zero-copy as Blob, just wrapped as a Node Buffer
         // (JSUint8Array with JSBufferSubclassStructure).
         ok = true;
-        return JSValue::decode(JSBuffer__fromMmap(defaultGlobalObject(g), map, byteLen));
+        return JSValue::decode(JSBuffer__fromMmap(defaultGlobalObject(g), map.leakSpan().data(), byteLen));
     }
     case ScreenshotEncoding::Base64: {
         // base64Encode copies into the output String — one
         // materialization, unavoidable (the user explicitly wants the
         // text form). WTF's encoder is vectorized (SIMD on the 3→4
-        // table-lookup). Unmap after — the string owns its own copy.
-        WTF::String b64 = WTF::base64EncodeToString(
-            std::span<const uint8_t>(static_cast<const uint8_t*>(map), byteLen));
-        munmap(map, byteLen);
+        // table-lookup).
         ok = true;
-        return jsString(vm, WTF::move(b64));
+        return jsString(vm, WTF::base64EncodeToString(map.span()));
     }
     case ScreenshotEncoding::Shmem:
         RELEASE_ASSERT_NOT_REACHED(); // handled above
@@ -336,6 +327,10 @@ void HostClient::handleReply(const Frame& h, Reader r)
         return;
     }
     case Reply::NavFailEvent: {
+        // Callback only. The slot settles on the NavFailed that follows when
+        // the failure belongs to an IPC navigate; the delegate also fails
+        // for navigations no IPC navigate owns (reload, back/forward, the
+        // page itself), and only the host can tell them apart.
         WTF::String err = r.str();
         view->m_loading = false;
         if (JSObject* cb = view->m_onNavigationFailed.get()) {
@@ -403,8 +398,9 @@ void HostClient::handleReply(const Frame& h, Reader r)
         settleSlot(g, view, view->m_pendingNavigate, true, jsUndefined());
         return;
     case Reply::NavFailed:
-        // navigateIPC sends NavFailed directly for invalid URLs — no
-        // NavFailEvent precedes it, so the only m_loading reset path is here.
+        // NavFailEvent precedes this on navigation failures. host_main's
+        // invalid-viewId NavFailed has no event, so keep the m_loading
+        // reset here too.
         view->m_loading = false;
         settleSlot(g, view, view->m_pendingNavigate, false, createError(g, r.str()));
         return;
@@ -485,8 +481,17 @@ void HostClient::onClose()
     rejectAllAndMarkDead("WebView host process died"_s);
 }
 
+void HostClient::retireGlobal(Zig::GlobalObject* g)
+{
+    if (global != g) return;
+    rejectAllAndMarkDead("WebView closed: its test file finished"_s);
+    Bun__WebViewHost__retire();
+    global = nullptr;
+}
+
 void HostClient::onData(const char* data, int length)
 {
+    if (dead) return;
     rx.append(std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(data), static_cast<size_t>(length)));
 
     auto& vm = global->vm();
@@ -511,7 +516,7 @@ void HostClient::onData(const char* data, int length)
         off += sizeof(Frame) + h.len;
 
         handleReply(h, r);
-        // createError/jsString/Blob__create can throw (OOM). Report +
+        // createError/jsString can throw (OOM). Report +
         // clear so one bad frame doesn't poison the rest of the batch.
         if (auto* exception = catchScope.exception()) [[unlikely]] {
             if (!catchScope.clearExceptionExceptTermination()) break;
@@ -645,16 +650,23 @@ JSPromise* reload(JSGlobalObject* g, JSWebView* view)
     return sendOp(g, view, view->m_pendingMisc, Op::Reload, nullptr, 0);
 }
 
+// close() variant, mirror of ChromeBackend's rejectViewSlotsAsHandled:
+// see rejectSlotAsHandled (JSWebView.h).
+static void rejectViewSlotsAsHandled(JSGlobalObject* g, JSWebView* view, JSValue err)
+{
+    view->m_loading = false;
+    rejectSlotAsHandled(g, view, view->m_pendingNavigate, err);
+    rejectSlotAsHandled(g, view, view->m_pendingEval, err);
+    rejectSlotAsHandled(g, view, view->m_pendingScreenshot, err);
+    rejectSlotAsHandled(g, view, view->m_pendingMisc, err);
+}
+
 void close(JSWebView* view)
 {
     auto& c = client();
     if (c.global) {
         auto* g = c.global;
-        JSValue err = createError(g, "WebView closed"_s);
-        settleSlot(g, view, view->m_pendingNavigate, false, err);
-        settleSlot(g, view, view->m_pendingEval, false, err);
-        settleSlot(g, view, view->m_pendingScreenshot, false, err);
-        settleSlot(g, view, view->m_pendingMisc, false, err);
+        rejectViewSlotsAsHandled(g, view, createError(g, "WebView closed"_s));
     }
     c.writeFrame(Op::Close, view->m_viewId, nullptr, 0);
     c.viewsById.erase(view->m_viewId);

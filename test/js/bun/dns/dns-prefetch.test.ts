@@ -1,6 +1,8 @@
 import { dns } from "bun";
 import { describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isASAN, isWindows, tempDir } from "harness";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 // The DNS cache is process-global, so this runs in its own process to get
 // clean counters. Docs promise that a failed connection evicts the host's
@@ -40,10 +42,115 @@ test("a failed connect evicts the host's DNS cache entry", async () => {
   });
 });
 
+test.skipIf(!isASAN || isWindows)("dns.prefetch does not leak when every cache entry is in use", async () => {
+  const script = `
+    import { dnsCacheSeed } from "bun:internal-for-testing";
+    // Out of the module loader's stack, whose leaks are suppressed.
+    await new Promise(resolve => setImmediate(resolve));
+    const listener = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+    // With two addresses, a socket uses its entry until it is connected.
+    const connecting = Array.from({ length: 256 }, (_, i) => {
+      dnsCacheSeed("host-" + i, ["127.0.0.1", "127.0.0.1"]);
+      return Bun.connect({ hostname: "host-" + i, port: listener.port, socket: { data() {} } });
+    });
+    // A second miss shows that the first request found no slot.
+    Bun.dns.prefetch("one-more.localhost");
+    Bun.dns.prefetch("one-more.localhost");
+    console.log(Bun.dns.getCacheStats().cacheMisses);
+    for (const socket of await Promise.all(connecting)) socket.end();
+    listener.stop(true);
+  `;
+  // `leak:getaddrinfo` also matches the cache's own `getaddrinfo`, which allocates the request.
+  const suppressions = readFileSync(join(import.meta.dirname, "../../../leaksan.supp"), "utf8").split("\n");
+  using dir = tempDir("dns-cache-full", {
+    "leaksan.supp": suppressions.filter(rule => !rule.endsWith("getaddrinfo")).join("\n"),
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: {
+      ...bunEnv,
+      BUN_DESTRUCT_VM_ON_EXIT: "1",
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+      LSAN_OPTIONS: `print_suppressions=0:suppressions=${join(String(dir), "leaksan.supp")}`,
+    },
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "2\n", stderr: "", exitCode: 0 });
+});
+
+test("dns.getCacheStats returns a new plain object of integers", () => {
+  const stats = dns.getCacheStats();
+  expect(Object.getPrototypeOf(stats)).toBe(Object.prototype);
+  expect(Object.keys(stats)).toEqual([
+    "cacheHitsCompleted",
+    "cacheHitsInflight",
+    "cacheMisses",
+    "size",
+    "errors",
+    "totalCount",
+  ]);
+  for (const descriptor of Object.values(Object.getOwnPropertyDescriptors(stats))) {
+    expect(descriptor).toEqual({ value: expect.any(Number), writable: true, enumerable: true, configurable: true });
+    expect(descriptor.value).toBeInteger();
+  }
+  expect(dns.getCacheStats()).not.toBe(stats);
+});
+
 describe("dns.prefetch", () => {
+  it("checks its arguments", () => {
+    for (const hostname of [undefined, null, 1, {}, [], Symbol(), { toString: () => "localhost" }] as any[]) {
+      expect(() => dns.prefetch(hostname)).toThrow(
+        expect.objectContaining({
+          name: "TypeError",
+          code: "ERR_INVALID_ARG_TYPE",
+          message: "hostname must be a string",
+        }),
+      );
+    }
+    for (const [port, received] of [
+      ["80", "type string ('80')"],
+      [true, "type boolean (true)"],
+      [80n, "type bigint (80n)"],
+      [{ valueOf: () => 80 }, "an instance of Object"],
+    ] as any[]) {
+      expect(() => dns.prefetch("localhost", port)).toThrow(
+        expect.objectContaining({
+          name: "TypeError",
+          code: "ERR_INVALID_ARG_TYPE",
+          message: `The "port" argument must be of type number. Received ${received}`,
+        }),
+      );
+    }
+    for (const port of [80.5, NaN, Infinity]) {
+      expect(() => dns.prefetch("localhost", port)).toThrow(
+        expect.objectContaining({
+          name: "RangeError",
+          code: "ERR_OUT_OF_RANGE",
+          message: `The value of "port" is out of range. It must be an integer. Received ${port}`,
+        }),
+      );
+    }
+    for (const [port, received] of [
+      [-1, "-1"],
+      [65536, "65536"],
+      [2 ** 53, "9_007_199_254_740_992"],
+    ]) {
+      expect(() => dns.prefetch("localhost", port as number)).toThrow(
+        expect.objectContaining({
+          name: "RangeError",
+          code: "ERR_OUT_OF_RANGE",
+          message: `The value of "port" is out of range. It must be >= 0 && <= 65535. Received ${received}`,
+        }),
+      );
+    }
+    // Not "localhost": the cache is keyed by the name, and the next test needs it cold.
+    for (const port of [undefined, null, 0, 65535] as any[]) expect(dns.prefetch("127.0.0.1", port)).toBeUndefined();
+  });
+
   it("should prefetch", async () => {
-    // A local server keeps the test off the external network. "localhost" is a
-    // real DNS lookup, so prefetch and fetch share the same cache entry.
+    // A local server keeps the test off the external network. "localhost" gets a
+    // cache entry like any other name, which prefetch and fetch share.
     await using server = Bun.serve({ port: 0, fetch: () => new Response("ok") });
     const url = `http://localhost:${server.port}/`;
 

@@ -8,24 +8,24 @@ use core::ptr::NonNull;
 
 use bun_ast::Loader;
 use bun_ast::Log;
-use bun_bundler::bundle_v2::BundleV2Result;
+use bun_bundler::bundle_v2::BuildResult;
 use bun_bundler::options::{self as bundler_options, LoaderExt as _};
-use bun_core::strings;
 use bun_http::Headers;
 use bun_http_types::Method::Method;
 use bun_jsc::JsCell;
-use bun_ptr::{AsCtxPtr, IntrusiveRc, RefCount};
+use bun_ptr::{RefCount, RefPtr};
 use bun_uws::{AnyRequest, AnyResponse};
 
-use crate::api::js_bundle_completion_task::{
-    JSBundleCompletionTask, create_and_schedule_completion_task,
-};
+use crate::api::js_bundle_completion_task::{BuildOwner, JSBundleCompletionTask};
 use crate::api::js_bundler::js_bundler::{self as JSBundler, Config as JSBundlerConfig};
 use crate::api::output_file_jsc::OutputFileJsc as _;
 use crate::bake::dev_server::route_bundle;
-use crate::server::jsc::{JSGlobalObject, JSValue, JsResult};
+use crate::server::jsc::{JSGlobalObject, JSValue};
 use crate::server::server_config::MethodOptional;
-use crate::server::{AnyRoute, AnyServer, GetOrStartLoadResult, ServePluginsCallback, StaticRoute};
+use crate::server::{
+    AnyRoute, AnyServer, GetOrStartLoadResult, PendingRequest, ServePluginsCallback, Served,
+    StaticRoute,
+};
 use crate::webcore::AnyBlob;
 
 // Scoped debug logger — wrapped in a sub-module so the
@@ -36,99 +36,34 @@ mod debug_scope {
 }
 use debug_scope::HTMLBundle as debug;
 
-// .classes.ts codegen wires toJS/fromJS/fromJSDirect via #[bun_jsc::JsClass].
 // HTMLBundle can be owned by JavaScript as well as any number of Server instances,
 // hence the ref count alongside the JS wrapper.
-// `*mut HTMLBundle` is the m_ctx payload of a
-// `.classes.ts` wrapper — FFI rule says intrusive `RefPtr`.
+/// `HTMLBundle`, declared in `HTMLBundle.bind.ts`.
 #[derive(bun_ptr::RefCounted)]
 #[ref_count(debug_name = "HTMLBundle")]
-pub struct HTMLBundle {
+pub(crate) struct HTMLBundle {
     ref_count: RefCount<HTMLBundle>,
-    // JSC_BORROW field on heap struct.
-    pub global: *const JSGlobalObject,
+    pub global: bun_ptr::BackRef<JSGlobalObject>,
     pub path: Box<[u8]>,
 }
 
-// `jsc.Codegen.JSHTMLBundle` — hand-expansion of what the `#[bun_jsc::JsClass]`
-// derive would emit. Symbol names match generate-classes.ts
-// (`${typeName}__fromJS` / `__fromJSDirect` / `__create` / `__getConstructor`).
-// Hand-written (rather than `#[bun_jsc::JsClass]`) because HTMLBundle has a
-// custom `finalize` that derefs an intrusive refcount instead of Box-dropping.
-const _: () = {
-    // `*mut HTMLBundle` is opaque to C++ (linked by symbol name only); the
-    // pointee's Rust layout is irrelevant to the FFI boundary, but HTMLBundle
-    // lacks `#[repr(C)]` so rustc lints anyway.
-    // `safe fn` to match `generated_classes.rs` / the `#[bun_jsc::JsClass]`
-    // macro (avoids `clashing_extern_declarations`).
-    bun_jsc::jsc_abi_extern! {
-        #[allow(improper_ctypes)]
-        {
-            #[link_name = "HTMLBundle__fromJS"]
-            safe fn __from_js(value: JSValue) -> *mut HTMLBundle;
-            #[link_name = "HTMLBundle__fromJSDirect"]
-            safe fn __from_js_direct(value: JSValue) -> *mut HTMLBundle;
-            #[link_name = "HTMLBundle__create"]
-            safe fn __create(global: *mut JSGlobalObject, ptr: *mut HTMLBundle) -> JSValue;
-        }
-    }
-
-    impl bun_jsc::JsClass for HTMLBundle {
-        fn from_js(value: JSValue) -> Option<*mut Self> {
-            let p = __from_js(value);
-            if p.is_null() { None } else { Some(p) }
-        }
-        fn from_js_direct(value: JSValue) -> Option<*mut Self> {
-            let p = __from_js_direct(value);
-            if p.is_null() { None } else { Some(p) }
-        }
-        fn to_js(self, _global: &JSGlobalObject) -> JSValue {
-            // HTMLBundle is *only* constructed via `init()` → `IntrusiveRc::new`
-            // (heap-boxed, intrusive-refcounted) and wrapped via the inherent
-            // `HTMLBundle::to_js(*mut Self, …)` below, which
-            // wraps the *existing* `*HTMLBundle` allocation; re-boxing a
-            // by-value `self` here would split the allocation from its refcount
-            // and make `finalize`'s `deref` target the wrong heap block. No
-            // code path holds an owned by-value `HTMLBundle`, so this trait
-            // method is genuinely unreachable.
-            unreachable!("HTMLBundle::to_js: use the inherent *mut Self overload")
-        }
-        // `noConstructor: true` — no `HTMLBundle__getConstructor` export; trait default applies.
-    }
-
-    impl HTMLBundle {
-        /// `jsc.Codegen.JSHTMLBundle.toJS` — wraps an existing intrusive-
-        /// refcounted allocation. The JS wrapper takes one ref (released in
-        /// `finalize`), so callers must have already accounted for that ref.
-        pub fn to_js(this: *mut HTMLBundle, global: &JSGlobalObject) -> JSValue {
-            // `this` is a live `IntrusiveRc::new`-boxed allocation; ownership
-            // of one ref transfers to the C++ wrapper (deref'd via
-            // `HTMLBundleClass__finalize` → `finalize()`).
-            __create(global.as_mut_ptr(), this)
-        }
-    }
-};
-
 impl HTMLBundle {
+    /// The JS wrapper takes over `self`.
+    pub(crate) fn to_js(self: RefPtr<Self>, global: &JSGlobalObject) -> JSValue {
+        crate::generated_bindgen::html_bundle::js_HTMLBundle::to_js(self, global)
+    }
+
     /// Initialize an HTMLBundle given a path.
-    pub(crate) fn init(global: &JSGlobalObject, path: &[u8]) -> IntrusiveRc<HTMLBundle> {
-        // Box::from aborts on OOM.
-        IntrusiveRc::new(HTMLBundle {
+    pub(crate) fn init(global: &JSGlobalObject, path: &[u8]) -> RefPtr<HTMLBundle> {
+        RefPtr::new(HTMLBundle {
             ref_count: RefCount::init(),
-            global,
+            global: bun_ptr::BackRef::new(global),
             path: Box::<[u8]>::from(path),
         })
     }
 
-    /// `.classes.ts` finalize: true — runs on mutator thread during lazy sweep.
-    pub fn finalize(self: Box<Self>) {
-        bun_ptr::finalize_js_box_noop(self);
-    }
-
-    // `path: Box<[u8]>` auto-drops; dealloc handled by IntrusiveRc — no explicit Drop body.
-
-    pub(crate) fn get_index(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        bun_jsc::bun_string_jsc::create_utf8_for_js(global, &this.path)
+    pub(crate) fn get_index(&self) -> &[u8] {
+        &self.path
     }
 
     /// For `Route::on_complete` and the dev server's `finalize_bundle`, when a build has no page for the file.
@@ -155,16 +90,13 @@ pub(crate) type HTMLBundleRoute = Route;
 /// html file on multiple endpoints.
 // R-2 (host-fn re-entrancy): every uws/event-loop-reachable method takes
 // `&self`; per-field interior mutability via `Cell` (Copy) / `JsCell`
-// (non-Copy). `*mut Route` is recovered from uws userdata and the
-// `JSBundleCompletionTask` backref while a prior `&Route` may still be on the
+// (non-Copy). A `Route` is re-entered from uws callbacks and the
+// `JSBundleCompletionTask` while a prior `&Route` may still be on the
 // stack — `&mut self` would alias (UB); `&self` + `UnsafeCell` is sound.
 #[derive(bun_ptr::RefCounted)]
 #[ref_count(debug_name = "HTMLBundleRoute")]
-pub struct Route {
-    // FFI userdata — *Route is recovered from uws callback
-    // userdata (on_aborted, JSBundleCompletionTask backref). §Pointers FFI
-    // rule → `bun_ptr::RefPtr<HTMLBundle>` + `impl RefCounted`.
-    pub(crate) bundle: IntrusiveRc<HTMLBundle>,
+pub(crate) struct Route {
+    pub(crate) bundle: RefPtr<HTMLBundle>,
     /// One HTMLBundle.Route can be specified multiple times
     ref_count: RefCount<Route>,
     // TODO: attempt to remove the null case. null is only present during server
@@ -176,62 +108,33 @@ pub struct Route {
     /// registered with the bundler.
     pub(crate) dev_server_id: Cell<Option<route_bundle::Index>>,
     /// When state == .pending, incomplete responses are stored here.
-    // Raw `*mut` because the pointer is handed to uws onAborted callback and
-    // compared by identity; allocation/free is via heap::alloc/from_raw.
-    pub(crate) pending_responses: JsCell<Vec<*mut PendingResponse>>,
+    pending_responses: JsCell<Vec<PendingResponse>>,
 }
 
-pub enum State {
-    Pending,
-    /// `None` while the server's plugins are still loading. In either form the
-    /// route holds a pending request on `Route::server` (`schedule_bundle`).
-    Building(Option<*mut JSBundleCompletionTask>),
-    Err(Log),
-    /// Intrusive-refcounted; freed via `StaticRoute::deref_` in `State::deinit`.
-    Html(*mut StaticRoute),
-}
-
-// `State::deinit` is *only* invoked from `Route::deinit` and the
-// dev-mode reset in `onAnyRequest`; ordinary `this.state = ...` overwrites in
-// `onComplete`/`onPluginsResolved`/etc. do NOT run it. Mapping it to `impl Drop`
-// would fire on every assignment — in particular `on_complete`'s
-// `self.state = State::Err/Html` would spuriously cancel and double-deref the
-// completion task (whose matching deref is the caller's `defer this.deref()` in
-// `JSBundleCompletionTask.onComplete`). So `deinit` stays an explicit method.
-impl State {
-    fn deinit(&mut self) {
-        match mem::replace(self, State::Pending) {
-            State::Err(_log) => {
-                // Log drops itself
-            }
-            State::Building(Some(c)) => {
-                // SAFETY: `c` was produced by `create_and_schedule_completion_task`
-                // (heap::alloc, refcount ≥ 1) and we hold one of those refs.
-                unsafe {
-                    (*c).cancelled
-                        .store(true, core::sync::atomic::Ordering::Release);
-                    RefCount::<JSBundleCompletionTask>::deref(c);
-                }
-            }
-            State::Building(None) => {}
-            State::Html(html) => {
-                // SAFETY: `html` was produced by `StaticRoute::clone` (heap::alloc,
-                // refcount == 1) or via `ref_()`; this drops our ref.
-                unsafe { StaticRoute::deref_(html) };
-            }
-            State::Pending => {}
-        }
+impl Served for RefPtr<Route> {
+    fn served_by(&self) -> Option<AnyServer> {
+        self.server.get()
     }
+}
+
+/// Keeps the route and its server alive until the route is told the outcome.
+pub(crate) type PendingBuild = PendingRequest<RefPtr<Route>>;
+
+pub(crate) enum State {
+    Pending,
+    /// The plugin load or the `JSBundleCompletionTask` holds a [`PendingBuild`].
+    Building,
+    Err(Log),
+    Html(RefPtr<StaticRoute>),
 }
 
 impl State {
     fn memory_cost(&self) -> usize {
         match self {
             State::Pending => 0,
-            State::Building(_) => 0,
+            State::Building => 0,
             State::Err(log) => log.memory_cost(),
-            // SAFETY: `*html` is a live intrusive-refcounted allocation while held.
-            State::Html(html) => unsafe { (**html).memory_cost() },
+            State::Html(html) => html.memory_cost(),
         }
     }
 }
@@ -245,16 +148,9 @@ impl Route {
         cost
     }
 
-    /// # Safety
-    /// `html_bundle` must point to a live `IntrusiveRc`-managed `HTMLBundle`
-    /// allocation; this takes one ref on it.
-    // Forwards `html_bundle` to `IntrusiveRc::init_ref` without dereferencing it
-    // here; not_unsafe_ptr_arg_deref is a false positive on forwarding wrappers.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub(crate) fn init(html_bundle: *mut HTMLBundle) -> IntrusiveRc<Route> {
-        IntrusiveRc::new(Route {
-            // SAFETY: caller contract.
-            bundle: unsafe { IntrusiveRc::<HTMLBundle>::init_ref(html_bundle) },
+    pub(crate) fn init(bundle: RefPtr<HTMLBundle>) -> RefPtr<Route> {
+        RefPtr::new(Route {
+            bundle,
             pending_responses: JsCell::new(Vec::new()),
             ref_count: RefCount::init(),
             server: Cell::new(None),
@@ -263,24 +159,19 @@ impl Route {
         })
     }
 
-    pub(crate) fn on_request(this: *mut Self, req: AnyRequest, resp: AnyResponse) {
-        Self::on_any_request(this, req, resp, false);
+    pub(crate) fn on_request(self: RefPtr<Self>, req: AnyRequest, resp: AnyResponse) {
+        self.on_any_request(req, resp, false);
     }
 
-    pub(crate) fn on_head_request(this: *mut Self, req: AnyRequest, resp: AnyResponse) {
-        Self::on_any_request(this, req, resp, true);
+    pub(crate) fn on_head_request(self: RefPtr<Self>, req: AnyRequest, resp: AnyResponse) {
+        self.on_any_request(req, resp, true);
     }
 
-    fn on_any_request(this: *mut Self, mut req: AnyRequest, resp: AnyResponse, is_head: bool) {
-        // SAFETY: `this` is a live IntrusiveRc-managed allocation; `ScopedRef`
-        // bumps the count and derefs on every exit path.
-        let _keep_alive = unsafe { bun_ptr::ScopedRef::new(this) };
-        // SAFETY: held alive by `_keep_alive`; single-threaded (uws JS-thread
-        // callback). R-2: deref as shared (`&*`) — every method below takes
-        // `&self`; mutation goes through `Cell`/`JsCell`.
-        let route = unsafe { &*this };
+    #[inline(never)]
+    fn on_any_request(self: RefPtr<Self>, mut req: AnyRequest, resp: AnyResponse, is_head: bool) {
+        bun_removable_features::removable_definition!(Bundler, Self::on_any_request);
 
-        let Some(server) = route.server.get() else {
+        let Some(server) = self.server.get() else {
             resp.end_without_body(true);
             return;
         };
@@ -293,11 +184,8 @@ impl Route {
                 match req {
                     AnyRequest::H1(h1) => {
                         // S008: `uws::Request` is an `opaque_ffi!` ZST — safe deref.
-                        // R-2: pass the raw `this` (not `route: &Route`) so
-                        // DevServer's `*mut Route` userdata path doesn't alias
-                        // a live shared borrow.
                         bun_core::handle_oom(dev.respond_for_html_bundle(
-                            this,
+                            &self,
                             bun_opaque::opaque_deref_mut(h1),
                             resp,
                         ));
@@ -311,18 +199,15 @@ impl Route {
             }
 
             // Simpler development workflow which rebundles on every request.
-            // R-2: swap the state out *before* running its destructor so no
-            // `&mut State` borrow into `route.state` is live across the
-            // `StaticRoute::deref_` / `JSBundleCompletionTask::deref` calls.
-            if matches!(route.state.get(), State::Html(_) | State::Err(_)) {
-                route.state.replace(State::Pending).deinit();
+            if matches!(self.state.get(), State::Html(_) | State::Err(_)) {
+                self.state.set(State::Pending);
             }
         }
 
         // One re-dispatch
         // after `Pending` schedules the bundle.
         loop {
-            match route.state.get() {
+            match self.state.get() {
                 State::Pending => {
                     if bun_core::Environment::ENABLE_LOGS {
                         bun_output::scoped_log!(
@@ -331,10 +216,10 @@ impl Route {
                             bstr::BStr::new(req.url())
                         );
                     }
-                    bun_core::handle_oom(route.schedule_bundle(server));
+                    bun_core::handle_oom(self.schedule_bundle(server));
                     continue;
                 }
-                State::Building(_) => {
+                State::Building => {
                     if bun_core::Environment::ENABLE_LOGS {
                         bun_output::scoped_log!(
                             debug,
@@ -349,25 +234,14 @@ impl Route {
                         resp.end_without_body(true);
                         return;
                     };
-                    let pending = bun_core::heap::into_raw(Box::new(PendingResponse {
+                    let pending = PendingResponse {
                         method,
                         resp,
-                        route: this,
+                        _route: self.clone(),
                         is_response_pending: Cell::new(true),
-                    }));
-
-                    route.pending_responses.with_mut(|v| v.push(pending));
-
-                    // SAFETY: `this` is a live IntrusiveRc-managed allocation;
-                    // matched by the deref in `PendingResponse` drop / on_aborted.
-                    unsafe { RefCount::<Route>::ref_(this) };
-                    resp.on_aborted(
-                        |p, r| {
-                            // SAFETY: `p` was registered from a live `heap::into_raw` allocation above.
-                            unsafe { PendingResponse::on_aborted(p, r) }
-                        },
-                        pending,
-                    );
+                    };
+                    self.pending_responses.with_mut(|v| v.push(pending));
+                    resp.on_aborted_ref(Self::on_pending_response_aborted, &self);
                     req.set_yield(false);
                 }
                 State::Err(_log) => {
@@ -378,7 +252,7 @@ impl Route {
                             bstr::BStr::new(req.url())
                         );
                     }
-                    // TODO: use the code from DevServer.rs to render the error
+                    // TODO: use the code from bake/dev_server/failures.rs to render the error
                     resp.end_without_body(true);
                 }
                 State::Html(html) => {
@@ -390,11 +264,9 @@ impl Route {
                         );
                     }
                     if is_head {
-                        // SAFETY: `*html` is a live intrusive-refcounted allocation.
-                        unsafe { StaticRoute::on_head_request(*html, req, resp) };
+                        html.clone().on_head_request(req, resp);
                     } else {
-                        // SAFETY: see above.
-                        unsafe { StaticRoute::on_request(*html, req, resp) };
+                        html.clone().on_request(req, resp);
                     }
                 }
             }
@@ -403,78 +275,59 @@ impl Route {
     }
 
     /// Schedule a bundle to be built.
-    ///
-    /// Entering `State::Building` counts as a pending request on the server:
-    /// the plugin load and the build finish on later event-loop turns and call
-    /// back into it (`on_plugins_resolved`, `on_complete`), so its
-    /// `deinit_if_we_can` must not free it before then. Nothing else holds it
-    /// on the route's behalf; the clients waiting in `pending_responses` only
-    /// count as connections and can disconnect at any time. `finish_building`
-    /// releases the pending request when the route leaves `State::Building`.
-    fn schedule_bundle(&self, mut server: AnyServer) -> Result<(), crate::Error> {
-        match server.get_or_load_plugins(ServePluginsCallback::HtmlBundleRoute(self.as_ctx_ptr())) {
+    fn schedule_bundle(self: &RefPtr<Self>, server: AnyServer) -> Result<(), crate::Error> {
+        match server.get_or_load_plugins(ServePluginsCallback::HtmlBundleRoute(self)) {
             GetOrStartLoadResult::Err => {
                 self.state.set(State::Err(Log::init()));
             }
             GetOrStartLoadResult::Ready(plugins) => {
                 let plugins = plugins.map(NonNull::from);
-                server.on_pending_request();
-                self.on_plugins_resolved(plugins)?;
+                Self::on_plugins_resolved(PendingBuild::new(self.clone()), plugins)?;
             }
             GetOrStartLoadResult::Pending => {
-                server.on_pending_request();
-                self.state.set(State::Building(None));
+                self.state.set(State::Building);
             }
         }
         Ok(())
     }
 
-    /// Leaves `State::Building`: answers the requests that arrived while the
-    /// route was building, then releases the pending request `schedule_bundle`
-    /// took on the server. The release comes last because it runs the server's
-    /// idle pass (`deinit_if_we_can`), which schedules the server's deinit when
-    /// this build was the only thing still keeping a stopped server alive.
-    fn finish_building(&self) {
-        debug_assert!(matches!(self.state.get(), State::Err(_) | State::Html(_)));
+    /// The build task will not deliver (the context that started it stopped, or the VM is going):
+    /// what waits for the page is answered as for a failed build.
+    pub(crate) fn on_build_abandoned(&self) {
+        self.state.set(State::Err(Log::init()));
         self.resume_pending_responses();
-        self.server.get().expect("server set").on_request_complete();
     }
 
     /// Production keeps the reason to itself, see `resume_pending_responses`.
     fn set_build_error(&self, server: AnyServer, log: Log) {
         if server.config().is_development() {
-            // `Log::print` takes the process-global writer as a `*mut io::Writer` through `IntoLogWrite`.
-            let writer: *mut bun_core::io::Writer = bun_output::error_writer_buffered();
-            let _ = log.print(writer);
+            let _ = log.print(bun_output::error_writer_buffered());
             bun_output::flush();
         }
         self.state.set(State::Err(log));
     }
 
     pub(crate) fn on_plugins_resolved(
-        &self,
+        this: PendingBuild,
         plugins: Option<NonNull<JSBundler::Plugin>>,
     ) -> Result<(), crate::Error> {
-        // S008: `JSGlobalObject` is an `opaque_ffi!` ZST — safe `*const → &` deref.
-        let global = bun_opaque::opaque_deref(self.bundle.global);
-        let server = self.server.get().expect("server set");
+        let global = this.bundle.global;
+        let server = this.server.get().expect("server set");
         let development = server.config().development;
-        // SAFETY: `bun_vm()` returns the live `*mut VirtualMachine` for a Bun-owned
-        // global; single-threaded JS thread, no other &mut alias active.
-        let vm = global.bun_vm().as_mut();
+        let vm = global.bun_vm();
 
         let mut config = JSBundlerConfig::default();
         // `Config` owns its fields and
         // drops on early-return.
-        config.entry_points.insert(&self.bundle.path)?;
+        config.entry_points.insert(&this.bundle.path)?;
         // An import attribute or a bunfig `[loader]` entry may have made this html. `ext` is `""` without one.
         config.loaders = Some(bun_options_types::schema::api::LoaderMap {
             extensions: vec![Box::from(
-                bun_paths::fs::PathName::init(&self.bundle.path).ext,
+                bun_paths::fs::PathName::init(&this.bundle.path).ext,
             )],
             loaders: vec![bun_options_types::schema::api::Loader::html],
         });
-        let xform = &vm.transpiler.options.transform_options;
+        let xform = &vm.transpiler.get().options.transform_options;
         if let Some(public_path) = xform.serve_public_path.as_deref() {
             if !public_path.is_empty() {
                 config.public_path.append_slice(public_path)?;
@@ -561,20 +414,14 @@ impl Route {
             bundler_options::SourceMapOption::None
         };
 
-        let completion_task = create_and_schedule_completion_task(config, plugins, global)?;
-        // SAFETY: `completion_task` is the freshly-boxed allocation (refcount==1); sole owner.
-        unsafe {
-            (*completion_task).started_at_ns =
-                bun_core::util::Timespec::now_allow_mocked_time().ns();
-            (*completion_task).html_build_task = Some(self.as_ctx_ptr());
-        }
-        self.state.set(State::Building(Some(completion_task)));
-
-        // While we're building, ensure this doesn't get freed.
-        // SAFETY: `self` is a live IntrusiveRc-managed allocation; matched by the
-        // deref at the top of `on_complete`. `RefCount` is `Cell`-backed so the
-        // `*const → *mut` cast carries sufficient (UnsafeCell) provenance.
-        unsafe { RefCount::<Route>::ref_(self.as_ctx_ptr()) };
+        this.state.set(State::Building);
+        let owner = BuildOwner::Route {
+            plugins,
+            route: this,
+            started_at_ns: bun_core::util::Timespec::now_allow_mocked_time().ns(),
+        };
+        // The build is the server's: it continues the script that made the server.
+        JSBundleCompletionTask::schedule(config, &global, server.context_id(), owner);
         Ok(())
     }
 
@@ -585,29 +432,27 @@ impl Route {
             std::ptr::from_ref(self) as usize
         );
         self.state.set(State::Err(Log::init()));
-        self.finish_building();
+        self.resume_pending_responses();
         Ok(())
     }
 
-    pub(crate) fn on_complete(&self, completion_task: &mut JSBundleCompletionTask) {
-        // For the build task — matches the ref() taken in on_plugins_resolved.
-        // SAFETY: self is IntrusiveRc-managed; `adopt` consumes the prior +1 on Drop.
-        let _drop_build_ref = unsafe { bun_ptr::ScopedRef::<Route>::adopt(self.as_ctx_ptr()) };
-        // Still allocated, even if it has been stopped and its JS wrapper
-        // collected since: the route holds a pending request on it until
-        // `finish_building` (see `schedule_bundle`).
+    /// Called by the build task, which holds the [`PendingBuild`] across the call.
+    pub(crate) fn on_complete(
+        &self,
+        result: bun_bundler::Result<BuildResult>,
+        log: Log,
+        started_at_ns: u64,
+    ) {
         let server = self.server.get().expect("server set");
 
-        match &mut completion_task.result {
-            BundleV2Result::Err(err) => {
+        match result {
+            Err(err) => {
                 if bun_core::Environment::ENABLE_LOGS {
                     bun_output::scoped_log!(debug, "onComplete: err - {}", err);
                 }
-                let mut log = Log::init();
-                completion_task.log.clone_to_with_recycled(&mut log, true);
                 self.set_build_error(server, log);
             }
-            BundleV2Result::Value(bundle) => 'bundle: {
+            Ok(mut bundle) => 'bundle: {
                 if bun_core::Environment::ENABLE_LOGS {
                     bun_output::scoped_log!(debug, "onComplete: success");
                 }
@@ -618,7 +463,7 @@ impl Route {
 
                 if server.config().is_development() {
                     let now = bun_core::util::Timespec::now_allow_mocked_time().ns();
-                    let duration = now.saturating_sub(completion_task.started_at_ns);
+                    let duration = now.saturating_sub(started_at_ns);
                     let duration_f64 = duration as f64 / 1_000_000_000.0;
 
                     bun_output::print_elapsed(duration_f64);
@@ -644,13 +489,10 @@ impl Route {
                     break 'bundle;
                 };
 
-                // `AnyRoute::Static` carries
-                // an intrusive `*mut StaticRoute` here; defer appending the HTML
-                // entry-point until after cloning so we retain the sole owner for
-                // the `clone()` mutable borrow. Static routes are keyed by
-                // `dest_path`, so registration order is immaterial.
-                let mut this_html_route: Option<(core::ptr::NonNull<StaticRoute>, Box<[u8]>)> =
-                    None;
+                // The HTML entry point is registered after the loop: `clone()`
+                // needs it by `&mut` before it is shared. Static routes are keyed
+                // by `dest_path`, so registration order is immaterial.
+                let mut this_html_route: Option<(StaticRoute, Box<[u8]>)> = None;
 
                 // Create static routes for each output file
                 // Index loop because the SourceMap branch reads a sibling entry.
@@ -674,7 +516,7 @@ impl Route {
                     let is_html = output_files[i].loader == Loader::Html;
                     // Source maps don't carry a precomputed chunk hash; hash
                     // their bytes so every served file gets a unique ETag.
-                    let hash = match output_files[i].hash {
+                    let hash = match output_files[i].hash.value {
                         0 => bun_core::hash::xxhash64(0, blob.slice()),
                         h => h,
                     };
@@ -700,55 +542,38 @@ impl Route {
                     {
                         let mut route_path: &[u8] =
                             &output_files[output_files[i].source_map_index as usize].dest_path;
-                        if strings::has_prefix(route_path, b"./")
-                            || strings::has_prefix(route_path, b".\\")
-                        {
+                        if bun_paths::without_leading_dot_slash(route_path) != route_path {
                             route_path = &route_path[1..];
                         }
                         headers.append(b"SourceMap", route_path);
                     }
 
-                    let cached_blob_size = blob.size() as u64;
-                    let static_route = bun_core::heap::into_raw_nn(Box::new(StaticRoute {
-                        ref_count: Cell::new(1),
-                        blob,
-                        server: Cell::new(Some(server)),
-                        status_code: 200,
-                        headers,
-                        cached_blob_size,
-                        has_date: false,
-                    }));
+                    let static_route = StaticRoute::new(blob, headers, Some(server), 200);
 
                     let mut route_path: &[u8] = &output_files[i].dest_path;
                     // The route path gets cloned inside of appendStaticRoute.
-                    if strings::has_prefix(route_path, b"./")
-                        || strings::has_prefix(route_path, b".\\")
-                    {
+                    if bun_paths::without_leading_dot_slash(route_path) != route_path {
                         route_path = &route_path[1..];
                     }
 
                     if i == html_index {
-                        // Defer registration so we retain unique ownership for `clone()`.
                         this_html_route = Some((static_route, Box::<[u8]>::from(route_path)));
                         continue;
                     }
 
                     bun_core::handle_oom(server.append_static_route(
                         route_path,
-                        AnyRoute::Static(static_route),
+                        AnyRoute::Static(RefPtr::new(static_route)),
                         MethodOptional::Any,
                     ));
                 }
 
-                let (html_route, html_route_path) =
+                let (mut html_route, html_route_path) =
                     this_html_route.expect("the loop above visited html_index");
-                // SAFETY: html_route is a fresh heap::alloc with ref_count=1;
-                // sole owner before registration.
-                let html_route_clone =
-                    bun_core::handle_oom(unsafe { &mut *html_route.as_ptr() }.clone(global_this));
+                let html_route_clone = html_route.clone(global_this);
                 bun_core::handle_oom(server.append_static_route(
                     &html_route_path,
-                    AnyRoute::Static(html_route),
+                    AnyRoute::Static(RefPtr::new(html_route)),
                     MethodOptional::Any,
                 ));
                 self.state.set(State::Html(html_route_clone));
@@ -758,10 +583,9 @@ impl Route {
                     // TODO: handle this case
                 }
             }
-            BundleV2Result::Pending => unreachable!(),
         }
 
-        self.finish_building();
+        self.resume_pending_responses();
     }
 
     fn resume_pending_responses(&self) {
@@ -769,17 +593,7 @@ impl Route {
         // (which writes responses and may run uws callbacks) holds no borrow
         // into `self.pending_responses`.
         let pending = self.pending_responses.replace(Vec::new());
-        for pending_response_ptr in pending {
-            // SAFETY: every entry was created via heap::alloc in on_any_request and
-            // is removed exactly once (here, or via on_aborted which removes without
-            // freeing). Shared — the pending flag is a `Cell`.
-            let pending_response = unsafe { &*pending_response_ptr };
-            // `defer pending_response.deinit()` — heap::take + Drop at scope end.
-            let _drop = scopeguard::guard(pending_response_ptr, |p| {
-                // SAFETY: see above; reconstitutes the Box and runs `Drop`.
-                drop(unsafe { bun_core::heap::take(p) });
-            });
-
+        for pending_response in pending {
             let resp = pending_response.resp;
             let method = pending_response.method;
             if !pending_response.is_response_pending.get() {
@@ -792,11 +606,9 @@ impl Route {
             match self.state.get() {
                 State::Html(html) => {
                     if method == Method::HEAD {
-                        // SAFETY: `*html` is a live intrusive-refcounted allocation.
-                        unsafe { StaticRoute::on_head(*html, resp) };
+                        html.clone().on_head(resp);
                     } else {
-                        // SAFETY: see above.
-                        unsafe { StaticRoute::on(*html, resp) };
+                        html.clone().on(resp);
                     }
                 }
                 State::Err(_log) => {
@@ -807,7 +619,7 @@ impl Route {
                         .config()
                         .is_development()
                     {
-                        // TODO: use the code from DevServer.rs to render the error
+                        // TODO: use the code from bake/dev_server/failures.rs to render the error
                     } else {
                         // To protect privacy, do not show errors to end users in production.
                         // TODO: Show a generic error page.
@@ -832,24 +644,16 @@ impl Drop for Route {
     fn drop(&mut self) {
         // pending responses keep a ref to the route
         debug_assert!(self.pending_responses.get().is_empty());
-        // `pending_responses` (Vec) and `bundle` (IntrusiveRc) auto-drop.
-        // `state` has no `Drop` glue for the intrusive-pointer variants — release
-        // them explicitly.
-        // `with_mut` is fine here — refcount==0 so no other `&Route` exists.
-        self.state.with_mut(|s| s.deinit());
-        // The Box free is handled by IntrusiveRc dealloc.
     }
 }
 
 /// Represents an in-flight response before the bundle has finished building.
-pub struct PendingResponse {
+pub(crate) struct PendingResponse {
     method: Method,
     resp: AnyResponse,
     is_response_pending: Cell<bool>,
-    // Raw ptr because the route owns the Vec containing this
-    // PendingResponse; an `IntrusiveRc<Route>` field would form a cycle through
-    // `Drop`. The ref is bumped/dropped manually via `RefCount::<Route>` calls.
-    route: *mut Route,
+    /// Keeps the route alive while this response waits on it.
+    _route: RefPtr<Route>,
 }
 
 impl Drop for PendingResponse {
@@ -859,48 +663,24 @@ impl Drop for PendingResponse {
             self.resp.clear_on_writable();
             self.resp.end_without_body(true);
         }
-        // SAFETY: `route` was a live IntrusiveRc-managed Route when stored;
-        // matches the `ref()` taken when this PendingResponse was created.
-        unsafe { RefCount::<Route>::deref(self.route) };
-        // The Box free is handled by the heap::take caller.
     }
 }
 
-impl PendingResponse {
-    /// # Safety
-    /// `this` must point to a live `PendingResponse` previously boxed via
-    /// `heap::into_raw` and registered with `resp.on_aborted`; it may be freed
-    /// (via `heap::take`) by this call.
-    unsafe fn on_aborted(this: *mut PendingResponse, _resp: AnyResponse) {
-        // SAFETY: caller contract. Shared — the pending flag is a `Cell`, and
-        // the `heap::take` below goes through `this`, not this borrow.
-        let this_ref = unsafe { &*this };
-        debug_assert!(this_ref.is_response_pending.get());
-        this_ref.is_response_pending.set(false);
-
-        // Technically, this could be the final ref count, but we don't want to risk it
-        let route_ptr = this_ref.route;
-        // SAFETY: this.route is a valid IntrusiveRc-managed allocation;
-        // `ScopedRef` bumps the count and derefs on every exit path.
-        let _keep_route = unsafe { bun_ptr::ScopedRef::new(route_ptr) };
-
-        // SAFETY: single-threaded; Route is alive (we hold a ref). R-2: deref as
-        // shared (`&*`); `pending_responses` is `JsCell`-wrapped.
-        let route = unsafe { &*route_ptr };
-        // R-2: scope the `&mut Vec` to the find+remove only — `RefCount::deref`
-        // can run `Route::drop` (which `get()`s `pending_responses`) and must
-        // not overlap a live `with_mut` borrow.
-        let removed = route.pending_responses.with_mut(|v| {
-            if let Some(index) = v.iter().position(|&p| p == this) {
-                v.remove(index);
-                true
-            } else {
-                false
-            }
+impl Route {
+    /// uws onAborted for a response waiting in `pending_responses`.
+    fn on_pending_response_aborted(self: RefPtr<Self>, resp: AnyResponse) {
+        // R-2: scope the `&mut Vec` to the find+remove only — dropping the
+        // removed entry releases a route ref and must not overlap a live
+        // `with_mut` borrow.
+        let removed = self.pending_responses.with_mut(|v| {
+            v.iter()
+                .position(|p| p.resp == resp)
+                .map(|index| v.remove(index))
         });
-        if removed {
-            // SAFETY: matches `heap::into_raw` in on_any_request; Drop releases the route ref taken there.
-            drop(unsafe { bun_core::heap::take(this) });
+        if let Some(pending_response) = removed {
+            debug_assert!(pending_response.is_response_pending.get());
+            pending_response.is_response_pending.set(false);
+            drop(pending_response);
         }
     }
 }

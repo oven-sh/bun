@@ -3,30 +3,31 @@
 //! Execution proceeds: expand assigns → expand redirect → expand argv atoms
 //! → resolve to builtin or spawn subprocess → await exit.
 
+use crate::node::fs::{note_shell_redirect, open_embedded_shell_operand, refuse_shell_redirect};
 use crate::shell::ExitCode;
 use crate::shell::ast;
 use crate::shell::builtin::{Builtin, Kind as BuiltinKind};
-use crate::shell::interpreter::{CowFd, Interpreter, Node, NodeId, ShellExecEnv, StateKind, log};
+use crate::shell::interpreter::{Interpreter, Node, NodeId, OwnedFd, StateKind, log};
 use crate::shell::io::{IO, OutKind as IoOutKind};
 use crate::shell::shell_body::subproc::{Readable, ShellSubprocess, StdioKind};
 use crate::shell::states::assigns::{AssignCtx, Assigns};
-use crate::shell::states::base::Base;
+use crate::shell::states::base::{Base, Env};
 use crate::shell::states::expansion::Expansion;
 use crate::shell::subproc::{ShellIO, SpawnArgs};
 use crate::shell::util::{OutKind, Stdio};
 use crate::shell::yield_::Yield;
 use bun_collections::VecExt;
 
-pub struct Cmd {
+pub(crate) struct Cmd {
     pub(crate) base: Base,
     pub node: bun_ptr::BackRef<ast::Cmd>,
     pub(crate) io: IO,
     pub(crate) state: CmdState,
     pub args: Vec<Vec<u8>>,
     pub(crate) redirection_file: Vec<u8>,
-    pub(crate) redirection_fd: Option<*mut CowFd>,
     pub(crate) exec: Exec,
     pub(crate) exit_code: Option<ExitCode>,
+    pub(crate) shell: Env,
 }
 
 #[derive(Default, strum::IntoStaticStr)]
@@ -46,7 +47,7 @@ pub enum CmdState {
 }
 
 #[derive(Default)]
-pub enum Exec {
+pub(crate) enum Exec {
     #[default]
     None,
     Builtin(Box<Builtin>),
@@ -65,7 +66,7 @@ impl Cmd {
     }
 }
 
-pub struct SubprocExec {
+pub(crate) struct SubprocExec {
     pub(crate) child: *mut ShellSubprocess,
     pub(crate) buffered_closed: BufferedIoClosed,
     /// NodeId-arena backrefs so the legacy `&mut self` subprocess callbacks
@@ -80,38 +81,13 @@ pub struct SubprocExec {
 
 /// Tracks which subprocess stdio pipes are still open. Each `Option` is `None`
 /// if that fd was *not* piped (e.g. inherited / fd-backed), so it never gates
-/// completion. `Some(state)` means it was piped and must reach `Closed` before
+/// completion. `Some(closed)` means it was piped and must be closed before
 /// [`Cmd::has_finished`] returns true.
 #[derive(Default)]
-pub struct BufferedIoClosed {
+pub(crate) struct BufferedIoClosed {
     pub(crate) stdin: Option<bool>,
-    pub(crate) stdout: Option<BufferedIoState>,
-    pub(crate) stderr: Option<BufferedIoState>,
-}
-
-#[derive(Default)]
-pub enum BufferedIoState {
-    #[default]
-    Open,
-    Closed(Vec<u8>),
-}
-
-impl BufferedIoState {
-    #[inline]
-    fn closed(&self) -> bool {
-        matches!(self, BufferedIoState::Closed(_))
-    }
-}
-
-impl Drop for BufferedIoState {
-    fn drop(&mut self) {
-        // Spec `BufferedIoState.deinit`: the closed buffer was taken via
-        // `PipeReader.take_buffer()`; we own it regardless of the original
-        // stdio variant. `Vec<u8>`'s own Drop frees the storage.
-        if let BufferedIoState::Closed(list) = self {
-            list.clear_and_free();
-        }
-    }
+    pub(crate) stdout: Option<bool>,
+    pub(crate) stderr: Option<bool>,
 }
 
 impl BufferedIoClosed {
@@ -121,29 +97,17 @@ impl BufferedIoClosed {
         const STDOUT_NO: usize = 1;
         const STDERR_NO: usize = 2;
         Self {
-            stdin: if io[STDIN_NO].is_piped() {
-                Some(false)
-            } else {
-                None
-            },
-            stdout: if io[STDOUT_NO].is_piped() {
-                Some(BufferedIoState::Open)
-            } else {
-                None
-            },
-            stderr: if io[STDERR_NO].is_piped() {
-                Some(BufferedIoState::Open)
-            } else {
-                None
-            },
+            stdin: io[STDIN_NO].is_piped().then_some(false),
+            stdout: io[STDOUT_NO].is_piped().then_some(false),
+            stderr: io[STDERR_NO].is_piped().then_some(false),
         }
     }
 
     /// True once stdin, stdout, and stderr have all been closed.
     fn all_closed(&self) -> bool {
         let stdin_closed = self.stdin.unwrap_or(true);
-        let stdout_closed = self.stdout.as_ref().is_none_or(BufferedIoState::closed);
-        let stderr_closed = self.stderr.as_ref().is_none_or(BufferedIoState::closed);
+        let stdout_closed = self.stdout.unwrap_or(true);
+        let stderr_closed = self.stderr.unwrap_or(true);
         let ret = stdin_closed && stdout_closed && stderr_closed;
         log!(
             "BufferedIOClosed all_closed={} stdin={} stdout={} stderr={}",
@@ -161,24 +125,16 @@ impl BufferedIoClosed {
     }
 
     /// Close the stdout/stderr side.
-    ///
-    /// `readable` is the subprocess's `stdout`/`stderr` `Readable`; if it was
-    /// a pipe its buffered bytes are taken (ownership moves into
-    /// `state.Closed`) and, if the shell-side IO is `.pipe` and the AST
-    /// redirect didn't send this stream elsewhere, also tee'd into the
-    /// command-substitution aggregate buffer.
     fn close_out(
-        slot: &mut Option<BufferedIoState>,
-        readable: &mut Readable,
+        slot: &mut Option<bool>,
+        readable: &Readable,
         io_is_pipe: bool,
         redirects_elsewhere: bool,
         shell_buf: *mut Vec<u8>,
     ) {
-        let Some(state) = slot.as_mut() else { return };
+        let Some(closed) = slot else { return };
+        *closed = true;
         let Readable::Pipe(pipe) = readable else {
-            // Not a pipe: nothing to capture. Mark closed with an empty
-            // buffer so `all_closed()` is satisfied.
-            *state = BufferedIoState::Closed(Vec::<u8>::default());
             return;
         };
         // If the shell state is piped (inside a cmd substitution) aggregate
@@ -186,34 +142,29 @@ impl BufferedIoClosed {
         if io_is_pipe && !redirects_elsewhere && !shell_buf.is_null() {
             let the_slice = pipe.slice();
             // SAFETY: `shell_buf` points into `ShellExecEnv::_buffered_*`,
-            // which the owning Cmd's `base.shell` keeps live for the duration
+            // which the owning Cmd's `shell` keeps live for the duration
             // of the command. Single-threaded.
             unsafe { (*shell_buf).append_slice(the_slice) };
         }
-        // SAFETY: `Arc<PipeReader>` interior mutability — the shell is
-        // single-threaded and this is the same pattern `subproc::on_close_io`
-        // uses to take the done buffer.
-        let buffer = unsafe { &mut *(std::sync::Arc::as_ptr(pipe).cast_mut()) }.take_buffer();
-        *state = BufferedIoState::Closed(Vec::<u8>::move_from_list(buffer));
     }
 }
 
 impl Cmd {
     pub(crate) fn init(
         interp: &Interpreter,
-        shell: *mut ShellExecEnv,
+        shell: Env,
         node: &ast::Cmd,
         parent: NodeId,
         io: IO,
     ) -> NodeId {
         interp.alloc_node(Node::Cmd(Cmd {
-            base: Base::new(parent, shell),
+            base: Base::new(parent),
+            shell,
             node: bun_ptr::BackRef::new(node),
             io,
             state: CmdState::Idle,
             args: Vec::new(),
             redirection_file: Vec::new(),
-            redirection_fd: None,
             exec: Exec::None,
             exit_code: None,
         }))
@@ -227,7 +178,7 @@ impl Cmd {
         loop {
             let (shell, node) = {
                 let me = interp.as_cmd(this);
-                (me.base.shell, me.node)
+                (me.shell.as_ptr(), me.node)
             };
             let n = node.get();
             log!(
@@ -235,6 +186,18 @@ impl Cmd {
                 this,
                 <&'static str>::from(&interp.as_cmd(this).state)
             );
+            if interp.failed()
+                && !matches!(
+                    interp.as_cmd(this).state,
+                    CmdState::WaitingWriteErr | CmdState::Done
+                )
+            {
+                // The script failed: expand nothing more and do not spawn.
+                let me = interp.as_cmd_mut(this);
+                me.exit_code = Some(1);
+                me.state = CmdState::Done;
+                continue;
+            }
             match interp.as_cmd(this).state {
                 CmdState::Idle => {
                     if !n.assigns.is_empty() {
@@ -252,8 +215,7 @@ impl Cmd {
                 CmdState::ExpandingRedirect { idx } => {
                     match &n.redirect_file {
                         Some(ast::Redirect::Atom(atom)) if idx == 0 => {
-                            let atom: *const ast::Atom = atom;
-                            let child = Expansion::init(interp, shell, atom, this);
+                            let child = Expansion::init(interp, shell, atom, this, false);
                             return Expansion::start(interp, child);
                         }
                         // JsBuf redirects don't need expansion; nor does the
@@ -269,8 +231,11 @@ impl Cmd {
                         interp.as_cmd_mut(this).state = CmdState::Exec;
                         continue;
                     }
-                    let atom: *const ast::Atom = &raw const args[idx as usize];
-                    let child = Expansion::init(interp, shell, atom, this);
+                    let assign_ctx = idx > 0
+                        && is_declaration_utility(&args[0])
+                        && is_assignment_word(&args[idx as usize]);
+                    let atom = &args[idx as usize];
+                    let child = Expansion::init(interp, shell, atom, this, assign_ctx);
                     return Expansion::start(interp, child);
                 }
                 CmdState::Exec => {
@@ -297,7 +262,7 @@ impl Cmd {
     ) -> Yield {
         if let Some(err) = e {
             interp.throw(crate::shell::ShellErr::from_system(err));
-            return Yield::failed();
+            return Yield::Failed(this);
         }
         debug_assert!(matches!(
             interp.as_cmd(this).state,
@@ -409,7 +374,7 @@ impl Cmd {
     /// Resolves argv[0] to a builtin or falls through to subprocess spawn
     /// (still gated).
     fn transition_to_exec(interp: &Interpreter, this: NodeId) -> Yield {
-        // NUL-terminate every arg so builtins can borrow them as `*const c_char`.
+        // NUL-terminate every arg for the argv of a subprocess.
         for a in &mut interp.as_cmd_mut(this).args {
             if a.last() != Some(&0) {
                 a.push(0);
@@ -444,28 +409,17 @@ impl Cmd {
         }
 
         // ── Subprocess path ─────────────────────────────────────────────────
-        // `SpawnArgs` borrows only the local `arena` (its
-        // `interp`/`argv` fields are raw pointers), so `interp: &mut
-        // Interpreter` is freely re-borrowable at every step before
-        // `spawn_async`. Re-enter the arena via `interp.as_cmd{,_mut}(this)`
-        // for each short-lived access instead of caching raw `*mut Cmd`.
+        // Re-enter the arena via `interp.as_cmd{,_mut}(this)` for each
+        // short-lived access instead of caching raw `*mut Cmd`.
         let event_loop = interp.event_loop;
 
         let arena = bun_alloc::Arena::new();
-        let mut spawn_args = SpawnArgs::default::<false>(&arena, interp.as_ctx_ptr(), event_loop);
-        // Cache the raw `*mut ShellExecEnv` and deref it directly so the
-        // `cwd: &[u8]` stored in `spawn_args` is decoupled from any borrow of
-        // `*interp` — `Base::shell()` would tie the slice's lifetime to
-        // `&interp`, blocking every `interp.as_cmd_mut(...)` below for the
-        // life of `spawn_args`. The env is a separate heap allocation that
-        // outlives this Cmd, so the slice remains valid across reborrows.
-        let shell_ptr: *mut ShellExecEnv = interp.as_cmd(this).base.shell;
-        // SAFETY: `shell_ptr` is the live env owned by this Cmd's scope chain.
-        spawn_args.cwd = unsafe { &*shell_ptr }.cwd();
+        let mut spawn_args = SpawnArgs::default::<false>(&arena, event_loop);
+        spawn_args.cwd = interp.as_cmd(this).shell.cwd();
 
         // Fill env from export_env + cmd_local_env.
         {
-            let env = interp.as_cmd_mut(this).base.shell_mut();
+            let env = &mut *interp.as_cmd_mut(this).shell;
             let mut iter = env.export_env.iterator();
             spawn_args.fill_env::<false>(&mut iter);
             let mut iter = env.cmd_local_env.iterator();
@@ -474,8 +428,7 @@ impl Cmd {
 
         // Resolve argv[0] via PATH (`bun_which::which`).
         let resolved: Option<Vec<u8>> = {
-            let mut path_buf = bun_paths::path_buffer_pool::get();
-            match bun_which::which(&mut *path_buf, spawn_args.path, spawn_args.cwd, &first_arg) {
+            match bun_which::which(spawn_args.path, spawn_args.cwd, &first_arg) {
                 Some(z) => Some(z.as_bytes().to_vec()),
                 None if &first_arg[..] == b"bun" || &first_arg[..] == b"bun-debug" => {
                     bun_core::self_exe_path()
@@ -533,7 +486,15 @@ impl Cmd {
 
         // Apply file/jsbuf/`2>&1` redirects on
         // top of the IO-derived stdio.
-        match Self::init_subproc_redirections(interp, this, &mut spawn_args.stdio) {
+        let mut redirection_fd = None;
+        match Self::init_subproc_redirections(
+            interp,
+            this,
+            &mut spawn_args.stdio,
+            &mut spawn_args.redirect_stdout,
+            &mut spawn_args.redirect_stderr,
+            &mut redirection_fd,
+        ) {
             Ok(None) => {}
             Ok(Some(y)) => {
                 drop(spawn_args);
@@ -543,7 +504,7 @@ impl Cmd {
             Err(_) => {
                 drop(spawn_args);
                 drop(arena);
-                return Yield::failed();
+                return Yield::Failed(this);
             }
         }
 
@@ -573,29 +534,27 @@ impl Cmd {
         // `&Interpreter` is live across the re-entrant spawn. `child_out`
         // points into the `Box<SubprocExec>` heap allocation, which is
         // address-stable for the lifetime of the Cmd (only dropped in
-        // `deinit`). argv pointers borrow `cmd.args[i]` storage, which is not
-        // reallocated between here and `spawn_process`.
+        // `deinit`).
         //
         // `cmd_parent` is `(interp, NodeId)` rather than the spec's `*ShellCmd`
         // — the Cmd lives inline in `interp.nodes: Vec<Node>`, and a raw
         // `*mut Cmd` would dangle on the next `alloc_node` reallocation.
+        let args;
         let child_out: *mut *mut ShellSubprocess = {
             let cmd = interp.as_cmd_mut(this);
-            spawn_args.argv.reserve_exact(cmd.args.len() + 1);
-            for arg in &cmd.args {
-                debug_assert_eq!(arg.last(), Some(&0));
-                spawn_args.argv.push(arg.as_ptr().cast());
+            args = core::mem::take(&mut cmd.args);
+            spawn_args.argv.reserve_exact(args.len() + 1);
+            for arg in &args {
+                let arg = bun_core::CStrRef::from_slice_with_nul(arg);
+                spawn_args.argv.push(Some(arg));
             }
-            spawn_args.argv.push(core::ptr::null());
             match &mut cmd.exec {
                 Exec::Subproc(sub) => core::ptr::addr_of_mut!(sub.child),
                 _ => unreachable!(),
             }
         };
         let cmd_parent = crate::shell::subproc::CmdHandle {
-            // SAFETY: `interp_ptr` is the live owning Interpreter (from
-            // `&mut Interpreter` above); single-threaded, write provenance.
-            interp: unsafe { bun_ptr::ParentRef::from_raw_mut(interp_ptr) },
+            interp: bun_ptr::ParentRef::new(interp),
             id: this,
         };
 
@@ -613,7 +572,7 @@ impl Cmd {
             child_out,
             &mut did_exit_immediately,
         );
-        drop(shellio);
+        drop((shellio, redirection_fd));
 
         if let Err(e) = spawn_result {
             drop(arena);
@@ -638,11 +597,11 @@ impl Cmd {
         if did_exit_immediately {
             // `watch()` failed → process already gone.
             let process = subproc.proc();
-            if process.has_exited() {
-                let status = process.status.clone();
-                process.on_exit(status, &crate::api::bun::process::rusage_zeroed());
-            } else {
-                process.wait(false);
+            let mut rusage = crate::api::bun::process::rusage_zeroed();
+            if let Some(status) = process.status() {
+                process.on_exit(status.clone()).dispatch(&rusage);
+            } else if let Some(exit) = process.wait(false, &mut rusage) {
+                exit.dispatch(&rusage);
             }
         }
 
@@ -669,6 +628,9 @@ impl Cmd {
         interp: &Interpreter,
         this: NodeId,
         stdio: &mut [Stdio; 3],
+        redirect_stdout: &mut Option<crate::jsc::PinnedArrayBuffer>,
+        redirect_stderr: &mut Option<crate::jsc::PinnedArrayBuffer>,
+        redirection_fd: &mut Option<OwnedFd>,
     ) -> crate::jsc::JsResult<Option<Yield>> {
         const STDIN_NO: usize = 0;
         const STDOUT_NO: usize = 1;
@@ -702,20 +664,9 @@ impl Cmd {
                 let global = interp
                     .global_this_ref()
                     .expect("JS values not allowed in this context");
-                let idx = val.idx as usize;
-                if idx >= interp.jsobjs.len() {
-                    return Err(global.throw(format_args!("Invalid JS object reference in shell")));
-                }
-                let jsval = interp.jsobjs[idx];
+                let jsval = interp.jsobj(global, val.idx)?;
 
                 if let Some(buf) = jsval.as_array_buffer(global) {
-                    let mk_out = || {
-                        let pinned = jsval.as_pinned_arraybuffer(global);
-                        Stdio::ArrayBuffer(crate::jsc::array_buffer::ArrayBufferStrong {
-                            array_buffer: pinned.unwrap_or(buf),
-                            held: crate::jsc::StrongOptional::create(buf.value, global),
-                        })
-                    };
                     if flags.stdin() {
                         let bytes = buf.byte_slice();
                         // An empty buffer delivers EOF immediately; `Stdio::Ignore`
@@ -726,16 +677,21 @@ impl Cmd {
                             Stdio::Blob(crate::webcore::blob::Any::from_owned_slice(bytes.to_vec()))
                         };
                     }
-                    if flags.duplicate_out() {
-                        stdio[STDOUT_NO] = mk_out();
-                        stdio[STDERR_NO] = mk_out();
-                    } else {
-                        if flags.stdout() {
-                            stdio[STDOUT_NO] = mk_out();
-                        }
-                        if flags.stderr() {
-                            stdio[STDERR_NO] = mk_out();
-                        }
+                    let mut redirect_out =
+                        |fd: usize, slot: &mut Option<crate::jsc::PinnedArrayBuffer>| {
+                            let Some(buf) = crate::jsc::PinnedArrayBuffer::root(global, jsval)
+                            else {
+                                return Err(global.throw_out_of_memory());
+                            };
+                            stdio[fd] = Stdio::Pipe;
+                            *slot = Some(buf);
+                            Ok(())
+                        };
+                    if flags.duplicate_out() || flags.stdout() {
+                        redirect_out(STDOUT_NO, redirect_stdout)?;
+                    }
+                    if flags.duplicate_out() || flags.stderr() {
+                        redirect_out(STDERR_NO, redirect_stderr)?;
                     }
                 } else if let Some(blob_ref) = jsval.as_class_ref::<crate::webcore::Blob>() {
                     let blob = blob_ref.dupe();
@@ -758,12 +714,7 @@ impl Cmd {
                             STDERR_NO as i32,
                         )?;
                     }
-                } else if crate::webcore::ReadableStream::from_js(jsval, global)?.is_some() {
-                    panic!("TODO SHELL READABLE STREAM");
-                } else if let Some(req) = jsval.as_::<crate::webcore::Response>() {
-                    // SAFETY: `as_` returns a live JSC-owned `*mut Response`;
-                    // `get_body_value` is `&self`.
-                    let req = unsafe { &*req };
+                } else if let Some(req) = jsval.as_class_ref::<crate::webcore::Response>() {
                     req.get_body_value().to_blob_if_possible();
                     if flags.stdin() {
                         let b = req.get_body_value().use_as_any_blob();
@@ -802,23 +753,28 @@ impl Cmd {
                         ),
                     )));
                 }
-                let path_buf: Vec<u8> = {
-                    let raw = &interp.as_cmd(this).redirection_file;
-                    let len = raw.len().saturating_sub(1);
-                    let mut v = raw[..len].to_vec();
-                    v.push(0);
-                    v
-                };
-                let path = bun_core::ZStr::from_buf(&path_buf, path_buf.len() - 1);
+                let raw = &interp.as_cmd(this).redirection_file;
+                let path = &bun_core::ZBox::from_bytes(&raw[..raw.len() - 1]);
                 log!("Expanded Redirect: {}\n", bstr::BStr::new(path.as_bytes()));
-                let cwd_fd = interp.as_cmd(this).base.shell().cwd_fd;
-                let redirfd = match crate::shell::interpreter::shell_openat(
-                    cwd_fd,
-                    path,
-                    flags.to_flags(),
-                    0o666,
-                ) {
-                    Ok(f) => f,
+                let shell = &*interp.as_cmd(this).shell;
+                let cwd_fd = shell.cwd_fd.fd();
+                let refused = refuse_shell_redirect(shell.cwd(), path.as_bytes(), flags.to_flags());
+                let opened = refused.and_then(|()| {
+                    crate::shell::interpreter::shell_openat(cwd_fd, path, flags.to_flags(), 0o666)
+                });
+                let opened = opened.inspect(|_| {
+                    note_shell_redirect(shell.cwd(), path.as_bytes(), flags.to_flags());
+                });
+                let opened = opened.or_else(|error| {
+                    open_embedded_shell_operand(
+                        shell.cwd(),
+                        path.as_bytes(),
+                        flags.to_flags(),
+                        error,
+                    )
+                });
+                let redirfd = match opened {
+                    Ok(fd) => redirection_fd.insert(OwnedFd(fd)),
                     Err(e) => {
                         let sys_err = e.to_shell_system_error();
                         return Ok(Some(Builtin::cmd_write_failing_error(
@@ -832,8 +788,7 @@ impl Cmd {
                         )));
                     }
                 };
-                interp.as_cmd_mut(this).redirection_fd = Some(CowFd::init(redirfd));
-                set_stdio_from_redirect(stdio, flags, redirfd);
+                set_stdio_from_redirect(stdio, flags, redirfd.fd());
             }
         }
         Ok(None)
@@ -862,7 +817,7 @@ impl Cmd {
                 Exec::Subproc(sub) if !sub.child.is_null() => {
                     // SAFETY: `child` is the live heap::alloc'd subprocess;
                     // the call only writes its own fields.
-                    unsafe { ShellSubprocess::defuse_array_buffer_unpins(sub.child) };
+                    unsafe { (*sub.child).defuse_array_buffer_unpins() };
                 }
                 _ => {}
             }
@@ -870,21 +825,23 @@ impl Cmd {
         Self::deinit(interp, this);
     }
 
+    /// The script failed: stop the subprocess. Its exit finishes the Cmd through `on_exit`.
+    pub(crate) fn kill_subprocess(interp: &Interpreter, this: NodeId) {
+        let Exec::Subproc(sub) = &interp.as_cmd(this).exec else {
+            return;
+        };
+        if sub.child.is_null() {
+            return;
+        }
+        // SAFETY: `child` was set by `spawn_async` from a
+        // `heap::alloc(ShellSubprocess)` and stays valid until `deinit`
+        // reclaims the box. Single-threaded.
+        let _ = unsafe { (*sub.child).try_kill(bun_core::SignalCode::SIGKILL as i32) };
+    }
+
     pub(crate) fn deinit(interp: &Interpreter, this: NodeId) {
         log!("Cmd {} deinit", this);
-        let exec = {
-            let me = interp.as_cmd_mut(this);
-            me.args.clear();
-            me.redirection_file.clear();
-            if let Some(fd) = me.redirection_fd.take() {
-                // SAFETY: `fd` is the +1 ref held in `me.redirection_fd`.
-                CowFd::deref(fd);
-            }
-            core::mem::take(&mut me.exec)
-        };
-        // `me`'s borrow ended above: the teardown below re-enters this Cmd
-        // via stdin `on_close_io` → `buffered_input_close` (a no-op once
-        // `exec` is taken).
+        let exec = core::mem::take(&mut interp.as_cmd_mut(this).exec);
         match exec {
             Exec::None => {}
             Exec::Builtin(b) => drop(b),
@@ -902,20 +859,15 @@ impl Cmd {
                     // Stop any still-active stdio before the drop (only the
                     // VM-shutdown path reaches here in flight).
                     #[cfg(not(windows))]
-                    ShellSubprocess::deinit_in_flight_io(child);
+                    (*child).deinit_in_flight_io();
                     drop(bun_core::heap::take(child));
                 }
-                // `sub.buffered_closed` drops here, freeing any captured
-                // `Vec<u8>`s (spec `buffered_closed.deinit()`).
             }
             // `Exec::Subproc` with null `child`: spawn failed before the
             // subprocess box was returned. Nothing to tear down.
             Exec::Subproc(_) => {}
         }
         // Argv/env are heap-owned `Vec`s; there is no spawn arena to free.
-        // `base.shell` is borrowed (or, when parent is Pipeline, freed by
-        // `Pipeline::child_done` before this runs) — never freed here.
-        interp.as_cmd_mut(this).base.end_scope();
     }
 
     // ── Subprocess callbacks (legacy `*Cmd` backref shape) ────────────────
@@ -940,15 +892,16 @@ impl Cmd {
     }
 
     /// Mark the subprocess's buffered stdin as closed.
-    pub(crate) fn buffered_input_close(&mut self) {
-        if let Exec::Subproc(sub) = &mut self.exec {
-            sub.buffered_closed.close_stdin();
-        }
+    pub(crate) fn buffered_input_close(&mut self) -> Yield {
+        let Exec::Subproc(sub) = &mut self.exec else {
+            return Yield::suspended();
+        };
+        sub.buffered_closed.close_stdin();
+        self.finish_if_done()
     }
 
     /// Mark the subprocess's buffered stdout/stderr as closed (flushing the
-    /// captured bytes into the shell buffers); if that makes the command
-    /// finished, transition to `Done` and yield back to the trampoline.
+    /// captured bytes into the shell buffers).
     pub(crate) fn buffered_output_close(
         &mut self,
         kind: OutKind,
@@ -958,34 +911,43 @@ impl Cmd {
             OutKind::Stdout => self.buffered_output_close_stdout(err),
             OutKind::Stderr => self.buffered_output_close_stderr(err),
         }
-        if self.has_finished() {
-            // Set `state = Done` and hand the Yield back to the caller
-            // (`PipeReader::run_yield`), which drives the trampoline with the
-            // `*mut Interpreter` it already holds, landing in `Cmd::next` →
-            // `CmdState::Done` → `interp.child_done(...)`.
-            self.state = CmdState::Done;
-            let (interp, this_id) = match &self.exec {
-                Exec::Subproc(sub) => (sub.interp, sub.this_id),
-                // Only the subprocess path calls this; builtin output goes
-                // through `Builtin::done` → `on_exec_done`.
-                _ => return Yield::suspended(),
-            };
-            // Same gate as `on_exit`: `exec.interp` stays null until the spawn
-            // returns, so a Yield run here would reach `Cmd::deinit` and free the
-            // `ShellSubprocess` still on the spawn frame. `transition_to_exec` resumes.
-            if interp.is_null() {
-                return Yield::suspended();
-            }
-            return Yield::Next(this_id);
+        self.finish_if_done()
+    }
+
+    /// Called by `ShellSubprocess::on_process_exit`.
+    pub(crate) fn on_exit(&mut self, exit_code: ExitCode) -> Yield {
+        log!("cmd exit code={}", exit_code);
+        // Keep the errno a stdio error already recorded.
+        if self.exit_code.is_none() {
+            self.exit_code = Some(exit_code);
         }
-        Yield::suspended()
+        self.finish_if_done()
+    }
+
+    /// `Done` once the exit code and every piped stdio are in; the caller runs
+    /// the Yield.
+    fn finish_if_done(&mut self) -> Yield {
+        if matches!(self.state, CmdState::Done) || !self.has_finished() {
+            return Yield::suspended();
+        }
+        self.state = CmdState::Done;
+        let (interp, this_id) = match &self.exec {
+            Exec::Subproc(sub) => (sub.interp, sub.this_id),
+            // Builtins finish through `Builtin::done`.
+            _ => return Yield::suspended(),
+        };
+        // Still inside the spawn; `transition_to_exec` resumes from `state`.
+        if interp.is_null() {
+            return Yield::suspended();
+        }
+        Yield::Next(this_id)
     }
 
     fn buffered_output_close_stdout(&mut self, err: Option<bun_sys::SystemError>) {
         debug_assert!(matches!(self.exec, Exec::Subproc(_)));
         log!("cmd close buffered stdout");
         if let Some(e) = err {
-            self.exit_code = Some(e.errno.unsigned_abs() as ExitCode);
+            self.exit_code = Some(e.get_errno() as ExitCode);
         }
         let redirect = self.ast_node().redirect;
         let Exec::Subproc(sub) = &mut self.exec else {
@@ -1009,10 +971,10 @@ impl Cmd {
         }
         BufferedIoClosed::close_out(
             &mut sub.buffered_closed.stdout,
-            &mut child.stdout,
+            &child.stdout,
             matches!(self.io.stdout, IoOutKind::Pipe),
             redirect.redirects_elsewhere(ast::IoKind::Stdout),
-            self.base.shell_mut().buffered_stdout(),
+            self.shell.buffered_stdout(),
         );
         child.close_io(StdioKind::Stdout);
     }
@@ -1021,7 +983,7 @@ impl Cmd {
         debug_assert!(matches!(self.exec, Exec::Subproc(_)));
         log!("cmd close buffered stderr");
         if let Some(e) = err {
-            self.exit_code = Some(e.errno.unsigned_abs() as ExitCode);
+            self.exit_code = Some(e.get_errno() as ExitCode);
         }
         let redirect = self.ast_node().redirect;
         let Exec::Subproc(sub) = &mut self.exec else {
@@ -1043,38 +1005,46 @@ impl Cmd {
         }
         BufferedIoClosed::close_out(
             &mut sub.buffered_closed.stderr,
-            &mut child.stderr,
+            &child.stderr,
             matches!(self.io.stderr, IoOutKind::Pipe),
             redirect.redirects_elsewhere(ast::IoKind::Stderr),
-            self.base.shell_mut().buffered_stderr(),
+            self.shell.buffered_stderr(),
         );
         child.close_io(StdioKind::Stderr);
     }
+}
 
-    /// Called by `ShellSubprocess::on_process_exit`.
-    pub(crate) fn on_exit(&mut self, exit_code: ExitCode) {
-        self.exit_code = Some(exit_code);
-        let has_finished = self.has_finished();
-        log!("cmd exit code={} has_finished={}", exit_code, has_finished);
-        if has_finished {
-            self.state = CmdState::Done;
-            // `self` lives inside `interp.nodes`, so resume via the stashed
-            // backrefs.
-            let (interp, this_id) = match &self.exec {
-                Exec::Subproc(sub) => (sub.interp, sub.this_id),
-                _ => return,
-            };
-            if interp.is_null() {
-                return;
-            }
-            // SAFETY: `interp` outlives every spawned subprocess (it owns the
-            // arena slot containing `self`). `&mut self` is dead by NLL after
-            // this point so the `&Interpreter` borrow does not alias it.
-            // The caller (`ShellSubprocess::on_process_exit`) does not touch
-            // its `*mut Cmd` again after this returns.
-            Yield::Next(this_id).run(unsafe { &*interp });
-        }
-    }
+/// True when argv0 is the literal word `export`, the only declaration
+/// builtin the Bun shell has.
+fn is_declaration_utility(argv0: &ast::Atom) -> bool {
+    matches!(argv0, ast::Atom::Simple(ast::SimpleAtom::Text(t)) if **t == b"export"[..])
+}
+
+/// True when the word starts with a literal `NAME=` prefix where `NAME` is a
+/// valid shell identifier. A name produced by an expansion does not count,
+/// like in bash.
+fn is_assignment_word(atom: &ast::Atom) -> bool {
+    let first = match atom {
+        ast::Atom::Simple(s) => s,
+        ast::Atom::Compound(c) => match c.atoms.first() {
+            Some(s) => s,
+            None => return false,
+        },
+    };
+    let ast::SimpleAtom::Text(text) = first else {
+        return false;
+    };
+    let Some(eq) = bun_core::strings::index_of_char_usize(text, b'=') else {
+        return false;
+    };
+    let name = &text[..eq];
+    let Some(&head) = name.first() else {
+        return false;
+    };
+    (head.is_ascii_alphabetic() || head == b'_')
+        && name[1..]
+            .iter()
+            .all(|&b| b.is_ascii_alphanumeric() || b == b'_')
 }
 
 fn set_stdio_from_redirect(stdio: &mut [Stdio; 3], flags: ast::RedirectFlags, fd: bun_sys::Fd) {

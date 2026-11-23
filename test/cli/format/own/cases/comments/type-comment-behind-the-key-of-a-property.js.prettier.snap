@@ -1,0 +1,27 @@
+------------------
+{ printWidth: 80 }
+------------------
+x = {
+  minimizer:
+    /** @type {{ implementation: Implementation<T>, options: Options<T> }} */
+    normalize(minimizers, options),
+  implementation:
+    /** @type {Implementation<T>} */
+    /** @type {unknown} */ generate,
+  /* not one */
+  plain: value,
+};
+
+-------------------
+{ printWidth: 100 }
+-------------------
+x = {
+  minimizer:
+    /** @type {{ implementation: Implementation<T>, options: Options<T> }} */
+    normalize(minimizers, options),
+  implementation: /** @type {Implementation<T>} */ /** @type {unknown} */ generate,
+  /* not one */
+  plain: value,
+};
+
+===================== End =====================

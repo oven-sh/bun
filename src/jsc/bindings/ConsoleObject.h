@@ -10,16 +10,7 @@ using namespace JSC;
 
 class ConsoleObject final : public JSC::ConsoleClient {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(ConsoleObject);
-
-public:
-    ~ConsoleObject() final {}
-    ConsoleObject(void* client)
-        : JSC::ConsoleClient()
-    {
-        m_client = client;
-    }
-
-    void* m_client;
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(ConsoleObject);
 
 private:
     void messageWithTypeAndLevel(MessageType, MessageLevel, JSC::JSGlobalObject*,

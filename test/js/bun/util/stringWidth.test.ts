@@ -1,15 +1,22 @@
 import { describe, expect, test } from "bun:test";
 import npmStringWidth from "string-width";
 
+declare module "bun:test" {
+  interface Matchers<T> {
+    toMatchNPMStringWidth(): void;
+    toMatchNPMStringWidthExcludeANSI(): void;
+  }
+}
+
 expect.extend({
-  toMatchNPMStringWidth(received: string) {
+  toMatchNPMStringWidth(received: any) {
     const width = npmStringWidth(received, { countAnsiEscapeCodes: true });
     const bunWidth = Bun.stringWidth(received, { countAnsiEscapeCodes: true });
     const pass = width === bunWidth;
     const message = () => `expected ${received} to have npm string width ${width} but got ${bunWidth}`;
     return { pass, message };
   },
-  toMatchNPMStringWidthExcludeANSI(received: string) {
+  toMatchNPMStringWidthExcludeANSI(received: any) {
     const width = npmStringWidth(received, { countAnsiEscapeCodes: false });
     const bunWidth = Bun.stringWidth(received, { countAnsiEscapeCodes: false });
     const pass = width === bunWidth;
@@ -1335,6 +1342,7 @@ describe("ANSI escapes across SIMD chunk boundaries", () => {
           else return k;
           break;
         case "inOscGotEsc":
+        // @ts-expect-error falls through
         case "needStGotEsc":
           // ESC \ is ST; any other byte follows an ESC that aborted the
           // payload and re-introduced a sequence, so process it in gotEsc.
@@ -1749,6 +1757,61 @@ describe("UTF-16 bulk width fast path", () => {
     const partWidth = Bun.stringWidth(part);
     expect(partWidth).toBe(40); // 6 + 5 + 6 + 7 + 9 + 7
     expect(Bun.stringWidth(part.repeat(50))).toBe(partWidth * 50);
+  });
+
+  test("every short interleaving of control, escape and non-ASCII tokens", () => {
+    // No token joins a neighbouring cluster, so the width is the sum of the parts.
+    const tokens: Array<[string, number]> = [
+      ["日", 2],
+      ["\n", 0],
+      ["a", 1],
+      ["e\u0301", 1],
+      ["\x1b[31m", 0],
+      ["\u009b0m", 0],
+      ["\u009d0;t\x1b\\", 0], // C1 OSC whose terminator is the next ESC
+      ["\u009b1;\x1b[0m", 0], // C1 CSI aborted by the next ESC
+    ];
+    const mismatches: string[] = [];
+    const walk = (text: string, expected: number, depth: number) => {
+      for (const ambiguousIsNarrow of [true, false]) {
+        // The trailing 日 keeps an all-Latin-1 combination on the UTF-16 path.
+        const got = Bun.stringWidth(text + "日", { ambiguousIsNarrow });
+        if (got !== expected + 2) mismatches.push(`${JSON.stringify(text)}: got ${got}, expected ${expected + 2}`);
+      }
+      if (depth === 0) return;
+      for (const [token, width] of tokens) walk(text + token, expected + width, depth - 1);
+    };
+    walk("", 0, 4);
+    expect(mismatches).toEqual([]);
+  });
+
+  describe("looking for escapes does not rescan the text on every short ASCII run", () => {
+    const n = 50_000;
+    const bestOf3 = (text: string, options: { countAnsiEscapeCodes: boolean; ambiguousIsNarrow: boolean }) => {
+      let best = Infinity;
+      for (let i = 0; i < 3; i++) {
+        const start = Bun.nanoseconds();
+        Bun.stringWidth(text, options);
+        best = Math.min(best, Bun.nanoseconds() - start);
+      }
+      return best;
+    };
+
+    test.each([
+      ["no escape", "日\n", "", true, 2 * n],
+      ["no escape, ambiguous as wide", "日a", "", false, 3 * n],
+      ["one escape at the end", "日\t", "\x1b[0m", true, 2 * n],
+      ["C1 escapes only", "\n\u009b0m", "日", true, 2],
+    ])("%s", (_, unit, suffix, ambiguousIsNarrow, expected) => {
+      const text = Buffer.alloc(Buffer.byteLength(unit) * n, unit).toString() + suffix;
+      expect(Bun.stringWidth(text, { ambiguousIsNarrow })).toBe(expected);
+      // Counting escape codes walks the same text without looking for escapes,
+      // so it scales with the build (debug, ASAN) the same way. Rescanning the
+      // rest of the text for ESC on every run is over 100x slower at this size.
+      const baseline = bestOf3(text, { countAnsiEscapeCodes: true, ambiguousIsNarrow });
+      const elapsed = bestOf3(text, { countAnsiEscapeCodes: false, ambiguousIsNarrow });
+      expect(elapsed).toBeLessThan(baseline * 30);
+    });
   });
 });
 

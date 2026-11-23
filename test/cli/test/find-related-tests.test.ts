@@ -104,4 +104,54 @@ describe.concurrent("bun test --find-related-tests", () => {
     expect(stderr).toContain("--changed and --find-related-tests cannot be used together");
     expect(exitCode).not.toBe(0);
   });
+  test("accepts repeated flags, aliases, and equals values", async () => {
+    using dir = tempDir("find-related-repeated", fixture);
+
+    const { stderr, exitCode } = await runRelated(String(dir), ["src/helper.ts", "--findRelatedTests=src/other.ts"]);
+
+    expect(ranFiles(stderr)).toEqual(["a.test.ts", "b.test.ts"]);
+    expect(stderr).toContain("2 source files, running 2/3 test files");
+    expect(exitCode).toBe(0);
+  });
+
+  test("keeps test file filters before the source list", async () => {
+    using dir = tempDir("find-related-filter", fixture);
+
+    const { stderr, exitCode } = await runRelated(
+      String(dir),
+      ["src/helper.ts", "src/other.ts"],
+      "--find-related-tests",
+      ["./a.test.ts"],
+    );
+
+    expect(ranFiles(stderr)).toEqual(["a.test.ts"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("keeps test file filters after the end-of-options marker", async () => {
+    using dir = tempDir("find-related-end-of-options", fixture);
+
+    const { stderr, exitCode } = await runRelated(String(dir), ["src/helper.ts", "src/util.ts", "--", "./b.test.ts"]);
+
+    expect(ranFiles(stderr)).toEqual([]);
+    expect(stderr).toContain("no test files are related");
+    expect(exitCode).toBe(0);
+  });
+
+  test("selects every importer when a source uses multiple loaders", async () => {
+    using dir = tempDir("find-related-two-loaders", {
+      ...fixture,
+      "data.json": '{"v":1}\n',
+      "a.test.ts":
+        'import { test, expect } from "bun:test";\nimport data from "./data.json";\ntest("a", () => expect(data.v).toBe(1));\n',
+      "b.test.ts":
+        'import { test, expect } from "bun:test";\nimport text from "./data.json" with { type: "text" };\ntest("b", () => expect(text).toContain("v"));\n',
+    });
+
+    const { stderr, exitCode } = await runRelated(String(dir), ["data.json"]);
+
+    expect(ranFiles(stderr)).toEqual(["a.test.ts", "b.test.ts"]);
+    expect(stderr).toContain("1 source file, running 2/3 test files");
+    expect(exitCode).toBe(0);
+  });
 });

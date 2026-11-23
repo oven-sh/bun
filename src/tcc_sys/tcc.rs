@@ -16,7 +16,7 @@ pub type ErrorFunc<Ctx> = unsafe extern "C" fn(ctx: *mut Ctx, msg: *const c_char
 // On those platforms these `extern "C"` decls would be undefined at link:
 // `bun_runtime::ffi::ffi_body::{Source::add,
 // CompileC::compile}` are reachable from `extern "C"` JS bindings and the
-// monomorphized refs land in `libbun_rust.a` regardless of any
+// monomorphized refs land in the link regardless of any
 // `if !ENABLE_TINYCC { return }` runtime guard. Swap the `extern` block for
 // stub *definitions* on those targets so the link resolves; the gated Rust
 // callers never reach them at runtime (they early-return with "not available
@@ -27,23 +27,39 @@ pub type ErrorFunc<Ctx> = unsafe extern "C" fn(ctx: *mut Ctx, msg: *const c_char
 // and `ENABLE_TINYCC` in `scripts/build/buildOptionsRs.ts`.
 macro_rules! tcc_externs {
     ($($(#[$attr:meta])* fn $name:ident($($arg:ident: $ty:ty),* $(,)?) $(-> $ret:ty)?;)*) => {
-        #[cfg(not(any(target_os = "android", target_os = "freebsd")))]
-        unsafe extern "C" {
-            $($(#[$attr])* fn $name($($arg: $ty),*) $(-> $ret)?;)*
+        mod raw {
+            use super::*;
+
+            #[cfg(not(any(target_os = "android", target_os = "freebsd")))]
+            unsafe extern "C" {
+                $($(#[$attr])* pub(super) fn $name($($arg: $ty),*) $(-> $ret)?;)*
+            }
+            $(
+                #[cfg(any(target_os = "android", target_os = "freebsd"))]
+                #[allow(unused_variables, clippy::missing_safety_doc)]
+                pub(super) unsafe extern "C" fn $name($($arg: $ty),*) $(-> $ret)? {
+                    unreachable!(concat!(
+                        stringify!($name),
+                        " called but TinyCC is disabled on this target — keep the ",
+                        "ENABLE_TINYCC early-returns in bun_runtime::ffi in sync with this stub"
+                    ));
+                }
+            )*
         }
         $(
-            #[cfg(any(target_os = "android", target_os = "freebsd"))]
-            #[allow(unused_variables, clippy::missing_safety_doc)]
-            unsafe extern "C" fn $name($($arg: $ty),*) $(-> $ret)? {
-                unreachable!(concat!(
-                    stringify!($name),
-                    " called but TinyCC is disabled on this target — keep the ",
-                    "ENABLE_TINYCC early-returns in bun_runtime::ffi in sync with this stub"
-                ));
+            unsafe fn $name($($arg: $ty),*) $(-> $ret)? {
+                let _lock = LIBTCC_LOCK.lock();
+                // SAFETY: same contract as the libtcc function; the caller upholds it.
+                unsafe { raw::$name($($arg),*) }
             }
         )*
     };
 }
+
+/// The only lock around TinyCC's process globals: its own are compiled out
+/// (`CONFIG_TCC_SEMLOCK=0`, scripts/build/deps/tinycc.ts). Held across the
+/// error callback, which must not call into libtcc.
+static LIBTCC_LOCK: bun_core::Mutex<()> = bun_core::Mutex::new(());
 
 tcc_externs! {
     fn tcc_new() -> *mut TCCState;
@@ -123,7 +139,7 @@ pub enum OutputFormat {
 bun_opaque::opaque_ffi! { pub struct Symbol; }
 
 bun_opaque::opaque_ffi! {
-    /// Opaque TinyCC compilation state. Always handled via `*mut State` / `&mut State`.
+    /// Opaque TinyCC compilation state, owned by [`OwnedState`].
     pub struct State;
 }
 
@@ -132,55 +148,54 @@ pub struct ConfigErr<ErrCtx> {
     pub handler: unsafe extern "C" fn(*mut ErrCtx, *const c_char),
 }
 
-pub struct Config<ErrCtx> {
-    // Call sites pass both literals (default_tcc_options) and runtime strings
-    // (CompileC.flags / BUN_TCC_OPTIONS); kept as a raw ptr rather than a borrow.
-    pub options: Option<NonNull<ZStr>>,
+pub struct Config<'a, ErrCtx> {
+    pub options: Option<&'a ZStr>,
     pub output_type: OutputFormat,
     pub err: ConfigErr<ErrCtx>,
 }
 
-impl<ErrCtx> Default for Config<ErrCtx>
-where
-    ConfigErr<ErrCtx>: Default,
-{
-    fn default() -> Self {
-        // `err.handler` has no default, so this Default impl exists only for
-        // `ErrCtx` types whose `ConfigErr` provides a handler default.
-        Self {
-            options: None,
-            output_type: OutputFormat::Memory,
-            err: Default::default(),
-        }
+/// Owns a compilation context and the code it relocated.
+pub struct OwnedState(NonNull<State>);
+
+impl core::ops::Deref for OwnedState {
+    type Target = State;
+    fn deref(&self) -> &State {
+        State::opaque_ref(self.0.as_ptr())
     }
 }
 
-impl State {
-    /// Create a new TCC compilation context
-    pub(crate) fn new() -> Result<NonNull<State>, bun_alloc::AllocError> {
-        // SAFETY: tcc_new has no preconditions.
-        NonNull::new(unsafe { tcc_new() }).ok_or(bun_alloc::AllocError)
+impl core::ops::DerefMut for OwnedState {
+    fn deref_mut(&mut self) -> &mut State {
+        State::opaque_mut(self.0.as_ptr())
+    }
+}
+
+impl Drop for OwnedState {
+    fn drop(&mut self) {
+        // SAFETY: a `tcc_new` handle, deleted once.
+        unsafe { tcc_delete(self.0.as_ptr()) }
+    }
+}
+
+impl OwnedState {
+    /// Keeps the compiled code mapped for the life of the process.
+    pub fn leak(self) {
+        let _ = core::mem::ManuallyDrop::new(self);
     }
 
     /// Create and initialize a new TCC compilation context
     pub fn init<ErrCtx, const VALIDATE_OPTIONS: bool>(
-        config: &Config<ErrCtx>,
-    ) -> Result<NonNull<State>, Error> {
-        let state_ptr = State::new()?;
-        // errdefer state.destroy() — State is an FFI handle without Drop, so use scopeguard.
-        let guard = scopeguard::guard(state_ptr, |p| {
-            // SAFETY: p was returned by tcc_new and has not yet been deleted.
-            unsafe { tcc_delete(p.as_ptr()) }
-        });
-        // SAFETY: state_ptr is valid and uniquely owned for the duration of this fn.
-        let state: &mut State = unsafe { &mut *state_ptr.as_ptr() };
+        config: &Config<'_, ErrCtx>,
+    ) -> Result<Self, Error> {
+        // SAFETY: tcc_new has no preconditions.
+        let state = NonNull::new(unsafe { tcc_new() }).ok_or(bun_alloc::AllocError)?;
+        let mut state = Self(state);
 
         // setOutputType has side effects that are conditional on existing
         // options, so this must be called after setOptions
         if !VALIDATE_OPTIONS {
             if let Some(options) = config.options {
-                // SAFETY: caller guarantees `options` outlives this init call.
-                match state.set_options(unsafe { options.as_ref() }) {
+                match state.set_options(options) {
                     Ok(()) => {}
                     Err(_) => {
                         if cfg!(debug_assertions) {
@@ -197,27 +212,17 @@ impl State {
 
         if VALIDATE_OPTIONS {
             if let Some(options) = config.options {
-                // SAFETY: caller guarantees `options` outlives this init call.
-                state.set_options(unsafe { options.as_ref() })?;
+                state.set_options(options)?;
             }
         }
 
         state.set_output_type(config.output_type)?;
 
-        let state_ptr = scopeguard::ScopeGuard::into_inner(guard);
-        Ok(state_ptr)
+        Ok(state)
     }
+}
 
-    /// Free a TCC compilation context
-    ///
-    /// # Safety
-    /// `s` must have been returned by [`State::new`]/[`State::init`] and not yet freed.
-    pub unsafe fn destroy(s: *mut State) {
-        // opaque FFI handle — kept as explicit destroy fn, not `impl Drop`.
-        // SAFETY: caller's contract guarantees `s` is a live `tcc_new` handle not yet deleted.
-        unsafe { tcc_delete(s) }
-    }
-
+impl State {
     /// Set error/warning display callback
     pub(crate) fn set_error_func<Context>(
         &mut self,

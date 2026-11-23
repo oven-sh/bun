@@ -7,6 +7,7 @@ describe("issue #437", function () {
     const clock = FakeTimers.install();
 
     class DateTime extends Date {
+      declare bar: string;
       constructor() {
         super();
 

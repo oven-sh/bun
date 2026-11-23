@@ -1,7 +1,5 @@
 use bun_core::ZStr;
-#[cfg(unix)]
-use bun_sys::FdExt;
-use bun_sys::{self, Fd, Mode};
+use bun_sys::{self, Fd, File, Mode};
 
 // A sealed trait whose impls cover each accepted input type
 // (`PathOrFileDescriptor` and zero-terminated path slices).
@@ -59,9 +57,9 @@ pub fn open_for_writing<P, C>(
     force_sync: bool,
     out_nonblocking: &mut bool,
     ctx: C,
-    on_force_sync_or_isa_tty: fn(C),
+    on_tty: fn(C),
     is_pollable: fn(mode: Mode) -> bool,
-) -> bun_sys::Result<Fd>
+) -> bun_sys::Result<File>
 where
     P: OpenForWritingInput,
 {
@@ -75,7 +73,7 @@ where
         force_sync,
         out_nonblocking,
         ctx,
-        on_force_sync_or_isa_tty,
+        on_tty,
         is_pollable,
         bun_sys::openat,
     )
@@ -91,84 +89,64 @@ pub fn open_for_writing_impl<P, C>(
     force_sync: bool,
     out_nonblocking: &mut bool,
     ctx: C,
-    on_force_sync_or_isa_tty: fn(C),
+    on_tty: fn(C),
     is_pollable: fn(mode: Mode) -> bool,
     openat: fn(dir: Fd, path: &ZStr, flags: i32, mode: Mode) -> bun_sys::Result<Fd>,
-) -> bun_sys::Result<Fd>
+) -> bun_sys::Result<File>
 where
     P: OpenForWritingInput,
 {
     #[cfg(windows)]
     {
-        let _ = (
-            is_socket,
-            out_nonblocking,
-            ctx,
-            on_force_sync_or_isa_tty,
-            is_pollable,
-        );
+        let _ = (is_socket, out_nonblocking, ctx, on_tty, is_pollable);
     }
+    // `O_NONBLOCK` opens an asynchronous handle, and `uv_fs_write` fails on those with EINVAL.
+    #[cfg(windows)]
+    let input_flags = input_flags & !bun_sys::O::NONBLOCK;
     // TODO: this should be concurrent.
     #[cfg(unix)]
     let mut isatty = false;
     let mut is_nonblocking = false;
     let result =
         input_path.open_for_writing_result(dir, input_flags, mode, &mut is_nonblocking, &openat);
-    let fd = result?;
+    let file = File::from_fd(result?);
+    let fd = file.fd();
 
     #[cfg(unix)]
     {
-        match bun_sys::fstat(fd) {
-            Err(err) => {
-                fd.close();
-                return Err(err);
-            }
-            Ok(stat) => {
-                // pollable.* = bun.sys.isPollable(stat.mode);
-                *pollable = is_pollable(stat.st_mode as Mode);
-                if !*pollable {
-                    isatty = bun_sys::isatty(fd);
+        let stat = bun_sys::fstat(fd)?;
+        *pollable = is_pollable(stat.st_mode as Mode);
+        if !*pollable {
+            isatty = bun_sys::isatty(fd);
+        }
+
+        if isatty {
+            *pollable = true;
+        }
+
+        *is_socket = bun_sys::S::ISSOCK(stat.st_mode as Mode);
+
+        if isatty {
+            on_tty(ctx);
+        }
+        if force_sync || isatty {
+            // As in Node: https://github.com/nodejs/node/pull/1771#issuecomment-119351671
+            let _ = bun_sys::update_nonblocking(fd, false);
+            is_nonblocking = false;
+        } else if !is_nonblocking {
+            let flags = bun_sys::get_fcntl_flags(fd)?;
+            is_nonblocking = (flags as i32 & bun_sys::O::NONBLOCK) != 0;
+
+            if !is_nonblocking {
+                if bun_sys::set_nonblocking(fd).is_ok() {
+                    is_nonblocking = true;
                 }
-
-                if isatty {
-                    *pollable = true;
-                }
-
-                *is_socket = bun_sys::S::ISSOCK(stat.st_mode as Mode);
-
-                if force_sync || isatty {
-                    // Prevents interleaved or dropped stdout/stderr output for terminals.
-                    // As noted in the following reference, local TTYs tend to be quite fast and
-                    // this behavior has become expected due historical functionality on OS X,
-                    // even though it was originally intended to change in v1.0.2 (Libuv 1.2.1).
-                    // Ref: https://github.com/nodejs/node/pull/1771#issuecomment-119351671
-                    let _ = bun_sys::update_nonblocking(fd, false);
-                    is_nonblocking = false;
-                    // this.force_sync = true;
-                    // this.writer.force_sync = true;
-                    on_force_sync_or_isa_tty(ctx);
-                } else if !is_nonblocking {
-                    let flags = match bun_sys::get_fcntl_flags(fd) {
-                        Ok(flags) => flags,
-                        Err(err) => {
-                            fd.close();
-                            return Err(err);
-                        }
-                    };
-                    is_nonblocking = (flags as i32 & bun_sys::O::NONBLOCK) != 0;
-
-                    if !is_nonblocking {
-                        if bun_sys::set_nonblocking(fd).is_ok() {
-                            is_nonblocking = true;
-                        }
-                    }
-                }
-
-                *out_nonblocking = is_nonblocking && *pollable;
             }
         }
 
-        return Ok(fd);
+        *out_nonblocking = is_nonblocking && *pollable;
+
+        return Ok(file);
     }
 
     #[cfg(windows)]
@@ -176,6 +154,7 @@ where
         *pollable = (bun_sys::windows::GetFileType(fd.native()) & bun_sys::windows::FILE_TYPE_PIPE)
             != 0
             && !force_sync;
-        return Ok(fd);
+        // The libuv writer needs a CRT fd. `Fd::uv()` panics on a HANDLE.
+        return file.make_lib_uv_owned_for_syscall(bun_sys::Tag::open);
     }
 }

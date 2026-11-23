@@ -1,18 +1,23 @@
 use bun_core::ZStr;
 
-use crate::{E, ErrorCase, Fd, FdExt, Mode, O, Tag};
-
-// O_TMPFILE doesn't seem to work very well.
-const ALLOW_TMPFILE: bool = false;
+use crate::{CloseOnDrop, Error, Fd, Mode, O, Tag};
 
 // To be used with files
 // not folders!
 pub struct Tmpfile<'a> {
-    destination_dir: Fd,
-    // Caller-supplied tmp name, valid for the lifetime of the Tmpfile.
-    tmpfilename: &'a ZStr,
-    pub fd: Fd,
-    pub using_tmpfile: bool,
+    pub file: CloseOnDrop,
+    entry: UnlinkOnDrop<'a>,
+}
+
+struct UnlinkOnDrop<'a> {
+    dir: Fd,
+    name: &'a ZStr,
+}
+
+impl Drop for UnlinkOnDrop<'_> {
+    fn drop(&mut self) {
+        let _ = crate::unlinkat(self.dir, self.name);
+    }
 }
 
 impl<'a> Tmpfile<'a> {
@@ -25,79 +30,38 @@ impl<'a> Tmpfile<'a> {
         tmpfilename: &'a ZStr,
         perm: Mode,
     ) -> crate::Result<Tmpfile<'a>> {
-        let mut tmpfile = Tmpfile {
+        let file = crate::openat(
             destination_dir,
             tmpfilename,
-            fd: Fd::INVALID,
-            using_tmpfile: ALLOW_TMPFILE,
+            O::CREAT | O::EXCL | O::CLOEXEC | O::WRONLY,
+            perm,
+        )
+        .map(CloseOnDrop::new)?;
+        let entry = UnlinkOnDrop {
+            dir: destination_dir,
+            name: tmpfilename,
         };
 
-        'open: {
-            // ALLOW_TMPFILE = false: dead branch, but Rust still type-checks
-            // `if false` bodies, so the body must resolve.
-            if ALLOW_TMPFILE {
-                // SAFETY: literal is NUL-terminated; len excludes the NUL.
-                let dot = ZStr::from_static(b".\0");
-                match crate::openat(
-                    destination_dir,
-                    dot,
-                    O::WRONLY | O::TMPFILE | O::CLOEXEC,
-                    perm,
-                ) {
-                    Ok(fd) => {
-                        tmpfile.fd =
-                            fd.make_lib_uv_owned_for_syscall(Tag::open, ErrorCase::CloseOnFail)?;
-                        break 'open;
-                    }
-                    Err(err) => match err.get_errno() {
-                        E::EINVAL | E::ENOTSUP | E::ENOSYS => {
-                            tmpfile.using_tmpfile = false;
-                        }
-                        _ => return Err(err),
-                    },
-                }
-            }
-
-            tmpfile.fd = crate::openat(
-                destination_dir,
-                tmpfilename,
-                O::CREAT | O::EXCL | O::CLOEXEC | O::WRONLY,
-                perm,
-            )?
-            .make_lib_uv_owned_for_syscall(Tag::open, ErrorCase::CloseOnFail)?;
-        }
-
-        Ok(tmpfile)
+        Ok(Tmpfile {
+            file: file.make_lib_uv_owned_for_syscall(Tag::open)?,
+            entry,
+        })
     }
 
-    pub fn finish(&mut self, destname: &ZStr) -> crate::Result<()> {
-        // ALLOW_TMPFILE = false dead branch — see `create()` note above.
-        if ALLOW_TMPFILE && self.using_tmpfile {
-            let mut retry = true;
-            // SAFETY: basename returns a suffix of `destname`, which is NUL-terminated,
-            // so the suffix is also NUL-terminated at the same position.
-            let basename: &ZStr = unsafe {
-                let b = bun_paths::basename(destname.as_bytes());
-                ZStr::from_raw(b.as_ptr(), b.len())
-            };
-            while retry {
-                match crate::linkat_tmpfile(self.fd, self.destination_dir, basename) {
-                    Ok(()) => return Ok(()),
-                    Err(err) if err.get_errno() == E::EEXIST && retry => {
-                        let _ = crate::unlinkat(self.destination_dir, basename);
-                        retry = false;
-                    }
-                    Err(err) => return Err(err),
-                }
+    /// A failure hands the file back.
+    pub fn finish(self, destname: &ZStr) -> Result<(), (Error, Self)> {
+        let UnlinkOnDrop { dir, name } = self.entry;
+        match crate::move_file_z_with_handle(self.file.fd(), dir, name, dir, destname) {
+            Ok(()) => {
+                self.keep();
+                Ok(())
             }
+            Err(err) => Err((err, self)),
         }
+    }
 
-        crate::move_file_z_with_handle(
-            self.fd,
-            self.destination_dir,
-            self.tmpfilename,
-            self.destination_dir,
-            destname,
-        )
+    /// Closes the file and leaves it on disk.
+    pub fn keep(self) {
+        let _ = core::mem::ManuallyDrop::new(self.entry);
     }
 }

@@ -72,18 +72,18 @@ match bun_sys::unlink(path) {
 - `File::open(path: &ZStr, flags, mode)` / `File::openat(dir: Fd, path: &[u8], flags, mode)` / `File::make_open(...)` (creates parent dirs) / `File::create(dir, path, truncate)`
 - `file.read(buf)` / `read_all(buf)` / `read_to_end()` / `read_to_end_small()` / `write(buf)` / `write_all(buf)`
 - `bun_sys::open`, `read`, `write`, `pread`, `pwrite`, `stat`, `fstat`, `lstat`, `mkdir`, `unlink`, `rename`, `symlink`, `chmod` — free fns over `Fd`
+- `bun_sys::read_buf(fd, cursor)` / `file.read_all_buf(cursor)` / `pread_all_buf(cursor, offset)` — fill uninitialized memory through a `BorrowedCursor`; `bun_core::vec::append_with` lends one over the spare capacity of a `Vec`
 - Open flags: `bun_sys::O::RDONLY`, `O::WRONLY | O::CREAT | O::TRUNC`, etc.
 
 ## Path Buffers
 
-Use `bun_paths` for joining/normalization and the path-buffer pool to avoid 64 KB stack allocations on Windows:
+Build paths with `bun_paths::Path`. It is NUL-terminated and grows on the heap, which avoids 96 KB stack allocations on Windows:
 
 ```rust
-use bun_paths::{path_buffer_pool, resolve_path::{self, platform}};
+use bun_paths::Path;
 
-let mut buf = path_buffer_pool::get();
-let joined = resolve_path::join_string_buf::<platform::Auto>(&mut *buf, &[dir, name]);
-let file = File::openat(Fd::cwd(), joined, O::RDONLY, 0)?;
+let path = Path::from_parts(&[dir, name]);
+let file = File::open(&path, O::RDONLY, 0)?;
 ```
 
 ## Common Mistakes

@@ -6,7 +6,7 @@
 use core::ffi::{c_char, c_long};
 use core::ptr;
 
-use bun_boringssl_sys::SSL_CTX;
+use bun_boringssl_sys::{OwnedSslCtx, SSL_CTX};
 
 use crate::create_bun_socket_error_t;
 
@@ -37,45 +37,33 @@ fn stat_for_digest(path: &bun_core::ZStr) -> Option<[i64; 3]> {
 fn stat_for_digest(path: &bun_core::ZStr) -> Option<[i64; 3]> {
     use bun_windows_sys as fs;
     use bun_windows_sys::FILETIME;
+    use std::os::windows::io::{AsRawHandle as _, HandleOrInvalid, OwnedHandle};
     // Spec parity: `bun.sys.stat` on Windows is libuv `uv_fs_stat`, which opens
     // via `CreateFileW` *without* `FILE_FLAG_OPEN_REPARSE_POINT` and therefore
     // follows symlinks to the target. `GetFileAttributesExW` does NOT follow
     // reparse points — it would return the link's own mtime/size and miss an
     // in-place cert rotation behind a symlink (stale SSL_CTX served). Match
     // libuv: open query-only, `GetFileInformationByHandle`, close.
-    //
-    // `bun_core::to_w_path_normalized` lives above this crate, so widen
-    // inline: UTF-8→UTF-16LE (≤ input.len() code units), normalize `/`→`\`,
-    // NUL-terminate. Heap-allocated (cold init path; avoids a 64KB stack
-    // `WPathBuffer` and the wrong-unit `MAX_PATH_BYTES` previously used here).
-    let bytes = path.as_bytes();
-    let mut wbuf = vec![0u16; bytes.len() + 1];
-    let n = bun_core::strings::convert_utf8_to_utf16_in_buffer(&mut wbuf, bytes).len();
-    bun_paths::slashes_to_windows_in_place(&mut wbuf[..n]);
-    wbuf[n] = 0;
-    // SAFETY: `wbuf` is NUL-terminated at `[n]`. dwDesiredAccess=0 is query-
+    let mut wide = bun_paths::OSPath::from(path);
+    bun_paths::to_native_in_place(wide.as_mut_slice());
+    // SAFETY: `wide` is NUL-terminated. dwDesiredAccess=0 is query-
     // only (metadata). FILE_FLAG_BACKUP_SEMANTICS lets this succeed on dirs;
     // omitting FILE_FLAG_OPEN_REPARSE_POINT makes CreateFileW follow symlinks.
     let h = unsafe {
-        fs::CreateFileW(
-            wbuf.as_ptr(),
+        HandleOrInvalid::from_raw_handle(fs::CreateFileW(
+            wide.as_ptr(),
             0,
             fs::FILE_SHARE_READ | fs::FILE_SHARE_WRITE | fs::FILE_SHARE_DELETE,
             ptr::null_mut(),
             fs::OPEN_EXISTING,
             fs::FILE_FLAG_BACKUP_SEMANTICS,
             ptr::null_mut(),
-        )
+        ))
     };
-    if h == fs::INVALID_HANDLE_VALUE {
-        return None;
-    }
+    let h = OwnedHandle::try_from(h).ok()?;
     let mut data: fs::BY_HANDLE_FILE_INFORMATION = bun_core::ffi::zeroed();
     // SAFETY: `h` is a valid open handle; `data` is a valid out-ptr.
-    let ok = unsafe { fs::GetFileInformationByHandle(h, &raw mut data) };
-    // SAFETY: `h` is a valid open handle from CreateFileW above.
-    unsafe { fs::CloseHandle(h) };
-    if ok == 0 {
+    if unsafe { fs::GetFileInformationByHandle(h.as_raw_handle(), &raw mut data) } == 0 {
         return None;
     }
     let ft: FILETIME = data.ftLastWriteTime;
@@ -160,21 +148,31 @@ impl Default for BunSocketContextOptions {
 }
 
 impl BunSocketContextOptions {
-    /// Build a BoringSSL `SSL_CTX*` from these options. Caller owns one ref
-    /// and releases with `SSL_CTX_free` — the passphrase is freed inside this
-    /// call once private-key load completes, so plain `SSL_CTX_free` is
-    /// correct on every path.
-    ///
-    /// Mode-neutral: the same `SSL_CTX*` may back client connects and server
-    /// accepts. CTX-level verify mode comes from `request_cert`/`ca`/
-    /// `reject_unauthorized` here; the per-socket client override (always run
-    /// chain validation, populate verify_error) is applied in
-    /// `us_internal_ssl_attach`, so a server reusing this ctx never sends
-    /// CertificateRequest unless these options asked it to.
-    pub fn create_ssl_context(self, err: &mut create_bun_socket_error_t) -> Option<*mut SSL_CTX> {
+    /// Build a BoringSSL `SSL_CTX` from these options. The verify mode follows
+    /// `request_cert`/`reject_unauthorized` only; see `us_ssl_ctx_from_options`.
+    pub fn create_ssl_context(self, err: &mut create_bun_socket_error_t) -> Option<OwnedSslCtx> {
         // SAFETY: FFI call; `self` is `#[repr(C)]` and passed by value, `err` is a valid out-param.
-        let ctx = unsafe { c::us_ssl_ctx_from_options(self, err) };
-        if ctx.is_null() { None } else { Some(ctx) }
+        // A non-null return carries the +1 from `SSL_CTX_new`.
+        unsafe { OwnedSslCtx::from_raw(c::us_ssl_ctx_from_options(self, err)) }
+    }
+
+    /// Sets `digest` (this struct's `digest()`) as the session id context: see `us_ssl_apply_selected_ctx`.
+    pub fn create_ssl_context_with_digest(
+        self,
+        digest: &[u8; 32],
+        err: &mut create_bun_socket_error_t,
+    ) -> Option<OwnedSslCtx> {
+        let ctx = self.create_ssl_context(err)?;
+        // SAFETY: `ctx` is live and not shared yet; the call copies `digest`
+        // (32 bytes, the session id context maximum, so it cannot fail).
+        unsafe {
+            bun_boringssl_sys::SSL_CTX_set_session_id_context(
+                ctx.as_ptr(),
+                digest.as_ptr(),
+                digest.len(),
+            );
+        }
+        Some(ctx)
     }
 
     /// SHA-256 over every field this struct carries, dereferencing string
@@ -223,9 +221,7 @@ impl BunSocketContextOptions {
             hp.update(&[(!s.is_null()) as u8]);
             if !s.is_null() {
                 // SAFETY: NUL-terminated C string.
-                let bytes = unsafe { bun_core::ffi::cstr(s) }.to_bytes();
-                // SAFETY: `s[bytes.len()] == 0` (CStr invariant) and `s[..len]` is readable.
-                let path = unsafe { bun_core::ZStr::from_raw(s.cast::<u8>(), bytes.len()) };
+                let path = bun_core::ZStr::from_cstr(unsafe { bun_core::ffi::cstr(s) });
                 hp.update(path.as_bytes());
                 let mut meta: [i64; 3] = [0; 3];
                 if !path.as_bytes().is_empty() {

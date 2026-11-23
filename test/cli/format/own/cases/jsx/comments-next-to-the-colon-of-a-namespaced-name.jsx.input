@@ -1,0 +1,18 @@
+const a = <a /* 1 */ : /* 2 */ b c /* 3 */ : /* 4 */ d="e"></a /* 5 */ : /* 6 */ b>;
+
+const b = <a // 1
+:b c:d="e" />;
+
+const c = <a:
+// 1
+b c:d="e" />;
+
+const d = <a:b c // 1
+:d="e" />;
+
+const e = <a:b c:
+// 1
+d="e" />;
+
+const f = <a:b /* 1 */ c:d /* 2 */ ="e" />;
+g();

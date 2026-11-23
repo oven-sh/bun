@@ -22,18 +22,6 @@ const {
   kCloseEmitted,
   kErrored,
   kConstructed,
-}: {
-  readonly kState: unique symbol;
-  readonly kOnConstructed: unique symbol;
-  kObjectMode: number;
-  kErrorEmitted: number;
-  kAutoDestroy: number;
-  kEmitClose: number;
-  kDestroyed: number;
-  kClosed: number;
-  kCloseEmitted: number;
-  kErrored: number;
-  kConstructed: number;
 } = require("internal/streams/utils");
 
 const ObjectDefineProperties = Object.defineProperties;
@@ -1125,4 +1113,6 @@ Writable.prototype[SymbolAsyncDispose] = function () {
   );
 };
 
-export default Writable as unknown as typeof import("node:stream").Writable;
+export default Writable as unknown as typeof import("node:stream").Writable & {
+  WritableState: typeof WritableState;
+};

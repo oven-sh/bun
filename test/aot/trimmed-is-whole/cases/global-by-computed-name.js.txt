@@ -1,0 +1,171 @@
+// Reads a global by a computed name.
+//@ args HTMLRewriter WebSocket
+const names = process.argv.slice(2);
+function show(value) { console.log(typeof value, typeof value === "function" ? value.name : String(value)); }
+//// bracket-argv
+for (const name of names) show(globalThis[name]);
+//// bracket-concat
+show(globalThis["HTML" + "Rewriter"]);
+//// bracket-template
+const tail = "Rewriter";
+show(globalThis[`HTML${tail}`]);
+//// bracket-join
+show(globalThis[["HTML", "Rewriter"].join("")]);
+//// bracket-fromCharCode
+show(globalThis[String.fromCharCode(72, 84, 77, 76) + "Rewriter"]);
+//// bracket-JSON
+show(globalThis[JSON.parse('"HTMLRewriter"')]);
+//// bracket-date
+show(globalThis[Date.now() > 0 ? "HTMLRewriter" : "x"]);
+//// bracket-const-ternary
+const pick = names.length > 100 ? "Map" : "HTMLRewriter";
+show(globalThis[pick]);
+//// alias-variable
+const g = globalThis;
+for (const name of names) show(g[name]);
+//// alias-helper
+function globalObject() { return globalThis; }
+for (const name of names) show(globalObject()[name]);
+//// alias-self
+for (const name of names) show(self[name]);
+//// alias-global
+for (const name of names) show(global[name]);
+//// alias-globalThis-globalThis
+for (const name of names) show(globalThis.globalThis[name]);
+//// alias-object-property
+const holder = { g: globalThis };
+for (const name of names) show(holder.g[name]);
+//// alias-array
+const [g] = [globalThis];
+for (const name of names) show(g[name]);
+//// alias-parameter
+function read(object, name) { return object[name]; }
+for (const name of names) show(read(globalThis, name));
+//// alias-closure
+const read = (object => name => object[name])(globalThis);
+for (const name of names) show(read(name));
+//// Reflect-get
+for (const name of names) show(Reflect.get(globalThis, name));
+//// Reflect-has
+for (const name of names) console.log(Reflect.has(globalThis, name));
+//// in
+for (const name of names) console.log(name in globalThis);
+//// hasOwnProperty
+for (const name of names) console.log(globalThis.hasOwnProperty(name), Object.hasOwn(globalThis, name), Object.prototype.hasOwnProperty.call(globalThis, name));
+//// descriptor
+for (const name of names) { const d = Object.getOwnPropertyDescriptor(globalThis, name); console.log(d && Object.keys(d).join(), d && d.enumerable, d && d.configurable); }
+//// descriptor-value
+for (const name of names) { const d = Object.getOwnPropertyDescriptor(globalThis, name); show(d.value ?? d.get?.call(globalThis)); }
+//// Reflect-descriptor
+for (const name of names) { const d = Reflect.getOwnPropertyDescriptor(globalThis, name); show(d.value ?? d.get?.call(globalThis)); }
+//// descriptors
+const all = Object.getOwnPropertyDescriptors(globalThis);
+for (const name of names) show(all[name].value ?? all[name].get?.call(globalThis));
+//// destructure-computed
+for (const name of names) { const { [name]: value } = globalThis; show(value); }
+//// destructure-rest
+const { Map: _, ...rest } = globalThis;
+console.log(Object.keys(rest).sort().join());
+//// spread
+console.log(Object.keys({ ...globalThis }).sort().join());
+//// assign
+console.log(Object.keys(Object.assign({}, globalThis)).sort().join());
+//// optional-chaining
+for (const name of names) show(globalThis?.[name]);
+//// proxy-over-global
+const proxy = new Proxy(globalThis, {});
+for (const name of names) show(proxy[name]);
+//// object-create
+const child = Object.create(globalThis);
+for (const name of names) show(child[name]);
+//// setPrototypeOf
+const child = {};
+Object.setPrototypeOf(child, globalThis);
+for (const name of names) show(child[name]);
+//// proto-literal
+const child = { __proto__: globalThis };
+for (const name of names) show(child[name]);
+//// class-extends-null-proto
+function F() {}
+F.prototype = globalThis;
+for (const name of names) show(new F()[name]);
+//// sloppy-this
+//@ ext cjs
+const g = (function () { return this; })();
+for (const name of names) show(g[name]);
+//// sloppy-this-call-undefined
+//@ ext cjs
+function self() { return this; }
+for (const name of names) show(self.call(undefined)[name]);
+//// sloppy-callback-this
+//@ ext cjs
+[1].forEach(function () { for (const name of names) show(this[name]); });
+//// sloppy-settimeout-this
+//@ ext cjs
+setTimeout(function () { console.log(typeof this, this === globalThis); }, 1);
+//// getter-this
+//@ exit 1
+Object.defineProperty(globalThis, "me", { get() { return this; }, configurable: true });
+for (const name of names) show(me[name]);
+//// method-on-global
+globalThis.mine = function () { return this; };
+for (const name of names) show(globalThis.mine()[name]);
+//// bare-call-of-stored-sloppy
+//@ ext cjs
+globalThis.mine = function () { return this; };
+for (const name of names) show(mine()[name]);
+//// event-target
+addEventListener("ping", function (event) { for (const name of names) show(event.target[name]); });
+dispatchEvent(new Event("ping"));
+//// event-currentTarget
+addEventListener("ping", event => { for (const name of names) show(event.currentTarget[name]); });
+dispatchEvent(new Event("ping"));
+//// event-this
+//@ exit 1
+addEventListener("ping", function () { for (const name of names) show(this[name]); });
+dispatchEvent(new Event("ping"));
+//// event-through-prototype
+EventTarget.prototype.addEventListener.call(globalThis, "ping", event => { for (const name of names) show(event.target[name]); });
+EventTarget.prototype.dispatchEvent.call(globalThis, new Event("ping"));
+//// event-handleEvent
+addEventListener("ping", { handleEvent(event) { for (const name of names) show(event.target[name]); } });
+dispatchEvent(new Event("ping"));
+//// event-composedPath
+addEventListener("ping", event => { for (const name of names) show(event.composedPath()[0][name]); });
+dispatchEvent(new Event("ping"));
+//// event-srcElement
+addEventListener("ping", event => { for (const name of names) show(event.srcElement[name]); });
+dispatchEvent(new Event("ping"));
+//// valueOf
+const g = globalThis.valueOf();
+for (const name of names) show(g[name]);
+//// Object-of
+const g = Object(globalThis);
+for (const name of names) show(g[name]);
+//// array-find
+const g = [globalThis].find(Boolean);
+for (const name of names) show(g[name]);
+//// Reflect-apply-identity
+const g = Reflect.apply(x => x, null, [globalThis]);
+for (const name of names) show(g[name]);
+//// map-store
+const m = new Map([["g", globalThis]]);
+for (const name of names) show(m.get("g")[name]);
+//// json-free-weakref
+const g = new WeakRef(globalThis).deref();
+for (const name of names) show(g[name]);
+//// promise
+const g = await Promise.resolve(globalThis);
+for (const name of names) show(g[name]);
+//// generator
+function* gen() { yield globalThis; }
+for (const g of gen()) for (const name of names) show(g[name]);
+//// process-mainModule-free: Function-prototype-call
+//@ ext cjs
+const g = Function.prototype.call.call(function () { return this; });
+for (const name of names) show(g[name]);
+//// node-vm-free: globalThis-from-util-inspect
+import util from "node:util";
+console.log(util.inspect(globalThis, { depth: 0 }).includes("HTMLRewriter"));
+//// console-log-global
+console.log(Bun.inspect(globalThis, { depth: 0 }).split("\n").length);

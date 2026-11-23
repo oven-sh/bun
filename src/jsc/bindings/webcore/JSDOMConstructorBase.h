@@ -20,6 +20,7 @@
 #pragma once
 
 #include "JSDOMGlobalObject.h"
+#include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/InternalFunction.h>
 
 #include "ZigGlobalObject.h"
@@ -53,13 +54,23 @@ public:
     static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM&);
 
     JSDOMGlobalObject* globalObject() const { return uncheckedDowncast<JSDOMGlobalObject>(Base::globalObject()); }
-    ScriptExecutionContext* scriptExecutionContext() const { return globalObject()->scriptExecutionContext(); }
+    // What the constructor makes belongs to the context the calling script runs in.
+    ScriptExecutionContext* scriptExecutionContext() const { return globalObject()->currentScriptExecutionContext(); }
     Bun::ErrorCode errorCode() const { return m_errorCode; }
 
     // The `length` / `name` / `prototype` prologue shared by every `initializeProperties`.
     void initializeBaseProperties(JSC::VM&, unsigned length, ASCIILiteral name, JSC::JSObject* prototype);
 
 protected:
+    // The constructor of the interface that JSClass inherits from, or Function.prototype.
+    template<typename JSClass> static JSC::JSValue parentConstructor(JSC::VM& vm, const JSDOMGlobalObject& globalObject)
+    {
+        if constexpr (requires { JSClass::Base::getConstructor(vm, &globalObject); })
+            return JSClass::Base::getConstructor(vm, &globalObject);
+        else
+            return globalObject.functionPrototype();
+    }
+
     JSDOMConstructorBase(JSC::VM& vm, JSC::Structure* structure,
         JSC::NativeFunction functionForConstruct,
         JSC::NativeFunction functionForCall = nullptr,

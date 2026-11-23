@@ -46,7 +46,7 @@ public:
     struct Init {
         std::optional<Vector<String>> entryTypes;
         std::optional<String> type;
-        bool buffered;
+        bool buffered { false };
     };
 
     static Ref<PerformanceObserver> create(ScriptExecutionContext& context, Ref<PerformanceObserverCallback>&& callback)
@@ -60,6 +60,8 @@ public:
 
     ExceptionOr<void> observe(Init&&);
     void disconnect();
+    // The context of the script that made it.
+    ScriptExecutionContext* scriptExecutionContext() const;
     Vector<RefPtr<PerformanceEntry>> takeRecords();
 
     OptionSet<PerformanceEntry::Type> typeFilter() const { return m_typeFilter; }

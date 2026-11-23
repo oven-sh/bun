@@ -1,0 +1,10 @@
+import { add, twice, inner } from "pkg-esm";
+import { add as throughStar } from "./barrel-star";
+import { add as throughNamed } from "./barrel-named";
+import * as whole from "pkg-esm";
+import * as cjs from "pkg-cjs";
+import cjsDefault from "pkg-cjs";
+import object from "pkg-cjs-object";
+import { own, arrow } from "./own";
+export const seenBySrc = (): unknown[] => [add(1, 2), throughStar(1, 2), throughNamed(1, 2), whole.add(1, 2), twice(4), inner(), own(), arrow()];
+export const seenOfCjs = (): unknown[] => [cjs.add(1, 2), cjsDefault.add(1, 2), require("pkg-cjs").add(1, 2), cjs.callsAdd(1, 2), object.add(1, 2), object.callsAdd(1, 2)];

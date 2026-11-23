@@ -1,11 +1,10 @@
-use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::io::Write as _;
 
 use bstr::BStr;
 use bun_ast::{Expr, Log, Source};
 use bun_collections::{DynamicBitSet, StringHashMap, index_sort};
-use bun_core::fmt::PathSep;
+use bun_core::fmt::{PathSep, escape_control_chars, redacted};
 use bun_core::{FileKind, Global, Output, strings};
 use bun_install::isolated_install::store::entry::fmt_store_key;
 use bun_install::lockfile::{Lockfile, package::PackageColumns as _, reachable, tree};
@@ -13,7 +12,8 @@ use bun_install::package_manager::{LogLevel, workspace_selection};
 use bun_install::{PackageID, PackageManager, Resolution, ResolutionTag};
 use bun_install_types::NodeLinker::NodeLinker;
 use bun_parsers::json as JSON;
-use bun_paths::{AutoAbsPath, resolve_path};
+use bun_paths::Path;
+use bun_resolver::fs::FileSystem;
 use bun_sys::{self, Dir, Fd, File};
 
 use crate::cli::package_manager_command::PackageManagerCommand;
@@ -44,7 +44,7 @@ struct Entry {
 }
 
 /// Lazily-scanned, sorted entry names of `node_modules/.bun/`; `None` until first needed.
-struct BunStore {
+pub(crate) struct BunStore {
     entries: Option<Vec<Box<[u8]>>>,
 }
 
@@ -95,10 +95,10 @@ impl PmLicensesCommand {
             }
         }
 
-        let configured_linker = pm.options.node_linker;
         let load = pm.load_lockfile_from_cwd::<true>();
         PackageManagerCommand::handle_load_lockfile_errors_for(&load, log_level, "list");
-        let isolated = load.node_linker(configured_linker) == NodeLinker::Isolated;
+        let isolated =
+            load.node_linker(&pm.lockfile, pm.options.node_linker) == NodeLinker::Isolated;
 
         let json_output = pm.options.json_output;
         let features = pm.options.local_package_features;
@@ -111,17 +111,14 @@ impl PmLicensesCommand {
             Global::exit(1);
         }
 
-        let mut path = AutoAbsPath::init_top_level_dir();
-        let top_len = path.len();
-        let _ = path.append(b"node_modules");
-        if !bun_sys::exists(path.slice()) {
+        let top_level_dir = FileSystem::get().top_level_dir();
+        if !bun_sys::exists_z(&Path::from_parts(&[top_level_dir, b"node_modules"])) {
             if not_silent {
                 Output::err_generic("node_modules not found, nothing to list", ());
                 bun_core::note!("run 'bun install' first");
             }
             Global::exit(1);
         }
-        path.set_length(top_len);
 
         let filter_patterns = pm.options.filter_patterns;
         let (roots, follow_workspace_edges): (Vec<PackageID>, bool) = if filter_patterns.is_empty()
@@ -154,6 +151,15 @@ impl PmLicensesCommand {
             (selection.ids, false)
         };
 
+        // After the exits above so error output keeps a clean stdout.
+        if pm.options.should_print_command_name() && !json_output {
+            bun_core::pretty!(
+                "<r><b>bun pm licenses <r><d>v{}<r>\n\n",
+                Global::package_json_version_with_sha
+            );
+            Output::flush();
+        }
+
         let options = reachable::Options {
             root: 0,
             dev: features.dev_dependencies,
@@ -161,7 +167,7 @@ impl PmLicensesCommand {
             peer: features.peer_dependencies,
             optional_peer: features.peer_dependencies,
             bundled: true,
-            platform: Some((pm.options.cpu, pm.options.os)),
+            platform: Some((pm.options.cpu, pm.options.os, pm.options.libc)),
         };
         let resolutions = lockfile.buffers.resolutions.as_slice();
         let walk = if flags.dev_only {
@@ -191,15 +197,18 @@ impl PmLicensesCommand {
             });
         let locations = tree_locations(lockfile);
 
-        let packages = lockfile.packages.slice();
+        let packages = &lockfile.packages;
         let pkg_names = packages.items_name();
         let pkg_resolution = packages.items_resolution();
         let buf = lockfile.buffers.string_bytes.as_slice();
 
         let mut log = Log::init();
-        let mut store = BunStore { entries: None };
+        let mut store = BunStore::init();
         let mut disk = DiskIndex { entries: None };
         let mut entries: Vec<Entry> = Vec::new();
+        // Packages whose installed copy is not the version in bun.lock. They are listed under the
+        // version in the installed package.json.
+        let mut other_versions: Vec<Entry> = Vec::new();
         let mut missing: usize = 0;
         let mut checked: usize = 0;
 
@@ -221,58 +230,53 @@ impl PmLicensesCommand {
             let is_npm = resolution.tag == ResolutionTag::Npm;
 
             let mut info = if isolated {
-                store.read_info(
-                    &mut path,
-                    top_len,
-                    pkg_names[pkg_id],
-                    resolution,
-                    buf,
-                    &mut log,
-                )
+                store.read_info(top_level_dir, pkg_names[pkg_id], resolution, buf, &mut log)
             } else {
                 None
             };
 
+            let mut other_version: Option<PackageInfo> = None;
             if info.is_none() {
                 if let Some(location) = &locations[pkg_id] {
-                    let segments: [&[u8]; 1] = [location];
-                    info = read_package_info_at(&mut path, top_len, &segments, &mut log);
+                    info =
+                        read_package_info(&Path::from_parts(&[top_level_dir, location]), &mut log);
                 }
                 if is_npm {
-                    info = info.filter(|info| match &info.version {
-                        Some(installed) => installed[..] == version[..],
-                        None => true,
+                    other_version = info.take_if(|info| match &info.version {
+                        Some(installed) => installed[..] != version[..],
+                        None => false,
                     });
                 }
             }
 
             if info.is_none() && !isolated {
-                info = store.read_info(
-                    &mut path,
-                    top_len,
-                    pkg_names[pkg_id],
-                    resolution,
-                    buf,
-                    &mut log,
-                );
+                info = store.read_info(top_level_dir, pkg_names[pkg_id], resolution, buf, &mut log);
             }
 
             if info.is_none() && is_npm {
                 info = disk.take(
-                    &mut path,
-                    top_len,
+                    top_level_dir,
                     &mut log,
                     pkg_names[pkg_id].slice(buf),
                     &version,
                 );
             }
 
-            let Some(info) = info else {
-                missing += 1;
-                continue;
+            let (info, list) = match (info, other_version) {
+                (Some(info), _) => (info, &mut entries),
+                (None, Some(info)) => {
+                    if let Some(installed) = &info.version {
+                        version = installed.to_vec();
+                    }
+                    (info, &mut other_versions)
+                }
+                (None, None) => {
+                    missing += 1;
+                    continue;
+                }
             };
 
-            entries.push(Entry {
+            list.push(Entry {
                 license: info.license,
                 name: pkg_names[pkg_id].slice(buf).into(),
                 version: version.into_boxed_slice(),
@@ -283,6 +287,16 @@ impl PmLicensesCommand {
                 description: info.description,
                 dev_only: production.as_ref().is_some_and(|prod| !prod.is_set(pkg_id)),
             });
+        }
+
+        // A copy on disk that is already listed, for the bun.lock package it matches, is not listed
+        // twice. The package it was found for counts as missing.
+        for entry in other_versions {
+            if entries.iter().any(|listed| listed.path == entry.path) {
+                missing += 1;
+            } else {
+                entries.push(entry);
+            }
         }
 
         index_sort::sort_vec_by(&mut entries, |a, b| {
@@ -300,7 +314,12 @@ impl PmLicensesCommand {
         if json_output {
             print_json(&entries);
         } else {
-            print_text(&entries, flags.long, checked);
+            print_text(
+                &entries,
+                flags.long,
+                checked,
+                pm.options.should_print_command_name(),
+            );
         }
 
         Output::flush();
@@ -335,19 +354,6 @@ fn license_order(a: &[u8], b: &[u8]) -> Ordering {
         .then_with(|| a.cmp(b))
 }
 
-fn printable(s: &[u8]) -> Cow<'_, [u8]> {
-    if s.iter().any(u8::is_ascii_control) {
-        Cow::Owned(
-            s.iter()
-                .copied()
-                .filter(|b| !b.is_ascii_control())
-                .collect(),
-        )
-    } else {
-        Cow::Borrowed(s)
-    }
-}
-
 fn tree_locations(lockfile: &Lockfile) -> Vec<Option<Box<[u8]>>> {
     let len = lockfile.packages.len();
     let mut out: Vec<Option<Box<[u8]>>> = vec![None; len];
@@ -364,39 +370,19 @@ fn tree_locations(lockfile: &Lockfile) -> Vec<Option<Box<[u8]>>> {
             }
             let relative_path = folder.relative_path.as_bytes();
             let alias = dependencies[dep_id as usize].name.slice(buf);
-            let mut location: Vec<u8> = Vec::with_capacity(relative_path.len() + 1 + alias.len());
-            location.extend_from_slice(relative_path);
-            location.push(bun_paths::SEP);
-            location.extend_from_slice(alias);
-            out[pkg_id as usize] = Some(location.into_boxed_slice());
+            let location = Path::from_parts(&[relative_path, alias]);
+            out[pkg_id as usize] = Some(location.as_bytes().into());
         }
     }
 
     out
 }
 
-fn read_package_info_at(
-    path: &mut AutoAbsPath,
-    base_len: usize,
-    segments: &[&[u8]],
-    log: &mut Log,
-) -> Option<PackageInfo> {
-    path.set_length(base_len);
-    for &segment in segments {
-        let _ = path.append(segment);
-    }
-    let dir_len = path.len();
-    let _ = path.append(b"package.json");
-    let full = path.slice();
-    let info = read_package_info(full, &full[..dir_len], log);
-    path.set_length(base_len);
-    info
-}
-
-fn read_package_info(path: &[u8], dir: &[u8], log: &mut Log) -> Option<PackageInfo> {
-    let contents = File::read_from(Fd::cwd(), path).ok()?;
+fn read_package_info(dir: &[u8], log: &mut Log) -> Option<PackageInfo> {
+    let path = Path::from_parts(&[dir, b"package.json"]);
+    let contents = File::read_from(Fd::cwd(), &path).ok()?;
     bun_ast::initialize_store_or_reset();
-    let source = Source::init_path_string(path, contents.as_slice());
+    let source = Source::init_path_string(path.as_bytes(), contents.as_slice());
     Some(
         match JSON::parse_package_json_utf8(&source, log, crate::cli::cli_arena()) {
             Ok(json) => PackageInfo {
@@ -406,7 +392,7 @@ fn read_package_info(path: &[u8], dir: &[u8], log: &mut Log) -> Option<PackageIn
                 homepage: string_field(&json, b"homepage").or_else(|| repository_of(&json)),
                 author: author_of(&json),
                 description: string_field(&json, b"description"),
-                path: platform_dir(dir),
+                path: dir.into(),
             },
             Err(_) => PackageInfo {
                 name: None,
@@ -415,16 +401,10 @@ fn read_package_info(path: &[u8], dir: &[u8], log: &mut Log) -> Option<PackageIn
                 homepage: None,
                 author: None,
                 description: None,
-                path: platform_dir(dir),
+                path: dir.into(),
             },
         },
     )
-}
-
-fn platform_dir(dir: &[u8]) -> Box<[u8]> {
-    let mut out = dir.to_vec();
-    resolve_path::posix_to_platform_in_place(&mut out);
-    out.into_boxed_slice()
 }
 
 fn str_of(expr: &Expr) -> Option<&[u8]> {
@@ -437,10 +417,10 @@ fn string_field(json: &Expr, key: &[u8]) -> Option<Box<[u8]>> {
 }
 
 fn string_or_type(expr: &Expr) -> Option<Box<[u8]>> {
-    match str_of(expr) {
-        Some(s) => Some(s.into()),
-        None => string_field(expr, b"type").or_else(|| string_field(expr, b"name")),
-    }
+    str_of(expr)
+        .map(Into::into)
+        .or_else(|| string_field(expr, b"type"))
+        .or_else(|| string_field(expr, b"name"))
 }
 
 fn parse_license_field(field: &Expr) -> Option<Box<[u8]>> {
@@ -460,16 +440,8 @@ fn parse_license_field(field: &Expr) -> Option<Box<[u8]>> {
         0 => None,
         1 => collected.pop(),
         _ => {
-            let mut joined: Vec<u8> = Vec::new();
-            joined.push(b'(');
-            for (i, value) in collected.iter().enumerate() {
-                if i > 0 {
-                    joined.extend_from_slice(b" OR ");
-                }
-                joined.extend_from_slice(value);
-            }
-            joined.push(b')');
-            Some(joined.into_boxed_slice())
+            let joined = collected.join(&b" OR "[..]);
+            Some([b"(".as_slice(), &joined, b")"].concat().into_boxed_slice())
         }
     }
 }
@@ -486,10 +458,9 @@ fn license_of(json: &Expr) -> Box<[u8]> {
 
 fn repository_of(json: &Expr) -> Option<Box<[u8]>> {
     let repository = json.get(b"repository")?;
-    match str_of(&repository) {
-        Some(s) => Some(s.into()),
-        None => string_field(&repository, b"url"),
-    }
+    str_of(&repository)
+        .map(Into::into)
+        .or_else(|| string_field(&repository, b"url"))
 }
 
 fn author_of(json: &Expr) -> Option<Box<[u8]>> {
@@ -523,38 +494,40 @@ fn author_of(json: &Expr) -> Option<Box<[u8]>> {
 }
 
 impl BunStore {
+    pub(crate) fn init() -> Self {
+        Self { entries: None }
+    }
+
     fn read_info(
         &mut self,
-        path: &mut AutoAbsPath,
-        top_len: usize,
+        top_level_dir: &[u8],
         pkg_name: bun_semver::String,
         resolution: &Resolution,
         buf: &[u8],
         log: &mut Log,
     ) -> Option<PackageInfo> {
-        let entry = self.lookup(path, top_len, pkg_name, resolution, buf)?;
-        let segments: [&[u8]; 5] = [
-            b"node_modules",
-            b".bun",
+        let entry = self.lookup(top_level_dir, pkg_name, resolution, buf)?;
+        let dir = Path::from_parts(&[
+            top_level_dir,
+            b"node_modules/.bun",
             entry,
             b"node_modules",
             pkg_name.slice(buf),
-        ];
-        read_package_info_at(path, top_len, &segments, log)
+        ]);
+        read_package_info(&dir, log)
     }
 
-    fn lookup(
+    pub(crate) fn lookup(
         &mut self,
-        path: &mut AutoAbsPath,
-        top_len: usize,
+        top_level_dir: &[u8],
         pkg_name: bun_semver::String,
         resolution: &Resolution,
         buf: &[u8],
     ) -> Option<&[u8]> {
-        if self.entries.is_none() {
-            self.entries = Some(Self::scan(path, top_len));
-        }
-        let entries = self.entries.as_deref()?;
+        let entries = self.entries.get_or_insert_with(|| {
+            let listing = list_dir(&Path::from_parts(&[top_level_dir, b"node_modules/.bun"]));
+            listing.into_iter().map(|(name, _)| name).collect()
+        });
         if entries.is_empty() {
             return None;
         }
@@ -568,18 +541,6 @@ impl BunStore {
         let peer_suffixed =
             entry.len() > key.len() && entry.starts_with(&key) && entry[key.len()] == b'+';
         (exact || peer_suffixed).then_some(&entry[..])
-    }
-
-    fn scan(path: &mut AutoAbsPath, top_len: usize) -> Vec<Box<[u8]>> {
-        path.set_length(top_len);
-        let _ = path.append(b"node_modules");
-        let _ = path.append(b".bun");
-        let names: Vec<Box<[u8]>> = list_dir(path.slice())
-            .into_iter()
-            .map(|(name, _)| name)
-            .collect();
-        path.set_length(top_len);
-        names
     }
 }
 
@@ -598,75 +559,59 @@ fn list_dir(path: &[u8]) -> Vec<(Box<[u8]>, FileKind)> {
 }
 
 fn disk_key(name: &[u8], version: &[u8]) -> Vec<u8> {
-    let mut key: Vec<u8> = Vec::with_capacity(name.len() + 1 + version.len());
-    key.extend_from_slice(name);
-    key.push(b'@');
-    key.extend_from_slice(version);
-    key
+    [name, b"@", version].concat()
 }
 
 impl DiskIndex {
     fn take(
         &mut self,
-        path: &mut AutoAbsPath,
-        top_len: usize,
+        top_level_dir: &[u8],
         log: &mut Log,
         name: &[u8],
         version: &[u8],
     ) -> Option<PackageInfo> {
         let entries = self.entries.get_or_insert_with(|| {
             let mut entries = StringHashMap::default();
-            path.set_length(top_len);
-            let _ = path.append(b"node_modules");
-            Self::scan_node_modules(path, 0, log, &mut entries);
-            path.set_length(top_len);
+            let mut node_modules = Path::from_parts(&[top_level_dir, b"node_modules"]);
+            Self::scan_node_modules(&mut node_modules, 0, log, &mut entries);
             entries
         });
         entries.remove(&disk_key(name, version)[..])
     }
 
     fn scan_node_modules(
-        path: &mut AutoAbsPath,
+        path: &mut Path,
         depth: usize,
         log: &mut Log,
         out: &mut StringHashMap<PackageInfo>,
     ) {
-        let nm_len = path.len();
-        for (name, kind) in list_dir(path.slice()) {
+        for (name, kind) in list_dir(path) {
             if name.starts_with(b".") || (depth > 0 && kind == FileKind::SymLink) {
                 continue;
             }
-            if path.append(&name[..]).is_err() {
-                continue;
-            }
+            let mut entry_path = path.push_scoped(&name);
             if !name.starts_with(b"@") {
-                Self::scan_package(path, depth, log, out);
+                Self::scan_package(&mut entry_path, depth, log, out);
             } else {
-                let scope_len = path.len();
-                for (scoped_name, scoped_kind) in list_dir(path.slice()) {
+                for (scoped_name, scoped_kind) in list_dir(&entry_path) {
                     if scoped_name.starts_with(b".")
                         || (depth > 0 && scoped_kind == FileKind::SymLink)
                     {
                         continue;
                     }
-                    if path.append(&scoped_name[..]).is_ok() {
-                        Self::scan_package(path, depth, log, out);
-                    }
-                    path.set_length(scope_len);
+                    Self::scan_package(&mut entry_path.push_scoped(&scoped_name), depth, log, out);
                 }
             }
-            path.set_length(nm_len);
         }
     }
 
     fn scan_package(
-        path: &mut AutoAbsPath,
+        path: &mut Path,
         depth: usize,
         log: &mut Log,
         out: &mut StringHashMap<PackageInfo>,
     ) {
-        let pkg_len = path.len();
-        if let Some(info) = read_package_info_at(path, pkg_len, &[], log) {
+        if let Some(info) = read_package_info(path, log) {
             if let (Some(name), Some(version)) = (&info.name, &info.version) {
                 let key = disk_key(name, version);
                 if !out.contains_key(&key[..]) {
@@ -674,48 +619,52 @@ impl DiskIndex {
                 }
             }
         }
-        if depth < MAX_SCAN_DEPTH && path.append(b"node_modules").is_ok() {
-            Self::scan_node_modules(path, depth + 1, log, out);
+        if depth < MAX_SCAN_DEPTH {
+            Self::scan_node_modules(&mut path.push_scoped(b"node_modules"), depth + 1, log, out);
         }
-        path.set_length(pkg_len);
     }
 }
 
-fn print_text(entries: &[Entry], long: bool, checked: usize) {
+fn plural(n: usize) -> &'static str {
+    if n == 1 { "" } else { "s" }
+}
+
+fn print_text(entries: &[Entry], long: bool, checked: usize, summary: bool) {
     if entries.is_empty() {
-        bun_core::pretty!(
-            "No packages to list <d>(checked {} package{} in bun.lock)<r> ",
-            checked,
-            if checked == 1 { "" } else { "s" }
-        );
-        Output::print_start_end_stdout(bun_core::start_time(), bun_core::time::nano_timestamp());
+        bun_core::pretty!("No packages to list");
+        if summary {
+            bun_core::pretty!(
+                " <d>(checked {} package{} in bun.lock)<r> ",
+                checked,
+                plural(checked)
+            );
+            Output::print_start_end_stdout(
+                bun_core::start_time(),
+                bun_core::time::nano_timestamp(),
+            );
+        }
         bun_core::pretty!("\n");
         return;
     }
 
-    let mut start = 0;
-    while start < entries.len() {
-        let license = &entries[start].license;
-        let mut end = start + 1;
-        while end < entries.len() && entries[end].license == *license {
-            end += 1;
-        }
-
-        if start > 0 {
+    let mut licenses = 0;
+    for group in entries.chunk_by(|a, b| a.license == b.license) {
+        if licenses > 0 {
             Output::print(format_args!("\n"));
         }
+        licenses += 1;
         bun_core::prettyln!(
             "<b>{}<r> <d>({})<r>",
-            BStr::new(&printable(license)),
-            end - start
+            escape_control_chars(&group[0].license),
+            group.len()
         );
-        for (i, entry) in entries[start..end].iter().enumerate() {
-            let last = start + i + 1 == end;
+        for (i, entry) in group.iter().enumerate() {
+            let last = i + 1 == group.len();
             bun_core::pretty!(
                 "<d>{}<r> {}<d>@{}<r>",
                 if last { "└──" } else { "├──" },
-                BStr::new(&entry.name),
-                BStr::new(&entry.version)
+                bun_core::fmt::escape_control_chars(&entry.name),
+                bun_core::fmt::for_terminal(BStr::new(&entry.version))
             );
             if entry.dev_only {
                 bun_core::pretty!(" <d>(dev)<r>");
@@ -727,15 +676,27 @@ fn print_text(entries: &[Entry], long: bool, checked: usize) {
                     .flatten()
                 {
                     if last {
-                        bun_core::prettyln!("    <d>{}<r>", BStr::new(&printable(field)));
+                        bun_core::prettyln!("    <d>{}<r>", escape_control_chars(field));
                     } else {
-                        bun_core::prettyln!("<d>│   {}<r>", BStr::new(&printable(field)));
+                        bun_core::prettyln!("<d>│   {}<r>", escape_control_chars(field));
                     }
                 }
             }
         }
+    }
 
-        start = end;
+    if summary {
+        bun_core::pretty!(
+            "\n<b>{}<r> package{} across {} license{} <d>(checked {} package{} in bun.lock)<r> ",
+            entries.len(),
+            plural(entries.len()),
+            licenses,
+            plural(licenses),
+            checked,
+            plural(checked)
+        );
+        Output::print_start_end_stdout(bun_core::start_time(), bun_core::time::nano_timestamp());
+        bun_core::pretty!("\n");
     }
 }
 
@@ -757,38 +718,26 @@ fn print_json(entries: &[Entry]) {
     }
 
     out.extend_from_slice(b"{\n");
-    let mut start = 0;
-    while start < entries.len() {
-        let license = &entries[start].license;
-        let mut end = start + 1;
-        while end < entries.len() && entries[end].license == *license {
-            end += 1;
-        }
+    let by_license = entries.chunk_by(|a, b| a.license == b.license);
+    for (license_index, same_license) in by_license.enumerate() {
+        let license = &same_license[0].license;
 
-        if start > 0 {
+        if license_index > 0 {
             out.extend_from_slice(b",\n");
         }
         out.extend_from_slice(b"  ");
         json_string(&mut out, license);
         out.extend_from_slice(b": [");
 
-        let mut group_start = start;
-        let mut first_group = true;
-        while group_start < end {
-            let first = &entries[group_start];
-            let mut group_end = group_start + 1;
-            while group_end < end && entries[group_end].name == first.name {
-                group_end += 1;
-            }
-
-            if !first_group {
+        let by_name = same_license.chunk_by(|a, b| a.name == b.name);
+        for (name_index, same_name) in by_name.enumerate() {
+            if name_index > 0 {
                 out.push(b',');
             }
-            first_group = false;
             out.extend_from_slice(b"\n    {\n      \"name\": ");
-            json_string(&mut out, &first.name);
+            json_string(&mut out, &same_name[0].name);
             let mut kept: Vec<&Entry> = Vec::new();
-            for entry in &entries[group_start..group_end] {
+            for entry in same_name {
                 if kept
                     .last()
                     .is_none_or(|previous| previous.version != entry.version)
@@ -801,7 +750,8 @@ fn print_json(entries: &[Entry]) {
                 if i > 0 {
                     out.extend_from_slice(b", ");
                 }
-                json_string(&mut out, &entry.version);
+                let version = redacted(BStr::new(&entry.version)).to_string();
+                json_string(&mut out, version.as_bytes());
             }
             out.extend_from_slice(b"],\n      \"paths\": [");
             for (i, entry) in kept.iter().enumerate() {
@@ -812,7 +762,7 @@ fn print_json(entries: &[Entry]) {
             }
             out.extend_from_slice(b"],\n      \"license\": ");
             json_string(&mut out, license);
-            let newest = &entries[group_end - 1];
+            let newest = &same_name[same_name.len() - 1];
             let extra: [(&[u8], &Option<Box<[u8]>>); 3] = [
                 (b"author", &newest.author),
                 (b"description", &newest.description),
@@ -827,12 +777,9 @@ fn print_json(entries: &[Entry]) {
                 }
             }
             out.extend_from_slice(b"\n    }");
-
-            group_start = group_end;
         }
 
         out.extend_from_slice(b"\n  ]");
-        start = end;
     }
     out.extend_from_slice(b"\n}\n");
 

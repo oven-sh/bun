@@ -131,6 +131,10 @@ JSC_DEFINE_HOST_FUNCTION(jsHmacProtoFuncUpdate, (JSC::JSGlobalObject * globalObj
 
     // Check if the HMAC is already finalized
     if (hmac->m_finalized) {
+        // Hmac.prototype._transform passes `false`. Node drops a chunk written after digest().
+        if (callFrame->argument(3).isFalse()) {
+            return JSValue::encode(jsUndefined());
+        }
         return Bun::ERR::CRYPTO_HASH_FINALIZED(scope, globalObject);
     }
 
@@ -217,7 +221,6 @@ JSC_DEFINE_HOST_FUNCTION(jsHmacProtoFuncDigest, (JSC::JSGlobalObject * lexicalGl
         WTF::String encodingString = encodingValue.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
         encoding = parseEnumerationFromString<BufferEncodingType>(encodingString).value_or(BufferEncodingType::buffer);
-        RETURN_IF_EXCEPTION(scope, {});
     }
 
     unsigned char mdValue[EVP_MAX_MD_SIZE];
@@ -235,6 +238,9 @@ JSC_DEFINE_HOST_FUNCTION(jsHmacProtoFuncDigest, (JSC::JSGlobalObject * lexicalGl
         }
         hmac->m_ctx.reset();
         hmac->m_sizeForGC = 0;
+    } else {
+        // Converting the encoding above finalized this Hmac: the digest is empty, as for a second digest().
+        mdBuffer.len = 0;
     }
 
     // We shouldn't set finalized if coming from _flush, but this

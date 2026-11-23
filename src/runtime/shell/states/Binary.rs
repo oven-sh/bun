@@ -5,8 +5,9 @@ use crate::shell::io::IO;
 use crate::shell::states::base::Base;
 use crate::shell::yield_::Yield;
 
-pub struct Binary {
+pub(crate) struct Binary {
     pub(crate) base: Base,
+    shell: *mut ShellExecEnv,
     pub node: bun_ptr::BackRef<ast::Binary>,
     pub(crate) io: IO,
     /// Once `left` is done, this holds its exit code; `None` while running left.
@@ -24,7 +25,8 @@ impl Binary {
         io: IO,
     ) -> NodeId {
         interp.alloc_node(Node::Binary(Binary {
-            base: Base::new(parent, shell),
+            base: Base::new(parent),
+            shell,
             node: bun_ptr::BackRef::new(node),
             io,
             left: None,
@@ -41,7 +43,7 @@ impl Binary {
     pub(crate) fn next(interp: &Interpreter, this: NodeId) -> Yield {
         let (left_exit, right_exit, parent, shell, node) = {
             let me = interp.as_binary(this);
-            (me.left, me.right, me.base.parent, me.base.shell, me.node)
+            (me.left, me.right, me.base.parent, me.shell, me.node)
         };
         let n = node.get();
 
@@ -77,10 +79,11 @@ impl Binary {
         exit_code: ExitCode,
     ) -> Yield {
         interp.deinit_node(child);
+        let stop = interp.interrupted(this);
         {
             let me = interp.as_binary_mut(this);
             me.currently_executing = None;
-            if me.left.is_none() {
+            if me.left.is_none() && !stop {
                 me.left = Some(exit_code);
             } else {
                 me.right = Some(exit_code);
@@ -94,6 +97,5 @@ impl Binary {
         if let Some(exec) = exec {
             interp.deinit_node(exec);
         }
-        interp.as_binary_mut(this).base.end_scope();
     }
 }

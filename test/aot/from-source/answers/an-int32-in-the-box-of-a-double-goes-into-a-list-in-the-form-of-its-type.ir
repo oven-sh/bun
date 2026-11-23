@@ -1,0 +1,11 @@
+# This is the passing control of an-int32-in-the-box-of-a-double-that-goes-into-a-list-as-it-came-stops-the-build-by-name.ir.
+# Without the fault the same source builds, and the array holds what it holds when the shell runs the source itself.
+# -- source: main.js
+# function fillBehindCase(to, x) { switch (x) { case 3: for (let i = 0; i < to.length; i++) to[i] = x; break; } return to; }
+# function outOfFractions(at) { const list = JSON.parse("[0.5,1,2,3,4]"); list.push("x"); return list[at]; }
+# const filled = fillBehindCase([9, 9, 9, 9].slice(), outOfFractions(3));
+# print(filled.join() + " " + filled.indexOf(3) + " " + filled.includes(3) + " " + JSON.stringify(filled));
+# -- end of source
+# RUN: run-in-shell mechanisms=all
+# CHECK: 3,3,3,3 0 true [3,3,3,3]
+# CHECK: exited with 0

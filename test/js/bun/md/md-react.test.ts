@@ -21,11 +21,11 @@ describe("Bun.markdown.react", () => {
 
   /** Helper: get the children array from the Fragment returned by react() */
   function children(md: string, components?: any, opts?: any): any[] {
-    return Markdown.react(md, components, opts).props.children;
+    return (Markdown.react(md, components, opts).props as { children: any[] }).children;
   }
 
   test("returns a Fragment element", () => {
-    const result = Markdown.react("# Hello\n");
+    const result: any = Markdown.react("# Hello\n");
     expect(result.$$typeof).toBe(REACT_TRANSITIONAL_SYMBOL);
     expect(result.type).toBe(REACT_FRAGMENT_SYMBOL);
     expect(result.key).toBeNull();
@@ -176,13 +176,13 @@ describe("Bun.markdown.react", () => {
   });
 
   test("default $$typeof is react.transitional.element", () => {
-    const result = Markdown.react("# Hi\n");
+    const result: any = Markdown.react("# Hi\n");
     expect(result.$$typeof).toBe(REACT_TRANSITIONAL_SYMBOL);
     expect(result.props.children[0].$$typeof).toBe(REACT_TRANSITIONAL_SYMBOL);
   });
 
   test("reactVersion 18 uses react.element symbol on all elements", () => {
-    const result = Markdown.react("Hello **world**\n", undefined, { reactVersion: 18 });
+    const result: any = Markdown.react("Hello **world**\n", undefined, { reactVersion: 18 });
     expect(result.$$typeof).toBe(REACT_ELEMENT_SYMBOL);
     const p = result.props.children[0];
     expect(p.$$typeof).toBe(REACT_ELEMENT_SYMBOL);
@@ -516,7 +516,7 @@ Hello **world**, this is *important*.
 
   test("reactVersion 18 produces correct structure", () => {
     const result = Markdown.react("# Hello\n", undefined, { reactVersion: 18 });
-    const els = result.props.children;
+    const els = (result.props as { children: any[] }).children;
     expect(els[0].type).toBe("h1");
     expect(els[0].props.children).toEqual(["Hello"]);
   });
@@ -534,7 +534,7 @@ describe("Bun.markdown.react component overrides", () => {
 
   /** Helper: get fragment children */
   function children(md: string, components?: any, opts?: any): any[] {
-    return Markdown.react(md, components, opts).props.children;
+    return (Markdown.react(md, components, opts).props as { children: any[] }).children;
   }
 
   test("function component override replaces type", () => {

@@ -44,13 +44,11 @@ public:
 private:
     JSPerformanceObserverCallback(JSC::JSObject*, JSDOMGlobalObject*);
 
-    bool hasCallback() const final { return m_data && m_data->callback(); }
-
     void visitJSFunction(JSC::AbstractSlotVisitor&) override;
 
     void visitJSFunction(JSC::SlotVisitor&) override;
 
-    JSCallbackData* m_data;
+    JSCallbackData m_data;
 };
 
 } // namespace WebCore

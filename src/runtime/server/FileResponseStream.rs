@@ -12,16 +12,15 @@ use core::cell::Cell;
 use core::ffi::c_void;
 
 use bun_io::Closer;
-#[cfg(windows)]
-use bun_io::pipe_reader::WindowsFlags as ReaderFlags;
-use bun_io::{BufferedReader, FileType, ReadState};
-#[cfg(unix)]
-use bun_io::{FilePollFlag, PosixFlags as ReaderFlags};
+use bun_io::pipe_reader::ReaderFlags;
+use bun_io::{BufferedReader, FileType, IoEvent, Owner, PollTag, ReadResult, ReadState};
 use bun_jsc::JsCell;
-use bun_sys::{self as sys, Fd};
+use bun_ptr::RefPtr;
+use bun_sys::{self as sys, Fd, File, MaybeOwnedFile};
 use bun_uws::{AnyResponse, WriteResult};
 
-use crate::server::jsc::{EventLoopHandle, VirtualMachine};
+use crate::server::jsc::VirtualMachine;
+use crate::server::{DirectoryRoute, FileRoute, PendingRequest};
 
 bun_output::declare_scope!(FileResponseStream, hidden);
 
@@ -29,26 +28,24 @@ bun_output::declare_scope!(FileResponseStream, hidden);
 pub(crate) struct FileResponseStream {
     ref_count: Cell<u32>,
     resp: Cell<AnyResponse>,
-    // LIFETIMES.tsv: `&'static VirtualMachine`. `BackRef` keeps the struct
-    // `'static` for the uWS callback userdata slot while giving safe `Deref`.
-    vm: Cell<bun_ptr::BackRef<VirtualMachine>>,
-    /// Typed enum mirror of `vm.event_loop()` for the io-layer FilePoll vtable
-    /// (`bun_io::EventLoopHandle` wraps `*const EventLoopHandle`).
-    event_loop_handle: Cell<EventLoopHandle>,
-    fd: Cell<Fd>,
-    auto_close: Cell<bool>,
+    event_loop: bun_io::EventLoopCtx,
+    reader: BufferedReader,
+    /// After `reader`, whose poll goes first.
+    fd: StreamFd,
     idle_timeout: Cell<u8>,
 
-    ctx: Cell<*mut c_void>,
-    on_complete: Cell<fn(*mut c_void, AnyResponse)>,
-    on_abort: Cell<Option<fn(*mut c_void, AnyResponse)>>,
-    on_error: Cell<fn(*mut c_void, AnyResponse, sys::Error)>,
+    /// Taken by whichever of complete / abort / error fires first.
+    owner: Cell<Option<StreamOwner>>,
 
     mode: Cell<Mode>,
-    reader: JsCell<BufferedReader>,
     sendfile: JsCell<Sendfile>,
 
     state: Cell<State>,
+    /// For the uWS callbacks and the reader, until `finish()`.
+    self_ref: JsCell<Option<RefPtr<Self>>>,
+    /// A uv read in flight outlives `finish()`.
+    #[cfg(windows)]
+    read_ref: JsCell<Option<RefPtr<Self>>>,
 }
 
 #[derive(Copy, Clone, Eq, PartialEq, strum::IntoStaticStr)]
@@ -90,16 +87,43 @@ bitflags::bitflags! {
     #[repr(transparent)]
     struct State: u8 {
         const RESPONSE_DONE = 1 << 0;
-        const FINISHED      = 1 << 1;
-        const ERRORED       = 1 << 2;
-        const RESP_DETACHED = 1 << 3;
-        const READ_REF_HELD = 1 << 4;
+        const ERRORED       = 1 << 1;
+        const RESP_DETACHED = 1 << 2;
+    }
+}
+
+/// The descriptor that a response is read from. Closed off this thread.
+pub(crate) struct StreamFd(MaybeOwnedFile);
+
+impl StreamFd {
+    pub(crate) fn borrowed(fd: Fd) -> Self {
+        Self(MaybeOwnedFile::Borrowed(fd))
+    }
+
+    pub(crate) fn get(&self) -> Fd {
+        self.0.fd()
+    }
+}
+
+impl From<File> for StreamFd {
+    fn from(file: File) -> Self {
+        Self(file.into())
+    }
+}
+
+impl Drop for StreamFd {
+    fn drop(&mut self) {
+        if let MaybeOwnedFile::Owned(file) = core::mem::take(&mut self.0) {
+            #[cfg(windows)]
+            Closer::close(file, bun_sys::windows::libuv::Loop::get());
+            #[cfg(not(windows))]
+            Closer::close(file, ());
+        }
     }
 }
 
 pub(crate) struct StartOptions {
-    pub fd: Fd,
-    pub auto_close: bool,
+    pub fd: StreamFd,
     pub resp: AnyResponse,
     pub vm: bun_ptr::BackRef<VirtualMachine>,
     pub file_type: FileType,
@@ -110,49 +134,76 @@ pub(crate) struct StartOptions {
     /// should be `stat.size - offset` (after Range/slice clamping).
     pub length: Option<u64>,
     pub idle_timeout: u8,
-    pub ctx: *mut c_void,
-    pub on_complete: fn(*mut c_void, AnyResponse),
-    /// Fires instead of `on_complete` when the client disconnects mid-stream.
-    /// If `None`, abort is reported via `on_complete`.
-    pub on_abort: Option<fn(*mut c_void, AnyResponse)>,
-    pub on_error: fn(*mut c_void, AnyResponse, sys::Error),
+    pub owner: StreamOwner,
+}
+
+/// Who hears about the end of the stream. Exactly one of complete / abort /
+/// error is delivered, exactly once.
+pub(crate) enum StreamOwner {
+    /// A reload can remove the route from the route table meanwhile.
+    FileRoute(PendingRequest<RefPtr<FileRoute>>),
+    DirectoryRoute(PendingRequest<RefPtr<DirectoryRoute>>),
+    Ctx {
+        ctx: *mut c_void,
+        on_complete: fn(*mut c_void, AnyResponse),
+        /// Fires instead of `on_complete` when the client disconnects
+        /// mid-stream. If `None`, abort is reported via `on_complete`.
+        on_abort: Option<fn(*mut c_void, AnyResponse)>,
+        on_error: fn(*mut c_void, AnyResponse, sys::Error),
+    },
+}
+
+enum StreamEnd {
+    Complete,
+    Abort,
+    Error(sys::Error),
+}
+
+impl StreamOwner {
+    fn deliver(self, resp: AnyResponse, end: StreamEnd) {
+        match self {
+            StreamOwner::FileRoute(route) => drop(route),
+            StreamOwner::DirectoryRoute(route) => drop(route),
+            StreamOwner::Ctx {
+                ctx,
+                on_complete,
+                on_abort,
+                on_error,
+            } => match end {
+                StreamEnd::Complete => on_complete(ctx, resp),
+                StreamEnd::Abort => on_abort.unwrap_or(on_complete)(ctx, resp),
+                StreamEnd::Error(err) => on_error(ctx, resp, err),
+            },
+        }
+    }
 }
 
 impl FileResponseStream {
-    pub(crate) fn start(opts: &StartOptions) {
+    pub(crate) fn start(opts: StartOptions) {
         let use_sendfile = can_sendfile(opts.resp, opts.file_type, opts.length);
 
-        // Heap-allocate; the raw pointer is handed to uWS callbacks and freed
-        // via `heap::take` in `deref()` when the intrusive refcount hits 0.
-        let this: *mut FileResponseStream =
-            bun_core::heap::into_raw(Box::new(FileResponseStream {
-                ref_count: Cell::new(1),
-                resp: Cell::new(opts.resp),
-                vm: Cell::new(opts.vm),
-                event_loop_handle: Cell::new(EventLoopHandle::init(
-                    opts.vm.event_loop().cast::<()>(),
-                )),
-                fd: Cell::new(opts.fd),
-                auto_close: Cell::new(opts.auto_close),
-                idle_timeout: Cell::new(opts.idle_timeout),
-                ctx: Cell::new(opts.ctx),
-                on_complete: Cell::new(opts.on_complete),
-                on_abort: Cell::new(opts.on_abort),
-                on_error: Cell::new(opts.on_error),
-                mode: Cell::new(if use_sendfile {
-                    Mode::Sendfile
-                } else {
-                    Mode::Reader
-                }),
-                reader: JsCell::new(BufferedReader::init::<FileResponseStream>()),
-                sendfile: JsCell::new(Sendfile::default()),
-                state: Cell::new(State::default()),
-            }));
-        // SAFETY: `this` is the live allocation above; the guard's ref defers
-        // any free until after `this_ref` is dead at the end of this frame.
-        let _guard = unsafe { bun_ptr::ScopedRef::<Self>::new(this) };
-        // SAFETY: `this` is live for at least as long as `_guard`.
-        let this_ref = unsafe { &*this };
+        let owned = RefPtr::new(FileResponseStream {
+            ref_count: Cell::new(1),
+            resp: Cell::new(opts.resp),
+            event_loop: opts.vm.loop_ctx(),
+            fd: opts.fd,
+            idle_timeout: Cell::new(opts.idle_timeout),
+            owner: Cell::new(Some(opts.owner)),
+            mode: Cell::new(if use_sendfile {
+                Mode::Sendfile
+            } else {
+                Mode::Reader
+            }),
+            reader: BufferedReader::init(),
+            sendfile: JsCell::new(Sendfile::default()),
+            state: Cell::new(State::default()),
+            self_ref: JsCell::new(None),
+            #[cfg(windows)]
+            read_ref: JsCell::new(None),
+        });
+        owned.self_ref.set(Some(owned.clone()));
+        let this = owned.as_ptr();
+        let this_ref: &Self = &owned;
 
         let resp = this_ref.resp.get();
         resp.timeout(opts.idle_timeout);
@@ -161,7 +212,7 @@ impl FileResponseStream {
                 // SAFETY: uWS hands back the userdata pointer set below; the
                 // guard keeps `*p` alive across the handler.
                 unsafe {
-                    let _guard = bun_ptr::ScopedRef::<Self>::new(p);
+                    let _guard = RefPtr::init_ref(p);
                     (*p).on_aborted(r);
                 }
             },
@@ -190,64 +241,54 @@ impl FileResponseStream {
         }
 
         // BufferedReader path
-        this_ref.reader.with_mut(|reader| {
-            reader.flags.remove(ReaderFlags::CLOSE_HANDLE); // we own fd via auto_close
-            reader.flags.set(ReaderFlags::POLLABLE, opts.pollable);
-            reader
-                .flags
-                .set(ReaderFlags::NONBLOCKING, opts.file_type != FileType::File);
+        let reader = &this_ref.reader;
+        reader.update_flags(|f| {
+            f.set(ReaderFlags::POLLABLE, opts.pollable);
+            f.set(ReaderFlags::NONBLOCKING, opts.file_type != FileType::File);
             #[cfg(unix)]
-            if opts.file_type == FileType::Socket {
-                reader.flags.insert(ReaderFlags::SOCKET);
-            }
-            // The reader reports the end of the body as EOF, so `on_read_chunk` ends the response there like at a real EOF.
-            reader.set_limit(opts.length.map(|len| len as usize));
-            reader.set_parent(this.cast::<c_void>());
+            f.set(ReaderFlags::SOCKET, opts.file_type == FileType::Socket);
         });
+        // The reader reports the end of the body as EOF, so `on_read_chunk` ends the response there like at a real EOF.
+        reader.set_limit(opts.length.map(|len| len as usize));
+        let owner = Owner::new(PollTag::FileResponseStream, this.cast());
+        // SAFETY: `owner` points to the heap allocation that holds this reader.
+        unsafe { reader.set_owner(owner) };
 
-        // SAFETY: `start()`/`start_file_offset()` re-enter this object through
-        // the parent pointer (`loop_`/`event_loop`), so no cell borrow spans them.
-        let reader = this_ref.reader_mut();
+        let event_loop = this_ref.event_loop;
+        let fd = MaybeOwnedFile::Borrowed(this_ref.fd.get());
         let start_result = if opts.offset > 0 {
-            reader.start_file_offset(opts.fd, opts.pollable, opts.offset as usize)
+            reader.start_file_offset(event_loop, fd, opts.pollable, opts.offset as usize)
         } else {
-            reader.start(opts.fd, opts.pollable)
+            reader.start(event_loop, fd, opts.pollable)
         };
-        if let Err(err) = start_result {
-            this_ref.fail_with(err);
-            return;
+        match start_result {
+            Ok(result) => this_ref.on_read_result(result),
+            Err(err) => return this_ref.fail_with(err),
         }
 
-        // SAFETY: as above — `update_ref` re-enters `event_loop` through the parent pointer.
-        this_ref.reader_mut().update_ref(true);
+        reader.update_ref(true);
 
-        #[cfg(unix)]
-        if let Some(poll) = this_ref.reader.get().handle.get_poll() {
-            if this_ref
-                .reader
-                .get()
-                .flags
-                .contains(ReaderFlags::NONBLOCKING)
-            {
-                poll.set_flag(FilePollFlag::Nonblocking);
-            }
-            match opts.file_type {
-                FileType::Socket => poll.set_flag(FilePollFlag::Socket),
-                FileType::NonblockingPipe | FileType::Pipe => poll.set_flag(FilePollFlag::Fifo),
-                FileType::File => {}
-            }
-        }
-
-        // hold a ref for the in-flight read; released in on_reader_done/on_reader_error
+        #[cfg(windows)]
         this_ref.hold_read_ref();
-        // SAFETY: `reader` is live for the stream's lifetime; `read` is the
-        // raw re-entrancy-safe entry (its dispatch runs user JS).
-        unsafe { BufferedReader::read(this_ref.reader.as_ptr()) };
+        this_ref.read(None);
     }
 
-    #[inline]
-    fn as_ptr(&self) -> *mut Self {
-        std::ptr::from_ref(self).cast_mut()
+    fn arm_on_writable(&self) {
+        // Not a pointer made from `self`: the callback's guard may free through it.
+        let Some(this) = self.self_ref.get() else {
+            return;
+        };
+        self.resp.get().on_writable(
+            |p: *mut FileResponseStream, off, r| {
+                // SAFETY: uWS hands back the userdata pointer set below; the
+                // guard keeps `*p` alive across the handler.
+                unsafe {
+                    let _guard = RefPtr::init_ref(p);
+                    (*p).on_writable(off, r)
+                }
+            },
+            this.as_ptr(),
+        );
     }
 
     #[inline]
@@ -255,16 +296,21 @@ impl FileResponseStream {
         self.state.set(self.state.get() | flags);
     }
 
+    fn deliver(&self, resp: AnyResponse, end: StreamEnd) {
+        if let Some(owner) = self.owner.take() {
+            owner.deliver(resp, end);
+        }
+    }
+
     // ───────────────────────── reader backend ─────────────────────────
 
-    #[allow(
-        clippy::mut_from_ref,
-        reason = "reader is a separate cell payload; see doc"
-    )]
-    fn reader_mut(&self) -> &mut BufferedReader {
-        // SAFETY: `reader` is live for the stream's lifetime; the io crate's
-        // re-entrancy contract (see doc) covers the nested call.
-        unsafe { &mut *self.reader.as_ptr() }
+    pub(crate) fn read(&self, event: Option<IoEvent>) {
+        let result = self
+            .reader
+            .read_chunks(self.event_loop, event, |chunk, state| {
+                self.on_read_chunk(&chunk, state)
+            });
+        self.on_read_result(result);
     }
 
     fn on_read_chunk(&self, chunk: &[u8], state: ReadState) -> bool {
@@ -279,65 +325,38 @@ impl FileResponseStream {
             self.insert_state(State::RESPONSE_DONE);
             self.detach_resp();
             resp.end(chunk, resp.should_close_connection());
-            (self.on_complete.get())(self.ctx.get(), resp);
+            self.deliver(resp, StreamEnd::Complete);
             return false;
         }
 
         match resp.write(chunk) {
             WriteResult::Backpressure(_) => {
-                // release the read ref; on_writable re-takes it. Adopts the ref
-                // taken before `reader.read()` — no fresh `ref_()` here.
-                let _guard2 = self.take_read_ref();
-                resp.on_writable(
-                    |p: *mut FileResponseStream, off, r| {
-                        // SAFETY: uWS hands back the userdata pointer set below;
-                        // the guard keeps `*p` alive across the handler.
-                        unsafe {
-                            let _guard = bun_ptr::ScopedRef::<Self>::new(p);
-                            (*p).on_writable(off, r)
-                        }
-                    },
-                    self.as_ptr(),
-                );
-                #[cfg(not(unix))]
-                // SAFETY: reader entry point; `pause()` does not call back into
-                // this object.
-                self.reader_mut().pause();
+                // `on_writable` takes it again.
+                #[cfg(windows)]
+                let _read_ref = self.read_ref.take();
+                self.arm_on_writable();
+                self.reader.pause();
                 false
             }
             WriteResult::WantMore(_) => true,
         }
     }
 
-    pub(crate) fn on_reader_done(&self) {
-        // Adopts the in-flight read ref taken before `reader.read()`.
-        let _guard = self.take_read_ref();
-        self.finish();
+    fn on_read_result(&self, result: ReadResult) {
+        match result {
+            ReadResult::Pending => return,
+            ReadResult::Done => self.finish(),
+            ReadResult::Err(err) => self.fail_with(err),
+        }
+        #[cfg(windows)]
+        self.read_ref.set(None);
     }
 
-    fn on_reader_error(&self, err: sys::Error) {
-        // Adopts the in-flight read ref taken before `reader.read()`.
-        let _guard = self.take_read_ref();
-        self.fail_with(err);
-    }
-
+    #[cfg(windows)]
     fn hold_read_ref(&self) {
-        if self.state.get().contains(State::READ_REF_HELD) {
-            return;
+        if self.read_ref.get().is_none() {
+            self.read_ref.set(self.self_ref.get().clone());
         }
-        self.insert_state(State::READ_REF_HELD);
-        self.ref_();
-    }
-
-    fn take_read_ref(&self) -> Option<bun_ptr::ScopedRef<Self>> {
-        if !self.state.get().contains(State::READ_REF_HELD) {
-            return None;
-        }
-        self.state
-            .set(self.state.get().difference(State::READ_REF_HELD));
-        // SAFETY: `self` is the live intrusive allocation; `READ_REF_HELD`
-        // witnesses exactly one outstanding ref taken in `hold_read_ref`.
-        Some(unsafe { bun_ptr::ScopedRef::<Self>::adopt(self.as_ptr()) })
     }
 
     fn on_writable(&self, _: u64, _: AnyResponse) -> bool {
@@ -347,16 +366,16 @@ impl FileResponseStream {
             return self.on_sendfile();
         }
 
-        if self.reader.get().is_done() {
+        if self.reader.is_done() {
             self.finish();
             return true;
         }
         self.resp.get().timeout(self.idle_timeout.get());
+        #[cfg(windows)]
         self.hold_read_ref();
-        // SAFETY: `read()` dispatches `on_read_chunk`/`on_reader_done` back
-        // into this object through the parent pointer, so no cell borrow
-        // spans it.
-        unsafe { BufferedReader::read(self.reader.as_ptr()) };
+        // A paused POSIX reader ignores `read()`.
+        self.on_read_result(self.reader.unpause());
+        self.read(None);
         true
     }
 
@@ -375,20 +394,32 @@ impl FileResponseStream {
         }
 
         #[cfg(any(target_os = "linux", target_os = "android"))]
+        {
+            // sendfile() bypasses the userspace socket buffer, so an unsent
+            // header tail parked there must flush first or file bytes overtake
+            // it on the wire. The writable path re-enters here once it has.
+            let buffered = self.resp.get().get_buffered_amount();
+            if buffered > 0 {
+                bun_output::scoped_log!(
+                    FileResponseStream,
+                    "deferring sendfile behind {} buffered bytes",
+                    buffered
+                );
+                return self.arm_sendfile_writable();
+            }
+        }
+
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         loop {
             let (errno, sent, remain) = self.sendfile.with_mut(|sf| {
                 let adjusted = sf.remain.min(i32::MAX as u64);
                 let mut off: i64 = i64::try_from(sf.offset).expect("int cast");
-                // SAFETY: both fds are valid open file descriptors owned by `self`;
-                // `off` is a stack local.
-                let rc = unsafe {
-                    sys::linux::sendfile(
-                        sf.socket_fd.native(),
-                        self.fd.get().native(),
-                        &raw mut off,
-                        adjusted as usize,
-                    )
-                };
+                let rc = sys::linux::sendfile(
+                    sf.socket_fd.native(),
+                    self.fd.get().native(),
+                    Some(&mut off),
+                    adjusted as usize,
+                );
                 let errno = sys::get_errno(rc);
                 let sent: u64 =
                     u64::try_from((off - i64::try_from(sf.offset).expect("int cast")).max(0))
@@ -427,17 +458,7 @@ impl FileResponseStream {
         bun_output::scoped_log!(FileResponseStream, "armSendfileWritable");
         if !self.sendfile.get().has_set_on_writable {
             self.sendfile.with_mut(|sf| sf.has_set_on_writable = true);
-            self.resp.get().on_writable(
-                |p: *mut FileResponseStream, off, r| {
-                    // SAFETY: uWS hands back the userdata pointer set below; the
-                    // guard keeps `*p` alive across the handler.
-                    unsafe {
-                        let _guard = bun_ptr::ScopedRef::<Self>::new(p);
-                        (*p).on_writable(off, r)
-                    }
-                },
-                self.as_ptr(),
-            );
+            self.arm_on_writable();
         }
         self.resp.get().mark_needs_more();
         true
@@ -453,7 +474,7 @@ impl FileResponseStream {
         self.detach_resp();
         let resp = self.resp.get();
         resp.end_send_file(self.sendfile.get().offset, resp.should_close_connection());
-        (self.on_complete.get())(self.ctx.get(), resp);
+        self.deliver(resp, StreamEnd::Complete);
         // `end_send_file` bypasses every shouldCloseConnection() gate: it does
         // not go through internalEnd, and the onWritable gate is skipped
         // because this frame returns `false` to it. Run the gate here — after
@@ -482,12 +503,10 @@ impl FileResponseStream {
         if !self.state.get().contains(State::RESPONSE_DONE) {
             self.insert_state(State::RESPONSE_DONE);
             self.detach_resp();
-            (self
-                .on_abort
-                .get()
-                .unwrap_or_else(|| self.on_complete.get()))(
-                self.ctx.get(), self.resp.get()
-            );
+            // An `abort` listener may close the fd, and epoll cannot remove a closed fd.
+            #[cfg(unix)]
+            self.reader.release_handle();
+            self.deliver(self.resp.get(), StreamEnd::Abort);
         }
         self.finish();
     }
@@ -498,7 +517,7 @@ impl FileResponseStream {
             self.detach_resp();
             let resp = self.resp.get();
             resp.force_close();
-            (self.on_error.get())(self.ctx.get(), resp, err);
+            self.deliver(resp, StreamEnd::Error(err));
         }
         self.finish();
     }
@@ -519,91 +538,21 @@ impl FileResponseStream {
         bun_output::scoped_log!(
             FileResponseStream,
             "finish (already={})",
-            self.state.get().contains(State::FINISHED)
+            self.self_ref.get().is_none()
         );
-        if self.state.get().contains(State::FINISHED) {
+        // Never the last ref: every entry point that can reach here holds its own.
+        let Some(_self_ref) = self.self_ref.take() else {
             return;
-        }
-        self.insert_state(State::FINISHED);
+        };
 
         if !self.state.get().contains(State::RESPONSE_DONE) {
             self.insert_state(State::RESPONSE_DONE);
             self.detach_resp();
             let resp = self.resp.get();
-            resp.end_without_body(resp.should_close_connection());
-            (self.on_complete.get())(self.ctx.get(), resp);
-            // This end runs uncorked (reader callbacks), so no cork or parser
-            // gate will run the close check; do it here, after `on_complete`
-            // like `end_sendfile`, so the callbacks see a live socket.
-            resp.close_if_done_and_marked();
-        }
-
-        // Release the owner ref from `heap::into_raw` in `start()`. Every entry
-        // point that can reach here holds its own ref, so the free lands on
-        // that guard's drop, not here.
-        // SAFETY: `self` is live and owns the ref; nothing touches `self` after.
-        unsafe { Self::deref(self.as_ptr()) };
-    }
-
-    fn event_loop(&self) -> EventLoopHandle {
-        EventLoopHandle::init(self.vm.get().event_loop().cast::<()>())
-    }
-
-    fn r#loop(&self) -> *mut bun_io::Loop {
-        #[cfg(windows)]
-        {
-            // SAFETY: `r#loop()` returns the live uws WindowsLoop; its `uv_loop`
-            // is set by C `us_create_loop` and valid for the loop's lifetime.
-            return unsafe { (*self.event_loop().r#loop()).uv_loop };
-        }
-        #[cfg(not(windows))]
-        {
-            self.event_loop().r#loop()
-        }
-    }
-
-    // bun.ptr.RefCount(@This(), "ref_count", deinit, .{}) — intrusive single-thread RC.
-    // `ref_()`/`deref()` are provided by `#[derive(CellRefCounted)]`; the former
-    // hand-rolled `ref_guard`/`DerefOnDrop` pair is now `bun_ptr::ScopedRef<Self>`.
-}
-
-// BufferedReader vtable parent.
-// `loop_` delegates to the inherent `r#loop()` which already does the
-// cfg(windows) `.uv_loop` projection. The read/done/error arms take a ref for
-// the duration of the handler since it can end in `finish()`.
-bun_io::impl_buffered_reader_parent! {
-    FileResponseStream for FileResponseStream;
-    has_on_read_chunk = true;
-    on_read_chunk   = |this, chunk, state| {
-        let _guard = bun_ptr::ScopedRef::<Self>::new(this);
-        (*this).on_read_chunk(&chunk, state)
-    };
-    on_reader_done  = |this| {
-        let _guard = bun_ptr::ScopedRef::<Self>::new(this);
-        (*this).on_reader_done()
-    };
-    on_reader_error = |this, err| {
-        let _guard = bun_ptr::ScopedRef::<Self>::new(this);
-        (*this).on_reader_error(err)
-    };
-    loop_           = |this| (*this).r#loop();
-    event_loop      = |this| (*this).event_loop_handle.get().as_event_loop_ctx();
-    // The reader still uses itself (embedded here) after dispatching the `on_reader_done` that releases the owning ref.
-    ref_            = |this| (*this).ref_();
-    deref           = |this| Self::deref(this);
-}
-
-impl Drop for FileResponseStream {
-    fn drop(&mut self) {
-        bun_output::scoped_log!(FileResponseStream, "deinit");
-        // `self.reader` (BufferedReader) is torn down by its own `Drop` as a
-        // field — closes the poll handle. `bun.destroy(this)` is owned by
-        // `heap::take` in `deref`, not here.
-        if self.auto_close.get() {
-            #[cfg(windows)]
-            Closer::close(self.fd.get(), bun_sys::windows::libuv::Loop::get());
-            #[cfg(not(windows))]
-            Closer::close(self.fd.get(), ());
+            // `end` writes a chunked body's final chunk, or `Content-Length: 0` if no
+            // length was declared, and runs the uWS close check.
+            resp.end(b"", resp.should_close_connection());
+            self.deliver(resp, StreamEnd::Complete);
         }
     }
 }

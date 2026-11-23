@@ -1,0 +1,143 @@
+# f1 = pairUp, f2 = addScaled, f3 = countAbove, f37 = spread, f38 = spreadByNames
+# -- source: a-view-that-may-be-nothing-is-asked-in-front-of-a-loop-for-its-own-class.ts
+# // Views that may be nothing by their types: a parameter written `right: Float64Array`, a const read off a field in front of a loop.
+# // A read off such a view is typed without a guess (it asks for an object and reads), so nobody guessed at the view, and the loop's front asked it whether it is an Array.
+# function pairUp(left: Float64Array, right: Float64Array): number {
+#   let total = 0;
+#   for (let at = 0; at < left.length; at++) total += left[at]! * right[at]!;
+#   return total;
+# }
+# function addScaled(into: Float64Array, factor: number, from: Float64Array): void {
+#   for (let at = 0; at < into.length; at++) into[at] = into[at]! + factor * from[at]!;
+# }
+# function countAbove(marks: Uint8Array, limits: Uint8Array): number {
+#   let count = 0;
+#   for (let at = 0; at < marks.length; at++) if (marks[at]! > limits[at]!) count++;
+#   return count;
+# }
+# class Rows {
+#   private readonly starts: Int32Array;
+#   private readonly places: Int32Array;
+#   private readonly weights: Float64Array;
+#   constructor(readonly size: number, width: number) {
+#     this.starts = new Int32Array(size + 1);
+#     this.places = new Int32Array(size * width);
+#     this.weights = new Float64Array(size * width);
+#     for (let row = 0; row < size; row++) {
+#       this.starts[row + 1] = (row + 1) * width - (row % 2);
+#       for (let at = 0; at < width; at++) {
+#         this.places[row * width + at] = (row * 3 + at * 5) % size;
+#         this.weights[row * width + at] = (row + 1) / (at + 2);
+#       }
+#     }
+#   }
+#   spread = (from: Float64Array, into: Float64Array): void => {
+#     const weights = this.weights;
+#     for (let row = 0; row < this.size; row++) {
+#       let total = 0;
+#       const end = this.starts[row + 1]!;
+#       for (let at = this.starts[row]!; at < end; at++) total += weights[at]! * from[this.places[at]!]!;
+#       into[row] = total;
+#     }
+#   };
+#   spreadByNames = (from: Float64Array, into: Float64Array): void => {
+#     const { size, starts, weights, places } = this;
+#     for (let row = 0; row < size; row++) {
+#       let total = 0;
+#       const end = starts[row + 1]!;
+#       for (let at = starts[row]!; at < end; at++) total += weights[at]! * from[places[at]!]!;
+#       into[row] = total;
+#     }
+#   };
+# }
+# class Wider extends Float64Array {
+#   twice(at: number): number { return this[at]! * 2; }
+# }
+# const said: string[] = [];
+# function attempt(name: string, run: () => unknown): void {
+#   let answer: string;
+#   try { answer = String(run()); } catch (error) { answer = (error as Error).constructor.name; }
+#   said.push(name + " " + answer);
+# }
+# const nothings = [null, undefined] as unknown as Float64Array[];
+# const none = new Float64Array(0);
+# const three = Float64Array.of(1.5, -2, 4);
+# const five = Float64Array.of(2, 3, 5, 7, 11);
+# const wider = new Wider(4).fill(0.25);
+# const growing = new Float64Array(new ArrayBuffer(40, { maxByteLength: 80 }));
+# growing.set([1, 2, 3, 4, 5]);
+# const gone = Float64Array.of(9, 9, 9);
+# gone.buffer.transfer();
+# const renamed = Float64Array.of(6, 6, 6, 6);
+# Object.defineProperty(renamed, "length", { value: 2 });
+# for (let round = 0; round < 3; round++) {
+#   attempt("same", () => pairUp(three, three));
+#   attempt("shorter", () => pairUp(five, three));
+#   attempt("longer", () => pairUp(three, five));
+#   attempt("subclass", () => pairUp(three, wider) + pairUp(wider, five));
+#   attempt("growing", () => pairUp(five, growing) + pairUp(growing, five));
+#   attempt("gone", () => pairUp(three, gone) + " " + pairUp(gone, three));
+#   attempt("renamed", () => pairUp(renamed, five) + " " + pairUp(five, renamed));
+#   for (const nothing of nothings) {
+#     attempt("no turn " + nothing, () => pairUp(none, nothing));
+#     attempt("a turn " + nothing, () => pairUp(three, nothing));
+#     attempt("nothing in front " + nothing, () => pairUp(nothing, three));
+#     attempt("stores no turn " + nothing, () => addScaled(none, 2, nothing));
+#     attempt("stores " + nothing, () => { const into = Float64Array.of(1, 2); try { addScaled(into, 2, nothing); } finally { said.push("left " + into.join()); } });
+#     attempt("bytes " + nothing, () => countAbove(Uint8Array.of(1, 2), nothing as unknown as Uint8Array));
+#   }
+#   attempt("stores", () => { const into = Float64Array.of(1, 2, 3, 4); addScaled(into, 0.5, three); return into.join(); });
+#   attempt("stores into itself", () => { const into = Float64Array.of(1, 2, 3); addScaled(into, 2, into); return into.join(); });
+#   attempt("stores over one buffer", () => { const whole = Float64Array.of(1, 2, 3, 4, 5); addScaled(whole.subarray(1), 1, whole); return whole.join(); });
+#   attempt("bytes", () => countAbove(Uint8Array.of(1, 200, 3, 90), Uint8Array.of(0, 201, 3)));
+#   growing.buffer.resize(round === 0 ? 16 : 64);
+#   const rows = new Rows(6 + round, 3);
+#   const from = new Float64Array(rows.size).map((_, at) => at + 0.5);
+#   attempt("spread", () => { const into = new Float64Array(rows.size); rows.spread(from, into); return into.join(); });
+#   attempt("spread by names", () => { const into = new Float64Array(rows.size); rows.spreadByNames(from, into); return into.join(); });
+#   attempt("spread from less", () => { const into = new Float64Array(rows.size); rows.spread(three, into); return into.join(); });
+#   attempt("spread by names into less", () => { const into = new Float64Array(2); rows.spreadByNames(from, into); return into.join(); });
+#   for (const nothing of nothings) {
+#     attempt("spread from " + nothing, () => rows.spread(nothing, new Float64Array(rows.size)));
+#     attempt("spread by names into " + nothing, () => rows.spreadByNames(from, nothing));
+#   }
+#   const stripped = new Rows(4, 2);
+#   (stripped as unknown as { weights: undefined }).weights = undefined;
+#   attempt("no weights", () => stripped.spread(five, new Float64Array(4)));
+#   attempt("no weights by names", () => stripped.spreadByNames(five, new Float64Array(4)));
+#   const empty = new Rows(0, 2);
+#   (empty as unknown as { weights: null }).weights = null;
+#   attempt("no weights, no turn", () => empty.spread(five, none));
+# }
+# function digest(text: string): number { let hash = 2166136261; for (let at = 0; at < text.length; at++) { hash ^= text.charCodeAt(at); hash = Math.imul(hash, 16777619); } return hash >>> 0; }
+# const say: (...values: unknown[]) => void = (globalThis as any).print ?? console.log;
+# say(said.length + " lines " + digest(said.join("\n")));
+# -- end of source
+# `right[at]` off a parameter written `right: Float64Array` (undefined, null or the view by its type) asks for an object and reads: it is typed without a guess, so nobody guesses at `right`. The row of the loop takes it among
+# its views all the same, and the front, finding no guess at it and no proven view, asked it whether it is an Array: false by its type, so the typed copy was swept and the copy built for size was the loop: `left.length` by name in every turn.
+# The front asks a view for its own class. Two heads: the typed copy and the other one.
+# RUN(PAIR): walk f1 mechanisms=all
+# PAIR: = TypeTest v1 testedType=Float64Array
+# PAIR-COUNT-2: isLoopHead=true
+# PAIR-NOT: isLoopHead=true
+# RUN(PAIRWHOLE): walk f1 mechanisms=all
+# PAIRWHOLE-NOT: testedType=Array
+# The same where the turns store, and over bytes.
+# RUN(STORES): walk f2 mechanisms=all
+# STORES: = TypeTest v2 testedType=Float64Array
+# STORES-COUNT-2: isLoopHead=true
+# STORES-NOT: isLoopHead=true
+# RUN(BYTES): walk f3 mechanisms=all
+# BYTES: = TypeTest v1 testedType=Uint8Array
+# BYTES-COUNT-2: isLoopHead=true
+# BYTES-NOT: isLoopHead=true
+# A const read off a field in front of the loops, as everybody writes it: the field may be undefined by its type, for the arrow is made before the constructor fills it.
+# RUN(CONST): walk f37 mechanisms=all
+# CONST-NOT: testedType=Array
+# RUN(CONSTASKED): walk f37 mechanisms=all
+# CONSTASKED: = TypeTest {{*}} testedType=Float64Array
+# RUN(NAMES): walk f38 mechanisms=all
+# NAMES-NOT: testedType=Array
+# Nothing in the place of the view throws in the first turn and not in front of it; a shorter view, one that has lost its memory, one whose memory shrinks and grows between the calls, an instance of a class below, a view with a `length` of its own, two views over one memory.
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 108 lines 3526263935

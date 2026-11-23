@@ -6,11 +6,14 @@
 #include "DOMIsoSubspaces.h"
 #include "ErrorCode.h"
 #include "JSAbortSignal.h"
+#include "JSDirectStreamSource.h"
+#include "JSStreamsRuntime.h"
 #include "JSDOMBinding.h"
 #include "JSDOMConvertNumbers.h"
 #include "JSDOMExceptionHandling.h"
 #include "JSDOMGlobalObject.h"
 #include "JSDOMGlobalObjectInlines.h"
+#include "JSDOMPrototype.h"
 #include "JSDOMWrapperCache.h"
 #include "JSReadableStreamAsyncIterator.h"
 #include "JSReadableStreamBYOBReader.h"
@@ -24,7 +27,6 @@
 #include <JavaScriptCore/BuiltinNames.h>
 #include <JavaScriptCore/DOMAttributeGetterSetter.h>
 #include <JavaScriptCore/Error.h>
-#include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/InternalFieldTuple.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSPromise.h>
@@ -32,7 +34,6 @@
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/SlotVisitorMacros.h>
 #include <JavaScriptCore/SubspaceInlines.h>
-#include <JavaScriptCore/TopExceptionScope.h>
 
 namespace WebCore {
 
@@ -51,42 +52,14 @@ static JSC_DECLARE_HOST_FUNCTION(jsReadableStreamPrototypeFunction_bytes);
 static JSC_DECLARE_HOST_FUNCTION(jsReadableStreamPrototypeFunction_blob);
 static JSC_DECLARE_HOST_FUNCTION(jsReadableStreamStaticFunction_from);
 static JSC_DECLARE_CUSTOM_GETTER(jsReadableStreamPrototypeGetter_locked);
-static JSC_DECLARE_CUSTOM_GETTER(jsReadableStreamPrototypeGetter_constructor);
+static JSC_DECLARE_CUSTOM_GETTER(jsReadableStreamPrototypeGetter_nodeReadable);
+static JSC_DECLARE_CUSTOM_GETTER(jsReadableStreamPrototypeGetter_nodeErrored);
+static JSC_DECLARE_CUSTOM_GETTER(jsReadableStreamPrototypeGetter_nodeDisturbed);
 static JSC_DECLARE_CUSTOM_GETTER(jsReadableStreamPrototype_nativePtrGetter);
 static JSC_DECLARE_CUSTOM_SETTER(jsReadableStreamPrototype_nativePtrSetter);
 static JSC_DECLARE_HOST_FUNCTION(jsReadableStreamPrototype_inspectCustom);
 
-class JSReadableStreamPrototype final : public JSC::JSNonFinalObject {
-public:
-    using Base = JSC::JSNonFinalObject;
-    static JSReadableStreamPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
-    {
-        JSReadableStreamPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSReadableStreamPrototype))) JSReadableStreamPrototype(vm, structure);
-        ptr->finishCreation(vm);
-        return ptr;
-    }
-
-    DECLARE_INFO;
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSReadableStreamPrototype, Base);
-        return &vm.plainObjectSpace();
-    }
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
-    }
-
-private:
-    JSReadableStreamPrototype(JSC::VM& vm, JSC::Structure* structure)
-        : JSC::JSNonFinalObject(vm, structure)
-    {
-    }
-
-    void finishCreation(JSC::VM&);
-};
-STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSReadableStreamPrototype, JSReadableStreamPrototype::Base);
+using JSReadableStreamPrototype = JSDOMPrototype<JSReadableStream>;
 
 // WebIDL dictionary conversions. Each [[Get]] is observable and happens in alphabetical
 // member order; a present, non-callable callback member throws during conversion.
@@ -199,7 +172,7 @@ static ConvertedUnderlyingSource convertUnderlyingSource(JSC::VM& vm, JSGlobalOb
         } else if (typeString == "direct"_s)
             result.type = BunUnderlyingSourceType::Direct;
         else
-            throwTypeError(globalObject, scope, makeString("'"_s, typeString, "' is not a valid underlying source 'type'; expected \"bytes\", \"direct\", or undefined"_s));
+            Bun::throwTypeErrorOrOutOfMemory(globalObject, scope, tryMakeString("'"_s, typeString, "' is not a valid underlying source 'type'; expected \"bytes\", \"direct\", or undefined"_s));
     }
     return result;
 }
@@ -256,32 +229,10 @@ static ConvertedStreamPipeOptions convertStreamPipeOptions(JSC::VM& vm, JSGlobal
 // instantiates them).
 
 template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSReadableStreamConstructor::construct(JSGlobalObject*, CallFrame*);
-template<> JSValue JSReadableStreamConstructor::prototypeForStructure(JSC::VM&, const JSDOMGlobalObject&);
 template<> void JSReadableStreamConstructor::finishCreation(JSC::VM&, JSDOMGlobalObject&);
 template<> GCClient::IsoSubspace* JSReadableStreamConstructor::subspaceForImpl(JSC::VM&);
-template<> void JSReadableStreamConstructor::visitChildren(JSCell*, JSC::AbstractSlotVisitor&);
-template<> void JSReadableStreamConstructor::visitChildren(JSCell*, JSC::SlotVisitor&);
-template<>
-template<typename Visitor>
-void JSReadableStreamConstructor::visitChildrenImpl(JSCell*, Visitor&);
 
 template<> const ClassInfo JSReadableStreamConstructor::s_info = { "ReadableStream"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSReadableStreamConstructor) };
-
-template<> JSValue JSReadableStreamConstructor::prototypeForStructure(JSC::VM& vm, const JSDOMGlobalObject& globalObject)
-{
-    return globalObject.functionPrototype();
-}
-
-template<>
-template<typename Visitor>
-void JSReadableStreamConstructor::visitChildrenImpl(JSCell* cell, Visitor& visitor)
-{
-    auto* thisObject = uncheckedDowncast<JSReadableStreamConstructor>(cell);
-    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
-    Base::visitChildren(thisObject, visitor);
-    visitor.append(thisObject->m_instanceStructure);
-}
-DEFINE_VISIT_CHILDREN_WITH_MODIFIER(template<>, JSReadableStreamConstructor);
 
 template<> GCClient::IsoSubspace* JSReadableStreamConstructor::subspaceForImpl(JSC::VM& vm)
 {
@@ -331,9 +282,16 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSReadableStreamConstruc
 
     switch (source.type) {
     case BunUnderlyingSourceType::Direct: {
+        // Bun's close(reason) hook is not a dictionary member; it is converted like one.
+        JSValue close = asObject(underlyingSource)->get(lexicalGlobalObject, builtinNames(vm).closePublicName());
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!close.isUndefined() && !close.isCallable())
+            return throwVMTypeError(lexicalGlobalObject, scope, "The underlying source's 'close' property must be a function"_s);
+        auto* directSource = JSDirectStreamSource::create(vm, JSStreamsRuntime::from(lexicalGlobalObject)->directStreamSourceStructure(defaultGlobalObject(lexicalGlobalObject)), underlyingSource,
+            source.dict.pull ? source.dict.pull.getObject() : nullptr, source.dict.cancel ? source.dict.cancel.getObject() : nullptr, close.isUndefined() ? nullptr : close.getObject());
         // A direct stream has no controller yet; materializeIfNeeded() builds it on first use.
         stream->m_bunMode = BunStreamMode::DirectPending;
-        stream->m_directUnderlyingSource.set(vm, stream, asObject(underlyingSource));
+        stream->m_directSource.set(vm, stream, directSource);
         break;
     }
     case BunUnderlyingSourceType::Bytes: {
@@ -361,7 +319,7 @@ JSC_ANNOTATE_HOST_FUNCTION(JSReadableStreamConstructorConstruct, JSReadableStrea
 // JSReadableStreamPrototype
 
 static const HashTableValue JSReadableStreamPrototypeTableValues[] = {
-    { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsReadableStreamPrototypeGetter_constructor, 0 } },
+    { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, JSReadableStreamPrototype::constructorGetter, 0 } },
     { "locked"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsReadableStreamPrototypeGetter_locked, 0 } },
     { "cancel"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsReadableStreamPrototypeFunction_cancel, 0 } },
     { "getReader"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsReadableStreamPrototypeFunction_getReader, 0 } },
@@ -375,13 +333,13 @@ static const HashTableValue JSReadableStreamPrototypeTableValues[] = {
     { "text"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsReadableStreamPrototypeFunction_text, 0 } },
 };
 
-const ClassInfo JSReadableStreamPrototype::s_info = { "ReadableStream"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSReadableStreamPrototype) };
+template<> const ClassInfo JSReadableStreamPrototype::s_info = { "ReadableStream"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSReadableStreamPrototype) };
 
 JSC_DEFINE_HOST_FUNCTION(jsReadableStreamPrototype_inspectCustom, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue thisValue = callFrame->thisValue();
+    JSValue thisValue = callFrame->thisValue().toThis(lexicalGlobalObject, JSC::ECMAMode::strict());
     auto* thisObject = dynamicDowncast<JSReadableStream>(thisValue);
     if (!thisObject) [[unlikely]]
         return JSValue::encode(thisValue);
@@ -404,7 +362,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamPrototype_inspectCustom, (JSGlobalObjec
     RELEASE_AND_RETURN(scope, Bun::WebStreams::customInspect(lexicalGlobalObject, callFrame, thisValue, "ReadableStream"_s, data));
 }
 
-void JSReadableStreamPrototype::finishCreation(VM& vm)
+template<> void JSReadableStreamPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     Bun::reifyStaticPropertyTable(vm, JSReadableStream::info(), JSReadableStreamPrototypeTableValues, *this);
@@ -416,6 +374,12 @@ void JSReadableStreamPrototype::finishCreation(VM& vm)
     // Bun private-name accessor read by surviving builtins (`stream.$bunNativePtr`).
     auto& names = builtinNames(vm);
     putDirectCustomAccessor(vm, names.bunNativePtrPrivateName(), DOMAttributeGetterSetter::create(vm, jsReadableStreamPrototype_nativePtrGetter, jsReadableStreamPrototype_nativePtrSetter, DOMAttributeAnnotation { JSReadableStream::info(), nullptr }), JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | JSC::PropertyAttribute::DontDelete);
+
+    const auto nodeStreamStateAttributes = JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly;
+    const auto nodeStreamStateAnnotation = DOMAttributeAnnotation { JSReadableStream::info(), nullptr };
+    putDirectCustomAccessor(vm, Identifier::fromUid(vm.symbolRegistry().symbolForKey("nodejs.stream.readable"_s)), DOMAttributeGetterSetter::create(vm, jsReadableStreamPrototypeGetter_nodeReadable, nullptr, nodeStreamStateAnnotation), nodeStreamStateAttributes);
+    putDirectCustomAccessor(vm, Identifier::fromUid(vm.symbolRegistry().symbolForKey("nodejs.stream.errored"_s)), DOMAttributeGetterSetter::create(vm, jsReadableStreamPrototypeGetter_nodeErrored, nullptr, nodeStreamStateAnnotation), nodeStreamStateAttributes);
+    putDirectCustomAccessor(vm, Identifier::fromUid(vm.symbolRegistry().symbolForKey("nodejs.stream.disturbed"_s)), DOMAttributeGetterSetter::create(vm, jsReadableStreamPrototypeGetter_nodeDisturbed, nullptr, nodeStreamStateAnnotation), nodeStreamStateAttributes);
 
     Bun::WebStreams::installInspectCustom(vm, this, jsReadableStreamPrototype_inspectCustom);
     Bun::putToStringTagWithoutTransition(vm, this, info());
@@ -453,9 +417,7 @@ Structure* JSReadableStream::createStructure(VM& vm, JSGlobalObject* globalObjec
 
 JSObject* JSReadableStream::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    auto* structure = JSReadableStreamPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype());
-    structure->setMayBePrototype(true);
-    return JSReadableStreamPrototype::create(vm, &globalObject, structure);
+    return JSReadableStreamPrototype::create(vm, globalObject, globalObject.objectPrototype());
 }
 
 JSObject* JSReadableStream::prototype(VM& vm, JSDOMGlobalObject& globalObject)
@@ -485,7 +447,7 @@ void JSReadableStream::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.appendHidden(thisObject->m_storedError);
     visitor.appendHidden(thisObject->m_controller);
     visitor.appendHidden(thisObject->m_nativePtr);
-    visitor.appendHidden(thisObject->m_directUnderlyingSource);
+    visitor.appendHidden(thisObject->m_directSource);
     visitor.appendHidden(thisObject->m_asyncContext);
     visitor.appendHidden(thisObject->m_closedPromise);
 }
@@ -499,7 +461,7 @@ void JSReadableStream::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_storedError, "storedError"_s);
     analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_controller, "controller"_s);
     analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_nativePtr, "bunNativePtr"_s);
-    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_directUnderlyingSource, "underlyingSource"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_directSource, "directSource"_s);
     analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_asyncContext, "asyncContext"_s);
     analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_closedPromise, "closedPromise"_s);
 }
@@ -509,25 +471,19 @@ void JSReadableStream::materializeIfNeeded(JSGlobalObject* globalObject)
     const auto mode = m_bunMode;
     if (mode == BunStreamMode::Default) [[likely]]
         return;
+    // A native sink locked this stream without a reader (ReadableStream__lockNative) and didn't start it.
+    // Don't start its source here. The caller's acquire will fail on the lock.
+    if (m_lockedWithoutReader)
+        return;
     // Clear the mode BEFORE running the thunk so re-entrant consumers see it done.
     m_bunMode = BunStreamMode::Default;
     if (mode == BunStreamMode::DirectPending)
-        setUpDirectStreamController(globalObject, this, DirectSinkKind::ArrayBuffer, m_bunHighWaterMark);
+        setUpDirectStreamController(globalObject, this, DirectSinkKind::ArrayBuffer);
     else
         materializeNativeSource(globalObject, this);
 }
 
 // Prototype host functions
-
-JSC_DEFINE_CUSTOM_GETTER(jsReadableStreamPrototypeGetter_constructor, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* prototype = dynamicDowncast<JSReadableStreamPrototype>(JSValue::decode(thisValue));
-    if (!prototype) [[unlikely]]
-        return throwVMTypeError(lexicalGlobalObject, scope);
-    return JSValue::encode(JSReadableStream::getConstructor(vm, prototype->globalObject()));
-}
 
 JSC_DEFINE_CUSTOM_GETTER(jsReadableStreamPrototypeGetter_locked, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
@@ -539,6 +495,36 @@ JSC_DEFINE_CUSTOM_GETTER(jsReadableStreamPrototypeGetter_locked, (JSGlobalObject
     return JSValue::encode(jsBoolean(isReadableStreamLocked(stream)));
 }
 
+JSC_DEFINE_CUSTOM_GETTER(jsReadableStreamPrototypeGetter_nodeReadable, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* stream = dynamicDowncast<JSReadableStream>(JSValue::decode(thisValue));
+    if (!stream) [[unlikely]]
+        return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "ReadableStream"_s);
+    return JSValue::encode(jsBoolean(stream->m_state == ReadableStreamState::Readable));
+}
+
+JSC_DEFINE_CUSTOM_GETTER(jsReadableStreamPrototypeGetter_nodeErrored, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* stream = dynamicDowncast<JSReadableStream>(JSValue::decode(thisValue));
+    if (!stream) [[unlikely]]
+        return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "ReadableStream"_s);
+    return JSValue::encode(jsBoolean(stream->m_state == ReadableStreamState::Errored));
+}
+
+JSC_DEFINE_CUSTOM_GETTER(jsReadableStreamPrototypeGetter_nodeDisturbed, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* stream = dynamicDowncast<JSReadableStream>(JSValue::decode(thisValue));
+    if (!stream) [[unlikely]]
+        return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "ReadableStream"_s);
+    return JSValue::encode(jsBoolean(stream->m_disturbed));
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsReadableStreamPrototypeFunction_cancel, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -547,7 +533,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamPrototypeFunction_cancel, (JSGlobalObje
     if (!stream) [[unlikely]]
         RELEASE_AND_RETURN(scope, JSValue::encode(promiseRejectedWith(lexicalGlobalObject, createTypeError(lexicalGlobalObject, "ReadableStream.prototype.cancel can only be called on a ReadableStream"_s))));
     if (isReadableStreamLocked(stream))
-        RELEASE_AND_RETURN(scope, JSValue::encode(promiseRejectedWith(lexicalGlobalObject, createTypeError(lexicalGlobalObject, "Cannot cancel a locked ReadableStream"_s))));
+        RELEASE_AND_RETURN(scope, JSValue::encode(promiseRejectedWith(lexicalGlobalObject, Bun::createError(lexicalGlobalObject, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: ReadableStream is locked"_s))));
     auto* promise = readableStreamCancel(lexicalGlobalObject, stream, callFrame->argument(0));
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(promise);
@@ -620,9 +606,9 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamPrototypeFunction_pipeThrough, (JSGloba
     RETURN_IF_EXCEPTION(scope, {});
 
     if (isReadableStreamLocked(stream))
-        return throwVMTypeError(lexicalGlobalObject, scope, "Cannot pipe a locked ReadableStream"_s);
+        return Bun::throwError(lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: The ReadableStream is locked"_s);
     if (isWritableStreamLocked(transformWritable))
-        return throwVMTypeError(lexicalGlobalObject, scope, "Cannot pipe to a locked WritableStream"_s);
+        return Bun::throwError(lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: The WritableStream is locked"_s);
 
     auto* promise = readableStreamPipeTo(lexicalGlobalObject, stream, transformWritable, options.preventClose, options.preventAbort, options.preventCancel, options.signal);
     RETURN_IF_EXCEPTION(scope, {});
@@ -641,27 +627,17 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamPrototypeFunction_pipeTo, (JSGlobalObje
     if (!destination)
         RELEASE_AND_RETURN(scope, JSValue::encode(promiseRejectedWith(lexicalGlobalObject, createTypeError(lexicalGlobalObject, "ReadableStream.prototype.pipeTo requires a WritableStream destination"_s))));
 
-    ConvertedStreamPipeOptions options;
-    {
-        // WebIDL: a promise-returning operation turns an argument-conversion failure into a rejection.
-        auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        options = convertStreamPipeOptions(vm, lexicalGlobalObject, callFrame->argument(1));
-        if (catchScope.exception()) [[unlikely]] {
-            JSValue thrown = takeAbruptCompletion(lexicalGlobalObject, catchScope);
-            if (thrown.isEmpty())
-                return {};
-            RELEASE_AND_RETURN(scope, JSValue::encode(promiseRejectedWith(lexicalGlobalObject, thrown)));
-        }
-    }
-
-    if (isReadableStreamLocked(stream))
-        RELEASE_AND_RETURN(scope, JSValue::encode(promiseRejectedWith(lexicalGlobalObject, createTypeError(lexicalGlobalObject, "Cannot pipe a locked ReadableStream"_s))));
-    if (isWritableStreamLocked(destination))
-        RELEASE_AND_RETURN(scope, JSValue::encode(promiseRejectedWith(lexicalGlobalObject, createTypeError(lexicalGlobalObject, "Cannot pipe to a locked WritableStream"_s))));
-
-    auto* promise = readableStreamPipeTo(lexicalGlobalObject, stream, destination, options.preventClose, options.preventAbort, options.preventCancel, options.signal);
-    RETURN_IF_EXCEPTION(scope, {});
-    return JSValue::encode(promise);
+    // WebIDL: a promise-returning operation turns an argument-conversion failure into a rejection.
+    RELEASE_AND_RETURN(scope, JSValue::encode(promiseFromSteps(lexicalGlobalObject, [&] -> JSPromise* {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        ConvertedStreamPipeOptions options = convertStreamPipeOptions(vm, lexicalGlobalObject, callFrame->argument(1));
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        if (isReadableStreamLocked(stream))
+            RELEASE_AND_RETURN(scope, promiseRejectedWith(lexicalGlobalObject, Bun::createError(lexicalGlobalObject, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: The ReadableStream is locked"_s)));
+        if (isWritableStreamLocked(destination))
+            RELEASE_AND_RETURN(scope, promiseRejectedWith(lexicalGlobalObject, Bun::createError(lexicalGlobalObject, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: The WritableStream is locked"_s)));
+        RELEASE_AND_RETURN(scope, readableStreamPipeTo(lexicalGlobalObject, stream, destination, options.preventClose, options.preventAbort, options.preventCancel, options.signal));
+    })));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsReadableStreamPrototypeFunction_tee, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))

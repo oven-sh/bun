@@ -1,0 +1,18 @@
+# A layout that takes the whole list of fields of its base is not asked field by field for what is gathered at the declarations: only for the cells that some set names.
+# A store through the class below, behind the construction, names such a cell. It is told at the declaration, so `a` is written late in the base too, and `b` in neither.
+# -- source: a-late-store-through-the-class-below.ts
+# class Base { a = 1; b = 2; }
+# class Below extends Base { c = 3; }
+# const base = new Base();
+# const below = new Below();
+# below.a = 5;
+# console.log(base.a, base.b, below.a, below.c);
+# -- end of source
+# RUN: link fields mechanisms=all
+# CHECK: field L0.0 "a" proven=int[0, 2147483647] writers-known filled
+# CHECK: field L0.1 "b" proven=int[0, 2147483647] writers-known written-at-construction-alone filled
+# CHECK: field L1.1 "a" proven=int[0, 2147483647] writers-known filled
+# CHECK: field L1.2 "b" proven=int[0, 2147483647] writers-known written-at-construction-alone filled
+# RUN(HELD): link held fields mechanisms=all
+# HELD: field L0.0 "a" proven=i32 writers-known filled
+# HELD: field L1.1 "a" proven=i32 writers-known filled

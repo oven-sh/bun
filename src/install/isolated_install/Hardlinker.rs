@@ -1,34 +1,21 @@
 use bun_alloc::AllocError;
+use bun_paths::{OSPath, OSPathSlice};
 #[cfg(not(windows))]
 use bun_sys::FdDirExt;
 use bun_sys::walker_skippable::Walker;
 use bun_sys::{self as sys, EntryKind, Fd, FdExt};
-// OS-unit paths are u8 on POSIX, u16
-// on Windows — encoded here via the `OSPathChar` type alias so the struct's
-// `slice()`/`slice_z()` produce the platform-native width without per-field
-// `#[cfg]` divergence.
-#[cfg(windows)]
-use bun_paths::path_options::AssumeOk as _;
-use bun_paths::{AbsPath, OSPathChar, OSPathSlice, Path};
-
-type OsAbsPath = AbsPath<OSPathChar, { bun_paths::path_options::PathSeparators::AUTO }>;
-type OsPath = Path<
-    OSPathChar,
-    { bun_paths::path_options::Kind::ANY },
-    { bun_paths::path_options::PathSeparators::AUTO },
->;
 
 pub(crate) struct Hardlinker {
-    pub(crate) src: OsAbsPath,
-    pub(crate) dest: OsPath,
+    pub(crate) src: OSPath,
+    pub(crate) dest: OSPath,
     pub(crate) walker: Walker,
 }
 
 impl Hardlinker {
     pub(crate) fn init(
         folder_dir: Fd,
-        src: OsAbsPath,
-        dest: OsPath,
+        src: OSPath,
+        dest: OSPath,
         skip_dirnames: &[&OSPathSlice],
     ) -> Result<Hardlinker, AllocError> {
         Ok(Hardlinker {
@@ -47,12 +34,12 @@ impl Hardlinker {
         })
     }
 
-    pub(crate) fn link(&mut self) -> Result<sys::Result<()>, AllocError> {
+    pub(crate) fn link(&mut self) -> sys::Result<()> {
         if crate::PackageManager::verbose_install() {
             bun_core::pretty_errorln!(
                 "Hardlinking {} to {}",
-                bun_core::fmt::fmt_os_path(self.src.slice(), Default::default()),
-                bun_core::fmt::fmt_os_path(self.dest.slice(), Default::default()),
+                bun_core::fmt::fmt_os_path(&self.src, Default::default()),
+                bun_core::fmt::fmt_os_path(&self.dest, Default::default()),
             );
             bun_core::output::flush();
         }
@@ -60,257 +47,96 @@ impl Hardlinker {
         #[cfg(windows)]
         {
             let mut cwd_buf = bun_paths::w_path_buffer_pool::get();
-            // `get_fd_path_w` writes the raw `\\?\C:\...` result into
-            // `cwd_buf` and returns a SUB-SLICE (offset 4, or 6 for UNC) after
-            // stripping the long-path prefix. We can't keep that slice borrowed
-            // across the loop (borrowck vs `cwd_buf`), so capture both its start
-            // OFFSET and length, then reslice `cwd_buf[off..off+len]` per-iter.
-            // Slicing from 0 would yield `\\?\C:\…` with the last 4 chars of the
-            // real cwd dropped — wrong path for every project-relative hardlink.
-            let (dest_cwd_off, dest_cwd_len) = {
-                let dest_cwd: &[u16] = match sys::get_fd_path_w(Fd::cwd(), &mut cwd_buf[..]) {
-                    Ok(s) => &*s,
-                    Err(_) => {
-                        return Ok(sys::Result::Err(sys::Error::from_code(
-                            sys::E::ACCES,
-                            sys::Tag::link,
-                        )));
-                    }
-                };
-                // SAFETY: `dest_cwd` is a sub-slice of `cwd_buf` by contract of
-                // `get_fd_path_w` (it returns `&mut out_buffer[off..]`).
-                // NB: capture `len`/`dest_ptr` first so NLL drops the `&mut cwd_buf`
-                // loan (held via `dest_cwd`) before `cwd_buf.as_ptr()` takes `&cwd_buf`
-                // — otherwise E0502 on x86_64-pc-windows-msvc.
-                let len = dest_cwd.len();
-                let dest_ptr = dest_cwd.as_ptr();
-                let off = unsafe { dest_ptr.offset_from(cwd_buf.as_ptr()) } as usize;
-                (off, len)
+            let dest_cwd: &[u16] = match sys::get_fd_path_w(Fd::cwd(), &mut cwd_buf[..]) {
+                Ok(s) => &*s,
+                Err(_) => return Err(sys::Error::from_code(sys::E::ACCES, sys::Tag::link)),
             };
+            // `dest` is absolute for an entry of the global virtual store.
+            let mut nt_dest = OSPath::resolve(&[dest_cwd, &self.dest]);
+            nt_dest.make_nt_path();
+            drop(cwd_buf);
 
-            loop {
-                let entry = match self.walker.next() {
-                    sys::Result::Ok(Some(res)) => res,
-                    sys::Result::Ok(None) => break,
-                    sys::Result::Err(err) => return Ok(sys::Result::Err(err)),
-                };
+            while let Some(entry) = self.walker.next()? {
+                let dest = self.dest.push_scoped(entry.path);
 
-                // A `path.save()` ResetScope would hold `&mut Path` and keep
-                // `self.src`/`self.dest` exclusively borrowed for the rest of
-                // the iteration. Capture the saved length directly and restore
-                // via `set_length` after the body (and before any error return)
-                // so the truncation happens on every exit.
-                let src_saved_len = self.src.len();
-                // `OsAbsPath`/`OsPath` use `CheckLength::ASSUME`, so `append`'s
-                // `Err(MaxPathExceeded)` arm is statically unreachable -- see
-                // `path_options::AssumeOk`.
-                self.src.append(entry.path.as_slice()).assume_ok();
-
-                let dest_saved_len = self.dest.len();
-                self.dest.append(entry.path.as_slice()).assume_ok();
-
-                let err: Option<sys::Error> = 'body: {
-                    match entry.kind {
-                        EntryKind::Directory => {
-                            let _ = sys::make_path::make_path::<u16>(
-                                &sys::Dir::cwd(),
-                                self.dest.slice(),
-                            );
-                        }
-                        EntryKind::File => {
-                            let mut destfile_path_buf = bun_paths::w_path_buffer_pool::get();
-                            let mut destfile_path_buf2 = bun_paths::w_path_buffer_pool::get();
-                            // `dest` may already be absolute (global virtual store
-                            // entries live under the cache, not cwd); only prefix the
-                            // working-directory path when it's project-relative.
-                            // Stash the dest slice once so the `&self` borrow
-                            // doesn't span the buffer-mut below.
-                            let dest_slice: &[u16] = self.dest.slice();
-                            let dest_parts: &[&[u16]] = if !dest_slice.is_empty()
-                                && bun_paths::Platform::Windows.is_absolute_t::<u16>(dest_slice)
-                            {
-                                &[dest_slice]
-                            } else {
-                                &[
-                                    &cwd_buf[dest_cwd_off..dest_cwd_off + dest_cwd_len],
-                                    dest_slice,
-                                ]
-                            };
-                            let joined = bun_paths::resolve_path::join_string_buf_w_same::<
-                                bun_paths::platform::Windows,
-                            >(
-                                &mut destfile_path_buf[..], dest_parts
-                            );
-                            let destfile_path = bun_paths::strings::add_nt_path_prefix_if_needed(
-                                &mut destfile_path_buf2[..],
-                                joined,
-                            );
-
-                            match sys::link_w(self.src.slice_z(), destfile_path) {
-                                sys::Result::Ok(()) => {}
-                                sys::Result::Err(link_err1) => match link_err1.get_errno() {
-                                    sys::E::UV_EEXIST | sys::E::EEXIST => {
-                                        if crate::PackageManager::verbose_install() {
-                                            bun_core::pretty_errorln!(
-                                                "Hardlinking {} to a path that already exists: {}",
-                                                bun_core::fmt::fmt_os_path(
-                                                    self.src.slice(),
-                                                    Default::default()
-                                                ),
-                                                bun_core::fmt::fmt_os_path(
-                                                    destfile_path.as_slice(),
-                                                    Default::default()
-                                                ),
-                                            );
-                                        }
-
-                                        {
-                                            let mut delete_tree_buf =
-                                                bun_paths::path_buffer_pool::get();
-
-                                            let delete_tree_path =
-                                                bun_core::convert_utf16_to_utf8_in_buffer(
-                                                    &mut delete_tree_buf[..],
-                                                    self.dest.slice(),
-                                                );
-                                            let _ = Fd::cwd().delete_tree(delete_tree_path);
-                                        }
-                                        match sys::link_w(self.src.slice_z(), destfile_path) {
-                                            sys::Result::Ok(()) => {}
-                                            sys::Result::Err(link_err2) => {
-                                                break 'body Some(link_err2);
-                                            }
-                                        }
-                                    }
-                                    sys::E::UV_ENOENT | sys::E::ENOENT => {
-                                        if crate::PackageManager::verbose_install() {
-                                            bun_core::pretty_errorln!(
-                                                "Hardlinking {} to a path that doesn't exist: {}",
-                                                bun_core::fmt::fmt_os_path(
-                                                    self.src.slice(),
-                                                    Default::default()
-                                                ),
-                                                bun_core::fmt::fmt_os_path(
-                                                    destfile_path.as_slice(),
-                                                    Default::default()
-                                                ),
-                                            );
-                                        }
-                                        let Some(dest_parent) = self.dest.dirname() else {
-                                            break 'body Some(link_err1);
-                                        };
-
-                                        let _ = sys::make_path::make_path::<u16>(
-                                            &sys::Dir::cwd(),
-                                            dest_parent,
-                                        );
-
-                                        match sys::link_w(self.src.slice_z(), destfile_path) {
-                                            sys::Result::Ok(()) => {}
-                                            sys::Result::Err(link_err2) => {
-                                                break 'body Some(link_err2);
-                                            }
-                                        }
-                                    }
-                                    _ => break 'body Some(link_err1),
-                                },
-                            }
-                        }
-                        _ => {}
+                match entry.kind {
+                    EntryKind::Directory => {
+                        sys::make_path::make_path(&sys::Dir::cwd(), &dest)?;
                     }
-                    None
-                };
+                    EntryKind::File => {
+                        let src = self.src.push_scoped(entry.path);
+                        let destfile_path = nt_dest.push_scoped(entry.path);
 
-                self.src.set_length(src_saved_len);
-                self.dest.set_length(dest_saved_len);
-
-                if let Some(err) = err {
-                    return Ok(sys::Result::Err(err));
+                        let Err(link_err1) = sys::link_w(&src, &destfile_path) else {
+                            continue;
+                        };
+                        let print_retry = |reason: &str| {
+                            if crate::PackageManager::verbose_install() {
+                                bun_core::pretty_errorln!(
+                                    "Hardlinking {} to a path that {}: {}",
+                                    bun_core::fmt::fmt_os_path(&src, Default::default()),
+                                    reason,
+                                    bun_core::fmt::EscapeControlChars(bun_core::fmt::fmt_os_path(
+                                        &destfile_path,
+                                        Default::default()
+                                    )),
+                                );
+                            }
+                        };
+                        match link_err1.get_errno() {
+                            sys::E::UV_EEXIST | sys::E::EEXIST => {
+                                print_retry("already exists");
+                                let _ = Fd::cwd().delete_tree(&bun_paths::Path::from(&dest));
+                            }
+                            sys::E::UV_ENOENT | sys::E::ENOENT => {
+                                print_retry("doesn't exist");
+                                let Some(dest_parent) = dest.dirname() else {
+                                    return Err(link_err1);
+                                };
+                                let _ = sys::make_path::make_path(&sys::Dir::cwd(), dest_parent);
+                            }
+                            _ => return Err(link_err1),
+                        }
+                        sys::link_w(&src, &destfile_path)?;
+                    }
+                    _ => {}
                 }
             }
 
-            return Ok(sys::Result::Ok(()));
+            return Ok(());
         }
 
         #[cfg(not(windows))]
         {
-            loop {
-                let entry = match self.walker.next() {
-                    sys::Result::Ok(Some(res)) => res,
-                    sys::Result::Ok(None) => break,
-                    sys::Result::Err(err) => return Ok(sys::Result::Err(err)),
-                };
+            while let Some(entry) = self.walker.next()? {
+                let dest = self.dest.push_scoped(entry.path);
 
-                // A `dest.save()` ResetScope would hold `&mut Path` and keep
-                // `self.dest` exclusively borrowed across the body. Capture
-                // `len()` and restore via `set_length()` after the body so the
-                // truncation runs on every exit.
-                let dest_saved_len = self.dest.len();
-                let _ = self.dest.append(entry.path.as_bytes()); // OOM/capacity: fire-and-forget
-
-                let err: Option<sys::Error> = 'body: {
-                    match entry.kind {
-                        EntryKind::Directory => {
-                            let _ = Fd::cwd().make_path(self.dest.slice());
-                        }
-                        EntryKind::File => {
-                            match sys::linkat(
-                                entry.dir,
-                                entry.basename,
-                                Fd::cwd(),
-                                self.dest.slice_z(),
-                            ) {
-                                sys::Result::Ok(()) => {}
-                                sys::Result::Err(link_err1) => match link_err1.get_errno() {
-                                    sys::E::EEXIST => {
-                                        let _ = Fd::cwd().delete_tree(self.dest.slice());
-                                        match sys::linkat(
-                                            entry.dir,
-                                            entry.basename,
-                                            Fd::cwd(),
-                                            self.dest.slice_z(),
-                                        ) {
-                                            sys::Result::Ok(()) => {}
-                                            sys::Result::Err(link_err2) => {
-                                                break 'body Some(link_err2);
-                                            }
-                                        }
-                                    }
-                                    sys::E::ENOENT => {
-                                        let Some(dest_parent) = self.dest.dirname() else {
-                                            break 'body Some(link_err1);
-                                        };
-
-                                        let _ = Fd::cwd().make_path(dest_parent);
-                                        match sys::linkat(
-                                            entry.dir,
-                                            entry.basename,
-                                            Fd::cwd(),
-                                            self.dest.slice_z(),
-                                        ) {
-                                            sys::Result::Ok(()) => {}
-                                            sys::Result::Err(link_err2) => {
-                                                break 'body Some(link_err2);
-                                            }
-                                        }
-                                    }
-                                    _ => break 'body Some(link_err1),
-                                },
+                match entry.kind {
+                    EntryKind::Directory => Fd::cwd().make_path(&dest)?,
+                    EntryKind::File => {
+                        let (dir, name) = (entry.dir, entry.basename);
+                        let Err(link_err1) = sys::linkat(dir, name, Fd::cwd(), &dest) else {
+                            continue;
+                        };
+                        match link_err1.get_errno() {
+                            sys::E::EEXIST => {
+                                let _ = Fd::cwd().delete_tree(&dest);
                             }
+                            sys::E::ENOENT => {
+                                let Some(dest_parent) = dest.dirname() else {
+                                    return Err(link_err1);
+                                };
+                                let _ = Fd::cwd().make_path(dest_parent);
+                            }
+                            _ => return Err(link_err1),
                         }
-                        _ => {}
+                        sys::linkat(dir, name, Fd::cwd(), &dest)?;
                     }
-                    None
-                };
-
-                self.dest.set_length(dest_saved_len);
-
-                if let Some(err) = err {
-                    return Ok(sys::Result::Err(err));
+                    _ => {}
                 }
             }
 
-            Ok(sys::Result::Ok(()))
+            Ok(())
         }
     }
 }

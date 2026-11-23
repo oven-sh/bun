@@ -1,0 +1,6 @@
+export default function // 1
+(): void;
+(function // 2
+() {})();
+(function /* 3 */ // 4
+() {})();

@@ -48,6 +48,8 @@ pub enum Error {
     DanglingSymlink,
     #[error("UnsupportedYarnLockfileVersion")]
     UnsupportedYarnLockfileVersion,
+    #[error("InvalidYarnBerryLockfile")]
+    InvalidYarnBerryLockfile,
     #[error("InvalidPackageJSON")]
     InvalidPackageJSON,
     #[error("LockfileResolveFailed")]
@@ -68,8 +70,12 @@ pub enum Error {
     Failed,
     #[error("UnrecognizedDependencyFormat")]
     UnrecognizedDependencyFormat,
+    #[error("InvalidDependencyName")]
+    InvalidDependencyName,
     #[error("No global directory found")]
     NoGlobalDirectoryFound,
+    #[error("$BUN_INSTALL is not an absolute path")]
+    RelativeBunInstall,
     #[error("InvalidPackageID")]
     InvalidPackageID,
     #[error("PartialInstallFailed")]
@@ -150,8 +156,6 @@ pub enum Error {
     IntegrityCheckFailed,
     #[error("RepositoryNotFound")]
     RepositoryNotFound,
-    #[error("DebugTextLockfileRoundTrip")]
-    DebugTextLockfileRoundTrip,
     #[error("NoPackage")]
     NoPackage,
     #[error("WriteFailed")]
@@ -172,10 +176,6 @@ pub enum Error {
     CorruptLockfile,
     #[error("Lockfile is missing resolution data")]
     LockfileIsMissingResolutionData,
-    #[error("MissingPackageName")]
-    MissingPackageName,
-    #[error("GlobError")]
-    GlobError,
     #[error("Lockfile validation failed: list is impossibly long")]
     LockfileValidationFailedListIsImpossiblyLong,
     #[error("Lockfile validation failed: alignment mismatch")]
@@ -220,19 +220,13 @@ pub enum Error {
     #[error(transparent)]
     Http(#[from] bun_http::Error),
     #[error(transparent)]
-    PackageManifest(#[from] crate::PackageManifestError),
-    #[error(transparent)]
     Dotenv(#[from] bun_dotenv::Error),
     #[error(transparent)]
     Parsers(#[from] bun_parsers::Error),
     #[error(transparent)]
+    JsPrinter(#[from] bun_js_printer::Error),
+    #[error(transparent)]
     Bunfig(#[from] bun_bunfig::Error),
-    #[error(transparent)]
-    Transpiler(#[from] bun_transpiler::Error),
-    #[error(transparent)]
-    Paths(#[from] bun_paths::Error),
-    #[error(transparent)]
-    PathOptions(#[from] bun_paths::path_options::Error),
     #[error(transparent)]
     Fmt(#[from] core::fmt::Error),
 }
@@ -265,6 +259,7 @@ impl Error {
             Self::BufferTooSmall => "BufferTooSmall",
             Self::DanglingSymlink => "DanglingSymlink",
             Self::UnsupportedYarnLockfileVersion => "UnsupportedYarnLockfileVersion",
+            Self::InvalidYarnBerryLockfile => "InvalidYarnBerryLockfile",
             Self::InvalidPackageJSON => "InvalidPackageJSON",
             Self::LockfileResolveFailed => "LockfileResolveFailed",
             Self::DistTagNotFound => "DistTagNotFound",
@@ -275,7 +270,9 @@ impl Error {
             Self::HTTPError => "HTTPError",
             Self::Failed => "Failed",
             Self::UnrecognizedDependencyFormat => "UnrecognizedDependencyFormat",
+            Self::InvalidDependencyName => "InvalidDependencyName",
             Self::NoGlobalDirectoryFound => "No global directory found",
+            Self::RelativeBunInstall => "$BUN_INSTALL is not an absolute path",
             Self::InvalidPackageID => "InvalidPackageID",
             Self::PartialInstallFailed => "PartialInstallFailed",
             Self::NoPackagesInstalled => "NoPackagesInstalled",
@@ -320,7 +317,6 @@ impl Error {
             Self::Fail => "Fail",
             Self::IntegrityCheckFailed => "IntegrityCheckFailed",
             Self::RepositoryNotFound => "RepositoryNotFound",
-            Self::DebugTextLockfileRoundTrip => "DebugTextLockfileRoundTrip",
             Self::NoPackage => "NoPackage",
             Self::WriteFailed => "WriteFailed",
             Self::InvalidCharacter => "InvalidCharacter",
@@ -333,8 +329,6 @@ impl Error {
             }
             Self::CorruptLockfile => "CorruptLockfile",
             Self::LockfileIsMissingResolutionData => "Lockfile is missing resolution data",
-            Self::MissingPackageName => "MissingPackageName",
-            Self::GlobError => "GlobError",
             Self::LockfileValidationFailedListIsImpossiblyLong => {
                 "Lockfile validation failed: list is impossibly long"
             }
@@ -372,13 +366,10 @@ impl Error {
             Self::Resolver(e) => e.name(),
             Self::Spawn(e) => e.name(),
             Self::Http(e) => e.name(),
-            Self::PackageManifest(e) => <&'static str>::from(e),
             Self::Dotenv(e) => e.name(),
             Self::Parsers(e) => e.name(),
+            Self::JsPrinter(e) => e.name(),
             Self::Bunfig(e) => e.name(),
-            Self::Transpiler(e) => e.name(),
-            Self::Paths(e) => e.name(),
-            Self::PathOptions(e) => <&'static str>::from(e),
             Self::Fmt(_) => "FmtError",
         }
     }
@@ -396,14 +387,20 @@ impl From<bun_sys::Error> for Error {
     }
 }
 
-impl From<bun_libarchive::Error> for Error {
-    fn from(e: bun_libarchive::Error) -> Self {
+impl From<bun_paths::NameTooLong> for Error {
+    fn from(e: bun_paths::NameTooLong) -> Self {
+        Self::Sys(e.into())
+    }
+}
+
+impl From<bun_archive::Error> for Error {
+    fn from(e: bun_archive::Error) -> Self {
         match e {
-            bun_libarchive::Error::Fail => Self::Fail,
-            bun_libarchive::Error::Sys(s) => Self::Sys(s),
-            bun_libarchive::Error::Alloc(a) => Self::Alloc(a),
-            bun_libarchive::Error::MakeLibUvOwned(_) => Self::SystemFdQuotaExceeded,
-            bun_libarchive::Error::Paths(p) => Self::Paths(p),
+            bun_archive::Error::Fail => Self::Fail,
+            bun_archive::Error::Sys(s) => Self::Sys(s),
+            bun_archive::Error::Alloc(a) => Self::Alloc(a),
+            bun_archive::Error::MakeLibUvOwned(_) => Self::SystemFdQuotaExceeded,
+            bun_archive::Error::LeavesDestination(e) => Self::Sys(e.into()),
         }
     }
 }
@@ -451,6 +448,7 @@ impl From<Error> for bun_core::Error {
             Error::Alloc(a) => bun_core::Error::Alloc(a),
             Error::WriteFailed => bun_core::Error::WriteFailed,
             Error::InvalidCharacter => bun_core::Error::InvalidCharacter,
+            Error::FileNotFound => bun_core::Error::FileNotFound,
             _ => bun_core::Error::Unexpected,
         }
     }

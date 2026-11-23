@@ -9,6 +9,10 @@
 
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows } from "harness";
+import { release } from "node:os";
+
+// Windows build number ("10.0.17763" is Server 2019, "10.0.26100" is 11 24H2).
+const windowsBuild = isWindows ? Number(release().split(".")[2]) : 0;
 
 /** Spawn a child attached to a fresh terminal, collect all PTY output until
  *  `done()` returns true or the child exits, then close the terminal. */
@@ -215,11 +219,14 @@ describe("Bun.Terminal platform behaviour", () => {
 
   test("SAME: output LF is translated to CRLF", async () => {
     // POSIX ONLCR and ConPTY both render \n as \r\n on the master/read side.
-    // Older ConPTY may pad to the cell boundary with spaces before \r\n.
+    // Server 2019's ConPTY pads the row before the \r\n with spaces or, on a
+    // full repaint, ESC[nX ESC[nC (#38054): strip the escapes and anchor on
+    // LINE2 so the \r\n has to be the row break between the two markers.
     const { output } = await runInTerminal(`process.stdout.write('READY\\nLINE2')`, {
       done: o => o.includes("LINE2"),
     });
-    expect(output).toMatch(/READY *\r\n/);
+    expect(Bun.stripANSI(output)).toMatch(/READY *\r\nLINE2/);
+    if (!isWindows) expect(output).toContain("READY\r\nLINE2");
   });
 
   test("GAP: ANSI escape sequences", async () => {
@@ -235,6 +242,27 @@ describe("Bun.Terminal platform behaviour", () => {
       expect(output).toContain("\x1b[31mRED\x1b[0m");
     }
   });
+
+  // The inbox conhost on Windows 10 and Server 2019 predates
+  // microsoft/terminal#4856 and drops mouse-tracking DECSET sequences written
+  // by the child, so the outer terminal never starts reporting mouse events to
+  // it (#43450). Server 2022 (build 20348) and Windows 11 relay them, but only
+  // once the child has switched stdin to VT input mode (setRawMode).
+  test.todoIf(isWindows && windowsBuild < 20348)(
+    "SAME: mouse-tracking enable sequences reach the data callback",
+    async () => {
+      const { output } = await runInTerminal(
+        `process.stdin.setRawMode(true);
+       process.stdin.resume();
+       process.stdout.write('\\x1b[?1000h\\x1b[?1006h');
+       process.stdout.write('READY');
+       setInterval(() => {}, 1000);`,
+        { done: o => o.includes("READY") },
+      );
+      expect(output).toContain("\x1b[?1000h");
+      expect(output).toContain("\x1b[?1006h");
+    },
+  );
 
   test("SAME: UTF-8 multibyte characters reach the data callback", async () => {
     // ConPTY may alter spacing around wide-cell characters when re-rendering,

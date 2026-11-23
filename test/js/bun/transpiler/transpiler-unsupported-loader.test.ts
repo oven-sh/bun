@@ -17,7 +17,7 @@ describe("Bun.Transpiler rejects non-transpilable loaders", () => {
     });
 
     test("scan", () => {
-      expect(() => t.scan("let x = 1", loader as any)).toThrow(TypeError);
+      expect(() => (t as any).scan("let x = 1", loader)).toThrow(TypeError);
     });
   });
 
@@ -39,21 +39,21 @@ describe("Bun.Transpiler still accepts data-format loaders", () => {
   const t = new Bun.Transpiler({ loader: "ts" });
 
   test("json", () => {
-    expect(t.transformSync('{"a":1}', "json")).toContain("export default");
+    expect(t.transformSync('{"a":1}', "json" as any)).toContain("export default");
   });
 
   test("toml", () => {
-    expect(t.transformSync("a = 1", "toml")).toContain("export default");
+    expect(t.transformSync("a = 1", "toml" as any)).toContain("export default");
   });
 
   test("xml", () => {
-    const out = t.transformSync(`<a b="1"><c>x</c></a>`, "xml");
+    const out = t.transformSync(`<a b="1"><c>x</c></a>`, "xml" as any);
     expect(out).toContain("export default");
     expect(out).toContain('"@b": "1"');
     expect(out).toContain('c: "x"');
   });
 
   test("text", () => {
-    expect(t.transformSync("hello", "text")).toContain("export default");
+    expect(t.transformSync("hello", "text" as any)).toContain("export default");
   });
 });

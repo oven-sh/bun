@@ -5,6 +5,7 @@
 #include "DOMIsoSubspaces.h"
 #include "JSDOMExceptionHandling.h"
 #include "JSDOMGlobalObjectInlines.h"
+#include "JSDOMPrototype.h"
 #include "JSDOMWrapperCache.h"
 #include "JSCompressionStream.h"
 #include "JSDecompressionStream.h"
@@ -20,12 +21,10 @@
 
 #include <JavaScriptCore/Error.h>
 #include <JavaScriptCore/ExceptionHelpers.h>
-#include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/SlotVisitorMacros.h>
 #include <JavaScriptCore/SubspaceInlines.h>
-#include <JavaScriptCore/TopExceptionScope.h>
 
 namespace Bun {
 namespace WebStreams {
@@ -43,45 +42,17 @@ static JSReadableStreamDefaultController* transformReadableController(JSTransfor
     return uncheckedDowncast<JSReadableStreamDefaultController>(readable->m_controller.get());
 }
 
-// WebIDL callback invoke returning Promise<undefined>: an abrupt completion becomes a
-// rejected promise (a sanctioned completion-record catch). Returns nullptr on VM termination.
-static JSPromise* invokePromiseReturningMethod(JSC::VM& vm, JSGlobalObject* globalObject, JSObject* method, JSValue thisValue, const MarkedArgumentBuffer& args)
-{
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue result;
-    JSValue thrown;
-    {
-        auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        auto callData = getCallData(method);
-        ASSERT(callData.type != CallData::Type::None);
-        result = call(globalObject, method, callData, thisValue, args);
-        if (catchScope.exception()) [[unlikely]]
-            thrown = takeAbruptCompletion(globalObject, catchScope);
-    }
-    if (!thrown.isEmpty())
-        RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, thrown));
-    if (result.isEmpty())
-        return nullptr;
-    RELEASE_AND_RETURN(scope, promiseResolvedWith(globalObject, result));
-}
-
-// The default [[transformAlgorithm]]: enqueue the chunk unchanged; the enqueue's abrupt
-// completion becomes a rejected promise (a sanctioned completion-record catch).
+// The default [[transformAlgorithm]] (SetUpTransformStreamDefaultControllerFromTransformer step 2):
+// "Let result be TransformStreamDefaultControllerEnqueue(controller, chunk). If result is an abrupt
+// completion, return a promise rejected with result.[[Value]]. Otherwise a promise resolved with undefined."
 static JSPromise* defaultTransformAlgorithm(JSC::VM& vm, JSGlobalObject* globalObject, JSTransformStreamDefaultController* controller, JSValue chunk)
 {
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue thrown;
-    {
-        auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    return promiseFromSteps(globalObject, [&] -> JSPromise* {
+        auto scope = DECLARE_THROW_SCOPE(vm);
         transformStreamDefaultControllerEnqueue(globalObject, controller, chunk);
-        if (catchScope.exception()) [[unlikely]]
-            thrown = takeAbruptCompletion(globalObject, catchScope);
-    }
-    // takeAbruptCompletion leaves a VM termination pending and returns the empty value.
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    if (!thrown.isEmpty())
-        RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, thrown));
-    RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
+    });
 }
 
 // The [[transformAlgorithm]] dispatch; the switch is total over TransformerKind.
@@ -98,7 +69,7 @@ static JSPromise* performTransformAlgorithm(JSC::VM& vm, JSGlobalObject* globalO
                 throwOutOfMemoryError(globalObject, scope);
                 return nullptr;
             }
-            RELEASE_AND_RETURN(scope, invokePromiseReturningMethod(vm, globalObject, transformMethod, controller->m_transformer.get(), args));
+            RELEASE_AND_RETURN(scope, invokeCallbackReturningPromise(globalObject, transformMethod, controller->m_transformer.get(), args));
         }
         break;
     case TransformerKind::Identity:
@@ -123,69 +94,38 @@ namespace WebCore {
 using namespace JSC;
 using namespace Bun::WebStreams;
 
-static JSC_DECLARE_CUSTOM_GETTER(jsTransformStreamDefaultControllerConstructorGetter);
 static JSC_DECLARE_CUSTOM_GETTER(jsTransformStreamDefaultControllerPrototypeGetter_desiredSize);
 static JSC_DECLARE_HOST_FUNCTION(jsTransformStreamDefaultControllerPrototypeFunction_enqueue);
 static JSC_DECLARE_HOST_FUNCTION(jsTransformStreamDefaultControllerPrototypeFunction_error);
 static JSC_DECLARE_HOST_FUNCTION(jsTransformStreamDefaultControllerPrototypeFunction_terminate);
 static JSC_DECLARE_HOST_FUNCTION(jsTransformStreamDefaultControllerPrototype_inspectCustom);
 
-class JSTransformStreamDefaultControllerPrototype final : public JSC::JSNonFinalObject {
-public:
-    using Base = JSC::JSNonFinalObject;
-    static JSTransformStreamDefaultControllerPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
-    {
-        JSTransformStreamDefaultControllerPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSTransformStreamDefaultControllerPrototype))) JSTransformStreamDefaultControllerPrototype(vm, globalObject, structure);
-        ptr->finishCreation(vm);
-        return ptr;
-    }
-
-    DECLARE_INFO;
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSTransformStreamDefaultControllerPrototype, Base);
-        return &vm.plainObjectSpace();
-    }
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
-    }
-
-private:
-    JSTransformStreamDefaultControllerPrototype(JSC::VM& vm, JSC::JSGlobalObject*, JSC::Structure* structure)
-        : JSC::JSNonFinalObject(vm, structure)
-    {
-    }
-
-    void finishCreation(JSC::VM&);
-};
-STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSTransformStreamDefaultControllerPrototype, JSTransformStreamDefaultControllerPrototype::Base);
+using JSTransformStreamDefaultControllerPrototype = JSDOMPrototype<JSTransformStreamDefaultController>;
 
 static const HashTableValue JSTransformStreamDefaultControllerPrototypeTableValues[] = {
-    { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsTransformStreamDefaultControllerConstructorGetter, 0 } },
+    { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, JSTransformStreamDefaultControllerPrototype::constructorGetter, 0 } },
     { "desiredSize"_s, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor, NoIntrinsic, { HashTableValue::GetterSetterType, jsTransformStreamDefaultControllerPrototypeGetter_desiredSize, 0 } },
     { "enqueue"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsTransformStreamDefaultControllerPrototypeFunction_enqueue, 0 } },
     { "error"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsTransformStreamDefaultControllerPrototypeFunction_error, 0 } },
     { "terminate"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsTransformStreamDefaultControllerPrototypeFunction_terminate, 0 } },
 };
 
-const ClassInfo JSTransformStreamDefaultControllerPrototype::s_info = { "TransformStreamDefaultController"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSTransformStreamDefaultControllerPrototype) };
+template<> const ClassInfo JSTransformStreamDefaultControllerPrototype::s_info = { "TransformStreamDefaultController"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSTransformStreamDefaultControllerPrototype) };
 
 JSC_DEFINE_HOST_FUNCTION(jsTransformStreamDefaultControllerPrototype_inspectCustom, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue thisValue = callFrame->thisValue();
+    JSValue thisValue = callFrame->thisValue().toThis(lexicalGlobalObject, JSC::ECMAMode::strict());
     auto* thisObject = dynamicDowncast<JSTransformStreamDefaultController>(thisValue);
     if (!thisObject) [[unlikely]]
         return JSValue::encode(thisValue);
     JSObject* data = constructEmptyObject(lexicalGlobalObject);
-    data->putDirect(vm, Identifier::fromString(vm, "stream"_s), thisObject->m_stream.get() ? JSValue(thisObject->m_stream.get()) : jsUndefined(), 0);
+    Bun::putDirectNamed(vm, data, "stream"_s, thisObject->m_stream.get() ? JSValue(thisObject->m_stream.get()) : jsUndefined());
     RELEASE_AND_RETURN(scope, Bun::WebStreams::customInspect(lexicalGlobalObject, callFrame, thisValue, "TransformStreamDefaultController"_s, data));
 }
 
-void JSTransformStreamDefaultControllerPrototype::finishCreation(VM& vm)
+template<> void JSTransformStreamDefaultControllerPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     Bun::reifyStaticPropertyTable(vm, JSTransformStreamDefaultController::info(), JSTransformStreamDefaultControllerPrototypeTableValues, *this);
@@ -194,17 +134,6 @@ void JSTransformStreamDefaultControllerPrototype::finishCreation(VM& vm)
 }
 
 template<> const ClassInfo JSTransformStreamDefaultControllerConstructor::s_info = { "TransformStreamDefaultController"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSTransformStreamDefaultControllerConstructor) };
-
-template<> JSValue JSTransformStreamDefaultControllerConstructor::prototypeForStructure(JSC::VM& vm, const JSDOMGlobalObject& globalObject)
-{
-    UNUSED_PARAM(vm);
-    return globalObject.functionPrototype();
-}
-
-template<> void JSTransformStreamDefaultControllerConstructor::initializeProperties(VM& vm, JSDOMGlobalObject& globalObject)
-{
-    initializeBaseProperties(vm, 0, "TransformStreamDefaultController"_s, JSTransformStreamDefaultController::prototype(vm, globalObject));
-}
 
 const ClassInfo JSTransformStreamDefaultController::s_info = { "TransformStreamDefaultController"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSTransformStreamDefaultController) };
 
@@ -233,9 +162,7 @@ Structure* JSTransformStreamDefaultController::createStructure(VM& vm, JSGlobalO
 
 JSObject* JSTransformStreamDefaultController::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    auto* structure = JSTransformStreamDefaultControllerPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype());
-    structure->setMayBePrototype(true);
-    return JSTransformStreamDefaultControllerPrototype::create(vm, &globalObject, structure);
+    return JSTransformStreamDefaultControllerPrototype::create(vm, globalObject, globalObject.objectPrototype());
 }
 
 JSObject* JSTransformStreamDefaultController::prototype(VM& vm, JSDOMGlobalObject& globalObject)
@@ -300,16 +227,6 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onTSPerformTransformRejected, (JSGl
 
 // Prototype accessors & methods.
 
-JSC_DEFINE_CUSTOM_GETTER(jsTransformStreamDefaultControllerConstructorGetter, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
-{
-    auto& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* prototype = dynamicDowncast<JSTransformStreamDefaultControllerPrototype>(JSValue::decode(thisValue));
-    if (!prototype) [[unlikely]]
-        return throwVMTypeError(globalObject, scope);
-    return JSValue::encode(JSTransformStreamDefaultController::getConstructor(vm, prototype->globalObject()));
-}
-
 JSC_DEFINE_CUSTOM_GETTER(jsTransformStreamDefaultControllerPrototypeGetter_desiredSize, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
 {
     auto& vm = getVM(globalObject);
@@ -370,26 +287,18 @@ namespace WebStreams {
 using namespace JSC;
 using namespace WebCore;
 
-extern "C" void CompressionStreamCoder__destroy(void*);
-extern "C" void TextEncoderStreamEncoder__destroyForStream(void*);
-extern "C" void TextDecoder__destroyForStream(void*);
-
-// Drop the native coder/decoder now rather than waiting for the cell's finalizer: a
-// CompressionStream's zlib/brotli/zstd state is hundreds of KB of window buffer, and
-// finalizers run late (main-thread, typically only at full GC), so relying on them for
-// this in a hot pipe loop lets native memory grow unbounded. The finalizer stays as an
-// idempotent fallback for an abandoned stream that never reaches a terminal.
+// The cell is destroyed late, and a CompressionStream's zlib/brotli/zstd state is hundreds of KB: a hot pipe loop can't wait.
 void nativeTransformReleaseState(JSTransformStream* stream)
 {
     stream->m_nativeStateReleasePending = false;
     if (auto* s = dynamicDowncast<JSCompressionStream>(stream))
-        CompressionStreamCoder__destroy(std::exchange(s->m_coder, nullptr));
+        s->m_coder = nullptr;
     else if (auto* s = dynamicDowncast<JSDecompressionStream>(stream))
-        CompressionStreamCoder__destroy(std::exchange(s->m_coder, nullptr));
+        s->m_coder = nullptr;
     else if (auto* s = dynamicDowncast<JSTextEncoderStream>(stream))
-        TextEncoderStreamEncoder__destroyForStream(std::exchange(s->m_encoder, nullptr));
+        s->m_encoder = nullptr;
     else if (auto* s = dynamicDowncast<JSTextDecoderStream>(stream))
-        TextDecoder__destroyForStream(std::exchange(s->m_decoder, nullptr));
+        s->m_decoder = nullptr;
 }
 
 void nativeTransformReleaseStateIfIdle(JSTransformStream* stream)
@@ -432,20 +341,13 @@ void transformStreamDefaultControllerEnqueue(JSGlobalObject* globalObject, JSTra
         throwTypeError(globalObject, scope, "Cannot enqueue a chunk into a TransformStream whose readable side is closed or has already requested close"_s);
         return;
     }
-    JSValue thrown;
-    {
-        // The readable-side enqueue interpreted as a completion record (a sanctioned
-        // completion-record catch): an abrupt completion errors the WRITABLE side and
-        // rethrows the readable's stored error.
-        auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        readableStreamDefaultControllerEnqueue(globalObject, readableController, chunk);
-        if (catchScope.exception()) [[unlikely]]
-            thrown = takeAbruptCompletion(globalObject, catchScope);
-    }
-    // takeAbruptCompletion leaves a VM termination pending and returns the empty value.
-    RETURN_IF_EXCEPTION(scope, void());
-    if (!thrown.isEmpty()) [[unlikely]] {
-        transformStreamErrorWritableAndUnblockWrite(globalObject, stream, thrown);
+    readableStreamDefaultControllerEnqueue(globalObject, readableController, chunk);
+    if (JSC::Exception* exception = scope.exception()) [[unlikely]] {
+        // Spec steps 4-5: "If enqueueResult is an abrupt completion, perform
+        // ! TransformStreamErrorWritableAndUnblockWrite(stream, enqueueResult.[[Value]]) and throw
+        // stream.[[readable]].[[storedError]]."
+        TRY_CLEAR_EXCEPTION(scope, );
+        transformStreamErrorWritableAndUnblockWrite(globalObject, stream, exception->value());
         RETURN_IF_EXCEPTION(scope, void());
         // The readable is not necessarily Errored here: the user size() callback may have
         // closed it before throwing, leaving [[storedError]] unset — then we throw undefined.

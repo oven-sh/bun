@@ -14,11 +14,12 @@ BunBroadcastChannelRegistry& BunBroadcastChannelRegistry::singleton()
     return registry.get();
 }
 
-void BunBroadcastChannelRegistry::subscribe(const String& name, ScriptExecutionContextIdentifier ctxId, BroadcastChannel& channel)
+void BunBroadcastChannelRegistry::subscribe(const String& name, ScriptExecutionContext& context, BroadcastChannel& channel)
 {
+    Subscriber subscriber { context.identifier(), context.currentLoopKind(), ThreadSafeWeakPtr<BroadcastChannel> { channel }, &channel };
     Locker locker { m_lock };
     auto& list = m_subscribers.ensure(name.isolatedCopy(), [] { return Vector<Subscriber> {}; }).iterator->value;
-    list.append(Subscriber { ctxId, ThreadSafeWeakPtr<BroadcastChannel> { channel }, &channel });
+    list.append(WTF::move(subscriber));
 }
 
 void BunBroadcastChannelRegistry::unsubscribe(const String& name, BroadcastChannel& channel)
@@ -47,7 +48,12 @@ void BunBroadcastChannelRegistry::post(const String& name, BroadcastChannel& sou
     // local ref as the last), and ~BroadcastChannel → ~EventTarget →
     // EventListenerMap::clear() would then fire on the wrong thread and
     // trip releaseAssertOrSetThreadUID.
-    Vector<std::pair<ScriptExecutionContextIdentifier, ThreadSafeWeakPtr<BroadcastChannel>>, 4> targets;
+    struct Target {
+        ScriptExecutionContextIdentifier ctxId;
+        BunLoopKind ctxLoopKind;
+        ThreadSafeWeakPtr<BroadcastChannel> channel;
+    };
+    Vector<Target, 4> targets;
     {
         Locker locker { m_lock };
         auto it = m_subscribers.find(name);
@@ -60,15 +66,15 @@ void BunBroadcastChannelRegistry::post(const String& name, BroadcastChannel& sou
         for (auto& sub : it->value) {
             if (sub.identity == &source)
                 continue;
-            targets.append({ sub.ctxId, sub.channel });
+            targets.append({ sub.ctxId, sub.ctxLoopKind, sub.channel });
         }
     }
 
     // One task per (message, subscriber), queued in subscription order.
     // Same-context subscribers share a task queue, so this preserves the
     // spec-mandated (message-major, creation-minor) delivery order.
-    for (auto& [ctxId, weakChannel] : targets) {
-        ScriptExecutionContext::postTaskTo(ctxId, [weakChannel, message = message.copyRef()](ScriptExecutionContext&) mutable {
+    for (auto& [ctxId, ctxLoopKind, weakChannel] : targets) {
+        ScriptExecutionContext::postTaskTo(ctxId, ctxLoopKind, [weakChannel, message = message.copyRef()](ScriptExecutionContext&) mutable {
             // Resolve on the target thread so any last deref happens here.
             if (RefPtr channel = weakChannel.get())
                 channel->dispatchMessage(WTF::move(message));

@@ -1,0 +1,15 @@
+# -- source: main.ts
+# class Knot { above: Knot | Bead | undefined; mark: number; constructor(above: Knot | Bead | undefined, mark: number) { this.above = above; this.mark = mark; } }
+# class Bead { mark: number; tint = "red"; above: Knot | Bead | undefined; constructor(above: Knot | Bead | undefined, mark: number) { this.mark = mark; this.above = above; } }
+# type Link = Knot | Bead;
+# function nextOf(t: Link): Link | undefined { return t.mark & 1 ? t.above : undefined; }
+# function settles(t: Link): number { if (t.mark & 256) return -1; const c = nextOf(t); if (c && c !== t) return 1 + settles(c); return 0; }
+# (globalThis as any).kept = settles;
+# const a = new Knot(undefined, 1), b = new Knot(a, 1), c = new Bead(b, 3);
+# console.log(settles(c), settles(a));
+# -- end of source
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: = ShapeTest
+# CHECK: = ShapeTest
+# CHECK-NOT: = ShapeTest

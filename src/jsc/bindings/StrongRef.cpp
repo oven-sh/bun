@@ -72,10 +72,14 @@ extern "C" void Bun__StrongRef__delete(StrongRefImpl* _Nonnull ref)
     auto* block = decodeStrongRefBlock(ref);
     auto& vm = block->vm();
     auto* clientData = clientDataFast(vm);
+    bool empty = block->clear(decodeStrongRefIndex(ref));
+    // Mid-sweep (a JSCell destructor) only the slot may change; acquire() reclaims empties later.
+    if (vm.heap.mutatorState() == JSC::MutatorState::Sweeping) [[unlikely]]
+        return;
     // This block just freed a slot, so the next acquire() should try it first
     // (covers the FIFO pattern where the oldest-armed block gets room while
     // the cursor sits at a full head).
     clientData->m_strongRootBlockCursor = block;
-    if (block->clear(decodeStrongRefIndex(ref))) [[unlikely]]
+    if (empty) [[unlikely]]
         StrongRootBlock::release(clientData, vm, block);
 }

@@ -1,4 +1,5 @@
 import assert from "assert";
+import type { PluginBuilder } from "bun";
 import { describe, expect } from "bun:test";
 import { itBundled } from "./expectBundled";
 
@@ -116,6 +117,54 @@ describe("bundler", () => {
     },
     onAfterBundle(api) {
       api.expectFile("out.js").not.toInclude("import ");
+    },
+  });
+  // The polyfill is plain JS bundled into the user's output, so it cannot use
+  // JSC builtin intrinsics ($newPromiseCapability and friends). Those are
+  // only rewritten inside src/js; in a browser bundle they are bare globals.
+  itBundled("browser/NodeEventsOnce", {
+    files: {
+      "/entry.js": /* js */ `
+        import { once, EventEmitter } from "node:events";
+        const results = [];
+        {
+          const e = new EventEmitter();
+          const p = once(e, "hello");
+          e.emit("hello", 1, "two");
+          results.push(JSON.stringify(await p));
+        }
+        {
+          const e = new EventEmitter();
+          const p = once(e, "never");
+          e.emit("error", new Error("boom"));
+          results.push(await p.then(() => "resolved", err => "rejected:" + err.message));
+          results.push(e.listenerCount("never") + "," + e.listenerCount("error"));
+        }
+        {
+          const e = new EventEmitter();
+          const ac = new AbortController();
+          const p = once(e, "never", { signal: ac.signal });
+          ac.abort();
+          results.push(await p.then(() => "resolved", err => err.name + ":" + err.code));
+          results.push(e.listenerCount("never") + "," + e.listenerCount("error"));
+        }
+        {
+          const et = new EventTarget();
+          const p = once(et, "ping");
+          et.dispatchEvent(new Event("ping"));
+          const [ev] = await p;
+          results.push(ev.type);
+        }
+        console.log(results.join("\\n"));
+      `,
+    },
+    target: "browser",
+    run: {
+      stdout: '[1,"two"]\nrejected:boom\n0,0\nAbortError:ABORT_ERR\n0,0\nping',
+    },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      assert(!out.includes("$newPromiseCapability"), "events polyfill must not reference a JSC builtin intrinsic");
     },
   });
   itBundled("browser/NodeUrlProtocolTablesIgnorePrototype", {
@@ -345,6 +394,57 @@ describe("bundler", () => {
       assert(!out.includes("createHash"), "crypto polyfill should not be bundled when browser map remaps it");
     },
   });
+  itBundled("browser/BrowserFieldRemapsSubpathOfPackage", {
+    skipOnEsbuild: true,
+    files: {
+      "/entry.js": String.raw`
+        import slash from "pkg/a/b";
+        import backslash from "pkg/a\\b";
+        console.log(slash, backslash);
+      `,
+      "/package.json": /* json */ `{ "browser": { "pkg/a/b": "./shim.js" } }`,
+      "/shim.js": /* js */ `export default "shim";`,
+      "/node_modules/pkg/a/b.js": /* js */ `export default "original";`,
+    },
+    target: "browser",
+    run: {
+      stdout: "shim shim",
+    },
+  });
+  itBundled("browser/BrowserFieldRemapsToPathWithBackslashes", {
+    skipOnEsbuild: true,
+    files: {
+      "/entry.js": /* js */ `
+        import file from "./a.js";
+        console.log(file, require("pkg"));
+      `,
+      "/package.json": JSON.stringify({ browser: { "./a.js": "closed\\lib\\y.js", pkg: "closed\\lib\\y.js" } }),
+      "/a.js": /* js */ `export default "original";`,
+      "/node_modules/closed/package.json": /* json */ `{ "name": "closed", "exports": "./index.js" }`,
+      "/node_modules/closed/lib/y.js": /* js */ `module.exports = "shim";`,
+    },
+    target: "browser",
+    run: {
+      stdout: "shim shim",
+    },
+  });
+  itBundled("browser/BrowserFieldRemapsSpecifierThatClimbsOut", {
+    skipOnEsbuild: true,
+    files: {
+      "/entry.js": /* js */ `
+        import a from "q/../../a";
+        console.log(a);
+      `,
+      "/package.json": /* json */ `{ "browser": { "./a.js": "./shim.js" } }`,
+      "/a.js": /* js */ `export default "original";`,
+      "/shim.js": /* js */ `export default "shim";`,
+      "/node_modules/q/index.js": ``,
+    },
+    target: "browser",
+    run: {
+      stdout: "shim",
+    },
+  });
   itBundled("browser/BrowserFieldDisabledBuiltinStillPolyfillsOutsideScope", {
     // A browser:{events:false} in one package must not leak into a sibling package.
     files: {
@@ -439,6 +539,30 @@ describe("bundler", () => {
       "<bun>": ['"pkg" is disabled due to "browser" field in package.json (entry point)'],
     },
   });
+  for (const [name, entryPoints, plugins] of [
+    ["Imported", ["/entry.js"], undefined],
+    ["ImportedAfterPlugin", ["/entry.js"], (build: PluginBuilder) => void build.onResolve({ filter: /pkg/ }, () => {})],
+    ["EntryPoint", ["/pkg"], undefined],
+  ] as const) {
+    itBundled("browser/ModuleFieldDisabledByBrowserFieldHasRelativePathComment" + name, {
+      files: {
+        "/entry.js": `import { value } from "./pkg"; console.log(value);`,
+        "/pkg/package.json": JSON.stringify({
+          main: "./main.js",
+          module: "./module.js",
+          browser: { "./module.js": false },
+        }),
+        "/pkg/main.js": `exports.value = Math.random();`,
+        "/pkg/module.js": `export const value = Math.random();`,
+      },
+      entryPoints: [...entryPoints],
+      plugins,
+      target: "browser",
+      onAfterBundle(api) {
+        expect(api.readFile("out.js")).toMatch(/^\/\/ pkg\/\w+\.js$/m);
+      },
+    });
+  }
   itBundled("browser/EntryPointIsNodeBuiltinStubbedForBrowser", {
     // Browser builds replace "fs" (and node:* builtins without a polyfill) with
     // an empty module, so as entry points they have nothing to bundle either.
@@ -449,8 +573,8 @@ describe("bundler", () => {
     target: "browser",
     bundleErrors: {
       "<bun>": [
-        `Cannot use Node.js builtin "fs" as an entry point`,
-        `Cannot use Node.js builtin "node:fs" as an entry point`,
+        `Cannot use "fs" as an entry point: it resolves to a builtin module`,
+        `Cannot use "node:fs" as an entry point: it resolves to a builtin module`,
       ],
     },
   });

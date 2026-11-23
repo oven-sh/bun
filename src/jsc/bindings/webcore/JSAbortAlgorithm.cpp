@@ -24,14 +24,14 @@
 #include "JSDOMConvertBase.h"
 #include "JSDOMExceptionHandling.h"
 #include "ScriptExecutionContext.h"
-#include "DeleteCallbackDataTask.h"
+#include "ModuleGraph.h"
 
 namespace WebCore {
 using namespace JSC;
 
 JSAbortAlgorithm::JSAbortAlgorithm(VM& vm, JSObject* callback)
-    : AbortAlgorithm(uncheckedDowncast<JSDOMGlobalObject>(callback->globalObject())->scriptExecutionContext())
-    , m_data(new JSCallbackData(vm, callback, this))
+    : AbortAlgorithm(defaultGlobalObject(callback->globalObject())->currentScriptExecutionContext())
+    , m_data(makeUnique<JSCallbackData>(vm, callback, this))
 {
 }
 
@@ -40,20 +40,16 @@ JSAbortAlgorithm::~JSAbortAlgorithm()
     ScriptExecutionContext* context = scriptExecutionContext();
     // When the context is destroyed, all tasks with a reference to a callback
     // should be deleted. So if the context is 0, we are on the context thread.
-    if (!context || context->isContextThread())
-        delete m_data;
-    else
-
-        context->postTask(new DeleteCallbackDataTask(m_data));
-#ifndef NDEBUG
-    m_data = nullptr;
-#endif
+    if (context && !context->isContextThread())
+        context->postTask([data = WTF::move(m_data)](ScriptExecutionContext&) {});
 }
 
 CallbackResult<typename IDLUndefined::ImplementationType> JSAbortAlgorithm::handleEvent(JSValue value)
 {
     if (!canInvokeCallback())
         return CallbackResultType::UnableToExecute;
+
+    Bun::ModuleGraphContextScope moduleGraphContext(*scriptExecutionContext());
 
     Ref<JSAbortAlgorithm> protectedThis(*this);
 
@@ -89,14 +85,6 @@ void JSAbortAlgorithm::visitJSFunction(JSC::AbstractSlotVisitor& visitor)
 void JSAbortAlgorithm::visitJSFunction(JSC::SlotVisitor& visitor)
 {
     m_data->visitJSFunction(visitor);
-}
-
-JSC::JSValue toJS(AbortAlgorithm& impl)
-{
-    if (!static_cast<JSAbortAlgorithm&>(impl).callbackData())
-        return jsNull();
-
-    return static_cast<JSAbortAlgorithm&>(impl).callbackData()->callback();
 }
 
 } // namespace WebCore

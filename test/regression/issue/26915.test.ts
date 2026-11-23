@@ -12,7 +12,7 @@ function startServer(payloadSize: number): Promise<{ port: number; server: http2
   const payload = Buffer.alloc(payloadSize, "x");
   return new Promise(resolve => {
     const server = http2.createServer();
-    server.on("stream", stream => {
+    server.on("stream", (stream: http2.ServerHttp2Stream) => {
       stream.respond({ ":status": 200 });
       stream.end(payload);
     });

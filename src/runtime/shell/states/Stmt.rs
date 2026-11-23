@@ -5,8 +5,9 @@ use crate::shell::io::IO;
 use crate::shell::states::base::Base;
 use crate::shell::yield_::Yield;
 
-pub struct Stmt {
+pub(crate) struct Stmt {
     pub(crate) base: Base,
+    shell: *mut ShellExecEnv,
     pub node: bun_ptr::BackRef<ast::Stmt>,
     pub(crate) idx: usize,
     pub(crate) last_exit_code: Option<ExitCode>,
@@ -18,18 +19,14 @@ impl Stmt {
     pub(crate) fn init(
         interp: &Interpreter,
         shell: *mut ShellExecEnv,
-        node: *const ast::Stmt,
+        node: &ast::Stmt,
         parent: NodeId,
         io: IO,
     ) -> NodeId {
         let id = interp.alloc_node(Node::Stmt(Stmt {
-            base: Base::new(parent, shell),
-            // SAFETY: `node` is non-null and points into the AST arena
-            // (`ShellArgs::__arena`), which the interpreter holds for its
-            // entire lifetime — strictly outliving every state node (the
-            // BackRef invariant). Callers pass `&raw const` only to escape
-            // borrowck across the `&Interpreter` reborrow.
-            node: unsafe { bun_ptr::BackRef::from_raw(node as *mut ast::Stmt) },
+            base: Base::new(parent),
+            shell,
+            node: bun_ptr::BackRef::new(node),
             idx: 0,
             last_exit_code: None,
             currently_executing: None,
@@ -55,7 +52,7 @@ impl Stmt {
                 Self::expr_count(me),
                 me.base.parent,
                 me.last_exit_code,
-                me.base.shell,
+                me.shell,
             )
         };
         if idx >= len {
@@ -82,9 +79,13 @@ impl Stmt {
             me.currently_executing = None;
         }
         // Async children are *not* freed here (they outlive their parent's
-        // notion of "done"); see `Async`'s empty `deinit`.
+        // notion of "done").
         if !matches!(interp.node(child).kind(), StateKind::Async) {
             interp.deinit_node(child);
+        }
+        if interp.interrupted(this) {
+            let me = interp.as_stmt_mut(this);
+            me.idx = Self::expr_count(me);
         }
         Yield::Next(this)
     }
@@ -94,7 +95,6 @@ impl Stmt {
         if let Some(exec) = exec {
             interp.deinit_node(exec);
         }
-        interp.as_stmt_mut(this).base.end_scope();
     }
 
     #[inline]

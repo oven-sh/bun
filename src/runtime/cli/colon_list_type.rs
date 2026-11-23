@@ -8,7 +8,7 @@ use bun_core::{Global, pretty_errorln};
 // schema Loader.
 pub(crate) trait ColonListValue: Sized {
     /// Parses one value from its string form.
-    fn resolve_value(input: &[u8]) -> Result<Self, Error>;
+    fn resolve_value(input: &'static [u8]) -> Result<Self, Error>;
 
     /// Whether `T` is the schema `Loader` type.
     const IS_LOADER: bool = false;

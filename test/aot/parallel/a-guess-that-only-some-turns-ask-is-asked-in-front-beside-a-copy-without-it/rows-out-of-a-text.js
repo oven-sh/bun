@@ -1,0 +1,4 @@
+// Threads of a cloth are read through small closures, behind `at < wide &&`: only some turns ask whether `threads` and its row are lists. It is asked in front of the loop; the rows come out of a text.
+class Cloth { constructor(threads) { this.wide = threads.length; this.threads = threads; } seams() { const { wide, threads } = this; let worth = 0; const walked = stitch => { let from = 0; for (let at = 1; at <= wide; at++) { if (at < wide && stitch(at) === stitch(from)) continue; if (at - from > 2) worth += at - from; from = at; } }; for (let row = 0; row < wide; row++) { walked(at => threads[row][at]); walked(at => threads[at][row]); } return worth; } }
+const rows = JSON.parse("[[1,1,1,1,0,0],[0,1,1,1,1,0],[0,0,0,0,1,1],[1,0,1,0,1,0],[1,1,1,1,1,1],[0,0,0,1,1,1]]");
+const rounds = JSON.parse("3"); for (let t = 0; t < rounds; t++) console.log(new Cloth(rows).seams());

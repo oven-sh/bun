@@ -7,7 +7,7 @@
 import { $ } from "bun";
 import { beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { existsSync, mkdirSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
 import path from "path";
 import { createTestBuilder, sortedShellOutput } from "../util";
 const TestBuilder = createTestBuilder(import.meta.path);
@@ -145,9 +145,23 @@ foo/
     }
   });
 
-  // The DirTask parent/child hand-off had a lost-wakeup window between
-  // `subtask_count.load() > 1` and `need_to_wait.store(true)`: the last
-  // child could decrement and read `need_to_wait == false` in between,
+  test("-dv prints the directory it removed", async () => {
+    using dir = tempDir("rm-dv", { captured: {}, redirected: {} });
+    const captured = await $`rm -dv captured`.cwd(String(dir)).quiet();
+    const redirected = await $`rm -dv redirected > out`.cwd(String(dir)).quiet();
+    expect({
+      captured: { output: captured.stdout.toString(), exitCode: captured.exitCode },
+      redirected: { output: await Bun.file(path.join(String(dir), "out")).text(), exitCode: redirected.exitCode },
+      left: readdirSync(String(dir)),
+    }).toEqual({
+      captured: { output: "captured\n", exitCode: 0 },
+      redirected: { output: "redirected\n", exitCode: 0 },
+      left: ["out"],
+    });
+  });
+
+  // The DirTask parent/child hand-off had a lost-wakeup window: the last
+  // child could finish before the parent had said that it was waiting,
   // stranding the parent DirTask forever. A directory with exactly one
   // subdirectory is the minimal trigger; the window is a few instructions
   // so this is a stress probe rather than a deterministic repro.
@@ -270,7 +284,7 @@ test.skipIf(process.platform === "win32")(
       // Start the recursive delete on the worker pool, then immediately
       // replace each subdirectory with a symlink pointing at the victim
       // directory while the walk is in flight.
-      const running = $`rm -rf ${target}`.nothrow().quiet().run();
+      const running = ($`rm -rf ${target}`.nothrow().quiet() as any).run();
       for (let i = 0; i < ENTRIES; i++) {
         const entry = path.join(target, `d${i}`);
         try {
@@ -482,5 +496,26 @@ test("operands longer than the path scratch buffers are reported, not a crash", 
     mixed: { exitCode: 1, stderr: tooLong(long), shortRemoved: true },
     ...(isWindows ? {} : { upToRoot: { exitCode: 1, stderr: 'rm: "/" may not be removed\n' } }),
   });
+  expect(exitCode).toBe(0);
+});
+
+test.skipIf(isWindows)("the root check reads a backslash as part of a name, as the removal does", async () => {
+  // Without -r no directory can be removed, whatever the check decides.
+  const { exitCode, stderr } = await $`rm ${"/no-such-dir\\x\\y/.."}`.quiet();
+  expect(stderr.toString()).toBe('rm: "/no-such-dir\\x\\y/.." may not be removed\n');
+  expect(exitCode).toBe(1);
+});
+
+test("an empty operand names nothing", async () => {
+  using dir = tempDir("rm-empty-operand", { "a.txt": "", "sub/b.txt": "" });
+  const { exitCode } = await $`rm -rf ${""}`.cwd(String(dir)).quiet();
+  expect(readdirSync(String(dir), { recursive: true }).sort()).toEqual(["a.txt", "sub", path.join("sub", "b.txt")]);
+  expect(exitCode).toBe(0);
+});
+
+test("removes a directory that is written with ./", async () => {
+  using dir = tempDir("rm-dot-slash", { "sub/b.txt": "" });
+  const { exitCode } = await $`rm -r ./sub`.cwd(String(dir)).quiet();
+  expect(readdirSync(String(dir))).toEqual([]);
   expect(exitCode).toBe(0);
 });

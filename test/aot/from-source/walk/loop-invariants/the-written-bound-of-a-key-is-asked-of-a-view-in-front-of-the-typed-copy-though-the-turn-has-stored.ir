@@ -1,0 +1,35 @@
+# -- source: the-written-bound-of-a-key-is-asked-of-a-view-in-front-of-the-typed-copy-though-the-turn-has-stored.ts
+# declare function sink(value: unknown): void;
+# const steps = new Uint16Array([0, 1, 1, 1, 1, 1, 1, 1, 1, 2]);
+# let swapped = new Uint16Array([0, 1, 1, 1, 1, 1, 1, 1, 1, 2]);
+# const room = new ArrayBuffer(20, { maxByteLength: 40 }), tracking = new Uint16Array(room);
+# class Walker { miles: number; constructor() { this.miles = 0; } rests(): number { this.miles = (this.miles + 5) & 7; return this.miles & 1; } }
+# function climbs(walker: Walker, top: number): number { let height = 2; for (let hour = 1; hour < 10; hour++) { height += walker.rests(); const step = steps[hour]!; height = height * 2 - step; if (height > top) return hour * 1000 + height; } return -height; }
+# function climbsSwapped(walker: Walker): number { let height = 0; for (let hour = 1; hour < 10; hour++) { height += walker.rests(); const step = swapped[hour]!; height += step; } return height; }
+# function climbsShrinking(walker: Walker, at: number): number { let height = 0; for (let hour = 1; hour < 10; hour++) { height -= walker.rests(); if (hour === at) room.resize(4); const step = tracking[hour]!; height += step + 1; } return height; }
+# const said = [climbs(new Walker(), 90), climbs(new Walker(), 9000), climbsSwapped(new Walker())];
+# swapped = new Uint16Array([0, 1, 1]);
+# said.push(climbsSwapped(new Walker()), climbsShrinking(new Walker(), 99), climbsShrinking(new Walker(), 3));
+# sink(said.join(" "));
+# -- end of source
+# `steps[hour]!` with hour in 1 .. 9: nothing said that 9 lies inside the view, so the read gave undefined|int and step and height went as doubles with a test for NaN in every turn.
+# Two rules refused the proof. A counter is held below the room of a view only where the view is a VALUE from in front of the loop, and `steps` is a variable of the module, read in the turn. And at the
+# read itself nothing was asked in front of the typed copy, nor could the turn begin again, because rests(), copied in line, has stored into the walker. A test in front runs before the first turn: what the
+# turn has WRITTEN does not touch it; only other code could. So "9 < the length" is asked there, as it is of a list, and the read lies inside.
+# climbsSwapped: the variable holds a shorter view at the second call: the test fails and the other copy answers NaN as plain does. climbsShrinking: a turn resizes the buffer: the turns do not leave
+# views as they are, nothing is asked in front, and the reads behind the resize give undefined.
+# How often the bound is asked is not pinned: since the failing way of the test leads to the loop bought once more without the question, the typed copy is walked more than once.
+# f1 = climbs, f2 = climbsSwapped, f3 = climbsShrinking
+# OPTIONS: testing=CheckProofsAtRunTime check=Validate
+# RUN: walk f1 f2 f3 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = GetTypedArrayElement {{*}}[keyIsIntegral, isInsideView]
+# CHECK-LABEL: code f2:Body
+# CHECK: = GetTypedArrayElement {{*}}[keyIsIntegral, isInsideView]
+# CHECK-LABEL: code f3:Body
+# CHECK-NOT: isInsideView
+# RUN(COUNT): compile TypedArrayBoundsChecksHoisted
+# COUNT-NOT: statistic TypedArrayBoundsChecksHoisted 0
+# RUN(SHELL): run-in-shell globalThis.sink = print;
+# SHELL: 6149 -1194 15 NaN 4 NaN
+# SHELL: exited with 0

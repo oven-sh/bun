@@ -1,0 +1,14 @@
+# f1 = keep, f2 = make
+# -- source: main.ts
+# declare function print(value: any): void;
+# let kept: (() => string) | null = null;
+# function keep(callback: () => string): void { kept = callback; }
+# function make(start: number): number { const label = "n" + start; keep(function again(): string { return kept === again ? label : "other"; }); return label.length; }
+# print(make(3));
+# print(kept!());
+# -- end of source
+# The twin of a-store-of-what-may-be-lent-stops-the-checks-where-the-run-time-has-no-net.ir under the same lie: the one closure that arrives names itself, and such a closure is never made in a frame: the store is let through.
+# OPTIONS: testing=AssumeCalleesRetainNothing
+# RUN: walk f1 mechanisms=all
+# CHECK-NOT: failed
+# CHECK: PutModuleVariable

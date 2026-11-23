@@ -6,8 +6,9 @@ use crate::bun_fs as fs;
 use bun_alloc::AstAlloc;
 use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags, ImportRecordTag, Index as AstIndex};
 use bun_ast::{Loc, Log, Range, Source};
+use bun_core::strings;
+use bun_paths::Path;
 use bun_paths::fs::Path as FsPath;
-use bun_paths::{platform, resolve_path};
 use bun_sys as sys;
 
 /// The single `lol_html::OutputSink` type every Bun `HtmlRewriter` is built
@@ -52,13 +53,13 @@ bun_core::declare_scope!(HTMLScanner, hidden);
 
 pub(crate) struct HTMLScanner<'a> {
     // arena field dropped — global mimalloc (see PORTING.md §Allocators).
-    pub import_records: Vec<ImportRecord>,
+    pub import_records: Vec<ImportRecord<'static>>,
     pub log: &'a mut Log,
-    pub source: &'a Source,
+    pub source: &'a Source<'a>,
 }
 
 impl<'a> HTMLScanner<'a> {
-    pub(crate) fn init(log: &'a mut Log, source: &'a Source) -> HTMLScanner<'a> {
+    pub(crate) fn init(log: &'a mut Log, source: &'a Source<'a>) -> HTMLScanner<'a> {
         HTMLScanner {
             import_records: Vec::new(),
             log,
@@ -68,17 +69,27 @@ impl<'a> HTMLScanner<'a> {
 }
 
 impl<'a> HTMLScanner<'a> {
-    fn create_import_record(&mut self, input_path: &[u8], kind: ImportKind) -> Result<(), Error> {
+    fn create_import_record(&mut self, written: &[u8], kind: ImportKind) -> Result<(), Error> {
+        // In the path of a URL `\` is a separator.
+        let end = strings::index_of_any(written, b"?#").unwrap_or(written.len());
+        let (url_path, rest) = written.split_at(end);
+        let has_scheme =
+            strings::index_of_any(url_path, b":/\\").is_some_and(|at| url_path[at] == b':');
+        let with_slashes = match strings::replace_char(url_path, b'\\', b'/') {
+            Cow::Owned(converted) if !has_scheme => Cow::Owned([&converted, rest].concat()),
+            _ => Cow::Borrowed(written),
+        };
+        let input_path: &[u8] = &with_slashes;
         // In HTML, sometimes people do /src/index.js
         // In that case, we don't want to use the absolute filesystem path, we want to use the path relative to the project root
+        let mut resolved;
         let path_to_use: &[u8] = if input_path.len() > 1 && input_path[0] == b'/' {
-            resolve_path::join_abs_string::<platform::Auto>(
-                fs::FileSystem::instance().top_level_dir,
-                &[&input_path[1..]],
-            )
+            resolved = Path::resolve(&[fs::FileSystem::get().top_level_dir(), &input_path[1..]]);
+            resolved.copy_trailing_sep_from(input_path);
+            &resolved
         }
         // Check if imports to (e.g) "App.tsx" are actually relative imoprts w/o the "./"
-        else if input_path.len() > 2 && input_path[0] != b'.' && input_path[1] != b'/' {
+        else if written.len() > 2 && written[0] != b'.' && written[1] != b'/' {
             'blk: {
                 let Some(index_of_dot) = bun_core::strings::last_index_of_char(input_path, b'.')
                 else {
@@ -89,13 +100,13 @@ impl<'a> HTMLScanner<'a> {
                     break 'blk input_path;
                 }
                 // /foo/bar/index.html -> /foo/bar
-                let dirname = resolve_path::dirname::<platform::Auto>(self.source.path.text());
-                if dirname.is_empty() {
+                let dirname = bun_paths::dirname_or_root(self.source.path.text());
+                if !bun_paths::is_absolute(dirname) {
                     break 'blk input_path;
                 }
-                let resolved =
-                    resolve_path::join_abs_string_z::<platform::Auto>(dirname, &[input_path]);
-                if sys::exists_z(resolved) {
+                resolved = Path::resolve(&[dirname, input_path]);
+                resolved.copy_trailing_sep_from(input_path);
+                if sys::exists_z(&resolved) {
                     resolved.as_bytes()
                 } else {
                     input_path
@@ -148,6 +159,16 @@ impl<'a> HTMLScanner<'a> {
     pub(crate) fn scan(&mut self, input: &[u8]) -> Result<(), Error> {
         Processor::run(self, input)
     }
+}
+
+/// The import records of the HTML file `source`: one per `<script src>`, `<link href>` and other tag the bundler follows.
+pub fn scan_import_records(
+    log: &mut Log,
+    source: &Source,
+) -> Result<Vec<ImportRecord<'static>>, Error> {
+    let mut scanner = HTMLScanner::init(log, source);
+    scanner.scan(&source.contents)?;
+    Ok(scanner.import_records)
 }
 
 type Processor<'a> = HTMLProcessor<HTMLScanner<'a>, false>;
@@ -370,9 +391,10 @@ impl<T: HTMLProcessorHandler, const VISIT_DOCUMENT_TAGS: bool>
         let settings = lol_html::Settings {
             element_content_handlers,
             encoding: lol_html::AsciiCompatibleEncoding::utf_8(),
+            // lol_html only buffers the unparsed tail of each write, so the default preallocation is enough.
             memory_settings: lol_html::MemorySettings {
-                preallocated_parsing_buffer_size: (input.len() / 4).max(1024),
-                max_allowed_memory_usage: 1024 * 1024 * 10,
+                max_allowed_memory_usage: u32::MAX as usize,
+                ..lol_html::MemorySettings::new()
             },
             strict: false,
             ..lol_html::Settings::new()

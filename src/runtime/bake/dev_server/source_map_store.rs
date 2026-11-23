@@ -11,16 +11,15 @@ use bun_core::string_joiner::StringJoiner;
 use bun_core::{Timespec, TimespecMockMode};
 use bun_sourcemap::{self as source_map, SourceMapState};
 
-use crate::bake::dev_server_body::map_log;
 use crate::bake::{self, Side};
 use crate::timer::EventLoopTimerState;
 
-use super::{ChunkKind, DevServer, EventLoopTimer, Magic, TimerTag, packed_map};
+use super::{ChunkKind, EventLoopTimer, OwnedTimer, TimerTag, packed_map};
 
 /// See `SourceId` for what the content of u64 is.
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Default)]
-pub struct Key(pub(crate) u64);
+pub(crate) struct Key(pub(crate) u64);
 impl Key {
     #[inline]
     pub(crate) const fn init(v: u64) -> Self {
@@ -62,7 +61,7 @@ const WEAK_REF_ENTRY_MAX: usize = 16;
 /// `SourceMapStore.Entry` is the information + refcount holder to
 /// construct the actual JSON file associated with a bundle/hot update.
 #[derive(Default)]
-pub struct Entry {
+pub(crate) struct Entry {
     /// Sum of:
     /// - How many active sockets have code that could reference this source map?
     /// - For route bundle client scripts, +1 until invalidation.
@@ -92,12 +91,7 @@ impl Entry {
     }
 
     /// `SourceMapStore.Entry.renderJSON`.
-    pub(crate) fn render_json(
-        &self,
-        dev: &mut DevServer,
-        kind: ChunkKind,
-        side: Side,
-    ) -> crate::Result<Vec<u8>> {
+    pub(crate) fn render_json(&self, kind: ChunkKind, side: Side) -> crate::Result<Vec<u8>> {
         let map_files = self.files.as_slice();
         let paths = &self.paths;
 
@@ -109,17 +103,9 @@ impl Entry {
         // `percent_encode_write` takes `&mut Vec<u8>`.
         let mut source_map_strings: Vec<u8> = Vec::new();
 
-        #[cfg(windows)]
-        let mut buf = bun_paths::path_buffer_pool::get();
-
         for native_file_path in paths.iter() {
-            let native_file_path: &[u8] = native_file_path;
             source_map_strings.extend_from_slice(b",");
-            #[cfg(windows)]
-            let path: &[u8] =
-                bun_paths::resolve_path::path_to_posix_buf::<u8>(native_file_path, &mut **buf);
-            #[cfg(not(windows))]
-            let path: &[u8] = native_file_path;
+            let path: &[u8] = &bun_paths::to_portable(native_file_path);
 
             if bun_paths::is_absolute(path) {
                 let is_windows_drive_path = cfg!(windows) && path[0] != b'/';
@@ -217,8 +203,6 @@ impl Entry {
 
         let json_bytes = j.done_with_end(b"\"}")?.into_vec();
         // errdefer @compileError("last try should be the final alloc") — no further fallible ops below.
-
-        let _ = dev;
 
         Ok(json_bytes)
     }
@@ -323,24 +307,10 @@ impl Entry {
         }
         Ok(())
     }
-
-    /// Drop handles `files` (each `Shared` decrements its `Rc<PackedMap>`)
-    /// and `paths` (both the outer box and the owned inner `Box<[u8]>` path
-    /// copies).
-    ///
-    /// Deliberately not `impl Drop` — the `ref_count == 0` assertion belongs
-    /// only on the explicit `unrefAtIndex` release path. Whole-store teardown and
-    /// `*out = Entry { .. }` overwrites legitimately drop entries with nonzero
-    /// counts, where a `Drop` assertion would diverge from spec and panic.
-    pub(crate) fn deinit(&mut self) {
-        debug_assert_eq!(self.ref_count, 0);
-        self.files.clear();
-        self.paths = Box::default();
-    }
 }
 
 #[derive(Debug)]
-pub enum EncodeSourceMapPathError {
+pub(crate) enum EncodeSourceMapPathError {
     OutOfMemory,
     IncompleteUTF8,
 }
@@ -354,7 +324,7 @@ impl From<bun_core::PercentEncodeError> for EncodeSourceMapPathError {
 }
 
 #[derive(Copy, Clone)]
-pub struct WeakRef {
+pub(crate) struct WeakRef {
     /// This encoding only supports route bundle scripts, which do not
     /// utilize the bottom 32 bits of their keys. This is because the bottom
     /// 32 bits are used for the index of the route bundle. While those bits
@@ -397,7 +367,7 @@ pub(crate) enum PutOrIncrementRefCount<'a> {
 /// Action for `SourceMapStore::remove_or_upgrade_weak_ref`.
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq)]
-pub enum RemoveOrUpgradeMode {
+pub(crate) enum RemoveOrUpgradeMode {
     /// Remove the weak ref entirely
     Remove = 0,
     /// Convert the weak ref into a strong ref
@@ -413,7 +383,7 @@ pub(crate) struct GetResult<'a> {
     pub(crate) file_paths: &'a [Box<[u8]>],
     pub(crate) entry_files: &'a [packed_map::Shared],
 }
-pub struct SourceMapStore {
+pub(crate) struct SourceMapStore {
     pub(crate) entries: ArrayHashMap<Key, Entry>,
     /// When a HTML bundle is loaded, it places a "weak reference" to the
     /// script's source map. This reference is held until either:
@@ -422,7 +392,7 @@ pub struct SourceMapStore {
     /// - Too many different weak references exist
     pub(crate) weak_refs: LinearFifo<WeakRef, StaticBuffer<WeakRef, WEAK_REF_ENTRY_MAX>>,
     /// Shared
-    pub(crate) weak_ref_sweep_timer: EventLoopTimer,
+    pub(crate) weak_ref_sweep_timer: OwnedTimer,
 }
 
 bun_event_loop::impl_timer_owner!(SourceMapStore; from_timer_ptr => weak_ref_sweep_timer);
@@ -432,16 +402,10 @@ impl Default for SourceMapStore {
         Self {
             entries: ArrayHashMap::new(),
             weak_refs: LinearFifo::<WeakRef, StaticBuffer<WeakRef, WEAK_REF_ENTRY_MAX>>::init(),
-            weak_ref_sweep_timer: EventLoopTimer::init_paused(TimerTag::DevServerSweepSourceMaps),
+            weak_ref_sweep_timer: OwnedTimer::init_paused(TimerTag::DevServerSweepSourceMaps),
         }
     }
 }
-
-// Intrusive backref: recover the owning DevServer. Caller must guarantee `self`
-// is the `source_maps` field of a live, heap-allocated `DevServer` (always
-// true for production use; the `Default::default()` instance must never call
-// this).
-bun_core::impl_field_parent! { SourceMapStore => DevServer.source_maps; pub fn mut owner; }
 
 impl SourceMapStore {
     /// ArrayHashMap/LinearFifo have no `const fn` ctors; callers use
@@ -449,11 +413,6 @@ impl SourceMapStore {
     #[inline]
     pub(crate) fn empty() -> Self {
         Self::default()
-    }
-
-    #[inline]
-    fn timer_all<'a>() -> &'a mut crate::timer::All {
-        crate::jsc_hooks::timer_all_mut()
     }
 
     pub(crate) fn put_or_increment_ref_count(
@@ -532,10 +491,8 @@ impl SourceMapStore {
             if self.weak_refs.readable_length() >= WEAK_REF_ENTRY_MAX {
                 let first = self.weak_refs.read_item().unwrap();
                 self.unref_count(first.key(), first.count);
-                if self.weak_ref_sweep_timer.state == EventLoopTimerState::ACTIVE
-                    && self.weak_ref_sweep_timer.next.sec == first.expire
-                {
-                    Self::timer_all().remove(core::ptr::addr_of_mut!(self.weak_ref_sweep_timer));
+                if self.weak_ref_sweep_timer.next.get().sec == first.expire {
+                    self.weak_ref_sweep_timer.disarm();
                 }
             }
         }
@@ -548,9 +505,12 @@ impl SourceMapStore {
             .write_item(WeakRef::init(key, new_weak_ref_count, expire.sec))
             .expect("unreachable"); // space has been cleared above
 
-        if self.weak_ref_sweep_timer.state != EventLoopTimerState::ACTIVE {
+        if self.weak_ref_sweep_timer.state.get() != EventLoopTimerState::ACTIVE {
             map_log!("arming weak ref sweep timer");
-            Self::timer_all().update(core::ptr::addr_of_mut!(self.weak_ref_sweep_timer), &expire);
+            crate::jsc_hooks::timer_all().update(
+                OwnedTimer::node(&raw const self.weak_ref_sweep_timer),
+                &expire,
+            );
         }
         map_log!("addWeakRef {:x}, ref_count: {}", key.get(), entry_ref_count);
     }
@@ -591,7 +551,6 @@ impl SourceMapStore {
             key.get(),
             entry_ref_count
         );
-        let _ = entry_ref_count;
         true
     }
 
@@ -611,54 +570,37 @@ impl SourceMapStore {
     ///
     /// # Safety
     /// `timer` must point to the `weak_ref_sweep_timer` field of a live
-    /// `SourceMapStore` that is itself the `source_maps` field of a live
-    /// heap-allocated `DevServer`.
-    // `timer` is never dereferenced in Rust — `from_timer_ptr` only does
-    // `container_of` pointer arithmetic to recover the parent `SourceMapStore`;
-    // the deref is of that recovered parent pointer, not the parameter.
-    // not_unsafe_ptr_arg_deref is a false positive on this fieldParentPtr pattern.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub(crate) fn sweep_weak_refs(
-        timer: *mut EventLoopTimer,
-        now_ts: &bun_event_loop::EventLoopTimer::Timespec,
-    ) {
+    /// `SourceMapStore`.
+    pub(crate) fn sweep_weak_refs(timer: *mut EventLoopTimer, now_ts: &Timespec) {
         map_log!("sweepWeakRefs");
         // SAFETY: `timer` points to the `weak_ref_sweep_timer` field of a SourceMapStore.
         let store: &mut SourceMapStore = unsafe { &mut *SourceMapStore::from_timer_ptr(timer) };
-        // SAFETY: invariant of `owner()` — store is the `source_maps` field of a live DevServer.
-        debug_assert!(unsafe { (*store.owner()).magic } == Magic::Valid);
 
         // Mixed-sign comparison: a negative `expire` must count as expired.
         // Keep `now` as i64 (already clamped ≥0) so the comparison stays
         // sign-correct without u64 wrap.
         let now: i64 = now_ts.sec.max(0);
 
-        // `emitMemoryVisualizerMessageIfNeeded` is inlined at both returns
-        // (a scopeguard cannot capture &mut store across the loop body
-        // without aliasing).
-
         while let Some(item) = store.weak_refs.read_item() {
             if item.expire <= now {
                 store.unref_count(item.key(), item.count);
             } else {
                 store.weak_refs.unget(&[item]).expect("unreachable"); // space exists since the last item was just removed.
-                store.weak_ref_sweep_timer.state = EventLoopTimerState::FIRED;
-                Self::timer_all().update(
-                    core::ptr::addr_of_mut!(store.weak_ref_sweep_timer),
+                crate::jsc_hooks::timer_all().update(
+                    OwnedTimer::node(&raw const store.weak_ref_sweep_timer),
                     &Timespec {
                         sec: item.expire + 1,
                         nsec: 0,
                     },
                 );
-                // SAFETY: invariant of `owner()`.
-                unsafe { (*store.owner()).emit_memory_visualizer_message_if_needed() };
                 return;
             }
         }
 
-        store.weak_ref_sweep_timer.state = EventLoopTimerState::CANCELLED;
-        // SAFETY: invariant of `owner()`.
-        unsafe { (*store.owner()).emit_memory_visualizer_message_if_needed() };
+        store
+            .weak_ref_sweep_timer
+            .state
+            .set(EventLoopTimerState::CANCELLED);
     }
 
     /// This is used in exactly one place: remapping errors.
@@ -679,7 +621,6 @@ impl SourceMapStore {
             &vlq_bytes,
             None,
             i32::try_from(entry.paths.len()).expect("int cast"),
-            0, // unused
             Default::default(),
         ) {
             Err(fail) => {

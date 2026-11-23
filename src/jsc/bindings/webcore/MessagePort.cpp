@@ -29,7 +29,6 @@
 #include <wtf/SetForScope.h>
 #include <JavaScriptCore/JSArrayBuffer.h>
 
-#include "BunClientData.h"
 #include "EventNames.h"
 #include "GlobalEventScope.h"
 #include "JSMessagePort.h"
@@ -105,40 +104,38 @@ ExceptionOr<void> MessagePort::postMessage(JSC::JSGlobalObject& state, JSC::JSVa
     }
     RETURN_IF_EXCEPTION(warnScope, {});
 
-    if (!isEntangled())
-        return {};
-
+    // create() already detached the buffers, so (as in node) a message dropped below still consumes the listed ports.
     Vector<TransferredMessagePort> transferredPorts;
+    bool targetsEntangledPeer = false;
     if (!ports.isEmpty()) {
         // Posting a port's own entangled peer targets the message at itself.
         // (The source port itself was rejected before serialization above.)
-        bool targetsEntangledPeer = false;
         for (auto& port : ports) {
             if (port->pipe() == m_pipe.ptr()) {
                 targetsEntangledPeer = true;
                 break;
             }
         }
-        // Detach every transfer-list port up front: transfer is atomic in node, so a
-        // third-party port must not stay usable even when the message is dropped below.
         auto disentangled = MessagePort::disentanglePorts(WTF::move(ports));
         if (disentangled.hasException())
             return disentangled.releaseException();
         transferredPorts = disentangled.releaseReturnValue();
+    }
 
-        if (targetsEntangledPeer) {
-            // Posting the port's own entangled peer: node warns and loses the channel
-            // rather than throwing. Transferables were already detached above; drop the
-            // message and close so the dead channel stops reffing the loop.
-            Bun__Process__emitWarning(defaultGlobalObject(&state),
-                JSC::JSValue::encode(JSC::jsString(vm, String("The target port was posted to itself, and the communication channel was lost"_s))),
-                JSC::JSValue::encode(JSC::jsString(vm, String("Warning"_s))),
-                JSC::JSValue::encode(JSC::jsUndefined()),
-                JSC::JSValue::encode(JSC::jsUndefined()));
-            CLEAR_IF_EXCEPTION(warnScope);
-            close();
-            return {};
-        }
+    if (!isEntangled())
+        return {};
+
+    if (targetsEntangledPeer) {
+        // Node warns and loses the channel instead of throwing; close() stops the dead channel from reffing the loop.
+        Bun__Process__emitWarning(defaultGlobalObject(&state),
+            JSC::JSValue::encode(JSC::jsString(vm, String("The target port was posted to itself, and the communication channel was lost"_s))),
+            JSC::JSValue::encode(JSC::jsString(vm, String("Warning"_s))),
+            JSC::JSValue::encode(JSC::jsUndefined()),
+            JSC::JSValue::encode(JSC::jsUndefined()));
+        CLEAR_IF_EXCEPTION(warnScope);
+        close();
+        RETURN_IF_EXCEPTION(warnScope, Exception { ExistingExceptionError });
+        return {};
     }
 
     m_pipe->send(m_side, MessageWithMessagePorts { messageData.releaseReturnValue(), WTF::move(transferredPorts) });
@@ -173,7 +170,7 @@ void MessagePort::start()
     ASSERT(context);
     // From the pipe's point of view "attached" means "ready to have drains
     // scheduled on my behalf" — that is exactly what start() promises.
-    m_pipe->attach(m_side, context->identifier(), ThreadSafeWeakPtr<MessagePort> { *this });
+    m_pipe->attach(m_side, *context, ThreadSafeWeakPtr<MessagePort> { *this });
 }
 
 void MessagePort::flushQueuedMessagesBeforeClose()
@@ -224,22 +221,7 @@ void MessagePort::close()
     // it in hasPendingActivity()); marking our side Closed is sufficient.
     m_pipe->close(m_side, MessagePortPipe::CloseKind::Explicit);
 
-    // Release the self-reference taken by jsRef() (set when .onmessage is
-    // assigned or .ref() is called from JS). The JS .close() binding calls
-    // jsUnref() first; stop() and contextDestroyed() do not.
-    if (m_hasRef) {
-        m_hasRef = false;
-        if (auto* context = scriptExecutionContext())
-            context->unrefEventLoop();
-        deref();
-    }
-
-    // close() can run without a prior jsUnref() (warn-and-close, contextDestroyed());
-    // clear the listener keepalive so a later listener add can't re-ref the loop.
-    if (m_isRefd) {
-        m_isRefd = false;
-        updateListenerEventLoopRef();
-    }
+    jsUnref();
 
     // Defer 'close' to a task (node fires it at uv close-callback timing, i.e.
     // after sync code and microtasks), so a listener added after close() still
@@ -285,40 +267,18 @@ void MessagePort::peerClosed()
     // Fire 'close' (guarded against a double dispatch) and release this side's loop refs
     // so the loop can idle, matching node.
     dispatchCloseEvent();
-    // jsUnref() clears both the listener loop-ref (m_isRefd) and the onmessage/ref()
-    // keepalive (m_hasRef), so a listening transferred port stops pinning the loop.
-    auto* globalObject = defaultGlobalObject(context->globalObject());
-    jsUnref(globalObject);
+    jsUnref();
 }
 
 TransferredMessagePort MessagePort::disentangle()
 {
     ASSERT(isEntangled());
 
-    // Drop any message listeners (and the event-loop ref they carry) while
-    // this port is still attached to its context; after observeContext(null)
-    // there would be nothing to unref.
     removeAllEventListeners();
     m_hasMessageEventListener = false;
 
-    // Release the self-reference taken by jsRef() on the sending side. After
-    // transfer this object is inert (the receiving side gets a fresh
-    // MessagePort for the same pipe endpoint) and is no longer a destruction
-    // observer, so nothing else will ever release a ref taken here.
-    // The caller (disentanglePorts) holds a RefPtr, so deref() is safe.
-    if (m_hasRef) {
-        m_hasRef = false;
-        if (auto* context = scriptExecutionContext())
-            context->unrefEventLoop();
-        deref();
-    }
-
-    // A transferred port is inert; clear the listener keepalive too so hasRef()
-    // reports false (the disentangle analogue of the close() reset above).
-    if (m_isRefd) {
-        m_isRefd = false;
-        updateListenerEventLoopRef();
-    }
+    // This object is inert from here: the receiving side gets a fresh MessagePort. The caller holds a RefPtr.
+    jsUnref();
 
     // Hand the pipe endpoint to its next owner. Messages that arrive while
     // in transit buffer in the pipe; the receiving context's entangle()
@@ -366,8 +326,17 @@ void MessagePort::dispatchOneMessage(ScriptExecutionContext& context, MessageWit
         return;
     }
 
+    // https://html.spec.whatwg.org/multipage/web-messaging.html#message-port-post-message-steps (7.3): if
+    // deserializing throws, catch it and fire messageerror instead.
     auto event = MessageEvent::create(*context.jsGlobalObject(), message.message.releaseNonNull(), {}, {}, {}, WTF::move(ports));
-    dispatchEvent(event.event);
+    if (scope.exception()) [[unlikely]] {
+        if (vm->hasPendingTerminationException())
+            return;
+        scope.clearException();
+        dispatchEvent(MessageEvent::create(eventNames().messageerrorEvent, MessageEvent::Init { {}, jsNull() }, MessageEvent::IsTrusted::Yes));
+        return;
+    }
+    dispatchEvent(event->event);
 }
 
 JSValue MessagePort::tryTakeMessage(JSGlobalObject* lexicalGlobalObject, bool& hadMessage)
@@ -386,7 +355,7 @@ JSValue MessagePort::tryTakeMessage(JSGlobalObject* lexicalGlobalObject, bool& h
 
     hadMessage = true;
     auto ports = MessagePort::entanglePorts(*context, WTF::move(message->transferredPorts));
-    return message->message.releaseNonNull()->deserialize(*lexicalGlobalObject, lexicalGlobalObject, WTF::move(ports), SerializationErrorMode::NonThrowing);
+    return message->message.releaseNonNull()->deserialize(*lexicalGlobalObject, lexicalGlobalObject, WTF::move(ports), SerializationErrorMode::Throwing);
 }
 
 void MessagePort::dispatchEvent(Event& event)
@@ -400,6 +369,8 @@ void MessagePort::contextDestroyed()
 {
     ASSERT(scriptExecutionContext());
 
+    // close() can drop the last reference if no stop phase ran first, e.g. for a collected ShadowRealm.
+    Ref protectedThis { *this };
     close();
     ActiveDOMObject::contextDestroyed();
 }
@@ -474,23 +445,6 @@ Vector<RefPtr<MessagePort>> MessagePort::entanglePorts(ScriptExecutionContext& c
     });
 }
 
-// Reconcile the message-listener loop-ref with (m_isRefd && m_messageEventCount > 0),
-// so .unref() releases the listener ref and .ref() re-acquires it.
-void MessagePort::updateListenerEventLoopRef()
-{
-    bool shouldHold = m_isRefd && m_messageEventCount > 0;
-    if (shouldHold == m_listenerLoopRefActive)
-        return;
-    auto* context = scriptExecutionContext();
-    if (!context)
-        return;
-    if (shouldHold)
-        context->refEventLoop();
-    else
-        context->unrefEventLoop();
-    m_listenerLoopRefActive = shouldHold;
-}
-
 void MessagePort::onDidChangeListenerImpl(EventTarget& self, const AtomString& eventType, OnDidChangeListenerKind kind)
 {
     if (eventType != eventNames().messageEvent)
@@ -509,7 +463,7 @@ void MessagePort::onDidChangeListenerImpl(EventTarget& self, const AtomString& e
         port.m_messageEventCount = 0;
         break;
     }
-    port.updateListenerEventLoopRef();
+    port.updateKeepAlive();
 }
 
 bool MessagePort::addEventListener(const AtomString& eventType, Ref<EventListener>&& listener, const AddEventListenerOptions& options)
@@ -521,7 +475,7 @@ bool MessagePort::addEventListener(const AtomString& eventType, Ref<EventListene
         // pause re-schedules the drain for messages buffered meanwhile.
         if (m_started && isEntangled()) {
             if (auto* context = scriptExecutionContext())
-                m_pipe->attach(m_side, context->identifier(), ThreadSafeWeakPtr<MessagePort> { *this });
+                m_pipe->attach(m_side, *context, ThreadSafeWeakPtr<MessagePort> { *this });
         }
     } else if (eventType == eventNames().closeEvent) {
         m_hasCloseEventListener.store(true, std::memory_order_release);
@@ -529,7 +483,7 @@ bool MessagePort::addEventListener(const AtomString& eventType, Ref<EventListene
             // Record our context with the pipe so the peer's close() can deliver a
             // 'close' event even if we never started (no 'message' listener).
             if (auto* context = scriptExecutionContext())
-                m_pipe->registerCloseContext(m_side, context->identifier(), ThreadSafeWeakPtr<MessagePort> { *this });
+                m_pipe->registerCloseContext(m_side, *context, ThreadSafeWeakPtr<MessagePort> { *this });
         }
     }
     return EventTarget::addEventListener(eventType, WTF::move(listener), options);
@@ -550,7 +504,7 @@ WebCoreOpaqueRoot root(MessagePort* port)
     return WebCoreOpaqueRoot { port };
 }
 
-void MessagePort::jsRef(JSGlobalObject* lexicalGlobalObject)
+void MessagePort::jsRef()
 {
     // A closed or transferred-away port can never receive messages again, so
     // taking a self-ref (and an event-loop ref) here would only leak:
@@ -563,32 +517,18 @@ void MessagePort::jsRef(JSGlobalObject* lexicalGlobalObject)
     if (!isEntangled() || m_pipe->isOtherSideClosedByRequest(m_side))
         return;
 
-    // Re-acquire the message-listener loop-ref (if a listener is present) that .unref() released.
-    if (!m_isRefd) {
-        m_isRefd = true;
-        updateListenerEventLoopRef();
-    }
-
-    if (!m_hasRef) {
-        m_hasRef = true;
-        ref();
-        Bun__eventLoop__refKeepAlive(WebCore::clientData(lexicalGlobalObject->vm())->bunVM, 1);
-    }
+    m_isRefd = true;
+    if (!m_protectedThis)
+        m_protectedThis = this;
+    updateKeepAlive();
 }
 
-void MessagePort::jsUnref(JSGlobalObject* lexicalGlobalObject)
+void MessagePort::jsUnref()
 {
-    // Also release the listener loop-ref; otherwise an always-listening transferred
-    // port (a postMessageToThread control port) would pin the event loop forever.
-    if (m_isRefd) {
-        m_isRefd = false;
-        updateListenerEventLoopRef();
-    }
-    if (m_hasRef) {
-        m_hasRef = false;
-        deref();
-        Bun__eventLoop__refKeepAlive(WebCore::clientData(lexicalGlobalObject->vm())->bunVM, -1);
-    }
+    // Also for its listeners: an always-listening port (a postMessageToThread control port) would pin the loop forever.
+    m_isRefd = false;
+    updateKeepAlive();
+    m_protectedThis = nullptr;
 }
 
 } // namespace WebCore

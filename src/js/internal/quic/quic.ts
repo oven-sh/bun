@@ -40,8 +40,8 @@ const { SocketAddress, BlockList } = require("node:net");
 
 // The native binding hands certificates over as DER bytes; expose them as
 // X509Certificate objects like Node does.
-let X509Certificate;
-function wrapCertificate(der) {
+let X509Certificate: $BunModules["node:crypto"]["X509Certificate"] | undefined;
+function wrapCertificate(der: Uint8Array | undefined) {
   if (der === undefined) return undefined;
   X509Certificate ??= require("node:crypto").X509Certificate;
   return new X509Certificate(Buffer.from(der.buffer ?? der, der.byteOffset ?? 0, der.byteLength));
@@ -59,18 +59,22 @@ const FunctionPrototypeBind = uncurryThis(Function.prototype.bind);
 const ObjectDefineProperties = Object.defineProperties;
 const ObjectKeys = Object.keys;
 const PromisePrototypeThen = uncurryThis(Promise.prototype.then);
-const PromiseResolve = value => Promise.$resolve(value);
-const PromiseWithResolvers = () => Promise.withResolvers();
+const PromiseResolve = (value?: unknown) => Promise.$resolve(value);
+const PromiseWithResolvers = (): {
+  promise: Promise<unknown>;
+  resolve: (value?: unknown) => void;
+  reject: (reason?: unknown) => void;
+} => Promise.withResolvers();
 const SymbolAsyncDispose = Symbol.asyncDispose;
 const SymbolAsyncIterator = Symbol.asyncIterator;
 const SymbolDispose = Symbol.dispose;
 const SymbolIterator = Symbol.iterator;
 const DataViewPrototypeGetByteLength = uncurryThis(
-  Object.getOwnPropertyDescriptor(DataView.prototype, "byteLength").get,
+  Object.getOwnPropertyDescriptor(DataView.prototype, "byteLength")!.get,
 );
 const DataViewPrototypeGetUint32 = uncurryThis(DataView.prototype.getUint32);
 const TypedArrayPrototypeGetByteLength = uncurryThis(
-  Object.getOwnPropertyDescriptor(Object.getPrototypeOf(Uint8Array.prototype), "byteLength").get,
+  Object.getOwnPropertyDescriptor(Object.getPrototypeOf(Uint8Array.prototype), "byteLength")!.get,
 );
 
 let debug = debuglog("quic", fn => {
@@ -78,7 +82,7 @@ let debug = debuglog("quic", fn => {
 });
 
 // Internal assertion helper (stand-in for Node's `internal/assert`).
-function assert(value, message) {
+function assert(value, message?: string) {
   if (!value) {
     throw $ERR_INTERNAL_ASSERTION(message || "Internal assertion failed");
   }
@@ -119,34 +123,12 @@ const {
   QUIC_STREAM_HEADERS_FLAGS_TERMINAL: kHeadersFlagsTerminal,
 } = require("internal/quic/binding");
 
-const kHeadersKindName = [];
+const kHeadersKindName: string[] = [];
 kHeadersKindName[kHeadersKindHints] = "hints";
 kHeadersKindName[kHeadersKindInitial] = "initial";
 kHeadersKindName[kHeadersKindTrailing] = "trailing";
 
 // Message templates match Node's internal/errors.js definitions.
-function ERR_ILLEGAL_CONSTRUCTOR() {
-  return $ERR_ILLEGAL_CONSTRUCTOR();
-}
-function ERR_INVALID_ARG_TYPE(name, expected, actual) {
-  return $ERR_INVALID_ARG_TYPE(name, expected, actual);
-}
-function ERR_INVALID_ARG_VALUE(name, value, reason) {
-  if (reason === undefined) return $ERR_INVALID_ARG_VALUE(name, value);
-  return $ERR_INVALID_ARG_VALUE(name, value, reason);
-}
-function ERR_INVALID_STATE(message) {
-  return $ERR_INVALID_STATE(message);
-}
-function ERR_INVALID_THIS(type) {
-  return $ERR_INVALID_THIS(type);
-}
-function ERR_MISSING_ARGS(...args) {
-  return $ERR_MISSING_ARGS(...args);
-}
-function ERR_OUT_OF_RANGE(name, range, value) {
-  return $ERR_OUT_OF_RANGE(name, range, value);
-}
 function ERR_QUIC_CONNECTION_FAILED() {
   return $ERR_QUIC_CONNECTION_FAILED("QUIC connection failed");
 }
@@ -185,18 +167,10 @@ Object.defineProperty(BlockList.prototype, kBlockListHandle, {
   },
   configurable: true,
 });
-function InternalSocketAddress(handle) {
+function InternalSocketAddress(handle): void {
   return handle;
 }
 
-const kBlobHandle = Symbol("kBlobHandle");
-Object.defineProperty(Blob.prototype, kBlobHandle, {
-  __proto__: null,
-  get() {
-    return this;
-  },
-  configurable: true,
-});
 function isBlob(value) {
   return value instanceof Blob;
 }
@@ -246,43 +220,41 @@ const {
   assertValidPseudoHeaderTrailer,
 } = require("internal/quic/http2util");
 
-const kEmptyObject = { __proto__: null };
+const kEmptyObject: {} = { __proto__: null };
 
-const {
-  kAttachFileHandle,
-  kBlocked,
-  kConnect,
-  kDatagram,
-  kDatagramStatus,
-  kDrain,
-  kEarlyDataRejected,
-  kFinishClose,
-  kGoaway,
-  kHandshake,
-  kHandshakeCompleted,
-  kVerifyPeer,
-  kHeaders,
-  kOwner,
-  kRemoveSession,
-  kKeylog,
-  kListen,
-  kNewSession,
-  kQlog,
-  kRemoveStream,
-  kNewStream,
-  kNewToken,
-  kOrigin,
-  kStreamCallbacks,
-  kStreamIdleTimeout,
-  kPathValidation,
-  kPrivateConstructor,
-  kReset,
-  kSendHeaders,
-  kSessionTicket,
-  kTrailers,
-  kVersionNegotiation,
-  kInspect,
-} = require("internal/quic/symbols");
+const symbols = require("internal/quic/symbols");
+const kAttachFileHandle: typeof symbols.kAttachFileHandle = symbols.kAttachFileHandle;
+const kBlocked: typeof symbols.kBlocked = symbols.kBlocked;
+const kConnect: typeof symbols.kConnect = symbols.kConnect;
+const kDatagram: typeof symbols.kDatagram = symbols.kDatagram;
+const kDatagramStatus: typeof symbols.kDatagramStatus = symbols.kDatagramStatus;
+const kDrain: typeof symbols.kDrain = symbols.kDrain;
+const kEarlyDataRejected: typeof symbols.kEarlyDataRejected = symbols.kEarlyDataRejected;
+const kFinishClose: typeof symbols.kFinishClose = symbols.kFinishClose;
+const kGoaway: typeof symbols.kGoaway = symbols.kGoaway;
+const kHandshake: typeof symbols.kHandshake = symbols.kHandshake;
+const kHandshakeCompleted: typeof symbols.kHandshakeCompleted = symbols.kHandshakeCompleted;
+const kVerifyPeer: typeof symbols.kVerifyPeer = symbols.kVerifyPeer;
+const kHeaders: typeof symbols.kHeaders = symbols.kHeaders;
+const kOwner: typeof symbols.kOwner = symbols.kOwner;
+const kRemoveSession: typeof symbols.kRemoveSession = symbols.kRemoveSession;
+const kKeylog: typeof symbols.kKeylog = symbols.kKeylog;
+const kListen: typeof symbols.kListen = symbols.kListen;
+const kNewSession: typeof symbols.kNewSession = symbols.kNewSession;
+const kQlog: typeof symbols.kQlog = symbols.kQlog;
+const kRemoveStream: typeof symbols.kRemoveStream = symbols.kRemoveStream;
+const kNewStream: typeof symbols.kNewStream = symbols.kNewStream;
+const kNewToken: typeof symbols.kNewToken = symbols.kNewToken;
+const kOrigin: typeof symbols.kOrigin = symbols.kOrigin;
+const kStreamCallbacks: typeof symbols.kStreamCallbacks = symbols.kStreamCallbacks;
+const kStreamIdleTimeout: typeof symbols.kStreamIdleTimeout = symbols.kStreamIdleTimeout;
+const kPathValidation: typeof symbols.kPathValidation = symbols.kPathValidation;
+const kPrivateConstructor: typeof symbols.kPrivateConstructor = symbols.kPrivateConstructor;
+const kReset: typeof symbols.kReset = symbols.kReset;
+const kSessionTicket: typeof symbols.kSessionTicket = symbols.kSessionTicket;
+const kTrailers: typeof symbols.kTrailers = symbols.kTrailers;
+const kVersionNegotiation: typeof symbols.kVersionNegotiation = symbols.kVersionNegotiation;
+const kInspect: typeof symbols.kInspect = symbols.kInspect;
 
 const { QuicEndpointStats, QuicStreamStats, QuicSessionStats, kCreateDisconnected } = require("internal/quic/stats");
 
@@ -330,7 +302,11 @@ const {
 // Ported verbatim from Node lib/internal/blob.js createBlobReaderIterable().
 const kMaxBatchChunks = 16;
 
-async function* createBlobReaderIterable(reader, options = {}) {
+interface BlobReaderIterableOptions {
+  getReadError?: (status: number) => unknown;
+}
+
+async function* createBlobReaderIterable(reader: QuicStreamReader, options: BlobReaderIterableOptions = {}) {
   const { getReadError } = options;
   let wakeup = PromiseWithResolvers();
   reader.setWakeup(wakeup.resolve);
@@ -340,11 +316,11 @@ async function* createBlobReaderIterable(reader, options = {}) {
       const batch = [];
       let blocked = false;
       let eos = false;
-      let error = null;
+      let error: unknown = null;
 
       let pullStatus = 0;
-      let pullBuffer = null;
-      const onPull = (status, buffer) => {
+      let pullBuffer: ArrayBuffer | null | undefined = null;
+      const onPull = (status: number, buffer: ArrayBuffer | undefined) => {
         pullStatus = status;
         pullBuffer = buffer;
       };
@@ -359,14 +335,14 @@ async function* createBlobReaderIterable(reader, options = {}) {
           error =
             typeof getReadError === "function"
               ? getReadError(pullStatus)
-              : new ERR_INVALID_STATE("The reader is not readable");
+              : $ERR_INVALID_STATE("The reader is not readable");
           break;
         }
         if (pullStatus === 2) {
           blocked = true;
           break;
         }
-        ArrayPrototypePush(batch, new Uint8Array(pullBuffer));
+        ArrayPrototypePush(batch, new Uint8Array(pullBuffer!));
         if (batch.length >= kMaxBatchChunks) break;
       }
 
@@ -391,9 +367,9 @@ async function* createBlobReaderIterable(reader, options = {}) {
 
 const kNilDatagramId = 0n;
 
-const endpointRegistry = new SafeSet();
+const endpointRegistry: Set<QuicEndpoint> = new SafeSet();
 
-let releaseEndpointSocket;
+let releaseEndpointSocket: (endpoint: QuicEndpoint) => void;
 process.on("exit", () => {
   for (const endpoint of endpointRegistry) {
     releaseEndpointSocket(endpoint);
@@ -840,17 +816,17 @@ setCallbacks({
    * @param {number} context Identifies the reason the endpoint was closed.
    * @param {number} status If context indicates an error, provides the error code.
    */
-  onEndpointClose(context, status) {
+  onEndpointClose(this: EndpointHandle, context, status) {
     debug("endpoint close callback", status);
-    this[kOwner][kFinishClose](context, status);
+    this[kOwner]![kFinishClose](context, status);
   },
   /**
    * Called when the QuicEndpoint C++ handle receives a new server-side session
    * @param {object} session The QuicSession C++ handle
    */
-  onSessionNew(session) {
+  onSessionNew(this: EndpointHandle, session) {
     debug("new server session callback", this[kOwner], session);
-    this[kOwner][kNewSession](session);
+    this[kOwner]![kNewSession](session);
   },
 
   /**
@@ -862,9 +838,9 @@ setCallbacks({
    * @param {string} [errorName] Decoded TLS alert name when `code` is a
    *   CRYPTO_ERROR; otherwise undefined.
    */
-  onSessionClose(errorType, code, reason, errorName) {
+  onSessionClose(this: SessionHandle, errorType, code, reason, errorName) {
     debug("session close callback", errorType, code, reason, errorName);
-    this[kOwner][kFinishClose](errorType, code, reason, errorName);
+    this[kOwner]![kFinishClose](errorType, code, reason, errorName);
   },
 
   /**
@@ -872,9 +848,9 @@ setCallbacks({
    * @param {bigint} lastStreamId The highest stream ID the peer may have
    *   processed. Streams above this ID were not processed and can be retried.
    */
-  onSessionGoaway(lastStreamId) {
+  onSessionGoaway(this: SessionHandle, lastStreamId) {
     debug("session goaway callback", lastStreamId);
-    this[kOwner][kGoaway](lastStreamId);
+    this[kOwner]![kGoaway](lastStreamId);
   },
 
   /**
@@ -882,9 +858,9 @@ setCallbacks({
    * @param {Uint8Array} uint8Array
    * @param {boolean} early
    */
-  onSessionDatagram(uint8Array, early) {
+  onSessionDatagram(this: SessionHandle, uint8Array, early) {
     debug("session datagram callback", TypedArrayPrototypeGetByteLength(uint8Array), early);
-    this[kOwner][kDatagram](uint8Array, early);
+    this[kOwner]![kDatagram](uint8Array, early);
   },
 
   /**
@@ -892,9 +868,9 @@ setCallbacks({
    * @param {bigint} id
    * @param {'lost' | 'acknowledged'} status
    */
-  onSessionDatagramStatus(id, status) {
+  onSessionDatagramStatus(this: SessionHandle, id, status) {
     debug("session datagram status callback", id, status);
-    this[kOwner][kDatagramStatus](id, status);
+    this[kOwner]![kDatagramStatus](id, status);
   },
 
   /**
@@ -909,6 +885,7 @@ setCallbacks({
    * @param {boolean} earlyDataAccepted
    */
   onSessionHandshake(
+    this: SessionHandle,
     servername,
     protocol,
     cipher,
@@ -929,7 +906,7 @@ setCallbacks({
       earlyDataAttempted,
       earlyDataAccepted,
     );
-    this[kOwner][kHandshake](
+    this[kOwner]![kHandshake](
       servername,
       protocol,
       cipher,
@@ -951,6 +928,7 @@ setCallbacks({
    * @param {boolean} preferredAddress
    */
   onSessionPathValidation(
+    this: SessionHandle,
     result,
     newLocalAddress,
     newRemoteAddress,
@@ -959,7 +937,7 @@ setCallbacks({
     preferredAddress,
   ) {
     debug("session path validation callback", this[kOwner]);
-    this[kOwner][kPathValidation](
+    this[kOwner]![kPathValidation](
       result,
       newLocalAddress,
       newRemoteAddress,
@@ -973,9 +951,9 @@ setCallbacks({
    * Called when the session generates a new TLS session ticket
    * @param {object} ticket An opaque session ticket
    */
-  onSessionTicket(ticket) {
+  onSessionTicket(this: SessionHandle, ticket) {
     debug("session ticket callback", this[kOwner]);
-    this[kOwner][kSessionTicket](ticket);
+    this[kOwner]![kSessionTicket](ticket);
   },
 
   /**
@@ -985,23 +963,23 @@ setCallbacks({
    * @param {Buffer} token The opaque token data
    * @param {SocketAddress} address The remote server address
    */
-  onSessionNewToken(token, address) {
+  onSessionNewToken(this: SessionHandle, token, address) {
     debug("session new token callback", this[kOwner]);
-    this[kOwner][kNewToken](token, address);
+    this[kOwner]![kNewToken](token, address);
   },
 
-  onSessionEarlyDataRejected() {
+  onSessionEarlyDataRejected(this: SessionHandle) {
     debug("session early data rejected callback", this[kOwner]);
-    this[kOwner][kEarlyDataRejected]();
+    this[kOwner]![kEarlyDataRejected]();
   },
 
   /**
    * Called when the session receives an ORIGIN frame from the peer (RFC 9412).
    * @param {string[]} origins The list of origins the peer claims authority for
    */
-  onSessionOrigin(origins) {
+  onSessionOrigin(this: SessionHandle, origins) {
     debug("session origin callback", this[kOwner]);
-    this[kOwner][kOrigin](origins);
+    this[kOwner]![kOrigin](origins);
   },
 
   /**
@@ -1010,24 +988,24 @@ setCallbacks({
    * @param {number[]} requestedVersions
    * @param {number[]} supportedVersions
    */
-  onSessionVersionNegotiation(version, requestedVersions, supportedVersions) {
+  onSessionVersionNegotiation(this: SessionHandle, version, requestedVersions, supportedVersions) {
     debug("session version negotiation callback", version, requestedVersions, supportedVersions, this[kOwner]);
-    this[kOwner][kVersionNegotiation](version, requestedVersions, supportedVersions);
+    this[kOwner]![kVersionNegotiation](version, requestedVersions, supportedVersions);
   },
 
-  onSessionKeyLog(line) {
+  onSessionKeyLog(this: SessionHandle, line) {
     debug("session key log callback", line, this[kOwner]);
-    this[kOwner][kKeylog](line);
+    this[kOwner]![kKeylog](line);
   },
 
-  onSessionQlog(data, fin) {
+  onSessionQlog(this: SessionHandle, data, fin) {
     if (this[kOwner] === undefined) {
       this._pendingQlog ??= [];
       this._pendingQlog.push(data, fin);
       return;
     }
     debug("session qlog callback", this[kOwner]);
-    this[kOwner][kQlog](data, fin);
+    this[kOwner]![kQlog](data, fin);
   },
 
   /**
@@ -1035,8 +1013,8 @@ setCallbacks({
    * @param {object} stream The QuicStream C++ handle
    * @param {number} direction The stream direction (0 == bidi, 1 == uni)
    */
-  onStreamCreated(stream, direction) {
-    const session = this[kOwner];
+  onStreamCreated(this: SessionHandle, stream: StreamHandle, direction: number) {
+    const session = this[kOwner]!;
     debug("stream created callback", session, direction);
     if (session.destroyed) {
       stream.destroy();
@@ -1045,17 +1023,17 @@ setCallbacks({
     session[kNewStream](stream, direction);
   },
 
-  onStreamBlocked() {
+  onStreamBlocked(this: StreamHandle) {
     debug("stream blocked callback", this[kOwner]);
-    this[kOwner][kBlocked]();
+    this[kOwner]![kBlocked]();
   },
 
-  onStreamDrain() {
+  onStreamDrain(this: StreamHandle) {
     debug("stream drain callback", this[kOwner]);
-    this[kOwner][kDrain]();
+    this[kOwner]![kDrain]();
   },
 
-  onStreamClose(error) {
+  onStreamClose(this: StreamHandle, error) {
     if (error !== undefined) {
       error = convertQuicError(error);
     } else if (this[kOwner] && !this[kOwner].destroyed) {
@@ -1070,32 +1048,32 @@ setCallbacks({
         );
       }
     }
-    debug(`stream ${this[kOwner].id} closed callback with error: ${error}`);
-    this[kOwner][kFinishClose](error);
+    debug(`stream ${this[kOwner]!.id} closed callback with error: ${error}`);
+    this[kOwner]![kFinishClose](error);
   },
 
-  onStreamReset(error) {
+  onStreamReset(this: StreamHandle, error) {
     if (error !== undefined) {
       error = convertQuicError(error);
     }
     debug("stream reset callback", this[kOwner], error);
-    this[kOwner][kReset](error);
+    this[kOwner]![kReset](error);
   },
 
-  onStreamHeaders(headers, kind) {
-    debug(`stream ${this[kOwner].id} headers callback`, headers, kind);
-    this[kOwner][kHeaders](headers, kind);
+  onStreamHeaders(this: StreamHandle, headers, kind) {
+    debug(`stream ${this[kOwner]!.id} headers callback`, headers, kind);
+    this[kOwner]![kHeaders](headers, kind);
   },
 
-  onStreamTrailers() {
+  onStreamTrailers(this: StreamHandle) {
     debug("stream want trailers callback", this[kOwner]);
-    this[kOwner][kTrailers]();
+    this[kOwner]![kTrailers]();
   },
 });
 
 function assertPrivateSymbol(privateSymbol) {
   if (privateSymbol !== kPrivateConstructor) {
-    throw new ERR_ILLEGAL_CONSTRUCTOR();
+    throw $ERR_ILLEGAL_CONSTRUCTOR();
   }
 }
 
@@ -1119,13 +1097,21 @@ const kMaxQuicErrorCode = (1n << 62n) - 1n;
  * `errorCode` property to avoid colliding with Node.js's convention
  * that `error.code` is a string.
  */
+interface QuicErrorOptions {
+  errorCode?: bigint | number;
+  code?: string;
+  type?: "transport" | "application";
+}
+
 class QuicError extends Error {
+  declare reason?: string;
+  declare errorName?: string;
   /** @type {bigint} */
   #errorCode;
   /** @type {'transport' | 'application'} */
   #type;
 
-  static isQuicError(val) {
+  static isQuicError(val): val is QuicError {
     return val != null && typeof val === "object" && #errorCode in val;
   }
 
@@ -1146,21 +1132,21 @@ class QuicError extends Error {
    *   resets always carry application codes; this option is exposed
    *   for use sites that may target either layer.
    */
-  constructor(message, options = kEmptyObject) {
+  constructor(message, options: QuicErrorOptions = kEmptyObject) {
     validateString(message, "message");
     validateObject(options, "options");
     const { errorCode, code = "ERR_QUIC_STREAM_ABORTED", type = "application" } = options;
     if (errorCode === undefined) {
-      throw new ERR_MISSING_ARGS("options.errorCode");
+      throw $ERR_MISSING_ARGS("options.errorCode");
     }
     if (typeof errorCode !== "bigint" && typeof errorCode !== "number") {
-      throw new ERR_INVALID_ARG_TYPE("options.errorCode", ["bigint", "number"], errorCode);
+      throw $ERR_INVALID_ARG_TYPE("options.errorCode", ["bigint", "number"], errorCode);
     }
     validateString(code, "options.code");
     validateOneOf(type, "options.type", ["transport", "application"]);
     const numericCode = BigInt(errorCode);
     if (numericCode < 0n || numericCode > kMaxQuicErrorCode) {
-      throw new ERR_OUT_OF_RANGE("options.errorCode", `>= 0 and <= ${kMaxQuicErrorCode}`, errorCode);
+      throw $ERR_OUT_OF_RANGE("options.errorCode", `>= 0 and <= ${kMaxQuicErrorCode}`, errorCode);
     }
     super(message);
     this.code = code;
@@ -1187,7 +1173,7 @@ function quicErrorMessage(prefix, errorCode, reason, errorName) {
   return msg;
 }
 
-function makeQuicError(code, prefix, type, errorCode, reason, errorName) {
+function makeQuicError(code, prefix, type, errorCode, reason, errorName?: string) {
   const err = new QuicError(quicErrorMessage(prefix, errorCode, reason, errorName), { errorCode, code, type });
   ErrorCaptureStackTrace(err, makeQuicError);
   if (reason) err.reason = reason;
@@ -1213,7 +1199,7 @@ function convertQuicError(error) {
         errorName,
       );
     case "version_negotiation":
-      return new ERR_QUIC_VERSION_NEGOTIATION_ERROR();
+      return ERR_QUIC_VERSION_NEGOTIATION_ERROR();
     default:
       return makeQuicError("ERR_QUIC_TRANSPORT_ERROR", "QUIC transport error", "transport", code, reason, errorName);
   }
@@ -1235,9 +1221,13 @@ function errorToCloseOptions(error) {
  * @param {object} owner The QuicSession or QuicStream that owns the callback.
  * @param  {...any} args Arguments forwarded to the callback.
  */
-function safeCallbackInvoke(fn, owner, ...args) {
+function safeCallbackInvoke(
+  fn: Callback | undefined,
+  owner: { destroy(error?: unknown): unknown },
+  ...args: unknown[]
+) {
   try {
-    const result = fn(...args, owner);
+    const result = fn!(...args, owner);
     if (isPromise(result)) {
       PromisePrototypeThen(result, undefined, err => {
         owner.destroy(err);
@@ -1255,7 +1245,7 @@ function safeCallbackInvoke(fn, owner, ...args) {
  * @param {Function} fn  The onerror callback.
  * @param {any} error    The original error that triggered destruction.
  */
-function invokeOnerror(fn, error) {
+function invokeOnerror(fn: Callback, error: unknown) {
   try {
     const result = fn(error);
     if (isPromise(result)) {
@@ -1269,7 +1259,7 @@ function invokeOnerror(fn, error) {
   } catch (err) {
     process.nextTick(() => {
       // eslint-disable-next-line no-restricted-syntax
-      throw new SuppressedError(err, error, err?.message);
+      throw new SuppressedError(err, error, (err as { message?: string } | null | undefined)?.message);
     });
   }
 }
@@ -1279,7 +1269,7 @@ function validateBody(body) {
   if (isArrayBuffer(body) || isSharedArrayBuffer(body) || isArrayBufferView(body)) {
     return body;
   }
-  if (isBlob(body)) return body[kBlobHandle];
+  if (isBlob(body)) return body;
 
   if (typeof body === "string") {
     return Buffer.from(body, "utf8");
@@ -1287,17 +1277,13 @@ function validateBody(body) {
 
   if (FileHandle.isFileHandle(body)) {
     if (body[kFileLocked]) {
-      throw new ERR_INVALID_STATE("FileHandle is locked");
+      throw $ERR_INVALID_STATE("FileHandle is locked");
     }
     body[kFileLocked] = true;
     return body[kFileHandle];
   }
 
-  throw new ERR_INVALID_ARG_TYPE(
-    "options.body",
-    ["string", "ArrayBuffer", "ArrayBufferView", "Blob", "FileHandle"],
-    body,
-  );
+  throw $ERR_INVALID_ARG_TYPE("options.body", ["string", "ArrayBuffer", "ArrayBufferView", "Blob", "FileHandle"], body);
 }
 
 /**
@@ -1389,7 +1375,7 @@ function applyCallbacks(session, cbs) {
 const kDefaultHighWaterMark = 65536;
 const kDefaultMaxPendingDatagrams = 128;
 
-function configureOutbound(handle, stream, body) {
+function configureOutbound(handle: StreamHandle, stream: QuicStream, body) {
   if (body === null) {
     handle.initStreamingSource();
     handle.endWrite();
@@ -1416,7 +1402,7 @@ function configureOutbound(handle, stream, body) {
 
   if (FileHandle.isFileHandle(body)) {
     if (body[kFileLocked]) {
-      throw new ERR_INVALID_STATE("FileHandle is locked");
+      throw $ERR_INVALID_STATE("FileHandle is locked");
     }
     body[kFileLocked] = true;
     consumeAsyncSource(handle, stream, body.createReadStream());
@@ -1443,7 +1429,7 @@ function configureOutbound(handle, stream, body) {
     return;
   }
 
-  throw new ERR_INVALID_ARG_TYPE(
+  throw $ERR_INVALID_ARG_TYPE(
     "body",
     [
       "string",
@@ -1470,7 +1456,7 @@ function initStreamingBackpressure(stream) {
   }
 }
 
-function waitForDrain(stream) {
+function waitForDrain(stream: QuicStream) {
   const { promise, resolve } = PromiseWithResolvers();
   const prevDrain = stream[kDrain];
   stream[kDrain] = () => {
@@ -1480,7 +1466,7 @@ function waitForDrain(stream) {
   return promise;
 }
 
-async function writeBatchWithDrain(handle, stream, batch) {
+async function writeBatchWithDrain(handle: StreamHandle, stream: QuicStream, batch: Uint8Array[]) {
   const state = getQuicStreamState(stream);
 
   if (state.writeDesiredSize === 0) {
@@ -1491,14 +1477,14 @@ async function writeBatchWithDrain(handle, stream, batch) {
   const result = handle.write(batch);
   if (result === undefined) {
     if (!stream.destroyed) {
-      stream.destroy(new ERR_INVALID_STATE("Stream write failed"));
+      stream.destroy($ERR_INVALID_STATE("Stream write failed"));
     }
     return true;
   }
   return false;
 }
 
-async function consumeAsyncSource(handle, stream, source) {
+async function consumeAsyncSource(handle: StreamHandle, stream: QuicStream, source) {
   handle.initStreamingSource();
   initStreamingBackpressure(stream);
   try {
@@ -1517,11 +1503,11 @@ async function consumeAsyncSource(handle, stream, source) {
   }
 }
 
-async function consumeSyncSource(handle, stream, source) {
+async function consumeSyncSource(handle: StreamHandle, stream: QuicStream, source) {
   handle.initStreamingSource();
   initStreamingBackpressure(stream);
-  const normalized = streamFromSync(source);
-  const iter = normalized[SymbolIterator]();
+  const normalized: Iterable<Uint8Array[]> = streamFromSync(source);
+  const iter: Iterator<Uint8Array[]> = normalized[SymbolIterator]();
   try {
     while (true) {
       if (stream.destroyed) return;
@@ -1547,19 +1533,19 @@ function isSyncIterable(obj) {
   return obj != null && typeof obj[SymbolIterator] === "function";
 }
 
-let getQuicStreamState;
-let getQuicSessionState;
-let isQuicSessionDestroying;
-let getQuicEndpointState;
-let assertIsQuicEndpoint;
-let assertIsQuicStream;
-let assertIsQuicSession;
-let assertHeadersSupported;
-let assertEndpointNotClosedOrClosing;
-let assertEndpointIsNotBusy;
-let isQuicStream;
-let isQuicSession;
-let isQuicEndpoint;
+let getQuicStreamState: (stream: QuicStream) => QuicStreamInner["state"];
+let getQuicSessionState: (session: QuicSession | undefined) => QuicSessionInner["state"];
+let isQuicSessionDestroying: (session: QuicSession | undefined) => QuicSessionInner["destroying"];
+let getQuicEndpointState: (endpoint: QuicEndpoint) => QuicEndpointInner["state"];
+let assertIsQuicEndpoint: (val: unknown) => asserts val is QuicEndpoint;
+let assertIsQuicStream: (val: unknown) => asserts val is QuicStream;
+let assertIsQuicSession: (val: unknown) => asserts val is QuicSession;
+let assertHeadersSupported: (session: QuicSession | undefined) => void;
+let assertEndpointNotClosedOrClosing: (endpoint: QuicEndpoint) => void;
+let assertEndpointIsNotBusy: (endpoint: QuicEndpoint) => void;
+let isQuicStream: (val: unknown) => val is QuicStream;
+let isQuicSession: (val: unknown) => val is QuicSession;
+let isQuicEndpoint: (val: unknown) => val is QuicEndpoint;
 
 function maybeGetCloseError(context, status, pendingError) {
   switch (context) {
@@ -1567,31 +1553,116 @@ function maybeGetCloseError(context, status, pendingError) {
       return pendingError;
     }
     case kCloseContextBindFailure: {
-      return new ERR_QUIC_ENDPOINT_CLOSED("Bind failure", status);
+      return ERR_QUIC_ENDPOINT_CLOSED("Bind failure", status);
     }
     case kCloseContextListenFailure: {
-      return new ERR_QUIC_ENDPOINT_CLOSED("Listen failure", status);
+      return ERR_QUIC_ENDPOINT_CLOSED("Listen failure", status);
     }
     case kCloseContextReceiveFailure: {
-      return new ERR_QUIC_ENDPOINT_CLOSED("Receive failure", status);
+      return ERR_QUIC_ENDPOINT_CLOSED("Receive failure", status);
     }
     case kCloseContextSendFailure: {
-      return new ERR_QUIC_ENDPOINT_CLOSED("Send failure", status);
+      return ERR_QUIC_ENDPOINT_CLOSED("Send failure", status);
     }
     case kCloseContextStartFailure: {
-      return new ERR_QUIC_ENDPOINT_CLOSED("Start failure", status);
+      return ERR_QUIC_ENDPOINT_CLOSED("Start failure", status);
     }
   }
 }
 
+type QuicEndpointState = InstanceType<typeof QuicEndpointState>;
+type QuicSessionState = InstanceType<typeof QuicSessionState>;
+type QuicStreamState = InstanceType<typeof QuicStreamState>;
+type QuicEndpointStats = InstanceType<typeof QuicEndpointStats>;
+type QuicSessionStats = InstanceType<typeof QuicSessionStats>;
+type QuicStreamStats = InstanceType<typeof QuicStreamStats>;
+
+/** The native handles. Each class stores itself on its handle, where the callbacks of the binding find it. */
+type EndpointHandle = $Bindgen.QuicEndpoint & { [kOwner]?: QuicEndpoint };
+type SessionHandle = $Bindgen.QuicSession & { [kOwner]?: QuicSession; _pendingQlog?: unknown[] };
+type StreamHandle = $Bindgen.QuicStream & { [kOwner]?: QuicStream };
+/** A listener that a user set: `onerror`, `onstream` .. */
+type Callback = (...args: unknown[]) => unknown;
+
+interface PendingPromise {
+  promise: Promise<unknown>;
+  resolve: ((value?: unknown) => void) | undefined;
+  reject: ((reason?: unknown) => void) | undefined;
+}
+
+interface QuicStreamReader {
+  setWakeup(wakeup: ((value?: unknown) => void) | undefined): void;
+  pull(callback: (status: number, buffer: ArrayBuffer | undefined) => void): void;
+}
+
+interface QuicStreamWriterOptions {
+  signal?: AbortSignal;
+}
+
+interface QuicStreamWriter {
+  __proto__?: null;
+  readonly desiredSize: number | null;
+  writeSync(chunk: string | Uint8Array): boolean;
+  write(chunk: string | Uint8Array, options?: QuicStreamWriterOptions): Promise<void>;
+  writevSync(chunks: Array<string | Uint8Array>): boolean;
+  writev(chunks: Array<string | Uint8Array>, options?: QuicStreamWriterOptions): Promise<void>;
+  endSync(): number;
+  end(options?: QuicStreamWriterOptions): Promise<number>;
+  fail(reason?: unknown): void;
+  [drainableProtocol](): Promise<unknown> | null;
+  [SymbolAsyncDispose](): Promise<void>;
+  [SymbolDispose](): void;
+}
+
+interface QuicStreamDestroyOptions {
+  code?: bigint | number;
+  reason?: string;
+}
+
+interface SendHeadersOptions {
+  terminal?: boolean;
+}
+
+interface StreamPriority {
+  level?: "default" | "low" | "high";
+  incremental?: boolean;
+}
+
+interface QuicStreamInner {
+  __proto__?: null;
+  session: QuicSession | undefined;
+  direction: number | undefined;
+  isLocal: boolean;
+  state: QuicStreamState;
+  stats: QuicStreamStats | undefined;
+  pendingClose: PendingPromise | undefined;
+  reader: QuicStreamReader | undefined;
+  destroying: boolean;
+  iteratorLocked: boolean;
+  outboundSet: boolean;
+  localResetError: QuicError | undefined;
+  writer: QuicStreamWriter | undefined;
+  fileHandle: $Node.FileHandle | undefined;
+  headers: object | undefined;
+  pendingTrailers: object | undefined;
+  onerror: Callback | undefined;
+  onblocked: Callback | undefined;
+  onreset: Callback | undefined;
+  onheaders: Callback | undefined;
+  ontrailers: Callback | undefined;
+  oninfo: Callback | undefined;
+  onwanttrailers: Callback | undefined;
+  earlySnapshot?: boolean;
+}
+
 class QuicStream {
-  #handle;
-  #inner = {
+  #handle: StreamHandle | undefined;
+  #inner: QuicStreamInner = {
     __proto__: null,
     session: undefined,
     direction: undefined,
     isLocal: false,
-    state: undefined,
+    state: undefined as unknown as QuicStreamState,
     stats: undefined,
     pendingClose: undefined,
     reader: undefined,
@@ -1613,19 +1684,19 @@ class QuicStream {
   };
 
   static {
-    isQuicStream = function (val) {
+    isQuicStream = function (val): val is QuicStream {
       return val != null && typeof val === "object" && #handle in val;
     };
 
-    assertIsQuicStream = function (val) {
+    assertIsQuicStream = function (val): asserts val is QuicStream {
       if (!isQuicStream(val)) {
-        throw new ERR_INVALID_THIS("QuicStream");
+        throw $ERR_INVALID_THIS("QuicStream");
       }
     };
 
     assertHeadersSupported = function (session) {
       if (getQuicSessionState(session).headersSupported === 2) {
-        throw new ERR_INVALID_STATE("The negotiated QUIC application protocol does not support headers");
+        throw $ERR_INVALID_STATE("The negotiated QUIC application protocol does not support headers");
       }
     };
 
@@ -1674,7 +1745,7 @@ class QuicStream {
     assertIsQuicStream(this);
     const inner = this.#inner;
     if (inner.iteratorLocked) {
-      throw new ERR_INVALID_STATE("Stream is already being read");
+      throw $ERR_INVALID_STATE("Stream is already being read");
     }
     inner.iteratorLocked = true;
 
@@ -1685,11 +1756,11 @@ class QuicStream {
       getReadError: () => {
         if (inner.state.readEnded && !inner.state.finReceived) {
           if (inner.state.reset) {
-            return new ERR_QUIC_STREAM_RESET(Number(inner.state.resetCode ?? 0n));
+            return ERR_QUIC_STREAM_RESET(Number(inner.state.resetCode ?? 0n));
           }
-          return new ERR_QUIC_STREAM_ABORTED("Stream aborted before FIN was received");
+          return ERR_QUIC_STREAM_ABORTED("Stream aborted before FIN was received");
         }
-        return new ERR_INVALID_STATE("The stream is not readable");
+        return $ERR_INVALID_STATE("The stream is not readable");
       },
     });
   }
@@ -1911,7 +1982,7 @@ class QuicStream {
     const handle = this.#handle;
     return (inner.stats ??=
       handle == null
-        ? QuicStreamStats[kCreateDisconnected]()
+        ? (QuicStreamStats[kCreateDisconnected] as () => QuicStreamStats)()
         : new QuicStreamStats(kPrivateConstructor, handle.stats, handle.statsByteOffset));
   }
 
@@ -1977,14 +2048,14 @@ class QuicStream {
    * @param {any} error
    * @param {QuicStreamDestroyOptions} [options]
    */
-  destroy(error, options = kEmptyObject) {
+  destroy(error?, options: QuicStreamDestroyOptions = kEmptyObject) {
     assertIsQuicStream(this);
     const inner = this.#inner;
     if (inner.destroying || this.destroyed) return;
     validateObject(options, "options");
     const { code: optionCode, reason } = options;
     if (optionCode !== undefined && typeof optionCode !== "bigint" && typeof optionCode !== "number") {
-      throw new ERR_INVALID_ARG_TYPE("options.code", ["bigint", "number"], optionCode);
+      throw $ERR_INVALID_ARG_TYPE("options.code", ["bigint", "number"], optionCode);
     }
     if (reason !== undefined) {
       validateString(reason, "options.reason");
@@ -2020,7 +2091,7 @@ class QuicStream {
       const wantStop = !inner.state.readEnded;
       const wantReset = inner.writer === undefined && !inner.state.writeEnded;
       if (wantStop || wantReset) {
-        this.#handle.abortForDestroy(wantStop ? abortCode : undefined, wantReset ? abortCode : undefined);
+        this.#handle!.abortForDestroy(wantStop ? abortCode : undefined, wantReset ? abortCode : undefined);
       }
     }
     const { onerror } = inner;
@@ -2029,7 +2100,7 @@ class QuicStream {
     }
     const handle = this.#handle;
     this[kFinishClose](error);
-    handle.destroy(cascadingFromSessionDestroy);
+    handle!.destroy(cascadingFromSessionDestroy);
   }
 
   /**
@@ -2043,12 +2114,12 @@ class QuicStream {
   setOutbound(outbound) {
     assertIsQuicStream(this);
     if (this.destroyed) {
-      throw new ERR_INVALID_STATE("Stream is destroyed");
+      throw $ERR_INVALID_STATE("Stream is destroyed");
     }
     if (this.#inner.state.hasOutbound) {
-      throw new ERR_INVALID_STATE("Stream already has an outbound data source");
+      throw $ERR_INVALID_STATE("Stream already has an outbound data source");
     }
-    this.#handle.attachSource(validateBody(outbound));
+    this.#handle!.attachSource(validateBody(outbound));
   }
 
   /**
@@ -2056,17 +2127,17 @@ class QuicStream {
    * @param {SendHeadersOptions} [options]
    * @returns {boolean}
    */
-  sendHeaders(headers, options = kEmptyObject) {
+  sendHeaders(headers, options: SendHeadersOptions = kEmptyObject) {
     assertIsQuicStream(this);
     if (this.destroyed) return false;
     if (getQuicSessionState(this.#inner.session).headersSupported === 2) {
-      throw new ERR_INVALID_STATE("The negotiated QUIC application protocol does not support headers");
+      throw $ERR_INVALID_STATE("The negotiated QUIC application protocol does not support headers");
     }
     validateObject(headers, "headers");
     const { terminal = false } = options;
     const headerString = buildNgHeaderString(headers, assertValidPseudoHeader, true);
     const flags = terminal ? kHeadersFlagsTerminal : kHeadersFlagsNone;
-    return this.#handle.sendHeaders(kHeadersKindInitial, headerString, flags);
+    return this.#handle!.sendHeaders(kHeadersKindInitial, headerString, flags);
   }
 
   /**
@@ -2079,11 +2150,11 @@ class QuicStream {
     assertIsQuicStream(this);
     if (this.destroyed) return false;
     if (getQuicSessionState(this.#inner.session).headersSupported === 2) {
-      throw new ERR_INVALID_STATE("The negotiated QUIC application protocol does not support headers");
+      throw $ERR_INVALID_STATE("The negotiated QUIC application protocol does not support headers");
     }
     validateObject(headers, "headers");
     const headerString = buildNgHeaderString(headers, assertValidPseudoHeader, true);
-    return this.#handle.sendHeaders(kHeadersKindHints, headerString, kHeadersFlagsNone);
+    return this.#handle!.sendHeaders(kHeadersKindHints, headerString, kHeadersFlagsNone);
   }
 
   /**
@@ -2097,11 +2168,11 @@ class QuicStream {
     assertIsQuicStream(this);
     if (this.destroyed) return false;
     if (getQuicSessionState(this.#inner.session).headersSupported === 2) {
-      throw new ERR_INVALID_STATE("The negotiated QUIC application protocol does not support headers");
+      throw $ERR_INVALID_STATE("The negotiated QUIC application protocol does not support headers");
     }
     validateObject(headers, "headers");
     const headerString = buildNgHeaderString(headers, assertValidPseudoHeaderTrailer);
-    return this.#handle.sendHeaders(kHeadersKindTrailing, headerString, kHeadersFlagsNone);
+    return this.#handle!.sendHeaders(kHeadersKindTrailing, headerString, kHeadersFlagsNone);
   }
 
   /**
@@ -2116,16 +2187,16 @@ class QuicStream {
     const existingWriter = inner.writer;
     if (existingWriter !== undefined) return existingWriter;
     if (inner.outboundSet) {
-      throw new ERR_INVALID_STATE("Stream outbound already configured with a body source");
+      throw $ERR_INVALID_STATE("Stream outbound already configured with a body source");
     }
 
     const handle = this.#handle;
     const stream = this;
     let closed = false;
     let errored = false;
-    let error = null;
+    let error: unknown = null;
     let totalBytesWritten = 0;
-    let drainWakeup = null;
+    let drainWakeup: PromiseWithResolvers<unknown> | null = null;
 
     stream[kDrain] = () => {
       if (drainWakeup) {
@@ -2142,13 +2213,13 @@ class QuicStream {
       const len = TypedArrayPrototypeGetByteLength(chunk);
       if (len === 0) return true;
       if (stream.#inner.state.writeDesiredSize === 0) return false;
-      const result = handle.write([chunk]);
+      const result = handle!.write([chunk]);
       if (result === undefined) return false;
       totalBytesWritten += len;
       return true;
     }
 
-    async function write(chunk, options = kEmptyObject) {
+    async function write(chunk, options: QuicStreamWriterOptions = kEmptyObject) {
       validateObject(options, "options");
       const { signal } = options;
       if (signal !== undefined) {
@@ -2157,14 +2228,14 @@ class QuicStream {
       }
       if (errored) throw error;
       if (closed || stream.#inner.state.writeEnded) {
-        throw new ERR_INVALID_STATE("Writer is closed");
+        throw $ERR_INVALID_STATE("Writer is closed");
       }
       if (drainWakeup != null) {
-        throw new ERR_INVALID_STATE("Stream write buffer is full");
+        throw $ERR_INVALID_STATE("Stream write buffer is full");
       }
 
       if (!writeSync(chunk)) {
-        throw new ERR_INVALID_STATE("Stream write buffer is full");
+        throw $ERR_INVALID_STATE("Stream write buffer is full");
       }
     }
 
@@ -2177,13 +2248,13 @@ class QuicStream {
       for (const c of chunks) len += TypedArrayPrototypeGetByteLength(c);
       if (len === 0) return true;
       if (stream.#inner.state.writeDesiredSize === 0) return false;
-      const result = handle.write(chunks);
+      const result = handle!.write(chunks);
       if (result === undefined) return false;
       totalBytesWritten += len;
       return true;
     }
 
-    async function writev(chunks, options = kEmptyObject) {
+    async function writev(chunks, options: QuicStreamWriterOptions = kEmptyObject) {
       validateObject(options, "options");
       const { signal } = options;
       if (signal !== undefined) {
@@ -2193,15 +2264,15 @@ class QuicStream {
 
       if (errored) throw error;
       if (closed || stream.#inner.state.writeEnded) {
-        throw new ERR_INVALID_STATE("Writer is closed");
+        throw $ERR_INVALID_STATE("Writer is closed");
       }
 
       if (drainWakeup != null) {
-        throw new ERR_INVALID_STATE("Stream write buffer is full");
+        throw $ERR_INVALID_STATE("Stream write buffer is full");
       }
 
       if (!writevSync(chunks)) {
-        throw new ERR_INVALID_STATE("Stream write buffer is full");
+        throw $ERR_INVALID_STATE("Stream write buffer is full");
       }
     }
 
@@ -2212,12 +2283,12 @@ class QuicStream {
 
       if (drainWakeup != null) return -1;
 
-      handle.endWrite();
+      handle!.endWrite();
       closed = true;
       return totalBytesWritten;
     }
 
-    async function end(options = kEmptyObject) {
+    async function end(options: QuicStreamWriterOptions = kEmptyObject) {
       validateObject(options, "options");
       const { signal } = options;
       if (signal !== undefined) {
@@ -2239,17 +2310,17 @@ class QuicStream {
       return endSync();
     }
 
-    function fail(reason) {
+    function fail(reason?: unknown) {
       if (closed || errored) return;
       errored = true;
-      error = reason ?? new ERR_INVALID_STATE("Failed");
+      error = reason ?? $ERR_INVALID_STATE("Failed");
       const code =
         reason === undefined
           ? 0n
           : QuicError.isQuicError(error)
             ? error.errorCode
             : getQuicSessionState(stream.#inner.session).internalErrorCode;
-      handle.resetStream(code);
+      handle!.resetStream(code);
       markPromiseAsHandled(stream.closed);
       if (drainWakeup != null) {
         drainWakeup.reject(error);
@@ -2257,7 +2328,7 @@ class QuicStream {
       }
     }
 
-    const writer = {
+    const writer: QuicStreamWriter = {
       __proto__: null,
       get desiredSize() {
         if (closed || errored || stream.#inner.state.writeEnded) return null;
@@ -2279,7 +2350,7 @@ class QuicStream {
       },
       [SymbolAsyncDispose]() {
         if (!closed && !errored) fail();
-        return PromiseResolve();
+        return PromiseResolve() as Promise<void>;
       },
       [SymbolDispose]() {
         if (!closed && !errored) fail();
@@ -2311,20 +2382,20 @@ class QuicStream {
   setBody(body) {
     assertIsQuicStream(this);
     if (this.destroyed) {
-      throw new ERR_INVALID_STATE("Stream is destroyed");
+      throw $ERR_INVALID_STATE("Stream is destroyed");
     }
     const inner = this.#inner;
     if (inner.outboundSet) {
-      throw new ERR_INVALID_STATE("Stream outbound already configured");
+      throw $ERR_INVALID_STATE("Stream outbound already configured");
     }
     if (inner.writer !== undefined) {
-      throw new ERR_INVALID_STATE("Stream writer already accessed");
+      throw $ERR_INVALID_STATE("Stream writer already accessed");
     }
     inner.outboundSet = true;
     if (FileHandle.isFileHandle(body)) {
       inner.fileHandle = body;
     }
-    configureOutbound(this.#handle, this, body);
+    configureOutbound(this.#handle!, this, body);
   }
 
   /**
@@ -2347,7 +2418,7 @@ class QuicStream {
   stopSending(code = 0n) {
     assertIsQuicStream(this);
     if (this.destroyed) return;
-    this.#handle.stopSending(BigInt(code));
+    this.#handle!.stopSending(BigInt(code));
   }
 
   /**
@@ -2361,7 +2432,7 @@ class QuicStream {
     assertIsQuicStream(this);
     if (this.destroyed) return;
     code = BigInt(code);
-    this.#handle.resetStream(code);
+    this.#handle!.resetStream(code);
     this.#inner.localResetError ??= makeQuicError(
       "ERR_QUIC_APPLICATION_ERROR",
       "QUIC application error",
@@ -2379,8 +2450,8 @@ class QuicStream {
    */
   get priority() {
     assertIsQuicStream(this);
-    if (this.destroyed || getQuicSessionState(this.#inner.session).headersSupported === 2) return null;
-    const packed = this.#handle.getPriority();
+    if (this.destroyed || !getQuicSessionState(this.#inner.session).isPrioritySupported) return null;
+    const packed = this.#handle!.getPriority();
     const urgency = packed >> 1;
     const incremental = !!(packed & 1);
     const level = urgency < 3 ? "high" : urgency > 3 ? "low" : "default";
@@ -2391,44 +2462,18 @@ class QuicStream {
    * Sets the priority of the stream.
    * @param {StreamPriority} [options]
    */
-  setPriority(options = kEmptyObject) {
+  setPriority(options: StreamPriority = kEmptyObject) {
     assertIsQuicStream(this);
     if (this.destroyed) return;
     if (!getQuicSessionState(this.#inner.session).isPrioritySupported) {
-      throw new ERR_INVALID_STATE("The session does not support stream priority");
+      throw $ERR_INVALID_STATE("The session does not support stream priority");
     }
     validateObject(options, "options");
     const { level = "default", incremental = false } = options;
     validateOneOf(level, "options.level", ["default", "low", "high"]);
     validateBoolean(incremental, "options.incremental");
     const urgency = level === "high" ? 0 : level === "low" ? 7 : 3;
-    this.#handle.setPriority((urgency << 1) | (incremental ? 1 : 0));
-  }
-
-  /**
-   * Send a block of headers. The headers are formatted as an array
-   * of key, value pairs. The reason we don't use a Headers object
-   * here is because this needs to be able to represent headers like
-   * :method which the high-level Headers API does not allow.
-   *
-   * Note that QUIC in general does not support headers. This method
-   * is in place to support HTTP3 and is therefore not generally
-   * exposed except via a private symbol.
-   * @param {object} headers
-   * @returns {boolean} true if the headers were scheduled to be sent.
-   */
-  [kSendHeaders](headers, kind = kHeadersKindInitial, flags = kHeadersFlagsTerminal) {
-    validateObject(headers, "headers");
-    if (getQuicSessionState(this.#inner.session).headersSupported === 2) {
-      throw new ERR_INVALID_STATE("The negotiated QUIC application protocol does not support headers");
-    }
-    if (this.pending) {
-      debug("pending stream enqueuing headers", headers);
-    } else {
-      debug(`stream ${this.id} sending headers`, headers);
-    }
-    const headerString = buildNgHeaderString(headers, assertValidPseudoHeader, true);
-    return this.#handle.sendHeaders(kind, headerString, flags);
+    this.#handle!.setPriority((urgency << 1) | (incremental ? 1 : 0));
   }
 
   [kFinishClose](error) {
@@ -2441,9 +2486,9 @@ class QuicStream {
       error ??= inner.localResetError;
     }
     if (error !== undefined) {
-      inner.pendingClose.reject(error);
+      inner.pendingClose.reject!(error);
     } else {
-      inner.pendingClose.resolve();
+      inner.pendingClose.resolve!();
     }
     debug("stream closed");
     if (onStreamClosedChannel.hasSubscribers) {
@@ -2466,7 +2511,7 @@ class QuicStream {
     inner.stats?.[kFinishClose]();
     inner.earlySnapshot = inner.state?.early;
     inner.state?.[kFinishClose]();
-    inner.session[kRemoveStream](this);
+    inner.session![kRemoveStream](this);
     inner.writer?.fail(error);
     inner.reader ??= this.#handle?.getReader();
     inner.session = undefined;
@@ -2484,7 +2529,7 @@ class QuicStream {
     this.#handle = undefined;
     this[kDrain]?.();
     if (inner.fileHandle !== undefined) {
-      markPromiseAsHandled(this.#inner.fileHandle.close());
+      markPromiseAsHandled(inner.fileHandle.close());
       inner.fileHandle = undefined;
     }
   }
@@ -2609,11 +2654,106 @@ class QuicStream {
   }
 }
 
+type QuicStreamBody =
+  | string
+  | ArrayBuffer
+  | SharedArrayBuffer
+  | ArrayBufferView
+  | Blob
+  | import("node:fs/promises").FileHandle
+  | AsyncIterable<unknown>
+  | Iterable<unknown>
+  | Promise<unknown>
+  | null;
+
+interface OpenStreamOptions {
+  body?: QuicStreamBody;
+  headers?: object;
+  priority?: "high" | "default" | "low";
+  incremental?: boolean;
+  highWaterMark?: number;
+  onheaders?: Callback;
+  ontrailers?: Callback;
+  oninfo?: Callback;
+  onwanttrailers?: Callback;
+}
+
+interface SessionCloseOptions {
+  code?: bigint | number;
+  type?: string;
+  reason?: string;
+}
+
+interface QuicSessionPath {
+  __proto__?: null;
+  local: import("node:net").SocketAddress;
+  remote: import("node:net").SocketAddress;
+}
+
+interface QuicSessionHandshakeInfo {
+  __proto__?: null;
+  servername: string;
+  protocol: string;
+  earlyDataAttempted: boolean;
+  earlyDataAccepted: boolean;
+}
+
+interface QuicSessionInfo {
+  __proto__?: null;
+  local: import("node:net").SocketAddress | undefined;
+  remote: import("node:net").SocketAddress | undefined;
+  servername: string;
+  protocol: string;
+  cipher: string;
+  cipherVersion: string;
+  validationErrorReason: string | undefined;
+  validationErrorCode: number | undefined;
+  earlyDataAttempted: boolean;
+  earlyDataAccepted: boolean;
+}
+
+interface QuicSessionInner {
+  __proto__?: null;
+  endpoint: QuicEndpoint | undefined;
+  isPendingClose: boolean;
+  selfInitiatedClose: boolean;
+  destroying: boolean;
+  handshakeCompleted: boolean;
+  pendingClose: PendingPromise;
+  pendingOpen: PendingPromise;
+  state: QuicSessionState;
+  stats: QuicSessionStats;
+  streams: Set<QuicStream>;
+  onerror: Callback | undefined;
+  onstream: Callback | undefined;
+  ondatagram: Callback | undefined;
+  ondatagramstatus: Callback | undefined;
+  onpathvalidation: Callback | undefined;
+  onsessionticket: Callback | undefined;
+  onversionnegotiation: Callback | undefined;
+  onhandshake: Callback | undefined;
+  onnewtoken: Callback | undefined;
+  onearlyrejected: Callback | undefined;
+  onorigin: Callback | undefined;
+  ongoaway: Callback | undefined;
+  onkeylog: Callback | undefined;
+  onqlog: Callback | undefined;
+  pendingQlog: Array<string | boolean> | undefined;
+  verifyPeer: string;
+  handshakeInfo: QuicSessionHandshakeInfo | undefined;
+  path: QuicSessionPath | undefined;
+  certificate: import("node:crypto").X509Certificate | undefined;
+  peerCertificate: import("node:crypto").X509Certificate | undefined;
+  ephemeralKeyInfo: object | undefined;
+  localTransportParams: object | undefined;
+  remoteTransportParams: object | undefined;
+}
+
 class QuicSession {
   /** @type {object|undefined} */
-  #handle;
+  #handle: SessionHandle | undefined;
 
-  #inner = {
+  #inner: QuicSessionInner = {
     __proto__: null,
     /** @type {QuicEndpoint} */
     endpoint: undefined,
@@ -2623,10 +2763,8 @@ class QuicSession {
     handshakeCompleted: false,
     pendingClose: PromiseWithResolvers(),
     pendingOpen: PromiseWithResolvers(),
-    /** @type {QuicSessionState} */
-    state: undefined,
-    /** @type {QuicSessionStats} */
-    stats: undefined,
+    state: undefined as unknown as QuicSessionState,
+    stats: undefined as unknown as QuicSessionStats,
     streams: new SafeSet(),
     onerror: undefined,
     onstream: undefined,
@@ -2655,13 +2793,13 @@ class QuicSession {
   };
 
   static {
-    isQuicSession = function (val) {
+    isQuicSession = function (val): val is QuicSession {
       return val != null && typeof val === "object" && #handle in val;
     };
 
-    assertIsQuicSession = function (val) {
+    assertIsQuicSession = function (val): asserts val is QuicSession {
       if (!isQuicSession(val)) {
-        throw new ERR_INVALID_THIS("QuicSession");
+        throw $ERR_INVALID_THIS("QuicSession");
       }
     };
 
@@ -2685,7 +2823,7 @@ class QuicSession {
     assertPrivateSymbol(privateSymbol);
 
     this.#handle = handle;
-    this.#handle[kOwner] = this;
+    this.#handle![kOwner] = this;
 
     const inner = this.#inner;
     inner.endpoint = endpoint;
@@ -2705,7 +2843,7 @@ class QuicSession {
 
   get applicationOptions() {
     if (this.destroyed) return null;
-    return this.#handle.applicationOptions();
+    return this.#handle!.applicationOptions();
   }
 
   get localTransportParams() {
@@ -2713,7 +2851,7 @@ class QuicSession {
       return this.#inner.localTransportParams;
     }
     if (this.destroyed) return null;
-    const params = this.#handle.localTransportParams();
+    const params = this.#handle!.localTransportParams() as $Bindgen.QuicTransportParams;
     if (params.preferredAddressIpv4 !== undefined) {
       params.preferredAddressIpv4 = new InternalSocketAddress(params.preferredAddressIpv4);
     }
@@ -2728,7 +2866,7 @@ class QuicSession {
       return this.#inner.remoteTransportParams;
     }
     if (this.destroyed) return null;
-    const params = this.#handle.remoteTransportParams();
+    const params = this.#handle!.remoteTransportParams() as $Bindgen.QuicTransportParams | undefined;
     if (params === undefined) return undefined;
     if (params.preferredAddressIpv4 !== undefined) {
       params.preferredAddressIpv4 = new InternalSocketAddress(params.preferredAddressIpv4);
@@ -3064,8 +3202,8 @@ class QuicSession {
     if (this.destroyed) return undefined;
     return (this.#inner.path ??= {
       __proto__: null,
-      local: new InternalSocketAddress(this.#handle.getLocalAddress()),
-      remote: new InternalSocketAddress(this.#handle.getRemoteAddress()),
+      local: new InternalSocketAddress(this.#handle!.getLocalAddress()),
+      remote: new InternalSocketAddress(this.#handle!.getRemoteAddress()),
     });
   }
 
@@ -3076,7 +3214,7 @@ class QuicSession {
   get certificate() {
     assertIsQuicSession(this);
     if (this.destroyed) return undefined;
-    return (this.#inner.certificate ??= wrapCertificate(this.#handle.getCertificate()));
+    return (this.#inner.certificate ??= wrapCertificate(this.#handle!.getCertificate()));
   }
 
   /**
@@ -3087,7 +3225,7 @@ class QuicSession {
   get peerCertificate() {
     assertIsQuicSession(this);
     if (this.destroyed) return undefined;
-    return (this.#inner.peerCertificate ??= wrapCertificate(this.#handle.getPeerCertificate()));
+    return (this.#inner.peerCertificate ??= wrapCertificate(this.#handle!.getPeerCertificate()));
   }
 
   /**
@@ -3099,7 +3237,7 @@ class QuicSession {
   get ephemeralKeyInfo() {
     assertIsQuicSession(this);
     if (this.destroyed) return undefined;
-    return (this.#inner.ephemeralKeyInfo ??= this.#handle.getEphemeralKey());
+    return (this.#inner.ephemeralKeyInfo ??= this.#handle!.getEphemeralKey());
   }
 
   /**
@@ -3107,10 +3245,10 @@ class QuicSession {
    * @param {OpenStreamOptions} options
    * @returns {QuicStream}
    */
-  async #createStream(direction, options = kEmptyObject) {
+  async #createStream(direction, options: OpenStreamOptions = kEmptyObject) {
     const inner = this.#inner;
     if (this.#isClosedOrClosing) {
-      throw new ERR_INVALID_STATE("Session is closed. New streams cannot be opened.");
+      throw $ERR_INVALID_STATE("Session is closed. New streams cannot be opened.");
     }
     const dir = direction === kStreamDirectionBidirectional ? "bidi" : "uni";
     if (inner.state.isStreamOpenAllowed) {
@@ -3138,12 +3276,12 @@ class QuicSession {
     const deferredBody = body !== undefined && (isBlob(body) || FileHandle.isFileHandle(body));
     const validatedBody = deferredBody ? undefined : validateBody(body);
 
-    const handle = this.#handle.openStream(direction, validatedBody);
+    const handle = this.#handle!.openStream(direction, validatedBody) as StreamHandle | undefined;
     if (handle === undefined) {
-      throw new ERR_QUIC_OPEN_STREAM_FAILED();
+      throw ERR_QUIC_OPEN_STREAM_FAILED();
     }
 
-    if (inner.state.headersSupported !== 2) {
+    if (inner.state.isPrioritySupported) {
       const urgency = priority === "high" ? 0 : priority === "low" ? 7 : 3;
       handle.setPriority((urgency << 1) | (incremental ? 1 : 0));
     }
@@ -3165,8 +3303,15 @@ class QuicSession {
     if (oninfo) stream.oninfo = oninfo;
     if (onwanttrailers) stream.onwanttrailers = onwanttrailers;
 
-    if (headers !== undefined) {
-      stream.sendHeaders(headers, { terminal: validatedBody === undefined && !deferredBody });
+    if (
+      headers !== undefined &&
+      !stream.sendHeaders(headers, { terminal: validatedBody === undefined && !deferredBody })
+    ) {
+      const error = ERR_QUIC_OPEN_STREAM_FAILED();
+      // The caller never gets the stream.
+      markPromiseAsHandled(stream.closed);
+      stream.destroy(error);
+      throw error;
     }
 
     if (deferredBody) {
@@ -3190,7 +3335,7 @@ class QuicSession {
    * @param {OpenStreamOptions} [options]
    * @returns {Promise<QuicStream>}
    */
-  async createBidirectionalStream(options = kEmptyObject) {
+  async createBidirectionalStream(options: OpenStreamOptions = kEmptyObject) {
     assertIsQuicSession(this);
     return await this.#createStream(kStreamDirectionBidirectional, options);
   }
@@ -3201,7 +3346,7 @@ class QuicSession {
    * @param {OpenStreamOptions} [options]
    * @returns {Promise<QuicStream>}
    */
-  async createUnidirectionalStream(options = kEmptyObject) {
+  async createUnidirectionalStream(options: OpenStreamOptions = kEmptyObject) {
     assertIsQuicSession(this);
     return await this.#createStream(kStreamDirectionUnidirectional, options);
   }
@@ -3229,7 +3374,7 @@ class QuicSession {
   async sendDatagram(datagram, encoding = "utf8") {
     assertIsQuicSession(this);
     if (this.#isClosedOrClosing) {
-      throw new ERR_INVALID_STATE("Session is closed");
+      throw $ERR_INVALID_STATE("Session is closed");
     }
 
     const maxDatagramSize = this.#inner.state.maxDatagramSize;
@@ -3244,7 +3389,7 @@ class QuicSession {
     if (typeof datagram === "string") {
       datagram = new Uint8Array(Buffer.from(datagram, encoding));
     } else if (!isArrayBufferView(datagram)) {
-      throw new ERR_INVALID_ARG_TYPE("datagram", ["ArrayBufferView", "string"], datagram);
+      throw $ERR_INVALID_ARG_TYPE("datagram", ["ArrayBufferView", "string"], datagram);
     }
 
     const length = isDataView(datagram)
@@ -3255,7 +3400,7 @@ class QuicSession {
 
     if (length > maxDatagramSize) return kNilDatagramId;
 
-    const id = this.#handle.sendDatagram(datagram);
+    const id = this.#handle!.sendDatagram(datagram);
 
     if (id !== kNilDatagramId && onSessionSendDatagramChannel.hasSubscribers) {
       onSessionSendDatagramChannel.publish({
@@ -3273,12 +3418,12 @@ class QuicSession {
   updateKey() {
     assertIsQuicSession(this);
     if (this.#isClosedOrClosing) {
-      throw new ERR_INVALID_STATE("Session is closed");
+      throw $ERR_INVALID_STATE("Session is closed");
     }
 
     debug("updating session key");
 
-    this.#handle.updateKey();
+    this.#handle!.updateKey();
     if (onSessionUpdateKeyChannel.hasSubscribers) {
       onSessionUpdateKeyChannel.publish({
         __proto__: null,
@@ -3304,7 +3449,7 @@ class QuicSession {
    *   string included in the CONNECTION_CLOSE frame (diagnostic only).
    * @returns {Promise<void>}
    */
-  close(options = kEmptyObject) {
+  close(options: SessionCloseOptions = kEmptyObject) {
     assertIsQuicSession(this);
     options = validateCloseOptions(options);
     const inner = this.#inner;
@@ -3316,7 +3461,7 @@ class QuicSession {
 
       debug("gracefully closing the session");
 
-      this.#handle.gracefulClose(options);
+      this.#handle!.gracefulClose(options);
       if (onSessionClosingChannel.hasSubscribers) {
         onSessionClosingChannel.publish({
           __proto__: null,
@@ -3369,7 +3514,7 @@ class QuicSession {
    * @param {string} [options.reason] An optional human-readable reason
    *   string included in the CONNECTION_CLOSE frame (diagnostic only).
    */
-  destroy(error, options) {
+  destroy(error?, options?: SessionCloseOptions) {
     assertIsQuicSession(this);
     const inner = this.#inner;
     if (inner.destroying || this.destroyed) return;
@@ -3407,13 +3552,13 @@ class QuicSession {
     }
     inner.streams.clear();
 
-    inner.endpoint[kRemoveSession](this);
+    inner.endpoint![kRemoveSession](this);
     inner.endpoint = undefined;
     inner.isPendingClose = false;
 
     if (inner.pendingOpen.reject) {
       markPromiseAsHandled(inner.pendingOpen.promise);
-      inner.pendingOpen.reject(error ?? new ERR_INVALID_STATE("Session was destroyed before it opened"));
+      inner.pendingOpen.reject(error ?? $ERR_INVALID_STATE("Session was destroyed before it opened"));
     }
 
     if (error) {
@@ -3457,7 +3602,7 @@ class QuicSession {
     inner.peerCertificate = undefined;
     inner.ephemeralKeyInfo = undefined;
 
-    this.#handle.destroy(options);
+    this.#handle!.destroy(options);
     this.#handle = undefined;
 
     if (onSessionClosedChannel.hasSubscribers) {
@@ -3526,7 +3671,7 @@ class QuicSession {
         );
         break;
       case 2:
-        this.destroy(new ERR_QUIC_VERSION_NEGOTIATION_ERROR());
+        this.destroy(ERR_QUIC_VERSION_NEGOTIATION_ERROR());
         break;
       case 3:
         this.destroy();
@@ -3703,7 +3848,7 @@ class QuicSession {
     if (typeof onversionnegotiation === "function") {
       safeCallbackInvoke(onversionnegotiation, this, version, requestedVersions, supportedVersions);
     }
-    this.destroy(new ERR_QUIC_VERSION_NEGOTIATION_ERROR());
+    this.destroy(ERR_QUIC_VERSION_NEGOTIATION_ERROR());
   }
 
   /**
@@ -3745,11 +3890,11 @@ class QuicSession {
     const inner = this.#inner;
     if (this.destroyed || !inner.pendingOpen.resolve) return;
 
-    const addr = this.#handle.getRemoteAddress();
+    const addr = this.#handle!.getRemoteAddress();
 
-    const info = {
+    const info: QuicSessionInfo = {
       __proto__: null,
-      local: inner.endpoint.address,
+      local: inner.endpoint!.address,
       remote: addr !== undefined ? new InternalSocketAddress(addr) : undefined,
       servername,
       protocol,
@@ -3807,10 +3952,6 @@ class QuicSession {
   /** @type {boolean} */
   get [kHandshakeCompleted]() {
     return this.#inner.handshakeCompleted;
-  }
-
-  get [kVerifyPeer]() {
-    return this.#inner.verifyPeer;
   }
 
   set [kVerifyPeer](value) {
@@ -3910,9 +4051,186 @@ class QuicSession {
   }
 }
 
+interface EndpointOptions {
+  address?: import("node:net").SocketAddress | string;
+  addressLRUSize?: bigint | number;
+  cc?: "reno" | "cubic" | "bbr";
+  disableStatelessReset?: boolean;
+  idleTimeout?: bigint | number;
+  ipv6Only?: boolean;
+  reusePort?: boolean;
+  maxConnectionsPerHost?: bigint | number;
+  maxConnectionsTotal?: bigint | number;
+  retryRate?: number;
+  retryBurst?: number;
+  statelessResetRate?: number;
+  statelessResetBurst?: number;
+  versionNegotiationRate?: number;
+  versionNegotiationBurst?: number;
+  immediateCloseRate?: number;
+  immediateCloseBurst?: number;
+  sessionCreationRate?: number;
+  sessionCreationBurst?: number;
+  blockList?: import("node:net").BlockList;
+  blockListPolicy?: "deny" | "allow";
+  resetTokenSecret?: ArrayBufferView;
+  retryTokenExpiration?: bigint | number;
+  rxDiagnosticLoss?: number;
+  tokenExpiration?: bigint | number;
+  tokenSecret?: ArrayBufferView;
+  txDiagnosticLoss?: number;
+  udpReceiveBufferSize?: number;
+  udpSendBufferSize?: number;
+  udpTTL?: number;
+  validateAddress?: boolean;
+}
+
+interface TransportParams {
+  preferredAddressIpv4?: import("node:net").SocketAddress;
+  preferredAddressIpv6?: import("node:net").SocketAddress;
+  initialMaxStreamDataBidiLocal?: bigint | number;
+  initialMaxStreamDataBidiRemote?: bigint | number;
+  initialMaxStreamDataUni?: bigint | number;
+  initialMaxData?: bigint | number;
+  initialMaxStreamsBidi?: bigint | number;
+  initialMaxStreamsUni?: bigint | number;
+  maxIdleTimeout?: bigint | number;
+  activeConnectionIDLimit?: bigint | number;
+  ackDelayExponent?: bigint | number;
+  maxAckDelay?: bigint | number;
+  maxDatagramFrameSize?: bigint | number;
+}
+
+interface ApplicationOptions {
+  maxHeaderPairs?: bigint | number;
+  maxHeaderLength?: bigint | number;
+  maxFieldSectionSize?: bigint | number;
+  qpackMaxDTableCapacity?: bigint | number;
+  qpackEncoderMaxDTableCapacity?: bigint | number;
+  qpackBlockedStreams?: bigint | number;
+  enableConnectProtocol?: boolean;
+  enableDatagrams?: boolean;
+}
+
+interface IdentityOptions {
+  keys: import("node:crypto").KeyObject | Array<import("node:crypto").KeyObject>;
+  certs: TlsCertificateInput;
+  verifyPrivateKey?: boolean;
+  port?: number;
+  authoritative?: boolean;
+}
+
+interface SessionOptions {
+  endpoint?: EndpointOptions | QuicEndpoint;
+  reuseEndpoint?: boolean;
+  version?: number;
+  minVersion?: number;
+  preferredAddressPolicy?: "use" | "ignore" | "default";
+  verifyPeer?: "strict" | "auto" | "manual";
+  application?: ApplicationOptions;
+  transportParams?: TransportParams;
+  servername?: string;
+  alpn?: string | string[];
+  ciphers?: string;
+  groups?: string;
+  keylog?: boolean;
+  verifyClient?: boolean;
+  tlsTrace?: boolean;
+  enableEarlyData?: boolean;
+  rejectUnauthorized?: boolean;
+  verifyPrivateKey?: boolean;
+  keys?: import("node:crypto").KeyObject | Array<import("node:crypto").KeyObject>;
+  certs?: TlsCertificateInput;
+  ca?: TlsCertificateInput;
+  crl?: TlsCertificateInput;
+  sni?: { [key: string]: IdentityOptions };
+  qlog?: boolean;
+  sessionTicket?: ArrayBufferView;
+  token?: ArrayBufferView;
+  handshakeTimeout?: bigint | number;
+  initialRtt?: bigint | number;
+  keepAlive?: bigint | number;
+  maxStreamWindow?: bigint | number;
+  maxWindow?: bigint | number;
+  maxPayloadSize?: bigint | number;
+  unacknowledgedPacketThreshold?: bigint | number;
+  cc?: "reno" | "cubic" | "bbr";
+  datagramDropPolicy?: "drop-oldest" | "drop-newest";
+  drainingPeriodMultiplier?: number;
+  streamIdleTimeout?: bigint | number;
+  maxDatagramSendAttempts?: number;
+  onerror?: Callback;
+  onstream?: Callback;
+  ondatagram?: Callback;
+  ondatagramstatus?: Callback;
+  onpathvalidation?: Callback;
+  onsessionticket?: Callback;
+  onversionnegotiation?: Callback;
+  onhandshake?: Callback;
+  onnewtoken?: Callback;
+  onearlyrejected?: Callback;
+  onorigin?: Callback;
+  ongoaway?: Callback;
+  onkeylog?: Callback;
+  onqlog?: Callback;
+  onheaders?: Callback;
+  ontrailers?: Callback;
+  oninfo?: Callback;
+  onwanttrailers?: Callback;
+}
+
+interface ProcessSessionOptions {
+  forServer?: boolean;
+}
+
+interface SessionCallbacks {
+  __proto__?: null;
+  onerror: Callback | undefined;
+  onstream: Callback | undefined;
+  ondatagram: Callback | undefined;
+  ondatagramstatus: Callback | undefined;
+  onpathvalidation: Callback | undefined;
+  onsessionticket: Callback | undefined;
+  onversionnegotiation: Callback | undefined;
+  onhandshake: Callback | undefined;
+  onnewtoken: Callback | undefined;
+  onearlyrejected: Callback | undefined;
+  onorigin: Callback | undefined;
+  ongoaway: Callback | undefined;
+  onkeylog: Callback | undefined;
+  onqlog: Callback | undefined;
+  onheaders: Callback | undefined;
+  ontrailers: Callback | undefined;
+  oninfo: Callback | undefined;
+  onwanttrailers: Callback | undefined;
+  streamIdleTimeout: number;
+}
+
+interface SNIContextOptions {
+  replace?: boolean;
+}
+
+interface QuicEndpointInner {
+  __proto__?: null;
+  address: import("node:net").SocketAddress | undefined;
+  busy: boolean;
+  isPendingClose: boolean;
+  listening: boolean;
+  clientHttp: boolean | undefined;
+  pendingClose: PendingPromise;
+  pendingError: unknown;
+  sessions: Set<QuicSession>;
+  state: QuicEndpointState;
+  stats: QuicEndpointStats;
+  onsession: Callback | undefined;
+  sessionCallbacks: SessionCallbacks | undefined;
+  idleTimeout?: number;
+  suppressCloseChannels?: boolean;
+}
+
 class QuicEndpoint {
-  #handle;
-  #inner = {
+  #handle: EndpointHandle | undefined;
+  #inner: QuicEndpointInner = {
     __proto__: null,
     address: undefined,
     busy: false,
@@ -3922,20 +4240,20 @@ class QuicEndpoint {
     pendingClose: PromiseWithResolvers(),
     pendingError: undefined,
     sessions: new SafeSet(),
-    stat: undefined,
-    stats: undefined,
+    state: undefined as unknown as QuicEndpointState,
+    stats: undefined as unknown as QuicEndpointStats,
     onsession: undefined,
     sessionCallbacks: undefined,
   };
 
   static {
-    isQuicEndpoint = function (val) {
+    isQuicEndpoint = function (val): val is QuicEndpoint {
       return val != null && typeof val === "object" && #handle in val;
     };
 
-    assertIsQuicEndpoint = function (val) {
+    assertIsQuicEndpoint = function (val): asserts val is QuicEndpoint {
       if (!isQuicEndpoint(val)) {
-        throw new ERR_INVALID_THIS("QuicEndpoint");
+        throw $ERR_INVALID_THIS("QuicEndpoint");
       }
     };
 
@@ -3950,13 +4268,13 @@ class QuicEndpoint {
 
     assertEndpointNotClosedOrClosing = function (endpoint) {
       if (endpoint.#isClosedOrClosing) {
-        throw new ERR_INVALID_STATE("Endpoint is closed");
+        throw $ERR_INVALID_STATE("Endpoint is closed");
       }
     };
 
     assertEndpointIsNotBusy = function (endpoint) {
       if (endpoint.#inner.state.isBusy) {
-        throw new ERR_INVALID_STATE("Endpoint is busy");
+        throw $ERR_INVALID_STATE("Endpoint is busy");
       }
     };
   }
@@ -4003,7 +4321,7 @@ class QuicEndpoint {
 
     if (blockList !== undefined) {
       if (!BlockList.isBlockList(blockList)) {
-        throw new ERR_INVALID_ARG_TYPE("options.blockList", "net.BlockList", blockList);
+        throw $ERR_INVALID_ARG_TYPE("options.blockList", "net.BlockList", blockList);
       }
     }
 
@@ -4016,7 +4334,7 @@ class QuicEndpoint {
     ]) {
       if (v === undefined) continue;
       if (typeof v === "bigint") {
-        if (v < 0n) throw new ERR_OUT_OF_RANGE(`options.${name}`, ">= 0", v);
+        if (v < 0n) throw $ERR_OUT_OF_RANGE(`options.${name}`, ">= 0", v);
       } else {
         validateInteger(v, `options.${name}`, 0);
       }
@@ -4038,10 +4356,10 @@ class QuicEndpoint {
     ]) {
       if (v === undefined) continue;
       if (typeof v !== "number") {
-        throw new ERR_INVALID_ARG_TYPE(`options.${name}`, "number", v);
+        throw $ERR_INVALID_ARG_TYPE(`options.${name}`, "number", v);
       }
       if (v < 0 || NumberIsNaN(v)) {
-        throw new ERR_OUT_OF_RANGE(`options.${name}`, ">= 0", v);
+        throw $ERR_OUT_OF_RANGE(`options.${name}`, ">= 0", v);
       }
     }
 
@@ -4061,10 +4379,10 @@ class QuicEndpoint {
     ]) {
       if (v === undefined) continue;
       if (!isArrayBufferView(v)) {
-        throw new ERR_INVALID_ARG_TYPE(`options.${name}`, ["ArrayBufferView"], v);
+        throw $ERR_INVALID_ARG_TYPE(`options.${name}`, ["ArrayBufferView"], v);
       }
       if (v.byteLength !== 16) {
-        throw new ERR_INVALID_ARG_VALUE(`options.${name}`, v, "must be exactly 16 bytes");
+        throw $ERR_INVALID_ARG_VALUE(`options.${name}`, v, "must be exactly 16 bytes");
       }
     }
 
@@ -4074,7 +4392,7 @@ class QuicEndpoint {
       } else if (typeof address === "object" && address !== null) {
         address = new SocketAddress(address);
       } else {
-        throw new ERR_INVALID_ARG_TYPE("options.address", ["SocketAddress", "string"], address);
+        throw $ERR_INVALID_ARG_TYPE("options.address", ["SocketAddress", "string"], address);
       }
     }
 
@@ -4124,13 +4442,13 @@ class QuicEndpoint {
   /**
    * @param {EndpointOptions} config
    */
-  constructor(config = kEmptyObject) {
+  constructor(config: EndpointOptions = kEmptyObject) {
     const options = this.#processEndpointOptions(config);
     this.#handle = new Endpoint_(options);
-    this.#handle[kOwner] = this;
+    this.#handle![kOwner] = this;
     const inner = this.#inner;
-    inner.stats = new QuicEndpointStats(kPrivateConstructor, this.#handle.stats);
-    inner.state = new QuicEndpointState(kPrivateConstructor, this.#handle.state);
+    inner.stats = new QuicEndpointStats(kPrivateConstructor, this.#handle!.stats);
+    inner.state = new QuicEndpointState(kPrivateConstructor, this.#handle!.state);
 
     const { maxConnectionsPerHost, maxConnectionsTotal } = options;
     if (maxConnectionsPerHost !== undefined) {
@@ -4192,7 +4510,7 @@ class QuicEndpoint {
     if (!!val !== inner.busy) {
       debug("toggling endpoint busy status to ", !inner.busy);
       inner.busy = !inner.busy;
-      this.#handle.markBusy(inner.busy);
+      this.#handle!.markBusy(inner.busy);
       if (onEndpointBusyChangeChannel.hasSubscribers) {
         onEndpointBusyChangeChannel.publish({
           __proto__: null,
@@ -4243,7 +4561,7 @@ class QuicEndpoint {
     assertIsQuicEndpoint(this);
     if (this.#isClosedOrClosing) return undefined;
     if (this.#inner.address === undefined) {
-      const addr = this.#handle.address();
+      const addr = this.#handle!.address();
       if (addr !== undefined) this.#inner.address = new InternalSocketAddress(addr);
     }
     return this.#inner.address;
@@ -4259,7 +4577,7 @@ class QuicEndpoint {
     assertEndpointIsNotBusy(this);
     const inner = this.#inner;
     if (inner.listening) {
-      throw new ERR_INVALID_STATE("Endpoint is already listening");
+      throw $ERR_INVALID_STATE("Endpoint is already listening");
     }
     validateObject(options, "options");
     validateFunction(onsession, "onsession");
@@ -4311,7 +4629,7 @@ class QuicEndpoint {
         typeof rest.streamIdleTimeout === "bigint" ? Number(rest.streamIdleTimeout) : rest.streamIdleTimeout || 0,
     };
 
-    this.#handle.listen(rest);
+    this.#handle!.listen(rest);
     inner.listening = true;
     debug("endpoint listening as a server");
   }
@@ -4329,9 +4647,9 @@ class QuicEndpoint {
     const { sessionTicket, ...rest } = options;
 
     debug("endpoint connecting as a client");
-    const handle = this.#handle.connect(address, rest, sessionTicket);
+    const handle = this.#handle!.connect(address, rest, sessionTicket);
     if (handle === undefined) {
-      throw new ERR_QUIC_CONNECTION_FAILED();
+      throw ERR_QUIC_CONNECTION_FAILED();
     }
     const session = this.#newSession(handle);
     applyCallbacks(session, options);
@@ -4356,7 +4674,7 @@ class QuicEndpoint {
       debug("gracefully closing the endpoint");
       const inner = this.#inner;
       inner.isPendingClose = true;
-      this.#handle.closeGracefully();
+      this.#handle!.closeGracefully();
       if (onEndpointClosingChannel.hasSubscribers && !inner.suppressCloseChannels) {
         onEndpointClosingChannel.publish({
           __proto__: null,
@@ -4416,7 +4734,7 @@ class QuicEndpoint {
    * @param {any} [error]
    * @returns {Promise<void>} Returns this.closed
    */
-  destroy(error) {
+  destroy(error?) {
     assertIsQuicEndpoint(this);
     debug("destroying the endpoint");
     const inner = this.#inner;
@@ -4442,10 +4760,10 @@ class QuicEndpoint {
    * @param {object} entries
    * @param {SNIContextOptions} [options]
    */
-  setSNIContexts(entries, options = kEmptyObject) {
+  setSNIContexts(entries, options: SNIContextOptions = kEmptyObject) {
     assertIsQuicEndpoint(this);
     if (this.#handle === undefined) {
-      throw new ERR_INVALID_STATE("Endpoint is destroyed");
+      throw $ERR_INVALID_STATE("Endpoint is destroyed");
     }
     validateObject(entries, "entries");
     const { replace = false } = options;
@@ -4456,15 +4774,15 @@ class QuicEndpoint {
       validateString(hostname, "entries key");
       const identity = processIdentityOptions(entries[hostname], `entries['${hostname}']`);
       if (identity.keys.length === 0) {
-        throw new ERR_MISSING_ARGS(`entries['${hostname}'].keys`);
+        throw $ERR_MISSING_ARGS(`entries['${hostname}'].keys`);
       }
       if (identity.certs === undefined) {
-        throw new ERR_MISSING_ARGS(`entries['${hostname}'].certs`);
+        throw $ERR_MISSING_ARGS(`entries['${hostname}'].certs`);
       }
       processed[hostname] = identity;
     }
 
-    this.#handle.setSNIContexts(processed, replace);
+    this.#handle!.setSNIContexts(processed, replace);
   }
 
   [kFinishClose](context, status) {
@@ -4505,9 +4823,9 @@ class QuicEndpoint {
           error: maybeCloseError,
         });
       }
-      inner.pendingClose.reject(maybeCloseError);
+      inner.pendingClose.reject!(maybeCloseError);
     } else {
-      inner.pendingClose.resolve();
+      inner.pendingClose.resolve!();
     }
     if (onEndpointClosedChannel.hasSubscribers && !inner.suppressCloseChannels) {
       onEndpointClosedChannel.publish({
@@ -4628,7 +4946,7 @@ function findSuitableEndpoint(wantHttp) {
  * @param {boolean} forServer
  * @returns {QuicEndpoint}
  */
-function processEndpointOption(endpoint, reuseEndpoint = true, forServer = false, wantHttp = true) {
+function processEndpointOption(endpoint, reuseEndpoint = true, forServer = false, wantHttp = true): QuicEndpoint {
   if (isQuicEndpoint(endpoint)) {
     return endpoint;
   }
@@ -4649,14 +4967,21 @@ function processEndpointOption(endpoint, reuseEndpoint = true, forServer = false
  * @param {string} label
  * @returns {object}
  */
-function processIdentityOptions(identity, label) {
+interface ProcessedIdentityOptions {
+  __proto__?: null;
+  keys: string[];
+  certs: TlsCertificateInput | undefined;
+  verifyPrivateKey: boolean;
+}
+
+function processIdentityOptions(identity, label): ProcessedIdentityOptions {
   const { keys, certs, verifyPrivateKey = false } = identity;
 
   if (certs !== undefined) {
     const certInputs = ArrayIsArray(certs) ? certs : [certs];
     for (const cert of certInputs) {
       if (!isArrayBufferView(cert) && !isArrayBuffer(cert)) {
-        throw new ERR_INVALID_ARG_TYPE(`${label}.certs`, ["ArrayBufferView", "ArrayBuffer"], cert);
+        throw $ERR_INVALID_ARG_TYPE(`${label}.certs`, ["ArrayBufferView", "ArrayBuffer"], cert);
       }
     }
   }
@@ -4667,11 +4992,11 @@ function processIdentityOptions(identity, label) {
     for (const key of keyInputs) {
       if (isKeyObject(key)) {
         if (getKeyObjectType(key) !== "private") {
-          throw new ERR_INVALID_ARG_VALUE(`${label}.keys`, key, "must be a private key");
+          throw $ERR_INVALID_ARG_VALUE(`${label}.keys`, key, "must be a private key");
         }
         ArrayPrototypePush(keyHandles, getKeyObjectHandle(key));
       } else {
-        throw new ERR_INVALID_ARG_TYPE(`${label}.keys`, "KeyObject", key);
+        throw $ERR_INVALID_ARG_TYPE(`${label}.keys`, "KeyObject", key);
       }
     }
   }
@@ -4691,6 +5016,23 @@ function processIdentityOptions(identity, label) {
  * @param {boolean} forServer
  * @returns {object}
  */
+type TlsCertificateInput = ArrayBuffer | ArrayBufferView | Array<ArrayBuffer | ArrayBufferView>;
+
+interface SharedTlsOptions {
+  __proto__?: null;
+  servername: string | undefined;
+  alpn: Buffer | undefined;
+  ciphers: string | undefined;
+  groups: string | undefined;
+  keylog: boolean;
+  verifyClient: boolean;
+  rejectUnauthorized: boolean;
+  enableEarlyData: boolean;
+  tlsTrace: boolean;
+  ca: TlsCertificateInput | undefined;
+  crl: TlsCertificateInput | undefined;
+}
+
 function processTlsOptions(tls, forServer) {
   const {
     servername,
@@ -4735,7 +5077,7 @@ function processTlsOptions(tls, forServer) {
     for (let i = 0; i < protocols.length; i++) {
       validateString(protocols[i], `options.alpn[${i}]`);
       if (protocols[i].length === 0 || protocols[i].length > 255) {
-        throw new ERR_INVALID_ARG_VALUE(`options.alpn[${i}]`, protocols[i], "must be between 1 and 255 characters");
+        throw $ERR_INVALID_ARG_VALUE(`options.alpn[${i}]`, protocols[i], "must be between 1 and 255 characters");
       }
       totalLen += 1 + protocols[i].length;
     }
@@ -4753,7 +5095,7 @@ function processTlsOptions(tls, forServer) {
     const caInputs = ArrayIsArray(ca) ? ca : [ca];
     for (const caCert of caInputs) {
       if (!isArrayBufferView(caCert) && !isArrayBuffer(caCert)) {
-        throw new ERR_INVALID_ARG_TYPE("options.ca", ["ArrayBufferView", "ArrayBuffer"], caCert);
+        throw $ERR_INVALID_ARG_TYPE("options.ca", ["ArrayBufferView", "ArrayBuffer"], caCert);
       }
     }
   }
@@ -4762,12 +5104,12 @@ function processTlsOptions(tls, forServer) {
     const crlInputs = ArrayIsArray(crl) ? crl : [crl];
     for (const crlCert of crlInputs) {
       if (!isArrayBufferView(crlCert) && !isArrayBuffer(crlCert)) {
-        throw new ERR_INVALID_ARG_TYPE("options.crl", ["ArrayBufferView", "ArrayBuffer"], crlCert);
+        throw $ERR_INVALID_ARG_TYPE("options.crl", ["ArrayBufferView", "ArrayBuffer"], crlCert);
       }
     }
   }
 
-  const shared = {
+  const shared: SharedTlsOptions = {
     __proto__: null,
     servername,
     alpn: encodedAlpn,
@@ -4784,22 +5126,22 @@ function processTlsOptions(tls, forServer) {
 
   if (forServer) {
     if (sni === undefined || typeof sni !== "object") {
-      throw new ERR_MISSING_ARGS("options.sni");
+      throw $ERR_MISSING_ARGS("options.sni");
     }
 
     const sniKeys = ObjectKeys(sni);
     if (sniKeys.length === 0) {
-      throw new ERR_MISSING_ARGS("options.sni");
+      throw $ERR_MISSING_ARGS("options.sni");
     }
 
-    let defaultIdentity = {};
+    let defaultIdentity: ProcessedIdentityOptions | Record<string, never> = {};
     if (sni["*"] !== undefined) {
       defaultIdentity = processIdentityOptions(sni["*"], "options.sni['*']");
       if (defaultIdentity.keys.length === 0) {
-        throw new ERR_MISSING_ARGS("options.sni['*'].keys");
+        throw $ERR_MISSING_ARGS("options.sni['*'].keys");
       }
       if (defaultIdentity.certs === undefined) {
-        throw new ERR_MISSING_ARGS("options.sni['*'].certs");
+        throw $ERR_MISSING_ARGS("options.sni['*'].certs");
       }
     }
 
@@ -4811,10 +5153,10 @@ function processTlsOptions(tls, forServer) {
       validateString(hostname, "options.sni key");
       const identity = processIdentityOptions(sni[hostname], `options.sni['${hostname}']`);
       if (identity.keys.length === 0) {
-        throw new ERR_MISSING_ARGS(`options.sni['${hostname}'].keys`);
+        throw $ERR_MISSING_ARGS(`options.sni['${hostname}'].keys`);
       }
       if (identity.certs === undefined) {
-        throw new ERR_MISSING_ARGS(`options.sni['${hostname}'].certs`);
+        throw $ERR_MISSING_ARGS(`options.sni['${hostname}'].certs`);
       }
       const { port, authoritative } = sni[hostname];
       // A wildcard key (`*.example.com`, which match_sni serves) has no valid
@@ -4872,7 +5214,7 @@ function validateCloseOptions(options) {
 
   if (code !== undefined) {
     if (typeof code !== "bigint" && typeof code !== "number") {
-      throw new ERR_INVALID_ARG_TYPE("options.code", ["bigint", "number"], code);
+      throw $ERR_INVALID_ARG_TYPE("options.code", ["bigint", "number"], code);
     }
   }
   validateOneOf(type, "options.type", ["transport", "application"]);
@@ -4892,7 +5234,7 @@ function getPreferredAddressPolicy(policy = "default") {
     case "default":
       return kPreferredAddressDefault;
   }
-  throw new ERR_INVALID_ARG_VALUE("options.preferredAddressPolicy", policy);
+  throw $ERR_INVALID_ARG_VALUE("options.preferredAddressPolicy", policy);
 }
 
 /**
@@ -4900,7 +5242,7 @@ function getPreferredAddressPolicy(policy = "default") {
  * @param {ProcessSessionOptions} [config]
  * @returns {SessionOptions}
  */
-function processSessionOptions(options, config = kEmptyObject) {
+function processSessionOptions(options, config: ProcessSessionOptions = kEmptyObject) {
   validateObject(options, "options");
   const {
     endpoint,
@@ -4950,7 +5292,7 @@ function processSessionOptions(options, config = kEmptyObject) {
 
   if (token !== undefined) {
     if (!isArrayBufferView(token)) {
-      throw new ERR_INVALID_ARG_TYPE("options.token", ["ArrayBufferView"], token);
+      throw $ERR_INVALID_ARG_TYPE("options.token", ["ArrayBufferView"], token);
     }
   }
 
@@ -4990,21 +5332,21 @@ function processSessionOptions(options, config = kEmptyObject) {
       // maxDatagramFrameSize is a uint16 (RFC 9221 §3).
       (name === "maxDatagramFrameSize" && BigInt(v) > 65535n)
     ) {
-      throw new ERR_INVALID_ARG_VALUE(`options.transportParams.${name}`, v, "must be a non-negative number or bigint");
+      throw $ERR_INVALID_ARG_VALUE(`options.transportParams.${name}`, v, "must be a non-negative number or bigint");
     }
   }
 
   const { preferredAddressIpv4, preferredAddressIpv6 } = transportParams;
   if (preferredAddressIpv4 !== undefined) {
     if (!SocketAddress.isSocketAddress(preferredAddressIpv4)) {
-      throw new ERR_INVALID_ARG_TYPE(
+      throw $ERR_INVALID_ARG_TYPE(
         "options.transportParams.preferredAddressIpv4",
         "SocketAddress",
         preferredAddressIpv4,
       );
     }
     if (preferredAddressIpv4.family !== "ipv4") {
-      throw new ERR_INVALID_ARG_VALUE(
+      throw $ERR_INVALID_ARG_VALUE(
         "options.transportParams.preferredAddressIpv4",
         preferredAddressIpv4,
         "must be an IPv4 address",
@@ -5013,14 +5355,14 @@ function processSessionOptions(options, config = kEmptyObject) {
   }
   if (preferredAddressIpv6 !== undefined) {
     if (!SocketAddress.isSocketAddress(preferredAddressIpv6)) {
-      throw new ERR_INVALID_ARG_TYPE(
+      throw $ERR_INVALID_ARG_TYPE(
         "options.transportParams.preferredAddressIpv6",
         "SocketAddress",
         preferredAddressIpv6,
       );
     }
     if (preferredAddressIpv6.family !== "ipv6") {
-      throw new ERR_INVALID_ARG_VALUE(
+      throw $ERR_INVALID_ARG_VALUE(
         "options.transportParams.preferredAddressIpv6",
         preferredAddressIpv6,
         "must be an IPv6 address",
@@ -5044,7 +5386,7 @@ function processSessionOptions(options, config = kEmptyObject) {
   } = application;
   if (sessionTicket !== undefined) {
     if (!isArrayBufferView(sessionTicket)) {
-      throw new ERR_INVALID_ARG_TYPE("options.sessionTicket", ["ArrayBufferView"], sessionTicket);
+      throw $ERR_INVALID_ARG_TYPE("options.sessionTicket", ["ArrayBufferView"], sessionTicket);
     }
     const tb = new DataView(sessionTicket.buffer, sessionTicket.byteOffset, sessionTicket.byteLength);
     let ok = sessionTicket.byteLength >= 16 && DataViewPrototypeGetUint32(tb, 4) === 1;
@@ -5057,7 +5399,7 @@ function processSessionOptions(options, config = kEmptyObject) {
       }
     }
     if (!ok) {
-      throw new ERR_INVALID_ARG_VALUE("options.sessionTicket", sessionTicket, "is not a valid session ticket");
+      throw $ERR_INVALID_ARG_VALUE("options.sessionTicket", sessionTicket, "is not a valid session ticket");
     }
   }
 
@@ -5132,7 +5474,7 @@ function processSessionOptions(options, config = kEmptyObject) {
  * @param {SessionOptions} [options]
  * @returns {Promise<QuicEndpoint>}
  */
-async function listen(callback, options = kEmptyObject) {
+async function listen(callback, options: SessionOptions = kEmptyObject) {
   validateFunction(callback, "callback");
   const { endpoint, ...sessionOptions } = processSessionOptions(options, { forServer: true });
   endpoint[kListen](callback, sessionOptions);
@@ -5153,14 +5495,14 @@ async function listen(callback, options = kEmptyObject) {
  * @param {SessionOptions} [options]
  * @returns {Promise<QuicSession>}
  */
-async function connect(address, options = kEmptyObject) {
+async function connect(address, options: SessionOptions = kEmptyObject) {
   if (typeof address === "string") {
     address = SocketAddress.parse(address);
   }
 
   if (!SocketAddress.isSocketAddress(address)) {
     if (address == null || typeof address !== "object") {
-      throw new ERR_INVALID_ARG_TYPE("address", ["SocketAddress", "string"], address);
+      throw $ERR_INVALID_ARG_TYPE("address", ["SocketAddress", "string"], address);
     }
     address = new SocketAddress(address);
   }

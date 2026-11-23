@@ -1,11 +1,49 @@
+#pragma once
+
 #include <openssl/pem.h>
+#include <openssl/sha.h>
+#include <openssl/ssl.h>
 #include <openssl/x509.h>
 
 #ifdef __cplusplus
+#include "../libusockets.h"
+
+#include <cstdlib>
+#include <memory>
+
 #define CPPDECL extern "C"
 
+// bssl::UniquePtr, which BORINGSSL_NO_CXX (Windows) leaves out.
+template <auto free_fn> struct us_deleter {
+  void operator()(auto *ptr) const { free_fn(ptr); }
+};
+template <typename T, auto free_fn> using us_unique_ptr = std::unique_ptr<T, us_deleter<free_fn>>;
+
+// Leaves `buffer` as it was when there is no memory.
+template <typename T> bool us_grow(us_unique_ptr<T, us_free> &buffer, size_t size) {
+  auto *grown = (decltype(buffer.get()))us_realloc(buffer.get(), size);
+  if (!grown) return false;
+  buffer.release();
+  buffer.reset(grown);
+  return true;
+}
+
+using us_ssl_ctx_ptr = us_unique_ptr<SSL_CTX, SSL_CTX_free>;
+
+inline void us_x509_stack_free(STACK_OF(X509) *certs) { sk_X509_pop_free(certs, X509_free); }
+using us_x509_stack_ptr = us_unique_ptr<STACK_OF(X509), us_x509_stack_free>;
+
 STACK_OF(X509) *us_get_root_extra_cert_instances();
-STACK_OF(X509) *us_get_root_system_cert_instances();
+X509_LAZY_CERT_SET *us_get_bundled_root_cert_set();
+
+// The OS trust store. Platforms that hand us DER (Linux and other Unix) index it lazily; those whose trust evaluation
+// needs the parsed certificate (macOS) or that are not yet converted (Windows) hand back parsed X509s. Either may be
+// null/empty.
+struct us_system_certs_t {
+  X509_LAZY_CERT_SET *lazy = nullptr;
+  STACK_OF(X509) *parsed = nullptr;
+};
+const us_system_certs_t &us_get_root_system_certs();
 
 #else
 #define CPPDECL extern
@@ -13,3 +51,10 @@ STACK_OF(X509) *us_get_root_system_cert_instances();
 
 CPPDECL X509_STORE *us_get_default_ca_store();
 CPPDECL X509_STORE *us_get_shared_default_ca_store();
+
+// blocked_spkis.cpp
+// After X509_verify_cert: X509_V_OK, or the error of a chain that holds a blocked public key.
+CPPDECL int us_x509_store_ctx_blocked_key_error(X509_STORE_CTX *ctx);
+// `hash` is SHA256_DIGEST_LENGTH bytes.
+CPPDECL void us_add_blocked_spki_for_testing(const uint8_t *hash);
+CPPDECL void us_clear_blocked_spkis_for_testing();

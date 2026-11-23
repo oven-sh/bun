@@ -1,0 +1,32 @@
+# import { serve } from "bun";  function start() { return serve({ port: 0 }); }  start();
+# The front end copies the member into a variable of the file at the head of the file, and an import cannot be assigned to: the variable is stored once. So it is Bun.serve wherever it is read, in whichever body, and the look
+# at bodies sees the call with its operands as if `Bun.serve({ port: 0 })` were written out. If the store let the function go, as it did, a call that nobody sees might pass it any option, code from outside the executable
+# might run, and the report of every server that is written with the import would be open.
+# OPTIONS: exclude=CodeOutsideImage
+# RUN: causes mechanisms=all
+# CHECK-NOT: cause
+# CHECK: unseen-code cannot-run
+
+layout L0 module=m0 fields=[{key="port" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="serve" module=m0 declared={type=anything} initialization=Undefined flags=[IsImmutable]
+module m0 path="main.mjs" displayPath="main.mjs" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Bun
+    v1 = PropGet v0 key="serve"
+    PutModuleVariable v1 variable=g0
+    v3 = NewClosure function=f1
+    v4 = Call v3 calleeName="start"
+    v5 = Undefined
+    Return v5
+}
+function f1 name="start" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = Integer
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    v3 = FinishObject v2
+    v4 = Call v0, -, v3 calleeName="serve"
+    Return v4
+}

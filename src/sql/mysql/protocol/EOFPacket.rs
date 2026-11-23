@@ -1,10 +1,10 @@
 use super::super::status_flags::StatusFlags;
 use super::any_mysql_error::Error as AnyMySQLError;
-use super::new_reader::{NewReader, ReaderContext};
+use super::packet_reader::PacketReader;
 
-pub struct EOFPacket {
+pub(crate) struct EOFPacket {
     pub(crate) header: u8,
-    pub status_flags: StatusFlags,
+    pub(crate) status_flags: StatusFlags,
 }
 
 impl Default for EOFPacket {
@@ -17,9 +17,9 @@ impl Default for EOFPacket {
 }
 
 impl EOFPacket {
-    pub fn decode_internal<Context: ReaderContext>(
+    pub(crate) fn decode_internal(
         &mut self,
-        reader: NewReader<Context>,
+        reader: PacketReader<'_>,
     ) -> Result<(), AnyMySQLError> {
         self.header = reader.int::<u8>()?;
         if self.header != 0xfe {

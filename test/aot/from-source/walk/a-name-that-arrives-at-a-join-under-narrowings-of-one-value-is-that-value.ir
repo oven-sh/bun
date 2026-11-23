@@ -1,0 +1,17 @@
+# -- source: a-name-that-arrives-at-a-join-under-narrowings-of-one-value-is-that-value.ts
+# function ripe(crate: string | undefined) { return (crate as string).charCodeAt(0) > 96 && (crate as string).charCodeAt(1) < 58 && (crate as string).charCodeAt(2) === (crate as string).charCodeAt(1); }
+# (globalThis as any).kept = ripe;
+# console.log(ripe("a33"), ripe("a34"), ripe("a"), ripe("A33"));
+# -- end of source
+# f1 = ripe
+# The guess that `crate` is a text has a closed arm, which meets the typed one at every `&&`. There `crate` arrives as "v0, which is a text" and as "v0, which is none": the join made a parameter for it: one value joined with
+# itself, of which the join says no more than v0 says. The back end leads an edge that hands a constant truth past a join that only tests it only where the join has one parameter, so the false of `a && b` was made a word
+# and tested again. The name is bound to v0: the join has the truth alone, and the next test asks v0.
+# RUN(EVENT): compile NarrowedBindingsFoldedAtJoins mechanisms=all
+# EVENT-NOT: statistic NarrowedBindingsFoldedAtJoins 0
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK-COUNT-2: = TypeTest v0 testedType=string
+# RUN(JOIN): walk f1 mechanisms=all
+# JOIN-LABEL: code f1:Body
+# JOIN-NOT: @Boolean, v{{*}}: anything

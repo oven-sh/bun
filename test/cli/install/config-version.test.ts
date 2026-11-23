@@ -131,6 +131,114 @@ describe.concurrent("configVersion", () => {
     `);
   });
 
+  test.each([true, false])("bun pm trust keeps the lockfile's configVersion (text = %p)", async text => {
+    using dir = tempDir("config-version-pm-trust", {
+      "bunfig.toml": `[install]\nsaveTextLockfile = ${text}\n`,
+      "package.json": JSON.stringify({
+        name: "root-1",
+        dependencies: { dep: "file:./dep" },
+      }),
+      "dep/package.json": JSON.stringify({
+        name: "dep",
+        version: "1.0.0",
+        scripts: { postinstall: "echo postinstall" },
+      }),
+    });
+    const packageDir = String(dir);
+
+    const { out, err, exitCode } = await install(packageDir);
+    expect(err).toContain("Saved lockfile");
+    expect(out).toContain("Blocked 1 postinstall");
+    expect(exitCode).toBe(0);
+
+    // A project that predates configVersion 1, or one migrated from npm or yarn.
+    const lockfile = join(packageDir, text ? "bun.lock" : "bun.lockb");
+    const v0 = Buffer.from(await file(lockfile).arrayBuffer());
+    const at = text ? v0.indexOf(`"configVersion": 1,`) + `"configVersion": `.length : v0.indexOf("cNfGvRsN") + 8;
+    expect(v0[at]).toBe(text ? "1".charCodeAt(0) : 1);
+    v0[at] -= 1;
+    await Bun.write(lockfile, v0);
+
+    await using trust = spawn({
+      cmd: [bunExe(), "pm", "trust", "dep"],
+      cwd: packageDir,
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [trustErr, trustExitCode] = await Promise.all([trust.stderr.text(), trust.exited]);
+    expect(trustErr).not.toContain("error:");
+    expect(trustExitCode).toBe(0);
+
+    const saved = Buffer.from(await file(lockfile).arrayBuffer());
+    expect(saved.equals(v0)).toBe(false);
+    if (text) {
+      expect(saved.toString()).toBe(
+        v0.toString().replace(`  "packages": {`, `  "trustedDependencies": [\n    "dep",\n  ],\n  "packages": {`),
+      );
+    } else {
+      expect(saved[saved.indexOf("cNfGvRsN") + 8]).toBe(0);
+    }
+  });
+
+  // None of the three has a `configVersion`, `trustedDependencies` or bun's `patchedDependencies`.
+  test.each([
+    [
+      "package-lock.json",
+      JSON.stringify({
+        name: "app",
+        lockfileVersion: 3,
+        packages: {
+          "": { name: "app", dependencies: { dep: "file:dep" } },
+          "dep": { version: "1.0.0" },
+          "node_modules/dep": { resolved: "dep", link: true },
+        },
+      }),
+    ],
+    ["yarn.lock", `# yarn lockfile v1\n\n\n"dep@file:dep":\n  version "1.0.0"\n`],
+    [
+      "pnpm-lock.yaml",
+      `lockfileVersion: '9.0'
+importers:
+  .:
+    dependencies:
+      dep:
+        specifier: file:dep
+        version: file:dep
+packages:
+  dep@file:dep:
+    resolution: {directory: dep, type: directory}
+snapshots:
+  dep@file:dep: {}
+`,
+    ],
+  ])("bun pm migrate writes the bun.lock of an install that migrates %s", async (name, foreign) => {
+    const results = [];
+    for (const args of [
+      ["pm", "migrate"],
+      ["install", "--lockfile-only"],
+    ]) {
+      using dir = tempDir("config-version-pm-migrate", {
+        "package.json": JSON.stringify({
+          name: "app",
+          dependencies: { dep: "file:dep" },
+          trustedDependencies: ["dep"],
+          patchedDependencies: { "dep@1.0.0": "dep.patch" },
+        }),
+        "dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }),
+        "dep.patch": "diff --git a/index.js b/index.js\n",
+        [name]: foreign,
+      });
+      await using proc = spawn({ cmd: [bunExe(), ...args], cwd: String(dir), env: bunEnv, stderr: "pipe" });
+      const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(err).toContain(`migrated lockfile from ${name}`);
+      expect(exitCode).toBe(0);
+      results.push(await file(join(String(dir), "bun.lock")).text());
+    }
+    expect(results[0]).toContain(`"trustedDependencies"`);
+    expect(results[0]).toBe(results[1]);
+  });
+
   test("should add configVersion@v0 to an existing lockfile", async () => {
     using dir = tempDir("config-version-existing-lockfile", {
       "package.json": JSON.stringify({

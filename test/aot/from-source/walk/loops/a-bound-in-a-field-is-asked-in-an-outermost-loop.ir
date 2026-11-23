@@ -1,0 +1,17 @@
+# -- source: main.mjs
+# class Pile { constructor(stones) { this.stones = stones; this.height = stones.length; this.base = 1; } }
+# export function weighs(pile) { let sum = 0; for (let at = pile.base; at < pile.height; at += 2) sum = sum * 3 + pile.stones.charCodeAt(at); return sum; }
+# globalThis.kept = [weighs, Pile];
+# const pile = new Pile(JSON.parse('"gravel"'));
+# print(weighs(pile)); pile.height = "4"; print(weighs(pile)); pile.height = { valueOf() { return 2; } }; print(weighs(pile));
+# -- end of source
+# The bound is read anew in every iteration: nothing tells that it is a number, and the relation may run other code, which the typed version is left at. It is asked for a number,
+# so it is read and rounded before the loop. If the typed version contains other code anyway, the bound is not read.
+# RUN: walk f1:Body mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: TypeTest {{*}}testedType=number
+# CHECK: IntegerBound {{*}}comparison=Less
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 1488
+# ANSWERS-NEXT: 460
+# ANSWERS-NEXT: 114

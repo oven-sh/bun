@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { isLinux, isMacOS, isPosix, isWindows, tempDir } from "harness";
 import fs from "node:fs";
+import { pathToFileURL } from "node:url";
 
 // On POSIX systems, MAX_PATH_BYTES is 4096.
 // Path validation must account for the actual UTF-8 byte length of strings,
@@ -46,7 +47,7 @@ describe.if(isPosix)("path length validation with multi-byte characters", () => 
   // PATH_MAX (Linux 4096, macOS 1024) includes the NUL terminator, so the
   // longest usable path string is PATH_MAX-1 bytes. A path of exactly
   // PATH_MAX bytes used to pass the `0..=MAX_PATH_BYTES` length guard, then
-  // `slice_z_with_force_copy` had no room for the NUL and returned "" — the
+  // `slice_z` had no room for the NUL and returned "" — the
   // syscall ran on the empty path and came back ENOENT instead of
   // ENAMETOOLONG. PATH_MAX-1 (kernel rejects) and PATH_MAX+1 (guard rejects)
   // were already correct; only this one length was wrong.
@@ -114,8 +115,7 @@ describe.if(isWindows)("path length validation in normalizePathWindows", () => {
   });
 
   // Absolute drive-letter paths are normalized into `buf` with an NT object
-  // prefix (\??\ or \??\UNC\) and NUL terminator added by
-  // normalizeStringGenericTZ, which does not bounds-check. node:fs prepends
+  // prefix (\??\ or \??\UNC\) and NUL terminator. node:fs prepends
   // a \\?\ long-path prefix before reaching normalizePathWindows, so size
   // the input so that prefixed length (+4) still fits the 32767-u16
   // conversion buffer and the headroom guard is what rejects it.
@@ -201,7 +201,7 @@ describe.if(isWindows)("path length validation against UTF-16 conversion buffers
   it("still accepts multi-byte paths that are long in bytes but within the UTF-16 bound", () => {
     // 150 × 200-char CJK segments: 90152 UTF-8 bytes — past the UTF-16-unit
     // limit in bytes — but only 30152 UTF-16 units, so
-    // fits_in_wide_path_buffer must compute the exact length and accept it.
+    // the conversion must compute the exact length and accept it.
     // Each component stays under NTFS's 255-unit limit so the only possible
     // syscall failure is non-existence: copyFileSync (which checks both
     // paths against the guard and does not swallow errors) must get past
@@ -232,5 +232,112 @@ describe.if(isWindows)("Buffer paths containing malformed byte sequences", () =>
     ]);
     expect(fs.readdirSync(String(dir) + "\\sub")).toEqual([]);
     expect(fs.readFileSync(String(dir) + "\\e\uFFFDF", "utf8")).toBe("4");
+  });
+});
+
+// A path of MAX_PATH_BYTES or more never reaches a syscall: the argument parser
+// produces the ENAMETOOLONG itself. Node gets that error from the syscall, so
+// it arrives through the callback like any other syscall error, and the
+// callback APIs (which call the native binding directly, unlike fs.promises'
+// async wrappers) must not throw it synchronously. The lengths clear
+// MAX_PATH_BYTES on every platform: 4096 Linux, 1024 macOS, 98302 Windows.
+describe("callback APIs report a path longer than MAX_PATH_BYTES through the callback", () => {
+  const tooLongLength = isWindows ? 100_000 : 5_000;
+  const tooLong = (isWindows ? "C:\\" : "/") + Buffer.alloc(tooLongLength, "a").toString();
+  // The operand that is not under test. Every operation below fails on
+  // `tooLong` before touching the filesystem, so this path is never created.
+  const other = "fs-path-length-other-operand";
+
+  type Callback = (err: unknown) => void;
+  // [name, call, whether node reports `tooLong` as `err.path` (it is the
+  // `dest` of the two-operand calls, and mkdtemp appends its suffix)]
+  const calls: [string, (cb: Callback) => void, boolean][] = [
+    ["access", cb => fs.access(tooLong, cb), true],
+    ["appendFile", cb => fs.appendFile(tooLong, "x", cb), true],
+    ["chmod", cb => fs.chmod(tooLong, 0o644, cb), true],
+    ["chown", cb => fs.chown(tooLong, 0, 0, cb), true],
+    ["copyFile", cb => fs.copyFile(tooLong, other, cb), true],
+    ["cp", cb => fs.cp(tooLong, other, cb), true],
+    ["lstat", cb => fs.lstat(tooLong, cb), true],
+    ["mkdir", cb => fs.mkdir(tooLong, cb), true],
+    ["mkdir recursive", cb => fs.mkdir(tooLong, { recursive: true }, cb), true],
+    ["mkdtemp", cb => fs.mkdtemp(tooLong, cb), false],
+    ["open", cb => fs.open(tooLong, "r", cb), true],
+    ["opendir", cb => fs.opendir(tooLong, cb), true],
+    ["readdir", cb => fs.readdir(tooLong, cb), true],
+    ["readdir recursive", cb => fs.readdir(tooLong, { recursive: true }, cb), true],
+    ["readFile", cb => fs.readFile(tooLong, cb), true],
+    ["readlink", cb => fs.readlink(tooLong, cb), true],
+    ["realpath", cb => fs.realpath(tooLong, cb), true],
+    ["realpath.native", cb => fs.realpath.native(tooLong, cb), true],
+    ["rename oldPath", cb => fs.rename(tooLong, other, cb), true],
+    ["rename newPath", cb => fs.rename(other, tooLong, cb), false],
+    ["rm", cb => fs.rm(tooLong, cb), true],
+    ["rmdir", cb => fs.rmdir(tooLong, cb), true],
+    ["stat", cb => fs.stat(tooLong, cb), true],
+    ["stat with a Buffer path", cb => fs.stat(Buffer.from(tooLong), cb), true],
+    ["stat with a file: URL path", cb => fs.stat(pathToFileURL(tooLong), cb), true],
+    ["statfs", cb => fs.statfs(tooLong, cb), true],
+    ["symlink", cb => fs.symlink(other, tooLong, cb), false],
+    ["truncate", cb => fs.truncate(tooLong, cb), true],
+    ["unlink", cb => fs.unlink(tooLong, cb), true],
+    ["utimes", cb => fs.utimes(tooLong, 0, 0, cb), true],
+    ["writeFile", cb => fs.writeFile(tooLong, "x", cb), true],
+  ];
+
+  it.each(calls)("fs.%s", async (_, call, pathIsReported) => {
+    const { promise, resolve } = Promise.withResolvers<unknown>();
+    let returned = false;
+    let calledBeforeReturning = false;
+    call(err => {
+      calledBeforeReturning = !returned;
+      resolve(err);
+    });
+    returned = true;
+    const err = (await promise) as NodeJS.ErrnoException;
+    expect(calledBeforeReturning).toBe(false);
+    expect(err.code).toBe("ENAMETOOLONG");
+    if (pathIsReported) {
+      expect(err.path).toBe(tooLong);
+    }
+  });
+
+  // https://github.com/oven-sh/bun/issues/25659
+  it("a relative path is reported the same way (#25659)", async () => {
+    const { promise, resolve } = Promise.withResolvers<unknown>();
+    const order: string[] = [];
+    fs.readFile(Buffer.alloc(tooLongLength, "a").toString(), err => {
+      order.push("callback");
+      resolve(err);
+    });
+    order.push("returned");
+    const err = (await promise) as NodeJS.ErrnoException;
+    expect(order).toEqual(["returned", "callback"]);
+    expect(err.code).toBe("ENAMETOOLONG");
+  });
+
+  it("fs.exists answers false", async () => {
+    const { promise, resolve } = Promise.withResolvers<boolean>();
+    fs.exists(tooLong, resolve);
+    expect(await promise).toBe(false);
+  });
+
+  // Node validates the other arguments before issuing the syscall, so an
+  // invalid option still throws synchronously and wins over the path's errno.
+  it("an invalid option still throws synchronously", () => {
+    expect(() => fs.readdir(tooLong, { encoding: "bogus" as BufferEncoding }, () => {})).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
+    );
+    expect(() => fs.readFile(tooLong, { encoding: "bogus" as BufferEncoding }, () => {})).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
+    );
+  });
+
+  it("the sync variants throw it, naming the path", () => {
+    expect(() => fs.statSync(tooLong)).toThrow(expect.objectContaining({ code: "ENAMETOOLONG", path: tooLong }));
+    expect(() => fs.statSync(Buffer.from(tooLong))).toThrow(
+      expect.objectContaining({ code: "ENAMETOOLONG", path: tooLong }),
+    );
+    expect(() => fs.renameSync(other, tooLong)).toThrow(expect.objectContaining({ code: "ENAMETOOLONG" }));
   });
 });

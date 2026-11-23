@@ -128,6 +128,9 @@ await redis.set("counter", "0");
 // Increment by 1
 await redis.incr("counter");
 
+// Redis 8.8 or Valkey 9.2: increment and set the expiration in one command
+const [value, increment] = await redis.increx("counter", "BYINT", 5, "EX", 60);
+
 // Decrement by 1
 await redis.decr("counter");
 ```
@@ -251,6 +254,9 @@ Publish messages with the `publish()` method:
 
 ```typescript redis.ts icon="/icons/typescript.svg"
 await client.publish(channelName, message);
+
+// A buffer is sent as its bytes
+await client.publish(channelName, new Uint8Array([0xff, 0xfe]));
 ```
 
 ### Subscriptions
@@ -292,7 +298,7 @@ const client = new RedisClient("redis://localhost:6379", {
 
 ### Raw Commands
 
-Use the `send` method to run any Redis command, including ones without a dedicated method. The first argument is the command name, and the second is an array of string arguments.
+Use the `send` method to run any Redis command, including ones without a dedicated method. The first argument is the command name. The second is an array of strings, numbers, buffers or in-memory `Blob`s. `Bun.file()` and `S3File` throw here and in every other method: pass `await file.bytes()`.
 
 ```ts redis.ts icon="/icons/typescript.svg"
 // Run any Redis command
@@ -304,6 +310,8 @@ await redis.send("LPUSH", ["mylist", "value1", "value2"]);
 // Get list range
 const list = await redis.send("LRANGE", ["mylist", "0", "-1"]);
 ```
+
+A `null` or `undefined` argument throws where it would shift or drop another one, as in `mget(a, undefined, c)` or `set(key, value, undefined, "NX")`. After `MULTI`, catch such errors and send `DISCARD`, or later commands stay queued.
 
 ### Connection Events
 

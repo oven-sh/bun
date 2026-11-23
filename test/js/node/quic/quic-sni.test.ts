@@ -231,6 +231,27 @@ test("an expired intermediate in `ca` does not shadow the valid one the server s
   expect(info.validationErrorCode).toBeUndefined();
 });
 
+test.each([[["root", "root-not-a-ca"]], [["root-not-a-ca", "root"]]])(
+  "an unusable copy of the root does not shadow it, ca: %p",
+  async ca => {
+    const read = (name: string) => readFileSync(join(import.meta.dir, "..", "tls", "fixtures", "trust-anchor", name));
+    const identity = {
+      keys: [createPrivateKey(read("leaf.key"))],
+      certs: [Buffer.concat([read("leaf.pem"), read("intermediate.pem")])],
+    };
+    await using server = await listen(ignoreErrors, { sni: { "*": identity }, alpn: ["quic-test"] });
+    const session = await connect(server.address!, {
+      alpn: "quic-test",
+      servername: "localhost",
+      verifyPeer: "strict",
+      ca: ca.map(name => read(`${name}.pem`)),
+    } as SessionOptions);
+    const info = await session.opened;
+    await session.close();
+    expect(info.validationErrorCode).toBeUndefined();
+  },
+);
+
 test("verifyPeer 'strict' and 'auto' refuse a certificate with a blocked public key", async () => {
   // Unlike agent6's, this certificate names its host, which both modes check.
   const fixtures = join(import.meta.dir, "..", "tls", "fixtures");

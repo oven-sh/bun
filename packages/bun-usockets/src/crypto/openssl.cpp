@@ -24,8 +24,6 @@
 #include <limits.h>
 #include <time.h>
 #include <atomic>
-#include <string_view>
-#include <unordered_set>
 #include <utility>
 #ifndef _WIN32
 #include <pthread.h>
@@ -878,34 +876,29 @@ static void us_crypto_buffer_stack_free(STACK_OF(CRYPTO_BUFFER) *buffers) {
 }
 using us_crypto_buffer_stack_ptr = us_unique_ptr<STACK_OF(CRYPTO_BUFFER), us_crypto_buffer_stack_free>;
 
+static int us_crypto_buffer_cmp(const CRYPTO_BUFFER *const *a, const CRYPTO_BUFFER *const *b) {
+  size_t al = CRYPTO_BUFFER_len(*a), bl = CRYPTO_BUFFER_len(*b);
+  if (al != bl) return al < bl ? -1 : 1;
+  return memcmp(CRYPTO_BUFFER_data(*a), CRYPTO_BUFFER_data(*b), al);
+}
+
 /* Trusts the DER certificates in `certs` (duplicates dropped) through one lazily-parsed set on `store`, and makes their
  * subjects the context's client-CA list, as X509_STORE_add_cert + SSL_CTX_add_client_CA per parsed certificate did. */
 static int us_install_ca_buffers(SSL_CTX *ctx, X509_STORE *store, STACK_OF(CRYPTO_BUFFER) *certs) {
-  size_t total = sk_CRYPTO_BUFFER_num(certs), n = 0;
-  if (total == 0) return 1;
-  us_unique_ptr<CRYPTO_BUFFER *[], free> bufs{(CRYPTO_BUFFER **)malloc(total * sizeof(CRYPTO_BUFFER *))};
+  sk_CRYPTO_BUFFER_set_cmp_func(certs, us_crypto_buffer_cmp);
+  sk_CRYPTO_BUFFER_sort_and_dedup(certs, CRYPTO_BUFFER_free);
+  size_t n = sk_CRYPTO_BUFFER_num(certs);
+  if (n == 0) return 1;
+  us_unique_ptr<CRYPTO_BUFFER *[], free> bufs{(CRYPTO_BUFFER **)malloc(n * sizeof(CRYPTO_BUFFER *))};
   if (bufs == NULL) return 0;
-  /* Not by sorting: of several certificates with one subject, BoringSSL tries only the first it comes to. */
-  std::unordered_set<std::string_view> seen;
-  for (size_t i = 0; i < total; i++) {
-    CRYPTO_BUFFER *cert = sk_CRYPTO_BUFFER_value(certs, i);
-    if (seen.emplace((const char *)CRYPTO_BUFFER_data(cert), CRYPTO_BUFFER_len(cert)).second) bufs[n++] = cert;
-  }
+  for (size_t i = 0; i < n; i++) bufs[i] = sk_CRYPTO_BUFFER_value(certs, i);
   us_unique_ptr<X509_LAZY_CERT_SET, X509_LAZY_CERT_SET_free> set{X509_LAZY_CERT_SET_new(bufs.get(), n)};
   us_crypto_buffer_stack_ptr names{sk_CRYPTO_BUFFER_new_null()};
   if (set == NULL || names == NULL || !X509_STORE_add_lazy_cert_set(store, set.get())) return 0;
-  std::unordered_set<uint32_t> subjects;
   for (size_t i = 0; i < n; i++) {
     const uint8_t *subject;
     size_t subject_len;
     if (!X509_LAZY_CERT_SET_get0_subject(set.get(), i, &subject, &subject_len)) return 0;
-    const uint8_t *cursor = subject;
-    us_unique_ptr<X509_NAME, X509_NAME_free> parsed{d2i_X509_NAME(NULL, &cursor, subject_len)};
-    if (parsed == NULL) return 0;
-    /* Auto-chain only sees the flags of the store. With nothing to choose from, it sends what is out of date. */
-    if (!subjects.insert(X509_NAME_hash(parsed.get())).second) {
-      X509_STORE_set_flags(store, X509_V_FLAG_IGNORE_EXPIRED_TRUST_ANCHORS);
-    }
     us_crypto_buffer_ptr name{CRYPTO_BUFFER_new(subject, subject_len, NULL)};
     if (name == NULL || !sk_CRYPTO_BUFFER_push(names.get(), name.get())) return 0;
     name.release();
@@ -1187,13 +1180,78 @@ static int us_x509_store_ctx_common_name_error(X509_STORE_CTX *ctx) {
   return error;
 }
 
+static int us_x509_store_ctx_own_error(X509_STORE_CTX *ctx, int ok) {
+  int error = us_x509_store_ctx_blocked_key_error(ctx);
+  return error == X509_V_OK && ok ? us_x509_store_ctx_common_name_error(ctx) : error;
+}
+
+using us_x509_store_ctx_ptr = us_unique_ptr<X509_STORE_CTX, X509_STORE_CTX_free>;
+using us_x509_borrowed_stack_ptr = us_unique_ptr<STACK_OF(X509), sk_X509_free>;
+
+/* The verdict of `ctx` on one path: its leaf, `intermediates`, and `anchor` from the store. */
+static int us_x509_verify_path(X509_STORE_CTX *ctx, STACK_OF(X509) *intermediates, X509 *anchor) {
+  us_x509_borrowed_stack_ptr trusted{sk_X509_new_null()};
+  us_x509_store_ctx_ptr path{X509_STORE_CTX_new()};
+  if (trusted == NULL || path == NULL || !sk_X509_push(trusted.get(), anchor) ||
+      !X509_STORE_CTX_init(path.get(), X509_STORE_CTX_get0_store(ctx), X509_STORE_CTX_get0_cert(ctx), intermediates) ||
+      !X509_VERIFY_PARAM_set1(X509_STORE_CTX_get0_param(path.get()), X509_STORE_CTX_get0_param(ctx))) {
+    return X509_V_ERR_OUT_OF_MEM;
+  }
+  X509_STORE_CTX_set0_trusted_stack(path.get(), trusted.get());
+  if (!X509_verify_cert(path.get())) return X509_STORE_CTX_get_error(path.get());
+  return us_x509_store_ctx_own_error(path.get(), 1);
+}
+
+/* Depth-first: whether `path`, which ends in `subject`, verifies through any issuer in the store or from the peer. */
+static int us_x509_extend_path(X509_STORE_CTX *ctx, STACK_OF(X509) *path, X509 *subject, int *issuers_left) {
+  us_x509_stack_ptr stored{X509_STORE_CTX_get1_certs(ctx, X509_get_issuer_name(subject))};
+  STACK_OF(X509) *sent = X509_STORE_CTX_get0_untrusted(ctx);
+  size_t num_stored = sk_X509_num(stored.get());
+  for (size_t i = 0; i < num_stored + sk_X509_num(sent); i++) {
+    X509 *issuer = i < num_stored ? sk_X509_value(stored.get(), i) : sk_X509_value(sent, i - num_stored);
+    if (X509_check_issued(issuer, subject) != X509_V_OK || sk_X509_find(path, NULL, issuer)) continue;
+    if (--*issuers_left < 0) return 0;
+    if (i < num_stored) {
+      int error = us_x509_verify_path(ctx, path, issuer);
+      if (error == X509_V_OK || error == X509_V_ERR_CERT_REJECTED) return error == X509_V_OK;
+    }
+    if (X509_get_extension_flags(issuer) & EXFLAG_SS) continue;
+    if (!sk_X509_push(path, issuer)) return 0;
+    if (us_x509_extend_path(ctx, path, issuer, issuers_left)) return 1;
+    sk_X509_pop(path);
+  }
+  return 0;
+}
+
+/* As maxChainSignatureChecks in Go's crypto/x509. */
+static const int us_x509_max_issuers_to_try = 100;
+
+/* X509_verify_cert builds one path, out of the first issuers it comes to, and does not go back. */
+static int us_x509_store_ctx_has_valid_path(X509_STORE_CTX *ctx) {
+  X509 *leaf = X509_STORE_CTX_get0_cert(ctx);
+  us_x509_stack_ptr same_subject{X509_STORE_CTX_get1_certs(ctx, X509_get_subject_name(leaf))};
+  for (size_t i = 0; i < sk_X509_num(same_subject.get()); i++) {
+    if (X509_cmp(sk_X509_value(same_subject.get(), i), leaf) != 0) continue;
+    int error = us_x509_verify_path(ctx, NULL, sk_X509_value(same_subject.get(), i));
+    if (error == X509_V_OK || error == X509_V_ERR_CERT_REJECTED) return error == X509_V_OK;
+  }
+  us_x509_borrowed_stack_ptr path{sk_X509_new_null()};
+  int issuers_left = us_x509_max_issuers_to_try;
+  return path != NULL && us_x509_extend_path(ctx, path.get(), leaf, &issuers_left);
+}
+
 /* What X509_verify_cert does not look for, a blocked public key (blocked_spkis.cpp) and
  * us_x509_store_ctx_common_name_error, is reported the way it reports its own errors: to the SSL's verify callback,
  * which says whether to go on. Without one, as in quic.cpp and node:quic, this returns 0 as it would. */
 static int us_x509_verify_chain(X509_STORE_CTX *ctx) {
   int ok = X509_verify_cert(ctx);
-  int error = us_x509_store_ctx_blocked_key_error(ctx);
-  if (error == X509_V_OK && ok) error = us_x509_store_ctx_common_name_error(ctx);
+  int error = us_x509_store_ctx_own_error(ctx, ok);
+  if ((error != X509_V_OK || X509_STORE_CTX_get_error(ctx) != X509_V_OK) && us_x509_store_ctx_has_valid_path(ctx)) {
+    /* libssl does not do this for quic.cpp, and SSL_get_error takes whatever is left for a failure. */
+    ERR_clear_error();
+    X509_STORE_CTX_set_error(ctx, X509_V_OK);
+    return 1;
+  }
   if (error == X509_V_OK) return ok;
   X509_STORE_CTX_set_error(ctx, error);
   SSL *ssl = (SSL *)X509_STORE_CTX_get_ex_data(ctx, SSL_get_ex_data_X509_STORE_CTX_idx());
@@ -1225,6 +1283,57 @@ int us_x509_verify_cert(X509_STORE_CTX *ctx, int purpose) {
     }
   }
   return us_x509_verify_chain(ctx);
+}
+
+/* One call of getPeerCertificate(true). Mirrors IssuerWalk in tls_socket_functions.rs. */
+struct us_x509_issuer_walk_t {
+  X509_STORE *store;
+  STACK_OF(X509) *sent;
+  int had_choice;
+  int signatures_checked;
+};
+
+static us_x509_stack_ptr us_x509_issuer_walk_get1_stored(struct us_x509_issuer_walk_t *walk, X509 *subject,
+                                                         X509 **first) {
+  us_x509_store_ctx_ptr lookup{walk->store ? X509_STORE_CTX_new() : NULL};
+  if (lookup == NULL || !X509_STORE_CTX_init(lookup.get(), walk->store, NULL, NULL)) return NULL;
+  if (first) X509_STORE_CTX_get1_issuer(first, lookup.get(), subject);
+  return us_x509_stack_ptr{X509_STORE_CTX_get1_certs(lookup.get(), X509_get_issuer_name(subject))};
+}
+
+/* Applications pin this chain, and X509_check_issued only compares what anyone can copy. As long as each link has one
+ * candidate, it is the chain that was verified. Past that, signatures have to say so. */
+int us_x509_issuer_walk_accepts(struct us_x509_issuer_walk_t *walk, X509 *subject, X509 *issuer) {
+  if (X509_check_issued(issuer, subject) != X509_V_OK) return 0;
+  us_x509_stack_ptr stored = us_x509_issuer_walk_get1_stored(walk, subject, NULL);
+  int has_choice = 0, check_signature = walk->had_choice;
+  for (STACK_OF(X509) *others : {walk->sent, stored.get()}) {
+    for (size_t i = 0; i < sk_X509_num(others) && !check_signature; i++) {
+      X509 *other = sk_X509_value(others, i);
+      if (other == issuer || X509_check_issued(other, subject) != X509_V_OK) continue;
+      has_choice = 1;
+      check_signature = ASN1_STRING_cmp(X509_get0_pubkey_bitstr(other), X509_get0_pubkey_bitstr(issuer)) != 0;
+    }
+  }
+  if (check_signature && (++walk->signatures_checked > us_x509_max_issuers_to_try ||
+                          X509_verify(subject, X509_get0_pubkey(issuer)) != 1)) {
+    ERR_clear_error();
+    return 0;
+  }
+  walk->had_choice |= has_choice;
+  return 1;
+}
+
+X509 *us_x509_issuer_walk_get1_from_store(struct us_x509_issuer_walk_t *walk, X509 *subject) {
+  X509 *first = NULL;
+  us_x509_stack_ptr stored = us_x509_issuer_walk_get1_stored(walk, subject, &first);
+  us_x509_ptr owned{first};
+  if (first == NULL || us_x509_issuer_walk_accepts(walk, subject, first)) return owned.release();
+  for (size_t i = 0; i < sk_X509_num(stored.get()); i++) {
+    X509 *other = sk_X509_value(stored.get(), i);
+    if (other != first && us_x509_issuer_walk_accepts(walk, subject, other) && X509_up_ref(other)) return other;
+  }
+  return NULL;
 }
 
 /* Verifies the chain, then asks the owner of a client for the name: a wrong name is a verify error like any other. */

@@ -18,7 +18,10 @@ use crate::api::bun_x509 as X509;
 // ──────────────────────────────────────────────────────────────────────────
 #[allow(non_upper_case_globals)]
 pub(super) mod ffi {
-    use super::boringssl::{OwnedX509Store, SSL, SSL_CTX, SSL_SESSION, X509, struct_stack_st_X509};
+    use super::boringssl::{
+        OwnedX509, OwnedX509Store, SSL, SSL_CTX, SSL_SESSION, X509, X509_STORE,
+        struct_stack_st_X509,
+    };
     use core::ffi::{c_char, c_int, c_uint, c_void};
 
     // Re-export the one decl whose `*const c_char` NUL-terminated arg keeps a
@@ -28,6 +31,15 @@ pub(super) mod ffi {
     // Opaque handles missing from boringssl_sys.
     bun_opaque::opaque_ffi! {
         pub(crate) struct SSL_CIPHER;
+    }
+
+    /// `us_x509_issuer_walk_t` in openssl.cpp.
+    #[repr(C)]
+    pub(crate) struct IssuerWalk<'a> {
+        pub(crate) store: Option<&'a X509_STORE>,
+        pub(crate) sent: Option<&'a struct_stack_st_X509>,
+        pub(crate) had_choice: c_int,
+        pub(crate) signatures_checked: c_int,
     }
 
     // ssl.h
@@ -234,6 +246,15 @@ pub(super) mod ffi {
         pub(crate) safe fn us_ssl_ctx_has_user_ca(ctx: &SSL_CTX) -> c_int;
         // Returns X509_V_OK (0) when `issuer` could have issued `subject`.
         pub(crate) safe fn X509_check_issued(issuer: &X509, subject: &X509) -> c_int;
+        pub(crate) safe fn us_x509_issuer_walk_accepts(
+            walk: &mut IssuerWalk<'_>,
+            subject: &X509,
+            issuer: &X509,
+        ) -> c_int;
+        pub(crate) safe fn us_x509_issuer_walk_get1_from_store(
+            walk: &mut IssuerWalk<'_>,
+            subject: &X509,
+        ) -> Option<OwnedX509>;
     }
 }
 use super::TLSSocket;
@@ -434,18 +455,35 @@ impl TLSSocket {
         // `X509::to_js` allocation can trigger a GC - a heap-backed Vec<JSValue>
         // is not stack-scanned.
         let mut prev_obj: JSValue = first_obj;
+        let ssl_ctx = boringssl::SSL_CTX::opaque_ref(ffi::SSL_get_SSL_CTX(
+            boringssl::SSL::opaque_ref(ssl_ptr),
+        ));
+        let ctx_store = boringssl::SSL_CTX_get_cert_store(ssl_ctx);
+        // Without `ca`, Node looks in the bundled roots.
+        let shared_store = if ctx_store.is_none() || ffi::us_ssl_ctx_has_user_ca(ssl_ctx) == 0 {
+            ffi::us_get_shared_default_ca_store()
+        } else {
+            None
+        };
+        let mut walk = ffi::IssuerWalk {
+            store: shared_store.as_deref().or(ctx_store),
+            sent: (!cert_chain.is_null())
+                .then(|| boringssl::struct_stack_st_X509::opaque_ref(cert_chain)),
+            had_choice: 0,
+            signatures_checked: 0,
+        };
         let mut last_sent = boringssl::X509::opaque_ref(first_cert);
-        if !cert_chain.is_null() {
+        if let Some(chain) = walk.sent {
             // The certificates the peer sent are candidates: each link is the one that
             // X509_check_issued accepts, like Node's AddIssuerChainToObject
             // (src/crypto/crypto_common.cc).
-            let chain = boringssl::struct_stack_st_X509::opaque_ref(cert_chain);
             let mut candidates: Vec<*mut boringssl::X509> = (usize::from(cert.is_none())..)
                 .map(|i| ffi::sk_X509_value(chain, i))
                 .take_while(|candidate| !candidate.is_null())
                 .collect();
             while let Some(i) = candidates.iter().position(|&candidate| {
-                ffi::X509_check_issued(boringssl::X509::opaque_ref(candidate), last_sent) == 0
+                let candidate = boringssl::X509::opaque_ref(candidate);
+                ffi::us_x509_issuer_walk_accepts(&mut walk, last_sent, candidate) != 0
             }) {
                 let issuer = candidates.remove(i);
                 let obj = X509::to_js(boringssl::X509::opaque_mut(issuer), global)?;
@@ -459,20 +497,6 @@ impl TLSSocket {
         // certificate is reached, the way Node's getPeerCertificate(true) walks
         // X509_STORE_CTX_get1_issuer to surface the root that completed
         // verification even though the peer never sent it.
-        let ssl_ctx = boringssl::SSL_CTX::opaque_ref(ffi::SSL_get_SSL_CTX(
-            boringssl::SSL::opaque_ref(ssl_ptr),
-        ));
-        let ctx_store = boringssl::SSL_CTX_get_cert_store(ssl_ctx);
-        // Without `ca`, Node looks in the bundled roots.
-        let shared_store = if ctx_store.is_none() || ffi::us_ssl_ctx_has_user_ca(ssl_ctx) == 0 {
-            ffi::us_get_shared_default_ca_store()
-        } else {
-            None
-        };
-        let store = shared_store.as_deref().or(ctx_store);
-        let Some(lookup) = store.and_then(boringssl::IssuerLookup::new) else {
-            return Ok(first_obj);
-        };
         let mut last_found: Option<boringssl::OwnedX509> = None;
         // Cap the walk so a cyclic store cannot loop forever.
         for _ in 0..16 {
@@ -480,7 +504,8 @@ impl TLSSocket {
             if ffi::X509_check_issued(subject, subject) == 0 {
                 break;
             }
-            let Some(mut issuer) = lookup.issuer_of(subject) else {
+            let Some(mut issuer) = ffi::us_x509_issuer_walk_get1_from_store(&mut walk, subject)
+            else {
                 break;
             };
             let obj = X509::to_js(&mut issuer, global)?;

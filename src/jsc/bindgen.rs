@@ -106,14 +106,7 @@ impl<'a> JsHeap<'a> {
         let mut items = items.into_iter();
         for count in 0..short.len() {
             let Some(item) = items.next() else {
-                // SAFETY: `count` initialized values.
-                return JsLocal::from_js_result(crate::call_zero_is_throw(global, || unsafe {
-                    extern_types::Bun__Bindgen__constructArrayFromValues(
-                        self.global_ptr(),
-                        short.as_ptr(),
-                        count,
-                    )
-                }));
+                return self.create_array_of(&short[..count]);
             };
             short[count] = convert(self, item)?.0;
         }
@@ -123,6 +116,19 @@ impl<'a> JsHeap<'a> {
             array.put_index(global, index as u32, value?)?;
         }
         Ok(JsLocal::from_raw(array))
+    }
+
+    /// An array of `values`, which are where the collector sees them: on the stack or in a [`crate::MarkedArgumentBuffer`].
+    #[inline]
+    pub fn create_array_of(&self, values: &[JSValue]) -> Result<'a, JsLocal<'a, JSArray>> {
+        // SAFETY: the pointer and the length of a slice.
+        JsLocal::from_js_result(crate::call_zero_is_throw(self.global_object(), || unsafe {
+            extern_types::Bun__Bindgen__constructArrayFromValues(
+                self.global_ptr(),
+                values.as_ptr(),
+                values.len(),
+            )
+        }))
     }
 
     #[inline]

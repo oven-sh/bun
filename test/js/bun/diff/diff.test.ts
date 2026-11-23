@@ -264,6 +264,28 @@ describe("arrays", () => {
     expect(reads).toBe(1);
   });
 
+  test("elements that only the call holds survive a collection", () => {
+    const fresh = (from: number) => {
+      const array: unknown[] = [];
+      for (let i = 0; i < 20; i++) {
+        Object.defineProperty(array, i, { get: () => (Bun.gc(true), { id: from + i }) });
+      }
+      return array;
+    };
+    const ids = (from: number) => Array.from({ length: 20 }, (_, i) => ({ id: from + i }));
+    expect(short(diff.arrays(fresh(0), fresh(20)))).toEqual([
+      ["-", ids(0), 20],
+      ["+", ids(20), 20],
+    ]);
+
+    const old: unknown[] = ids(0);
+    const overwrites = Object.defineProperty([], 0, { get: () => (old.fill(0), Bun.gc(true), "new") });
+    expect(short(diff.arrays(old, overwrites))).toEqual([
+      ["-", ids(0), 20],
+      ["+", ["new"], 1],
+    ]);
+  });
+
   test("what a getter throws is thrown", () => {
     const error = new Error("from the getter");
     const throwing = Object.defineProperty(Array(20).fill(0), 15, {

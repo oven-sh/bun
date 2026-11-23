@@ -3,7 +3,7 @@ use std::borrow::Cow;
 
 use bun_core::String;
 use bun_core::strings::CodeUnits;
-use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsScope, to_js};
+use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsScope};
 use bun_jsc::{
     ErrorCode, JSArray, JSArrayIterator, JSGlobalObject, JSMap, JSValue, JsResult,
     MarkedArgumentBuffer,
@@ -12,7 +12,8 @@ use bun_text_diff::patch;
 use bun_text_diff::tokens::{Edit, Split, Unit, diff_ids, diff_text};
 
 use crate::generated_bindgen::diff_object::{
-    Change, FilePatch, Hunk, HunkToApply, HunksOptions, Options, PatchOptions, PatchToApply,
+    ArrayChange, Change, FilePatch, Hunk, HunkToApply, HunksOptions, Options, PatchOptions,
+    PatchToApply,
 };
 
 trait JsUnit: Unit {
@@ -160,8 +161,13 @@ struct ValueIds {
 }
 
 impl ValueIds {
-    /// A copy of `array`, which a getter can change, and the number of each element.
-    fn read(&mut self, global: &JSGlobalObject, array: JSValue) -> JsResult<(JSValue, Vec<u32>)> {
+    /// The number of each element. The elements go into `copy`, which is empty, because a getter can change `array`.
+    fn read(
+        &mut self,
+        global: &JSGlobalObject,
+        array: JSValue,
+        copy: &mut MarkedArgumentBuffer,
+    ) -> JsResult<Vec<u32>> {
         let Some(map) = JSMap::from_js(self.map) else {
             return Err(global.throw_out_of_memory());
         };
@@ -170,45 +176,42 @@ impl ValueIds {
         if elements.len > i32::MAX as u32 {
             return Err(global.throw_out_of_memory());
         }
-        MarkedArgumentBuffer::new(|copy| {
-            let mut ids = Vec::new();
-            while let Some(element) = elements.next()? {
-                copy.append(element);
-                if copy.size() == ids.len() {
-                    return Err(global.throw_out_of_memory());
-                }
-                // To a `Map`, NaN is the same as NaN.
-                let is_nan = element.is_number() && element.as_number().is_nan();
-                if !is_nan {
-                    let known = map.get(global, element)?;
-                    if known.is_number() {
-                        ids.push(known.as_number() as u32);
-                        continue;
-                    }
-                    map.set(global, element, JSValue::js_number(self.distinct.into()))?;
-                }
-                ids.push(self.distinct);
-                self.distinct += 1;
+        let mut ids = Vec::new();
+        while let Some(element) = elements.next()? {
+            copy.append(element);
+            if copy.size() == ids.len() {
+                return Err(global.throw_out_of_memory());
             }
-            Ok((copy.construct_array(global)?, ids))
-        })
+            // To a `Map`, NaN is the same as NaN.
+            let is_nan = element.is_number() && element.as_number().is_nan();
+            if !is_nan {
+                let known = map.get(global, element)?;
+                if known.is_number() {
+                    ids.push(known.as_number() as u32);
+                    continue;
+                }
+                map.set(global, element, JSValue::js_number(self.distinct.into()))?;
+            }
+            ids.push(self.distinct);
+            self.distinct += 1;
+        }
+        Ok(ids)
     }
 }
 
-pub(crate) fn arrays<'a>(
+fn array_changes<'a>(
     cx: &mut JsScope<'a>,
-    old: JsLocal<'a, JSArray>,
-    new: JsLocal<'a, JSArray>,
-    options: &Options,
+    (old, old_copy): (JSValue, &mut MarkedArgumentBuffer),
+    (new, new_copy): (JSValue, &mut MarkedArgumentBuffer),
+    max_edits: usize,
 ) -> bindgen::Result<'a, Option<JsLocal<'a, JSArray>>> {
-    let max_edits = max_edits(&cx.heap, options.max_edit_length)?;
     let global = cx.global();
     let mut ids = ValueIds {
         map: JSMap::create(global),
         distinct: 0,
     };
-    let (old, a) = ids.read(global, old.to_js())?;
-    let (new, b) = ids.read(global, new.to_js())?;
+    let a = ids.read(global, old, old_copy)?;
+    let b = ids.read(global, new, new_copy)?;
     ids.map.ensure_still_alive();
 
     let Some(hunks) = diff_ids(&a, &b, ids.distinct as usize, max_edits) else {
@@ -219,25 +222,34 @@ pub(crate) fn arrays<'a>(
         tokens: hunk,
     });
     let runs = runs(edits, b.len(), |from| b.len() - from);
+    let (old, new) = (old_copy.as_slice(), new_copy.as_slice());
     let changes = cx.heap.create_array(runs, |heap, run| {
         let Run { kind, range, count } = run;
         let from = if kind == Kind::Removed { old } else { new };
-        // SAFETY: each index of the copies is an own data property, so reading one runs no JavaScript.
-        let global = unsafe { heap.global() };
-        let value = heap.create_array(range, |heap, index| {
-            to_js::any(heap, from.get_index(global, index as u32)?)
-        })?;
-        let members = [
-            ("value", value.as_value()),
-            ("added", to_js::bool(heap, kind == Kind::Added)?),
-            ("removed", to_js::bool(heap, kind == Kind::Removed)?),
-            ("count", to_js::usize(heap, count)?),
-        ];
-        to_js::record(heap, members, to_js::any)
+        let change = ArrayChange {
+            value: heap.create_array_of(&from[range])?,
+            added: kind == Kind::Added,
+            removed: kind == Kind::Removed,
+            count,
+        };
+        change.into_js(heap)
     })?;
-    old.ensure_still_alive();
-    new.ensure_still_alive();
     Ok(Some(changes))
+}
+
+pub(crate) fn arrays<'a>(
+    cx: &mut JsScope<'a>,
+    old: JsLocal<'a, JSArray>,
+    new: JsLocal<'a, JSArray>,
+    options: &Options,
+) -> bindgen::Result<'a, Option<JsLocal<'a, JSArray>>> {
+    let max_edits = max_edits(&cx.heap, options.max_edit_length)?;
+    MarkedArgumentBuffer::new(|old_copy| {
+        MarkedArgumentBuffer::new(|new_copy| {
+            let (old, new) = ((old.to_js(), old_copy), (new.to_js(), new_copy));
+            array_changes(cx, old, new, max_edits)
+        })
+    })
 }
 
 fn hunk_with<L>(hunk: patch::PatchHunk<L>, line: impl FnMut(L) -> String) -> Hunk {

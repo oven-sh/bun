@@ -11,6 +11,7 @@ bun_opaque::opaque_ffi! {
 unsafe extern "C" {
     safe fn MarkedArgumentBuffer__append(args: &MarkedArgumentBuffer, value: JSValue);
     safe fn MarkedArgumentBuffer__size(args: &MarkedArgumentBuffer) -> usize;
+    safe fn MarkedArgumentBuffer__data(args: &MarkedArgumentBuffer) -> *const JSValue;
     safe fn MarkedArgumentBuffer__constructArray(
         args: &MarkedArgumentBuffer,
         global: &JSGlobalObject,
@@ -55,6 +56,11 @@ impl MarkedArgumentBuffer {
 
     pub fn size(&self) -> usize {
         MarkedArgumentBuffer__size(self)
+    }
+
+    pub fn as_slice(&self) -> &[JSValue] {
+        // SAFETY: the inline buffer or an allocation, with `size` values. Only `append`, which takes `&mut self`, moves it.
+        unsafe { core::slice::from_raw_parts(MarkedArgumentBuffer__data(self), self.size()) }
     }
 
     /// A `JSArray` of the values.

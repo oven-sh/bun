@@ -26,6 +26,11 @@ extern "C" size_t MarkedArgumentBuffer__size(void* args)
     return static_cast<JSC::MarkedArgumentBuffer*>(args)->size();
 }
 
+extern "C" const JSC::EncodedJSValue* MarkedArgumentBuffer__data(void* args)
+{
+    return static_cast<JSC::MarkedArgumentBuffer*>(args)->data();
+}
+
 extern "C" JSC::EncodedJSValue MarkedArgumentBuffer__constructArray(void* ptr, JSC::JSGlobalObject* globalObject)
 {
     auto& args = *static_cast<JSC::MarkedArgumentBuffer*>(ptr);

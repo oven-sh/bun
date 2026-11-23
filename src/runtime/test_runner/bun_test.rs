@@ -1223,19 +1223,23 @@ impl BunTest {
         data: &RefDataValue,
         call: impl FnOnce() -> JsResult<R>,
     ) -> JsResult<R> {
-        // An exception left pending by earlier code would make this call fail, so report it first.
-        if global_this.has_exception() {
-            global_this.clear_termination_exception();
-            this.on_uncaught_exception(global_this, global_this.try_take_exception(), false, &RefDataValue::Start);
-        }
+        let on_stack = Self::before_callback(this, global_this, data);
         let vm = global_this.bun_vm();
-        let on_stack = OnStack::enter(&this.execution.on_stack, data);
         vm.event_loop().run_callback_with_result_and_forcefully_drain_microtasks(
             vm.test_isolation_state.file_context.get(),
             global_this,
             call,
             move || drop(on_stack),
         )
+    }
+
+    fn before_callback<'a>(this: &'a BunTestPtr, global_this: &JSGlobalObject, data: &RefDataValue) -> OnStack<'a> {
+        // An exception left pending by earlier code would make this call fail, so report it first.
+        if global_this.has_exception() {
+            global_this.clear_termination_exception();
+            this.on_uncaught_exception(global_this, global_this.try_take_exception(), false, &RefDataValue::Start);
+        }
+        OnStack::enter(&this.execution.on_stack, data)
     }
 
     pub(crate) fn report_thrown(this: &BunTestPtr, global_this: &JSGlobalObject, data: &RefDataValue) {

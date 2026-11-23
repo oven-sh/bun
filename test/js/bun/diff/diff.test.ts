@@ -714,6 +714,13 @@ describe("applyPatch", () => {
     expect(diff.applyPatch(kept + "b\n", [{ oldStart: 1, lines }]) === kept).toBeTrue();
   });
 
+  test("a long hunk that differs everywhere in only a CR", () => {
+    const kept = "x\r\n" + Buffer.alloc(400_000, "a\n").toString();
+    const lines = [...Array(100_000).fill(" a"), "-a\r"];
+    expect(diff.applyPatch(kept, [{ oldStart: 1, lines }])).toBeUndefined();
+    expect(diff.applyPatch(kept + "a\r\n", [{ oldStart: 1, lines }]) === kept).toBeTrue();
+  });
+
   test("undoes createPatch and hunks", () => {
     const next = random(2);
     for (let i = 0; i < 200; i++) {

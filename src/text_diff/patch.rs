@@ -774,13 +774,12 @@ fn change_last_newline<T: Unit>(lines: &mut Vec<&[T]>, last_hunk: &[Step<'_, T>]
 
 const HASH_BASE: u64 = 0x9E37_79B9_7F4A_7C15;
 
-/// The hash of some lines and `line` after them. A `\r` at its end can be in [`Step::cr`], so none counts.
-fn roll<T: Unit>(hash: u64, mut line: &[T]) -> u64 {
-    while let Some(shorter) = line.strip_suffix(&[T::from_u8(b'\r')]) {
-        line = shorter;
-    }
-    hash.wrapping_mul(HASH_BASE)
-        .wrapping_add(bun_wyhash::hash(slice_as_bytes(line)))
+/// `hash` of some lines, extended by `line` and `cr`. A last `\r` counts the same in either.
+fn roll<T: Unit>(hash: u64, line: &[T], cr: Option<T>) -> u64 {
+    let text = if cr.is_some() { line } else { without_cr(line) };
+    let has_cr = cr.is_some() || text.len() < line.len();
+    let line = bun_wyhash::hash_with_seed(has_cr.into(), slice_as_bytes(text));
+    hash.wrapping_mul(HASH_BASE).wrapping_add(line)
 }
 
 struct Source<'a, T> {
@@ -816,12 +815,12 @@ impl<T: Unit> Source<'_, T> {
 
         let hashes = self.hashes.get_or_init(|| {
             let rolled = self.lines.iter().scan(0, |hash, line| {
-                *hash = roll(*hash, line);
+                *hash = roll(*hash, line, None);
                 Some(*hash)
             });
             core::iter::once(0).chain(rolled).collect()
         });
-        let hash = old().fold(0, |hash, step| roll(hash, step.text));
+        let hash = old().fold(0, |hash, step| roll(hash, step.text, step.cr));
         let shift = HASH_BASE.wrapping_pow(old_lines as u32);
         let mut around = (1..=(max - nearest).max(nearest - min)).flat_map(|distance| {
             let later = Some(nearest + distance).filter(|&at| at <= max);

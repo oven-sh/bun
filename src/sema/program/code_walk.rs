@@ -2142,8 +2142,16 @@ fn share_modules_among_types<'r>(
     entry_points: VecDeque<u32>,
     builds_executable: bool,
 ) {
-    let has_shared_type =
-        |file: &WalkedFile<'_, '_>| file.code_targets().iter().any(|it| it.has_shared_type);
+    let is_call_with_written_type = |target: &CodeTarget<'_>| {
+        builds_executable
+            && !target.has_shared_type
+            && target.has_type_of_shared_kind
+            && target.has_loader_attribute
+            && target.is_linked_by_bundler
+    };
+    let is_shared =
+        |target: &CodeTarget<'_>| target.has_shared_type || is_call_with_written_type(target);
+    let has_shared_type = |file: &WalkedFile<'_, '_>| file.code_targets().iter().any(is_shared);
     if !files.iter().any(has_shared_type) {
         return;
     }
@@ -2158,13 +2166,15 @@ fn share_modules_among_types<'r>(
     };
     for mut later in graphs {
         let mut first_forms: FxHashMap<&'r [u8], u32> = FxHashMap::default();
-        // Calls have a module for each type: whichever runs first answers for the others at run time.
+        // What one load reaches by statements runs before the calls in it do.
         while let Some(root) = later.pop_front() {
             let mut level = VecDeque::from([root]);
+            let mut loaded_together = Vec::new();
             while let Some(index) = level.pop_front() {
                 if std::mem::replace(&mut seen[index as usize], true) {
                     continue;
                 }
+                loaded_together.push(index);
                 for next in 0..files[index as usize].code_targets().len() {
                     let target = files[index as usize].code_targets()[next];
                     if target.has_shared_type {
@@ -2174,6 +2184,13 @@ fn share_modules_among_types<'r>(
                     match target.is_loaded_with_importer {
                         true => level.push_back(reached),
                         false => later.push_back(reached),
+                    }
+                }
+            }
+            for index in loaded_together {
+                for next in 0..files[index as usize].code_targets().len() {
+                    if is_call_with_written_type(&files[index as usize].code_targets()[next]) {
+                        share_form(host, files, &mut first_forms, index, next);
                     }
                 }
             }

@@ -48,6 +48,14 @@ impl Hunk {
     pub fn inserted(&self) -> usize {
         self.b_hi - self.b_lo
     }
+    #[inline]
+    fn is_single_edit(&self) -> bool {
+        self.deleted() == 0 || self.inserted() == 0
+    }
+    #[inline]
+    fn touches(&self, next: &Hunk) -> bool {
+        self.a_hi == next.a_lo && self.b_hi == next.b_lo
+    }
 }
 
 // ───────────────────────────── element types ─────────────────────────────
@@ -1026,7 +1034,7 @@ pub fn diff_lines(a: &[u8], b: &[u8]) -> Vec<Hunk> {
             b_lo: head,
             b_hi: b_end,
         }];
-        slide_line_hunks(&mut hunks, a, b);
+        slide_edits(&mut hunks, a, b, Unit::Line);
         return hunks;
     }
     let single = |m: &[u8]| match index_of_char(m, b'\n') {
@@ -1039,7 +1047,7 @@ pub fn diff_lines(a: &[u8], b: &[u8]) -> Vec<Hunk> {
         } else {
             one_vs_lines(mb, ma, head, true)
         };
-        slide_line_hunks(&mut hunks, a, b);
+        slide_edits(&mut hunks, a, b, Unit::Line);
         return hunks;
     }
 
@@ -1064,7 +1072,7 @@ pub fn diff_lines(a: &[u8], b: &[u8]) -> Vec<Hunk> {
             b_hi: offs_b[h.b_hi] as usize,
         };
     }
-    slide_line_hunks(&mut hunks, a, b);
+    slide_edits(&mut hunks, a, b, Unit::Line);
     hunks
 }
 
@@ -1144,80 +1152,6 @@ fn search_bounded(a: &[u32], b: &[u32], changed_a: &mut [bool], changed_b: &mut 
         changed_a,
         changed_b,
     );
-}
-
-/// `cleanup_merge`'s slide pass applied to byte hunks that sit on line
-/// boundaries (they only ever move by whole lines), repeated until stable.
-fn slide_line_hunks(hunks: &mut Vec<Hunk>, a: &[u8], b: &[u8]) {
-    while slide_single_edits(hunks, a, b, true) {
-        let mut w = 1;
-        for r in 1..hunks.len() {
-            let h = hunks[r];
-            if hunks[w - 1].a_hi == h.a_lo && hunks[w - 1].b_hi == h.b_lo {
-                hunks[w - 1].a_hi = h.a_hi;
-                hunks[w - 1].b_hi = h.b_hi;
-            } else {
-                hunks[w] = h;
-                w += 1;
-            }
-        }
-        hunks.truncate(w);
-    }
-}
-
-/// diff-match-patch `diff_cleanupMerge`, second half: a pure insertion or
-/// deletion that ends with the entire equality before it (or starts with the
-/// entire equality after it) is slid over that equality so it touches the
-/// neighbouring hunk or the edge, e.g. `A<ins>BA</ins>C` → `<ins>AB</ins>AC`.
-/// With `whole_lines`, only slides that keep the hunk on line boundaries are
-/// taken. Returns whether anything moved; joining is left to the caller.
-fn slide_single_edits<T: Elem>(hunks: &mut [Hunk], a: &[T], b: &[T], whole_lines: bool) -> bool {
-    let mut changed = false;
-    for i in 0..hunks.len() {
-        let h = hunks[i];
-        if h.deleted() > 0 && h.inserted() > 0 {
-            continue;
-        }
-        let prev_a = if i == 0 { 0 } else { hunks[i - 1].a_hi };
-        let next_a = if i + 1 == hunks.len() {
-            a.len()
-        } else {
-            hunks[i + 1].a_lo
-        };
-        let (before, after) = (h.a_lo - prev_a, next_a - h.a_hi);
-        if before == 0 || after == 0 {
-            continue;
-        }
-        let (seq, lo, hi) = if h.deleted() > 0 {
-            (a, h.a_lo, h.a_hi)
-        } else {
-            (b, h.b_lo, h.b_hi)
-        };
-        let edit = &seq[lo..hi];
-        let boundary = |at: usize| !whole_lines || at == lo || at == hi || seq[at - 1].is_newline();
-        let by = if edit.len() >= before
-            && edit.ends_with(&seq[lo - before..lo])
-            && boundary(hi - before)
-        {
-            -(before as isize)
-        } else if edit.len() >= after
-            && edit.starts_with(&seq[hi..hi + after])
-            && boundary(lo + after)
-        {
-            after as isize
-        } else {
-            continue;
-        };
-        let mv = |v: usize| (v as isize + by) as usize;
-        hunks[i] = Hunk {
-            a_lo: mv(h.a_lo),
-            a_hi: mv(h.a_hi),
-            b_lo: mv(h.b_lo),
-            b_hi: mv(h.b_hi),
-        };
-        changed = true;
-    }
-    changed
 }
 
 /// Hunks for a one-line middle `one` against a multi-line middle `many`, both
@@ -1474,40 +1408,201 @@ fn contains(a: &[u8], b: &[u8]) -> Option<(bool, usize)> {
 
 // ───────────────────────── cleanup (diff-match-patch) ─────────────────────────
 
-/// diff-match-patch `diff_cleanupMerge`: with hunks there is nothing to merge,
-/// but two of its effects remain: common prefix/suffix inside a hunk is
-/// factored out (joining hunks that come to touch), and single edits are slid
-/// over a neighbouring equality they repeat (`slide_single_edits`).
-fn cleanup_merge<T: Elem>(hunks: &mut Vec<Hunk>, a: &[T], b: &[T]) {
-    loop {
-        let mut w = 0;
-        for r in 0..hunks.len() {
-            let mut h = hunks[r];
-            if h.a_lo < h.a_hi && h.b_lo < h.b_hi {
-                let p = T::common_prefix(&a[h.a_lo..h.a_hi], &b[h.b_lo..h.b_hi]);
-                h.a_lo += p;
-                h.b_lo += p;
-                let s = T::common_suffix(&a[h.a_lo..h.a_hi], &b[h.b_lo..h.b_hi]);
-                h.a_hi -= s;
-                h.b_hi -= s;
-                if h.a_lo == h.a_hi && h.b_lo == h.b_hi {
-                    continue;
-                }
-            }
-            if w > 0 && hunks[w - 1].a_hi == h.a_lo && hunks[w - 1].b_hi == h.b_lo {
-                hunks[w - 1].a_hi = h.a_hi;
-                hunks[w - 1].b_hi = h.b_hi;
-            } else {
-                hunks[w] = h;
-                w += 1;
-            }
-        }
-        hunks.truncate(w);
+/// What a hunk's edges may not fall inside of.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Unit {
+    Element,
+    Line,
+}
 
-        if !slide_single_edits(hunks, a, b, false) {
-            return;
+/// diff-match-patch `diff_cleanupMerge`: the common prefix and suffix inside a hunk are factored out, hunks that
+/// touch are joined, and single edits are slid (`slide_edits`).
+fn cleanup_merge<T: Elem>(hunks: &mut Vec<Hunk>, a: &[T], b: &[T]) {
+    trim_and_join(hunks, a, b, Unit::Element);
+    slide_edits(hunks, a, b, Unit::Element);
+}
+
+/// Slides single edits over a neighbouring equality they repeat (`slide_single_edit`), then trims and joins, in
+/// passes until nothing moves.
+fn slide_edits<T: Elem>(hunks: &mut Vec<Hunk>, a: &[T], b: &[T], unit: Unit) {
+    let slide_all = |hunks: &mut [Hunk]| {
+        (0..hunks.len()).fold(false, |moved, at| {
+            slide_single_edit(hunks, at, (at.wrapping_sub(1), at + 1), a, b, unit) | moved
+        })
+    };
+    // Most diffs end within two passes, which allocate nothing.
+    if slide_all(hunks) {
+        trim_and_join(hunks, a, b, unit);
+        if slide_all(hunks) {
+            join_slid_edits(hunks, a, b, unit);
         }
     }
+}
+
+fn trim_and_join<T: Elem>(hunks: &mut Vec<Hunk>, a: &[T], b: &[T], unit: Unit) {
+    let mut w = 0;
+    for r in 0..hunks.len() {
+        let h = trimmed(hunks[r], a, b, unit);
+        if h.deleted() == 0 && h.inserted() == 0 {
+            continue;
+        }
+        if w > 0 && hunks[w - 1].touches(&h) {
+            (hunks[w - 1].a_hi, hunks[w - 1].b_hi) = (h.a_hi, h.b_hi);
+        } else {
+            hunks[w] = h;
+            w += 1;
+        }
+    }
+    hunks.truncate(w);
+}
+
+/// The later passes. The equalities around a hunk only grow until it is joined, so an edit that did not slide once
+/// does not slide later. After the first of these, a pass visits only the hunks that the pass before it changed.
+#[cold]
+fn join_slid_edits<T: Elem>(hunks: &mut Vec<Hunk>, a: &[T], b: &[T], unit: Unit) {
+    let mut list = HunkList::new(hunks);
+    let mut visit: Vec<usize> = (0..list.hunks.len()).collect();
+    loop {
+        let mut kept = 0;
+        for k in 0..visit.len() {
+            let mut at = visit[k];
+            let h = trimmed(list.hunks[at], a, b, unit);
+            list.hunks[at] = h;
+            if h.deleted() == 0 && h.inserted() == 0 {
+                list.remove(at);
+                continue;
+            }
+            let (prev, next) = list.links[at];
+            if list.hunks.get(prev).is_some_and(|prev| prev.touches(&h)) {
+                list.join(prev, at);
+                at = prev;
+            }
+            // If `next` is visited too, it is trimmed first.
+            if visit.get(k + 1) != Some(&next)
+                && list.hunks.get(next).is_some_and(|next| h.touches(next))
+            {
+                list.join(at, next);
+            }
+            if h.is_single_edit() && visit[..kept].last() != Some(&at) {
+                visit[kept] = at;
+                kept += 1;
+            }
+        }
+        visit.truncate(kept);
+
+        let mut moved = false;
+        visit.retain(|&at| {
+            let slid = slide_single_edit(list.hunks, at, list.links[at], a, b, unit);
+            moved |= slid;
+            slid || !list.hunks[at].is_single_edit()
+        });
+        if !moved {
+            break;
+        }
+    }
+    hunks.retain(|h| h.deleted() > 0 || h.inserted() > 0);
+}
+
+/// Lines are not trimmed: their common start or end can be part of a line.
+fn trimmed<T: Elem>(mut h: Hunk, a: &[T], b: &[T], unit: Unit) -> Hunk {
+    if unit == Unit::Element && !h.is_single_edit() {
+        let p = T::common_prefix(&a[h.a_lo..h.a_hi], &b[h.b_lo..h.b_hi]);
+        h.a_lo += p;
+        h.b_lo += p;
+        let s = T::common_suffix(&a[h.a_lo..h.a_hi], &b[h.b_lo..h.b_hi]);
+        h.a_hi -= s;
+        h.b_hi -= s;
+    }
+    h
+}
+
+/// Hunks that can be removed without moving the others. A removed one is left empty.
+struct HunkList<'h> {
+    hunks: &'h mut [Hunk],
+    /// The indices of the hunks before and after each, out of bounds if there is none.
+    links: Vec<(usize, usize)>,
+}
+
+impl<'h> HunkList<'h> {
+    fn new(hunks: &'h mut [Hunk]) -> Self {
+        let links = (0..hunks.len()).map(|i| (i.wrapping_sub(1), i + 1));
+        Self {
+            links: links.collect(),
+            hunks,
+        }
+    }
+
+    fn remove(&mut self, at: usize) {
+        let h = &mut self.hunks[at];
+        (h.a_hi, h.b_hi) = (h.a_lo, h.b_lo);
+        let (prev, next) = self.links[at];
+        if let Some(links) = self.links.get_mut(prev) {
+            links.1 = next;
+        }
+        if let Some(links) = self.links.get_mut(next) {
+            links.0 = prev;
+        }
+    }
+
+    fn join(&mut self, first: usize, second: usize) {
+        let Hunk { a_hi, b_hi, .. } = self.hunks[second];
+        (self.hunks[first].a_hi, self.hunks[first].b_hi) = (a_hi, b_hi);
+        self.remove(second);
+    }
+}
+
+/// A pure insertion or deletion that ends with the entire equality before it (or starts with the entire equality
+/// after it) is slid over that equality so it touches the neighbouring hunk or the edge, e.g. `A<ins>BA</ins>C` →
+/// `<ins>AB</ins>AC`. `prev` and `next` are as in `HunkList::links`. Returns whether it moved.
+#[inline]
+fn slide_single_edit<T: Elem>(
+    hunks: &mut [Hunk],
+    at: usize,
+    (prev, next): (usize, usize),
+    a: &[T],
+    b: &[T],
+    unit: Unit,
+) -> bool {
+    const BLOCK: usize = 512;
+
+    let h = hunks[at];
+    if !h.is_single_edit() {
+        return false;
+    }
+    let before = h.a_lo - hunks.get(prev).map_or(0, |prev| prev.a_hi);
+    let after = hunks.get(next).map_or(a.len(), |next| next.a_lo) - h.a_hi;
+    if before == 0 || after == 0 {
+        return false;
+    }
+    let (seq, lo, hi) = if h.deleted() > 0 {
+        (a, h.a_lo, h.a_hi)
+    } else {
+        (b, h.b_lo, h.b_hi)
+    };
+    let edit = &seq[lo..hi];
+    let boundary =
+        |at: usize| unit == Unit::Element || at == lo || at == hi || seq[at - 1].is_newline();
+    // From the end: when an edit moves right pass after pass, the start of the equality can match each time.
+    let ends_with_before = || {
+        let end = edit[edit.len() - before..].rchunks(BLOCK);
+        end.eq(seq[lo - before..lo].rchunks(BLOCK))
+    };
+    let by = if edit.len() >= before && ends_with_before() && boundary(hi - before) {
+        -(before as isize)
+    } else if edit.len() >= after && edit.starts_with(&seq[hi..hi + after]) && boundary(lo + after)
+    {
+        after as isize
+    } else {
+        return false;
+    };
+    let mv = |v: usize| (v as isize + by) as usize;
+    hunks[at] = Hunk {
+        a_lo: mv(h.a_lo),
+        a_hi: mv(h.a_hi),
+        b_lo: mv(h.b_lo),
+        b_hi: mv(h.b_hi),
+    };
+    true
 }
 
 /// diff-match-patch `diff_cleanupSemantic`, `diff_cleanupSemanticLossless`
@@ -2002,6 +2097,83 @@ mod tests {
         }
         assert_eq!(u8::common_prefix(a, &a[..20]), 20);
         assert_eq!(u8::common_suffix(a, &a[10..]), 26);
+    }
+
+    /// `trim_and_join` and `slide_edits` with passes that visit every hunk.
+    fn cleanup_merge_all(hunks: &mut Vec<Hunk>, a: &[u8], b: &[u8], unit: Unit) {
+        loop {
+            let mut joined: Vec<Hunk> = Vec::new();
+            let mut one = Vec::new();
+            for &h in hunks.iter() {
+                match unit {
+                    Unit::Element => push_trimmed(a, b, h, &mut one),
+                    Unit::Line => one.push(h),
+                }
+                match (joined.last_mut(), one.pop()) {
+                    (Some(last), Some(h)) if (last.a_hi, last.b_hi) == (h.a_lo, h.b_lo) => {
+                        (last.a_hi, last.b_hi) = (h.a_hi, h.b_hi);
+                    }
+                    (_, h) => joined.extend(h),
+                }
+            }
+            *hunks = joined;
+            let mut moved = false;
+            for i in 0..hunks.len() {
+                moved |= slide_single_edit(hunks, i, (i.wrapping_sub(1), i + 1), a, b, unit);
+            }
+            if !moved {
+                return;
+            }
+        }
+    }
+
+    #[test]
+    fn cleanup_merge_skips_only_hunks_that_stay() {
+        let mut rng = Rng(7);
+        for iter in 0..40_000 {
+            let (unit, words): (_, &[&str]) = match iter % 2 {
+                0 => (Unit::Element, &["a", "a", "b", "c"]),
+                _ => (Unit::Line, &["a\n", "a\n", "ba\n", "c\n"]),
+            };
+            let words = &words[..2 + rng.below(3) as usize];
+            let (mut a, mut b, mut hunks) = (Vec::new(), Vec::new(), Vec::new());
+            for part in rng.below(2)..rng.below(24) {
+                let mut text = |min: u64, max: u64| -> Vec<u8> {
+                    let len = min + rng.below(max - min + 1);
+                    let words = (0..len).map(|_| words[rng.below(words.len() as u64) as usize]);
+                    words.collect::<String>().into_bytes()
+                };
+                let (a_lo, b_lo) = (a.len(), b.len());
+                if part % 2 == 0 {
+                    let same = text(0, 2);
+                    a.extend(&same);
+                    b.extend(&same);
+                    continue;
+                }
+                let (one, other) = (text(1, 5), text(1, 3));
+                match rng.below(5) {
+                    0 | 1 => a.extend(one),
+                    2 | 3 => b.extend(one),
+                    _ => {
+                        a.extend(one);
+                        b.extend(other);
+                    }
+                }
+                let (a_hi, b_hi) = (a.len(), b.len());
+                hunks.push(Hunk {
+                    a_lo,
+                    a_hi,
+                    b_lo,
+                    b_hi,
+                });
+            }
+            let mut expected = hunks.clone();
+            cleanup_merge_all(&mut expected, &a, &b, unit);
+            trim_and_join(&mut hunks, &a, &b, unit);
+            slide_edits(&mut hunks, &a, &b, unit);
+            check_script(&a, &b, &hunks);
+            assert_eq!(hunks, expected, "iter {iter}");
+        }
     }
 
     fn render(a: &[u8], b: &[u8], hunks: &[Hunk]) -> String {

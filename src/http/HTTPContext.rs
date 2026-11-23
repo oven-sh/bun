@@ -1525,15 +1525,12 @@ impl<const SSL: bool> Handler<SSL> {
         // stops reading them), so the peer would never observe the connection
         // closing and it would leak.
         let tagged = HTTPContext::<SSL>::enter_client(socket, |client| {
-            let end = if client.has_unsent_request_body() {
+            if client.has_unsent_request_body() {
                 socket.close(uws::CloseKind::Failure);
-                // A reset that `send()` reported first reads as a FIN.
-                TransportEnd::Failed
             } else {
                 socket.close(uws::CloseKind::Normal);
-                TransportEnd::Clean
-            };
-            client.on_close::<SSL>(socket, end)
+            }
+            client.on_close::<SSL>(socket, TransportEnd::Clean)
         });
         let Some(tagged) = tagged else { return };
         HTTPContext::<SSL>::mark_tagged_socket_as_dead(socket, tagged);

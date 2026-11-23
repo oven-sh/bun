@@ -371,7 +371,7 @@ impl HTTPClient<'_> {
         // Mirror `HTTPClient::on_close`:
         // treat connection close as end-of-body for identity transfer when no content-length.
         if !self.state.flags.is_redirect_pending && self.state.is_body_complete_on_close() {
-            match self.finalize_body_on_eof(end) {
+            match self.finalize_body_on_close(end) {
                 Ok(()) => return Break(NextStep::ReleaseSocket),
                 // `err` says why.
                 Err(Error::ConnectionClosed) => {}

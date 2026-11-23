@@ -1166,6 +1166,14 @@ describe("a compressed stream that is unfinished when the body ends", () => {
         });
       });
 
+      it("rejects if the close comes before the request body is sent", async () => {
+        const { head, framed } = frame(coding, "close", flushed(small));
+        const body = new ReadableStream({ start: controller => controller.enqueue(small) });
+        const { response, origin } = await request(route, Buffer.concat([head, framed]), { method: "POST", body });
+        origin.end();
+        expect(await outcome(response.bytes(), small)).toBe("ECONNRESET");
+      });
+
       it("rejects if a close in the trailer section comes with the body", async () => {
         const read = async ([body, expected]: [Buffer, Buffer]) => {
           const { head, framed } = frame(coding, "chunked", body);
@@ -1210,14 +1218,6 @@ describe("a compressed stream that is unfinished when the body ends", () => {
         const end = ({ wire }: Connection) => void wire.end();
         expect(await readStreamed(route, coding, "close", flushed(small), small, end)).toBe("ok");
       });
-    });
-
-    it("rejects if the close comes before the request body is sent", async () => {
-      const { head, framed } = frame(coding, "close", flushed(small));
-      const body = new ReadableStream({ start: controller => controller.enqueue(small) });
-      const { response, origin } = await request("http", Buffer.concat([head, framed]), { method: "POST", body });
-      origin.end();
-      expect(await outcome(response.bytes(), small)).toBe("ECONNRESET");
     });
 
     it("rejects in S3Client", async () => {

@@ -2065,7 +2065,7 @@ impl<'a> HTTPClient<'a> {
             return self.do_redirect::<IS_SSL>(socket);
         }
         if self.state.is_body_complete_on_close() {
-            if let Err(err) = self.finalize_body_on_eof(end) {
+            if let Err(err) = self.finalize_body_on_close(end) {
                 return self.fail(err);
             }
             return Break(NextStep::ReleaseSocket);
@@ -3761,6 +3761,15 @@ impl<'a> HTTPClient<'a> {
     pub(crate) fn finalize_body_on_eof(&mut self, end: TransportEnd) -> crate::Result<()> {
         self.state.end_body(end);
         self.process_received_body(true).map(drop)
+    }
+
+    /// For an HTTP/1 connection that closes.
+    pub(crate) fn finalize_body_on_close(&mut self, end: TransportEnd) -> crate::Result<()> {
+        // A reset that `send()` reported first reads as a FIN.
+        if self.has_unsent_request_body() {
+            return self.finalize_body_on_eof(TransportEnd::Failed);
+        }
+        self.finalize_body_on_eof(end)
     }
 
     /// The consumer or the decoder is behind, so the transport should stop taking body bytes.

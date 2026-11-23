@@ -44,7 +44,7 @@ impl ZlibDecoder {
         mut input: &[u8],
         out: &mut Vec<u8>,
         max_output: usize,
-        must_finish: bool,
+        is_done: bool,
     ) -> crate::Result<usize> {
         let input_len = input.len();
         loop {
@@ -69,7 +69,7 @@ impl ZlibDecoder {
                     continue;
                 }
                 Ok(Status::NeedsInput | Status::NeedsOutput) if out.len() == max_output => continue,
-                Ok(Status::NeedsInput) if !must_finish => return Err(crate::Error::ShortRead),
+                Ok(Status::NeedsInput) if !is_done => return Err(crate::Error::ShortRead),
                 Ok(_) => crate::Error::Zlib,
                 Err(error) => error.into(),
             };
@@ -153,15 +153,14 @@ impl Decompressor {
             return Ok(0);
         }
         let out = &mut body_out_str.list;
-        let must_finish = is_done && unfinished == UnfinishedStream::Reject;
+        // A decoder that is not told of the end keeps asking for input.
+        let is_done = is_done && unfinished == UnfinishedStream::Reject;
         match self {
-            Decompressor::Zlib(reader) => reader.decompress(buffer, out, max_output, must_finish),
+            Decompressor::Zlib(reader) => reader.decompress(buffer, out, max_output, is_done),
             Decompressor::Brotli(reader) => {
-                Ok(reader.decompress(buffer, out, max_output, must_finish)?)
+                Ok(reader.decompress(buffer, out, max_output, is_done)?)
             }
-            Decompressor::Zstd(reader) => {
-                Ok(reader.decompress(buffer, out, max_output, must_finish)?)
-            }
+            Decompressor::Zstd(reader) => Ok(reader.decompress(buffer, out, max_output, is_done)?),
             Decompressor::None => {
                 unreachable!("Invalid encoding. This code should not be reachable")
             }

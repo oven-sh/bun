@@ -96,7 +96,7 @@ function createDelayedChunksServer(compression: "gzip" | "br" | "zstd" | "deflat
   });
 }
 
-// The message is complete by its Content-Length, so the body is what the bytes decode to, as in Node and browsers.
+// The message is complete by its Content-Length, so the body is what the bytes decode to.
 test.each([
   ["gzip", 5, "Hello World! This is a test message."],
   ["br", 5, "Hello"],

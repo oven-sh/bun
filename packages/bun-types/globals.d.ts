@@ -2185,10 +2185,9 @@ interface BunFetchRequestInit extends RequestInit {
    * This can improve performance when you handle compressed data yourself or
    * forward it as-is.
    *
-   * When `true`, reading the body rejects if Bun cannot decode the data.
-   * If the response ends normally before the compressed data does, the body is
-   * what the received bytes decode to. To reject such a response, pass `false`
-   * and pipe the body through a `DecompressionStream`.
+   * If the response ends before the compressed data does, Bun gives you the
+   * bytes it decoded. To reject such a response, pass `false` and pipe the body
+   * through a `DecompressionStream`.
    *
    * Not part of the Fetch API specification.
    *

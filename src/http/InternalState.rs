@@ -81,8 +81,8 @@ pub struct InternalState<'a> {
 pub struct InternalStateFlags {
     pub(crate) allow_keepalive: bool,
     pub(crate) received_last_chunk: bool,
-    /// The body counts as received, but the transport went away without marking its end.
-    pub(crate) lacks_end_marker: bool,
+    /// The body counts as received, but the transport ended abnormally.
+    pub(crate) was_cut_short: bool,
     pub(crate) is_redirect_pending: bool,
     pub(crate) is_libdeflate_fast_path_disabled: bool,
     pub(crate) resend_request_body_on_redirect: bool,
@@ -117,7 +117,7 @@ impl InternalStateFlags {
         Self {
             allow_keepalive: true,
             received_last_chunk: false,
-            lacks_end_marker: false,
+            was_cut_short: false,
             is_redirect_pending: false,
             is_libdeflate_fast_path_disabled: false,
             resend_request_body_on_redirect: false,
@@ -257,7 +257,7 @@ impl<'a> InternalState<'a> {
     pub(crate) fn end_body(&mut self, end: TransportEnd) {
         if !core::mem::replace(&mut self.flags.received_last_chunk, true) {
             // A chunked body only gets here from inside its trailer section.
-            self.flags.lacks_end_marker = self.is_chunked_encoding()
+            self.flags.was_cut_short = self.is_chunked_encoding()
                 || (self.content_length.is_none() && end == TransportEnd::Failed);
         }
     }
@@ -406,7 +406,7 @@ impl<'a> InternalState<'a> {
                     }
                 }
             }
-            if self.flags.lacks_end_marker
+            if self.flags.was_cut_short
                 && self.decoded_body.list.len() < max_output
                 && self.decompressor.is_mid_stream()
             {

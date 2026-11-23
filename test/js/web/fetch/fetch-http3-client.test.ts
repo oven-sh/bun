@@ -964,7 +964,11 @@ test("a gzip body that waits for its consumer ends at its Content-Length, with t
 test.each([
   ["FIN", (stream: any) => stream.writer.endSync(), true],
   ["RESET_STREAM", (stream: any) => stream.resetStream(0x102n), "ECONNRESET"],
-  ["the end of the connection", (stream: any) => stream.session.destroy(), "ECONNRESET"],
+  [
+    "CONNECTION_CLOSE",
+    (stream: any) => stream.session.destroy(undefined, { code: 0x100, type: "application" }),
+    "ECONNRESET",
+  ],
 ])("an unfinished gzip stream, then %s", async (_, end, expected) => {
   let stream: any;
   const origin = await listen(

@@ -319,7 +319,7 @@ extern "C" fn on_stream_close(s: *mut quic::Stream) {
         stream.status_code,
         stream.headers_delivered,
     );
-    // A FIN would have detached the stream in `on_stream_data`.
+    // A FIN that was read detached the stream in `on_stream_data`.
     stream
         .session_mut()
         .deliver(stream, Some(TransportEnd::Failed));

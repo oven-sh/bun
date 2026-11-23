@@ -69,7 +69,12 @@ impl<const IS_SSL: bool> ClientHandler<'_, '_, IS_SSL> {
         }
     }
 
-    fn close(&mut self, err: Error, end: TransportEnd) {
+    fn close(&mut self, err: Error) {
+        let end = if self.wrapper.flags.received_ssl_shutdown() {
+            TransportEnd::Clean
+        } else {
+            TransportEnd::Failed
+        };
         self.wrapper.deinit();
         self.next_step = self.client.on_proxy_tunnel_close(err, end, self.socket);
     }
@@ -215,9 +220,7 @@ impl<const IS_SSL: bool> SSLWrapperHandler for ClientHandler<'_, '_, IS_SSL> {
                 let flow = client.handle_on_data_headers(decoded_data, self.socket, wrapper);
                 return self.stop_on_break(flow);
             }
-            Decrypted::Unexpected => {
-                return self.close(crate::Error::UnexpectedData, TransportEnd::Failed);
-            }
+            Decrypted::Unexpected => return self.close(crate::Error::UnexpectedData),
         };
         let flow = match report_progress {
             Ok(true) => client.progress_update(self.socket),
@@ -234,7 +237,7 @@ impl<const IS_SSL: bool> SSLWrapperHandler for ClientHandler<'_, '_, IS_SSL> {
         match on_tunnel_handshake(self.client, self.wrapper, handshake_success, ssl_error) {
             Ok(true) => {}
             Ok(false) => return,
-            Err(err) => return self.close(err, TransportEnd::Failed),
+            Err(err) => return self.close(err),
         }
         let client = &mut *self.client;
         if client.wants_server_identity_check() {
@@ -267,13 +270,7 @@ impl<const IS_SSL: bool> SSLWrapperHandler for ClientHandler<'_, '_, IS_SSL> {
 
     fn on_close(&mut self) {
         if self.next_step.is_continue() {
-            // A fatal error that has a reason went to `on_handshake`. One without comes here.
-            let end = if self.wrapper.flags.fatal_error() {
-                TransportEnd::Failed
-            } else {
-                TransportEnd::Clean
-            };
-            self.close(crate::Error::ConnectionClosed, end);
+            self.close(crate::Error::ConnectionClosed);
         }
     }
 
@@ -376,6 +373,8 @@ impl HTTPClient<'_> {
         if !self.state.flags.is_redirect_pending && self.state.is_body_complete_on_close() {
             match self.finalize_body_on_eof(end) {
                 Ok(()) => return Break(NextStep::ReleaseSocket),
+                // `err` says why.
+                Err(Error::ConnectionClosed) => {}
                 Err(e) => err = e,
             }
         }

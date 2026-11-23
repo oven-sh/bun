@@ -1198,17 +1198,39 @@ describe("a compressed stream that is unfinished when the body ends", () => {
       expect(await outcome(chunks, zeros)).toBe("ok");
     });
 
-    it.each([
-      ["https", "EPROTO"],
-      ["CONNECT tunnel", "ECONNRESET"],
-    ] as const)(
-      "%s: rejects if a TLS record that does not decrypt ends a close-delimited body",
-      async (route, code) => {
+    describe.each(["https", "CONNECT tunnel"] as const)("%s: a close-delimited body", route => {
+      it("rejects at a TLS record that does not decrypt", async () => {
         const badRecord = Buffer.concat([Buffer.from([0x17, 0x03, 0x03, 0x00, 0x20]), Buffer.alloc(0x20)]);
         const end = ({ wire }: Connection) => void wire.write(badRecord);
-        expect(await readStreamed(route, coding, "close", flushed(small), small, end)).toBe(code);
-      },
-    );
+        expect(await readStreamed(route, coding, "close", flushed(small), small, end)).toBe("EPROTO");
+      });
+
+      // Like Node, unlike https://www.rfc-editor.org/rfc/rfc9112#section-9.8
+      it("ends at a FIN without close_notify", async () => {
+        const end = ({ wire }: Connection) => void wire.end();
+        expect(await readStreamed(route, coding, "close", flushed(small), small, end)).toBe("ok");
+      });
+    });
+
+    it("rejects if the close comes before the request body is sent", async () => {
+      const { head, framed } = frame(coding, "close", flushed(small));
+      const body = new ReadableStream({ start: controller => controller.enqueue(small) });
+      const { response, origin } = await request("http", Buffer.concat([head, framed]), { method: "POST", body });
+      origin.end();
+      expect(await outcome(response.bytes(), small)).toBe("ECONNRESET");
+    });
+
+    it("rejects in S3Client", async () => {
+      const s3 = new Bun.S3Client({ endpoint: targets.http.url, accessKeyId: "a", secretAccessKey: "b", bucket: "s3" });
+      const rows = { bytes: (file: Bun.S3File) => file.bytes(), stream: (file: Bun.S3File) => file.stream().bytes() };
+      const results = await grid(rows, (read, framing) => {
+        const { head, framed, terminator } = frame(coding, framing, flushed(small));
+        const key = String(requests++);
+        waiting.set(`/s3/${key}`, ({ origin }) => origin.end(Buffer.concat([head, framed, Buffer.from(terminator)])));
+        return outcome(read(s3.file(key)), small);
+      });
+      expect(results).toEqual(filled(rows, code));
+    });
 
     it("rejects in a DecompressionStream", async () => {
       const format = ({ "raw deflate": "deflate-raw", "br": "brotli" }[coding] ?? coding) as CompressionFormat;

@@ -18,6 +18,9 @@ describe.skipIf(isWindows || !compiler)("a native addon's allocations", () => {
   const folder = String(tempDir("addon-allocations", {}));
   afterAll(() => rmSync(folder, { recursive: true, force: true }));
   const addon = join(folder, "allocations.node");
+  const weakStubs = join(folder, "weak-stubs.node");
+  const replacesOperators = join(folder, "replaces-operators.node");
+  const loadedAfter = join(folder, "loaded-after.node");
 
   const exitLibrary = join(folder, "exit-instead-of-quick-exit.so");
 
@@ -71,9 +74,24 @@ describe.skipIf(isWindows || !compiler)("a native addon's allocations", () => {
   beforeAll(async () => {
     await Promise.all([
       compile("addon.cpp", addon),
+      compile("weak-stubs.cpp", weakStubs),
+      ...(isMacOS
+        ? [compile("replaces-operators.cpp", replacesOperators), compile("loaded-after.cpp", loadedAfter)]
+        : []),
       ...(isLinux ? [compile("exit-instead-of-quick-exit.cpp", exitLibrary)] : []),
     ]);
   }, 120_000);
+
+  async function evaluate(script: string) {
+    await using child = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: { ...bunEnv, MallocDebugReport: "crash" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
+    return { stdout, stderr, exitCode, signalCode: child.signalCode };
+  }
 
   const whenTheProcessEnds = ["released by an atexit handler", "released by a static destructor"];
   const whenTheEnvironmentEnds = [
@@ -141,6 +159,53 @@ describe.skipIf(isWindows || !compiler)("a native addon's allocations", () => {
       expect(result.stderr).not.toContain("A C++ exception occurred");
       expect(result.stdout).toBe("");
       expect(result.exitCode).not.toBe(0);
+    },
+    120_000,
+  );
+
+  test.skipIf(!isMacOS || isASAN)(
+    "another exception that the addon does not catch is not reported as out of memory",
+    async () => {
+      const result = await printedBy("throwAndLeaveIt", {
+        BUN_CRASH_REPORT_URL: "",
+        BUN_ENABLE_CRASH_REPORTING: "0",
+      });
+      expect(result.stderr).toContain("A C++ exception occurred");
+      expect(result.stderr).not.toContain("Bun has run out of memory");
+      expect(result.stdout).toBe("");
+      expect(result.exitCode).not.toBe(0);
+    },
+    120_000,
+  );
+
+  // With an operator delete that the runtime exports, the addon has the library's operator new and the runtime's
+  // operator delete, which cannot release the library's block.
+  test.skipIf(!isMacOS || isASAN)(
+    "an addon that is loaded after a library with operators of its own calls that library's operators",
+    async () => {
+      const script = `require(${JSON.stringify(replacesOperators)}); require(${JSON.stringify(loadedAfter)});`;
+      expect(await evaluate(script)).toEqual({
+        stdout:
+          "operator new: replaces-operators.node\noperator delete: replaces-operators.node\nreleased 1000 blocks\n",
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+    },
+    120_000,
+  );
+
+  // The addon of Dawn (the webgpu package) has such stubs. On macOS the loader looks in the runtime for a function to
+  // put in their place only where the runtime's header has MH_WEAK_DEFINES, which an ASAN build lacks.
+  test.skipIf(isMacOS && isASAN)(
+    "a Node-API function of the runtime takes the place of an addon's weak stub of it",
+    async () => {
+      expect(await evaluate(`console.log(require(${JSON.stringify(weakStubs)}).text);`)).toEqual({
+        stdout: "made by the runtime\n",
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
     },
     120_000,
   );

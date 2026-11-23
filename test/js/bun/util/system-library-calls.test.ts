@@ -119,3 +119,21 @@ test.skipIf(!isMacOS || isASAN)(
     });
   },
 );
+
+// For an operator that the executable exports, dyld writes every use of it in the shared cache when the process
+// starts. An ASAN build has no operators of its own.
+test.skipIf(!isMacOS || isASAN)("dyld points no use of an operator in the shared cache at the executable", async () => {
+  await using child = Bun.spawn({
+    cmd: [bunExe(), "-e", "0"],
+    env: { ...bunEnv, DYLD_PRINT_BINDINGS: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([child.stderr.text(), child.exited]);
+  const lines = stderr.split("\n");
+  expect({
+    dyldPrintedItsBindings: lines.some(line => line.startsWith("dyld[")),
+    patchesOfTheSharedCache: lines.filter(line => line.includes("cache patch")),
+    exitCode,
+  }).toEqual({ dyldPrintedItsBindings: true, patchesOfTheSharedCache: [], exitCode: 0 });
+});

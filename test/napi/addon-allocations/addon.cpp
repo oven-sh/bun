@@ -885,6 +885,12 @@ napi_value askForTooMuchAndLeaveIt(napi_env, napi_callback_info)
     return nullptr;
 }
 
+// throwAndLeaveIt(): an exception that is not about memory leaves the addon, and nothing catches it.
+napi_value throwAndLeaveIt(napi_env, napi_callback_info)
+{
+    throw std::runtime_error("not about memory");
+}
+
 } // namespace
 
 NAPI_MODULE_INIT()
@@ -948,6 +954,7 @@ NAPI_MODULE_INIT()
         { "printImagesOfOperators", printImagesOfOperators },
         { "askForTooMuch", askForTooMuch },
         { "askForTooMuchAndLeaveIt", askForTooMuchAndLeaveIt },
+        { "throwAndLeaveIt", throwAndLeaveIt },
     };
     for (auto& entry : functions) {
         napi_value function;

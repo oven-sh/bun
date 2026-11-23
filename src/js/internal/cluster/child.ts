@@ -9,6 +9,11 @@ const onInternalMessage: (
   worker: ClusterWorker,
   callback: (this: ClusterWorker, message, handle: unknown) => void,
 ) => void = $bindgen("node_cluster_binding.bind.ts", "onInternalMessageChild");
+// A received descriptor is closed when `onmessage` returns, unless it is claimed, or held and not yet tried.
+const claimRawHandle: (fd: number) => void = $bindgen("node_cluster_binding.bind.ts", "clusterClaimHandle");
+const holdRawHandle: (fd: number) => number | null = $bindgen("node_cluster_binding.bind.ts", "clusterHoldHandle");
+/** Does nothing once native code has adopted it. */
+const refuseRawHandle: (ticket: number) => void = $bindgen("node_cluster_binding.bind.ts", "clusterRefuseHandle");
 const closeRawHandle: (fd: number) => void = $bindgen("node_cluster_binding.bind.ts", "clusterCloseHandle");
 
 const FunctionPrototype = Function.prototype;
@@ -65,14 +70,11 @@ let seq = 0;
 const callbacks = new Map<number, ReplyCallback>();
 
 function makeConnectionHandle(fd: number) {
-  let closed = false;
+  const ticket = holdRawHandle(fd);
   return {
     fd,
     close(cb?: () => void) {
-      if (!closed) {
-        closed = true;
-        closeRawHandle(fd);
-      }
+      if (ticket !== null) refuseRawHandle(ticket);
       if (typeof cb === "function") process.nextTick(cb);
     },
   };
@@ -122,8 +124,8 @@ cluster._setupWorker = function () {
         return;
       }
     }
-    if (message.act === "newconn" && typeof handle === "number" && handle >= 0) {
-      handle = makeConnectionHandle(handle);
+    if (typeof handle === "number") {
+      handle = message.act === "newconn" ? makeConnectionHandle(handle) : undefined;
     }
     try {
       process.emit("internalMessage", message, handle);
@@ -213,6 +215,7 @@ function removeIndexesKey(indexesKey: string, index: number) {
 }
 
 function makeSharedHandle(fd: number) {
+  claimRawHandle(fd);
   let fdOpen = true;
   const handle = {
     sharedFd: fd,

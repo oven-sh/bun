@@ -56,6 +56,8 @@ pub(crate) mod ssl_wrapper {
     }
 }
 
+pub(crate) mod offered_fd;
+
 pub(crate) mod udp_socket;
 
 #[path = "uws_dispatch.rs"]

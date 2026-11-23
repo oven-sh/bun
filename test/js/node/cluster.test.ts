@@ -1602,3 +1602,137 @@ test.concurrent("a Worker thread that sets up node:cluster does not take the mes
   expect({ stdout, stderr }).toEqual({ stdout: "listening\nexit 0 null\n", stderr: "" });
   expect(exitCode).toBe(0);
 });
+
+// Workers answer a connection with their id. The first to listen is the first to get one.
+async function runRoundRobin(workers: number, primary: string, worker: string) {
+  using dir = tempDir("cluster-round-robin", {
+    "index.js": `
+      const cluster = require("node:cluster");
+      const { once } = require("node:events");
+      const fs = require("node:fs");
+      const net = require("node:net");
+      if (cluster.isPrimary) {
+        cluster.schedulingPolicy = cluster.SCHED_RR;
+        const workers = [];
+        let port;
+        while (workers.length < ${workers}) {
+          workers.push(cluster.fork());
+          [{ port }] = await once(workers.at(-1), "listening");
+        }
+        const [first] = workers;
+        const ask = message => (first.send(message), once(first, "message"));
+        const unblock = () => fs.writeFileSync("go", "");
+        const accepted = new Promise(resolve => {
+          require("node:diagnostics_channel").subscribe("net.server.socket", () => setImmediate(resolve));
+        });
+        const request = () =>
+          new Promise(resolve => {
+            let reply = "";
+            const socket = net.connect(port, "127.0.0.1").setEncoding("utf8");
+            socket.on("data", data => (reply += data)).on("error", () => {});
+            socket.on("close", () => resolve("reply " + reply));
+          });
+        ${primary}
+        process.exit(0);
+      } else {
+        const block = () =>
+          process.send("blocked", () => {
+            const deadline = Date.now() + 120_000;
+            while (!fs.existsSync("go") && Date.now() < deadline) Bun.sleepSync(1);
+          });
+        const server = net.createServer(socket => socket.end(String(cluster.worker.id))).listen(0, "127.0.0.1");
+        ${worker}
+      }
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--no-orphans", "index.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout: stdout.trim().split(/\r?\n/), stderr, exitCode };
+}
+
+test.concurrent.each([
+  {
+    name: "goes to another worker while worker.process.disconnect() waits for an ack",
+    workers: 2,
+    primary: `
+      const other = net.createServer().listen(0, "127.0.0.1");
+      await once(other, "listening");
+      await ask("block");
+      first.send("handle", other);
+      first.process.disconnect();
+      console.log(await request());
+      unblock();
+    `,
+    worker: `process.once("message", block);`,
+    stdout: ["reply 2"],
+  },
+  {
+    name: "that is queued is served after worker.disconnect()",
+    workers: 1,
+    primary: `
+      await ask("block");
+      first.send(Buffer.alloc(2 << 20, "x").toString());
+      const reply = request();
+      await accepted;
+      first.disconnect();
+      unblock();
+      console.log(await reply);
+    `,
+    worker: `process.once("message", block);`,
+    stdout: ["reply 1"],
+  },
+  {
+    name: "is served by an onconnection that is wrapped to run later",
+    workers: 1,
+    primary: `
+      await ask("wrap");
+      console.log(await request());
+    `,
+    worker: `
+      process.on("message", () => {
+        const { onconnection } = server._handle;
+        server._handle.onconnection = function () {
+          setImmediate(() => onconnection.apply(this, arguments));
+        };
+        process.send("wrapped");
+      });
+    `,
+    stdout: ["reply 1"],
+  },
+  {
+    name: "is not closed through the handle of an earlier one",
+    workers: 1,
+    primary: `
+      const closed = once(first, "message");
+      console.log(await request());
+      await closed;
+      console.log(await request());
+    `,
+    worker: `
+      let earlier;
+      server.once("connection", socket =>
+        socket.on("close", () => {
+          // The next one gets the same number.
+          let next;
+          while (${!isWindows} && (next = fs.openSync("/dev/null")) < earlier.fd);
+          if (next) fs.closeSync(next);
+          process.send("closed");
+        }),
+      );
+      process.on("internalMessage", (_, handle) => {
+        if (${!isWindows} && earlier && earlier.fd !== handle.fd) console.log("another number");
+        earlier?.close();
+        earlier = handle;
+      });
+    `,
+    stdout: ["reply 1", "reply 1"],
+  },
+])("a round-robin connection $name", async ({ workers, primary, worker, stdout }) => {
+  expect(await runRoundRobin(workers, primary, worker)).toEqual({ stdout, stderr: "", exitCode: 0 });
+});

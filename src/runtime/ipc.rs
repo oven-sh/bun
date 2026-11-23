@@ -30,6 +30,8 @@ use bun_sys::windows::libuv as uv;
 use bun_sys::windows::libuv::{UvHandle as _, UvStream as _};
 use bun_sys::{CloseOnDrop, Fd};
 
+use crate::socket::offered_fd::Offer;
+
 // `bun.cpp.*` — generated C++ dispatch shims for IPC handle (de)serialization
 // (`IPCSerialize` / `IPCParse`) are declared once in `bun_jsc::cpp` and called
 // through that module's safe wrappers; no local extern block needed.
@@ -822,6 +824,8 @@ pub(crate) struct WindowsState {
     /// libuv's until `windows_on_write_complete`.
     pub(crate) windows_write: Option<*mut WindowsWrite>,
     pub(crate) try_close_after_write: bool,
+    /// To the handle that is being written: it can be read before libuv reports the write.
+    early_reply: Option<AckNack>,
 }
 
 #[derive(Copy, Clone, Eq, PartialEq)]
@@ -926,13 +930,6 @@ impl SendQueueOwner {
             SendQueueOwner::Instance => {
                 crate::ipc_host::IPCInstance::handle_ipc_message(msg, handle)
             }
-        }
-    }
-
-    fn takes_cluster_handle(self) -> bool {
-        match self {
-            SendQueueOwner::Subprocess(_) => false,
-            SendQueueOwner::Instance => crate::node::node_cluster_binding::is_child_listening(),
         }
     }
 
@@ -1190,11 +1187,12 @@ impl SendQueue {
         self.close_socket_next_tick(true);
     }
 
-    /// User disconnect(): reports disconnected now but, like node, closes only once a handle awaiting its ack and the queue behind it have gone out.
+    /// User disconnect(): reports disconnected now but, like node, closes only once every handle is acked. What is queued behind goes out first.
     pub(crate) fn disconnect(&self) {
         if self.socket_is_open()
             && !self.pending_close.get()
-            && self.waiting_for_ack.get().is_some()
+            && (self.waiting_for_ack.get().is_some()
+                || self.queue.get().iter().any(|item| item.handle.is_some()))
         {
             self.close_after_flush.set(true);
             return;
@@ -1269,6 +1267,13 @@ impl SendQueue {
             Some(item) => Some(item.handle.is_some()),
         });
         let Some(has_handle) = waiting else {
+            #[cfg(windows)]
+            if self.write_in_progress.get()
+                && (self.queue.get().front()).is_some_and(|first| first.handle.is_some())
+            {
+                self.windows.with_mut(|w| w.early_reply = Some(ack_nack));
+                return;
+            }
             log!("onAckNack: ack received but not waiting for ack");
             return;
         };
@@ -1739,7 +1744,10 @@ impl SendQueue {
         // socket_closed if not); every method takes `&self`.
         let this = unsafe { &*this };
         let _alive = this.hold_owner();
-        this.windows.with_mut(|w| w.windows_write = None);
+        let early_reply = this.windows.with_mut(|w| {
+            w.windows_write = None;
+            w.early_reply.take()
+        });
         this.with_pipe(|pipe| pipe.unref()); // write complete; unref
         let n = if status.to_error(bun_sys::Tag::write).is_some() {
             -1
@@ -1747,10 +1755,14 @@ impl SendQueue {
             i32::try_from(write_len).expect("int cast")
         };
         let global = this.get_global_this();
-        if this.on_write_complete(n) {
-            this.continue_send(&global, ContinueSendReason::OnWritable);
-        } else {
+        if !this.on_write_complete(n) {
             this.update_ref(&global);
+        } else if let Some(reply) = early_reply
+            && this.waiting_for_ack.get().is_some()
+        {
+            this.on_ack_nack(&global, reply);
+        } else {
+            this.continue_send(&global, ContinueSendReason::OnWritable);
         }
 
         if this.windows.get().try_close_after_write {
@@ -1987,9 +1999,10 @@ fn handle_ipc_message(
         match icmd {
             IPCCommand::Handle(msg_data) => {
                 #[cfg(windows)]
-                let received = import_windows_socket_payload(global_this, msg_data)?;
+                let received =
+                    import_windows_socket_payload(global_this, msg_data)?.map(Offer::new);
                 #[cfg(not(windows))]
-                let received = send_queue.incoming_fd.take();
+                let received = send_queue.incoming_fd.take().map(Offer::new);
 
                 let packet = if received.is_some() {
                     get_ack_packet(send_queue.mode)
@@ -2026,8 +2039,8 @@ fn handle_ipc_message(
                 let _scope = global_this.bun_vm().enter_event_loop_scope();
                 let fd_js = received_fd_to_js(received.fd());
                 let emit = ipc_parse(global_this, target, msg_data, fd_js)?;
-                // The object that `ipc_parse` made closes it. Before the listener, which can end the thread.
-                received.into_raw();
+                // Before the listener, which can end the thread.
+                received.leave_untried_to_script();
                 if emit.is_callable() {
                     emit.call_for_running_script(global_this, JSValue::UNDEFINED, &[])?;
                 }
@@ -2059,11 +2072,12 @@ fn handle_ipc_message(
                 {
                     #[cfg(windows)]
                     {
-                        received = import_windows_socket_payload(global_this, msg_data)?;
+                        received =
+                            import_windows_socket_payload(global_this, msg_data)?.map(Offer::new);
                     }
                     #[cfg(not(windows))]
                     {
-                        received = send_queue.incoming_fd.take();
+                        received = send_queue.incoming_fd.take().map(Offer::new);
                     }
                     let packet = if received.is_some() {
                         get_ack_packet(send_queue.mode)
@@ -2086,9 +2100,8 @@ fn handle_ipc_message(
             }
         }
         if let Some(owner) = send_queue.owner.get() {
-            let handle_js = received
-                .filter(|_| owner.takes_cluster_handle())
-                .map_or(JSValue::UNDEFINED, |fd| received_fd_to_js(fd.into_raw()));
+            let handle_js =
+                (received.as_ref()).map_or(JSValue::UNDEFINED, |it| received_fd_to_js(it.fd()));
             owner.handle_ipc_message(&message, handle_js)?;
         }
     }

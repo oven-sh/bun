@@ -477,7 +477,7 @@ impl Listener {
             ),
             UnixOrHost::Fd(fd) => {
                 let fd_native = fd.native() as uws_sys::LIBUS_SOCKET_DESCRIPTOR;
-                this_ref.group.listen_fd(
+                let ls = this_ref.group.listen_fd(
                     kind,
                     secure_ctx_ptr,
                     fd_native,
@@ -485,7 +485,8 @@ impl Listener {
                     socket_flags,
                     size_of::<*mut c_void>() as c_int,
                     &mut errno,
-                )
+                );
+                super::offered_fd::settle(fd_native, ls)
             }
         };
         let Some(owned_socket) = listen_socket else {

@@ -9,8 +9,6 @@ const sendHelper = $bindgen("node_cluster_binding.bind.ts", "sendHelperPrimary")
 const uvTranslateSysError: (errno: number) => number = $bindgen("node_util_binding.bind.ts", "uvTranslateSysError");
 const { UV_EINVAL } = process.binding("uv");
 
-const ArrayIsArray = Array.isArray;
-
 const UV_TCP_IPV6ONLY = 1;
 
 export default class RoundRobinHandle {
@@ -161,19 +159,15 @@ export default class RoundRobinHandle {
       return;
     }
     append(this.handles, handle);
-    // eslint-disable-next-line node-core/no-array-destructuring
-    const [workerEntry] = this.free; // this.free is a SafeMap
-
-    if (ArrayIsArray(workerEntry)) {
-      const { 0: workerId, 1: worker } = workerEntry;
+    for (const { 0: workerId, 1: worker } of this.free) {
       this.free.delete(workerId);
-      this.handoff(worker);
+      if (worker.process.connected) return this.handoff(worker);
     }
   }
 
   handoff(worker: ClusterWorker) {
-    if (!this.all.has(worker.id)) {
-      return; // Worker is closing (or has closed) the server.
+    if (!this.all.has(worker.id) || !worker.process.connected) {
+      return; // Worker is closing (or has closed) the server or the channel.
     }
 
     for (;;) {

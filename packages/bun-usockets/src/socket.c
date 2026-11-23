@@ -740,7 +740,12 @@ int us_socket_ipc_write_fd(struct us_socket_t *s, const char *data, int length, 
     int sent = bsd_sendmsg(us_poll_fd(&s->p), &msg, 0);
 
     if (sent < 0) {
-        if (errno == EAGAIN || errno == EWOULDBLOCK || errno == ENOBUFS) {
+        if (errno == EAGAIN || errno == EWOULDBLOCK || errno == ENOBUFS
+#ifdef __APPLE__
+            /* The control message does not fit in what is left of the buffer. */
+            || errno == EMSGSIZE
+#endif
+        ) {
             s->flags.last_write_failed = 1;
             us_poll_change(&s->p, s->group->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
             return 0;

@@ -24,6 +24,9 @@ export const clusterRawBind = b.fn({
   throws: true,
 });
 export const clusterValidateFd = b.fn({ args: { fd: b.f64, wantDgram: b.bool }, returns: b.i32 });
+export const clusterClaimHandle = b.fn({ args: { fd: b.f64 } });
+export const clusterHoldHandle = b.fn({ args: { fd: b.f64 }, returns: b.f64.nullable });
+export const clusterRefuseHandle = b.fn({ args: { ticket: b.f64 } });
 export const clusterCloseHandle = b.fn({ args: { fd: b.f64 } });
 
 /** `process[kHandle]` of a `cluster.Worker`, which takes any object as its process. */

@@ -5,6 +5,7 @@
 // - We should not be creating JSFunction's in process.nextTick.
 
 use crate::ipc::{IsInternal, SerializeAndSendResult};
+use crate::socket::offered_fd::{self, Ticket};
 use bun_jsc::bindgen::{Callable, JsLocal, JsScope};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{JSGlobalObject, JSObject, JSValue, JsResult, StrongOptional};
@@ -64,7 +65,7 @@ pub(crate) fn on_internal_message_child<'a>(
     Ok(())
 }
 
-pub(crate) fn is_child_listening() -> bool {
+fn is_child_listening() -> bool {
     child_singleton().is_ready()
 }
 
@@ -578,6 +579,18 @@ pub(crate) fn cluster_validate_fd(fd: f64, want_dgram: bool) -> i32 {
         let _ = (fd, want_dgram);
         -bun_sys::UV_E::INVAL
     }
+}
+
+pub(crate) fn cluster_claim_handle(fd: f64) {
+    offered_fd::claim(fd as bun_uws::LIBUS_SOCKET_DESCRIPTOR);
+}
+
+pub(crate) fn cluster_hold_handle(fd: f64) -> Option<f64> {
+    offered_fd::hold(fd as bun_uws::LIBUS_SOCKET_DESCRIPTOR).map(Ticket::to_number)
+}
+
+pub(crate) fn cluster_refuse_handle(ticket: f64) {
+    Ticket::from_number(ticket).refuse();
 }
 
 pub(crate) fn cluster_close_handle(fd: f64) {

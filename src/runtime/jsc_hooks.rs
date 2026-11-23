@@ -91,6 +91,7 @@ pub(crate) struct RuntimeState {
     /// The wrappers of the running `Bun.cron()` jobs of the main thread under `--hot`, which a reload stops.
     pub(crate) cron_jobs: JsCell<Vec<bun_jsc::Strong>>,
     pub(crate) cron_os_jobs: crate::api::cron_os::OsJobs,
+    pub(crate) offered_fds: crate::socket::offered_fd::OfferedFds,
     pub(crate) stat_watcher_scheduler: Cell<Option<bun_ptr::RefPtr<StatWatcherScheduler>>>,
     /// Set in the VM that runs the files of `bun test`.
     pub(crate) test_runner: Cell<Option<&'static crate::test_runner::jest::TestRunner>>,
@@ -320,6 +321,7 @@ fn init_runtime_state(vm: &VirtualMachine, opts: &InitOptions) -> OpaqueRuntimeS
         request_pools: Default::default(),
         cron_jobs: JsCell::default(),
         cron_os_jobs: Default::default(),
+        offered_fds: Default::default(),
         stat_watcher_scheduler: Cell::new(None),
         test_runner: Cell::new(None),
         matcher_pass: Cell::new(ptr::null()),

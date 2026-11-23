@@ -12,15 +12,28 @@ expectType(channel.stream("/s/m", { messages: [1], frame: (message: number) => n
   AsyncGenerator<Uint8Array, void, void>
 >();
 
-const unary = route(false, false, async (request, context) => {
-  expectType(request).is<Uint8Array>();
-  expectType(context).is<CallContext>();
-  return request;
-});
+const frame = (message: number) => new Uint8Array(message);
+const unary = route(
+  false,
+  false,
+  async (request, context) => {
+    expectType(request).is<Uint8Array>();
+    expectType(context).is<CallContext>();
+    return request.length;
+  },
+  frame,
+);
 expectType(unary).is<Route>();
-const bidi = route(true, true, async requests => {
-  expectType(requests).is<AsyncGenerator<Uint8Array, void, void>>();
-  return { messages: requests, frame: (message: Uint8Array) => message };
-});
+const bidi = route(
+  true,
+  true,
+  requests => {
+    expectType(requests).is<AsyncGenerator<Uint8Array, void, void>>();
+    return [1];
+  },
+  frame,
+);
+// @ts-expect-error `frame` takes a number
+route(false, false, () => "1", frame);
 
 Bun.serve({ http2: true, routes: { "/s/unary": unary, "/s/bidi": bidi } });

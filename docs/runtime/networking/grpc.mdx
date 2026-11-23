@@ -67,6 +67,10 @@ Bun.serve({
 });
 ```
 
+The path of a method is `/package.Service/Method`, so services from different packages can have the same name. On a server that has gRPC routes, a call of an unknown service or method fails with `UNIMPLEMENTED`. It does not reach `fetch` or a `/*` route.
+
+Bun matches the path, reads the messages, and enforces limits and deadlines in native code. It creates no `Request` or `Response` for a call.
+
 A stream of requests is an async iterable. For a stream of responses, return an iterable or an async iterable.
 
 ```ts
@@ -110,14 +114,17 @@ Greeter.routes(new Greetings());
 
 The second argument of a handler describes the call.
 
-| Property           | Description                                                       |
-| ------------------ | ----------------------------------------------------------------- |
-| `headers`          | The metadata from the client                                      |
-| `responseHeaders`  | Metadata to send before the first message                         |
-| `responseTrailers` | Metadata to send with the status                                  |
-| `signal`           | Aborts when the client cancels the call or the deadline passes    |
-| `request`          | The `Request`                                                     |
-| `server`           | The `Server`, for example for `server.requestIP(context.request)` |
+| Member             | Description                                                                                                       |
+| ------------------ | ----------------------------------------------------------------------------------------------------------------- |
+| `headers`          | The metadata from the client                                                                                      |
+| `responseHeaders`  | Metadata to send before the first message                                                                         |
+| `responseTrailers` | Metadata to send with the status                                                                                  |
+| `signal`           | Aborts with a `GrpcError` when the client cancels the call, the deadline passes, or Bun refuses a request message |
+| `path`             | For example `"/helloworld.Greeter/SayHello"`                                                                      |
+| `host`             | The host and port that the client asked for                                                                       |
+| `server`           | The `Server`                                                                                                      |
+| `requestIP()`      | The address of the client                                                                                         |
+| `timeout(seconds)` | Replaces `idleTimeout` for this call                                                                              |
 
 Metadata is a `Headers` object. The value of a key that ends in `-bin` is base64, which you encode and decode yourself.
 
@@ -150,14 +157,14 @@ Greeter.routes(greeter, {
 
 `maxReceiveMessageLength` limits each request message, after decompression. The default is 4 MiB.
 
-`maxRequestBodySize` applies only to a request that has a `Content-Length` header, so a stream of requests can be any length.
+`maxRequestBodySize` also limits each request message. It does not limit their sum, so a stream of requests can be any length.
 
 [`idleTimeout`](/runtime/http/server#idletimeout) closes a connection on which no call has sent or received a message for 10 seconds. A call that has a deadline extends that to its deadline, up to 255 seconds. For a call that can be silent for longer, turn the timeout off in its handler.
 
 ```ts
 Greeter.routes({
   async *watch(request, context) {
-    context.server.timeout(context.request, 0);
+    context.timeout(0);
     yield* changes(context.signal);
   },
 });

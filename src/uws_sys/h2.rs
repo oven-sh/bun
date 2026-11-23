@@ -14,6 +14,26 @@ use bun_ptr::{AnyRefCounted, RefPtr};
 
 pub use crate::h3::Request;
 
+/// Names are in lower case, and `:authority` comes as `host`.
+pub fn for_each_header<F: FnMut(&[u8], &[u8])>(request: &mut Request, mut handler: F) {
+    extern "C" fn cb<F: FnMut(&[u8], &[u8])>(
+        name: *const u8,
+        name_len: usize,
+        value: *const u8,
+        value_len: usize,
+        handler: *mut c_void,
+    ) {
+        // SAFETY: `handler` is the `F` below, and both slices last as long as the request.
+        unsafe {
+            (*handler.cast::<F>())(
+                thunk::c_slice(name, name_len),
+                thunk::c_slice(value, value_len),
+            );
+        }
+    }
+    c::uws_h2_req_for_each_header(request, cb::<F>, (&raw mut handler).cast());
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // Response
 // ──────────────────────────────────────────────────────────────────────────
@@ -613,6 +633,11 @@ mod c {
             p: *const u8,
             n: usize,
             h: Handler,
+            ud: *mut c_void,
+        );
+        pub(super) safe fn uws_h2_req_for_each_header(
+            req: &mut Request,
+            cb: unsafe extern "C" fn(*const u8, usize, *const u8, usize, *mut c_void),
             ud: *mut c_void,
         );
         pub(super) safe fn uws_h2_res_state(res: &mut Response) -> State;

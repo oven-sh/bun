@@ -85,6 +85,8 @@ public:
     template<typename Req>
     JSValue callRoute(Zig::GlobalObject* globalObject, uint32_t index, void* requestPtr, EncodedJSValue serverObject, EncodedJSValue* requestObject, Req* req);
 
+    JSCell* callbackAt(uint32_t index) const { return m_routes.at(index).get(); }
+
 private:
     Structure* structureForParamsObject(JSC::VM& vm, JSC::JSGlobalObject* globalObject, uint32_t index, std::span<const Identifier> identifiers);
     template<typename Req>
@@ -285,6 +287,11 @@ extern "C" JSC::EncodedJSValue Bun__ServerRouteList__callRouteH3(
     JSValue routeListValue = JSValue::decode(routeListObject);
     ServerRouteList* routeList = uncheckedDowncast<ServerRouteList>(routeListValue);
     return JSValue::encode(routeList->callRoute(globalObject, index, requestPtr, serverObject, requestObject, req));
+}
+
+extern "C" JSC::EncodedJSValue Bun__ServerRouteList__callbackAt(JSC::EncodedJSValue routeListObject, uint32_t index)
+{
+    return JSValue::encode(uncheckedDowncast<ServerRouteList>(JSValue::decode(routeListObject))->callbackAt(index));
 }
 
 extern "C" JSC::EncodedJSValue Bun__ServerRouteList__create(Zig::GlobalObject* globalObject, EncodedJSValue* callbacks, EncodedSlice* paths, size_t pathsLength)

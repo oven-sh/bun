@@ -112,21 +112,35 @@ declare module "bun:grpc" {
   }
 
   interface CallContext {
-    readonly request: Request;
     readonly server: Bun.Server<unknown>;
-    /** The metadata of the call: `request.headers` without the fields of HTTP and gRPC themselves. */
+    /** For example `"/helloworld.Greeter/SayHello"` */
+    readonly path: string;
+    /** The host and port that the client asked for, such as `"localhost:3000"`. */
+    readonly host: string;
+    /** The metadata of the call: the request headers without the fields of HTTP and gRPC themselves. */
     readonly headers: Headers;
-    /** Aborts when the client cancels the call or the deadline passes. */
+    /**
+     * Aborts with a {@link GrpcError} when the call ends before its handler
+     * does: the client cancels it, the deadline passes, or a request is invalid.
+     */
     readonly signal: AbortSignal;
     /** Metadata to send before the first message. Changes after that have no effect. */
     readonly responseHeaders: Headers;
     /** Metadata to send with the status. */
     readonly responseTrailers: Headers;
+    /** The address of the client. `null` on a Unix socket and once the call has ended. */
+    requestIP(): Bun.SocketAddress | null;
+    /**
+     * Replaces the `idleTimeout` of the server for this call.
+     * @param seconds An integer from 0 to 255. `0` disables the timeout.
+     */
+    timeout(seconds: number): void;
   }
 
   interface RoutesOptions {
     /**
-     * A longer request message fails the call with `Status.RESOURCE_EXHAUSTED`.
+     * A longer request message fails the call with `Status.RESOURCE_EXHAUSTED`,
+     * and so does one that is longer than the `maxRequestBodySize` of the server.
      * @default 4 * 1024 * 1024
      */
     maxReceiveMessageLength?: number | undefined;
@@ -140,7 +154,7 @@ declare module "bun:grpc" {
 
   /** The value of one path in the `routes` of `Bun.serve()`. */
   interface Route {
-    POST(request: Request, server: Bun.Server<any>): Promise<Response>;
+    readonly [Symbol.toStringTag]: "GrpcRoute";
   }
 
   /** Messages to send, and what turns one into bytes that start with the 5-byte prefix of gRPC. */
@@ -161,19 +175,20 @@ declare module "bun:grpc" {
   }
 
   /**
-   * What a generated `routes()` calls. The bytes that `handler` returns start
-   * with the 5-byte prefix of gRPC. The bytes it takes do not. Without a
-   * `handler`, calls fail with `Status.UNIMPLEMENTED`.
+   * What a generated `routes()` calls. The bytes that `frame` returns start
+   * with the 5-byte prefix of gRPC. The bytes that `handler` takes do not.
+   * Without a `handler`, calls fail with `Status.UNIMPLEMENTED`.
    */
-  function route<RequestStream extends boolean, ResponseStream extends boolean>(
+  function route<RequestStream extends boolean, ResponseStream extends boolean, T>(
     requestStream: RequestStream,
     responseStream: ResponseStream,
     handler:
       | ((
           request: RequestStream extends true ? AsyncGenerator<Uint8Array, void, void> : Uint8Array,
           context: CallContext,
-        ) => Promise<ResponseStream extends true ? Outgoing : Uint8Array>)
+        ) => NoInfer<ResponseStream extends true ? Messages<T> | Promise<Messages<T>> : T | Promise<T>>)
       | undefined,
+    frame: (message: T) => Uint8Array,
     options?: RoutesOptions,
   ): Route;
 }

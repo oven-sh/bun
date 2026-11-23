@@ -1,13 +1,15 @@
 import * as grpcJs from "@grpc/grpc-js";
-import { GrpcError, Status } from "bun:grpc";
+import { GrpcError, Status, type CallOptions } from "bun:grpc";
 import { describe, expect, spyOn, test } from "bun:test";
-import { isWindows, tempDir, tls } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir, tls } from "harness";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { once } from "node:events";
 import http2 from "node:http2";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import { deflateSync, gzipSync } from "node:zlib";
 import { Echo, Message } from "./echo.proto";
+import * as other from "./other.proto";
 
 const echo = {
   unary: (request: any) => ({ text: "echo " + request.text, number: request.number + 1, blob: request.blob }),
@@ -104,7 +106,7 @@ describe.concurrent("transports", () => {
 
   test("calls share a connection", async () => {
     await using it = serve({
-      unary: (_: any, { server, request }: any) => ({ number: server.requestIP(request).port }),
+      unary: (_: any, context: any) => ({ number: context.requestIP().port }),
     });
     const together = await Promise.all(Array.from({ length: 20 }, () => it.client.unary({})));
     const later = await it.client.unary({});
@@ -134,6 +136,143 @@ describe.concurrent("transports", () => {
   });
 });
 
+describe.concurrent("routing", () => {
+  const unimplemented = { code: Status.UNIMPLEMENTED, message: "The method is not implemented" };
+
+  test("several services on one server and one connection", async () => {
+    const named = (text: string) => (_: any, context: any) => ({ text, number: context.requestIP().port });
+    await using server = Bun.serve({
+      port: 0,
+      http2: true,
+      routes: {
+        ...Echo.routes({ unary: named("test.v1.Echo") }),
+        ...other.Echo.routes({ unary: named("test.v2.Echo") }),
+        ...other.Health.routes({ check: named("test.v2.Health") }),
+      },
+    });
+    const responses = [
+      await new Echo.Client(server.url).unary({}),
+      await new other.Echo.Client(server.url).unary({}),
+      await new other.Health.Client(server.url).check({}),
+    ];
+    expect(responses.map(it => it.text)).toEqual(["test.v1.Echo", "test.v2.Echo", "test.v2.Health"]);
+    expect(new Set(responses.map(it => it.number)).size).toBe(1);
+  });
+
+  test.each([
+    ["nothing", {}, undefined, 404],
+    ["fetch", {}, () => new Response("fallback"), 200],
+    ["a wildcard", { "/*": () => new Response("fallback") }, undefined, 200],
+    ["a static wildcard", { "/*": new Response("fallback") }, undefined, 200],
+    ["a wildcard for GET", { "/*": { GET: new Response() } }, () => new Response("fallback"), 200],
+    ["a wildcard for POST", { "/*": { POST: () => new Response("fallback") } }, undefined, 200],
+  ] as [string, object, any, number][])(
+    "an unknown method with %s to fall back on",
+    async (_, routes, fetch, status) => {
+      await using server = Bun.serve({ port: 0, http2: true, routes: { ...routes, ...Echo.routes(echo) }, fetch });
+      expect(await failure(new other.Health.Client(server.url).check({}))).toMatchObject(unimplemented);
+      const response = await Bun.fetch(new URL("/test.v2.Health/Check", server.url), {
+        method: "POST",
+        protocol: "http2",
+      });
+      expect(response.status).toBe(status);
+    },
+  );
+
+  test("a route for the path of a method that is not a gRPC route", async () => {
+    const forbid = () => new Response(null, { headers: { "content-type": "application/grpc", "grpc-status": "7" } });
+    for (const routes of [
+      { "/test.v2.Health/Check": forbid },
+      { "/test.v2.Health/Check": forbid() },
+      { "/test.v2.Health/Check": false },
+      { "/test.v2.Health/*": forbid },
+      { "/test.v2.Health/:method": { POST: forbid } },
+    ]) {
+      await using server = Bun.serve({
+        port: 0,
+        http2: true,
+        routes: { ...Echo.routes(echo), ...(routes as object) },
+        fetch: forbid,
+      });
+      expect(await failure(new other.Health.Client(server.url).check({}))).toMatchObject({
+        code: Status.PERMISSION_DENIED,
+      });
+    }
+  });
+
+  test("one route for every method", async () => {
+    const routes = Echo.routes({ unary: (_, context) => ({ text: context.path }) });
+    await using server = Bun.serve({ port: 0, http2: true, routes: { "/*": routes["/test.v1.Echo/Unary"] } });
+    expect((await new other.Health.Client(server.url).check({})).text).toBe("/test.v2.Health/Check");
+  });
+
+  test("reload", async () => {
+    const [started, release] = [Promise.withResolvers<void>(), Promise.withResolvers<void>()];
+    await using it = serve({
+      unary: () => ({ text: "old" }),
+      async clientStream() {
+        started.resolve();
+        await release.promise;
+        return { text: "old" };
+      },
+    });
+    const session = http2.connect(it.server.url);
+    try {
+      const incomplete = session.request({
+        ":method": "POST",
+        ":path": "/test.v1.Echo/Unary",
+        "content-type": "application/grpc",
+      });
+      await new Promise(resolve => session.once("connect", () => session.ping(resolve)));
+      const running = it.client.clientStream([]);
+      await started.promise;
+
+      it.server.reload({ routes: other.Health.routes({ check: () => ({ text: "new" }) }) });
+      Bun.gc(true);
+      expect(await failure(it.client.unary({}))).toMatchObject(unimplemented);
+      expect((await new other.Health.Client(it.server.url).check({})).text).toBe("new");
+
+      release.resolve();
+      expect((await running).text).toBe("old");
+      incomplete.end(frame(new Uint8Array()));
+      expect(Message.decode(Buffer.concat(await Array.fromAsync(incomplete)).subarray(5)).text).toBe("old");
+    } finally {
+      session.destroy();
+    }
+  });
+
+  test("a handler can reload or stop its server", async () => {
+    await using it = serve({
+      clientStream: (_: any, { server }: any) => (
+        server.reload({ routes: Echo.routes(stopping) }),
+        { text: "reloaded" }
+      ),
+    });
+    const stopping = { clientStream: (_: any, { server }: any) => (server.stop(true), {}) };
+    expect((await it.client.clientStream([])).text).toBe("reloaded");
+    expect(await failure(it.client.clientStream([]))).toMatchObject({ code: Status.UNAVAILABLE });
+  });
+
+  test("stop() waits for the calls", async () => {
+    const [started, release] = [Promise.withResolvers<void>(), Promise.withResolvers<void>()];
+    await using it = serve({ unary: () => (started.resolve(), release.promise.then(() => ({ text: "done" }))) });
+    const call = it.client.unary({});
+    await started.promise;
+    expect(it.server.pendingRequests).toBe(1);
+    const stopped = it.server.stop();
+    release.resolve();
+    expect((await call).text).toBe("done");
+    await stopped;
+    expect(it.server.pendingRequests).toBe(0);
+  });
+
+  test("handlers run in the async context of Bun.serve()", async () => {
+    const storage = new AsyncLocalStorage<string>();
+    await using it = storage.run("stored", () => serve({ unary: () => ({ text: storage.getStore() }) }));
+    expect((await it.client.unary({})).text).toBe("stored");
+  });
+});
+
 describe.concurrent("handlers", () => {
   test("can be methods of a class, and can return any iterable", async () => {
     class Service {
@@ -148,6 +287,11 @@ describe.concurrent("handlers", () => {
     await using it = serve(new Service());
     expect((await it.client.unary({})).text).toBe("private");
     expect(await Array.fromAsync(it.client.serverStream({}))).toHaveLength(2);
+  });
+
+  test("can return a thenable", async () => {
+    await using it = serve({ unary: () => ({ then: (resolve: Function) => resolve({ text: "a" }) }) });
+    expect((await it.client.unary({})).text).toBe("a");
   });
 
   test("a method that is left out is unimplemented", async () => {
@@ -227,7 +371,7 @@ describe.concurrent("a handler that calls another server", () => {
     await using backend = serve({
       async clientStream(requests: AsyncIterable<any>, context: any) {
         context.responseHeaders.set("x-header", context.headers.get("x-call"));
-        context.responseTrailers.set("x-trailer", context.request.headers.get("host"));
+        context.responseTrailers.set("x-trailer", context.host);
         return echo.clientStream(requests);
       },
     });
@@ -264,7 +408,7 @@ describe.concurrent("a handler that calls another server", () => {
     });
     await using front = serve({ unary: () => backend.client.unary({}) });
     const error = await failure(front.client.unary({}));
-    expect(error.trailers.toJSON()).toEqual({ "grpc-status": "5", "grpc-message": "gone" });
+    expect([error.code, error.message, error.trailers.has("set-cookie")]).toEqual([Status.NOT_FOUND, "gone", false]);
   });
 });
 
@@ -295,6 +439,8 @@ describe.concurrent("errors", () => {
     expect(error).toBeInstanceOf(GrpcError);
     expect(error).toMatchObject({ name: "GrpcError", code: Status.NOT_FOUND, message });
     expect(error.trailers.toJSON()).toEqual({
+      "content-type": "application/grpc",
+      "grpc-accept-encoding": "identity,gzip,deflate",
       "grpc-status": "5",
       "grpc-message": "%20100%25 %E2%98%83%0D%0A%20",
       "x-context": "1",
@@ -313,13 +459,34 @@ describe.concurrent("errors", () => {
       unary: () => Promise.reject(secret),
       serverStream: () => 1,
       clientStream: () => ({ number: "1" }),
+      bidi: () => Promise.reject(Object.assign(new GrpcError(Status.ABORTED), { code: 0 })),
     });
-    const calls = [it.client.unary({}), it.client.serverStream({}), it.client.clientStream([])];
+    const calls = [it.client.unary({}), it.client.serverStream({}), it.client.clientStream([]), it.client.bidi([])];
     for (const error of await Promise.all(calls.map(failure))) {
       expect(error).toMatchObject({ code: Status.UNKNOWN, message: "Unknown error" });
     }
-    expect(logged.mock.calls.map(([error]) => error.name).sort()).toEqual(["Error", "TypeError", "TypeError"]);
+    expect(logged.mock.calls.map(([error]) => error.name).sort()).toEqual([
+      "Error",
+      "RangeError",
+      "TypeError",
+      "TypeError",
+    ]);
     expect(logged).toHaveBeenCalledWith(secret);
+  });
+
+  test.serial("an error that cannot be looked at, and onError that throws", async () => {
+    using logged = spyOn(console, "error").mockImplementation(() => {});
+    const { proxy, revoke } = Proxy.revocable({}, {});
+    revoke();
+    const implementation = { unary: () => Promise.reject(proxy), clientStream: () => Promise.reject(1) };
+    await using it = serve(implementation, {
+      onError() {
+        throw new RangeError();
+      },
+    });
+    expect(await failure(it.client.unary({}))).toMatchObject({ code: Status.UNKNOWN });
+    expect(await failure(it.client.clientStream([]))).toMatchObject({ code: Status.UNKNOWN });
+    expect(logged.mock.calls.map(([error]) => error.name)).toEqual(["TypeError", "RangeError"]);
   });
 
   test("onError", async () => {
@@ -331,7 +498,7 @@ describe.concurrent("errors", () => {
     };
     await using it = serve(implementation, {
       onError(error: unknown, context: any) {
-        seen.push([error, new URL(context.request.url).pathname]);
+        seen.push([error, context.path]);
         if (error === "mapped") return new GrpcError(Status.INVALID_ARGUMENT, "mapped");
       },
     });
@@ -415,21 +582,14 @@ describe.concurrent("deadlines and cancellation", () => {
   test("timeout", async () => {
     const serverSide = Promise.withResolvers();
     await using it = serve({
-      async unary(_: any, { request, signal }: any) {
-        const timeout = request.headers.get("grpc-timeout");
-        await aborted(signal);
-        serverSide.resolve(timeout);
+      async unary(_: any, { signal }: any) {
+        serverSide.resolve(await aborted(signal));
         return {};
       },
     });
     const client = new Echo.Client(it.server.url, { timeout: 2 ** 31 - 1 });
     expect(await failure(client.unary({}, { timeout: 200 }))).toMatchObject({ code: Status.DEADLINE_EXCEEDED });
-    expect(await serverSide.promise).toBe("200m");
-  });
-
-  test("a timeout of more than 8 digits is sent in seconds", async () => {
-    await using it = serve({ unary: (_: any, { request }: any) => ({ text: request.headers.get("grpc-timeout") }) });
-    expect((await it.client.unary({}, { timeout: 100_000_001 })).text).toBe("100001S");
+    expect(await serverSide.promise).toBeInstanceOf(GrpcError);
   });
 
   test.each(["unary", "serverStream", "clientStream", "bidi"])("the server ends %s at the deadline", async method => {
@@ -469,7 +629,7 @@ describe.concurrent("deadlines and cancellation", () => {
     await started.promise;
     controller.abort("why");
     expect(await call).toMatchObject({ code: Status.CANCELLED, cause: "why" });
-    await serverSide.promise;
+    expect(await serverSide.promise).toMatchObject({ name: "GrpcError", code: Status.CANCELLED });
     expect(await failure(it.client.unary({}, { signal: controller.signal }))).toMatchObject({ code: Status.CANCELLED });
   });
 
@@ -479,7 +639,7 @@ describe.concurrent("deadlines and cancellation", () => {
     await using it = serve(
       {
         async unary(request: any, context: any) {
-          if (request.text === "lifted") context.server.timeout(context.request, 0);
+          if (request.text === "lifted") context.timeout(0);
           await release.promise;
           return request;
         },
@@ -504,6 +664,23 @@ describe.concurrent("deadlines and cancellation", () => {
     }
   }, 30_000);
 
+  test("idleTimeout applies again to what is left to send once the call has ended", async () => {
+    await using it = serve(
+      { unary: (_: any, context: any) => (context.timeout(0), { blob: new Uint8Array(1 << 20) }) },
+      {},
+      { idleTimeout: 1 },
+    );
+    const session = http2.connect(it.server.url).on("error", () => {});
+    try {
+      const headers = { ":method": "POST", ":path": "/test.v1.Echo/Unary", "content-type": "application/grpc" };
+      const neverRead = session.request(headers).on("error", () => {});
+      neverRead.end(frame(new Uint8Array()));
+      expect((await once(session, "goaway"))[0]).toBe(http2.constants.NGHTTP2_NO_ERROR);
+    } finally {
+      session.destroy();
+    }
+  }, 30_000);
+
   test("an iterator that waits for its next message is closed when the call ends", async () => {
     const closed = [Promise.withResolvers<void>(), Promise.withResolvers<void>()];
     const waiting = ({ resolve }: (typeof closed)[0]) => ({
@@ -515,33 +692,55 @@ describe.concurrent("deadlines and cancellation", () => {
     await Promise.all(closed.map(it => it.promise));
   });
 
-  test("the handler is closed if the client cancels before the response starts", async () => {
-    const [responded, closed] = [Promise.withResolvers<void>(), Promise.withResolvers<void>()];
-    const { POST } = Echo.routes({
-      *serverStream() {
-        try {
-          yield {};
-        } finally {
-          closed.resolve();
-        }
-      },
-    })["/test.v1.Echo/ServerStream"];
-    await using server = Bun.serve({
-      port: 0,
-      http2: true,
-      async fetch(request, server) {
-        const response = await POST(request, server);
-        responded.resolve();
-        await aborted(request.signal);
-        return response;
+  test("the responses are closed if the call ends before the handler returns them", async () => {
+    const [started, closed] = [Promise.withResolvers<void>(), Promise.withResolvers<void>()];
+    await using it = serve({
+      async serverStream(_: any, { signal }: any) {
+        started.resolve();
+        await aborted(signal);
+        return new ReadableStream({ cancel: () => closed.resolve() });
       },
     });
     const controller = new AbortController();
-    const call = failure(new Echo.Client(server.url).serverStream({}, { signal: controller.signal }));
-    await responded.promise;
+    const call = failure(it.client.serverStream({}, { signal: controller.signal }));
+    await started.promise;
     controller.abort();
     expect(await call).toMatchObject({ code: Status.CANCELLED });
     await closed.promise;
+  });
+
+  test("the context once the call has ended", async () => {
+    const contexts: any[] = [];
+    await using it = serve({
+      unary: (request: any, context: any) => (contexts.push(context), request.number ? new Promise(() => {}) : {}),
+    });
+    await it.client.unary({}, { headers: { "x-call": "a" } });
+    await failure(it.client.unary({ number: 1 }, { headers: { "x-call": "b", "grpc-timeout": "1m" } }));
+    Bun.gc(true);
+    for (const context of contexts) context.timeout(1);
+    expect(contexts.map(it => [it.headers.get("x-call"), it.signal.reason?.code, it.requestIP()])).toEqual([
+      ["a", undefined, null],
+      ["b", Status.DEADLINE_EXCEEDED, null],
+    ]);
+    expect(contexts[0].server).toBe(it.server);
+    expect(() => contexts[0].timeout(256)).toThrow(expect.objectContaining({ code: "ERR_OUT_OF_RANGE" }));
+  });
+
+  test("reading the requests once the handler has answered", async () => {
+    const reads: Promise<any>[] = [];
+    await using it = serve({
+      async clientStream(requests: AsyncGenerator<any>) {
+        await requests.next();
+        reads.push(failure(requests.next()));
+        return {};
+      },
+    });
+    async function* oneThenSilence() {
+      yield {};
+      await new Promise(() => {});
+    }
+    await it.client.clientStream(oneThenSilence());
+    expect(await reads[0]).toMatchObject({ code: Status.CANCELLED });
   });
 
   test("leaving the loop over the responses closes the handler", async () => {
@@ -573,32 +772,38 @@ describe.concurrent("sizes", () => {
     expect(total).toBe(8 << 20);
   });
 
-  test("a stream of requests can be longer than maxRequestBodySize", async () => {
-    await using it = serve(echo, {}, { maxRequestBodySize: 1 << 20 });
+  test("maxRequestBodySize limits each request, and not the stream", async () => {
+    await using it = serve(echo, {}, { maxRequestBodySize: 2 << 20 });
     const requests = Array.from({ length: 4 }, () => ({ number: 1, blob: megabyte }));
     expect((await it.client.clientStream(requests)).number).toBe(4);
+    const tooLong = { blob: new Uint8Array(2 << 20) };
+    expect(await failure(it.client.unary(tooLong))).toMatchObject({ code: Status.RESOURCE_EXHAUSTED });
+    expect(await failure(it.client.clientStream([tooLong]))).toMatchObject({ code: Status.RESOURCE_EXHAUSTED });
   });
 
-  test("nothing else can read a body that maxRequestBodySize does not limit", async () => {
+  test("a slow handler holds the client back", async () => {
+    const release = Promise.withResolvers<void>();
     await using it = serve({
-      clientStream: (_: any, { request }: any) => request.arrayBuffer().catch((error: any) => ({ text: error.code })),
-    });
-    expect((await it.client.clientStream([{}])).text).toBe("ERR_BODY_ALREADY_USED");
-
-    const cloned = Promise.withResolvers<unknown>();
-    const { POST } = Echo.routes(echo)["/test.v1.Echo/ClientStream"];
-    await using server = Bun.serve({
-      port: 0,
-      http2: true,
-      maxRequestBodySize: 1 << 20,
-      fetch(request, server) {
-        cloned.resolve(failure(request.clone().arrayBuffer()));
-        return POST(request, server);
+      unary: echo.unary,
+      async clientStream(requests: AsyncGenerator<any>) {
+        await requests.next();
+        await release.promise;
+        return echo.clientStream(requests);
       },
     });
-    const requests = Array.from({ length: 4 }, () => ({ blob: megabyte }));
-    await failure(new Echo.Client(server.url).clientStream(requests));
-    expect(await cloned.promise).toMatchObject({ message: "Request body exceeded maxRequestBodySize" });
+    let produced = 0;
+    function* requests() {
+      for (; produced < 64; produced++) yield { number: 1, blob: megabyte };
+    }
+    const call = it.client.clientStream(requests());
+    let last = -1;
+    while (last !== produced) {
+      last = produced;
+      for (let i = 0; i < 10; i++) await it.client.unary({});
+    }
+    expect(produced).toBeLessThan(32);
+    release.resolve();
+    expect((await call).number).toBe(63);
   });
 
   test("a slow reader holds the handler back", async () => {
@@ -618,6 +823,42 @@ describe.concurrent("sizes", () => {
     }
     expect(produced).toBeLessThan(64);
     await responses.return();
+  });
+
+  test.serial("a fast reader does not keep the server from its other work", async () => {
+    const turns: number[] = [];
+    let turn = 0;
+    let immediate = setImmediate(function again() {
+      turn++;
+      immediate = setImmediate(again);
+    });
+    await using it = serve({
+      *serverStream() {
+        while (turns.push(turn) < 32) yield { blob: megabyte };
+      },
+    });
+    // In another process, so that it reads while the server writes.
+    await using reader = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const session = require("node:http2").connect(process.argv[1], { settings: { initialWindowSize: 2 ** 30 } });
+        session.on("connect", () => {
+          session.setLocalWindowSize(2 ** 30);
+          const headers = { ":method": "POST", ":path": "/test.v1.Echo/ServerStream", "content-type": "application/grpc" };
+          session.request(headers).on("end", () => session.close()).resume().end(Buffer.alloc(5));
+        });`,
+        it.server.url.href,
+      ],
+      env: bunEnv,
+      stdio: ["ignore", "inherit", "inherit"],
+    });
+    try {
+      expect(await reader.exited).toBe(0);
+    } finally {
+      clearImmediate(immediate);
+    }
+    expect(new Set(turns).size).toBeGreaterThan(12);
   });
 
   test("maxReceiveMessageLength", async () => {
@@ -652,10 +893,12 @@ describe.concurrent("what the server makes of a request", () => {
         "content-type": "application/grpc",
         ...headers,
       });
-      const [response, trailers, body] = [once(stream, "response"), once(stream, "trailers"), Array.fromAsync(stream)];
+      let trailers: http2.IncomingHttpHeaders | undefined;
+      stream.on("trailers", received => (trailers = received));
+      const [response, body] = [once(stream, "response"), Array.fromAsync(stream)];
       for (const chunk of chunks) await new Promise(resolve => stream.write(chunk, resolve));
       stream.end();
-      return { headers: (await response)[0], trailers: (await trailers)[0], body: Buffer.concat(await body) };
+      return { headers: (await response)[0], body: Buffer.concat(await body), trailers };
     } finally {
       session.close();
     }
@@ -667,7 +910,51 @@ describe.concurrent("what the server makes of a request", () => {
     expect(headers).toMatchObject({ ":status": 200, "content-type": "application/grpc" });
     expect(headers).not.toContainKey("content-length");
     expect(body.toString("hex")).toBe("000000000a0a066563686f20611001");
-    expect(Object.entries(trailers)).toEqual([["grpc-status", "0"]]);
+    expect(Object.entries(trailers!)).toEqual([["grpc-status", "0"]]);
+  });
+
+  test("a failure is only trailers, unless the handler has headers to send", async () => {
+    await using it = serve({
+      unary(_: any, context: any) {
+        if (context.headers.has("x-header")) context.responseHeaders.set("x-header", "1");
+        throw new GrpcError(Status.UNAVAILABLE, "later", { trailers: { "x-trailer": "2" } });
+      },
+    });
+    const status = { "grpc-status": "14", "grpc-message": "later", "x-trailer": "2" };
+    const only = await send(it.server.url, {}, frame(message));
+    expect(only.headers).toMatchObject({ ":status": 200, "content-type": "application/grpc", ...status });
+    expect(only.trailers).toBeUndefined();
+    const apart = await send(it.server.url, { "x-header": "1" }, frame(message));
+    expect(apart.headers).toMatchObject({ ":status": 200, "x-header": "1" });
+    expect(apart.headers).not.toContainKey("grpc-status");
+    expect(apart.trailers).toMatchObject(status);
+  });
+
+  test("the metadata", async () => {
+    await using it = serve({ unary: (_: any, context: any) => ({ text: JSON.stringify(context.headers) }) });
+    const headers = { "te": "trailers", "grpc-timeout": "1H", "x-empty": "", "x-twice": ["a", "b"], "x-latin1": "é" };
+    const { body } = await send(it.server.url, headers, frame(message));
+    expect(JSON.parse(Message.decode(body.subarray(5)).text)).toEqual({
+      "x-empty": "",
+      "x-twice": "a, b",
+      "x-latin1": "é",
+    });
+  });
+
+  test("the deadline passes before the request is complete", async () => {
+    await using it = serve(echo);
+    const session = http2.connect(it.server.url);
+    try {
+      const stream = session.request({
+        ":method": "POST",
+        ":path": "/test.v1.Echo/Unary",
+        "content-type": "application/grpc",
+        "grpc-timeout": "1n",
+      });
+      expect((await once(stream, "response"))[0]["grpc-status"]).toBe("4");
+    } finally {
+      session.destroy();
+    }
   });
 
   test.each([
@@ -675,6 +962,14 @@ describe.concurrent("what the server makes of a request", () => {
     ["an empty message", {}, [frame(new Uint8Array())], "0"],
     ["+proto", { "content-type": "application/grpc+proto" }, [frame(message)], "0"],
     ["gzip", { "grpc-encoding": "gzip" }, [frame(gzipSync(message), 1)], "0"],
+    [
+      "gzip in two members",
+      { "grpc-encoding": "gzip" },
+      [frame(Buffer.concat([gzipSync(message.subarray(0, 1)), gzipSync(message.subarray(1))]), 1)],
+      "0",
+    ],
+    ["gzip of an empty message", { "grpc-encoding": "gzip" }, [frame(gzipSync(new Uint8Array()), 1)], "0"],
+    ["a parameter of the content type", { "content-type": "Application/gRPC ; a=b" }, [frame(message)], "0"],
     ["deflate", { "grpc-encoding": "deflate" }, [frame(deflateSync(message), 1)], "0"],
     ["an encoding that is not used", { "grpc-encoding": "snappy" }, [frame(message)], "0"],
     ["a timeout longer than a timer", { "grpc-timeout": "99999999H" }, [frame(message)], "0"],
@@ -682,50 +977,52 @@ describe.concurrent("what the server makes of a request", () => {
     ["compression without an encoding", {}, [frame(message, 1)], "13"],
     ["an unknown flag", { "grpc-encoding": "gzip" }, [frame(message, 2)], "13"],
     ["broken gzip", { "grpc-encoding": "gzip" }, [frame(message, 1)], "13"],
+    ["half of a gzip stream", { "grpc-encoding": "gzip" }, [frame(gzipSync(message).subarray(0, 12), 1)], "13"],
     ["gzip that expands over the limit", { "grpc-encoding": "gzip" }, [frame(gzipSync(zeros), 1)], "8"],
     ["a length over the limit", {}, [Buffer.from("00ffffffff", "hex")], "8"],
     ["no message", {}, [], "12"],
     ["two messages", {}, [frame(message), frame(message)], "12"],
     ["half a prefix", {}, [Buffer.from("0000", "hex")], "13"],
     ["half a message", {}, [frame(message).subarray(0, 6)], "13"],
-    ["a message and a half", {}, [frame(message), Buffer.from("00", "hex")], "13"],
+    ["a message and a half", {}, [frame(message), Buffer.from("00", "hex")], "12"],
     ["a malformed message", {}, [frame(new Uint8Array([0x0a]))], "13"],
-    ["a malformed timeout", { "grpc-timeout": "1" }, [frame(message)], "13"],
+    ["a timeout without a unit", { "grpc-timeout": "1" }, [frame(message)], "13"],
+    ["a timeout without digits", { "grpc-timeout": "S" }, [frame(message)], "13"],
+    ["a timeout of 9 digits", { "grpc-timeout": "100000000n" }, [frame(message)], "13"],
   ] as [string, object, Uint8Array[], string][])("%s", async (_, headers, chunks, status) => {
     await using it = serve(echo);
-    expect((await send(it.server.url, headers, ...chunks)).trailers["grpc-status"]).toBe(status);
+    const response = await send(it.server.url, headers, ...chunks);
+    expect((response.trailers ?? response.headers)["grpc-status"]).toBe(status);
   });
 
-  test.serial("a length that is only declared takes no memory", async () => {
-    let read = Promise.withResolvers<void>();
-    await using it = serve(
-      {
-        async clientStream(requests: AsyncGenerator<any>) {
-          await requests.next();
-          const second = requests.next();
-          read.resolve();
-          return (await second).value;
+  test.each([
+    ["one byte at a time", {}, [...frame(message), ...frame(message)].map(byte => new Uint8Array([byte])), 2, "0"],
+    ["all at once", {}, [Buffer.concat([frame(message), frame(new Uint8Array()), frame(message)])], 3, "0"],
+    ["gzip or not", { "grpc-encoding": "gzip" }, [frame(gzipSync(message), 1), frame(message)], 2, "0"],
+    ["a message and a half", {}, [Buffer.concat([frame(message), Buffer.from("00", "hex")])], 1, "13"],
+    ["a length over the limit", {}, [Buffer.concat([frame(message), Buffer.from("00ffffffff", "hex")])], 1, "8"],
+    ["broken gzip", { "grpc-encoding": "gzip" }, [frame(message), frame(message, 1)], 1, "13"],
+  ] as [string, object, Uint8Array[], number, string][])(
+    "a stream of requests: %s",
+    async (_, headers, chunks, count, status) => {
+      const seen = Promise.withResolvers();
+      await using it = serve({
+        async clientStream(requests: AsyncIterable<any>) {
+          let read = 0;
+          try {
+            for await (const _ of requests) read++;
+            seen.resolve([read, 0]);
+          } catch (error: any) {
+            seen.resolve([read, error.code]);
+          }
+          return {};
         },
-      },
-      { maxReceiveMessageLength: 2 ** 30 },
-    );
-    const session = http2.connect(it.server.url);
-    try {
-      const before = process.memoryUsage().arrayBuffers;
-      const stream = session.request({
-        ":method": "POST",
-        ":path": "/test.v1.Echo/ClientStream",
-        "content-type": "application/grpc",
       });
-      stream.on("error", () => {}).write(Buffer.concat([frame(message), Buffer.from("004000000001", "hex")]));
-      await read.promise;
-      await it.client.unary({}).catch(() => {});
-      Bun.gc(true);
-      expect(process.memoryUsage().arrayBuffers - before).toBeLessThan(2 ** 29);
-    } finally {
-      session.destroy();
-    }
-  });
+      const response = await send(it.server.url, { ":path": "/test.v1.Echo/ClientStream", ...headers }, ...chunks);
+      expect((response.trailers ?? response.headers)["grpc-status"]).toBe(status);
+      expect(await seen.promise).toEqual([count, Number(status)]);
+    },
+  );
 
   test("what is not gRPC", async () => {
     await using it = serve(echo);
@@ -742,7 +1039,10 @@ describe.concurrent("what the client makes of a response", () => {
   const message = Message.encode({ text: "a" });
   const grpc = { ":status": 200, "content-type": "application/grpc" };
 
-  async function respondWith(handler: (stream: http2.ServerHttp2Stream, headers: http2.IncomingHttpHeaders) => void) {
+  async function respondWith(
+    handler: (stream: http2.ServerHttp2Stream, headers: http2.IncomingHttpHeaders) => void,
+    options?: CallOptions,
+  ) {
     const server = http2.createServer().on("stream", (stream, headers) =>
       handler(
         stream.on("error", () => {}),
@@ -753,7 +1053,8 @@ describe.concurrent("what the client makes of a response", () => {
     using session = new Bun.FetchSession();
     try {
       const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-      return await new Echo.Client(url, { fetch: session.fetch }).unary({}).catch((error: unknown) => error);
+      const client = new Echo.Client(url, { fetch: session.fetch });
+      return await client.unary({}, options).catch((error: unknown) => error);
     } finally {
       server.close();
     }
@@ -778,6 +1079,42 @@ describe.concurrent("what the client makes of a response", () => {
       "user-agent": "grpc-bun/" + Bun.version,
     });
     expect(seen).not.toContainKey("grpc-timeout");
+  });
+
+  test.serial("a length that is only declared takes no memory", async () => {
+    const server = http2.createServer().on("stream", stream => {
+      stream.on("error", () => {}).respond(grpc);
+      stream.write(Buffer.concat([frame(message), Buffer.from("004000000001", "hex")]));
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    using session = new Bun.FetchSession();
+    try {
+      const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+      const client = new Echo.Client(url, { fetch: session.fetch, maxReceiveMessageLength: 2 ** 30 });
+      const controller = new AbortController();
+      const responses = client.serverStream({}, { signal: controller.signal });
+      await responses.next();
+      const second = failure(responses.next());
+      await new Promise(setImmediate);
+      Bun.gc(true);
+      expect(process.memoryUsage().external).toBeLessThan(2 ** 29);
+      controller.abort();
+      expect(await second).toMatchObject({ code: Status.CANCELLED });
+    } finally {
+      server.close();
+    }
+  });
+
+  test.each([
+    [99_999_999, "99999999m"],
+    [100_000_001, "100001S"],
+  ])("a timeout of %d ms", async (timeout, expected) => {
+    let seen: unknown;
+    await respondWith(
+      (stream, headers) => ((seen = headers["grpc-timeout"]), stream.respond(grpc, { endStream: true })),
+      { timeout },
+    );
+    expect(seen).toBe(expected);
   });
 
   test.each([

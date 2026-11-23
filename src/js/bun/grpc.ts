@@ -1,18 +1,11 @@
 // https://github.com/grpc/grpc/blob/master/doc/PROTOCOL-HTTP2.md
 const { validateFunction, validateInteger, validateNumber, validateObject } = require("internal/validators");
 
-const acceptCall: (request: Request) => boolean = $bindgen("grpc_binding.bind.ts", "acceptCall");
-const extendTimeout: (request: Request, seconds: number) => void = $bindgen("grpc_binding.bind.ts", "extendTimeout");
-const writeStatus: (request: Request, code: number, message: string, trailers: Headers | undefined) => void = $bindgen(
-  "grpc_binding.bind.ts",
-  "writeStatus",
-);
 const takeTrailers: (response: Response) => Headers | undefined = $bindgen("grpc_binding.bind.ts", "takeTrailers");
 
 type Frame = Uint8Array<ArrayBuffer>;
 type MessageIterator = AsyncIterator<unknown> | Iterator<unknown>;
-type Server = Bun.Server<unknown>;
-type Handler = (request: Uint8Array | AsyncGenerator<Uint8Array>, context: CallContext) => Promise<Frame | Outgoing>;
+type Handler = (request: Uint8Array | AsyncGenerator<Uint8Array>, context: CallContext) => unknown;
 
 interface Outgoing {
   messages: AsyncIterable<unknown> | Iterable<unknown>;
@@ -120,7 +113,7 @@ function deadlineExceeded(): GrpcError {
   return new GrpcError(Status.DEADLINE_EXCEEDED, "Deadline exceeded");
 }
 
-function iteratorOf({ messages }: Outgoing, name: string): MessageIterator {
+function iteratorOf(messages: Outgoing["messages"], name: string): MessageIterator {
   const start = messages?.[Symbol.asyncIterator] ?? messages?.[Symbol.iterator];
   if (!$isCallable(start) || typeof messages === "string") {
     throw $ERR_INVALID_ARG_TYPE(name, ["AsyncIterable", "Iterable"], messages);
@@ -399,7 +392,7 @@ class ClientCall {
   }
 
   #stream(requests: Outgoing): ReadableStream<Uint8Array> {
-    const iterator = (this.#requests = iteratorOf(requests, "requests"));
+    const iterator = (this.#requests = iteratorOf(requests.messages, "requests"));
     return new ReadableStream<Uint8Array>(
       {
         pull: async controller => {
@@ -490,238 +483,224 @@ class Channel {
   }
 }
 
-const millisecondsPer = { H: 3_600_000, M: 60_000, S: 1000, m: 1, u: 1e-3, n: 1e-6 };
-
-function parseTimeout(value: string): number {
-  const match = /^(\d{1,8})([HMSmun])$/.exec(value);
-  if (match === null) throw new GrpcError(Status.INTERNAL, `Received the malformed grpc-timeout ${value}`);
-  return Number(match[1]) * millisecondsPer[match[2]];
-}
-
-interface CallContext {
-  readonly request: Request;
-  readonly server: Server;
+/** `GrpcCall` in `grpc_binding.bind.ts` */
+interface NativeCall {
+  listener: ((event: Event) => void) | undefined;
+  readonly server: Bun.Server<unknown>;
+  readonly path: string;
+  readonly host: string;
   readonly headers: Headers;
-  readonly signal: AbortSignal;
   readonly responseHeaders: Headers;
   readonly responseTrailers: Headers;
+  readonly interruptionCode: number;
+  readonly interruptionMessage: string;
+  requestIP(): Bun.SocketAddress | null;
+  timeout(seconds: number): void;
+  read(): Uint8Array | null | undefined;
+  write(frame: Frame): boolean;
+  end(code: number, message: string, frame?: Frame): void;
 }
 
-const plainResponse = { headers: { "content-type": contentType, "grpc-accept-encoding": acceptedEncodings } };
+const enum Event {
+  Readable,
+  Writable,
+  Interrupted,
+}
+
+class CallContext {
+  #call: ServerCall;
+
+  constructor(call: ServerCall) {
+    this.#call = call;
+  }
+
+  get server() {
+    return this.#call.native.server;
+  }
+  get path() {
+    return this.#call.native.path;
+  }
+  get host() {
+    return this.#call.native.host;
+  }
+  get headers() {
+    return this.#call.native.headers;
+  }
+  get signal() {
+    return this.#call.signal();
+  }
+  get responseHeaders() {
+    return this.#call.native.responseHeaders;
+  }
+  get responseTrailers() {
+    return this.#call.native.responseTrailers;
+  }
+  requestIP() {
+    return this.#call.native.requestIP();
+  }
+  timeout(seconds: number) {
+    validateInteger(seconds, "seconds", 0, 255);
+    this.#call.native.timeout(seconds);
+  }
+}
 
 class ServerCall {
-  request: Request;
+  native: NativeCall;
   context: CallContext;
+  #frame: Outgoing["frame"];
   #onError: RoutesOptions["onError"];
-  #metadata: Headers | undefined;
-  #responses: MessageIterator | undefined;
-  #responseHeaders: Headers | undefined;
-  #responseTrailers: Headers | undefined;
-  #deadline: AbortController | undefined;
-  #signal: AbortSignal | undefined;
-  #timer: Timer | undefined;
+  #controller: AbortController | undefined;
   #interruption: GrpcError | undefined;
-  #rejectWait: ((error: GrpcError) => void) | undefined;
+  #responses: MessageIterator | undefined;
+  #onReadable: (() => void) | undefined;
+  #onWritable: (() => void) | undefined;
+  #hasEnded = false;
 
-  constructor(request: Request, server: Server, onError: RoutesOptions["onError"]) {
-    const call = this;
-    this.request = request;
+  constructor(native: NativeCall, frame: Outgoing["frame"], onError: RoutesOptions["onError"]) {
+    this.native = native;
+    this.context = new CallContext(this);
+    this.#frame = frame;
     this.#onError = onError;
-    this.context = {
-      request,
-      server,
-      get headers() {
-        let metadata = call.#metadata;
-        if (metadata === undefined) {
-          metadata = call.#metadata = keepMetadata(new Headers(request.headers));
-          metadata.delete("grpc-timeout");
-          metadata.delete("host");
-        }
-        return metadata;
-      },
-      get signal() {
-        const deadline = call.#deadline;
-        if (deadline === undefined) return request.signal;
-        return (call.#signal ??= AbortSignal.any([request.signal, deadline.signal]));
-      },
-      get responseHeaders() {
-        return (call.#responseHeaders ??= new Headers());
-      },
-      get responseTrailers() {
-        return (call.#responseTrailers ??= new Headers());
-      },
+  }
+
+  #listen() {
+    this.native.listener ??= event => {
+      if (event !== Event.Readable) this.#onWritable?.();
+      if (event !== Event.Writable) this.#onReadable?.();
+      if (event !== Event.Interrupted) return;
+      this.#closeResponses();
+      this.#controller?.abort(this.#interrupted());
     };
   }
 
-  startDeadline() {
-    const header = this.request.headers.get("grpc-timeout");
-    if (header === null) return;
-    const timeout = parseTimeout(header);
-    // The timer of a socket ticks every 4 seconds.
-    extendTimeout(this.request, Math.min(Math.ceil(timeout / 1000) + 4, 255));
-    if (timeout > longestTimer) return;
-    const deadline = (this.#deadline = new AbortController());
-    this.#timer = setTimeout(() => {
-      const error = deadlineExceeded();
-      this.#interrupt(error);
-      deadline.abort(error);
-    }, timeout);
+  #interrupted(): GrpcError | undefined {
+    const code = this.native.interruptionCode;
+    if (code !== Status.OK) return (this.#interruption ??= new GrpcError(code, this.native.interruptionMessage));
   }
 
-  watchForCancel() {
-    const { signal } = this.request;
-    const onAbort = () => this.#interrupt(new GrpcError(Status.CANCELLED, "The client cancelled the call"));
-    if (signal.aborted) onAbort();
-    else signal.addEventListener("abort", onAbort);
+  signal(): AbortSignal {
+    let controller = this.#controller;
+    if (controller === undefined) {
+      controller = this.#controller = new AbortController();
+      const interruption = this.#interrupted();
+      if (interruption === undefined) this.#listen();
+      else controller.abort(interruption);
+    }
+    return controller.signal;
   }
 
-  #interrupt(error: GrpcError) {
-    this.#interruption ??= error;
-    this.#rejectWait?.(error);
-    this.#release();
+  async *requests(): AsyncGenerator<Uint8Array> {
+    this.#listen();
+    while (true) {
+      const message = this.native.read();
+      if (message === null) return;
+      if (message !== undefined) {
+        yield message;
+        continue;
+      }
+      const interruption = this.#interrupted();
+      if (interruption !== undefined) throw interruption;
+      if (this.#hasEnded) throw new GrpcError(Status.CANCELLED, "The call ended before the last request");
+      await new Promise<void>(resolve => (this.#onReadable = resolve));
+    }
   }
 
-  #release() {
-    clearTimeout(this.#timer);
+  respond(response: unknown) {
+    try {
+      this.#end(Status.OK, "", this.#frame(response));
+    } catch (error) {
+      this.fail(error);
+    }
+  }
+
+  async stream(responses: unknown) {
+    this.#listen();
+    try {
+      const iterator = (this.#responses = iteratorOf((await responses) as Outgoing["messages"], "responses"));
+      if (this.#interrupted() !== undefined) return this.#closeResponses();
+      while (this.#responses !== undefined) {
+        const { done, value } = await iterator.next();
+        if (done || this.#responses === undefined) break;
+        if (!this.native.write(this.#frame(value))) await new Promise<void>(resolve => (this.#onWritable = resolve));
+      }
+      this.#responses = undefined;
+      this.#end(Status.OK, "");
+    } catch (error) {
+      this.fail(error);
+    }
+  }
+
+  fail(error: unknown) {
+    this.#closeResponses();
+    if (this.native.interruptionCode !== Status.OK) return;
+    try {
+      if (!(error instanceof GrpcError)) error = this.#report(error);
+      if (error instanceof GrpcError) this.#endWith(error);
+    } catch (thrown) {
+      console.error(thrown);
+    } finally {
+      if (!this.#hasEnded) this.#end(Status.UNKNOWN, "Unknown error");
+    }
+  }
+
+  #endWith(error: GrpcError) {
+    const { code } = error;
+    validateInteger(code, "error.code", Status.CANCELLED, Status.UNAUTHENTICATED);
+    if (!receivedErrors.has(error)) {
+      for (const [name, value] of error.trailers) this.native.responseTrailers.set(name, value);
+    }
+    this.#end(code, String(error.message));
+  }
+
+  #end(code: number, message: string, frame?: Frame) {
+    this.native.end(code, message, frame);
+    this.#hasEnded = true;
+    this.#onReadable?.();
+  }
+
+  #closeResponses() {
     const responses = this.#responses;
     this.#responses = undefined;
     if (responses !== undefined) closeIterator(responses);
   }
 
-  open(responses: Outgoing): MessageIterator {
-    return (this.#responses = iteratorOf(responses, "responses"));
-  }
-
-  /** Unlike `Promise.race()`, leaves nothing behind on a promise that lasts as long as the call. */
-  wait<T>(value: T | Promise<T>): Promise<T> {
-    const { promise, resolve, reject } = Promise.withResolvers<T>();
-    Promise.$resolve(value).$then(resolve, reject);
-    this.#rejectWait = reject;
-    if (this.#interruption !== undefined) reject(this.#interruption);
-    return promise;
-  }
-
-  respond(body: Frame | ReadableStream | null): Response {
-    const headers = this.#responseHeaders;
-    if (headers === undefined) return new Response(body, plainResponse);
-    keepMetadata(headers);
-    headers.set("content-type", contentType);
-    headers.set("grpc-accept-encoding", acceptedEncodings);
-    return new Response(body, { headers });
-  }
-
-  succeed() {
-    clearTimeout(this.#timer);
-    this.#responses = undefined;
-    this.#writeStatus(Status.OK, "");
-  }
-
-  #writeStatus(code: number, message: string) {
-    const trailers = this.#responseTrailers;
-    writeStatus(this.request, code, message, trailers && keepMetadata(trailers));
-  }
-
-  fail(error: unknown) {
-    this.#release();
-    if (this.request.signal.aborted) return;
-    if (!(error instanceof GrpcError)) error = this.#report(error);
-    if (!(error instanceof GrpcError)) return this.#writeStatus(Status.UNKNOWN, "Unknown error");
-    if (!receivedErrors.has(error)) {
-      for (const [name, value] of error.trailers) this.context.responseTrailers.set(name, value);
-    }
-    this.#writeStatus(error.code, String(error.message));
-  }
-
   #report(error: unknown): unknown {
-    try {
-      if (this.#onError !== undefined) return this.#onError(error, this.context);
-    } catch (thrown) {
-      error = thrown;
-    }
+    if (this.#onError !== undefined) return this.#onError(error, this.context);
     console.error(error);
   }
 }
 
-async function* readRequests(reader: ReadableStreamDefaultReader<Uint8Array> | undefined, parser: MessageParser) {
-  if (reader === undefined) return;
-  while (true) {
-    let result;
-    try {
-      result = await reader.read();
-    } catch (cause) {
-      throw new GrpcError(Status.CANCELLED, "The call ended before the last request", { cause });
-    }
-    if (result.done) return parser.end();
-    parser.push(result.value);
-    for (let message = parser.next(); message !== undefined; message = parser.next()) yield message;
-  }
-}
-
-async function onlyRequest(requests: AsyncGenerator<Uint8Array, void>): Promise<Uint8Array> {
-  const { done, value } = await requests.next();
-  if (done || !(await requests.next()).done) {
-    throw new GrpcError(Status.UNIMPLEMENTED, "The request does not have exactly one message");
-  }
-  return value;
-}
-
-function writeResponses(call: ServerCall, { frame }: Outgoing, rest: MessageIterator, first: Frame): ReadableStream {
-  return new ReadableStream({
-    type: "direct",
-    async pull(controller: ReadableStreamDirectController) {
-      try {
-        await call.wait(controller.write(first));
-        while (true) {
-          const { done, value } = await call.wait(rest.next());
-          if (done) break;
-          await call.wait(controller.write(frame(value)));
-        }
-        call.succeed();
-      } catch (error) {
-        call.fail(error);
-      }
-    },
-  });
-}
-
-function route(requestStream: boolean, responseStream: boolean, handler: Handler | undefined, options?: RoutesOptions) {
+function route(
+  requestStream: boolean,
+  responseStream: boolean,
+  handler: Handler | undefined,
+  frame: Outgoing["frame"],
+  options?: RoutesOptions,
+) {
   if (options !== undefined) validateObject(options, "options");
   const limit = messageLimitOf(options);
   const onError = options?.onError;
   if (onError !== undefined) validateFunction(onError, "options.onError");
 
-  async function POST(request: Request, server: Server): Promise<Response> {
-    const { headers } = request;
-    if (!isGrpcContentType(headers.get("content-type"))) return new Response(null, { status: 415 });
-    if (!acceptCall(request)) return new Response("gRPC requires HTTP/2", { status: 505 });
-
-    const call = new ServerCall(request, server, onError);
+  function start(native: NativeCall, request: Uint8Array) {
+    const call = new ServerCall(native, frame, onError);
     try {
-      // Locked at once, so that only what limits each message reads it.
-      const reader = request.body?.getReader() as ReadableStreamDefaultReader<Uint8Array> | undefined;
-      if (handler === undefined) throw new GrpcError(Status.UNIMPLEMENTED, "The method is not implemented");
-      call.startDeadline();
-      if (responseStream) call.watchForCancel();
-      const requests = readRequests(reader, new MessageParser(headers, limit));
-      const input = requestStream ? requests : await call.wait(onlyRequest(requests));
-      const output = await call.wait(handler(input, call.context));
-      if (!responseStream) {
-        const response = call.respond(output as Frame);
-        call.succeed();
-        return response;
+      const output = handler!(requestStream ? call.requests() : request, call.context);
+      if (responseStream) {
+        call.stream(output);
+      } else if ($isCallable((output as PromiseLike<unknown> | undefined)?.then)) {
+        Promise.$resolve(output).$then(
+          response => call.respond(response),
+          error => call.fail(error),
+        );
+      } else {
+        call.respond(output);
       }
-      const responses = output as Outgoing;
-      const iterator = call.open(responses);
-      // The handler can set `responseHeaders` until it has a message.
-      const { done, value } = await call.wait(iterator.next());
-      if (!done) return call.respond(writeResponses(call, responses, iterator, responses.frame(value)));
-      call.succeed();
     } catch (error) {
       call.fail(error);
     }
-    return call.respond(null);
   }
-  return { POST };
+  return $bindgen("grpc_binding.bind.ts", "createRoute")(requestStream, limit, handler && start);
 }
 
 export default { Channel, GrpcError, Status, route };

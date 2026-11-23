@@ -696,17 +696,9 @@ impl ServiceParts {
             ),
         }
 
-        let handled =
-            format!("await server.{name}!({request_prefix}${receive}($request), $context)");
-        let (answer, send) = match response_stream {
-            true => (
-                format!("$grpc.Messages<{response}.Init>"),
-                format!("({{ messages: {handled}, frame: {response_prefix}$frame }})"),
-            ),
-            false => (
-                format!("{response}.Init"),
-                format!("{response_prefix}$frame({handled})"),
-            ),
+        let answer = match response_stream {
+            true => format!("$grpc.Messages<{response}.Init>"),
+            false => format!("{response}.Init"),
         };
         write_doc(&mut self.server, "    ", &method.doc);
         line!(
@@ -717,7 +709,8 @@ impl ServiceParts {
         line!(
             self.routes,
             "    {path}: $grpc.route({request_stream}, {response_stream}, server.{name} === undefined ? undefined : \
-             async ($request, $context) => {send}, options),"
+             ($request, $context) => server.{name}!({request_prefix}${receive}($request), $context), \
+             {response_prefix}$frame, options),"
         );
     }
 }

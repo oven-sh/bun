@@ -67,6 +67,13 @@ H2_ROUTE(trace, trace)
 H2_ROUTE(any, any)
 #undef H2_ROUTE
 
+void uws_h2_req_for_each_header(uws_h3_req_t* req, void (*handler)(const char*, size_t, const char*, size_t, void*), void* user_data)
+{
+    ((Http2Request*)req)->forEachHeader([&](std::string_view name, std::string_view value) {
+        handler(name.data(), name.size(), value.data(), value.size(), user_data);
+    });
+}
+
 /* ───── response ───── */
 
 int uws_h2_res_state(uws_h2_res_t* res) { return ((Http2Response*)res)->getHttpResponseData()->state; }

@@ -159,6 +159,8 @@ const prototypesWithoutConstructor = [
   "%FFICallback%.prototype",
   "%FSWatcher%.prototype",
   "%FileInternalReadableStreamSource%.prototype",
+  "%GrpcCall%.prototype",
+  "%GrpcRoute%.prototype",
   "%HTMLBundle%.prototype",
   "%HTMLRewriterTransform%.prototype",
   "%HTTPSServer%.prototype",

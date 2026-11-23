@@ -3888,13 +3888,7 @@ where
                 .get()
                 .saturating_add(chunk.len());
             this.request_body_streamed_len.set(streamed_len);
-            let is_pulled = |bytes: &WebCore::ByteStream| {
-                bytes.buffer_action.get().is_none() && bytes.sink.get().is_none()
-            };
-            if streamed_len > server.config().max_request_body_size
-                && !(this.flags.request_stream_is_unbounded()
-                    && readable.ptr.bytes().is_some_and(|it| is_pulled(&it)))
-            {
+            if streamed_len > server.config().max_request_body_size {
                 this.resp
                     .get()
                     .expect("infallible: resp bound")
@@ -4255,29 +4249,6 @@ where
         })
     }
 
-    pub(crate) fn live_http2_response(&self) -> Option<*mut bun_uws_sys::h2::Response> {
-        match self.live_resp()? {
-            uws::AnyResponse::H2(response) => Some(response),
-            _ => None,
-        }
-    }
-
-    pub(crate) fn lift_request_stream_limit(&self) {
-        let stream = self.request_body_readable_stream_ref.get().get();
-        let global = self.server().global_this();
-        // After `request.clone()` the bytes also go to a reader that nothing holds to a limit.
-        if !stream.is_some_and(|it| it.is_disturbed_or_locked(global)) {
-            self.flags.set_request_stream_is_unbounded(true);
-        }
-    }
-
-    pub(crate) fn extend_timeout(&self, seconds: c_uint) {
-        let idle_timeout = c_uint::from(self.server().config().idle_timeout);
-        if idle_timeout != 0 && seconds > idle_timeout {
-            self.set_timeout(seconds);
-        }
-    }
-
     pub(crate) fn set_timeout(&self, seconds: c_uint) -> bool {
         if let Some(resp) = self.live_resp() {
             // SAFETY: FFI handle
@@ -4458,8 +4429,6 @@ bitflags::bitflags! {
         const REQUEST_BODY_PAUSED         = 1 << 16;
         /// `on_start_buffering` fired (`.text()` etc.); skip pre-stream backpressure.
         const REQUEST_BODY_BUFFER_ALL     = 1 << 17;
-        /// The body is a stream of gRPC messages, each of which its reader holds to a limit.
-        const REQUEST_STREAM_IS_UNBOUNDED = 1 << 18;
     }
 }
 
@@ -4540,11 +4509,6 @@ impl<const DEBUG_MODE: bool> Flags<DEBUG_MODE> {
         request_body_buffer_all,
         set_request_body_buffer_all,
         REQUEST_BODY_BUFFER_ALL
-    );
-    flag_accessor!(
-        request_stream_is_unbounded,
-        set_request_stream_is_unbounded,
-        REQUEST_STREAM_IS_UNBOUNDED
     );
 
     #[inline]

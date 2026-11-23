@@ -3294,7 +3294,6 @@ describe("bundler", () => {
           'should be 32': ~(~x.a & ~x.b) & (x.b | x.c),
         })
       `,
-    }
     };
     const entryPoints = ["/enum-entry.ts", "/const-entry.js", "/nested-entry.ts"];
     itBundled("dce/CrossModuleConstantFolding", {

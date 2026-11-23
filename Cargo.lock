@@ -1446,6 +1446,7 @@ dependencies = [
  "bun_collections",
  "bun_core",
  "bun_highway",
+ "bun_ptr",
  "bun_simdutf_sys",
  "bun_wyhash",
  "criterion",

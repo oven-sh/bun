@@ -870,7 +870,7 @@ impl BlobExt for Blob {
         {
             writer.write_str(" {\n")?;
             {
-                formatter.indent_inc();
+                let mut formatter = formatter.indented();
 
                 if show_name {
                     formatter.write_indent(writer)?;
@@ -926,8 +926,6 @@ impl BlobExt for Blob {
                         self.last_modified.get(),
                     )?;
                 }
-
-                formatter.indent_dec();
             }
             formatter.write_indent(writer)?;
             writer.write_str("}")?;
@@ -1297,7 +1295,7 @@ impl BlobExt for Blob {
 
         // `pipe_stream` takes its own refs; init's +1 drops with `file_sink` on return.
         let mut readable_stream = readable_stream;
-        match webcore::FileSink::pipe_stream(&file_sink, &mut readable_stream, cx.global()) {
+        match file_sink.pipe_stream(&mut readable_stream, cx.global()) {
             Ok(promise) => Ok(promise),
             Err(err) => {
                 Ok(JSPromise::rejected_promise_with_caught_exception(cx.global(), err)?.to_js())
@@ -1433,7 +1431,7 @@ impl BlobExt for Blob {
                 sink.close_with_graph(context);
             }
 
-            return Ok(webcore::FileSink::to_js(sink, global_this));
+            return Ok(sink.to_js(global_this));
         }
 
         #[cfg(not(windows))]
@@ -1477,7 +1475,7 @@ impl BlobExt for Blob {
                 return Err(global_this.throw_value(err.to_js(global_this)));
             }
 
-            Ok(webcore::FileSink::to_js(sink, global_this))
+            Ok(sink.to_js(global_this))
         }
     }
     fn get_slice_from(
@@ -3292,18 +3290,6 @@ pub(crate) fn write_format_for_size<W: core::fmt::Write, const ENABLE_ANSI_COLOR
     )
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// mkdirIfNotExists / Retry
-// ──────────────────────────────────────────────────────────────────────────
-
-#[derive(Copy, Clone, PartialEq, Eq)]
-#[cfg(not(windows))]
-pub(crate) enum Retry {
-    Continue,
-    Fail,
-    No,
-}
-
 /// Create the parent directories of `path`.
 #[inline(never)]
 pub(crate) fn mkdirp_parent(path: &[u8]) -> bun_sys::Result<()> {
@@ -3321,29 +3307,6 @@ pub(crate) fn mkdirp_parent(path: &[u8]) -> bun_sys::Result<()> {
             ..Default::default()
         })
         .map(|_| ())
-}
-
-// TODO: move this to bun_sys?
-#[inline(never)]
-#[cfg(not(windows))]
-pub(crate) fn mkdir_if_not_exists<T: MkdirpTarget>(
-    this: &mut T,
-    err: &bun_sys::Error,
-    path_string: &bun_core::ZStr,
-) -> Retry {
-    if err.get_errno() == bun_sys::E::ENOENT && this.mkdirp_if_not_exists() {
-        match mkdirp_parent(path_string.as_bytes()) {
-            bun_sys::Result::Ok(()) => {
-                this.set_mkdirp_if_not_exists(false);
-                return Retry::Continue;
-            }
-            bun_sys::Result::Err(_) => {
-                this.set_system_error(err.to_system_error());
-                return Retry::Fail;
-            }
-        }
-    }
-    Retry::No
 }
 
 /// Runs `create` again if the parents of `path` were missing and could be made, which clears `mkdirp`.
@@ -3379,14 +3342,6 @@ fn sys_error_with_path_like(
         }
         PathOrFileDescriptor::Fd(_) => err.clone(),
     }
-}
-
-/// Receiver trait for `mkdir_if_not_exists`.
-#[cfg(not(windows))]
-pub(crate) trait MkdirpTarget {
-    fn mkdirp_if_not_exists(&self) -> bool;
-    fn set_mkdirp_if_not_exists(&mut self, v: bool);
-    fn set_system_error(&mut self, e: bun_sys::SystemError);
 }
 
 // ──────────────────────────────────────────────────────────────────────────

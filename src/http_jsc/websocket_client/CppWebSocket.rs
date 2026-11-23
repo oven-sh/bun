@@ -15,7 +15,7 @@ use bun_core::ffi::FfiSlice;
 use bun_http1::Response;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{ContextId, JSGlobalObject, JSValue, JsResult, VirtualMachineRef};
-use bun_ptr::{RefPtr, ThisPtr};
+use bun_ptr::RefPtr;
 use bun_uws_sys::Socket;
 
 use super::websocket_deflate;
@@ -102,9 +102,9 @@ unsafe extern "C" {
         verified_hostname: FfiSlice<'_>,
     ) -> *mut core::ffi::c_void;
     #[allow(improper_ctypes)]
-    safe fn WebSocket__didConnectWithTunnel(
+    fn WebSocket__didConnectWithTunnel(
         websocket_context: &CppWebSocket,
-        tunnel: ThisPtr<WebSocketProxyTunnel>,
+        tunnel: *mut WebSocketProxyTunnel,
         buffered_data: Option<Box<InitialData>>,
         deflate_params: Option<&websocket_deflate::Params>,
     ) -> *mut core::ffi::c_void;
@@ -123,6 +123,17 @@ unsafe extern "C" {
         is_upgrade: bool,
         body: FfiSlice<'_>,
     ) -> HandshakeResult;
+    safe fn WebSocket__willSendRequest(
+        websocket_context: &CppWebSocket,
+        request: FfiSlice<'_>,
+        socket: *mut bun_uws_sys::us_socket_t,
+    );
+    safe fn WebSocket__socketDidFail(
+        websocket_context: &CppWebSocket,
+        close_code: i32,
+        is_write: bool,
+        tls_reason: BunString,
+    );
     safe fn WebSocket__isWsMode(websocket_context: &CppWebSocket) -> bool;
     safe fn WebSocket__didReceiveResponseBody(
         websocket_context: &CppWebSocket,
@@ -246,6 +257,26 @@ impl CppWebSocket {
         HandshakeVerdict::Accepted {
             deflate: result.has_deflate.then_some(result.deflate),
         }
+    }
+
+    /// For `node:diagnostics_channel`. No JS runs.
+    pub(crate) fn will_send_request(
+        &self,
+        request: &[u8],
+        socket: Option<*mut bun_uws_sys::us_socket_t>,
+    ) {
+        let socket = socket.unwrap_or(core::ptr::null_mut());
+        WebSocket__willSendRequest(self, request.into(), socket);
+    }
+
+    /// For `node:diagnostics_channel`. No JS runs.
+    pub(crate) fn did_close_with_error(&self, close_code: i32, is_write: bool) {
+        WebSocket__socketDidFail(self, close_code, is_write, BunString::EMPTY);
+    }
+
+    /// For `node:diagnostics_channel`. No JS runs.
+    pub(crate) fn did_fail_tls(&self, reason: &[u8]) {
+        WebSocket__socketDidFail(self, 0, false, BunString::clone_utf8(reason));
     }
 
     /// True if the `ws` module created this WebSocket. A field read on the C++ side: no JS runs.
@@ -413,11 +444,11 @@ impl CppWebSocket {
             let _scope = VirtualMachine::get().enter_event_loop_scope();
             core::ptr::NonNull::new(connect().cast::<WebSocket<SSL>>()).map(|client| {
                 // SAFETY: C++ holds a ref on the client it returns.
-                RefPtr::from_this(unsafe { ThisPtr::new(client.as_ptr()) })
+                unsafe { RefPtr::init_ref(client.as_ptr()) }
             })
         };
         if let Some(client) = client {
-            WebSocket::<SSL>::deliver_initial_data(client.this_ptr());
+            client.deliver_initial_data();
         }
     }
 
@@ -445,12 +476,13 @@ impl CppWebSocket {
     /// `buffered_data` is handed on to the connected client.
     pub(crate) fn did_connect_with_tunnel(
         &self,
-        tunnel: ThisPtr<WebSocketProxyTunnel>,
+        tunnel: &RefPtr<WebSocketProxyTunnel>,
         buffered_data: Option<Box<InitialData>>,
         deflate_params: Option<&websocket_deflate::Params>,
     ) {
-        Self::open_then_deliver_initial_data::<false>(|| {
-            WebSocket__didConnectWithTunnel(self, tunnel, buffered_data, deflate_params)
+        // SAFETY: the caller's ref lasts for the call, in which the connected client takes its own.
+        Self::open_then_deliver_initial_data::<false>(|| unsafe {
+            WebSocket__didConnectWithTunnel(self, tunnel.as_ptr(), buffered_data, deflate_params)
         });
     }
 

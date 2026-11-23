@@ -220,7 +220,12 @@ __attribute__((minsize)) static void stubEnv(Zig::GlobalObject* globalObject, JS
     JSMap* originals = ensureMap(vm, globalObject, globalObject->mockModule.stubbedEnvs);
     JSValue nameString = jsString(vm, name);
 #if OS(WINDOWS)
-    JSValue key = jsString(vm, name.convertToUppercaseWithoutLocale());
+    String upperName = name.convertToUppercaseWithoutLocale();
+    if (upperName.isNull()) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return;
+    }
+    JSValue key = jsString(vm, upperName);
 #else
     JSValue key = nameString;
 #endif

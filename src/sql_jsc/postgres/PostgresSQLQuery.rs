@@ -6,7 +6,7 @@ use crate::shared::query_ctor_args;
 use bun_core::String as BunString;
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 use bun_jsc::{JSArray, JsCell};
-use bun_ptr::{AsCtxPtr, RefPtr};
+use bun_ptr::RefPtr;
 
 use super::PostgresSQLConnection;
 use super::PostgresSQLStatement;
@@ -63,13 +63,6 @@ pub enum CopyStream {
 }
 
 impl PostgresSQLQuery {
-    /// Hold a ref on `self` for the guard's lifetime (across re-entrant calls).
-    #[inline]
-    pub(crate) fn ref_guard(&self) -> RefPtr<Self> {
-        // SAFETY: `self` is the live heap allocation.
-        unsafe { RefPtr::init_ref(self.as_ctx_ptr()) }
-    }
-
     #[inline]
     pub(crate) fn seat(&self) -> Option<Seat> {
         match self.place.get() {
@@ -108,8 +101,7 @@ impl PostgresSQLQuery {
     }
 
     /// Does nothing a second time.
-    pub(crate) fn reject(&self, err: JSValue, global_object: &JSGlobalObject) {
-        let _guard = self.ref_guard();
+    pub(crate) fn reject(self: RefPtr<Self>, err: JSValue, global_object: &JSGlobalObject) {
         let Some(this_value) = self.this_value.get().try_get() else {
             return;
         };
@@ -151,12 +143,11 @@ impl PostgresSQLQuery {
 
     /// The last call has no `statement`: it ends the query and brings no result.
     pub(crate) fn on_result(
-        &self,
+        self: &RefPtr<Self>,
         command_tag_str: &[u8],
         global_object: &JSGlobalObject,
         statement: Option<&PostgresSQLStatement>,
     ) -> JsResult<()> {
-        let _guard = self.ref_guard();
         let is_last = statement.is_none();
         let tag = CommandTag::init(command_tag_str);
         let js_tag = tag.to_js_tag(global_object)?;
@@ -300,10 +291,10 @@ impl PostgresSQLQuery {
     }
 
     pub fn run(
-        &self,
+        self: &RefPtr<Self>,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        connection: &PostgresSQLConnection,
+        connection: &RefPtr<PostgresSQLConnection>,
         query: JsLocal<'_>,
     ) -> JsResult<()> {
         let global_object = cx.global();

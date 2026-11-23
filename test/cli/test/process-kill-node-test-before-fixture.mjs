@@ -29,10 +29,20 @@ test("test timeout kills the processes this test spawned", async () => {
   await new Promise(() => {});
 });
 
-test("process spawned in before survives the timeout", async () => {
-  assert.strictEqual(server.signalCode, null);
+// Its own `timeout` keeps the small default from failing it while the process from before() starts up on a slow machine.
+test("process spawned in before survives the timeout", { timeout: 30_000 }, async () => {
+  assert.deepStrictEqual([server.exitCode, server.signalCode], [null, null]);
+  const stop = new AbortController();
+  const exited = once(server, "exit", { signal: stop.signal }).then(
+    ([code, signal]) => assert.fail(`process from before() exited: ${signal ?? code}`),
+    () => {},
+  );
   const data = once(server.stdout, "data");
   server.stdin.write("ping\n");
-  const [chunk] = await data;
-  assert.strictEqual(chunk.toString(), "ping\n");
+  try {
+    const [chunk] = await Promise.race([data, exited]);
+    assert.strictEqual(chunk.toString(), "ping\n");
+  } finally {
+    stop.abort();
+  }
 });

@@ -11,7 +11,7 @@ use std::io::Write as _;
 use bun_core::strings::{is_js_line_terminator, is_js_whitespace, to_utf16_alloc_for_real};
 use bun_core::{UnwrapOrOom as _, slice_as_bytes};
 
-use crate::tokens::{Edit, Split, Unit, count_newlines, is, line_start};
+use crate::tokens::{Edit, Split, Unit, count_newlines, for_each_line_end, is, line_start};
 
 /// A start is the first line of the range, from 1. If the range is empty, it is the line after it.
 pub struct PatchHunk<Line> {
@@ -48,25 +48,38 @@ impl<T: Unit> Line<'_, T> {
     }
 }
 
-/// How many lines of `text` were pushed: at most `limit`.
+fn push_line<'a, T: Unit>(lines: &mut Vec<Line<'a, T>>, operation: u8, line: &'a [T]) {
+    match line.strip_suffix(&[T::from_u8(b'\n')]) {
+        Some(line) => lines.push(Line::Text(operation, line)),
+        None => lines.extend([Line::Text(operation, line), Line::NoNewline]),
+    }
+}
+
+/// `text` has `count` lines.
 fn push_lines<'a, T: Unit>(
     lines: &mut Vec<Line<'a, T>>,
     operation: u8,
-    text: &'a [T],
-    limit: usize,
-) -> usize {
-    let (mut at, mut count) = (0, 0);
-    while at < text.len() && count < limit {
-        let end = Split::Lines.end(text, at);
-        if let Some(line) = text[at..end].strip_suffix(&[T::from_u8(b'\n')]) {
-            lines.push(Line::Text(operation, line));
-        } else {
-            lines.extend([Line::Text(operation, &text[at..end]), Line::NoNewline]);
+    mut text: &'a [T],
+    count: usize,
+) {
+    // One pass over the text is faster than a search for each line only if there are many.
+    if count > 16 {
+        let mut at = 0;
+        for_each_line_end(text, |end| {
+            lines.push(Line::Text(operation, &text[at..end - 1]));
+            at = end;
+        });
+        text = &text[at..];
+    } else {
+        for _ in 1..count {
+            let line;
+            (line, text) = text.split_at(Split::Lines.end(text, 0));
+            push_line(lines, operation, line);
         }
-        at = end;
-        count += 1;
     }
-    count
+    if !text.is_empty() {
+        push_line(lines, operation, text);
+    }
 }
 
 /// `edits` are by [`Split::Lines`].
@@ -82,21 +95,31 @@ pub fn hunks<'a, T: Unit>(
         let first = &group[0];
         let before = context.min(first.tokens.a_lo);
         let mut at = (0..before).fold(first.units.a_lo, |at, _| line_start(a, at - 1));
-        let (mut lines, mut old_lines, mut new_lines) = (Vec::new(), 0, 0);
+        let (start_a, start_b) = (first.tokens.a_lo - before, first.tokens.b_lo - before);
+        let last = &group[group.len() - 1];
+        let inserted: usize = group.iter().map(|edit| edit.tokens.inserted()).sum();
+        // With room for a usual context after the last edit, and two markers.
+        let mut lines =
+            Vec::with_capacity(last.tokens.a_hi - start_a + inserted + context.min(8) + 2);
+        let mut line = start_a;
         for &Edit { units, tokens } in group {
-            let same = push_lines(&mut lines, b' ', &a[at..units.a_lo], usize::MAX);
-            push_lines(&mut lines, b'-', &a[units.a_lo..units.a_hi], usize::MAX);
-            push_lines(&mut lines, b'+', &b[units.b_lo..units.b_hi], usize::MAX);
-            old_lines += same + tokens.deleted();
-            new_lines += same + tokens.inserted();
-            at = units.a_hi;
+            let (deleted, inserted) = (&a[units.a_lo..units.a_hi], &b[units.b_lo..units.b_hi]);
+            push_lines(&mut lines, b' ', &a[at..units.a_lo], tokens.a_lo - line);
+            push_lines(&mut lines, b'-', deleted, tokens.deleted());
+            push_lines(&mut lines, b'+', inserted, tokens.inserted());
+            (at, line) = (units.a_hi, tokens.a_hi);
         }
-        let after = push_lines(&mut lines, b' ', &a[at..], context);
+        let mut after = 0;
+        while after < context && at < a.len() {
+            let end = Split::Lines.end(a, at);
+            push_line(&mut lines, b' ', &a[at..end]);
+            (at, after) = (end, after + 1);
+        }
         PatchHunk {
-            old_start: first.tokens.a_lo - before + 1,
-            old_lines: old_lines + after,
-            new_start: first.tokens.b_lo - before + 1,
-            new_lines: new_lines + after,
+            old_start: start_a + 1,
+            old_lines: last.tokens.a_hi - start_a + after,
+            new_start: start_b + 1,
+            new_lines: last.tokens.b_hi - start_b + after,
             lines,
         }
     })

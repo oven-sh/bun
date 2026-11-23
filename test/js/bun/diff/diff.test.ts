@@ -606,6 +606,7 @@ describe("hunks", () => {
     ["new", "a\n", "a", ["-a", "+a", marker]],
     ["both", "a", "b", ["-a", marker, "+b", marker]],
     ["a kept line", "a\nb", "x\nb", ["-a", "+x", " b", marker]],
+    ["many lines", "", text + "x", [...text.split("\n", 20).map(line => "+" + line), "+x", marker]],
   ])("no newline at the end of %s", (_, a, b, lines) => {
     expect(diff.hunks(a, b).map(hunk => hunk.lines)).toEqual([lines]);
   });

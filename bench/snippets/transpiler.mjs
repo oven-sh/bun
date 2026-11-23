@@ -51,7 +51,7 @@ async function getWithName(name) {
       transform = babel_.transformAsync;
       opts = {
         sourceMaps: false,
-        presets: ["@babel/preset-react"],
+        presets: [require.resolve("@babel/preset-react")],
       };
     } catch (exception) {
       throw exception;

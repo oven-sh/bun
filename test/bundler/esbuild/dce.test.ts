@@ -3747,8 +3747,8 @@ describe("bundler", () => {
       "/out/ts-namespace-eval.js": 1,
     },
   });
-  itBundled("dce/CrossModuleConstantFolding", {
-    files: {
+  {
+    const files = {
       "/enum-constants.ts": /* ts */ `
         export enum remove {
           a = 3,
@@ -3852,93 +3852,102 @@ describe("bundler", () => {
           'should be 32': ~(~x.a & ~x.b) & (x.b | x.c),
         })
       `,
-    },
-    entryPoints: ["/enum-entry.ts", "/const-entry.js", "/nested-entry.ts"],
-    minifySyntax: true,
-    dce: true,
-    onAfterBundle(api) {
-      expect(api.readFile("/out/enum-entry.js")).toMatchInlineSnapshot(`
-        "// enum-entry.ts
-        console.log([
-          6,
-          -6,
-          -7,
-          !1,
-          typeof 6 /* b */
-        ], [
-          9,
-          -3,
-          18,
-          0.5,
-          3,
-          729
-        ], [
-          !0,
-          !1,
-          !0,
-          !1,
-          !1,
-          !0,
-          !1,
-          !0
-        ], [
-          12,
-          3,
-          3
-        ], [
-          2,
-          7,
-          5
-        ], [
-          6,
-          3,
-          3
-        ]);
-        "
-      `);
-      expect(api.readFile("/out/const-entry.js")).toMatchInlineSnapshot(`
-        "// const-entry.js
-        console.log([
-          6,
-          -6,
-          -7,
-          !1,
-          typeof 6
-        ], [
-          9,
-          -3,
-          18,
-          0.5,
-          3,
-          729
-        ], [
-          !0,
-          !1,
-          !0,
-          !1,
-          !1,
-          !0,
-          !1,
-          !0
-        ], [
-          12,
-          3,
-          3
-        ], [
-          2,
-          7,
-          5
-        ], [
-          6,
-          3,
-          3
-        ]);
-        "
-      `);
-      expect(api.readFile("/out/nested-entry.js")).toContain('"should be 4": 4');
-      expect(api.readFile("/out/nested-entry.js")).toContain('"should be 32": 32');
-    },
-  });
+    };
+    const entryPoints = ["/enum-entry.ts", "/const-entry.js", "/nested-entry.ts"];
+    itBundled("dce/CrossModuleConstantFolding", {
+      files,
+      entryPoints,
+      dce: true,
+    });
+    itBundled("dce/CrossModuleConstantFoldingMinifySyntax", {
+      files,
+      entryPoints,
+      minifySyntax: true,
+      dce: true,
+      onAfterBundle(api) {
+        expect(api.readFile("/out/enum-entry.js")).toMatchInlineSnapshot(`
+          "// enum-entry.ts
+          console.log([
+            6,
+            -6,
+            -7,
+            !1,
+            typeof 6 /* b */
+          ], [
+            9,
+            -3,
+            18,
+            0.5,
+            3,
+            729
+          ], [
+            !0,
+            !1,
+            !0,
+            !1,
+            !1,
+            !0,
+            !1,
+            !0
+          ], [
+            12,
+            3,
+            3
+          ], [
+            2,
+            7,
+            5
+          ], [
+            6,
+            3,
+            3
+          ]);
+          "
+        `);
+        expect(api.readFile("/out/const-entry.js")).toMatchInlineSnapshot(`
+          "// const-entry.js
+          console.log([
+            6,
+            -6,
+            -7,
+            !1,
+            typeof 6
+          ], [
+            9,
+            -3,
+            18,
+            0.5,
+            3,
+            729
+          ], [
+            !0,
+            !1,
+            !0,
+            !1,
+            !1,
+            !0,
+            !1,
+            !0
+          ], [
+            12,
+            3,
+            3
+          ], [
+            2,
+            7,
+            5
+          ], [
+            6,
+            3,
+            3
+          ]);
+          "
+        `);
+        expect(api.readFile("/out/nested-entry.js")).toContain('"should be 4": 4');
+        expect(api.readFile("/out/nested-entry.js")).toContain('"should be 32": 32');
+      },
+    });
+  }
   // The tests below are for `bun_ast::late_fold`: the printer folds what an enum value of another
   // file decides. The parser cannot, because it sees one file at a time.
 

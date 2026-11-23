@@ -11,6 +11,7 @@ import {
   chmodSync,
   closeSync,
   existsSync,
+  linkSync,
   lstatSync,
   mkdirSync,
   openSync,
@@ -20,6 +21,7 @@ import {
   renameSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
@@ -691,3 +693,26 @@ describe("file: folder dependencies with the hoisted linker", () => {
     }
   });
 });
+
+test.concurrent.skipIf(!isWindows).each(["hoisted", "isolated"])(
+  "copies the target of a symlink in a file: folder if it cannot be hard linked (%s)",
+  async linker => {
+    const { dir, projectDir, packageDir } = projectWithLocalPackage("folder-link-copied");
+    using _ = dir;
+    const target = join(projectDir, "target.txt");
+    writeFileSync(target, "copied");
+    // NTFS gives a file at most 1024 names.
+    mkdirSync(join(projectDir, "names"));
+    for (let i = 1; i < 1024; i++) linkSync(target, join(projectDir, "names", String(i)));
+    symlinkSync(target, join(packageDir, "link.txt"), "file");
+
+    const { stderr, exitCode } = await install(projectDir, null, { args: [`--linker=${linker}`] });
+    expect(stderr).not.toContain("error:");
+    const installed = join(projectDir, "node_modules", "pkg", "link.txt");
+    expect({ text: readFileSync(installed, "utf8"), names: statSync(installed).nlink }).toEqual({
+      text: "copied",
+      names: 1,
+    });
+    expect(exitCode).toBe(0);
+  },
+);

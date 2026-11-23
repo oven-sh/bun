@@ -2330,6 +2330,50 @@ describe.concurrent("bun pm diff (engine invariants)", () => {
     expect(exitCode).toBe(0);
   }, 30_000);
 
+  const times = (text: string, n: number) => Buffer.alloc(text.length * n, text).toString();
+
+  // Under two seconds in a release build. With a pass over all removals for each join it takes minutes.
+  test.skipIf(isDebug).each([
+    [
+      "left",
+      () => times("c\nd\n", 200_000) + times("c\n", 200_000) + "e\np\n",
+      () => times("c\n", 200_000) + "e\nq\n",
+      "+1 -400001",
+    ],
+    [
+      "right",
+      () => "y\nz\n" + times("c\n", 800_000) + "w\n" + times("c\n", 800_000) + times("d\nc\n", 400_001),
+      () => "z\ny\n" + times("c\n", 800_000) + "w\n" + times("c\n", 400_001),
+      "+1 -1200002",
+    ],
+  ])(
+    "a removal that slides %s along many others joins them",
+    async (_, a, b, totals) => {
+      const { text, exitCode } = await pretty({ "a/data.txt": a(), "b/data.txt": b() }, ["--raw", "--stat"]);
+      expect(text).toContain("\n1 file  " + totals);
+      expect(exitCode).toBe(0);
+    },
+    15_000,
+  );
+
+  // Takes about a second in a release build.
+  test.skipIf(isDebug)(
+    "a long run of equal lines that only the reverse search reaches stays unchanged",
+    async () => {
+      const { text, exitCode } = await pretty(
+        {
+          "a/data.txt": times("c\n", 10_000) + times("x\n", 100_000) + "d\n",
+          "b/data.txt": "d\n" + times("x\n", 100_000) + "c\n",
+        },
+        ["--raw", "--stat"],
+      );
+      const added = Number(text.match(/\n1 file  \+(\d+) -\d+\n$/)?.[1]);
+      expect(added).toBeLessThan(100);
+      expect(exitCode).toBe(0);
+    },
+    30_000,
+  );
+
   test("un-minified display: a bare `if(x)a(),b()` body splits like a block one; minified CSS/JSON keep plain gutters", async () => {
     const pad = "/*" + Buffer.alloc(300, "x").toString() + "*/";
     // The edit sits inside the `if` so the split body is in the shown context (`f` is renamed in lockstep to `a_`).

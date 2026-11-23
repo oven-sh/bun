@@ -10,6 +10,8 @@ import { join } from "path";
 const library = join(import.meta.dir, "..", "..", "src", "js");
 
 const expected: string[] = [
+  // A warning is a call of the global console: the-console-and-the-loader-of-an-executable-publish-to-no-diagnostics-channel.test.ts.
+  "builtins/ProcessObjectInternals.ts builtinChannel",
   // Names of types.
   // It answers false, always.
   // `globalThis.TypeError` and `Function.prototype.call`, each kept in a variable.

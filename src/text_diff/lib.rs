@@ -1,4 +1,5 @@
-//! Line- and character-level diffing for test-runner output.
+//! Line- and character-level diffing for test-runner output. [`tokens`] and
+//! [`patch`] are `Bun.diff`.
 //!
 //! The core is Myers' O(ND) algorithm in its linear-space, bidirectional
 //! ("middle snake") form, made unconditional-time-limit-free by bounding
@@ -16,7 +17,13 @@
 // diff-match-patch is Copyright 2018 The diff-match-patch Authors,
 // licensed under the Apache License, Version 2.0.
 
+mod bit_rows;
+pub mod patch;
+pub mod tokens;
+
 use core::ops::Range;
+use std::borrow::Cow;
+use std::collections::BTreeMap;
 
 use bun_core::strings::{
     count_char, index_of, index_of_char_usize as index_of_char, last_index_of_char,
@@ -42,6 +49,14 @@ impl Hunk {
     #[inline]
     pub fn inserted(&self) -> usize {
         self.b_hi - self.b_lo
+    }
+    #[inline]
+    fn is_single_edit(&self) -> bool {
+        self.deleted() == 0 || self.inserted() == 0
+    }
+    #[inline]
+    fn touches(&self, next: &Hunk) -> bool {
+        self.a_hi == next.a_lo && self.b_hi == next.b_lo
     }
 }
 
@@ -205,7 +220,7 @@ pub(crate) struct Policy {
     pub exhaustive_per_elem: usize,
     pub exhaustive_quota: usize,
     /// Total steps for the whole diff; once spent, unsolved boxes are emitted
-    /// as wholesale replacements.
+    /// as wholesale replacements. Also the start of `Myers::drop_left`.
     pub work: usize,
     /// Not 0: before a box is searched it is cut as fast-diff cuts it (see
     /// `CharDiff::diff_as_fast_diff`), which may spend this many steps per
@@ -224,6 +239,9 @@ struct Myers<'a, 's, T: Elem> {
     work_left: isize,
     /// Steps left for `policy.half_match`.
     half_left: isize,
+    /// Elements of reverse progress that cuts at the forward point may still throw away. The next box compares them
+    /// again, and `work_left` does not count that.
+    drop_left: isize,
     /// Scratch for the unique-token anchor split; sized by the largest id
     /// and only allocated if some box ever needs it.
     anchors: Option<Anchors>,
@@ -305,6 +323,7 @@ impl<'a, 's, T: Elem> Myers<'a, 's, T> {
                 0 => 0,
                 per_element => (per_element * (a.len() + b.len()) + HALF_MATCH_FLOOR) as isize,
             },
+            drop_left: policy.work as isize,
             anchors: None,
         }
     }
@@ -429,14 +448,21 @@ impl<'a, 's, T: Elem> Myers<'a, 's, T> {
 
             let inside = |p: (usize, usize)| p != (alo, blo) && p != (ahi, bhi);
             // Cut at whichever of the two points lie strictly inside the box
-            // (both, if the forward one precedes the reverse one).
+            // (both, if the forward one precedes the reverse one). If they cross:
+            // the forward one until `drop_left` is spent, then the one that got further.
             let mut cuts = [(alo, blo); 4];
             let mut n = 1;
-            if inside(f) {
+            let in_order = f.0 <= r.0 && f.1 <= r.1 && f != r;
+            let forward = (f.0 - alo) + (f.1 - blo);
+            let reverse = (ahi - r.0) + (bhi - r.1);
+            if inside(f) && (in_order || self.drop_left > 0 || forward >= reverse) {
                 cuts[n] = f;
                 n += 1;
+                if !in_order {
+                    self.drop_left -= reverse as isize;
+                }
             }
-            if inside(r) && (n == 1 || (f.0 <= r.0 && f.1 <= r.1 && f != r)) {
+            if inside(r) && (n == 1 || in_order) {
                 cuts[n] = r;
                 n += 1;
             }
@@ -612,14 +638,11 @@ impl<'a, 's, T: Elem> Myers<'a, 's, T> {
                     let hi = $v[i + 1];
                     // Furthest of: step right from diagonal k-1, step down from
                     // k+1. NONE stays negative through the +1.
+                    // Next to a diagonal that has come to the edge of the grid, the
+                    // edge takes one step more. No shortest path goes there.
                     let mut $x = if lo + 1 > hi { lo + 1 } else { hi };
                     if $x > lim {
-                        // The further move runs off the grid; take the other,
-                        // or failing that leave this diagonal where it was.
-                        $x = if lo + 1 < hi { lo + 1 } else { hi };
-                        if $x < 0 || $x > lim {
-                            $x = $v[i];
-                        }
+                        $x = lim;
                     }
                     if $x >= 0 {
                         let y = $x - $k;
@@ -865,16 +888,19 @@ fn push_trimmed<T: Elem>(a: &[T], b: &[T], mut h: Hunk, out: &mut Vec<Hunk>) {
 
 // ───────────────────────────── line mode ─────────────────────────────
 
-/// Open-addressing table from line content to dense id. Sized up front (the
-/// line count is known) so it never rehashes; a slot is the top 32 bits of the
-/// hash plus the id, and candidates are confirmed by comparing bytes.
+/// Open-addressing table from line content to dense id. A slot is the top 32 bits
+/// of the hash plus the id, and candidates are confirmed by comparing bytes.
 struct Interner<'a> {
     slots: Vec<(u32, u32)>,
     mask: usize,
     lines: Vec<&'a [u8]>,
+    /// The lines, with their hashes, whose first `PROBES` slots were taken by others. Slots are never freed, so a
+    /// later search for such a line ends up here too.
+    overflow: BTreeMap<(u64, &'a [u8]), u32>,
 }
 
 const EMPTY: u32 = u32::MAX;
+const PROBES: usize = 64;
 
 impl<'a> Interner<'a> {
     fn with_capacity(lines: usize) -> Self {
@@ -883,6 +909,7 @@ impl<'a> Interner<'a> {
             slots: vec![(0, EMPTY); cap],
             mask: cap - 1,
             lines: Vec::with_capacity(lines),
+            overflow: BTreeMap::new(),
         }
     }
 
@@ -891,12 +918,15 @@ impl<'a> Interner<'a> {
         let h = hash_bytes(line);
         let tag = (h >> 32) as u32;
         let mut i = h as usize & self.mask;
-        loop {
+        for _ in 0..PROBES {
             let slot = &mut self.slots[i];
             if slot.1 == EMPTY {
                 let id = self.lines.len() as u32;
                 *slot = (tag, id);
                 self.lines.push(line);
+                if self.lines.len() * 2 > self.slots.len() {
+                    self.grow();
+                }
                 return id;
             }
             if slot.0 == tag && self.lines[slot.1 as usize] == line {
@@ -904,6 +934,41 @@ impl<'a> Interner<'a> {
             }
             i = (i + 1) & self.mask;
         }
+        self.intern_in_overflow(h, line)
+    }
+
+    #[cold]
+    fn intern_in_overflow(&mut self, hash: u64, line: &'a [u8]) -> u32 {
+        *self.overflow.entry((hash, line)).or_insert_with(|| {
+            self.lines.push(line);
+            self.lines.len() as u32 - 1
+        })
+    }
+
+    #[cold]
+    fn grow(&mut self) {
+        let mut grown = Self::with_capacity(self.lines.len() * 2);
+        for &line in &self.lines {
+            grown.intern(line);
+        }
+        *self = grown;
+    }
+
+    fn find(&self, line: &[u8]) -> Option<u32> {
+        let h = hash_bytes(line);
+        let tag = (h >> 32) as u32;
+        let mut i = h as usize & self.mask;
+        for _ in 0..PROBES {
+            let slot = self.slots[i];
+            if slot.1 == EMPTY {
+                return None;
+            }
+            if slot.0 == tag && self.lines[slot.1 as usize] == line {
+                return Some(slot.1);
+            }
+            i = (i + 1) & self.mask;
+        }
+        self.overflow.get(&(h, line)).copied()
     }
 }
 
@@ -993,7 +1058,7 @@ pub fn diff_lines(a: &[u8], b: &[u8]) -> Vec<Hunk> {
             b_lo: head,
             b_hi: b_end,
         }];
-        slide_line_hunks(&mut hunks, a, b);
+        slide_edits(&mut hunks, a, b, Unit::Line);
         return hunks;
     }
     let single = |m: &[u8]| match index_of_char(m, b'\n') {
@@ -1006,7 +1071,7 @@ pub fn diff_lines(a: &[u8], b: &[u8]) -> Vec<Hunk> {
         } else {
             one_vs_lines(mb, ma, head, true)
         };
-        slide_line_hunks(&mut hunks, a, b);
+        slide_edits(&mut hunks, a, b, Unit::Line);
         return hunks;
     }
 
@@ -1019,74 +1084,10 @@ pub fn diff_lines(a: &[u8], b: &[u8]) -> Vec<Hunk> {
     let mut offs_b: Vec<u32> = Vec::with_capacity(est_b + 1);
     tokenize(ma, head, &mut interner, &mut ta, &mut offs_a);
     tokenize(mb, head, &mut interner, &mut tb, &mut offs_b);
-    let (na, nb) = (ta.len(), tb.len());
-
-    // A line that never occurs on the other side cannot be part of any common
-    // subsequence, so it is marked changed up front and left out of the
-    // sequences handed to Myers. This preserves minimality while shrinking
-    // both N and D — often to nothing.
     let uniq = interner.lines.len();
     drop(interner);
-    let mut occ = vec![[0u32; 2]; uniq];
-    for &t in &ta {
-        occ[t as usize][0] += 1;
-    }
-    for &t in &tb {
-        occ[t as usize][1] += 1;
-    }
-    let mut changed = vec![false; na + nb];
-    let (changed_a, changed_b) = changed.split_at_mut(na);
-    // Surviving tokens and their original indices.
-    let mut ra: Vec<u32> = Vec::with_capacity(na);
-    let mut map_a: Vec<u32> = Vec::with_capacity(na);
-    for (i, &t) in ta.iter().enumerate() {
-        if occ[t as usize][1] == 0 {
-            changed_a[i] = true;
-        } else {
-            ra.push(t);
-            map_a.push(i as u32);
-        }
-    }
-    let mut rb: Vec<u32> = Vec::with_capacity(nb);
-    let mut map_b: Vec<u32> = Vec::with_capacity(nb);
-    for (j, &t) in tb.iter().enumerate() {
-        if occ[t as usize][0] == 0 {
-            changed_b[j] = true;
-        } else {
-            rb.push(t);
-            map_b.push(j as u32);
-        }
-    }
-    drop(occ);
 
-    if !ra.is_empty() && !rb.is_empty() {
-        let n = ra.len() + rb.len();
-        let mut sc = MyersScratch::default();
-        let mut rchanged = vec![false; n];
-        let (rchanged_a, rchanged_b) = rchanged.split_at_mut(ra.len());
-        let policy = Policy {
-            work: LINES.work + n * LINE_WORK_PER_TOKEN,
-            ..LINES
-        };
-        let mut myers = Myers::new(&ra[..], &rb[..], &mut sc, policy);
-        myers.run(0..ra.len(), 0..rb.len(), rchanged_a, rchanged_b);
-        for (ri, &c) in rchanged_a.iter().enumerate() {
-            if c {
-                changed_a[map_a[ri] as usize] = true;
-            }
-        }
-        for (rj, &c) in rchanged_b.iter().enumerate() {
-            if c {
-                changed_b[map_b[rj] as usize] = true;
-            }
-        }
-    } else {
-        changed_a.fill(true);
-        changed_b.fill(true);
-    }
-
-    let mut hunks = Vec::with_capacity(16);
-    hunks_from_changed(&ta[..], &tb[..], changed_a, changed_b, &mut hunks);
+    let mut hunks = diff_shared_tokens(&ta, &tb, uniq, &search_bounded);
     for h in &mut hunks {
         *h = Hunk {
             a_lo: offs_a[h.a_lo] as usize,
@@ -1095,82 +1096,81 @@ pub fn diff_lines(a: &[u8], b: &[u8]) -> Vec<Hunk> {
             b_hi: offs_b[h.b_hi] as usize,
         };
     }
-    slide_line_hunks(&mut hunks, a, b);
+    slide_edits(&mut hunks, a, b, Unit::Line);
     hunks
 }
 
-/// `cleanup_merge`'s slide pass applied to byte hunks that sit on line
-/// boundaries (they only ever move by whole lines), repeated until stable.
-fn slide_line_hunks(hunks: &mut Vec<Hunk>, a: &[u8], b: &[u8]) {
-    while slide_single_edits(hunks, a, b, true) {
-        let mut w = 1;
-        for r in 1..hunks.len() {
-            let h = hunks[r];
-            if hunks[w - 1].a_hi == h.a_lo && hunks[w - 1].b_hi == h.b_lo {
-                hunks[w - 1].a_hi = h.a_hi;
-                hunks[w - 1].b_hi = h.b_hi;
-            } else {
-                hunks[w] = h;
-                w += 1;
-            }
-        }
-        hunks.truncate(w);
+/// A token that never occurs on the other side cannot be part of any common
+/// subsequence, so it is marked changed up front and left out of the sequences
+/// handed to `search`. This preserves minimality while shrinking both N and D —
+/// often to nothing. Every token is below `uniq`; hunks are token indices.
+fn diff_shared_tokens(
+    ta: &[u32],
+    tb: &[u32],
+    uniq: usize,
+    search: &dyn Fn(&[u32], &[u32], &mut [bool], &mut [bool]),
+) -> Vec<Hunk> {
+    let (na, nb) = (ta.len(), tb.len());
+    let mut occurs = vec![[false; 2]; uniq];
+    for &t in ta {
+        occurs[t as usize][0] = true;
     }
+    for &t in tb {
+        occurs[t as usize][1] = true;
+    }
+    let mut changed = vec![false; na + nb];
+    let (changed_a, changed_b) = changed.split_at_mut(na);
+    let ra = shared_tokens(ta, &occurs, changed_a);
+    let rb = shared_tokens(tb, &occurs, changed_b);
+    drop(occurs);
+
+    // A token that survives does so on both sides.
+    if !ra.is_empty() {
+        let mut rchanged = vec![false; ra.len() + rb.len()];
+        let (rchanged_a, rchanged_b) = rchanged.split_at_mut(ra.len());
+        search(&ra, &rb, rchanged_a, rchanged_b);
+        for (changed, rchanged) in [(&mut *changed_a, rchanged_a), (changed_b, rchanged_b)] {
+            let survivors = changed.iter_mut().filter(|changed| !**changed);
+            survivors.zip(rchanged).for_each(|(to, from)| *to = *from);
+        }
+    }
+
+    let mut hunks = Vec::with_capacity(16);
+    hunks_from_changed(ta, tb, changed_a, changed_b, &mut hunks);
+    hunks
 }
 
-/// diff-match-patch `diff_cleanupMerge`, second half: a pure insertion or
-/// deletion that ends with the entire equality before it (or starts with the
-/// entire equality after it) is slid over that equality so it touches the
-/// neighbouring hunk or the edge, e.g. `A<ins>BA</ins>C` → `<ins>AB</ins>AC`.
-/// With `whole_lines`, only slides that keep the hunk on line boundaries are
-/// taken. Returns whether anything moved; joining is left to the caller.
-fn slide_single_edits<T: Elem>(hunks: &mut [Hunk], a: &[T], b: &[T], whole_lines: bool) -> bool {
-    let mut changed = false;
-    for i in 0..hunks.len() {
-        let h = hunks[i];
-        if h.deleted() > 0 && h.inserted() > 0 {
-            continue;
-        }
-        let prev_a = if i == 0 { 0 } else { hunks[i - 1].a_hi };
-        let next_a = if i + 1 == hunks.len() {
-            a.len()
-        } else {
-            hunks[i + 1].a_lo
-        };
-        let (before, after) = (h.a_lo - prev_a, next_a - h.a_hi);
-        if before == 0 || after == 0 {
-            continue;
-        }
-        let (seq, lo, hi) = if h.deleted() > 0 {
-            (a, h.a_lo, h.a_hi)
-        } else {
-            (b, h.b_lo, h.b_hi)
-        };
-        let edit = &seq[lo..hi];
-        let boundary = |at: usize| !whole_lines || at == lo || at == hi || seq[at - 1].is_newline();
-        let by = if edit.len() >= before
-            && edit.ends_with(&seq[lo - before..lo])
-            && boundary(hi - before)
-        {
-            -(before as isize)
-        } else if edit.len() >= after
-            && edit.starts_with(&seq[hi..hi + after])
-            && boundary(lo + after)
-        {
-            after as isize
-        } else {
-            continue;
-        };
-        let mv = |v: usize| (v as isize + by) as usize;
-        hunks[i] = Hunk {
-            a_lo: mv(h.a_lo),
-            a_hi: mv(h.a_hi),
-            b_lo: mv(h.b_lo),
-            b_hi: mv(h.b_hi),
-        };
-        changed = true;
+/// Marks the tokens that only one side has, and returns the others.
+fn shared_tokens<'a>(
+    tokens: &'a [u32],
+    occurs: &[[bool; 2]],
+    changed: &mut [bool],
+) -> Cow<'a, [u32]> {
+    let mut shared = 0;
+    for (&t, changed) in tokens.iter().zip(&mut *changed) {
+        *changed = occurs[t as usize] != [true; 2];
+        shared += usize::from(!*changed);
     }
-    changed
+    if shared == tokens.len() {
+        return Cow::Borrowed(tokens);
+    }
+    let mut survivors = Vec::with_capacity(shared);
+    let pairs = tokens.iter().zip(&*changed);
+    survivors.extend(pairs.filter_map(|(&t, &changed)| (!changed).then_some(t)));
+    Cow::Owned(survivors)
+}
+
+fn search_bounded(a: &[u32], b: &[u32], changed_a: &mut [bool], changed_b: &mut [bool]) {
+    let policy = Policy {
+        work: LINES.work + (a.len() + b.len()) * LINE_WORK_PER_TOKEN,
+        ..LINES
+    };
+    Myers::new(a, b, &mut MyersScratch::default(), policy).run(
+        0..a.len(),
+        0..b.len(),
+        changed_a,
+        changed_b,
+    );
 }
 
 /// Hunks for a one-line middle `one` against a multi-line middle `many`, both
@@ -1427,40 +1427,201 @@ fn contains(a: &[u8], b: &[u8]) -> Option<(bool, usize)> {
 
 // ───────────────────────── cleanup (diff-match-patch) ─────────────────────────
 
-/// diff-match-patch `diff_cleanupMerge`: with hunks there is nothing to merge,
-/// but two of its effects remain: common prefix/suffix inside a hunk is
-/// factored out (joining hunks that come to touch), and single edits are slid
-/// over a neighbouring equality they repeat (`slide_single_edits`).
-fn cleanup_merge<T: Elem>(hunks: &mut Vec<Hunk>, a: &[T], b: &[T]) {
-    loop {
-        let mut w = 0;
-        for r in 0..hunks.len() {
-            let mut h = hunks[r];
-            if h.a_lo < h.a_hi && h.b_lo < h.b_hi {
-                let p = T::common_prefix(&a[h.a_lo..h.a_hi], &b[h.b_lo..h.b_hi]);
-                h.a_lo += p;
-                h.b_lo += p;
-                let s = T::common_suffix(&a[h.a_lo..h.a_hi], &b[h.b_lo..h.b_hi]);
-                h.a_hi -= s;
-                h.b_hi -= s;
-                if h.a_lo == h.a_hi && h.b_lo == h.b_hi {
-                    continue;
-                }
-            }
-            if w > 0 && hunks[w - 1].a_hi == h.a_lo && hunks[w - 1].b_hi == h.b_lo {
-                hunks[w - 1].a_hi = h.a_hi;
-                hunks[w - 1].b_hi = h.b_hi;
-            } else {
-                hunks[w] = h;
-                w += 1;
-            }
-        }
-        hunks.truncate(w);
+/// What a hunk's edges may not fall inside of.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Unit {
+    Element,
+    Line,
+}
 
-        if !slide_single_edits(hunks, a, b, false) {
-            return;
+/// diff-match-patch `diff_cleanupMerge`: the common prefix and suffix inside a hunk are factored out, hunks that
+/// touch are joined, and single edits are slid (`slide_edits`).
+fn cleanup_merge<T: Elem>(hunks: &mut Vec<Hunk>, a: &[T], b: &[T]) {
+    trim_and_join(hunks, a, b, Unit::Element);
+    slide_edits(hunks, a, b, Unit::Element);
+}
+
+/// Slides single edits over a neighbouring equality they repeat (`slide_single_edit`), then trims and joins, in
+/// passes until nothing moves.
+fn slide_edits<T: Elem>(hunks: &mut Vec<Hunk>, a: &[T], b: &[T], unit: Unit) {
+    let slide_all = |hunks: &mut [Hunk]| {
+        (0..hunks.len()).fold(false, |moved, at| {
+            slide_single_edit(hunks, at, (at.wrapping_sub(1), at + 1), a, b, unit) | moved
+        })
+    };
+    // Most diffs end within two passes, which allocate nothing.
+    if slide_all(hunks) {
+        trim_and_join(hunks, a, b, unit);
+        if slide_all(hunks) {
+            join_slid_edits(hunks, a, b, unit);
         }
     }
+}
+
+fn trim_and_join<T: Elem>(hunks: &mut Vec<Hunk>, a: &[T], b: &[T], unit: Unit) {
+    let mut w = 0;
+    for r in 0..hunks.len() {
+        let h = trimmed(hunks[r], a, b, unit);
+        if h.deleted() == 0 && h.inserted() == 0 {
+            continue;
+        }
+        if w > 0 && hunks[w - 1].touches(&h) {
+            (hunks[w - 1].a_hi, hunks[w - 1].b_hi) = (h.a_hi, h.b_hi);
+        } else {
+            hunks[w] = h;
+            w += 1;
+        }
+    }
+    hunks.truncate(w);
+}
+
+/// The later passes. The equalities around a hunk only grow until it is joined, so an edit that did not slide once
+/// does not slide later. After the first of these, a pass visits only the hunks that the pass before it changed.
+#[cold]
+fn join_slid_edits<T: Elem>(hunks: &mut Vec<Hunk>, a: &[T], b: &[T], unit: Unit) {
+    let mut list = HunkList::new(hunks);
+    let mut visit: Vec<usize> = (0..list.hunks.len()).collect();
+    loop {
+        let mut kept = 0;
+        for k in 0..visit.len() {
+            let mut at = visit[k];
+            let h = trimmed(list.hunks[at], a, b, unit);
+            list.hunks[at] = h;
+            if h.deleted() == 0 && h.inserted() == 0 {
+                list.remove(at);
+                continue;
+            }
+            let (prev, next) = list.links[at];
+            if list.hunks.get(prev).is_some_and(|prev| prev.touches(&h)) {
+                list.join(prev, at);
+                at = prev;
+            }
+            // If `next` is visited too, it is trimmed first.
+            if visit.get(k + 1) != Some(&next)
+                && list.hunks.get(next).is_some_and(|next| h.touches(next))
+            {
+                list.join(at, next);
+            }
+            if h.is_single_edit() && visit[..kept].last() != Some(&at) {
+                visit[kept] = at;
+                kept += 1;
+            }
+        }
+        visit.truncate(kept);
+
+        let mut moved = false;
+        visit.retain(|&at| {
+            let slid = slide_single_edit(list.hunks, at, list.links[at], a, b, unit);
+            moved |= slid;
+            slid || !list.hunks[at].is_single_edit()
+        });
+        if !moved {
+            break;
+        }
+    }
+    hunks.retain(|h| h.deleted() > 0 || h.inserted() > 0);
+}
+
+/// Lines are not trimmed: their common start or end can be part of a line.
+fn trimmed<T: Elem>(mut h: Hunk, a: &[T], b: &[T], unit: Unit) -> Hunk {
+    if unit == Unit::Element && !h.is_single_edit() {
+        let p = T::common_prefix(&a[h.a_lo..h.a_hi], &b[h.b_lo..h.b_hi]);
+        h.a_lo += p;
+        h.b_lo += p;
+        let s = T::common_suffix(&a[h.a_lo..h.a_hi], &b[h.b_lo..h.b_hi]);
+        h.a_hi -= s;
+        h.b_hi -= s;
+    }
+    h
+}
+
+/// Hunks that can be removed without moving the others. A removed one is left empty.
+struct HunkList<'h> {
+    hunks: &'h mut [Hunk],
+    /// The indices of the hunks before and after each, out of bounds if there is none.
+    links: Vec<(usize, usize)>,
+}
+
+impl<'h> HunkList<'h> {
+    fn new(hunks: &'h mut [Hunk]) -> Self {
+        let links = (0..hunks.len()).map(|i| (i.wrapping_sub(1), i + 1));
+        Self {
+            links: links.collect(),
+            hunks,
+        }
+    }
+
+    fn remove(&mut self, at: usize) {
+        let h = &mut self.hunks[at];
+        (h.a_hi, h.b_hi) = (h.a_lo, h.b_lo);
+        let (prev, next) = self.links[at];
+        if let Some(links) = self.links.get_mut(prev) {
+            links.1 = next;
+        }
+        if let Some(links) = self.links.get_mut(next) {
+            links.0 = prev;
+        }
+    }
+
+    fn join(&mut self, first: usize, second: usize) {
+        let Hunk { a_hi, b_hi, .. } = self.hunks[second];
+        (self.hunks[first].a_hi, self.hunks[first].b_hi) = (a_hi, b_hi);
+        self.remove(second);
+    }
+}
+
+/// A pure insertion or deletion that ends with the entire equality before it (or starts with the entire equality
+/// after it) is slid over that equality so it touches the neighbouring hunk or the edge, e.g. `A<ins>BA</ins>C` →
+/// `<ins>AB</ins>AC`. `prev` and `next` are as in `HunkList::links`. Returns whether it moved.
+#[inline]
+fn slide_single_edit<T: Elem>(
+    hunks: &mut [Hunk],
+    at: usize,
+    (prev, next): (usize, usize),
+    a: &[T],
+    b: &[T],
+    unit: Unit,
+) -> bool {
+    const BLOCK: usize = 512;
+
+    let h = hunks[at];
+    if !h.is_single_edit() {
+        return false;
+    }
+    let before = h.a_lo - hunks.get(prev).map_or(0, |prev| prev.a_hi);
+    let after = hunks.get(next).map_or(a.len(), |next| next.a_lo) - h.a_hi;
+    if before == 0 || after == 0 {
+        return false;
+    }
+    let (seq, lo, hi) = if h.deleted() > 0 {
+        (a, h.a_lo, h.a_hi)
+    } else {
+        (b, h.b_lo, h.b_hi)
+    };
+    let edit = &seq[lo..hi];
+    let boundary =
+        |at: usize| unit == Unit::Element || at == lo || at == hi || seq[at - 1].is_newline();
+    // From the end: when an edit moves right pass after pass, the start of the equality can match each time.
+    let ends_with_before = || {
+        let end = edit[edit.len() - before..].rchunks(BLOCK);
+        end.eq(seq[lo - before..lo].rchunks(BLOCK))
+    };
+    let by = if edit.len() >= before && ends_with_before() && boundary(hi - before) {
+        -(before as isize)
+    } else if edit.len() >= after && edit.starts_with(&seq[hi..hi + after]) && boundary(lo + after)
+    {
+        after as isize
+    } else {
+        return false;
+    };
+    let mv = |v: usize| (v as isize + by) as usize;
+    hunks[at] = Hunk {
+        a_lo: mv(h.a_lo),
+        a_hi: mv(h.a_hi),
+        b_lo: mv(h.b_lo),
+        b_hi: mv(h.b_hi),
+    };
+    true
 }
 
 /// diff-match-patch `diff_cleanupSemantic`, `diff_cleanupSemanticLossless`
@@ -1794,8 +1955,10 @@ mod tests {
         CharDiff::default().diff(a, b).to_vec()
     }
 
+    const UNLIMITED: usize = usize::MAX >> 2;
+
     /// Minimal-ish edit script between two sequences as a hunk list.
-    fn diff_slices<T: Elem>(a: &[T], b: &[T], probe: usize) -> Vec<Hunk> {
+    fn diff_slices<T: Elem>(a: &[T], b: &[T], probe: usize, work: usize) -> Vec<Hunk> {
         let mut hunks = Vec::new();
         let p = T::common_prefix(a, b);
         if p == a.len() && p == b.len() {
@@ -1824,7 +1987,7 @@ mod tests {
                 exhaustive_max: probe,
                 exhaustive_per_elem: 0,
                 exhaustive_quota: 0,
-                work: usize::MAX >> 2,
+                work,
                 half_match: 0,
             },
         );
@@ -1904,7 +2067,7 @@ mod tests {
                     _ => {}
                 }
             }
-            let hunks = diff_slices(&a, &b, 1024);
+            let hunks = diff_slices(&a, &b, 1024, UNLIMITED);
             let kept = check_script(&a, &b, &hunks);
             assert_eq!(
                 kept,
@@ -1921,7 +2084,7 @@ mod tests {
             let n = 50 + rng.below(200) as usize;
             let a: Vec<u32> = (0..n).map(|_| rng.below(3) as u32).collect();
             let b: Vec<u32> = (0..n).map(|_| rng.below(3) as u32).collect();
-            let hunks = diff_slices(&a, &b, 2);
+            let hunks = diff_slices(&a, &b, 2, UNLIMITED);
             let kept = check_script(&a, &b, &hunks);
             let opt = lcs_len(&a, &b);
             assert!(kept <= opt);
@@ -1955,6 +2118,154 @@ mod tests {
         }
         assert_eq!(u8::common_prefix(a, &a[..20]), 20);
         assert_eq!(u8::common_suffix(a, &a[10..]), 26);
+    }
+
+    /// `trim_and_join` and `slide_edits` with passes that visit every hunk.
+    fn cleanup_merge_all(hunks: &mut Vec<Hunk>, a: &[u8], b: &[u8], unit: Unit) {
+        loop {
+            let mut joined: Vec<Hunk> = Vec::new();
+            let mut one = Vec::new();
+            for &h in hunks.iter() {
+                match unit {
+                    Unit::Element => push_trimmed(a, b, h, &mut one),
+                    Unit::Line => one.push(h),
+                }
+                match (joined.last_mut(), one.pop()) {
+                    (Some(last), Some(h)) if (last.a_hi, last.b_hi) == (h.a_lo, h.b_lo) => {
+                        (last.a_hi, last.b_hi) = (h.a_hi, h.b_hi);
+                    }
+                    (_, h) => joined.extend(h),
+                }
+            }
+            *hunks = joined;
+            let mut moved = false;
+            for i in 0..hunks.len() {
+                moved |= slide_single_edit(hunks, i, (i.wrapping_sub(1), i + 1), a, b, unit);
+            }
+            if !moved {
+                return;
+            }
+        }
+    }
+
+    #[test]
+    fn cleanup_merge_skips_only_hunks_that_stay() {
+        let mut rng = Rng(7);
+        for iter in 0..40_000 {
+            let (unit, words): (_, &[&str]) = match iter % 2 {
+                0 => (Unit::Element, &["a", "a", "b", "c"]),
+                _ => (Unit::Line, &["a\n", "a\n", "ba\n", "c\n"]),
+            };
+            let words = &words[..2 + rng.below(3) as usize];
+            let (mut a, mut b, mut hunks) = (Vec::new(), Vec::new(), Vec::new());
+            for part in rng.below(2)..rng.below(24) {
+                let mut text = |min: u64, max: u64| -> Vec<u8> {
+                    let len = min + rng.below(max - min + 1);
+                    let words = (0..len).map(|_| words[rng.below(words.len() as u64) as usize]);
+                    words.collect::<String>().into_bytes()
+                };
+                let (a_lo, b_lo) = (a.len(), b.len());
+                if part % 2 == 0 {
+                    let same = text(0, 2);
+                    a.extend(&same);
+                    b.extend(&same);
+                    continue;
+                }
+                let (one, other) = (text(1, 5), text(1, 3));
+                match rng.below(5) {
+                    0 | 1 => a.extend(one),
+                    2 | 3 => b.extend(one),
+                    _ => {
+                        a.extend(one);
+                        b.extend(other);
+                    }
+                }
+                let (a_hi, b_hi) = (a.len(), b.len());
+                hunks.push(Hunk {
+                    a_lo,
+                    a_hi,
+                    b_lo,
+                    b_hi,
+                });
+            }
+            let mut expected = hunks.clone();
+            cleanup_merge_all(&mut expected, &a, &b, unit);
+            trim_and_join(&mut hunks, &a, &b, unit);
+            slide_edits(&mut hunks, &a, &b, unit);
+            check_script(&a, &b, &hunks);
+            assert_eq!(hunks, expected, "iter {iter}");
+        }
+    }
+
+    #[test]
+    fn interner_finds_lines_that_got_no_slot() {
+        let count = 2 * PROBES;
+        let mask = Interner::with_capacity(count).mask;
+        let lines: Vec<String> = (0..)
+            .map(|i| format!("{i}\n"))
+            .filter(|line| hash_bytes(line.as_bytes()) as usize & mask == 0)
+            .take(count + 1)
+            .collect();
+        let (known, unknown) = (&lines[..count], &lines[count]);
+        // With no capacity it grows, up to the same size.
+        for capacity in [count, 0] {
+            let mut interner = Interner::with_capacity(capacity);
+            for _ in 0..2 {
+                let ids = known.iter().map(|line| interner.intern(line.as_bytes()));
+                assert!(ids.eq(0..count as u32));
+            }
+            assert_eq!((interner.mask, interner.overflow.len()), (mask, PROBES));
+            let found = known.iter().map(|line| interner.find(line.as_bytes()));
+            assert!(found.eq((0..count as u32).map(Some)));
+            assert_eq!(interner.find(unknown.as_bytes()), None);
+        }
+    }
+
+    fn text(parts: &[(&str, usize)]) -> Vec<u8> {
+        let parts = parts.iter().map(|&(part, n)| part.repeat(n));
+        parts.collect::<String>().into_bytes()
+    }
+
+    #[test]
+    fn greedy_cut_drops_the_reverse_point_until_that_has_cost_the_budget() {
+        let a = text(&[("c", 10_000), ("x", 20_000), ("d", 1)]);
+        let b = text(&[("d", 1), ("x", 20_000), ("c", 1)]);
+        let kept = |work| check_script(&a, &b, &diff_slices(&a, &b, MIN_PROBE, work));
+        assert_eq!(kept(UNLIMITED), 1);
+        assert!(kept(80_000) >= 20_000 - MIN_PROBE);
+    }
+
+    #[test]
+    fn greedy_cut_past_the_budget() {
+        // Unique ids cut the diff in two. The first part spends the budget.
+        let kept_after = |a: &[(&str, usize)], b: &[(&str, usize)]| {
+            let ids = |first: &[(&str, usize)], second| -> Vec<u32> {
+                let [first, second] = [first, second].map(|it| text(it).into_iter().map(u32::from));
+                first.chain(1000..21_000).chain(second).collect()
+            };
+            let a = ids(&[("c", 10_000), ("x", 20_000), ("d", 1)], a);
+            let b = ids(&[("d", 1), ("x", 20_000), ("c", 1)], b);
+            check_script(&a, &b, &diff_slices(&a, &b, 128, 400_000))
+        };
+        let before = 20_000 - MIN_PROBE + 20_000;
+        // The forward point got further.
+        let a = [("d", 1), ("x", 20_000), ("c", 10_000)];
+        let b = [("c", 1), ("x", 20_000), ("d", 1)];
+        assert!(kept_after(&a, &b) >= before + 20_000);
+        // The reverse point got further, but both are taken.
+        let a = [("c", 100), ("y", 50), ("c", 1000), ("x", 5000), ("d", 1)];
+        let b = [("y", 50), ("e", 1000), ("x", 5000), ("e", 1)];
+        assert!(kept_after(&a, &b) >= before + 5050);
+    }
+
+    #[test]
+    fn greedy_cut_at_both_points_drops_nothing() {
+        let a = text(&[("c", 1000), ("x", 1000), ("d", 1), ("z", 60_000), ("e", 1)]);
+        let b = text(&[("d", 1), ("x", 1000), ("c", 100), ("z", 60_000), ("f", 1)]);
+        assert_eq!(
+            diff_slices(&a, &b, MIN_PROBE, 100_000),
+            diff_slices(&a, &b, MIN_PROBE, UNLIMITED)
+        );
     }
 
     fn render(a: &[u8], b: &[u8], hunks: &[Hunk]) -> String {

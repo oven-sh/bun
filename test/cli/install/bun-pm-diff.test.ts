@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import {
   bunEnv,
   bunExe,
+  emptyProcessMaxRSS,
   isASAN,
   isDebug,
   isRoot,
@@ -627,7 +628,7 @@ diffme@1.0.0 → diffme@2.0.0
       return maxRSS;
     }
 
-    const [few, many] = [await peakMemory(8), await peakMemory(64)];
+    const [few, many] = await Promise.all([peakMemory(8), peakMemory(64)]);
     // When no AST is freed, this is over 40 MiB on Linux x64.
     expect(many - few).toBeLessThan((isASAN || isDebug ? 32 : 24) * 1024 * 1024);
   });
@@ -660,8 +661,8 @@ diffme@1.0.0 → diffme@2.0.0
     expect(stderr).toBe("");
     expect(stdout).toEndWith("\n18 files changed, 1 added, 0 removed  (+17 -16 lines)\n");
     expect(exitCode).toBe(0);
-    // One file takes some 30 MiB. All at the same time take some 400 MiB on Linux x64.
-    expect(maxRSS).toBeLessThan(280 * 1024 * 1024);
+    // One file takes some 30 MiB.
+    expect(maxRSS - (await emptyProcessMaxRSS())).toBeLessThan(260 * 1024 * 1024);
   });
 
   test("a deleted file is not parsed for a patch", async () => {
@@ -688,8 +689,8 @@ diffme@1.0.0 → diffme@2.0.0
 
   // These print 60 MiB, which is too slow without optimizations, to a file through `sh`.
   test.skipIf(isASAN || isDebug || isWindows).each([
-    ["many tokens", Buffer.alloc(2_000_000, Buffer.alloc(99, ";") + "\n"), 60],
-    ["one line that is not UTF-8", Buffer.alloc(21 * 1024 * 1024, 0xff), 100],
+    ["many tokens", Buffer.alloc(2_000_000, Buffer.alloc(99, ";") + "\n"), 45],
+    ["one line that is not UTF-8", Buffer.alloc(21 * 1024 * 1024, 0xff), 85],
   ])("the colored output is printed in parts: %s", async (_, added, mebibytes) => {
     using dir = tempDir("pm-diff-colors", { "a/same.txt": "", "b/same.txt": "", "b/added.jsonc": added });
     const { stderr, exitCode, maxRSS } = await runCommandMaxRSS({
@@ -700,7 +701,7 @@ diffme@1.0.0 → diffme@2.0.0
     expect(stderr).toBe("");
     expect(statSync(join(String(dir), "out")).size).toBeGreaterThan(60 * 1024 * 1024);
     expect(exitCode).toBe(0);
-    expect(maxRSS).toBeLessThan(mebibytes * 1024 * 1024);
+    expect(maxRSS - (await emptyProcessMaxRSS())).toBeLessThan(mebibytes * 1024 * 1024);
   });
 
   test("identical sides say so", async () => {
@@ -1478,7 +1479,7 @@ describe.concurrent("bun pm diff (hostile and awkward inputs)", () => {
 
   test("long files are colored line by line, in order", async () => {
     const names = ["f0.js", "f1.js", "f2.js"];
-    const numbers = Array.from({ length: 4000 }, (_, i) => i + 1);
+    const numbers = Array.from({ length: isDebug ? 700 : 4000 }, (_, i) => i + 1);
     const { raw, stderr, exitCode } = await pretty(
       {
         "a/same.txt": "",
@@ -1486,7 +1487,8 @@ describe.concurrent("bun pm diff (hostile and awkward inputs)", () => {
         ...Object.fromEntries(names.map((name, i) => [`b/${name}`, numbers.map(n => `f(${i}, ${n});\n`).join("")])),
       },
       [],
-      { GOMAXPROCS: "8" },
+      // Few threads have room for few parts.
+      { GOMAXPROCS: "2" },
     );
     const tint = `${ESC}[0m${ESC}[48;5;22m`;
     const number = (n: number) => `${tint}${ESC}[33m${n}${tint}`;

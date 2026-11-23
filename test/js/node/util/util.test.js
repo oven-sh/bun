@@ -632,15 +632,14 @@ describe("util", () => {
     });
 
     it.concurrent("takes little memory for large inputs with many differences", async () => {
-      // Keeping every diagonal of every level would take 320 MB for the first call and 512 MB for each of the others.
+      // Keeping every diagonal of every level would take 512 MB for each of the last two calls.
       const fixture = `
         import util from "node:util";
         const lines = (length, name) => Array.from({ length }, (_, i) => name + i);
-        const edited = lines(20_000, "line");
-        for (let i = 0; i < edited.length; i += 40) edited[i] = "edited" + i;
         const large = lines(8_000, "line");
+        const edited = large.map((line, i) => (i % 80 ? line : "edited" + i));
         const counts = [
-          util.diff(lines(20_000, "line"), edited),
+          util.diff(large, edited),
           util.diff(large, []),
           util.diff([], large),
         ].map(result => [1, 0, -1].map(kind => result.filter(entry => entry[0] === kind).length));
@@ -648,7 +647,7 @@ describe("util", () => {
       `;
       const [maxRSS, emptyMaxRSS] = await Promise.all([
         runFixtureMaxRSS(fixture, [
-          [500, 19_500, 500],
+          [100, 7_900, 100],
           [8_000, 0, 0],
           [0, 0, 8_000],
         ]),

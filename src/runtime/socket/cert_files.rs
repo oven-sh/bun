@@ -4,15 +4,27 @@
 use core::ffi::{c_char, c_int, c_void};
 
 use bun_core::{ZBox, ZStr, env_var, strings};
-use bun_sys::O;
+use bun_sys::{E, Error, O, Tag};
 
 /// Receives the whole contents of one file.
 pub(crate) type OnFile = unsafe extern "C" fn(ctx: *mut c_void, data: *const u8, len: usize);
 
+/// Far more than a list of certificates takes. A device may never end.
+const MAX_FILE_LEN: usize = 64 << 20;
+
 /// Reads all of `file` as OpenSSL sees it, which takes each line, or 254 bytes of it, for a C string. An empty one is
 /// the end of the file there. Here it is only an error within a block.
 pub(crate) fn read_pem(file: &bun_sys::File, bytes: &mut Vec<u8>) -> bun_sys::Result<()> {
-    file.read_to_end_into(bytes)?;
+    loop {
+        bytes.try_reserve(8192).map_err(|_| Error::oom())?;
+        bun_core::vec::append_with(bytes, usize::MAX, |spare| file.read_all_buf(spare))?;
+        if bytes.len() < bytes.capacity() {
+            break;
+        }
+        if bytes.len() >= MAX_FILE_LEN {
+            return Err(Error::from_code(E::EFBIG, Tag::read));
+        }
+    }
     if !strings::contains_char(bytes, 0) {
         return Ok(());
     }

@@ -5672,6 +5672,7 @@ impl VirtualMachine {
         self.regular_event_loop.global.set(NonNull::new(new_global));
         self.macro_event_loop.global.set(NonNull::new(new_global));
         if let Some(rare) = self.rare_data.get() {
+            rare.root_certs_from_users.set(None);
             rare.cleanup_hooks.with_mut(|hooks| {
                 for hook in hooks {
                     if hook.global_this == old_global {

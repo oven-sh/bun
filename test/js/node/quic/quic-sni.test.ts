@@ -434,6 +434,38 @@ test("setDefaultCACertificates() counts from the next connection on, and on its 
   });
 });
 
+test("setDefaultCACertificates() ends with its file under bun test --isolate", async () => {
+  const fixtures = join(import.meta.dir, "..", "tls", "fixtures", "trust-anchor");
+  const read = (name: string) => readFileSync(join(fixtures, name));
+  const identity = {
+    keys: [createPrivateKey(read("leaf.key"))],
+    certs: [Buffer.concat([read("leaf.pem"), read("intermediate.pem")])],
+  };
+  await using server = await listen(ignoreErrors, { sni: { "*": identity }, alpn: ["quic-test"] });
+  const file = `
+    import { connect } from "node:quic";
+    import { setDefaultCACertificates } from "node:tls";
+    for (const certs of [undefined, [${JSON.stringify(String(read("root.pem")))}]]) {
+      if (certs) setDefaultCACertificates(certs);
+      const options = { alpn: "quic-test", servername: "localhost", verifyPeer: "manual" };
+      const session = await connect("127.0.0.1:${server.address!.port}", options);
+      console.log((await session.opened).validationErrorCode ?? "authorized");
+      await session.close();
+    }`;
+  using dir = tempDir("quic-default-ca-isolate", { "a.test.mjs": file, "b.test.mjs": file });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--isolate"],
+    cwd: String(dir),
+    env: { ...bunEnv, BUN_OPTIONS: "--experimental-quic --no-warnings" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const each = ["UNABLE_TO_GET_ISSUER_CERT_LOCALLY", "authorized"];
+  expect(stdout.trim().split("\n").slice(1)).toEqual([...each, ...each]);
+  expect(exitCode).toBe(0);
+});
+
 test("`crl` is read as by node:tls", async () => {
   const identity = { keys: [createPrivateKey(readKey("agent3-key.pem"))], certs: [readKey("agent3-cert.pem")] };
   await using server = await listen(ignoreErrors, { sni: { "*": identity }, alpn: ["quic-test"] });

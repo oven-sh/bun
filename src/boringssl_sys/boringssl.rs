@@ -371,6 +371,7 @@ owned_handle! {
     OwnedSslSession(SSL_SESSION) => SSL_SESSION_free;
     OwnedX509(X509) => X509_free;
     OwnedX509Store(X509_STORE) => X509_STORE_free;
+    OwnedX509LazyCertSet(X509_LAZY_CERT_SET) => X509_LAZY_CERT_SET_free;
     OwnedEvpPkey(EVP_PKEY) => EVP_PKEY_free;
 }
 
@@ -1368,6 +1369,7 @@ unsafe extern "C" {
         certs: *const *mut CRYPTO_BUFFER,
         num_certs: usize,
     ) -> *mut X509_LAZY_CERT_SET;
+    fn X509_LAZY_CERT_SET_free(set: *mut X509_LAZY_CERT_SET);
     pub safe fn X509_get_default_cert_file() -> *const c_char;
     pub safe fn X509_get_default_cert_dir() -> *const c_char;
     fn PEM_read_bio_X509(

@@ -338,8 +338,9 @@ unsafe fn use_default_ca_store(
     global: &JSGlobalObject,
     ctx: &ssl::SSL_CTX,
 ) -> Result<(), &'static str> {
-    let store = Bun__newRootCertStore(global);
+    let store = us_new_root_cert_store(global.bun_vm().rare_data().root_certs_from_users());
     if store.is_null() {
+        ssl::ERR_clear_error();
         return Err("failed to load the default CA certificates");
     }
     // SAFETY: fn contract; `ctx` takes the reference to `store`.
@@ -532,8 +533,10 @@ unsafe extern "C" {
     fn us_ssl_ctx_set_verify_signature_algorithms(ctx: *mut ssl::SSL_CTX) -> c_int;
     /// openssl.cpp: the blocked public keys every other TLS context of Bun rejects in a peer's chain.
     fn us_ssl_ctx_reject_blocked_keys(ctx: *mut ssl::SSL_CTX);
-    /// NodeTLS.cpp: a new store, or null.
-    safe fn Bun__newRootCertStore(global: &JSGlobalObject) -> *mut ssl::X509_STORE;
+    /// root_certs.cpp: a new store, or null.
+    safe fn us_new_root_cert_store(
+        certs_from_users: Option<&ssl::X509_LAZY_CERT_SET>,
+    ) -> *mut ssl::X509_STORE;
     /// ca_pem.cpp: how every other TLS context of Bun reads `ca` and `crl`.
     fn us_x509_store_add_cas(
         store: &ssl::X509_STORE,

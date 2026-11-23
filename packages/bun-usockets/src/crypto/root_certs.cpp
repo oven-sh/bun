@@ -337,6 +337,13 @@ extern "C" X509_STORE *us_get_default_ca_store() {
   return store.release();
 }
 
+// https://github.com/nodejs/node/blob/v26.12.1/src/crypto/crypto_context.cc#L1053
+extern "C" X509_STORE *us_new_root_cert_store(X509_LAZY_CERT_SET *certs_from_users) {
+  if (certs_from_users == NULL) return us_get_default_ca_store();
+  us_unique_ptr<X509_STORE, X509_STORE_free> store{X509_STORE_new()};
+  return store && X509_STORE_add_lazy_cert_set(store.get(), certs_from_users) ? store.release() : NULL;
+}
+
 // Process-wide immutable default store. Safe to share across SSL_CTXs that
 // don't add per-config CAs (the user-`ca` path in build_raw populates the
 // SSL_CTX's own private, initially-empty store instead), so roots parsed for

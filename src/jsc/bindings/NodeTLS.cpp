@@ -178,6 +178,9 @@ JSC_DEFINE_HOST_FUNCTION(getSystemCACertificates, (JSC::JSGlobalObject * globalO
 // callbacks.
 using CACertInput = std::variant<WTF::UTF8CString, JSC::JSArrayBufferView*>;
 
+// Takes the reference to `certs`.
+extern "C" void Bun__VM__setRootCertsFromUsers(void* bunVM, X509_LAZY_CERT_SET* certs);
+
 // https://github.com/nodejs/node/blob/v26.12.1/src/crypto/crypto_context.cc#L1242, and answers with the new certificates.
 JSC_DEFINE_HOST_FUNCTION(resetRootCertStore, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
@@ -228,7 +231,7 @@ JSC_DEFINE_HOST_FUNCTION(resetRootCertStore, (JSC::JSGlobalObject * globalObject
     struct Certificate {
         std::array<uint8_t, SHA_DIGEST_LENGTH> fingerprint;
         WTF::String pem;
-        bssl::UniquePtr<CRYPTO_BUFFER> der;
+        us_unique_ptr<CRYPTO_BUFFER, CRYPTO_BUFFER_free> der;
     };
     WTF::Vector<Certificate, 16> parsed;
     WTF::HashSet<WTF::String> seen;
@@ -258,7 +261,7 @@ JSC_DEFINE_HOST_FUNCTION(resetRootCertStore, (JSC::JSGlobalObject * globalObject
         us_ca_reader reader { bio.get(), us_ca_trust::ignored };
         CRYPTO_BUFFER* buffer = nullptr;
         while (auto x509 = ncrypto::X509Pointer(reader.next(&buffer))) {
-            bssl::UniquePtr<CRYPTO_BUFFER> der { buffer };
+            us_unique_ptr<CRYPTO_BUFFER, CRYPTO_BUFFER_free> der { buffer };
             std::array<uint8_t, SHA_DIGEST_LENGTH> fingerprint;
             auto out = ncrypto::BIOPointer::NewMem();
             if (!out || PEM_write_bio_X509(out.get(), x509.get()) != 1 || X509_digest(x509.get(), EVP_sha1(), fingerprint.data(), nullptr) != 1) {
@@ -300,7 +303,7 @@ JSC_DEFINE_HOST_FUNCTION(resetRootCertStore, (JSC::JSGlobalObject * globalObject
     // Node keeps them in a set ordered by X509_cmp, which in OpenSSL compares SHA-1 fingerprints.
     std::ranges::sort(parsed, {}, &Certificate::fingerprint);
     auto ders = parsed.map([](auto& certificate) { return certificate.der.get(); });
-    decltype(Zig::GlobalObject::m_rootCertsFromUsers) certsFromUsers { X509_LAZY_CERT_SET_new(ders.span().data(), ders.size()), X509_LAZY_CERT_SET_free };
+    us_unique_ptr<X509_LAZY_CERT_SET, X509_LAZY_CERT_SET_free> certsFromUsers { X509_LAZY_CERT_SET_new(ders.span().data(), ders.size()) };
     if (!certsFromUsers) {
         throwOutOfMemoryError(globalObject, scope);
         return {};
@@ -315,21 +318,8 @@ JSC_DEFINE_HOST_FUNCTION(resetRootCertStore, (JSC::JSGlobalObject * globalObject
     }
     auto* array = JSC::constructArray(globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), results);
     RETURN_IF_EXCEPTION(scope, {});
-    defaultGlobalObject(globalObject)->m_rootCertsFromUsers = WTF::move(certsFromUsers);
+    Bun__VM__setRootCertsFromUsers(bunVM(globalObject), certsFromUsers.release());
     return JSValue::encode(array);
-}
-
-// https://github.com/nodejs/node/blob/v26.12.1/src/crypto/crypto_context.cc#L1053
-extern "C" X509_STORE* Bun__newRootCertStore(JSC::JSGlobalObject* globalObject)
-{
-    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
-    auto* certsFromUsers = defaultGlobalObject(globalObject)->m_rootCertsFromUsers.get();
-    if (!certsFromUsers)
-        return us_get_default_ca_store();
-    bssl::UniquePtr<X509_STORE> store { X509_STORE_new() };
-    if (!store || !X509_STORE_add_lazy_cert_set(store.get(), certsFromUsers))
-        return nullptr;
-    return store.release();
 }
 
 // (names: Map<string, T>, servername: string) => T | undefined, matched by the tree a listener keeps its names in.

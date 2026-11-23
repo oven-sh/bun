@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { once } from "events";
 import { readFileSync } from "fs";
-import { bunEnv, bunExe, tls as harnessCert, invalidTls, isLinux, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, tls as harnessCert, invalidTls, isLinux, isPosix, tempDir, tmpdirSync } from "harness";
 import {
   createCipheriv,
   createHash,
@@ -1541,126 +1541,6 @@ describe("several certificates match one issuer", () => {
     expect(cert.checkIssued(cert)).toBe(true);
   });
 
-  describe("a server names the CAs it accepts", () => {
-    const requestCert = { requestCert: true, rejectUnauthorized: false };
-    async function named(options: tls.TlsOptions) {
-      await using server = await serve(chain, { ...requestCert, ...options });
-      return await namedBy(server);
-    }
-    async function namedBy(server: { port: number }): Promise<string[] | null> {
-      const received: Buffer[] = [];
-      const transport = net.connect(server.port, "127.0.0.1").on("data", chunk => received.push(chunk as Buffer));
-      const socket = new Duplex({
-        read() {},
-        write: (chunk, encoding, callback) => void transport.write(chunk, encoding, callback),
-      });
-      transport
-        .on("data", chunk => socket.push(chunk))
-        .on("error", error => socket.destroy(error))
-        .on("close", () => socket.push(null));
-      try {
-        const ciphers = "ECDHE-ECDSA-AES128-GCM-SHA256";
-        expect(await connect(server.port, { socket, ca: root, maxVersion: "TLSv1.2", ciphers })).toBe("authorized");
-      } finally {
-        transport.destroy();
-      }
-      const text = Buffer.concat(received).toString("latin1");
-      return text.match(new RegExp([...names, "Joyent"].join("|"), "g"));
-    }
-    const names = ["a long name for a CA", "short", "a medium name"];
-    const cas = names.map(name => mint(name, name, ca));
-
-    it("in the order of `ca`", async () => {
-      expect(await named({ ca: cas })).toEqual(names);
-    });
-
-    it("once each, unlike in Node.js", async () => {
-      expect(await named({ ca: [...cas, mint(names[1], names[1], ca), cas[0]] })).toEqual(names);
-    });
-
-    it("then those given to addCACert()", async () => {
-      const secureContext = tls.createSecureContext({ key, cert: chain, ca: cas[0] });
-      secureContext.context.addCACert(cas[1] + cas[2]);
-      await using server = net.createServer(socket => {
-        new tls.TLSSocket(socket, { isServer: true, secureContext, ...requestCert }).on("error", () => {}).resume();
-      });
-      await once(server.listen(0, "127.0.0.1"), "listening");
-      expect(await namedBy(server.address() as AddressInfo)).toEqual(names);
-    });
-
-    it("but not those of setDefaultCACertificates()", async () => {
-      const before = tls.getCACertificates("default");
-      tls.setDefaultCACertificates(cas);
-      try {
-        await using server = tls.createServer({ key, cert: chain, ...requestCert });
-        // The contexts of these are shared between equal options, while in use.
-        const sockets: tls.TLSSocket[] = [];
-        await using wrapping = net.createServer(socket => {
-          const ca = sockets.length ? tls.getCACertificates("default") : undefined;
-          const options = { isServer: true, key, cert: chain, ca, ...requestCert };
-          sockets.push(new tls.TLSSocket(socket, options).on("error", () => {}).resume());
-        });
-        await Promise.all([server, wrapping].map(server => once(server.listen(0, "127.0.0.1"), "listening")));
-        expect({
-          https: await named({}),
-          tls: await namedBy(server.address() as AddressInfo),
-          socket: await namedBy(wrapping.address() as AddressInfo),
-          socketWithCa: (await namedBy(wrapping.address() as AddressInfo))?.length,
-        }).toEqual({ https: null, tls: null, socket: null, socketWithCa: names.length });
-      } finally {
-        tls.setDefaultCACertificates(before);
-      }
-    });
-
-    it("even next to those in a pfx", async () => {
-      const pfx = readFileSync(join(import.meta.dir, "../test/fixtures/keys/agent1.pfx"));
-      const before = tls.getCACertificates("default");
-      tls.setDefaultCACertificates(cas.slice(1));
-      try {
-        await using server = tls.createServer({ key, cert: chain, pfx, passphrase: "sample", ...requestCert });
-        await once(server.listen(0, "127.0.0.1"), "listening");
-        expect({
-          https: await named({ pfx, passphrase: "sample" }),
-          httpsWithCa: await named({ pfx, passphrase: "sample", ca: cas[0] }),
-          tls: await namedBy(server.address() as AddressInfo),
-        }).toEqual({ https: ["Joyent"], httpsWithCa: [names[0], "Joyent"], tls: ["Joyent"] });
-      } finally {
-        tls.setDefaultCACertificates(before);
-      }
-    });
-
-    it("from caFile", async () => {
-      const file = [cas[0], crlOf("root"), withSettings(cas[1], seq()), cas[2], mint(names[1], names[1], ca)];
-      using dir = tempDir("named-ca", { "ca.pem": file.join("") });
-      using listener = Bun.listen({
-        hostname: "127.0.0.1",
-        port: 0,
-        tls: { key, cert: chain, caFile: join(String(dir), "ca.pem"), ...requestCert } as Bun.TLSOptions,
-        socket: { data() {} },
-      });
-      expect(await namedBy(listener)).toEqual(names);
-    });
-
-    it("so repeating them does not take more than the 64 KB they have, unlike in Node.js", async () => {
-      const long = Buffer.alloc(1000, "a").toString();
-      const repeated = Array(70)
-        .fill(mint(long, long, ca))
-        .join("");
-      using dir = tempDir("repeated-ca", { "ca.pem": repeated + mint(long, long, ca) });
-      const outcomes: string[] = [];
-      for (const options of [{ ca: repeated }, { caFile: join(String(dir), "ca.pem") }]) {
-        using listener = Bun.listen({
-          hostname: "127.0.0.1",
-          port: 0,
-          tls: { key, cert: chain, ...requestCert, ...options },
-          socket: { data() {} },
-        });
-        outcomes.push(await connect(listener.port, { ca: root }));
-      }
-      expect(outcomes).toEqual(["authorized", "authorized"]);
-    });
-  });
-
   // OpenSSL takes it, though its manual asks for "a certificate with suitable key usage".
   it("a copy that may not sign certificates is passed over, unlike in Node.js", async () => {
     const mayNotSign = mint("root", "root", [isCA, digitalSignature]);
@@ -2395,6 +2275,13 @@ describe("several certificates match one issuer", () => {
     });
   });
 
+  it.skipIf(!isPosix)("a caFile that never ends is refused", () => {
+    const tls = { key, cert: chain, caFile: "/dev/zero" } as Bun.TLSOptions;
+    expect(() => Bun.listen({ hostname: "127.0.0.1", port: 0, tls, socket: { data() {} } })).toThrow(
+      "Failed to load CA file",
+    );
+  });
+
   it("addCACert() takes a string or a view of bytes, and ignores the rest", async () => {
     await using server = await serve(chain);
     const added = (value: unknown) => {
@@ -2656,6 +2543,127 @@ describe("several certificates match one issuer", () => {
     expect(() => tls.createSecureContext({ crl: crlOf("root") + armor("X509 CRL", signed(tbs, caKey)) })).toThrow(
       expect.objectContaining({ code: "ERR_CRYPTO_OPERATION_FAILED" }),
     );
+  });
+
+  // From here on the default CAs are those of setDefaultCACertificates(), which nothing undoes.
+  describe("a server names the CAs it accepts", () => {
+    const requestCert = { requestCert: true, rejectUnauthorized: false };
+    async function named(options: tls.TlsOptions) {
+      await using server = await serve(chain, { ...requestCert, ...options });
+      return await namedBy(server);
+    }
+    async function namedBy(server: { port: number }): Promise<string[] | null> {
+      const received: Buffer[] = [];
+      const transport = net.connect(server.port, "127.0.0.1").on("data", chunk => received.push(chunk as Buffer));
+      const socket = new Duplex({
+        read() {},
+        write: (chunk, encoding, callback) => void transport.write(chunk, encoding, callback),
+      });
+      transport
+        .on("data", chunk => socket.push(chunk))
+        .on("error", error => socket.destroy(error))
+        .on("close", () => socket.push(null));
+      try {
+        const ciphers = "ECDHE-ECDSA-AES128-GCM-SHA256";
+        expect(await connect(server.port, { socket, ca: root, maxVersion: "TLSv1.2", ciphers })).toBe("authorized");
+      } finally {
+        transport.destroy();
+      }
+      const text = Buffer.concat(received).toString("latin1");
+      return text.match(new RegExp([...names, "Joyent"].join("|"), "g"));
+    }
+    const names = ["a long name for a CA", "short", "a medium name"];
+    const cas = names.map(name => mint(name, name, ca));
+
+    it("in the order of `ca`", async () => {
+      expect(await named({ ca: cas })).toEqual(names);
+    });
+
+    it("once each, unlike in Node.js", async () => {
+      expect(await named({ ca: [...cas, mint(names[1], names[1], ca), cas[0]] })).toEqual(names);
+    });
+
+    it("then those given to addCACert()", async () => {
+      const secureContext = tls.createSecureContext({ key, cert: chain, ca: cas[0] });
+      secureContext.context.addCACert(cas[1] + cas[2]);
+      await using server = net.createServer(socket => {
+        new tls.TLSSocket(socket, { isServer: true, secureContext, ...requestCert }).on("error", () => {}).resume();
+      });
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      expect(await namedBy(server.address() as AddressInfo)).toEqual(names);
+    });
+
+    it("but not those of setDefaultCACertificates()", async () => {
+      const before = tls.getCACertificates("default");
+      tls.setDefaultCACertificates(cas);
+      try {
+        await using server = tls.createServer({ key, cert: chain, ...requestCert });
+        // The contexts of these are shared between equal options, while in use.
+        const sockets: tls.TLSSocket[] = [];
+        await using wrapping = net.createServer(socket => {
+          const ca = sockets.length ? tls.getCACertificates("default") : undefined;
+          const options = { isServer: true, key, cert: chain, ca, ...requestCert };
+          sockets.push(new tls.TLSSocket(socket, options).on("error", () => {}).resume());
+        });
+        await Promise.all([server, wrapping].map(server => once(server.listen(0, "127.0.0.1"), "listening")));
+        expect({
+          https: await named({}),
+          tls: await namedBy(server.address() as AddressInfo),
+          socket: await namedBy(wrapping.address() as AddressInfo),
+          socketWithCa: (await namedBy(wrapping.address() as AddressInfo))?.length,
+        }).toEqual({ https: null, tls: null, socket: null, socketWithCa: names.length });
+      } finally {
+        tls.setDefaultCACertificates(before);
+      }
+    });
+
+    it("even next to those in a pfx", async () => {
+      const pfx = readFileSync(join(import.meta.dir, "../test/fixtures/keys/agent1.pfx"));
+      const before = tls.getCACertificates("default");
+      tls.setDefaultCACertificates(cas.slice(1));
+      try {
+        await using server = tls.createServer({ key, cert: chain, pfx, passphrase: "sample", ...requestCert });
+        await once(server.listen(0, "127.0.0.1"), "listening");
+        expect({
+          https: await named({ pfx, passphrase: "sample" }),
+          httpsWithCa: await named({ pfx, passphrase: "sample", ca: cas[0] }),
+          tls: await namedBy(server.address() as AddressInfo),
+        }).toEqual({ https: ["Joyent"], httpsWithCa: [names[0], "Joyent"], tls: ["Joyent"] });
+      } finally {
+        tls.setDefaultCACertificates(before);
+      }
+    });
+
+    it("from caFile", async () => {
+      const file = [cas[0], crlOf("root"), withSettings(cas[1], seq()), cas[2], mint(names[1], names[1], ca)];
+      using dir = tempDir("named-ca", { "ca.pem": file.join("") });
+      using listener = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        tls: { key, cert: chain, caFile: join(String(dir), "ca.pem"), ...requestCert } as Bun.TLSOptions,
+        socket: { data() {} },
+      });
+      expect(await namedBy(listener)).toEqual(names);
+    });
+
+    it("so repeating them does not take more than the 64 KB they have, unlike in Node.js", async () => {
+      const long = Buffer.alloc(1000, "a").toString();
+      const repeated = Array(70)
+        .fill(mint(long, long, ca))
+        .join("");
+      using dir = tempDir("repeated-ca", { "ca.pem": repeated + mint(long, long, ca) });
+      const outcomes: string[] = [];
+      for (const options of [{ ca: repeated }, { caFile: join(String(dir), "ca.pem") }]) {
+        using listener = Bun.listen({
+          hostname: "127.0.0.1",
+          port: 0,
+          tls: { key, cert: chain, ...requestCert, ...options },
+          socket: { data() {} },
+        });
+        outcomes.push(await connect(listener.port, { ca: root }));
+      }
+      expect(outcomes).toEqual(["authorized", "authorized"]);
+    });
   });
 
   describe("setDefaultCACertificates()", () => {

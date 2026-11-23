@@ -1,6 +1,7 @@
 use core::cell::OnceCell;
 use core::ffi::c_void;
 use core::marker::PhantomData;
+use core::mem::ManuallyDrop;
 use core::sync::atomic::Ordering;
 use std::sync::Arc;
 
@@ -239,6 +240,8 @@ pub struct RareData {
     /// Owned NUL-terminated buffer. `len()` includes the trailing 0;
     /// [`Self::tls_default_ciphers`] strips it.
     tls_default_ciphers: JsCell<Option<Box<[u8]>>>,
+    /// What `tls.setDefaultCACertificates()` was last given, if it has been called.
+    pub(crate) root_certs_from_users: JsCell<Option<RootCertsFromUsers>>,
 
     // proxy_env_storage moved to VirtualMachine — see comment there on why
     // lazy RareData creation raced with worker spawn.
@@ -273,6 +276,7 @@ impl Default for RareData {
             node_quic_callbacks: JsCell::new(Strong::empty()),
             default_csrf_secret: OnceCell::new(),
             tls_default_ciphers: JsCell::new(None),
+            root_certs_from_users: JsCell::new(None),
             spawn_sync_event_loop_: OnceCell::new(),
             path_buf: JsCell::default(),
         }
@@ -702,6 +706,10 @@ impl RareData {
             .map(|s| &s[..s.len() - 1])
     }
 
+    pub fn root_certs_from_users(&self) -> Option<&boring::X509_LAZY_CERT_SET> {
+        Some(&self.root_certs_from_users.get().as_ref()?.0)
+    }
+
     pub(crate) fn set_tls_default_ciphers(&self, ciphers: &[u8]) {
         // Old value (if any) drops here via Box<[u8]> Drop.
         let mut owned = Vec::with_capacity(ciphers.len() + 1);
@@ -910,6 +918,26 @@ pub(crate) fn get_tls_default_ciphers<'a>(heap: &JsHeap<'a>) -> &'a [u8] {
         Some(c) => c,
         None => uws::get_default_ciphers().as_bytes(),
     }
+}
+
+pub(crate) struct RootCertsFromUsers(ManuallyDrop<boring::OwnedX509LazyCertSet>);
+
+impl Drop for RootCertsFromUsers {
+    fn drop(&mut self) {
+        bun_removable_features::removable_body_behind_value!(Tls, {
+            // SAFETY: not used again.
+            unsafe { ManuallyDrop::drop(&mut self.0) }
+        })
+    }
+}
+
+#[unsafe(no_mangle)]
+extern "C" fn Bun__VM__setRootCertsFromUsers(
+    vm: &VirtualMachine,
+    certs: boring::OwnedX509LazyCertSet,
+) {
+    let certs = RootCertsFromUsers(ManuallyDrop::new(certs));
+    vm.rare_data().root_certs_from_users.set(Some(certs));
 }
 
 // ──────────────────────────────────────────────────────────────────────────

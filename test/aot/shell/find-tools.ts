@@ -1,4 +1,4 @@
-// Where the compiler's own tools are looked for. tools.ts and ../engine/testaot.ts go by it. The head of tools.ts says what is looked for where.
+// Where the compiler's own tools are looked for. tools.ts, ../engine/testaot.ts and ../tools/ir-test-from-source.ts go by it. The head of tools.ts says what is looked for where.
 // CI unpacks the tools for the tests that import this file: ../harness/tests-that-start-tools-of-the-engine.ts. Look for them through it alone.
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";

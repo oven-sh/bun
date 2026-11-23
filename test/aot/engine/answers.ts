@@ -4,15 +4,20 @@
 // The records are made with the front end of the Bun under test (../tools/answers-test-from-source.ts, ../tools/update-ir-tests.ts).
 // Then `testaot run` does what the head says: it holds what `walk`, `link` or `plan` print against the check lines; it builds a program that tells
 // its answers, runs it in the shell, has the shell run the text itself, and compares answer by answer.
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
-import { mkdirSync, readdirSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { readdirSync } from "node:fs";
+import { join } from "node:path";
 import { slot } from "../harness/commands";
-import { expectEveryTestPasses, skipOrFail, whyNoShell } from "./testaot";
+import { expectNoTestFails, skipOrFail, whyNoShell } from "./testaot";
 
 // `--mechanisms=none`, say: then only the run in the shell runs, on code that no mechanism has touched.
 const moreFlags = (process.env.AOT_ANSWERS_FLAGS ?? "").split(" ").filter(Boolean);
+
+// bun:test ends the processes of a case that reaches its limit only where no case runs beside it. So a tool that hangs is ended here,
+// before the limit of its case, and the signal fails the case. `testaot run` ends what it starts itself.
+const limitOfACase = 600_000;
+const limitOfATool = 540_000;
 
 export const answersTests = (part: number, parts: number) =>
   testsMadeOf(
@@ -34,7 +39,11 @@ export const fromSourceTests = (part: number, parts: number) =>
     parts,
   );
 
-/** Every `parts`-th file of the folder, from the `part`-th on. A new file needs no list: it is in one of the parts. */
+/**
+ * Every `parts`-th file of the folder, from the `part`-th on, each a case of its own. A new file needs no list: it is in one of the parts.
+ * A case makes its test and runs it at once, by itself: `testaot run` hands sixteen files that follow one another to a process, which runs
+ * them one after another, and a test that holds much of the library takes as long as a hundred others.
+ */
 function testsMadeOf(folderName: string, tool: string[], isTest: RegExp, title: string, part: number, parts: number) {
   if (whyNoShell) return void skipOrFail(whyNoShell);
   const folder = join(import.meta.dir, "..", folderName);
@@ -43,35 +52,44 @@ function testsMadeOf(folderName: string, tool: string[], isTest: RegExp, title: 
     .map(name => name.replaceAll("\\", "/"))
     .sort()
     .filter((_, index) => index % parts === part - 1);
-  test(`${mine.length} ${title}`, async () => {
-    using made = tempDir("aot-tests-made", {});
-    const notMade: string[] = [];
-    const tests = await Promise.all(
-      mine.map(name =>
-        slot(async () => {
-          await using child = Bun.spawn({
-            cmd: [bunExe(), join(import.meta.dir, "..", "tools", tool[0]), tool[1], join(folder, name)],
-            // Without a front end named, ../shell/tools builds a program and writes an executable to learn whether this Bun is one.
-            // The tool builds with this Bun whatever the answer, and a Bun that writes no program is a test that could not be made.
-            env: { ...bunEnv, FRONT_END: bunExe() },
-            stdin: "ignore",
-            stdout: "pipe",
-            stderr: "pipe",
-          });
-          const [text, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
-          if (exitCode !== 0 || !text.includes("\nmodule ")) {
-            notMade.push(`${name}: ended with ${exitCode}: ${stderr.slice(-600)}`);
-            return [];
-          }
-          const path = name.replace(/\.\w+$/, ".ir");
-          mkdirSync(dirname(join(String(made), path)), { recursive: true });
-          writeFileSync(join(String(made), path), text);
-          return [path];
-        }),
-      ),
-    );
-    const ran = await expectEveryTestPasses(["run", ...moreFlags, ...tests.flat()], String(made));
-    // A file of which no test could be made has not been tested.
-    expect({ notMade, ran }).toEqual({ notMade: [], ran: mine.length });
-  }, 600_000);
+  describe(`${mine.length} ${title}`, () => {
+    let passed = 0;
+    for (const name of mine)
+      test.concurrent(
+        name,
+        () =>
+          slot(async () => {
+            await using child = Bun.spawn({
+              cmd: [bunExe(), join(import.meta.dir, "..", "tools", tool[0]), tool[1], join(folder, name)],
+              env: bunEnv,
+              stdin: "ignore",
+              stdout: "pipe",
+              stderr: "pipe",
+              timeout: limitOfATool,
+              killSignal: "SIGKILL",
+            });
+            const [text, stderr, exitCode] = await Promise.all([
+              child.stdout.text(),
+              child.stderr.text(),
+              child.exited,
+            ]);
+            // A file of which no test could be made has not been tested. The tool says on stderr what stood in the way, and also that an id
+            // in the text names no record: `testaot run` does not read such a text.
+            expect({
+              stderr: stderr.slice(-600),
+              exitCode,
+              signalCode: child.signalCode,
+              hasRecords: text.includes("\nmodule "),
+            }).toEqual({ stderr: "", exitCode: 0, signalCode: null, hasRecords: true });
+            const path = name.replace(/\.\w+$/, ".ir");
+            using made = tempDir("aot-tests-made", { [path]: text });
+            const counted = await expectNoTestFails(["run", ...moreFlags, path], String(made));
+            expect(counted.passed + counted.todo).toBe(1);
+            passed += counted.passed;
+          }),
+        limitOfACase,
+      );
+    // What `expectEveryTestPasses` holds of one command holds of the commands of a part: a part of which nothing passed has shown nothing.
+    test.serial("a file of the part passes", () => expect(passed).toBeGreaterThan(0));
+  });
 }

@@ -503,7 +503,7 @@ mod topics {
         publish(&mut topics, b"x", b"3");
         topics.drain_all();
         topics.drain_all();
-        assert_eq!(log.take(), ["a:1,2", "b:2", "b:3", "a:3", "d:1,2,3"]);
+        assert_eq!(log.take(), ["a:1,2", "b:2", "a:3", "b:3", "d:1,2,3"]);
     }
 
     #[test]

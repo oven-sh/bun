@@ -98,6 +98,8 @@
 #define LIBUS_SEND_BUFFER_LENGTH (1 << 14)
 /* A timeout granularity of 4 seconds means give or take 4 seconds from set timeout */
 #define LIBUS_TIMEOUT_GRANULARITY 4
+/* Without it mimalloc commits a page of 4 MiB for a receive buffer (MI_LARGE_MAX_OBJ_SIZE) */
+#define LIBUS_RECV_BUFFER_PADDING 32
 /* Guaranteed alignment of extension memory */
 #define LIBUS_EXT_ALIGNMENT 16
 #define ALLOW_SERVER_RENEGOTIATION 0

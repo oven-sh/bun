@@ -61,6 +61,12 @@ extern "C"
     uWS::Loop::get()->removeTickHandler(key);
   }
 
+  const void *uws_loop_shared_deflate() {
+    auto &shared = uWS::Loop::data((us_loop_t *)uWS::Loop::get())->sharedDeflate;
+    if (!shared) shared.reset(Bun__SharedDeflate__create());
+    return shared.get();
+  }
+
   uws_app_t *uws_create_app(int ssl, struct us_bun_socket_context_options_t options, const void *web_sockets)
   {
     uWS::SocketContextOptions socket_context_options;

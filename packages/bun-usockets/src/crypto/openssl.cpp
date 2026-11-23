@@ -735,7 +735,7 @@ static char *ssl_alloc_read_output(void) {
   int unused = 0;
   if (US_FAULT_CHECK(US_FAULT_SSL_LOOP_BUFFER, -1, injected, unused)) return NULL;
 #endif
-  return (char *)us_malloc(LIBUS_RECV_BUFFER_LENGTH);
+  return (char *)us_malloc(LIBUS_RECV_BUFFER_LENGTH + LIBUS_RECV_BUFFER_PADDING * 2);
 }
 
 void us_internal_init_loop_ssl_data(struct us_loop_t *loop) {
@@ -2507,7 +2507,7 @@ static struct us_socket_t *ssl_fail_established_session(struct us_socket_t *s, s
   ssl_flush_pending_events(s);
   if (ssl_gone(s)) return NULL;
   if (read) {
-    s = us_dispatch_data(s, loop_ssl_data->ssl_read_output.get(), read);
+    s = us_dispatch_data(s, loop_ssl_data->ssl_read_output.get() + LIBUS_RECV_BUFFER_PADDING, read);
     if (!s || ssl_gone(s)) return NULL;
   }
   s->ssl_fatal_error = 1;
@@ -2580,7 +2580,7 @@ restart:
     unsigned char ssl_was_in_use = s->ssl_in_use;
     s->ssl_in_use = 1;
     int just_read = SSL_read(s_ssl(s),
-                             loop_ssl_data->ssl_read_output.get() + read,
+                             loop_ssl_data->ssl_read_output.get() + LIBUS_RECV_BUFFER_PADDING + read,
                              LIBUS_RECV_BUFFER_LENGTH - read);
     s->ssl_in_use = ssl_was_in_use;
     if (hs_batching) {
@@ -2634,7 +2634,7 @@ restart:
           ssl_flush_pending_events(s);
           if (ssl_gone(s)) return NULL;
           if (read) {
-            s = us_dispatch_data(s, loop_ssl_data->ssl_read_output.get(), read);
+            s = us_dispatch_data(s, loop_ssl_data->ssl_read_output.get() + LIBUS_RECV_BUFFER_PADDING, read);
             if (!s || ssl_gone(s)) return NULL;
           }
           /* close_notify only closed the PEER's write side; when it rides in
@@ -2711,7 +2711,7 @@ restart:
          * clobber pending ciphertext. */
         ssl_flush_pending_events(s);
         if (ssl_gone(s)) return NULL;
-        s = us_dispatch_data(s, loop_ssl_data->ssl_read_output.get(), read);
+        s = us_dispatch_data(s, loop_ssl_data->ssl_read_output.get() + LIBUS_RECV_BUFFER_PADDING, read);
         if (!s || ssl_gone(s)) return NULL;
         break;
       }
@@ -2736,7 +2736,7 @@ restart:
        * JS the session handler runs. */
       ssl_flush_pending_events(s);
       if (ssl_gone(s)) return NULL;
-      s = us_dispatch_data(s, loop_ssl_data->ssl_read_output.get(), read);
+      s = us_dispatch_data(s, loop_ssl_data->ssl_read_output.get() + LIBUS_RECV_BUFFER_PADDING, read);
       if (!s || ssl_gone(s)) return NULL;
       loop_ssl_data->ssl_read_input = saved_input;
       loop_ssl_data->ssl_read_input_length = saved_length;

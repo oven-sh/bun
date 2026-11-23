@@ -226,7 +226,7 @@ pub struct WebSockets {
     /// An upgrade in flight points to one, so none goes before the app.
     contexts: RefCell<Vec<Rc<WebSocketUpgradeContext>>>,
     topics: RefCell<Topics<AnyWebSocket>>,
-    shared: OnceCell<Shared>,
+    shared: OnceCell<&'static SharedDeflate>,
 }
 
 impl Drop for WebSockets {
@@ -291,13 +291,9 @@ impl WebSockets {
         BackRef::new(context)
     }
 
-    fn shared(&self) -> &Shared {
-        self.shared.get_or_init(|| Shared {
-            compressor: RefCell::new(Compressor::shared()),
-            decompressor: RefCell::new(Decompressor::shared()),
-            compressed: RefCell::default(),
-            decompressed: Cell::default(),
-        })
+    fn shared(&self) -> &SharedDeflate {
+        // SAFETY: the loop owns it, and outlives its sockets.
+        (self.shared).get_or_init(|| unsafe { &*c::uws_loop_shared_deflate().cast() })
     }
 
     pub fn num_subscribers(&self, topic: &[u8]) -> u32 {
@@ -341,7 +337,7 @@ impl WebSockets {
                 .fold(SendStatus::Success, |worst, ws| worst.max(ws.send_status()));
         }
         let mut worst = None;
-        for index in 0..topics.subscribers(topic).len() {
+        for index in (0..topics.subscribers(topic).len()).rev() {
             let subscriber = topics.subscribers(topic)[index];
             if Some(subscriber) == sender {
                 continue;
@@ -497,13 +493,26 @@ impl<const SSL: bool> Response<SSL> {
     }
 }
 
-/// For the connections without context takeover.
-struct Shared {
+/// For all the servers of a loop.
+struct SharedDeflate {
     compressor: RefCell<Compressor>,
     decompressor: RefCell<Decompressor>,
     compressed: RefCell<Vec<u8>>,
     decompressed: Cell<Vec<u8>>,
 }
+
+#[unsafe(no_mangle)]
+extern "C" fn Bun__SharedDeflate__create() -> Box<SharedDeflate> {
+    Box::new(SharedDeflate {
+        compressor: RefCell::new(Compressor::shared()),
+        decompressor: RefCell::new(Decompressor::shared()),
+        compressed: RefCell::default(),
+        decompressed: Cell::default(),
+    })
+}
+
+#[unsafe(no_mangle)]
+extern "C" fn Bun__SharedDeflate__destroy(_: Box<SharedDeflate>) {}
 
 /// Behind `UpgradedSocketData` (HttpResponse.h). Never dropped: `on_close` empties it, under calls that still read it.
 struct State {
@@ -996,13 +1005,14 @@ impl AnyWebSocket {
                         (shared.decompressor.borrow_mut()).decompress(payload, &mut out, max_len)
                     }
                 };
-                result.map_err(|error| match error {
-                    InflateError::Corrupt => Failure::CompressedData,
-                    InflateError::TooLarge => Failure::MessageTooBig,
-                    InflateError::OutOfMemory => Failure::OutOfMemory,
-                })?;
-                self.emit_message(&out, opcode)?;
+                let result = match result {
+                    Ok(()) => self.emit_message(&out, opcode),
+                    Err(InflateError::Corrupt) => Err(Failure::CompressedData),
+                    Err(InflateError::TooLarge) => Err(Failure::MessageTooBig),
+                    Err(InflateError::OutOfMemory) => return Err(Failure::OutOfMemory),
+                };
                 shared.decompressed.set(out);
+                result?;
             }
             opcode => self.emit_message(payload, opcode)?,
         }
@@ -1185,6 +1195,7 @@ mod c {
             handler: extern "C" fn(*const c_void),
         );
         pub(super) safe fn uws_loop_remove_tick_handler(key: *const c_void);
+        pub(super) safe fn uws_loop_shared_deflate() -> *const c_void;
         pub(super) fn uws_res_destroy_for_upgrade(ssl: c_int, socket: *mut us_socket_t);
         pub(super) fn uws_res_adopt_into(
             ssl: c_int,

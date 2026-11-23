@@ -264,7 +264,8 @@ impl<R: Receiver> Topics<R> {
             subscribers.drain_all();
         }
         let mut is_queued = false;
-        for &id in &self.topics[topic.0].subscribers {
+        // `waiting` is drained from its end.
+        for &id in self.topics[topic.0].subscribers.iter().rev() {
             if Some(id) == sender {
                 continue;
             }

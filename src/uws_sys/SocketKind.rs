@@ -59,6 +59,8 @@ pub enum SocketKind {
     //    the thunk reads `group->ext` as the templated `HttpContext<SSL>*`.
     UwsHttp,
     UwsHttpTls,
+
+    // ── The WebSockets of a server (WebSocket.rs) ─────────────────────────
     UwsWs,
     UwsWsTls,
 }
@@ -103,7 +105,7 @@ impl SocketKind {
 // `#[repr(u8)]` already refuses to compile with >256 variants, so the
 // invariant is enforced by the type system; no explicit assert needed.
 
-/// The four kinds whose handlers live in C++ are also referenced from C++
+/// The kinds whose handlers live in C++ are also referenced from C++
 /// (`packages/bun-uws/src/SocketKinds.h`). Export their ordinals so the C++
 /// side links against the Rust source of truth instead of mirroring literals
 /// that silently rot if this enum is reordered.

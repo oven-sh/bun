@@ -5,7 +5,7 @@
 //! owner from the user-data, (b) re-type the opaque handle, (c) lift any
 //! `(ptr,len)` pairs into slices, then (d) call the safe Rust handler. Before
 //! this module each of `Response::on_*`, `h3::Response::on_*`,
-//! `WebSocket::Wrap::on_*`, and `uws_handlers::*Handler` open-coded those
+//! and `uws_handlers::*Handler` open-coded those
 //! steps with three or four `unsafe {}` blocks apiece — ~300 in total.
 //!
 //! Centralising here means each invariant is documented and audited **once**:

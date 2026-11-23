@@ -555,6 +555,24 @@ describe.concurrent("Bun.serve perMessageDeflate", () => {
     const invalid = 'close 1007 "Received invalid compressed data"';
     expect(answers).toEqual(['text "20000"', invalid, invalid, 'text "20000"']);
   });
+
+  test.skipIf(isASAN)("the servers of a thread share one compressor", async () => {
+    const script = `
+      import { heapStats } from "bun:jsc";
+      const allocated = () => (Bun.gc(true), heapStats().mimalloc.allocated.current);
+      const serve = () => Bun.serve({ port: 0, fetch() {}, websocket: { perMessageDeflate: true, message() {} } });
+      const servers = [serve()];
+      const before = allocated();
+      for (let i = 0; i < 50; i++) servers.push(serve());
+      console.log((allocated() - before) / 50 / 1024);
+      for (const server of servers) server.stop(true);
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "inherit" });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    // A server takes about 25 KB, a compressor 400 KB.
+    expect(Number(stdout)).toBeLessThan(150);
+    expect(exitCode).toBe(0);
+  });
 });
 
 // See the fixture for how the race works. Only a sanitizer catches the out-of-bounds write.

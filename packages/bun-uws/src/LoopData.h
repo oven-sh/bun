@@ -32,6 +32,11 @@
 #include "MoveOnlyFunction.h"
 // clang-format off
 
+/* src/uws_sys/WebSocket.rs */
+struct SharedDeflate;
+extern "C" SharedDeflate *Bun__SharedDeflate__create();
+extern "C" void Bun__SharedDeflate__destroy(SharedDeflate *);
+
 namespace uWS {
 
 struct Loop;
@@ -178,6 +183,11 @@ public:
     static constexpr unsigned int CORK_BUFFER_SIZE = 128 * 1024;
     /* A longer write is not copied into the cork buffer: it goes out behind it in one vectored write. */
     static constexpr unsigned int CORK_COPY_MAX = 16 * 1024;
+
+    struct DestroySharedDeflate {
+        void operator()(SharedDeflate *shared) const { Bun__SharedDeflate__destroy(shared); }
+    };
+    std::unique_ptr<SharedDeflate, DestroySharedDeflate> sharedDeflate;
 };
 
 }

@@ -1,6 +1,6 @@
 import { $ } from "bun";
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, bunRun, normalizeBunSnapshot } from "harness";
+import { bunEnv, bunExe, bunRun, normalizeBunSnapshot, tempDir } from "harness";
 import { join } from "node:path";
 
 test("name property is used for function calls in Error.stack", () => {
@@ -218,4 +218,39 @@ test("Bun.inspect shows functions without a name whether or not the stack of the
     expect(Bun.stripANSI(shown[0])).toMatch(/at <anonymous> \(.*\n +at throwsInside \(.*\n +at <anonymous> \(/);
     expect(shown[1]).toBe(shown[0]);
   }
+});
+
+test.concurrent.each([
+  ["error.stack", `error.stack`, /at async suspendedCaller \(.*main\.mjs:6:\d+\)/],
+  ["Bun.inspect", `Bun.inspect(error)`, /at async suspendedCaller \(.*main\.mjs:6:\d+\)/],
+  [
+    "Error.prepareStackTrace",
+    `(Error.prepareStackTrace = (_, sites) => sites.map(describeSite).join("\\n"), error.stack)`,
+    /^suspendedCaller main\.mjs:6 isNative=false isAsync=true$/m,
+  ],
+])("async frames keep their file and line after their code is dropped: %s", async (_, read, expected) => {
+  using dir = tempDir("async-frame-without-code", {
+    "main.mjs": `const { promise, resolve } = Promise.withResolvers();
+      async function leaf() {
+        await promise;
+        throw new Error("boom");
+      }
+      async function suspendedCaller() {
+        await leaf();
+      }
+      const describeSite = site =>
+        \`\${site.getFunctionName()} \${site.getFileName().split(/[\\\\/]/).pop()}:\${site.getLineNumber()} isNative=\${site.isNative()} isAsync=\${site.isAsync()}\`;
+      suspendedCaller().catch(error => console.log(${read}));
+      Bun.shrink();
+      await Bun.sleep(1); // Bun.shrink() runs once no JS is on the stack
+      resolve();
+    `,
+  });
+  // Line 6 is where the function starts. With its code still there, the frame is at the await on line 7.
+  expect(await bunRun(join(String(dir), "main.mjs"))).toEqual({
+    stdout: expect.stringMatching(expected),
+    stderr: "",
+    exitCode: 0,
+    signalCode: null,
+  });
 });

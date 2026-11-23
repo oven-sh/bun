@@ -49,10 +49,10 @@ void CallSite::finishCreation(VM& vm, JSCStackFrame& stackFrame, bool encountere
 
     bool isStrictFrame = encounteredStrictFrame;
     JSC::JSCell* callee = stackFrame.callee();
-    JSC::CodeBlock* codeBlock = stackFrame.codeBlock();
+    JSC::ScriptExecutable* executable = stackFrame.executable();
     if (!isStrictFrame) {
-        if (codeBlock) {
-            isStrictFrame = codeBlock->ownerExecutable()->isInStrictContext();
+        if (executable) {
+            isStrictFrame = executable->isInStrictContext();
         }
     }
 
@@ -106,7 +106,7 @@ void CallSite::finishCreation(VM& vm, JSCStackFrame& stackFrame, bool encountere
     if (stackFrame.isConstructor()) {
         m_flags |= static_cast<unsigned int>(Flags::IsConstructor);
     }
-    if (isCompiled ? isCompiledHiddenBuiltin || !frame.hasLineAndColumnInfo() : !stackFrame.codeBlock()) {
+    if (isCompiled ? isCompiledHiddenBuiltin || !frame.hasLineAndColumnInfo() : !executable) {
         m_flags |= static_cast<unsigned int>(Flags::IsNative);
     }
     if (stackFrame.isAsync()) {

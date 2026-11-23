@@ -92,6 +92,14 @@ describe("SocketAddress constructor", () => {
     },
   );
 
+  it.each([
+    { address: "nope" },
+    { address: "::1", family: "ipv4" },
+    { address: "127.0.0.1", family: "ipv6" },
+  ] as SocketAddressInitOptions[])("given %j, throws ERR_INVALID_ADDRESS", options => {
+    expect(() => new SocketAddress(options)).toThrowWithCode(Error, "ERR_INVALID_ADDRESS");
+  });
+
   // ===========================================================================
   // ============================= LEAK DETECTION ==============================
   // ===========================================================================

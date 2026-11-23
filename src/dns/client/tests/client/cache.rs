@@ -61,7 +61,7 @@ fn positive() {
     for other in [alias, soa(5, 9)] {
         assert_eq!(lifetime(0, [&[address("1.1.1.1", 9), other], &[], &[]]), 5);
     }
-    for (ttl, expected) in [(0, 0), (1, 1), (9999, 3600)] {
+    for (ttl, expected) in [(0, 0), (1, 1), (9999, 3600), (u32::MAX, 3600)] {
         assert_eq!(
             lifetime(0, [&[address("1.1.1.1", ttl)], &[], &[]]),
             expected

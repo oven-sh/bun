@@ -187,8 +187,7 @@ impl<'a> Reader<'a> {
         Some(Resource {
             kind,
             class,
-            // RFC 2181 §8
-            ttl: if ttl > i32::MAX as u32 { 0 } else { ttl },
+            ttl: ttl.min(i32::MAX as u32),
             data,
         })
     }

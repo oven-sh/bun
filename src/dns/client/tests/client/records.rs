@@ -255,7 +255,7 @@ fn time_to_live() {
     let extremes = [0, 0x7fff_ffff, 0x8000_0000, u32::MAX].map(|ttl| address("::", ttl));
     assert_eq!(
         answered(RecordType::AAAA, &extremes),
-        "::/0, ::/2147483647, ::/0, ::/0"
+        "::/0, ::/2147483647, ::/2147483647, ::/2147483647"
     );
 }
 

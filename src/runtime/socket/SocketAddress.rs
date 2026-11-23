@@ -291,7 +291,7 @@ impl SocketAddress {
             (AF::INET6, Some(IpAddr::V6(ip))) => {
                 sockaddr::v6(port, ip.octets(), options.flowlabel.unwrap_or(0), 0)
             }
-            _ => return Err(throw_invalid_ip_address(global)),
+            _ => return Err(throw_invalid_address(global)),
         };
 
         Ok(SocketAddress {
@@ -559,9 +559,9 @@ impl SocketAddress {
     }
 }
 
-fn throw_invalid_ip_address(global: &JSGlobalObject) -> JsError {
+fn throw_invalid_address(global: &JSGlobalObject) -> JsError {
     global.throw_sys_error(
-        bun_jsc::ErrorCode::ERR_INVALID_IP_ADDRESS,
+        bun_jsc::ErrorCode::ERR_INVALID_ADDRESS,
         format_args!("Invalid socket address"),
     )
 }

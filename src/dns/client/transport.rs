@@ -20,6 +20,8 @@ const MAX_ESTIMATED_TIMEOUT: Duration = Duration::from_secs(5);
 const TIMEOUT_PER_LATENCY: u64 = 5;
 /// The end of an estimated timeout can wait for it.
 const CHECK_INTERVAL: Duration = Duration::from_secs(1);
+/// In a row and for each server, whatever the number of tries.
+const MAX_FAILURES_BEFORE_TIMEOUT: usize = 64;
 /// One new query in this many is also sent to a server that failed.
 const PROBE_ODDS: u16 = 10;
 /// The replies fit in the receive buffer.
@@ -46,6 +48,7 @@ pub(crate) struct Query<R> {
     waiting: Vec<Purpose<R>>,
     transport: Transport,
     failed_tries: usize,
+    failures_since_timeout: usize,
     last_error: Error,
 }
 
@@ -261,6 +264,7 @@ impl<S: System, R> Client<S, R> {
                 waiting: vec![purpose],
                 transport: self.config.transport,
                 failed_tries: 0,
+                failures_since_timeout: 0,
                 last_error: Error::ETIMEOUT,
             }),
         };
@@ -390,13 +394,20 @@ impl<S: System, R> Client<S, R> {
         let error = error.unwrap_or(query.last_error);
         query.last_error = error;
         query.failed_tries += 1;
+        query.failures_since_timeout = match error {
+            Error::ETIMEOUT => 0,
+            _ => query.failures_since_timeout + 1,
+        };
         let have_enough = query.waiting.extract_if(
             ..,
             |purpose| matches!(purpose, Purpose::Addresses(lookup, _) if lookup.has_ipv4()),
         );
         self.steps
             .extend(have_enough.map(|purpose| Step::Finish(purpose, Err(error))));
-        if !query.waiting.is_empty() && query.failed_tries < self.servers.len() * self.tries {
+        if !query.waiting.is_empty()
+            && query.failed_tries < self.servers.len() * self.tries
+            && query.failures_since_timeout < self.servers.len() * MAX_FAILURES_BEFORE_TIMEOUT
+        {
             if self.servers.all_failed() {
                 self.probe(&question);
             }
@@ -461,10 +472,13 @@ impl<S: System, R> Client<S, R> {
             let ((_, number), (socket, id)) = first.remove_entry();
             let entry = self.connections.open.entry(socket);
             entry.and_modify(|connection| {
-                connection.room = 0;
                 connection.unsent.remove(&number);
                 self.servers.failed(connection.server, self.now);
                 let late = connection.tries.remove(&id);
+                // A renewal outlasts what was sent before it.
+                if late.iter().any(|it| it.sent >= connection.opened) {
+                    connection.room = 0;
+                }
                 let retry = late.map(|it| Step::Retry(it.question, Some(Error::ETIMEOUT)));
                 self.steps.extend(retry);
             });

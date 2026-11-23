@@ -186,6 +186,20 @@ fn old_socket_is_better_than_none() {
 }
 
 #[test]
+fn timeouts_from_before_there_was_no_socket() {
+    let mut setup = one_server().tries(1);
+    setup.timeout_ms = Some(300);
+    let mut test = setup.start();
+    test.ask("first.test");
+    test.world().unreachable = test.client.servers().collect();
+    for index in 1..90 {
+        test.wait(10);
+        assert_eq!(test.ask(&format!("{index}.test")).socket, 0);
+        assert_eq!(test.world().connect_calls, 1 + index / 30);
+    }
+}
+
+#[test]
 fn many_sockets_are_filled_up() {
     let mut test = one_server().start();
     test.world().randoms.extend(0..=u16::MAX);
@@ -492,6 +506,19 @@ fn socket_with_a_timeout_serves_those_it_has() {
 }
 
 #[test]
+fn timeout_of_one_that_was_not_the_first() {
+    let mut test = over_tcp().start();
+    let first = test.ask("a.test");
+    for name in ["b.test", "c.test"] {
+        test.wait(1);
+        test.ask(name);
+    }
+    assert_eq!(test.deliver(&first, &good(&first)), GOOD);
+    test.wait(1999);
+    assert_eq!(test.sent_one().socket, 1);
+}
+
+#[test]
 fn what_has_arrived_is_not_late() {
     let mut test = one_server().tries(1).start();
     let a = test.ask("a.test");
@@ -548,6 +575,32 @@ fn no_socket() {
         assert_eq!(test.world().connect_calls, calls);
         assert!(test.is_idle());
     }
+}
+
+#[test]
+fn all_tries_that_take_time() {
+    let mut setup = one_server().tries(200);
+    setup.max_timeout_ms = Some(10);
+    let mut test = setup.start();
+    test.ask("a.test");
+    for _ in 1..200 {
+        assert_eq!(test.wait(10), NOTHING);
+    }
+    assert_eq!(test.wait(10), ["ETIMEOUT"]);
+}
+
+#[test]
+fn tries_that_take_no_time_count_in_a_row() {
+    let mut setup = one_server().tries(1000);
+    setup.max_timeout_ms = Some(10);
+    let mut test = setup.start();
+    test.ask("a.test");
+    for _ in 0..3 {
+        test.world().send_results.extend([Err(Failed); 63]);
+        assert_eq!(test.wait(10), NOTHING);
+    }
+    test.world().send_results.extend([Err(Failed); 64]);
+    assert_eq!(test.wait(10), ["ECONNREFUSED"]);
 }
 
 #[test]

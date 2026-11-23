@@ -13,9 +13,6 @@ use crate::servers::{ServerId, Servers};
 use crate::system::{Events, SocketId, System};
 use crate::transport::{Connections, MIN_TIMEOUT, Queries};
 
-/// The timeout doubles with each round, so nobody waits for more.
-const MAX_TRIES: u32 = 64;
-
 #[derive(Clone, Copy)]
 pub struct Options {
     /// Of the first try at each server. `None`: what the system says.
@@ -96,7 +93,7 @@ impl<S: System, R> Client<S, R> {
             system,
             config,
             max_timeout: options.max_timeout.unwrap_or(Duration::MAX),
-            tries: options.tries.min(MAX_TRIES) as usize,
+            tries: options.tries as usize,
             servers,
             local_v4: None,
             local_v6: None,

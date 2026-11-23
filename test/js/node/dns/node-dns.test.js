@@ -1,6 +1,6 @@
 import { dnsGetaddrinfoError } from "bun:internal-for-testing";
 import { beforeAll, describe, expect, it, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, bunRun, isLinux, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, bunRun, isLinux, isWindows, runWithError, tempDir } from "harness";
 import * as dgram from "node:dgram";
 import * as dns from "node:dns";
 import * as dns_promises from "node:dns/promises";
@@ -1555,6 +1555,37 @@ describe("resolve record types", () => {
     }
   });
 
+  test.concurrent("Resolver makes as many tries as it is told to", async () => {
+    const { socket, resolver: other } = await startFakeServer();
+    const last = Promise.withResolvers();
+    let tries = 0;
+    socket.removeAllListeners("message");
+    socket.on("message", message => (message.length === 1 ? last.resolve() : tries++));
+    try {
+      const resolver = new dns_promises.Resolver({ tries: 70, maxTimeout: 1 });
+      resolver.setServers(other.getServers());
+      expect(await resolver.resolve4(NAME).catch(err => err.code)).toBe("ETIMEOUT");
+      socket.send("!", socket.address().port, "127.0.0.1");
+      await last.promise;
+      expect(tries).toBe(70);
+    } finally {
+      socket.close();
+    }
+  });
+
+  test.concurrent("reverse() and setLocalAddress() drop the zone of an IPv6 address", async () => {
+    const { socket, queries, resolver } = await startFakeServer(() => []);
+    try {
+      resolver.setLocalAddress("::1%lo");
+      const { code, hostname } = await resolver.reverse("2001:db8::1%lo").catch(err => err);
+      expect({ code, hostname }).toEqual({ code: "ENOTFOUND", hostname: "2001:db8::1%lo" });
+      expect(queries).toEqual([`PTR 1.${"0.".repeat(23)}8.b.d.0.1.0.0.2.ip6.arpa`]);
+      expect(await resolver._handle.reverse("2001:db8::1%\0").catch(err => err.code)).toBe("DNS_ENOTIMP");
+    } finally {
+      socket.close();
+    }
+  });
+
   // Not every system has all of 127.0.0.0/8 on its loopback interface.
   test.concurrent.skipIf(!isLinux)("queries come from the address given to setLocalAddress()", async () => {
     const { socket, resolver } = await startFakeServer();
@@ -1640,16 +1671,17 @@ describe('errors inherit the name "Error", like Node', () => {
   test.each([
     { api: "lookup", fail: () => viaCallback(dns.lookup, "a b"), string: "Error: getaddrinfo ENOTFOUND a b" },
     { api: "resolve4", fail: () => viaCallback(dns.resolve4, "a\0"), string: "Error: queryA ENOTFOUND a\0" },
-    { api: "reverse", fail: () => viaCallback(dns.reverse, "nope"), string: "Error: getHostByAddr ENOTIMP nope" },
-    { api: "promises.reverse", fail: () => dns_promises.reverse("nope"), string: "Error: getHostByAddr ENOTIMP nope" },
+    { api: "promises.resolve4", fail: () => dns_promises.resolve4("a b"), string: "Error: queryA ENOTFOUND a b" },
+    { api: "reverse", fail: () => viaCallback(dns.reverse, "nope"), string: "Error: getHostByAddr EINVAL nope" },
+    { api: "promises.reverse", fail: () => dns_promises.reverse("nope"), string: "Error: getHostByAddr EINVAL nope" },
   ])("$api", async ({ fail, string }) => {
     const err = await fail().catch(err => err);
     expect({ string: String(err), ownName: Object.hasOwn(err, "name") }).toEqual({ string, ownName: false });
   });
 
   test("in the first line of stack", async () => {
-    const { stack } = await dns_promises.reverse("nope").catch(err => err);
-    expect(stack).toStartWith("Error: getHostByAddr ENOTIMP nope\n");
+    const { stack } = await dns_promises.resolve4("a b").catch(err => err);
+    expect(stack).toStartWith("Error: queryA ENOTFOUND a b\n");
   });
 
   test("lookup finds no address", async () => {
@@ -1726,6 +1758,33 @@ describe("getaddrinfo status mapping", () => {
   });
 });
 
+it.each(["nope", "", "10.0.0", "10.0.0.1/8", "10.0.0.1%lo", "[::1]"])(
+  "%j is no address for reverse() and setLocalAddress()",
+  async text => {
+    const expected = {
+      message: `getHostByAddr EINVAL ${text}`.trimEnd(),
+      code: "EINVAL",
+      errno: isWindows ? -4071 : -22,
+      syscall: "getHostByAddr",
+      ...(text && { hostname: text }),
+    };
+    const fields = err => ({ ...err, message: err.message });
+    for (const resolver of [dns, new dns.Resolver()]) {
+      expect(fields(runWithError(() => resolver.reverse(text, () => {})))).toEqual(expected);
+    }
+    for (const resolver of [dns_promises, new dns_promises.Resolver()]) {
+      expect(await resolver.reverse(text).catch(fields)).toEqual(expected);
+    }
+    for (const addresses of [[text], ["::1", text]]) {
+      expect(runWithError(() => new dns.Resolver().setLocalAddress(...addresses))).toMatchObject({
+        name: "TypeError",
+        code: "ERR_INVALID_ARG_VALUE",
+        message: "Invalid IP address.",
+      });
+    }
+  },
+);
+
 it("argument validation errors name the argument", () => {
   const message = fn => {
     try {
@@ -1739,6 +1798,12 @@ it("argument validation errors name the argument", () => {
     verbatim: message(() => dns.lookup("localhost", { verbatim: 1 }, () => {})),
     ipv4: message(() => new dns.Resolver().setLocalAddress(1)),
     ipv6: message(() => new dns.Resolver().setLocalAddress("127.0.0.1", 1)),
+    name: [1, "\0"].flatMap(ip =>
+      [dns, new dns.Resolver(), dns.promises, new dns.promises.Resolver()].map(it => message(() => it.reverse(ip))),
+    ),
+    localAddresses: [["\0"], ["127.0.0.1", "\0"]].flatMap(addresses =>
+      [dns, dns.promises].map(({ Resolver }) => message(() => new Resolver().setLocalAddress(...addresses))),
+    ),
     lookupService: message(() => dns.lookupService(1, 80, () => {})),
     promisesLookupService: message(() => dns.promises.lookupService(1, 80)),
     maxTimeout: ["1", -1, 2 ** 32, 0, 2 ** 32 - 1].map(maxTimeout => message(() => new dns.Resolver({ maxTimeout }))),
@@ -1747,6 +1812,14 @@ it("argument validation errors name the argument", () => {
     verbatim: 'The "options.verbatim" property must be of type boolean. Received type number (1)',
     ipv4: 'The "ipv4" argument must be of type string. Received type number (1)',
     ipv6: 'The "ipv6" argument must be of type string. Received type number (1)',
+    name: [
+      ...Array(4).fill('The "name" argument must be of type string. Received type number (1)'),
+      ...Array(4).fill("The argument 'name' must be a string without null bytes. Received '\\x00'"),
+    ],
+    localAddresses: [
+      ...Array(2).fill("The argument 'ipv4' must be a string without null bytes. Received '\\x00'"),
+      ...Array(2).fill("The argument 'ipv6' must be a string without null bytes. Received '\\x00'"),
+    ],
     lookupService: "The argument 'address' is invalid. Received 1",
     promisesLookupService: "The argument 'address' is invalid. Received 1",
     maxTimeout: [

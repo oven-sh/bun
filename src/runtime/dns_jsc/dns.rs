@@ -1784,6 +1784,11 @@ fn throw_invalid_ip(global: &JSGlobalObject, address: &[u8]) -> jsc::JsError {
     jsc::Error::INVALID_IP_ADDRESS.throw(global, format_args!("Invalid IP address: \"{address}\""))
 }
 
+/// What Node.js takes for `reverse()` and `setLocalAddress()`.
+fn parse_address(text: &[u8]) -> Option<IpAddr> {
+    ip_address::parse_uv_inet_pton(text).filter(|_| !strings::contains_char(text, 0))
+}
+
 impl Resolver {
     pub(crate) fn vm(&self) -> &VirtualMachine {
         self.vm.get()
@@ -2091,7 +2096,7 @@ impl Resolver {
             ));
         }
 
-        let send = |client: &mut Client, query| match ip_address::parse_strict(ip) {
+        let send = |client: &mut Client, query| match parse_address(ip) {
             Some(ip) => client.reverse(ip, query),
             None => vec![(query, Err(Error::ENOTIMP))],
         };
@@ -2238,9 +2243,10 @@ impl Resolver {
     ) -> JsResult<()> {
         let global_this = cx.global();
         let set = |value: &bun_core::String| {
-            let address = value.to_utf8();
-            let ip = ip_address::parse_strict(&address)
-                .ok_or_else(|| throw_invalid_ip(global_this, &address))?;
+            let ip = parse_address(&value.to_utf8()).ok_or_else(|| {
+                let message = format_args!("Invalid IP address.");
+                jsc::Error::INVALID_ARG_VALUE.throw(global_this, message)
+            })?;
             self.with_client(|client| client.set_local_ip(ip));
             JsResult::Ok(ip)
         };

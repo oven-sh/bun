@@ -347,6 +347,22 @@ fn connections_take_turns() {
 }
 
 #[test]
+fn few_are_told_twice_if_many_connections_end_at_once() {
+    let mut raw = Raw::client().connected();
+    for _ in 1..40 {
+        raw = raw.again().connected();
+    }
+    let mut datagrams = 0;
+    for handle in raw.peer.endpoint.handles() {
+        let connection = raw.peer.endpoint.get_mut(handle).unwrap();
+        connection.abort(raw.now, Transport, 0, &[]);
+        datagrams += raw.run_lens().len();
+        raw.now = raw.now + Duration::from_millis(1);
+    }
+    assert_eq!(datagrams, 40 + 16 + 3);
+}
+
+#[test]
 fn turns_are_short_while_the_socket_is_backed_up() {
     let mut raw = Raw::server();
     raw.peer.tls.hello_len = 56_000;

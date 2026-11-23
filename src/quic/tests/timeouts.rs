@@ -1019,12 +1019,11 @@ fn connection_that_the_peer_may_have_given_up() {
     let mut raw = Raw::server().connected();
     raw.request_packets("a");
     let [early, late] = [449, 450].map(|it| raw.now + Duration::from_millis(it));
-    for is_stale in [false, false, true] {
-        raw.wait();
-        raw.forget();
-        assert!(!raw.connection().is_stale(early));
-        assert_eq!(raw.connection().is_stale(late), is_stale);
-    }
+    raw.advance(10);
+    raw.request_packets("b");
+    raw.send("ping");
+    assert!(!raw.connection().is_stale(early));
+    assert!(raw.connection().is_stale(late));
     raw.send("ack");
     assert!(!raw.connection().is_stale(late));
 

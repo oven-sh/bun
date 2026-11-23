@@ -21,7 +21,7 @@ const MAX_HANDSHAKE_REASON_LEN: usize = 128;
 const GRACE_PERIOD: Duration = Duration::from_secs(30);
 const MIN_IDLE_PROBE_TIMEOUT: Duration = Duration::from_millis(150);
 const INITIAL_IDLE_PROBE_TIMEOUT: Duration = Duration::from_secs(1);
-const MAX_UNANSWERED_PROBES: u32 = 3;
+const MAX_UNANSWERED_PINGS: u32 = 3;
 const MAX_SETTLING_PERIOD: Duration = Duration::from_secs(15);
 const MIN_YIELDING_PERIOD: Duration = Duration::from_secs(1);
 
@@ -325,11 +325,9 @@ impl Connection {
     /// Whether the peer may have dropped the connection by the time something new arrives.
     pub fn is_stale(&self, now: Instant) -> bool {
         let margin = (self.settling_period()).clamp(self.idle_timeout / 16, self.idle_timeout / 2);
-        let idle_at = self.timers.get(Timer::Idle);
-        // A peer that is close by may just be busy.
-        let is_overdue = now + self.idle_timeout >= idle_at + self.min_idle_timeout();
-        self.pto_count >= MAX_UNANSWERED_PROBES && is_overdue
-            || self.silence.pings > MAX_UNANSWERED_PROBES
-            || now + margin >= idle_at
+        let oldest = self.spaces.data.sent.packets.front();
+        oldest.is_some_and(|it| now >= it.flight.at + self.min_idle_timeout())
+            || self.silence.pings > MAX_UNANSWERED_PINGS
+            || now + margin >= self.timers.get(Timer::Idle)
     }
 }

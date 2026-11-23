@@ -113,6 +113,7 @@ impl Connection {
             if self.side.is_server()
                 && self.is_confirmed()
                 && !self.spaces.data.sent.has_in_flight()
+                && shared.repeated_closes.take(now, 1)
             {
                 self.write_datagram(now, Content::Close, batch, shared);
             }

@@ -1546,11 +1546,15 @@ impl QuicSession {
         options: JsLocal<'_>,
     ) -> JsResult<()> {
         let global = cx.global();
-        // After GOAWAY, it is up to the peer.
-        if !self.destroyed.get() && self.get(Connection::peer_go_away).flatten().is_none() {
+        if !self.destroyed.get() {
             // Parse before the latch: a throw here must leave the session
             // untouched, not marked gracefully-closing with no close sent.
             let close = self.parse_close_options(global, options.to_js())?;
+            // The peer is the first to close.
+            if self.get(Connection::peer_go_away).flatten().is_some() {
+                self.update(|conn| conn.set_close_error(close.0, close.1, &close.2));
+                return Ok(());
+            }
             self.with_state(|s| s.graceful_close = 1);
             if self.conn.get().is_some() {
                 self.pending_graceful.set(Some(close));

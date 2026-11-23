@@ -2,7 +2,7 @@
 // `onwanttrailers`, records `trailers_pending` rather than `fin_pending`)
 // must deliver it with a FIN, never retract it with a RESET_STREAM.
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir, withoutAsanQuarantine } from "harness";
+import { bunEnv, bunExe, isLinux, tempDir, withoutAsanQuarantine } from "harness";
 import { createPrivateKey } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -848,7 +848,8 @@ test.each(["has been written", "is being written"])(
   },
 );
 
-test("ongoaway comes after a response that has arrived with GOAWAY", async () => {
+// Linux's loopback delivers a datagram before send() returns.
+test.skipIf(!isLinux)("ongoaway comes after a response that has arrived with GOAWAY", async () => {
   let accepted: QuicSession;
   let held: Buffer[] | undefined;
   let sentBeforeClose = Infinity;

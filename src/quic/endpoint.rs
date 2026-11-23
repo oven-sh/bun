@@ -48,6 +48,8 @@ const MAX_AWAITING_TURN: usize = 1024;
 const MAX_AWAITING_FINISHED: usize = 8192;
 const UNVALIDATED_CLIENTS: TokenBucket = TokenBucket::new(100.0, 512.0);
 const VERSION_NEGOTIATIONS: TokenBucket = TokenBucket::new(100.0, 200.0);
+/// If many connections end at once, there may not be room for more than one datagram each.
+const REPEATED_CLOSES: TokenBucket = TokenBucket::new(100.0, 16.0);
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -71,6 +73,7 @@ pub(crate) struct Shared {
     pub(crate) scratch: Vec<u8>,
     /// From then on, runs are made of full datagrams only.
     pub(crate) was_backed_up: bool,
+    pub(crate) repeated_closes: TokenBucket,
 }
 
 impl Shared {
@@ -229,6 +232,7 @@ impl Endpoint {
                 pool: Pool::default(),
                 scratch: Vec::new(),
                 was_backed_up: false,
+                repeated_closes: REPEATED_CLOSES,
             },
             slots: Slots::default(),
             free: Vec::new(),

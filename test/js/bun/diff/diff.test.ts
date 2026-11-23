@@ -1,5 +1,6 @@
 import { diff } from "bun";
 import { describe, expect, test } from "bun:test";
+import { isDebug } from "harness";
 
 // Unless a test says otherwise, what is expected is what the package `diff` 9.0.0 returns.
 
@@ -220,6 +221,10 @@ describe("arrays", () => {
   });
 });
 
+test.each([2 ** 28 + 1, 2 ** 32 - 1])("arrays: a sparse array of length %d", length => {
+  expect(() => diff.arrays(new Array(length), [])).toThrow(new RangeError("Out of memory"));
+});
+
 describe("of several shortest diffs, the one that diff picks", () => {
   test.each([
     ["lines", diff.lines, ["a\n", "b\n", "\n", "ab\n", "b\r\n", "}\n"]],
@@ -347,6 +352,15 @@ describe("large inputs, on which diff is quadratic", () => {
     expect(diff.lines(a, b, { maxEditLength: 1999 })).toBeUndefined();
   });
 
+  test("lines that are made to collide", () => {
+    // wyhash multiplies the last 8 bytes by the 8 before them xor this constant.
+    const part = isDebug ? 3000 : 50_000;
+    const lines = Array.from({ length: 4 * part }, (_, i) => `x\xdb\x28\xb4\xa0\xd1\x7e\x03\xe7${1_000_000 + i}\n`);
+    expect(new Set(lines.slice(0, 50).map(line => Bun.hash.wyhash(Buffer.from(line, "latin1")))).size).toBe(1);
+    const [a, b] = [lines.slice(0, -part).join(""), lines.slice(part).join("")];
+    expect(diff.lines(a, b).map(change => change.count)).toEqual([part, 2 * part, part]);
+  });
+
   test("past the limit of the search, the diff is still correct", () => {
     const next = random(4);
     // Every third line is the same on both sides and is there once, which makes what takes over fast.
@@ -358,6 +372,13 @@ describe("large inputs, on which diff is quadratic", () => {
     const patch = diff.createPatch(a, b);
     expect(diff.applyPatch(a, patch) === b).toBeTrue();
     expect(patch.split("\n ").length - 1).toBeGreaterThanOrEqual(33_000);
+  });
+
+  test.skipIf(isDebug)("past the limit of the search, a long run of equal characters stays unchanged", () => {
+    const times = (letter: string, n: number) => Buffer.alloc(n, letter).toString();
+    const a = "x" + times("c", 20_000) + times("x", 100_000) + "d";
+    const b = "xd" + times("x", 100_000) + times("c", 20_000);
+    expect(edits(diff.chars(a, b))).toBeLessThan(41_000);
   });
 });
 
@@ -422,7 +443,9 @@ describe("createPatch", () => {
     ["only the new name", { newFileName: "n" }, "--- n\n+++ n\n"],
     ["headers", { oldFileName: "f", oldHeader: "é", newHeader: "世" }, "--- f\té\n+++ f\t世\n"],
     ["an empty header", { oldFileName: "f", oldHeader: "" }, "--- f\n+++ f\n"],
-    ["a space is not quoted", { oldFileName: "a b" }, "--- a b\n+++ a b\n"],
+    // diff has no tab, and GNU patch changes the file "a".
+    ["a tab ends a name with a space", { oldFileName: "a b", newHeader: "x" }, "--- a b\t\n+++ a b\tx\n"],
+    ["a space at the start or the end is quoted", { oldFileName: " a", newFileName: "b " }, '--- " a"\t\n+++ "b "\t\n'],
     ["quoted names", { oldFileName: 'é\x07\b\t\n\v\f\r"\\\x01\x7f', newFileName: "世" }, '--- "\\303\\251\\a\\b\\t\\n\\v\\f\\r\\"\\\\\\001\\177"\n+++ "\\344\\270\\226"\n'],
   ])("%s", (_, options, headers) => {
     expect(diff.createPatch("a\n", "b\n", options)).toBe(headers + body);
@@ -511,6 +534,9 @@ describe("parsePatch", () => {
     ["only ---, then a section", "Index: f\n--- f\nIndex: g\n", 'Missing "+++ ..." file header for f'],
     ["a line between --- and +++", `${body}--- f\n\n+++ f\n${body}diff --git a/g b/g\n`, 'Missing "+++ ..." file header for f'],
     ["diff -c", "*** o\n--- n\n***************\n*** 1 ****\n! a\n--- 1 ----\n! b\n", 'Missing "+++ ..." file header for n'],
+    ["diff -c, then a git section", "*** o\n--- n\n***************\ndiff --git a/g b/g\n", 'Missing "+++ ..." file header for n'],
+    ["Index: and ---, then a git section", "Index: f\n--- f\ndiff --git a/g b/g\n", 'Missing "+++ ..." file header for f'],
+    ["a rule and ---, then a git section", `Index: f\r\n${"=".repeat(67)}\r\n--- f\r\ndiff --git a/g b/g\r\n`, 'Missing "+++ ..." file header for f'],
     ["only ---, then a combined hunk", "--- f\n@@@ -1 -1 +1 @@@\ndiff --git a/g b/g\n", 'Missing "+++ ..." file header for f'],
     ["--- and +++ without hunks, then a git section", "diff --cc f\n--- a/f\n+++ b/f\ndiff --git a/g b/g\n", [
       { oldFileName: "a/f", oldHeader: "", newFileName: "b/f", newHeader: "", hunks: [] },
@@ -530,8 +556,11 @@ describe("parsePatch", () => {
     // diff takes the signature for a removed line.
     ["git format-patch", `Subject: x\n\n---\n f | 2 +-\n\ndiff --git a/f b/f\n${body}-- \n2.43.0\n`, [{ isGit: true, oldFileName: "a/f", newFileName: "b/f", hunks: [hunk] }]],
     ["more than a signature", `${body}-- a\n`, "Hunk at line 1 has more lines than expected (expected 1 old lines and 1 new lines)"],
+    ["an octal escape past 377", '--- "\\456"\n+++ "\\377"\n', [{ oldFileName: '"\\456"', oldHeader: "", newFileName: "\ufffd", newHeader: "", hunks: [] }]],
+    ["a long invalid line", `@@ -1 +1 @@\n${"x".repeat(300)}`, `Hunk at line 1 contained invalid line ${"x".repeat(256)}`],
+    ["a long name", `--- ${"x".repeat(300)}`, `Missing "+++ ..." file header for ${"x".repeat(256)}`],
     // diff takes them for file headers.
-    ["--- and +++ in commit messages", `--- Original Message ---\n> x\n+++ y\n--- z\ndiff --git a/x b/y\nrename from x\nrename to y\n-- \n\n--- x\n\ndiff --git a/f b/f\n--- a/f\n+++ b/f\n${body}-- \n\n+++ x\n\ndiff --git a/g b/g\n`, [
+    ["--- and +++ in commit messages", `--- Original Message ---\n> x\n*** w\n--- \n+++y\n+++ y\n--- z\ndiff --git a/x b/y\nrename from x\nrename to y\n-- \n\n--- x\n\ndiff --git a/f b/f\n--- a/f\n+++ b/f\n${body}-- \n\n+++ x\n\ndiff --git a/g b/g\n`, [
       { isGit: true, isRename: true, oldFileName: "a/x", newFileName: "b/y", hunks: [] },
       { isGit: true, oldFileName: "a/f", oldHeader: "", newFileName: "b/f", newHeader: "", hunks: [hunk] },
       { isGit: true, oldFileName: "a/g", newFileName: "b/g", hunks: [] },
@@ -625,6 +654,15 @@ describe("applyPatch", () => {
     ["removes an empty line after the last newline", "\na\n", [{ oldStart: 3, lines: ["-", "+b"] }], undefined],
     ["adds after an empty line after the last newline", "a\n", [{ oldStart: 1, lines: [" a", " ", "+b"] }], undefined],
     ["removes an empty line of an empty source", "", [{ oldStart: 1, lines: ["-", "+b"] }], undefined],
+    // diff leaves half a line ending.
+    ["adds after a last line without CRLF", "x\r\na", [{ oldStart: 3, lines: ["+b"] }], undefined],
+    ["removes a last line after CRLF", "y\nx\r\na", [{ oldStart: 3, lines: ["-a"] }], undefined],
+    ["replaces a last line that ends with CR", "a\r", [{ oldStart: 1, lines: ["-a\r", "+b\r"] }], "b\r"],
+    ["adds a last line after CRLF", "a\r\n", [{ oldStart: 1, lines: ["-a\r", "+b\r"] }, { oldStart: 2, lines: ["+c", marker] }], "b\r\nc"],
+    ["a CRLF patch with its end trimmed", "x\na\n", [{ oldStart: 2, lines: ["-a\r", "+b\r", marker] }], "x\nb"],
+    ["a CRLF patch of last lines with its end trimmed", "x\na", [{ oldStart: 2, lines: ["-a\r", `${marker}\r`, "+b\r", marker] }], "x\nb"],
+    // diff takes the \r for a part of a line ending.
+    ["a last line that ends with CR", "x\na\r", [{ oldStart: 2, lines: ["-a\r", marker, "+b\r", marker] }], "x\nb\r"],
     // diff changes the last newline wherever the hunk fits.
     ["removes the last newline, before the end", "a\nx\n", [{ oldStart: 1, lines: ["-a", "+b", marker] }], undefined],
     ["adds the last newline, before the end", "a\nx", [{ oldStart: 1, lines: ["-a", marker, "+b"] }], undefined],
@@ -667,6 +705,27 @@ describe("applyPatch", () => {
     const crlf = (text: string) => text.replaceAll("\n", "\r\n");
     const patch = crlf(`Subject: x\n\n---\n f | 2 +-\n\ndiff --git a/f b/f\n${diff.createPatch(a, b)}-- \n2.43.0\n`);
     expect([diff.applyPatch(a, patch), diff.applyPatch(crlf(a), patch)]).toEqual([b, crlf(b)]);
+  });
+
+  test("hunks that each search the whole source", () => {
+    const source = `x\n${Buffer.alloc(100_000, "a\n")}`;
+    const hunks = (count: number) =>
+      Array.from({ length: count }, (_, i) => ({ oldStart: i % 2 ? 50_000 : 1, lines: [" x"] }));
+    expect(diff.applyPatch(source, hunks(20)) === source).toBeTrue();
+    expect(diff.applyPatch(source, hunks(2000))).toBeUndefined();
+  });
+
+  test("a hunk with the hash of every place", () => {
+    const count = isDebug ? 10_000 : 100_000;
+    const patch = `@@ -1,${count + 1} +1,${count + 1} @@\n${Buffer.alloc(3 * count, " a\n")} a\r\n`;
+    expect(diff.applyPatch(Buffer.alloc(4 * count, "a\n").toString(), patch)).toBeUndefined();
+  });
+
+  test("hunks that are longer than a string", () => {
+    const lines = Array(2048).fill(`+${Buffer.alloc(2 ** 20, "a")}`);
+    expect(() => diff.applyPatch("", [{ oldStart: 1, lines }])).toThrow(
+      expect.objectContaining({ code: "ERR_STRING_TOO_LONG" }),
+    );
   });
 
   test("a binary patch", () => {

@@ -38,6 +38,7 @@ pub(crate) mod key {
 }
 
 const BATCH: usize = 128;
+const ALLOWANCE: usize = 16;
 
 /// The part of a [`Port`] that other threads use.
 pub(crate) struct Shared {
@@ -146,6 +147,8 @@ pub struct Port {
     /// The system may have had more than `batch` has room for.
     was_full: Cell<bool>,
     has_posted: Cell<bool>,
+    /// Without sockets, which can be ready again and again although nothing moves.
+    has_posted_request: Cell<bool>,
     /// What ended without a packet from the system.
     deferred: RefCell<VecDeque<Packet>>,
     /// The same, for a turn that has not begun.
@@ -158,7 +161,14 @@ pub struct Port {
     /// When the last turn ended, or a wait for which nothing was ready.
     busy_since_ns: Cell<u64>,
     expects_more: Cell<bool>,
-    has_overdue_timer: Cell<bool>,
+    overdue: Cell<Overdue>,
+    had_overdue_timer: Cell<bool>,
+    were_timers_slow: Cell<bool>,
+    /// What is left of it in this turn. `None` unless the loop is held up.
+    allowance: Cell<Option<usize>>,
+    /// How many times it was asked for in this turn, and in the last one in which it was.
+    claims: Cell<(usize, usize)>,
+    turns: Cell<u64>,
     /// A timer has been overdue since the last `park`.
     is_overrun: Cell<bool>,
     next_yield_ns: Cell<u64>,
@@ -168,6 +178,14 @@ pub struct Port {
     delayed: RefCell<BinaryHeap<Reverse<(u64, usize, usize)>>>,
     holds: Cell<usize>,
     is_shut_down: Cell<bool>,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Default)]
+enum Overdue {
+    #[default]
+    Nothing,
+    Timer,
+    TimerAndTasks,
 }
 
 pub(crate) fn now_ns() -> u64 {
@@ -202,6 +220,7 @@ impl Port {
             end: Cell::new(0),
             was_full: Cell::new(false),
             has_posted: Cell::new(false),
+            has_posted_request: Cell::new(false),
             deferred: RefCell::default(),
             next_turn: RefCell::default(),
             inputs: Cell::new(0),
@@ -209,7 +228,12 @@ impl Port {
             rounds: Cell::new(0),
             busy_since_ns: Cell::new(now_ns()),
             expects_more: Cell::new(false),
-            has_overdue_timer: Cell::new(false),
+            overdue: Cell::default(),
+            had_overdue_timer: Cell::new(false),
+            were_timers_slow: Cell::new(false),
+            allowance: Cell::new(None),
+            claims: Cell::new((0, 1)),
+            turns: Cell::new(0),
             is_overrun: Cell::new(false),
             next_yield_ns: Cell::new(0),
             flood: Cell::new((0, 0)),
@@ -261,13 +285,43 @@ impl Port {
         now_ns().saturating_sub(self.busy_since_ns.get()) > SLOW_NS
     }
 
+    /// Whether slow timers are due again as soon as they have run, so that a stream gets one step in each turn.
+    pub(crate) fn is_held_up(&self) -> bool {
+        self.allowance.get().is_some()
+    }
+
+    /// How many of `steps` a stream may take on top of its usual one: none unless the loop is held up. All share what a turn has.
+    pub fn take_allowance(&self, steps: usize) -> usize {
+        let (Some(left), 1..) = (self.allowance.get(), steps) else {
+            return 0;
+        };
+        let (claims, before) = self.claims.get();
+        self.claims.set((claims + 1, before));
+        let taken = steps.min(left).min((ALLOWANCE / before).max(1));
+        self.allowance.set(Some(left - taken));
+        taken
+    }
+
+    pub fn turns(&self) -> u64 {
+        self.turns.get()
+    }
+
     pub fn did_send(&self) {
         self.has_sent.set(true);
     }
 
+    pub fn did_run_timers(&self) {
+        self.were_timers_slow.set(self.is_slow());
+    }
+
     /// That is why the next `wait` has no time.
     pub fn note_overdue_timer(&self) {
-        self.has_overdue_timer.set(true);
+        self.overdue.set(Overdue::Timer);
+    }
+
+    /// The next `wait` has no time even without the timer.
+    pub fn note_overdue_timer_and_tasks(&self) {
+        self.overdue.set(Overdue::TimerAndTasks);
     }
 
     /// Whether a [`Hold`] is set.
@@ -309,6 +363,7 @@ impl Port {
     pub(crate) fn post(&self, packet: Packet) {
         sys::post(&self.shared.handle, packet.key, packet.context);
         self.has_posted.set(true);
+        (self.has_posted_request).update(|has| has || packet.key != key::SOCKET);
     }
 
     /// Spares the loop a turn for what was deferred a moment ago.
@@ -360,7 +415,13 @@ impl Port {
         const TURNS_TO_FLOOD: u32 = 4;
         const TURNS_TO_DOUBT: u32 = 64;
 
-        let has_overdue_timer = self.has_overdue_timer.take();
+        let overdue = self.overdue.take();
+        let has_overdue_timer = overdue != Overdue::Nothing;
+        let had_overdue_timer = self.had_overdue_timer.replace(has_overdue_timer);
+        let is_held_up = self.were_timers_slow.take() && had_overdue_timer && has_overdue_timer;
+        self.allowance.set(is_held_up.then_some(ALLOWANCE));
+        (self.claims).update(|(claims, before)| (0, if claims > 0 { claims } else { before }));
+        self.turns.update(|turns| turns + 1);
         if self.next.get() < self.end.get() {
             return self.undispatched();
         }
@@ -376,7 +437,7 @@ impl Port {
         let mut is_at_once = true;
         if timeout_ns == Some(0) || self.has_work() {
             self.fill_batch(Timeout::Now);
-            if has_overdue_timer {
+            if overdue == Overdue::Timer {
                 self.yield_now_and_then();
             }
         } else {
@@ -475,6 +536,7 @@ impl Port {
         let removed = sys::remove_packets(&self.shared.handle, &self.batch, timeout);
         self.was_full.set(removed == BATCH);
         self.has_posted.set(false);
+        self.has_posted_request.set(false);
         let mut end = 0;
         for cell in &self.batch[..removed] {
             if let Some(packet) = self.receive(cell.get()) {
@@ -545,6 +607,7 @@ impl Port {
         for round in 0.. {
             let goes_on = (round < MIN_ROUNDS || now <= deadline)
                 && (self.dispatch_deferred(on_event)
+                    || self.dispatch_posted(on_event)
                     || (self.expects_more.take()
                         && busy_ns > MIN_NS
                         && self.dispatch_soon(on_event)));
@@ -554,6 +617,19 @@ impl Port {
             now = now_ns();
         }
         self.busy_since_ns.set(now);
+    }
+
+    /// `false` if the loop is not held up, nothing was posted, or something else is first.
+    fn dispatch_posted(&self, on_event: &impl Fn(Event)) -> bool {
+        if !(self.has_posted_request.get() && self.is_held_up())
+            || self.undispatched() > 0
+            || self.sockets.has_changed()
+        {
+            return false;
+        }
+        self.fill_batch(Timeout::Now);
+        self.dispatch_batch(on_event);
+        true
     }
 
     /// `false` if nothing has come, or something else is first.

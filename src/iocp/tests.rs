@@ -1561,6 +1561,116 @@ fn a_slow_turn_waits_a_moment_for_more() {
     assert_eq!(turn(&port, Duration::ZERO), 0);
 }
 
+fn overrun(port: &Port, busy_ms: u64) {
+    CLOCK_AHEAD.set(CLOCK_AHEAD.get() + Duration::from_millis(busy_ms));
+    port.did_run_timers();
+    port.note_overdue_timer();
+    turn(port, Duration::ZERO);
+}
+
+#[test]
+fn timers_that_keep_overrunning_hold_the_loop_up() {
+    let port = Port::new().unwrap();
+    CLOCK_STOPPED_AT.set(Some(Instant::now()));
+    let allows = |busy_ms| {
+        overrun(&port, busy_ms);
+        let taken = port.take_allowance(usize::MAX);
+        assert_eq!(port.is_held_up(), taken > 0);
+        taken
+    };
+    assert_eq!([50, 50, 1, 0].map(allows), [0, 16, 16, 0]);
+    turn(&port, Duration::ZERO);
+    assert_eq!([50, 50].map(allows), [0, 16]);
+    assert_eq!(port.turns(), 7);
+
+    port.did_run_timers();
+    CLOCK_AHEAD.set(CLOCK_AHEAD.get() + Duration::from_millis(50));
+    port.note_overdue_timer_and_tasks();
+    turn(&port, Duration::ZERO);
+    assert!(!port.is_held_up());
+
+    let shares = || {
+        overrun(&port, 50);
+        [99, 0, 1, 99, 99].map(|steps| port.take_allowance(steps))
+    };
+    assert_eq!(shares(), [16, 0, 0, 0, 0]);
+    overrun(&port, 50);
+    assert_eq!(shares(), [4, 0, 1, 4, 4]);
+}
+
+#[test]
+fn a_write_that_is_done_goes_before_timers_that_hold_the_loop_up() {
+    for is_held_up in [false, true] {
+        let port = Port::new().unwrap();
+        let (file, _peer) = pipe(&port, AsyncFile::exclusive);
+        if is_held_up {
+            overrun(&port, 50);
+        }
+        let (wrote, write) = (Slot::default(), Rc::new(Cell::new(None)));
+        let (done, slot) = (into(&wrote), Rc::clone(&write));
+        let _first = Request::defer(&port, move || {
+            slot.set(Some(file.write(vec![1], 0, done)));
+        });
+        overrun(&port, 50);
+        assert_eq!(wrote.borrow().is_some(), is_held_up);
+        run_until(&port, || wrote.borrow().is_some());
+    }
+}
+
+#[test]
+fn a_write_that_is_done_does_not_pass_a_socket_that_is_readable() {
+    let port = Port::new().unwrap();
+    let ((file, _peer), (ours, mut theirs)) = (pipe(&port, AsyncFile::exclusive), connected());
+    let (watch, seen) = watch(&port, &ours);
+    watch.set_interest(Readiness::RECEIVE);
+    theirs.write_all(b"x").unwrap();
+    run_until(&port, || !seen.take().is_empty());
+    overrun(&port, 50);
+    let (wrote, write) = (Slot::default(), Rc::new(Cell::new(None)));
+    let (done, slot) = (into(&wrote), Rc::clone(&write));
+    let _first = Request::defer(&port, move || slot.set(Some(file.write(vec![1], 0, done))));
+    overrun(&port, 50);
+    assert!(port.is_held_up() && wrote.borrow().is_none());
+}
+
+#[test]
+fn a_write_that_is_done_does_not_pass_a_socket_that_was_just_asked() {
+    let port = Port::new().unwrap();
+    let ((file, _peer), (ours, _theirs)) = (pipe(&port, AsyncFile::exclusive), connected());
+    let watch = Rc::new(watch(&port, &ours).0);
+    overrun(&port, 50);
+    let (wrote, write, its_port) = (Slot::default(), Rc::new(Cell::new(None)), Rc::clone(&port));
+    let (done, slot, asked) = (into(&wrote), Rc::clone(&write), Rc::clone(&watch));
+    let _first = Request::defer(&port, move || {
+        core::mem::forget(Request::defer(&its_port, move || {
+            asked.set_interest(Readiness::RECEIVE);
+            slot.set(Some(file.write(vec![1], 0, done)));
+        }));
+    });
+    overrun(&port, 50);
+    assert!(port.is_held_up() && wrote.borrow().is_none());
+}
+
+#[test]
+fn a_socket_that_stays_ready_does_not_keep_a_turn_going() {
+    let port = Port::new().unwrap();
+    let ((file, _peer), (ours, _theirs)) = (pipe(&port, AsyncFile::exclusive), connected());
+    let reports = Rc::new(Cell::new(0));
+    let count = Rc::clone(&reports);
+    let watcher = Watcher::Callback(Rc::new(move |_| {
+        count.update(|it| it + 1);
+        core::mem::forget(file.write(vec![1], 0, |_| {}));
+    }));
+    let watch = SocketWatch::new(&port, ours.as_raw_socket() as usize, watcher).unwrap();
+    watch.set_interest(Readiness::SEND);
+    assert_eq!(
+        [(); 4].map(|()| (overrun(&port, 50), reports.take()).1),
+        [1, 2, 2, 2]
+    );
+    assert!(port.is_held_up());
+    port.shut_down();
+}
+
 #[test]
 fn timers_that_keep_overrunning_yield() {
     let port = Port::new().unwrap();
@@ -1585,6 +1695,11 @@ fn timers_that_keep_overrunning_yield() {
     assert_eq!(turn(&port, Duration::ZERO), 0);
     let _ready = Request::defer(&port, || {});
     assert_eq!([0; 2].map(yields), [0, 1]);
+    pass(50);
+    port.did_run_timers();
+    port.note_overdue_timer_and_tasks();
+    assert_eq!(turn(&port, Duration::ZERO), 0);
+    assert!(port.is_held_up());
 
     let waits = || {
         port.waker().wake();

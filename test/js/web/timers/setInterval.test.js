@@ -1,5 +1,5 @@
-import { expect, it } from "bun:test";
-import { bunEnv, bunExe, bunRun, isASAN, isWindows } from "harness";
+import { describe, expect, it } from "bun:test";
+import { bunEnv, bunExe, bunRun, isASAN, isWindows, tempDir } from "harness";
 import { join } from "path";
 
 it("setInterval", async () => {
@@ -176,4 +176,69 @@ it.skipIf(!isWindows)("a thread on the same CPU runs between the turns of an int
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout, stderr, exitCode }).toEqual({ stdout: "pinned: 1\nmost of the time\n", stderr: "", exitCode: 0 });
+});
+
+describe.concurrent.skipIf(!isWindows)("between the turns of an interval that overruns", () => {
+  async function run(eachTurn, script) {
+    using dir = tempDir("overrun-stream", {
+      "main.mjs": `
+        import crypto from "crypto";
+        import fs from "fs";
+        const overrun = Promise.withResolvers(), chunks = [];
+        let bytes = crypto.randomBytes(2e6), turns = 0, largest = 0, size = 0;
+        fs.writeFileSync("in", bytes);
+        const step = len => (largest = Math.max(largest, len));
+        const keep = chunk => (chunks.push(chunk), step(chunk.length));
+        setInterval(() => {
+          ${eachTurn}
+          // Longer each time, until the slowest disk keeps up.
+          Bun.sleepSync(Math.min(4 * 1.2 ** turns, 200));
+          if (++turns === 3) overrun.resolve();
+        }, 1);
+        await overrun.promise;
+        ${script}
+        process.exit();`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.mjs"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  it.each([
+    ["a file", `for await (const chunk of Bun.file("in").stream()) keep(chunk);`],
+    [
+      "a part of a file",
+      `for await (const chunk of Bun.file("in").slice(1001, 1_500_003).stream()) keep(chunk);
+       bytes = bytes.subarray(1001, 1_500_003);`,
+    ],
+    [
+      "a file, with an immediate after each chunk,",
+      `for await (const chunk of Bun.file("in").stream()) keep(chunk), await new Promise(setImmediate);`,
+    ],
+    ["a file through the shell", "await Bun.$`cat in > out`;"],
+    [
+      "the output of a child into a file",
+      `await Bun.write("out", new Response(Bun.spawn([process.execPath, "-e", "fs.writeSync(1, fs.readFileSync('in'))"]).stdout));`,
+    ],
+  ])("%s moves in large steps", async (_, move) => {
+    const watch = `step(-size + (size = fs.statSync("out", { throwIfNoEntry: false })?.size ?? 0));`;
+    const report = `console.log(largest >= 512 * 1024 || largest, bytes.equals(chunks.length ? Buffer.concat(chunks) : fs.readFileSync("out")));`;
+    expect(await run(watch, move + report)).toEqual({ stdout: "true true\n", stderr: "", exitCode: 0 });
+  });
+
+  it("writes to a pipe that has room follow one another", async () => {
+    const script = `
+      const child = Bun.spawn([process.execPath, "-e", "setTimeout(() => {}, 30_000)"], { stdin: "pipe" });
+      const first = turns;
+      for (let i = 0; i < 5; i++) child.stdin.write("x"), await child.stdin.write("y");
+      console.log(turns - first < 5 || turns - first);
+      child.kill();`;
+    expect(await run("", script)).toEqual({ stdout: "true\n", stderr: "", exitCode: 0 });
+  });
 });

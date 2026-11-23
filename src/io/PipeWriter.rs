@@ -1212,6 +1212,12 @@ impl WindowsStreamingWriter {
             && self.base.with_source(WriteSource::is_file) == Some(true)
     }
 
+    /// Whether the `len` bytes that were queued last are no reason to stop their source.
+    pub fn can_queue(&self, len: usize) -> bool {
+        self.queued_len() < 1024 * 1024
+            && self.base.with_source(|source| source.can_queue(len)) == Some(true)
+    }
+
     /// Waits for the one in flight.
     pub fn finish_write_to_disk(&self) -> sys::Result<()> {
         (self.base.with_source(WriteSource::finish_write_to_disk)).unwrap_or(Ok(()))

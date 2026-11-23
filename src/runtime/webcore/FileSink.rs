@@ -1300,6 +1300,12 @@ impl FileSink {
                 if !self.writer.is_backed_up() {
                     return streams::Writable::Owned(accepted);
                 }
+                #[cfg(windows)]
+                if let streams::SourceHandle::FileReader(_) = self.source.get()
+                    && self.writer.can_queue(accepted as usize)
+                {
+                    return streams::Writable::Owned(accepted);
+                }
                 self.source_pending_pull.set(true);
                 if matches!(
                     self.source.get(),

@@ -236,6 +236,11 @@ impl WriteSource {
         }
     }
 
+    /// A write to a disk ends a turn later at best, which is long while the loop is held up.
+    pub(crate) fn can_queue(&self, len: usize) -> bool {
+        matches!(&self.0, Source::File(file) if file.can_queue(len))
+    }
+
     /// The event follows nevertheless.
     pub(crate) fn finish_write_to_disk(&self) -> sys::Result<()> {
         let write = self.0.endpoint().owners.disk_write.take();

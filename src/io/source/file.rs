@@ -11,7 +11,7 @@ use bun_sys::{self as sys, E, Fd, FdExt as _, Tag};
 use bun_threading::Guarded;
 use bun_threading::work_pool::FilePool;
 
-use super::endpoint::{Endpoint, HasEndpoint};
+use super::endpoint::{BUSY_SIZE, Endpoint, HasEndpoint};
 use crate::Closer;
 use crate::pipe_reader::ReadEvent;
 use crate::pipe_writer::WriteEvent;
@@ -62,8 +62,11 @@ struct Inner {
     is_on_disk: bool,
     /// `None` is the position of the file.
     offset: Cell<Option<u64>>,
+    /// The length of the last one if a disk filled its buffer, and the turn of the loop in which it ended.
+    full_read: Cell<Option<(usize, u64)>>,
     read: Cell<Option<(Request, Option<Cancel>)>>,
     write: Cell<Option<(Request, Arc<Write>)>>,
+    was_write_slow: Cell<bool>,
 }
 
 impl File {
@@ -75,8 +78,10 @@ impl File {
             fd: Arc::new(OwnedFd { fd, is_only_handle }),
             is_on_disk: w::GetFileType(fd.native()) == w::FILE_TYPE_DISK,
             offset: Cell::new(None),
+            full_read: Cell::new(None),
             read: Cell::new(None),
             write: Cell::new(None),
+            was_write_slow: Cell::new(false),
         }))
     }
 
@@ -99,9 +104,10 @@ impl File {
 
     pub(super) fn write(&self, buffer: Vec<u8>) {
         // It goes on after `self` is dropped, and keeps the loop running.
-        let this = Rc::clone(&self.0);
+        let (this, turn) = (Rc::clone(&self.0), self.0.endpoint.port.turns());
         let done = move |(buffer, result): (Vec<u8>, sys::Result<()>)| {
             this.write.take();
+            (this.was_write_slow).set(this.endpoint.port.turns() - turn > 1);
             this.endpoint.owners.disk_write.take();
             this.report_write(match result {
                 Ok(()) => WriteEvent::Wrote(buffer),
@@ -127,6 +133,13 @@ impl File {
         self.0.endpoint.owners.disk_write.set(disk_write);
         self.0.write.set(Some((request, write)));
         self.0.endpoint.set_writing(true);
+    }
+
+    pub(super) fn can_queue(&self, len: usize) -> bool {
+        let this = &self.0;
+        this.is_on_disk
+            && !this.was_write_slow.get()
+            && this.endpoint.port.take_allowance(len.div_ceil(BUSY_SIZE)) > 0
     }
 
     pub(super) fn write_blocking(&self, bytes: &[u8]) -> sys::Result<()> {
@@ -167,6 +180,22 @@ impl Inner {
         }
     }
 
+    /// While the loop is held up, it grows for a reader that is back by the next turn.
+    fn buffer(&self, max_len: usize) -> Vec<u8> {
+        /// As much as a stream gets at once on POSIX.
+        const MAX_LEN: usize = 512 * 1024;
+        let port = &self.endpoint.port;
+        let wanted = match self.full_read.take() {
+            Some((len, turn)) if port.turns() - turn <= 1 => (len * 4).min(MAX_LEN),
+            _ => 0,
+        };
+        let more = wanted.min(max_len).div_ceil(BUSY_SIZE).saturating_sub(1);
+        match port.take_allowance(more) {
+            0 => self.endpoint.buffer(max_len),
+            more => Vec::with_capacity(((1 + more) * BUSY_SIZE).min(max_len)),
+        }
+    }
+
     fn continue_reading(self: &Rc<Self>) {
         let Some(max_len) = self.endpoint.wanted() else {
             return;
@@ -187,6 +216,8 @@ impl Inner {
             let Some(this) = this.upgrade() else { return };
             this.read.take();
             if let ReadEvent::Data(data) = &event {
+                let is_full = this.is_on_disk && data.len() == data.capacity();
+                (this.full_read).set(is_full.then(|| (data.len(), this.endpoint.port.turns())));
                 this.offset
                     .update(|offset| Some(offset? + data.len() as u64));
             }
@@ -194,7 +225,7 @@ impl Inner {
             this.report_read();
         });
         let (fd, cancel) = (Arc::clone(&self.fd), Cancel::default());
-        let (buffer, offset) = (self.endpoint.buffer(max_len), self.offset.get());
+        let (buffer, offset) = (self.buffer(max_len), self.offset.get());
         let (thread, is_on_disk) = (cancel.clone(), self.is_on_disk);
         self.run(move || {
             let event = match is_on_disk {

@@ -463,6 +463,15 @@ impl All {
     ) -> bool {
         if has_pending_immediate {
             *spec = Timespec { sec: 0, nsec: 0 };
+            #[cfg(windows)]
+            if let Some(next) = self.timers.first_deadline()
+                && !self.is_due_when_idle()
+                && !next.greater(
+                    now_out.get_or_insert_with(|| Timespec::now(TimespecMockMode::ForceRealTime)),
+                )
+            {
+                (vm.event_loop().usockets_loop().port()).note_overdue_timer_and_tasks();
+            }
             return true;
         }
 
@@ -556,6 +565,8 @@ impl All {
                 break;
             }
         }
+        #[cfg(windows)]
+        vm.event_loop().usockets_loop().port().did_run_timers();
     }
 
     /// `uws_loop` is the calling VM's uws loop.

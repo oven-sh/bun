@@ -1282,19 +1282,22 @@ fn strip_cr(bytes: &[u8]) -> Vec<u8> {
     out
 }
 
-/// Every run of ASCII whitespace becomes one space and leading/trailing runs go, for `-w`.
+/// Every run of ASCII whitespace becomes one byte and leading/trailing runs go, for `-w`. A line break stays one: it
+/// ends a comment or a command. What follows a backslash decides if the command goes on, and `#!` only counts at the start.
 fn collapse_whitespace(bytes: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(bytes.len());
-    let mut pending_space = false;
-    for &b in bytes {
-        if b.is_ascii_whitespace() {
-            pending_space = !out.is_empty();
-        } else {
-            if pending_space {
-                out.push(b' ');
-                pending_space = false;
+    let text = bytes.trim_ascii_start();
+    let mut pending = (text.starts_with(b"#!") && text.len() < bytes.len()).then_some(b' ');
+    for &b in text {
+        match b {
+            _ if pending.is_none() && out.last() == Some(&b'\\') => out.push(b),
+            b'\n' => pending = Some(b),
+            b'\r' if pending != Some(b'\n') => pending = Some(b),
+            _ if b.is_ascii_whitespace() => pending = pending.or(Some(b' ')),
+            _ => {
+                out.extend(pending.take());
+                out.push(b);
             }
-            out.push(b);
         }
     }
     out
@@ -3366,12 +3369,15 @@ struct Tinted<'a> {
 
 impl core::fmt::Write for Tinted<'_> {
     fn write_str(&mut self, text: &str) -> core::fmt::Result {
-        for part in text.as_bytes().split_inclusive(|&b| b == b'm') {
+        const RESET: &[u8] = b"\x1b[0m";
+        let mut rest = text.as_bytes();
+        while let Some(at) = strings::index_of(rest, RESET) {
+            let part;
+            (part, rest) = rest.split_at(at + RESET.len());
             self.out.extend_from_slice(part);
-            if part.ends_with(b"\x1b[0m") {
-                self.out.extend_from_slice(self.bg.as_bytes());
-            }
+            self.out.extend_from_slice(self.bg.as_bytes());
         }
+        self.out.extend_from_slice(rest);
         Ok(())
     }
 }

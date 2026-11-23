@@ -3651,6 +3651,301 @@ test.concurrent("timeout during a nested event-loop wait beneath the script", as
   expect(exitCode).toBe(0);
 });
 
+// The same wait, with the timeout in a callback that the loop calls. The termination unwinds to the run through
+// native frames that have more to call for the same read. JSC makes no VM entry while the TerminationException is
+// pending, so none of those callbacks is entered. A debug build used to abort at the next entry (`!exception()`),
+// and a release build ran a callback that is a host function.
+describe("a vm timeout in a callback that a nested event-loop wait called", () => {
+  // Bun.build() waits for its plugin beneath the script that called it. `interrupt` is the option that ends the
+  // run, and `spin()` is the callback that it lands in.
+  const fixture = (interrupt: "timeout" | "breakOnSigint", body: string) => `
+    const vm = require("node:vm");
+    const ran = [];
+    const noop = () => {};
+    const localhost = "127.0.0.1";
+    // It ends by itself, so an interrupt that is lost fails the test and does not hang it.
+    // The inner loop keeps the thread in script: a loop that only calls performance.now() is slow to interrupt once the JIT optimized it.
+    const spin = () => {
+      ran.push("spinning");
+      ${interrupt === "breakOnSigint" ? `process.kill(process.pid, "SIGINT");` : ""}
+      const end = performance.now() + 3000;
+      while (performance.now() < end) for (let i = 0; i < 1e4; i++);
+    };
+    // The plugin is ready after the run is over, so a lost interrupt fails the test and does not hang it.
+    const build = () =>
+      Bun.build({
+        entrypoints: [require("node:path").join(__dirname, "entry.js")],
+        plugins: [{ name: "not ready", setup: () => new Promise(resolve => setTimeout(resolve, 4000)) }],
+      });
+    // How the run ended.
+    const interrupted = () => {
+      try {
+        vm.runInNewContext("build(); ran.push('script after Bun.build()');", { build, ran }, ${
+          interrupt === "timeout" ? "{ timeout: 500 }" : "{ breakOnSigint: true }"
+        });
+        return "returned";
+      } catch (e) {
+        return "threw " + e.code;
+      }
+    };
+    // What was entered after the callback that the interrupt landed in.
+    const enteredAfterwards = () => JSON.stringify(ran.slice(ran.indexOf("spinning") + 1));
+    // What one write() sends, the server reads with one read. So these clients write the bytes themselves.
+    const connect = (port, data = noop) => Bun.connect({ hostname: localhost, port, socket: { data } });
+    const upgradeRequest = "GET / HTTP/1.1\\r\\nHost: x\\r\\nUpgrade: websocket\\r\\nConnection: Upgrade\\r\\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\\r\\nSec-WebSocket-Version: 13\\r\\n\\r\\n";
+    const frame = text => {
+      const payload = Buffer.from(text);
+      return Buffer.concat([Buffer.from([0x81, 0x80 | payload.length, 0, 0, 0, 0]), payload]);
+    };
+    const webSocket = async port => {
+      const upgraded = Promise.withResolvers();
+      const socket = await connect(port, upgraded.resolve);
+      socket.write(upgradeRequest);
+      await upgraded.promise;
+      return socket;
+    };
+    (async () => {
+      ${body}
+    })();
+  `;
+  const upgrade = `(request, server) => (server.upgrade(request) ? undefined : new Response("not a websocket"))`;
+  const websocketServer = (websocket: string, fetch = upgrade) =>
+    `Bun.serve({ port: 0, hostname: localhost, fetch: ${fetch}, websocket: ${websocket} })`;
+  const run = `console.log(interrupted() + " " + enteredAfterwards()); process.exit(0);`;
+  const twoFrames = (second: string) => `
+      const server = ${websocketServer(`{ message: (ws, data) => (data === "first" ? spin() : ran.push("message " + data)) }`)};
+      const client = await webSocket(server.port);
+      client.write(Buffer.concat([frame("first"), frame(${second})]));
+      ${run}`;
+  const twoRequests = `"GET /first HTTP/1.1\\r\\nHost: x\\r\\n\\r\\nGET /second HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n"`;
+
+  const rows: [name: string, body: string][] = [
+    ["the Bun.serve websocket message handler, for the second frame of one read", twoFrames(`"second"`)],
+    [
+      // The handler's argument is made before the call: a string that is not ASCII is made on another path.
+      "the Bun.serve websocket message handler, for a second frame that is not ASCII",
+      twoFrames(`"zweite Nachricht: \\u00e4\\u00f6\\u00fc"`),
+    ],
+    [
+      "the node:http request listener, for the second request of one read",
+      `const server = require("node:http").createServer((request, response) => {
+        if (request.url === "/first") spin();
+        else ran.push("request " + request.url);
+        response.end("ok");
+      });
+      await new Promise(resolve => server.listen(0, localhost, resolve));
+      (await connect(server.address().port)).write(${twoRequests});
+      ${run}`,
+    ],
+  ];
+
+  // A handler that is a host function: the resolving function of `entered`. It settles its promise before it reads
+  // the pending exception, so a release build shows that it was entered. One read has what calls both handlers.
+  const hostFunctionRows: [name: string, body: string][] = [
+    [
+      // The frame arrives with the upgrade request. The fetch handler is called, and then the message handler.
+      "a Bun.serve websocket message handler",
+      `const server = ${websocketServer("{ message: entered.resolve }", "(request, server) => { server.upgrade(request); spin(); }")};
+      (await connect(server.port)).write(Buffer.concat([Buffer.from(upgradeRequest), frame("with the upgrade")]));`,
+    ],
+    [
+      "the Bun.serve fetch handler",
+      `const server = Bun.serve({
+        port: 0,
+        hostname: localhost,
+        routes: { "/first": () => (spin(), new Response("ok")) },
+        fetch: entered.resolve,
+      });
+      (await connect(server.port)).write(${twoRequests});`,
+    ],
+  ];
+
+  async function outputOf(source: string) {
+    using dir = tempDir("vm-timeout-in-a-nested-wait", { "entry.js": "export default 1;", "fixture.cjs": source });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.cjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode, signalCode: proc.signalCode };
+  }
+
+  test.concurrent.each(rows)("does not enter %s", async (_name, body) => {
+    expect(await outputOf(fixture("timeout", body))).toEqual({
+      stdout: "threw ERR_SCRIPT_EXECUTION_TIMEOUT []\n",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
+  test.concurrent.each(hostFunctionRows)("does not enter %s that is a host function", async (_name, body) => {
+    const source = `
+      const entered = Promise.withResolvers();
+      ${body}
+      console.log(interrupted() + ", and the promise of the handler is " + Bun.peek.status(entered.promise));
+      process.exit(0);`;
+    expect(await outputOf(fixture("timeout", source))).toEqual({
+      stdout: "threw ERR_SCRIPT_EXECUTION_TIMEOUT, and the promise of the handler is pending\n",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
+  // The callback interrupts the run itself in the tests below, so no deadline decides where the interrupt lands.
+
+  // The dispatcher of the client's handlers clears what a handler throws, the termination too. The wait still ends
+  // there. One more turn of the loop would read the frame that the callback sent, with nothing to call for it.
+  test.concurrent.skipIf(isWindows)(
+    "takes no other turn of the loop after a dispatcher cleared the exception",
+    async () => {
+      const body = `
+      const accepted = Promise.withResolvers();
+      const delivered = Promise.withResolvers();
+      const message = (ws, data) => {
+        ran.push("the server got: " + data);
+        if (data === "after the run") delivered.resolve();
+      };
+      const server = ${websocketServer("{ open: accepted.resolve, message }")};
+      const client = new (require("ws"))("ws://" + localhost + ":" + server.port);
+      client.on("message", () => {
+        client.send("during the callback");
+        spin();
+      });
+      await new Promise(resolve => client.on("open", resolve));
+      (await accepted.promise).send("go");
+      ran.push("the run ended: " + interrupted());
+      client.send("after the run");
+      await delivered.promise;
+      console.log(ran.join("\\n"));
+      process.exit(0);`;
+      expect(await outputOf(fixture("breakOnSigint", body))).toEqual({
+        stdout: [
+          "spinning",
+          "the run ended: threw ERR_SCRIPT_EXECUTION_INTERRUPTED",
+          "the server got: during the callback",
+          "the server got: after the run",
+          "",
+        ].join("\n"),
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+    },
+  );
+
+  // The interrupt lands in a job that the loop runs before it waits for events. The wait ends there. If it went on
+  // to wait, it would take the timer that is due, with nothing to call for it.
+  test.concurrent.skipIf(isWindows).each(["queueMicrotask", "process.nextTick"])(
+    "does not wait for events after the interrupt landed in a %s() job",
+    async queue => {
+      const body = `
+      setTimeout(() => ran.push("the timer"), 1);
+      ${queue}(spin);
+      ran.push("the run ended: " + interrupted());
+      await new Promise(resolve => setTimeout(resolve, 1));
+      console.log(ran.join("\\n"));
+      process.exit(0);`;
+      expect(await outputOf(fixture("breakOnSigint", body))).toEqual({
+        stdout: ["spinning", "the run ended: threw ERR_SCRIPT_EXECUTION_INTERRUPTED", "the timer", ""].join("\n"),
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+    },
+  );
+
+  // The callback that was not entered is not called later: the frame is consumed. What arrives after the run is
+  // delivered.
+  test.concurrent.skipIf(isWindows)("enters the callbacks of the turns after the run", async () => {
+    const body = `
+      const third = Promise.withResolvers();
+      const message = (ws, data) => {
+        if (data === "first") return spin();
+        ran.push("message " + data);
+        if (data === "third") third.resolve();
+      };
+      const server = ${websocketServer("{ message }")};
+      const client = await webSocket(server.port);
+      client.write(Buffer.concat([frame("first"), frame("second")]));
+      const outcome = interrupted();
+      client.write(frame("third"));
+      await third.promise;
+      console.log(outcome + " " + enteredAfterwards());
+      process.exit(0);`;
+    expect(await outputOf(fixture("breakOnSigint", body))).toEqual({
+      stdout: 'threw ERR_SCRIPT_EXECUTION_INTERRUPTED ["message third"]\n',
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
+  // The dispatcher of the port clears the termination of the listener that the interrupt cut, and the drain of the
+  // port goes on: its entries are made. A drain that ends there with its flag set never runs again. The other port
+  // is in use until the end, because a port that is collected delivers what is queued.
+  test.concurrent.skipIf(isWindows)("a MessagePort delivers what is posted after the run", async () => {
+    const body = `
+      const { port1, port2 } = new MessageChannel();
+      const delivered = Promise.withResolvers();
+      port1.onmessage = ({ data }) => {
+        if (data === "first") return spin();
+        ran.push("message " + data);
+        if (data === "after the run") delivered.resolve();
+      };
+      port2.postMessage("first");
+      const outcome = interrupted();
+      port2.postMessage("after the run");
+      await delivered.promise;
+      port2.close();
+      console.log(outcome + " " + enteredAfterwards());
+      process.exit(0);`;
+    expect(await outputOf(fixture("breakOnSigint", body))).toEqual({
+      stdout: 'threw ERR_SCRIPT_EXECUTION_INTERRUPTED ["message after the run"]\n',
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
+  // The timeout lands in a listener of dispatchEvent(), whose dispatcher clears it. The script then reads
+  // process.stdout for the first time. JSC makes that object inside a scope that defers the termination until the
+  // scope ends, and the constructor that it calls waits for a plugin. That wait does not end for the termination.
+  test.concurrent("waits on inside a scope that defers the termination", async () => {
+    const body = `
+      const fs = require("node:fs");
+      const WriteStream = fs.WriteStream;
+      fs.WriteStream = function (...args) {
+        Bun.build({
+          entrypoints: [require("node:path").join(__dirname, "entry.js")],
+          plugins: [{ name: "ready soon", setup: () => new Promise(resolve => setTimeout(resolve, 100)) }],
+        });
+        ran.push("the wait ended with the plugin");
+        return new WriteStream(...args);
+      };
+      const target = new EventTarget();
+      target.addEventListener("event", spin);
+      let outcome = "returned";
+      try {
+        vm.runInNewContext("target.dispatchEvent(new Event('event')); process.stdout;", { target, Event, process }, { timeout: 500 });
+      } catch (e) {
+        outcome = "threw " + e.code;
+      }
+      console.log(outcome + " " + enteredAfterwards() + " " + typeof process.stdout);
+      process.exit(0);`;
+    expect(await outputOf(fixture("timeout", body))).toEqual({
+      stdout: 'threw ERR_SCRIPT_EXECUTION_TIMEOUT ["the wait ended with the plugin"] object\n',
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+});
+
 test("SourceTextModule applies lineOffset and columnOffset to reported positions the way Script does", async () => {
   const options = { lineOffset: 5, columnOffset: 10 };
   const position = (error: unknown) =>

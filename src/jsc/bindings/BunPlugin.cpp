@@ -8446,7 +8446,7 @@ EncodedJSValue BunPlugin::OnResolve::run(JSC::JSGlobalObject* globalObject, cons
         return {};
     }
 #if ENABLE(AOT)
-    if (vm.hasCompiledCode() && vm.disallowVMEntryCount) [[unlikely]]
+    if (vm.hasCompiledCode() && (vm.disallowVMEntryCount & ~JSC::VM::thrownTerminationFlag)) [[unlikely]]
         return JSValue::encode(jsUndefined());
 #endif
 

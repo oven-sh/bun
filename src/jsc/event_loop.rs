@@ -1126,9 +1126,10 @@ impl EventLoop {
     /// Ticks until `promise` settles. `Err` when it returns with the promise
     /// still pending because the VM can no longer run the script that would
     /// settle it (execution forbidden, or a stop was requested: a worker being
-    /// terminated mid-wait), or because a termination is pending beneath this wait
-    /// (a nested wait under a `node:vm` run whose deadline fired: it must unwind to
-    /// that run, not tick on over it). Nothing is thrown for it; a caller inside a
+    /// terminated mid-wait), or because a termination has the script beneath this wait
+    /// to unwind (a nested wait under a `node:vm` run whose deadline fired: it must
+    /// unwind to that run, not tick on over it, also when a dispatcher of this turn
+    /// cleared the exception). Nothing is thrown for it; a caller inside a
     /// `JsResult` function crosses explicitly with [`jsc::Stopped::throw`] (which, with
     /// the termination already pending, is just `Thrown`).
     pub fn wait_for_promise(&self, promise: jsc::AnyPromise) -> Result<(), jsc::Stopped> {
@@ -1139,12 +1140,15 @@ impl EventLoop {
         while promise.status() == PromiseStatus::Pending {
             if jsc_vm.execution_forbidden()
                 || !self.vm_ref().script_allowed()
-                || self.global_ref().has_pending_termination_exception()
+                || self.global_ref().has_termination_to_unwind()
             {
                 return Err(jsc::Stopped);
             }
             self.tick();
-            if promise.status() == PromiseStatus::Pending {
+            // A termination that landed in this tick ends the wait before it sleeps for an event that it could not call anything for.
+            if promise.status() == PromiseStatus::Pending
+                && !self.global_ref().has_termination_to_unwind()
+            {
                 self.auto_tick();
             }
         }

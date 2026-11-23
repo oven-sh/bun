@@ -939,6 +939,13 @@ impl JSGlobalObject {
         crate::cpp::JSC__JSGlobalObject__hasPendingTerminationException(self)
     }
 
+    /// A termination has script to unwind: its exception is pending, or a frame beneath that script cleared the
+    /// exception and the request is not withdrawn. For a loop that would go on driving the VM.
+    #[inline]
+    pub fn has_termination_to_unwind(&self) -> bool {
+        crate::cpp::JSC__JSGlobalObject__hasTerminationToUnwind(self)
+    }
+
     pub fn clear_exception(&self) {
         JSGlobalObject__clearException(self)
     }

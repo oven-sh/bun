@@ -5788,6 +5788,15 @@ bool JSC__JSGlobalObject__hasPendingTerminationException(JSC::JSGlobalObject* gl
     return JSC::getVM(globalObject).hasPendingTerminationException();
 }
 
+// A termination has script to unwind: its exception is pending, or a frame beneath that script cleared the exception
+// and the request is not withdrawn. Inside a DeferTermination scope the request waits for the end of the scope.
+[[ZIG_EXPORT(nothrow)]]
+bool JSC__JSGlobalObject__hasTerminationToUnwind(JSC::JSGlobalObject* globalObject)
+{
+    auto& vm = JSC::getVM(globalObject);
+    return vm.hasPendingTerminationException() || (vm.hasTerminationRequest() && vm.isEntered() && !vm.traps().isDeferringTermination());
+}
+
 // These may be called concurrently from another thread — or from the VM's own thread inside a host call,
 // API lock held: VMTraps::fireTrap is CONCURRENT_SAFE and needs no lock either way (releasing the API lock
 // here would run JSLock's microtask checkpoint mid-host-call).

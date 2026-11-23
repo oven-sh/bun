@@ -436,7 +436,7 @@ describe("mock()", () => {
       fn.mockImplementation(function () {
         throw message;
       });
-      expect(() => vm.runInNewContext(source, { fn })).toThrow();
+      expect(() => vm.runInNewContext(source, { fn })).toThrow(message);
       expect(fn.mock.results).toEqual([incomplete, { type: "throw", value: message }]);
     });
 

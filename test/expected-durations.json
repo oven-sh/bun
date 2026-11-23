@@ -16,6 +16,10 @@
       "windows-aarch64": "windows-aarch64-11-test-bun"
     }
   },
+  "aot/the-idle-gc-timer-collects-in-an-executable-only-what-was-allocated.test.ts": {
+    "default": 4500,
+    "asan": 18000
+  },
   "aot/the-console-and-the-loader-of-an-executable-publish-to-no-diagnostics-channel.test.ts": {
     "default": 3000,
     "asan": 12000

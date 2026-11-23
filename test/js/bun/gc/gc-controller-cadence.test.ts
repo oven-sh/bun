@@ -236,8 +236,11 @@ describe("the tick of the idle GC timer", () => {
 
   // A full collection can free what was allocated before the last collection, and it ages out code that no longer
   // runs. So JSC turns no tick down where the tick's collection is a full one, and such a program keeps the
-  // collections it had. With 13 MB alive a full collection ends at the tick after its own, so every second tick
-  // gets one. If the tick itself ended the collection that is under way, every tick would get one.
+  // collections it had. With 13 MB alive a full collection ends when the event loop next parks, which is after the
+  // next tick, so every second tick gets one. If the loop turns between two ticks, the collection ends there and the
+  // next tick asks again. On Windows the loop can turn once more just before a tick fires (the timer that wakes it
+  // counts whole milliseconds), and CI counted 16 collections in 20 ticks there. So the upper bound is for the other
+  // platforms.
   const fullOnly: [string, Record<string, string>][] = [
     ["without the JIT", { BUN_JSC_useJIT: "0" }],
     ["without the generational collector", { BUN_JSC_useGenerationalGC: "0" }],
@@ -253,7 +256,44 @@ describe("the tick of the idle GC timer", () => {
     const { collections, stderr } = await collectionsBetweenMarks(liveBetweenMarks, extraEnv);
     expect(collections, stderr).not.toContain("=> EdenCollection");
     expect(collections.length, stderr).toBeGreaterThanOrEqual(5);
-    expect(collections.length, stderr).toBeLessThanOrEqual(13);
+    if (!isWindows) expect(collections.length, stderr).toBeLessThanOrEqual(13);
+  });
+
+  // The tick is not what ends a collection under way: a hint that did so would ask for the next one in the same
+  // call, and every tick would get a collection. Here 100,000 hints come in one turn of JavaScript, without the JIT,
+  // so nothing else reaches a safepoint. The first hint asks, and the others find its request queued and leave it.
+  // If one of them ran the collection, the dropped object would be gone.
+  test.concurrent("a hint does not run the collection that is queued", async () => {
+    const script = `
+      const { jscInternals } = require("bun:internal-for-testing");
+      const { fullGC } = require("bun:jsc");
+      const hint = () => jscInternals.collectAsyncIfNecessary();
+      // No local variable ever holds the object.
+      globalThis.dropped = { a: 1 };
+      const weak = new WeakRef(globalThis.dropped);
+      // Bun collects once when the entry module has run, so the rest runs from a timer.
+      setTimeout(() => {
+        hint();
+        fullGC();
+        globalThis.dropped = null;
+        let answeredYes = 0;
+        for (let i = 0; i < 100000; i++) if (hint()) answeredYes++;
+        // Read before anything is allocated: an allocation is a safepoint too.
+        const collected = weak.deref() === undefined;
+        console.log(JSON.stringify({ answeredYes, collected }));
+      }, 10);
+    `;
+    using dir = tempDir("gc-hint-queued", { "queued.js": script });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "queued.js"],
+      env: { ...env, BUN_GC_TIMER_DISABLE: "1", BUN_JSC_useJIT: "0" },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim() === "" ? stderr : JSON.parse(stdout)).toEqual({ answeredYes: 100000, collected: false });
+    expect(exitCode).toBe(0);
   });
 
   // After an eden collection that leaves little room, JSC makes the next collection a full one, and nothing but the

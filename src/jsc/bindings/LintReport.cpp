@@ -1046,8 +1046,7 @@ JSArray* createPair(JSGlobalObject* globalObject, JSValue value)
     return pair;
 }
 
-// ESLint 10 refuses a text that isn't a string. Earlier versions add it to a string when they merge or apply the fix, and
-// oxlint has `String(text)`.
+// ESLint 10 refuses a text that isn't a string. ESLint 8 and 9 and oxlint make it a string.
 bool checkText(JSGlobalObject* globalObject, ThrowScope& scope, FixKind kind, JSValue& text)
 {
     if (kind == FixKind::Remove || text.isString()) [[likely]]

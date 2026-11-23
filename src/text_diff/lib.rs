@@ -18,6 +18,7 @@
 // licensed under the Apache License, Version 2.0.
 
 mod bit_rows;
+mod lines;
 pub mod patch;
 pub mod tokens;
 
@@ -945,6 +946,13 @@ impl<'a> Interner<'a> {
         })
     }
 
+    /// The next id, for a line that is new and that the caller finds again by itself.
+    #[inline]
+    fn push_new(&mut self, line: &'a [u8]) -> u32 {
+        self.lines.push(line);
+        self.lines.len() as u32 - 1
+    }
+
     #[cold]
     fn grow(&mut self) {
         let mut grown = Self::with_capacity(self.lines.len() * 2);
@@ -1120,8 +1128,8 @@ fn diff_shared_tokens(
     }
     let mut changed = vec![false; na + nb];
     let (changed_a, changed_b) = changed.split_at_mut(na);
-    let ra = shared_tokens(ta, &occurs, changed_a);
-    let rb = shared_tokens(tb, &occurs, changed_b);
+    let ra = without_unshared(ta, changed_a, &occurs, 1);
+    let rb = without_unshared(tb, changed_b, &occurs, 0);
     drop(occurs);
 
     // A token that survives does so on both sides.
@@ -1129,9 +1137,14 @@ fn diff_shared_tokens(
         let mut rchanged = vec![false; ra.len() + rb.len()];
         let (rchanged_a, rchanged_b) = rchanged.split_at_mut(ra.len());
         search(&ra, &rb, rchanged_a, rchanged_b);
-        for (changed, rchanged) in [(&mut *changed_a, rchanged_a), (changed_b, rchanged_b)] {
-            let survivors = changed.iter_mut().filter(|changed| !**changed);
-            survivors.zip(rchanged).for_each(|(to, from)| *to = *from);
+        // The tokens that are not marked yet are the ones that were searched, in order.
+        for (changed, rchanged) in [(&mut *changed_a, rchanged_a), (&mut *changed_b, rchanged_b)] {
+            let mut at = 0;
+            for c in changed {
+                let survived = !*c;
+                *c |= rchanged.get(at) == Some(&true);
+                at += usize::from(survived);
+            }
         }
     }
 
@@ -1140,24 +1153,28 @@ fn diff_shared_tokens(
     hunks
 }
 
-/// Marks the tokens that only one side has, and returns the others.
-fn shared_tokens<'a>(
+/// `tokens` without those that do not occur on side `other`, which are marked in `changed`.
+fn without_unshared<'a>(
     tokens: &'a [u32],
-    occurs: &[[bool; 2]],
     changed: &mut [bool],
+    occurs: &[[bool; 2]],
+    other: usize,
 ) -> Cow<'a, [u32]> {
-    let mut shared = 0;
+    let mut kept = 0;
     for (&t, changed) in tokens.iter().zip(&mut *changed) {
-        *changed = occurs[t as usize] != [true; 2];
-        shared += usize::from(!*changed);
+        *changed = !occurs[t as usize][other];
+        kept += usize::from(!*changed);
     }
-    if shared == tokens.len() {
+    if kept == tokens.len() {
         return Cow::Borrowed(tokens);
     }
-    let mut survivors = Vec::with_capacity(shared);
-    let pairs = tokens.iter().zip(&*changed);
-    survivors.extend(pairs.filter_map(|(&t, &changed)| (!changed).then_some(t)));
-    Cow::Owned(survivors)
+    let (mut rest, mut len) = (vec![0; kept], 0);
+    for (&t, &changed) in tokens.iter().zip(&*changed) {
+        let Some(slot) = rest.get_mut(len) else { break };
+        *slot = t;
+        len += usize::from(!changed);
+    }
+    Cow::Owned(rest)
 }
 
 fn search_bounded(a: &[u32], b: &[u32], changed_a: &mut [bool], changed_b: &mut [bool]) {

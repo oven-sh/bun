@@ -22,6 +22,10 @@ export const PatchOptions = b.dictionary(
 );
 
 export const Change = b.dictionary({ value: b.string, added: b.bool, removed: b.bool, count: b.usize });
+export const ArrayChange = b.dictionary(
+  { value: b.jsArray, added: b.bool, removed: b.bool, count: b.usize },
+  { toJS: true },
+);
 export const Hunk = b.dictionary({
   oldStart: b.usize,
   oldLines: b.usize,

@@ -10,7 +10,7 @@ use hashbrown::{HashTable, hash_table};
 
 use crate::client::{Client, Outcome, Purpose, Step};
 use crate::message::{self, Message, Question, Received};
-use crate::servers::{Server, ServerId};
+use crate::servers::{Server, ServerId, ServerSet};
 use crate::system::{Events, Socket, SocketError, SocketId, System, Transport};
 use crate::{Error, HashMap};
 
@@ -49,6 +49,8 @@ pub(crate) struct Query<R> {
     transport: Transport,
     failed_tries: usize,
     failures_since_timeout: usize,
+    /// Since then. A socket that fails counts once for all its tries, unlike a timeout.
+    avoided: ServerSet,
     last_error: Error,
 }
 
@@ -77,6 +79,8 @@ struct Connection<T> {
     server: ServerId,
     peer: SocketAddr,
     is_connecting: bool,
+    /// It follows one that failed, and has had no reply.
+    is_second_chance: bool,
     /// `None` until it is watched.
     watches_writable: Option<bool>,
     tries: HashMap<MessageId, Try>,
@@ -123,6 +127,7 @@ impl<T: Socket> Connection<T> {
         let socket = system.connect(transport, peer, local)?;
         Some(Self {
             is_connecting: socket.is_connecting(),
+            is_second_chance: server.last_error == Some(Error::ECONNREFUSED),
             socket,
             transport,
             server: server.id,
@@ -265,34 +270,36 @@ impl<S: System, R> Client<S, R> {
                 transport: self.config.transport,
                 failed_tries: 0,
                 failures_since_timeout: 0,
+                avoided: ServerSet::default(),
                 last_error: Error::ETIMEOUT,
             }),
         };
         if self.servers.any_failed() && self.system.random().is_multiple_of(PROBE_ODDS) {
-            self.probe(&question);
+            self.probe(&question, self.config.transport);
         }
         self.send(question, None);
     }
 
-    fn probe(&mut self, question: &Question) {
+    fn probe(&mut self, question: &Question, transport: Transport) {
         let server = self.servers.next_to_probe(self.now);
-        let probe = server.map(|server| Step::Send(question.detached(), Some(server)));
+        let probe = server.map(|it| Step::Send(question.detached(), Some((it, transport))));
         self.steps.extend(probe);
     }
 
-    /// To the best server, unless there is one to probe.
-    pub(crate) fn send(&mut self, question: Question, probed: Option<ServerId>) {
-        let (transport, failed_tries) = match (find(&mut self.queries, &question), probed) {
-            (Some(query), _) => (query.transport, query.failed_tries),
-            (None, Some(_)) => (self.config.transport, 0),
+    pub(crate) fn send(&mut self, question: Question, probed: Option<(ServerId, Transport)>) {
+        let count = self.servers.len();
+        let query = find(&mut self.queries, &question);
+        let (server, transport, failed_tries) = match (query, probed) {
+            (Some(query), _) => {
+                let random = self.config.rotate.then(|| self.system.random());
+                let out_of_turn = query.last_error == Error::ECONNREFUSED;
+                let server = self.servers.choose(random, &mut query.avoided, out_of_turn);
+                (server, query.transport, query.failed_tries)
+            }
+            (None, Some((server, transport))) => (self.servers.get(server), transport, 0),
             (None, None) => return,
         };
-        let rounds = failed_tries / self.servers.len().max(1);
-        let server = match probed {
-            Some(server) => self.servers.get(server),
-            None if self.config.rotate => self.servers.one_of_the_best(self.system.random()),
-            None => self.servers.best(),
-        };
+        let rounds = failed_tries / count.max(1);
         let Some(server) = server else {
             let end = Step::End(question, Err(Error::ENOSERVER));
             return self.steps.push_back(end);
@@ -326,8 +333,8 @@ impl<S: System, R> Client<S, R> {
                     }
                     (None, _) => {
                         let server = server.id;
-                        self.servers.failed(server, self.now);
-                        return self.retry_later(question, Error::ECONNREFUSED);
+                        self.servers.failed(server, Error::ECONNREFUSED, self.now);
+                        return self.retry_later(question, None, Error::ECONNREFUSED);
                     }
                 }
             }
@@ -344,8 +351,8 @@ impl<S: System, R> Client<S, R> {
         let number = self.connections.last_try;
         if connection.write(&question, id, number).is_err() {
             let connection = entry.remove();
-            self.fail(connection);
-            return self.retry_later(question, Error::ECONNREFUSED);
+            let avoided = self.fail(connection);
+            return self.retry_later(question, avoided, Error::ECONNREFUSED);
         }
         connection.room = connection.room.saturating_sub(1);
         *server.socket(transport) = Some(socket);
@@ -383,7 +390,12 @@ impl<S: System, R> Client<S, R> {
         }
     }
 
-    fn retry_later(&mut self, question: Question, error: Error) {
+    fn retry_later(&mut self, question: Question, avoided: Option<ServerId>, error: Error) {
+        if let Some(server) = avoided.and_then(|server| self.servers.get(server))
+            && let Some(query) = find(&mut self.queries, &question)
+        {
+            query.avoided.insert(server);
+        }
         self.steps.push_back(Step::Retry(question, Some(error)));
     }
 
@@ -394,9 +406,9 @@ impl<S: System, R> Client<S, R> {
         let error = error.unwrap_or(query.last_error);
         query.last_error = error;
         query.failed_tries += 1;
-        query.failures_since_timeout = match error {
-            Error::ETIMEOUT => 0,
-            _ => query.failures_since_timeout + 1,
+        (query.failures_since_timeout, query.avoided) = match error {
+            Error::ETIMEOUT => Default::default(),
+            _ => (query.failures_since_timeout + 1, query.avoided),
         };
         let have_enough = query.waiting.extract_if(
             ..,
@@ -409,7 +421,8 @@ impl<S: System, R> Client<S, R> {
             && query.failures_since_timeout < self.servers.len() * MAX_FAILURES_BEFORE_TIMEOUT
         {
             if self.servers.all_failed() {
-                self.probe(&question);
+                let transport = query.transport;
+                self.probe(&question, transport);
             }
             self.send(question, None);
         } else {
@@ -417,14 +430,20 @@ impl<S: System, R> Client<S, R> {
         }
     }
 
-    fn fail(&mut self, connection: Connection<S::Socket>) {
-        self.servers.failed(connection.server, self.now);
+    /// Returns the server to avoid.
+    fn fail(&mut self, connection: Connection<S::Socket>) -> Option<ServerId> {
+        (self.servers).failed(connection.server, Error::ECONNREFUSED, self.now);
+        let avoided = connection.is_second_chance.then_some(connection.server);
         for it in self.connections.close([connection]) {
-            self.retry_later(it.question, Error::ECONNREFUSED);
+            self.retry_later(it.question, avoided, Error::ECONNREFUSED);
         }
+        avoided
     }
 
     pub(crate) fn leave_removed_servers(&mut self) {
+        for query in &mut self.queries {
+            query.avoided = ServerSet::default();
+        }
         let open = &mut self.connections.open;
         let left = open.extract_if(|_, connection| self.servers.get(connection.server).is_none());
         let left: Vec<_> = left.map(|(_, connection)| connection).collect();
@@ -473,7 +492,7 @@ impl<S: System, R> Client<S, R> {
             let entry = self.connections.open.entry(socket);
             entry.and_modify(|connection| {
                 connection.unsent.remove(&number);
-                self.servers.failed(connection.server, self.now);
+                (self.servers).failed(connection.server, Error::ETIMEOUT, self.now);
                 let late = connection.tries.remove(&id);
                 // A renewal outlasts what was sent before it.
                 if late.iter().any(|it| it.sent >= connection.opened) {
@@ -495,9 +514,8 @@ impl<S: System, R> Client<S, R> {
             || (events.writable && connection.flush().is_err())
             || (events.failed && !connection.tries.is_empty())
         {
-            return self.fail(connection);
-        }
-        if !events.failed {
+            self.fail(connection);
+        } else if !events.failed {
             self.connections.idle.push(socket);
             self.connections.open.insert(socket, connection);
         }
@@ -554,6 +572,7 @@ impl<S: System, R> Client<S, R> {
             sent,
             deadline,
         } = entry.remove();
+        connection.is_second_chance &= matches!(received, Received::Malformed);
         connection.unsent.remove(&deadline.1);
         self.connections.deadlines.remove(&deadline);
         match received {
@@ -569,8 +588,8 @@ impl<S: System, R> Client<S, R> {
                 self.steps.push_back(Step::Send(question, None));
             }
             Received::Malformed => {
-                self.servers.failed(connection.server, self.now);
-                self.retry_later(question, Error::EBADRESP);
+                (self.servers).failed(connection.server, Error::EBADRESP, self.now);
+                self.retry_later(question, Some(connection.server), Error::EBADRESP);
             }
         }
         true

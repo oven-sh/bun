@@ -6,6 +6,7 @@ use std::collections::VecDeque;
 
 use bun_collections::index_sort;
 
+use crate::Error;
 use crate::system::{SocketId, Transport};
 
 const MAX_FAILURES: u8 = 16;
@@ -14,6 +15,20 @@ const RETRY_DELAY: Duration = Duration::from_secs(5);
 /// Stays with a server for as long as it is in the list.
 pub(crate) type ServerId = u64;
 
+/// By position. Those that are 64 apart count as one.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct ServerSet(u64);
+
+impl ServerSet {
+    fn contains(self, server: &Server) -> bool {
+        self.0 >> (server.position % 64) & 1 == 1
+    }
+
+    pub(crate) fn insert(&mut self, server: &Server) {
+        self.0 |= 1 << (server.position % 64);
+    }
+}
+
 pub(crate) struct Server {
     pub(crate) id: ServerId,
     pub(crate) address: SocketAddr,
@@ -21,6 +36,12 @@ pub(crate) struct Server {
     position: usize,
     /// In a row.
     failures: u8,
+    /// Numbered across the servers, as many happen at the same time.
+    last_failure: u64,
+    /// Of that one.
+    pub(crate) last_error: Option<Error>,
+    /// From the first failure to the last, without most of the time in which it was not asked.
+    outage: Duration,
     retry_at: Duration,
     /// The last probe is over by then.
     probe_at: Duration,
@@ -31,8 +52,8 @@ pub(crate) struct Server {
 
 impl Server {
     /// Lower is better.
-    fn rank(&self) -> (u8, Duration, usize) {
-        (self.failures, self.retry_at, self.position)
+    fn rank(&self) -> (u8, u64, usize) {
+        (self.failures, self.last_failure, self.position)
     }
 
     /// The one that took the last query. It may have been closed since.
@@ -49,6 +70,9 @@ impl Server {
 pub(crate) struct Servers {
     list: VecDeque<Server>,
     last_id: ServerId,
+    last_failure: u64,
+    /// There is none to probe until then.
+    probe_at: Duration,
 }
 
 impl Servers {
@@ -83,6 +107,9 @@ impl Servers {
                     address,
                     position,
                     failures: 0,
+                    last_failure: 0,
+                    last_error: None,
+                    outage: Duration::ZERO,
                     retry_at: Duration::ZERO,
                     probe_at: Duration::ZERO,
                     udp: None,
@@ -95,14 +122,33 @@ impl Servers {
         index_sort::sort_slice_unstable_by_key(self.list.make_contiguous(), Server::rank);
     }
 
-    pub(crate) fn best(&mut self) -> Option<&mut Server> {
-        self.list.front_mut()
-    }
-
-    pub(crate) fn one_of_the_best(&mut self, random: u16) -> Option<&mut Server> {
-        let fewest = self.list.front().map(|server| server.failures);
-        let count = self.list.partition_point(|it| Some(it.failures) == fewest);
-        self.list.get_mut(usize::from(random).checked_rem(count)?)
+    /// The best, or with `random` one of the best. One that is `avoided` gives way to one that works
+    /// or has timed out as often or, `out_of_turn`, not for much longer. Otherwise all are forgiven.
+    pub(crate) fn choose(
+        &mut self,
+        random: Option<u16>,
+        avoided: &mut ServerSet,
+        out_of_turn: bool,
+    ) -> Option<&mut Server> {
+        let fewest = self.list.front()?.failures;
+        let mut index = random.map_or(0, |random| {
+            usize::from(random) % self.list.partition_point(|it| it.failures == fewest)
+        });
+        if let Some(best) = self.list.get(index).filter(|it| avoided.contains(it)) {
+            let longest = best.outage + RETRY_DELAY;
+            let will_do = |it: &Server| match it.last_error {
+                Some(Error::ETIMEOUT) => {
+                    it.failures == fewest || (out_of_turn && it.outage <= longest)
+                }
+                error => error.is_none(),
+            };
+            let mut others = self.list.iter();
+            match others.position(|it| !avoided.contains(it) && will_do(it)) {
+                Some(other) => index = other,
+                None => *avoided = ServerSet::default(),
+            }
+        }
+        self.list.get_mut(index)
     }
 
     pub(crate) fn any_failed(&self) -> bool {
@@ -115,16 +161,29 @@ impl Servers {
 
     /// One that may have come back, other than the best.
     pub(crate) fn next_to_probe(&mut self, now: Duration) -> Option<ServerId> {
+        if now < self.probe_at {
+            return None;
+        }
+        let due = |it: &Server| (it.failures > 0).then(|| it.retry_at.max(it.probe_at));
+        self.probe_at = self.list.iter().filter_map(due).min().unwrap_or_default();
         let mut others = self.list.iter_mut().skip(1);
-        let server = others.find(|it| it.failures > 0 && it.retry_at.max(it.probe_at) <= now)?;
+        let server = others.find(|it| due(it).is_some_and(|due| due <= now))?;
         server.probe_at = now.saturating_add(RETRY_DELAY);
         Some(server.id)
     }
 
-    pub(crate) fn failed(&mut self, id: ServerId, now: Duration) {
+    pub(crate) fn failed(&mut self, id: ServerId, error: Error, now: Duration) {
+        self.last_failure += 1;
+        let number = self.last_failure;
+        let retry_at = now.saturating_add(RETRY_DELAY);
         self.change(id, |server| {
+            if server.failures > 0 {
+                server.outage += RETRY_DELAY.min(retry_at.saturating_sub(server.retry_at));
+            }
             server.failures = MAX_FAILURES.min(server.failures + 1);
-            server.retry_at = now.saturating_add(RETRY_DELAY);
+            server.last_failure = number;
+            server.last_error = Some(error);
+            server.retry_at = retry_at;
         });
     }
 
@@ -132,6 +191,9 @@ impl Servers {
     pub(crate) fn answered(&mut self, id: ServerId, took: Option<Duration>, now: Duration) {
         self.change(id, |server| {
             server.failures = 0;
+            server.last_failure = 0;
+            server.last_error = None;
+            server.outage = Duration::ZERO;
             server.retry_at = Duration::ZERO;
             if let Some(took) = took {
                 server.latency.record(took, now);

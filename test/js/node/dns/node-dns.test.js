@@ -1513,6 +1513,79 @@ describe("resolve record types", () => {
     }
   });
 
+  const manyNames = Array.from({ length: 24 }, (_, i) => `${i}.test`);
+
+  // Nothing is answered until all of them were asked twice.
+  function afterALoss() {
+    const lost = new Set();
+    const replies = new Map();
+    return (query, send) => {
+      const question = query.toString("latin1", 12);
+      if (!lost.has(question)) return lost.add(question);
+      replies.set(question, () => send(respond(query, [])));
+      if (replies.size === manyNames.length) for (const reply of replies.values()) reply();
+    };
+  }
+
+  function resolverFor(...servers) {
+    const resolver = new dns_promises.Resolver({ timeout: 500, tries: 6 });
+    resolver.setServers(servers.map(it => "127.0.0.1:" + it.address().port));
+    return resolver;
+  }
+
+  async function resolveMany(resolver) {
+    expect(await Promise.all(manyNames.map(name => resolver.resolve4(name).catch(err => err.code)))).toEqual(
+      manyNames.map(() => byType.A.expected),
+    );
+  }
+
+  test.concurrent("many lost queries are asked again if the first server takes no datagrams", async () => {
+    const [{ socket: closed }, { socket }] = await Promise.all([startFakeServer(), startFakeServer()]);
+    const answer = afterALoss();
+    socket.removeAllListeners("message");
+    socket.on("message", (query, rinfo) => answer(query, reply => socket.send(reply, rinfo.port, rinfo.address)));
+    try {
+      // It keeps its port, which is closed to all others.
+      closed.connect(socket.address().port, "127.0.0.1");
+      await once(closed, "connect");
+      await resolveMany(resolverFor(closed, socket));
+    } finally {
+      closed.close();
+      socket.close();
+    }
+  });
+
+  test.concurrent("many lost queries are asked again if the first server takes no connections", async () => {
+    const { socket: first } = await startFakeServer();
+    const answer = afterALoss();
+    await using server = net.createServer(socket => {
+      let input = Buffer.alloc(0);
+      socket.on("error", () => {});
+      socket.on("data", chunk => {
+        input = Buffer.concat([input, chunk]);
+        while (input.length >= 2 && input.length >= 2 + input.readUInt16BE(0)) {
+          const end = 2 + input.readUInt16BE(0);
+          answer(input.subarray(2, end), reply => socket.write(Buffer.concat([u16(reply.length), reply])));
+          input = input.subarray(end);
+        }
+      });
+    });
+    try {
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const resolver = resolverFor(first, server);
+      await resolver.resolve4(NAME);
+      first.removeAllListeners("message");
+      first.on("message", (query, rinfo) => {
+        // QR and TC
+        query[2] |= 0x82;
+        first.send(query, rinfo.port, rinfo.address);
+      });
+      await resolveMany(resolver);
+    } finally {
+      first.close();
+    }
+  });
+
   test.concurrent("fast answers do not shorten the timeout that was asked for", async () => {
     const { socket, resolver: other } = await startFakeServer();
     try {

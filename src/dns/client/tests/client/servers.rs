@@ -1,6 +1,6 @@
 use core::time::Duration;
 
-use bun_dns_client::{Family, RecordType};
+use bun_dns_client::{Family, RecordType, SocketError, Transport};
 
 use crate::machine::{NOTHING, Sent, Setup, Test, one_server, resolv_conf, shown, two_servers};
 use crate::wire::*;
@@ -231,6 +231,18 @@ fn servers_at_the_limit_take_turns() {
 }
 
 #[test]
+fn servers_at_the_limit_take_turns_in_no_time() {
+    let mut test = two_servers().start();
+    answer_after(&mut test, 0, NXDOMAIN);
+    (0..20).for_each(|index| drop(test.ask(&format!("{index}.test"))));
+    test.wait(2000);
+    test.sent();
+    test.world().unreachable = test.client.servers().skip(1).collect();
+    assert_eq!(test.wait(2000), NOTHING);
+    assert_eq!(test.sent().len(), 20);
+}
+
+#[test]
 fn failures_are_counted_up_to_a_limit() {
     for (first, second, best) in [
         (1, 1, FIRST),
@@ -254,6 +266,368 @@ fn failures_are_counted_up_to_a_limit() {
         test.set_servers(&[SECOND, FIRST]);
         assert_eq!(test.servers()[0], best);
     }
+}
+
+/// What timed out at the first of `servers` has been sent to the second.
+fn after_many_timeouts(options: &str, servers: &[&str]) -> (Test, Vec<Sent>) {
+    let mut test = resolv_conf(format!("options {options}")).start();
+    test.set_servers(&servers[..1]);
+    (0..20).for_each(|index| drop(test.ask(&format!("{index}.test"))));
+    test.set_servers(servers);
+    test.wait(2000);
+    let sent = test.sent();
+    assert_eq!(test.server_of(&sent[0]), servers[1]);
+    (test, sent)
+}
+
+/// Returns the server that got all of `sent` once more.
+fn sent_again(test: &Test, sent: &mut Vec<Sent>) -> String {
+    let again = test.sent();
+    assert_eq!(again.len(), sent.len());
+    assert!(again.iter().all(|it| it.socket == again[0].socket));
+    *sent = again;
+    test.server_of(&sent[0])
+}
+
+fn break_socket_of(test: &mut Test, sent: &mut Vec<Sent>) -> String {
+    test.break_socket(sent[0].socket);
+    assert_eq!(test.process(sent[0].socket, true, false), NOTHING);
+    sent_again(test, sent)
+}
+
+#[test]
+fn second_failure_of_a_socket_leads_to_another_server() {
+    let ways: [&dyn Fn(&mut Test, &Sent) -> Vec<String>; 2] =
+        [&|test, sent| test.process_error(sent.socket), &|test, _| {
+            let results = [Err(SocketError::Failed)];
+            test.world().send_results.extend(results);
+            test.resolve(RecordType::A, "a.test")
+        }];
+    for options in ["", "use-vc", "rotate"] {
+        for (way, count) in ways.iter().zip([20, 21]) {
+            let (mut test, mut sent) = after_many_timeouts(options, &[FIRST, SECOND]);
+            assert_eq!(break_socket_of(&mut test, &mut sent), SECOND);
+            assert_eq!(way(&mut test, &sent[0]), NOTHING);
+            let again = test.sent();
+            assert_eq!(again.len(), count);
+            assert!(again.iter().all(|it| test.server_of(it) == FIRST));
+            assert_eq!(test.servers(), [SECOND, FIRST]);
+        }
+    }
+}
+
+#[test]
+fn sockets_that_fail_together() {
+    let mut test = two_servers().start();
+    (0..130).for_each(|index| drop(test.ask(&format!("{index}.test"))));
+    test.wait(2000);
+    let sent = test.sent();
+    for first in sent.iter().step_by(64) {
+        assert_eq!(test.process_error(first.socket), NOTHING);
+        let again = test.sent();
+        assert_eq!(again.len(), 64);
+        assert!(again.iter().all(|it| test.server_of(it) == SECOND));
+    }
+}
+
+#[test]
+fn answers_to_others_give_no_third_chance() {
+    let (mut test, sent) = after_many_timeouts("", &[FIRST, SECOND]);
+    test.decline(&sent[0], TRUNCATED);
+    let mut stream = test.sent();
+    for (other, expected) in sent[1..].iter().zip([SECOND, FIRST]) {
+        test.decline(other, NXDOMAIN);
+        assert_eq!(break_socket_of(&mut test, &mut stream), expected);
+    }
+}
+
+#[test]
+fn servers_take_turns_at_failing_sockets() {
+    let (mut test, mut sent) = after_many_timeouts("", &[FIRST, SECOND, THIRD]);
+    let asked = [(); 7].map(|()| break_socket_of(&mut test, &mut sent));
+    assert_eq!(asked, [THIRD, SECOND, THIRD, FIRST, SECOND, THIRD, SECOND]);
+
+    let servers: Vec<_> = (1..=70).map(|port| format!("10.0.0.1:{port}")).collect();
+    let servers: Vec<_> = servers.iter().map(String::as_str).collect();
+    let (mut test, mut sent) = after_many_timeouts("", &servers);
+    for next in servers[2..].iter().chain(&servers[1..]) {
+        assert_eq!(break_socket_of(&mut test, &mut sent), *next);
+    }
+}
+
+#[test]
+fn timeout_leads_to_the_best() {
+    let (mut test, mut sent) = after_many_timeouts("", &[FIRST, SECOND]);
+    break_socket_of(&mut test, &mut sent);
+    break_socket_of(&mut test, &mut sent);
+    test.wait(4000);
+    assert_eq!(sent_again(&test, &mut sent), SECOND);
+
+    let (mut test, _) = after_many_timeouts("", &[FIRST, SECOND]);
+    test.wait(2000);
+    drop(test.client.cancel());
+    test.sent();
+    let mut sent = vec![test.ask("a.test")];
+    for ms in [2000, 4000] {
+        assert_eq!(break_socket_of(&mut test, &mut sent), SECOND);
+        test.wait(ms);
+        assert_eq!(sent_again(&test, &mut sent), FIRST);
+    }
+}
+
+#[test]
+fn what_does_not_use_up_the_second_chance() {
+    let ways: [&dyn Fn(&mut Test, &mut Vec<Sent>); 3] = [
+        &|test, sent| {
+            (sent[1..].iter()).for_each(|query| drop(test.decline(query, NXDOMAIN)));
+            test.wait(2000);
+        },
+        &|test, sent| drop(test.answer(&sent[0], &[ASKED.to_vec()])),
+        &|test, sent| {
+            break_socket_of(test, sent);
+            test.decline(&sent[0], NXDOMAIN);
+        },
+    ];
+    for way in ways {
+        let (mut test, mut sent) = after_many_timeouts("", &[FIRST, SECOND]);
+        way(&mut test, &mut sent);
+        drop(test.client.cancel());
+        test.sent();
+        let mut sent = vec![test.ask("a.test")];
+        let asked = [(); 2].map(|()| break_socket_of(&mut test, &mut sent));
+        assert_eq!(asked, [SECOND, FIRST]);
+    }
+}
+
+#[test]
+fn best_of_the_others() {
+    let (mut test, mut sent) = after_many_timeouts("", &[FIRST, SECOND, THIRD]);
+    break_socket_of(&mut test, &mut sent);
+    test.wait(2000);
+    drop(test.client.cancel());
+    test.sent();
+    assert_eq!(test.servers(), [SECOND, FIRST, THIRD]);
+    let mut sent = vec![test.ask("a.test")];
+    assert_eq!(break_socket_of(&mut test, &mut sent), FIRST);
+}
+
+#[test]
+fn rotate_after_a_failure_of_a_socket() {
+    let text = "nameserver 10.0.0.1 10.0.0.2 10.0.0.3 10.0.0.4\noptions rotate";
+    let mut test = resolv_conf(text).start();
+    test.world().randoms.push_back(0);
+    let mut sent = vec![test.ask("a.test")];
+    for (random, expected) in [
+        (0, SECOND),
+        (1, "10.0.0.4:53"),
+        (0, THIRD),
+        (2, "10.0.0.4:53"),
+        (1, SECOND),
+    ] {
+        test.world().randoms.push_back(random);
+        assert_eq!(break_socket_of(&mut test, &mut sent), expected);
+    }
+}
+
+#[test]
+fn rotate_at_the_limit() {
+    let ways: [(&dyn Fn(&mut Test, &Sent) -> Vec<String>, &[&str]); 2] = [
+        (
+            &|test, sent| test.process_error(sent.socket),
+            &[FIRST, SECOND],
+        ),
+        (
+            &|test, sent| test.answer(sent, &[ASKED.to_vec()]),
+            &[SECOND],
+        ),
+    ];
+    for (way, expected) in ways {
+        let (mut test, _) = after_many_timeouts("rotate", &[FIRST, SECOND]);
+        test.wait(2000);
+        drop(test.client.cancel());
+        test.sent();
+        test.world().randoms.extend([NO_LUCK, 0]);
+        let mut query = test.ask("a.test");
+        assert_eq!(test.server_of(&query), FIRST);
+        for expected in expected {
+            test.world().randoms.push_back(1);
+            way(&mut test, &query);
+            query = test.sent_one();
+            assert_eq!(test.server_of(&query), *expected);
+        }
+    }
+}
+
+#[test]
+fn no_socket_for_the_best() {
+    let (mut test, _) = after_many_timeouts("", &[FIRST, SECOND]);
+    drop(test.client.cancel());
+    test.world().unreachable = vec![SECOND.parse().unwrap()];
+    assert_eq!(test.resolve(RecordType::A, "a.test"), ["21: ECONNREFUSED"]);
+    test.world().unreachable.clear();
+    let mut sent = vec![test.ask("a.test")];
+    assert_eq!(break_socket_of(&mut test, &mut sent), FIRST);
+}
+
+#[test]
+fn no_socket_for_the_other_server() {
+    let (mut test, mut sent) = after_many_timeouts("", &[FIRST, SECOND]);
+    test.world().unreachable = vec![FIRST.parse().unwrap()];
+    let before = test.world().connect_calls;
+    let asked = [(); 4].map(|()| break_socket_of(&mut test, &mut sent));
+    assert_eq!(asked, [SECOND; 4]);
+    assert_eq!(test.world().connect_calls - before, 5);
+
+    let mut test = two_servers().tries(64).start();
+    test.world().unreachable = vec![SECOND.parse().unwrap()];
+    let ask = |index| test.ask(&format!("{index}.test"));
+    let mut sent: Vec<_> = (0..20).map(ask).collect();
+    (0..30).for_each(|_| drop(break_socket_of(&mut test, &mut sent)));
+    assert_eq!(test.world().connect_calls, 61);
+}
+
+#[test]
+fn end_of_a_connection_that_worked() {
+    for options in ["", "use-vc"] {
+        let (mut test, mut sent) = after_many_timeouts(options, &[FIRST, SECOND]);
+        for _ in 0..3 {
+            test.decline(&sent.remove(0), NXDOMAIN);
+            assert_eq!(break_socket_of(&mut test, &mut sent), SECOND);
+        }
+    }
+
+    let (mut test, mut sent) = after_many_timeouts("", &[FIRST, SECOND]);
+    break_socket_of(&mut test, &mut sent);
+    test.decline(&sent.remove(0), TRUNCATED);
+    test.sent_one();
+    assert_eq!(break_socket_of(&mut test, &mut sent), SECOND);
+
+    let (mut test, mut sent) = after_many_timeouts("use-vc", &[FIRST, SECOND]);
+    for expected in [SECOND, FIRST] {
+        test.answer(&sent[0], &[ASKED.to_vec()]);
+        test.sent_one();
+        assert_eq!(break_socket_of(&mut test, &mut sent), expected);
+    }
+}
+
+#[test]
+fn stream_after_a_failure_of_a_socket() {
+    let mut test = one_server().start();
+    time_out(&mut test, &[5000]);
+    test.set_servers(&[FIRST, SECOND]);
+    let mut sent = vec![test.ask("b.test")];
+    break_socket_of(&mut test, &mut sent);
+    break_socket_of(&mut test, &mut sent);
+    test.world().randoms.push_back(NO_LUCK);
+    answer_after(&mut test, 0, NXDOMAIN);
+    test.decline(&sent[0], TRUNCATED);
+    assert_eq!(test.server_of(&test.sent_one()), FIRST);
+
+    let mut test = one_server().start();
+    let mut sent = vec![test.ask("a.test")];
+    (0..3).for_each(|_| drop(break_socket_of(&mut test, &mut sent)));
+    drop(test.client.cancel());
+    test.ask("b.test");
+    test.set_servers(&[FIRST, SECOND]);
+    let mut sent = vec![test.ask("c.test")];
+    let asked = [(); 2].map(|()| break_socket_of(&mut test, &mut sent));
+    assert_eq!(asked, [SECOND; 2]);
+    test.wait(2000);
+    test.sent_one();
+    test.decline(&sent[0], TRUNCATED);
+    assert_eq!(test.server_of(&test.sent_one()), SECOND);
+}
+
+#[test]
+fn malformed_reply_leads_to_a_server_that_is_as_good() {
+    let mut test = two_servers().start();
+    let [a, b] = ["a.test", "b.test"].map(|name| test.ask(name));
+    test.arrive(a.socket, &reply(&a.bytes, 0, [&[ASKED.to_vec()], &[], &[]]));
+    assert_eq!(test.decline(&b, NXDOMAIN), ["2: ENOTFOUND"]);
+    assert_eq!(test.servers(), [FIRST, SECOND]);
+    assert_eq!(test.server_of(&test.sent_one()), SECOND);
+
+    let (mut test, sent) = after_many_timeouts("", &[FIRST, SECOND]);
+    let mut query = sent[0].clone();
+    for _ in 0..6 {
+        assert_eq!(test.answer(&query, &[ASKED.to_vec()]), NOTHING);
+        query = test.sent_one();
+        assert_eq!(test.server_of(&query), SECOND);
+    }
+    assert_eq!(test.answer(&query, &[ASKED.to_vec()]), ["EBADRESP"]);
+}
+
+/// Some queries to the only server time out, and some more after each pause.
+fn time_out(test: &mut Test, pauses: &[u64]) {
+    for ms in [2000].iter().chain(pauses) {
+        test.wait(ms - 2000);
+        (0..3).for_each(|index| drop(test.ask(&format!("{index}.test"))));
+        test.wait(2000);
+        drop(test.client.cancel());
+        test.sent();
+    }
+}
+
+#[test]
+fn server_that_has_long_been_silent_gets_no_extra_turn() {
+    for (first, second, expected) in [
+        (&[2500, 2500][..], 0, FIRST),
+        (&[2500, 2501], 0, SECOND),
+        (&[3000, 3000], 1000, FIRST),
+        (&[3000, 3001], 1000, SECOND),
+        (&[HOUR * 1000], 0, FIRST),
+        (&[HOUR * 1000, 2000], 0, SECOND),
+    ] {
+        let mut test = one_server().start();
+        time_out(&mut test, first);
+        test.set_servers(&[FIRST, SECOND]);
+        let mut sent = vec![test.ask("b.test")];
+        assert_eq!(break_socket_of(&mut test, &mut sent), SECOND);
+        test.world().now += Duration::from_millis(second);
+        assert_eq!(break_socket_of(&mut test, &mut sent), expected);
+    }
+}
+
+#[test]
+fn server_that_is_not_silent_gets_no_extra_turn() {
+    let ways: [&dyn Fn(&mut Test, &Sent) -> Vec<String>; 2] = [
+        &|test, sent| test.process_error(sent.socket),
+        &|test, sent| test.answer(sent, &[ASKED.to_vec()]),
+    ];
+    for way in ways {
+        let mut test = one_server().start();
+        time_out(&mut test, &[]);
+        let query = test.ask("a.test");
+        way(&mut test, &query);
+        drop(test.client.cancel());
+        test.sent();
+        test.set_servers(&[FIRST, SECOND]);
+        let mut sent = vec![test.ask("b.test")];
+        let asked = [(); 2].map(|()| break_socket_of(&mut test, &mut sent));
+        assert_eq!(asked, [SECOND; 2]);
+    }
+}
+
+#[test]
+fn answer_ends_an_outage() {
+    let mut test = one_server().start();
+    time_out(&mut test, &[4000, 4000]);
+    answer_after(&mut test, 0, NXDOMAIN);
+    time_out(&mut test, &[4000]);
+    test.set_servers(&[FIRST, SECOND]);
+    let mut sent = vec![test.ask("b.test")];
+    let asked = [(); 2].map(|()| break_socket_of(&mut test, &mut sent));
+    assert_eq!(asked, [SECOND, FIRST]);
+}
+
+#[test]
+fn new_list_after_a_failure_of_a_socket() {
+    let (mut test, mut sent) = after_many_timeouts("", &[FIRST, SECOND]);
+    test.set_servers(&[SECOND, FIRST]);
+    break_socket_of(&mut test, &mut sent);
+    break_socket_of(&mut test, &mut sent);
+    assert_eq!(test.set_servers(&[THIRD, "10.0.0.4:53"]), NOTHING);
+    assert_eq!(sent_again(&test, &mut sent), THIRD);
 }
 
 #[test]
@@ -362,9 +736,37 @@ fn probe_next_to_a_retry() {
         [test.server_of(&retry), test.server_of(&probe)],
         [SECOND, FIRST]
     );
+    assert_eq!(test.transport_of(&probe), Transport::Udp);
     assert_eq!(test.decline(&probe, REFUSED), NOTHING);
     test.wait(2000);
     assert_eq!(test.server_of(&test.sent_one()), FIRST);
+}
+
+#[test]
+fn probe_over_a_stream() {
+    let ways: [(&str, &dyn Fn(&mut Test)); 2] = [
+        ("use-vc", &|test| {
+            test.world().randoms.push_back(LUCK);
+            test.resolve(RecordType::A, "a.test");
+        }),
+        ("", &|test| {
+            test.world().randoms.push_back(NO_LUCK);
+            let query = test.ask("a.test");
+            test.decline(&query, TRUNCATED);
+            test.process_error(test.sent_one().socket);
+        }),
+    ];
+    for (options, way) in ways {
+        let (mut test, _) = after_many_timeouts(options, &[FIRST, SECOND]);
+        drop(test.client.cancel());
+        test.wait(5000);
+        way(&mut test);
+        let [query, probe] = test.sent_exactly();
+        assert_eq!(
+            [&query, &probe].map(|it| (test.server_of(it), test.transport_of(it))),
+            [SECOND, FIRST].map(|it| (it.into(), Transport::Tcp))
+        );
+    }
 }
 
 #[test]
@@ -395,6 +797,30 @@ fn ask_with_luck<const N: usize>(test: &mut Test) -> [Sent; N] {
     test.world().randoms.push_back(LUCK);
     test.resolve(RecordType::A, "b.test");
     test.sent_exactly()
+}
+
+#[test]
+fn probe_for_the_first_of_two_that_failed() {
+    let mut test = after_a_failure(1000);
+    test.set_servers(&[FIRST, SECOND, THIRD]);
+    let query = test.ask("c.test");
+    test.process_error(query.socket);
+    test.sent_one();
+    ask_with_luck::<1>(&mut test);
+    drop(test.client.cancel());
+    test.wait(4000);
+    ask_with_luck::<2>(&mut test);
+
+    let mut test = after_a_failure(0);
+    let old = test.ask("c.test");
+    test.wait(1000);
+    let new = test.ask("d.test");
+    test.process_error(old.socket);
+    assert_eq!(test.server_of(&test.sent_one()), FIRST);
+    test.decline(&new, NXDOMAIN);
+    drop(test.client.cancel());
+    test.wait(4000);
+    ask_with_luck::<2>(&mut test);
 }
 
 #[test]

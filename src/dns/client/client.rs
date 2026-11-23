@@ -10,7 +10,7 @@ use crate::hosts::Hosts;
 use crate::lookup::{AddressLookup, NameLookup};
 use crate::message::{Address, Message, Question, RecordType, Records};
 use crate::servers::{ServerId, Servers};
-use crate::system::{Events, SocketId, System};
+use crate::system::{Events, SocketId, System, Transport};
 use crate::transport::{Connections, MIN_TIMEOUT, Queries};
 
 #[derive(Clone, Copy)]
@@ -51,7 +51,7 @@ pub(crate) type Outcome = Result<Message, Error>;
 /// What waits until the sockets and the deadlines have been gone through.
 pub(crate) enum Step<R> {
     /// `Some`: to see whether this one, which failed, is back.
-    Send(Question, Option<ServerId>),
+    Send(Question, Option<(ServerId, Transport)>),
     /// The error is the outcome if there is no try left. `None`: that of the try before.
     Retry(Question, Option<Error>),
     /// For all that wait for the reply.

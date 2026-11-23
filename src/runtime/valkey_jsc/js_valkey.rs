@@ -24,7 +24,9 @@ use super::protocol_jsc::{
 };
 use super::valkey;
 use bun_jsc::url::Parsed;
-use bun_valkey::client::{Acked, Attempt, Client, Close, Config, Event, Lost, Reason, Sent};
+use bun_valkey::client::{
+    Acked, Attempt, Awaited, Client, Close, Config, Event, Lost, Reason, Sent,
+};
 use bun_valkey::command::Reply;
 use bun_valkey::valkey_protocol::{RESPValue, RedisError};
 
@@ -47,6 +49,12 @@ impl<'a> Object<'a> {
 
     fn subscription_count(self) -> u32 {
         self.subscription_callback_map().map_or(0, JSMap::size)
+    }
+
+    fn has_handler(self) -> bool {
+        let this = self.to_js();
+        js::onconnect_get_cached(this).is_some_and(is_handler)
+            || js::onclose_get_cached(this).is_some_and(is_handler)
     }
 
     fn take_connection_promise(self, global: &JSGlobalObject) -> Option<&'a mut JSPromise> {
@@ -661,8 +669,8 @@ impl JSValkeyClient {
     fn claim_for(&self, handler: JSValue, object: Object<'_>) {
         if handler.is_callable() {
             self.client.with_mut(Client::claim);
-            self.update_poll_ref(object);
         }
+        self.update_poll_ref(object);
     }
 
     fn reset_connection_timeout(self: &RefPtr<Self>) {
@@ -1106,10 +1114,14 @@ impl JSValkeyClient {
     /// Keep the event loop alive, or don't keep it alive.
     fn update_poll_ref(&self, object: Object<'_>) {
         let client = self.client.get();
-        let is_idle = client.is_connected()
-            && !client.has_pending_commands()
-            && object.subscription_count() == 0;
-        if client.is_active() && !is_idle && !client.is_preconnect() {
+        let has_work = || client.has_commands() || object.subscription_count() > 0;
+        let is_awaited = match client.awaited() {
+            Awaited::No => false,
+            Awaited::ByWorkOrBytes => has_work() || client.buffered_amount() > 0,
+            Awaited::ByWorkOrHandlers => has_work() || object.has_handler(),
+            Awaited::Yes => true,
+        };
+        if is_awaited {
             self.poll_ref.ref_(bun_io::js_vm_ctx());
         } else {
             self.poll_ref.unref(bun_io::js_vm_ctx());

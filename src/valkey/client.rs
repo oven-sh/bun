@@ -98,6 +98,8 @@ enum Goal {
     Connect(Retries),
     /// Replaces a connection that script had.
     Reconnect(NonZeroU32),
+    /// A reconnect that a busy or silent server has turned away, which can go on for minutes.
+    Outlast(NonZeroU32),
 }
 
 impl Ask {
@@ -106,7 +108,7 @@ impl Ask {
     fn retries(self) -> Retries {
         match self.0 {
             Goal::Connect(retries) => retries,
-            Goal::Reconnect(retries) => retries.get(),
+            Goal::Reconnect(retries) | Goal::Outlast(retries) => retries.get(),
         }
     }
 }
@@ -213,6 +215,16 @@ pub enum Sent {
     Queued,
 }
 
+/// Whether the process has to stay for the client's next event.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Awaited {
+    No,
+    /// Work: commands and subscriptions.
+    ByWorkOrBytes,
+    ByWorkOrHandlers,
+    Yes,
+}
+
 #[must_use]
 pub enum Close {
     Nothing,
@@ -298,24 +310,24 @@ impl<P> Client<P> {
         matches!(self.state, Opening(Step::Dial, _))
     }
 
-    pub fn is_preconnect(&self) -> bool {
-        match self.state {
-            Opening(_, by) | Ending(End::Policy(by)) => matches!(by, By::Flag),
-            Spare | Ending(End::FailedUnclaimed) => true,
-            Ending(End::Requested(_) | End::Final | End::Failed) => false,
-            Idle | Ready(_) | Backoff(_) | Closed => false,
-        }
-    }
-
     pub fn is_ending(&self) -> bool {
         matches!(self.state, Ending(_))
     }
 
-    /// An event is still to come.
-    pub fn is_active(&self) -> bool {
+    pub fn awaited(&self) -> Awaited {
         match self.state {
-            Opening(..) | Ready(_) | Spare | Ending(_) | Backoff(_) => true,
-            Idle | Closed => false,
+            Idle | Spare | Closed => Awaited::No,
+            Opening(_, By::Flag) | Ending(End::Policy(By::Flag) | End::FailedUnclaimed) => {
+                Awaited::No
+            }
+            Ready(_) => Awaited::ByWorkOrBytes,
+            Opening(_, By::Script(Ask(goal, _)))
+            | Ending(End::Policy(By::Script(Ask(goal, _))))
+            | Backoff(Ask(goal, _)) => match goal {
+                Goal::Connect(_) | Goal::Reconnect(_) => Awaited::Yes,
+                Goal::Outlast(_) => Awaited::ByWorkOrHandlers,
+            },
+            Ending(End::Requested(_) | End::Final | End::Failed) => Awaited::Yes,
         }
     }
 
@@ -335,8 +347,8 @@ impl<P> Client<P> {
         self.is_subscriber = false;
     }
 
-    pub fn has_pending_commands(&self) -> bool {
-        !self.in_flight.is_empty() || !self.queue.is_empty() || self.buffered_amount() > 0
+    pub fn has_commands(&self) -> bool {
+        !self.in_flight.is_empty() || !self.queue.is_empty()
     }
 
     pub fn buffered_amount(&self) -> usize {
@@ -486,10 +498,12 @@ impl<P> Client<P> {
     /// For a reason that passes. Whether that costs only this attempt: the caller closes the socket, else it fails.
     #[must_use]
     pub fn abandon_handshake(&mut self) -> bool {
-        let Opening(_, by @ By::Script(Ask(Goal::Reconnect(_), _))) = self.state else {
+        let Opening(_, By::Script(Ask(Goal::Reconnect(n) | Goal::Outlast(n), selected))) =
+            self.state
+        else {
             return false;
         };
-        self.state = Ending(End::Policy(by));
+        self.state = Ending(End::Policy(By::Script(Ask(Goal::Outlast(n), selected))));
         true
     }
 
@@ -512,6 +526,7 @@ impl<P> Client<P> {
             | Backoff(Ask(goal, selected)) => Ok(match goal {
                 Goal::Connect(n) => Ask(Goal::Connect(n.saturating_add(1)), selected),
                 Goal::Reconnect(n) => Ask(Goal::Reconnect(n.saturating_add(1)), selected),
+                Goal::Outlast(n) => Ask(Goal::Outlast(n.saturating_add(1)), selected),
             }),
             Ready(selected) => Ok(Ask(Goal::Reconnect(NonZeroU32::MIN), selected)),
             Opening(_, By::Flag) | Spare | Ending(End::Policy(By::Flag) | End::FailedUnclaimed) => {

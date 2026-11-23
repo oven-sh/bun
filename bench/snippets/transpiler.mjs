@@ -48,7 +48,7 @@ async function getWithName(name) {
   } else if (name === "babel") {
     try {
       transformSync = babel_.transformSync;
-      transform = babel_.transform;
+      transform = babel_.transformAsync;
       opts = {
         sourceMaps: false,
         presets: ["@babel/preset-react"],

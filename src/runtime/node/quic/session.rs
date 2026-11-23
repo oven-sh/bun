@@ -1925,7 +1925,6 @@ impl QuicSession {
             }
             Event::Ready => return self.on_ready(),
             Event::StreamsAvailable(direction) => return self.open_pending_streams(direction),
-            Event::Answered => return,
             Event::HandshakeConfirmed => {
                 if self.is_server
                     && let (Some(ep), Some(peer)) = (self.endpoint_ref(), self.remote_addr.get())

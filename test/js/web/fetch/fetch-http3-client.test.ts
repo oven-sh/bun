@@ -1144,30 +1144,6 @@ int connect(int fd, const struct sockaddr *addr, socklen_t len) {
 
 const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
 
-async function spawnWithProbeShim(dir: string, port: number) {
-  const shim = join(dir, "shim.so");
-  await using build = Bun.spawn({
-    cmd: [cc!, "-shared", "-fPIC", "-O1", "-o", shim, join(dir, "shim.c"), "-ldl"],
-    env: bunEnv,
-    stderr: "pipe",
-  });
-  const [buildErr, buildExit] = await Promise.all([build.stderr.text(), build.exited]);
-  if (buildExit !== 0) throw new Error("shim compile failed: " + buildErr);
-
-  return Bun.spawn({
-    cmd: [bunExe(), "fixture.ts"],
-    cwd: dir,
-    env: {
-      ...bunEnv,
-      LD_PRELOAD: bunEnv.LD_PRELOAD ? `${shim}:${bunEnv.LD_PRELOAD}` : shim,
-      H3_ORIGIN_PORT: String(port),
-      H3_ALLOW_PROBES: "1",
-    },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-}
-
 test.concurrent.skipIf(!isLinux || !cc)("a retry whose reconnect fails before it returns rejects once", async () => {
   // rejectUnauthorized with the self-signed cert fails the handshake, so the
   // request's stream closes before any response header: the retry trigger.
@@ -1187,7 +1163,27 @@ test.concurrent.skipIf(!isLinux || !cc)("a retry whose reconnect fails before it
     console.log(JSON.stringify({ first, second }));
   `;
   using dir = tempDir("h3-retry-connect", { "shim.c": PROBE_SHIM_C, "fixture.ts": fixture });
-  await using proc = await spawnWithProbeShim(String(dir), server.port!);
+  const shim = join(String(dir), "shim.so");
+  await using build = Bun.spawn({
+    cmd: [cc!, "-shared", "-fPIC", "-O1", "-o", shim, join(String(dir), "shim.c"), "-ldl"],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [buildErr, buildExit] = await Promise.all([build.stderr.text(), build.exited]);
+  if (buildExit !== 0) throw new Error("shim compile failed: " + buildErr);
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.ts"],
+    cwd: String(dir),
+    env: {
+      ...bunEnv,
+      LD_PRELOAD: bunEnv.LD_PRELOAD ? `${shim}:${bunEnv.LD_PRELOAD}` : shim,
+      H3_ORIGIN_PORT: String(server.port),
+      H3_ALLOW_PROBES: "1",
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   const probes = stderr.split("\n").filter(line => line.startsWith("[shim] probe"));
   // The first connect reaches the origin; the retry's connect does not.
@@ -1202,74 +1198,6 @@ test.concurrent.skipIf(!isLinux || !cc)("a retry whose reconnect fails before it
     exitCode: 0,
   });
 });
-
-// A relay holds everything up from the first request until the client has looked for another way.
-test.concurrent.skipIf(!isLinux || !cc)(
-  "a request waits for a silent connection if there is no other route",
-  async () => {
-    const fixture = /* js */ `
-    const url = "https://localhost:" + process.env.H3_ORIGIN_PORT;
-    const opts = { protocol: "http3", tls: { rejectUnauthorized: false }, method: "POST", body: "x" };
-    const send = () => fetch(url, opts).then(r => r.text(), e => e.code);
-    await send();
-    let isBack = false;
-    const requests = [send().finally(() => (isBack = true))];
-    while (!isBack && requests.length < 90) {
-      await Bun.sleep(100);
-      requests.push(send());
-    }
-    console.log([...new Set(await Promise.all(requests))].join());
-  `;
-    let state: "up" | "silent" | "back" = "up";
-    await using origin = Bun.serve({
-      port: 0,
-      tls,
-      http3: true,
-      http1: false,
-      fetch() {
-        if (state === "up") state = "silent";
-        return new Response("ok");
-      },
-    });
-    let client = { port: 0, address: "" };
-    const queue: Buffer[] = [];
-    const flush = () => queue.splice(0).forEach(packet => back.send(packet, origin.port!, "127.0.0.1"));
-    // The client is gone in the end.
-    const error = () => {};
-    const back = await Bun.udpSocket({
-      hostname: "127.0.0.1",
-      socket: { error, data: (_socket, packet) => void front.send(packet, client.port, client.address) },
-    });
-    const front = await Bun.udpSocket({
-      hostname: "127.0.0.1",
-      socket: {
-        error,
-        data(_socket, packet, port, address) {
-          client = { port, address };
-          queue.push(Buffer.from(packet));
-          if (state !== "silent") flush();
-        },
-      },
-    });
-    try {
-      using dir = tempDir("h3-no-route", { "shim.c": PROBE_SHIM_C, "fixture.ts": fixture });
-      await using proc = await spawnWithProbeShim(String(dir), front.port);
-      const stdout = proc.stdout.text();
-      let stderr = "";
-      for await (const chunk of proc.stderr) {
-        stderr += Buffer.from(chunk).toString();
-        if (!stderr.includes("refused")) continue;
-        state = "back";
-        flush();
-      }
-      expect(await stdout).toBe("ok\n");
-      expect(await proc.exited).toBe(0);
-    } finally {
-      front.close();
-      back.close();
-    }
-  },
-);
 
 // The same stop as in the port reuse test above, but A's handler already has a
 // request that is not idempotent. The origin may have acted on it, so the client
@@ -1529,72 +1457,50 @@ test.each([
   }
 });
 
-// A relay holds everything up until the client tries another connection after those that are refused.
-test.each([
-  ["the pooled connection if that comes back", "a", 0],
-  ["the pooled connection if others are refused", "a", 1],
-  ["another connection if that is ready first", "b", 0],
-])("a request for a server that has fallen silent takes %s", async (_, expected, refused) => {
+test("a request is not written to a connection that is about to time out", async () => {
   using pool = new Bun.FetchSession();
-  const serve = (name: string) =>
-    Bun.serve({ port: 0, tls, http3: true, http1: false, fetch: () => new Response(name) });
-  await using a = serve("a");
-  await using b = serve("b");
-  await using busy = await listen(() => {}, {
-    sni: { "*": { keys: [createPrivateKey(tls.key)], certs: [Buffer.from(tls.cert)] } },
-  });
-  busy.busy = true;
-  const ports = { a: a.port!, b: b.port!, busy: busy.address!.port };
-  // A is gone in the end.
-  const error = () => {};
-  let state: "up" | "silent" | "back" = "up";
-  let client = { port: 0, address: "" };
-  const sourceIds = new Set<string>();
-  const queue: Buffer[] = [];
-  const back = await Bun.udpSocket({
-    hostname: "127.0.0.1",
-    socket: { error, data: (_socket, packet) => void front.send(packet, client.port, client.address) },
-  });
-  const front = await Bun.udpSocket({
+  const origin = await listen(
+    async (session: any) => {
+      session.onstream = (stream: any) => stream.closed.catch(() => {});
+      await session.closed.catch(() => {});
+    },
+    {
+      sni: { "*": { keys: [createPrivateKey(tls.key)], certs: [Buffer.from(tls.cert)] } },
+      transportParams: { maxIdleTimeout: 1 },
+      onheaders(this: any) {
+        this.sendHeaders({ ":status": "204" }, { terminal: true });
+      },
+    },
+  );
+  const { port: originPort } = origin.address!;
+  let [clientPort, isDark] = [0, false];
+  const relay = await Bun.udpSocket({
     hostname: "127.0.0.1",
     socket: {
-      error,
-      data(_socket, packet, port, address) {
-        client = { port, address };
-        if (packet[0] >= 0x80) {
-          sourceIds.add(packet.subarray(7 + packet[5], 7 + packet[5] + packet[6 + packet[5]]).toString("hex"));
-          if (sourceIds.size > 1 + refused) state = "back";
-          if (sourceIds.size > 1 && refused) back.send(packet, ports.busy, "127.0.0.1");
-        }
-        queue.push(Buffer.from(packet));
-        for (const it of state === "silent" ? [] : queue.splice(0)) {
-          if (state === "back" && expected === "b") back.send(it, ports.b, "127.0.0.1");
-          else if (state === "up" || it[0] < 0x80) back.send(it, ports.a, "127.0.0.1");
-        }
+      data(socket, packet, port) {
+        if (port !== originPort) clientPort = port;
+        // Until the client starts over.
+        isDark &&= packet[0] >> 4 !== 0xc;
+        if (!isDark) socket.send(packet, port === originPort ? clientPort : originPort, "127.0.0.1");
       },
     },
   });
   const send = () =>
-    fetch(`https://127.0.0.1:${front.port}/`, { ...h3, session: pool, method: "POST", body: "x" }).then(
-      res => res.text(),
+    fetch(`https://127.0.0.1:${relay.port}/`, { ...h3, session: pool, method: "POST", body: "x" }).then(
+      res => res.status,
       err => err.code,
     );
   try {
-    expect(await send()).toBe("a");
-    state = "silent";
-    const requests: Promise<string>[] = [];
-    // Fewer than the server allows on a connection.
-    while (state === "silent" && requests.length < 90) {
-      requests.push(send());
-      await Bun.sleep(100);
-    }
-    expect(state).toBe("back");
-    expect(new Set(await Promise.all(requests.slice(expected === "a" ? 0 : -1)))).toEqual(new Set([expected]));
-    await a.stop(true);
-    await Promise.all(requests);
+    // So that the timeout does not depend on how long the first round trips took.
+    for (let i = 0; i < 20; i++) expect(await send()).toBe(204);
+    isDark = true;
+    // By then the client has read what was on its way.
+    await fetch(`${base}/hello`, h3).then(res => res.text());
+    await Bun.sleep(950);
+    expect(await send()).toBe(204);
   } finally {
-    front.close();
-    back.close();
+    relay.close();
+    await origin.destroy();
   }
 });
 

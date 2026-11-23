@@ -266,7 +266,7 @@ impl Connection {
     }
 
     pub(super) fn leave_time_for_an_answer(&mut self, now: Instant) {
-        let deadline = now + self.min_idle_timeout();
+        let deadline = now + self.probe_timeout();
         (self.timers).set(Timer::Idle, deadline.max(self.timers.get(Timer::Idle)));
     }
 
@@ -331,12 +331,17 @@ impl Connection {
         let oldest = self.spaces.data.sent.packets.front();
         oldest.is_some_and(|it| now >= it.flight.at + self.min_idle_timeout())
             || self.silence.pings > MAX_UNANSWERED_PINGS
+            || self.silence.is_watched && self.has_sent_since_receiving
             || now + margin >= self.timers.get(Timer::Idle)
     }
 
-    /// For a client. [`Event::Answered`](crate::Event::Answered) follows when that has put an end to [`Self::is_stale`].
+    /// For a client. [`Event::StreamsAvailable`] follows when that has put an end to [`Self::is_stale`].
     pub fn ask_for_answer(&mut self) {
         self.silence.is_watched = true;
         self.streams.state.owed |= Control::PING;
+        // A gap tends to be acknowledged without delay (RFC 9000 §13.2.1).
+        if self.next_skip != u64::MAX {
+            self.next_skip = self.spaces.data.next_number;
+        }
     }
 }

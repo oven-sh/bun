@@ -4,6 +4,7 @@ use super::Connection;
 use super::streams::Asked;
 use super::timers::Timer;
 use crate::event::Event;
+use crate::stream_id::Direction;
 use crate::time::{Duration, Instant};
 
 /// How many it takes to know the pace of the server.
@@ -71,9 +72,9 @@ impl Connection {
     /// After a client has read what there is.
     #[inline]
     pub(super) fn listen(&mut self, now: Instant) {
-        if self.silence.is_watched && !self.has_sent_since_receiving && !self.is_stale(now) {
+        if self.silence.is_watched && !self.is_stale(now) {
             self.silence.is_watched = false;
-            self.emit(Event::Answered);
+            self.emit(Event::StreamsAvailable(Direction::Bidirectional));
         }
         let state = &mut self.streams.state;
         let asked = core::mem::take(&mut state.asked);

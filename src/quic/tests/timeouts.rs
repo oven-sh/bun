@@ -106,8 +106,8 @@ fn giving_up_early_leaves_time_for_an_answer_to_the_first_packet_that_is_sent() 
     for (first, second, rest) in [
         (10_000, 10_000, 10_000),
         (10_000, 19_900, 100),
-        (29_550, 100, 350),
-        (29_900, 200, 250),
+        (29_900, 20, 80),
+        (29_990, 20, 47),
     ] {
         let mut raw = (Raw::client().config(|it| it.gives_up_early = true)).connected();
         raw.send("ack");
@@ -1050,22 +1050,28 @@ fn tells_when_the_peer_answers_again() {
     raw.send("ping");
     assert_eq!(raw.events(), "");
     raw.send("ack");
-    assert_eq!(raw.events(), "answered");
+    assert_eq!(raw.events(), "available Bidirectional");
     raw.send("ping");
     assert_eq!(raw.events(), "");
 
-    let raw = Raw::server().config(|it| {
-        (it.parameters.max_idle_timeout_millis, it.gives_up_early) = (1600, true);
-    });
-    let mut raw = raw.connected();
-    raw.send("ack");
-    raw.advance(1500);
-    raw.connection().ask_for_answer();
-    raw.process();
-    raw.wait();
-    assert_eq!(raw.events(), "");
-    raw.send("ack");
-    assert_eq!(raw.events(), "answered");
+    for (idle, after) in [(1600, 1590), (100, 440)] {
+        let raw = Raw::server().config(|it| {
+            (it.parameters.max_idle_timeout_millis, it.gives_up_early) = (idle, true);
+        });
+        let mut raw = raw.connected();
+        raw.send("ack");
+        raw.advance(after);
+        raw.forget();
+        let last = *raw.received[2].last().unwrap();
+        raw.connection().ask_for_answer();
+        assert_eq!(raw.take()[0].number, last + 2);
+        raw.advance(10);
+        let now = raw.now;
+        assert!(raw.connection().is_stale(now));
+        assert_eq!(raw.events(), "");
+        raw.send("ack");
+        assert_eq!(raw.events(), "available Bidirectional");
+    }
 }
 
 #[test]

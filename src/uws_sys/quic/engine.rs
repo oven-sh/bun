@@ -328,27 +328,20 @@ impl Connection {
         }
     }
 
-    pub fn open(self, context: Context) -> Option<Stream> {
-        let id = self.update(|it| it.open(Direction::Bidirectional, context))??;
+    /// [`Event::StreamsAvailable`] tells when it is worth another try.
+    pub fn open(self, context: Context, can_be_repeated: bool) -> Option<Stream> {
+        let id = self.update(|it| {
+            if !can_be_repeated && it.is_stale(now()) {
+                it.ask_for_answer();
+                return None;
+            }
+            it.open(Direction::Bidirectional, context)
+        })??;
         Some(self.stream(id))
-    }
-
-    pub fn can_open(&self) -> bool {
-        self.get(|it| it.available_streams(Direction::Bidirectional) > 0 && !it.is_stale(now()))
-            == Some(true)
     }
 
     pub fn available_streams(&self) -> u64 {
         (self.get(|it| it.available_streams(Direction::Bidirectional))).unwrap_or(0)
-    }
-
-    /// If it is stale. Returns how many streams are worth opening once it has come.
-    pub fn ask_for_answer(&self) -> u64 {
-        if self.get(|it| it.is_stale(now())) != Some(true) {
-            return 0;
-        }
-        self.update(bun_quic::Connection::ask_for_answer);
-        self.available_streams()
     }
 
     /// Neither side is closing or going away.

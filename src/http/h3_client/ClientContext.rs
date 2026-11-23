@@ -75,34 +75,21 @@ impl ClientContext {
         let hostname = bun_url::strip_ipv6_brackets(client.url.hostname);
         let reject = client.flags.reject_unauthorized;
         self.client.set_alarm(SWEEP_SECONDS);
-        // sessions vec holds live ClientSession pointers; removed via
-        // unregister() before destroy — `session_mut` centralises that
-        // backref upgrade.
-        let pool_id = client.pool.id;
-        let find = |this: &Self, handshake_done| {
-            (this.sessions.iter().map(RefPtr::as_ptr)).find(|&it| {
-                let s = session_mut(it);
-                s.handshake_done == handshake_done
-                    && s.matches(hostname, port, reject, pool_id)
-                    && s.has_headroom()
-            })
-        };
-        let found = find(self, true).or_else(|| {
-            self.attempt_again(|it| it.matches(hostname, port, reject, pool_id));
-            find(self, false)
-        });
-        if let Some(session) = found {
-            bun_core::scoped_log!(
-                h3_client,
-                "reuse session {}:{}",
-                bstr::BStr::new(hostname),
-                port,
-            );
-            session_mut(session).enqueue(client);
-            if !session_mut(session).handshake_done && self.ask_for_answers(session) {
-                session_mut(session).is_spare = true;
+        for s in self.sessions.iter().map(RefPtr::as_ptr) {
+            // sessions vec holds live ClientSession pointers; removed via
+            // unregister() before destroy — `session_mut` centralises that
+            // backref upgrade.
+            let s = session_mut(s);
+            if s.matches(hostname, port, reject, client.pool.id) && s.has_headroom() {
+                bun_core::scoped_log!(
+                    h3_client,
+                    "reuse session {}:{}",
+                    bstr::BStr::new(hostname),
+                    port,
+                );
+                s.enqueue(client);
+                return Ok(());
             }
-            return Ok(());
         }
 
         client.trace(|_| crate::request_trace::Event::Connecting);
@@ -114,79 +101,42 @@ impl ClientContext {
         session_mut(session).registry_index = u32::try_from(self.sessions.len()).expect("int cast");
         self.sessions.push(registry_ref);
         session_mut(session).enqueue(client);
-        session_mut(session).is_spare = self.ask_for_answers(session);
-        if self.attempt(session) {
-            return Ok(());
-        }
-        let s = session_mut(session);
-        let client = s.take_unopened().expect("enqueued above");
-        let _registry_ref = self.unregister(s);
-        PendingConnect::fail_session(session, crate::Error::ConnectionRefused);
-        Err(client)
-    }
 
-    /// Returns false if it has failed for good.
-    fn attempt(&mut self, session: *mut ClientSession) -> bool {
-        let s = session_mut(session);
-        let connecting = self.client.connect(&s.origin(), session.cast());
-        let (hostname, port) = (bstr::BStr::new(&s.hostname), s.port);
-        match connecting {
+        match (self.client).connect(&session_mut(session).origin(), session.cast()) {
             Some(Connecting::Started(connection)) => {
-                bun_core::scoped_log!(h3_client, "connect {}:{} (sync)", hostname, port);
-                s.connection = Some(connection);
+                session_mut(session).connection = Some(connection);
+                bun_core::scoped_log!(
+                    h3_client,
+                    "connect {}:{} (sync)",
+                    bstr::BStr::new(hostname),
+                    port,
+                );
             }
             Some(Connecting::Resolving(lookup)) => {
-                bun_core::scoped_log!(h3_client, "connect {}:{} (dns pending)", hostname, port);
+                bun_core::scoped_log!(
+                    h3_client,
+                    "connect {}:{} (dns pending)",
+                    bstr::BStr::new(hostname),
+                    port,
+                );
                 PendingConnect::register(session, lookup);
             }
             None => {
-                bun_core::scoped_log!(h3_client, "connect {}:{} failed", hostname, port);
-                s.awaits_attempt = s.is_spare;
-                return s.is_spare;
+                bun_core::scoped_log!(
+                    h3_client,
+                    "connect {}:{} failed",
+                    bstr::BStr::new(hostname),
+                    port,
+                );
+                let s = session_mut(session);
+                let client = s.pending[0].client.take().expect("enqueued above");
+                s.detach(s.pending[0].as_ptr());
+                let _registry_ref = self.unregister(s);
+                PendingConnect::fail_session(session, crate::Error::ConnectionRefused);
+                return Err(client);
             }
         }
-        true
-    }
-
-    /// For a spare session whose attempt has failed.
-    pub(crate) fn connect_again(&mut self, session: *mut ClientSession) {
-        let is_needed = !session_mut(session).pending.is_empty();
-        session_mut(session).awaits_attempt = false;
-        session_mut(session).is_spare = is_needed && self.ask_for_answers(session);
-        if !is_needed || !self.attempt(session) {
-            let _registry_ref = self.unregister(session_mut(session));
-            PendingConnect::fail_session(session, crate::Error::ConnectionRefused);
-        }
-    }
-
-    pub(crate) fn attempt_again(&mut self, is_due: impl Fn(&ClientSession) -> bool) {
-        let due = (self.sessions.iter()).filter(|it| it.awaits_attempt && is_due(it));
-        for s in Vec::from_iter(due.cloned()) {
-            self.connect_again(s.as_ptr());
-        }
-    }
-
-    /// The other sessions that could carry the requests of `session`.
-    pub(crate) fn alternatives_to(&self, session: *mut ClientSession) -> Vec<*mut ClientSession> {
-        let s = &*session_mut(session);
-        (self.sessions.iter())
-            .filter(|it| it.as_ptr() != session)
-            .filter(|it| it.matches(&s.hostname, s.port, s.reject_unauthorized, s.pool_id))
-            .map(RefPtr::as_ptr)
-            .collect()
-    }
-
-    /// Returns whether those that are stale allow more requests than the other spare sessions have.
-    pub(crate) fn ask_for_answers(&self, session: *mut ClientSession) -> bool {
-        let (mut allowed, mut waiting) = (0, 0);
-        for other in self.alternatives_to(session).into_iter().map(session_mut) {
-            match other.connection {
-                Some(connection) if other.handshake_done => allowed += connection.ask_for_answer(),
-                _ if other.is_spare => waiting += other.pending.len() as u64,
-                _ => {}
-            }
-        }
-        allowed > waiting
+        Ok(())
     }
 
     /// Returns the registry's ref, which the caller holds while it empties `pending`.
@@ -236,13 +186,12 @@ impl ClientContext {
         for s in ctx.sessions.iter().map(RefPtr::as_ptr) {
             session_mut(s).sweep(SWEEP_SECONDS);
         }
-        Self::as_mut(this).attempt_again(|_| true);
         if !ctx.sessions.is_empty() {
             ctx.client.set_alarm(SWEEP_SECONDS);
         }
     }
 
-    /// Close the connections of fetch session `pool_id` that carry no request, and that none waits for.
+    /// Close the connections of fetch session `pool_id` that carry no request.
     pub(crate) fn close_idle_sessions(pool_id: u64) {
         let Some(this) = Self::get() else {
             return;
@@ -250,10 +199,7 @@ impl ClientContext {
         // See `abort_by_http_id` — `BackRef` over the process-lifetime singleton.
         let ctx = bun_ptr::BackRef::from(this);
         for s in ctx.sessions.iter().filter(|it| it.pool_id == pool_id) {
-            let mut others = ctx.alternatives_to(s.as_ptr()).into_iter().map(session_mut);
-            if !others.any(|it| it.is_spare && !it.pending.is_empty()) {
-                session_mut(s.as_ptr()).close_if_idle();
-            }
+            session_mut(s.as_ptr()).close_if_idle();
         }
     }
 

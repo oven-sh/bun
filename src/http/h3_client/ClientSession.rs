@@ -38,10 +38,6 @@ pub struct ClientSession {
     pub(crate) pool_id: u64,
     pub(crate) handshake_done: bool,
     pub(crate) closed: bool,
-    /// It is connecting in place of one that is stale and may come back, so a failure is not the last word.
-    pub(crate) is_spare: bool,
-    /// The last attempt has failed, and there is none under way.
-    pub(crate) awaits_attempt: bool,
     pub(crate) registry_index: u32,
     idle_seconds: u32,
 
@@ -74,8 +70,6 @@ impl ClientSession {
             pool_id,
             handshake_done: false,
             closed: false,
-            is_spare: false,
-            awaits_attempt: false,
             registry_index: u32::MAX,
             idle_seconds: 0,
             pending: Vec::new(),
@@ -116,7 +110,11 @@ impl ClientSession {
     pub(crate) fn has_headroom(&self) -> bool {
         match self.connection {
             _ if self.closed => false,
-            Some(connection) if self.handshake_done => connection.can_open(),
+            Some(connection) if self.handshake_done => {
+                let newest_first = self.pending.iter().rev();
+                let unopened = newest_first.take_while(|it| it.qstream.is_none());
+                connection.available_streams() > unopened.count() as u64
+            }
             // The limit of the server is not known yet.
             _ => self.pending.len() < 64,
         }
@@ -137,22 +135,6 @@ impl ClientSession {
         }
     }
 
-    pub(crate) fn take_unopened(&mut self) -> Option<InFlightRequest> {
-        let stream = self.first_unopened()?;
-        let client = stream_mut(stream).client.take();
-        self.detach(stream);
-        client
-    }
-
-    /// As many of the requests that wait as there are streams for.
-    pub(crate) fn take_over_from(&mut self, other: &mut ClientSession) {
-        while self.has_headroom()
-            && let Some(client) = other.take_unopened()
-        {
-            self.enqueue(client);
-        }
-    }
-
     pub(crate) fn first_unopened(&self) -> Option<*mut Stream> {
         (self.pending.iter().map(AliasableBox::as_ptr)).find(|&it| stream_ref(it).qstream.is_none())
     }
@@ -160,7 +142,11 @@ impl ClientSession {
     /// The requests are written when their streams are reported as writable.
     pub(crate) fn open_streams(&mut self) {
         while let Some(stream) = self.first_unopened()
-            && let Some(qstream) = self.connection.and_then(|it| it.open(stream.cast()))
+            && let Some(client) = &stream_ref(stream).client
+            && let can_be_repeated =
+                (client.method.is_idempotent() && !client.state.original_request_body.is_stream())
+            && let Some(connection) = self.connection
+            && let Some(qstream) = connection.open(stream.cast(), can_be_repeated)
         {
             stream_mut(stream).qstream = Some(qstream);
             qstream.want_write();
@@ -273,8 +259,7 @@ impl ClientSession {
         };
         // RFC 9110 §9.2.2: the origin may have acted on a request that was written.
         let replay_safe = !st.headers_sent || st.peer_rejected || client.method.is_idempotent();
-        let was_retried = client.flags.h3_retried || st.has_waited_in_vain && !self.handshake_done;
-        if was_retried || st.is_streaming_body || st.headers_delivered || !replay_safe {
+        if client.flags.h3_retried || st.is_streaming_body || st.headers_delivered || !replay_safe {
             self.cancel(stream);
             return client.fail(err);
         }
@@ -306,9 +291,9 @@ impl ClientSession {
     pub(crate) fn sweep(&mut self, elapsed_seconds: u32) {
         if self.pending.is_empty() {
             self.idle_seconds = self.idle_seconds.saturating_add(elapsed_seconds);
-            let max_seconds = match self.connection.map(|it| it.available_streams()) {
-                Some(0) => MAX_SPENT_SECONDS,
-                _ => MAX_IDLE_SECONDS,
+            let max_seconds = match self.has_headroom() {
+                true => MAX_IDLE_SECONDS,
+                false => MAX_SPENT_SECONDS,
             };
             if self.idle_seconds >= max_seconds {
                 self.close_if_idle();

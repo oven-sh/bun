@@ -59,8 +59,7 @@ impl PendingConnect {
             let client = &ClientContext::as_mut(ctx).client;
             client.connect_resolved(self.lookup, &s.origin(), session.cast())
         });
-        s.awaits_attempt = s.connection.is_none() && s.is_spare;
-        if s.connection.is_none() && !s.is_spare {
+        if s.connection.is_none() {
             Self::fail_session(session, crate::Error::DNSResolutionFailed);
         }
     }

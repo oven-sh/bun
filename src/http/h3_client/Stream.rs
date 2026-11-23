@@ -12,7 +12,7 @@ pub struct Stream {
     // BACKREF: owned by `session.pending`; session outlives every Stream it holds.
     pub(crate) session: bun_ptr::BackRef<ClientSession, bun_ptr::Mut>,
     pub(crate) client: Option<InFlightRequest>,
-    /// `None` until the server allows another stream.
+    /// `None` until the connection can take another stream.
     pub(crate) qstream: Option<quic::Stream>,
 
     pub(crate) decoded_headers: Headers,
@@ -22,8 +22,6 @@ pub struct Stream {
     // BACKREF: borrows the request body owned by `client`; not freed here.
     // `RawSlice` carries the outlives-holder invariant.
     pub(crate) pending_body: bun_ptr::RawSlice<u8>,
-    /// For a handshake that timed out, and not just at the end.
-    pub(crate) has_waited_in_vain: bool,
     pub(crate) headers_sent: bool,
     pub(crate) request_body_done: bool,
     pub(crate) is_streaming_body: bool,
@@ -45,7 +43,6 @@ impl Stream {
             body_buffer: Vec::new(),
             status_code: 0,
             pending_body: bun_ptr::RawSlice::EMPTY,
-            has_waited_in_vain: false,
             headers_sent: false,
             request_body_done: false,
             is_streaming_body: false,

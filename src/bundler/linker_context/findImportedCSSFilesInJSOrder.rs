@@ -13,15 +13,12 @@ use bun_collections::DynamicBitSet as BitSet;
 /// plan and the walks read `entry_bits` before `merge_small_chunks` changes them: they ask
 /// which files a load evaluates, not which chunk holds a file.
 pub(crate) struct CssWalkPlan {
-    /// Per entry point id: where its load sites start in `sites_of_entry`. One more at the end.
-    /// Empty without code splitting.
-    sites_of_entry_start: Vec<u32>,
-    /// Indices into `targets_start`.
-    sites_of_entry: Vec<u32>,
-    /// Per load site: where its targets start in `targets`. One more at the end.
-    targets_start: Vec<u32>,
-    /// Entry point ids.
-    targets: Vec<u32>,
+    /// Per entry point id: its index in `loaders`. `u32::MAX`: the entry point loads nothing
+    /// on demand. Empty if no entry point does.
+    loaders_of_entry: Vec<u32>,
+    /// An entry point and every entry point that its load can load on demand, also through
+    /// another one. Entry points that load each other share one set.
+    loaders: Vec<AutoBitSet>,
 }
 
 impl CssWalkPlan {
@@ -31,16 +28,15 @@ impl CssWalkPlan {
             return None;
         }
         let mut plan = CssWalkPlan {
-            sites_of_entry_start: Vec::new(),
-            sites_of_entry: Vec::new(),
-            targets_start: Vec::new(),
-            targets: Vec::new(),
+            loaders_of_entry: Vec::new(),
+            loaders: Vec::new(),
         };
         if !c.graph.code_splitting {
             return Some(plan);
         }
 
         let entry_points = c.graph.entry_points.items_source_index();
+        let entries_len = entry_points.len();
         let mut entry_id_of_file = vec![u32::MAX; c.graph.files.len()];
         for (entry_id, &source_index) in entry_points.iter().enumerate() {
             let slot = &mut entry_id_of_file[source_index as usize];
@@ -49,10 +45,15 @@ impl CssWalkPlan {
             }
         }
 
+        // A graph of the entry points (node: the entry point id) and the load sites (node:
+        // `entries_len` + the index of the site). An entry point has an edge to each site that
+        // it loads, and a site has an edge to each of its targets.
         let entry_bits = c.graph.files.items_entry_bits();
         let all_import_records = c.graph.ast.items_import_records();
         let all_parts = c.graph.ast.items_parts();
-        // (entry point id, load site)
+        let mut targets_start: Vec<u32> = Vec::new();
+        let mut targets: Vec<u32> = Vec::new();
+        // (entry point id, node of a site)
         let mut sites: Vec<(u32, u32)> = Vec::new();
         for source_index in c.graph.reachable_files.iter() {
             let source_index = source_index.get();
@@ -61,7 +62,7 @@ impl CssWalkPlan {
             }
             let records: &[ImportRecord] = all_import_records[source_index as usize].as_slice();
             let parts_live = &c.graph.parts_live[source_index as usize];
-            let targets_len = plan.targets.len();
+            let targets_len = targets.len();
             for (part_index, part) in all_parts[source_index as usize]
                 .as_slice()
                 .iter()
@@ -75,72 +76,91 @@ impl CssWalkPlan {
                     if let Some(Edge::LoadNow(other) | Edge::LoadLater(other)) =
                         edge_of_record(c, source_index, part, true, record)
                     {
-                        plan.targets.push(entry_id_of_file[other as usize]);
+                        targets.push(entry_id_of_file[other as usize]);
                     }
                 }
             }
-            if plan.targets.len() == targets_len {
+            if targets.len() == targets_len {
                 continue;
             }
-            let site = plan.targets_start.len() as u32;
-            plan.targets_start.push(targets_len as u32);
+            let site = (entries_len + targets_start.len()) as u32;
+            targets_start.push(targets_len as u32);
             let mut loaders = entry_bits[source_index as usize].iterator::<true, true>();
             while let Some(loader) = loaders.next() {
                 sites.push((loader as u32, site));
             }
         }
-        plan.targets_start.push(plan.targets.len() as u32);
+        if targets.is_empty() {
+            return Some(plan);
+        }
+        targets_start.push(targets.len() as u32);
 
         sites.sort_unstable();
-        plan.sites_of_entry_start = Vec::with_capacity(entry_points.len() + 1);
-        plan.sites_of_entry = Vec::with_capacity(sites.len());
+        let mut sites_start: Vec<u32> = Vec::with_capacity(entries_len + 1);
+        let mut site_of: Vec<u32> = Vec::with_capacity(sites.len());
         let mut sites = sites.into_iter().peekable();
-        for entry_id in 0..entry_points.len() as u32 {
-            plan.sites_of_entry_start
-                .push(plan.sites_of_entry.len() as u32);
+        for entry_id in 0..entries_len as u32 {
+            sites_start.push(site_of.len() as u32);
             while let Some((_, site)) = sites.next_if(|&(loader, _)| loader == entry_id) {
-                plan.sites_of_entry.push(site);
+                site_of.push(site);
             }
         }
-        plan.sites_of_entry_start
-            .push(plan.sites_of_entry.len() as u32);
-        Some(plan)
-    }
+        sites_start.push(site_of.len() as u32);
 
-    fn sites_of(&self, entry_id: u32) -> &[u32] {
-        let start = self.sites_of_entry_start[entry_id as usize];
-        let end = self.sites_of_entry_start[entry_id as usize + 1];
-        &self.sites_of_entry[start as usize..end as usize]
+        let edges_of = |node: usize| -> &[u32] {
+            if node < entries_len {
+                &site_of[sites_start[node] as usize..sites_start[node + 1] as usize]
+            } else {
+                let site = node - entries_len;
+                &targets[targets_start[site] as usize..targets_start[site + 1] as usize]
+            }
+        };
+        // A component has a higher number than every component it has an edge to.
+        let (component_of, components) = bun_sema::components::strongly_connected_components_of(
+            entries_len + targets_start.len() - 1,
+            edges_of,
+            None,
+        );
+        plan.loaders_of_entry = vec![u32::MAX; entries_len];
+        let mut loaders_of_component = vec![u32::MAX; components.len()];
+        for (number, nodes) in components.iter().enumerate() {
+            if let [node] = nodes.as_slice()
+                && edges_of(*node).is_empty()
+            {
+                continue;
+            }
+            let mut loaders = bun_core::handle_oom(AutoBitSet::init_empty(entries_len));
+            for &node in nodes {
+                if node < entries_len {
+                    loaders.set(node);
+                }
+                for &other in edges_of(node) {
+                    let other_component = component_of[other as usize] as usize;
+                    if other_component == number {
+                        continue;
+                    }
+                    match loaders_of_component[other_component] {
+                        u32::MAX => loaders.set(other as usize),
+                        index => loaders.set_union(&plan.loaders[index as usize]),
+                    }
+                }
+            }
+            loaders_of_component[number] = plan.loaders.len() as u32;
+            for &node in nodes {
+                if node < entries_len {
+                    plan.loaders_of_entry[node] = plan.loaders.len() as u32;
+                }
+            }
+            plan.loaders.push(loaders);
+        }
+        Some(plan)
     }
 
     /// With code splitting: the entry point and every entry point that its load can load on
     /// demand, also through another one. `None`: the entry point alone.
-    fn loaders_of(&self, c: &LinkerContext, entry_id: u32) -> Option<AutoBitSet> {
-        if !c.graph.code_splitting || self.sites_of(entry_id).is_empty() {
-            return None;
-        }
-        let mut loaders = bun_core::handle_oom(AutoBitSet::init_empty(c.graph.entry_points.len()));
-        loaders.set(entry_id as usize);
-        let mut seen_sites =
-            bun_core::handle_oom(AutoBitSet::init_empty(self.targets_start.len() - 1));
-        let mut queue = vec![entry_id];
-        while let Some(entry_id) = queue.pop() {
-            for &site in self.sites_of(entry_id) {
-                if seen_sites.is_set(site as usize) {
-                    continue;
-                }
-                seen_sites.set(site as usize);
-                let start = self.targets_start[site as usize];
-                let end = self.targets_start[site as usize + 1];
-                for &loaded in &self.targets[start as usize..end as usize] {
-                    if !loaders.is_set(loaded as usize) {
-                        loaders.set(loaded as usize);
-                        queue.push(loaded);
-                    }
-                }
-            }
-        }
-        Some(loaders)
+    fn loaders_of(&self, entry_id: u32) -> Option<&AutoBitSet> {
+        let index = *self.loaders_of_entry.get(entry_id as usize)?;
+        self.loaders.get(index as usize)
     }
 }
 
@@ -186,10 +206,10 @@ pub(crate) fn find_imported_css_files_in_js_order(
     let all_parts = this.graph.ast.items_parts();
     let all_parts_live = &this.graph.parts_live;
 
-    let loaders = plan.loaders_of(this, entry_id);
+    let loaders = plan.loaders_of(entry_id);
     let runs = |source_index: IndexInt| {
         files_live.is_set(source_index as usize)
-            && match &loaders {
+            && match loaders {
                 Some(loaders) => entry_bits[source_index as usize].has_intersection(loaders),
                 None => entry_bits[source_index as usize].is_set(entry_id as usize),
             }

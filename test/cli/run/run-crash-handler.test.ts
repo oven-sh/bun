@@ -784,6 +784,229 @@ int eventfd(unsigned int initval, int flags) {
   });
 });
 
+// A frame pointer can lead the stack walk into a page that is mapped and cannot be read, such as the guard page of
+// another thread's stack. The walk ends there, as it does where nothing is mapped: the kernel copies what the walk reads.
+// macOS and FreeBSD used to ask msync() whether the page was mapped and then load from it, and so did Linux where it can
+// read its own memory neither with process_vm_readv nor from /proc/<pid>/mem. The crash handler then faulted in its own
+// walk, and nothing of the report followed.
+describe.if(isPosix)("a stack walk that meets a page that cannot be read", () => {
+  // The first frame record of the chain holds the return address 1, the second 2, and so on. The records lie in three
+  // pages, and the caller that the last one names lies where nothing is mapped.
+  const walks = `
+    const { stackWalkAcrossPages } = require("bun:internal-for-testing").crash_handler;
+    for (const secondPageReadable of [true, false])
+      for (const recordAcrossPages of [false, true])
+        console.log(JSON.stringify([secondPageReadable, recordAcrossPages, stackWalkAcrossPages(secondPageReadable, recordAcrossPages)]));`;
+  const found = [
+    // Records 2 and 3 meet where the first page ends, and records 3 and 4 lie in the second page.
+    [true, false, [1, 2, 3, 4, 5]],
+    // Record 2 starts in the last word of the first page, and record 3 lies in the second page.
+    [true, true, [1, 2, 3, 4]],
+    [false, false, [1, 2]],
+    [false, true, [1]],
+  ];
+
+  async function walked(env: Record<string, string | undefined>) {
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", walks], env, stdio: ["ignore", "pipe", "pipe"] });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const lines = stdout.split("\n").filter(line => line.length > 0);
+    return { found: lines.map(line => JSON.parse(line)), stderr, exitCode };
+  }
+
+  test("the walk ends at that page", async () => {
+    expect(await walked(bunEnv)).toEqual({ found, stderr: expect.any(String), exitCode: 0 });
+  });
+
+  // The last resort of Linux is all that FreeBSD has: the kernel copies what is written into a pipe.
+  const shim = /* c */ `
+#define _GNU_SOURCE
+#include <errno.h>
+#include <fcntl.h>
+#include <stdarg.h>
+#include <string.h>
+#include <sys/syscall.h>
+#include <sys/types.h>
+#include <sys/uio.h>
+#include <unistd.h>
+
+// As under qemu-user.
+ssize_t process_vm_readv(pid_t pid, const struct iovec *local, unsigned long local_count, const struct iovec *remote,
+                         unsigned long remote_count, unsigned long flags) {
+  errno = ENOSYS;
+  return -1;
+}
+
+// As where /proc is not mounted.
+static int opened(const char *path, int flags, mode_t mode) {
+  size_t length = strlen(path);
+  if (length > 10 && strncmp(path, "/proc/", 6) == 0 && strcmp(path + length - 4, "/mem") == 0) {
+    static const char said[] = "refused: /proc/<pid>/mem\\n";
+    if (write(2, said, sizeof(said) - 1) < 0) return -1;
+    errno = ENOENT;
+    return -1;
+  }
+  return syscall(SYS_openat, AT_FDCWD, path, flags, mode);
+}
+
+int open(const char *path, int flags, ...) {
+  va_list arguments;
+  va_start(arguments, flags);
+  mode_t mode = va_arg(arguments, mode_t);
+  va_end(arguments);
+  return opened(path, flags, mode);
+}
+
+int open64(const char *path, int flags, ...) {
+  va_list arguments;
+  va_start(arguments, flags);
+  mode_t mode = va_arg(arguments, mode_t);
+  va_end(arguments);
+  return opened(path, flags, mode);
+}
+`;
+  test.if(isLinux && !!cc)("the walk ends at that page where only a pipe reads memory", async () => {
+    using dir = tempDir("stack-walk-through-a-pipe", { "shim.c": shim });
+    const shimPath = path.join(String(dir), "shim.so");
+    const compiled = Bun.spawnSync({
+      cmd: [cc!, "-shared", "-fPIC", "-o", shimPath, "shim.c"],
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    expect(compiled.stderr.toString()).toBe("");
+
+    expect(await walked({ ...bunEnv, LD_PRELOAD: shimPath })).toEqual({
+      found,
+      stderr: expect.stringContaining("refused: /proc/<pid>/mem\n"),
+      exitCode: 0,
+    });
+  });
+
+  // The same through the signal handler. C code that bun:ffi compiles starts a thread on a stack below a page that
+  // cannot be read. The thread writes the address of that page over the frame pointer that its frame record saved, and
+  // then to address 8. bun:ffi needs memory that it can write and run, and ASAN answers a fault itself.
+  describe.if(!isASAN && !!without("a hardened build"))("in a crash", () => {
+    const fault = /* c */ `
+extern void *mmap(void *, unsigned long, int, int, int, long);
+extern int mprotect(void *, unsigned long, int);
+extern int getpagesize(void);
+extern int pthread_attr_init(void *);
+extern int pthread_attr_setstack(void *, void *, unsigned long);
+extern int pthread_create(unsigned long *, const void *, void *(*)(void *), void *);
+extern int pthread_join(unsigned long, void **);
+
+#define STACK_SIZE (1 << 20)
+static int how;
+static int calls[3];
+
+static void *fault(void *unreadable) {
+  void **frame = __builtin_frame_address(0);
+  long refused = how ? refuse_reads(how, calls) : 0;
+  if (refused) return (void *)refused;
+  frame[0] = (char *)unreadable + 16;
+  *(volatile int *)8 = 1;
+  return 0;
+}
+
+long crash(int anonymous, int forced, int process_vm_readv, int openat, int open) {
+  int page = getpagesize();
+  long attributes[32];
+  unsigned long thread;
+  void *failed = 0;
+  char *stack = mmap(0, STACK_SIZE + page, 3 /* PROT_READ | PROT_WRITE */, anonymous, -1, 0);
+  if (stack == (char *)-1) return 1;
+  if (mprotect(stack + STACK_SIZE, page, 0 /* PROT_NONE */) != 0) return 2;
+  how = forced;
+  calls[0] = process_vm_readv, calls[1] = openat, calls[2] = open;
+  if (pthread_attr_init(attributes) != 0 || pthread_attr_setstack(attributes, stack, STACK_SIZE) != 0) return 3;
+  if (pthread_create(&thread, attributes, fault, stack + STACK_SIZE) != 0) return 4;
+  pthread_join(thread, &failed);
+  return (long)failed;
+}
+`;
+    // For the thread that faults, process_vm_readv answers as under qemu-user and open as where /proc is not mounted.
+    // That leaves the pipe, and with no descriptor free, nothing.
+    const refuseReads = /* c */ `
+extern int prctl(int, ...);
+extern int setrlimit(int, const void *);
+
+struct filter { unsigned short code; unsigned char jt, jf; unsigned int k; };
+struct program { unsigned short length; struct filter *filter; };
+
+static long refuse_reads(int how, const int *calls) {
+  struct filter filter[] = {
+    {0x20, 0, 0, 0},               // the number of the call
+    {0x15, 3, 0, calls[0]},        // process_vm_readv
+    {0x15, 3, 0, calls[1]},        // openat
+    {0x15, 2, 0, calls[2]},        // open
+    {0x06, 0, 0, 0x7fff0000},      // allowed
+    {0x06, 0, 0, 0x00050000 | 38}, // ENOSYS
+    {0x06, 0, 0, 0x00050000 | 2},  // ENOENT
+  };
+  struct program program = {sizeof(filter) / sizeof(filter[0]), filter};
+  unsigned long no_descriptors[2] = {0, 0};
+  if (prctl(38 /* PR_SET_NO_NEW_PRIVS */, 1UL, 0UL, 0UL, 0UL) != 0) return 10;
+  if (prctl(22 /* PR_SET_SECCOMP */, 2UL /* SECCOMP_MODE_FILTER */, &program) != 0) return 11;
+  if (how == 2 && setrlimit(7 /* RLIMIT_NOFILE */, no_descriptors) != 0) return 12;
+  return 0;
+}
+`;
+    const nothingRefused = /* c */ `
+static long refuse_reads(int how, const int *calls) { return 0; }
+`;
+    const program = `
+const { cc } = require("bun:ffi");
+const { crash } = cc({
+  source: require("path").join(__dirname, "fault.c"),
+  symbols: { crash: { args: ["int", "int", "int", "int", "int"], returns: "i64" } },
+}).symbols;
+// MAP_PRIVATE | MAP_ANON
+const anonymous = process.platform === "linux" ? 0x22 : 0x1002;
+// process_vm_readv, openat, open
+const calls = process.arch === "x64" ? [310, 257, 2] : [270, 56, 56];
+console.log(crash(anonymous, ["kernel", "pipe", "nothing"].indexOf(process.argv[2]), ...calls));
+`;
+
+    // `_` is an address that no image holds: the C code. Its caller follows, unless nothing reads the frame record.
+    const cases: [title: string, reads: string, addresses: RegExp][] = [
+      ["the platform's own reads", "kernel", /^_.+$/],
+    ];
+    if (isLinux) {
+      cases.push(["only a pipe reads memory", "pipe", /^_.+$/]);
+      cases.push(["no descriptor is free for a pipe", "nothing", /^_$/]);
+    }
+    test.concurrent.each(cases)("the crash is reported: %s", async (_, reads, addresses) => {
+      using dir = tempDir("crash-with-unreadable-frame-record", {
+        "fault.c": (isLinux ? refuseReads : nothingRefused) + fault,
+        "fault.js": program,
+      });
+      await using proc = Bun.spawn({
+        cmd: withoutCoreDump([bunExe(), "fault.js", reads, "--debug-crash-handler-use-trace-string"]),
+        cwd: String(dir),
+        env: noReportEnv,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      // After the version: the platform, the command, the format and 7 characters of commit, two VLQs of feature bits,
+      // the addresses, a zero, and the fault: 2 and two VLQs of its address.
+      const trace = stderr.match(/^ \/\d+\.\d+\.\d+\/.{10}(?:[g-z0-9+/]*[A-Za-f]){2}(\S*)A2AQ$/m)?.[1];
+      expect({
+        stdout,
+        reason: stderr.match(/^panic(?:\(.*\))?: (.*)$/m)?.[1],
+        isExplained: stderr.includes("oh no: Bun has crashed."),
+        trace,
+        signal: proc.signalCode,
+      }).toEqual({
+        stdout: "",
+        reason: "Segmentation fault at address 0x8",
+        isExplained: true,
+        trace: expect.stringMatching(addresses),
+        signal: "SIGSEGV",
+      });
+    });
+  });
+});
+
 describe("automatic crash reporter", () => {
   for (const approach of ["panic", "segfault", "outOfMemory"]) {
     test(`${approach} should report`, async () => {

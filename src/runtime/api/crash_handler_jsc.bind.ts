@@ -26,5 +26,9 @@ export const crashHandler = b.namespace({
   fastfail: { length: 1 },
   trap: { length: 1 },
   raiseIgnoringPanicHandler: { length: 1 },
+  stackWalkAcrossPages: {
+    args: { secondPageReadable: b.bool, recordAcrossPages: b.bool },
+    returns: b.array(b.u32).optional,
+  },
   stackTraceStartsAtSignedReturnAddress: { returns: b.bool.optional },
 });

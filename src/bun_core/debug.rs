@@ -58,20 +58,66 @@ pub fn frame_address() -> usize {
     }
 }
 
-/// Reads memory from any address of the current process, tolerating unmapped
-/// or corrupt pages so a damaged stack can't fault the walker itself.
-struct MemoryAccessor {
+/// Has the kernel copy memory of the current process. What cannot be read is an error of the call, where a load would fault.
+#[cfg(not(windows))]
+struct KernelReader {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     mem: core::ffi::c_int, // -1 = uninit, -2 = unavailable, else /proc/<pid>/mem fd
+    #[cfg(not(target_os = "macos"))]
+    pipe: Pipe,
 }
 
-impl MemoryAccessor {
+/// Where no call copies the memory of the own process, the kernel copies what a walk writes into a pipe.
+#[cfg(not(any(windows, target_os = "macos")))]
+enum Pipe {
+    Unopened,
+    Unavailable,
+    Open {
+        reader: core::ffi::c_int,
+        writer: core::ffi::c_int,
+    },
+}
+
+#[cfg(not(windows))]
+impl KernelReader {
     const INIT: Self = Self {
         #[cfg(any(target_os = "linux", target_os = "android"))]
         mem: -1,
+        #[cfg(not(target_os = "macos"))]
+        pipe: Pipe::Unopened,
     };
 
-    fn read(&mut self, address: usize, buf: &mut [u8]) -> bool {
+    /// All of `buf` from `address`, or `false`.
+    #[cfg(target_os = "macos")]
+    fn read(&mut self, address: usize, buf: &mut [core::mem::MaybeUninit<u8>]) -> bool {
+        unsafe extern "C" {
+            // The `libc` crate does not have the first and deprecates the second.
+            fn mach_vm_read_overwrite(
+                target_task: libc::mach_port_t,
+                address: u64,
+                size: u64,
+                data: u64,
+                outsize: *mut u64,
+            ) -> libc::kern_return_t;
+            safe static mach_task_self_: libc::mach_port_t;
+        }
+        let mut copied = 0u64;
+        // SAFETY: `buf` is valid for a write of its length, and the kernel answers a source that it cannot read with an error.
+        let result = unsafe {
+            mach_vm_read_overwrite(
+                mach_task_self_,
+                address as u64,
+                buf.len() as u64,
+                buf.as_mut_ptr() as u64,
+                &raw mut copied,
+            )
+        };
+        result == libc::KERN_SUCCESS && copied == buf.len() as u64
+    }
+
+    /// All of `buf` from `address`, or `false`.
+    #[cfg(not(target_os = "macos"))]
+    fn read(&mut self, address: usize, buf: &mut [core::mem::MaybeUninit<u8>]) -> bool {
         #[cfg(any(target_os = "linux", target_os = "android"))]
         loop {
             match self.mem {
@@ -131,36 +177,154 @@ impl MemoryAccessor {
                 }
             }
         }
-        if !is_valid_memory(address) {
-            return false;
-        }
-        // SAFETY: is_valid_memory just confirmed the page at `address` is mapped.
-        unsafe {
-            core::ptr::copy_nonoverlapping(address as *const u8, buf.as_mut_ptr(), buf.len());
-        }
-        true
+        self.read_through_pipe(address, buf)
     }
 
-    fn load_usize(&mut self, address: usize) -> Option<usize> {
-        let mut result = [0u8; core::mem::size_of::<usize>()];
-        if self.read(address, &mut result) {
-            Some(usize::from_ne_bytes(result))
-        } else {
-            None
+    /// The kernel answers a write from memory that it cannot read with EFAULT. Without two free descriptors nothing is read.
+    #[cfg(not(target_os = "macos"))]
+    fn read_through_pipe(
+        &mut self,
+        address: usize,
+        buf: &mut [core::mem::MaybeUninit<u8>],
+    ) -> bool {
+        let (reader, writer) = match self.pipe {
+            Pipe::Open { reader, writer } => (reader, writer),
+            Pipe::Unavailable => return false,
+            Pipe::Unopened => {
+                let mut fds: [core::ffi::c_int; 2] = [-1; 2];
+                // SAFETY: `fds` is valid for a write of two descriptors.
+                if unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC | libc::O_NONBLOCK) } != 0
+                {
+                    self.pipe = Pipe::Unavailable;
+                    return false;
+                }
+                let [reader, writer] = fds;
+                self.pipe = Pipe::Open { reader, writer };
+                (reader, writer)
+            }
+        };
+        // SAFETY: the kernel reads the source, and the pipe is empty and holds a window. Not `libc::write`: ASAN checks what that writes against its shadow, and a live stack has redzones.
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        let written =
+            unsafe { libc::syscall(libc::SYS_write, writer, address, buf.len()) } as isize;
+        // SAFETY: as above.
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
+        let written =
+            unsafe { libc::write(writer, address as *const core::ffi::c_void, buf.len()) };
+        // A source that ends in a page that cannot be read can leave its first bytes in the pipe.
+        let written = usize::try_from(written).unwrap_or(0);
+        let mut taken = 0;
+        while taken < written {
+            // SAFETY: `buf[taken..]` is valid for a write of what is left of `written`, which is no more than its length.
+            let count =
+                unsafe { libc::read(reader, buf[taken..].as_mut_ptr().cast(), written - taken) };
+            let Ok(count @ 1..) = usize::try_from(count) else {
+                // What is left in the pipe would be taken for the bytes of the next read.
+                self.close_pipe();
+                return false;
+            };
+            taken += count;
+        }
+        written == buf.len()
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    fn close_pipe(&mut self) {
+        if let Pipe::Open { reader, writer } = core::mem::replace(&mut self.pipe, Pipe::Unavailable)
+        {
+            // SAFETY: both are descriptors that `read_through_pipe` opened.
+            unsafe {
+                libc::close(reader);
+                libc::close(writer);
+            }
         }
     }
 }
 
-impl Drop for MemoryAccessor {
+#[cfg(not(windows))]
+impl Drop for KernelReader {
     fn drop(&mut self) {
         #[cfg(any(target_os = "linux", target_os = "android"))]
         if self.mem >= 0 {
             // SAFETY: self.mem is a valid fd we opened.
             unsafe { libc::close(self.mem) };
         }
+        #[cfg(not(target_os = "macos"))]
+        self.close_pipe();
     }
 }
 
+/// The most that the kernel copies in one call: frame records lie close together, so one call serves many loads. A pipe can be as small as this.
+#[cfg(not(windows))]
+const WINDOW_SIZE: usize = 4096;
+
+/// Loads words from any address of the current process. A word that cannot be read is `None` and not a fault, so a damaged stack does not stop the walker.
+struct MemoryAccessor {
+    #[cfg(not(windows))]
+    kernel: KernelReader,
+    /// What the kernel copied last: `window_len` bytes from the address `window_start`.
+    #[cfg(not(windows))]
+    window: [core::mem::MaybeUninit<u8>; WINDOW_SIZE],
+    #[cfg(not(windows))]
+    window_start: usize,
+    #[cfg(not(windows))]
+    window_len: usize,
+}
+
+impl MemoryAccessor {
+    /// Not a constant: a copy of one brings the bytes of the window along.
+    const fn init() -> Self {
+        Self {
+            #[cfg(not(windows))]
+            kernel: KernelReader::INIT,
+            #[cfg(not(windows))]
+            window: [core::mem::MaybeUninit::uninit(); WINDOW_SIZE],
+            #[cfg(not(windows))]
+            window_start: 0,
+            #[cfg(not(windows))]
+            window_len: 0,
+        }
+    }
+
+    #[cfg(not(windows))]
+    fn load_usize(&mut self, address: usize) -> Option<usize> {
+        const WORD: usize = core::mem::size_of::<usize>();
+        let mut offset = address.wrapping_sub(self.window_start);
+        if offset >= self.window_len || self.window_len - offset < WORD {
+            // A page can be read as a whole or not at all, so one copy takes what is left of it. A word in two pages is copied alone.
+            let page_size = bun_alloc::page_size();
+            let len = (page_size - address % page_size).clamp(WORD, WINDOW_SIZE);
+            self.window_len = 0;
+            if !self.kernel.read(address, &mut self.window[..len]) {
+                return None;
+            }
+            self.window_start = address;
+            self.window_len = len;
+            offset = 0;
+        }
+        let word = self.window[offset..offset + WORD]
+            .as_ptr()
+            .cast::<[u8; WORD]>();
+        // SAFETY: the kernel wrote the first `window_len` bytes of the window, and the word lies in them.
+        Some(usize::from_ne_bytes(unsafe { word.read() }))
+    }
+
+    #[cfg(windows)]
+    fn load_usize(&mut self, address: usize) -> Option<usize> {
+        if !is_valid_memory(address) {
+            return None;
+        }
+        let mut result = [0u8; core::mem::size_of::<usize>()];
+        // SAFETY: `is_valid_memory` found the page of `address` committed and readable, and on Windows no load is of an
+        // unaligned address, so the word lies in that page.
+        unsafe {
+            core::ptr::copy_nonoverlapping(address as *const u8, result.as_mut_ptr(), result.len());
+        }
+        Some(usize::from_ne_bytes(result))
+    }
+}
+
+#[cfg(windows)]
 fn is_valid_memory(address: usize) -> bool {
     let page_size = bun_alloc::page_size();
     let aligned_address = address & !(page_size - 1);
@@ -199,21 +363,6 @@ fn is_valid_memory(address: usize) -> bool {
             && mbi.State == MEM_COMMIT
             && mbi.Protect & (PAGE_NOACCESS | PAGE_GUARD) == 0
             && mbi.Protect & READABLE != 0
-    }
-    #[cfg(not(windows))]
-    {
-        // SAFETY: msync only inspects the mapping; aligned_address is page-aligned.
-        let rc = unsafe {
-            libc::msync(
-                aligned_address as *mut core::ffi::c_void,
-                page_size,
-                libc::MS_ASYNC,
-            )
-        };
-        if rc != 0 {
-            return crate::ffi::errno() != libc::ENOMEM;
-        }
-        true
     }
 }
 
@@ -486,7 +635,7 @@ impl StackIterator {
             fp,
             returned_to: None,
             is_at_fault: false,
-            ma: MemoryAccessor::INIT,
+            ma: MemoryAccessor::init(),
         }
     }
 

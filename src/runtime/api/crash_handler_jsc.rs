@@ -199,6 +199,76 @@ pub(crate) fn raise_ignoring_panic_handler() {
     Global::raise_ignoring_panic_handler(bun_core::SignalCode::SIGSEGV);
 }
 
+/// The return addresses that a stack walk finds in a chain of frame records over three fresh pages, of which the second can be left without read permission. The nth record holds the return address n. `None` where the test does not run.
+pub(crate) fn stack_walk_across_pages(
+    second_page_readable: bool,
+    record_across_pages: bool,
+) -> Option<Vec<u32>> {
+    #[cfg(unix)]
+    {
+        use bun_sys::{Fd, Mmap};
+        const WORD: usize = core::mem::size_of::<usize>();
+        const RECORD: usize = 2 * WORD;
+        const NOT_MAPPED: usize = 1 << (usize::BITS - 1);
+        let page = bun_sys::page_size();
+        let access = libc::PROT_READ | libc::PROT_WRITE;
+        let anonymous = libc::MAP_PRIVATE | libc::MAP_ANON;
+        let pages = Mmap::new(3 * page, access, anonymous, Fd::from_native(-1), 0).ok()?;
+        let first = pages.as_ptr().addr();
+        let (second, third) = (first + page, first + 2 * page);
+        let records: &[usize] = if record_across_pages {
+            // The second record starts in the last word of the first page.
+            &[first, second - WORD, second + RECORD, third + page - RECORD]
+        } else {
+            // Records end with the first and with the second page, and one starts the second.
+            &[
+                first,
+                second - RECORD,
+                second,
+                third - RECORD,
+                third + page - RECORD,
+            ]
+        };
+        for (index, &record) in records.iter().enumerate() {
+            // The last record names a caller where nothing is mapped.
+            let caller = records.get(index + 1).copied().unwrap_or(NOT_MAPPED);
+            // SAFETY: the record lies in the three pages, which can be written.
+            unsafe {
+                pages
+                    .as_ptr()
+                    .with_addr(record)
+                    .cast::<[usize; 2]>()
+                    .write_unaligned([caller, index + 1]);
+            }
+        }
+        if !second_page_readable {
+            let flags = anonymous | libc::MAP_FIXED;
+            // SAFETY: the page that this replaces is one of `pages`, and nothing refers to its bytes.
+            unsafe {
+                bun_sys::mmap(
+                    pages.as_ptr().with_addr(second),
+                    page,
+                    libc::PROT_NONE,
+                    flags,
+                    Fd::from_native(-1),
+                    0,
+                )
+            }
+            .ok()?;
+        }
+        let mut walk = bun_core::debug::StackIterator::init(first);
+        let found = core::iter::from_fn(|| walk.next())
+            .take(records.len() + 1)
+            .map(|address| address as u32);
+        Some(found.collect())
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (second_page_readable, record_across_pages);
+        None
+    }
+}
+
 /// Whether a stack trace from below a frame with a signed return address,
 /// trimmed to that address, starts there: the walk and the address to trim by
 /// must both come without the signature. `None` where the test does not run.

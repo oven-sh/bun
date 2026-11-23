@@ -27,6 +27,7 @@
     "@remix-run/react": "2.17.5",
     "@remix-run/serve": "2.17.5",
     "@resvg/resvg-js": "2.6.2",
+    "@sinclair/typebox": "0.34.52",
     "@swc/core": "1.16.22",
     "@testing-library/jest-dom": "8.0.0",
     "@testing-library/react": "16.3.3",
@@ -112,7 +113,7 @@
     "webpack-cli": "7.3.1",
     "ws": "8.23.0",
     "xml2js": "0.6.2",
-    "yargs": "18.2.0"
+    "yargs": "17.7.2"
   },
   "private": true,
   "scripts": {

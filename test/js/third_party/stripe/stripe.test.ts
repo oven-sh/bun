@@ -10,7 +10,7 @@ describe.skipIf(!stripeCredentials)("stripe", () => {
   test("should be able to query a charge", async () => {
     // Stripe 23 throws from the constructor when there is no key, so the client is made where the test runs.
     const stripe = new Stripe(accessToken);
-    expect(stripe.charges.retrieve(chargeId, {}, { stripeAccount: accountId })).rejects.toThrow(
+    await expect(stripe.charges.retrieve(chargeId, {}, { stripeAccount: accountId })).rejects.toThrow(
       `No such charge: '${chargeId}'`,
     );
   });

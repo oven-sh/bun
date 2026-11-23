@@ -67,7 +67,7 @@ describe("res", function () {
   });
 
   describe("when accepting html", function () {
-    it.todo("should respond with html", function (done) {
+    it("should respond with html", function (done) {
       var app = express();
 
       app.use(function (req, res) {
@@ -79,10 +79,14 @@ describe("res", function () {
         .set("Accept", "text/html")
         .expect("Content-Type", /html/)
         .expect("Location", "http://google.com")
-        .expect(302, "<p>Found. Redirecting to http://google.com</p>", done);
+        .expect(
+          302,
+          "<!DOCTYPE html><head><title>Found</title></head><body><p>Found. Redirecting to http://google.com</p></body>",
+          done,
+        );
     });
 
-    it.todo("should escape the url", function (done) {
+    it("should escape the url", function (done) {
       var app = express();
 
       app.use(function (req, res) {
@@ -95,10 +99,14 @@ describe("res", function () {
         .set("Accept", "text/html")
         .expect("Content-Type", /html/)
         .expect("Location", "%3Cla'me%3E")
-        .expect(302, "<p>Found. Redirecting to %3Cla&#39;me%3E</p>", done);
+        .expect(
+          302,
+          "<!DOCTYPE html><head><title>Found</title></head><body><p>Found. Redirecting to %3Cla&#39;me%3E</p></body>",
+          done,
+        );
     });
 
-    it.todo("should not render evil javascript links in anchor href (prevent XSS)", function (done) {
+    it("should not render evil javascript links in anchor href (prevent XSS)", function (done) {
       var app = express();
       var xss = "javascript:eval(document.body.innerHTML=`<p>XSS</p>`);";
       var encodedXss = "javascript:eval(document.body.innerHTML=%60%3Cp%3EXSS%3C/p%3E%60);";
@@ -113,10 +121,16 @@ describe("res", function () {
         .set("Accept", "text/html")
         .expect("Content-Type", /html/)
         .expect("Location", encodedXss)
-        .expect(302, "<p>Found. Redirecting to " + encodedXss + "</p>", done);
+        .expect(
+          302,
+          "<!DOCTYPE html><head><title>Found</title></head><body><p>Found. Redirecting to " +
+            encodedXss +
+            "</p></body>",
+          done,
+        );
     });
 
-    it.todo("should include the redirect type", function (done) {
+    it("should include the redirect type", function (done) {
       var app = express();
 
       app.use(function (req, res) {
@@ -128,7 +142,11 @@ describe("res", function () {
         .set("Accept", "text/html")
         .expect("Content-Type", /html/)
         .expect("Location", "http://google.com")
-        .expect(301, "<p>Moved Permanently. Redirecting to http://google.com</p>", done);
+        .expect(
+          301,
+          "<!DOCTYPE html><head><title>Moved Permanently</title></head><body><p>Moved Permanently. Redirecting to http://google.com</p></body>",
+          done,
+        );
     });
   });
 

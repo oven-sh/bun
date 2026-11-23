@@ -46,6 +46,16 @@ function hasMatchingAddress(endpointList: Endpoint[], expectedAddress: Subchanne
   return false;
 }
 
+// Without public DNS a resolution fails. The case then ends with that error, as the earlier port did in onError.
+function resolutionFailed<T>(
+  result: StatusOr<T>,
+  done: (error: Error) => void,
+): result is Extract<StatusOr<T>, { ok: false }> {
+  if (result.ok) return false;
+  done(new Error(`Failed with status ${result.error.details}`));
+  return true;
+}
+
 describe("Name Resolver", () => {
   before(() => {
     resolver_dns.setup();
@@ -189,7 +199,7 @@ describe("Name Resolver", () => {
           return true;
         }
         resultSeen = true;
-        assert(maybeEndpointList.ok);
+        if (resolutionFailed(maybeEndpointList, done)) return true;
         const endpointList = maybeEndpointList.value;
         assert(endpointList.length > 0);
         done();
@@ -263,7 +273,7 @@ describe("Name Resolver", () => {
           return true;
         }
         resultSeen = true;
-        assert(maybeEndpointList.ok);
+        if (resolutionFailed(maybeEndpointList, done)) return true;
         const endpointList = maybeEndpointList.value;
         assert(
           hasMatchingAddress(endpointList, { host: "127.0.0.1", port: 443 }),
@@ -290,7 +300,7 @@ describe("Name Resolver", () => {
           return true;
         }
         resultSeen = true;
-        assert(maybeEndpointList.ok);
+        if (resolutionFailed(maybeEndpointList, done)) return true;
         const endpointList = maybeEndpointList.value;
         assert(hasMatchingAddress(endpointList, { host: "::1", port: 443 }));
         done();
@@ -315,7 +325,7 @@ describe("Name Resolver", () => {
           return true;
         }
         resultSeen = true;
-        assert(maybeEndpointList.ok);
+        if (resolutionFailed(maybeEndpointList, done)) return true;
         const endpointList = maybeEndpointList.value;
         assert(
           hasMatchingAddress(endpointList, { host: "127.0.0.1", port: 443 }),
@@ -342,7 +352,7 @@ describe("Name Resolver", () => {
           return true;
         }
         resultSeen = true;
-        assert(maybeEndpointList.ok);
+        if (resolutionFailed(maybeEndpointList, done)) return true;
         const endpointList = maybeEndpointList.value;
         assert(endpointList.length > 0);
         done();
@@ -368,7 +378,10 @@ describe("Name Resolver", () => {
         if (completeCount >= 2) {
           return true;
         }
-        assert(maybeEndpointList.ok);
+        if (resolutionFailed(maybeEndpointList, done)) {
+          completeCount = 2;
+          return true;
+        }
         const endpointList = maybeEndpointList.value;
         assert(endpointList.length > 0);
         completeCount += 1;

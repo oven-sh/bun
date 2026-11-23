@@ -71,7 +71,34 @@ const pFixtures = Promise.all(
 });
 
 describe("ChannelCredentials Implementation", () => {
+  // grpc-js 1.14 has no _getConnectionOptions() and no _getCallCredentials(), and its own suite dropped the six cases
+  // that read them. They stay here through _isSecure(), _createSecureConnector() and _equals(): createSsl() gives each
+  // argument shape to tls.createSecureContext().
   describe("createSsl", () => {
+    function assertConnectionOptions(creds: ChannelCredentials) {
+      assert.ok(creds._isSecure());
+      creds._createSecureConnector({ scheme: "dns", path: "localhost" }, {}).destroy();
+    }
+
+    it("should work when given no arguments", () => {
+      assertConnectionOptions(assert2.noThrowAndReturn(() => ChannelCredentials.createSsl()));
+    });
+
+    it("should work with just a CA override", async () => {
+      const { ca } = await pFixtures;
+      assertConnectionOptions(assert2.noThrowAndReturn(() => ChannelCredentials.createSsl(ca)));
+    });
+
+    it("should work with just a private key and cert chain", async () => {
+      const { key, cert } = await pFixtures;
+      assertConnectionOptions(assert2.noThrowAndReturn(() => ChannelCredentials.createSsl(null, key, cert)));
+    });
+
+    it("should work with three parameters specified", async () => {
+      const { ca, key, cert } = await pFixtures;
+      assertConnectionOptions(assert2.noThrowAndReturn(() => ChannelCredentials.createSsl(ca, key, cert)));
+    });
+
     it("should throw if just one of private key and cert chain are missing", async () => {
       const { ca, key, cert } = await pFixtures;
       assert.throws(() => ChannelCredentials.createSsl(ca, key));
@@ -99,9 +126,26 @@ describe("ChannelCredentials Implementation", () => {
       assert.strictEqual(connector.getCallCredentials(), callCreds);
       connector.destroy();
     });
+
+    it("should be chainable", () => {
+      const channelCreds = ChannelCredentials.createSsl();
+      const callCreds1 = new CallCredentialsMock();
+      const callCreds2 = new CallCredentialsMock();
+      // Associate both call credentials with channelCreds
+      const composedChannelCreds = channelCreds.compose(callCreds1).compose(callCreds2);
+      // Build credentials that should be an identical copy
+      const composedCallCreds = callCreds1.compose(callCreds2);
+      assert.ok(composedChannelCreds._equals(channelCreds.compose(composedCallCreds)));
+      assert.ok(!composedChannelCreds._equals(channelCreds.compose(callCreds1)));
+    });
   });
 
   describe("createInsecure", () => {
+    it("should return a ChannelCredentials object with no associated secure context", () => {
+      const creds = assert2.noThrowAndReturn(() => ChannelCredentials.createInsecure());
+      assert.ok(!creds._isSecure());
+    });
+
     it("should return the same default CallCredentials instance from a connector", () => {
       const insecureCreds = ChannelCredentials.createInsecure();
       const connector = insecureCreds._createSecureConnector({ scheme: "dns", path: "localhost" }, {});

@@ -143,3 +143,7 @@ leak:TemporalCore::withTimeZone
 # one of the op lambdas withCalendar runs would still be reported
 # (withTimeZone has no builder frame; its ucal_open is inline).
 leak:TemporalCore::buildCalendarTemplate
+# test/js/third_party/vitest/vitest.test.ts: vitest loads vite 8.3, and its rolldown 1.2 addon ends the process with
+# threadsafe functions that it created and did not release. LeakSanitizer reports what napi_create_threadsafe_function
+# allocated for them. The same build with rolldown 1.3.3 has no report. This line matches the module of the addon.
+leak:rolldown-binding

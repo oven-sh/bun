@@ -2,6 +2,7 @@ import { internalModuleBytecode } from "bun:internal-for-testing";
 import { afterAll, describe, expect, test } from "bun:test";
 import { existsSync, readdirSync, readFileSync, renameSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { pathToFileURL } from "node:url";
 import vm from "node:vm";
 import { basename, join } from "path";
 
@@ -250,7 +251,6 @@ const bundledTogether = [
   "pg-connection-string",
   "pg-gateway",
   "pino-pretty",
-  "postgres",
   "prompts",
   "react",
   "react-dom",
@@ -428,12 +428,21 @@ describe("bytecode cache portability", () => {
         new vm.SourceTextModule(librarySource("acorn/dist/acorn.mjs"), { identifier: "acorn.mjs" }) as any
       ).createCachedData(),
     );
+    // The bundler replaces __dirname, __filename and import.meta.url with the absolute path of the module. A library
+    // that reads one of them gives a bundle whose hash is only right where this checkout is, so it fails here and not
+    // first in CI. Take the library that the excerpt belongs to out of the corpus.
+    const nodeModules = join(corpusDir, "../../node_modules");
+    const checkoutPaths = [nodeModules, nodeModules.replaceAll("\\", "\\\\"), pathToFileURL(nodeModules).href];
+    const inlinedPaths: string[] = [];
     for (const [i, { name }] of bundlerBuilds.entries()) {
       const { js, jsc } = (await bundled)[i];
+      const at = Math.max(...checkoutPaths.map(path => js.indexOf(path)));
+      if (at !== -1) inlinedPaths.push(`${name}: ${js.subarray(Math.max(0, at - 100), at + 200)}`);
       // If `js` differs between platforms the bundler is at fault, not the bytecode format.
       // The file ends with a 24-byte footer whose checksum covers cacheVersion, so hash only the payload.
       outputs[name] = { js: Bun.CryptoHasher.hash("sha256", js, "hex"), jsc: fingerprint(jsc.subarray(0, -24)) };
     }
+    expect(inlinedPaths, "a bundle holds an absolute path of this checkout").toEqual([]);
     expectOutputs(outputs);
   });
 
@@ -519,10 +528,10 @@ describe("bytecode cache portability", () => {
           },
         },
         "bun build --bytecode libraries.js": {
-          "js": "0156d706f9379e6d1d4ad07cff4d7b8f7594bd35ac4734a08db6234047af6f6d",
+          "js": "f5d6a7ca847920c6e90dd85de121946ad2e8f570b97db455833aab0b69b65213",
           "jsc": {
-            "bytes": 23267568,
-            "sha256": "dbfed4bc6ef7142cbefe5f86cc4fa8ae154321b58ded9ab021181ab3432d1a7e",
+            "bytes": 22859368,
+            "sha256": "0ab1f489d94215c5ace0552217fa8cd89f85a87756d6399e4c63275622839d84",
           },
         },
         "bun build --bytecode lodash/lodash.js": {

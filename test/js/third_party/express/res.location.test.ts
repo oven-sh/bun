@@ -79,7 +79,7 @@ describe("res", function () {
       request(app).get("/").expect("Location", "[object%20Object]").expect(200, done);
     });
 
-    it.todo("should consistently handle non-string inputs: array", function (done) {
+    it("should consistently handle non-string inputs: array", function (done) {
       var app = express();
       app.use(function (req, res) {
         res.location([]).end();
@@ -88,7 +88,7 @@ describe("res", function () {
       request(app).get("/").expect("Location", "").expect(200, done);
     });
 
-    it.todo("should consistently handle empty string input", function (done) {
+    it("should consistently handle empty string input", function (done) {
       var app = express();
       app.use(function (req, res) {
         res.location("").end();
@@ -168,17 +168,17 @@ describe("res", function () {
       testRequestedRedirect(app, "/foo/bar", "/foo/bar", null, done);
     });
 
-    it.todo("should not encode urls in such a way that they can bypass redirect allow lists", function (done) {
+    it("should not encode urls in such a way that they can bypass redirect allow lists", function (done) {
       var app = createRedirectServerForDomain("google.com");
       testRequestedRedirect(app, "http://google.com\\@apple.com", "http://google.com\\@apple.com", "google.com", done);
     });
 
-    it.todo("should not be case sensitive", function (done) {
+    it("should not be case sensitive", function (done) {
       var app = createRedirectServerForDomain("google.com");
       testRequestedRedirect(app, "HTTP://google.com\\@apple.com", "HTTP://google.com\\@apple.com", "google.com", done);
     });
 
-    it.todo("should work with https", function (done) {
+    it("should work with https", function (done) {
       var app = createRedirectServerForDomain("google.com");
       testRequestedRedirect(
         app,
@@ -189,12 +189,12 @@ describe("res", function () {
       );
     });
 
-    it.todo("should correctly encode schemaless paths", function (done) {
+    it("should correctly encode schemaless paths", function (done) {
       var app = createRedirectServerForDomain("google.com");
       testRequestedRedirect(app, "//google.com\\@apple.com/", "//google.com\\@apple.com/", "google.com", done);
     });
 
-    it.todo("should keep backslashes in the path", function (done) {
+    it("should keep backslashes in the path", function (done) {
       var app = createRedirectServerForDomain("google.com");
       testRequestedRedirect(
         app,
@@ -205,7 +205,7 @@ describe("res", function () {
       );
     });
 
-    it.todo("should escape header splitting for old node versions", function (done) {
+    it("should escape header splitting for old node versions", function (done) {
       var app = createRedirectServerForDomain("google.com");
       testRequestedRedirect(
         app,
@@ -221,7 +221,7 @@ describe("res", function () {
       testRequestedRedirect(app, "/%e2%98%83", "/%e2%98%83", null, done);
     });
 
-    it.todo("should encode unicode correctly even with a bad host", function (done) {
+    it("should encode unicode correctly even with a bad host", function (done) {
       var app = createRedirectServerForDomain("google.com");
       testRequestedRedirect(
         app,
@@ -243,7 +243,7 @@ describe("res", function () {
       );
     });
 
-    it.todo("should encode file uri path", function (done) {
+    it("should encode file uri path", function (done) {
       var app = createRedirectServerForDomain("");
       testRequestedRedirect(app, "file:///etc\\passwd", "file:///etc\\passwd", "", done);
     });

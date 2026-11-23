@@ -35,7 +35,6 @@ void Bun__NodeHTTPResponse_takeBackConnection(void* zigResponse, JSC::EncodedJSV
 namespace uWS {
 template<bool SSL, bool IsNodeHttp>
 struct HttpResponseData;
-struct WebSocketData;
 }
 
 namespace Bun {

@@ -95,7 +95,6 @@ use ensure_route::{
 };
 use failures::mark_all_route_children;
 pub(crate) use finalize::{CachedFileIndex, HotUpdateContext};
-use hmr_socket::hmr_socket_behavior;
 pub(crate) use hot_reload_event::{HotReloadEvent, PendingReloadEvent};
 use http::{
     DevHandlerId, dev_route_tramp, extract_pathname_from_url, host_forbidden,

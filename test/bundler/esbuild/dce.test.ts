@@ -3755,6 +3755,34 @@ describe("bundler", () => {
       });
     }
   }
+  // unused.js does not run. Only the @import in a.css keeps x.css, so x.css goes where that @import puts it.
+  itBundled("dce/CSSOfTreeShakenFileThatACSSFileAlsoImports", {
+    files: {
+      "/entry.js": `import "./a.css"; import { unused } from "./lib/unused.js"; console.log("entry.js runs");`,
+      "/a.css": `@import "./lib/x.css";\n.a { color: red }`,
+      "/lib/package.json": JSON.stringify({ name: "lib", sideEffects: ["*.css"] }),
+      "/lib/unused.js": `import "./x.css"; export const unused = 1;`,
+      "/lib/x.css": `.x { color: blue }`,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    onAfterBundle(api) {
+      expect(cssFilesIn(api, "/out/entry.css")).toEqual(["lib/x.css", "a.css"]);
+    },
+    run: { file: "/out/entry.js", stdout: "entry.js runs" },
+  });
+  // treeShaking: false keeps code that nothing uses. The sideEffects field still applies, so b.js does not run.
+  itBundled("dce/CSSOfTreeShakenFileTreeShakingFalse", {
+    files: cssBehindBarrel({ sideEffects: ["*.css"] }, namedBarrel),
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    treeShaking: false,
+    backend: "api",
+    onAfterBundle(api) {
+      expect(cssFilesIn(api, "/out/entry.css")).toEqual(["lib/a.css"]);
+    },
+    run: { file: "/out/entry.js", stdout: "a.js runs\nA" },
+  });
   // unused.js does not run. Its CSS goes, and shared.css keeps the place that the import in unused.js gives it.
   itBundled("dce/CSSOfTreeShakenFileKeepsTheOrder", {
     files: {

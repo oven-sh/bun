@@ -1451,3 +1451,25 @@ test.concurrent.each(["Bun.TOML.parse('a = 1')", "new Bun.Transpiler({ macro: { 
   },
   timeout,
 );
+
+// More lookups than there are threads for them, so that the worker's end finds some not yet started.
+test("a worker can end while system lookups wait for a thread", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const { Worker } = require("node:worker_threads");
+      new Worker(
+        'for (let port = 1; port <= 32; port++) Bun.dns.lookup("localhost", { port, backend: "libc" }); process.exit(0);',
+        { eval: true },
+      ).on("exit", code => console.log("exit", code));
+    `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "exit 0\n", stderr: "", exitCode: 0 });
+});

@@ -17,8 +17,9 @@
 import assert from "assert";
 import { afterAll as after, beforeAll as before, beforeEach, describe, it } from "bun:test";
 
-import { credentials } from "@grpc/grpc-js";
+import { statusOrFromError, statusOrFromValue } from "@grpc/grpc-js/build/src/call-interface";
 import { ConnectivityState } from "@grpc/grpc-js/build/src/connectivity-state";
+import { Status } from "@grpc/grpc-js/build/src/constants";
 import { ChannelControlHelper, createChildChannelControlHelper } from "@grpc/grpc-js/build/src/load-balancer";
 import {
   PickFirstLoadBalancer,
@@ -29,8 +30,6 @@ import { Metadata } from "@grpc/grpc-js/build/src/metadata";
 import { Picker } from "@grpc/grpc-js/build/src/picker";
 import { Endpoint, subchannelAddressToString } from "@grpc/grpc-js/build/src/subchannel-address";
 import { MockSubchannel, TestClient, TestServer } from "./common";
-import { statusOrFromError, statusOrFromValue } from "@grpc/grpc-js/build/src/call-interface";
-import { Status } from "@grpc/grpc-js/build/src/constants";
 
 type Done = (err?: unknown) => void;
 function updateStateCallBackForExpectedStateSequence(expectedStateSequence: ConnectivityState[], done: Done) {

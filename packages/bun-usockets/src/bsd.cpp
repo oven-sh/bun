@@ -26,7 +26,6 @@
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <atomic>
 #include <memory>
 
 #if BUN_DEBUG
@@ -834,9 +833,6 @@ int bsd_addr_get_port(struct bsd_addr_t *addr) {
 }
 
 #ifdef _WIN32
-/* Whether this process has ever handed out or adopted a listening socket. */
-static std::atomic<bool> win32_shares_listeners;
-
 /* Winsock's accept() on a non-blocking socket is two steps: it polls, then waits for the
  * connection it saw. If another holder of the socket takes that connection in between, the wait
  * lasts until the next client arrives. An overlapped AcceptEx() can be called off instead. */
@@ -905,17 +901,15 @@ static SOCKET win32_accept_shared(SOCKET fd, struct bsd_addr_t *addr) {
 }
 #endif
 
-void bsd_socket_listener_is_shared(void) {
-#ifdef _WIN32
-    win32_shares_listeners.store(true, std::memory_order_relaxed);
-#endif
-}
-
 // called by dispatch_ready_poll
-LIBUS_SOCKET_DESCRIPTOR bsd_accept_socket(LIBUS_SOCKET_DESCRIPTOR fd, struct bsd_addr_t *addr) {
+LIBUS_SOCKET_DESCRIPTOR bsd_accept_socket(LIBUS_SOCKET_DESCRIPTOR fd, struct bsd_addr_t *addr, int shared) {
     ssize_t injected = 0; int unused = 0;
     if (US_FAULT_CHECK(US_FAULT_ACCEPT, fd, injected, unused)) return LIBUS_SOCKET_ERROR;
     (void)injected; (void)unused;
+#ifndef _WIN32
+    /* A POSIX accept() honors O_NONBLOCK on a shared socket too. */
+    (void)shared;
+#endif
 
     while (1) {
         addr->len = sizeof(addr->mem);
@@ -924,9 +918,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_accept_socket(LIBUS_SOCKET_DESCRIPTOR fd, struct bsd
         // Linux, FreeBSD
         us_fd_t accepted_fd{accept4(fd, (struct sockaddr *) addr, &addr->len, SOCK_CLOEXEC | SOCK_NONBLOCK)};
 #elif defined(_WIN32)
-        us_fd_t accepted_fd{UNLIKELY(win32_shares_listeners.load(std::memory_order_relaxed))
-            ? win32_accept_shared(fd, addr)
-            : accept(fd, (struct sockaddr *) addr, &addr->len)};
+        us_fd_t accepted_fd{shared ? win32_accept_shared(fd, addr) : accept(fd, (struct sockaddr *) addr, &addr->len)};
 #else
         // OS X
         us_fd_t accepted_fd{accept(fd, (struct sockaddr *) addr, &addr->len)};
@@ -1322,21 +1314,10 @@ int bsd_socket_export_size(void) {
 #endif
 }
 
-#ifdef _WIN32
-static bool win32_is_listening(SOCKET fd) {
-    int listening = 0;
-    int optlen = (int) sizeof(listening);
-    return getsockopt(fd, SOL_SOCKET, SO_ACCEPTCONN, (char *) &listening, &optlen) == 0 && listening != 0;
-}
-#endif
-
 int bsd_socket_export(LIBUS_SOCKET_DESCRIPTOR fd, unsigned int target_pid, void *info_out) {
 #ifdef _WIN32
     if (WSADuplicateSocketW(fd, (DWORD) target_pid, (WSAPROTOCOL_INFOW *) info_out) != 0) {
         return WSAGetLastError();
-    }
-    if (win32_is_listening(fd)) {
-        bsd_socket_listener_is_shared();
     }
     return 0;
 #else
@@ -1367,7 +1348,12 @@ LIBUS_SOCKET_DESCRIPTOR bsd_socket_import(void *info, int *err) {
  * sidesteps this by listening before the xfer (UV_HANDLE_SHARED_TCP_SOCKET, win/tcp.c). */
 int bsd_socket_listen_error_is_benign(LIBUS_SOCKET_DESCRIPTOR fd) {
 #ifdef _WIN32
-    return win32_is_listening(fd);
+    int listening = 0;
+    int optlen = (int) sizeof(listening);
+    if (getsockopt(fd, SOL_SOCKET, SO_ACCEPTCONN, (char *) &listening, &optlen) != 0) {
+        return 0;
+    }
+    return listening != 0;
 #else
     (void) fd;
     return 0;

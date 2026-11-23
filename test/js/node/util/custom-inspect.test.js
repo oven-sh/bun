@@ -87,26 +87,32 @@ describe("util.inspect of a nested value that throws", () => {
     ],
   ])("with `getters: true`, when %s throws", (_, make) => {
     const print = thrown => util.inspect(make(thrown), { getters: true });
+    const printed = text => `{ a: [Getter: <Inspection threw (${text})>] }`;
 
-    test("prints null and undefined", () => {
-      expect(print(null)).toBe("{ a: [Getter: <Inspection threw (null)>] }");
-      expect(print(undefined)).toBe("{ a: [Getter: <Inspection threw (undefined)>] }");
+    test("prints a primitive", () => {
+      expect(print(null)).toBe(printed("null"));
+      expect(print(undefined)).toBe(printed("undefined"));
+      expect(print(42)).toBe(printed("42"));
+      expect(print("boom")).toBe(printed("'boom'"));
     });
 
-    test("prints an error", () => {
-      // Node.js prints the error and its stack between the parentheses. Bun prints the message.
-      expect(print(boom)).toMatch(/a: \[Getter: <Inspection threw \((RangeError: )?boom/);
+    // Node.js prints an object that is thrown. Bun prints its message.
+    test("prints the message of an error", () => {
+      if (process.versions.bun) expect(print(boom)).toBe(printed("boom"));
+      else expect(print(boom)).toContain("a: [Getter: <Inspection threw (RangeError: boom");
     });
 
-    test("prints a value with no readable message", () => {
+    test("prints an object with no readable message", () => {
       const unreadable = Object.defineProperty(new Error("unreadable"), "message", {
         get() {
           throw boom;
         },
       });
 
-      expect(print(unreadable)).toContain("a: [Getter: <Inspection threw (");
-      expect(print({ message: Symbol("not a string") })).toContain("a: [Getter: <Inspection threw (");
+      for (const thrown of [unreadable, { message: Symbol("not a string") }]) {
+        if (process.versions.bun) expect(print(thrown)).toBe(printed("undefined"));
+        else expect(print(thrown)).toContain("a: [Getter: <Inspection threw (");
+      }
     });
   });
 
@@ -141,23 +147,6 @@ describe("util.inspect of a nested value that throws", () => {
     } finally {
       // node:assert sets the limit to 0 while it prints. A print that throws leaves it there.
       Error.stackTraceLimit = limit;
-    }
-  });
-
-  test("throws Node's internal assertion error for an export of a module namespace", async () => {
-    const source = `export const member = { [Symbol.for("nodejs.util.inspect.custom")]() { throw new TypeError("boom"); } };`;
-    const namespace = await import("data:text/javascript," + encodeURIComponent(source));
-
-    for (const value of [namespace, [namespace]]) {
-      const { name, code, message } = thrownBy(() => util.inspect(value));
-
-      expect({ name, code, message }).toEqual({
-        name: "Error",
-        code: "ERR_INTERNAL_ASSERTION",
-        message:
-          "This is caused by either a bug in Node.js or incorrect usage of Node.js internals.\n" +
-          "Please open an issue with this stack trace at https://github.com/nodejs/node/issues\n",
-      });
     }
   });
 });

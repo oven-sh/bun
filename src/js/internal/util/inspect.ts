@@ -175,11 +175,25 @@ const {
 const isMapIterator = $newCppFunction("NodeUtilTypesModule.cpp", "jsFunctionIsMapIterator", 1);
 const isSetIterator = $newCppFunction("NodeUtilTypesModule.cpp", "jsFunctionIsSetIterator", 1);
 
-// Node's inspect.js calls `internal/assert` with no message, so the text is the suffix without its leading newline.
-function assert(value: unknown) {
-  if (!value) {
-    throw $ERR_INTERNAL_ASSERTION(StringPrototypeSlice.$call(require("internal/shared").kInternalAssertionSuffix, 1));
+// We need this duplicate here to avoid a circular dependency between node:assert and node:util.
+class AssertionError extends Error {
+  declare operator: string;
+  declare generatedMessage: boolean;
+  declare actual: unknown;
+  declare expected: unknown;
+
+  constructor(message?: string) {
+    super(message);
+    this.name = "AssertionError";
+    this.code = "ERR_ASSERTION";
+    this.operator = "==";
+    this.generatedMessage = true;
+    this.actual = false;
+    this.expected = true;
   }
+}
+function assert(p: unknown, message?: string) {
+  if (!p) throw new AssertionError(message);
 }
 
 const { validateObject, kValidateObjectAllowArray } = require("internal/validators");
@@ -2521,9 +2535,13 @@ function formatProperty(
       } catch (err) {
         let thrown: string | undefined;
         try {
-          thrown = `${err == null ? err : (err as Error).message}`;
+          // Node.js prints the thrown value. This prints a primitive as Node.js does, and the message of an object.
+          thrown =
+            (typeof err === "object" && err !== null) || typeof err === "function"
+              ? `${(err as Error).message}`
+              : formatValue(ctx, err, recurseTimes);
         } catch {
-          // Any value can be thrown: its message can throw when read, or not convert to a string.
+          // The message can throw when read, or not convert to a string.
         }
         const message = `<Inspection threw (${thrown})>`;
         str = `${s(`[${label}:`, sp)} ${message}${s("]", sp)}`;

@@ -142,17 +142,6 @@ const failsToday: string[] = [];
 
 /** How many were run: those that passed, and those that fail under a `# TODO:`. ./what-a-todo-of-an-ir-test-stands-for.test.ts shows what such a line stands for. */
 export async function expectEveryTestPasses(args: string[], cwd?: string, env?: Record<string, string>) {
-  const { passed, todo } = await expectNoTestFails(args, cwd, env);
-  // A run of which nothing passed has shown nothing.
-  expect(passed).toBeGreaterThan(0);
-  return passed + todo;
-}
-
-/**
- * The two counts apart. It takes a run of which nothing passed: whoever starts a command for each file of a folder holds that something
- * of the folder passed.
- */
-export async function expectNoTestFails(args: string[], cwd?: string, env?: Record<string, string>) {
   const { lines, stderr, exitCode } = await runTool([testaot!, ...args], cwd, env);
   await printOutputOfFailedTests(lines, cwd);
   const failed = lines.filter(
@@ -167,7 +156,7 @@ export async function expectNoTestFails(args: string[], cwd?: string, env?: Reco
     lines.filter(line => line.startsWith("FAIL ")).map(line => /^FAIL (.+?\.ir):\d+: /.exec(line)?.[1] ?? line),
   ).size;
   expect({ lastLine: lines.at(-1), stderr, exitCode }).toEqual({
-    lastLine: expect.stringMatching(new RegExp(`^[0-9]+ passed, ${listed} failed, [0-9]+ todo$`)),
+    lastLine: expect.stringMatching(new RegExp(`^[1-9][0-9]* passed, ${listed} failed, [0-9]+ todo$`)),
     stderr: expect.any(String),
     exitCode: listed ? 1 : 0,
   });
@@ -180,7 +169,7 @@ export async function expectNoTestFails(args: string[], cwd?: string, env?: Reco
     .filter(line => !(asksForCheck && line.startsWith("NOT RUN, not as users build here: the command line asks for a check: ")));
   expect(notRun).toEqual([]);
   const [, passed, todo] = /^(\d+) passed, \d+ failed, (\d+) todo$/.exec(lines.at(-1)!)!;
-  return { passed: Number(passed), todo: Number(todo) };
+  return Number(passed) + Number(todo);
 }
 
 export const skipOrFail = (why: string) =>

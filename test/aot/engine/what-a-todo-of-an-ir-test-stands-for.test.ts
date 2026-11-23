@@ -2,7 +2,7 @@
 // on files that are made here: the file is run, it fails once it passes, and a stop of the compiler's own verifier fails it whatever it is marked with.
 import { expect, test } from "bun:test";
 import { tempDir } from "harness";
-import { expectEveryTestPasses, expectNoTestFails, runTool, skipOrFail, testaot, whyNoTestaot } from "./testaot";
+import { expectEveryTestPasses, runTool, skipOrFail, testaot, whyNoTestaot } from "./testaot";
 
 const program = 'module m0 path="/a.ts" displayPath="a.ts"\n';
 const mark = "# TODO: somebody: some day\n";
@@ -53,14 +53,5 @@ else {
     using folder = tempDir("what-a-todo-of-an-ir-test-stands-for", files);
     expect(await expectEveryTestPasses(["run", "passes.ir", "marked-and-fails.ir"], String(folder))).toBe(2);
     await expect(expectEveryTestPasses(["run", "marked-and-fails.ir"], String(folder))).rejects.toThrow();
-  });
-
-  // ./answers.ts starts a command for each of its files, and holds of all of them that something passed.
-  test("a command for one file counts it as what it is", async () => {
-    using folder = tempDir("what-a-todo-of-an-ir-test-stands-for", files);
-    expect({
-      passes: await expectNoTestFails(["run", "passes.ir"], String(folder)),
-      markedAndFails: await expectNoTestFails(["run", "marked-and-fails.ir"], String(folder)),
-    }).toEqual({ passes: { passed: 1, todo: 0 }, markedAndFails: { passed: 0, todo: 1 } });
   });
 }

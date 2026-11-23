@@ -21,7 +21,6 @@ import { linksWithLld, type Config } from "./config.ts";
 import {
   overridesDarwinAllocator,
   replacedLibcAllocationSymbols,
-  replacedOperatorDeleteSymbols,
   replacedOperatorNewSymbols,
 } from "./deps/mimalloc.ts";
 import { definesLibcFunctions, libcFunctionsScriptPath, rustLtoInLink, versionScriptPath } from "./flags.ts";
@@ -42,7 +41,7 @@ export interface BinaryExpectations {
     /** Read at check time (they are link inputs, so an edit relinks and re-checks without a reconfigure). */
     versionScript?: string;
     symbolList?: string;
-    /** On top of what the files list. A Mach-O executable has to export each of them. */
+    /** On top of what the files list. */
     exact: string[];
     patterns: string[];
   };
@@ -98,6 +97,8 @@ export interface BinaryExpectations {
   /** Undefined dynamic symbols that must not appear (`*` wildcards). */
   forbiddenImports: string[];
   requiredImports?: string[];
+  /** Mach-O: the only C++ functions that may be imported, as the Itanium ABI mangles them (`*` wildcards). Undefined = not checked. */
+  cxxImports?: string[];
   /**
    * The exact set of imported symbols, for a program small enough that every import is a decision (the Windows
    * `.bin/` shim). Undefined = only `forbiddenImports` is checked.
@@ -304,6 +305,36 @@ function requiredImports(cfg: Config): string[] {
   ];
 }
 
+/**
+ * The C++ functions that the macOS executable imports. Code in the executable has its own operator new and operator
+ * delete, and every other image has those of libc++abi.dylib (MimallocOverrideDarwin.cpp). A function of
+ * libc++.1.dylib that releases or grows a block of the executable would give a block of mimalloc to the system
+ * allocator, which ends the process. The out-of-line members of std::string did that, and that file now compiles them
+ * into the executable. None of these does. One that returns a block of the system allocator is fine
+ * (std::to_string): the executable's operator delete gives it back to its owner.
+ */
+const importedCxxFunctions = [
+  // A control block releases itself in its own virtual function, which is code of the executable.
+  "_ZNKSt3__119__shared_weak_count*",
+  "_ZNSt3__119__shared_weak_count*",
+  "_ZNSt3__111__call_once*",
+  "_ZNSt3__112__next_primeEm",
+  "_ZNSt3__115system_categoryEv",
+  "_ZNSt3__118condition_variable*",
+  "_ZNSt3__15mutex*",
+  "_ZNSt3__16__sortI*",
+  "_ZNSt3__16chrono12steady_clock3nowEv",
+  "_ZNSt3__19to_stringE*",
+  // They read the path.
+  "_ZNSt3__14__fs10filesystem8__statusERKNS1_4pathEPNS_10error_codeE",
+  "_ZNSt3__14__fs10filesystem16__symlink_statusERKNS1_4pathEPNS_10error_codeE",
+  // From libc++abi.dylib.
+  "_ZSt13set_terminatePFvvE",
+  "_ZSt15get_new_handlerv",
+  "_ZSt7nothrow",
+  "_ZSt9terminatev",
+];
+
 function forbiddenImports(cfg: Config): string[] {
   // Emulated TLS and libatomic calls: nowhere.
   const forbidden = ["__emutls_*", "__atomic_*"];
@@ -328,7 +359,7 @@ function forbiddenImports(cfg: Config): string[] {
     // Everything linked into the executable allocates from mimalloc
     // (MimallocOverrideDarwin.cpp). An import of one of these is code that
     // reached the system allocator around it.
-    forbidden.push(...replacedLibcAllocationSymbols, ...replacedOperatorNewSymbols, ...replacedOperatorDeleteSymbols);
+    forbidden.push(...replacedLibcAllocationSymbols, ...replacedOperatorNewSymbols);
   }
   if (cfg.linux && cfg.abi !== "musl") {
     // …nor the function-local-static guards (musl/FreeBSD/macOS take them
@@ -577,7 +608,7 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
         format,
         exports: {
           symbolList: src("symbols.txt"),
-          exact: overridesDarwinAllocator(cfg) ? replacedOperatorDeleteSymbols.map(name => `_${name}`) : [],
+          exact: [],
           patterns: [],
         },
         neededLibs: {
@@ -592,11 +623,11 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
         },
         ...(cfg.osxDeploymentTarget !== undefined && { minOSVersion: cfg.osxDeploymentTarget }),
         forbiddenImports: forbiddenImports(cfg),
+        ...(overridesDarwinAllocator(cfg) && !cfg.debug && { cxxImports: importedCxxFunctions }),
         ...(staticInitializers && { staticInitializers }),
         ...(forbiddenSymbols && { forbiddenSymbols }),
         macho: {
-          // dyld looks for operator delete in an executable only where its header has MH_WEAK_DEFINES.
-          flags: ["PIE", "TWOLEVEL", "DYLDLINK", ...(overridesDarwinAllocator(cfg) ? ["WEAK_DEFINES"] : [])],
+          flags: ["PIE", "TWOLEVEL", "DYLDLINK"],
           segmentMaxProt: { __TEXT: "r-x", __DATA_CONST: "rw-", __DATA: "rw-", __LINKEDIT: "r--" },
         },
       };

@@ -4,19 +4,19 @@
 // C: malloc, calloc, realloc, free and their relatives are defined here and not exported. Every object in the link
 // binds to these definitions; every other image binds to libSystem by name.
 //
-// C++: operator new is not exported either, so every other image calls the one in libc++abi.dylib. The out-of-line half
-// of std::string and friends lives in libc++.1.dylib, so a buffer can be allocated in the executable and released in
-// the dylib, or the other way around. operator delete is therefore exported (replacedOperatorDeleteSymbols in
-// scripts/build/deps/mimalloc.ts): dyld binds every image in the process to it.
+// C++: operator new and operator delete are defined here and not exported either, so every other image calls those of
+// libc++abi.dylib. libc++.1.dylib has the out-of-line members of std::string, and one that grows a string would release
+// the executable's buffer there. They are compiled into the executable below, and the check of the linked executable
+// names each C++ function that it may still import (cxxImports in scripts/build/binary-expectations.ts).
 //
 // free, realloc and operator delete look the pointer up and give a block that is not mimalloc's back to the zone that
 // owns it. Such blocks also reach the executable from realpath(path, nullptr), getcwd(nullptr, 0), __cxa_demangle,
 // backtrace_symbols, getdelim, and native addons that hand over ownership.
-// An operator new that a library exports or interposes has to allocate from a malloc zone: its blocks come here too.
 //
 // The other direction has no such check: never hand a block from malloc to a system API that releases it with its own
 // free (kCFAllocatorMalloc, freeWhenDone:YES, DISPATCH_DATA_DESTRUCTOR_FREE, a heap block for _Block_release, a buffer
 // for getline). Pass a callback that calls free, or allocate with malloc_zone_malloc(malloc_default_zone(), size).
+// The same holds for operator new and an object that a native addon deletes.
 
 #include "root.h"
 
@@ -27,6 +27,7 @@
 #include <cstring>
 #include <malloc/malloc.h>
 #include <new>
+#include <string>
 
 namespace {
 
@@ -86,8 +87,13 @@ BUN_LINKED_ONLY char* strndup(const char* string, size_t maxLength) { return mi_
 
 #undef BUN_LINKED_ONLY
 
-// clang refuses to hide a replaceable operator, so the link does. Not inlined: each caller would get a copy of mi_new.
-#define BUN_OPERATOR_NEW __attribute__((used)) NEVER_INLINE void*
+// libc++.1.dylib would release the executable's buffer where one of its std::string members grows a string.
+template class std::basic_string<char>;
+
+// clang refuses to hide a replaceable operator, so the link does: it exports none of them.
+#define BUN_LINKED_ONLY_OPERATOR __attribute__((used))
+// Not inlined: each caller would get a copy of mi_new.
+#define BUN_OPERATOR_NEW BUN_LINKED_ONLY_OPERATOR NEVER_INLINE void*
 
 BUN_OPERATOR_NEW operator new(size_t size) { return mi_new(size); }
 BUN_OPERATOR_NEW operator new[](size_t size) { return mi_new(size); }
@@ -100,21 +106,19 @@ BUN_OPERATOR_NEW operator new[](size_t size, std::align_val_t alignment, const s
 
 #undef BUN_OPERATOR_NEW
 
-#define BUN_WHOLE_PROCESS __attribute__((used, visibility("default")))
+BUN_LINKED_ONLY_OPERATOR void operator delete(void* block) noexcept { freeBlock(block); }
+BUN_LINKED_ONLY_OPERATOR void operator delete[](void* block) noexcept { freeBlock(block); }
+BUN_LINKED_ONLY_OPERATOR void operator delete(void* block, size_t) noexcept { freeBlock(block); }
+BUN_LINKED_ONLY_OPERATOR void operator delete[](void* block, size_t) noexcept { freeBlock(block); }
+BUN_LINKED_ONLY_OPERATOR void operator delete(void* block, const std::nothrow_t&) noexcept { freeBlock(block); }
+BUN_LINKED_ONLY_OPERATOR void operator delete[](void* block, const std::nothrow_t&) noexcept { freeBlock(block); }
+BUN_LINKED_ONLY_OPERATOR void operator delete(void* block, std::align_val_t) noexcept { freeBlock(block); }
+BUN_LINKED_ONLY_OPERATOR void operator delete[](void* block, std::align_val_t) noexcept { freeBlock(block); }
+BUN_LINKED_ONLY_OPERATOR void operator delete(void* block, size_t, std::align_val_t) noexcept { freeBlock(block); }
+BUN_LINKED_ONLY_OPERATOR void operator delete[](void* block, size_t, std::align_val_t) noexcept { freeBlock(block); }
+BUN_LINKED_ONLY_OPERATOR void operator delete(void* block, std::align_val_t, const std::nothrow_t&) noexcept { freeBlock(block); }
+BUN_LINKED_ONLY_OPERATOR void operator delete[](void* block, std::align_val_t, const std::nothrow_t&) noexcept { freeBlock(block); }
 
-BUN_WHOLE_PROCESS void operator delete(void* block) noexcept { freeBlock(block); }
-BUN_WHOLE_PROCESS void operator delete[](void* block) noexcept { freeBlock(block); }
-BUN_WHOLE_PROCESS void operator delete(void* block, size_t) noexcept { freeBlock(block); }
-BUN_WHOLE_PROCESS void operator delete[](void* block, size_t) noexcept { freeBlock(block); }
-BUN_WHOLE_PROCESS void operator delete(void* block, const std::nothrow_t&) noexcept { freeBlock(block); }
-BUN_WHOLE_PROCESS void operator delete[](void* block, const std::nothrow_t&) noexcept { freeBlock(block); }
-BUN_WHOLE_PROCESS void operator delete(void* block, std::align_val_t) noexcept { freeBlock(block); }
-BUN_WHOLE_PROCESS void operator delete[](void* block, std::align_val_t) noexcept { freeBlock(block); }
-BUN_WHOLE_PROCESS void operator delete(void* block, size_t, std::align_val_t) noexcept { freeBlock(block); }
-BUN_WHOLE_PROCESS void operator delete[](void* block, size_t, std::align_val_t) noexcept { freeBlock(block); }
-BUN_WHOLE_PROCESS void operator delete(void* block, std::align_val_t, const std::nothrow_t&) noexcept { freeBlock(block); }
-BUN_WHOLE_PROCESS void operator delete[](void* block, std::align_val_t, const std::nothrow_t&) noexcept { freeBlock(block); }
-
-#undef BUN_WHOLE_PROCESS
+#undef BUN_LINKED_ONLY_OPERATOR
 
 #endif

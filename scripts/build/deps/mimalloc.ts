@@ -40,30 +40,24 @@ export const replacedLibcAllocationSymbols: readonly string[] = [
 ];
 
 /**
- * Every replaceable form of operator new, as the Itanium ABI mangles it. That
- * file defines them for the objects of the link, and the executable does not
- * export them: every other image calls the operator new of libc++abi.dylib.
+ * Every replaceable form of operator new and operator delete, as the Itanium
+ * ABI mangles it. That file defines them for the objects of the link, and the
+ * executable neither exports nor imports them: every other image calls those
+ * of libc++abi.dylib.
  */
 export const replacedOperatorNewSymbols: readonly string[] = ["w", "a"].flatMap(form => [
   `_Zn${form}m`,
   `_Zn${form}mRKSt9nothrow_t`,
   `_Zn${form}mSt11align_val_t`,
   `_Zn${form}mSt11align_val_tRKSt9nothrow_t`,
-]);
-
-/**
- * Every replaceable form of operator delete. The macOS executable exports
- * them: libc++.1.dylib releases std::string buffers that inlined code in bun
- * allocated, and dyld binds an image to the executable's operator only if it
- * is exported. They release a block of either allocator.
- */
-export const replacedOperatorDeleteSymbols: readonly string[] = ["l", "a"].flatMap(form => [
-  `_Zd${form}Pv`,
-  `_Zd${form}Pvm`,
-  `_Zd${form}PvRKSt9nothrow_t`,
-  `_Zd${form}PvSt11align_val_t`,
-  `_Zd${form}PvmSt11align_val_t`,
-  `_Zd${form}PvSt11align_val_tRKSt9nothrow_t`,
+  ...[`_Zd${form === "w" ? "l" : "a"}Pv`].flatMap(del => [
+    del,
+    `${del}m`,
+    `${del}RKSt9nothrow_t`,
+    `${del}St11align_val_t`,
+    `${del}mSt11align_val_t`,
+    `${del}St11align_val_tRKSt9nothrow_t`,
+  ]),
 ]);
 
 /**

@@ -97,9 +97,6 @@ const GUIDANCE: Record<CheckName, string[]> = {
     "to come only from the lists in src/ (linker.lds, symbols.txt, symbols.def, NAPI_EXTERN /",
     "BUN_EXPORT in code); a stray one is usually a vendored header's __declspec(dllexport)",
     'or visibility("default"). Fix the declaration rather than extending the list.',
-    "A `-` line is an operator delete that the macOS link was told to export and did not",
-    "(replacedOperatorDeleteSymbols in deps/mimalloc.ts): libc++.1.dylib would then release the",
-    "executable's blocks with the system allocator.",
   ],
   imports: [
     "These imports mean a toolchain feature bun builds without has crept into some object",
@@ -107,6 +104,10 @@ const GUIDANCE: Record<CheckName, string[]> = {
     "references the symbol (llvm-nm -A over the link inputs) and fix its compile flags.",
     "malloc, free, operator new and their relatives on macOS: MimallocOverrideDarwin.cpp defines",
     "them for the whole link, so an import means it lacks the one that is listed. Add it there.",
+    "A C++ import that is not in the list, on macOS: read importedCxxFunctions in",
+    "binary-expectations.ts. If the function cannot release or grow a block that the executable",
+    "allocated, add it to that list. If it can, compile it into the executable, as",
+    "MimallocOverrideDarwin.cpp does for std::string.",
   ],
   "static initializers": [
     "A static initializer runs before main() on every start of every bun process, in",
@@ -125,9 +126,6 @@ const GUIDANCE: Record<CheckName, string[]> = {
     "These bits are process-wide exploit mitigations / layout guarantees (non-executable",
     "stack, no writable+executable mapping, ASLR flags). Losing one is almost always an",
     "unintended side effect of a linker-flag or toolchain change; find that change.",
-    "MH_WEAK_DEFINES is of another kind: without it dyld does not look for operator delete in the",
-    "executable (deps/mimalloc.ts). ld64.lld leaves it out where the same link compiles the",
-    "operators from bitcode; the trimmable link, which links their object, sets it.",
   ],
   size: [
     "This program is written to stay tiny (no CRT, no allocator, no formatting). A jump in size",
@@ -487,12 +485,11 @@ function verifyMachO(spec: VerifySpec): void {
     // dyld's own entry points every executable exports.
     const builtin = new Set(["__mh_execute_header", "_main"]);
     const bad = exported.filter(s => !exact.has(s) && !pat.test(s) && !builtin.has(s));
-    const found = new Set(exported);
-    const absent = expect.exports.exact.filter(s => !found.has(s));
-    report("exports", `${exported.length} exported symbols`, [
-      ...bad.map(s => `+ ${s} (not in the export list)`),
-      ...absent.map(s => `- ${s} (not exported)`),
-    ]);
+    report(
+      "exports",
+      `${exported.length} exported symbols`,
+      bad.map(s => `+ ${s} (not in the export list)`),
+    );
   }
 
   const cmds = loadCommands(priv);
@@ -522,11 +519,12 @@ function verifyMachO(spec: VerifySpec): void {
     // Mach-O spells every C-level symbol with one more leading underscore.
     const pat = globToRegExp(expect.forbiddenImports.map(p => `_${p}`));
     const bad = imported.filter(s => pat.test(s));
-    report(
-      "imports",
-      `${imported.length} imported symbols`,
-      bad.map(s => `+ ${s} (forbidden import)`),
-    );
+    const listed = expect.cxxImports && globToRegExp(expect.cxxImports.map(p => `_${p}`));
+    const unlisted = listed ? imported.filter(s => s.startsWith("__Z") && !pat.test(s) && !listed.test(s)) : [];
+    report("imports", `${imported.length} imported symbols`, [
+      ...bad.map(s => `+ ${s} (forbidden import)`),
+      ...unlisted.map(s => `+ ${s} (a C++ import that is not in the list)`),
+    ]);
   }
 
   // 4. static initializers: __mod_init_func (pointers) or __init_offsets

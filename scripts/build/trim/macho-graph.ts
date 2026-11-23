@@ -566,7 +566,7 @@ function findRoots(
 }
 
 // The list has what native addons and libraries that the program loads ask for by name. Whatever else the image exports, dyld binds
-// the system's libraries to: they call the replaced operator delete whatever the program does.
+// the system's libraries to, so it runs whatever the program does. The link exports nothing else today.
 function findExportedNodes(
   executable: string,
   exportedSymbols: string,

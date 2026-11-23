@@ -14,11 +14,7 @@ import { join } from "node:path";
 
 import { binaryExpectations } from "../../scripts/build/binary-expectations.ts";
 import { resolveConfig, type Config, type PartialConfig, type Toolchain } from "../../scripts/build/config.ts";
-import {
-  replacedLibcAllocationSymbols,
-  replacedOperatorDeleteSymbols,
-  replacedOperatorNewSymbols,
-} from "../../scripts/build/deps/mimalloc.ts";
+import { replacedLibcAllocationSymbols, replacedOperatorNewSymbols } from "../../scripts/build/deps/mimalloc.ts";
 import { webkit } from "../../scripts/build/deps/webkit.ts";
 import { parsePackedFeaturesList } from "../../scripts/build/features-json.ts";
 import { computeFlags, DARWIN_STACK_SIZE } from "../../scripts/build/flags.ts";
@@ -192,7 +188,7 @@ describe.skipIf(isMacOS)("macOS cross-compile config (non-darwin host)", () => {
     expect(arm64.ldflags).not.toContain("-Wl,-sectalign,__BUN,__bun,0x1000");
   });
 
-  test("the link exports every operator delete that MimallocOverrideDarwin.cpp defines, and no operator new", () => {
+  test("the executable exports no operator of MimallocOverrideDarwin.cpp, and the C++ functions that it imports are listed", () => {
     const source = readFileSync(join(import.meta.dir, "../../src/jsc/bindings/MimallocOverrideDarwin.cpp"), "utf8");
     const typeCodes: Record<string, string> = {
       "size_t": "m",
@@ -206,40 +202,26 @@ describe.skipIf(isMacOS)("macOS cross-compile config (non-darwin host)", () => {
       return typeCodes[type];
     };
     // Each operator that the file defines, as the Itanium ABI mangles it.
-    const defined = (kind: "new" | "delete") =>
-      Array.from(
-        source.matchAll(/^BUN_\w+ (?:void )?operator (new|delete)(\[\])?\(([^)]*)\)/gm),
-        ([, operator, array, parameters]) =>
-          operator === kind
-            ? `_Z${kind === "new" ? "n" : "d"}${array ? "a" : kind === "new" ? "w" : "l"}` +
-              parameters.split(", ").map(codeOf).join("")
-            : [],
-      )
-        .flat()
-        .sort();
-    expect({ new: defined("new"), delete: defined("delete") }).toEqual({
-      new: [...replacedOperatorNewSymbols].sort(),
-      delete: [...replacedOperatorDeleteSymbols].sort(),
-    });
+    const operators = Array.from(
+      source.matchAll(/^BUN_\w+ (?:void )?operator (new|delete)(\[\])?\(([^)]*)\)/gm),
+      ([, operator, array, parameters]) =>
+        `_Z${operator === "new" ? "n" : "d"}${array ? "a" : operator === "new" ? "w" : "l"}` +
+        parameters.split(", ").map(codeOf).join(""),
+    );
+    expect(operators.sort()).toEqual([...replacedOperatorNewSymbols].sort());
     const libcFunctions = Array.from(source.matchAll(/^BUN_LINKED_ONLY [\w*]+ (\w+)\(/gm), ([, name]) => name);
     expect(libcFunctions.sort()).toEqual([...replacedLibcAllocationSymbols].sort());
 
     for (const arch of ["aarch64", "x64"] as const) {
       const cfg = resolveDarwin({ arch });
-      const exported = computeFlags(cfg)
-        .ldflags.filter(flag => flag.startsWith("-Wl,-exported_symbol,"))
-        .map(flag => flag.slice("-Wl,-exported_symbol,_".length));
-      expect(exported.sort()).toEqual(defined("delete"));
-      expect(exported.filter(name => name.startsWith("_Zn"))).toEqual([]);
-
-      // The check of the linked executable holds it to the same, and to the header flag without which dyld does not
-      // look for an operator in an executable.
+      // Only the names in src/symbols.txt are exported.
+      expect(computeFlags(cfg).ldflags.filter(flag => flag.includes("exported_symbol,"))).toEqual([]);
       const expectations = binaryExpectations(cfg);
-      expect(expectations.exports.exact.sort()).toEqual(exported.map(name => `_${name}`).sort());
-      expect(expectations.forbiddenImports).toEqual(
-        expect.arrayContaining([...defined("new"), ...defined("delete"), ...libcFunctions]),
-      );
-      expect(expectations.macho?.flags).toContain("WEAK_DEFINES");
+      expect(expectations.exports.exact).toEqual([]);
+      expect(expectations.forbiddenImports).toEqual(expect.arrayContaining([...operators, ...libcFunctions]));
+      // The members of std::string that libc++.1.dylib has are compiled into the executable.
+      expect(source).toContain("template class std::basic_string<char>;");
+      expect(expectations.cxxImports?.filter(name => name.includes("basic_string"))).toEqual([]);
     }
   });
 

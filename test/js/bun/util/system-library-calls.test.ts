@@ -98,7 +98,7 @@ const lookUpOperators = `
 
 // An ASAN build has operators of ASAN's in front of both.
 test.skipIf(!isMacOS || isASAN)(
-  "a lookup by name finds the operator new of the C++ library and the operator delete of the executable",
+  "a lookup by name finds the operator new and the operator delete of the C++ library, not the executable's",
   async () => {
     await using child = Bun.spawn({
       cmd: [bunExe(), "-e", lookUpOperators],
@@ -109,7 +109,10 @@ test.skipIf(!isMacOS || isASAN)(
     const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
     expect({ stdout, stderr, exitCode, signalCode: child.signalCode }).toEqual({
       stdout:
-        JSON.stringify({ "operator new": "/usr/lib/libc++abi.dylib", "operator delete": "the executable" }) + "\n",
+        JSON.stringify({
+          "operator new": "/usr/lib/libc++abi.dylib",
+          "operator delete": "/usr/lib/libc++abi.dylib",
+        }) + "\n",
       stderr: "",
       exitCode: 0,
       signalCode: null,

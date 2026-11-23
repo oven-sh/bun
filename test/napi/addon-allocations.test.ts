@@ -92,10 +92,10 @@ describe.skipIf(isWindows || !compiler)("a native addon's allocations", () => {
 
   // An ASAN build of the runtime has operators of ASAN's in front of both.
   test.skipIf(!isMacOS || isASAN)(
-    "the addon calls the operator new of the C++ library and the operator delete of the runtime",
+    "the addon calls the operator new and the operator delete of the C++ library, not the runtime's",
     async () => {
       expect(await printedBy("printImagesOfOperators")).toEqual({
-        stdout: "operator new: /usr/lib/libc++abi.dylib\noperator delete: the runtime\n",
+        stdout: "operator new: /usr/lib/libc++abi.dylib\noperator delete: /usr/lib/libc++abi.dylib\n",
         stderr: "",
         exitCode: 0,
         signalCode: null,

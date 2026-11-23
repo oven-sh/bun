@@ -6,7 +6,7 @@
  * After changing it, run `bun run pin-webkit`: webkit.sha256 pins the sha256
  * of this version's tarballs, and a build refuses one that is not in there.
  */
-export const WEBKIT_VERSION = "e2fe703936f307a5bd95f77d9099fb5c056b5280";
+export const WEBKIT_VERSION = "cad01dc3cd19aa743283bbfe46944966515d3aec";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine, with WTF and bmalloc.

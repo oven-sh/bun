@@ -8,7 +8,7 @@ const esbuild_ = require("esbuild/lib/main");
 const swc_ = require("@swc/core");
 const babel_ = require("@babel/core");
 
-const code = readFileSync(dirname(fileURLToPath(import.meta.url)) + "/../../src/test/fixtures/simple.jsx", "utf-8");
+const code = readFileSync(dirname(fileURLToPath(import.meta.url)) + "/_transpiler-fixture.jsx", "utf-8");
 
 async function getWithName(name) {
   let transformSync;
@@ -48,10 +48,10 @@ async function getWithName(name) {
   } else if (name === "babel") {
     try {
       transformSync = babel_.transformSync;
-      transform = babel_.transform;
+      transform = babel_.transformAsync;
       opts = {
         sourceMaps: false,
-        presets: ["@babel/preset-react"],
+        presets: [require.resolve("@babel/preset-react")],
       };
     } catch (exception) {
       throw exception;

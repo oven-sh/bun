@@ -26,18 +26,24 @@
 #include "HttpContextData.h"
 #include "Utilities.h"
 
-#include "WebSocketExtensions.h"
-#include "WebSocketHandshake.h"
-#include "WebSocket.h"
-#include "WebSocketContextData.h"
-
 #include "MoveOnlyFunction.h"
+
+#include <climits>
+
+#if defined(_WIN32)
+#define strncasecmp _strnicmp
+#endif
 
 /* todo: tryWrite is missing currently, only send smaller segments with write */
 
 namespace uWS {
 
-template <bool, bool, typename> struct WebSocketContext;
+/* What precedes the state of a WebSocket (src/uws_sys/WebSocket.rs). */
+struct UpgradedSocketData : AsyncSocketData<false> {
+    void *socketData;
+    void (*onSocketClosed)(void *userData, int is_ssl, struct us_socket_t *rawSocket, int readError, bool peerEnded);
+};
+static_assert(sizeof(UpgradedSocketData) == 64);
 
 /* Some pre-defined status constants to use with writeStatus */
 inline constexpr const char* HTTP_200_OK = "200 OK";
@@ -371,117 +377,8 @@ public:
         }
     }
 
-    /* Manually upgrade to WebSocket. Typically called in upgrade handler. Immediately calls open handler.
-     * NOTE: Will invalidate 'this' as socket might change location in memory. Throw away after use.
-     * Returns nullptr and leaves userData untouched if the socket is closed or shut down. Nothing was written in
-     * that case, unless the 101 overflowed the cork buffer and that write is what closed the socket. */
-    template <typename UserData>
-    us_socket_t *upgrade(UserData&& userData, std::string_view secWebSocketKey, std::string_view secWebSocketProtocol,
-            std::string_view secWebSocketExtensions,
-            WebSocketContext<SSL, true, UserData> *webSocketContext) {
-
-        /* Check up front: us_socket_adopt() rejects these sockets, but by then HttpResponseData is already destructed */
-        if (us_socket_is_closed((us_socket_t *) this) || us_socket_is_shut_down((us_socket_t *) this)) {
-            return nullptr;
-        }
-
-        /* Cork so the 101 and anything the open handler sends are flushed in one write */
-        Super::cork();
-
-        /* Extract needed parameters from WebSocketContextData */
-        WebSocketContextData<SSL, UserData> *webSocketContextData = webSocketContext->getExt();
-
-        char secWebSocketAccept[29] = {};
-        char secWebSocketKeyBuffer[24] = {};
-        secWebSocketKey.copy(secWebSocketKeyBuffer, 24);
-        WebSocketHandshake::generate(secWebSocketKeyBuffer, secWebSocketAccept);
-
-        writeStatus("101 Switching Protocols")
-            ->writeHeader("Upgrade", "websocket")
-            ->writeHeader("Connection", "Upgrade")
-            ->writeHeader("Sec-WebSocket-Accept", secWebSocketAccept);
-
-        /* Select first subprotocol if present */
-        if (secWebSocketProtocol.length()) {
-            writeHeader("Sec-WebSocket-Protocol", secWebSocketProtocol.substr(0, secWebSocketProtocol.find(',')));
-        }
-
-        /* Negotiate compression */
-        bool perMessageDeflate = false;
-        CompressOptions compressOptions = CompressOptions::DISABLED;
-        if (secWebSocketExtensions.length() && webSocketContextData->compression != DISABLED) {
-
-            /* Make sure to map SHARED_DECOMPRESSOR to windowBits = 0, not 1  */
-            int wantedInflationWindow = 0;
-            if ((webSocketContextData->compression & CompressOptions::_DECOMPRESSOR_MASK) != CompressOptions::SHARED_DECOMPRESSOR) {
-                wantedInflationWindow = (webSocketContextData->compression & CompressOptions::_DECOMPRESSOR_MASK) >> 8;
-            }
-
-            /* Map from selected compressor (this automatically maps SHARED_COMPRESSOR to windowBits 0, not 1) */
-            int wantedCompressionWindow = (webSocketContextData->compression & CompressOptions::_COMPRESSOR_MASK) >> 4;
-
-            auto [negCompression, negCompressionWindow, negInflationWindow, negResponse] =
-            negotiateCompression(true, wantedCompressionWindow, wantedInflationWindow,
-                                        secWebSocketExtensions);
-
-            if (negCompression) {
-                perMessageDeflate = true;
-
-                /* A negotiated window of 0 means no context takeover */
-                compressOptions = compressOptionsFor({
-                    .serverMaxWindowBits = negCompressionWindow ? negCompressionWindow : 15,
-                    .clientMaxWindowBits = negInflationWindow ? negInflationWindow : 15,
-                    .serverNoContextTakeover = !negCompressionWindow,
-                    .clientNoContextTakeover = !negInflationWindow,
-                });
-
-                /* If we are dedicated and have the 3kb then correct any 4kb to 3kb,
-                 * (they both share the windowBits = 9) */
-                if (negCompressionWindow && (webSocketContextData->compression & CompressOptions::_COMPRESSOR_MASK) == CompressOptions::DEDICATED_COMPRESSOR_3KB) {
-                    compressOptions = CompressOptions((compressOptions & ~CompressOptions::_COMPRESSOR_MASK) | CompressOptions::DEDICATED_COMPRESSOR_3KB);
-                }
-
-                writeHeader("Sec-WebSocket-Extensions", negResponse);
-            }
-        }
-
-        writeMark();
-        Super::write("\r\n", 2);
-
-        return adoptWebSocket(std::forward<UserData>(userData), perMessageDeflate, compressOptions, webSocketContext);
-    }
-
-    /* Like upgrade(), but the caller already negotiated and built the 101 response head, which is written verbatim.
-     * deflateParams is nullptr if permessage-deflate wasn't negotiated. */
-    template <typename UserData>
-    us_socket_t *upgradeRaw(UserData&& userData, std::string_view handshake, const PerMessageDeflateParams *deflateParams,
-            WebSocketContext<SSL, true, UserData> *webSocketContext) {
-
-        if (us_socket_is_closed((us_socket_t *) this) || us_socket_is_shut_down((us_socket_t *) this)) {
-            return nullptr;
-        }
-
-        Super::cork();
-        Super::write(handshake.data(), (int) handshake.length());
-
-        return adoptWebSocket(std::forward<UserData>(userData), deflateParams != nullptr,
-            deflateParams ? compressOptionsFor(*deflateParams) : CompressOptions::DISABLED, webSocketContext);
-    }
-
-private:
-    /* Moves the socket into webSocketContext. It must be corked, with the 101 already written. */
-    template <typename UserData>
-    us_socket_t *adoptWebSocket(UserData&& userData, bool perMessageDeflate, CompressOptions compressOptions,
-            WebSocketContext<SSL, true, UserData> *webSocketContext) {
-
-        /* If TLS rejected the 101 write, the socket is now closed or shut down. Leave it as an HTTP socket;
-         * the next writable event closes it. */
-        if (us_socket_is_closed((us_socket_t *) this) || us_socket_is_shut_down((us_socket_t *) this)) {
-            return nullptr;
-        }
-
-        WebSocketContextData<SSL, UserData> *webSocketContextData = webSocketContext->getExt();
-
+    /* The socket must be corked, with the 101 already written. adoptInto() follows. */
+    void destroyForUpgrade() {
         /* Not internalEnd(), because the socket leaves HTTP right after: the
          * connection close gate does not apply (Connection: close, HTTP/1.0
          * and close-when-idle describe the HTTP connection, not the WebSocket
@@ -516,7 +413,7 @@ private:
         }
 
         /* Destroy HttpResponseData (the IsNodeHttp=true type on node:http
-         * compat contexts; upgrade() is not on a templated handler path, so it
+         * compat contexts; this is not on a templated handler path, so it
          * selects at runtime like socketExtSize()). */
         if (httpContext->isNodeHttp()) {
             ((HttpResponseData<SSL, true> *) responseData)->~HttpResponseData();
@@ -524,70 +421,23 @@ private:
             responseData->~HttpResponseData();
         }
 
-        /* Before we adopt and potentially change socket, check which cork slot
-         * we occupy so we can transfer it to the new WebSocket. */
-        LoopData *loopData = Super::getLoopData();
-        int corkedSlot = loopData->findCorkSlot(this);
-
-        /* Read before the adoption below, which can move this socket. An upgrade of another connection must leave the parsed socket alone. */
-        const bool upgradingParsedSocket = httpContextData->isParsing((us_socket_t *) this);
-
-        /* Adopting a socket invalidates it, do not rely on it directly to carry any data */
-        /* The old ext size is only used as an upper bound to keep the block in
-         * place (and as the copy length when it cannot be). The base size is
-         * always correct here: a node:http compat socket's block is bigger, so
-         * under-stating it is an in-bounds under-copy of an already-destructed
-         * ext, while over-stating it for a Bun.serve socket would read out of
-         * bounds. */
-        us_socket_t *usSocket = us_socket_adopt((us_socket_t *) this, webSocketContext->getSocketGroup(),
-            WebSocketContext<SSL, true, UserData>::socketKind(),
-            sizeof(HttpResponseData<SSL>), sizeof(WebSocketData) + sizeof(UserData));
-        WebSocket<SSL, true, UserData> *webSocket = (WebSocket<SSL, true, UserData> *) usSocket;
-
-        /* For whatever reason we were corked, update cork to the new socket */
-        if (corkedSlot != LoopData::INVALID_CORK_SLOT) {
-            loopData->transferCorkSlot(corkedSlot, webSocket, SSL);
-        }
-
-        /* Initialize websocket with any moved backpressure intact */
-        webSocket->init(perMessageDeflate, compressOptions, std::move(backpressure), socketData, httpContextData->onSocketClosed);
-        if (httpContextData->onSocketUpgraded) {
-            httpContextData->onSocketUpgraded(socketData, SSL, usSocket);
-        }
-
-        /* We should only mark this if inside the parser; if upgrading "async" we cannot set this */
-        if (upgradingParsedSocket) {
-            /* We need to tell the Http parser that we changed socket */
-            httpContextData->upgradedWebSocket = webSocket;
-        }
-
-        /* Arm maxLifetime timeout */
-        us_socket_long_timeout((us_socket_t *) webSocket, webSocketContextData->maxLifetime);
-
-        /* Arm idleTimeout */
-        us_socket_timeout((us_socket_t *) webSocket, webSocketContextData->idleTimeoutComponents.first);
-
-        /* Move construct the UserData right before calling open handler */
-        new (webSocket->getUserData()) UserData(std::forward<UserData>(userData));
-
-        /* Emit open event and start the timeout */
-        if (webSocketContextData->openHandler) {
-            webSocketContextData->openHandler(webSocket);
-        }
-
-        /* Uncork here. An enclosing HttpResponse::cork() can't uncork a WebSocket, and after an await there isn't one. */
-        ((AsyncSocket<SSL> *) webSocket)->uncork();
-
-        return usSocket;
+        static_assert(sizeof(UpgradedSocketData) + 128 <= sizeof(HttpResponseData<SSL>));
+        new (responseData) UpgradedSocketData{{std::move(backpressure)}, socketData, httpContextData->onSocketClosed};
     }
 
-public:
+    void adoptInto(us_socket_group_t *group, unsigned char kind) {
+        auto *onSocketUpgraded = HttpContext<SSL>::getSocketContextDataS((us_socket_t *) this)->onSocketUpgraded;
+        /* In place: onData tells the upgrade by the kind of its socket. */
+        us_socket_adopt((us_socket_t *) this, group, kind, -1, -1);
+        if (onSocketUpgraded) {
+            onSocketUpgraded(((UpgradedSocketData *) Super::getAsyncSocketData())->socketData, SSL, (us_socket_t *) this);
+        }
+    }
+
     /* Immediately terminate this Http response */
     using Super::close;
 
     /* See AsyncSocket */
-    using Super::getRemoteAddress;
-    using Super::getRemoteAddressAsText;
     using Super::getNativeHandle;
 
     /* Throttle reads and writes */

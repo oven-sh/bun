@@ -105,7 +105,7 @@ fn finalize_bundle_cleanup(dev: &mut DevServer, had_sent_hmr_event: bool) {
         dev.publish(
             HmrTopic::TestingWatchSynchronization,
             &[MessageId::TestingWatchSynchronization.char(), 0],
-            Opcode::BINARY,
+            Opcode::Binary,
         );
     } else {
         dev.publish(
@@ -114,7 +114,7 @@ fn finalize_bundle_cleanup(dev: &mut DevServer, had_sent_hmr_event: bool) {
                 MessageId::TestingWatchSynchronization.char(),
                 if had_sent_hmr_event { 4 } else { 3 },
             ],
-            Opcode::BINARY,
+            Opcode::Binary,
         );
     }
 
@@ -1021,7 +1021,7 @@ fn finalize_bundle_inner(
             w_int!(i32, 0);
         }
 
-        dev.publish(HmrTopic::HotUpdate, &hot_update_payload, Opcode::BINARY);
+        dev.publish(HmrTopic::HotUpdate, &hot_update_payload, Opcode::Binary);
         *had_sent_hmr_event = true;
     }
 

@@ -4034,6 +4034,7 @@ test("ModuleGraph isolation: every property of Bun is classified", () => {
         "deepEquals",
         "deepMatch",
         "deflateSync",
+        "diff",
         "enableANSIColors",
         "escapeHTML",
         "fileURLToPath",

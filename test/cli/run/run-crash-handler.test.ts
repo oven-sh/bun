@@ -67,6 +67,73 @@ test.if(hasPointerAuthentication)("a stack trace takes the signature off a retur
   expect(crash_handler.stackTraceStartsAtSignedReturnAddress()).toBe(true);
 });
 
+// What a child runs first to close both reads that the kernel offers of a process's own memory, with a seccomp filter.
+// Where the kernel refuses the filter, it says so in one line and ends.
+const closesKernelReads = isLinux
+  ? `
+const { dlopen, ptr } = require("bun:ffi");
+const libc = dlopen(${JSON.stringify(libcPathForDlopen())}, {
+  prctl: { args: ["i32", "u64", "u64", "u64", "u64"], returns: "i32" },
+  process_vm_readv: { args: ["i32", "ptr", "u64", "ptr", "u64", "u64"], returns: "i64" },
+}).symbols;
+const load = 0x20, jumpIfEqual = 0x15, answer = 0x06, allow = 0x7fff0000, notPermitted = 0x00050000 | 1;
+const architecture = 4, systemCall = 0, setNoNewPrivileges = 38, setFilter = 22, filterMode = 2;
+const [thisArchitecture, processVmReadv, openat, open] =
+  process.arch === "arm64" ? [0xc00000b7, 270, 56, 56] : [0xc000003e, 310, 257, 2];
+const instructions = [
+  [load, 0, 0, architecture], [jumpIfEqual, 1, 0, thisArchitecture], [answer, 0, 0, allow],
+  [load, 0, 0, systemCall],
+  [jumpIfEqual, 2, 0, processVmReadv], [jumpIfEqual, 1, 0, openat], [jumpIfEqual, 0, 1, open],
+  [answer, 0, 0, notPermitted],
+  [answer, 0, 0, allow],
+];
+const filter = new Uint8Array(instructions.length * 8);
+const view = new DataView(filter.buffer);
+instructions.forEach(([code, ifTrue, ifFalse, operand], i) => {
+  view.setUint16(i * 8, code, true);
+  view.setUint8(i * 8 + 2, ifTrue);
+  view.setUint8(i * 8 + 3, ifFalse);
+  view.setUint32(i * 8 + 4, operand, true);
+});
+const filterProgram = new BigUint64Array([BigInt(instructions.length), BigInt(ptr(filter))]);
+// What the hook and the end of the process need is loaded while files can be opened.
+require("bun:internal-for-testing").crash_handler.faultWalkStartsAtCaller("callOfZero");
+if (libc.prctl(setNoNewPrivileges, 1, 0, 0, 0) || libc.prctl(setFilter, filterMode, ptr(filterProgram), 0, 0)) {
+  console.log(JSON.stringify(["the filter was refused", null]));
+  process.exit(0);
+}
+const from = new BigUint64Array([42n]), to = new BigUint64Array(1);
+const vector = words => new BigUint64Array([BigInt(ptr(words)), 8n]);
+const [local, remote] = [vector(to), vector(from)];
+const read = Number(libc.process_vm_readv(process.pid, ptr(local), 1, ptr(remote), 1, 0));
+let opened = "opened";
+try {
+  require("fs").openSync("/proc/self/mem", "r");
+} catch (error) {
+  opened = error.code;
+}
+if (read !== -1 || opened !== "EPERM") throw new Error("the kernel still reads: " + JSON.stringify({ read, opened }));
+`
+  : "";
+// LeakSanitizer lists the threads from /proc where the process ends, which the filter refuses too.
+const withoutKernelReadsEnv = {
+  ...noReportEnv,
+  ASAN_OPTIONS: [noReportEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
+};
+// A container can refuse a seccomp filter. A child finds that out before the test is declared: the test is then skipped by
+// name, and does not pass without a check. bun:ffi, which installs the filter, needs what a hardened build does not give.
+const takesSeccompFilter =
+  isLinux &&
+  !!without("a hardened build") &&
+  !(await (async () => {
+    await using probe = Bun.spawn({
+      cmd: [bunExe(), "-e", closesKernelReads],
+      env: withoutKernelReadsEnv,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    return (await probe.stdout.text()).includes("the filter was refused");
+  })());
+
 // The instruction at an address where nothing can run is not fetched, and no frame record names the function that called
 // it or jumped to it. On AArch64 x30 does, and on x86-64 the word that the call pushed. A return leaves neither.
 describe.if(isPosix)("the stack trace of a fault at an address that cannot be run", () => {
@@ -127,8 +194,7 @@ for (const state of ${JSON.stringify(of.map(([, state]) => state))})
     const answers = Object.fromEntries(
       of.filter(([, state]) => answered.has(state)).map(([name, state]) => [name, answered.get(state)]),
     );
-    const refused = answered.has("the filter was refused") || undefined;
-    return { answers, exitCode, signalCode: proc.signalCode, stderr: exitCode === 0 ? "" : stderr, refused };
+    return { answers, exitCode, signalCode: proc.signalCode, stderr: exitCode === 0 ? "" : stderr };
   }
 
   test.concurrent("each state of the registers", async () => {
@@ -143,64 +209,12 @@ for (const state of ${JSON.stringify(of.map(([, state]) => state))})
   // Where the kernel offers no read of the process's own memory, the walk copies memory itself after it has asked whether
   // the page is mapped. That is no answer for an address that nothing has checked, so the rule is off there: each trace
   // is as without it. The filter closes process_vm_readv and /proc/<pid>/mem, and the child shows that both are closed.
-  test.concurrent.if(isLinux && !!without("a hardened build"))("each state without a read by the kernel", async () => {
-    const closesKernelReads = `
-const { dlopen, ptr } = require("bun:ffi");
-const libc = dlopen(${JSON.stringify(libcPathForDlopen())}, {
-  prctl: { args: ["i32", "u64", "u64", "u64", "u64"], returns: "i32" },
-  process_vm_readv: { args: ["i32", "ptr", "u64", "ptr", "u64", "u64"], returns: "i64" },
-}).symbols;
-const load = 0x20, jumpIfEqual = 0x15, answer = 0x06, allow = 0x7fff0000, notPermitted = 0x00050000 | 1;
-const architecture = 4, systemCall = 0, setNoNewPrivileges = 38, setFilter = 22, filterMode = 2;
-const [thisArchitecture, processVmReadv, openat, open] =
-  process.arch === "arm64" ? [0xc00000b7, 270, 56, 56] : [0xc000003e, 310, 257, 2];
-const instructions = [
-  [load, 0, 0, architecture], [jumpIfEqual, 1, 0, thisArchitecture], [answer, 0, 0, allow],
-  [load, 0, 0, systemCall],
-  [jumpIfEqual, 2, 0, processVmReadv], [jumpIfEqual, 1, 0, openat], [jumpIfEqual, 0, 1, open],
-  [answer, 0, 0, notPermitted],
-  [answer, 0, 0, allow],
-];
-const filter = new Uint8Array(instructions.length * 8);
-const view = new DataView(filter.buffer);
-instructions.forEach(([code, ifTrue, ifFalse, operand], i) => {
-  view.setUint16(i * 8, code, true);
-  view.setUint8(i * 8 + 2, ifTrue);
-  view.setUint8(i * 8 + 3, ifFalse);
-  view.setUint32(i * 8 + 4, operand, true);
-});
-const filterProgram = new BigUint64Array([BigInt(instructions.length), BigInt(ptr(filter))]);
-// What the hook and the end of the process need is loaded while files can be opened.
-require("bun:internal-for-testing").crash_handler.faultWalkStartsAtCaller("callOfZero");
-if (libc.prctl(setNoNewPrivileges, 1, 0, 0, 0) || libc.prctl(setFilter, filterMode, ptr(filterProgram), 0, 0)) {
-  console.log(JSON.stringify(["the filter was refused", null]));
-  process.exit(0);
-}
-const from = new BigUint64Array([42n]), to = new BigUint64Array(1);
-const vector = words => new BigUint64Array([BigInt(ptr(words)), 8n]);
-const [local, remote] = [vector(to), vector(from)];
-const read = Number(libc.process_vm_readv(process.pid, ptr(local), 1, ptr(remote), 1, 0));
-let opened = "opened";
-try {
-  require("fs").openSync("/proc/self/mem", "r");
-} catch (error) {
-  opened = error.code;
-}
-if (read !== -1 || opened !== "EPERM") throw new Error("the kernel still reads: " + JSON.stringify({ read, opened }));
-`;
+  test.concurrent.if(takesSeccompFilter)("each state without a read by the kernel", async () => {
     // The walk of main reads a frame record in memory that cannot be read itself, with or without the rule.
     const read = states.filter(([, state]) => state !== "frameRecordThatCannotBeRead");
     // From a frame pointer that is not aligned the walk finds no caller, which the hook takes for neither answer.
     const isNeither = (state: string) => state === "unalignedFrameRecordThatHoldsLinkRegister";
-    // LeakSanitizer lists the threads from /proc where the process ends, which the filter refuses too.
-    const withoutLeakCheck = [noReportEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":");
-    const answered = await answersOfChild(read, closesKernelReads, { ...noReportEnv, ASAN_OPTIONS: withoutLeakCheck });
-    if (answered.refused) {
-      // bun:test cannot skip a test that runs, so the log says that nothing was tested here.
-      console.warn("SKIP each state without a read by the kernel: this kernel refuses a seccomp filter");
-      return;
-    }
-    expect(answered).toEqual({
+    expect(await answersOfChild(read, closesKernelReads, withoutKernelReadsEnv)).toEqual({
       answers: Object.fromEntries(
         read.map(([name, state, startsAtCaller]) => [name, startsAtCaller === null || isNeither(state) ? null : false]),
       ),

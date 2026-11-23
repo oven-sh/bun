@@ -265,6 +265,15 @@ impl Paras {
     }
 }
 
+#[derive(Clone, Copy, Default)]
+pub(crate) struct Run {
+    pub(crate) logical_start: usize,
+    pub(crate) is_odd: bool,
+    /// Read only while the runs are reordered.
+    pub(crate) level: UBiDiLevel,
+    pub(crate) visual_limit: usize,
+}
+
 #[derive(Default)]
 pub(crate) struct UBiDi {
     /// False if there is no text yet, or if the last `set_para` failed.
@@ -344,7 +353,7 @@ impl UBiDi {
         self.default_para_level = is_default_level(para_level);
 
         if self.length == 0 {
-            self.runs.set_empty();
+            self.runs.set(Vec::new());
             self.is_valid = true;
             return Ok(());
         }
@@ -628,11 +637,12 @@ impl UBiDi {
     // ICU4C: ubidi.cpp, resolveImplicitLevels
     fn resolve_implicit_levels(&mut self, start: usize, limit: usize, sor: u8, eor: u8) {
         let run_level = self.levels.at(start);
+        let [for_even, for_odd] = tables::DEFAULT;
         let mut run = LevState {
             imp_tab: if run_level & 1 == 0 {
-                &tables::L_DEFAULT
+                for_even
             } else {
-                &tables::R_DEFAULT
+                for_odd
             },
             run_start: start,
             run_level,
@@ -723,7 +733,7 @@ impl UBiDi {
         );
         let mut start = start0;
 
-        match Action::of(cell) {
+        match run.imp_tab.action(cell) {
             Action::None => {}
             Action::InitOnSeq => run.start_on = Some(start0),
             Action::PrependOnSeq => start = start_on,

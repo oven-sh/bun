@@ -1,4 +1,4 @@
-//! The state tables of the implicit rules of UAX #9. ICU4C: ubidi.cpp
+//! The state tables of the implicit rules of UAX #9, as in ubidi.cpp.
 //!
 //! `IMP_TAB_PROPS` reads the properties of a level run and cuts it into sequences of one *reduced* property (W1 to W7).
 //! An `ImpTab` reads these sequences and gives each its level (N1, N2, I1, I2).
@@ -87,25 +87,20 @@ pub(crate) enum Action {
     PrependOnSeq,
     NumberAfterROn,
 }
+use Action::*;
 
-impl Action {
-    pub(crate) fn of(cell: u8) -> Self {
-        [
-            Self::None,
-            Self::InitOnSeq,
-            Self::PrependOnSeq,
-            Self::NumberAfterROn,
-        ]
-        .at(action(cell).into())
-    }
-}
+static IMP_ACT0: [Action; 4] = [None, InitOnSeq, PrependOnSeq, NumberAfterROn];
 
 /// `Res` is added to the level of the run for a sequence that leads to the state. Later actions may revise it.
-pub(crate) struct ImpTab([[u8; 8]; 6]);
+pub(crate) struct ImpTab {
+    rows: &'static [[u8; 8]],
+    /// Indexed by the action number of a cell.
+    actions: &'static [Action],
+}
 
 impl ImpTab {
     pub(crate) fn cell(&self, state: u8, prop: u8) -> u8 {
-        self.0
+        self.rows
             .as_flattened()
             .at(usize::from(state) * 8 + usize::from(prop))
     }
@@ -114,10 +109,14 @@ impl ImpTab {
     pub(crate) fn add_level(&self, state: u8) -> u8 {
         self.cell(state, 7)
     }
+
+    pub(crate) fn action(&self, cell: u8) -> Action {
+        self.actions.at(action(cell).into())
+    }
 }
 
 #[rustfmt::skip]
-pub(crate) static L_DEFAULT: ImpTab = ImpTab(cells![
+static L_DEFAULT: ImpTab = ImpTab { actions: &IMP_ACT0, rows: &cells![
     /*                      L    R   EN   AN   ON    S    B  Res */
     /* 0 init        */ [   0,   1,   0,   2,   0,   0,   0,   0],
     /* 1 R           */ [   0,   1,   3,   3, 1:4, 1:4,   0,   1],
@@ -125,10 +124,10 @@ pub(crate) static L_DEFAULT: ImpTab = ImpTab(cells![
     /* 3 R+EN/AN     */ [   0,   1,   3,   3, 1:4, 1:4,   0,   2],
     /* 4 R+ON        */ [   0, 2:1, 3:3, 3:3,   4,   4,   0,   0],
     /* 5 AN+ON       */ [   0, 2:1,   0, 3:2,   5,   5,   0,   0],
-]);
+] };
 
 #[rustfmt::skip]
-pub(crate) static R_DEFAULT: ImpTab = ImpTab(cells![
+static R_DEFAULT: ImpTab = ImpTab { actions: &IMP_ACT0, rows: &cells![
     /*                      L    R   EN   AN   ON    S    B  Res */
     /* 0 init        */ [   1,   0,   2,   2,   0,   0,   0,   0],
     /* 1 L           */ [   1,   0,   1,   3, 1:4, 1:4,   0,   1],
@@ -136,4 +135,9 @@ pub(crate) static R_DEFAULT: ImpTab = ImpTab(cells![
     /* 3 L+AN        */ [   1,   0,   1,   3,   5,   5,   0,   1],
     /* 4 L+ON        */ [ 2:1,   0, 2:1,   3,   4,   4,   0,   0],
     /* 5 L+AN+ON     */ [   1,   0,   1,   3,   5,   5,   0,   0],
-]);
+] };
+
+/// The tables for runs at an even and at an odd level.
+pub(crate) type ImpTabPair = [&'static ImpTab; 2];
+
+pub(crate) static DEFAULT: ImpTabPair = [&L_DEFAULT, &R_DEFAULT];

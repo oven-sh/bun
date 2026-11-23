@@ -153,6 +153,8 @@ pub(crate) struct ExecutionSequence {
     pub(crate) result: Cell<Result>,
     executing: Cell<bool>,
     started_at: Cell<Timespec>,
+    /// The auto-killer's mark when this attempt started: a timeout kills only the processes spawned since.
+    auto_killer_mark: Cell<u64>,
     /// Number of expect() calls observed in this sequence.
     pub(crate) expect_call_count: Cell<u32>,
     /// Expectation set by expect.hasAssertions() or expect.assertions(n).
@@ -190,6 +192,7 @@ impl ExecutionSequence {
             result: Cell::new(Result::Pending),
             executing: Cell::new(false),
             started_at: Cell::new(Timespec::EPOCH),
+            auto_killer_mark: Cell::new(0),
             expect_call_count: Cell::new(0),
             expect_assertions: Cell::new(ExpectAssertions::NotSet),
             maybe_skip: Cell::new(false),
@@ -469,7 +472,8 @@ impl Execution {
     /// The kill-only half of [`BunTest::handle_timeout`]: reaps a timed-out test's spawned processes without touching the runner's queue, so it may run from inside `spawnSync`'s isolated loop.
     pub(crate) fn kill_dangling_processes_on_timeout(buntest: &BunTest, global_this: &JSGlobalObject) {
         // if the concurrent group has one sequence and the sequence has an active entry that has timed out,
-        //   kill any dangling processes
+        //   kill the processes spawned since that sequence started (its beforeEach hooks, the test, its afterEach hooks)
+        //   and keep the ones spawned before it, such as a server that a beforeAll hook started for the whole file.
         // when using test.concurrent(), we can't do this because it could kill multiple tests at once.
         if let Some(current_group) = buntest.execution.active_group() {
             let sequences = current_group.sequences(&buntest.execution);
@@ -478,7 +482,10 @@ impl Execution {
                 if let Some(entry) = sequence.active_entry.get() {
                     let now = Timespec::now_force_real_time();
                     if buntest.sequence_entry(entry).timespec.get().order(&now) == core::cmp::Ordering::Less {
-                        let kill_count = global_this.bun_vm().auto_killer.kill();
+                        let kill_count = global_this
+                            .bun_vm()
+                            .auto_killer
+                            .kill_spawned_since(sequence.auto_killer_mark.get());
                         if kill_count.processes > 0 {
                             bun_core::pretty_errorln!(
                                 "<d>killed {} dangling process{}<r>",
@@ -699,6 +706,7 @@ impl Execution {
     }
 
     fn on_sequence_started(buntest: &BunTest, global_this: &JSGlobalObject, sequence: &ExecutionSequence) {
+        sequence.auto_killer_mark.set(global_this.bun_vm().auto_killer.mark());
         let test = sequence.test(buntest);
         if test.is_some_and(|entry| !entry.callback.is_some()) {
             return;
@@ -843,6 +851,7 @@ impl Execution {
             result,
             executing: _,
             started_at,
+            auto_killer_mark: _,
             expect_call_count,
             expect_assertions,
             maybe_skip,

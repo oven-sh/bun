@@ -1,11 +1,11 @@
 // What the compiler reads in place of src/js/internal/http1_server_fallback.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 41c21ef70f06121b91402db887ed060293ce3fa0ac17281efbd45af1ed670026.
+// Written against that file with the SHA-256 1a8bf518d5e7c61376e95b30875b8605fbbf348afbbc099eeca901be622d3459.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // JS HTTP/1 server path over an arbitrary Duplex with a JS stand-in for NodeHTTPResponse.
 // Used by http2's `allowHTTP1` ALPN fallback and http's `server.emit("connection", socket)`.
 // See https://github.com/nodejs/node/blob/main/lib/_http_server.js connectionListener.
-const { STATUS_CODES, kPendingCallbacks } = require("internal/http");
+const { STATUS_CODES, NodeHTTPHeaderState, headerStateSymbol, kPendingCallbacks } = require("internal/http");
 const { SafeSet } = require("internal/primordials");
 const AsyncContextFrame = require("internal/async_context_frame");
 const { builtinChannel } = require("internal/shared");
@@ -22,6 +22,8 @@ const reportError = globalThis.reportError;
 function rethrowUncaught(err: unknown) {
   throw err;
 }
+
+function ignoreError() {}
 
 // Node fails the write callbacks that a destroyed socket still holds before it emits 'close' (Writable's errorBuffer).
 function failPendingWriteCallbacks(res: $Node.ServerResponse, err: Error) {
@@ -694,9 +696,12 @@ function connectionListenerHTTP1(
     // Match Node's http _connectionListener: attach err.rawPacket and, when no
     // 'clientError' listener is present, write the same raw error response
     // Node's socketOnError does before destroying.
+    socket.removeListener("error", onHttp1SocketErrorListener);
+    if (socket.listenerCount("error", ignoreError) === 0) socket.on("error", ignoreError);
     prepareError(err, parser, rawPacket);
     if (!server.emit("clientError", err, socket)) {
-      if (socket.writable && !socket.destroyed) {
+      const isResponding = socket._httpMessage?.[headerStateSymbol] === NodeHTTPHeaderState.sent;
+      if (socket.writable && !socket.destroyed && !isResponding) {
         const code = err?.code;
         socket.write(
           code === "HPE_HEADER_OVERFLOW"

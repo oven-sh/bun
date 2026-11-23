@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/_http_server.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 371355a0a2f6c26d64277b6679930a86640b27449c378d7591a9931958086749.
+// Written against that file with the SHA-256 9eb511df166fb3210fa162d650e4f434309507e8e3d8ab4f83365f9fbf933c84.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:_http_server"

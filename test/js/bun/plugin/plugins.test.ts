@@ -820,7 +820,7 @@ it("builder methods return the builder only when called as methods", () => {
   });
 });
 
-it("the builders and the onLoad arguments have the members that the types declare", async () => {
+it("the builders and the callback arguments have the members that the types declare", async () => {
   using dir = tempDir("plugin-builder-types", {
     "entry.ts": `export {};`,
     "tsconfig.json": JSON.stringify({
@@ -846,27 +846,37 @@ it("the builders and the onLoad arguments have the members that the types declar
 `,
   });
 
-  const seen = { runtime: [] as string[], onLoadArgs: [] as string[], bundler: [] as string[] };
+  const seen = {
+    runtime: [] as string[],
+    onLoadArgs: [] as string[],
+    onResolveArgs: [] as string[],
+    bundler: [] as string[],
+  };
   plugin({
     name: "members of the builder of Bun.plugin()",
     setup(builder) {
       seen.runtime = Object.keys(builder).sort();
-      builder.onLoad({ filter: /.*/, namespace: "members-of-onload-args" }, args => {
+      builder.onResolve({ filter: /.*/, namespace: "members-of-callback-args" }, args => {
+        seen.onResolveArgs = Object.keys(args).sort();
+        return { path: args.path, namespace: "members-of-callback-args" };
+      });
+      builder.onLoad({ filter: /.*/, namespace: "members-of-callback-args" }, args => {
         seen.onLoadArgs = Object.keys(args).sort();
         return { exports: {}, loader: "object" };
       });
     },
   });
-  require("members-of-onload-args:module");
+  require("members-of-callback-args:module");
   await Bun.build({
     entrypoints: [resolve(String(dir), "entry.ts")],
     plugins: [
       { name: "members of the builder of Bun.build()", setup: builder => void (seen.bundler = Object.keys(builder)) },
     ],
   });
-  expect({ runtime: seen.runtime, onLoadArgs: seen.onLoadArgs }).toEqual({
+  expect({ runtime: seen.runtime, onLoadArgs: seen.onLoadArgs, onResolveArgs: seen.onResolveArgs }).toEqual({
     runtime: ["module", "onLoad", "onResolve", "target"],
     onLoadArgs: ["path"],
+    onResolveArgs: ["importer", "kind", "namespace", "path", "resolveDir"],
   });
 
   const literal = (names: string[]) => JSON.stringify(Object.fromEntries(names.map(name => [name, true])));
@@ -874,10 +884,11 @@ it("the builders and the onLoad arguments have the members that the types declar
   // The builder of Bun.build() also has members that the types leave out, so it only must have each declared one.
   await Bun.write(
     resolve(String(dir), "members.ts"),
-    `import type { PluginBuilder, RuntimeOnLoadArgs, RuntimePluginBuilder } from "bun";
+    `import type { OnResolveArgs, PluginBuilder, RuntimeOnLoadArgs, RuntimePluginBuilder } from "bun";
 type Set<T> = { [K in keyof T]-?: undefined extends T[K] ? never : K }[keyof T];
 export const runtime: Record<Set<RuntimePluginBuilder>, true> = ${literal(seen.runtime)};
 export const onLoadArgs: Record<Set<RuntimeOnLoadArgs>, true> = ${literal(seen.onLoadArgs)};
+export const onResolveArgs: Record<keyof OnResolveArgs, true> = ${literal(seen.onResolveArgs)};
 const has = ${literal(seen.bundler)} as const;
 export const bundler: Record<keyof PluginBuilder, true> = has;
 `,
@@ -889,9 +900,10 @@ export const bundler: Record<keyof PluginBuilder, true> = has;
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-  expect({ stdout: stdout.trim().split("\n"), exitCode }).toEqual({
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim().split("\n"), stderr, exitCode }).toEqual({
     stdout: ["runtime.ts(4,17): error TS18048: 'build.config' is possibly 'undefined'."],
+    stderr: expect.stringContaining("Found 1 error in 1 file"),
     exitCode: 1,
   });
 });

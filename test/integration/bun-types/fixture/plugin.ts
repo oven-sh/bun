@@ -1,4 +1,12 @@
-import type { BunPlugin, OnLoadArgs, PluginBuilder, RuntimeOnLoadArgs, RuntimePlugin, RuntimePluginBuilder } from "bun";
+import type {
+  BunPlugin,
+  OnLoadArgs,
+  OnLoadCallback,
+  PluginBuilder,
+  RuntimeOnLoadArgs,
+  RuntimePlugin,
+  RuntimePluginBuilder,
+} from "bun";
 import { expectType } from "./utilities";
 
 // Bun.plugin() passes a builder that has `target`, `onLoad`, `onResolve` and `module`, and nothing else.
@@ -110,4 +118,27 @@ Bun.build({
     build.onEnd(() => {});
   };
   expectType(Bun.plugin({ name: "a setup() that is typed for Bun.build()", setup })).is<void>();
+
+  // A type that is read off Bun.plugin() comes from its last signature, and stays `BunPlugin`.
+  expectType<Parameters<typeof Bun.plugin>[0]>().is<BunPlugin>();
+}
+
+// An onLoad callback that is typed for Bun.build() goes to both builders. One that is written inline does not.
+{
+  const forBoth: OnLoadCallback = ({ path }) => ({ contents: path, loader: "text" });
+  const readsTheNamespace = (args: OnLoadArgs) => ({ contents: args.namespace, loader: "text" as const });
+  Bun.plugin({
+    name: "callbacks that are typed for Bun.build()",
+    setup(build) {
+      build.onLoad({ filter: /^hey$/ }, forBoth).onLoad({ filter: /^hey$/ }, readsTheNamespace);
+      // @ts-expect-error
+      build.onLoad({ filter: /^hey$/ }, args => ({ contents: args.namespace.length + "", loader: "text" }));
+      // @ts-expect-error
+      build.onLoad({ filter: /^hey$/ }, () => ({ contents: 1 }));
+    },
+  });
+  Bun.build({
+    entrypoints: ["hey"],
+    plugins: [{ name: "both", setup: build => void build.onLoad({ filter: /^hey$/ }, forBoth) }],
+  });
 }

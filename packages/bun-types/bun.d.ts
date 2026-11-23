@@ -6723,7 +6723,7 @@ declare module "bun" {
     /**
      * The loader to use for this file
      */
-    loader?: Loader;
+    loader?: Loader | undefined;
   }
 
   interface OnLoadResultObject {
@@ -6987,11 +6987,15 @@ declare module "bun" {
      * });
      * ```
      *
+     * `Args` is {@link RuntimeOnLoadArgs} for a callback that is written
+     * inline. A callback that is typed for the {@link OnLoadArgs} of
+     * {@link Bun.build} is accepted too, and receives only `path` here.
+     *
      * @returns `this` for method chaining
      */
-    onLoad(
+    onLoad<Args extends RuntimeOnLoadArgs | OnLoadArgs = RuntimeOnLoadArgs>(
       constraints: PluginConstraints,
-      callback: (args: RuntimeOnLoadArgs) => OnLoadResult | Promise<OnLoadResult>,
+      callback: (args: Args) => OnLoadResult | Promise<OnLoadResult>,
     ): this;
     /**
      * Register a callback to resolve imports matching a filter and/or namespace
@@ -7102,7 +7106,7 @@ declare module "bun" {
      * {@link Bun.plugin} accepts `"bun"`, `"node"` and `"browser"`, and does
      * not use the value.
      */
-    target?: Target;
+    target?: Target | undefined;
 
     /**
      * {@link Bun.plugin} calls this function once, before it returns.

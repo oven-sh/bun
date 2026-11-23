@@ -111,6 +111,11 @@ export function recordsOfSource(source: string, keepsLibrary = true) {
       .filter(id => !unreached.has(id)),
   );
 
+  const runtimeFunctions = records.filter(
+    record => record.kind === "runtimefunction" && reached.has(/ function=(f\d+)/.exec(record.lines[0])?.[1] ?? ""),
+  );
+  const listed = new Set(runtimeFunctions.map(record => / id=(\w+)/.exec(record.lines[0])?.[1]));
+
   function stripped(record: IRRecord) {
     const isWhole = record.kind !== "function" || isOwn(record) || reached.has(record.id!) || !hasBody(record);
     // The verifier wants a body where the role says that there is one: the first block, which takes what the function takes, and no way on.
@@ -127,7 +132,10 @@ export function recordsOfSource(source: string, keepsLibrary = true) {
       if (record.kind !== "function") return line;
       // An operation says where in the text it stands, as in a build of the program.
       if (index) return line;
-      return withoutField(line, "sourceRange");
+      // The verifier wants the function that encloses it listed. That of a function that is only named may be unreached.
+      return outsideQuotes(withoutField(line, "sourceRange"), part =>
+        part.replace(/ enclosingRuntimeFunction=(\w+)/, (field, id) => (listed.has(id) ? field : "")),
+      );
     });
   }
 
@@ -155,9 +163,7 @@ export function recordsOfSource(source: string, keepsLibrary = true) {
         return part;
       });
   }
-  for (const record of records)
-    if (record.kind === "runtimefunction" && reached.has(/ function=(f\d+)/.exec(record.lines[0])?.[1] ?? ""))
-      texts.set(record, record.lines);
+  for (const record of runtimeFunctions) texts.set(record, record.lines);
 
   const newIDs = new Map<string, string>();
   const counts: Record<string, number> = {};

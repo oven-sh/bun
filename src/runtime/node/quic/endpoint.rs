@@ -1938,7 +1938,8 @@ impl QuicEndpoint {
         options: JSValue,
         global: &JSGlobalObject,
     ) -> JsResult<*mut lsquic::lsquic_engine> {
-        let tls = TlsContext::new(config).map_err(|e| global.throw(format_args!("tls: {}", e)))?;
+        let tls = TlsContext::new(global, config)
+            .map_err(|e| global.throw(format_args!("tls: {}", e)))?;
         // Node accepts a list, so own ALPN on the SSL_CTX and pass NULL here.
         let alpn_cstr = TlsContext::alpn_cstr(config);
         let is_http = alpn_cstr_is_http(&alpn_cstr);
@@ -2284,7 +2285,7 @@ impl QuicEndpoint {
             // Node's TLS options are per-session, but the lsquic engine is
             // per-endpoint. Each conn's SSL holds a reference to its SSL_CTX,
             // so replacing ours is safe for earlier sessions.
-            match TlsContext::new(&config) {
+            match TlsContext::new(global, &config) {
                 Ok(fresh) => self.client_tls.set(Some(fresh)),
                 Err(e) => return Err(global.throw(format_args!("{e}"))),
             }
@@ -2552,7 +2553,7 @@ impl QuicEndpoint {
             if config.alpn.is_empty() {
                 config.alpn = alpn.to_vec();
             }
-            match TlsContext::new(&config) {
+            match TlsContext::new(global, &config) {
                 Ok(ctx) => out.push((host, ctx)),
                 Err(e) => {
                     return Err(global

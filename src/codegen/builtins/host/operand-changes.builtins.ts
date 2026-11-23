@@ -68,7 +68,7 @@ const resultsOfBindingsChangingNothing: Readonly<Record<b.BuiltinPath, b.TableTy
   // JSEventTargetNode.cpp: a new list of the functions that the program has registered.
   "native:NewCppFunction:JSEventTargetNode.cpp:jsFunctionNodeEventsGetEventListeners": b.instance("Array"),
   "native:NewCppFunction:NodeTLS.cpp:loadExtraCACertificates": b.undefined,
-  "native:NewCppFunction:NodeTLS.cpp:parseCACertificates": b.instance("Array").holding({ element: b.string }).fresh,
+  "native:NewCppFunction:NodeTLS.cpp:resetRootCertStore": b.instance("Array").holding({ element: b.string }).fresh,
   "native:NewCppFunction:decodeURIComponentSIMD.cpp:jsFunctionDecodeURIComponentSIMD": b.union(b.string, b.undefined),
   "native:NewCppFunction:stringWidth.cpp:jsFunctionBunStringWidth": b.f64,
 };

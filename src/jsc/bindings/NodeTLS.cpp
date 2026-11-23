@@ -178,7 +178,8 @@ JSC_DEFINE_HOST_FUNCTION(getSystemCACertificates, (JSC::JSGlobalObject * globalO
 // callbacks.
 using CACertInput = std::variant<WTF::UTF8CString, JSC::JSArrayBufferView*>;
 
-JSC_DEFINE_HOST_FUNCTION(parseCACertificates, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+// https://github.com/nodejs/node/blob/v26.12.1/src/crypto/crypto_context.cc#L1242, and answers with the new certificates.
+JSC_DEFINE_HOST_FUNCTION(resetRootCertStore, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -224,7 +225,12 @@ JSC_DEFINE_HOST_FUNCTION(parseCACertificates, (JSC::JSGlobalObject * globalObjec
     // BoringSSL error is recorded and thrown below, after all RAII scopes exit.
     // No user JS runs in this pass (nothing here dispatches to JS), so a view's
     // backing store cannot be detached out from under the span read below.
-    WTF::Vector<std::pair<std::array<uint8_t, SHA_DIGEST_LENGTH>, WTF::String>, 16> pems;
+    struct Certificate {
+        std::array<uint8_t, SHA_DIGEST_LENGTH> fingerprint;
+        WTF::String pem;
+        bssl::UniquePtr<CRYPTO_BUFFER> der;
+    };
+    WTF::Vector<Certificate, 16> parsed;
     WTF::HashSet<WTF::String> seen;
     unsigned long parseError = 0;
     bool oom = false;
@@ -250,7 +256,9 @@ JSC_DEFINE_HOST_FUNCTION(parseCACertificates, (JSC::JSGlobalObject * globalObjec
             break;
         }
         us_ca_reader reader { bio.get(), us_ca_trust::ignored };
-        while (auto x509 = ncrypto::X509Pointer(reader.next())) {
+        CRYPTO_BUFFER* buffer = nullptr;
+        while (auto x509 = ncrypto::X509Pointer(reader.next(&buffer))) {
+            bssl::UniquePtr<CRYPTO_BUFFER> der { buffer };
             std::array<uint8_t, SHA_DIGEST_LENGTH> fingerprint;
             auto out = ncrypto::BIOPointer::NewMem();
             if (!out || PEM_write_bio_X509(out.get(), x509.get()) != 1 || X509_digest(x509.get(), EVP_sha1(), fingerprint.data(), nullptr) != 1) {
@@ -261,7 +269,7 @@ JSC_DEFINE_HOST_FUNCTION(parseCACertificates, (JSC::JSGlobalObject * globalObjec
             BUF_MEM* mem = out;
             auto pem = WTF::String::fromUTF8(std::span { mem->data, mem->length });
             if (seen.add(pem).isNewEntry)
-                pems.append({ fingerprint, WTF::move(pem) });
+                parsed.append({ fingerprint, WTF::move(pem), WTF::move(der) });
         }
         if (oom || parseError) break;
         // PEM_R_NO_START_LINE is the normal end-of-stream marker.
@@ -286,11 +294,20 @@ JSC_DEFINE_HOST_FUNCTION(parseCACertificates, (JSC::JSGlobalObject * globalObjec
         return {};
     }
 
+    if (parsed.isEmpty() && !inputs.isEmpty())
+        return ERR::CRYPTO_OPERATION_FAILED(scope, globalObject, "No valid certificates found in the provided array"_s);
+
     // Node keeps them in a set ordered by X509_cmp, which in OpenSSL compares SHA-1 fingerprints.
-    std::ranges::sort(pems, {}, &decltype(pems)::ValueType::first);
+    std::ranges::sort(parsed, {}, &Certificate::fingerprint);
+    auto ders = parsed.map([](auto& certificate) { return certificate.der.get(); });
+    decltype(Zig::GlobalObject::m_rootCertsFromUsers) certsFromUsers { X509_LAZY_CERT_SET_new(ders.span().data(), ders.size()), X509_LAZY_CERT_SET_free };
+    if (!certsFromUsers) {
+        throwOutOfMemoryError(globalObject, scope);
+        return {};
+    }
     JSC::MarkedArgumentBuffer results;
-    for (auto& [fingerprint, pem] : pems) {
-        results.append(JSC::jsString(vm, pem));
+    for (auto& certificate : parsed) {
+        results.append(JSC::jsString(vm, certificate.pem));
         if (results.hasOverflowed()) {
             throwOutOfMemoryError(globalObject, scope);
             return {};
@@ -298,7 +315,21 @@ JSC_DEFINE_HOST_FUNCTION(parseCACertificates, (JSC::JSGlobalObject * globalObjec
     }
     auto* array = JSC::constructArray(globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), results);
     RETURN_IF_EXCEPTION(scope, {});
-    RELEASE_AND_RETURN(scope, JSValue::encode(array));
+    defaultGlobalObject(globalObject)->m_rootCertsFromUsers = WTF::move(certsFromUsers);
+    return JSValue::encode(array);
+}
+
+// https://github.com/nodejs/node/blob/v26.12.1/src/crypto/crypto_context.cc#L1053
+extern "C" X509_STORE* Bun__newRootCertStore(JSC::JSGlobalObject* globalObject)
+{
+    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
+    auto* certsFromUsers = defaultGlobalObject(globalObject)->m_rootCertsFromUsers.get();
+    if (!certsFromUsers)
+        return us_get_default_ca_store();
+    bssl::UniquePtr<X509_STORE> store { X509_STORE_new() };
+    if (!store || !X509_STORE_add_lazy_cert_set(store.get(), certsFromUsers))
+        return nullptr;
+    return store.release();
 }
 
 // (names: Map<string, T>, servername: string) => T | undefined, matched by the tree a listener keeps its names in.

@@ -1,6 +1,6 @@
 import { addBlockedSPKIForTesting, clearBlockedSPKIsForTesting } from "bun:internal-for-testing";
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { createHash, createPrivateKey, X509Certificate } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -364,6 +364,74 @@ test("without `ca`, or after an empty one, the default roots are trusted", async
       validationErrorCodes(join(fixtures, "root.pem"), "[]"),
     ]),
   ).toEqual([withRoot, without, withRoot, without]);
+});
+
+test("setDefaultCACertificates() counts from the next connection on, and on its own thread", async () => {
+  const fixtures = join(import.meta.dir, "..", "tls", "fixtures", "trust-anchor");
+  const read = (name: string) => readFileSync(join(fixtures, name));
+  const identity = {
+    keys: [createPrivateKey(read("leaf.key"))],
+    certs: [Buffer.concat([read("leaf.pem"), read("intermediate.pem")])],
+  };
+  await using server = await listen(ignoreErrors, { sni: { "*": identity }, alpn: ["quic-test"] });
+  using dir = tempDir("quic-default-ca", {
+    "index.mjs": `
+      import { once } from "node:events";
+      import { readFileSync } from "node:fs";
+      import { connect } from "node:quic";
+      import { setDefaultCACertificates } from "node:tls";
+      import { isMainThread, parentPort, Worker } from "node:worker_threads";
+      async function outcome(more) {
+        const options = { alpn: "quic-test", servername: "localhost", verifyPeer: "manual", ...more };
+        const session = await connect("127.0.0.1:${server.address!.port}", options);
+        const { validationErrorCode = "authorized" } = await session.opened;
+        await session.close();
+        return validationErrorCode;
+      }
+      if (isMainThread) {
+        setDefaultCACertificates([readFileSync("root.pem")]);
+        console.log("root:", await outcome());
+        const worker = new Worker(import.meta.filename);
+        console.log("in a worker:", ...(await once(worker, "message")));
+        await once(worker, "exit");
+        console.log("after it:", await outcome());
+        const crl = ["intermediate-empty.crl", "root-revokes-intermediate.crl"].map(name => readFileSync(name));
+        console.log("revoked:", await outcome({ crl }));
+        console.log("after it:", await outcome());
+        try {
+          setDefaultCACertificates(["text"]);
+        } catch (error) {
+          console.log(error.code + ":", await outcome());
+        }
+        setDefaultCACertificates([readFileSync("root-not-a-ca.pem")]);
+        console.log("another:", await outcome());
+      } else {
+        const inherited = await outcome();
+        setDefaultCACertificates([readFileSync("root-not-a-ca.pem")]);
+        parentPort.postMessage(inherited + ", then " + (await outcome()));
+      }`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--experimental-quic", "--no-warnings", join(String(dir), "index.mjs")],
+    cwd: fixtures,
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim().split("\n"), stderr, exitCode }).toEqual({
+    stdout: [
+      "root: authorized",
+      "in a worker: UNABLE_TO_GET_ISSUER_CERT_LOCALLY, then INVALID_CA",
+      "after it: authorized",
+      "revoked: CERT_REVOKED",
+      "after it: authorized",
+      "ERR_CRYPTO_OPERATION_FAILED: authorized",
+      "another: INVALID_CA",
+    ],
+    stderr: "",
+    exitCode: 0,
+  });
 });
 
 test("`crl` is read as by node:tls", async () => {

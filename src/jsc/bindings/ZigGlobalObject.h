@@ -31,6 +31,8 @@ class Performance;
 class JSBuiltinInternalFunctions;
 } // namespace WebCore
 
+struct x509_lazy_cert_set_st;
+
 namespace Bun {
 class InternalModuleRegistry;
 class HandleScopeImpl;
@@ -691,6 +693,10 @@ public:
     // config digest. WeakGCMap self-registers with the heap, so no
     // visitChildren wiring needed (and it must NOT keep its values alive).
     std::unique_ptr<Bun::SecureContextCache> m_secureContextCache;
+
+    // What tls.setDefaultCACertificates() was last given, if it has been called. The deleter comes
+    // with the value, or every trimmed executable would keep the code that frees a certificate.
+    std::unique_ptr<x509_lazy_cert_set_st, void (*)(x509_lazy_cert_set_st*)> m_rootCertsFromUsers { nullptr, nullptr };
 
     std::unique_ptr<Bun::ModuleGraphState> m_moduleGraphs;
 

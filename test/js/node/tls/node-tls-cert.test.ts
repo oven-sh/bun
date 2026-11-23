@@ -2920,9 +2920,44 @@ describe("several certificates match one issuer", () => {
         tls.setDefaultCACertificates([root]);
         const server: any = tls.createServer({ key, cert: chain });
         expect(() => server[Symbol.for("::buntls::")](0)[0].ca.push(unrelated[0])).toThrow(TypeError);
+        expect(() => tls.getCACertificates("default").push(unrelated[0])).toThrow(TypeError);
         expect(tls.getCACertificates("default")).toEqual([root]);
+        expect(tls.getCACertificates("default")).toBe(tls.getCACertificates("default"));
       } finally {
         tls.setDefaultCACertificates(before);
+      }
+    });
+
+    it.each([
+      ["sockets", true],
+      ["sessions", false],
+    ])("is not for an empty `ca`, not even through the %s of an agent, unlike in Node.js", async (_, keepAlive) => {
+      await using server = await serve(chain);
+      const agent = new https.Agent({ keepAlive });
+      async function get(ca?: any) {
+        const request = https.get({ host: "127.0.0.1", port: server.port, servername: "localhost", agent, ca });
+        try {
+          const [response] = await once(request, "response");
+          const reused = request.reusedSocket || response.socket.isSessionReused();
+          await Promise.all([once(request, "close"), once(response.resume(), "end")]);
+          return reused ? "reused" : "authorized";
+        } catch (error: any) {
+          return error.code;
+        }
+      }
+      const empty = new ArrayBuffer(0);
+      const values = [[], [""], [[]], Buffer.alloc(0), [Buffer.alloc(0)], new DataView(empty), empty];
+      const before = tls.getCACertificates("default");
+      tls.setDefaultCACertificates([root]);
+      try {
+        const seen = [await get(), await get()];
+        for (const ca of values) seen.push(agent.getName({ ca }) === agent.getName({}) + ":emptyCA");
+        seen.push(await get([]), await get(Buffer.alloc(0)), await get());
+        const missing = "UNABLE_TO_GET_ISSUER_CERT_LOCALLY";
+        expect(seen).toEqual(["authorized", "reused", ...values.map(() => true), missing, missing, "reused"]);
+      } finally {
+        tls.setDefaultCACertificates(before);
+        agent.destroy();
       }
     });
 
@@ -3508,12 +3543,6 @@ describe("several certificates match one issuer", () => {
         stderr: "",
         exitCode: 0,
       });
-    });
-
-    it("nor does it get the sockets and sessions of an agent that have no `ca`, unlike in Node.js", () => {
-      const agent = new https.Agent();
-      const names = [[], [""], Buffer.alloc(0)].map(ca => agent.getName({ ca }));
-      expect(names.includes(agent.getName({}))).toBe(false);
     });
 
     it("the same goes for the built-in ws and node-fetch", async () => {

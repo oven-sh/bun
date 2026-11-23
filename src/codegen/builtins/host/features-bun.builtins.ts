@@ -485,7 +485,7 @@ export default b.declarations(
       "getExtraCACertificates",
       "getSystemCACertificates",
       "loadExtraCACertificates",
-      "parseCACertificates",
+      "resetRootCertStore",
       "selectServerName",
     ),
   ),

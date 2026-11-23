@@ -162,10 +162,10 @@ export const bindingsChangingNothing: Readonly<Record<string, Binding>> = {
     taken: [],
     refused: [],
   },
-  "native:NewCppFunction:NodeTLS.cpp:parseCACertificates": {
+  "native:NewCppFunction:NodeTLS.cpp:resetRootCertStore": {
     functions: 1,
-    sets: 316,
-    returned: 5,
+    sets: 141,
+    returned: 1,
     taken: [0],
     refused: [],
   },

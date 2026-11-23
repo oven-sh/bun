@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/https.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 5cd47cd0dda4686d0512169cbd25f556b5148653d3589de290493c27234dd21d.
+// Written against that file with the SHA-256 28ec169e04ed3e49341425b804050280969a98f15a5e1998719f008073082733.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:https"
@@ -420,6 +420,14 @@ function poolKeyPart(value: unknown): unknown {
   return `[object #${id}]`;
 }
 
+// Whether poolKeyPart() is "", without making it again.
+function isEmptyPoolKeyPart(value: unknown): boolean {
+  if ($isArray(value)) return value.length < 2 && isEmptyPoolKeyPart(value[0]);
+  if (typeof value !== "object" || value === null) return value == null || value === "";
+  const { byteLength, pem } = value as { byteLength?: number; pem?: unknown };
+  return byteLength === 0 || (pem != null && isEmptyPoolKeyPart(pem));
+}
+
 // getPfxAgentKey() of https://github.com/nodejs/node/commit/9f03017f38 (CVE-2026-56850)
 type PfxEntry = { buf?: unknown; passphrase?: unknown } | null | undefined;
 function pfxPoolKey(pfx: unknown, passphrase: unknown) {
@@ -476,8 +484,7 @@ Agent.prototype.getName = function getName(options = kEmptyObject) {
   } = options;
 
   name += ":";
-  // Unlike in Node, where a `ca` that trusts nothing gets the sockets and sessions of the default roots.
-  if (ca) name += `${poolKeyPart(ca)}` || "[]";
+  if (ca) name += poolKeyPart(ca);
 
   name += ":";
   if (cert) name += poolKeyPart(cert);
@@ -540,6 +547,8 @@ Agent.prototype.getName = function getName(options = kEmptyObject) {
   if (certFile) name += `:certFile=${JSONStringify(certFile)}`;
   if (keyFile) name += `:keyFile=${JSONStringify(keyFile)}`;
   if (caFile) name += `:caFile=${JSONStringify(caFile)}`;
+  // It trusts nothing, so it must not get the sockets and sessions that the default roots vouched for.
+  if (ca && isEmptyPoolKeyPart(ca)) name += ":emptyCA";
   if (allowPartialTrustChain) name += ":allowPartialTrustChain";
   if (secureContext) name += `:secureContext=${poolKeyPart(secureContext)}`;
 

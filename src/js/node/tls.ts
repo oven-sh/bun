@@ -47,7 +47,7 @@ const getExtraCACertificates = $newCppFunction("NodeTLS.cpp", "getExtraCACertifi
 const maybeWarnAboutExtraCACerts = $newCppFunction("NodeTLS.cpp", "loadExtraCACertificates", 0);
 const getSystemCACertificates = $newCppFunction("NodeTLS.cpp", "getSystemCACertificates", 1);
 const canonicalizeIP = $bindgen("cares_jsc.bind.ts", "canonicalizeIP");
-const parseCACertificates = $newCppFunction("NodeTLS.cpp", "parseCACertificates", 1);
+const resetRootCertStore = $newCppFunction("NodeTLS.cpp", "resetRootCertStore", 1);
 
 const getTLSDefaultCiphers = $bindgen("rare_data.bind.ts", "getTLSDefaultCiphers");
 const setTLSDefaultCiphers = $bindgen("rare_data.bind.ts", "setTLSDefaultCiphers");
@@ -1592,9 +1592,21 @@ function cacheBundledRootCertificates(): string[] {
 }
 const getCAStore = $bindgen("node_tls_binding.bind.ts", "getCAStore");
 
+// A copy: a server that gets the override itself as its `ca` does not name these CAs to clients.
+const getUserRootCertificates = () => getDefaultCACertificatesOverride()!.slice();
+
 let defaultCACertificates: string[] | undefined;
+let hasResetDefaultCACertificates = false;
+
 function cacheDefaultCACertificates() {
   if (defaultCACertificates) return defaultCACertificates;
+
+  if (hasResetDefaultCACertificates) {
+    defaultCACertificates = getUserRootCertificates();
+    ObjectFreeze(defaultCACertificates);
+    return defaultCACertificates;
+  }
+
   defaultCACertificates = [];
 
   // As in Node, what OpenSSL's default certificate file and directory hold is not listed.
@@ -1644,9 +1656,9 @@ type CACertInput = string | NodeJS.ArrayBufferView;
 // Node validates `certs` as an Array (its ERR_INVALID_ARG_TYPE renders the
 // 'Array' name as "an instance of Array"; Bun's validateArray renders the same
 // name as "of type Array", so build the error directly to match Node here),
-// then hands the certs to the native root store. Bun has no equivalent native
-// store override, so keep a JS-side override that getCACertificates('default')
-// and createSecureContext() read.
+// then hands the certs to the native root store. Only node:quic reads that one
+// here, so keep a JS-side override that getCACertificates('default') and
+// createSecureContext() read.
 function setDefaultCACertificates(certs: ReadonlyArray<CACertInput>): void {
   if (!$isArray(certs)) {
     let received: string;
@@ -1668,11 +1680,10 @@ function setDefaultCACertificates(certs: ReadonlyArray<CACertInput>): void {
     }
     snapshot.push(cert);
   }
-  const normalized = parseCACertificates(snapshot);
-  if (normalized.length === 0 && snapshot.length > 0) {
-    throw $ERR_CRYPTO_OPERATION_FAILED("No valid certificates found in the provided array");
-  }
-  setDefaultCACertificatesOverride(normalized);
+
+  setDefaultCACertificatesOverride(resetRootCertStore(snapshot));
+  defaultCACertificates = undefined; // Reset the cached default certificates
+  hasResetDefaultCACertificates = true;
 }
 
 function getCACertificates(type = "default") {
@@ -1680,7 +1691,7 @@ function getCACertificates(type = "default") {
 
   switch (type) {
     case "default":
-      return getDefaultCACertificatesOverride()?.slice() ?? cacheDefaultCACertificates();
+      return cacheDefaultCACertificates();
     case "bundled":
       return cacheBundledRootCertificates();
     case "system":

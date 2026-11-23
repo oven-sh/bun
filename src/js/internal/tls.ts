@@ -11,6 +11,7 @@ const ArrayPrototypeFilter = Array.prototype.filter;
 const ArrayPrototypeJoin = Array.prototype.join;
 const ArrayPrototypeSome = Array.prototype.some;
 const ArrayPrototypeMap = Array.prototype.map;
+const ObjectFreeze = Object.freeze;
 const WeakMapPrototypeGet = WeakMap.prototype.get;
 const WeakMapPrototypeSet = WeakMap.prototype.set;
 
@@ -497,7 +498,7 @@ function getDefaultCACertificatesOverride() {
 
 function setDefaultCACertificatesOverride(certificates: string[]) {
   // User code can get at it through the symbols of a server.
-  defaultCACertificatesOverride = Object.freeze(certificates);
+  defaultCACertificatesOverride = ObjectFreeze(certificates);
   WeakMapPrototypeSet.$call(defaultCACounts, certificates, certificates.length);
 }
 

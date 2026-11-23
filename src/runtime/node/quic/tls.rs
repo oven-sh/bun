@@ -334,8 +334,11 @@ unsafe fn load_crl_store(ctx: &ssl::SSL_CTX, pem: &[u8]) -> Result<(), &'static 
 }
 
 /// SAFETY: `ctx` is not shared yet.
-unsafe fn use_default_ca_store(ctx: &ssl::SSL_CTX) -> Result<(), &'static str> {
-    let store = us_get_default_ca_store();
+unsafe fn use_default_ca_store(
+    global: &JSGlobalObject,
+    ctx: &ssl::SSL_CTX,
+) -> Result<(), &'static str> {
+    let store = Bun__newRootCertStore(global);
     if store.is_null() {
         return Err("failed to load the default CA certificates");
     }
@@ -347,10 +350,14 @@ unsafe fn use_default_ca_store(ctx: &ssl::SSL_CTX) -> Result<(), &'static str> {
 /// https://github.com/nodejs/node/blob/v26.12.1/src/quic/tlscontext.cc#L599-L615
 ///
 /// SAFETY: `ctx` is not shared yet.
-unsafe fn load_ca_store(ctx: &ssl::SSL_CTX, pem: &[u8]) -> Result<(), &'static str> {
+unsafe fn load_ca_store(
+    global: &JSGlobalObject,
+    ctx: &ssl::SSL_CTX,
+    pem: &[u8],
+) -> Result<(), &'static str> {
     if pem.is_empty() {
         // SAFETY: fn contract.
-        return unsafe { use_default_ca_store(ctx) };
+        return unsafe { use_default_ca_store(global, ctx) };
     }
     let store = ssl::SSL_CTX_get_cert_store(ctx).expect("a new SSL_CTX has a store");
     // SAFETY: it only reads `pem`.
@@ -362,7 +369,7 @@ unsafe fn load_ca_store(ctx: &ssl::SSL_CTX, pem: &[u8]) -> Result<(), &'static s
 }
 
 impl TlsContext {
-    pub(super) fn new(config: &TlsConfig) -> Result<Self, &'static str> {
+    pub(super) fn new(global: &JSGlobalObject, config: &TlsConfig) -> Result<Self, &'static str> {
         // SAFETY: each SSL_CTX call below is paired with the matching free on
         // failure via Drop (the half-built `this` is dropped on early return).
         unsafe {
@@ -400,7 +407,7 @@ impl TlsContext {
                 }
             }
             if config.ca_pem.is_empty() {
-                use_default_ca_store(&this.ctx)?;
+                use_default_ca_store(global, &this.ctx)?;
             }
 
             // Node pairs `certs[i]` with `keys[i]`.
@@ -419,7 +426,7 @@ impl TlsContext {
                 }
             }
             for pem in &config.ca_pem {
-                load_ca_store(&this.ctx, pem)?;
+                load_ca_store(global, &this.ctx, pem)?;
             }
             for pem in &config.crl_pem {
                 load_crl_store(&this.ctx, pem)?;
@@ -525,8 +532,8 @@ unsafe extern "C" {
     fn us_ssl_ctx_set_verify_signature_algorithms(ctx: *mut ssl::SSL_CTX) -> c_int;
     /// openssl.cpp: the blocked public keys every other TLS context of Bun rejects in a peer's chain.
     fn us_ssl_ctx_reject_blocked_keys(ctx: *mut ssl::SSL_CTX);
-    /// root_certs.cpp: a new store, or null.
-    safe fn us_get_default_ca_store() -> *mut ssl::X509_STORE;
+    /// NodeTLS.cpp: a new store, or null.
+    safe fn Bun__newRootCertStore(global: &JSGlobalObject) -> *mut ssl::X509_STORE;
     /// ca_pem.cpp: how every other TLS context of Bun reads `ca` and `crl`.
     fn us_x509_store_add_cas(
         store: &ssl::X509_STORE,

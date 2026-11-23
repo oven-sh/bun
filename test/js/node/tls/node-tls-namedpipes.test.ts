@@ -76,9 +76,15 @@ it.if(isWindows)("a server on a named pipe trusts nothing when `ca` holds no cer
 
 it.if(isWindows)("a server on a named pipe trusts the default CAs of when it was created", async () => {
   const before = getCACertificates("default");
-  setDefaultCACertificates([tls.cert]);
-  await using server = createServer({ ...tls, requestCert: true, rejectUnauthorized: false });
-  setDefaultCACertificates(before);
+  function createServerTrustingItself() {
+    setDefaultCACertificates([tls.cert]);
+    try {
+      return createServer({ ...tls, requestCert: true, rejectUnauthorized: false });
+    } finally {
+      setDefaultCACertificates(before);
+    }
+  }
+  await using server = createServerTrustingItself();
   const pipeName = `\\\\.\\pipe\\test\\${randomUUID()}`;
   await once(server.listen(pipeName), "listening");
   const accepted = once(server, "secureConnection");

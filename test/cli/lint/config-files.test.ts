@@ -4796,6 +4796,186 @@ describe.concurrent("ESLint 8 config files", () => {
     }
   });
 
+  describe("the rules with types that typescript-eslint 8 removed", () => {
+    const throwLiteral = "@typescript-eslint/no-throw-literal";
+    const templateLiterals = "@typescript-eslint/no-useless-template-literals";
+    const onlyThrowError = "@typescript-eslint/only-throw-error";
+    const templateExpression = "@typescript-eslint/no-unnecessary-template-expression";
+    // The package with the rules each version has. If one of them runs, it reports at 1:1.
+    const plugin = (version: string) => {
+      const major = parseInt(version, 10);
+      const properties = { allowThrowingAny: { type: "boolean" }, allowThrowingUnknown: { type: "boolean" } };
+      const throwSchema = [{ type: "object", properties, additionalProperties: false }];
+      const metas: Record<string, object> = {
+        "no-throw-literal": { schema: throwSchema, deprecated: major === 7, replacedBy: [onlyThrowError] },
+      };
+      if (major >= 6) metas["no-useless-template-literals"] = { schema: [], fixable: "code" };
+      if (major >= 7) metas["only-throw-error"] = { schema: throwSchema };
+      if (major >= 7) metas["no-unnecessary-template-expression"] = { schema: [], fixable: "code" };
+      const index = `
+        const report = context => ({ Program: node => context.report({ node, message: "from the package" }) });
+        const rules = Object.entries(${JSON.stringify(metas)}).map(([name, meta]) => [name, { meta, create: report }]);
+        module.exports = { rules: Object.fromEntries(rules), configs: {} };
+      `;
+      return {
+        "node_modules/@typescript-eslint/eslint-plugin/package.json": JSON.stringify({ version, main: "index.js" }),
+        "node_modules/@typescript-eslint/eslint-plugin/index.js": index,
+      };
+    };
+    // The template literal is at 2:22, its `${"a"}` at 2:23, and the thrown value at 3:7.
+    const source = 'const count = 1;\nexport const label = `${"a"}`;\nthrow "oops" + count;\n';
+    const installed = (
+      version: string,
+      rules: object,
+      text = source,
+      parserOptions: object | undefined = undefined,
+    ) => ({
+      ".eslintrc.json": rc({
+        parser: "@typescript-eslint/parser",
+        parserOptions: parserOptions ?? { project: "./tsconfig.json" },
+        plugins: ["@typescript-eslint"],
+        rules,
+      }),
+      "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true }, include: ["*.ts"] }),
+      ...plugin(version),
+      "a.ts": text,
+    });
+    const note = (old: string, replacement: string) => `typescript-eslint 8 replaced ${old} with ${replacement}.`;
+
+    test("each one runs as its version 8 replacement and reports under its own name", async () => {
+      const rules = { [throwLiteral]: "error", [templateLiterals]: "warn" };
+      const [seven, six, five, eight] = await Promise.all(
+        ["7.18.0", "6.21.0", "5.62.0", "8.0.0"].map(version => lint(installed(version, rules), ["a.ts"])),
+      );
+      for (const old of [seven, six]) {
+        const messages: { ruleId: string; severity: number }[] = JSON.parse(old.raw).results[0].messages;
+        expect(messages.map(it => [it.ruleId, it.severity])).toEqual([
+          [templateLiterals, 1],
+          [throwLiteral, 2],
+        ]);
+        expect(old.problems).toEqual([`a.ts:2:23 ${templateLiterals}`, `a.ts:3:7 ${throwLiteral}`]);
+        // Each note is printed once, on stderr.
+        expect(old.stderr.split(note(throwLiteral, onlyThrowError)).length).toBe(2);
+        expect(old.stderr.split(note(templateLiterals, templateExpression)).length).toBe(2);
+        expect(old.stdout).not.toContain("typescript-eslint 8 replaced");
+        expect(old.exitCode).toBe(1);
+      }
+      // Version 5 doesn't have this rule, and ESLint says so.
+      expect(five.stdout).toContain(`Definition for rule '${templateLiterals}' was not found.`);
+      expect(five.problems).toEqual([`a.ts:1:1 ${templateLiterals}`, `a.ts:3:7 ${throwLiteral}`]);
+      expect(five.stderr).toContain(note(throwLiteral, onlyThrowError));
+      expect(five.stderr).not.toContain(templateExpression);
+      // Version 8 has neither rule.
+      expect(eight.problems).toEqual([]);
+      expect(eight.stderr).not.toContain("typescript-eslint 8 replaced");
+      expect(eight.stderr).toContain(`are not supported: ${throwLiteral}, ${templateLiterals}`);
+      expect(eight.exitCode).toBe(2);
+    });
+
+    test("the replacement stays a rule of its own", async () => {
+      const off = { [throwLiteral]: "off", [templateLiterals]: "off" };
+      const on = { [onlyThrowError]: "error", [templateExpression]: "error" };
+      const both = { [throwLiteral]: "error", [onlyThrowError]: "error" };
+      // Each comment disables the rule it names, and not the other one.
+      const disabled = [
+        "export function one() {",
+        `  // eslint-disable-next-line ${throwLiteral}`,
+        '  throw "a";',
+        "}",
+        "export function two() {",
+        `  // eslint-disable-next-line ${onlyThrowError}`,
+        '  throw "b";',
+        "}",
+        "",
+      ].join("\n");
+      const unused = ["--report-unused-disable-directives", "a.ts"];
+      const [newOnly, all, directives, withoutTypes] = await Promise.all([
+        lint(installed("7.18.0", { ...off, ...on }), ["a.ts"]),
+        lint(installed("7.18.0", { ...on, [throwLiteral]: "error", [templateLiterals]: "error" }), ["a.ts"]),
+        lint(installed("7.18.0", both, disabled), unused),
+        // No rule with types runs, so neither comment is known to be unused.
+        lint(installed("7.18.0", both, disabled, {}), unused),
+      ]);
+      expect(newOnly.problems).toEqual([`a.ts:2:23 ${templateExpression}`, `a.ts:3:7 ${onlyThrowError}`]);
+      expect(newOnly.stderr).not.toContain("typescript-eslint 8 replaced");
+      expect(all.problems).toEqual([
+        `a.ts:2:23 ${templateExpression}`,
+        `a.ts:2:23 ${templateLiterals}`,
+        `a.ts:3:7 ${throwLiteral}`,
+        `a.ts:3:7 ${onlyThrowError}`,
+      ]);
+      expect(directives.problems).toEqual([`a.ts:3:9 ${onlyThrowError}`, `a.ts:7:9 ${throwLiteral}`]);
+      expect(withoutTypes.problems).toEqual([]);
+    });
+
+    test("a comment turns one on and off, and takes the options of the installed version", async () => {
+      const comment = (settings: string) => `/* eslint ${settings} */\n${source}`;
+      const [switched, invalid] = await Promise.all([
+        lint(
+          installed(
+            "7.18.0",
+            { [throwLiteral]: "error" },
+            comment(`${throwLiteral}: "off", ${templateLiterals}: "error"`),
+          ),
+          ["a.ts"],
+        ),
+        lint(
+          installed(
+            "7.18.0",
+            { [throwLiteral]: "error" },
+            comment(`${throwLiteral}: ["error", { "allowRethrowing": true }]`),
+          ),
+          ["a.ts"],
+        ),
+      ]);
+      expect(switched.problems).toEqual([`a.ts:3:23 ${templateLiterals}`]);
+      // ESLint reports the comment and keeps the config's setting.
+      const [{ message }] = JSON.parse(invalid.raw).results[0].messages;
+      expect(message).toContain(`Configuration for rule "${throwLiteral}" is invalid:`);
+      expect(invalid.problems).toEqual([`a.ts:1:1 ${throwLiteral}`, `a.ts:4:7 ${throwLiteral}`]);
+    });
+
+    test("no-throw-literal has the options of the installed version and reports a rethrown error", async () => {
+      const rethrown = "export function f(g: () => void) {\n  try {\n    g();\n  } catch (e) {\n    throw e;\n  }\n}\n";
+      const strict = { [throwLiteral]: ["error", { allowThrowingUnknown: false }] };
+      const [seven, five, lenient, rejected] = await Promise.all([
+        lint(installed("7.18.0", strict, rethrown), ["a.ts"]),
+        lint(installed("5.62.0", strict, rethrown), ["a.ts"]),
+        lint(installed("7.18.0", { [throwLiteral]: "error" }, rethrown), ["a.ts"]),
+        // Only version 8's only-throw-error has this option.
+        lint(installed("7.18.0", { [throwLiteral]: ["error", { allowRethrowing: true }] }), ["a.ts"]),
+      ]);
+      expect(seven.problems).toEqual([`a.ts:5:11 ${throwLiteral}`]);
+      expect(five.problems).toEqual([`a.ts:5:11 ${throwLiteral}`]);
+      expect(lenient.problems).toEqual([]);
+      expect(rejected.stderr).toContain(`Configuration for rule "${throwLiteral}" is invalid:`);
+      expect(rejected.stderr).toContain("should NOT have additional properties");
+      expect(rejected.exitCode).toBe(2);
+    });
+
+    test("--print-config, usedDeprecatedRules, --fix-dry-run and --no-native-plugin-rules", async () => {
+      const rules = { [throwLiteral]: "error", [templateLiterals]: "error" };
+      const [unset, set, linted, fixed, packaged] = await Promise.all([
+        lint(installed("7.18.0", { eqeqeq: "error" }), ["--print-config", "a.ts"]),
+        lint(installed("7.18.0", rules), ["--print-config", "a.ts"]),
+        lint(installed("7.18.0", rules), ["a.ts"]),
+        lint(installed("7.18.0", { ...rules, [templateExpression]: "error" }), ["--fix-dry-run", "a.ts"]),
+        lint(installed("7.18.0", rules), ["--no-native-plugin-rules", "a.ts"]),
+      ]);
+      expect(Object.keys(JSON.parse(unset.stdout).rules)).toEqual(["eqeqeq"]);
+      expect(Object.keys(JSON.parse(set.stdout).rules)).toEqual([throwLiteral, templateLiterals]);
+      expect(JSON.parse(linted.raw).results[0].usedDeprecatedRules).toEqual([
+        { ruleId: throwLiteral, replacedBy: [onlyThrowError] },
+      ]);
+      expect(JSON.parse(fixed.raw).results[0].output).toBe(
+        'const count = 1;\nexport const label = "a";\nthrow "oops" + count;\n',
+      );
+      // The package's own rules run.
+      expect(packaged.problems).toEqual([`a.ts:1:1 ${throwLiteral}`, `a.ts:1:1 ${templateLiterals}`]);
+      expect(packaged.stderr).not.toContain("typescript-eslint 8 replaced");
+    });
+  });
+
   test("--print-config prints only the rules that the config files set", async () => {
     const files = { ".eslintrc.json": rc({ rules: { eqeqeq: "error" } }), "a.js": "" };
     const { stdout } = await lint(files, ["--print-config", "a.js"]);

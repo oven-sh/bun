@@ -914,7 +914,7 @@ impl Run<'_> {
         let started = Instant::now();
         let mut without_types: Vec<&Target> = Vec::with_capacity(supported.len());
         let mut with_types: Vec<(&Target, Typed)> = Vec::new();
-        let mut rules_without_types: Vec<&'static str> = Vec::new();
+        let mut rules_without_types: Vec<&[u8]> = Vec::new();
         // The configs whose rules are already in that list. Many files share a config.
         let (mut listed, mut last) = (FxHashSet::default(), None);
         for target in &supported {
@@ -948,7 +948,10 @@ impl Run<'_> {
             if last.replace(config) == Some(config) || !listed.insert(config) {
                 continue;
             }
-            for rule in needing.map(|it| it.entry.meta.name) {
+            for rule in needing.map(|it| match it.name() {
+                Some(name) => &name[..],
+                None => it.entry.meta.name.as_bytes(),
+            }) {
                 if !rules_without_types.contains(&rule) {
                     rules_without_types.push(rule);
                 }

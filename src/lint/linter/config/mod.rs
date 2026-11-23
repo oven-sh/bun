@@ -1742,9 +1742,11 @@ impl Config {
             let is_free = native.is_none()
                 && js.is_none()
                 && !config.foreign_plugins.iter().any(|it| **it == *prefix);
-            let base = match is_free {
-                true => registry.base_of(&setting.id),
-                false => None,
+            let base = match (is_free, native, js) {
+                (true, ..) => registry.base_of(&setting.id),
+                // The package has the rule, and a built-in rule has its checks.
+                (false, None, Some(Some(_))) => config.replaced_in_v8(registry, &setting.id),
+                _ => None,
             };
             let name: Option<Arc<[u8]>> = base.map(|_| Arc::from(&setting.id[..]));
             let entry = match (native.or(base), js) {
@@ -1792,7 +1794,9 @@ impl Config {
                 None => None,
             };
             let reported_as = self.reported_as(registry, entry, setting.builtin_plugin);
-            config.has_named_rules |= name.is_some();
+            if name.is_some() {
+                config.named_rules.push(config.rules.len() as u32);
+            }
             config.may_hand_back |= or_else.is_some() && setting.severity != Severity::Off;
             config.rules.push(
                 ConfiguredRule::new(entry, setting.severity, options)

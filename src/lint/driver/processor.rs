@@ -60,6 +60,11 @@ fn no_such_processor(config: &ResolvedConfig) -> Vec<u8> {
 impl Context<'_, '_> {
     /// Resolves the rule ID in a message about a file with `config`.
     fn find_rule(&self, config: &ResolvedConfig, id: &[u8]) -> RuleId {
+        if let Some(rule) = config.named_rule(id)
+            && let Some(name) = rule.name()
+        {
+            return RuleId::Named(rule.entry.meta, Arc::clone(name));
+        }
         if let Some(entry) = config.find_rule(self.linter.registry(), id) {
             return RuleId::Known(entry.meta);
         }

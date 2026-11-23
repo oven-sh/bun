@@ -116,6 +116,14 @@ impl ConfiguredRule {
         self
     }
 
+    /// The id of the rule that a disable comment applies to if it has this rule's name.
+    pub(super) fn id_in_directives(&self) -> super::RuleId {
+        match &self.name {
+            Some(name) => super::RuleId::Named(self.entry.meta, Arc::clone(name)),
+            None => super::RuleId::Known(self.entry.meta),
+        }
+    }
+
     /// The package's rule that this one replaces. It runs on the files this one [hands
     /// back](crate::ast::File::hand_back).
     pub fn or_else(&self) -> Option<&ConfiguredJsRule> {
@@ -201,8 +209,8 @@ pub(super) struct Prepared {
     pub(super) rules: Arc<dyn std::any::Any + Send + Sync>,
     /// The error thrown by the first rule that rejects its options.
     pub(super) options_error: Option<Arc<[u8]>>,
-    /// The enabled rules that need types.
-    pub(super) typed: Box<[&'static Meta]>,
+    /// The enabled rules that need types, each as a disable comment refers to it.
+    pub(super) typed: Box<[super::RuleId]>,
     /// True if an enabled rule needs the module graph, which means a file may be linted again.
     pub(super) needs_modules: bool,
 }
@@ -243,8 +251,8 @@ pub struct ResolvedConfig {
     pub(super) rules: Vec<ConfiguredRule>,
     /// Built from `rules` the first time a linter uses this config. A config belongs to one linter.
     pub(super) prepared: OnceLock<Prepared>,
-    /// True if any of `rules` has a [name](ConfiguredRule::name).
-    pub has_named_rules: bool,
+    /// The indices in `rules` of those that have a [name](ConfiguredRule::name).
+    pub(super) named_rules: Vec<u32>,
     /// [`ResolvedConfig::may_hand_back`]
     pub(super) may_hand_back: bool,
     /// The file the plugin was loaded from, for the first enabled rule that [replaces a package's
@@ -362,7 +370,7 @@ impl ResolvedConfig {
 
     /// Returns the rule instance whose [`ConfiguredRule::name`] is `id`. Only the config can create named instances.
     pub fn named_rule(&self, id: &[u8]) -> Option<&ConfiguredRule> {
-        let mut named = self.rules.iter().filter(|_| self.has_named_rules);
+        let mut named = (self.named_rules.iter()).filter_map(|at| self.rules.get(*at as usize));
         named.find(|it| it.name.as_deref() == Some(id))
     }
 

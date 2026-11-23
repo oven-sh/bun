@@ -419,7 +419,7 @@ impl<S: RuleSet> Linter<S> {
             };
             order.push((in_oxlint.number, slot, Arc::clone(instance)));
             if rule.entry.meta.requires_types {
-                typed.push(rule.entry.meta);
+                typed.push(rule.id_in_directives());
             }
             if options_error.is_none() {
                 options_error = self.options_error(rule).map(Arc::from);
@@ -722,13 +722,16 @@ impl<S: RuleSet> Linter<S> {
         let skips_typed_rules = file.types.is_none() && ignores_skipped_rules;
         if skips_typed_rules && is_plain {
             if has_directives {
-                rules_to_ignore.extend(prepared.typed.iter().copied().map(RuleId::Known));
+                rules_to_ignore.extend(prepared.typed.iter().cloned());
             }
         } else if skips_typed_rules && !options.again.is_some_and(|it| it.had_types) {
             let without_types = running
                 .iter()
                 .filter(|it| it.severity != Severity::Off && it.entry.meta.requires_types);
-            rules_to_ignore.extend(without_types.map(|it| RuleId::Known(it.entry.meta)));
+            rules_to_ignore.extend(without_types.map(|it| match it.configured {
+                Some(rule) => rule.id_in_directives(),
+                None => RuleId::Known(it.entry.meta),
+            }));
         }
         if options.js_plugins.is_none() {
             let skipped = running_js.iter();
@@ -1594,7 +1597,13 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
                 self.configured.retain(|it| !it.is(rule));
             }
             // In ESLint 8 a comment fully replaces a rule's setting, and the last comment wins.
-            let value = match eslint_8.map(|it| it.inline_setting(&id, &value, rule.js())) {
+            // An instance that has the name of a package's rule takes that rule's options.
+            let replaced = match rule {
+                Named::Instance(..) => self.config.find_js_rule(&id).flatten().map(|it| &**it),
+                Named::Native(_) | Named::Js(_) => None,
+            };
+            let (js, runs_in_js) = (rule.js().or(replaced), rule.js().is_some());
+            let value = match eslint_8.map(|it| it.inline_setting(&id, &value, js, runs_in_js)) {
                 Some(Ok(setting)) => Json::Array(setting),
                 Some(Err(message)) => {
                     self.error(comment, Some(rule.id()), message);

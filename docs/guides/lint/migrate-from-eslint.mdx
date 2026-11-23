@@ -100,6 +100,8 @@ eslint --ext .js,.ts,.tsx src # [!code --]
 bun lint --ext .js,.ts,.tsx src # [!code ++]
 ```
 
+With typescript-eslint 5, 6, or 7 installed, an `.eslintrc.*` config still runs version 8 of its rules, with the default options of the installed version. Version 8 removed `@typescript-eslint/no-throw-literal` and `@typescript-eslint/no-useless-template-literals`. Under such a config they run as `only-throw-error` and `no-unnecessary-template-expression`, and report under their old names. Neither applies to an `eslint.config.js`.
+
 ---
 
 If your config asks for something Bun can't do, Bun lints everything else, tells you what it skipped, and exits with code `2`.

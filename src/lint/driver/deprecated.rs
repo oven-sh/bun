@@ -73,6 +73,16 @@ pub(crate) fn write_used(out: &mut Vec<u8>, config: Option<&ResolvedConfig>) {
         }
         let separated = out.len();
         match entry {
+            // An instance that has the name of a package's rule is deprecated if that rule is.
+            Entry::Native(rule) if rule.severity != Severity::Off && rule.name().is_some() => {
+                let named = rule
+                    .name()
+                    .and_then(|it| config?.find_js_rule(it).flatten());
+                let deprecated = named.and_then(|it| Some((it, it.about().deprecated.as_deref()?)));
+                deprecated
+                    .into_iter()
+                    .for_each(|it| write_js(out, it.0, it.1));
+            }
             Entry::Native(rule)
                 if rule.severity != Severity::Off && rule.entry.meta.is_deprecated =>
             {

@@ -25,6 +25,8 @@ use crate::linter::resolved::{ConfiguredRule, ResolvedConfig, find_js_rule};
 use crate::linter::{schema, write_json};
 use crate::options::Json;
 use crate::paths::{self, Style};
+use crate::rule::Plugin;
+use crate::runner::RuleEntry;
 use bun_core::strings;
 use std::sync::Arc;
 
@@ -149,6 +151,7 @@ const TYPESCRIPT_ESLINT_DEFAULTS: &[u8] = br#"{
     "5": {
         "no-floating-promises": [{ "checkThenables": true }],
         "no-shadow": [{ "hoist": "functions" }],
+        "no-throw-literal": [{ "allowRethrowing": false }],
         "no-unused-vars": [{ "caughtErrors": "none" }],
         "prefer-nullish-coalescing": [{ "ignoreMixedLogicalExpressions": true, "ignoreTernaryTests": true }],
         "require-array-sort-compare": [{ "ignoreStringArrays": false }],
@@ -172,12 +175,47 @@ const TYPESCRIPT_ESLINT_DEFAULTS: &[u8] = br#"{
     "6": {
         "no-floating-promises": [{ "checkThenables": true }],
         "no-shadow": [{ "hoist": "functions" }],
+        "no-throw-literal": [{ "allowRethrowing": false }],
         "no-unused-vars": [{ "caughtErrors": "none" }],
+        "no-useless-template-literals": [],
         "only-throw-error": [{ "allowRethrowing": false }],
         "prefer-nullish-coalescing": [{ "ignoreConditionalTests": false }],
         "restrict-template-expressions": [{ "allow": [] }]
     }
 }"#;
+
+/// The rules of typescript-eslint that need types and that version 8 removed, each with the name of the version 8
+/// rule that has the same checks. No other rule of versions 5 to 7 that needs types lacks a built-in rule.
+const REMOVED_IN_TYPESCRIPT_ESLINT_8: [(&[u8], &[u8]); 2] = [
+    (b"@typescript-eslint/no-throw-literal", b"only-throw-error"),
+    (
+        b"@typescript-eslint/no-useless-template-literals",
+        b"no-unnecessary-template-expression",
+    ),
+];
+
+/// The built-in rule that runs under the name `id`, if `id` is one of [`REMOVED_IN_TYPESCRIPT_ESLINT_8`]. That's only
+/// the case where the package's rule would run otherwise: `major` is the installed version of typescript-eslint, if
+/// it's older than 8, and the built-in rules replace the package's. `foreign` are the prefixes of the plugins that
+/// nothing built in replaces. It's an extra instance of the built-in rule, so the rule's own name stays a rule of its
+/// own.
+fn replaced_in_v8(
+    registry: &Registry,
+    major: Option<u32>,
+    foreign: &[Box<[u8]>],
+    id: &[u8],
+) -> Option<&'static RuleEntry> {
+    major?;
+    let replacement = REMOVED_IN_TYPESCRIPT_ESLINT_8
+        .iter()
+        .find(|it| it.0 == id)?;
+    let prefix = parse_rule_id(id).0;
+    let is_replaced =
+        is_built_in_plugin(registry, prefix) && !foreign.iter().any(|it| **it == *prefix);
+    is_replaced
+        .then(|| registry.get(Plugin::TypeScript, replacement.1))
+        .flatten()
+}
 
 /// Rewrites `setting`, the setting for the rule `id`, for typescript-eslint 8 if it uses an option that only version
 /// `major` and earlier accept.
@@ -701,7 +739,7 @@ fn validate_rule(id: &[u8], value: &Json, definition: Definition) -> Result<Seve
 
 /// True if the plugin that ESLint calls `id` is built in, fully or partly, and the built-in rules replace it.
 fn is_built_in_plugin(registry: &Registry, id: &[u8]) -> bool {
-    registry.replaces_plugin(id) && crate::rule::Plugin::replaces_package(id, None)
+    registry.replaces_plugin(id) && Plugin::replaces_package(id, None)
 }
 
 /// True if ESLint 8 has no definition for the rule named `id`. `has_plugin` tells whether the elements have a plugin
@@ -717,7 +755,6 @@ fn lacks_rule(
         Some(found) => found.is_none() && !is_its_own,
         None if prefix.is_empty() => !is_its_own,
         None => {
-            use crate::rule::Plugin;
             !Plugin::from_prefix(prefix).is_some_and(Plugin::is_always_available)
                 && !has_plugin(prefix)
         }
@@ -929,6 +966,12 @@ struct Legacy<'r, 'l, 'c> {
 }
 
 impl<'c> Legacy<'_, '_, 'c> {
+    /// [`replaced_in_v8`]
+    fn replaced_in_v8(&self, id: &[u8]) -> Option<&'static RuleEntry> {
+        let foreign = &self.reader.foreign_prefixes;
+        replaced_in_v8(self.reader.registry, self.typescript_eslint, foreign, id)
+    }
+
     /// `_normalizeConfigData`
     fn config_data(&mut self, json: &mut Json, context: &Context<'c>) -> Result<(), ConfigError> {
         validate_schema(json, context)?;
@@ -1560,6 +1603,20 @@ impl<'c> Legacy<'_, '_, 'c> {
             let Some(severity) = items.first().and_then(severity_of) else {
                 continue;
             };
+            if severity != Severity::Off
+                && find_js_rule(&self.reader.js_plugins, id)
+                    .flatten()
+                    .is_some()
+                && let Some(entry) = self.replaced_in_v8(id)
+            {
+                self.reader.note(&[
+                    b"typescript-eslint 8 replaced ",
+                    id,
+                    b" with ",
+                    &RuleId::Known(entry.meta).to_vec(),
+                    b". bun lint runs that rule under the old name.",
+                ]);
+            }
             let options = match items.get(1..).unwrap_or_default() {
                 [] => Vec::new(),
                 options => migrate_options(&self.defaults, id, options),
@@ -1753,6 +1810,7 @@ impl<'c> Legacy<'_, '_, 'c> {
         let Some(major) = major.filter(|it| *it < 8) else {
             return Ok(());
         };
+        self.typescript_eslint = Some(major);
         let all = crate::json::parse(TYPESCRIPT_ESLINT_DEFAULTS).unwrap_or(Json::Null);
         let version_defaults = all.get(if major <= 5 { b"5" } else { b"6" });
         let mut settings = Vec::new();
@@ -1761,13 +1819,17 @@ impl<'c> Legacy<'_, '_, 'c> {
             .unwrap_or_default()
         {
             let id = [b"@typescript-eslint/", &name[..]].concat();
+            // Where the package's own rule runs, it has no such option.
+            let is_removed = REMOVED_IN_TYPESCRIPT_ESLINT_8.iter().any(|it| it.0 == id);
+            if is_removed && self.replaced_in_v8(&id).is_none() {
+                continue;
+            }
             put(&mut self.defaults, &id, options.clone());
             settings.push((id, off_with(options)));
         }
         let read = (self.reader).object(&object(vec![(b"rules", Json::Object(settings))]))?;
         self.reader.objects.push(read);
         self.reader.defaults = self.reader.objects.len();
-        self.typescript_eslint = Some(major);
         for rules in elements.iter_mut().filter_map(|it| it.rules.as_mut()) {
             let Json::Object(rules) = rules else {
                 continue;
@@ -2080,21 +2142,23 @@ impl Eslint8 {
     }
 
     /// Returns the setting that `/* eslint id: value */` gives the rule: the severity and all its options, regardless
-    /// of the config files. `js` is the rule, if it belongs to a JavaScript plugin. `Err` holds ESLint's message.
+    /// of the config files. `js` is the rule, if ESLint finds it in a JavaScript plugin. `runs_in_js` is false if a
+    /// built-in rule runs in its place. `Err` holds ESLint's message.
     pub(crate) fn inline_setting(
         &self,
         id: &[u8],
         value: &Json,
         js: Option<&js_plugin::Rule>,
+        runs_in_js: bool,
     ) -> Result<Vec<Json>, Vec<u8>> {
         let mut value = value.clone();
         if let Some(major) = self.typescript_eslint {
             migrate_setting_to_v8(major, id, &mut value);
         }
         let severity = validate_rule(id, &value, js.map_or(Definition::Native, Definition::Js))?;
-        let defaults = match js {
-            Some(_) => &Json::Null,
-            None => &self.defaults,
+        let defaults = match runs_in_js {
+            true => &Json::Null,
+            false => &self.defaults,
         };
         let options = match value
             .as_array()
@@ -2114,7 +2178,10 @@ impl Eslint8 {
 impl ResolvedConfig {
     /// True if `rule` is off and has the options that [`Legacy::defaults`] has for it, i.e. no file turned it on.
     pub fn only_has_defaults(&self, rule: &ConfiguredRule) -> bool {
-        let id = RuleId::Known(rule.entry.meta).to_vec();
+        let id = match rule.name() {
+            Some(name) => name.to_vec(),
+            None => RuleId::Known(rule.entry.meta).to_vec(),
+        };
         let eslint_8 = self.language.eslint_8.as_ref();
         let defaults = eslint_8.and_then(|it| it.defaults.get(&id)?.as_array());
         matches!(rule.severity, Severity::Off) && defaults.is_some_and(|it| *it == *rule.options)
@@ -2123,6 +2190,16 @@ impl ResolvedConfig {
     /// True if the config is an ESLint 8 config that has no definition for the rule that it or a comment calls `id`.
     pub(crate) fn lacks_rule(&self, id: &[u8]) -> bool {
         (self.language.eslint_8.as_ref()).is_some_and(|it| it.lacks_rule(id, &self.js_plugins))
+    }
+
+    /// [`replaced_in_v8`]
+    pub(crate) fn replaced_in_v8(
+        &self,
+        registry: &Registry,
+        id: &[u8],
+    ) -> Option<&'static RuleEntry> {
+        let major = self.language.eslint_8.as_ref()?.typescript_eslint;
+        replaced_in_v8(registry, major, &self.foreign_plugins, id)
     }
 
     /// True if the built-in rules of the plugin `prefix` run in place of the package's, as with an `eslint.config.js`.

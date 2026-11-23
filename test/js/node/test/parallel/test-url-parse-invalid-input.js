@@ -76,31 +76,43 @@ if (common.hasIntl) {
 }
 
 {
+  // NOTE: bun deviates from node here. Node 25+ throws ERR_INVALID_ARG_VALUE
+  // for every input (DEP0170). Bun throws for the web schemes, and for
+  // scheme-less input parsed with slashesDenoteHost. Other schemes keep their
+  // old result, because published packages (hosted-git-info 2.x) still parse
+  // scp-style git URLs.
   const badURLs = [
     'https://evil.com:.example.com',
+  ];
+  const lenientURLs = [
     'git+ssh://git@github.com:npm/npm',
   ];
   badURLs.forEach((badURL) => {
     common.spawnPromisified(process.execPath, ['-e', `url.parse(${JSON.stringify(badURL)})`])
       .then(common.mustCall(({ code, stdout, stderr }) => {
+        assert.strictEqual(code, 1);
+      }));
+  });
+  lenientURLs.forEach((lenientURL) => {
+    common.spawnPromisified(process.execPath, ['-e', `url.parse(${JSON.stringify(lenientURL)})`])
+      .then(common.mustCall(({ code, stdout, stderr }) => {
         assert.strictEqual(code, 0);
         assert.strictEqual(stdout, '');
-        // NOTE: bun formats errors slightly differently from node, but we're
-        // printing the same deprecation message.
-        // assert.match(stderr, /\[DEP0170\] DeprecationWarning:/);
-        assert.match(stderr, /\DEP0170/);
-        assert.match(stderr, /\DeprecationWarning/);
+        assert.doesNotMatch(stderr, /DEP0170/);
       }));
   });
 
-  // Warning should only happen once per process.
   common.expectWarning({
     DeprecationWarning: {
       DEP0169: '`url.parse()` behavior is not standardized and prone to errors that have security implications. Use the WHATWG URL API instead. CVEs are not issued for `url.parse()` vulnerabilities.',
-      DEP0170: `The URL ${badURLs[0]} is invalid. Future versions of Node.js will throw an error.`,
     },
   });
   badURLs.forEach((badURL) => {
-    url.parse(badURL);
+    assert.throws(() => url.parse(badURL), {
+      code: 'ERR_INVALID_ARG_VALUE',
+    });
+  });
+  lenientURLs.forEach((lenientURL) => {
+    assert.strictEqual(url.parse(lenientURL).pathname, '/:npm/npm');
   });
 }

@@ -719,7 +719,7 @@ int us_socket_get_error(us_socket_r s);
 /* A writable event's write made zero progress: does that prove the peer is
  * gone? On epoll/kqueue a writable event implies real send-buffer space, so
  * no progress means the send itself failed (EPIPE/ECONNRESET folded to 0) and
- * the answer is always yes. The completion model of IOCP can deliver
+ * the answer is always yes. The IOCP backend's completion model can deliver
  * a writable completion for space the same loop iteration already refilled,
  * making a stall there routine backpressure, so it asks the kernel
  * (SO_ERROR, then a zero-byte send probe). */

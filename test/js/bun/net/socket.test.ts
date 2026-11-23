@@ -2240,10 +2240,9 @@ describe.skipIf(!isWindows)("Bun.connect named-pipe client Handlers lifecycle", 
     });
   });
 
-  // A missing pipe is reported from the connect callback. The writer has no
-  // pipe then, so closing it reports no close, and the native context (which
-  // holds a ref on the TCPSocket/TLSSocket, and for TLS the SSL_CTX) has to be
-  // released all the same.
+  // A missing pipe is reported from the connect callback. The writer has no pipe yet and
+  // reports no close, but the native context (which holds a ref on the TCPSocket/TLSSocket,
+  // and for TLS the SSL_CTX) must still be released.
   it.concurrent.each([
     ["plain", "", 0],
     ["tls", "tls: true,", 1],

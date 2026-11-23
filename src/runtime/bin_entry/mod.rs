@@ -151,7 +151,7 @@ pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) ->
     }
 
     #[cfg(windows)]
-    bun_sys::windows::report_errors_to_callers();
+    bun_sys::windows::configure_error_handling();
 
     // 0. Capture argv FIRST — before the crash handler, whose panic path
     //    dumps the command line via `bun_core::argv()`.
@@ -199,11 +199,11 @@ pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) ->
     //    wires stdout/stderr `Source`s.
     output::stdio::init();
     let _flush = output::flush_guard();
-    // After stdio::init, which opens the standard handles that are missing.
+    // After stdio::init, which opens any missing standard handle.
     #[cfg(windows)]
     bun_sys::windows::disable_stdio_inheritance();
     #[cfg(windows)]
-    bun_sys::windows::announce_inherited_descriptors();
+    bun_sys::windows::register_inherited_descriptors();
     // After stdio::init (fd 0 is open even if we were exec'd with it closed), before any thread.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pregrow_fd_table();

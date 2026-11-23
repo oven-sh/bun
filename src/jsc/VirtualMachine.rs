@@ -741,11 +741,11 @@ impl VMHolder {
         // the signal may prove non-fatal, and latching here would no-op the real exit's persist.
         // https://github.com/nodejs/node/blob/main/src/env.cc (AtExit(FlushCompileCache))
         crate::node_compile_cache::persist_now();
-        // Written once, and writing it ends the recording: only before a signal that is sure to end the process, not
-        // one a program sends itself along the way (SIGTSTP on Ctrl-Z, SIGWINCH, one that is being ignored, ...).
         if signal_ends_process {
             vm.finish_writes();
         }
+        // Written once, and writing it ends the recording: only before a signal that is sure to end the process, not
+        // one a program sends itself along the way (SIGTSTP on Ctrl-Z, SIGWINCH, one that is being ignored, ...).
         if signal_ends_process && vm.is_main_thread() {
             crate::bytecode_order_recorder::write_at_exit(vm, standalone_module_graph());
         }
@@ -1631,14 +1631,14 @@ impl VirtualMachine {
         let has_coordinator =
             rare.is_some_and(|rare| !rare.test_parallel_ipc_group.head_sockets.get().is_null());
         #[cfg(windows)]
-        let has_coordinator = rare.is_some_and(|rare| rare.reads_from_test_coordinator.get());
+        let has_coordinator = rare.is_some_and(|rare| rare.has_test_coordinator_pipe.get());
         // e.g. `process.stdout` on a pipe with nothing left to write.
-        #[cfg(windows)]
-        let disarmed = 0;
         #[cfg(not(windows))]
         let disarmed = rare
             .and_then(|rare| rare.file_polls.get())
             .map_or(0, |polls| polls.disarmed_count());
+        #[cfg(windows)]
+        let disarmed = 0;
         let fires_nothing = i32::from(timers_hold_loop_ref) + i32::from(has_coordinator) + disarmed;
         self.event_loop_handle
             .get()
@@ -1750,7 +1750,7 @@ impl VirtualMachine {
         });
         self.macro_mode.set(false);
         self.event_loop.set(&raw const self.regular_event_loop);
-        // The macro's loop may have taken the wakeup that a signal posted.
+        // The macro loop may have consumed the wakeup of a signal queued for the regular loop.
         if self.regular_event_loop.signal_handler.get().is_some() {
             self.regular_event_loop.wakeup();
         }
@@ -2090,14 +2090,17 @@ impl VirtualMachine {
         }
     }
 
-    /// For a thread whose loop is not going to turn again.
+    /// Completes in-flight writes on Windows, for a thread whose loop will not run another iteration.
     pub fn finish_writes(&self) {
         #[cfg(windows)]
         {
             self.run_deferred_tasks();
-            bun_io::source::finish_writes_to_disk();
+            bun_io::source::finish_all_disk_writes();
             let loop_ = uws::Loop::get();
-            while loop_.port().wait_for_pending_writes() && !self.is_main_thread() {}
+            // A worker keeps waiting while the writes make progress. The main thread waits once.
+            while loop_.port().wait_for_pending_writes() == bun_iocp::WriteProgress::Partial
+                && !self.is_main_thread()
+            {}
         }
     }
 
@@ -2309,7 +2312,7 @@ impl VirtualMachine {
             (hooks.stop_watches_for_vm_teardown)();
             // Drop every TimeoutObject/ImmediateObject's heap node, JS pin and
             // loop ref while runtime state and the JSC heap are alive. The heap itself
-            // (and the loop handle it embeds) stays up: JSC's own RunLoop timers
+            // stays up: JSC's own RunLoop timers
             // — GC activity callbacks, sweeper, deferred work — are WTFTimers on
             // this heap and keep being scheduled until ~VM returns.
             (hooks.cancel_timers)(vm, None);
@@ -2435,7 +2438,7 @@ impl VirtualMachine {
             Some(hooks) => unsafe { (hooks.stop_active_handles_for_vm_teardown)(this) },
             None => vm.stop_context_handles(crate::StopReason::VmTeardown),
         });
-        // The exiting main thread leaves them to the OS.
+        // The exiting main thread leaves its pipes, consoles and files for the OS to close.
         #[cfg(windows)]
         if matches!(kind, Teardown::Worker) {
             bun_io::source::stop_all_for_vm_teardown();

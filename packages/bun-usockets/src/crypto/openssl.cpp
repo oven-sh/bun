@@ -2935,7 +2935,7 @@ int us_internal_ssl_fatal_write_error(struct us_socket_t *s) {
   }
   if (!s->ssl_fatal_error) return 0;
 #ifdef _WIN32
-  /* Winsock has no such code, so it is node's. */
+  /* -UV_EPROTO: Winsock has no EPROTO. */
   return 4046;
 #else
   return EPROTO;

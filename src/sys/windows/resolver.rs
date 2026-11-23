@@ -1,4 +1,4 @@
-//! Host names to addresses.
+//! Host name resolution with `GetAddrInfoW`.
 
 use core::ffi::c_int;
 use core::mem::offset_of;
@@ -7,7 +7,7 @@ use core::ptr::{self, NonNull};
 use bun_core::WStr;
 
 use super::ws2_32;
-use crate::windows_format::resolver::{encode_name, ip_sockaddr};
+use crate::windows_format::addr_info::{encode_name, extract_ip_sockaddr};
 
 #[repr(C)]
 struct ADDRINFOW {
@@ -28,21 +28,21 @@ const _: () = assert!(offset_of!(ADDRINFOW, ai_next) == 40);
 #[link(name = "ws2_32")]
 unsafe extern "system" {
     fn GetAddrInfoW(
-        node: *const u16,
-        service: *const u16,
-        hints: *const ADDRINFOW,
-        result: *mut *mut ADDRINFOW,
+        pNodeName: *const u16,
+        pServiceName: *const u16,
+        pHints: *const ADDRINFOW,
+        ppResult: *mut *mut ADDRINFOW,
     ) -> c_int;
-    fn FreeAddrInfoW(list: *mut ADDRINFOW);
+    fn FreeAddrInfoW(pAddrInfo: *mut ADDRINFOW);
 }
 
-/// What `GetAddrInfoW` returns.
+/// The list that `GetAddrInfoW` returns.
 pub struct AddrInfoList(NonNull<ADDRINFOW>);
 
 impl AddrInfoList {
     pub const MAX_NAME_LEN: usize = 255;
 
-    /// Blocks until the resolver answers. `Err` is the `EAI_*` status, or 0 for an empty list.
+    /// Blocking. `Err` is the `EAI_*` status, or 0 for an empty list.
     pub fn lookup(
         host: Option<&[u8]>,
         service: Option<&[u8]>,
@@ -53,7 +53,8 @@ impl AddrInfoList {
                 .transpose()
         }
         const NI_MAXSERV: usize = 32;
-        let (mut host_buf, mut service_buf) = ([0; Self::MAX_NAME_LEN + 1], [0; NI_MAXSERV]);
+        let mut host_buf = [0; Self::MAX_NAME_LEN + 1];
+        let mut service_buf = [0; NI_MAXSERV];
         let host = encode(host, &mut host_buf)?;
         let service = encode(service, &mut service_buf)?;
         let hints = hints.map(|hints| ADDRINFOW {
@@ -84,23 +85,23 @@ impl AddrInfoList {
         }
     }
 
-    /// The bytes of each `sockaddr_in` and `sockaddr_in6`, in the order of the list.
+    /// The bytes of each `sockaddr_in` and `sockaddr_in6`, in list order.
     pub fn addresses(&self) -> impl Iterator<Item = &[u8]> + Clone {
-        // SAFETY: live until `drop`.
+        // SAFETY: the list is live until `drop`.
         let first = unsafe { self.0.as_ref() };
         // SAFETY: `ai_next` is null or the next entry of the list.
-        let entries = core::iter::successors(Some(first), |it| unsafe { it.ai_next.as_ref() });
-        entries.filter(|it| !it.ai_addr.is_null()).filter_map(|it| {
-            let len = it.ai_addrlen.min(size_of::<ws2_32::sockaddr_in6>());
-            // SAFETY: there are `ai_addrlen` bytes at `ai_addr`.
-            ip_sockaddr(unsafe { core::slice::from_raw_parts(it.ai_addr, len) })
+        let entries = core::iter::successors(Some(first), |ai| unsafe { ai.ai_next.as_ref() });
+        entries.filter(|ai| !ai.ai_addr.is_null()).filter_map(|ai| {
+            let len = ai.ai_addrlen.min(size_of::<ws2_32::sockaddr_in6>());
+            // SAFETY: `ai_addr` is readable for `ai_addrlen` bytes.
+            extract_ip_sockaddr(unsafe { core::slice::from_raw_parts(ai.ai_addr, len) })
         })
     }
 }
 
 impl Drop for AddrInfoList {
     fn drop(&mut self) {
-        // SAFETY: from `GetAddrInfoW`.
+        // SAFETY: the list is from `GetAddrInfoW`.
         unsafe { FreeAddrInfoW(self.0.as_ptr()) }
     }
 }
@@ -128,15 +129,17 @@ mod tests {
         assert_eq!(lookup(b"127.0.0.1", 0), Ok(vec![v4.to_vec()]));
 
         let mut v6 = [0; 28];
-        (v6[0], v6[3], v6[8], v6[9], v6[23], v6[24]) = (23, 80, 0xFE, 0x80, 1, 1);
+        for (index, byte) in [(0, 23), (3, 80), (8, 0xFE), (9, 0x80), (23, 1), (24, 1)] {
+            v6[index] = byte;
+        }
         assert_eq!(lookup(b"fe80::1%1", 0), Ok(vec![v6.to_vec()]));
     }
 
     #[test]
-    fn reports_failures() {
+    fn failed_lookup_returns_eai_status() {
         assert_eq!(lookup(b"name", 0), Err(EAI_NONAME));
         assert_eq!(lookup(b"127.0.0.1", 12345), Err(EAI_FAMILY));
-        let status = |service: &[u8], ai_flags, ai_socktype| {
+        let lookup_error = |service: &[u8], ai_flags, ai_socktype| {
             let hints = ws2_32::addrinfo {
                 ai_flags,
                 ai_socktype,
@@ -144,8 +147,8 @@ mod tests {
             };
             AddrInfoList::lookup(Some(b"127.0.0.1"), Some(service), Some(&hints)).err()
         };
-        assert_eq!(status(b"no-such-service", 0, 1), Some(EAI_SERVICE));
-        assert_eq!(status(b"80", 0, 12345), Some(EAI_SOCKTYPE));
+        assert_eq!(lookup_error(b"no-such-service", 0, 1), Some(EAI_SERVICE));
+        assert_eq!(lookup_error(b"80", 0, 12345), Some(EAI_SOCKTYPE));
         assert_eq!(lookup(b"", 0), Err(EAI_NONAME));
         assert_eq!(lookup("\u{FC}".as_bytes(), 0), Err(EAI_NONAME));
     }

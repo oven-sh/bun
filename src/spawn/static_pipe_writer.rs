@@ -32,12 +32,12 @@ pub struct StaticPipeWriter<S: Source> {
     state: AliasableBox<State<S>>,
 }
 
-/// For a write in flight, which keeps it past the drop of the writer.
+/// An in-flight write keeps the source alive after the writer is dropped.
 #[cfg(windows)]
-struct Shared<S>(S);
+struct SharedSource<S>(S);
 
 #[cfg(windows)]
-impl<S: Source> AsRef<[u8]> for Shared<S> {
+impl<S: Source> AsRef<[u8]> for SharedSource<S> {
     fn as_ref(&self) -> &[u8] {
         self.0.slice()
     }
@@ -50,7 +50,7 @@ struct State<S> {
     #[cfg(not(windows))]
     source: S,
     #[cfg(windows)]
-    source: Rc<Shared<S>>,
+    source: Rc<SharedSource<S>>,
     written: Cell<usize>,
 }
 
@@ -75,7 +75,7 @@ impl<S: Source> StaticPipeWriter<S> {
             #[cfg(not(windows))]
             source,
             #[cfg(windows)]
-            source: Rc::new(Shared(source)),
+            source: Rc::new(SharedSource(source)),
             written: Cell::new(0),
         });
         // SAFETY: fn contract, and the box gives out shared borrows only.
@@ -97,11 +97,9 @@ impl<S: Source> StaticPipeWriter<S> {
         let file = state.file.take().unwrap();
         #[cfg(windows)]
         {
-            let (writer, source) = (&state.writer, Rc::<Shared<S>>::clone(&state.source));
-            writer.set_pipe(bun_io::Pipe::from_exclusive(
-                event_loop.loop_().port(),
-                file,
-            ));
+            let writer = &state.writer;
+            let source = Rc::<SharedSource<S>>::clone(&state.source);
+            writer.set_pipe(bun_io::Pipe::new_exclusive(event_loop.loop_().port(), file));
             writer.write_shared(state, source);
         }
         #[cfg(not(windows))]

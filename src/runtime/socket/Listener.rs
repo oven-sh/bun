@@ -824,7 +824,7 @@ impl Listener {
             ListenerType::Uws(uws_listener) => {
                 // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
                 let socket = bun_opaque::opaque_deref_mut(uws_listener.as_ptr()).socket::<false>();
-                // On Windows it is a handle, which has no `.crt()`.
+                // On Windows the fd is a SOCKET handle, for which `.crt()` panics.
                 use bun_sys_jsc::FdJsc as _;
                 socket.fd().to_js_without_making_crt_owned()
             }
@@ -963,7 +963,7 @@ impl Listener {
                 UnixOrHost::Fd(fd) if fd.kind() == bun_core::FdKind::System => false,
                 UnixOrHost::Fd(fd) => {
                     use bun_sys::windows as w;
-                    // `Subprocess.stdio` has handles for descriptors.
+                    // `Subprocess.stdio` exposes HANDLE values instead of CRT descriptors.
                     if fd.native() == w::INVALID_HANDLE_VALUE {
                         let handle = core::ptr::without_provenance_mut(fd.crt() as usize);
                         if w::GetFileType(handle) == w::FILE_TYPE_PIPE {

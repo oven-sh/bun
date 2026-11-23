@@ -364,7 +364,9 @@ impl WindowsNamedPipeContext {
         // TODO: reuse the same context for multiple connections when possibles
 
         let this = WindowsNamedPipeContext::create(cx, socket);
-        (this.named_pipe.connect(path, ssl_config, owned_ctx)).inspect_err(|_| this.fail_open())?;
+        this.named_pipe
+            .connect(path, ssl_config, owned_ctx)
+            .inspect_err(|_| this.fail_open())?;
 
         Ok(this.named_pipe.root.get())
     }

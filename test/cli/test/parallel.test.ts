@@ -1357,7 +1357,7 @@ describe("--parallel: a frame that a test writes to fd 3", () => {
     });
   });
 
-  // On Windows the answer goes to the read that the worker has waiting on the pipe.
+  // On Windows the worker's own pending read on the pipe consumes the reply.
   test.concurrent.skipIf(isWindows)("Ready is answered with Shutdown when no file is left", async () => {
     using dir = tempDir("parallel-forged-ready-in-last-file", {
       "a.test.js": `import {test} from "bun:test"; test("a", () => {});`,

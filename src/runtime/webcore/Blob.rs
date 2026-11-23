@@ -801,12 +801,12 @@ impl BlobExt for Blob {
                         PathOrFileDescriptor::Fd(fd) => {
                             #[cfg(windows)]
                             match fd.decode_windows() {
-                                bun_sys::fd::DecodeWindows::Crt(number) => {
+                                bun_sys::fd::DecodeWindows::Crt(crt_fd) => {
                                     bun_core::write_pretty!(
                                         writer,
                                         ENABLE_ANSI_COLORS,
                                         " (<r>fd<d>:<r> <yellow>{d}<r>)<r>",
-                                        number,
+                                        crt_fd,
                                     )?;
                                 }
                                 bun_sys::fd::DecodeWindows::Windows(handle) => {
@@ -3125,7 +3125,7 @@ pub(crate) fn mkdirp_parent(path: &[u8]) -> bun_sys::Result<()> {
     mkdirp(dirname)
 }
 
-/// `file` stands in for `options.input_path`.
+/// `file` overrides `options.input_path`.
 #[cfg(not(windows))]
 fn start_file_sink(
     cx: &bun_jsc::JsThread<'_>,
@@ -3144,7 +3144,7 @@ fn start_file_sink(
     Ok(sink)
 }
 
-/// With the rules of `node:fs` for a path, and without a duplicate of a descriptor.
+/// Resolves a path like `node:fs`, and borrows a descriptor instead of duplicating it.
 #[cfg(windows)]
 fn start_file_sink(
     cx: &bun_jsc::JsThread<'_>,
@@ -3171,9 +3171,9 @@ fn start_file_sink(
         return Err(err);
     }
     let mut buf = bun_paths::Path::new();
-    let resolved = path.slice_z(&mut buf);
+    let path_z = path.slice_z(&mut buf);
     let open =
-        || bun_sys::File::open(resolved, flags, mode).map_err(|err| err.with_path(path.slice()));
+        || bun_sys::File::open(path_z, flags, mode).map_err(|err| err.with_path(path.slice()));
     let file = match open() {
         Err(err) if err.get_errno() == bun_sys::E::ENOENT && mkdirp => {
             mkdirp_parent(path.slice())?;

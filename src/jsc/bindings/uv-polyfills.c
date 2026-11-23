@@ -198,11 +198,11 @@ UV_EXTERN int uv_translate_sys_error(int sys_errno)
 
 #endif
 
-// The layouts and values that src/runtime/napi/uv.rs and uv_windows.rs assert too.
+// src/runtime/napi/uv.rs and uv_windows.rs assert the same layouts and values.
 #if OS(WINDOWS)
-#define UV_LAYOUT(on_unix, on_windows) (on_windows)
+#define UV_LAYOUT(unix_value, windows_value) (windows_value)
 #else
-#define UV_LAYOUT(on_unix, on_windows) (on_unix)
+#define UV_LAYOUT(unix_value, windows_value) (unix_value)
 #endif
 #define UV_ASSERT(condition) _Static_assert(condition, #condition)
 
@@ -262,17 +262,17 @@ UV_EXTERN const char* uv_version_string(void)
     return UV_VERSION_STRING;
 }
 
-static char* unknown_error_r(int err, char* buf, size_t buflen)
+static char* format_unknown_error_r(int err, char* buf, size_t buflen)
 {
     snprintf(buf, buflen, "Unknown system error %d", err);
     return buf;
 }
 
-// The caller can keep the pointer, so libuv documents that the copy is never freed.
-static const char* unknown_error(int err)
+// Leaks the copy, as libuv documents for an unknown error code.
+static const char* format_unknown_error(int err)
 {
     char buf[40];
-    char* copy = strdup(unknown_error_r(err, buf, sizeof(buf)));
+    char* copy = strdup(format_unknown_error_r(err, buf, sizeof(buf)));
     return copy ? copy : "Unknown system error";
 }
 
@@ -285,7 +285,7 @@ UV_EXTERN const char* uv_err_name(int err)
         UV_ERRNO_MAP(XX)
 #undef XX
     }
-    return unknown_error(err);
+    return format_unknown_error(err);
 }
 
 UV_EXTERN char* uv_err_name_r(int err, char* buf, size_t buflen)
@@ -298,7 +298,7 @@ UV_EXTERN char* uv_err_name_r(int err, char* buf, size_t buflen)
         UV_ERRNO_MAP(XX)
 #undef XX
     }
-    return unknown_error_r(err, buf, buflen);
+    return format_unknown_error_r(err, buf, buflen);
 }
 
 UV_EXTERN const char* uv_strerror(int err)
@@ -310,7 +310,7 @@ UV_EXTERN const char* uv_strerror(int err)
         UV_ERRNO_MAP(XX)
 #undef XX
     }
-    return unknown_error(err);
+    return format_unknown_error(err);
 }
 
 UV_EXTERN char* uv_strerror_r(int err, char* buf, size_t buflen)
@@ -323,7 +323,7 @@ UV_EXTERN char* uv_strerror_r(int err, char* buf, size_t buflen)
         UV_ERRNO_MAP(XX)
 #undef XX
     }
-    return unknown_error_r(err, buf, buflen);
+    return format_unknown_error_r(err, buf, buflen);
 }
 
 UV_EXTERN size_t uv_handle_size(uv_handle_type type)

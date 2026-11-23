@@ -1,11 +1,11 @@
-//! The addresses of this machine.
+//! Network adapters and their addresses.
 
 use core::ffi::c_void;
 use core::ptr;
 
 use super::{ULONG, Win32Error, Win32ErrorExt as _, ws2_32};
 use crate::E;
-use crate::windows_format::adapters::{Interface, interfaces};
+use crate::windows_format::adapter_addresses::{Interface, parse_interfaces};
 
 #[link(name = "iphlpapi")]
 unsafe extern "system" {
@@ -23,18 +23,18 @@ const GAA_FLAG_SKIP_MULTICAST: ULONG = 0x4;
 const GAA_FLAG_SKIP_DNS_SERVER: ULONG = 0x8;
 const ADDRESS_NOT_ASSOCIATED: Win32Error = Win32Error(1228);
 
-/// An adapter takes about 1.6 KiB, and a call that only learns the size is as slow as one that gets the list.
-const USUAL_SIZE: ULONG = 32 * 1024;
+/// An adapter takes about 1.6 KiB, and a call that only returns the required size is as slow as a successful one.
+const INITIAL_BUFFER_SIZE: ULONG = 32 * 1024;
 
 pub fn network_interfaces() -> Result<Vec<Interface>, E> {
-    read_with(USUAL_SIZE)
+    query_interfaces(INITIAL_BUFFER_SIZE)
 }
 
-fn read_with(mut size: ULONG) -> Result<Vec<Interface>, E> {
+fn query_interfaces(mut size: ULONG) -> Result<Vec<Interface>, E> {
     loop {
         let capacity = size;
         let mut buf = vec![0u64; (capacity as usize).div_ceil(size_of::<u64>())];
-        // SAFETY: `buf` is aligned for the records and writable for `size` bytes.
+        // SAFETY: `buf` is aligned for `IP_ADAPTER_ADDRESSES` and writable for `size` bytes.
         let result = unsafe {
             GetAdaptersAddresses(
                 ws2_32::AF_UNSPEC as ULONG,
@@ -47,13 +47,13 @@ fn read_with(mut size: ULONG) -> Result<Vec<Interface>, E> {
         return match Win32Error::from_u32(result) {
             Win32Error::SUCCESS => {
                 let bytes = bun_core::slice_as_bytes(&buf);
-                Ok(interfaces(bytes, bytes.as_ptr().addr()))
+                Ok(parse_interfaces(bytes, bytes.as_ptr().addr()))
             }
             Win32Error::BUFFER_OVERFLOW if size > capacity => continue,
             Win32Error::NO_DATA => Ok(Vec::new()),
             ADDRESS_NOT_ASSOCIATED => Err(E::EAGAIN),
             Win32Error::BUFFER_OVERFLOW | Win32Error::INVALID_PARAMETER => Err(E::ENOBUFS),
-            error => Err(error.to_node_e()),
+            error => Err(error.to_node_errno()),
         };
     }
 }
@@ -63,9 +63,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn gives_the_same_list_after_asking_for_more_room() {
+    fn small_initial_buffer_returns_same_list() {
         let list = network_interfaces();
-        assert!(list.as_ref().unwrap().iter().any(|it| it.is_loopback));
-        assert_eq!(read_with(8), list);
+        assert!(list.as_ref().unwrap().iter().any(|entry| entry.is_loopback));
+        assert_eq!(query_interfaces(8), list);
     }
 }

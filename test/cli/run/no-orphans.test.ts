@@ -1001,7 +1001,7 @@ test.concurrent.skipIf(!isPosix || !hasPerl)(
 // --no-orphans job omits SILENT_BREAKAWAY so membership is inherited
 // recursively.
 //
-// Tree under test: test → bun → cmd.exe → leaf bun. cmd.exe is the foreign
+// Tree under test: test → bun → cmd.exe → leaf bun. cmd.exe is the non-Bun
 // link: it spawns the leaf via plain CreateProcess, so the leaf escapes
 // the spawn job but not the --no-orphans job. The leaf writes its pid to a file
 // so the test can observe it after cmd.exe's stdout pipe is torn down.

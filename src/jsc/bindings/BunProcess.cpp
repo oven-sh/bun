@@ -1716,7 +1716,7 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
                 } else {
                     if (listenerCount == 0 && signalsWithListeners->remove(signalNumber)) {
                         // The watch-mode sticky signal keeps its OS handler installed; only the
-                        // handler teardown is skipped. The map entry is still removed — it is the
+                        // handler teardown is skipped. The set entry is still removed — it is the
                         // "has JS listeners" source of truth that e.g. self-kill flush consults.
 #if !OS(WINDOWS)
                         if (signalNumber != watchModeStickySignal)
@@ -4976,13 +4976,13 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionConstrainedMemory, (JSC::JSGlobalObject
 }
 
 #if OS(WINDOWS)
-// ResourceUsage in src/sys/windows/process_info.rs.
+// Mirrors ResourceUsage in src/sys/windows/process_info.rs.
 struct ResourceUsage {
     CpuUsage cpu;
     uint64_t peakWorkingSetBytes { 0 };
-    uint64_t pageFaults { 0 };
-    uint64_t reads { 0 };
-    uint64_t writes { 0 };
+    uint64_t pageFaultCount { 0 };
+    uint64_t readOperationCount { 0 };
+    uint64_t writeOperationCount { 0 };
 };
 static_assert(sizeof(ResourceUsage) == 48);
 
@@ -5018,9 +5018,9 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionResourceUsage, (JSC::JSGlobalObject * g
     result->putDirectOffset(vm, 0, jsNumber(usage.cpu.user));
     result->putDirectOffset(vm, 1, jsNumber(usage.cpu.system));
     result->putDirectOffset(vm, 2, jsNumber(usage.peakWorkingSetBytes / 1024));
-    result->putDirectOffset(vm, 7, jsNumber(usage.pageFaults));
-    result->putDirectOffset(vm, 9, jsNumber(usage.reads));
-    result->putDirectOffset(vm, 10, jsNumber(usage.writes));
+    result->putDirectOffset(vm, 7, jsNumber(usage.pageFaultCount));
+    result->putDirectOffset(vm, 9, jsNumber(usage.readOperationCount));
+    result->putDirectOffset(vm, 10, jsNumber(usage.writeOperationCount));
 #else
     result->putDirectOffset(vm, 0, jsNumber(std::chrono::microseconds::period::den * rusage.ru_utime.tv_sec + rusage.ru_utime.tv_usec));
     result->putDirectOffset(vm, 1, jsNumber(std::chrono::microseconds::period::den * rusage.ru_stime.tv_sec + rusage.ru_stime.tv_usec));
@@ -5953,7 +5953,7 @@ static void bypassCrashHandlerForSelfSentSignal(int pid, int ownPid, int signalN
 static bool selfSentSignalEndsProcess(int pid, int ownPid, int signal)
 {
 #if OS(WINDOWS)
-    // What Bun__killProcess() ends the process for.
+    // The signals for which Bun__killProcess() terminates the process.
     return (pid == ownPid || !pid) && (signal == SIGINT || signal == SIGTERM || signal == SIGKILL || signal == SIGQUIT);
 #else
     if (!killReachesThisProcess(pid, ownPid))

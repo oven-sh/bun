@@ -93,14 +93,14 @@ impl File {
     pub fn into_raw(self) -> Fd {
         core::mem::ManuallyDrop::new(self).handle
     }
-    /// With a number that a script can use. `None` if the C runtime has no descriptor left.
+    /// Converts a `HANDLE` to a CRT descriptor, the number that JavaScript uses. `None` if the CRT cannot allocate one.
     pub fn make_crt_owned(self) -> Option<Self> {
         #[cfg(windows)]
         if self.handle.kind() == bun_core::FdKind::System {
-            let number = crate::windows::open_osfhandle(self.handle.native());
-            return (number != -1).then(|| {
+            let crt_fd = crate::windows::open_osfhandle(self.handle.native());
+            return (crt_fd != -1).then(|| {
                 self.into_raw();
-                Self::from_fd(Fd::from_crt(number))
+                Self::from_fd(Fd::from_crt(crt_fd))
             });
         }
         Some(self)
@@ -258,7 +258,7 @@ impl File {
     }
     pub fn pwrite_all(&self, mut buf: &[u8], mut off: i64) -> Maybe<()> {
         while !buf.is_empty() {
-            let n = pwrite_owned(self.handle, buf, off)?;
+            let n = pwrite_no_restore(self.handle, buf, off)?;
             if n == 0 {
                 return Ok(());
             }
@@ -276,7 +276,7 @@ impl File {
         let start = cursor.written();
         while cursor.capacity() != 0 {
             let at = offset as i64 + (cursor.written() - start) as i64;
-            if pread_owned_buf(self.handle, cursor.reborrow(), at)? == 0 {
+            if pread_no_restore_buf(self.handle, cursor.reborrow(), at)? == 0 {
                 break;
             }
         }

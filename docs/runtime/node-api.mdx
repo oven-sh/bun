@@ -20,7 +20,7 @@ process.dlopen(mod, "./my-node-module.node");
 
 ## libuv functions
 
-Bun does not use libuv. It exports the functions of libuv 1.51 so that add-ons load, and implements these on every platform:
+Bun does not use libuv, but it exports the libuv 1.51 functions so that add-ons load. Bun implements the following functions on every platform:
 
 | Area     | Functions                                                                                                                                                             |
 | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -31,4 +31,4 @@ Bun does not use libuv. It exports the functions of libuv 1.51 so that add-ons l
 | Errors   | `uv_err_name`, `uv_err_name_r`, `uv_strerror`, `uv_strerror_r`, `uv_translate_sys_error`                                                                              |
 | System   | `uv_cwd`, `uv_hrtime`, `uv_os_getpid`, `uv_os_getppid`, `uv_get_osfhandle`, `uv_open_osfhandle`, `uv_tty_reset_mode`, `uv_version`, `uv_version_string`               |
 
-A call to one of the other functions ends the process with a message that names the function. [#18546](https://github.com/oven-sh/bun/issues/18546) tracks the missing functions.
+If an add-on calls any other libuv function, Bun crashes with a message that names the function. [Issue #18546](https://github.com/oven-sh/bun/issues/18546) tracks the missing functions.

@@ -1,8 +1,8 @@
-//! Each of these calls is a round trip to the process that hosts the console.
+//! Console I/O. Every call is a round trip to the console host process.
 
 #![allow(
     clippy::not_unsafe_ptr_arg_deref,
-    reason = "a `HANDLE` is only a number"
+    reason = "a `HANDLE` is never dereferenced"
 )]
 
 use core::ffi::c_void;
@@ -10,90 +10,96 @@ use std::os::windows::io::OwnedHandle;
 use std::sync::OnceLock;
 
 use bun_core::WStr;
+use bun_core::strings::u16_is_lead;
 
 use super::kernel32_2::{GetConsoleMode, SetConsoleMode};
 use super::{BOOL, DWORD, HANDLE, ULONG, Win32Error, check, kernel32};
 use crate::windows_format::key_input::InputRecord;
 
-/// `CONSOLE_READCONSOLE_CONTROL`
 #[repr(C)]
-struct ReadControl {
-    size: ULONG,
-    initial_chars: ULONG,
-    wakeup_mask: ULONG,
-    control_keys: ULONG,
+struct CONSOLE_READCONSOLE_CONTROL {
+    nLength: ULONG,
+    nInitialChars: ULONG,
+    dwCtrlWakeupMask: ULONG,
+    dwControlKeyState: ULONG,
 }
 
 #[link(name = "kernel32")]
 unsafe extern "system" {
-    safe fn GetNumberOfConsoleInputEvents(console: HANDLE, count: &mut DWORD) -> BOOL;
+    safe fn GetNumberOfConsoleInputEvents(
+        hConsoleInput: HANDLE,
+        lpNumberOfEvents: &mut DWORD,
+    ) -> BOOL;
     fn ReadConsoleInputW(
-        console: HANDLE,
-        records: *mut InputRecord,
-        len: DWORD,
-        read: &mut DWORD,
+        hConsoleInput: HANDLE,
+        lpBuffer: *mut InputRecord,
+        nLength: DWORD,
+        lpNumberOfEventsRead: &mut DWORD,
     ) -> BOOL;
     fn WriteConsoleInputW(
-        console: HANDLE,
-        records: *const InputRecord,
-        len: DWORD,
-        written: &mut DWORD,
+        hConsoleInput: HANDLE,
+        lpBuffer: *const InputRecord,
+        nLength: DWORD,
+        lpNumberOfEventsWritten: &mut DWORD,
     ) -> BOOL;
     fn ReadConsoleW(
-        console: HANDLE,
-        buffer: *mut u16,
-        len: DWORD,
-        read: &mut DWORD,
-        control: &mut ReadControl,
+        hConsoleInput: HANDLE,
+        lpBuffer: *mut u16,
+        nNumberOfCharsToRead: DWORD,
+        lpNumberOfCharsRead: &mut DWORD,
+        pInputControl: &mut CONSOLE_READCONSOLE_CONTROL,
     ) -> BOOL;
     fn WriteConsoleW(
-        console: HANDLE,
-        buffer: *const u16,
-        len: DWORD,
-        written: &mut DWORD,
-        reserved: *const c_void,
+        hConsoleOutput: HANDLE,
+        lpBuffer: *const u16,
+        nNumberOfCharsToWrite: DWORD,
+        lpNumberOfCharsWritten: &mut DWORD,
+        lpReserved: *const c_void,
     ) -> BOOL;
 }
 
-/// `CONIN$` or `CONOUT$`.
+/// `name` is `CONIN$` or `CONOUT$`.
 pub fn open(name: &WStr) -> Result<OwnedHandle, Win32Error> {
     let access = super::GENERIC_READ | super::GENERIC_WRITE;
     let share = super::FILE_SHARE_READ | super::FILE_SHARE_WRITE;
     super::CreateFileW(name, access, share, super::OPEN_EXISTING, 0)
 }
 
-fn host_process_id() -> Option<DWORD> {
+fn query_host_pid() -> Option<DWORD> {
     const PROCESS_CONSOLE_HOST_PROCESS: ULONG = 49;
-    let mut id = 0usize;
-    // SAFETY: it writes at most the size given.
+    const FLAG_MASK: usize = 3;
+    let mut pid_and_flags = 0usize;
+    // SAFETY: `pid_and_flags` is writable for the size passed.
     let status = unsafe {
         super::ntdll::NtQueryInformationProcess(
             super::GetCurrentProcess(),
             PROCESS_CONSOLE_HOST_PROCESS,
-            (&raw mut id).cast(),
-            size_of_val(&id) as ULONG,
+            (&raw mut pid_and_flags).cast(),
+            size_of_val(&pid_and_flags) as ULONG,
             core::ptr::null_mut(),
         )
     };
-    // The low bits are flags.
-    super::NT_SUCCESS(status).then_some((id & !3) as DWORD)
+    super::NT_SUCCESS(status).then_some((pid_and_flags & !FLAG_MASK) as DWORD)
 }
 
-/// Keeps the thread, and calls `changed` on it when the size of the window may have changed.
-pub fn watch_layout(changed: impl Fn()) {
-    type Callback = extern "system" fn(HANDLE, u32, HANDLE, i32, i32, u32, u32);
-    type SetWinEventHook = extern "system" fn(u32, u32, HANDLE, Callback, u32, u32, u32) -> HANDLE;
+/// Blocks the calling thread, and runs `on_layout_event` on it whenever the window size may have changed.
+pub fn run_resize_message_loop(on_layout_event: impl Fn()) {
+    type WINEVENTPROC = extern "system" fn(HANDLE, u32, HANDLE, i32, i32, u32, u32);
+    type SetWinEventHook =
+        extern "system" fn(u32, u32, HANDLE, WINEVENTPROC, u32, u32, u32) -> HANDLE;
     type WaitMessage = extern "system" fn() -> BOOL;
     type PeekMessageW = extern "system" fn(&mut [usize; 6], HANDLE, u32, u32, u32) -> BOOL;
     const LOAD_LIBRARY_SEARCH_SYSTEM32: DWORD = 0x800;
-    const LAYOUT: u32 = 0x4005;
-    const OUT_OF_CONTEXT: u32 = 0;
+    const EVENT_CONSOLE_LAYOUT: u32 = 0x4005;
+    const WINEVENT_OUTOFCONTEXT: u32 = 0;
     const PM_REMOVE: u32 = 1;
-    extern "system" fn ignore(_: HANDLE, _: u32, _: HANDLE, _: i32, _: i32, _: u32, _: u32) {}
+    const THROTTLE_INTERVAL_MS: DWORD = 33;
+    extern "system" fn on_win_event(_: HANDLE, _: u32, _: HANDLE, _: i32, _: i32, _: u32, _: u32) {}
 
-    let (user32, null) = (bun_core::wstr!("user32.dll"), core::ptr::null_mut());
-    // SAFETY: the name ends with a NUL, the types are those of `winuser.h`, and a `MSG` takes six words.
-    let (set_hook, wait, peek) = unsafe {
+    let user32 = bun_core::wstr!("user32.dll");
+    let null = core::ptr::null_mut();
+    // SAFETY: `user32` is NUL-terminated, the signatures match `winuser.h`, and `MSG` is six words long.
+    let exports = unsafe {
         kernel32::LoadLibraryExW(user32.as_ptr(), null, LOAD_LIBRARY_SEARCH_SYSTEM32);
         (
             super::find_export::<SetWinEventHook>(user32, c"SetWinEventHook"),
@@ -101,17 +107,30 @@ pub fn watch_layout(changed: impl Fn()) {
             super::find_export::<PeekMessageW>(user32, c"PeekMessageW"),
         )
     };
-    // Not every edition of Windows has them, and not every process may load them.
-    if let (Some(set_hook), Some(wait), Some(peek)) = (set_hook, wait, peek)
-        && let Some(host) = host_process_id()
-        && !set_hook(LAYOUT, LAYOUT, null, ignore, host, 0, OUT_OF_CONTEXT).is_null()
-    {
-        while wait() != 0 {
-            while peek(&mut [0; 6], null, 0, 0, PM_REMOVE) != 0 {}
-            changed();
-            // Output that scrolls is reported too.
-            kernel32::Sleep(33);
-        }
+    // Some Windows editions lack these exports, and some processes cannot load user32.
+    let (Some(set_hook), Some(wait_message), Some(peek_message)) = exports else {
+        return;
+    };
+    let Some(host_pid) = query_host_pid() else {
+        return;
+    };
+    let hook = set_hook(
+        EVENT_CONSOLE_LAYOUT,
+        EVENT_CONSOLE_LAYOUT,
+        null,
+        on_win_event,
+        host_pid,
+        0,
+        WINEVENT_OUTOFCONTEXT,
+    );
+    if hook.is_null() {
+        return;
+    }
+    while wait_message() != 0 {
+        while peek_message(&mut [0; 6], null, 0, 0, PM_REMOVE) != 0 {}
+        on_layout_event();
+        // Scrolling output raises the event too.
+        kernel32::Sleep(THROTTLE_INTERVAL_MS);
     }
 }
 
@@ -128,7 +147,7 @@ pub fn is_input(console: HANDLE) -> bool {
     GetNumberOfConsoleInputEvents(console, &mut 0) != 0
 }
 
-/// Does not wait for any.
+/// Non-blocking: empty if the input queue is empty.
 pub fn read_records(
     input: HANDLE,
     records: &mut [InputRecord],
@@ -141,89 +160,95 @@ pub fn read_records(
         // SAFETY: https://learn.microsoft.com/en-us/windows/console/readconsoleinputex
         unsafe { super::find_export(bun_core::wstr!("kernel32.dll"), c"ReadConsoleInputExW") }
     });
-    let (mut len, mut read) = (records.len() as DWORD, 0);
+    let mut len = records.len() as DWORD;
+    let mut read_count = 0;
     if let Some(read_ex) = read_ex {
-        // SAFETY: `records` has the length that is passed.
+        // SAFETY: `records` is writable for `len` records.
         check(unsafe {
             read_ex(
                 input,
                 records.as_mut_ptr(),
                 len,
-                &mut read,
+                &mut read_count,
                 CONSOLE_READ_NOWAIT,
             )
         })?;
     } else {
-        // Old versions of Wine.
-        check(GetNumberOfConsoleInputEvents(input, &mut read))?;
-        len = len.min(read);
+        // Old versions of Wine do not export `ReadConsoleInputExW`.
+        check(GetNumberOfConsoleInputEvents(input, &mut read_count))?;
+        len = len.min(read_count);
         if len > 0 {
-            // SAFETY: `records` is no shorter than what is passed.
-            check(unsafe { ReadConsoleInputW(input, records.as_mut_ptr(), len, &mut read) })?;
+            // SAFETY: `records` is writable for `len` records.
+            check(unsafe { ReadConsoleInputW(input, records.as_mut_ptr(), len, &mut read_count) })?;
         }
     }
-    Ok(&records[..read.min(len) as usize])
+    Ok(&records[..read_count.min(len) as usize])
 }
 
-/// Returns how many are in the queue for it.
+/// Returns the number of records added to the input queue.
 pub fn write_records(input: HANDLE, records: &[InputRecord]) -> Result<usize, Win32Error> {
-    let (len, mut written) = (records.len() as DWORD, 0);
-    // SAFETY: `records` has the length that is passed.
-    check(unsafe { WriteConsoleInputW(input, records.as_ptr(), len, &mut written) })?;
-    Ok(written as usize)
+    let len = records.len() as DWORD;
+    let mut written_count = 0;
+    // SAFETY: `records` is readable for `len` records.
+    check(unsafe { WriteConsoleInputW(input, records.as_ptr(), len, &mut written_count) })?;
+    Ok(written_count as usize)
 }
 
-/// Waits for a line, or for the control character `wake`, which is then in the text. Empty after Ctrl+C.
-pub fn read_text(input: HANDLE, buffer: &mut [u16], wake: u16) -> Result<&[u16], Win32Error> {
-    let mut control = ReadControl {
-        size: size_of::<ReadControl>() as ULONG,
-        initial_chars: 0,
-        wakeup_mask: 1 << wake,
-        control_keys: 0,
+/// Blocks until a line or the control character `wakeup_char` (included in the text) is entered. Empty after Ctrl+C.
+pub fn read_text(
+    input: HANDLE,
+    buffer: &mut [u16],
+    wakeup_char: u16,
+) -> Result<&[u16], Win32Error> {
+    let mut control = CONSOLE_READCONSOLE_CONTROL {
+        nLength: size_of::<CONSOLE_READCONSOLE_CONTROL>() as ULONG,
+        nInitialChars: 0,
+        dwCtrlWakeupMask: 1 << wakeup_char,
+        dwControlKeyState: 0,
     };
-    let mut read = 0;
-    // SAFETY: `buffer` has the length that is passed.
+    let mut read_len = 0;
+    // SAFETY: `buffer` is writable for the length passed.
     check(unsafe {
         ReadConsoleW(
             input,
             buffer.as_mut_ptr(),
             buffer.len() as DWORD,
-            &mut read,
+            &mut read_len,
             &mut control,
         )
     })?;
-    Ok(&buffer[..buffer.len().min(read as usize)])
+    Ok(&buffer[..buffer.len().min(read_len as usize)])
 }
 
 pub fn write_text(output: HANDLE, mut text: &[u16]) -> Result<(), Win32Error> {
-    const MAX_LEN: usize = 8192;
+    const MAX_CHUNK_LEN: usize = 8192;
     while !text.is_empty() {
-        let mut len = text.len().min(MAX_LEN);
-        if len < text.len() && (0xD800..0xDC00).contains(&text[len - 1]) {
+        let mut len = text.len().min(MAX_CHUNK_LEN);
+        if len < text.len() && u16_is_lead(text[len - 1]) {
             len -= 1;
         }
-        let mut written = 0;
-        // SAFETY: `text` is no shorter than what is passed.
+        let mut written_len = 0;
+        // SAFETY: `text` is readable for `len` code units.
         check(unsafe {
             WriteConsoleW(
                 output,
                 text.as_ptr(),
                 len as DWORD,
-                &mut written,
+                &mut written_len,
                 core::ptr::null(),
             )
         })?;
-        text = &text[(written as usize).clamp(1, len)..];
+        text = &text[(written_len as usize).clamp(1, len)..];
     }
     Ok(())
 }
 
-/// The columns and rows that are visible.
+/// `(columns, rows)` of the visible window.
 pub fn window_size(output: HANDLE) -> Option<(u16, u16)> {
     let mut info: bun_windows_sys::CONSOLE_SCREEN_BUFFER_INFO = bun_core::ffi::zeroed();
-    // SAFETY: an out-param.
+    // SAFETY: `info` is a valid out-param.
     check(unsafe { kernel32::GetConsoleScreenBufferInfo(output, &raw mut info) }).ok()?;
     let window = info.srWindow;
-    let count = |first, last| u16::try_from(i32::from(last) - i32::from(first) + 1).ok();
-    count(window.Left, window.Right).zip(count(window.Top, window.Bottom))
+    let extent = |first, last| u16::try_from(i32::from(last) - i32::from(first) + 1).ok();
+    extent(window.Left, window.Right).zip(extent(window.Top, window.Bottom))
 }

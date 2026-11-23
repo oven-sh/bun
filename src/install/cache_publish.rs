@@ -242,7 +242,7 @@ pub(crate) fn create_index_link(
             return;
         }
         let link = &bun_paths::Path::resolve(&[cache_dir_path, name, version]);
-        let _ = sys::windows::junction(target, link);
+        let _ = sys::windows::create_junction(target, link);
     }
     #[cfg(not(windows))]
     {

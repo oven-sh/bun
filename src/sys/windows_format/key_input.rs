@@ -1,6 +1,6 @@
-//! The bytes that a terminal would send for the input records of a console.
+//! Translates console input records into the bytes a terminal would send.
 
-/// `INPUT_RECORD`, as a `KEY_EVENT_RECORD`.
+/// `INPUT_RECORD` with its union read as `KEY_EVENT_RECORD`.
 #[repr(C)]
 #[derive(Copy, Clone, Default, PartialEq, Eq)]
 pub struct InputRecord {
@@ -10,7 +10,7 @@ pub struct InputRecord {
     pub virtual_key: u16,
     pub scan_code: u16,
     pub character: u16,
-    pub control_keys: u32,
+    pub control_key_state: u32,
 }
 
 const _: () = assert!(size_of::<InputRecord>() == 20);
@@ -19,11 +19,11 @@ pub const KEY_EVENT: u16 = 1;
 pub const WINDOW_BUFFER_SIZE_EVENT: u16 = 4;
 pub const MENU_EVENT: u16 = 8;
 
-const RIGHT_ALT: u32 = 0x1;
-const LEFT_ALT: u32 = 0x2;
-const RIGHT_CTRL: u32 = 0x4;
-const LEFT_CTRL: u32 = 0x8;
-const SHIFT: u32 = 0x10;
+const RIGHT_ALT_PRESSED: u32 = 0x1;
+const LEFT_ALT_PRESSED: u32 = 0x2;
+const RIGHT_CTRL_PRESSED: u32 = 0x4;
+const LEFT_CTRL_PRESSED: u32 = 0x8;
+const SHIFT_PRESSED: u32 = 0x10;
 const ENHANCED_KEY: u32 = 0x100;
 
 const VK_CLEAR: u16 = 0x0C;
@@ -39,14 +39,14 @@ const VK_F1: u16 = 0x70;
 const VK_F12: u16 = 0x7B;
 
 impl InputRecord {
-    /// A key that went down, or Alt that went up after a character was typed on the keypad or pasted.
-    pub fn is_input(&self) -> bool {
+    /// A key press, or an Alt release that carries a character from an Alt code or a paste.
+    pub fn is_key_input(&self) -> bool {
         self.event_type == KEY_EVENT
             && (self.is_key_down != 0 || (self.virtual_key == VK_MENU && self.character != 0))
     }
 
-    fn is_part_of_keypad_character(&self) -> bool {
-        self.control_keys & (LEFT_ALT | ENHANCED_KEY) == LEFT_ALT
+    fn is_alt_code_digit(&self) -> bool {
+        self.control_key_state & (LEFT_ALT_PRESSED | ENHANCED_KEY) == LEFT_ALT_PRESSED
             && matches!(
                 self.virtual_key,
                 VK_CLEAR | VK_PRIOR..=VK_DOWN | VK_INSERT | VK_NUMPAD0..=VK_NUMPAD9
@@ -54,23 +54,21 @@ impl InputRecord {
     }
 }
 
-/// Without a modifier, with Shift, with Ctrl and with both.
-type Sequences = [&'static str; 4];
-
-const INSERT: Sequences = ["[2~", "[2;2~", "[2;5~", "[2;6~"];
-const DELETE: Sequences = ["[3~", "[3;2~", "[3;5~", "[3;6~"];
-const CLEAR: Sequences = ["[G", "[1;2G", "[1;5G", "[1;6G"];
-const PRIOR: Sequences = ["[5~", "[5;2~", "[5;5~", "[5;6~"];
-const NEXT: Sequences = ["[6~", "[6;2~", "[6;5~", "[6;6~"];
-const END: Sequences = ["[4~", "[4;2~", "[4;5~", "[4;6~"];
-const HOME: Sequences = ["[1~", "[1;2~", "[1;5~", "[1;6~"];
-const LEFT: Sequences = ["[D", "[1;2D", "[1;5D", "[1;6D"];
-const UP: Sequences = ["[A", "[1;2A", "[1;5A", "[1;6A"];
-const RIGHT: Sequences = ["[C", "[1;2C", "[1;5C", "[1;6C"];
-const DOWN: Sequences = ["[B", "[1;2B", "[1;5B", "[1;6B"];
-const NAVIGATION: [Sequences; 8] = [PRIOR, NEXT, END, HOME, LEFT, UP, RIGHT, DOWN];
-const KEYPAD: [Sequences; 10] = [INSERT, END, DOWN, NEXT, LEFT, CLEAR, RIGHT, HOME, UP, PRIOR];
-const FUNCTION: [Sequences; 12] = [
+// Escape sequences without the leading ESC: unmodified, Shift, Ctrl, Shift+Ctrl.
+const INSERT: [&str; 4] = ["[2~", "[2;2~", "[2;5~", "[2;6~"];
+const DELETE: [&str; 4] = ["[3~", "[3;2~", "[3;5~", "[3;6~"];
+const CLEAR: [&str; 4] = ["[G", "[1;2G", "[1;5G", "[1;6G"];
+const PRIOR: [&str; 4] = ["[5~", "[5;2~", "[5;5~", "[5;6~"];
+const NEXT: [&str; 4] = ["[6~", "[6;2~", "[6;5~", "[6;6~"];
+const END: [&str; 4] = ["[4~", "[4;2~", "[4;5~", "[4;6~"];
+const HOME: [&str; 4] = ["[1~", "[1;2~", "[1;5~", "[1;6~"];
+const LEFT: [&str; 4] = ["[D", "[1;2D", "[1;5D", "[1;6D"];
+const UP: [&str; 4] = ["[A", "[1;2A", "[1;5A", "[1;6A"];
+const RIGHT: [&str; 4] = ["[C", "[1;2C", "[1;5C", "[1;6C"];
+const DOWN: [&str; 4] = ["[B", "[1;2B", "[1;5B", "[1;6B"];
+const NAVIGATION_KEYS: [[&str; 4]; 8] = [PRIOR, NEXT, END, HOME, LEFT, UP, RIGHT, DOWN];
+const NUMPAD_KEYS: [[&str; 4]; 10] = [INSERT, END, DOWN, NEXT, LEFT, CLEAR, RIGHT, HOME, UP, PRIOR];
+const FUNCTION_KEYS: [[&str; 4]; 12] = [
     ["[[A", "[23~", "[11^", "[23^"],
     ["[[B", "[24~", "[12^", "[24^"],
     ["[[C", "[25~", "[13^", "[25^"],
@@ -85,27 +83,27 @@ const FUNCTION: [Sequences; 12] = [
     ["[24~", "[24$", "[24^", "[24@"],
 ];
 
-fn sequences(virtual_key: u16) -> Option<Sequences> {
+fn find_escape_sequences(virtual_key: u16) -> Option<[&'static str; 4]> {
     Some(match virtual_key {
         VK_CLEAR => CLEAR,
         VK_INSERT => INSERT,
         VK_DELETE | VK_DECIMAL => DELETE,
-        VK_PRIOR..=VK_DOWN => NAVIGATION[usize::from(virtual_key - VK_PRIOR)],
-        VK_NUMPAD0..=VK_NUMPAD9 => KEYPAD[usize::from(virtual_key - VK_NUMPAD0)],
-        VK_F1..=VK_F12 => FUNCTION[usize::from(virtual_key - VK_F1)],
+        VK_PRIOR..=VK_DOWN => NAVIGATION_KEYS[usize::from(virtual_key - VK_PRIOR)],
+        VK_NUMPAD0..=VK_NUMPAD9 => NUMPAD_KEYS[usize::from(virtual_key - VK_NUMPAD0)],
+        VK_F1..=VK_F12 => FUNCTION_KEYS[usize::from(virtual_key - VK_F1)],
         _ => return None,
     })
 }
 
-/// Space, digits, letters and punctuation, or 0xFF, which stands for no key of the layout.
-fn can_type(virtual_key: u16) -> bool {
+/// Space, digit, letter and punctuation keys, or 0xFF (no key in the keyboard layout).
+fn is_character_key(virtual_key: u16) -> bool {
     matches!(
         virtual_key,
         0x20 | 0x30..=0x39 | 0x41..=0x5A | 0xBA..=0xC2 | 0xDB..=0xDF | 0xE2 | 0xFF
     )
 }
 
-/// UTF-16 that comes in pieces, as UTF-8.
+/// Incremental UTF-16 to UTF-8 decoder.
 #[derive(Default)]
 pub struct Utf16Decoder {
     high_surrogate: Option<u16>,
@@ -119,10 +117,12 @@ impl Utf16Decoder {
     }
 
     pub fn push(&mut self, unit: u16, out: &mut Vec<u8>) {
-        let held = self.high_surrogate.take();
+        let pending_surrogate = self.high_surrogate.take();
         let is_high_surrogate = (0xD800..0xDC00).contains(&unit);
         self.high_surrogate = is_high_surrogate.then_some(unit);
-        let units = held.into_iter().chain((!is_high_surrogate).then_some(unit));
+        let units = pending_surrogate
+            .into_iter()
+            .chain((!is_high_surrogate).then_some(unit));
         for character in char::decode_utf16(units) {
             let character = character.unwrap_or(char::REPLACEMENT_CHARACTER);
             out.extend_from_slice(character.encode_utf8(&mut [0; 4]).as_bytes());
@@ -133,28 +133,28 @@ impl Utf16Decoder {
 pub fn translate(record: &InputRecord, decoder: &mut Utf16Decoder, out: &mut Vec<u8>) {
     const ESCAPE: u8 = 0x1B;
 
-    if !record.is_input() || record.is_part_of_keypad_character() {
+    if !record.is_key_input() || record.is_alt_code_digit() {
         return;
     }
-    let has_alt = record.control_keys & (LEFT_ALT | RIGHT_ALT) != 0;
-    let has_ctrl = record.control_keys & (LEFT_CTRL | RIGHT_CTRL) != 0;
-    let has_shift = record.control_keys & SHIFT != 0;
+    let has_alt = record.control_key_state & (LEFT_ALT_PRESSED | RIGHT_ALT_PRESSED) != 0;
+    let has_ctrl = record.control_key_state & (LEFT_CTRL_PRESSED | RIGHT_CTRL_PRESSED) != 0;
+    let has_shift = record.control_key_state & SHIFT_PRESSED != 0;
     let start = out.len();
     if record.character != 0 {
         decoder.push(record.character, out);
-        // With Ctrl it is AltGr.
+        // Ctrl+Alt is AltGr, which gets no ESC prefix.
         if has_alt && !has_ctrl && record.is_key_down != 0 && out.len() > start {
             out.insert(start, ESCAPE);
         }
-    } else if let Some(sequences) = sequences(record.virtual_key) {
+    } else if let Some(sequences) = find_escape_sequences(record.virtual_key) {
         if has_alt {
             out.push(ESCAPE);
         }
         out.push(ESCAPE);
         let sequence = sequences[usize::from(has_shift) + 2 * usize::from(has_ctrl)];
         out.extend_from_slice(sequence.as_bytes());
-    } else if has_ctrl && record.scan_code == 0 && can_type(record.virtual_key) {
-        // What the console makes of Ctrl+Space.
+    } else if has_ctrl && record.scan_code == 0 && is_character_key(record.virtual_key) {
+        // The console reports Ctrl+Space as a key event without a character or scan code.
         out.push(0);
     }
     let end = out.len();
@@ -167,7 +167,7 @@ pub fn translate(record: &InputRecord, decoder: &mut Utf16Decoder, out: &mut Vec
 mod tests {
     use super::*;
 
-    fn key(virtual_key: u16, character: u16, control_keys: u32) -> InputRecord {
+    fn key_down(virtual_key: u16, character: u16, control_key_state: u32) -> InputRecord {
         InputRecord {
             event_type: KEY_EVENT,
             is_key_down: 1,
@@ -175,100 +175,121 @@ mod tests {
             virtual_key,
             scan_code: 1,
             character,
-            control_keys,
+            control_key_state,
         }
     }
 
-    fn bytes(records: &[InputRecord]) -> Vec<u8> {
-        let (mut decoder, mut out) = (Utf16Decoder::new(), Vec::new());
+    fn translate_all(records: &[InputRecord]) -> Vec<u8> {
+        let mut decoder = Utf16Decoder::new();
+        let mut out = Vec::new();
         for record in records {
             translate(record, &mut decoder, &mut out);
         }
         out
     }
 
-    #[test]
-    fn characters() {
-        assert_eq!(bytes(&[key(0x41, 0x61, 0)]), b"a");
-        assert_eq!(bytes(&[key(0, 0x4E2D, 0)]), "中".as_bytes());
-        assert_eq!(bytes(&[key(0x41, 0x61, LEFT_ALT)]), b"\x1ba");
-        assert_eq!(bytes(&[key(0x51, 0x40, RIGHT_ALT | LEFT_CTRL)]), b"@");
+    fn translate_key(virtual_key: u16, character: u16, control_key_state: u32) -> Vec<u8> {
+        translate_all(&[key_down(virtual_key, character, control_key_state)])
     }
 
     #[test]
-    fn surrogates() {
-        let (high, low) = (key(0, 0xD83D, 0), key(0, 0xDE00, 0));
-        assert_eq!(bytes(&[high, low]), "😀".as_bytes());
-        assert_eq!(bytes(&[high]), b"");
-        assert_eq!(bytes(&[low]), "\u{FFFD}".as_bytes());
-        assert_eq!(bytes(&[high, key(0, 0x61, 0)]), "\u{FFFD}a".as_bytes());
-        assert_eq!(bytes(&[high, high, low]), "\u{FFFD}😀".as_bytes());
+    fn translates_character_keys() {
+        assert_eq!(translate_key(0x41, 0x61, 0), b"a");
+        assert_eq!(translate_key(0, 0x4E2D, 0), "中".as_bytes());
+        assert_eq!(translate_key(0x41, 0x61, LEFT_ALT_PRESSED), b"\x1ba");
+        assert_eq!(
+            translate_key(0x51, 0x40, RIGHT_ALT_PRESSED | LEFT_CTRL_PRESSED),
+            b"@"
+        );
     }
 
     #[test]
-    fn keys_that_go_up() {
-        let up = |record| InputRecord {
+    fn decodes_surrogates_across_records() {
+        let high = key_down(0, 0xD83D, 0);
+        let low = key_down(0, 0xDE00, 0);
+        assert_eq!(translate_all(&[high, low]), "😀".as_bytes());
+        assert_eq!(translate_all(&[high]), b"");
+        assert_eq!(translate_all(&[low]), "\u{FFFD}".as_bytes());
+        assert_eq!(
+            translate_all(&[high, key_down(0, 0x61, 0)]),
+            "\u{FFFD}a".as_bytes()
+        );
+        assert_eq!(translate_all(&[high, high, low]), "\u{FFFD}😀".as_bytes());
+    }
+
+    #[test]
+    fn ignores_key_up_except_alt_with_character() {
+        let to_key_up = |record| InputRecord {
             is_key_down: 0,
             ..record
         };
-        assert_eq!(bytes(&[up(key(0x41, 0x61, 0))]), b"");
-        assert_eq!(bytes(&[up(key(VK_MENU, 0, 0))]), b"");
-        assert_eq!(bytes(&[up(key(VK_MENU, 0xE9, LEFT_ALT))]), "é".as_bytes());
+        assert_eq!(translate_all(&[to_key_up(key_down(0x41, 0x61, 0))]), b"");
+        assert_eq!(translate_all(&[to_key_up(key_down(VK_MENU, 0, 0))]), b"");
+        assert_eq!(
+            translate_all(&[to_key_up(key_down(VK_MENU, 0xE9, LEFT_ALT_PRESSED))]),
+            "é".as_bytes()
+        );
     }
 
     #[test]
-    fn keys_without_a_character() {
-        assert_eq!(bytes(&[key(0x26, 0, ENHANCED_KEY)]), b"\x1b[A");
-        assert_eq!(bytes(&[key(0x24, 0, SHIFT)]), b"\x1b[1;2~");
-        assert_eq!(bytes(&[key(0x27, 0, LEFT_CTRL)]), b"\x1b[1;5C");
-        assert_eq!(bytes(&[key(VK_F12, 0, SHIFT | RIGHT_CTRL)]), b"\x1b[24@");
-        assert_eq!(bytes(&[key(VK_F1, 0, RIGHT_ALT)]), b"\x1b\x1b[[A");
-        assert_eq!(bytes(&[key(VK_NUMPAD0 + 7, 0, 0)]), b"\x1b[1~");
-        assert_eq!(bytes(&[key(VK_NUMPAD0 + 8, 0, 0)]), b"\x1b[A");
-        assert_eq!(bytes(&[key(0x10, 0, SHIFT)]), b"");
-        assert_eq!(bytes(&[key(0x11, 0, LEFT_CTRL)]), b"");
+    fn special_keys_produce_escape_sequences() {
+        assert_eq!(translate_key(0x26, 0, ENHANCED_KEY), b"\x1b[A");
+        assert_eq!(translate_key(0x24, 0, SHIFT_PRESSED), b"\x1b[1;2~");
+        assert_eq!(translate_key(0x27, 0, LEFT_CTRL_PRESSED), b"\x1b[1;5C");
+        assert_eq!(
+            translate_key(VK_F12, 0, SHIFT_PRESSED | RIGHT_CTRL_PRESSED),
+            b"\x1b[24@"
+        );
+        assert_eq!(translate_key(VK_F1, 0, RIGHT_ALT_PRESSED), b"\x1b\x1b[[A");
+        assert_eq!(translate_key(VK_NUMPAD0 + 7, 0, 0), b"\x1b[1~");
+        assert_eq!(translate_key(VK_NUMPAD0 + 8, 0, 0), b"\x1b[A");
+        assert_eq!(translate_key(0x10, 0, SHIFT_PRESSED), b"");
+        assert_eq!(translate_key(0x11, 0, LEFT_CTRL_PRESSED), b"");
     }
 
     #[test]
-    fn digits_typed_while_alt_is_held() {
-        assert_eq!(bytes(&[key(VK_NUMPAD0 + 1, 0, LEFT_ALT)]), b"");
-        assert_eq!(bytes(&[key(0x23, 0, LEFT_ALT)]), b"");
-        let end = key(0x23, 0, LEFT_ALT | ENHANCED_KEY);
-        assert_eq!(bytes(&[end]), b"\x1b\x1b[4~");
+    fn ignores_alt_code_digits() {
+        assert_eq!(translate_key(VK_NUMPAD0 + 1, 0, LEFT_ALT_PRESSED), b"");
+        assert_eq!(translate_key(0x23, 0, LEFT_ALT_PRESSED), b"");
+        let end = key_down(0x23, 0, LEFT_ALT_PRESSED | ENHANCED_KEY);
+        assert_eq!(translate_all(&[end]), b"\x1b\x1b[4~");
     }
 
     #[test]
-    fn ctrl_space() {
+    fn ctrl_space_produces_nul() {
         let record = InputRecord {
             scan_code: 0,
-            ..key(0x32, 0, LEFT_CTRL | SHIFT)
+            ..key_down(0x32, 0, LEFT_CTRL_PRESSED | SHIFT_PRESSED)
         };
-        assert_eq!(bytes(&[record]), b"\0");
+        assert_eq!(translate_all(&[record]), b"\0");
         for virtual_key in [0x11, 0x14, 0x5B, 0x7C, 0xA2, 0xAF, 0xE5] {
-            let other = InputRecord {
+            let non_character_key = InputRecord {
                 virtual_key,
                 ..record
             };
-            assert_eq!(bytes(&[other]), b"");
+            assert_eq!(translate_all(&[non_character_key]), b"");
         }
     }
 
     #[test]
-    fn repeats() {
-        let times = |repeat_count| InputRecord {
+    fn repeat_count_repeats_output() {
+        let with_repeat_count = |repeat_count| InputRecord {
             repeat_count,
-            ..key(0x26, 0, 0)
+            ..key_down(0x26, 0, 0)
         };
-        assert_eq!(bytes(&[times(1)]), b"\x1b[A");
-        assert_eq!(bytes(&[times(3)]), b"\x1b[A\x1b[A\x1b[A");
+        assert_eq!(translate_all(&[with_repeat_count(1)]), b"\x1b[A");
+        assert_eq!(
+            translate_all(&[with_repeat_count(3)]),
+            b"\x1b[A\x1b[A\x1b[A"
+        );
     }
 
     #[test]
-    fn other_records() {
-        let size = InputRecord {
+    fn ignores_non_key_events() {
+        let resize = InputRecord {
             event_type: WINDOW_BUFFER_SIZE_EVENT,
-            ..key(0x41, 0x61, 0)
+            ..key_down(0x41, 0x61, 0)
         };
-        assert_eq!(bytes(&[size]), b"");
+        assert_eq!(translate_all(&[resize]), b"");
     }
 }

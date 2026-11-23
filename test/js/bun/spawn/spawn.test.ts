@@ -945,7 +945,6 @@ describe("stdout reader of an unref'd child and process lifetime", () => {
 });
 
 describe("unref() + .exited with nothing else ref'd (Windows)", () => {
-  // The exit of an unref'd child has to be noticed when nothing else is left.
   for (const [name, body] of [
     ["unref() then await .exited", `const p = Bun.spawn(opts); p.unref(); await p.exited;`],
     [".exited then unref() then await", `const p = Bun.spawn(opts); const done = p.exited; p.unref(); await done;`],
@@ -2488,13 +2487,13 @@ it("doesn't crash when a subprocess pipe is canceled and the event loop runs ins
   await build;
 });
 
-async function finished(proc: Bun.Subprocess<any, "pipe", "pipe">) {
+async function collectOutput(proc: Bun.Subprocess<any, "pipe", "pipe">) {
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout, stderr, exitCode };
 }
 
-describe.concurrent("descriptors that parent and child share", () => {
-  it("one file as stdout and stderr has one position, which the parent sees too", async () => {
+describe.concurrent("file descriptors shared between parent and child", () => {
+  it("stdout, stderr and the parent share one file position", async () => {
     using dir = tempDir("spawn-shared-position", {});
     const file = join(String(dir), "out.txt");
     const fd = openSync(file, "w");
@@ -2513,7 +2512,7 @@ describe.concurrent("descriptors that parent and child share", () => {
     }
   });
 
-  it("a file as stdin is read from the parent's position on, and the parent goes on from the child's", async () => {
+  it("stdin shares its file position with the parent", async () => {
     using dir = tempDir("spawn-shared-position", { "in.txt": "0123456789" });
     const fd = openSync(join(String(dir), "in.txt"), "r");
     try {
@@ -2524,7 +2523,7 @@ describe.concurrent("descriptors that parent and child share", () => {
         env: bunEnv,
         stdio: [fd, "pipe", "pipe"],
       });
-      expect(await finished(proc)).toEqual({ stdout: "3456\n", stderr: "", exitCode: 0 });
+      expect(await collectOutput(proc)).toEqual({ stdout: "3456\n", stderr: "", exitCode: 0 });
       readSync(fd, buffer);
       expect(buffer.toString()).toBe("789");
     } finally {
@@ -2532,30 +2531,30 @@ describe.concurrent("descriptors that parent and child share", () => {
     }
   });
 
-  it("descriptors land on their own numbers when slots between them are ignored", async () => {
+  it("extra fds keep their index when the slots in between are ignored", async () => {
     using dir = tempDir("spawn-sparse", { "4.txt": "four", "9.txt": "nine" });
-    const four = openSync(join(String(dir), "4.txt"), "r");
-    const nine = openSync(join(String(dir), "9.txt"), "r");
+    const fd4 = openSync(join(String(dir), "4.txt"), "r");
+    const fd9 = openSync(join(String(dir), "9.txt"), "r");
     try {
       await using proc = spawn({
         cmd: [bunExe(), "-e", `console.log([4, 9].map(fd => require("fs").readFileSync(fd, "utf8")).join())`],
         env: bunEnv,
-        stdio: ["ignore", "pipe", "pipe", "ignore", four, "ignore", "ignore", "ignore", "ignore", nine] as any,
+        stdio: ["ignore", "pipe", "pipe", "ignore", fd4, "ignore", "ignore", "ignore", "ignore", fd9] as any,
       });
-      expect(await finished(proc as any)).toEqual({ stdout: "four,nine\n", stderr: "", exitCode: 0 });
+      expect(await collectOutput(proc as any)).toEqual({ stdout: "four,nine\n", stderr: "", exitCode: 0 });
     } finally {
-      closeSync(four);
-      closeSync(nine);
+      closeSync(fd4);
+      closeSync(fd9);
     }
   });
 });
 
-it("stdin.end() resolves when the child reads everything and exits before the event loop turns", async () => {
+it("stdin.end() resolves when the child reads everything and exits before the next event loop iteration", async () => {
   await using proc = spawn({
     cmd: [
       bunExe(),
       "-e",
-      `console.log(); for await (const line of console) require("fs").writeFileSync(line, ""), process.exit(0)`,
+      `console.log(); for await (const line of console) { require("fs").writeFileSync(line, ""); process.exit(0); }`,
     ],
     env: bunEnv,
     stdio: ["pipe", "pipe", "inherit"],
@@ -2565,40 +2564,40 @@ it("stdin.end() resolves when the child reads everything and exits before the ev
   await proc.stdout.getReader().read();
   proc.stdin.write(marker + "\n");
   proc.stdin.flush();
-  const ended = proc.stdin.end();
+  const endResult = proc.stdin.end();
   for (const deadline = Date.now() + 10_000; !existsSync(marker) && Date.now() < deadline;) Bun.sleepSync(1);
-  // From the marker to the exit, which nothing shows without the event loop.
+  // Gives the child time to exit, which cannot be observed without running the event loop.
   Bun.sleepSync(100);
-  expect(await ended).toBeNumber();
+  expect(await endResult).toBeNumber();
   expect(await proc.exited).toBe(0);
 });
 
-describe.concurrent("the pipes of one child are not kept open by another", () => {
-  const idle = [bunExe(), "-e", "setInterval(() => {}, 1e6)"];
+describe.concurrent("a child's stdio pipes reach EOF", () => {
+  const idleCmd = [bunExe(), "-e", "setInterval(() => {}, 1e6)"];
 
-  it.each(["ignore", "inherit", "pipe"] as const)("started later with stdio %s", async stdio => {
-    await using first = spawn({
+  it.each(["ignore", "inherit", "pipe"] as const)("while a sibling with stdio %s is running", async stdio => {
+    await using proc = spawn({
       cmd: [bunExe(), "-e", "console.log((await Bun.stdin.text()).length)"],
       env: bunEnv,
       stdio: ["pipe", "pipe", "pipe"],
     });
-    await using later = spawn({ cmd: idle, env: bunEnv, stdio: ["ignore", stdio, stdio] });
-    first.stdin.write("12345");
-    await first.stdin.end();
-    expect(await finished(first)).toEqual({ stdout: "5\n", stderr: "", exitCode: 0 });
-    expect(later.exitCode).toBeNull();
+    await using sibling = spawn({ cmd: idleCmd, env: bunEnv, stdio: ["ignore", stdio, stdio] });
+    proc.stdin.write("12345");
+    await proc.stdin.end();
+    expect(await collectOutput(proc)).toEqual({ stdout: "5\n", stderr: "", exitCode: 0 });
+    expect(sibling.exitCode).toBeNull();
   });
 
-  it("when spawns fail in between", async () => {
-    using dir = tempDir("spawn-fail-between", {});
-    await using first = spawn({
+  it("after failed spawns", async () => {
+    using dir = tempDir("spawn-failures", {});
+    await using proc = spawn({
       cmd: [bunExe(), "-e", "console.log((await Bun.stdin.text()).length)"],
       env: bunEnv,
       stdio: ["pipe", "pipe", "pipe"],
     });
     const codes = new Set<string>();
     for (let i = 0; i < 100; i++) {
-      for (const options of [{ cmd: [`${dir}/missing`] }, { cmd: idle, cwd: `${dir}/missing` }]) {
+      for (const options of [{ cmd: [`${dir}/missing`] }, { cmd: idleCmd, cwd: `${dir}/missing` }]) {
         try {
           spawn({ ...options, env: bunEnv, stdio: ["pipe", "pipe", "pipe"] }).kill();
           codes.add("started");
@@ -2608,14 +2607,14 @@ describe.concurrent("the pipes of one child are not kept open by another", () =>
       }
     }
     expect([...codes]).toEqual(["ENOENT"]);
-    first.stdin.write("123");
-    await first.stdin.end();
-    expect(await finished(first)).toEqual({ stdout: "3\n", stderr: "", exitCode: 0 });
+    proc.stdin.write("123");
+    await proc.stdin.end();
+    expect(await collectOutput(proc)).toEqual({ stdout: "3\n", stderr: "", exitCode: 0 });
   });
 });
 
-describe.concurrent.skipIf(!isWindows)("Windows children", () => {
-  const handleCount = `
+describe.concurrent.skipIf(!isWindows)("Windows child processes", () => {
+  const handleCountSource = `
     const k32 = require("bun:ffi").dlopen("kernel32.dll", {
       GetCurrentProcess: { args: [], returns: "ptr" },
       GetProcessHandleCount: { args: ["ptr", "ptr"], returns: "i32" },
@@ -2633,111 +2632,111 @@ describe.concurrent.skipIf(!isWindows)("Windows children", () => {
       env: bunEnv,
       cwd: String(dir),
       stdio: ["ignore", "pipe", "pipe"],
-      // With no stdio inherited this gives it a console of its own, whatever the test runner has.
+      // With no inherited stdio this gives the child its own console, whether or not the test runner has one.
       windowsHide: true,
     });
-    const { stdout, stderr, exitCode } = await finished(proc);
+    const { stdout, stderr, exitCode } = await collectOutput(proc);
     expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
     return JSON.parse(stdout);
   }
 
   it.each([
     ["files", `for (let i = 0; i < N; i++) fs.openSync("main.js", i % 2 ? "r" : "r+")`],
-    ["FileHandles", `for (let i = 0; i < N; i++) keep.push(await fs.promises.open("main.js"))`],
-    ["directories", `for (let i = 0; i < N; i++) keep.push(fs.opendirSync("."), fs.openSync(".", "r"))`],
-    ["FileSinks", `for (let i = 0; i < N; i++) keep.push(Bun.file("out" + i).writer())`],
-    ["watchers", `for (let i = 0; i < N; i++) fs.mkdirSync("d" + i), keep.push(fs.watch("d" + i, () => {}))`],
+    ["FileHandles", `for (let i = 0; i < N; i++) keepAlive.push(await fs.promises.open("main.js"))`],
+    ["directories", `for (let i = 0; i < N; i++) keepAlive.push(fs.opendirSync("."), fs.openSync(".", "r"))`],
+    ["FileSinks", `for (let i = 0; i < N; i++) keepAlive.push(Bun.file("out" + i).writer())`],
+    ["watchers", `for (let i = 0; i < N; i++) { fs.mkdirSync("d" + i); keepAlive.push(fs.watch("d" + i, () => {})); }`],
     [
       "listeners",
-      `for (let i = 0; i < N; i++) keep.push(Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } }))`,
+      `for (let i = 0; i < N; i++) keepAlive.push(Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } }))`,
     ],
-    ["servers", `for (let i = 0; i < N; i++) keep.push(Bun.serve({ port: 0, fetch() {} }))`],
-    ["UDP sockets", `for (let i = 0; i < N; i++) keep.push(await Bun.udpSocket({ hostname: "127.0.0.1" }))`],
-    ["connected and accepted sockets", `await connections({ hostname: "127.0.0.1", port: 0 })`],
-    ["named pipes", `await connections({ unix: "\\\\\\\\.\\\\pipe\\\\" + crypto.randomUUID() })`],
+    ["servers", `for (let i = 0; i < N; i++) keepAlive.push(Bun.serve({ port: 0, fetch() {} }))`],
+    ["UDP sockets", `for (let i = 0; i < N; i++) keepAlive.push(await Bun.udpSocket({ hostname: "127.0.0.1" }))`],
+    ["connected and accepted sockets", `await openConnections({ hostname: "127.0.0.1", port: 0 })`],
+    ["named pipes", `await openConnections({ unix: "\\\\\\\\.\\\\pipe\\\\" + crypto.randomUUID() })`],
     [
       "other children",
       `for (let i = 0; i < N / 4; i++)
-         keep.push(Bun.spawn([process.env.ComSpec, "/d", "/c", "set /p line="], { stdio: ["pipe", "pipe", "pipe", "pipe"] }))`,
+         keepAlive.push(Bun.spawn([process.env.ComSpec, "/d", "/c", "set /p line="], { stdio: ["pipe", "pipe", "pipe", "pipe"] }))`,
     ],
     [
       "Workers",
       `for (let i = 0; i < N / 8; i++) {
          const worker = new Worker("data:text/javascript,setInterval(() => {}, 1e6); postMessage(0)");
          await new Promise(resolve => (worker.onmessage = resolve));
-         keep.push(worker);
+         keepAlive.push(worker);
        }`,
     ],
-  ])("do not inherit the handles of %s", async (_, open) => {
-    const { opened, inherited } = await run({
-      "count.js": handleCount + "console.log(handleCount());",
+  ])("do not inherit the handles of %s", async (_, setup) => {
+    const { openedCount, inheritedCount } = await run({
+      "handle-count.js": handleCountSource + "console.log(handleCount());",
       "main.js": `
-        ${handleCount}
+        ${handleCountSource}
         const fs = require("fs");
-        const N = 64, keep = [];
-        async function connections(address) {
-          let accepted = 0, all = Promise.withResolvers();
-          const server = Bun.listen({ ...address, socket: { data() {}, open() { if (++accepted === N) all.resolve(); } } });
+        const N = 64, keepAlive = [];
+        async function openConnections(address) {
+          let acceptedCount = 0, allAccepted = Promise.withResolvers();
+          const server = Bun.listen({ ...address, socket: { data() {}, open() { if (++acceptedCount === N) allAccepted.resolve(); } } });
           for (let i = 0; i < N; i++)
-            keep.push(await Bun.connect({ ...address, ...(server.port && { port: server.port }), socket: { data() {} } }));
-          await all.promise;
+            keepAlive.push(await Bun.connect({ ...address, ...(server.port && { port: server.port }), socket: { data() {} } }));
+          await allAccepted.promise;
         }
-        const inChild = async () =>
-          Number(await Bun.spawn([process.execPath, "count.js"], { stdio: ["ignore", "pipe", "inherit"] }).stdout.text());
+        const countChildHandles = async () =>
+          Number(await Bun.spawn([process.execPath, "handle-count.js"], { stdio: ["ignore", "pipe", "inherit"] }).stdout.text());
         (async () => {
-          const control = await inChild();
-          const before = handleCount();
-          ${open};
-          const opened = handleCount() - before;
-          console.log(JSON.stringify({ opened, inherited: (await inChild()) - control }));
+          const childBaseline = await countChildHandles();
+          const parentBaseline = handleCount();
+          ${setup};
+          const openedCount = handleCount() - parentBaseline;
+          console.log(JSON.stringify({ openedCount, inheritedCount: (await countChildHandles()) - childBaseline }));
           process.exit(0);
         })();
       `,
     });
-    expect(opened).toBeGreaterThanOrEqual(32);
-    // The count of a starting process varies by a few.
-    expect(inherited).toBeLessThan(16);
+    expect(openedCount).toBeGreaterThanOrEqual(32);
+    // The handle count of a starting process varies by a few.
+    expect(inheritedCount).toBeLessThan(16);
   });
 
   it.each([
-    ["a missing program", `{ cmd: ["./missing.exe"] }`],
+    ["a missing executable", `{ cmd: ["./missing.exe"] }`],
     ["a missing cwd", `{ cmd: [process.execPath], cwd: "./missing" }`],
-    ["a file that is no program", `{ cmd: ["./empty.exe"] }`],
-    ["a descriptor that is not open", `{ cmd: [process.execPath], stdio: ["pipe", "pipe", "pipe", "pipe", 999] }`],
-    ["a command line that is too long", `{ cmd: [process.execPath, Buffer.alloc(40000, "a").toString()] }`],
-  ])("leave no handle behind after %s", async (_, options) => {
-    const { failures, grown } = await run({
+    ["an invalid executable", `{ cmd: ["./empty.exe"] }`],
+    ["an invalid file descriptor", `{ cmd: [process.execPath], stdio: ["pipe", "pipe", "pipe", "pipe", 999] }`],
+    ["an overlong command line", `{ cmd: [process.execPath, Buffer.alloc(40000, "a").toString()] }`],
+  ])("a spawn that fails on %s closes its handles", async (_, options) => {
+    const { failureCount, handleGrowth } = await run({
       "empty.exe": "",
       "main.js": `
-        ${handleCount}
-        let failures = 0;
-        async function round() {
+        ${handleCountSource}
+        let failureCount = 0;
+        async function runRound() {
           for (let i = 0; i < 50; i++) {
-            try { Bun.spawn({ stdio: ["pipe", "pipe", "pipe", "pipe"], ...${options} }); } catch { failures++; }
+            try { Bun.spawn({ stdio: ["pipe", "pipe", "pipe", "pipe"], ...${options} }); } catch { failureCount++; }
           }
           await new Promise(setImmediate);
           return handleCount();
         }
         (async () => {
-          const first = await round();
-          console.log(JSON.stringify({ grown: (await round()) - first, failures }));
+          const baseline = await runRound();
+          console.log(JSON.stringify({ handleGrowth: (await runRound()) - baseline, failureCount }));
         })();
       `,
     });
-    expect(failures).toBe(100);
-    expect(grown).toBeLessThan(10);
+    expect(failureCount).toBe(100);
+    expect(handleGrowth).toBeLessThan(10);
   });
 
-  it("take a command line of 32766 characters and no more", async () => {
-    // x -e 0 <filler>
-    const start = (length: number) =>
+  it("accept a command line of at most 32766 characters", async () => {
+    // The command line is `x -e 0 <filler>`.
+    const spawnWithLength = (length: number) =>
       spawn({ cmd: [bunExe(), "-e", "0", Buffer.alloc(length - 7, "a").toString()], argv0: "x", env: bunEnv });
-    await using fits = start(32766);
-    expect(await fits.exited).toBe(0);
-    expect(() => start(32767)).toThrow(expect.objectContaining({ code: "ENAMETOOLONG" }));
+    await using proc = spawnWithLength(32766);
+    expect(await proc.exited).toBe(0);
+    expect(() => spawnWithLength(32767)).toThrow(expect.objectContaining({ code: "ENAMETOOLONG" }));
   });
 
-  it("take 255 descriptors", async () => {
+  it("accept 255 file descriptors", async () => {
     using dir = tempDir("spawn-many-fds", { "last.txt": "last" });
     const fd = openSync(join(String(dir), "last.txt"), "r");
     try {
@@ -2746,33 +2745,33 @@ describe.concurrent.skipIf(!isWindows)("Windows children", () => {
         env: bunEnv,
         stdio: ["ignore", "pipe", "pipe", ...Array(251).fill("ignore"), fd] as any,
       });
-      expect(await finished(proc as any)).toEqual({ stdout: "last\n", stderr: "", exitCode: 0 });
+      expect(await collectOutput(proc as any)).toEqual({ stdout: "last\n", stderr: "", exitCode: 0 });
     } finally {
       closeSync(fd);
     }
   });
 
   it.each([
-    ["by default", {}, "pipe", { show: 10, console: "parent's" }],
-    ["windowsHide", { windowsHide: true }, "pipe", { show: 0, console: "own" }],
-    ["windowsHide with an inherited descriptor", { windowsHide: true }, "inherit", { show: 0, console: "parent's" }],
-    ["detached", { detached: true }, "pipe", { show: 10, console: "none" }],
-    ["detached and windowsHide", { detached: true, windowsHide: true }, "pipe", { show: 0, console: "none" }],
-  ])("get their window and console: %s", async (_, options, stderr, expected) => {
-    const seen = await run(
+    ["default options", {}, "pipe", { showWindow: 10, console: "inherited" }],
+    ["windowsHide", { windowsHide: true }, "pipe", { showWindow: 0, console: "own" }],
+    ["windowsHide with inherited stderr", { windowsHide: true }, "inherit", { showWindow: 0, console: "inherited" }],
+    ["detached", { detached: true }, "pipe", { showWindow: 10, console: "none" }],
+    ["detached and windowsHide", { detached: true, windowsHide: true }, "pipe", { showWindow: 0, console: "none" }],
+  ])("get the expected show state and console: %s", async (_, options, stderr, expected) => {
+    const result = await run(
       {
         "child.js": `
           const k32 = require("bun:ffi").dlopen("kernel32.dll", {
             GetStartupInfoW: { args: ["ptr"], returns: "void" },
             GetConsoleProcessList: { args: ["ptr", "u32"], returns: "u32" },
           }).symbols;
-          const info = new DataView(new ArrayBuffer(104));
-          k32.GetStartupInfoW(info);
+          const startupInfo = new DataView(new ArrayBuffer(104));
+          k32.GetStartupInfoW(startupInfo);
           const pids = new Uint32Array(64);
-          const attached = pids.subarray(0, k32.GetConsoleProcessList(pids, pids.length));
+          const attachedPids = pids.subarray(0, k32.GetConsoleProcessList(pids, pids.length));
           console.log(JSON.stringify({
-            show: info.getUint16(64, true),
-            console: attached.length === 0 ? "none" : attached.includes(process.ppid) ? "parent's" : "own",
+            showWindow: startupInfo.getUint16(64, true),
+            console: attachedPids.length === 0 ? "none" : attachedPids.includes(process.ppid) ? "inherited" : "own",
           }));
         `,
         "main.js": `
@@ -2783,14 +2782,14 @@ describe.concurrent.skipIf(!isWindows)("Windows children", () => {
       },
       JSON.stringify([options, stderr]),
     );
-    expect(seen).toEqual(expected);
+    expect(result).toEqual(expected);
   });
 
   describe.each([
     ["is killed", "setInterval(() => {}, 1e6)"],
     ["calls process.exit()", "process.stdin.once('data', () => process.exit(0))"],
-    ["runs out of work", "process.stdin.once('data', () => process.stdin.destroy())"],
-  ])("whose parent %s", (how, rest) => {
+    ["exits normally", "process.stdin.once('data', () => process.stdin.destroy())"],
+  ])("when the parent %s", (scenario, tail) => {
     const isAlive = (pid: number) => {
       try {
         return process.kill(pid, 0);
@@ -2798,7 +2797,7 @@ describe.concurrent.skipIf(!isWindows)("Windows children", () => {
         return false;
       }
     };
-    it("end with it, unless detached", async () => {
+    it("are terminated unless detached", async () => {
       await using parent = spawn({
         cmd: [
           bunExe(),
@@ -2812,75 +2811,82 @@ describe.concurrent.skipIf(!isWindows)("Windows children", () => {
              return child.pid;
            });
            console.log(JSON.stringify(pids));
-           ${rest}`,
+           ${tail}`,
         ],
         env: { ...bunEnv, BUN_FEATURE_FLAG_NO_ORPHANS: undefined },
         stdio: ["pipe", "pipe", "inherit"],
       });
       let line = "";
-      for await (const chunk of parent.stdout) if ((line += Buffer.from(chunk)).includes("\n")) break;
-      const [attached, detached] = JSON.parse(line);
+      for await (const chunk of parent.stdout) {
+        line += Buffer.from(chunk);
+        if (line.includes("\n")) break;
+      }
+      const [attachedPid, detachedPid] = JSON.parse(line);
       try {
-        expect([isAlive(attached), isAlive(detached)]).toEqual([true, true]);
-        if (how === "is killed") parent.kill("SIGKILL");
-        else (parent.stdin.write("go"), parent.stdin.flush());
+        expect([isAlive(attachedPid), isAlive(detachedPid)]).toEqual([true, true]);
+        if (scenario === "is killed") {
+          parent.kill("SIGKILL");
+        } else {
+          parent.stdin.write("go");
+          parent.stdin.flush();
+        }
         await parent.exited;
-        for (const deadline = Date.now() + 3000; isAlive(attached) && Date.now() < deadline;) await Bun.sleep(5);
-        expect([isAlive(attached), isAlive(detached)]).toEqual([false, true]);
+        for (const deadline = Date.now() + 3000; isAlive(attachedPid) && Date.now() < deadline;) await Bun.sleep(5);
+        expect([isAlive(attachedPid), isAlive(detachedPid)]).toEqual([false, true]);
       } finally {
-        for (const pid of [attached, detached]) if (isAlive(pid)) process.kill(pid);
+        for (const pid of [attachedPid, detachedPid]) if (isAlive(pid)) process.kill(pid);
       }
     });
   });
 
-  // What a program with the GUI subsystem has when Explorer starts it.
-  it("can be started with inherited stdio by a process that has no standard handles", async () => {
+  // A GUI subsystem program launched from Explorer has no standard handles.
+  it("can inherit stdio from a parent that has no standard handles", async () => {
     const result = await run({
-      "child.js": `console.log("lost"); console.error("lost"); require("fs").writeFileSync("child.txt", "ran");`,
-      "bare.js": `
+      "child.js": `console.log("discarded"); console.error("discarded"); require("fs").writeFileSync("child.txt", "ran");`,
+      "no-stdio.js": `
         const fs = require("fs");
         const options = { stdio: ["inherit", "inherit", "inherit"] };
-        const sync = Bun.spawnSync([process.execPath, "child.js"], options).exitCode;
-        const async = await Bun.spawn([process.execPath, "child.js"], options).exited;
-        const piped = await Bun.spawn([process.execPath, "-p", "1 + 1"], { stdio: ["inherit", "pipe", "inherit"] }).stdout.text();
-        fs.writeFileSync("bare.json", JSON.stringify({ sync, async, piped, child: fs.readFileSync("child.txt", "utf8") }));
+        const syncExitCode = Bun.spawnSync([process.execPath, "child.js"], options).exitCode;
+        const asyncExitCode = await Bun.spawn([process.execPath, "child.js"], options).exited;
+        const pipedStdout = await Bun.spawn([process.execPath, "-p", "1 + 1"], { stdio: ["inherit", "pipe", "inherit"] }).stdout.text();
+        fs.writeFileSync("result.json", JSON.stringify({ syncExitCode, asyncExitCode, pipedStdout, childFile: fs.readFileSync("child.txt", "utf8") }));
       `,
       "main.js": `
         const k32 = require("bun:ffi").dlopen("kernel32.dll", {
           CreateProcessW: { args: ["ptr", "ptr", "ptr", "ptr", "i32", "u32", "ptr", "ptr", "ptr", "ptr"], returns: "i32" },
           WaitForSingleObject: { args: ["u64", "u32"], returns: "u32" },
         }).symbols;
-        const wide = text => Buffer.from(text + "\\0", "utf16le");
-        const startup = new DataView(new ArrayBuffer(104));
-        startup.setUint32(0, 104, true);
-        startup.setUint32(60, 0x100 /* STARTF_USESTDHANDLES, all three NULL */, true);
-        const started = new BigUint64Array(3);
+        const toWide = text => Buffer.from(text + "\\0", "utf16le");
+        const startupInfo = new DataView(new ArrayBuffer(104));
+        startupInfo.setUint32(0, 104, true);
+        startupInfo.setUint32(60, 0x100 /* STARTF_USESTDHANDLES, all three NULL */, true);
+        const processInfo = new BigUint64Array(3);
         const DETACHED_PROCESS = 8;
-        if (!k32.CreateProcessW(wide(process.execPath), wide("bun bare.js"), null, null, 0, DETACHED_PROCESS, null, null, startup, started))
+        if (!k32.CreateProcessW(toWide(process.execPath), toWide("bun no-stdio.js"), null, null, 0, DETACHED_PROCESS, null, null, startupInfo, processInfo))
           throw new Error("CreateProcessW failed");
-        k32.WaitForSingleObject(started[0], 20_000);
-        console.log(require("fs").readFileSync("bare.json", "utf8"));
+        k32.WaitForSingleObject(processInfo[0], 20_000);
+        console.log(require("fs").readFileSync("result.json", "utf8"));
       `,
     });
-    expect(result).toEqual({ sync: 0, async: 0, piped: "2\n", child: "ran" });
+    expect(result).toEqual({ syncExitCode: 0, asyncExitCode: 0, pipedStdout: "2\n", childFile: "ran" });
   });
 });
 
-it.skipIf(!isWindows)("resourceUsage() answers for a process that is running", async () => {
+it.skipIf(!isWindows)("resourceUsage() works while the process is running", async () => {
   await using proc = spawn({ cmd: [bunExe(), "-e", "console.log(); setInterval(() => {}, 1000)"], env: bunEnv });
   await proc.stdout.getReader().read();
   expect(proc.resourceUsage()!.maxRSS).toBeGreaterThan(0);
 });
 
-it.concurrent.skipIf(!isWindows)("much output arrives in chunks of twice what the pipe holds", async () => {
-  const count = () => Uint32Array.from({ length: 1 << 18 }, (_, i) => i);
+it.concurrent.skipIf(!isWindows)("large output is read in 128 KiB chunks", async () => {
+  const createSequence = () => Uint32Array.from({ length: 1 << 18 }, (_, i) => i);
   await using proc = spawn({
-    cmd: [bunExe(), "-e", `require("fs").writeSync(1, (${count})())`],
+    cmd: [bunExe(), "-e", `require("fs").writeSync(1, (${createSequence})())`],
     env: bunEnv,
     stdout: "pipe",
   });
   const chunks = await Array.fromAsync(proc.stdout);
-  expect(Buffer.concat(chunks).equals(new Uint8Array(count().buffer))).toBe(true);
+  expect(Buffer.concat(chunks).equals(new Uint8Array(createSequence().buffer))).toBe(true);
   expect(chunks.map(chunk => chunk.length)).toContain(128 * 1024);
   expect(await proc.exited).toBe(0);
 });

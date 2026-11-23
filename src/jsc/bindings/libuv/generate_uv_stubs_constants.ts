@@ -318,7 +318,7 @@ export const symbols = [
   "uv_tty_get_vterm_state",
   "uv_tty_get_winsize",
   "uv_tty_init",
-  // Defined in wtf-bindings.cpp
+  // Defined in wtf-bindings.cpp and src/io/source/console.rs
   // "uv_tty_reset_mode",
   "uv_tty_set_mode",
   "uv_tty_set_vterm_state",

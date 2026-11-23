@@ -510,13 +510,13 @@ mod errno_name_tests {
 
     #[test]
     #[cfg(windows)]
-    fn uv_codes() {
+    fn uv_code_mapping() {
         for &(code, name) in uv_e::ENTRIES {
-            let again = (!name.starts_with("EAI_")).then_some(code);
-            assert_eq!(uv_to_e(code).and_then(try_e_to_uv), again);
+            let expected = (!name.starts_with("EAI_")).then_some(code);
+            assert_eq!(uv_to_errno(code).and_then(try_errno_to_uv), expected);
         }
-        assert_eq!(uv_to_e(uv::UV_ENOENT), Some(E::ENOENT));
-        assert_eq!(try_e_to_uv(E::ECHILD), None);
+        assert_eq!(uv_to_errno(uv::UV_ENOENT), Some(E::ENOENT));
+        assert_eq!(try_errno_to_uv(E::ECHILD), None);
         assert_eq!(E::init(4058_i64), Some(E::ENOENT));
 
         for (win32, code) in [

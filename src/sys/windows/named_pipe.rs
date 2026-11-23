@@ -1,8 +1,8 @@
-//! On a synchronous end the system runs one call at a time: most of these wait for a read that has no data yet.
+//! Windows serializes calls on a synchronous handle, so most of these functions block behind a pending read.
 
 #![allow(
     clippy::not_unsafe_ptr_arg_deref,
-    reason = "a `HANDLE` is only a number"
+    reason = "a `HANDLE` is an opaque value and is never dereferenced"
 )]
 
 use core::ptr;
@@ -13,8 +13,9 @@ use bun_core::WStr;
 use bun_windows_sys::externs::{
     FILE_ACCESS_INFORMATION, FILE_FLAG_OVERLAPPED, FILE_FS_DEVICE_INFORMATION,
     FILE_MODE_INFORMATION, FILE_PIPE_INFORMATION, FILE_PIPE_LOCAL_INFORMATION,
-    FILE_PIPE_QUEUE_OPERATION, FILE_READ_ATTRIBUTES, FILE_WRITE_ATTRIBUTES, GENERIC_READ,
-    GENERIC_WRITE, OPEN_EXISTING, PIPE_ACCESS_DUPLEX, WAIT_OBJECT_0,
+    FILE_PIPE_QUEUE_OPERATION, FILE_READ_ATTRIBUTES, FILE_READ_DATA, FILE_SYNCHRONOUS_IO_NONALERT,
+    FILE_WRITE_ATTRIBUTES, GENERIC_READ, GENERIC_WRITE, OPEN_EXISTING, PIPE_ACCESS_DUPLEX,
+    WAIT_OBJECT_0,
 };
 
 use super::{
@@ -27,95 +28,97 @@ unsafe extern "system" {
     safe fn GetNamedPipeServerProcessId(Pipe: HANDLE, ServerProcessId: &mut ULONG) -> BOOL;
 }
 
-/// Returns at once. Whether no call was under way a moment ago.
+/// Non-blocking snapshot of whether `handle` has no request in progress.
 pub fn is_idle(handle: HANDLE) -> bool {
     kernel32::WaitForSingleObject(handle, 0) == WAIT_OBJECT_0
 }
 
-static HAS_RIVAL: AtomicBool = AtomicBool::new(false);
+static HAS_CONCURRENT_READER: AtomicBool = AtomicBool::new(false);
 
-/// From now on another process may be reading an end that this one reads.
-pub fn expect_rival() {
-    HAS_RIVAL.store(true, Ordering::Relaxed);
+/// Records that another process may read from a pipe end that this process reads.
+pub fn mark_concurrent_reader() {
+    HAS_CONCURRENT_READER.store(true, Ordering::Relaxed);
 }
 
-/// For an end that the caller is not using. Whether a call is unlikely to have to wait for that of somebody else.
-pub fn is_left_alone(handle: HANDLE) -> bool {
-    if !HAS_RIVAL.load(Ordering::Relaxed) && !is_idle(handle) {
-        expect_rival();
+/// Best-effort check that a call will not block behind a concurrent reader. The caller has no request in progress on `handle`.
+pub fn is_sole_reader(handle: HANDLE) -> bool {
+    if !HAS_CONCURRENT_READER.load(Ordering::Relaxed) && !is_idle(handle) {
+        mark_concurrent_reader();
     }
-    !HAS_RIVAL.load(Ordering::Relaxed)
+    !HAS_CONCURRENT_READER.load(Ordering::Relaxed)
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum Kind {
     Synchronous,
     Overlapped,
-    /// `GetFileType` says `FILE_TYPE_PIPE` for a socket too.
+    /// `GetFileType` also reports `FILE_TYPE_PIPE` for sockets.
     NotAPipe,
 }
 
 pub fn kind(handle: HANDLE) -> Kind {
-    const FILE_SYNCHRONOUS_IO: ULONG = 0x10 | 0x20;
-    match nt::query::<FILE_PIPE_INFORMATION>(handle) {
+    const FILE_SYNCHRONOUS_IO_ALERT: ULONG = 0x10;
+    const SYNCHRONOUS_IO: ULONG = FILE_SYNCHRONOUS_IO_ALERT | FILE_SYNCHRONOUS_IO_NONALERT;
+    match nt::query_file_info::<FILE_PIPE_INFORMATION>(handle) {
         Ok(_) | Err(NTSTATUS::ACCESS_DENIED) => {}
         Err(_) => return Kind::NotAPipe,
     }
-    match nt::query::<FILE_MODE_INFORMATION>(handle) {
-        Ok(info) if info.Mode & FILE_SYNCHRONOUS_IO == 0 => Kind::Overlapped,
+    match nt::query_file_info::<FILE_MODE_INFORMATION>(handle) {
+        Ok(info) if info.Mode & SYNCHRONOUS_IO == 0 => Kind::Overlapped,
         _ => Kind::Synchronous,
     }
 }
 
 pub fn is_duplex(handle: HANDLE) -> bool {
-    const FILE_READ_AND_WRITE_DATA: ULONG = 1 | 2;
-    nt::query::<FILE_ACCESS_INFORMATION>(handle)
-        .is_ok_and(|it| it.AccessFlags & FILE_READ_AND_WRITE_DATA == FILE_READ_AND_WRITE_DATA)
+    const FILE_WRITE_DATA: ULONG = 0x2;
+    const READ_WRITE: ULONG = FILE_READ_DATA | FILE_WRITE_DATA;
+    nt::query_file_info::<FILE_ACCESS_INFORMATION>(handle)
+        .is_ok_and(|info| info.AccessFlags & READ_WRITE == READ_WRITE)
 }
 
-/// A pipe on another machine refuses a longer write, and loses what a longer read takes out beyond that.
-pub(super) const MAX_REMOTE_LEN: usize = 64 * 1024;
+/// A remote pipe rejects longer writes and discards the excess bytes of longer reads.
+pub(super) const MAX_REMOTE_TRANSFER_LEN: usize = 64 * 1024;
 
-/// For one request.
-pub fn max_len(handle: HANDLE) -> usize {
+pub fn max_transfer_len(handle: HANDLE) -> usize {
     const FILE_REMOTE_DEVICE: ULONG = 0x10;
-    match nt::query_volume::<FILE_FS_DEVICE_INFORMATION>(handle) {
-        Ok(device) if device.Characteristics & FILE_REMOTE_DEVICE != 0 => MAX_REMOTE_LEN,
+    match nt::query_volume_info::<FILE_FS_DEVICE_INFORMATION>(handle) {
+        Ok(device) if device.Characteristics & FILE_REMOTE_DEVICE != 0 => MAX_REMOTE_TRANSFER_LEN,
         _ => usize::MAX,
     }
 }
 
-/// How much the pipe holds for this end before a writer has to wait.
+/// Bytes that the pipe buffers for this end before a writer blocks.
 pub fn input_quota(handle: HANDLE) -> Result<usize, NTSTATUS> {
     const FILE_PIPE_SERVER_END: ULONG = 1;
-    let pipe = nt::query::<FILE_PIPE_LOCAL_INFORMATION>(handle)?;
-    Ok(match pipe.NamedPipeEnd {
-        FILE_PIPE_SERVER_END => pipe.InboundQuota,
-        _ => pipe.OutboundQuota,
+    let info = nt::query_file_info::<FILE_PIPE_LOCAL_INFORMATION>(handle)?;
+    Ok(match info.NamedPipeEnd {
+        FILE_PIPE_SERVER_END => info.InboundQuota,
+        _ => info.OutboundQuota,
     } as usize)
 }
 
-/// Undoes `PIPE_NOWAIT`.
+/// Clears `PIPE_NOWAIT`.
 pub fn set_blocking(handle: HANDLE) -> Result<(), NTSTATUS> {
-    let modes = FILE_PIPE_INFORMATION {
-        ReadMode: nt::query::<FILE_PIPE_INFORMATION>(handle).map_or(0, |it| it.ReadMode),
+    let info = FILE_PIPE_INFORMATION {
+        ReadMode: nt::query_file_info::<FILE_PIPE_INFORMATION>(handle)
+            .map_or(0, |current| current.ReadMode),
         CompletionMode: FILE_PIPE_QUEUE_OPERATION,
     };
-    nt::set(handle, modes)
+    nt::set_file_info(handle, info)
 }
 
-/// How many bytes there are, if a read would return at once with data or an empty message.
-pub fn input(handle: HANDLE) -> Result<Option<usize>, NTSTATUS> {
-    let [_state, bytes, messages, _message_len] = nt::peek_pipe(handle)?;
-    Ok((bytes > 0 || messages > 0).then_some(bytes as usize))
+/// `None` if a read would block. An empty message yields `Some(0)`.
+pub fn peek_available(handle: HANDLE) -> Result<Option<usize>, NTSTATUS> {
+    let [_state, available_len, message_count, _message_len] = nt::peek_pipe(handle)?;
+    Ok((available_len > 0 || message_count > 0).then_some(available_len as usize))
 }
 
-/// Appends at most `max_len` bytes to `buffer`, within its capacity. With 0 it waits for data, and leaves it there.
+/// Appends up to `max_len` bytes within the capacity of `buffer`. A zero-length read waits for data without consuming it.
 pub fn read(handle: HANDLE, buffer: &mut Vec<u8>, max_len: usize) -> Result<NTSTATUS, NTSTATUS> {
     read_device(handle, buffer, max_len, None)
 }
 
-/// [`read`] for what is no pipe. If that is overlapped, it refuses a request without an offset.
+/// [`read`] for other devices. An overlapped device rejects a request without an offset.
 pub fn read_device(
     handle: HANDLE,
     buffer: &mut Vec<u8>,
@@ -124,8 +127,8 @@ pub fn read_device(
 ) -> Result<NTSTATUS, NTSTATUS> {
     let spare = buffer.spare_capacity_mut();
     let len = spare.len().min(max_len).min(crate::MAX_COUNT);
-    let (status, read) = sync_io::complete_transfer(handle, |event, io| {
-        // SAFETY: `spare` is writable for `len` bytes, and outlasts the request.
+    let (status, bytes_read) = sync_io::complete_transfer(handle, |event, io| {
+        // SAFETY: `spare` is writable for `len` bytes and outlives the request.
         unsafe {
             ntdll::NtReadFile(
                 handle,
@@ -143,12 +146,12 @@ pub fn read_device(
     if NT_ERROR(status) {
         return Err(status);
     }
-    // SAFETY: the system wrote as many bytes as it reports.
-    unsafe { bun_core::vec::commit_spare(buffer, read.min(len)) };
+    // SAFETY: the kernel initialized the number of bytes it reports.
+    unsafe { bun_core::vec::commit_spare(buffer, bytes_read.min(len)) };
     Ok(status)
 }
 
-/// Returns how much of `bytes` it took.
+/// The write may be short.
 pub fn write(handle: HANDLE, bytes: &[u8]) -> Result<usize, NTSTATUS> {
     let len = bytes.len().min(crate::MAX_COUNT);
     // SAFETY: `bytes` is readable for `len` bytes.
@@ -161,22 +164,22 @@ pub fn write(handle: HANDLE, bytes: &[u8]) -> Result<usize, NTSTATUS> {
     }
 }
 
-/// One more end for a client to connect to, for overlapped I/O. The first fails if there is a pipe of that name.
+/// Creates an overlapped server instance. With `is_first`, fails if a pipe called `name` already exists.
 pub fn create_instance(name: &WStr, is_first: bool) -> Result<OwnedHandle, Win32Error> {
     const FILE_FLAG_FIRST_PIPE_INSTANCE: DWORD = 0x0008_0000;
     const PIPE_TYPE_BYTE: DWORD = 0;
     const PIPE_UNLIMITED_INSTANCES: DWORD = 255;
     const BUFFER_SIZE: DWORD = 64 * 1024;
-    let first = if is_first {
+    let first_instance_flag = if is_first {
         FILE_FLAG_FIRST_PIPE_INSTANCE
     } else {
         0
     };
-    // SAFETY: `name` ends with a NUL. The result is a new handle or `INVALID_HANDLE_VALUE`.
+    // SAFETY: `name` is NUL-terminated; the result is a new handle or `INVALID_HANDLE_VALUE`.
     let handle = unsafe {
         HandleOrInvalid::from_raw_handle(kernel32::CreateNamedPipeW(
             name.as_ptr(),
-            PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED | first,
+            PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED | first_instance_flag,
             PIPE_TYPE_BYTE,
             PIPE_UNLIMITED_INSTANCES,
             BUFFER_SIZE,
@@ -188,7 +191,7 @@ pub fn create_instance(name: &WStr, is_first: bool) -> Result<OwnedHandle, Win32
     OwnedHandle::try_from(handle).map_err(|_| Win32Error::get())
 }
 
-/// For overlapped I/O, in the directions that the pipe allows. `PIPE_BUSY` if every instance has a client.
+/// Opens an overlapped client end: duplex, else read-only, else write-only. `PIPE_BUSY` if every instance has a client.
 pub fn connect(name: &WStr) -> Result<OwnedHandle, Win32Error> {
     const SECURITY_SQOS_PRESENT: DWORD = 0x0010_0000;
     const SECURITY_IDENTIFICATION: DWORD = 0x0001_0000;
@@ -212,22 +215,22 @@ pub fn connect(name: &WStr) -> Result<OwnedHandle, Win32Error> {
     Ok(handle)
 }
 
-/// `FILE_PIPE_WAIT_FOR_BUFFER`. `name` is what follows `\\.\pipe\`.
-pub fn wait_request(name: &[u16], timeout_ms: u32) -> Vec<u8> {
-    let timeout = i64::from(timeout_ms) * -10_000;
-    let has_timeout = [1, 0];
+/// Serializes a `FILE_PIPE_WAIT_FOR_BUFFER`. `name` excludes the `\\.\pipe\` prefix.
+pub fn build_wait_request(name: &[u16], timeout_ms: u32) -> Vec<u8> {
+    let timeout_ticks = i64::from(timeout_ms) * -10_000;
+    let timeout_specified = [1, 0];
     let name = bun_core::slice_as_bytes(name);
-    let len = name.len() as u32;
+    let name_len = name.len() as u32;
     [
-        &timeout.to_le_bytes(),
-        &len.to_le_bytes()[..],
-        &has_timeout,
+        &timeout_ticks.to_le_bytes(),
+        &name_len.to_le_bytes()[..],
+        &timeout_specified,
         name,
     ]
     .concat()
 }
 
-/// The process that opened the other end, or both.
+/// The process that opened the other end, or that opened both ends.
 pub fn peer_process_id(handle: HANDLE) -> Option<u32> {
     let mut id = 0;
     if GetNamedPipeClientProcessId(handle, &mut id) != 0 && id != super::GetCurrentProcessId() {
@@ -241,19 +244,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn each_end_has_its_own_quota() {
+    fn input_quota_depends_on_pipe_end() {
         let name = format!(r"\\.\pipe\bun-quota-{}", std::process::id());
         let name: Vec<u16> = name.encode_utf16().chain([0]).collect();
-        let (to_client, to_server) = (4096, 8192);
-        // SAFETY: `name` ends with a NUL. The result is a new handle or `INVALID_HANDLE_VALUE`.
+        let out_buffer_size = 4096;
+        let in_buffer_size = 8192;
+        // SAFETY: `name` is NUL-terminated; the result is a new handle or `INVALID_HANDLE_VALUE`.
         let server = unsafe {
             HandleOrInvalid::from_raw_handle(kernel32::CreateNamedPipeW(
                 name.as_ptr(),
                 PIPE_ACCESS_DUPLEX,
                 0,
                 1,
-                to_client,
-                to_server,
+                out_buffer_size,
+                in_buffer_size,
                 0,
                 ptr::null_mut(),
             ))

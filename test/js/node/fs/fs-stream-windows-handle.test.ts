@@ -21,7 +21,7 @@ describe.skipIf(!isWindows)("fs streams with windowsHandle", () => {
     return { readHandle: handles[0], writeHandle: handles[1] };
   }
 
-  // The value of a closed handle goes to whatever another thread opens next.
+  // Another thread can reuse a closed handle value, so check that it still refers to a pipe.
   function isOpen(handle: bigint): boolean {
     const FILE_TYPE_PIPE = 3;
     return k32.GetFileType(handle) === FILE_TYPE_PIPE;

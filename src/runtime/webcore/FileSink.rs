@@ -210,7 +210,7 @@ impl FileSink {
     }
 
     pub(crate) fn on_writer_io(&self, event: IoEvent) {
-        // For `on_close`, which comes before `on_error` for a file.
+        // A file writer calls `on_close`, which reads the error, before `on_error`.
         #[cfg(windows)]
         if let Some(err) = event.write_error() {
             self.record_stream_error(streams::StreamError::Error(err.clone()));
@@ -492,13 +492,14 @@ impl FileSink {
         }
     }
 
-    /// For our end of a pipe that `bun_spawn` has made.
-    pub(crate) fn create_with_own_pipe(
+    /// `pipe` is the parent's end of a pipe created by `bun_spawn`.
+    pub(crate) fn create_with_pipe(
         event_loop: EventLoopHandle,
         pipe: sys::File,
     ) -> sys::Result<RefPtr<FileSink>> {
         let this = Self::init(pipe.fd(), event_loop);
-        (this.writer).start_own_pipe(&*this, event_loop.as_event_loop_ctx(), pipe)?;
+        this.writer
+            .start_exclusive_pipe(&*this, event_loop.as_event_loop_ctx(), pipe)?;
         #[cfg(not(windows))]
         this.writer.set_poll_flag(bun_io::FilePollFlag::Socket);
         Ok(this)
@@ -515,15 +516,15 @@ impl FileSink {
         }
     }
 
-    /// Its end is not reported once the file is another one. What reacts to the promise runs after `start()`.
+    /// A restarted writer never reports the in-flight write. Promise reactions run after `start()` returns.
     #[cfg(windows)]
-    fn settle_last_write_to_file(&self) {
+    fn settle_inflight_file_write(&self) {
         if self.pending.get().state == streams::PendingState::Pending
             && !self.writer.is_backed_up()
             && self.writer.is_writing_to_file()
         {
             let mut pending = self.pending.take();
-            if let Err(err) = self.writer.finish_write_to_disk() {
+            if let Err(err) = self.writer.finish_disk_write() {
                 pending.result = streams::Writable::Err(err);
             }
             pending.run();
@@ -628,7 +629,7 @@ impl FileSink {
         let event_loop = self.event_loop_handle.as_event_loop_ctx();
         #[cfg(windows)]
         {
-            self.settle_last_write_to_file();
+            self.settle_inflight_file_write();
             if self.force_sync.get() {
                 self.writer.start_sync(self, file.into())?;
                 self.writer.update_ref(false);
@@ -835,7 +836,7 @@ impl FileSink {
         // bytes it pushed out. It only reaches here when no write is pending.
         #[cfg(windows)]
         if !self.writer.is_backed_up() && self.writer.is_writing_to_file() {
-            return sys::Result::Ok(self.pending_result(flushed).to_js(cx));
+            return sys::Result::Ok(self.to_pending_result(flushed).to_js(cx));
         }
         match self.to_result(rc, flushed) {
             streams::Writable::Err(_) => unreachable!(),
@@ -1297,7 +1298,7 @@ impl FileSink {
                 streams::Writable::Err(err)
             }
             WriteResult::Pending(_) => {
-                // `inflight_write_ref` does it on Windows.
+                // On Windows `inflight_write_ref` keeps the sink alive.
                 #[cfg(not(windows))]
                 self.keep_alive_until_eof();
                 // A Windows write is always async: Pending with an empty
@@ -1307,7 +1308,7 @@ impl FileSink {
                 }
                 #[cfg(windows)]
                 if let streams::SourceHandle::FileReader(_) = self.source.get()
-                    && self.writer.can_queue(accepted as usize)
+                    && self.writer.try_take_io_budget(accepted as usize)
                 {
                     return streams::Writable::Owned(accepted);
                 }
@@ -1318,12 +1319,12 @@ impl FileSink {
                 ) {
                     return streams::Writable::Backpressure(accepted);
                 }
-                self.pending_result(accepted)
+                self.to_pending_result(accepted)
             }
         }
     }
 
-    fn pending_result(&self, accepted: u64) -> streams::Writable {
+    fn to_pending_result(&self, accepted: u64) -> streams::Writable {
         self.pending.with_mut(|p| {
             p.consumed += accepted;
             p.result = streams::Writable::Owned(p.consumed);

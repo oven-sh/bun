@@ -673,12 +673,12 @@ pub(crate) struct Handle {
     pub cluster_seq: Option<i32>,
 }
 
-/// A socket on its way to the peer.
+/// A socket duplicated for the peer process with `WSADuplicateSocketW`.
 #[cfg(windows)]
 struct ExportedSocket {
     fd: Fd,
     peer_pid: u32,
-    info: Box<ipc_frame::SocketInfo>,
+    info: Box<[u8; ipc_frame::SOCKET_INFO_LEN]>,
     is_connected: bool,
 }
 
@@ -687,7 +687,7 @@ impl ExportedSocket {
     fn new(fd: Fd, peer_pid: u32) -> Option<Self> {
         let mut info = Box::new([0; ipc_frame::SOCKET_INFO_LEN]);
         let socket = fd.native() as bun_uws::LIBUS_SOCKET_DESCRIPTOR;
-        // SAFETY: `info` has the size of what it writes.
+        // SAFETY: `info` has room for the `WSAPROTOCOL_INFOW` that the call writes.
         let rc = unsafe {
             bun_uws::socket_transfer::bsd_socket_export(socket, peer_pid, info.as_mut_ptr().cast())
         };
@@ -699,8 +699,8 @@ impl ExportedSocket {
         })
     }
 
-    fn for_frame(&self) -> ipc_frame::Socket<'_> {
-        ipc_frame::Socket {
+    fn as_socket_transfer(&self) -> ipc_frame::SocketTransfer<'_> {
+        ipc_frame::SocketTransfer {
             info: &self.info,
             is_connected: self.is_connected,
         }
@@ -708,10 +708,10 @@ impl ExportedSocket {
 }
 
 #[cfg(windows)]
-pub(crate) struct Received(Fd);
+pub(crate) struct ImportedSocket(Fd);
 
 #[cfg(windows)]
-impl Received {
+impl ImportedSocket {
     fn fd(&self) -> Fd {
         self.0
     }
@@ -722,30 +722,28 @@ impl Received {
 }
 
 #[cfg(windows)]
-impl Drop for Received {
+impl Drop for ImportedSocket {
     fn drop(&mut self) {
         let socket = self.0.native() as bun_uws::LIBUS_SOCKET_DESCRIPTOR;
         bun_uws::socket_transfer::bsd_close_socket(socket);
     }
 }
 
-#[cfg(not(windows))]
-type Received = CloseOnDrop;
-
 #[cfg(windows)]
-fn import_socket(info: &ipc_frame::SocketInfo) -> Option<Received> {
-    let (mut info, mut err) = (*info, 0);
-    // SAFETY: `info` has the size of what it reads.
+fn import_socket(info: &[u8; ipc_frame::SOCKET_INFO_LEN]) -> Option<ImportedSocket> {
+    let mut info = *info;
+    let mut err = 0;
+    // SAFETY: `info` has the size of the `WSAPROTOCOL_INFOW` that the call reads.
     let socket = unsafe {
         bun_uws::socket_transfer::bsd_socket_import(info.as_mut_ptr().cast(), &raw mut err)
     };
     (socket != bun_uws::LIBUS_SOCKET_DESCRIPTOR::MAX)
-        .then(|| Received(Fd::from_system(socket as *mut c_void)))
+        .then(|| ImportedSocket(Fd::from_system(socket as *mut c_void)))
 }
 
 impl Handle {
     #[cfg(windows)]
-    pub(crate) fn export(
+    pub(crate) fn init_export(
         fd: Fd,
         peer_pid: u32,
         js: JSValue,
@@ -915,16 +913,16 @@ fn close_sent_handle_fn(global: &JSGlobalObject) -> JSValue {
 struct WindowsState {
     reader: BufferedReader,
     writer: StreamingWriter,
-    frames: Cell<ipc_frame::Decoder>,
-    /// Without the head of its frame.
-    write_len: Cell<Option<usize>>,
-    /// To the handle in a write whose end has not been reported yet.
-    early_reply: Cell<Option<AckNack>>,
+    frame_decoder: Cell<ipc_frame::Decoder>,
+    /// Message bytes in the in-flight write, excluding the frame header.
+    inflight_write_len: Cell<Option<usize>>,
+    /// An ACK or NACK that arrived before the write of its handle reported completion.
+    deferred_ack_nack: Cell<Option<AckNack>>,
     try_close_after_write: Cell<bool>,
-    /// Since the microtasks last ran out.
-    messages_written: Cell<u32>,
+    /// Messages sent since microtasks last drained.
+    burst_message_count: Cell<u32>,
     auto_flusher: AutoFlusher,
-    /// In a child.
+    /// The parent process. Only set in a child.
     parent: core::cell::OnceCell<(u32, std::os::windows::io::OwnedHandle)>,
 }
 
@@ -969,7 +967,10 @@ pub(crate) struct SendQueue {
     pub(crate) mode: Mode,
     pub internal_msg_queue: JsCell<InternalMsgHolder>,
     incoming: JsCell<IncomingBuffer>,
-    pub(crate) incoming_fd: Cell<Option<Received>>,
+    #[cfg(not(windows))]
+    pub(crate) incoming_fd: Cell<Option<CloseOnDrop>>,
+    #[cfg(windows)]
+    pub(crate) incoming_fd: Cell<Option<ImportedSocket>>,
 
     pub socket: JsCell<SocketUnion>,
     pub(crate) owner: Cell<Option<SendQueueOwner>>,
@@ -1109,11 +1110,11 @@ impl SendQueue {
             windows: WindowsState {
                 reader: BufferedReader::init(),
                 writer: StreamingWriter::default(),
-                frames: Cell::default(),
-                write_len: Cell::new(None),
+                frame_decoder: Cell::default(),
+                inflight_write_len: Cell::new(None),
                 try_close_after_write: Cell::new(false),
-                early_reply: Cell::new(None),
-                messages_written: Cell::new(0),
+                deferred_ack_nack: Cell::new(None),
+                burst_message_count: Cell::new(0),
                 auto_flusher: AutoFlusher::default(),
                 parent: core::cell::OnceCell::new(),
             },
@@ -1158,10 +1159,10 @@ impl SendQueue {
         {
             let _ = reason;
             if from != CloseFrom::Deinit {
-                self.end_burst();
+                self.flush_deferred_write();
             }
             self.windows.reader.pause();
-            if self.windows.write_len.get().is_some() && from != CloseFrom::Deinit {
+            if self.windows.inflight_write_len.get().is_some() && from != CloseFrom::Deinit {
                 log!("SendQueue#closeSocket -> mark ready for close");
                 // currently writing; wait for the write to complete
                 self.windows.try_close_after_write.set(true);
@@ -1190,7 +1191,7 @@ impl SendQueue {
                 let vm = VirtualMachine::get();
                 AutoFlusher::unregister_deferred_microtask_with_type_unchecked(self, vm);
             }
-            self.windows.write_len.set(None);
+            self.windows.inflight_write_len.set(None);
             self.windows.reader.deinit();
             self.windows.writer.close_without_reporting(self);
         }
@@ -1234,7 +1235,7 @@ impl SendQueue {
             }
             #[cfg(windows)]
             if self.read_before_close.get()
-                && let Some(event) = self.windows.reader.take_available()
+                && let Some(event) = self.windows.reader.try_read()
             {
                 self.on_io(event);
             }
@@ -1375,9 +1376,13 @@ impl SendQueue {
         let Some(has_handle) = waiting else {
             #[cfg(windows)]
             if self.write_in_progress.get()
-                && (self.queue.get().first()).is_some_and(|first| first.handle.is_some())
+                && self
+                    .queue
+                    .get()
+                    .first()
+                    .is_some_and(|first| first.handle.is_some())
             {
-                return self.windows.early_reply.set(Some(ack_nack));
+                return self.windows.deferred_ack_nack.set(Some(ack_nack));
             }
             log!("onAckNack: ack received but not waiting for ack");
             return;
@@ -1401,9 +1406,10 @@ impl SendQueue {
                         if let Some(Handle { socket, .. }) = &mut item.handle
                             && !self.pending_close.get()
                             && !self.windows.try_close_after_write.get()
-                            && let Some(again) = ExportedSocket::new(socket.fd, socket.peer_pid)
+                            && let Some(reexported) =
+                                ExportedSocket::new(socket.fd, socket.peer_pid)
                         {
-                            *socket = again;
+                            *socket = reexported;
                         }
                         item
                     })
@@ -1534,7 +1540,7 @@ impl SendQueue {
             }
             #[cfg(windows)]
             Next::Send
-                if reason == ContinueSendReason::NewMessageAppended && self.is_in_burst() =>
+                if reason == ContinueSendReason::NewMessageAppended && self.try_defer_write() =>
             {
                 self.update_ref(global);
             }
@@ -1609,8 +1615,8 @@ impl SendQueue {
         match done {
             Done::AwaitAck => {
                 #[cfg(windows)]
-                if let Some(reply) = self.windows.early_reply.take() {
-                    return self.on_ack_nack(&global_this, reply);
+                if let Some(ack_nack) = self.windows.deferred_ack_nack.take() {
+                    return self.on_ack_nack(&global_this, ack_nack);
                 }
                 self.continue_send(&global_this, ContinueSendReason::OnWritable);
             }
@@ -1720,33 +1726,33 @@ impl SendQueue {
         }
     }
 
-    /// The rest of a burst of messages goes out in large writes. The last one follows when the microtasks run out.
+    /// Coalesces a burst of messages into large writes. Returns `true` if the write is left to `flush_deferred_write`.
     #[cfg(windows)]
-    fn is_in_burst(&self) -> bool {
-        const WRITTEN_SINGLY: u32 = 3;
-        const LARGE_WRITE: usize = 64 * 1024;
+    fn try_defer_write(&self) -> bool {
+        const MAX_UNCOALESCED_MESSAGES: u32 = 3;
+        const MAX_COALESCED_LEN: usize = 64 * 1024;
         let vm = VirtualMachine::get();
         if vm.is_inside_deferred_task_queue.get() || vm.is_shutting_down() || !self.socket_is_open()
         {
             return false;
         }
         AutoFlusher::register_deferred_microtask_with_type(self, vm);
-        self.windows.messages_written.update(|count| count + 1);
-        self.windows.messages_written.get() > WRITTEN_SINGLY
-            && matches!(&self.queue.get()[..], [only]
-                if only.handle.is_none() && only.data.list.len() < LARGE_WRITE)
+        self.windows.burst_message_count.update(|count| count + 1);
+        self.windows.burst_message_count.get() > MAX_UNCOALESCED_MESSAGES
+            && matches!(&self.queue.get()[..], [message]
+                if message.handle.is_none() && message.data.list.len() < MAX_COALESCED_LEN)
     }
 
     #[cfg(windows)]
-    fn end_burst(&self) {
-        if self.windows.messages_written.take() > 0 && self.socket_is_open() {
+    fn flush_deferred_write(&self) {
+        if self.windows.burst_message_count.take() > 0 && self.socket_is_open() {
             self.continue_send(&self.get_global_this(), ContinueSendReason::OnWritable);
         }
     }
 
     #[cfg(windows)]
     pub(crate) fn parent_pid(&self) -> u32 {
-        self.windows.parent.get().map_or(0, |parent| parent.0)
+        self.windows.parent.get().map_or(0, |&(pid, _)| pid)
     }
 
     /// starts a write request. on posix, this always calls _onWriteComplete immediately. on windows, it may
@@ -1764,18 +1770,18 @@ impl SendQueue {
             log!("SendQueue#write len {}", data.len());
             let data = &data[..data.len().min(MAX_WRITE_LEN)];
             let handle = first.handle.as_ref().filter(|_| first.data.cursor == 0);
-            let socket = handle.map(|handle| handle.socket.for_frame());
-            let mut head = [0; ipc_frame::MAX_HEAD_LEN];
-            let head_len = ipc_frame::write_head(&mut head, data.len() as u32, socket);
-            let head = &head[..head_len];
-            self.windows.write_len.set(Some(data.len()));
+            let socket = handle.map(|handle| handle.socket.as_socket_transfer());
+            let mut header = [0; ipc_frame::MAX_HEADER_LEN];
+            let header_len = ipc_frame::write_header(&mut header, data.len() as u32, socket);
+            let header = &header[..header_len];
+            self.windows.inflight_write_len.set(Some(data.len()));
             let writer = &self.windows.writer;
             if VirtualMachine::get().is_inside_deferred_task_queue.get() {
-                // It is too late for the callbacks to run in this turn.
-                writer.enqueue(head);
+                // The nextTick queue has already drained, so complete through `on_io`, which drains it again.
+                writer.enqueue(header);
                 writer.enqueue(data);
                 let _ = writer.flush(self);
-            } else if writer.write_now(self, &[head, data]) {
+            } else if writer.try_write(self, &[header, data]) {
                 self.windows_on_write_complete();
             }
         }
@@ -1803,7 +1809,7 @@ impl SendQueue {
     #[cfg(windows)]
     fn windows_on_write_complete(&self) {
         log!("SendQueue#_windowsOnWriteComplete");
-        let Some(len) = self.windows.write_len.take() else {
+        let Some(len) = self.windows.inflight_write_len.take() else {
             return;
         };
         self.on_write_complete(len as i32);
@@ -1826,12 +1832,16 @@ impl SendQueue {
         let result = reader.read_chunks(vm.loop_ctx(), Some(event), |chunk, _| {
             let mut rest = &*chunk;
             while !reader.has_flag(ReaderFlags::IS_PAUSED) {
-                match (self.windows.frames).with_taken(|frames| frames.next(&mut rest)) {
-                    Ok(Some(ipc_frame::Piece::Data(data))) => {
+                match self
+                    .windows
+                    .frame_decoder
+                    .with_taken(|decoder| decoder.decode(&mut rest))
+                {
+                    Ok(Some(ipc_frame::Item::Data(data))) => {
                         let _scope = vm.enter_event_loop_scope();
                         on_data2(self, data);
                     }
-                    Ok(Some(ipc_frame::Piece::Socket(info))) => {
+                    Ok(Some(ipc_frame::Item::Socket(info))) => {
                         self.incoming_fd.set(None);
                         self.incoming_fd.set(import_socket(&info));
                     }
@@ -1858,16 +1868,18 @@ impl SendQueue {
     pub(crate) fn windows_configure_server(&self, pipe: Pipe) -> bun_sys::Result<()> {
         log!("configureServer");
         pipe.update_ref(false);
-        pipe.take_long_writes_whole();
+        pipe.enable_eager_drain();
         let owner = Owner::new(PollTag::IpcChannel, self.root_ptr().cast());
-        // SAFETY: both are in the heap allocation that `owner` points to.
+        // SAFETY: `owner` points to the heap allocation that holds the reader and the writer.
         unsafe {
             self.windows.reader.set_owner(owner);
             self.windows.writer.set_owner(owner);
         }
         self.windows.writer.set_pipe(pipe.clone());
         self.socket.set(SocketUnion::Open(()));
-        (self.windows.reader.start_with_pipe(pipe))
+        self.windows
+            .reader
+            .start_with_pipe(pipe)
             .inspect_err(|_| self.close_socket(CloseReason::Failure, CloseFrom::User))
     }
 
@@ -1876,15 +1888,17 @@ impl SendQueue {
         use bun_sys::windows as w;
         log!("configureClient");
         if !w::named_pipe::is_duplex(pipe_fd.native()) {
-            let (errno, tag) = (bun_sys::E::EINVAL, bun_sys::Tag::open);
-            return Err(bun_sys::Error::from_code(errno, tag));
+            return Err(bun_sys::Error::from_code(
+                bun_sys::E::EINVAL,
+                bun_sys::Tag::open,
+            ));
         }
         let pipe = Pipe::open_duplex(VirtualMachine::get().uws_loop().port(), pipe_fd)?;
-        pipe.read_ahead();
-        if let Some(id) = pipe.peer_process_id().or_else(w::parent_process_id)
-            && let Some(process) = w::open_older_process(id)
+        pipe.enable_read_ahead();
+        if let Some(pid) = pipe.peer_process_id().or_else(w::parent_process_id)
+            && let Some(process) = w::open_parent_process(pid)
         {
-            let _ = self.windows.parent.set((id, process));
+            let _ = self.windows.parent.set((pid, process));
         }
         self.windows_configure_server(pipe)
     }
@@ -1897,10 +1911,10 @@ impl HasAutoFlusher for SendQueue {
     }
 
     unsafe fn on_auto_flush(this: *mut Self) -> bool {
-        // SAFETY: fn contract. `socket_closed` unregisters it.
+        // SAFETY: fn contract. `socket_closed_notify` unregisters `this` before it is freed.
         let this = unsafe { RefPtr::init_ref((*this).root_ptr()) };
         this.windows.auto_flusher.registered.set(false);
-        this.end_burst();
+        this.flush_deferred_write();
         false
     }
 }
@@ -1912,7 +1926,7 @@ impl WriteHandler for SendQueue {
     }
 
     fn on_error(&self, _: bun_sys::Error) {
-        self.windows.write_len.set(None);
+        self.windows.inflight_write_len.set(None);
         self.close_after_exit();
     }
 

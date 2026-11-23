@@ -193,13 +193,13 @@ pub trait JobContext: Sized + 'static {
     /// Whether the job is queued under `ContextId::NONE`: [`then`](Self::then) also runs after the scheduling context stops or `bun test --isolate` moves on.
     const OUTLIVES_SCRIPT: bool = false;
 
-    /// Whether [`run`](Self::run) is also called for a job that the pool reaches during the VM's final wait.
-    const RUNS_IN_FINAL_WAIT: bool = false;
+    /// Whether [`run`](Self::run) is still called when the pool reaches the job during the VM's final wait.
+    const SHOULD_RUN_DURING_TEARDOWN: bool = false;
 
-    /// Whether it is for the `FilePool` of Windows.
+    /// Whether the job runs on the `FilePool` on Windows.
     const IS_FILE_IO: bool = false;
 
-    /// Pool thread (or that of `Unstarted::run_here`), VM not yet in its final wait when the pool reached the job
+    /// Pool thread (or the caller of `UnscheduledJob::run_inline`), VM not yet in its final wait when the pool reached the job
     /// (a job reached later is handed back unrun, as Node's environment
     /// cleanup `uv_cancel`s queued work). Return `done` to complete now; keep
     /// it (e.g. across async I/O that finishes on another thread) and call
@@ -306,7 +306,7 @@ impl JobList {
     }
 }
 
-/// One pool-then-complete job. Heap-allocated by [`Job::schedule`]; freed on
+/// One pool-then-complete job. Heap-allocated by [`Job::create`]; freed on
 /// the JS thread by its completion or by the teardown's release.
 #[repr(C)]
 pub struct Job<C: JobContext> {
@@ -342,12 +342,12 @@ impl<C: JobContext> Job<C> {
     /// JS thread: build the job, keep the loop alive for it, hand it to the pool.
     #[track_caller]
     pub fn schedule(cx: &JsThread<'_>, off: C::OffThread, js: C::Js) {
-        Self::create(cx, off, js).start();
+        Self::create(cx, off, js).schedule();
     }
 
-    /// As [`schedule`](Self::schedule), but the caller says when the pool gets the job.
+    /// Like [`schedule`](Self::schedule), but the caller hands the job to the pool.
     #[track_caller]
-    pub fn create(cx: &JsThread<'_>, off: C::OffThread, js: C::Js) -> Unstarted {
+    pub fn create(cx: &JsThread<'_>, off: C::OffThread, js: C::Js) -> UnscheduledJob {
         let job = bun_core::heap::into_raw(Box::new(Self {
             header: JobHeader {
                 // SAFETY: (this and the entry below) the erased dispatchers are
@@ -378,12 +378,12 @@ impl<C: JobContext> Job<C> {
             off,
             js,
         }));
-        // SAFETY: live until completed/released on this thread, which is after it was started.
+        // SAFETY: live until completed/released on this thread, which requires scheduling or running it first.
         unsafe {
             if C::CANCELLABLE {
                 cx.vm().jobs.with_mut(|j| j.push(&raw mut (*job).header));
             }
-            Unstarted {
+            UnscheduledJob {
                 task: &raw mut (*job).task,
                 #[cfg(windows)]
                 pool: C::IS_FILE_IO.then(FilePool::get),
@@ -393,7 +393,7 @@ impl<C: JobContext> Job<C> {
 
     fn run_on_pool(task: *mut WorkPoolTask) {
         // SAFETY: only reachable through the `task.callback` slot wired in
-        // `schedule`; the pool calls back with exactly that field of a live job.
+        // `create`; the pool or `run_inline` passes exactly that field of a live job.
         let this: *mut Self = unsafe { bun_core::from_field_ptr!(Self, task, task) };
         // SAFETY: live job, exclusively the pool's for this callback; the
         // ticket leaves the job here, for good.
@@ -402,7 +402,7 @@ impl<C: JobContext> Job<C> {
             job: NonNull::new(this).expect("job"),
             ticket,
         };
-        if !C::RUNS_IN_FINAL_WAIT && done.ticket().cancelled() {
+        if !C::SHOULD_RUN_DURING_TEARDOWN && done.ticket().cancelled() {
             return done.finish();
         }
         if let Some(done) = C::run(off, done) {
@@ -435,19 +435,19 @@ impl<C: JobContext> Job<C> {
     }
 }
 
-/// A job that the pool does not have yet. Its VM waits for it like for any other.
-#[must_use = "a job must be started"]
-pub struct Unstarted {
+/// A job that has not been handed to a pool. It already holds its [`Ticket`], so teardown waits for it.
+#[must_use = "a job must be scheduled"]
+pub struct UnscheduledJob {
     task: *mut WorkPoolTask,
-    /// In place of the [`WorkPool`].
+    /// `None` selects the [`WorkPool`].
     #[cfg(windows)]
     pool: Option<&'static FifoPool>,
 }
-// SAFETY: a task can be scheduled by any thread, and run on any thread.
-unsafe impl Send for Unstarted {}
-impl Unstarted {
+// SAFETY: a pool task can be scheduled from, and run on, any thread.
+unsafe impl Send for UnscheduledJob {}
+impl UnscheduledJob {
     #[inline]
-    pub fn start(self) {
+    pub fn schedule(self) {
         #[cfg(windows)]
         if let Some(pool) = self.pool {
             return pool.schedule(self.task);
@@ -455,24 +455,23 @@ impl Unstarted {
         WorkPool::schedule(self.task);
     }
 
-    /// See [`FifoPool::schedule_after_this_task`].
+    /// See [`FifoPool::schedule_continuation`].
     #[cfg(windows)]
-    pub fn start_after_this_task(self) {
+    pub fn schedule_as_continuation(self) {
         match self.pool {
-            Some(pool) => pool.schedule_after_this_task(self.task),
-            None => self.start(),
+            Some(pool) => pool.schedule_continuation(self.task),
+            None => self.schedule(),
         }
     }
 
-    /// On this thread, in place of one of the pool.
     #[cfg(windows)]
-    pub fn run_here(self) {
-        // SAFETY: what the pool does with the task of a job.
+    pub fn run_inline(self) {
+        // SAFETY: `task` belongs to a live job, and consuming `self` makes this its only run.
         unsafe { ((*self.task).callback)(self.task) };
     }
 
     #[cfg(windows)]
-    pub fn for_device_if(mut self, can_block: bool) -> Self {
+    pub fn use_device_pool(mut self, can_block: bool) -> Self {
         if can_block {
             self.pool = Some(&DEVICE_POOL);
         }

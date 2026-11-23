@@ -1,7 +1,7 @@
 import { spawn } from "bun";
 import { describe, expect, it, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isMacOS, isWindows, tempDir, withoutAggressiveGC } from "harness";
-import { spawn as spawnChild } from "node:child_process";
+import { spawn as nodeSpawn } from "node:child_process";
 import { once } from "node:events";
 import { connect } from "node:net";
 import { join } from "node:path";
@@ -566,9 +566,9 @@ test("confirm (no) windows newline", async () => {
   expect(await proc.stderr.text()).toBe("No\n");
 });
 
-test.skipIf(!isWindows)("prompt goes on waiting when its read is cancelled", async () => {
+test.skipIf(!isWindows)("prompt retries the read when it is cancelled", async () => {
   using dir = tempDir("prompt-cancelled", {
-    "pass-on.js": `process.exitCode = await Bun.spawn([process.execPath, "main.js"], { stdio: [3, "inherit", "inherit"] }).exited;`,
+    "forward-fd.js": `process.exitCode = await Bun.spawn([process.execPath, "main.js"], { stdio: [3, "inherit", "inherit"] }).exited;`,
     "main.js": `
       new Worker("./cancel.js");
       console.log(JSON.stringify(prompt("Q?")));
@@ -581,8 +581,8 @@ test.skipIf(!isWindows)("prompt goes on waiting when its read is cancelled", asy
       while (!CancelIoEx(GetStdHandle(-10), null)) Bun.sleepSync(1);
       require("fs").writeSync(2, "cancelled");`,
   });
-  // fd 3 is overlapped. On a synchronous handle CancelIoEx() waits for the read that follows.
-  const child = spawnChild(bunExe(), ["pass-on.js"], {
+  // fd 3 is overlapped. On a synchronous handle CancelIoEx() would block on the retried read.
+  const child = nodeSpawn(bunExe(), ["forward-fd.js"], {
     cwd: String(dir),
     stdio: ["ignore", "pipe", "pipe", "pipe"],
     env: bunEnv,

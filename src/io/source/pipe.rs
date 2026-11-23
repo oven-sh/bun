@@ -3,52 +3,52 @@ use std::os::windows::io::OwnedHandle;
 use std::rc::{Rc, Weak};
 use std::sync::Arc;
 
-use bun_iocp::blocking::{self, Cancel};
-use bun_iocp::{AsyncFile, Completion, Handle, Port, Remote, Request};
+use bun_iocp::blocking::{self, CancelToken};
+use bun_iocp::{Completer, Completion, Handle, OverlappedFile, Port, Request};
 use bun_ptr::{CellExt as _, OptionCellExt as _};
 use bun_sys::windows::named_pipe::{self, Kind};
 use bun_sys::windows::{self as w, NT_ERROR, NTSTATUS, Win32Error, Win32ErrorExt as _};
 use bun_sys::{self as sys, E, Fd, Tag};
 
 use super::Payload;
-use super::endpoint::{BUSY_SIZE, Endpoint, HasEndpoint, room_for};
+use super::state::{HasSourceState, LARGE_READ_SIZE, SourceState, compute_buffer_size};
 use crate::pipe_reader::ReadEvent;
 use crate::pipe_writer::WriteEvent;
 
-/// More than a pipe holds.
-const MAX_AVAILABLE: usize = 256 * 1024;
+/// Exceeds a pipe's quota, so that `try_read` can drain a full pipe.
+const MAX_DRAIN_LEN: usize = 256 * 1024;
 
-/// What a pipe holds, and a write that waits for room. Half as many reads run into the writer half as often.
-const STREAM_SIZE: usize = 2 * BUSY_SIZE;
+/// A full pipe plus a write blocked on it. Fewer reads mean less contention with the writer.
+const STREAM_READ_SIZE: usize = 2 * LARGE_READ_SIZE;
 
-/// For one event.
-const MAX_READS: usize = 32;
+const MAX_READS_PER_EVENT: usize = 32;
 
-/// A read that finds less right after another one is on the heels of the writer, and only gets in its way.
-const LITTLE: usize = 8 * 1024;
+/// A follow-up read that returns less has caught up with the writer, so more reads would only contend with it.
+const SHORT_READ_THRESHOLD: usize = 8 * 1024;
 
 #[derive(Copy, Clone, PartialEq, Eq)]
-enum Gather {
-    Everything,
-    UntilLittleComes,
+enum FillMode {
+    Drain,
+    StopOnShortRead,
 }
 
-/// An end of a pipe, for a reader, a writer or both. It is closed with the last clone.
+/// One end of a pipe, used by a reader, a writer or both. Closed when the last clone is dropped.
 #[derive(Clone)]
 pub struct Pipe(Rc<Inner>);
 
-enum Io {
-    Overlapped(Rc<AsyncFile>),
+enum IoMode {
+    Overlapped(Rc<OverlappedFile>),
     Synchronous,
     NotAPipe,
 }
 
-struct InFlight {
+struct InflightRequest {
     request: Request,
-    thread: Option<CancelOnDrop>,
+    /// Set if the I/O runs on a blocking thread.
+    cancel_guard: Option<CancelOnDrop>,
 }
 
-struct CancelOnDrop(Cancel);
+struct CancelOnDrop(CancelToken);
 
 impl Drop for CancelOnDrop {
     fn drop(&mut self) {
@@ -56,93 +56,111 @@ impl Drop for CancelOnDrop {
     }
 }
 
-impl From<Request> for InFlight {
+impl From<Request> for InflightRequest {
     fn from(request: Request) -> Self {
-        let thread = None;
-        InFlight { request, thread }
+        InflightRequest {
+            request,
+            cancel_guard: None,
+        }
     }
 }
 
-impl InFlight {
+impl InflightRequest {
     fn cancel(&self) {
-        match &self.thread {
-            Some(thread) => thread.0.cancel(),
+        match &self.cancel_guard {
+            Some(cancel_guard) => cancel_guard.0.cancel(),
             None => self.request.cancel(),
         }
     }
 }
 
 struct Inner {
-    endpoint: Endpoint,
+    state: SourceState,
     handle: Arc<Handle>,
-    /// Of one request.
-    max_len: usize,
-    /// Finding out can take as long as a read.
-    io: OnceCell<Io>,
-    /// Others may read it too, so data is only taken out at a moment when the reader is known to want it.
+    max_transfer_len: usize,
+    /// Set lazily: on a synchronous handle the query blocks behind a pending read.
+    io_mode: OnceCell<IoMode>,
+    /// Others may read this end too, so data is consumed only when the reader is known to want it.
     is_input_shared: Cell<bool>,
-    was_full: Cell<bool>,
-    takes_long_writes_whole: Cell<bool>,
+    is_last_read_large: Cell<bool>,
+    should_drain_eagerly: Cell<bool>,
     quota: OnceCell<usize>,
-    read: Cell<Option<InFlight>>,
-    write: Cell<Option<InFlight>>,
+    inflight_read: Cell<Option<InflightRequest>>,
+    inflight_write: Cell<Option<InflightRequest>>,
 }
 
-/// When a read of shared input takes data out.
+/// When a read of shared input consumes data.
 #[derive(Copy, Clone, PartialEq, Eq)]
-enum Take {
-    Now,
-    OnceThereIsSome,
+enum ConsumeMode {
+    Immediate,
+    /// After a zero-byte read has reported data.
+    WaitReadable,
 }
 
 impl Pipe {
-    fn new(port: &Rc<Port>, handle: Arc<Handle>, max_len: usize, is_input_shared: bool) -> Pipe {
+    fn new(
+        port: &Rc<Port>,
+        handle: Arc<Handle>,
+        max_transfer_len: usize,
+        is_input_shared: bool,
+    ) -> Pipe {
         Pipe(Rc::new(Inner {
-            endpoint: Endpoint::new(port),
+            state: SourceState::new(port),
             handle,
-            max_len,
-            io: OnceCell::new(),
+            max_transfer_len,
+            io_mode: OnceCell::new(),
             is_input_shared: Cell::new(is_input_shared),
-            was_full: Cell::new(false),
-            takes_long_writes_whole: Cell::new(false),
+            is_last_read_large: Cell::new(false),
+            should_drain_eagerly: Cell::new(false),
             quota: OnceCell::new(),
-            read: Cell::new(None),
-            write: Cell::new(None),
+            inflight_read: Cell::new(None),
+            inflight_write: Cell::new(None),
         }))
     }
 
-    /// For an end that this process has opened for overlapped I/O, and keeps to itself.
-    pub fn from_exclusive(port: &Rc<Port>, end: impl Into<sys::File>) -> Pipe {
+    /// For an end that this process opened for overlapped I/O and shares with no other process.
+    pub fn new_exclusive(port: &Rc<Port>, end: impl Into<sys::File>) -> Pipe {
         let handle = Handle::new(end.into().into_raw());
-        Pipe::exclusive(Rc::new(AsyncFile::exclusive(port, handle)), usize::MAX)
+        Pipe::from_exclusive_file(
+            Rc::new(OverlappedFile::new_exclusive(port, handle)),
+            usize::MAX,
+        )
     }
 
-    /// The same for a client, whose name may have led to another machine.
-    pub(super) fn connected(port: &Rc<Port>, end: OwnedHandle) -> Pipe {
+    /// Like `new_exclusive`, for a client end, whose server may be on another machine.
+    pub(super) fn new_client(port: &Rc<Port>, end: OwnedHandle) -> Pipe {
         let handle = Handle::from_owned(end);
-        let max_len = named_pipe::max_len(handle.raw());
-        let pipe = Pipe::exclusive(Rc::new(AsyncFile::exclusive(port, handle)), max_len);
-        pipe.0.find_quota();
+        let max_transfer_len = named_pipe::max_transfer_len(handle.raw());
+        let pipe = Pipe::from_exclusive_file(
+            Rc::new(OverlappedFile::new_exclusive(port, handle)),
+            max_transfer_len,
+        );
+        pipe.0.init_quota();
         pipe
     }
 
-    pub(super) fn exclusive(file: Rc<AsyncFile>, max_len: usize) -> Pipe {
-        let pipe = Pipe::new(file.port(), Arc::clone(file.handle()), max_len, false);
-        file.limit_writes(max_len);
-        pipe.0.io.get_or_init(|| Io::Overlapped(file));
+    pub(super) fn from_exclusive_file(file: Rc<OverlappedFile>, max_transfer_len: usize) -> Pipe {
+        let pipe = Pipe::new(
+            file.port(),
+            Arc::clone(file.handle()),
+            max_transfer_len,
+            false,
+        );
+        file.set_max_write_len(max_transfer_len);
+        pipe.0.io_mode.get_or_init(|| IoMode::Overlapped(file));
         pipe
     }
 
-    /// For an end of unknown origin, which comes back if it turns out to be something else.
+    /// For an end of unknown origin, which is returned if it is not a pipe.
     pub(super) fn open(port: &Rc<Port>, end: sys::File) -> Result<Pipe, sys::File> {
         let handle = end.fd().native();
         match named_pipe::is_idle(handle).then(|| named_pipe::kind(handle)) {
             Some(Kind::NotAPipe) => Err(end),
-            kind => Ok(Pipe::foreign(port, end.into_raw(), kind)),
+            kind => Ok(Pipe::new_shared(port, end.into_raw(), kind)),
         }
     }
 
-    /// For an end of unknown origin whose first write has to start at once. It owns `fd` on `Ok`, unless that is stdio.
+    /// For an end of unknown origin whose first write has to start immediately. On `Ok` it owns `fd`, unless that is stdio.
     pub fn open_duplex(port: &Rc<Port>, fd: Fd) -> sys::Result<Pipe> {
         let handle = fd.native();
         let kind = match w::GetFileType(handle) {
@@ -152,129 +170,144 @@ impl Pipe {
         if kind == Kind::NotAPipe {
             return Err(sys::Error::from_code(E::ENOTSOCK, Tag::open));
         }
-        let owned = match fd.stdio_tag() {
+        let owned_fd = match fd.stdio_tag() {
             Some(_) => sys::dup(fd)?,
             None => fd,
         };
-        Ok(Pipe::foreign(port, owned, Some(kind)))
+        Ok(Pipe::new_shared(port, owned_fd, Some(kind)))
     }
 
-    fn foreign(port: &Rc<Port>, fd: Fd, kind: Option<Kind>) -> Pipe {
-        let max_len = named_pipe::max_len(fd.native());
-        let pipe = Pipe::new(port, Handle::new(fd), max_len, true);
+    fn new_shared(port: &Rc<Port>, fd: Fd, kind: Option<Kind>) -> Pipe {
+        let max_transfer_len = named_pipe::max_transfer_len(fd.native());
+        let pipe = Pipe::new(port, Handle::new(fd), max_transfer_len, true);
         if let Some(kind) = kind {
-            pipe.0.set_kind(kind);
+            pipe.0.init_io_mode(kind);
         }
         pipe
     }
 
-    /// For an end that nobody else reads.
-    pub fn read_ahead(&self) {
+    /// For an end with no other reader.
+    pub fn enable_read_ahead(&self) {
         self.0.is_input_shared.set(false);
     }
 
-    /// What has not been read of a write is lost when the writer exits.
-    pub fn take_long_writes_whole(&self) {
-        self.0.takes_long_writes_whole.set(true);
+    /// The unread part of a pending write is lost when the writer exits.
+    pub fn enable_eager_drain(&self) {
+        self.0.should_drain_eagerly.set(true);
     }
 
     pub fn peer_process_id(&self) -> Option<u32> {
         named_pipe::peer_process_id(self.0.handle.raw())
     }
 
-    /// Whether a read keeps the loop running. A write always does.
+    /// Sets whether a read keeps the loop alive. A write always does.
     pub fn update_ref(&self, value: bool) {
-        self.0.endpoint.update_ref(value);
+        self.0.state.update_ref(value);
     }
 
-    pub(super) fn endpoint(&self) -> &Endpoint {
-        &self.0.endpoint
+    pub(super) fn state(&self) -> &SourceState {
+        &self.0.state
     }
 
     pub(super) fn read(&self, max_len: usize) {
-        (self.0.endpoint).set_wanted(Some(max_len.min(self.0.max_len)));
-        self.0.continue_reading(Take::OnceThereIsSome);
+        self.0
+            .state
+            .set_read_limit(Some(max_len.min(self.0.max_transfer_len)));
+        self.0.maybe_start_read(ConsumeMode::WaitReadable);
     }
 
-    pub(super) fn read_on(&self, max_len: usize) {
-        (self.0.endpoint).set_wanted(Some(max_len.min(self.0.max_len)));
-        self.0.continue_reading(Take::Now);
+    pub(super) fn continue_read(&self, max_len: usize) {
+        self.0
+            .state
+            .set_read_limit(Some(max_len.min(self.0.max_transfer_len)));
+        self.0.maybe_start_read(ConsumeMode::Immediate);
     }
 
     pub(super) fn pause(&self) {
-        self.0.endpoint.set_wanted(None);
+        self.0.state.set_read_limit(None);
         if self.0.is_input_shared.get() {
             self.0.cancel_read();
         }
     }
 
-    pub(super) fn take_available(&self) -> Option<ReadEvent> {
+    pub(super) fn try_read(&self) -> Option<ReadEvent> {
         let this = &self.0;
-        if this.is_input_shared.get() || !matches!(this.io.get(), Some(Io::Overlapped(_))) {
+        if this.is_input_shared.get() || !matches!(this.io_mode.get(), Some(IoMode::Overlapped(_)))
+        {
             return None;
         }
-        let mut data = match this.read.take().map(|read| read.request.finish_now()) {
+        let mut data = match this
+            .inflight_read
+            .take()
+            .map(|inflight| inflight.request.cancel_and_wait())
+        {
             Some(Ok(completion)) => completion.buffer,
-            // Either a report that is made here or once more, or a read that does not end.
+            // `Err` is a deferred callback, whose event is returned below or recurs on the next read, or a cancel that timed out.
             Some(Err(_)) | None => Vec::new(),
         };
-        if !this.endpoint.is_holding() {
-            this.size_next_read(&data);
+        if !this.state.has_buffered_event() {
+            this.update_read_size(&data);
             if data.is_empty() {
-                this.endpoint.recycle(core::mem::take(&mut data));
+                this.state.reuse_buffer(core::mem::take(&mut data));
             }
-            let enough = data.len() + MAX_AVAILABLE;
-            this.add_what_followed(&mut data, enough, Gather::Everything);
+            let target_len = data.len() + MAX_DRAIN_LEN;
+            this.fill_buffer(&mut data, target_len, FillMode::Drain);
             if data.is_empty() {
-                this.continue_reading(Take::OnceThereIsSome);
+                this.maybe_start_read(ConsumeMode::WaitReadable);
                 return None;
             }
-            this.endpoint.hold(ReadEvent::Data(data));
+            this.state.buffer_event(ReadEvent::Data(data));
         }
-        this.endpoint.take_held()
+        this.state.take_buffered_event()
     }
 
     pub(super) fn stop_reading(&self) {
-        self.0.endpoint.set_wanted(None);
-        self.0.read.take();
+        self.0.state.set_read_limit(None);
+        self.0.inflight_read.take();
     }
 
     pub(super) fn write(&self, payload: Payload) -> sys::Result<()> {
-        debug_assert!(!self.0.write.is_some());
+        debug_assert!(self.0.inflight_write.is_none());
         self.0.start_write(payload, 0)
     }
 
-    pub(super) fn write_now(&self, buffer: Vec<u8>) -> sys::Result<Option<Vec<u8>>> {
+    pub(super) fn try_write(&self, buffer: Vec<u8>) -> sys::Result<Option<Vec<u8>>> {
         let this = &self.0;
-        let Some(Io::Overlapped(file)) = this.io.get() else {
+        let Some(IoMode::Overlapped(file)) = this.io_mode.get() else {
             return self.write(Payload::Owned(buffer)).map(|()| None);
         };
-        match file.write_now(buffer, this.on_wrote_owned(0)) {
-            Ok(request) => this.started_write(request.into()),
-            Err(ended) if NT_ERROR(ended.status) => return Err(write_error(ended.status)),
-            Err(ended) if ended.transferred >= ended.buffer.len() => return Ok(Some(ended.buffer)),
-            Err(ended) => this.start_write(Payload::Owned(ended.buffer), ended.transferred)?,
+        match file.try_write(buffer, this.make_owned_write_callback(0)) {
+            Ok(request) => this.set_inflight_write(request.into()),
+            Err(completion) if NT_ERROR(completion.status) => {
+                return Err(map_write_error(completion.status));
+            }
+            Err(completion) if completion.transferred >= completion.buffer.len() => {
+                return Ok(Some(completion.buffer));
+            }
+            Err(completion) => {
+                this.start_write(Payload::Owned(completion.buffer), completion.transferred)?
+            }
         }
         Ok(None)
     }
 
     pub(super) fn stop_writing(&self) {
-        self.0.write.take();
-        self.0.endpoint.set_writing(false);
-        self.0.continue_reading(Take::OnceThereIsSome);
+        self.0.inflight_write.take();
+        self.0.state.set_writing(false);
+        self.0.maybe_start_read(ConsumeMode::WaitReadable);
     }
 }
 
-fn read_error(status: NTSTATUS) -> ReadEvent {
+fn map_read_error(status: NTSTATUS) -> ReadEvent {
     ReadEvent::Err(match status {
         NTSTATUS::PIPE_BROKEN => return ReadEvent::Eof,
         NTSTATUS::ACCESS_DENIED => sys::Error::from_code(E::ENOTCONN, Tag::recv),
         NTSTATUS::RETRY => sys::Error::from_code(E::EAGAIN, Tag::recv),
-        status => sys::Error::new(Win32Error::from_ntstatus(status).to_node_e(), Tag::recv),
+        status => sys::Error::new(Win32Error::from_ntstatus(status).to_node_errno(), Tag::recv),
     })
 }
 
-fn write_error(status: NTSTATUS) -> sys::Error {
+fn map_write_error(status: NTSTATUS) -> sys::Error {
     match status {
         NTSTATUS::ACCESS_DENIED => sys::Error::from_code(E::EPIPE, Tag::write),
         NTSTATUS::RETRY => sys::Error::from_code(E::EAGAIN, Tag::write),
@@ -282,110 +315,119 @@ fn write_error(status: NTSTATUS) -> sys::Error {
     }
 }
 
-impl HasEndpoint for Inner {
-    fn endpoint(&self) -> &Endpoint {
-        &self.endpoint
+impl HasSourceState for Inner {
+    fn state(&self) -> &SourceState {
+        &self.state
     }
 }
 
 impl Inner {
-    fn set_kind(&self, kind: Kind) {
-        self.io.get_or_init(|| match kind {
+    fn init_io_mode(&self, kind: Kind) {
+        self.io_mode.get_or_init(|| match kind {
             Kind::Overlapped => {
-                let file = AsyncFile::shared(&self.endpoint.port, Arc::clone(&self.handle));
-                file.limit_writes(self.max_len);
-                self.find_quota();
-                Io::Overlapped(Rc::new(file))
+                let file = OverlappedFile::new_shared(&self.state.port, Arc::clone(&self.handle));
+                file.set_max_write_len(self.max_transfer_len);
+                self.init_quota();
+                IoMode::Overlapped(Rc::new(file))
             }
-            Kind::Synchronous => Io::Synchronous,
-            Kind::NotAPipe => Io::NotAPipe,
+            Kind::Synchronous => IoMode::Synchronous,
+            Kind::NotAPipe => IoMode::NotAPipe,
         });
     }
 
-    /// For a pipe that was made elsewhere. Many hold 4 KiB, or nothing.
-    fn find_quota(&self) {
-        if self.max_len == usize::MAX {
+    /// For a pipe created elsewhere, whose quota is often 4 KiB or zero.
+    fn init_quota(&self) {
+        const MIN_QUOTA: usize = 4096;
+        if self.max_transfer_len == usize::MAX {
             self.quota.get_or_init(|| {
                 let quota = named_pipe::input_quota(self.handle.raw());
-                quota.map_or(BUSY_SIZE, |quota| quota.clamp(4096, BUSY_SIZE))
+                quota.map_or(LARGE_READ_SIZE, |quota| {
+                    quota.clamp(MIN_QUOTA, LARGE_READ_SIZE)
+                })
             });
         }
     }
 
-    /// Whether the writer had run out of room.
-    fn is_full(&self, len: usize) -> bool {
-        len >= self.quota.get().copied().unwrap_or(BUSY_SIZE)
+    /// Whether `len` bytes fill the pipe, which blocks the writer.
+    fn is_quota_reached(&self, len: usize) -> bool {
+        len >= self.quota.get().copied().unwrap_or(LARGE_READ_SIZE)
     }
 
     // ── reading ──────────────────────────────────────────────────────────
 
-    /// The callback of the request in `read`.
-    fn on_read<T>(
+    fn make_read_callback<T>(
         self: &Rc<Self>,
         f: impl FnOnce(Rc<Self>, T) + 'static,
     ) -> impl FnOnce(T) + 'static {
         let this = Rc::downgrade(self);
         move |result| {
             if let Some(this) = Weak::upgrade(&this) {
-                this.read.take();
+                this.inflight_read.take();
                 f(this, result);
             }
         }
     }
 
-    fn later(self: &Rc<Self>, f: impl FnOnce(Rc<Self>) + 'static) -> impl FnOnce() + 'static {
-        let done = self.on_read(|this, ()| f(this));
-        move || done(())
+    fn make_deferred_read_callback(
+        self: &Rc<Self>,
+        f: impl FnOnce(Rc<Self>) + 'static,
+    ) -> impl FnOnce() + 'static {
+        let callback = self.make_read_callback(|this, ()| f(this));
+        move || callback(())
     }
 
     fn cancel_read(&self) {
-        self.read
-            .with_taken(|read| read.as_ref().map(InFlight::cancel));
+        self.inflight_read
+            .with_taken(|inflight| inflight.as_ref().map(InflightRequest::cancel));
     }
 
-    fn continue_reading(self: &Rc<Self>, take: Take) {
-        let Some(max_len) = self.endpoint.wanted() else {
+    fn maybe_start_read(self: &Rc<Self>, mode: ConsumeMode) {
+        let Some(max_len) = self.state.read_limit() else {
             return;
         };
-        if self.read.is_some() {
+        if self.inflight_read.is_some() {
             return;
         }
-        if self.endpoint.is_holding() {
-            let report = self.later(Inner::report_read);
-            return self.read.set(Some(
-                Request::defer_input(&self.endpoint.port, report).into(),
+        if self.state.has_buffered_event() {
+            let callback = self.make_deferred_read_callback(Inner::report_read);
+            return self.inflight_read.set(Some(
+                Request::defer_read_completion(&self.state.port, callback).into(),
             ));
         }
         let handle = self.handle.raw();
-        match self.io.get() {
-            Some(Io::Overlapped(file)) if self.is_input_shared.get() => {
-                let done = self.on_read(Inner::on_readable);
-                self.started_read(file.read(Vec::new(), 0, done));
+        match self.io_mode.get() {
+            Some(IoMode::Overlapped(file)) if self.is_input_shared.get() => {
+                let callback = self.make_read_callback(Inner::on_readable);
+                self.set_inflight_read(file.read(Vec::new(), 0, callback));
             }
-            Some(Io::Overlapped(file)) => self.started_read(self.read_overlapped(file, max_len)),
-            Some(Io::NotAPipe) => {
+            Some(IoMode::Overlapped(file)) => {
+                self.set_inflight_read(self.read_overlapped(file, max_len))
+            }
+            Some(IoMode::NotAPipe) => {
                 let err = sys::Error::from_code(E::ENOTSOCK, Tag::open);
-                self.endpoint.hold(ReadEvent::Err(err));
-                self.continue_reading(take);
+                self.state.buffer_event(ReadEvent::Err(err));
+                self.maybe_start_read(mode);
             }
-            // It would wait for the write, which starts it when it has ended.
-            Some(Io::Synchronous) | None if self.write.is_some() => {}
-            Some(Io::Synchronous) if take == Take::Now && named_pipe::is_left_alone(handle) => {
-                self.find_quota();
-                match named_pipe::input(handle) {
-                    Ok(Some(available)) => self.read_here(available, max_len),
-                    _ => self.read_on_thread(max_len, Take::OnceThereIsSome),
+            // A synchronous handle serializes I/O, so the read starts when the write in flight ends.
+            Some(IoMode::Synchronous) | None if self.inflight_write.is_some() => {}
+            Some(IoMode::Synchronous)
+                if mode == ConsumeMode::Immediate && named_pipe::is_sole_reader(handle) =>
+            {
+                self.init_quota();
+                match named_pipe::peek_available(handle) {
+                    Ok(Some(available)) => self.read_inline(available, max_len),
+                    _ => self.spawn_blocking_read(max_len, ConsumeMode::WaitReadable),
                 }
             }
-            Some(Io::Synchronous) | None => self.read_on_thread(max_len, take),
+            Some(IoMode::Synchronous) | None => self.spawn_blocking_read(max_len, mode),
         }
     }
 
-    fn read_here(self: &Rc<Self>, available: usize, max_len: usize) {
-        let mut buffer = self.endpoint.buffer_for(available, max_len);
-        let status = named_pipe::read(self.handle.raw(), &mut buffer, max_len);
-        self.started_read(Err(Completion {
-            status: status.unwrap_or_else(|status| status),
+    fn read_inline(self: &Rc<Self>, available: usize, max_len: usize) {
+        let mut buffer = self.state.acquire_buffer_with_hint(available, max_len);
+        let result = named_pipe::read(self.handle.raw(), &mut buffer, max_len);
+        self.set_inflight_read(Err(Completion {
+            status: result.unwrap_or_else(|status| status),
             transferred: buffer.len(),
             buffer,
         }));
@@ -393,279 +435,338 @@ impl Inner {
 
     fn read_overlapped(
         self: &Rc<Self>,
-        file: &AsyncFile,
+        file: &OverlappedFile,
         max_len: usize,
     ) -> Result<Request, Completion> {
-        let expected = if self.was_full.get() { STREAM_SIZE } else { 0 };
-        let max_len = max_len.min(expected.max(BUSY_SIZE));
-        let done = self.on_read(Inner::on_data);
-        file.read(self.endpoint.buffer_for(expected, max_len), max_len, done)
+        let size_hint = if self.is_last_read_large.get() {
+            STREAM_READ_SIZE
+        } else {
+            0
+        };
+        let max_len = max_len.min(size_hint.max(LARGE_READ_SIZE));
+        let callback = self.make_read_callback(Inner::on_read_complete);
+        file.read(
+            self.state.acquire_buffer_with_hint(size_hint, max_len),
+            max_len,
+            callback,
+        )
     }
 
-    fn started_read(self: &Rc<Self>, started: Result<Request, Completion>) {
-        let request = started.unwrap_or_else(|refused| {
-            let has_failed = NT_ERROR(refused.status);
-            let done = self.later(|this| this.on_data(refused));
-            match has_failed {
-                true => Request::defer(&self.endpoint.port, done).after_input(),
-                false => Request::defer_input(&self.endpoint.port, done),
+    fn set_inflight_read(self: &Rc<Self>, result: Result<Request, Completion>) {
+        let request = result.unwrap_or_else(|completion| {
+            let has_failed = NT_ERROR(completion.status);
+            let callback =
+                self.make_deferred_read_callback(|this| this.on_read_complete(completion));
+            if has_failed {
+                Request::defer(&self.state.port, callback).mark_hangup()
+            } else {
+                Request::defer_read_completion(&self.state.port, callback)
             }
         });
-        self.read.set(Some(request.into()));
+        self.inflight_read.set(Some(request.into()));
     }
 
     fn on_readable(self: Rc<Self>, completion: Completion) {
-        match (self.endpoint.wanted(), self.io.get()) {
-            _ if NT_ERROR(completion.status) => self.on_data(completion),
-            (Some(max_len), Some(Io::Overlapped(file))) => {
-                match (self.read_overlapped(file, max_len)).map(Request::take_immediate) {
-                    Ok(Ok(ended)) | Err(ended) => self.on_data(ended),
-                    Ok(Err(pending)) => self.started_read(Ok(pending)),
+        if NT_ERROR(completion.status) {
+            return self.on_read_complete(completion);
+        }
+        if let Some(max_len) = self.state.read_limit()
+            && let Some(IoMode::Overlapped(file)) = self.io_mode.get()
+        {
+            match self
+                .read_overlapped(file, max_len)
+                .map(Request::take_sync_completion)
+            {
+                Ok(Ok(read_completion)) | Err(read_completion) => {
+                    self.on_read_complete(read_completion)
                 }
+                Ok(Err(request)) => self.set_inflight_read(Ok(request)),
             }
-            _ => {}
         }
     }
 
-    /// A read that was waiting ends with the first write, which tends to have company. This leaves the next read waiting.
-    fn add_what_followed(self: &Rc<Self>, data: &mut Vec<u8>, enough: usize, gather: Gather) {
-        let (Some(wanted), Some(Io::Overlapped(file)), false) = (
-            self.endpoint.wanted(),
-            self.io.get(),
-            self.is_input_shared.get(),
-        ) else {
+    /// A pending read completes on the first write, so this appends the data of later writes. May leave the next read in flight.
+    fn fill_buffer(self: &Rc<Self>, buffer: &mut Vec<u8>, target_len: usize, mode: FillMode) {
+        let Some(max_len) = self.state.read_limit() else {
             return;
         };
-        let (mut reads, mut last_len) = (0, LITTLE);
-        while data.len() < wanted {
-            let started = self.read_overlapped(file, wanted - data.len());
-            reads += 1;
-            if last_len < LITTLE && gather == Gather::UntilLittleComes {
-                return self.started_read(started.inspect(Request::postpone));
+        let Some(IoMode::Overlapped(file)) = self.io_mode.get() else {
+            return;
+        };
+        if self.is_input_shared.get() {
+            return;
+        }
+        let mut read_count = 0;
+        let mut last_read_len = SHORT_READ_THRESHOLD;
+        while buffer.len() < max_len {
+            let result = self.read_overlapped(file, max_len - buffer.len());
+            read_count += 1;
+            if last_read_len < SHORT_READ_THRESHOLD && mode == FillMode::StopOnShortRead {
+                return self.set_inflight_read(result.inspect(Request::defer_to_next_iteration));
             }
-            if data.len() >= enough || reads == MAX_READS {
-                return self.started_read(started);
+            if buffer.len() >= target_len || read_count == MAX_READS_PER_EVENT {
+                return self.set_inflight_read(result);
             }
-            match started.map(Request::take_immediate) {
-                Ok(Ok(more)) if more.buffer.is_empty() => return,
-                Ok(Ok(more)) => {
-                    self.size_next_read(&more.buffer);
-                    data.extend_from_slice(&more.buffer);
-                    last_len = more.buffer.len();
-                    if self.is_full(data.len()) {
-                        self.endpoint.port.expect_more();
+            match result.map(Request::take_sync_completion) {
+                Ok(Ok(completion)) if completion.buffer.is_empty() => return,
+                Ok(Ok(completion)) => {
+                    self.update_read_size(&completion.buffer);
+                    buffer.extend_from_slice(&completion.buffer);
+                    last_read_len = completion.buffer.len();
+                    if self.is_quota_reached(buffer.len()) {
+                        self.state.port.expect_more_data();
                     }
-                    self.endpoint.recycle(more.buffer);
+                    self.state.reuse_buffer(completion.buffer);
                 }
-                Ok(Err(pending)) => return self.started_read(Ok(pending)),
-                Err(refused) => return self.started_read(Err(refused)),
+                Ok(Err(request)) => return self.set_inflight_read(Ok(request)),
+                Err(completion) => return self.set_inflight_read(Err(completion)),
             }
         }
     }
 
-    fn read_rest_of_long_write(self: &Rc<Self>, in_hand: usize) -> bool {
-        if self.takes_long_writes_whole.get()
-            && let (Some(wanted), Some(Io::Overlapped(file))) =
-                (self.endpoint.wanted(), self.io.get())
-            && let Ok(Some(available)) = named_pipe::input(self.handle.raw())
-            && let len @ STREAM_SIZE.. = available.min(wanted.saturating_sub(in_hand))
+    fn try_start_bulk_read(self: &Rc<Self>, buffered_len: usize) -> bool {
+        if self.should_drain_eagerly.get()
+            && let Some(max_len) = self.state.read_limit()
+            && let Some(IoMode::Overlapped(file)) = self.io_mode.get()
+            && let Ok(Some(available)) = named_pipe::peek_available(self.handle.raw())
         {
-            self.started_read(file.read_much(len, self.on_read(Inner::on_data)));
-            return true;
+            let len = available.min(max_len.saturating_sub(buffered_len));
+            if len >= STREAM_READ_SIZE {
+                let callback = self.make_read_callback(Inner::on_read_complete);
+                self.set_inflight_read(file.read_large(len, callback));
+                return true;
+            }
         }
         false
     }
 
-    /// `true` if more is to be expected.
-    fn size_next_read(&self, read: &Vec<u8>) -> bool {
-        self.was_full.set(read.len() >= BUSY_SIZE);
-        let is_much = !read.is_empty() && read.len() >= read.capacity().min(BUSY_SIZE);
-        if is_much {
-            self.endpoint.expect_much();
+    /// Returns whether the read filled its buffer or reached `LARGE_READ_SIZE`, in which case more data is likely.
+    fn update_read_size(&self, buffer: &Vec<u8>) -> bool {
+        self.is_last_read_large.set(buffer.len() >= LARGE_READ_SIZE);
+        let is_full_read =
+            !buffer.is_empty() && buffer.len() >= buffer.capacity().min(LARGE_READ_SIZE);
+        if is_full_read {
+            self.state.use_large_buffer();
         }
-        is_much
+        is_full_read
     }
 
-    fn on_data(self: Rc<Self>, completion: Completion) {
-        let (status, mut buffer) = (completion.status, completion.buffer);
-        let is_much = self.size_next_read(&buffer);
+    fn on_read_complete(self: Rc<Self>, completion: Completion) {
+        let status = completion.status;
+        let mut buffer = completion.buffer;
+        let is_full_read = self.update_read_size(&buffer);
         if !buffer.is_empty() {
-            if is_much || self.is_full(buffer.len()) {
-                self.endpoint.port.expect_more();
+            if is_full_read || self.is_quota_reached(buffer.len()) {
+                self.state.port.expect_more_data();
             } else {
-                self.endpoint.port.did_receive();
+                self.state.port.note_receive();
             }
-            if !(is_much && self.read_rest_of_long_write(buffer.len())) {
-                let gather =
-                    match self.takes_long_writes_whole.get() || self.endpoint.port.is_slow() {
-                        true => Gather::Everything,
-                        false => Gather::UntilLittleComes,
-                    };
-                self.add_what_followed(&mut buffer, BUSY_SIZE, gather);
+            if !(is_full_read && self.try_start_bulk_read(buffer.len())) {
+                let mode = if self.should_drain_eagerly.get() || self.state.port.is_iteration_slow()
+                {
+                    FillMode::Drain
+                } else {
+                    FillMode::StopOnShortRead
+                };
+                self.fill_buffer(&mut buffer, LARGE_READ_SIZE, mode);
             }
-            self.endpoint.hold(ReadEvent::Data(buffer));
+            self.state.buffer_event(ReadEvent::Data(buffer));
             return self.report_read();
         }
         match status {
             NTSTATUS::CANCELLED => {}
             NTSTATUS::PIPE_EMPTY if named_pipe::set_blocking(self.handle.raw()).is_ok() => {}
             status if NT_ERROR(status) => {
-                self.endpoint.hold(read_error(status));
+                self.state.buffer_event(map_read_error(status));
                 return self.report_read();
             }
             _ => {}
         }
-        self.endpoint.recycle(buffer);
-        self.continue_reading(Take::OnceThereIsSome);
+        self.state.reuse_buffer(buffer);
+        self.maybe_start_read(ConsumeMode::WaitReadable);
     }
 
-    fn read_on_thread(self: &Rc<Self>, max_len: usize, take: Take) {
-        let done = self.on_read(|this, (kind, read): (Kind, ThreadRead)| {
-            this.set_kind(kind);
+    fn spawn_blocking_read(self: &Rc<Self>, max_len: usize, mode: ConsumeMode) {
+        let callback = self.make_read_callback(|this, (kind, read): (Kind, BlockingRead)| {
+            this.init_io_mode(kind);
             match read {
-                ThreadRead::Ended(completion) => this.on_data(completion),
-                ThreadRead::Readable(buffer) => {
-                    this.endpoint.recycle(buffer);
-                    this.continue_reading(Take::Now);
+                BlockingRead::Completed(completion) => this.on_read_complete(completion),
+                BlockingRead::Readable(buffer) => {
+                    this.state.reuse_buffer(buffer);
+                    this.maybe_start_read(ConsumeMode::Immediate);
                 }
             }
         });
-        let (request, remote) = Request::remote(&self.endpoint.port, done);
-        let (handle, cancel) = (Arc::clone(&self.handle), Cancel::default());
-        let (buffer, thread) = (self.endpoint.buffer(max_len), cancel.clone());
-        let is_kind_known = self.io.get().is_some();
-        let take = self.is_input_shared.get().then_some(take);
+        let (request, completer) = Request::with_completer(&self.state.port, callback);
+        let handle = Arc::clone(&self.handle);
+        let worker_token = CancelToken::default();
+        let buffer = self.state.acquire_buffer(max_len);
+        let cancel_token = worker_token.clone();
+        let is_kind_known = self.io_mode.get().is_some();
+        let shared_mode = self.is_input_shared.get().then_some(mode);
         blocking::spawn(move || {
-            let kind = kind_on_thread(&handle, is_kind_known);
+            let kind = resolve_kind(&handle, is_kind_known);
             let read = match kind {
-                Kind::Synchronous => {
-                    read_synchronous(&handle, buffer, max_len, take, &cancel, &remote)
-                }
-                Kind::Overlapped | Kind::NotAPipe => ThreadRead::Readable(buffer),
+                Kind::Synchronous => read_synchronous(
+                    &handle,
+                    buffer,
+                    max_len,
+                    shared_mode,
+                    &worker_token,
+                    &completer,
+                ),
+                Kind::Overlapped | Kind::NotAPipe => BlockingRead::Readable(buffer),
             };
-            // Whoever hears of the result may close the pipe, and expect that to take effect.
+            // Released before completing, so that closing the pipe from the callback takes effect immediately.
             drop(handle);
-            remote.complete((kind, read));
+            completer.complete((kind, read));
         });
-        let thread = Some(CancelOnDrop(thread));
-        self.read.set(Some(InFlight { request, thread }));
+        let cancel_guard = Some(CancelOnDrop(cancel_token));
+        self.inflight_read.set(Some(InflightRequest {
+            request,
+            cancel_guard,
+        }));
     }
 
     // ── writing ──────────────────────────────────────────────────────────
 
-    /// The callback of the request in `write`.
-    fn on_write<T>(
+    fn make_write_callback<T>(
         self: &Rc<Self>,
         f: impl FnOnce(Rc<Self>, T) + 'static,
     ) -> impl FnOnce(T) + 'static {
         let this = Rc::downgrade(self);
         move |result| {
             if let Some(this) = Weak::upgrade(&this) {
-                this.write.take();
+                this.inflight_write.take();
                 f(this, result);
             }
         }
     }
 
-    fn start_write(self: &Rc<Self>, payload: Payload, from: usize) -> sys::Result<()> {
-        let write = match self.io.get() {
-            Some(Io::Overlapped(file)) => self.write_overlapped(file, payload, from)?.into(),
-            Some(Io::NotAPipe) => return Err(sys::Error::from_code(E::ENOTSOCK, Tag::open)),
-            Some(Io::Synchronous) | None => self.write_on_thread(payload.into_vec(), from),
+    fn start_write(self: &Rc<Self>, payload: Payload, offset: usize) -> sys::Result<()> {
+        let inflight = match self.io_mode.get() {
+            Some(IoMode::Overlapped(file)) => self.write_overlapped(file, payload, offset)?.into(),
+            Some(IoMode::NotAPipe) => return Err(sys::Error::from_code(E::ENOTSOCK, Tag::open)),
+            Some(IoMode::Synchronous) | None => {
+                self.spawn_blocking_write(payload.into_vec(), offset)
+            }
         };
-        self.started_write(write);
+        self.set_inflight_write(inflight);
         Ok(())
     }
 
-    fn started_write(&self, write: InFlight) {
-        self.write.set(Some(write));
-        self.endpoint.set_writing(true);
+    fn set_inflight_write(&self, inflight: InflightRequest) {
+        self.inflight_write.set(Some(inflight));
+        self.state.set_writing(true);
     }
 
-    fn on_wrote_owned(self: &Rc<Self>, from: usize) -> impl FnOnce(Completion) + 'static {
-        self.on_write(move |this, completion: Completion| {
-            let result = (completion.status, completion.transferred);
-            this.on_wrote(Payload::Owned(completion.buffer), from, result);
+    fn make_owned_write_callback(
+        self: &Rc<Self>,
+        offset: usize,
+    ) -> impl FnOnce(Completion) + 'static {
+        self.make_write_callback(move |this, completion: Completion| {
+            let payload = Payload::Owned(completion.buffer);
+            this.on_write_complete(payload, offset, completion.status, completion.transferred);
         })
     }
 
     fn write_overlapped(
         self: &Rc<Self>,
-        file: &AsyncFile,
+        file: &OverlappedFile,
         payload: Payload,
-        from: usize,
+        offset: usize,
     ) -> sys::Result<Request> {
-        let started = match payload {
-            Payload::Owned(buffer) => file.write(buffer, from, self.on_wrote_owned(from)),
+        let result = match payload {
+            Payload::Owned(buffer) => {
+                file.write(buffer, offset, self.make_owned_write_callback(offset))
+            }
             Payload::Shared(bytes) => {
                 let payload = Payload::Shared(Rc::clone(&bytes));
-                let done = self.on_write(move |this, completion: Completion| {
-                    this.on_wrote(payload, from, (completion.status, completion.transferred));
+                let callback = self.make_write_callback(move |this, completion: Completion| {
+                    this.on_write_complete(
+                        payload,
+                        offset,
+                        completion.status,
+                        completion.transferred,
+                    );
                 });
-                file.write_shared(bytes, from, done)
+                file.write_shared(bytes, offset, callback)
             }
         };
-        started.map_err(|refused| write_error(refused.status))
+        result.map_err(|completion| map_write_error(completion.status))
     }
 
-    fn on_wrote(self: Rc<Self>, payload: Payload, from: usize, result: (NTSTATUS, usize)) {
-        let (status, written) = result;
-        let from = from + written;
+    fn on_write_complete(
+        self: Rc<Self>,
+        payload: Payload,
+        offset: usize,
+        status: NTSTATUS,
+        written: usize,
+    ) {
+        let offset = offset + written;
         if NT_ERROR(status) {
-            self.end_write(WriteEvent::Failed(write_error(status)));
-        } else if from >= payload.bytes().len() {
-            self.end_write(WriteEvent::Wrote(payload.into_spare()));
+            self.end_write(WriteEvent::Err(map_write_error(status)));
+        } else if offset >= payload.as_bytes().len() {
+            self.end_write(WriteEvent::Wrote(payload.into_spare_buffer()));
         } else if written > 0 || named_pipe::set_blocking(self.handle.raw()).is_ok() {
-            self.continue_writing(payload, from);
+            self.continue_write(payload, offset);
         } else {
-            self.end_write(WriteEvent::Failed(write_error(NTSTATUS::RETRY)));
+            self.end_write(WriteEvent::Err(map_write_error(NTSTATUS::RETRY)));
         }
     }
 
-    fn continue_writing(self: Rc<Self>, payload: Payload, from: usize) {
-        if let Err(err) = self.start_write(payload, from) {
-            self.end_write(WriteEvent::Failed(err));
+    fn continue_write(self: Rc<Self>, payload: Payload, offset: usize) {
+        if let Err(err) = self.start_write(payload, offset) {
+            self.end_write(WriteEvent::Err(err));
         }
     }
 
-    fn write_on_thread(self: &Rc<Self>, buffer: Vec<u8>, from: usize) -> InFlight {
-        type Outcome = (Kind, Vec<u8>, sys::Result<()>);
-        let done = self.on_write(move |this, (kind, buffer, result): Outcome| {
-            this.set_kind(kind);
-            match (kind, result) {
-                (Kind::Synchronous, Ok(())) => this.end_write(WriteEvent::Wrote(buffer)),
-                (Kind::Synchronous, Err(err)) => this.end_write(WriteEvent::Failed(err)),
-                _ => {
-                    this.continue_reading(Take::OnceThereIsSome);
-                    this.continue_writing(Payload::Owned(buffer), from);
+    fn spawn_blocking_write(self: &Rc<Self>, buffer: Vec<u8>, offset: usize) -> InflightRequest {
+        let callback = self.make_write_callback(
+            move |this, (kind, buffer, result): (Kind, Vec<u8>, sys::Result<()>)| {
+                this.init_io_mode(kind);
+                match (kind, result) {
+                    (Kind::Synchronous, Ok(())) => this.end_write(WriteEvent::Wrote(buffer)),
+                    (Kind::Synchronous, Err(err)) => this.end_write(WriteEvent::Err(err)),
+                    _ => {
+                        this.maybe_start_read(ConsumeMode::WaitReadable);
+                        this.continue_write(Payload::Owned(buffer), offset);
+                    }
                 }
-            }
-        });
-        let (request, remote) = Request::remote(&self.endpoint.port, done);
-        let (handle, cancel) = (Arc::clone(&self.handle), Cancel::default());
-        let (thread, is_kind_known) = (Some(CancelOnDrop(cancel.clone())), self.io.get().is_some());
-        let pending = self.endpoint.port.pending_write();
-        // The write would wait for it.
+            },
+        );
+        let (request, completer) = Request::with_completer(&self.state.port, callback);
+        let handle = Arc::clone(&self.handle);
+        let worker_token = CancelToken::default();
+        let cancel_guard = Some(CancelOnDrop(worker_token.clone()));
+        let is_kind_known = self.io_mode.get().is_some();
+        let pending_write_guard = self.state.port.add_pending_write();
+        // A synchronous handle serializes I/O, so the write would block behind the pending read.
         self.cancel_read();
         blocking::spawn(move || {
-            let kind = kind_on_thread(&handle, is_kind_known);
+            let kind = resolve_kind(&handle, is_kind_known);
             let result = match kind {
-                Kind::Synchronous => write_synchronous(&handle, &buffer[from..], &cancel),
+                Kind::Synchronous => write_synchronous(&handle, &buffer[offset..], &worker_token),
                 Kind::Overlapped | Kind::NotAPipe => Ok(()),
             };
-            drop((handle, pending));
-            remote.complete((kind, buffer, result));
+            drop(handle);
+            drop(pending_write_guard);
+            completer.complete((kind, buffer, result));
         });
-        InFlight { request, thread }
+        InflightRequest {
+            request,
+            cancel_guard,
+        }
     }
 
     fn end_write(self: Rc<Self>, event: WriteEvent) {
-        self.continue_reading(Take::OnceThereIsSome);
+        self.maybe_start_read(ConsumeMode::WaitReadable);
         self.report_write(event);
     }
 }
 
-fn kind_on_thread(handle: &Handle, is_known: bool) -> Kind {
+/// A handle only reaches a blocking thread if its kind is synchronous or still unknown.
+fn resolve_kind(handle: &Handle, is_known: bool) -> Kind {
     if is_known {
         Kind::Synchronous
     } else {
@@ -673,24 +774,26 @@ fn kind_on_thread(handle: &Handle, is_known: bool) -> Kind {
     }
 }
 
-enum ThreadRead {
-    Ended(Completion),
-    /// It is for the loop to say whether the reader still wants it.
+enum BlockingRead {
+    Completed(Completion),
+    /// Nothing was consumed: the loop thread decides whether the reader still wants the data.
     Readable(Vec<u8>),
 }
 
-/// `take` is `None` for input that is not shared.
+/// `shared_mode` is `None` for input that is not shared.
 fn read_synchronous<T: Send + 'static>(
     handle: &Handle,
     mut buffer: Vec<u8>,
     max_len: usize,
-    mut take: Option<Take>,
-    cancel: &Cancel,
-    remote: &Remote<T>,
-) -> ThreadRead {
+    mut shared_mode: Option<ConsumeMode>,
+    cancel_token: &CancelToken,
+    completer: &Completer<T>,
+) -> BlockingRead {
+    /// On a remote pipe a zero-byte read returns immediately.
+    const MAX_READABLE_WAITS: usize = 3;
     let handle = handle.raw();
     let read_blocking = |buffer: &mut Vec<u8>, max_len| loop {
-        if cancel.is_cancelled() {
+        if cancel_token.is_cancelled() {
             return Err(NTSTATUS::CANCELLED);
         }
         match named_pipe::read(handle, buffer, max_len) {
@@ -700,47 +803,50 @@ fn read_synchronous<T: Send + 'static>(
             result => return result,
         }
     };
-    let read = cancel.run(|| {
-        // Over the network the wait for data returns at once.
-        for _ in 0..3 {
-            if take == Some(Take::Now)
-                && let Some(available) = named_pipe::input(handle)?
+    let has_consumed = cancel_token.run(|| {
+        for _ in 0..MAX_READABLE_WAITS {
+            if shared_mode == Some(ConsumeMode::Immediate)
+                && let Some(available) = named_pipe::peek_available(handle)?
             {
-                let size = room_for(available).min(max_len);
+                let size = compute_buffer_size(available).min(max_len);
                 if buffer.capacity() < size {
                     buffer = Vec::with_capacity(size);
                 }
                 break;
             }
-            if take.is_none() {
+            if shared_mode.is_none() {
                 break;
             }
             read_blocking(&mut buffer, 0)?;
-            // A script that is running may have left the input to a child, or be about to pause.
-            if cancel.is_cancelled() || !remote.is_port_idle() {
+            // Running JS may have handed the input to a child process or be about to pause.
+            if cancel_token.is_cancelled() || !completer.is_port_parked() {
                 return Ok(false);
             }
-            take = Some(Take::Now);
+            shared_mode = Some(ConsumeMode::Immediate);
         }
         read_blocking(&mut buffer, max_len).map(|_| true)
     });
-    let status = match read {
-        Some(Ok(false)) => return ThreadRead::Readable(buffer),
+    let status = match has_consumed {
+        Some(Ok(false)) => return BlockingRead::Readable(buffer),
         Some(Ok(true)) => NTSTATUS::SUCCESS,
         Some(Err(status)) => status,
         None => NTSTATUS::CANCELLED,
     };
-    ThreadRead::Ended(Completion {
+    BlockingRead::Completed(Completion {
         status,
         transferred: buffer.len(),
         buffer,
     })
 }
 
-fn write_synchronous(handle: &Handle, mut bytes: &[u8], cancel: &Cancel) -> sys::Result<()> {
+fn write_synchronous(
+    handle: &Handle,
+    mut bytes: &[u8],
+    cancel_token: &CancelToken,
+) -> sys::Result<()> {
     let write_all = || {
         while !bytes.is_empty() {
-            if cancel.is_cancelled() {
+            if cancel_token.is_cancelled() {
                 return Err(NTSTATUS::CANCELLED);
             }
             let written = named_pipe::write(handle.raw(), bytes)?;
@@ -751,8 +857,8 @@ fn write_synchronous(handle: &Handle, mut bytes: &[u8], cancel: &Cancel) -> sys:
         }
         Ok(())
     };
-    let result = cancel.run(write_all);
+    let result = cancel_token.run(write_all);
     result
         .unwrap_or(Err(NTSTATUS::CANCELLED))
-        .map_err(write_error)
+        .map_err(map_write_error)
 }

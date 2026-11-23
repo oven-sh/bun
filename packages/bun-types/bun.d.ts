@@ -2603,8 +2603,8 @@ declare module "bun" {
          * On macOS, `"getaddrinfo"` shouldn't be necessary because
          * `"system"` uses the same API underneath (except non-blocking).
          *
-         * On Windows, Bun runs `GetAddrInfoW` in a separate thread pool by default,
-         * and when specifying backends "system", "libc", or "getaddrinfo". The c-ares
+         * On Windows, Bun runs `GetAddrInfoW` in a dedicated thread pool by default, and
+         * when specifying backends "system", "libc", or "getaddrinfo". The c-ares
          * backend isn't supported on Windows.
          */
         backend?: "libc" | "c-ares" | "system" | "getaddrinfo";

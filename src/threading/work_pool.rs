@@ -58,7 +58,7 @@ pub trait OwnedTask: IntrusiveWorkTask + Send + 'static {
     #[doc(hidden)]
     unsafe fn __callback(task: *mut Task) {
         // SAFETY: `task` points to the `Task` field inside a `Box<Self>` that
-        // `Batch::from_owned` leaked. The thread pool guarantees this
+        // `task_from_owned` leaked. The thread pool guarantees this
         // callback fires exactly once per scheduled task, so reclaiming the
         // `Box` here is sound.
         let this = unsafe { Box::from_raw(Self::from_task_ptr(task)) };
@@ -135,28 +135,22 @@ impl Batch {
     }
 }
 
-struct Call<F> {
+struct FnTask<F> {
     task: Task,
-    run: F,
+    job: F,
 }
 
-intrusive_work_task!([F] Call<F>, task);
+intrusive_work_task!([F] FnTask<F>, task);
 
-impl<F: FnOnce() + Send + 'static> OwnedTask for Call<F> {
+impl<F: FnOnce() + Send + 'static> OwnedTask for FnTask<F> {
     fn run(self: Box<Self>) {
-        (self.run)();
+        (self.job)();
     }
 }
 
-pub(crate) fn task_from_fn(run: impl FnOnce() + Send + 'static) -> *mut Task {
+pub(crate) fn task_from_fn(job: impl FnOnce() + Send + 'static) -> *mut Task {
     let task = Task::default();
-    task_from_owned(Box::new(Call { task, run }))
-}
-
-impl Batch {
-    pub fn from_fn(run: impl FnOnce() + Send + 'static) -> Batch {
-        Batch::from(task_from_fn(run))
-    }
+    task_from_owned(Box::new(FnTask { task, job }))
 }
 
 static POOL: OnceLock<ThreadPool> = OnceLock::new();
@@ -169,41 +163,41 @@ fn create() -> ThreadPool {
     })
 }
 
-/// For calls on open files. On Windows those pin their directory, so they do not wait behind computations.
+/// For calls on open files. On Windows an open file pins its directory, so these calls do not queue behind CPU-bound tasks.
 pub struct FilePool;
 
 impl FilePool {
     #[cfg(windows)]
     pub fn get() -> &'static FifoPool {
         static POOL: std::sync::LazyLock<FifoPool> = std::sync::LazyLock::new(|| {
-            let threads = bun_core::env_var::UV_THREADPOOL_SIZE.get().unwrap_or(4);
+            let max_threads = bun_core::env_var::UV_THREADPOOL_SIZE.get().unwrap_or(4);
             FifoPool::new(Config {
                 name: "File I/O",
-                max_threads: threads.clamp(1, 1024) as usize,
+                max_threads: max_threads.clamp(1, 1024) as usize,
                 stack_size: 4 * 1024 * 1024,
                 on_thread_start: bun_core::Output::Source::configure_thread_no_js,
-                has_new_threads: true,
+                has_warmup: true,
             })
         });
         &POOL
     }
 
-    pub fn go(run: impl FnOnce() + Send + 'static) {
+    pub fn go(job: impl FnOnce() + Send + 'static) {
         #[cfg(windows)]
-        Self::get().go(run);
+        Self::get().go(job);
         #[cfg(not(windows))]
-        WorkPool::schedule(task_from_fn(run));
+        WorkPool::schedule(task_from_fn(job));
     }
 }
 
-/// For calls of scripts on pipes, consoles and other devices, which can take any time.
+/// For calls that scripts make on pipes, consoles and other devices, which can block indefinitely.
 #[cfg(windows)]
 pub static DEVICE_POOL: FifoPool = FifoPool::new(Config {
     name: "Device I/O",
     max_threads: 512,
     stack_size: 4 * 1024 * 1024,
     on_thread_start: bun_core::Output::Source::configure_thread_no_js,
-    has_new_threads: false,
+    has_warmup: false,
 });
 
 impl WorkPool {
@@ -232,7 +226,7 @@ impl WorkPool {
     }
 
     pub fn go<C: Send + 'static>(context: C, function: fn(C)) -> Result<(), bun_alloc::AllocError> {
-        Self::get().schedule(Batch::from_fn(move || function(context)));
+        Self::schedule(task_from_fn(move || function(context)));
         Ok(())
     }
 }

@@ -4,9 +4,9 @@ use bun_ptr::RefPtr;
 use bun_sys::windows::named_pipe;
 use bun_sys::{self as sys, E, Stat, Tag};
 
-use super::blocking::{Blocking, BlockingPart};
-use super::job_file::{JobFile, Target, bare, is_device};
-use crate::io_order::{Key, Turn};
+use super::blocking::{BlockingIo, BlockingTask};
+use super::job_file::{JobFile, Target, is_device, strip_error_context};
+use crate::io_order::{self, Key};
 use crate::webcore::blob::read_file::{
     PendingReadFileCompletion, ReadFileCompletion, directory_error,
 };
@@ -14,20 +14,20 @@ use crate::webcore::blob::store::Data;
 use crate::webcore::blob::{Blob, SizeType, Store, stat_to_js_mtime};
 use crate::webcore::node_types::PathOrFileDescriptor;
 
-const MAX_BUFFER: usize = bun_jsc::ArrayBuffer::MAX_SIZE as usize;
+const MAX_BUFFER_LEN: usize = bun_jsc::ArrayBuffer::MAX_SIZE as usize;
 
 pub(crate) struct ReadFile {
-    /// Not for `run`: the thread of the script changes it.
+    /// Mutated on the JS thread, so `run` must not access it.
     store: RefPtr<Store>,
     target: Target,
-    turn: Option<Turn>,
+    order_guard: Option<io_order::OrderGuard>,
     offset: SizeType,
     max_length: SizeType,
     result: sys::Result<Vec<u8>>,
     is_directory: bool,
-    /// For the store, which `then` updates.
+    /// Copied to the store in `then`.
     last_modified: Option<JSTimeType>,
-    blocking_part: BlockingPart<Vec<u8>>,
+    blocking_task: BlockingTask<Vec<u8>>,
 }
 
 impl JobContext for ReadFile {
@@ -37,7 +37,7 @@ impl JobContext for ReadFile {
     type Js = PendingReadFileCompletion;
 
     fn run(this: &mut Self, done: Completion<Self>) -> Option<Completion<Self>> {
-        let turn = this.turn.take();
+        let order_guard = this.order_guard.take();
         let (file, stat) = match this.open() {
             Ok(opened) => opened,
             Err(err) => {
@@ -46,23 +46,26 @@ impl JobContext for ReadFile {
             }
         };
         if !sys::S::ISREG(stat.st_mode as _) {
-            let (offset, max_length) = (this.offset, this.max_length as usize);
-            return (this.blocking_part).run(done, move |blocking| {
-                let _turn = turn;
-                read_stream(&file, offset, max_length, blocking).map_err(|err| bare(&err))
+            let offset = this.offset;
+            let max_length = this.max_length as usize;
+            return this.blocking_task.run(done, move |io| {
+                let _order_guard = order_guard;
+                read_stream(&file, offset, max_length, io).map_err(|err| strip_error_context(&err))
             });
         }
-        this.result = (this.read_regular_file(&file, stat.st_size)).map_err(|err| bare(&err));
+        this.result = this
+            .read_regular_file(&file, stat.st_size)
+            .map_err(|err| strip_error_context(&err));
         Some(done)
     }
 
     fn then(this: Self, completion: Self::Js, _: &JsThread<'_>) -> JsResult<()> {
-        if let (Some(last_modified), Data::File(file)) =
-            (this.last_modified, Store::data_mut(&this.store))
+        if let Some(last_modified) = this.last_modified
+            && let Data::File(file) = Store::data_mut(&this.store)
         {
             file.last_modified = last_modified;
         }
-        let result = match this.blocking_part.take_result().unwrap_or(this.result) {
+        let result = match this.blocking_task.take_result().unwrap_or(this.result) {
             Ok(bytes) => Ok(bytes.into()),
             Err(_) if this.is_directory => Err(directory_error(pathlike(&this.store))),
             Err(err) => Err(err.into()),
@@ -71,8 +74,8 @@ impl JobContext for ReadFile {
     }
 
     unsafe fn cancel(this: *mut Self) {
-        // SAFETY: fn contract. Nothing writes to the field.
-        unsafe { &(*this).blocking_part }.cancel();
+        // SAFETY: fn contract; the field is not written after the job is created.
+        unsafe { &(*this).blocking_task }.cancel();
     }
 }
 
@@ -85,33 +88,34 @@ impl ReadFile {
         let store = blob.store().expect("infallible: store present").clone();
         let mut read = ReadFile {
             target: Target::new(pathlike(&store)),
-            turn: None,
+            order_guard: None,
             store,
             offset: blob.offset.get(),
             max_length: blob.size.get(),
             result: Ok(Vec::new()),
             is_directory: false,
             last_modified: None,
-            blocking_part: BlockingPart::default(),
+            blocking_task: BlockingTask::default(),
         };
         let completion = PendingReadFileCompletion::new(completion);
         let &PathOrFileDescriptor::Fd(fd) = pathlike(&read.store) else {
             return Job::<Self>::schedule(cx, read, completion);
         };
         let can_block = is_device(pathlike(&read.store));
-        let key = match can_block {
-            true => Key::device_input(fd),
-            false => Key::descriptor(fd),
+        let key = if can_block {
+            Key::from_device_input(fd)
+        } else {
+            Key::from_fd(fd)
         };
-        Turn::after_earlier(cx, key, false, |turn| {
-            read.turn = Some(turn);
-            Job::<Self>::create(cx, read, completion).for_device_if(can_block)
+        io_order::OrderGuard::enqueue_job(cx, key, false, |order_guard| {
+            read.order_guard = Some(order_guard);
+            Job::<Self>::create(cx, read, completion).use_device_pool(can_block)
         });
     }
 
     fn open(&mut self) -> sys::Result<(JobFile, Stat)> {
-        let file = JobFile::source(&mut self.target)?;
-        let stat = file.stat().map_err(|err| bare(&err))?;
+        let file = JobFile::open_source(&mut self.target)?;
+        let stat = file.stat().map_err(|err| strip_error_context(&err))?;
         self.last_modified = Some(stat_to_js_mtime(&stat));
         self.is_directory = sys::S::ISDIR(stat.st_mode as _);
         if self.is_directory {
@@ -122,19 +126,19 @@ impl ReadFile {
 
     fn read_regular_file(&self, file: &JobFile, size: u64) -> sys::Result<Vec<u8>> {
         let len = size.saturating_sub(self.offset).min(self.max_length) as usize;
-        if file.is_lent() && self.offset > 0 {
-            // The descriptor is left at the start of the slice.
+        if file.is_borrowed() && self.offset > 0 {
+            // Leaves the caller's file position at the start of the slice.
             let _ = file.seek_to(self.offset);
         }
         let mut bytes = Vec::new();
         if len == 0 {
             return Ok(bytes);
         }
-        if len > MAX_BUFFER || bytes.try_reserve_exact(len).is_err() {
+        if len > MAX_BUFFER_LEN || bytes.try_reserve_exact(len).is_err() {
             return Err(sys::Error::oom());
         }
         append_with(&mut bytes, len, |spare| {
-            if file.is_lent() {
+            if file.is_borrowed() {
                 return file.pread_all_buf(spare, self.offset);
             }
             if self.offset > 0 {
@@ -150,26 +154,26 @@ fn read_stream(
     file: &JobFile,
     offset: u64,
     max_length: usize,
-    blocking: &Blocking,
+    io: &BlockingIo,
 ) -> sys::Result<Vec<u8>> {
-    const MIN_READ: usize = 64 * 1024;
-    /// As it doubles, there is room to find the end of an input whose size is a power of two.
-    const FIRST_CAPACITY: usize = MIN_READ + 4 * 1024;
-    /// The system touches every page of the buffer in front of each read.
-    const MAX_READ: usize = 1024 * 1024;
+    const MIN_READ_LEN: usize = 64 * 1024;
+    /// Above a power of two, so that a large power-of-two input reaches EOF without another doubling.
+    const INITIAL_CAPACITY: usize = MIN_READ_LEN + 4 * 1024;
+    /// The kernel probes every page of the buffer before each read.
+    const MAX_READ_LEN: usize = 1024 * 1024;
 
-    let max_read = MAX_READ.min(named_pipe::max_len(file.fd().native()));
-    let mut bytes = Vec::with_capacity(max_length.min(FIRST_CAPACITY));
+    let max_read_len = MAX_READ_LEN.min(named_pipe::max_transfer_len(file.fd().native()));
+    let mut bytes = Vec::with_capacity(max_length.min(INITIAL_CAPACITY));
     while bytes.len() < max_length {
-        let left = max_length - bytes.len();
-        if bytes.len() > MAX_BUFFER || bytes.try_reserve(left.min(MIN_READ)).is_err() {
+        let remaining = max_length - bytes.len();
+        if bytes.len() > MAX_BUFFER_LEN || bytes.try_reserve(remaining.min(MIN_READ_LEN)).is_err() {
             return Err(sys::Error::oom());
         }
         let offset = offset + bytes.len() as u64;
-        let read = append_with(&mut bytes, left.min(max_read), |spare| {
-            blocking.read(file.fd(), spare, Some(offset))
+        let bytes_read = append_with(&mut bytes, remaining.min(max_read_len), |spare| {
+            io.read(file.fd(), spare, Some(offset))
         })?;
-        if read == 0 {
+        if bytes_read == 0 {
             break;
         }
     }

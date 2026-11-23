@@ -50,7 +50,7 @@ fn from_seconds(seconds: f64) -> TimeLike {
     // always-non-negative `rem_euclid` nanoseconds.
     let mut sec = seconds.div_euclid(1.0);
     let mut nsec = seconds.rem_euclid(1.0) * NS_PER_S;
-    // As in Node.js there, 0.36 does not come back as 0.3599998.
+    // Round to microseconds: as in Node.js on Windows, 0.36 must not read back as 0.3599998.
     if cfg!(windows) {
         nsec = (nsec / 1000.0).round() * 1000.0;
     }
@@ -75,10 +75,11 @@ fn from_milliseconds(milliseconds: f64) -> TimeLike {
 
 #[cfg(windows)]
 fn from_now() -> TimeLike {
-    let (nanos, per_second) = (bun_core::time::nano_timestamp(), NS_PER_S as i128);
+    let nanos = bun_core::time::nano_timestamp();
+    let ns_per_s = NS_PER_S as i128;
     TimeLike {
-        sec: nanos.div_euclid(per_second) as _,
-        nsec: nanos.rem_euclid(per_second) as _,
+        sec: nanos.div_euclid(ns_per_s) as _,
+        nsec: nanos.rem_euclid(ns_per_s) as _,
     }
 }
 

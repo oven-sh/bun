@@ -1,4 +1,4 @@
-//! Threads that start tasks in the order of their arrival. All but one end when there is nothing to do.
+//! A thread pool that starts tasks in FIFO order. Idle threads exit after a timeout, except the last one.
 
 use core::cell::Cell;
 use core::ptr;
@@ -8,27 +8,27 @@ use std::thread::JoinHandle;
 
 use bun_core::{Timespec, TimespecMockMode};
 
-use crate::spin::Spin;
+use crate::spin::AdaptiveSpin;
 use crate::thread_pool::{Task, exit_spawn_failed};
 use crate::{Condition, Guarded};
 
-struct Queued(*mut Task);
+struct QueuedTask(*mut Task);
 
-// SAFETY: a task is made to be run by another thread.
-unsafe impl Send for Queued {}
+// SAFETY: a `Task` is scheduled in order to run on another thread.
+unsafe impl Send for QueuedTask {}
 
 struct State {
-    tasks: VecDeque<Queued>,
-    threads: usize,
-    /// Those that are waiting or starting.
-    idle_threads: usize,
-    /// One of them is awake, and takes the next task without a signal.
+    tasks: VecDeque<QueuedTask>,
+    thread_count: usize,
+    /// Threads that are waiting or starting.
+    idle_count: usize,
+    /// An idle thread is spinning, and takes the next task without a notification.
     is_spinning: bool,
-    spin: Spin,
-    /// Tasks, since `spin` was last told.
-    taken: u64,
+    spin: AdaptiveSpin,
+    /// Tasks started since the last `spin.record_wait`.
+    started_count: u64,
     /// When a thread last ran out of tasks.
-    idle_since: Option<u64>,
+    idle_since_ns: Option<u64>,
 }
 
 pub struct Config {
@@ -36,15 +36,15 @@ pub struct Config {
     pub max_threads: usize,
     pub stack_size: usize,
     pub on_thread_start: fn(),
-    /// See [`on_new_thread`].
-    pub has_new_threads: bool,
+    /// See [`try_during_warmup`].
+    pub has_warmup: bool,
 }
 
 pub struct FifoPool {
     config: Config,
     state: Guarded<State>,
-    queued: Condition,
-    /// For the one that is spinning.
+    task_available: Condition,
+    /// Polled by the spinning thread.
     has_task: AtomicBool,
 }
 
@@ -52,36 +52,37 @@ fn now_ns() -> u64 {
     Timespec::now(TimespecMockMode::ForceRealTime).ns()
 }
 
-static NEW_THREADS: AtomicUsize = AtomicUsize::new(0);
+static WARMING_THREAD_COUNT: AtomicUsize = AtomicUsize::new(0);
 
-/// In any pool.
-pub fn has_new_thread() -> bool {
-    NEW_THREADS.load(Ordering::SeqCst) > 0
+/// Across all pools.
+pub fn has_warming_thread() -> bool {
+    WARMING_THREAD_COUNT.load(Ordering::SeqCst) > 0
 }
 
-const MAX_SUCCESSES: u8 = 2;
+const MAX_WARMUP_SUCCESSES: u8 = 2;
 
-/// A thread is new until it sleeps after `attempt` has succeeded on it, or until `MAX_SUCCESSES`.
-pub fn on_new_thread(attempt: impl FnOnce() -> bool) -> bool {
-    let has_succeeded = SUCCESSES_LEFT.get() > 0 && attempt();
-    match (has_succeeded, SUCCESSES_LEFT.get()) {
-        (false, _) => {}
-        (true, ..=1) => stop_being_new(),
-        (true, left) => SUCCESSES_LEFT.set(left - 1),
+/// Warm-up ends after `MAX_WARMUP_SUCCESSES`, at the first sleep after a success, or at the idle timeout.
+pub fn try_during_warmup(attempt: impl FnOnce() -> bool) -> bool {
+    let has_succeeded = REMAINING_WARMUP_SUCCESSES.get() > 0 && attempt();
+    if has_succeeded {
+        match REMAINING_WARMUP_SUCCESSES.get() {
+            ..=1 => end_warmup(),
+            remaining => REMAINING_WARMUP_SUCCESSES.set(remaining - 1),
+        }
     }
     has_succeeded
 }
 
-fn stop_being_new() {
-    if SUCCESSES_LEFT.take() > 0 {
-        NEW_THREADS.fetch_sub(1, Ordering::SeqCst);
+fn end_warmup() {
+    if REMAINING_WARMUP_SUCCESSES.take() > 0 {
+        WARMING_THREAD_COUNT.fetch_sub(1, Ordering::SeqCst);
     }
 }
 
 thread_local! {
-    static SUCCESSES_LEFT: Cell<u8> = const { Cell::new(0) };
-    static POOL: Cell<*const FifoPool> = const { Cell::new(ptr::null()) };
-    static AFTER: Cell<*mut Task> = const { Cell::new(ptr::null_mut()) };
+    static REMAINING_WARMUP_SUCCESSES: Cell<u8> = const { Cell::new(0) };
+    static CURRENT_POOL: Cell<*const FifoPool> = const { Cell::new(ptr::null()) };
+    static CONTINUATION: Cell<*mut Task> = const { Cell::new(ptr::null_mut()) };
 }
 
 impl FifoPool {
@@ -90,51 +91,53 @@ impl FifoPool {
             config,
             state: Guarded::new(State {
                 tasks: VecDeque::new(),
-                threads: 0,
-                idle_threads: 0,
+                thread_count: 0,
+                idle_count: 0,
                 is_spinning: false,
-                spin: Spin::new(),
-                taken: 0,
-                idle_since: None,
+                spin: AdaptiveSpin::new(),
+                started_count: 0,
+                idle_since_ns: None,
             }),
-            queued: Condition::new(),
+            task_available: Condition::new(),
             has_task: AtomicBool::new(false),
         }
     }
 
     pub fn schedule(&'static self, task: *mut Task) {
         let mut state = self.state.lock();
-        state.tasks.push_back(Queued(task));
+        state.tasks.push_back(QueuedTask(task));
         if state.is_spinning && state.tasks.len() == 1 {
             return self.has_task.store(true, Ordering::SeqCst);
         }
-        let is_short = state.idle_threads < state.tasks.len();
+        let should_add_threads = state.idle_count < state.tasks.len();
         drop(state);
-        self.queued.notify_one();
-        if is_short {
+        self.task_available.notify_one();
+        if should_add_threads {
             self.add_threads();
         }
     }
 
-    /// If the system has none to give, tasks wait for the threads that there are.
+    /// If spawning fails, tasks wait for the existing threads.
     fn add_threads(&'static self) {
         loop {
             let mut state = self.state.lock();
-            if state.idle_threads >= state.tasks.len() || state.threads == self.config.max_threads {
+            if state.idle_count >= state.tasks.len()
+                || state.thread_count == self.config.max_threads
+            {
                 return;
             }
-            state.threads += 1;
-            state.idle_threads += 1;
-            NEW_THREADS.fetch_add(self.config.has_new_threads.into(), Ordering::SeqCst);
+            state.thread_count += 1;
+            state.idle_count += 1;
+            WARMING_THREAD_COUNT.fetch_add(self.config.has_warmup.into(), Ordering::SeqCst);
             drop(state);
             let Err(err) = self.spawn() else {
                 continue;
             };
-            NEW_THREADS.fetch_sub(self.config.has_new_threads.into(), Ordering::SeqCst);
+            WARMING_THREAD_COUNT.fetch_sub(self.config.has_warmup.into(), Ordering::SeqCst);
             let mut state = self.state.lock();
-            state.threads -= 1;
-            state.idle_threads -= 1;
-            if state.threads == 0 {
+            state.thread_count -= 1;
+            state.idle_count -= 1;
+            if state.thread_count == 0 {
                 exit_spawn_failed(&err);
             }
             return;
@@ -148,75 +151,86 @@ impl FifoPool {
             .spawn(|| self.run())
     }
 
-    pub fn has_this_thread(&self) -> bool {
-        ptr::eq(POOL.get(), self)
+    pub fn has_current_thread(&self) -> bool {
+        ptr::eq(CURRENT_POOL.get(), self)
     }
 
-    /// For the end of a task: the thread that it frees saves waking another one.
-    pub fn schedule_after_this_task(&'static self, task: *mut Task) {
-        match self.has_this_thread() && AFTER.get().is_null() {
-            true => AFTER.set(task),
-            false => self.schedule(task),
+    /// Queues `task` when the current task returns, so that no other thread has to be woken for it.
+    pub fn schedule_continuation(&'static self, task: *mut Task) {
+        if self.has_current_thread() && CONTINUATION.get().is_null() {
+            CONTINUATION.set(task);
+        } else {
+            self.schedule(task);
         }
     }
 
-    pub fn go(&'static self, run: impl FnOnce() + Send + 'static) {
-        self.schedule(crate::work_pool::task_from_fn(run));
+    pub fn go(&'static self, job: impl FnOnce() + Send + 'static) {
+        self.schedule(crate::work_pool::task_from_fn(job));
     }
 
     fn run(&self) {
-        const IDLE_NS: u64 = 10_000_000_000;
+        const IDLE_TIMEOUT_NS: u64 = 10_000_000_000;
 
         (self.config.on_thread_start)();
-        POOL.set(self);
-        SUCCESSES_LEFT.set(MAX_SUCCESSES * u8::from(self.config.has_new_threads));
+        CURRENT_POOL.set(self);
+        if self.config.has_warmup {
+            REMAINING_WARMUP_SUCCESSES.set(MAX_WARMUP_SUCCESSES);
+        }
         let mut state = self.state.lock();
         loop {
-            while let Some(Queued(task)) = state.tasks.pop_front() {
-                state.idle_threads -= 1;
-                state.taken += 1;
+            while let Some(QueuedTask(task)) = state.tasks.pop_front() {
+                state.idle_count -= 1;
+                state.started_count += 1;
                 drop(state);
-                // SAFETY: what `schedule` was given, once.
+                // SAFETY: a scheduled task is live until its callback runs, and it is dequeued once.
                 unsafe { ((*task).callback)(task) };
                 state = self.state.lock();
-                state.idle_threads += 1;
-                let after = AFTER.replace(ptr::null_mut());
-                if !after.is_null() {
-                    state.tasks.push_back(Queued(after));
+                state.idle_count += 1;
+                let continuation = CONTINUATION.replace(ptr::null_mut());
+                if !continuation.is_null() {
+                    state.tasks.push_back(QueuedTask(continuation));
                 }
             }
-            let (start, limit) = (now_ns(), state.spin.limit_ns());
-            state.idle_since = Some(start);
-            if limit > 0 && !state.is_spinning {
+            let idle_start_ns = now_ns();
+            let spin_limit_ns = state.spin.limit_ns();
+            state.idle_since_ns = Some(idle_start_ns);
+            if spin_limit_ns > 0 && !state.is_spinning {
                 state.is_spinning = true;
                 self.has_task.store(false, Ordering::SeqCst);
                 drop(state);
-                while !self.has_task.load(Ordering::SeqCst) && now_ns() < start + limit {
+                while !self.has_task.load(Ordering::SeqCst)
+                    && now_ns() < idle_start_ns + spin_limit_ns
+                {
                     core::hint::spin_loop();
                 }
                 state = self.state.lock();
                 state.is_spinning = false;
             }
-            if state.tasks.is_empty() && SUCCESSES_LEFT.get() < MAX_SUCCESSES {
-                stop_being_new();
+            if state.tasks.is_empty() && REMAINING_WARMUP_SUCCESSES.get() < MAX_WARMUP_SUCCESSES {
+                end_warmup();
             }
-            let stays = state.idle_threads == 1 && SUCCESSES_LEFT.get() == 0;
-            if state.tasks.is_empty() && stays {
-                self.queued.wait_guarded(&mut state);
+            let should_persist = state.idle_count == 1 && REMAINING_WARMUP_SUCCESSES.get() == 0;
+            if state.tasks.is_empty() && should_persist {
+                self.task_available.wait_guarded(&mut state);
             } else if state.tasks.is_empty()
-                && self.queued.timed_wait_guarded(&mut state, IDLE_NS).is_err()
+                && self
+                    .task_available
+                    .timed_wait_guarded(&mut state, IDLE_TIMEOUT_NS)
+                    .is_err()
                 && state.tasks.is_empty()
             {
-                stop_being_new();
-                if state.idle_threads > 1 {
-                    state.threads -= 1;
-                    state.idle_threads -= 1;
+                end_warmup();
+                if state.idle_count > 1 {
+                    state.thread_count -= 1;
+                    state.idle_count -= 1;
                     return;
                 }
             }
-            if let Some(since) = state.idle_since.take() {
-                let taken = core::mem::take(&mut state.taken);
-                state.spin.waited(since, now_ns(), limit, taken);
+            if let Some(idle_since_ns) = state.idle_since_ns.take() {
+                let started_count = core::mem::take(&mut state.started_count);
+                state
+                    .spin
+                    .record_wait(idle_since_ns, now_ns(), spin_limit_ns, started_count);
             }
         }
     }

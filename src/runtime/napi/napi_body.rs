@@ -4054,7 +4054,7 @@ mod posix_platform_specific_v8_apis {
 // uv_* symbol references (DCE suppression)
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Lists the uv_* symbols that need no loop. `uv` exports its own.
+/// Lists the uv_* symbols defined outside `uv`, which exports its own.
 mod uv_functions_to_export {
     unsafe extern "C" {
         pub(super) fn uv_accept();

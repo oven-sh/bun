@@ -434,7 +434,7 @@ impl Builtin {
                 };
 
                 if redirect.stdin() {
-                    let r = IOReader::init_for_one_command(redirfd, evtloop);
+                    let r = IOReader::init_exclusive(redirfd, evtloop);
                     r.set_interp(interp);
                     Self::of_mut(interp, cmd).stdin = BuiltinInput::Fd(r);
                     return None;

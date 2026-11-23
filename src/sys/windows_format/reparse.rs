@@ -1,50 +1,58 @@
-//! `REPARSE_DATA_BUFFER`: a tag, the length of the data, two unused bytes, and the data.
+//! `REPARSE_DATA_BUFFER`: a tag, the data length, two reserved bytes, and the data.
 
 use bun_paths::portable::is_sep;
 
-use super::wide;
+use super::wtf16;
 
-pub(crate) const MAX_SIZE: usize = 16 * 1024;
+pub(crate) const MAXIMUM_REPARSE_DATA_BUFFER_SIZE: usize = 16 * 1024;
 
-const TAG_MOUNT_POINT: u32 = 0xA000_0003;
-const TAG_SYMLINK: u32 = 0xA000_000C;
-const TAG_LX_SYMLINK: u32 = 0xA000_001D;
-const TAG_APP_EXEC_LINK: u32 = 0x8000_001B;
+const IO_REPARSE_TAG_MOUNT_POINT: u32 = 0xA000_0003;
+const IO_REPARSE_TAG_SYMLINK: u32 = 0xA000_000C;
+const IO_REPARSE_TAG_LX_SYMLINK: u32 = 0xA000_001D;
+const IO_REPARSE_TAG_APPEXECLINK: u32 = 0x8000_001B;
 
-pub(crate) fn can_be_link(tag: u32) -> bool {
+const HEADER_LEN: usize = 8;
+// Relative to the data that follows the header.
+const SYMLINK_PATH_BUFFER_OFFSET: usize = 12;
+const MOUNT_POINT_PATH_BUFFER_OFFSET: usize = 8;
+const LX_SYMLINK_VERSION: u32 = 2;
+
+pub(crate) fn is_link_tag(tag: u32) -> bool {
     matches!(
         tag,
-        TAG_MOUNT_POINT | TAG_SYMLINK | TAG_LX_SYMLINK | TAG_APP_EXEC_LINK
+        IO_REPARSE_TAG_MOUNT_POINT
+            | IO_REPARSE_TAG_SYMLINK
+            | IO_REPARSE_TAG_LX_SYMLINK
+            | IO_REPARSE_TAG_APPEXECLINK
     )
 }
 
-type Unit = [u8; 2];
-
-const fn unit(ascii: u8) -> Unit {
+const fn ascii_to_utf16le(ascii: u8) -> [u8; 2] {
     [ascii, 0]
 }
 
-const NUL: Unit = unit(0);
-const BACKSLASH: Unit = unit(b'\\');
-const NT_PREFIX: [Unit; 4] = [BACKSLASH, unit(b'?'), unit(b'?'), BACKSLASH];
+const NUL: [u8; 2] = ascii_to_utf16le(0);
+const BACKSLASH: [u8; 2] = ascii_to_utf16le(b'\\');
+const QUESTION_MARK: [u8; 2] = ascii_to_utf16le(b'?');
+const NT_OBJECT_PREFIX: [[u8; 2]; 4] = [BACKSLASH, QUESTION_MARK, QUESTION_MARK, BACKSLASH];
 
 pub(crate) enum LinkTarget<'a> {
-    Wide(&'a [Unit]),
-    /// `\server\share`, which lacks the first backslash.
-    Unc(&'a [Unit]),
+    Utf16(&'a [[u8; 2]]),
+    /// `\server\share`: a UNC path without its first backslash.
+    Unc(&'a [[u8; 2]]),
     Utf8(&'a [u8]),
 }
 
-fn units(wide: &[Unit]) -> impl Iterator<Item = u16> {
-    wide.iter().copied().map(u16::from_le_bytes)
+fn code_units(utf16le: &[[u8; 2]]) -> impl Iterator<Item = u16> {
+    utf16le.iter().copied().map(u16::from_le_bytes)
 }
 
 impl LinkTarget<'_> {
-    /// In WTF-8.
+    /// Length in WTF-8 bytes.
     pub(crate) fn len(&self) -> usize {
         match self {
-            Self::Wide(wide) => wide::decoded_len(units(wide)),
-            Self::Unc(wide) => 1 + wide::decoded_len(units(wide)),
+            Self::Utf16(path) => wtf16::decoded_len(code_units(path)),
+            Self::Unc(path) => 1 + wtf16::decoded_len(code_units(path)),
             Self::Utf8(bytes) => bytes.len(),
         }
     }
@@ -52,8 +60,10 @@ impl LinkTarget<'_> {
     /// Returns the length written, or `None` if `buf` is too small.
     pub(crate) fn decode(&self, buf: &mut [u8]) -> Option<usize> {
         match self {
-            Self::Wide(wide) => wide::decode(units(wide), buf),
-            Self::Unc(wide) => wide::decode([b'\\'.into()].into_iter().chain(units(wide)), buf),
+            Self::Utf16(path) => wtf16::decode(code_units(path), buf),
+            Self::Unc(path) => {
+                wtf16::decode([b'\\'.into()].into_iter().chain(code_units(path)), buf)
+            }
             Self::Utf8(bytes) => {
                 buf.get_mut(..bytes.len())?.copy_from_slice(bytes);
                 Some(bytes.len())
@@ -68,51 +78,51 @@ fn has_win32_prefix(path: &[u8]) -> bool {
             if is_sep(*a) && is_sep(*b))
 }
 
-/// `data` starts with the offset and the length of the name in `names`.
-fn substitute_name<'a>(data: &[u8], names: &'a [u8]) -> Option<&'a [Unit]> {
+/// `data` starts with `SubstituteNameOffset` and `SubstituteNameLength`.
+fn parse_substitute_name<'a>(data: &[u8], path_buffer: &'a [u8]) -> Option<&'a [[u8; 2]]> {
     let [offset, len, ..] = data.as_chunks().0 else {
         return None;
     };
-    let name = names
+    let name = path_buffer
         .get(u16::from_le_bytes(*offset).into()..)?
         .get(..u16::from_le_bytes(*len).into())?;
-    name.as_chunks().0.split(|&it| it == NUL).next()
+    name.as_chunks().0.split(|&unit| unit == NUL).next()
 }
 
-fn starts_at_drive(name: &[Unit]) -> bool {
+fn starts_with_drive_letter(name: &[[u8; 2]]) -> bool {
     matches!(name, [[letter, 0], [b':', 0], rest @ ..]
         if letter.is_ascii_alphabetic() && matches!(rest, [] | [BACKSLASH, ..]))
 }
 
-/// Whether `buffer` has the tag of a symlink or a mount point, but no name.
+/// Whether `buffer` has a symlink or mount point tag but no substitute name.
 #[cfg(windows)]
-pub(crate) fn lacks_name(buffer: &[u8]) -> bool {
-    let name = |names_at: usize| {
-        let (_, data) = split(buffer)?;
-        substitute_name(data, data.get(names_at..)?)
+pub(crate) fn is_missing_substitute_name(buffer: &[u8]) -> bool {
+    let parse_name = |path_buffer_offset: usize| {
+        let (_, data) = split_header(buffer)?;
+        parse_substitute_name(data, data.get(path_buffer_offset..)?)
     };
     match buffer.first_chunk().copied().map(u32::from_le_bytes) {
-        Some(TAG_SYMLINK) => name(12).is_none(),
-        Some(TAG_MOUNT_POINT) => name(8).is_none(),
+        Some(IO_REPARSE_TAG_SYMLINK) => parse_name(SYMLINK_PATH_BUFFER_OFFSET).is_none(),
+        Some(IO_REPARSE_TAG_MOUNT_POINT) => parse_name(MOUNT_POINT_PATH_BUFFER_OFFSET).is_none(),
         _ => false,
     }
 }
 
-/// The tag and the data.
-fn split(buffer: &[u8]) -> Option<(u32, &[u8])> {
-    let (&[tag @ .., l0, l1, _, _], data) = buffer.split_first_chunk::<8>()?;
-    let data = data.get(..u16::from_le_bytes([l0, l1]).into())?;
+/// Returns the tag and the data.
+fn split_header(buffer: &[u8]) -> Option<(u32, &[u8])> {
+    let (&[tag @ .., len_low, len_high, _, _], data) = buffer.split_first_chunk::<HEADER_LEN>()?;
+    let data = data.get(..u16::from_le_bytes([len_low, len_high]).into())?;
     Some((u32::from_le_bytes(tag), data))
 }
 
 /// `None` if the reparse point is not a link.
-pub(crate) fn link_target(buffer: &[u8]) -> Option<LinkTarget<'_>> {
-    let (tag, data) = split(buffer)?;
+pub(crate) fn parse_link_target(buffer: &[u8]) -> Option<LinkTarget<'_>> {
+    let (tag, data) = split_header(buffer)?;
     match tag {
-        TAG_SYMLINK => {
-            let name = substitute_name(data, data.get(12..)?)?;
-            Some(match name.strip_prefix(&NT_PREFIX) {
-                Some(path) if starts_at_drive(path) => LinkTarget::Wide(path),
+        IO_REPARSE_TAG_SYMLINK => {
+            let name = parse_substitute_name(data, data.get(SYMLINK_PATH_BUFFER_OFFSET..)?)?;
+            Some(match name.strip_prefix(&NT_OBJECT_PREFIX) {
+                Some(path) if starts_with_drive_letter(path) => LinkTarget::Utf16(path),
                 Some(
                     [
                         [b'U' | b'u', 0],
@@ -121,27 +131,31 @@ pub(crate) fn link_target(buffer: &[u8]) -> Option<LinkTarget<'_>> {
                         path @ ..,
                     ],
                 ) if path.first() == Some(&BACKSLASH) => LinkTarget::Unc(path),
-                _ => LinkTarget::Wide(name),
+                _ => LinkTarget::Utf16(name),
             })
         }
-        // One that names a volume is where the volume is mounted.
-        TAG_MOUNT_POINT => substitute_name(data, data.get(8..)?)?
-            .strip_prefix(&NT_PREFIX)
-            .filter(|path| starts_at_drive(path))
-            .map(LinkTarget::Wide),
-        TAG_APP_EXEC_LINK => {
-            let (count, strings) = data.split_first_chunk()?;
-            let mut strings = strings.as_chunks().0.split(|&it| it == NUL);
-            let (package, entry, path) = (strings.next()?, strings.next()?, strings.next()?);
-            (u32::from_le_bytes(*count) >= 3
-                && !package.is_empty()
-                && !entry.is_empty()
-                && path.len() > 2
-                && starts_at_drive(path))
-            .then_some(LinkTarget::Wide(path))
+        // A mount point whose target is a volume name is a mounted volume, not a link.
+        IO_REPARSE_TAG_MOUNT_POINT => {
+            parse_substitute_name(data, data.get(MOUNT_POINT_PATH_BUFFER_OFFSET..)?)?
+                .strip_prefix(&NT_OBJECT_PREFIX)
+                .filter(|path| starts_with_drive_letter(path))
+                .map(LinkTarget::Utf16)
         }
-        TAG_LX_SYMLINK => data
-            .strip_prefix(&2u32.to_le_bytes())
+        IO_REPARSE_TAG_APPEXECLINK => {
+            let (string_count, strings) = data.split_first_chunk()?;
+            let mut strings = strings.as_chunks().0.split(|&unit| unit == NUL);
+            let package = strings.next()?;
+            let entry_point = strings.next()?;
+            let path = strings.next()?;
+            (u32::from_le_bytes(*string_count) >= 3
+                && !package.is_empty()
+                && !entry_point.is_empty()
+                && path.len() > 2
+                && starts_with_drive_letter(path))
+            .then_some(LinkTarget::Utf16(path))
+        }
+        IO_REPARSE_TAG_LX_SYMLINK => data
+            .strip_prefix(&LX_SYMLINK_VERSION.to_le_bytes())
             .map(bun_core::slice_to_nul)
             .filter(|path| !has_win32_prefix(path))
             .map(LinkTarget::Utf8),
@@ -151,57 +165,58 @@ pub(crate) fn link_target(buffer: &[u8]) -> Option<LinkTarget<'_>> {
 
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum JunctionError {
-    TargetIsRelative,
+    RelativeTarget,
     TooLong,
 }
 
 /// `target` is `X:\…` or starts with `\\?\`.
-pub(crate) fn junction(target: &[u16]) -> Result<Vec<u8>, JunctionError> {
-    let is_separator = |&it: &u16| is_sep(it);
+pub(crate) fn encode_junction(target: &[u16]) -> Result<Vec<u8>, JunctionError> {
+    const COLON: u16 = b':' as u16;
     let target = match (target.strip_prefix(bun_core::w!("\\\\?\\")), target) {
         (Some(verbatim), _) => verbatim,
-        (None, [letter, 0x3A, separator, ..])
-            if u8::try_from(*letter).is_ok_and(|it| it.is_ascii_alphabetic())
-                && is_separator(separator) =>
+        (None, [letter, COLON, separator, ..])
+            if u8::try_from(*letter).is_ok_and(|byte| byte.is_ascii_alphabetic())
+                && is_sep(*separator) =>
         {
             target
         }
-        _ => return Err(JunctionError::TargetIsRelative),
+        _ => return Err(JunctionError::RelativeTarget),
     };
 
-    let mut name: Vec<Unit> = Vec::with_capacity(target.len() + 1);
-    for &it in target {
-        if !is_separator(&it) {
-            name.push(it.to_le_bytes());
-        } else if name.last() != Some(&BACKSLASH) {
-            name.push(BACKSLASH);
+    let mut print_name: Vec<[u8; 2]> = Vec::with_capacity(target.len() + 1);
+    for &unit in target {
+        if !is_sep(unit) {
+            print_name.push(unit.to_le_bytes());
+        } else if print_name.last() != Some(&BACKSLASH) {
+            print_name.push(BACKSLASH);
         }
     }
-    let substitute = [&NT_PREFIX[..], &name].concat();
-    if name.len() == 2 {
-        name.push(BACKSLASH);
+    let substitute_name = [&NT_OBJECT_PREFIX[..], &print_name].concat();
+    if print_name.len() == 2 {
+        print_name.push(BACKSLASH);
     }
-    let names = [&substitute[..], &[NUL], &name, &[NUL]].concat();
+    let path_buffer = [&substitute_name[..], &[NUL], &print_name, &[NUL]].concat();
 
-    let data_len = 8 + size_of_val(&*names);
-    if 8 + data_len > MAX_SIZE {
+    let data_len = MOUNT_POINT_PATH_BUFFER_OFFSET + size_of_val(&*path_buffer);
+    if HEADER_LEN + data_len > MAXIMUM_REPARSE_DATA_BUFFER_SIZE {
         return Err(JunctionError::TooLong);
     }
-    let substitute_len = size_of_val(&*substitute);
-    let print_len = size_of_val(&*name);
+    let substitute_name_len = size_of_val(&*substitute_name);
+    let print_name_len = size_of_val(&*print_name);
+    // Data length, reserved, then the offset and length of each name.
     let fields = [
         data_len,
         0,
         0,
-        substitute_len,
-        substitute_len + 2,
-        print_len,
+        substitute_name_len,
+        substitute_name_len + 2,
+        print_name_len,
     ]
-    .map(|it| (it as u16).to_le_bytes());
+    .map(|field| (field as u16).to_le_bytes());
     Ok([
-        &TAG_MOUNT_POINT.to_le_bytes()[..],
+        &IO_REPARSE_TAG_MOUNT_POINT.to_le_bytes()[..],
         fields.as_flattened(),
-        names.as_flattened(),
+        path_buffer.as_flattened(),
     ]
     .concat())
 }
@@ -210,79 +225,95 @@ pub(crate) fn junction(target: &[u16]) -> Result<Vec<u8>, JunctionError> {
 mod tests {
     use super::*;
 
-    fn wide(text: &str) -> Vec<u8> {
+    fn to_utf16le(text: &str) -> Vec<u8> {
         text.encode_utf16().flat_map(u16::to_le_bytes).collect()
     }
 
-    fn buffer(tag: u32, data: &[u8]) -> Vec<u8> {
+    fn encode_buffer(tag: u32, data: &[u8]) -> Vec<u8> {
         let len = (data.len() as u16).to_le_bytes();
         [&tag.to_le_bytes()[..], &len, &[0, 0], data].concat()
     }
 
-    fn named(tag: u32, name: &str) -> Vec<u8> {
-        let (print, name) = (wide("print"), wide(name));
-        let fields = [print.len(), name.len(), 0, print.len()].map(|it| (it as u16).to_le_bytes());
-        let flags: &[u8] = if tag == TAG_SYMLINK { &[0; 4] } else { &[] };
-        buffer(tag, &[fields.as_flattened(), flags, &print, &name].concat())
+    fn encode_link(tag: u32, substitute_name: &str) -> Vec<u8> {
+        let print_name = to_utf16le("print");
+        let substitute_name = to_utf16le(substitute_name);
+        let fields = [print_name.len(), substitute_name.len(), 0, print_name.len()]
+            .map(|field| (field as u16).to_le_bytes());
+        let flags: &[u8] = if tag == IO_REPARSE_TAG_SYMLINK {
+            &[0; 4]
+        } else {
+            &[]
+        };
+        let data = [fields.as_flattened(), flags, &print_name, &substitute_name].concat();
+        encode_buffer(tag, &data)
     }
 
-    fn app(count: u32, strings: &str) -> Vec<u8> {
-        let data = [&count.to_le_bytes()[..], &wide(strings)].concat();
-        buffer(TAG_APP_EXEC_LINK, &data)
+    fn encode_app_exec_link(string_count: u32, strings: &str) -> Vec<u8> {
+        let data = [&string_count.to_le_bytes()[..], &to_utf16le(strings)].concat();
+        encode_buffer(IO_REPARSE_TAG_APPEXECLINK, &data)
     }
 
-    fn target(buffer: &[u8]) -> Option<Vec<u8>> {
-        let target = link_target(buffer)?;
-        assert!(can_be_link(u32::from_le_bytes(*buffer.first_chunk()?)));
+    fn decode_target(buffer: &[u8]) -> Option<Vec<u8>> {
+        let target = parse_link_target(buffer)?;
+        assert!(is_link_tag(u32::from_le_bytes(*buffer.first_chunk()?)));
         let mut text = vec![0; target.len()];
         assert_eq!(target.decode(&mut text), Some(text.len()));
         Some(text)
     }
 
     #[test]
-    fn reads_link_targets() {
+    fn parses_link_targets() {
+        let symlink = |name| encode_link(IO_REPARSE_TAG_SYMLINK, name);
+        let mount_point = |name| encode_link(IO_REPARSE_TAG_MOUNT_POINT, name);
+        let lx_symlink = |data: &[u8]| encode_buffer(IO_REPARSE_TAG_LX_SYMLINK, data);
         for (buffer, expected) in [
-            (named(TAG_SYMLINK, "..\\é"), Some("..\\é")),
-            (named(TAG_SYMLINK, "\\??\\C:\\a"), Some("C:\\a")),
-            (named(TAG_SYMLINK, "\\??\\c:"), Some("c:")),
-            (named(TAG_SYMLINK, "\\??\\C:a"), Some("\\??\\C:a")),
-            (named(TAG_SYMLINK, "\\??\\unc\\s\\t"), Some("\\\\s\\t")),
-            (named(TAG_SYMLINK, "\\??\\UNC"), Some("\\??\\UNC")),
-            (named(TAG_SYMLINK, "\\??\\NUL"), Some("\\??\\NUL")),
-            (named(TAG_SYMLINK, "a\0"), Some("a")),
-            (named(TAG_SYMLINK, ""), Some("")),
-            (named(TAG_MOUNT_POINT, "\\??\\C:\\a\\"), Some("C:\\a\\")),
-            (app(3, "p\0e\0C:\\a.exe\x000\0"), Some("C:\\a.exe")),
-            (app(2, "p\0e\0C:\\a.exe\0"), None),
-            (app(3, "p\0\0C:\\a.exe\0"), None),
-            (app(3, "p\0e\0a.exe\0"), None),
-            (app(3, "p\0e\0C:\0"), None),
-            (buffer(TAG_LX_SYMLINK, b"\x02\0\0\0../a"), Some("../a")),
-            (buffer(TAG_LX_SYMLINK, b"\x01\0\0\0../a"), None),
-            (named(0x8000_0023, "a"), None),
+            (symlink("..\\é"), Some("..\\é")),
+            (symlink("\\??\\C:\\a"), Some("C:\\a")),
+            (symlink("\\??\\c:"), Some("c:")),
+            (symlink("\\??\\C:a"), Some("\\??\\C:a")),
+            (symlink("\\??\\unc\\s\\t"), Some("\\\\s\\t")),
+            (symlink("\\??\\UNC"), Some("\\??\\UNC")),
+            (symlink("\\??\\NUL"), Some("\\??\\NUL")),
+            (symlink("a\0"), Some("a")),
+            (symlink(""), Some("")),
+            (mount_point("\\??\\C:\\a\\"), Some("C:\\a\\")),
+            (
+                encode_app_exec_link(3, "p\0e\0C:\\a.exe\x000\0"),
+                Some("C:\\a.exe"),
+            ),
+            (encode_app_exec_link(2, "p\0e\0C:\\a.exe\0"), None),
+            (encode_app_exec_link(3, "p\0\0C:\\a.exe\0"), None),
+            (encode_app_exec_link(3, "p\0e\0a.exe\0"), None),
+            (encode_app_exec_link(3, "p\0e\0C:\0"), None),
+            (lx_symlink(b"\x02\0\0\0../a"), Some("../a")),
+            (lx_symlink(b"\x01\0\0\0../a"), None),
+            (encode_link(0x8000_0023, "a"), None),
         ] {
-            assert_eq!(target(&buffer).as_deref(), expected.map(str::as_bytes));
+            assert_eq!(
+                decode_target(&buffer).as_deref(),
+                expected.map(str::as_bytes)
+            );
         }
     }
 
     #[test]
-    fn builds_junctions() {
-        let build = |target: &str| junction(&target.encode_utf16().collect::<Vec<_>>());
+    fn encodes_junctions() {
+        let encode = |target: &str| encode_junction(&target.encode_utf16().collect::<Vec<_>>());
         let expected = [
             &[3, 0, 0, 0xA0, 36, 0, 0, 0, 0, 0, 16, 0, 18, 0, 8, 0][..],
-            &wide("\\??\\C:\\a\0C:\\a\0"),
+            &to_utf16le("\\??\\C:\\a\0C:\\a\0"),
         ];
-        assert_eq!(build("C:/a").unwrap(), expected.concat());
-        for (given, names) in [
+        assert_eq!(encode("C:/a").unwrap(), expected.concat());
+        for (target, path_buffer) in [
             ("C://a\\\\b/", "\\??\\C:\\a\\b\\\0C:\\a\\b\\\0"),
             ("C:\\", "\\??\\C:\\\0C:\\\0"),
             ("\\\\?\\C:", "\\??\\C:\0C:\\\0"),
             ("\\\\?\\UNC\\s\\t", "\\??\\UNC\\s\\t\0UNC\\s\\t\0"),
         ] {
-            assert_eq!(build(given).unwrap()[16..], wide(names));
+            assert_eq!(encode(target).unwrap()[16..], to_utf16le(path_buffer));
         }
         for relative in ["", "a", "C:", "C:a", "\\a", "\\\\s\\t", "1:\\a"] {
-            assert_eq!(build(relative), Err(JunctionError::TargetIsRelative));
+            assert_eq!(encode(relative), Err(JunctionError::RelativeTarget));
         }
     }
 }

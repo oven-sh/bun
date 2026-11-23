@@ -297,6 +297,7 @@ pub struct FILE_BASIC_INFORMATION {
     pub LastWriteTime: LARGE_INTEGER,
     pub ChangeTime: LARGE_INTEGER,
     pub FileAttributes: ULONG,
+    /// Tail padding; not a field in `wdm.h`.
     pub Reserved: ULONG,
 }
 
@@ -448,7 +449,7 @@ pub struct FILE_STAT_BASIC_INFORMATION {
     pub FileId128: [u8; 16],
 }
 
-/// `FILE_ID_FULL_DIR_INFORMATION` (`ntifs.h`). `EaSize` is the tag of a reparse point.
+/// `FILE_ID_FULL_DIR_INFORMATION` (`ntifs.h`). For a reparse point, `EaSize` holds the reparse tag.
 #[repr(C)]
 pub struct FILE_ID_FULL_DIR_INFORMATION {
     pub NextEntryOffset: ULONG,
@@ -1241,16 +1242,17 @@ pub mod ws2_32 {
     #[repr(C, align(8))]
     struct WSADATA([u8; 408]);
 
-    /// Comes before the first call of Winsock. It takes milliseconds.
+    /// Call before any other Winsock function. The first call takes milliseconds.
     pub fn ensure_started() {
         use core::sync::atomic::{AtomicBool, Ordering};
+        const WINSOCK_VERSION: u16 = 0x0202;
         static IS_STARTED: AtomicBool = AtomicBool::new(false);
         if IS_STARTED.load(Ordering::Acquire) {
             return;
         }
         let mut data = core::mem::MaybeUninit::uninit();
-        // SAFETY: an out-param. Threads that get here together each add a reference, which is never given back.
-        let rc = unsafe { WSAStartup(0x0202, data.as_mut_ptr()) };
+        // SAFETY: `data` is a valid out-param. Racing threads each add a reference, which is never released.
+        let rc = unsafe { WSAStartup(WINSOCK_VERSION, data.as_mut_ptr()) };
         IS_STARTED.store(rc == 0, Ordering::Release);
     }
 

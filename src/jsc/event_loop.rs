@@ -1245,7 +1245,7 @@ impl EventLoop {
     /// instead of returning immediately on `num_polls == 0`.
     fn hold_forever_poll(&self, loop_: &'static uws::Loop) {
         if !self.holds_forever_poll.get() {
-            // On Windows the loop counts as alive from here on, so what is unref'd goes on running.
+            // On Windows this also marks the loop active, so unref'd timers and handles keep running.
             #[cfg(windows)]
             loop_.ref_();
             #[cfg(not(windows))]
@@ -1272,11 +1272,11 @@ impl EventLoop {
         }
 
         vm.gc_controller.process_gc_timer();
+        // An earlier tick may have consumed the wakeup of a queued task, so don't park while one is queued.
+        let sec = if self.has_pending_tasks() { 0 } else { 1 };
         // `tick()` below can start work (e.g. a --hot reload) whose only wake
         // source is a cross-thread `wakeup()`; bound the park, same as the GC
         // timerfd used to.
-        // The wakeup for a task that is queued may have gone to an earlier tick.
-        let sec = (!self.has_pending_tasks()).into();
         loop_.tick_with_timeout(
             Some(&bun_core::Timespec { sec, nsec: 0 }),
             uws::NOW_NS_UNKNOWN,

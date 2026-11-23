@@ -16,8 +16,9 @@ extern "C" void Bun__JSC_acquireHeapAccessAfterWait(JSC::VM* _Nonnull vm)
     vm->heap.acquireAccess();
 }
 
-// `releasedHeapAccess`: set when this gave up heap access for the wait, in which case
-// Bun__JSC_acquireHeapAccessAfterWait must run before anything touches the JS heap. It does that while an idle collection GarbageCollectionController requested is unfinished
+// `releasedHeapAccess` is set when this gave up
+// heap access for the wait, in which case Bun__JSC_acquireHeapAccessAfterWait must run before anything touches the JS
+// heap. It does that while an idle collection GarbageCollectionController requested is unfinished
 // (JSVMClientData::idleCollectionsPending): a requested collection only advances at this thread's safepoints while this
 // thread holds the collector's conn, and a parked thread has none; without access, the conn goes to the collector thread,
 // which finishes the collection while this one sleeps.

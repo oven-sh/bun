@@ -205,10 +205,10 @@ describe.concurrent.skipIf(!isLinux)("a signal with no name", () => {
   });
 });
 
-// Windows has no signals to send. Four names end the process, 0 asks whether it runs.
+// Windows has no signals: SIGINT, SIGQUIT, SIGKILL and SIGTERM terminate the process, 0 checks that it is alive.
 describe.concurrent.skipIf(!isWindows)("kill on Windows", () => {
-  const idle = [bunExe(), "-e", "setInterval(() => {}, 1e6)"];
-  const codeOf = (fn: () => unknown) => {
+  const idleCmd = [bunExe(), "-e", "setInterval(() => {}, 1e6)"];
+  const captureErrorCode = (fn: () => unknown) => {
     try {
       return fn();
     } catch (error: any) {
@@ -221,8 +221,8 @@ describe.concurrent.skipIf(!isWindows)("kill on Windows", () => {
     ["SIGQUIT", 3],
     ["SIGKILL", 9],
     ["SIGTERM", 15],
-  ] as const)("subprocess.kill(%s) ends the child and is reported as its signal", async (signal, number) => {
-    await using proc = Bun.spawn({ cmd: idle, env: bunEnv, ...quiet });
+  ] as const)("subprocess.kill(%s) terminates the child and sets signalCode", async (signal, number) => {
+    await using proc = Bun.spawn({ cmd: idleCmd, env: bunEnv, ...quiet });
     proc.kill(signal);
     const exited = await proc.exited;
     expect({ exited, exitCode: proc.exitCode, signalCode: proc.signalCode }).toEqual({
@@ -233,17 +233,17 @@ describe.concurrent.skipIf(!isWindows)("kill on Windows", () => {
   });
 
   test.each(["SIGINT", "SIGQUIT", "SIGKILL", "SIGTERM"] as const)(
-    "process.kill(pid, %s) ends the child with exit code 1 and no signal",
+    "process.kill(pid, %s) terminates the child with exit code 1 and no signalCode",
     async signal => {
-      await using proc = Bun.spawn({ cmd: idle, env: bunEnv, ...quiet });
+      await using proc = Bun.spawn({ cmd: idleCmd, env: bunEnv, ...quiet });
       expect(process.kill(proc.pid, signal)).toBe(true);
       const exited = await proc.exited;
       expect({ exited, signalCode: proc.signalCode }).toEqual({ exited: 1, signalCode: null });
     },
   );
 
-  test("the first signal is the one that is reported", async () => {
-    await using proc = Bun.spawn({ cmd: idle, env: bunEnv, ...quiet });
+  test("signalCode reports the first signal sent", async () => {
+    await using proc = Bun.spawn({ cmd: idleCmd, env: bunEnv, ...quiet });
     proc.kill("SIGTERM");
     proc.kill(0);
     proc.kill("SIGKILL");
@@ -251,13 +251,16 @@ describe.concurrent.skipIf(!isWindows)("kill on Windows", () => {
     expect(proc.signalCode).toBe("SIGTERM");
   });
 
-  test("process.kill() knows this process as 0 and no process as -1", () => {
-    expect([codeOf(() => process.kill(0, 0)), codeOf(() => process.kill(-1, 0))]).toEqual([true, "ESRCH"]);
-    expect(codeOf(() => process.kill(process.pid, 64))).toBe("EINVAL");
+  test("process.kill() accepts pid 0 and rejects pid -1 and invalid signals", () => {
+    expect([captureErrorCode(() => process.kill(0, 0)), captureErrorCode(() => process.kill(-1, 0))]).toEqual([
+      true,
+      "ESRCH",
+    ]);
+    expect(captureErrorCode(() => process.kill(process.pid, 64))).toBe("EINVAL");
   });
 
-  // 259 is also what GetExitCodeProcess() answers for a process that still runs.
-  test.each([0, 259])("a process that exited with %d is gone while another handle keeps its pid", async code => {
+  // 259 is STILL_ACTIVE, which GetExitCodeProcess() also returns for a running process.
+  test.each([0, 259])("process.kill() throws ESRCH after exit code %d while a handle is still open", async code => {
     const k32 = dlopen("kernel32.dll", {
       OpenProcess: { args: ["u32", "i32", "u32"], returns: "u64" },
       CloseHandle: { args: ["u64"], returns: "i32" },
@@ -275,10 +278,10 @@ describe.concurrent.skipIf(!isWindows)("kill on Windows", () => {
       await proc.stdin.end();
       await proc.exited;
       expect(proc.signalCode).toBeNull();
-      expect([codeOf(() => process.kill(proc.pid, 0)), codeOf(() => process.kill(proc.pid, "SIGTERM"))]).toEqual([
-        "ESRCH",
-        "ESRCH",
-      ]);
+      expect([
+        captureErrorCode(() => process.kill(proc.pid, 0)),
+        captureErrorCode(() => process.kill(proc.pid, "SIGTERM")),
+      ]).toEqual(["ESRCH", "ESRCH"]);
     } finally {
       k32.symbols.CloseHandle(handle);
       k32.close();
@@ -286,7 +289,7 @@ describe.concurrent.skipIf(!isWindows)("kill on Windows", () => {
   });
 });
 
-test("kill(0) does not make an exit look like a signal", async () => {
+test("kill(0) does not set signalCode", async () => {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", "await Bun.stdin.text(); process.exit(7)"],
     env: bunEnv,

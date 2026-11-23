@@ -370,7 +370,7 @@ fn is_file_or_executable(name: &[u8], cwd: &[u8]) -> bool {
 /// finds no script in it.
 pub(super) fn read_package_json(path: &[u8]) -> Option<Vec<u8>> {
     use bun_sys::{EntryKind, O};
-    // Without `O_NONBLOCK`, opening a named pipe waits for somebody to open it for writing, who may never come.
+    // Without `O_NONBLOCK`, opening a named pipe waits for a writer.
     let flags = O::RDONLY | O::NONBLOCK;
     let file = bun_sys::File::openat(bun_core::Fd::cwd(), path, flags, 0).ok()?;
     let found = file.stat().ok()?;

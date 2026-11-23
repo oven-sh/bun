@@ -38,7 +38,7 @@ describe("spawnSync", () => {
   // Windows-only: it runs cmd.exe.
   it.skipIf(!isWindows)("timeout is measured from the current call, not from the previous spawnSync", async () => {
     const echo = (s: string) => ["cmd", "/c", `echo ${s}`];
-    // Populate the cached isolated event loop, then leave it alone
+    // Populate the cached isolated event loop, then leave it idle
     // for longer than the next call's timeout.
     const first = Bun.spawnSync({ cmd: echo("first"), stdout: "pipe", stderr: "pipe" });
     expect(first.exitCode).toBe(0);

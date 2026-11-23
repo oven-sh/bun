@@ -1,11 +1,11 @@
-//! What a reader or a writer works on. It reports from the loop, never from inside a call, and not once it is dropped.
+//! I/O sources of the Windows readers and writers. Events come from the event loop only: never inside a call, never after drop.
 
 mod console;
-mod endpoint;
 mod file;
 mod owners;
 mod pipe;
 mod pipe_server;
+mod state;
 
 use std::rc::Rc;
 
@@ -16,11 +16,11 @@ use bun_sys::{self as sys, E, MaybeOwnedFile, Tag};
 use crate::Owner;
 use crate::pipe_reader::ReadEvent;
 use console::Console;
-use endpoint::Endpoint;
 use file::File;
-pub use owners::{finish_writes_to_disk, stop_all_for_vm_teardown};
+pub use owners::{finish_all_disk_writes, stop_all_for_vm_teardown};
 pub use pipe::Pipe;
 pub use pipe_server::{PipeConnect, PipeServer};
+use state::SourceState;
 
 pub(crate) enum Payload {
     Owned(Vec<u8>),
@@ -28,7 +28,7 @@ pub(crate) enum Payload {
 }
 
 impl Payload {
-    pub(crate) fn bytes(&self) -> &[u8] {
+    pub(crate) fn as_bytes(&self) -> &[u8] {
         match self {
             Payload::Owned(bytes) => bytes,
             Payload::Shared(bytes) => (**bytes).as_ref(),
@@ -42,8 +42,7 @@ impl Payload {
         }
     }
 
-    /// The allocation, for the next write.
-    fn into_spare(self) -> Vec<u8> {
+    fn into_spare_buffer(self) -> Vec<u8> {
         match self {
             Payload::Owned(bytes) => bytes,
             Payload::Shared(_) => Vec::new(),
@@ -59,13 +58,13 @@ enum Source {
 
 impl Source {
     fn open(port: &Rc<Port>, file: MaybeOwnedFile) -> sys::Result<Source> {
-        if w::is_missing(file.fd().native()) {
+        if w::is_invalid_handle(file.fd().native()) {
             return Err(sys::Error::from_code(E::EBADF, Tag::open));
         }
         let (file, is_only_handle) = match file {
             MaybeOwnedFile::Owned(file) if file.fd().stdio_tag().is_none() => (file, true),
-            // Other threads use it, and what they use must not be closed under them.
-            kept => (sys::File::from_fd(sys::dup(kept.fd())?), false),
+            // Worker threads use the handle, so a borrowed or stdio fd is duplicated to stay open for them.
+            original => (sys::File::from_fd(sys::dup(original.fd())?), false),
         };
         Ok(match w::guess_handle(file.fd()) {
             HandleKind::Pipe => match Pipe::open(port, file) {
@@ -77,17 +76,17 @@ impl Source {
         })
     }
 
-    fn endpoint(&self) -> &Endpoint {
+    fn state(&self) -> &SourceState {
         match self {
-            Source::Pipe(pipe) => pipe.endpoint(),
-            Source::Console(console) => console.endpoint(),
-            Source::File(file) => file.endpoint(),
+            Source::Pipe(pipe) => pipe.state(),
+            Source::Console(console) => console.state(),
+            Source::File(file) => file.state(),
         }
     }
 
     fn update_ref(&self, value: bool) {
         if !matches!(self, Source::File(_)) {
-            self.endpoint().update_ref(value);
+            self.state().update_ref(value);
         }
     }
 }
@@ -101,7 +100,7 @@ impl From<Pipe> for ReadSource {
 }
 
 impl ReadSource {
-    /// `offset` is for a file or a device, whose position is used without it.
+    /// `offset` applies to files and devices only. `None` reads from the current file position.
     pub(crate) fn open(
         port: &Rc<Port>,
         file: MaybeOwnedFile,
@@ -114,17 +113,17 @@ impl ReadSource {
         Ok(ReadSource(source))
     }
 
-    /// SAFETY: `owner` can be passed to `__bun_run_io` until it is replaced, or `self` is dropped.
+    /// SAFETY: `owner` stays valid for `__bun_run_io` until it is replaced or `self` is dropped.
     pub(crate) unsafe fn set_owner(&self, owner: Owner) {
-        // SAFETY: fn contract. `Drop` clears it.
-        unsafe { self.0.endpoint().owners.set_reader(owner) };
+        // SAFETY: caller contract. `Drop` clears the reader.
+        unsafe { self.0.state().owners.set_reader(owner) };
     }
 
     pub(crate) fn update_ref(&self, value: bool) {
         self.0.update_ref(value);
     }
 
-    /// One event follows, with at most `max_len` bytes.
+    /// Requests one event of at most `max_len` bytes.
     pub(crate) fn read(&self, max_len: usize) {
         match &self.0 {
             Source::Pipe(pipe) => pipe.read(max_len),
@@ -133,15 +132,15 @@ impl ReadSource {
         }
     }
 
-    /// `read`, right after the event of the one before.
-    pub(crate) fn read_on(&self, max_len: usize) {
+    /// `read`, called right after handling the previous read's event.
+    pub(crate) fn continue_read(&self, max_len: usize) {
         match &self.0 {
-            Source::Pipe(pipe) => pipe.read_on(max_len),
+            Source::Pipe(pipe) => pipe.continue_read(max_len),
             Source::Console(_) | Source::File(_) => self.read(max_len),
         }
     }
 
-    /// What comes nevertheless is kept for the next `read`.
+    /// The result of a read that completes while paused is buffered for the next `read`.
     pub(crate) fn pause(&self) {
         match &self.0 {
             Source::Pipe(pipe) => pipe.pause(),
@@ -150,23 +149,22 @@ impl ReadSource {
         }
     }
 
-    /// The event of the `read` under way, if that is on an overlapped pipe of our own and has something by now. It leaves the end of the input to the loop.
-    pub(crate) fn take_available(&self) -> Option<ReadEvent> {
+    /// Completes the requested `read` if an overlapped pipe with unshared input already has data. EOF and errors are left to the loop.
+    pub(crate) fn try_read(&self) -> Option<ReadEvent> {
         match &self.0 {
-            Source::Pipe(pipe) => pipe.take_available(),
+            Source::Pipe(pipe) => pipe.try_read(),
             Source::Console(_) | Source::File(_) => None,
         }
     }
 
-    /// For a later read to fill.
-    pub(crate) fn recycle(&self, buffer: Vec<u8>) {
-        self.0.endpoint().recycle(buffer);
+    pub(crate) fn reuse_buffer(&self, buffer: Vec<u8>) {
+        self.0.state().reuse_buffer(buffer);
     }
 }
 
 impl Drop for ReadSource {
     fn drop(&mut self) {
-        self.0.endpoint().owners.clear_reader();
+        self.0.state().owners.clear_reader();
         if let Source::Pipe(pipe) = &self.0 {
             pipe.stop_reading();
         }
@@ -194,17 +192,17 @@ impl WriteSource {
         matches!(self.0, Source::File(_))
     }
 
-    /// SAFETY: as for [`ReadSource::set_owner`].
+    /// SAFETY: see [`ReadSource::set_owner`].
     pub(crate) unsafe fn set_owner(&self, owner: Owner) {
-        // SAFETY: fn contract. `Drop` clears it.
-        unsafe { self.0.endpoint().owners.set_writer(owner) };
+        // SAFETY: caller contract. `Drop` clears the writer.
+        unsafe { self.0.state().owners.set_writer(owner) };
     }
 
     pub(crate) fn update_ref(&self, value: bool) {
         self.0.update_ref(value);
     }
 
-    /// On `Ok` one event follows, once all of it is written. One at a time.
+    /// On `Ok`, reports one event once all of `payload` is written or the write fails. One write at a time.
     pub(crate) fn write(&self, payload: Payload) -> sys::Result<()> {
         match &self.0 {
             Source::Pipe(pipe) => pipe.write(payload),
@@ -216,10 +214,10 @@ impl WriteSource {
         }
     }
 
-    /// `write`, but no event follows if `buffer` comes back: it is written.
-    pub(crate) fn write_now(&self, buffer: Vec<u8>) -> sys::Result<Option<Vec<u8>>> {
+    /// Like `write`, but returns `buffer` and reports no event if the write completed synchronously.
+    pub(crate) fn try_write(&self, buffer: Vec<u8>) -> sys::Result<Option<Vec<u8>>> {
         match &self.0 {
-            Source::Pipe(pipe) => pipe.write_now(buffer),
+            Source::Pipe(pipe) => pipe.try_write(buffer),
             _ => self.write(Payload::Owned(buffer)).map(|()| None),
         }
     }
@@ -228,43 +226,42 @@ impl WriteSource {
         matches!(self.0, Source::Console(_))
     }
 
-    /// No event follows.
-    pub(crate) fn write_to_console(&self, bytes: &[u8]) -> Option<sys::Result<()>> {
+    pub(crate) fn write_console_sync(&self, bytes: &[u8]) -> Option<sys::Result<()>> {
         match &self.0 {
-            Source::Console(console) => Some(console.write_now(bytes)),
+            Source::Console(console) => Some(console.write_sync(bytes)),
             Source::Pipe(_) | Source::File(_) => None,
         }
     }
 
-    /// A write to a disk ends a turn later at best, which is long while the loop is held up.
-    pub(crate) fn can_queue(&self, len: usize) -> bool {
-        matches!(&self.0, Source::File(file) if file.can_queue(len))
+    /// A disk write completes one loop iteration later at best, which is slow while the loop is I/O-starved.
+    pub(crate) fn try_take_io_budget(&self, len: usize) -> bool {
+        matches!(&self.0, Source::File(file) if file.try_take_io_budget(len))
     }
 
-    /// The event follows nevertheless.
-    pub(crate) fn finish_write_to_disk(&self) -> sys::Result<()> {
-        let write = self.0.endpoint().owners.disk_write.take();
-        write.map_or(Ok(()), |write| write.run())
+    /// The write's event is still reported.
+    pub(crate) fn finish_disk_write(&self) -> sys::Result<()> {
+        let job = self.0.state().owners.disk_write.take();
+        job.map_or(Ok(()), |job| job.run())
     }
 
-    /// For `WriteEvent::WriteRestNow`.
-    pub(crate) fn write_rest(&self, bytes: &[u8]) {
+    /// For `WriteEvent::FlushSync`.
+    pub(crate) fn write_file_sync(&self, bytes: &[u8]) {
         if let Source::File(file) = &self.0 {
-            let _ = file.write_blocking(bytes);
+            let _ = file.write_sync(bytes);
         }
     }
 
-    /// A write to a file goes on after the drop otherwise.
-    pub(crate) fn cancel_write_unless_started(&self) {
+    /// Without this, a file write still runs after the source is dropped.
+    pub(crate) fn cancel_unstarted_write(&self) {
         if let Source::File(file) = &self.0 {
-            file.cancel_write_unless_started();
+            file.cancel_unstarted_write();
         }
     }
 }
 
 impl Drop for WriteSource {
     fn drop(&mut self) {
-        self.0.endpoint().owners.clear_writer();
+        self.0.state().owners.clear_writer();
         if let Source::Pipe(pipe) = &self.0 {
             pipe.stop_writing();
         }

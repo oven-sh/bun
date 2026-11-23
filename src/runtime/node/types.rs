@@ -907,12 +907,13 @@ impl PathLikeExt for PathLike<'_> {
                 .ok_or_else(|| ctx.throw_out_of_memory())?;
                 // The path is read after this call returns. By then a later argument's getter can
                 // shrink the buffer or grow its `WebAssembly.Memory`, which frees the pages.
-                let copied =
-                    match cfg!(windows) && will_be_async && buffer.slice().len() < MAX_PATH_BYTES {
-                        true => buffer.snapshot(ctx),
-                        false => buffer.copy_if_freeable_while_pinned(ctx),
+                let is_ok =
+                    if cfg!(windows) && will_be_async && buffer.slice().len() < MAX_PATH_BYTES {
+                        buffer.snapshot(ctx)
+                    } else {
+                        buffer.copy_if_freeable_while_pinned(ctx)
                     };
-                if !copied {
+                if !is_ok {
                     return Err(ctx.throw_out_of_memory());
                 }
                 Valid::path_buffer(buffer.slice(), ctx)?;

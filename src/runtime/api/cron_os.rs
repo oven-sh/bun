@@ -276,10 +276,12 @@ impl OsJob {
             .map_err(|err| Failure::Spawn(err.name()))?;
 
         let mut child = Child::OutputEnded(Ok(Vec::new()));
-        if let Some(output) = spawned.stdout.take().or_else(|| spawned.stderr.take()) {
-            (self.output)
+        if let Some(pipe) = spawned.stdout.take().or_else(|| spawned.stderr.take()) {
+            self.output
                 .update_flags(|f| f.insert(ReaderFlags::NONBLOCKING | ReaderFlags::SOCKET));
-            let read = (self.output.start_own_pipe(bun_io::js_vm_ctx(), output))
+            let read = self
+                .output
+                .start_exclusive_pipe(bun_io::js_vm_ctx(), pipe)
                 .map_err(|_| "Failed to start reading the output")?;
             child = (self.take_output(read)).map_or(Child::Running, Child::OutputEnded);
         }

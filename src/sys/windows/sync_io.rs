@@ -15,7 +15,7 @@ use super::kernel32::{
     CancelIoEx, GetCurrentThreadId, ReadFile, WaitForMultipleObjects, WaitForSingleObject,
     WriteFile,
 };
-use super::named_pipe::MAX_REMOTE_LEN;
+use super::named_pipe::MAX_REMOTE_TRANSFER_LEN;
 use super::{
     BOOL, DWORD, FALSE, FILE_TYPE_PIPE, GetFileType, HANDLE, INFINITE, NTSTATUS, OVERLAPPED,
     Win32Error, ntdll,
@@ -23,46 +23,46 @@ use super::{
 use crate::{Fd, IoVec, IoVecMut};
 
 #[repr(align(64))]
-struct SpareEvent(AtomicPtr<c_void>);
+struct EventSlot(AtomicPtr<c_void>);
 
-/// By thread id. The crash handler writes through here, so this takes no lock and no memory.
-static SPARE_EVENTS: [SpareEvent; 64] = [const { SpareEvent(AtomicPtr::new(ptr::null_mut())) }; 64];
+/// Indexed by thread id. The crash handler writes through this path, so it must not lock or allocate.
+static EVENT_CACHE: [EventSlot; 64] = [const { EventSlot(AtomicPtr::new(ptr::null_mut())) }; 64];
 
 struct Event {
     handle: HANDLE,
-    spare: &'static AtomicPtr<c_void>,
+    slot: &'static AtomicPtr<c_void>,
 }
 
 impl Event {
-    fn take() -> Result<Event, Win32Error> {
-        let spare = &SPARE_EVENTS[GetCurrentThreadId() as usize / 4 % SPARE_EVENTS.len()].0;
-        // The cell holds the handle alone, which the system gives to one thread at a time.
-        let mut handle = spare.swap(ptr::null_mut(), Ordering::Relaxed);
+    fn acquire() -> Result<Event, Win32Error> {
+        let slot = &EVENT_CACHE[GetCurrentThreadId() as usize / 4 % EVENT_CACHE.len()].0;
+        // Relaxed: the slot publishes only the handle value.
+        let mut handle = slot.swap(ptr::null_mut(), Ordering::Relaxed);
         if handle.is_null() {
             handle = super::CreateEventW()?.into_raw_handle();
         }
-        Ok(Event { handle, spare })
+        Ok(Event { handle, slot })
     }
 
-    /// A synchronous handle needs none, and the system would reset and set it every time.
-    fn take_for(file: HANDLE) -> Result<Option<Event>, Win32Error> {
-        let is_overlapped = overlapped_note(file).load(Ordering::Relaxed) == file;
+    /// A synchronous handle needs no event, and passing one costs a reset and a signal per request.
+    fn acquire_if_needed(file: HANDLE) -> Result<Option<Event>, Win32Error> {
+        let is_overlapped = overlapped_cache_slot(file).load(Ordering::Relaxed) == file;
         (is_overlapped || is_interruptible())
-            .then(Event::take)
+            .then(Event::acquire)
             .transpose()
     }
 
     fn wait(&self) {
-        // The buffers are not free before the signal.
+        // The kernel uses the request's buffers until it signals the event.
         assert_eq!(WaitForSingleObject(self.handle, INFINITE), 0);
     }
 
     fn wait_or_cancel(&self, file: HANDLE, request: *mut IO_STATUS_BLOCK) {
-        let either = [self.handle, INTERRUPT.get()];
-        if !either[1].is_null() {
-            // SAFETY: an array of two handles, and an address that is only compared.
+        let handles = [self.handle, INTERRUPT_EVENT.get()];
+        if !handles[1].is_null() {
+            // SAFETY: `handles` has two elements, and `CancelIoEx` only compares the address of `request`.
             unsafe {
-                if WaitForMultipleObjects(2, either.as_ptr(), FALSE, INFINITE) != 0 {
+                if WaitForMultipleObjects(2, handles.as_ptr(), FALSE, INFINITE) != 0 {
                     CancelIoEx(file, request.cast());
                 }
             }
@@ -73,35 +73,35 @@ impl Event {
 
 impl Drop for Event {
     fn drop(&mut self) {
-        let extra = self.spare.swap(self.handle, Ordering::Relaxed);
-        if !extra.is_null() {
-            // SAFETY: whoever takes an event out of the table owns it.
-            drop(unsafe { OwnedHandle::from_raw_handle(extra) });
+        let evicted = self.slot.swap(self.handle, Ordering::Relaxed);
+        if !evicted.is_null() {
+            // SAFETY: swapping a handle out of its slot transfers ownership of it.
+            drop(unsafe { OwnedHandle::from_raw_handle(evicted) });
         }
     }
 }
 
 thread_local! {
-    static INTERRUPT: Cell<HANDLE> = const { Cell::new(ptr::null_mut()) };
+    static INTERRUPT_EVENT: Cell<HANDLE> = const { Cell::new(ptr::null_mut()) };
 }
 
-/// A signal of `interrupt` cancels what `io` waits for on an overlapped handle, which `CancelSynchronousIo` does not.
-pub fn interruptible<T>(interrupt: BorrowedHandle<'_>, io: impl FnOnce() -> T) -> T {
-    let outer = INTERRUPT.replace(interrupt.as_raw_handle());
+/// Signaling `event` cancels the overlapped request that `io` waits for, which `CancelSynchronousIo` cannot do.
+pub fn with_interrupt_event<T>(event: BorrowedHandle<'_>, io: impl FnOnce() -> T) -> T {
+    let previous = INTERRUPT_EVENT.replace(event.as_raw_handle());
     let result = io();
-    INTERRUPT.set(outer);
+    INTERRUPT_EVENT.set(previous);
     result
 }
 
 pub(super) fn is_interruptible() -> bool {
-    !INTERRUPT.get().is_null()
+    !INTERRUPT_EVENT.get().is_null()
 }
 
 fn is_interrupted() -> bool {
-    is_interruptible() && WaitForSingleObject(INTERRUPT.get(), 0) == 0
+    is_interruptible() && WaitForSingleObject(INTERRUPT_EVENT.get(), 0) == 0
 }
 
-/// The `IO_STATUS_BLOCK` of a request that outlasts the call that starts it.
+/// An `IO_STATUS_BLOCK` that the kernel writes after the initiating call has returned.
 #[repr(C)]
 #[derive(Default)]
 pub struct StatusBlock {
@@ -112,7 +112,7 @@ pub struct StatusBlock {
 const _: () = assert!(size_of::<StatusBlock>() == size_of::<IO_STATUS_BLOCK>());
 
 impl StatusBlock {
-    fn pending() -> StatusBlock {
+    fn new_pending() -> StatusBlock {
         let this = StatusBlock::default();
         this.set(NTSTATUS::PENDING, 0);
         this
@@ -127,7 +127,7 @@ impl StatusBlock {
         self.information.store(information, Ordering::Relaxed);
     }
 
-    /// The system writes the status last.
+    /// The kernel writes `Status` after `Information`.
     pub fn get(&self) -> (NTSTATUS, usize) {
         let status = NTSTATUS(self.status.load(Ordering::Acquire) as u32);
         (status, self.information.load(Ordering::Relaxed))
@@ -139,27 +139,33 @@ pub(crate) fn complete(
     handle: HANDLE,
     start: impl FnOnce(*mut IO_STATUS_BLOCK) -> NTSTATUS,
 ) -> (NTSTATUS, usize) {
-    let io = StatusBlock::pending();
+    let io = StatusBlock::new_pending();
     wait(handle, None, &io, start(io.as_ptr()))
 }
 
-/// [`complete`] for a read or a write, which names the event. That can be null.
+/// [`complete`] for a read or write. `start` passes the given event, which may be null, to the request.
 pub(super) fn complete_transfer(
     handle: HANDLE,
     start: impl FnOnce(HANDLE, *mut IO_STATUS_BLOCK) -> NTSTATUS,
 ) -> (NTSTATUS, usize) {
-    let Ok(event) = Event::take_for(handle) else {
+    let Ok(event) = Event::acquire_if_needed(handle) else {
         return (NTSTATUS::INSUFFICIENT_RESOURCES, 0);
     };
-    let io = StatusBlock::pending();
-    let signal = event.as_ref().map_or(ptr::null_mut(), |it| it.handle);
-    wait(handle, event.as_ref(), &io, start(signal, io.as_ptr()))
+    let io = StatusBlock::new_pending();
+    let event_handle = event.as_ref().map_or(ptr::null_mut(), |event| event.handle);
+    wait(
+        handle,
+        event.as_ref(),
+        &io,
+        start(event_handle, io.as_ptr()),
+    )
 }
 
-/// The handle itself, if one of its requests has outlasted the call.
-fn overlapped_note(handle: HANDLE) -> &'static AtomicPtr<c_void> {
-    static NOTES: [AtomicPtr<c_void>; 64] = [const { AtomicPtr::new(ptr::null_mut()) }; 64];
-    &NOTES[handle.addr() / 4 % NOTES.len()]
+/// Direct-mapped cache of the handles that have returned `STATUS_PENDING`.
+fn overlapped_cache_slot(handle: HANDLE) -> &'static AtomicPtr<c_void> {
+    static OVERLAPPED_HANDLES: [AtomicPtr<c_void>; 64] =
+        [const { AtomicPtr::new(ptr::null_mut()) }; 64];
+    &OVERLAPPED_HANDLES[handle.addr() / 4 % OVERLAPPED_HANDLES.len()]
 }
 
 fn wait(
@@ -175,7 +181,7 @@ fn wait(
         event.wait_or_cancel(handle, io.as_ptr());
         return io.get();
     }
-    overlapped_note(handle).store(handle, Ordering::Relaxed);
+    overlapped_cache_slot(handle).store(handle, Ordering::Relaxed);
     loop {
         // Every request on the handle resets its signal when it starts and sets it when it ends.
         let waited = WaitForSingleObject(handle, 100);
@@ -193,7 +199,7 @@ pub(crate) fn complete_overlapped(
     start: impl FnOnce(*mut OVERLAPPED) -> BOOL,
 ) -> Result<(), Win32Error> {
     let mut overlapped: OVERLAPPED = bun_core::ffi::zeroed();
-    let event = Event::take()?;
+    let event = Event::acquire()?;
     // The low bit keeps the request from a completion port.
     overlapped.hEvent = event.handle.map_addr(|handle| handle | 1);
     match super::check(start(&raw mut overlapped)) {
@@ -204,7 +210,7 @@ pub(crate) fn complete_overlapped(
 }
 
 fn transferred((status, bytes): (NTSTATUS, usize)) -> Result<usize, Win32Error> {
-    // The rest of a message that does not fit waits for the next read.
+    // A partial message read: the next read returns the remainder.
     if NT_SUCCESS(status) || status == NTSTATUS::BUFFER_OVERFLOW {
         return Ok(bytes);
     }
@@ -219,20 +225,21 @@ fn is_console(handle: HANDLE) -> bool {
         || (is_stdin_tty() && handle == Fd::stdin().native())
 }
 
-/// One request for each part. An error behind some bytes is left for the next call.
-fn each_part(
-    parts: impl Iterator<Item = (*mut u8, usize)>,
+/// Issues one request per chunk. After a partial transfer, an error is left for the next call to report.
+fn transfer_chunks(
+    chunks: impl Iterator<Item = (*mut u8, usize)>,
     offset: Option<i64>,
     mut request: impl FnMut(*mut u8, DWORD, *const i64) -> Result<usize, Win32Error>,
 ) -> Result<usize, Win32Error> {
     let mut total = 0;
-    for (base, len) in parts {
+    for (base, len) in chunks {
         let offset = offset.map(|offset| offset.saturating_add_unsigned(total as u64));
         let offset = offset.as_ref().map_or(ptr::null(), ptr::from_ref);
-        // `CancelSynchronousIo` that has hit a request as it ended would wait for this one.
-        let result = match is_interrupted() {
-            true => Err(Win32Error::OPERATION_ABORTED),
-            false => request(base, len as DWORD, offset),
+        // A `CancelSynchronousIo` that raced with the previous request's completion would wait for this request.
+        let result = if is_interrupted() {
+            Err(Win32Error::OPERATION_ABORTED)
+        } else {
+            request(base, len as DWORD, offset)
         };
         match result {
             Ok(bytes) if bytes < len => return Ok(total + bytes),
@@ -252,7 +259,7 @@ pub(crate) fn readv(
 ) -> Result<usize, Win32Error> {
     let null = ptr::null_mut();
     let is_console = is_console(handle);
-    each_part(IoVecMut::parts(vecs), offset, |buf, len, offset| {
+    transfer_chunks(IoVecMut::chunks(vecs), offset, |buf, len, offset| {
         if is_console {
             let mut read = 0;
             // SAFETY: `buf` is writable for `len` bytes, and the call is synchronous.
@@ -260,7 +267,7 @@ pub(crate) fn readv(
             return super::check(rc).map(|()| read as usize);
         }
         transferred(complete_transfer(handle, |event, io| {
-            // SAFETY: `buf` is writable for `len` bytes until that returns.
+            // SAFETY: `buf` is writable for `len` bytes until `complete_transfer` returns.
             unsafe {
                 ntdll::NtReadFile(
                     handle,
@@ -286,30 +293,29 @@ pub(crate) fn writev(
 ) -> Result<usize, Win32Error> {
     let null = ptr::null_mut();
     let is_console = is_console(handle);
-    each_part(IoVec::parts(vecs), offset, |buf, len, offset| {
+    transfer_chunks(IoVec::chunks(vecs), offset, |buf, len, offset| {
         if is_console {
             let mut written = 0;
             // SAFETY: `buf` is readable for `len` bytes, and the call is synchronous.
             let rc = unsafe { WriteFile(handle, buf, len, &raw mut written, null) };
             return super::check(rc).map(|()| written as usize);
         }
-        // SAFETY: `buf` is readable for `len` bytes, and `offset` is null or from `each_part`.
+        // SAFETY: `buf` is readable for `len` bytes, and `offset` is null or from `transfer_chunks`.
         transferred(unsafe { write(handle, buf, len, offset) })
     })
 }
 
-/// # Safety
-/// `buf` is readable for `len` bytes, and `offset` is null or readable.
+/// SAFETY: `buf` is readable for `len` bytes, and `offset` is null or readable.
 pub(super) unsafe fn write(
     handle: HANDLE,
     buf: *const u8,
     len: DWORD,
     offset: *const i64,
 ) -> (NTSTATUS, usize) {
-    let write = |len| {
+    let issue_write = |len| {
         complete_transfer(handle, |event, io| {
             let null = ptr::null_mut();
-            // SAFETY: fn contract, which holds until the request has ended.
+            // SAFETY: fn contract, which holds until `complete_transfer` returns.
             unsafe {
                 ntdll::NtWriteFile(
                     handle,
@@ -325,11 +331,11 @@ pub(super) unsafe fn write(
             }
         })
     };
-    match write(len) {
+    match issue_write(len) {
         (NTSTATUS::INVALID_PARAMETER, _)
-            if len as usize > MAX_REMOTE_LEN && GetFileType(handle) == FILE_TYPE_PIPE =>
+            if len as usize > MAX_REMOTE_TRANSFER_LEN && GetFileType(handle) == FILE_TYPE_PIPE =>
         {
-            write(MAX_REMOTE_LEN as DWORD)
+            issue_write(MAX_REMOTE_TRANSFER_LEN as DWORD)
         }
         result => result,
     }

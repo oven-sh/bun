@@ -1,4 +1,4 @@
-//! Numbers that libuv defines and Node.js exposes.
+//! Constants that libuv defines and Node.js exposes.
 
 use core::ffi::c_int;
 

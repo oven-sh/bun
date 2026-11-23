@@ -470,7 +470,10 @@ impl All {
                     now_out.get_or_insert_with(|| Timespec::now(TimespecMockMode::ForceRealTime)),
                 )
             {
-                (vm.event_loop().usockets_loop().port()).note_overdue_timer_and_tasks();
+                vm.event_loop()
+                    .usockets_loop()
+                    .port()
+                    .note_overdue_timer_and_tasks();
             }
             return true;
         }
@@ -566,7 +569,7 @@ impl All {
             }
         }
         #[cfg(windows)]
-        vm.event_loop().usockets_loop().port().did_run_timers();
+        vm.event_loop().usockets_loop().port().note_timers_drained();
     }
 
     /// `uws_loop` is the calling VM's uws loop.

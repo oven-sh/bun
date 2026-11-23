@@ -28,7 +28,7 @@ impl FdJsc for Fd {
             return None;
         }
         let fd: i32 = i32::try_from(fd64).expect("int cast");
-        // On Windows, JS-visible fds are CRT fds (see `to_js`), whose 0/1/2 already map to stdio.
+        // On Windows, JS-visible fds are CRT descriptors (see `to_js`); 0/1/2 already map to stdio.
         Some(Fd::from_crt(fd))
     }
 
@@ -91,11 +91,11 @@ impl FdJsc for Fd {
         JSValue::js_number_from_int32(crt_fd.crt())
     }
 
-    /// Convert an FD to a JavaScript number without transferring ownership to the C runtime.
+    /// Convert an FD to a JavaScript number without transferring ownership to the CRT.
     /// Unlike to_js(), this does not call make_crt_owned() on Windows, so the caller
     /// retains ownership and must close the FD themselves.
     /// Returns -1 for invalid file descriptors.
-    /// On Windows: returns Uint64 for system handles, Int32 for descriptors of the C runtime.
+    /// On Windows: returns Uint64 for system handles, Int32 for CRT descriptors.
     fn to_js_without_making_crt_owned(self) -> JSValue {
         if !self.is_valid() {
             return JSValue::js_number_from_int32(-1);

@@ -115,7 +115,7 @@ extern ssize_t sys_epoll_pwait2(int epfd, struct epoll_event* events, int maxeve
                               const struct timespec* timeout, const sigset_t* sigmask);
 
 
-int bun_epoll_pwait2(int epfd, struct epoll_event *events, int maxevents, const struct timespec *timeout) {
+static int bun_epoll_pwait2(int epfd, struct epoll_event *events, int maxevents, const struct timespec *timeout) {
     int ret;
     sigset_t mask;
     sigemptyset(&mask);

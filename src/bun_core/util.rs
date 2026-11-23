@@ -639,6 +639,15 @@ pub struct Fd(pub FdBacking);
 const FD_KIND_BIT: u64 = 1u64 << 63;
 #[cfg(windows)]
 const FD_VALUE_MASK: u64 = FD_KIND_BIT - 1;
+// Handles and CRT fds fit in bits 0..32. With bit 61 set and bit 62 clear, bits 32..61 hold the origin.
+#[cfg(windows)]
+const FD_ORIGIN_BIT: u64 = 1u64 << 61;
+#[cfg(windows)]
+const FD_ORIGIN_TAG_MASK: u64 = FD_ORIGIN_BIT | (1u64 << 62);
+#[cfg(windows)]
+const FD_ORIGIN_SHIFT: u32 = 32;
+#[cfg(windows)]
+const FD_ORIGIN_MASK: u32 = (1 << 29) - 1;
 
 impl Fd {
     /// posix: minInt(c_int); windows: minInt(u63) = 0, kind=0 → all-zero u64.
@@ -658,7 +667,7 @@ impl Fd {
     pub const fn from_native(v: FdBacking) -> Fd {
         Fd(v)
     }
-    /// A descriptor of the C runtime, which is the number that scripts see.
+    /// A CRT file descriptor, which is the number exposed to JavaScript.
     #[inline]
     pub const fn from_crt(v: i32) -> Fd {
         #[cfg(windows)]
@@ -678,17 +687,18 @@ impl Fd {
         debug_assert!((h as u64) <= FD_VALUE_MASK);
         Fd((h as u64) & FD_VALUE_MASK)
     }
-    /// A handle or a number has 32 bits, which leaves 29 to say which descriptor it goes back to.
+    /// `origin` identifies the CRT descriptor that this fd derives from.
     #[cfg(windows)]
     #[inline]
     pub fn with_origin(self, origin: u32) -> Fd {
-        debug_assert!(self.0 & FD_VALUE_MASK < 1 << 32 && origin < 1 << 29);
-        Fd(self.0 | 1 << 61 | u64::from(origin) << 32)
+        debug_assert!(self.0 & FD_VALUE_MASK < 1 << FD_ORIGIN_SHIFT && origin <= FD_ORIGIN_MASK);
+        Fd(self.0 | FD_ORIGIN_BIT | (u64::from(origin) << FD_ORIGIN_SHIFT))
     }
     #[cfg(windows)]
     #[inline]
     pub fn origin(self) -> Option<u32> {
-        (self.0 >> 61 & 3 == 1).then_some((self.0 >> 32) as u32 & ((1 << 29) - 1))
+        let has_origin = self.0 & FD_ORIGIN_TAG_MASK == FD_ORIGIN_BIT;
+        has_origin.then_some((self.0 >> FD_ORIGIN_SHIFT) as u32 & FD_ORIGIN_MASK)
     }
     /// Native OS file descriptor (`fd_t`). On POSIX this is just the backing
     /// `c_int`. On Windows, when `kind == Crt`, calls `_get_osfhandle` to
@@ -732,7 +742,7 @@ impl Fd {
         // borrow cannot outlive `&self`.
         unsafe { std::os::fd::BorrowedFd::borrow_raw(raw) }
     }
-    /// The inverse of `from_crt`. Panics on a Windows handle, which `make_crt_owned()` converts.
+    /// The inverse of `from_crt`. Panics on a Windows `HANDLE`; convert it with `make_crt_owned()` first.
     #[cfg(not(windows))]
     #[inline]
     pub const fn crt(self) -> i32 {
@@ -1085,7 +1095,7 @@ pub mod fd {
 
     #[cfg(windows)]
     unsafe extern "C" {
-        /// `INVALID_HANDLE_VALUE` if `fd` is not open, -2 for a standard stream that the process was started without.
+        /// `INVALID_HANDLE_VALUE` if `fd` is not open, -2 if it is a standard stream without a handle.
         pub(crate) safe fn _get_osfhandle(fd: c_int) -> *mut c_void;
     }
     /// PEB ProcessParameters subset for stdio/cwd handle lookup.
@@ -4526,7 +4536,7 @@ impl Timespec {
         }
         #[cfg(windows)]
         {
-            // QPC via the c-bindings.cpp shim: the clock of WTF::MonotonicTime::now.
+            // QPC via the c-bindings.cpp shim: the same clock as WTF::MonotonicTime::now.
             let mut sec: i64 = 0;
             let mut nsec: i64 = 0;
             clock_gettime_monotonic(&mut sec, &mut nsec);

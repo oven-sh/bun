@@ -250,7 +250,7 @@ impl Error {
         self.resolve_system_errno().unwrap_or(SystemErrno::EIO)
     }
 
-    /// The name of the errno for printing, and the errno.
+    /// Returns the errno's printable name and the errno.
     pub fn get_error_code_tag_name(&self) -> Option<(&'static str, SystemErrno)> {
         let e = self.resolve_system_errno()?;
         // strum::IntoStaticStr — variant name (e.g., "ENOENT").
@@ -274,7 +274,7 @@ impl Error {
     /// Node reports libuv's codes in `err.errno` on every platform. On POSIX that is just the negated host errno.
     pub fn js_errno(&self) -> c_int {
         #[cfg(windows)]
-        if let Some(errno) = E::from_repr(self.errno).and_then(bun_errno::try_e_to_uv) {
+        if let Some(errno) = E::from_repr(self.errno).and_then(bun_errno::try_errno_to_uv) {
             return errno;
         }
         c_int::from(self.errno).wrapping_neg()

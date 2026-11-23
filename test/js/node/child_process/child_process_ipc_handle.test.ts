@@ -670,7 +670,7 @@ server.listen(0, '127.0.0.1', () => {
     },
   );
 
-  // A socket has no descriptor number on Windows.
+  // Sockets are not file descriptors on Windows.
   test.concurrent.skipIf(isWindows)("a received handle that lands on fd 0 is adopted", async () => {
     using dir = tempDir("ipc-handle-fd0", {
       "parent.js": `
@@ -821,7 +821,7 @@ const server = net.createServer().listen(0, '127.0.0.1', () => {
   });
 });
 
-test.skipIf(!isWindows)("a UDP socket cannot be sent, as in Node.js", async () => {
+test.skipIf(!isWindows)("sending a dgram.Socket fails with ENOTSUP on Windows", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -832,7 +832,8 @@ test.skipIf(!isWindows)("a UDP socket cannot be sent, as in Node.js", async () =
        const socket = require("dgram").createSocket("udp4").bind(0, "127.0.0.1", () => {
          child.send("x", socket, error => {
            console.log(error.code);
-           socket.close(), child.disconnect();
+           socket.close();
+           child.disconnect();
          });
        });`,
     ],

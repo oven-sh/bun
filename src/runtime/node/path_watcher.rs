@@ -215,7 +215,7 @@ impl ChangeEvent {
 }
 
 impl PathWatcher {
-    /// `rel_path` is borrowed — `onPathUpdatePosix` dupes it before enqueuing.
+    /// `rel_path` is borrowed — each event gets its own copy.
     /// `&self`: per-handler state is `Cell`-based, so the emit paths never
     /// need an exclusive `PathWatcher` borrow.
     pub(super) fn emit(&self, event_type: WatchEventKind, rel_path: &[u8], is_file: bool) {

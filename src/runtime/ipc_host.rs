@@ -153,7 +153,7 @@ pub(crate) fn do_send(
                     }
                     #[cfg(windows)]
                     {
-                        zig_handle = Handle::export(fd, peer_pid, handle, false);
+                        zig_handle = Handle::init_export(fd, peer_pid, handle, false);
                     }
                 }
                 #[cfg(windows)]
@@ -178,7 +178,7 @@ pub(crate) fn do_send(
                 }
                 #[cfg(windows)]
                 {
-                    zig_handle = Handle::export(fd, peer_pid, handle, !keep_open);
+                    zig_handle = Handle::init_export(fd, peer_pid, handle, !keep_open);
                 }
             }
         } else if let Some(udp) = handle.as_class_ref::<crate::socket::UDPSocket>() {
@@ -189,12 +189,14 @@ pub(crate) fn do_send(
                     Ok(h) => zig_handle = Some(h),
                     Err(e) => dup_err = Some(e),
                 }
-                // A frame has room for TCP only.
+                // The IPC frame format only carries TCP sockets.
                 #[cfg(windows)]
                 {
                     let _ = fd;
-                    let (errno, tag) = (bun_sys::E::ENOTSUP, bun_sys::Tag::write);
-                    dup_err = Some(bun_sys::Error::from_code(errno, tag));
+                    dup_err = Some(bun_sys::Error::from_code(
+                        bun_sys::E::ENOTSUP,
+                        bun_sys::Tag::write,
+                    ));
                 }
             }
         }

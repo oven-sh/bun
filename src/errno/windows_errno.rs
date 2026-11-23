@@ -217,11 +217,11 @@ pub enum SystemErrno {
 /// as an integer), and `c_int` (`Bun__errnoName`, which may receive a libuv
 /// code). A typed `Win32Error` uses `Win32ErrorExt` instead.
 pub trait SystemErrnoInit {
-    fn into_e(self) -> Option<SystemErrno>;
+    fn into_system_errno(self) -> Option<SystemErrno>;
 }
 impl SystemErrnoInit for i64 {
     #[inline]
-    fn into_e(self) -> Option<SystemErrno> {
+    fn into_system_errno(self) -> Option<SystemErrno> {
         // Only `u32` / positive `c_int` inputs enter the Win32/uv mapping
         // branch; `i64` is a direct discriminant cast, NOT the Win32Error
         // mapper. Routing i64 through `init_c_int` would mis-map e.g. 13 →
@@ -243,13 +243,13 @@ impl SystemErrnoInit for i64 {
 }
 impl SystemErrnoInit for i32 {
     #[inline]
-    fn into_e(self) -> Option<SystemErrno> {
+    fn into_system_errno(self) -> Option<SystemErrno> {
         SystemErrno::init_c_int(self)
     }
 }
 impl SystemErrnoInit for u32 {
     #[inline]
-    fn into_e(self) -> Option<SystemErrno> {
+    fn into_system_errno(self) -> Option<SystemErrno> {
         // A DWORD from GetLastError() and friends: values above 0xFFFF are
         // unmapped unless they are a `FACILITY_WIN32` HRESULT wrapping a Win32
         // code (see `Win32Error::from_u32`).
@@ -273,7 +273,7 @@ impl SystemErrno {
     /// `SystemErrno::init(code)`.
     #[inline]
     pub fn init<C: SystemErrnoInit>(code: C) -> Option<SystemErrno> {
-        code.into_e()
+        code.into_system_errno()
     }
 
     /// `init(code: c_int)` — same as u16 path for positives; negatives are negated and retried.
@@ -300,7 +300,7 @@ impl SystemErrno {
         {
             return Self::init_win32_error(Win32Error::from_raw(code));
         }
-        if let Some(mapped) = uv_to_e(-c_int::from(code)).filter(|&e| e != E::EUNKNOWN) {
+        if let Some(mapped) = uv_to_errno(-c_int::from(code)).filter(|&e| e != E::EUNKNOWN) {
             return Some(mapped);
         }
         if cfg!(debug_assertions) {
@@ -420,7 +420,7 @@ impl SystemErrno {
     }
 }
 
-macro_rules! __pair {
+macro_rules! __uv_code_pair {
     ($i:tt, $e:tt, $uv:tt) => {
         (E::$e, uv::$uv)
     };
@@ -431,28 +431,33 @@ macro_rules! __decl_uv_codes {
             &[(E::EOF, uv::UV_EOF), (E::EUNKNOWN, uv::UV_UNKNOWN), $($pair),+];
     };
 }
-crate::__uv_e_rows!(__decl_uv_codes, __pair);
+crate::__uv_e_rows!(__decl_uv_codes, __uv_code_pair);
 
-/// The inverse of [`try_e_to_uv`].
-pub fn uv_to_e(code: c_int) -> Option<E> {
-    (UV_CODES.iter()).find_map(|&(e, it)| (it == code).then_some(e))
+/// The inverse of [`try_errno_to_uv`].
+pub fn uv_to_errno(code: c_int) -> Option<E> {
+    UV_CODES
+        .iter()
+        .find_map(|&(errno, uv_code)| (uv_code == code).then_some(errno))
 }
 
-/// The code that Node.js reports in `err.errno`: -4058 for `ENOENT`.
-pub fn try_e_to_uv(e: E) -> Option<c_int> {
-    (UV_CODES.iter()).find_map(|&(it, code)| (it == e).then_some(code))
+/// The libuv code that Node.js reports in `err.errno`, such as -4058 for `ENOENT`.
+pub fn try_errno_to_uv(errno: E) -> Option<c_int> {
+    UV_CODES
+        .iter()
+        .find_map(|&(e, uv_code)| (e == errno).then_some(uv_code))
 }
 
-pub fn e_to_uv(e: E) -> c_int {
-    try_e_to_uv(e).unwrap_or(uv::UV_UNKNOWN)
+pub fn errno_to_uv(errno: E) -> c_int {
+    try_errno_to_uv(errno).unwrap_or(uv::UV_UNKNOWN)
 }
 
-/// A Win32 or Winsock error code → the libuv code for it. Values up to 0 are libuv codes already.
+/// Maps a Win32 or Winsock error code to a libuv code. Values <= 0 are already libuv codes.
 pub fn uv_translate_sys_error(code: c_int) -> c_int {
     if code <= 0 {
         return code;
     }
-    e_to_uv(u16::try_from(code).map_or(E::EUNKNOWN, |code| Win32Error(code).to_node_e()))
+    let errno = u16::try_from(code).map_or(E::EUNKNOWN, |code| Win32Error(code).to_node_errno());
+    errno_to_uv(errno)
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -497,8 +502,8 @@ pub mod windows {
         /// including `SUCCESS`, a failure that set no code. Compare against
         /// `Win32Error::SUCCESS` first when the call may have succeeded.
         fn to_e(self) -> E;
-        /// Like `to_e`, but what Node.js reports where that is something else.
-        fn to_node_e(self) -> E;
+        /// Like `to_e`, but follows Node.js where its mapping differs.
+        fn to_node_errno(self) -> E;
     }
     impl Win32ErrorExt for Win32Error {
         #[inline]
@@ -506,7 +511,7 @@ pub mod windows {
             E::init_win32_error(self).unwrap_or(E::EUNKNOWN)
         }
 
-        fn to_node_e(self) -> E {
+        fn to_node_errno(self) -> E {
             match self {
                 Win32Error::BROKEN_PIPE => E::EOF,
                 Win32Error::BUFFER_OVERFLOW => E::ENAMETOOLONG,
@@ -564,5 +569,5 @@ pub mod windows {
     }
 }
 
-// `Win32Error::{to_e, to_node_e}` are provided via `windows::Win32ErrorExt`
+// `Win32Error::{to_e, to_node_errno}` are provided via `windows::Win32ErrorExt`
 // (extension trait — `Win32Error` is now a foreign type from `bun_windows_sys`).

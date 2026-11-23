@@ -129,7 +129,7 @@ impl Writable {
         match stdio {
             Stdio::Dup2(_) => panic!("TODO dup2 stdio"),
             Stdio::Pipe | Stdio::ReadableStream(_) => {
-                let pipe_ref = match FileSink::create_with_own_pipe(evtloop, result.unwrap()) {
+                let pipe_ref = match FileSink::create_with_pipe(evtloop, result.unwrap()) {
                     Ok(pipe_ref) => pipe_ref,
                     Err(err) => {
                         if let Stdio::ReadableStream(rs) = &mut stdio {

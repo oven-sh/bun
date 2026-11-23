@@ -24,7 +24,7 @@ pub struct WindowsWatcher {
     pub(crate) root: Path,
 }
 
-// SAFETY: `overlapped` points at nothing, and a read on a handle that is bound to a port belongs to no thread.
+// SAFETY: `overlapped` points at nothing, and a read on a handle bound to a completion port is not tied to a thread.
 unsafe impl Send for WindowsWatcher {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr, thiserror::Error)]

@@ -6,8 +6,8 @@ use std::rc::{Rc, Weak};
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
-use bun_iocp::blocking::{self, Cancel, Turnstile};
-use bun_iocp::{Port, Remote, Request};
+use bun_iocp::blocking::{self, CancelToken, ConcurrencyGate};
+use bun_iocp::{Completer, Port, Request};
 use bun_ptr::OptionCellExt as _;
 use bun_sys::windows::{self as w, HANDLE, Win32Error, console};
 use bun_sys::windows_format::key_input::{self, InputRecord, Utf16Decoder};
@@ -16,29 +16,31 @@ use bun_threading::guarded::GuardedLock;
 use bun_threading::{Condition, Guarded, Mutex};
 
 use super::Payload;
-use super::endpoint::{Endpoint, HasEndpoint};
+use super::state::{HasSourceState, SourceState};
 use crate::pipe_reader::ReadEvent;
 use crate::pipe_writer::WriteEvent;
 
+const CR: u16 = 0x0D;
+const LF: u16 = 0x0A;
+
 // ── input ────────────────────────────────────────────────────────────────
 
-/// A process has one console, and every handle to its input takes from the same queue.
+/// One per process: every handle to the console's input reads from the same input buffer.
 struct Input {
     handle: OwnedHandle,
-    /// From `read_line` to `watch_lines`.
-    turnstile: Turnstile,
+    /// Holds `watch_line_reads` back until the thread in `read_line` blocks.
+    watcher_gate: ConcurrencyGate,
 }
 
 impl Input {
-    /// `handle` is what there is to fall back on.
-    fn get(handle: HANDLE) -> Result<&'static Input, Win32Error> {
+    fn get(fallback: HANDLE) -> Result<&'static Input, Win32Error> {
         static INPUT: OnceLock<Input> = OnceLock::new();
         if let Some(input) = INPUT.get() {
             return Ok(input);
         }
         let input = Input {
-            handle: open_input().or_else(|_| w::duplicate_handle(handle))?,
-            turnstile: Turnstile::new()?,
+            handle: open_input().or_else(|_| w::duplicate_handle(fallback))?,
+            watcher_gate: ConcurrencyGate::new()?,
         };
         Ok(INPUT.get_or_init(|| input))
     }
@@ -47,12 +49,12 @@ impl Input {
         self.handle.as_raw_handle()
     }
 
-    fn is_signalled(&self) -> bool {
-        w::kernel32::WaitForSingleObject(self.raw(), 0) == 0
+    fn is_signaled(&self) -> bool {
+        w::kernel32::WaitForSingleObject(self.raw(), 0) == w::WAIT_OBJECT_0
     }
 
-    /// The console passes its queue on to a read that waits, and who takes the last record resets the handle.
-    fn write_ignored(&self) -> Result<usize, Win32Error> {
+    /// Writing a record makes the console hand queued input to a pending read, and reading the last record resets the handle.
+    fn write_noop_record(&self) -> Result<usize, Win32Error> {
         let record = InputRecord {
             event_type: key_input::MENU_EVENT,
             ..Default::default()
@@ -67,49 +69,47 @@ fn open_input() -> Result<OwnedHandle, Win32Error> {
 
 static IS_RAW: AtomicBool = AtomicBool::new(false);
 
-enum Line {
+enum LineReadState {
     Idle,
     Starting,
-    /// The console goes on with a cancelled read until the handle is closed, so it takes a handle of our own to cancel.
-    Reading(Option<Cancel>),
+    /// The console keeps a cancelled read going until its handle is closed, so only a read on a private handle has a token.
+    Reading(Option<CancelToken>),
 }
 
 struct Shared {
-    line: Line,
-    /// How many times it was `Line::Reading`.
-    reads: usize,
-    is_watched: bool,
-    /// Who is told that `line` is idle again or raw mode is over, by the address of its `Inner`.
-    readers: Vec<(usize, Remote<()>)>,
-    /// Taken from the console, and not handed to a reader yet.
-    text: Vec<u8>,
-    end: Option<ReadEvent>,
+    line_state: LineReadState,
+    line_read_count: usize,
+    has_watcher_thread: bool,
+    /// Notified when the line read ends or raw mode is left. Keyed by the address of the reader's `Inner`.
+    readers: Vec<(usize, Completer<()>)>,
+    buffered_text: Vec<u8>,
+    end_event: Option<ReadEvent>,
     decoder: Utf16Decoder,
-    /// How many `WAKE`s were put in the queue, and have not come out.
-    wakes: usize,
-    /// For the next `Line::Reading`.
-    line_handle: Option<OwnedHandle>,
+    /// `WAKE_CHAR`s written to the input buffer and not read back yet.
+    pending_wake_count: usize,
+    /// Private input handle kept for the next line read.
+    spare_line_handle: Option<OwnedHandle>,
 }
 
 static SHARED: Guarded<Shared> = Guarded::new(Shared {
-    line: Line::Idle,
-    reads: 0,
-    is_watched: false,
+    line_state: LineReadState::Idle,
+    line_read_count: 0,
+    has_watcher_thread: false,
     readers: Vec::new(),
-    text: Vec::new(),
-    end: None,
+    buffered_text: Vec::new(),
+    end_event: None,
     decoder: Utf16Decoder::new(),
-    wakes: 0,
-    line_handle: None,
+    pending_wake_count: 0,
+    spare_line_handle: None,
 });
-static LINE_IS_IDLE: Condition = Condition::new();
+static LINE_READ_DONE: Condition = Condition::new();
 
-/// Ends a read without an echo, or an entry in the history.
-const WAKE: u16 = 0x1E;
-const END: u16 = 0x23;
+/// Ends a line read without an echo or a history entry.
+const WAKE_CHAR: u16 = 0x1E;
+const VK_END: u16 = 0x23;
 
-/// Unlike a key that was pressed, it has no scan code.
-fn key(virtual_key: u16, character: u16) -> InputRecord {
+/// Has no scan code, unlike a real key press.
+fn make_key_record(virtual_key: u16, character: u16) -> InputRecord {
     InputRecord {
         event_type: key_input::KEY_EVENT,
         is_key_down: 1,
@@ -121,18 +121,18 @@ fn key(virtual_key: u16, character: u16) -> InputRecord {
 }
 
 impl Shared {
-    fn is_reading(&self) -> bool {
-        matches!(self.line, Line::Reading(_))
+    fn is_reading_line(&self) -> bool {
+        matches!(self.line_state, LineReadState::Reading(_))
     }
 
-    fn take_wake(&mut self, character: u16) -> bool {
-        let is_wake = character == WAKE && self.wakes > 0;
-        self.wakes -= usize::from(is_wake);
+    fn try_consume_wake_char(&mut self, character: u16) -> bool {
+        let is_wake = character == WAKE_CHAR && self.pending_wake_count > 0;
+        self.pending_wake_count -= usize::from(is_wake);
         is_wake
     }
 
-    fn fail(&mut self, err: Win32Error) {
-        self.end = Some(match err {
+    fn record_error(&mut self, err: Win32Error) {
+        self.end_event = Some(match err {
             Win32Error::BROKEN_PIPE | Win32Error::NO_DATA | Win32Error::PIPE_NOT_CONNECTED => {
                 ReadEvent::Eof
             }
@@ -141,27 +141,32 @@ impl Shared {
     }
 
     fn read_keys(&mut self, input: &Input) {
-        const BATCH: usize = 256;
-        let mut records = [InputRecord::default(); BATCH];
+        const BATCH_SIZE: usize = 256;
+        const MAX_BATCHES: usize = 32;
+        /// Pasted text is delivered in chunks of a few KiB, as from a terminal.
+        const CHUNK_THRESHOLD: usize = 4096;
+        let mut records = [InputRecord::default(); BATCH_SIZE];
         let mut is_resized = false;
-        // What was pasted comes in pieces of some KiB, as from a terminal.
-        for _ in 0..32 {
+        for _ in 0..MAX_BATCHES {
             let records = match console::read_records(input.raw(), &mut records) {
                 Ok(records) => records,
-                Err(err) => return self.fail(err),
+                Err(err) => return self.record_error(err),
             };
-            // A change of the screen buffer empties the queue and leaves the handle signalled.
-            if records.is_empty() && input.is_signalled() {
-                let _ = input.write_ignored();
+            // Changing the screen buffer empties the input buffer but leaves the handle signaled.
+            if records.is_empty() && input.is_signaled() {
+                let _ = input.write_noop_record();
             }
             for record in records {
                 is_resized |= record.event_type == key_input::WINDOW_BUFFER_SIZE_EVENT;
-                let is_ours = *record == key(END, 0) && self.wakes > 0;
-                if !is_ours && !(record.is_input() && self.take_wake(record.character)) {
-                    key_input::translate(record, &mut self.decoder, &mut self.text);
+                let is_synthetic_end =
+                    *record == make_key_record(VK_END, 0) && self.pending_wake_count > 0;
+                if !is_synthetic_end
+                    && !(record.is_key_input() && self.try_consume_wake_char(record.character))
+                {
+                    key_input::translate(record, &mut self.decoder, &mut self.buffered_text);
                 }
             }
-            if records.len() < BATCH || self.text.len() >= 4096 {
+            if records.len() < BATCH_SIZE || self.buffered_text.len() >= CHUNK_THRESHOLD {
                 break;
             }
         }
@@ -172,112 +177,128 @@ impl Shared {
 
     fn add_line(&mut self, line: &[u16]) {
         const CTRL_Z: u16 = 0x1A;
-        if let [CTRL_Z, .., 0x0A] = line {
-            self.end = Some(ReadEvent::Eof);
+        if let [CTRL_Z, .., LF] = line {
+            self.end_event = Some(ReadEvent::Eof);
             return;
         }
-        for &unit in line {
-            if !self.take_wake(unit) {
-                self.decoder.push(unit, &mut self.text);
+        for &code_unit in line {
+            if !self.try_consume_wake_char(code_unit) {
+                self.decoder.push(code_unit, &mut self.buffered_text);
             }
         }
     }
 }
 
-/// A console before microsoft/terminal#18816 sits on a key that comes while it sets up a read, until the next record.
-fn watch_lines(input: &Input) {
-    let mut was_signalled_in = None;
+/// Before microsoft/terminal#18816, a key that arrives while the console sets up a read is not delivered until the next record.
+fn watch_line_reads(input: &Input) {
+    let mut last_signaled_read = None;
     loop {
-        input.turnstile.wait();
+        input.watcher_gate.wait();
         let shared = SHARED.lock();
-        let read = (shared.is_reading() && !shared.readers.is_empty()).then_some(shared.reads);
+        let current_read = (shared.is_reading_line() && !shared.readers.is_empty())
+            .then_some(shared.line_read_count);
         drop(shared);
-        if read.is_none() || (read == was_signalled_in && input.write_ignored().is_err()) {
+        if current_read.is_none()
+            || (current_read == last_signaled_read && input.write_noop_record().is_err())
+        {
             continue;
         }
-        input.turnstile.admit_after(input.handle.as_handle());
-        // The console answers in order, so it has seen the read by the time it has answered this.
-        let is_signalled = console::is_input(input.raw()) && input.is_signalled();
-        was_signalled_in = read.filter(|_| is_signalled);
-        if !is_signalled {
-            // The read drops the record that tells.
+        input.watcher_gate.post_on_signal(input.handle.as_handle());
+        // The console handles requests in order, so it has seen the read once this round trip returns.
+        let is_signaled = console::is_input(input.raw()) && input.is_signaled();
+        last_signaled_read = current_read.filter(|_| is_signaled);
+        if !is_signaled {
+            // A line read discards `WINDOW_BUFFER_SIZE_EVENT` records.
             crate::console_signals::check_window_size();
         }
     }
 }
 
 fn read_line(input: &'static Input) {
-    // Older consoles take no more keys once it is full.
-    let mut buffer = vec![0; 8192];
-    let capacity = buffer.len();
+    /// Older consoles stop accepting keys once the buffer is full.
+    const BUFFER_LEN: usize = 8192;
+    let mut buffer = vec![0; BUFFER_LEN];
     let mut shared = SHARED.lock();
     if !shared.readers.is_empty() && !IS_RAW.load(Ordering::SeqCst) {
-        let own = shared.line_handle.take().or_else(|| open_input().ok());
-        let cancel = Cancel::default();
-        shared.is_watched = shared.is_watched || blocking::spawn_endless(|| watch_lines(input));
-        input.turnstile.admit();
-        shared.reads += 1;
-        shared.line = Line::Reading(own.is_some().then(|| cancel.clone()));
+        let private_handle = shared
+            .spare_line_handle
+            .take()
+            .or_else(|| open_input().ok());
+        let cancel_token = CancelToken::default();
+        shared.has_watcher_thread =
+            shared.has_watcher_thread || blocking::try_spawn_dedicated(|| watch_line_reads(input));
+        input.watcher_gate.post();
+        shared.line_read_count += 1;
+        shared.line_state =
+            LineReadState::Reading(private_handle.is_some().then(|| cancel_token.clone()));
         drop(shared);
 
-        let handle = own.as_ref().unwrap_or(&input.handle).as_raw_handle();
+        let handle = private_handle
+            .as_ref()
+            .unwrap_or(&input.handle)
+            .as_raw_handle();
         shared = loop {
-            let line = cancel.run(|| console::read_text(handle, &mut buffer, WAKE));
+            let line = cancel_token.run(|| console::read_text(handle, &mut buffer, WAKE_CHAR));
             let line = line.unwrap_or(Ok(&[]));
             let mut shared = SHARED.lock();
             match line {
                 Ok(line) => shared.add_line(line),
-                // A character that the console has choked on.
+                // Cancelled, or the console failed to process a character.
                 Err(Win32Error::OPERATION_ABORTED | Win32Error::INVALID_PARAMETER) => {}
-                Err(err) => shared.fail(err),
+                Err(err) => shared.record_error(err),
             }
-            // The rest of a long line is not in the queue any more.
-            let has_rest = |line: &[u16]| {
-                line.len() == capacity && !matches!(line, [.., 0x0D, 0x0A] | [.., WAKE])
+            // The rest of a line longer than `buffer` has already left the input buffer.
+            let is_partial_line = |line: &[u16]| {
+                line.len() == BUFFER_LEN && !matches!(line, [.., CR, LF] | [.., WAKE_CHAR])
             };
-            if !line.is_ok_and(has_rest) {
-                shared.line_handle = own.filter(|_| !cancel.is_cancelled());
+            if !line.is_ok_and(is_partial_line) {
+                shared.spare_line_handle = private_handle.filter(|_| !cancel_token.is_cancelled());
                 break shared;
             }
         };
     }
-    shared.line = Line::Idle;
-    LINE_IS_IDLE.notify_all();
-    tell_readers(shared);
+    shared.line_state = LineReadState::Idle;
+    LINE_READ_DONE.notify_all();
+    notify_readers(shared);
 }
 
-fn tell_readers(mut shared: GuardedLock<'_, Shared, Mutex>) {
+fn notify_readers(mut shared: GuardedLock<'_, Shared, Mutex>) {
     let readers = core::mem::take(&mut shared.readers);
     drop(shared);
-    // The newest gets the line.
-    for (_, reader) in readers.into_iter().rev() {
-        reader.complete(());
+    // Newest first: that reader gets the line.
+    for (_, completer) in readers.into_iter().rev() {
+        completer.complete(());
     }
 }
 
-/// What the read returns is kept for the next reader, also if it does not end now.
-fn stop_line(input: &Input) {
-    const PATIENCE: Duration = Duration::from_millis(50);
+/// Whatever the read returns is buffered for the next reader, even if the read outlasts the timeout.
+fn stop_line_read(input: &Input) {
+    const STOP_TIMEOUT: Duration = Duration::from_millis(50);
     let mut shared = SHARED.lock();
-    let Line::Reading(cancel) = &shared.line else {
+    let LineReadState::Reading(cancel_token) = &shared.line_state else {
         return;
     };
-    // `WAKE` takes the place of what follows the cursor. End would be text where the console makes escape sequences.
-    let is_vt = |mode| mode & w::ENABLE_VIRTUAL_TERMINAL_INPUT != 0;
-    let first = usize::from(console::mode(input.raw()).is_ok_and(is_vt));
-    let write = || console::write_records(input.raw(), &[key(END, 0), key(0, WAKE)][first..]);
-    // The first key only resumes output that is paused.
-    if write().is_ok_and(|count| count > 0 || write().is_ok()) {
-        shared.wakes += 1;
-    } else if let Some(cancel) = cancel {
-        // This ends the reads of other processes too.
-        cancel.cancel();
+    // `WAKE_CHAR` replaces the text after the cursor, so End goes first, except in VT input mode, where End becomes text.
+    let is_vt_input = |mode| mode & w::ENABLE_VIRTUAL_TERMINAL_INPUT != 0;
+    let skip_count = usize::from(console::mode(input.raw()).is_ok_and(is_vt_input));
+    let write_wake_keys = || {
+        console::write_records(
+            input.raw(),
+            &[make_key_record(VK_END, 0), make_key_record(0, WAKE_CHAR)][skip_count..],
+        )
+    };
+    // While output is paused, the first key only resumes it.
+    if write_wake_keys().is_ok_and(|count| count > 0 || write_wake_keys().is_ok()) {
+        shared.pending_wake_count += 1;
+    } else if let Some(cancel_token) = cancel_token {
+        // Cancelling also ends the console reads of other processes.
+        cancel_token.cancel();
     }
-    let deadline = Instant::now() + PATIENCE;
-    while shared.is_reading()
-        && let Some(left) = deadline.checked_duration_since(Instant::now())
+    let deadline = Instant::now() + STOP_TIMEOUT;
+    while shared.is_reading_line()
+        && let Some(remaining) = deadline.checked_duration_since(Instant::now())
     {
-        let _ = LINE_IS_IDLE.timed_wait_guarded(&mut shared, left.as_nanos() as u64);
+        let _ = LINE_READ_DONE.timed_wait_guarded(&mut shared, remaining.as_nanos() as u64);
     }
 }
 
@@ -285,7 +306,7 @@ fn stop_line(input: &Input) {
 enum Mode {
     Normal,
     Raw,
-    /// The console makes the escape sequences.
+    /// The console generates the escape sequences itself.
     RawVt,
 }
 
@@ -297,34 +318,35 @@ fn set_mode(handle: HANDLE, mode: Mode) -> sys::Result<()> {
         let errno = console::mode(handle).map_or(E::EBADF, |_| E::EINVAL);
         return Err(sys::Error::from_code(errno, Tag::uv_tty_set_mode));
     }
-    let error = |err| sys::Error::from_win32(err, Tag::uv_tty_set_mode);
-    let input = Input::get(handle).map_err(error)?;
+    let map_error = |err| sys::Error::from_win32(err, Tag::uv_tty_set_mode);
+    let input = Input::get(handle).map_err(map_error)?;
     let flags = match mode {
         Mode::Normal => COOKED,
         Mode::Raw => w::ENABLE_WINDOW_INPUT,
         Mode::RawVt => w::ENABLE_WINDOW_INPUT | VT,
     };
-    // No line is begun while the console is in another mode.
+    // Set before the console leaves normal mode and cleared after it is back, so that no line read starts in raw mode.
     let was_raw = IS_RAW.fetch_or(mode != Mode::Normal, Ordering::SeqCst);
     if mode != Mode::Normal {
-        stop_line(input);
+        stop_line_read(input);
     }
-    // Other processes change it too.
-    let is_set = console::mode(input.raw()).is_ok_and(|it| (it ^ flags) & (COOKED | VT) == 0);
+    // Other processes attached to the console change its mode too.
+    let is_set =
+        console::mode(input.raw()).is_ok_and(|current| (current ^ flags) & (COOKED | VT) == 0);
     if !is_set {
         console::set_mode(input.raw(), flags)
             .or_else(|_| console::set_mode(input.raw(), flags & !VT))
             .inspect_err(|_| IS_RAW.store(was_raw, Ordering::SeqCst))
-            .map_err(error)?;
+            .map_err(map_error)?;
     }
     if mode == Mode::Normal && was_raw {
         IS_RAW.store(false, Ordering::SeqCst);
-        tell_readers(SHARED.lock());
+        notify_readers(SHARED.lock());
     }
     Ok(())
 }
 
-/// `mode` is a `uv_tty_mode_t`. Returns an error number of Node.js.
+/// `mode` is a `uv_tty_mode_t`. Returns 0 or a libuv error code.
 #[unsafe(no_mangle)]
 extern "C" fn Bun__ttySetMode(fd: c_int, mode: c_int, _state: *mut u8, _drain: c_int) -> c_int {
     let handle = Fd::from_crt(fd).native();
@@ -351,29 +373,29 @@ extern "C" fn uv_tty_reset_mode() -> c_int {
 pub(crate) struct Console(Rc<Inner>);
 
 struct Inner {
-    endpoint: Endpoint,
+    state: SourceState,
     file: File,
     is_input: OnceCell<bool>,
-    read: Cell<Option<Request>>,
-    /// For the entry in `Shared::readers`.
-    news: Cell<Option<Request>>,
-    write: Cell<Option<Request>>,
-    /// The start of a character that the next write has the rest of.
-    incomplete: Cell<Vec<u8>>,
-    last_written: Cell<u16>,
+    inflight_read: Cell<Option<Request>>,
+    /// Completed through this reader's entry in `Shared::readers`.
+    notification: Cell<Option<Request>>,
+    inflight_write: Cell<Option<Request>>,
+    /// Leading bytes of a UTF-8 sequence that is split across writes.
+    incomplete_utf8: Cell<Vec<u8>>,
+    last_written_unit: Cell<u16>,
 }
 
 impl Console {
     pub(super) fn new(port: &Rc<Port>, file: File) -> Console {
         Console(Rc::new(Inner {
-            endpoint: Endpoint::new(port),
+            state: SourceState::new(port),
             file,
             is_input: OnceCell::new(),
-            read: Cell::new(None),
-            news: Cell::new(None),
-            write: Cell::new(None),
-            incomplete: Cell::default(),
-            last_written: Cell::new(0),
+            inflight_read: Cell::new(None),
+            notification: Cell::new(None),
+            inflight_write: Cell::new(None),
+            incomplete_utf8: Cell::default(),
+            last_written_unit: Cell::new(0),
         }))
     }
 
@@ -392,38 +414,40 @@ impl Console {
         self.0.file.fd()
     }
 
-    pub(super) fn endpoint(&self) -> &Endpoint {
-        &self.0.endpoint
+    pub(super) fn state(&self) -> &SourceState {
+        &self.0.state
     }
 
-    /// Starts in the next turn of the loop, by when the script may have paused or changed the mode.
+    /// Starts in the next loop iteration, by which time JS may have paused or changed the mode.
     pub(super) fn read(&self, max_len: usize) {
-        self.0.endpoint.set_wanted(Some(max_len));
-        if !self.0.read.is_some() && !self.0.news.is_some() {
-            let start = self.0.on_read(|this| this.continue_reading(false));
+        self.0.state.set_read_limit(Some(max_len));
+        if self.0.inflight_read.is_none() && self.0.notification.is_none() {
+            let callback = self.0.make_read_callback(|this| this.process_read(false));
             self.0
-                .read
-                .set(Some(Request::defer(&self.0.endpoint.port, start)));
+                .inflight_read
+                .set(Some(Request::defer(&self.0.state.port, callback)));
         }
     }
 
     pub(super) fn pause(&self) {
-        self.0.endpoint.set_wanted(None);
-        self.0.read.take();
-        if self.0.news.take().is_some()
+        self.0.state.set_read_limit(None);
+        self.0.inflight_read.take();
+        if self.0.notification.take().is_some()
             && let Ok(input) = Input::get(self.fd().native())
         {
             let mut shared = SHARED.lock();
-            (shared.readers).retain(|(address, _)| *address != Rc::as_ptr(&self.0).addr());
+            shared
+                .readers
+                .retain(|(address, _)| *address != Rc::as_ptr(&self.0).addr());
             if shared.readers.is_empty() {
                 drop(shared);
-                stop_line(input);
+                stop_line_read(input);
             }
         }
     }
 
-    pub(super) fn write_now(&self, bytes: &[u8]) -> sys::Result<()> {
-        let mut joined = self.0.incomplete.take();
+    pub(super) fn write_sync(&self, bytes: &[u8]) -> sys::Result<()> {
+        let mut joined = self.0.incomplete_utf8.take();
         let bytes = if joined.is_empty() {
             bytes
         } else {
@@ -435,13 +459,15 @@ impl Console {
             false,
         >(bytes))
         {
-            Some((text, incomplete, len)) => {
-                self.0.incomplete.set(incomplete[..len.into()].to_vec());
+            Some((text, incomplete, incomplete_len)) => {
+                self.0
+                    .incomplete_utf8
+                    .set(incomplete[..incomplete_len.into()].to_vec());
                 text
             }
             None => bytes.iter().map(|&byte| u16::from(byte)).collect(),
         };
-        let text = self.0.with_carriage_returns(text);
+        let text = self.0.insert_carriage_returns(text);
         console::write_text(self.fd().native(), &text).map_err(|err| match err {
             Win32Error::INVALID_HANDLE => sys::Error::from_code(E::EPIPE, Tag::write),
             err => sys::Error::from_win32(err, Tag::write),
@@ -449,17 +475,17 @@ impl Console {
     }
 
     pub(super) fn write(&self, payload: Payload) -> sys::Result<()> {
-        self.write_now(payload.bytes())?;
+        self.write_sync(payload.as_bytes())?;
         let this = Rc::downgrade(&self.0);
-        let report = move || {
+        let callback = move || {
             let Some(this) = this.upgrade() else { return };
-            this.write.take();
-            this.report_write(WriteEvent::Wrote(payload.into_spare()));
+            this.inflight_write.take();
+            this.report_write(WriteEvent::Wrote(payload.into_spare_buffer()));
         };
         self.0
-            .write
-            .set(Some(Request::defer(&self.0.endpoint.port, report)));
-        self.0.endpoint.set_writing(true);
+            .inflight_write
+            .set(Some(Request::defer(&self.0.state.port, callback)));
+        self.0.state.set_writing(true);
         Ok(())
     }
 }
@@ -470,87 +496,96 @@ impl Drop for Console {
     }
 }
 
-impl HasEndpoint for Inner {
-    fn endpoint(&self) -> &Endpoint {
-        &self.endpoint
+impl HasSourceState for Inner {
+    fn state(&self) -> &SourceState {
+        &self.state
     }
 }
 
 impl Inner {
-    /// Another program may have told the console not to add them.
-    fn with_carriage_returns(&self, text: Vec<u16>) -> Vec<u16> {
-        const CR: u16 = 0x0D;
-        const LF: u16 = 0x0A;
+    /// Another process may have turned off the console's own LF to CRLF translation.
+    fn insert_carriage_returns(&self, text: Vec<u16>) -> Vec<u16> {
         let mut out = Vec::with_capacity(text.len() + text.len() / 16);
-        for unit in text {
-            if self.last_written.replace(unit) != CR && unit == LF {
+        for code_unit in text {
+            if self.last_written_unit.replace(code_unit) != CR && code_unit == LF {
                 out.push(CR);
             }
-            out.push(unit);
+            out.push(code_unit);
         }
         out
     }
 
-    /// The callback of the request in `read` or `news`.
-    fn on_read(self: &Rc<Self>, f: impl FnOnce(Rc<Self>) + 'static) -> impl FnOnce() + 'static {
+    fn make_read_callback(
+        self: &Rc<Self>,
+        f: impl FnOnce(Rc<Self>) + 'static,
+    ) -> impl FnOnce() + 'static {
         let this = Rc::downgrade(self);
         move || {
             if let Some(this) = Weak::upgrade(&this) {
-                this.read.take();
-                this.news.take();
+                this.inflight_read.take();
+                this.notification.take();
                 f(this);
             }
         }
     }
 
-    fn continue_reading(self: Rc<Self>, has_waited: bool) {
-        if !self.endpoint.is_holding()
-            && let Some(event) = self.take_or_wait(has_waited)
+    fn process_read(self: Rc<Self>, has_waited: bool) {
+        if !self.state.has_buffered_event()
+            && let Some(event) = self.poll_input(has_waited)
         {
-            self.endpoint.hold(event);
+            self.state.buffer_event(event);
         }
         self.report_read();
     }
 
-    fn take_or_wait(self: &Rc<Self>, has_waited: bool) -> Option<ReadEvent> {
-        let error = |errno| Some(ReadEvent::Err(sys::Error::from_code(errno, Tag::recv)));
+    /// On `None`, `process_read` runs again when there may be input.
+    fn poll_input(self: &Rc<Self>, has_waited: bool) -> Option<ReadEvent> {
+        let make_error_event =
+            |errno| Some(ReadEvent::Err(sys::Error::from_code(errno, Tag::recv)));
         let handle = self.file.fd().native();
         if !*self.is_input.get_or_init(|| console::is_input(handle)) {
-            return error(E::ENOTCONN);
+            return make_error_event(E::ENOTCONN);
         }
         let input = match Input::get(handle) {
             Ok(input) => input,
             Err(err) => return Some(ReadEvent::Err(sys::Error::from_win32(err, Tag::recv))),
         };
-        let (mut shared, address) = (SHARED.lock(), Rc::as_ptr(self).addr());
+        let mut shared = SHARED.lock();
+        let address = Rc::as_ptr(self).addr();
         shared.readers.retain(|reader| reader.0 != address);
-        let reads_keys = IS_RAW.load(Ordering::SeqCst) && !shared.is_reading();
-        if reads_keys && has_waited {
+        let should_read_keys = IS_RAW.load(Ordering::SeqCst) && !shared.is_reading_line();
+        if should_read_keys && has_waited {
             shared.read_keys(input);
         }
-        if !shared.text.is_empty() {
-            let len = (shared.text.len()).min(self.endpoint.wanted().unwrap_or(usize::MAX));
-            let rest = shared.text.split_off(len);
-            return Some(ReadEvent::Data(core::mem::replace(&mut shared.text, rest)));
+        if !shared.buffered_text.is_empty() {
+            let len = shared
+                .buffered_text
+                .len()
+                .min(self.state.read_limit().unwrap_or(usize::MAX));
+            let remainder = shared.buffered_text.split_off(len);
+            return Some(ReadEvent::Data(core::mem::replace(
+                &mut shared.buffered_text,
+                remainder,
+            )));
         }
-        if let Some(end) = shared.end.take() {
-            return Some(end);
+        if let Some(end_event) = shared.end_event.take() {
+            return Some(end_event);
         }
 
-        let done = || self.on_read(|this| this.continue_reading(true));
-        if reads_keys {
-            match Request::wait(&self.endpoint.port, input.handle.as_handle(), done()) {
-                Ok(request) => self.read.set(Some(request)),
-                Err(_) => return error(E::ENOMEM),
+        let make_callback = || self.make_read_callback(|this| this.process_read(true));
+        if should_read_keys {
+            match Request::wait(&self.state.port, input.handle.as_handle(), make_callback()) {
+                Ok(request) => self.inflight_read.set(Some(request)),
+                Err(_) => return make_error_event(E::ENOMEM),
             }
-        } else if let Line::Idle = shared.line {
+        } else if let LineReadState::Idle = shared.line_state {
             blocking::spawn(|| read_line(input));
-            shared.line = Line::Starting;
+            shared.line_state = LineReadState::Starting;
         }
-        let done = done();
-        let (request, remote) = Request::remote(&self.endpoint.port, |()| done());
-        shared.readers.push((address, remote));
-        self.news.set(Some(request));
+        let callback = make_callback();
+        let (request, completer) = Request::with_completer(&self.state.port, |()| callback());
+        shared.readers.push((address, completer));
+        self.notification.set(Some(request));
         None
     }
 }

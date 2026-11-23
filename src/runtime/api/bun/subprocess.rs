@@ -732,7 +732,7 @@ impl Subprocess<'_> {
             pipe.on_attached_process_exit(status);
         }
 
-        // Whether or not the end of the channel has been read yet, the callbacks find it disconnected.
+        // Before the exit callbacks, so that they see the IPC channel as disconnected even if its EOF is still unread.
         if let Some(ipc_data) = self.ipc() {
             ipc_data.close_after_exit();
         }

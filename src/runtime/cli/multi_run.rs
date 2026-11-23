@@ -157,7 +157,7 @@ impl<'a> PipeReader<'a> {
     /// After the exit: a leftover child may hold the pipe open, so its EOF may never come.
     fn drain_and_close(&mut self) {
         #[cfg(windows)]
-        if let Some(event) = self.reader.take_available() {
+        if let Some(event) = self.reader.try_read() {
             self.read(Some(event));
         }
         #[cfg(unix)]
@@ -233,7 +233,7 @@ impl<'a> ProcessHandle<'a> {
             if let Some(file) = file {
                 let _ = bun_sys::set_nonblocking(file.fd());
                 let event_loop = self.shared.event_loop.as_event_loop_ctx();
-                let _ = pipe.reader.start_own_pipe(event_loop, file)?;
+                let _ = pipe.reader.start_exclusive_pipe(event_loop, file)?;
             }
         }
 

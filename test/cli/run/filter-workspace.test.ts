@@ -1196,7 +1196,7 @@ describe.concurrent("a '!' entry in \"workspaces\"", () => {
 // as `bun exec "<script>"` with CREATE_NO_WINDOW, so the user's Ctrl+C never
 // reaches the scripts and cleanup is entirely on the parent. The global
 // spawn Job is KILL_ON_CLOSE | SILENT_BREAKAWAY_OK, so membership only
-// propagates one hop: as soon as the tree contains another spawner
+// propagates one hop: as soon as the tree contains a non-Bun spawner
 // (cmd.exe, a `.cmd` bin shim, node.exe), everything below it escapes and keeps
 // its port bound after the parent exits.
 //

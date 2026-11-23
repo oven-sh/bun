@@ -38,10 +38,9 @@ fn stat_for_digest(path: &bun_core::ZStr) -> Option<[i64; 3]> {
     use bun_windows_sys as fs;
     use bun_windows_sys::FILETIME;
     use std::os::windows::io::{AsRawHandle as _, HandleOrInvalid, OwnedHandle};
-    // `GetFileAttributesExW` does NOT follow
-    // reparse points — it would return the link's own mtime/size and miss an
-    // in-place cert rotation behind a symlink (stale SSL_CTX served). So:
-    // open query-only, `GetFileInformationByHandle`, close.
+    // `GetFileAttributesExW` does NOT follow reparse points — it would return the link's own
+    // mtime/size and miss an in-place cert rotation behind a symlink (stale SSL_CTX served).
+    // Instead: open query-only, `GetFileInformationByHandle`, close.
     let mut wide = bun_paths::OSPath::from(path);
     bun_paths::to_native_in_place(wide.as_mut_slice());
     // SAFETY: `wide` is NUL-terminated. dwDesiredAccess=0 is query-

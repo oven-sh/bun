@@ -165,7 +165,7 @@ impl core::ops::Deref for PreparedSpawnSyncEventLoop<'_> {
 impl Drop for PreparedSpawnSyncEventLoop<'_> {
     fn drop(&mut self) {
         #[cfg(windows)]
-        debug_assert!(!self.uws_loop().port().is_held());
+        debug_assert!(!self.uws_loop().port().has_loop_refs());
         debug_assert!(
             self.uws_loop().poll_count() == 0 && self.uws_loop().active.get() == 0,
             "spawnSync left num_polls={} active={} on its loop",
@@ -197,7 +197,7 @@ impl PreparedSpawnSyncEventLoop<'_> {
             None => None,
         };
 
-        // For the entire tick: the uws loop tick dispatches process exits and pipe I/O.
+        // Held for the entire tick, because the uws tick dispatches process exits and pipe I/O.
         let _suppress = SuppressMicrotaskDrain::new(self.event_loop.vm_ref());
 
         // Tick the isolated uws loop with the specified timeout

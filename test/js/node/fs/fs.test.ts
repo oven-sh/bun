@@ -6431,7 +6431,7 @@ describe.if(isWindows)("windows path handling", () => {
 });
 
 describe.if(isWindows)("windows file semantics", () => {
-  const codeOf = (fn: () => unknown) => {
+  const errorCode = (fn: () => unknown) => {
     try {
       fn();
       return "ok";
@@ -6452,27 +6452,28 @@ describe.if(isWindows)("windows file semantics", () => {
     const flags = constants.O_WRONLY | constants.O_TRUNC;
     closeSync(openSync(join(String(dir), "file"), flags));
     expect(readFileSync(join(String(dir), "file"), "utf8")).toBe("");
-    expect(codeOf(() => openSync(join(String(dir), "folder"), flags))).toBe("EISDIR");
-    expect(codeOf(() => openSync(join(String(dir), "missing"), flags))).toBe("ENOENT");
+    expect(errorCode(() => openSync(join(String(dir), "folder"), flags))).toBe("EISDIR");
+    expect(errorCode(() => openSync(join(String(dir), "missing"), flags))).toBe("ENOENT");
     closeSync(openSync("\\\\.\\NUL", flags));
   });
 
-  it("other calls go on while reads wait for their pipes", async () => {
+  it("blocked pipe reads do not exhaust the thread pool", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
-        `const fs = require("fs"), net = require("net");
+        `const fs = require("fs");
+        const net = require("net");
         const name = "\\\\\\\\.\\\\pipe\\\\fs-read-" + process.pid;
         const peers = [];
-        const all = Promise.withResolvers();
-        const server = net.createServer(peer => peers.push(peer) === 3 && all.resolve());
+        const allAccepted = Promise.withResolvers();
+        const server = net.createServer(peer => peers.push(peer) === 3 && allAccepted.resolve());
         await new Promise(resolve => server.listen(name, resolve));
         const files = [];
         for (let i = 0; i < 3; i++) files.push(await fs.promises.open(name, "r+"));
         const reads = files.map(file => file.read(Buffer.alloc(1), 0, 1, null));
         console.log((await fs.promises.stat(process.execPath)).isFile());
-        await all.promise;
+        await allAccepted.promise;
         for (const peer of peers) peer.end("x");
         console.log((await Promise.all(reads)).map(read => read.buffer.toString()).join());
         for (const file of files) await file.close();
@@ -6486,15 +6487,15 @@ describe.if(isWindows)("windows file semantics", () => {
     expect(exitCode).toBe(0);
   });
 
-  it("errors of readv and writev name the same call in every form", async () => {
+  it("readv and writev errors report the read and write syscalls", async () => {
     using dir = tempDir("fs-vector-errors", { file: "abc" });
-    await using forReading = await promises.open(join(String(dir), "file"), "r");
-    await using forWriting = await promises.open(join(String(dir), "file"), "a");
-    expect(() => readvSync(forWriting.fd, [Buffer.alloc(1)])).toThrow("EBADF: bad file descriptor, read");
-    expect(() => writevSync(forReading.fd, [Buffer.alloc(1)])).toThrow("EBADF: bad file descriptor, write");
-    const read = await forWriting.readv([Buffer.alloc(1)]).catch(e => e);
-    const write = await forReading.writev([Buffer.alloc(1)]).catch(e => e);
-    expect([read.syscall, write.syscall]).toEqual(["read", "write"]);
+    await using readHandle = await promises.open(join(String(dir), "file"), "r");
+    await using appendHandle = await promises.open(join(String(dir), "file"), "a");
+    expect(() => readvSync(appendHandle.fd, [Buffer.alloc(1)])).toThrow("EBADF: bad file descriptor, read");
+    expect(() => writevSync(readHandle.fd, [Buffer.alloc(1)])).toThrow("EBADF: bad file descriptor, write");
+    const readError = await appendHandle.readv([Buffer.alloc(1)]).catch(e => e);
+    const writeError = await readHandle.writev([Buffer.alloc(1)]).catch(e => e);
+    expect([readError.syscall, writeError.syscall]).toEqual(["read", "write"]);
   });
 });
 
@@ -8437,26 +8438,25 @@ describe("module init", () => {
   });
 });
 
-// The answers are those of Node.js on NTFS.
-describe.skipIf(!isWindows)("on Windows", () => {
+// Expected values match Node.js on NTFS.
+describe.skipIf(!isWindows)("Node.js compatibility on Windows", () => {
   const { O_RDONLY, O_WRONLY, O_RDWR, O_CREAT, O_TRUNC, O_APPEND, O_EXCL } = fs.constants;
-  const flag = {
+  const UV_FS_O = {
     RANDOM: 0x10,
     SEQUENTIAL: 0x20,
     TEMPORARY: 0x40,
     SHORT_LIVED: 0x1000,
-    DIRECT: 0x2000000,
     DSYNC: 0x4000000,
     SYNC: 0x8000000,
     EXLOCK: 0x10000000,
     FILEMAP: 0x20000000,
   };
-  const failure = (error: any) => `${error.code} ${error.errno} ${error.syscall}`;
+  const formatError = (error: any) => `${error.code} ${error.errno} ${error.syscall}`;
   function attempt<T>(fn: () => T): T | string {
     try {
       return fn() ?? "ok";
     } catch (error) {
-      return failure(error);
+      return formatError(error);
     }
   }
   function withFd<T>(path: string, flags: string | number, fn: (fd: number) => T): T {
@@ -8467,13 +8467,20 @@ describe.skipIf(!isWindows)("on Windows", () => {
       fs.closeSync(fd);
     }
   }
-  const mode = (stats: fs.Stats) => stats.mode.toString(8);
-  type At = (name: string) => string;
-  /** Each row runs in a directory of its own that has a file `f` ("abc"), a directory `d` and a directory `full`. */
-  function answers(rows: [string, (at: At) => unknown, unknown][], test: Pick<typeof it, "each"> = it) {
+  const formatMode = (stats: fs.Stats) => stats.mode.toString(8);
+  const tryFchmod = (fd: number, newMode: number) =>
+    attempt(() => {
+      fs.fchmodSync(fd, newMode);
+      return formatMode(fs.fstatSync(fd));
+    });
+  /** Runs each row in a new directory with a file `f` ("abc"), an empty directory `d` and a file `full/x`. */
+  function defineTests(
+    rows: [string, (tmpPath: (name: string) => string) => unknown, unknown][],
+    test: Pick<typeof it, "each"> = it,
+  ) {
     test.each(rows)("%s", async (_, fn, expected) => {
       using dir = tempDir("fs-windows", { "f": "abc", "d": {}, "full/x": "x" });
-      const result = await Promise.try(fn, (name: string) => join(String(dir), name)).catch(failure);
+      const result = await Promise.try(fn, (name: string) => join(String(dir), name)).catch(formatError);
       expect(result ?? "ok").toEqual(expected);
     });
   }
@@ -8484,8 +8491,9 @@ describe.skipIf(!isWindows)("on Windows", () => {
       async (path: string, flags: string | number) => {
         const fd = fs.openSync(path, flags);
         return {
-          read: async (b: Buffer, position: number | null) => fs.readSync(fd, b, 0, b.length, position),
-          write: async (b: Buffer, position: number | null) => fs.writeSync(fd, b, 0, b.length, position),
+          read: async (buffer: Buffer, position: number | null) => fs.readSync(fd, buffer, 0, buffer.length, position),
+          write: async (buffer: Buffer, position: number | null) =>
+            fs.writeSync(fd, buffer, 0, buffer.length, position),
           [Symbol.asyncDispose]: async () => fs.closeSync(fd),
         };
       },
@@ -8495,33 +8503,39 @@ describe.skipIf(!isWindows)("on Windows", () => {
       async (path: string, flags: string | number) => {
         const handle = await fs.promises.open(path, flags);
         return {
-          read: async (b: Buffer, position: number | null) => (await handle.read(b, 0, b.length, position)).bytesRead,
-          write: async (b: Buffer, position: number | null) =>
-            (await handle.write(b, 0, b.length, position)).bytesWritten,
+          read: async (buffer: Buffer, position: number | null) =>
+            (await handle.read(buffer, 0, buffer.length, position)).bytesRead,
+          write: async (buffer: Buffer, position: number | null) =>
+            (await handle.write(buffer, 0, buffer.length, position)).bytesWritten,
           [Symbol.asyncDispose]: () => handle.close(),
         };
       },
     ],
   ])("open, read and write (%s)", (_, open) => {
-    const code = (promise: Promise<unknown>) => promise.catch(error => error.code);
-    const flags = ["r", "rs", "r+", "rs+", "w", "wx", "w+", "wx+", "a", "ax", "as", "a+", "ax+", "as+"];
-    /** What opening gives, then a write of "X" and a read at 0, then what is in the file. */
-    async function use(path: string, flags: string | number) {
-      let seen;
+    const catchErrorCode = (promise: Promise<unknown>) => promise.catch(error => error.code);
+    const stringFlags = ["r", "rs", "r+", "rs+", "w", "wx", "w+", "wx+", "a", "ax", "as", "a+", "ax+", "as+"];
+    /** Returns the open error code, or the results of writing "X" and reading at 0, then the file contents. */
+    async function probeFlags(path: string, flags: string | number) {
+      let results;
       try {
         await using file = await open(path, flags);
-        seen = [await code(file.write(Buffer.from("X"), null)), await code(file.read(Buffer.alloc(8), 0))];
+        results = [
+          await catchErrorCode(file.write(Buffer.from("X"), null)),
+          await catchErrorCode(file.read(Buffer.alloc(8), 0)),
+        ];
       } catch (error: any) {
         return error.code;
       }
-      return [...seen, ...(fs.statSync(path).isFile() ? [fs.readFileSync(path, "utf8")] : [])].join(" ");
+      return [...results, ...(fs.statSync(path).isFile() ? [fs.readFileSync(path, "utf8")] : [])].join(" ");
     }
-    const table = async (path: (i: number) => string) =>
-      Object.fromEntries(await Promise.all(flags.map(async (flag, i) => [flag, await use(path(i), flag)])));
+    const probeStringFlags = async (getPath: (i: number) => string) =>
+      Object.fromEntries(
+        await Promise.all(stringFlags.map(async (flag, i) => [flag, await probeFlags(getPath(i), flag)])),
+      );
 
-    it("a file that does not exist", async () => {
+    it("string flags on a missing file", async () => {
       using dir = tempDir("fs-open-flags", {});
-      expect(await table(i => join(String(dir), `${i}`))).toEqual({
+      expect(await probeStringFlags(i => join(String(dir), `${i}`))).toEqual({
         "r": "ENOENT",
         "rs": "ENOENT",
         "r+": "ENOENT",
@@ -8539,9 +8553,9 @@ describe.skipIf(!isWindows)("on Windows", () => {
       });
     });
 
-    it("a file that exists", async () => {
-      using dir = tempDir("fs-open-flags", Object.fromEntries(flags.map((_, i) => [`${i}`, "abc"])));
-      expect(await table(i => join(String(dir), `${i}`))).toEqual({
+    it("string flags on an existing file", async () => {
+      using dir = tempDir("fs-open-flags", Object.fromEntries(stringFlags.map((_, i) => [`${i}`, "abc"])));
+      expect(await probeStringFlags(i => join(String(dir), `${i}`))).toEqual({
         "r": "EBADF 3 abc",
         "rs": "EBADF 3 abc",
         "r+": "1 3 Xbc",
@@ -8559,9 +8573,9 @@ describe.skipIf(!isWindows)("on Windows", () => {
       });
     });
 
-    it("a directory", async () => {
+    it("string flags on a directory", async () => {
       using dir = tempDir("fs-open-flags", {});
-      expect(await table(() => String(dir))).toEqual({
+      expect(await probeStringFlags(() => String(dir))).toEqual({
         "r": "EBADF EISDIR",
         "rs": "EBADF EISDIR",
         "r+": "EISDIR EISDIR",
@@ -8580,32 +8594,32 @@ describe.skipIf(!isWindows)("on Windows", () => {
     });
 
     describe.each([
-      ["plain", 0],
-      ["UV_FS_O_FILEMAP", flag.FILEMAP],
-    ])("positions, %s", (_, extra) => {
-      const text = async (file: Awaited<ReturnType<typeof open>>, length: number, position: number | null) => {
+      ["default", 0],
+      ["UV_FS_O_FILEMAP", UV_FS_O.FILEMAP],
+    ])("file position (%s)", (_, extraFlags) => {
+      const readText = async (file: Awaited<ReturnType<typeof open>>, length: number, position: number | null) => {
         const buffer = Buffer.alloc(length);
         return buffer.toString("latin1", 0, await file.read(buffer, position));
       };
 
-      it("a call with a position leaves the current one alone", async () => {
+      it("positional calls do not move the current position", async () => {
         using dir = tempDir("fs-position", { f: "0123456789" });
-        await using file = await open(join(String(dir), "f"), O_RDWR | extra);
+        await using file = await open(join(String(dir), "f"), O_RDWR | extraFlags);
         expect([
-          await text(file, 2, null),
-          await text(file, 2, 6),
+          await readText(file, 2, null),
+          await readText(file, 2, 6),
           await file.write(Buffer.from("X"), 8),
-          await text(file, 2, null),
-          await text(file, 2, 50),
-          await text(file, 20, null),
-          await text(file, 2, null),
+          await readText(file, 2, null),
+          await readText(file, 2, 50),
+          await readText(file, 20, null),
+          await readText(file, 2, null),
         ]).toEqual(["01", "67", 1, "23", "", "4567X9", ""]);
       });
 
-      it("writes with and without a position mix", async () => {
+      it("positional and sequential writes can be interleaved", async () => {
         using dir = tempDir("fs-position", {});
         {
-          await using file = await open(join(String(dir), "f"), O_RDWR | O_CREAT | extra);
+          await using file = await open(join(String(dir), "f"), O_RDWR | O_CREAT | extraFlags);
           for (const [letter, position] of [
             ["a", 0],
             ["a", null],
@@ -8615,113 +8629,155 @@ describe.skipIf(!isWindows)("on Windows", () => {
             ["e", 1],
           ] as const)
             await file.write(Buffer.from(letter), position);
-          expect(await text(file, 2, null)).toBe("cd");
+          expect(await readText(file, 2, null)).toBe("cd");
         }
         expect(fs.readFileSync(join(String(dir), "f"), "utf8")).toBe("aecd");
       });
 
-      it("O_APPEND writes at the end whatever the position says", async () => {
+      it("O_APPEND writes ignore the position argument", async () => {
         using dir = tempDir("fs-position", { f: "ab" });
         {
-          await using file = await open(join(String(dir), "f"), O_RDWR | O_APPEND | extra);
+          await using file = await open(join(String(dir), "f"), O_RDWR | O_APPEND | extraFlags);
           await file.write(Buffer.from("c"), 0);
-          expect(await text(file, 1, null)).toBe("a");
+          expect(await readText(file, 1, null)).toBe("a");
           await file.write(Buffer.from("d"), null);
           await file.write(Buffer.from("e"), 1);
         }
         expect(fs.readFileSync(join(String(dir), "f"), "utf8")).toBe("abcde");
       });
 
-      it("a write past the end leaves zeros, and an empty one nothing", async () => {
+      it("a write past EOF zero-fills the gap and an empty write does not extend the file", async () => {
         using dir = tempDir("fs-position", { f: "ab" });
         {
-          await using file = await open(join(String(dir), "f"), O_RDWR | extra);
+          await using file = await open(join(String(dir), "f"), O_RDWR | extraFlags);
           expect([await file.write(Buffer.from("z"), 5), await file.write(Buffer.alloc(0), 20)]).toEqual([1, 0]);
         }
         expect(fs.readFileSync(join(String(dir), "f"), "latin1")).toBe("ab\0\0\0z");
       });
 
-      it("the access mode holds", async () => {
+      it("writing a read-only fd and reading a write-only fd fail with EBADF", async () => {
         using dir = tempDir("fs-position", { r: "abc", w: "abc" });
-        await using readable = await open(join(String(dir), "r"), O_RDONLY | extra);
-        await using writable = await open(join(String(dir), "w"), O_WRONLY | extra);
+        await using readable = await open(join(String(dir), "r"), O_RDONLY | extraFlags);
+        await using writable = await open(join(String(dir), "w"), O_WRONLY | extraFlags);
         expect([
-          await code(readable.write(Buffer.from("X"), null)),
-          await code(writable.read(Buffer.alloc(1), null)),
+          await catchErrorCode(readable.write(Buffer.from("X"), null)),
+          await catchErrorCode(writable.read(Buffer.alloc(1), null)),
         ]).toEqual(["EBADF", "EBADF"]);
       });
     });
 
-    it.each(["RANDOM", "SEQUENTIAL", "SHORT_LIVED", "DSYNC", "SYNC"] as const)("UV_FS_O_%s", async name => {
+    it.each(["RANDOM", "SEQUENTIAL", "SHORT_LIVED", "DSYNC", "SYNC"] as const)("accepts UV_FS_O_%s", async name => {
       using dir = tempDir("fs-open-flags", {});
-      expect(await use(join(String(dir), "new"), O_RDWR | O_CREAT | flag[name])).toBe("1 1 X");
+      expect(await probeFlags(join(String(dir), "new"), O_RDWR | O_CREAT | UV_FS_O[name])).toBe("1 1 X");
     });
 
-    // The two flags are dropped on the way.
+    // Both flags are dropped when numeric open flags are converted.
     it.todo("UV_FS_O_TEMPORARY deletes the file on close", async () => {
       using dir = tempDir("fs-open-flags", {});
-      await (await open(join(String(dir), "new"), O_RDWR | O_CREAT | flag.TEMPORARY))[Symbol.asyncDispose]();
+      await (await open(join(String(dir), "new"), O_RDWR | O_CREAT | UV_FS_O.TEMPORARY))[Symbol.asyncDispose]();
       expect(fs.readdirSync(String(dir))).toEqual([]);
     });
-    it.todo("UV_FS_O_EXLOCK keeps others out until close", async () => {
+    it.todo("UV_FS_O_EXLOCK fails other opens with EBUSY until close", async () => {
       using dir = tempDir("fs-open-flags", { f: "abc" });
       {
-        await using _ = await open(join(String(dir), "f"), O_RDWR | flag.EXLOCK);
-        expect(await use(join(String(dir), "f"), "r")).toBe("EBUSY");
+        await using _ = await open(join(String(dir), "f"), O_RDWR | UV_FS_O.EXLOCK);
+        expect(await probeFlags(join(String(dir), "f"), "r")).toBe("EBUSY");
       }
-      expect(await use(join(String(dir), "f"), "r")).toBe("EBADF 3 abc");
+      expect(await probeFlags(join(String(dir), "f"), "r")).toBe("EBADF 3 abc");
     });
   });
 
   describe("open", () => {
-    const opens = (path: string, flags: string | number, mode?: number) => fs.closeSync(fs.openSync(path, flags, mode));
-    answers([
-      ["O_WRONLY | O_RDWR", at => opens(at("f"), O_WRONLY | O_RDWR), "EINVAL -4071 open"],
-      ["O_EXCL without O_CREAT", at => opens(at("f"), O_RDONLY | O_EXCL), "ok"],
-      ["O_RDONLY | O_CREAT", at => (opens(at("n"), O_RDONLY | O_CREAT), fs.existsSync(at("n"))), true],
+    const openAndClose = (path: string, flags: string | number, mode?: number) =>
+      fs.closeSync(fs.openSync(path, flags, mode));
+    defineTests([
       [
-        "O_APPEND | O_TRUNC | O_CREAT",
-        at => (opens(at("f"), O_WRONLY | O_APPEND | O_TRUNC | O_CREAT), fs.readFileSync(at("f"), "utf8")),
+        "O_WRONLY | O_RDWR fails with EINVAL",
+        tmpPath => openAndClose(tmpPath("f"), O_WRONLY | O_RDWR),
+        "EINVAL -4071 open",
+      ],
+      ["O_EXCL without O_CREAT opens an existing file", tmpPath => openAndClose(tmpPath("f"), O_RDONLY | O_EXCL), "ok"],
+      [
+        "O_RDONLY | O_CREAT creates the file",
+        tmpPath => {
+          openAndClose(tmpPath("n"), O_RDONLY | O_CREAT);
+          return fs.existsSync(tmpPath("n"));
+        },
+        true,
+      ],
+      [
+        "O_APPEND | O_TRUNC | O_CREAT truncates the file",
+        tmpPath => {
+          openAndClose(tmpPath("f"), O_WRONLY | O_APPEND | O_TRUNC | O_CREAT);
+          return fs.readFileSync(tmpPath("f"), "utf8");
+        },
         "",
       ],
       [
-        "mode 0o444 makes a new file read-only",
-        at => (opens(at("n"), "w", 0o444), mode(fs.statSync(at("n")))),
+        "mode 0o444 creates a read-only file",
+        tmpPath => {
+          openAndClose(tmpPath("n"), "w", 0o444);
+          return formatMode(fs.statSync(tmpPath("n")));
+        },
         "100444",
       ],
-      ["a read-only file for writing", at => (fs.chmodSync(at("f"), 0o444), opens(at("f"), "r+")), "EPERM -4048 open"],
-      ["below a file", at => opens(at("f\\x"), "r"), "ENOENT -4058 open"],
       [
-        "a name with ?",
-        at => [attempt(() => opens(at("a?b"), "r")), attempt(() => opens(at("a?b"), "w"))],
+        "r+ on a read-only file fails with EPERM",
+        tmpPath => {
+          fs.chmodSync(tmpPath("f"), 0o444);
+          return openAndClose(tmpPath("f"), "r+");
+        },
+        "EPERM -4048 open",
+      ],
+      ["a path below a file fails with ENOENT", tmpPath => openAndClose(tmpPath("f\\x"), "r"), "ENOENT -4058 open"],
+      [
+        "a name containing ? fails with ENOENT",
+        tmpPath => [attempt(() => openAndClose(tmpPath("a?b"), "r")), attempt(() => openAndClose(tmpPath("a?b"), "w"))],
         ["ENOENT -4058 open", "ENOENT -4058 open"],
       ],
-      ["a link to itself", at => (fs.symlinkSync("l", at("l")), opens(at("l"), "r")), "ELOOP -4067 open"],
-      ["a link to itself, async", at => (fs.symlinkSync("l", at("l")), fs.promises.open(at("l"))), "ELOOP -4067 open"],
       [
-        "the lowest free descriptor",
-        at => {
-          const [a, b] = [fs.openSync(at("f"), "r"), fs.openSync(at("f"), "r")];
-          fs.closeSync(a);
-          const again = fs.openSync(at("f"), "r");
-          [again, b].forEach(fd => fs.closeSync(fd));
-          return again === a;
+        "openSync fails with ELOOP on a self-referencing symlink",
+        tmpPath => {
+          fs.symlinkSync("l", tmpPath("l"));
+          return openAndClose(tmpPath("l"), "r");
+        },
+        "ELOOP -4067 open",
+      ],
+      [
+        "fs.promises.open rejects with ELOOP on a self-referencing symlink",
+        tmpPath => {
+          fs.symlinkSync("l", tmpPath("l"));
+          return fs.promises.open(tmpPath("l"));
+        },
+        "ELOOP -4067 open",
+      ],
+      [
+        "reuses the lowest free fd",
+        tmpPath => {
+          const lowFd = fs.openSync(tmpPath("f"), "r");
+          const highFd = fs.openSync(tmpPath("f"), "r");
+          fs.closeSync(lowFd);
+          const reopenedFd = fs.openSync(tmpPath("f"), "r");
+          [reopenedFd, highFd].forEach(fd => fs.closeSync(fd));
+          return reopenedFd === lowFd;
         },
         true,
       ],
     ]);
 
-    it("runs out of descriptors at 8192, and recovers", async () => {
+    it("fails with EMFILE at 8192 fds and recovers after a close", async () => {
       await using proc = Bun.spawn({
         cmd: [
           bunExe(),
           "-e",
-          `const fs = require("fs"), fds = [], code = fn => { try { fn(); return "ok"; } catch (error) { return error.code; } };
-           let full;
-           while ((full = code(() => fds.push(fs.openSync("\\\\\\\\.\\\\NUL", "r")))) === "ok");
-           const async = await fs.promises.open(process.execPath).catch(error => error.code);
+          `const fs = require("fs");
+           const fds = [];
+           const errorCode = fn => { try { fn(); return "ok"; } catch (error) { return error.code; } };
+           let syncCode;
+           while ((syncCode = errorCode(() => fds.push(fs.openSync("\\\\\\\\.\\\\NUL", "r")))) === "ok");
+           const asyncCode = await fs.promises.open(process.execPath).catch(error => error.code);
            fs.closeSync(fds[0]);
-           console.log(full, async, fds.at(-1), code(() => fs.openSync(process.execPath, "r")));`,
+           console.log(syncCode, asyncCode, fds.at(-1), errorCode(() => fs.openSync(process.execPath, "r")));`,
         ],
         env: bunEnv,
         stdout: "pipe",
@@ -8732,19 +8788,19 @@ describe.skipIf(!isWindows)("on Windows", () => {
     });
   });
 
-  describe("a descriptor", () => {
-    answers([
+  describe("file descriptors", () => {
+    defineTests([
       [
-        "closed twice",
-        at => {
-          const fd = fs.openSync(at("f"), "r");
+        "closing twice fails with EBADF",
+        tmpPath => {
+          const fd = fs.openSync(tmpPath("f"), "r");
           fs.closeSync(fd);
           fs.closeSync(fd);
         },
         "EBADF -4083 close",
       ],
       [
-        "that was never open",
+        "calls on an unopened fd fail with EBADF, except fchown",
         () => [
           attempt(() => fs.closeSync(9999)),
           attempt(() => fs.fstatSync(9999)),
@@ -8769,45 +8825,46 @@ describe.skipIf(!isWindows)("on Windows", () => {
         ],
       ],
       [
-        "open for reading",
-        at =>
-          withFd(at("f"), "r", fd => [
+        "a read-only fd rejects ftruncate, fsync and futimes but allows fchmod",
+        tmpPath =>
+          withFd(tmpPath("f"), "r", fd => [
             attempt(() => fs.ftruncateSync(fd)),
             attempt(() => fs.fsyncSync(fd)),
             attempt(() => fs.futimesSync(fd, 1, 1)),
-            attempt(() => (fs.fchmodSync(fd, 0o444), mode(fs.fstatSync(fd)))),
-            attempt(() => (fs.fchmodSync(fd, 0o666), mode(fs.fstatSync(fd)))),
+            tryFchmod(fd, 0o444),
+            tryFchmod(fd, 0o666),
           ]),
         ["EPERM -4048 ftruncate", "EPERM -4048 fsync", "EPERM -4048 futime", "100444", "100666"],
       ],
       [
-        "open for appending",
-        at => withFd(at("f"), "a", fd => [attempt(() => fs.ftruncateSync(fd)), attempt(() => fs.fdatasyncSync(fd))]),
+        "an append-only fd rejects ftruncate but allows fdatasync",
+        tmpPath =>
+          withFd(tmpPath("f"), "a", fd => [attempt(() => fs.ftruncateSync(fd)), attempt(() => fs.fdatasyncSync(fd))]),
         ["EPERM -4048 ftruncate", "ok"],
       ],
       [
-        "of a directory",
-        at => [
-          withFd(at("d"), "r", fd => attempt(() => fs.fsyncSync(fd))),
-          withFd(at("d"), "r+", fd => attempt(() => fs.fsyncSync(fd))),
-          withFd(at("d"), "r+", fd => attempt(() => fs.ftruncateSync(fd))),
-          withFd(at("d"), "r+", fd => attempt(() => fs.fchmodSync(fd, 0o444))),
+        "a directory fd allows fsync only with r+ and rejects ftruncate and fchmod",
+        tmpPath => [
+          withFd(tmpPath("d"), "r", fd => attempt(() => fs.fsyncSync(fd))),
+          withFd(tmpPath("d"), "r+", fd => attempt(() => fs.fsyncSync(fd))),
+          withFd(tmpPath("d"), "r+", fd => attempt(() => fs.ftruncateSync(fd))),
+          withFd(tmpPath("d"), "r+", fd => attempt(() => fs.fchmodSync(fd, 0o444))),
         ],
         ["EPERM -4048 fsync", "ok", "EINVAL -4071 ftruncate", "EPERM -4048 fchmod"],
       ],
       [
-        "fills the buffers of readv as far as the file goes",
-        at => {
-          fs.writeFileSync(at("f"), "abcde");
+        "readv fills buffers up to EOF",
+        tmpPath => {
+          fs.writeFileSync(tmpPath("f"), "abcde");
           const buffers = [Buffer.alloc(3), Buffer.alloc(3), Buffer.alloc(3)];
-          return withFd(at("f"), "r", fd => [fs.readvSync(fd, buffers), buffers.join("|")]);
+          return withFd(tmpPath("f"), "r", fd => [fs.readvSync(fd, buffers), buffers.join("|")]);
         },
         [5, "abc|de\0|\0\0\0"],
       ],
       [
-        "with UV_FS_O_FILEMAP shrinks and grows",
-        at =>
-          withFd(at("f"), O_RDWR | flag.FILEMAP, fd =>
+        "ftruncate shrinks and grows a file opened with UV_FS_O_FILEMAP",
+        tmpPath =>
+          withFd(tmpPath("f"), O_RDWR | UV_FS_O.FILEMAP, fd =>
             [1, 0, 3].map(length => {
               fs.ftruncateSync(fd, length);
               const buffer = Buffer.alloc(8);
@@ -8819,41 +8876,46 @@ describe.skipIf(!isWindows)("on Windows", () => {
     ]);
   });
 
-  describe("stat", () => {
-    const shape = ({ mode, size, nlink, blksize, rdev }: fs.Stats) => ({
+  describe("stat, fstat, statfs", () => {
+    const FILE_DEVICE_NULL = 0x15;
+    const summarizeStats = ({ mode, size, nlink, blksize, rdev }: fs.Stats) => ({
       mode: mode.toString(8),
       size,
       nlink,
       blksize,
       rdev,
     });
-    answers([
-      ["a file", at => shape(fs.statSync(at("f"))), { mode: "100666", size: 3, nlink: 1, blksize: 4096, rdev: 0 }],
-      ["a directory", at => mode(fs.statSync(at("d"))), "40666"],
+    defineTests([
       [
-        "NUL",
-        () => shape(fs.statSync("\\\\.\\NUL")),
-        { mode: "20666", size: 0, nlink: 1, blksize: 4096, rdev: 0x15 << 16 },
+        "stat fields of a file",
+        tmpPath => summarizeStats(fs.statSync(tmpPath("f"))),
+        { mode: "100666", size: 3, nlink: 1, blksize: 4096, rdev: 0 },
+      ],
+      ["stat mode of a directory", tmpPath => formatMode(fs.statSync(tmpPath("d"))), "40666"],
+      [
+        "stat reports NUL as a character device",
+        () => summarizeStats(fs.statSync("\\\\.\\NUL")),
+        { mode: "20666", size: 0, nlink: 1, blksize: 4096, rdev: FILE_DEVICE_NULL << 16 },
       ],
       [
-        "an open NUL",
-        () => withFd("\\\\.\\NUL", "r", fd => shape(fs.fstatSync(fd))),
-        { mode: "20666", size: 0, nlink: 1, blksize: 4096, rdev: 0x15 << 16 },
+        "fstat reports NUL as a character device",
+        () => withFd("\\\\.\\NUL", "r", fd => summarizeStats(fs.fstatSync(fd))),
+        { mode: "20666", size: 0, nlink: 1, blksize: 4096, rdev: FILE_DEVICE_NULL << 16 },
       ],
       [
-        "a file with trailing slashes",
-        at => [fs.statSync(at("f") + "\\").size, fs.statSync(at("f") + "//").size],
+        "stat ignores trailing slashes on a file path",
+        tmpPath => [fs.statSync(tmpPath("f") + "\\").size, fs.statSync(tmpPath("f") + "//").size],
         [3, 3],
       ],
       [
-        "names that cannot exist",
-        at => ["f\\x", "a?b", "*"].map(name => attempt(() => fs.statSync(at(name)))),
+        "stat fails with ENOENT on invalid paths",
+        tmpPath => ["f\\x", "a?b", "*"].map(name => attempt(() => fs.statSync(tmpPath(name)))),
         ["ENOENT -4058 stat", "ENOENT -4058 stat", "ENOENT -4058 stat"],
       ],
       [
-        "every spelling of a root",
-        at => {
-          const drive = at("").slice(0, 2);
+        "stat reports root and parent paths as directories",
+        tmpPath => {
+          const drive = tmpPath("").slice(0, 2);
           return [
             "\\",
             "/",
@@ -8868,86 +8930,94 @@ describe.skipIf(!isWindows)("on Windows", () => {
         [],
       ],
       [
-        "by name, by link and by descriptor it is the same file",
-        at => {
-          fs.symlinkSync("f", at("l"));
-          const id = ({ dev, ino }: fs.BigIntStats) => `${dev}:${ino}`;
+        "dev and ino are equal by path, symlink and fd",
+        tmpPath => {
+          fs.symlinkSync("f", tmpPath("l"));
+          const fileId = ({ dev, ino }: fs.BigIntStats) => `${dev}:${ino}`;
           const options = { bigint: true } as const;
           return new Set([
-            id(fs.statSync(at("f"), options)),
-            id(fs.lstatSync(at("f"), options)),
-            id(fs.statSync(at("l"), options)),
-            withFd(at("f"), "r", fd => id(fs.fstatSync(fd, options))),
+            fileId(fs.statSync(tmpPath("f"), options)),
+            fileId(fs.lstatSync(tmpPath("f"), options)),
+            fileId(fs.statSync(tmpPath("l"), options)),
+            withFd(tmpPath("f"), "r", fd => fileId(fs.fstatSync(fd, options))),
           ]).size;
         },
         1,
       ],
       [
-        "statfs",
-        at => {
-          const { type, files, ffree, bsize, blocks, bfree, bavail } = fs.statfsSync(at("d"));
+        "statfs fields of a directory and a file",
+        tmpPath => {
+          const { type, files, ffree, bsize, blocks, bfree, bavail } = fs.statfsSync(tmpPath("d"));
           return {
             type,
             files,
             ffree,
-            ordered: bavail <= bfree && bfree <= blocks,
-            file: fs.statfsSync(at("f")).bsize === bsize,
+            isOrdered: bavail <= bfree && bfree <= blocks,
+            isSameForFile: fs.statfsSync(tmpPath("f")).bsize === bsize,
           };
         },
-        { type: 0, files: 0, ffree: 0, ordered: true, file: true },
+        { type: 0, files: 0, ffree: 0, isOrdered: true, isSameForFile: true },
       ],
     ]);
 
-    it("of a pipe", async () => {
+    it("fstat fields of a pipe", async () => {
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "-p", `const s = fs.fstatSync(1); [s.mode.toString(8), s.size, s.nlink, s.rdev >> 16].join()`],
+        cmd: [
+          bunExe(),
+          "-p",
+          `const stats = fs.fstatSync(1); [stats.mode.toString(8), stats.size, stats.nlink, stats.rdev >> 16].join()`,
+        ],
         env: bunEnv,
         stdout: "pipe",
       });
+      // 17 is FILE_DEVICE_NAMED_PIPE.
       expect(await proc.stdout.text()).toBe("10000,0,1,17\n");
     });
   });
 
   describe("links", () => {
-    answers([
+    defineTests([
       [
-        "a junction",
-        at => {
-          fs.symlinkSync(at("d"), at("j"), "junction");
-          const { size } = fs.lstatSync(at("j"));
+        "lstat and readlink report a junction as a symlink",
+        tmpPath => {
+          fs.symlinkSync(tmpPath("d"), tmpPath("j"), "junction");
+          const { size } = fs.lstatSync(tmpPath("j"));
           return [
-            mode(fs.lstatSync(at("j"))),
-            fs.readlinkSync(at("j")) === at("d"),
-            size === Buffer.byteLength(at("d")),
+            formatMode(fs.lstatSync(tmpPath("j"))),
+            fs.readlinkSync(tmpPath("j")) === tmpPath("d"),
+            size === Buffer.byteLength(tmpPath("d")),
           ];
         },
         ["120666", true, true],
       ],
       [
-        "lstat of a junction with a trailing slash",
-        at => (fs.symlinkSync(at("d"), at("j"), "junction"), mode(fs.lstatSync(at("j") + "\\"))),
+        "lstat does not follow a junction with a trailing slash",
+        tmpPath => {
+          fs.symlinkSync(tmpPath("d"), tmpPath("j"), "junction");
+          return formatMode(fs.lstatSync(tmpPath("j") + "\\"));
+        },
         "120666",
       ],
       [
-        "a junction onto a name that exists",
-        at => fs.symlinkSync(at("d"), at("f"), "junction"),
+        "creating a junction over an existing file fails with EEXIST",
+        tmpPath => fs.symlinkSync(tmpPath("d"), tmpPath("f"), "junction"),
         "EEXIST -4075 symlink",
       ],
       [
-        "a junction to nothing",
-        at => {
-          fs.symlinkSync(at("none"), at("j"), "junction");
-          return [attempt(() => fs.statSync(at("j"))), attempt(() => fs.mkdirSync(at("j")))];
+        "a dangling junction fails stat with ENOENT and mkdir with EEXIST",
+        tmpPath => {
+          fs.symlinkSync(tmpPath("missing"), tmpPath("j"), "junction");
+          return [attempt(() => fs.statSync(tmpPath("j"))), attempt(() => fs.mkdirSync(tmpPath("j")))];
         },
         ["ENOENT -4058 stat", "EEXIST -4075 mkdir"],
       ],
       [
-        "unlink and rmdir take the junction and leave its target",
-        at =>
+        "unlink and rmdir remove a junction but not its target",
+        tmpPath =>
           [fs.unlinkSync, fs.rmdirSync].map(remove => {
-            fs.symlinkSync(at("full"), at("j"), "junction");
-            remove(at("j"));
-            return [fs.existsSync(at("j")), fs.existsSync(at("full\\x"))];
+            fs.symlinkSync(tmpPath("full"), tmpPath("j"), "junction");
+            remove(tmpPath("j"));
+            return [fs.existsSync(tmpPath("j")), fs.existsSync(tmpPath("full\\x"))];
           }),
         [
           [false, true],
@@ -8955,85 +9025,118 @@ describe.skipIf(!isWindows)("on Windows", () => {
         ],
       ],
       [
-        "unlink takes a directory symlink",
-        at => (fs.symlinkSync("full", at("l"), "dir"), fs.unlinkSync(at("l")), fs.readdirSync(at("")).sort()),
+        "unlink removes a directory symlink",
+        tmpPath => {
+          fs.symlinkSync("full", tmpPath("l"), "dir");
+          fs.unlinkSync(tmpPath("l"));
+          return fs.readdirSync(tmpPath("")).sort();
+        },
         ["d", "f", "full"],
       ],
       [
-        "readlink of what is no link",
-        at => ["f", "d", "none"].map(name => attempt(() => fs.readlinkSync(at(name)))),
+        "readlink fails on non-links and missing paths",
+        tmpPath => ["f", "d", "missing"].map(name => attempt(() => fs.readlinkSync(tmpPath(name)))),
         ["EINVAL -4071 readlink", "EINVAL -4071 readlink", "ENOENT -4058 readlink"],
       ],
       [
-        "a relative symlink",
-        at => (
-          fs.symlinkSync("f", at("l")),
-          [mode(fs.lstatSync(at("l"))), fs.lstatSync(at("l")).size, fs.readlinkSync(at("l"))]
-        ),
+        "lstat and readlink report a relative symlink target",
+        tmpPath => {
+          fs.symlinkSync("f", tmpPath("l"));
+          return [
+            formatMode(fs.lstatSync(tmpPath("l"))),
+            fs.lstatSync(tmpPath("l")).size,
+            fs.readlinkSync(tmpPath("l")),
+          ];
+        },
         ["120666", 1, "f"],
       ],
-      ["an absolute symlink", at => (fs.symlinkSync(at("f"), at("l")), fs.readlinkSync(at("l")) === at("f")), true],
       [
-        "a drive letter in lower case",
-        at =>
+        "readlink returns an absolute symlink target",
+        tmpPath => {
+          fs.symlinkSync(tmpPath("f"), tmpPath("l"));
+          return fs.readlinkSync(tmpPath("l")) === tmpPath("f");
+        },
+        true,
+      ],
+      [
+        "readlink returns a target with a lowercase drive letter",
+        tmpPath =>
           (["file", "junction"] as const).map(type => {
-            const target = at(type === "file" ? "f" : "d").replace(/^./, letter => letter.toLowerCase());
-            fs.symlinkSync(target, at(type), type);
-            return fs.readlinkSync(at(type)).toLowerCase() === target.toLowerCase();
+            const target = tmpPath(type === "file" ? "f" : "d").replace(/^./, letter => letter.toLowerCase());
+            fs.symlinkSync(target, tmpPath(type), type);
+            return fs.readlinkSync(tmpPath(type)).toLowerCase() === target.toLowerCase();
           }),
         [true, true],
       ],
       [
-        "a symlink to a share",
-        at => (fs.symlinkSync("\\\\localhost\\none\\x", at("l")), fs.readlinkSync(at("l"))),
-        "\\\\localhost\\none\\x",
+        "readlink returns a UNC target",
+        tmpPath => {
+          fs.symlinkSync("\\\\localhost\\missing\\x", tmpPath("l"));
+          return fs.readlinkSync(tmpPath("l"));
+        },
+        "\\\\localhost\\missing\\x",
       ],
       [
-        "a loop",
-        at => (fs.symlinkSync("b", at("a")), fs.symlinkSync("a", at("b")), fs.statSync(at("a"))),
+        "stat fails with ELOOP on a symlink loop",
+        tmpPath => {
+          fs.symlinkSync("b", tmpPath("a"));
+          fs.symlinkSync("a", tmpPath("b"));
+          return fs.statSync(tmpPath("a"));
+        },
         "ELOOP -4067 stat",
       ],
       [
-        "targets outside the basic plane",
-        at => {
-          fs.mkdirSync(at("\u{1F600}\u00e9"));
-          fs.symlinkSync("\u{1F600}\u00e9", at("l"), "dir");
-          return [fs.readlinkSync(at("l")), fs.lstatSync(at("l")).size, path.basename(fs.realpathSync.native(at("l")))];
+        "symlink targets keep non-BMP characters",
+        tmpPath => {
+          fs.mkdirSync(tmpPath("\u{1F600}\u00e9"));
+          fs.symlinkSync("\u{1F600}\u00e9", tmpPath("l"), "dir");
+          return [
+            fs.readlinkSync(tmpPath("l")),
+            fs.lstatSync(tmpPath("l")).size,
+            path.basename(fs.realpathSync.native(tmpPath("l"))),
+          ];
         },
         ["\u{1F600}\u00e9", 6, "\u{1F600}\u00e9"],
       ],
-      ["a hard link", at => (fs.linkSync(at("f"), at("h")), fs.statSync(at("f")).nlink), 2],
       [
-        "hard links that cannot be",
-        at =>
+        "link increments nlink",
+        tmpPath => {
+          fs.linkSync(tmpPath("f"), tmpPath("h"));
+          return fs.statSync(tmpPath("f")).nlink;
+        },
+        2,
+      ],
+      [
+        "link fails on an existing destination, a directory and a missing source",
+        tmpPath =>
           [
             ["f", "full\\x"],
             ["d", "h"],
-            ["none", "h"],
-          ].map(([from, to]) => attempt(() => fs.linkSync(at(from), at(to)))),
+            ["missing", "h"],
+          ].map(([from, to]) => attempt(() => fs.linkSync(tmpPath(from), tmpPath(to)))),
         ["EEXIST -4075 link", "EPERM -4048 link", "ENOENT -4058 link"],
       ],
       [
-        "realpath.native",
-        at => {
-          fs.symlinkSync(at("d"), at("j"), "junction");
-          const base = fs.realpathSync.native(at(""));
+        "realpath.native resolves case, junctions and drive roots",
+        tmpPath => {
+          fs.symlinkSync(tmpPath("d"), tmpPath("j"), "junction");
+          const base = fs.realpathSync.native(tmpPath(""));
           const root = base.slice(0, 3);
           return [
-            fs.realpathSync.native(at("F")) === join(base, "f"),
-            fs.realpathSync.native(at("j")) === join(base, "d"),
+            fs.realpathSync.native(tmpPath("F")) === join(base, "f"),
+            fs.realpathSync.native(tmpPath("j")) === join(base, "d"),
             fs.realpathSync.native(root) === root,
-            attempt(() => fs.realpathSync.native(at("none"))),
+            attempt(() => fs.realpathSync.native(tmpPath("missing"))),
           ];
         },
         [true, true, true, "ENOENT -4058 realpath"],
       ],
       [
-        "realpath.native through a share",
-        at => {
-          const base = fs.realpathSync.native(at("f"));
-          const shared = `\\\\localhost\\${base[0]}$${base.slice(2)}`;
-          return fs.realpathSync.native(shared).toLowerCase() === shared.toLowerCase();
+        "realpath.native keeps a UNC path",
+        tmpPath => {
+          const base = fs.realpathSync.native(tmpPath("f"));
+          const uncPath = `\\\\localhost\\${base[0]}$${base.slice(2)}`;
+          return fs.realpathSync.native(uncPath).toLowerCase() === uncPath.toLowerCase();
         },
         true,
       ],
@@ -9041,10 +9144,11 @@ describe.skipIf(!isWindows)("on Windows", () => {
   });
 
   describe("mkdir, rmdir, unlink", () => {
-    answers([
+    defineTests([
       [
-        "mkdir where it cannot",
-        at => ["d", "f", "f\\x", "none\\x", "a?b", "a:b"].map(name => attempt(() => fs.mkdirSync(at(name)))),
+        "mkdir error codes",
+        tmpPath =>
+          ["d", "f", "f\\x", "missing\\x", "a?b", "a:b"].map(name => attempt(() => fs.mkdirSync(tmpPath(name)))),
         [
           "EEXIST -4075 mkdir",
           "EEXIST -4075 mkdir",
@@ -9054,189 +9158,276 @@ describe.skipIf(!isWindows)("on Windows", () => {
           "EINVAL -4071 mkdir",
         ],
       ],
-      ["mkdir of a root", at => fs.mkdirSync(at("").slice(0, 3)), "EPERM -4048 mkdir"],
+      ["mkdir fails with EPERM on a drive root", tmpPath => fs.mkdirSync(tmpPath("").slice(0, 3)), "EPERM -4048 mkdir"],
       [
-        "mkdtemp where it cannot",
-        at => ["none\\x", "a?b"].map(name => attempt(() => fs.mkdtempSync(at(name)))),
+        "mkdtemp error codes",
+        tmpPath => ["missing\\x", "a?b"].map(name => attempt(() => fs.mkdtempSync(tmpPath(name)))),
         ["ENOENT -4058 mkdtemp", "ENOENT -4058 mkdtemp"],
       ],
       [
-        "mkdtemp outside the basic plane",
-        at => /^\u{1F600}[0-9a-z]{6}$/iu.test(path.basename(fs.mkdtempSync(at("\u{1F600}")))),
+        "mkdtemp accepts a non-BMP prefix",
+        tmpPath => /^\u{1F600}[0-9a-z]{6}$/iu.test(path.basename(fs.mkdtempSync(tmpPath("\u{1F600}")))),
         true,
       ],
       [
-        "rmdir where it cannot",
-        at => ["f", "none", "full"].map(name => attempt(() => fs.rmdirSync(at(name)))),
+        "rmdir error codes",
+        tmpPath => ["f", "missing", "full"].map(name => attempt(() => fs.rmdirSync(tmpPath(name)))),
         ["ENOENT -4058 rmdir", "ENOENT -4058 rmdir", "ENOTEMPTY -4051 rmdir"],
       ],
       [
-        "unlink where it cannot",
-        at => ["d", "none"].map(name => attempt(() => fs.unlinkSync(at(name)))),
+        "unlink error codes",
+        tmpPath => ["d", "missing"].map(name => attempt(() => fs.unlinkSync(tmpPath(name)))),
         ["EPERM -4048 unlink", "ENOENT -4058 unlink"],
       ],
       [
-        "what is read-only goes too",
-        at => {
-          (fs.chmodSync(at("f"), 0o444), fs.chmodSync(at("d"), 0o444));
-          (fs.unlinkSync(at("f")), fs.rmdirSync(at("d")));
-          return fs.readdirSync(at(""));
+        "unlink and rmdir remove read-only entries",
+        tmpPath => {
+          fs.chmodSync(tmpPath("f"), 0o444);
+          fs.chmodSync(tmpPath("d"), 0o444);
+          fs.unlinkSync(tmpPath("f"));
+          fs.rmdirSync(tmpPath("d"));
+          return fs.readdirSync(tmpPath(""));
         },
         ["full"],
       ],
       [
-        "an open file gives up its name at once",
-        at =>
-          withFd(at("f"), "r", fd => {
-            fs.unlinkSync(at("f"));
-            const gone = [fs.existsSync(at("f")), fs.fstatSync(fd).nlink];
-            fs.writeFileSync(at("f"), "new");
-            return [...gone, fs.readFileSync(fd, "utf8"), fs.readFileSync(at("f"), "utf8")];
+        "unlink frees the name of an open file immediately",
+        tmpPath =>
+          withFd(tmpPath("f"), "r", fd => {
+            fs.unlinkSync(tmpPath("f"));
+            const afterUnlink = [fs.existsSync(tmpPath("f")), fs.fstatSync(fd).nlink];
+            fs.writeFileSync(tmpPath("f"), "new");
+            return [...afterUnlink, fs.readFileSync(fd, "utf8"), fs.readFileSync(tmpPath("f"), "utf8")];
           }),
         [false, 0, "abc", "new"],
       ],
       [
-        "an open file does not keep its directory",
-        at =>
-          withFd(
-            at("full\\x"),
-            "r",
-            () => (fs.unlinkSync(at("full\\x")), fs.rmdirSync(at("full")), fs.existsSync(at("full"))),
-          ),
+        "rmdir succeeds after unlinking an open file",
+        tmpPath =>
+          withFd(tmpPath("full\\x"), "r", () => {
+            fs.unlinkSync(tmpPath("full\\x"));
+            fs.rmdirSync(tmpPath("full"));
+            return fs.existsSync(tmpPath("full"));
+          }),
         false,
       ],
     ]);
   });
 
   describe("rename", () => {
-    answers([
-      ["over a file", at => (fs.renameSync(at("f"), at("full\\x")), fs.readFileSync(at("full\\x"), "utf8")), "abc"],
-      ["an open file", at => withFd(at("f"), "r", () => fs.renameSync(at("f"), at("g"))), "ok"],
+    defineTests([
       [
-        "over an open file",
-        at => withFd(at("full\\x"), "r", () => fs.renameSync(at("f"), at("full\\x"))),
+        "replaces an existing file",
+        tmpPath => {
+          fs.renameSync(tmpPath("f"), tmpPath("full\\x"));
+          return fs.readFileSync(tmpPath("full\\x"), "utf8");
+        },
+        "abc",
+      ],
+      [
+        "renames an open file",
+        tmpPath => withFd(tmpPath("f"), "r", () => fs.renameSync(tmpPath("f"), tmpPath("g"))),
+        "ok",
+      ],
+      [
+        "fails with EPERM over an open file",
+        tmpPath => withFd(tmpPath("full\\x"), "r", () => fs.renameSync(tmpPath("f"), tmpPath("full\\x"))),
         "EPERM -4048 rename",
       ],
       [
-        "over a read-only file",
-        at => (fs.chmodSync(at("full\\x"), 0o444), fs.renameSync(at("f"), at("full\\x"))),
-        "EPERM -4048 rename",
-      ],
-      ["a file over a directory", at => fs.renameSync(at("f"), at("d")), "EPERM -4048 rename"],
-      ["a directory over a file", at => (fs.renameSync(at("d"), at("f")), fs.statSync(at("f")).isDirectory()), true],
-      ["a directory over an empty one", at => fs.renameSync(at("full"), at("d")), "EPERM -4048 rename"],
-      ["a directory over a full one", at => fs.renameSync(at("d"), at("full")), "EPERM -4048 rename"],
-      [
-        "a directory with an open file",
-        at => withFd(at("full\\x"), "r", () => fs.renameSync(at("full"), at("g"))),
+        "fails with EPERM over a read-only file",
+        tmpPath => {
+          fs.chmodSync(tmpPath("full\\x"), 0o444);
+          return fs.renameSync(tmpPath("f"), tmpPath("full\\x"));
+        },
         "EPERM -4048 rename",
       ],
       [
-        "to a hard link of itself",
-        at => (
-          fs.linkSync(at("f"), at("h")),
-          fs.renameSync(at("f"), at("h")),
-          [fs.existsSync(at("f")), fs.existsSync(at("h"))]
-        ),
+        "fails with EPERM for a file over a directory",
+        tmpPath => fs.renameSync(tmpPath("f"), tmpPath("d")),
+        "EPERM -4048 rename",
+      ],
+      [
+        "replaces a file with a directory",
+        tmpPath => {
+          fs.renameSync(tmpPath("d"), tmpPath("f"));
+          return fs.statSync(tmpPath("f")).isDirectory();
+        },
+        true,
+      ],
+      [
+        "fails with EPERM for a directory over an empty directory",
+        tmpPath => fs.renameSync(tmpPath("full"), tmpPath("d")),
+        "EPERM -4048 rename",
+      ],
+      [
+        "fails with EPERM for a directory over a non-empty directory",
+        tmpPath => fs.renameSync(tmpPath("d"), tmpPath("full")),
+        "EPERM -4048 rename",
+      ],
+      [
+        "fails with EPERM for a directory containing an open file",
+        tmpPath => withFd(tmpPath("full\\x"), "r", () => fs.renameSync(tmpPath("full"), tmpPath("g"))),
+        "EPERM -4048 rename",
+      ],
+      [
+        "removes the source when the destination is a hard link to it",
+        tmpPath => {
+          fs.linkSync(tmpPath("f"), tmpPath("h"));
+          fs.renameSync(tmpPath("f"), tmpPath("h"));
+          return [fs.existsSync(tmpPath("f")), fs.existsSync(tmpPath("h"))];
+        },
         [false, true],
       ],
-      ["to another case", at => (fs.renameSync(at("f"), at("F")), fs.readdirSync(at("")).sort()), ["F", "d", "full"]],
-      ["what is missing", at => fs.renameSync(at("none"), at("g")), "ENOENT -4058 rename"],
+      [
+        "changes the case of a name",
+        tmpPath => {
+          fs.renameSync(tmpPath("f"), tmpPath("F"));
+          return fs.readdirSync(tmpPath("")).sort();
+        },
+        ["F", "d", "full"],
+      ],
+      [
+        "fails with ENOENT for a missing source",
+        tmpPath => fs.renameSync(tmpPath("missing"), tmpPath("g")),
+        "ENOENT -4058 rename",
+      ],
     ]);
   });
 
   describe("chmod, utimes, copyFile", () => {
-    const set = (at: At, time: number | Date) => (
-      fs.utimesSync(at("f"), time, time),
-      fs.statSync(at("f"), { bigint: true }).mtimeNs
-    );
-    answers([
+    const setAndGetMtime = (tmpPath: (name: string) => string, time: number | Date) => {
+      fs.utimesSync(tmpPath("f"), time, time);
+      return fs.statSync(tmpPath("f"), { bigint: true }).mtimeNs;
+    };
+    defineTests([
       [
-        "only the write bit counts",
-        at => [0o444, 0o200, 0].map(bits => (fs.chmodSync(at("f"), bits), mode(fs.statSync(at("f"))))),
+        "chmod uses only the write bit",
+        tmpPath =>
+          [0o444, 0o200, 0].map(bits => {
+            fs.chmodSync(tmpPath("f"), bits);
+            return formatMode(fs.statSync(tmpPath("f")));
+          }),
         ["100444", "100666", "100444"],
       ],
       [
-        "chmod and chown of what is missing",
-        at => [attempt(() => fs.chmodSync(at("none"), 0)), attempt(() => fs.chownSync(at("none"), 1, 1))],
+        "chmod fails with ENOENT and chown succeeds on a missing path",
+        tmpPath => [
+          attempt(() => fs.chmodSync(tmpPath("missing"), 0)),
+          attempt(() => fs.chownSync(tmpPath("missing"), 1, 1)),
+        ],
         ["ENOENT -4058 chmod", "ok"],
       ],
       [
-        "times keep their microseconds",
-        at => [0, 1713037251.36, 1713037251.123456, 2147483648].map(time => set(at, time)),
+        "utimes preserves microseconds",
+        tmpPath => [0, 1713037251.36, 1713037251.123456, 2147483648].map(time => setAndGetMtime(tmpPath, time)),
         [0n, 1713037251360000000n, 1713037251123456000n, 2147483648000000000n],
       ],
       [
-        "seconds wrap at 32 bits",
-        at => [set(at, 4294967301), set(at, new Date(-1000))],
+        "utimes wraps seconds at 32 bits",
+        tmpPath => [setAndGetMtime(tmpPath, 4294967301), setAndGetMtime(tmpPath, new Date(-1000))],
         [5000000000n, 4294967295000000000n],
       ],
       [
-        "a time that does not fit",
-        at => [1e12, 1e300].map(time => attempt(() => set(at, time))),
+        "utimes fails with EINVAL on out-of-range times",
+        tmpPath => [1e12, 1e300].map(time => attempt(() => setAndGetMtime(tmpPath, time))),
         ["EINVAL -4071 utime", "EINVAL -4071 utime"],
       ],
       [
-        "utimes of a directory and of a read-only file",
-        at => (fs.chmodSync(at("f"), 0o444), fs.utimesSync(at("d"), 1, 1), set(at, 5)),
+        "utimes works on a directory and a read-only file",
+        tmpPath => {
+          fs.chmodSync(tmpPath("f"), 0o444);
+          fs.utimesSync(tmpPath("d"), 1, 1);
+          return setAndGetMtime(tmpPath, 5);
+        },
         5000000000n,
       ],
       [
-        "lutimes of a junction leaves its target",
-        at => {
-          fs.symlinkSync(at("d"), at("j"), "junction");
-          fs.utimesSync(at("d"), 1e9, 1e9);
-          fs.lutimesSync(at("j"), 2e9, 2e9);
-          return [fs.lstatSync(at("j")).mtimeMs, fs.statSync(at("d")).mtimeMs];
+        "lutimes on a junction does not change its target",
+        tmpPath => {
+          fs.symlinkSync(tmpPath("d"), tmpPath("j"), "junction");
+          fs.utimesSync(tmpPath("d"), 1e9, 1e9);
+          fs.lutimesSync(tmpPath("j"), 2e9, 2e9);
+          return [fs.lstatSync(tmpPath("j")).mtimeMs, fs.statSync(tmpPath("d")).mtimeMs];
         },
         [2e12, 1e12],
       ],
       [
-        "copyFile keeps mtime",
-        at => (set(at, 1e9), fs.copyFileSync(at("f"), at("g")), fs.statSync(at("g")).mtimeMs),
+        "copyFile preserves mtime",
+        tmpPath => {
+          setAndGetMtime(tmpPath, 1e9);
+          fs.copyFileSync(tmpPath("f"), tmpPath("g"));
+          return fs.statSync(tmpPath("g")).mtimeMs;
+        },
         1e12,
       ],
-      ["copyFile onto itself", at => (fs.copyFileSync(at("f"), at("f")), fs.readFileSync(at("f"), "utf8")), "abc"],
       [
-        "Bun.write() of a file onto itself",
-        async at => (await Bun.write(Bun.file(at("f")), Bun.file(at("f"))), fs.readFileSync(at("f"), "utf8")),
+        "copyFile onto itself keeps the contents",
+        tmpPath => {
+          fs.copyFileSync(tmpPath("f"), tmpPath("f"));
+          return fs.readFileSync(tmpPath("f"), "utf8");
+        },
         "abc",
       ],
       [
-        "copyFile from or to a directory",
-        at => [attempt(() => fs.copyFileSync(at("d"), at("g"))), attempt(() => fs.copyFileSync(at("f"), at("d")))],
+        "Bun.write() of a file onto itself keeps the contents",
+        async tmpPath => {
+          await Bun.write(Bun.file(tmpPath("f")), Bun.file(tmpPath("f")));
+          return fs.readFileSync(tmpPath("f"), "utf8");
+        },
+        "abc",
+      ],
+      [
+        "copyFile from or to a directory fails with EPERM",
+        tmpPath => [
+          attempt(() => fs.copyFileSync(tmpPath("d"), tmpPath("g"))),
+          attempt(() => fs.copyFileSync(tmpPath("f"), tmpPath("d"))),
+        ],
         ["EPERM -4048 copyfile", "EPERM -4048 copyfile"],
       ],
     ]);
   });
 
-  describe("files that another program made or holds", () => {
-    const kernel32 = () =>
+  describe("files created or held open through Win32 APIs", () => {
+    const GENERIC_READ = 0x80000000;
+    const GENERIC_WRITE = 0x40000000;
+    const DELETE = 0x10000;
+    const FILE_WRITE_ATTRIBUTES = 0x100;
+    const FILE_SHARE_READ = 1;
+    const FILE_SHARE_WRITE = 2;
+    const FILE_SHARE_DELETE = 4;
+    const FILE_SHARE_ALL = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
+    const OPEN_EXISTING = 3;
+    const FILE_FLAG_BACKUP_SEMANTICS = 0x02000000;
+    const FILE_FLAG_OPEN_REPARSE_POINT = 0x00200000;
+    const FILE_ATTRIBUTE_READONLY = 1;
+    const FileBasicInfo = 0;
+    const FileDispositionInfo = 4;
+    const FSCTL_SET_REPARSE_POINT = 0x900a4;
+    const IO_REPARSE_TAG_APPEXECLINK = 0x8000001b;
+    const openKernel32 = () =>
       dlopen("kernel32.dll", {
         CreateFileW: { args: ["ptr", "u32", "u32", "ptr", "u32", "u32", "ptr"], returns: "i64" },
         DeviceIoControl: { args: ["i64", "u32", "ptr", "u32", "ptr", "u32", "ptr", "ptr"], returns: "i32" },
         SetFileInformationByHandle: { args: ["i64", "i32", "ptr", "u32"], returns: "i32" },
-        LockFile: { args: ["i64", "u32", "u32", "u32", "u32"], returns: "i32" },
         SetFileAttributesW: { args: ["ptr", "u32"], returns: "i32" },
         GetFileAttributesW: { args: ["ptr"], returns: "u32" },
         CloseHandle: { args: ["i64"], returns: "i32" },
       });
-    const wide = (text: string) => Buffer.from(text + "\0", "utf16le");
+    const toWide = (text: string) => Buffer.from(text + "\0", "utf16le");
     function withHandle<T>(
       path: string,
-      share: number,
-      fn: (handle: bigint, k32: ReturnType<typeof kernel32>["symbols"]) => T,
+      shareMode: number,
+      fn: (handle: bigint, k32: ReturnType<typeof openKernel32>["symbols"]) => T,
     ) {
-      const { symbols, close } = kernel32();
-      const OPEN_EXISTING = 3;
-      const BACKUP_SEMANTICS_OPEN_REPARSE_POINT = 0x02200000;
+      const { symbols, close } = openKernel32();
       const handle = symbols.CreateFileW(
-        wide(path),
-        0xc0000000,
-        share,
+        toWide(path),
+        (GENERIC_READ | GENERIC_WRITE) >>> 0,
+        shareMode,
         null,
         OPEN_EXISTING,
-        BACKUP_SEMANTICS_OPEN_REPARSE_POINT,
+        FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
         null,
       ) as bigint;
       try {
@@ -9248,13 +9439,12 @@ describe.skipIf(!isWindows)("on Windows", () => {
       }
     }
     function setReparsePoint(path: string, tag: number, data: Buffer) {
-      // A tag that is not Microsoft's has a GUID in front of its data.
+      // Non-Microsoft tags use REPARSE_GUID_DATA_BUFFER, which has a GUID before the data.
       const header = Buffer.alloc(tag >= 0x80000000 ? 8 : 24, 1);
       header.writeUInt32LE(tag, 0);
       header.writeUInt32LE(data.length, 4);
       const buffer = Buffer.concat([header, data]);
-      const FSCTL_SET_REPARSE_POINT = 0x900a4;
-      withHandle(path, 7, (handle, k32) =>
+      withHandle(path, FILE_SHARE_ALL, (handle, k32) =>
         expect(
           k32.DeviceIoControl(
             handle,
@@ -9269,100 +9459,110 @@ describe.skipIf(!isWindows)("on Windows", () => {
         ).toBe(1),
       );
     }
-    const appExecLink = (count: number, ...strings: string[]) =>
-      Buffer.concat([Buffer.from([count, 0, 0, 0]), ...strings.map(wide)]);
+    const buildAppExecLink = (stringCount: number, ...strings: string[]) =>
+      Buffer.concat([Buffer.from([stringCount, 0, 0, 0]), ...strings.map(toWide)]);
 
-    answers([
+    defineTests([
       [
-        "whose delete is pending",
-        at => {
-          const { symbols, close } = kernel32();
-          const DELETE = 0x10000;
-          const handle = symbols.CreateFileW(wide(at("f")), DELETE, 7, null, 3, 0, null) as bigint;
+        "a delete-pending file fails open and unlink with EPERM but allows stat",
+        tmpPath => {
+          const { symbols, close } = openKernel32();
+          const handle = symbols.CreateFileW(
+            toWide(tmpPath("f")),
+            DELETE,
+            FILE_SHARE_ALL,
+            null,
+            OPEN_EXISTING,
+            0,
+            null,
+          ) as bigint;
           try {
-            // The name stays in its directory until the last handle is closed.
-            const FileDispositionInfo = 4;
             expect(symbols.SetFileInformationByHandle(handle, FileDispositionInfo, Buffer.from([1, 0, 0, 0]), 4)).toBe(
               1,
             );
             return [
-              attempt(() => fs.readFileSync(at("f")).length),
-              attempt(() => fs.statSync(at("f")).size),
-              attempt(() => fs.lstatSync(at("f")).size),
-              fs.existsSync(at("f")),
-              fs.readdirSync(at(".")),
-              attempt(() => fs.unlinkSync(at("f"))),
+              attempt(() => fs.readFileSync(tmpPath("f")).length),
+              attempt(() => fs.statSync(tmpPath("f")).size),
+              attempt(() => fs.lstatSync(tmpPath("f")).size),
+              fs.existsSync(tmpPath("f")),
+              fs.readdirSync(tmpPath(".")),
+              attempt(() => fs.unlinkSync(tmpPath("f"))),
             ];
           } finally {
             symbols.CloseHandle(handle);
             close();
           }
         },
-        // It is in its directory until the last handle closes, but its attributes cannot be read.
+        // The entry stays listed until the last handle closes, but GetFileAttributesW (existsSync) fails on it.
         ["EPERM -4048 open", 3, 3, false, ["d", "f", "full"], "EPERM -4048 unlink"],
       ],
       [
-        "without sharing",
-        at =>
-          withHandle(at("f"), 0, () => [
-            attempt(() => fs.readFileSync(at("f"))),
-            attempt(() => fs.unlinkSync(at("f"))),
-            attempt(() => fs.renameSync(at("f"), at("g"))),
-            attempt(() => fs.copyFileSync(at("f"), at("g"))),
-            attempt(() => fs.statSync(at("f")).size),
+        "a file opened without sharing fails with EBUSY, except stat",
+        tmpPath =>
+          withHandle(tmpPath("f"), 0, () => [
+            attempt(() => fs.readFileSync(tmpPath("f"))),
+            attempt(() => fs.unlinkSync(tmpPath("f"))),
+            attempt(() => fs.renameSync(tmpPath("f"), tmpPath("g"))),
+            attempt(() => fs.copyFileSync(tmpPath("f"), tmpPath("g"))),
+            attempt(() => fs.statSync(tmpPath("f")).size),
           ]),
         ["EBUSY -4082 open", "EBUSY -4082 unlink", "EBUSY -4082 rename", "EBUSY -4082 copyfile", 3],
       ],
       [
-        "read-only with the archive attribute off",
-        at => {
-          const { symbols, close } = kernel32();
-          const READONLY = 1;
-          symbols.SetFileAttributesW(wide(at("f")), READONLY);
-          symbols.SetFileAttributesW(wide(at("full\\x")), READONLY);
-          withFd(at("f"), "r", fd => fs.fchmodSync(fd, 0o666));
-          fs.unlinkSync(at("full\\x"));
-          const left = symbols.GetFileAttributesW(wide(at("f"))) & READONLY;
+        "fchmod and unlink work on a read-only file without the archive attribute",
+        tmpPath => {
+          const { symbols, close } = openKernel32();
+          symbols.SetFileAttributesW(toWide(tmpPath("f")), FILE_ATTRIBUTE_READONLY);
+          symbols.SetFileAttributesW(toWide(tmpPath("full\\x")), FILE_ATTRIBUTE_READONLY);
+          withFd(tmpPath("f"), "r", fd => fs.fchmodSync(fd, 0o666));
+          fs.unlinkSync(tmpPath("full\\x"));
+          const readOnlyBit = symbols.GetFileAttributesW(toWide(tmpPath("f"))) & FILE_ATTRIBUTE_READONLY;
           close();
-          return [left, fs.readdirSync(at("full"))];
+          return [readOnlyBit, fs.readdirSync(tmpPath("full"))];
         },
         [0, []],
       ],
       [
-        "an app execution alias is a link",
-        at => {
-          fs.writeFileSync(at("alias"), "");
-          setReparsePoint(at("alias"), 0x8000001b, appExecLink(3, "package", "app", "C:\\target.exe"));
-          const seen = [
-            mode(fs.lstatSync(at("alias"))),
-            fs.readlinkSync(at("alias")),
-            attempt(() => fs.statSync(at("alias"))),
+        "an app execution alias is reported as a symlink",
+        tmpPath => {
+          fs.writeFileSync(tmpPath("alias"), "");
+          setReparsePoint(
+            tmpPath("alias"),
+            IO_REPARSE_TAG_APPEXECLINK,
+            buildAppExecLink(3, "package", "app", "C:\\target.exe"),
+          );
+          const results = [
+            formatMode(fs.lstatSync(tmpPath("alias"))),
+            fs.readlinkSync(tmpPath("alias")),
+            attempt(() => fs.statSync(tmpPath("alias"))),
           ];
-          fs.unlinkSync(at("alias"));
-          return seen;
+          fs.unlinkSync(tmpPath("alias"));
+          return results;
         },
         ["120666", "C:\\target.exe", "EACCES -4092 stat"],
       ],
       [
-        "an app execution alias without an absolute target is none",
-        at =>
-          [appExecLink(3, "package", "app", "target.exe"), appExecLink(3, "package", "", "")].map((data, i) => {
-            fs.writeFileSync(at(`alias${i}`), "");
-            setReparsePoint(at(`alias${i}`), 0x8000001b, data);
-            const seen = attempt(() => fs.readlinkSync(at(`alias${i}`)));
-            fs.unlinkSync(at(`alias${i}`));
-            return seen;
-          }),
+        "readlink fails with EINVAL on an app execution alias without an absolute target",
+        tmpPath =>
+          [buildAppExecLink(3, "package", "app", "target.exe"), buildAppExecLink(3, "package", "", "")].map(
+            (data, i) => {
+              fs.writeFileSync(tmpPath(`alias${i}`), "");
+              setReparsePoint(tmpPath(`alias${i}`), IO_REPARSE_TAG_APPEXECLINK, data);
+              const result = attempt(() => fs.readlinkSync(tmpPath(`alias${i}`)));
+              fs.unlinkSync(tmpPath(`alias${i}`));
+              return result;
+            },
+          ),
         ["EINVAL -4071 readlink", "EINVAL -4071 readlink"],
       ],
       [
-        "a reparse point of another kind is none",
-        at => {
-          fs.writeFileSync(at("other"), "");
-          setReparsePoint(at("other"), 0x9913, Buffer.alloc(8));
-          const seen = attempt(() => fs.readlinkSync(at("other")));
-          fs.unlinkSync(at("other"));
-          return seen;
+        "readlink fails with EINVAL on an unknown reparse tag",
+        tmpPath => {
+          fs.writeFileSync(tmpPath("other"), "");
+          setReparsePoint(tmpPath("other"), 0x9913, Buffer.alloc(8));
+          const result = attempt(() => fs.readlinkSync(tmpPath("other")));
+          fs.unlinkSync(tmpPath("other"));
+          return result;
         },
         "EINVAL -4071 readlink",
       ],
@@ -9373,42 +9573,48 @@ describe.skipIf(!isWindows)("on Windows", () => {
       ["file", "a", ["100444", "100666"]],
       ["file", "r", ["100444", "100666"]],
       ["directory", "r+", ["EPERM -4048 fchmod", "EPERM -4048 fchmod"]],
-    ])("fchmod of a %s whose delete is pending, through %s", (name, flags, expected) => {
+    ])("fchmod on a delete-pending %s (flags %s) keeps ctime", (name, flags, expected) => {
       using dir = tempDir("fs-windows", { file: "abc", directory: {} });
       const file = join(String(dir), name);
-      const { symbols, close } = kernel32();
-      const [DELETE, WRITE_ATTRIBUTES, FileBasicInfo, FileDispositionInfo] = [0x10000, 0x100, 0, 4];
-      const BACKUP_SEMANTICS = 0x02000000;
-      const handle = symbols.CreateFileW(wide(file), DELETE | WRITE_ATTRIBUTES, 7, null, 3, BACKUP_SEMANTICS, null);
+      const { symbols, close } = openKernel32();
+      const handle = symbols.CreateFileW(
+        toWide(file),
+        DELETE | FILE_WRITE_ATTRIBUTES,
+        FILE_SHARE_ALL,
+        null,
+        OPEN_EXISTING,
+        FILE_FLAG_BACKUP_SEMANTICS,
+        null,
+      );
       try {
-        const seen = withFd(file, flags, fd => {
-          const changedIn1997 = new BigInt64Array([0n, 0n, 0n, 125_000_000_000_000_000n, 0n]);
+        const results = withFd(file, flags, fd => {
+          // FILE_BASIC_INFO with a ChangeTime in 1997.
+          const basicInfo = new BigInt64Array([0n, 0n, 0n, 125_000_000_000_000_000n, 0n]);
           expect([
-            symbols.SetFileInformationByHandle(handle, FileBasicInfo, changedIn1997, 40),
+            symbols.SetFileInformationByHandle(handle, FileBasicInfo, basicInfo, 40),
             symbols.SetFileInformationByHandle(handle, FileDispositionInfo, Buffer.from([1, 0, 0, 0]), 4),
           ]).toEqual([1, 1]);
-          const chmod = (to: number) => attempt(() => (fs.fchmodSync(fd, to), mode(fs.fstatSync(fd))));
-          return [chmod(0o444), chmod(0o666), fs.fstatSync(fd).ctime.getUTCFullYear()];
+          return [tryFchmod(fd, 0o444), tryFchmod(fd, 0o666), fs.fstatSync(fd).ctime.getUTCFullYear()];
         });
-        expect(seen).toEqual([...expected, 1997]);
+        expect(results).toEqual([...expected, 1997]);
       } finally {
         symbols.CloseHandle(handle);
         close();
       }
     });
 
-    // The server refuses a second open, which is where Node.js gives up.
-    it("fchmod of what was deleted on a share", async () => {
+    // The SMB server refuses to reopen a deleted file, which makes fchmod fail in Node.js.
+    it("fchmod on a deleted UNC file succeeds only through a writable fd", async () => {
       await using dir = tempDir("fs-windows", { "r+": "abc", "a": "abc", "r": "abc", "directory": {} });
-      const real = fs.realpathSync(String(dir));
+      const realDir = fs.realpathSync(String(dir));
       const chmodDeleted = (name: string, flags: string, remove: (path: string) => void) => {
-        const path = `\\\\localhost\\${real[0]}$${real.slice(2)}\\${name}`;
+        const path = `\\\\localhost\\${realDir[0]}$${realDir.slice(2)}\\${name}`;
         return withFd(path, flags, fd => {
           remove(path);
-          return [0o444, 0o666].map(to => attempt(() => (fs.fchmodSync(fd, to), mode(fs.fstatSync(fd)))));
+          return [0o444, 0o666].map(newMode => tryFchmod(fd, newMode));
         });
       };
-      const refused = "EPERM -4048 fchmod";
+      const EPERM = "EPERM -4048 fchmod";
       expect([
         chmodDeleted("r+", "r+", fs.unlinkSync),
         chmodDeleted("a", "a", fs.unlinkSync),
@@ -9417,46 +9623,46 @@ describe.skipIf(!isWindows)("on Windows", () => {
       ]).toEqual([
         ["100444", "100666"],
         ["100444", "100666"],
-        [refused, refused],
-        [refused, refused],
+        [EPERM, EPERM],
+        [EPERM, EPERM],
       ]);
     });
 
-    it("fchmod leaves a file alone whose access list says so", () => {
+    it("fchmod and utimes agree when the ACL denies FILE_WRITE_ATTRIBUTES", () => {
       using dir = tempDir("fs-windows", { f: "abc" });
       const file = join(String(dir), "f");
       const icacls = (...args: string[]) => Bun.spawnSync({ cmd: ["icacls", file, ...args] }).exitCode;
-      const seen = withFd(file, "r+", fd => {
+      const results = withFd(file, "r+", fd => {
         expect(icacls("/deny", "*S-1-1-0:(WA)")).toBe(0);
         try {
           return [
             attempt(() => fs.utimesSync(file, 1, 1)),
             attempt(() => fs.fchmodSync(fd, 0o444)),
-            mode(fs.fstatSync(fd)),
+            formatMode(fs.fstatSync(fd)),
           ];
         } finally {
           icacls("/remove:d", "*S-1-1-0");
         }
       });
-      // The privilege to restore files goes before the list.
-      expect(seen).toEqual(
-        seen[0] === "ok" ? ["ok", "ok", "100444"] : ["EPERM -4048 utime", "EPERM -4048 fchmod", "100666"],
+      // SeRestorePrivilege takes precedence over the ACL.
+      expect(results).toEqual(
+        results[0] === "ok" ? ["ok", "ok", "100444"] : ["EPERM -4048 utime", "EPERM -4048 fchmod", "100666"],
       );
     });
 
-    it.concurrent("fchmod does not wait for a read from a pipe", async () => {
+    it.concurrent("fchmod does not block on a pending pipe read", async () => {
       await using proc = Bun.spawn({
         cmd: [
           bunExe(),
           "-e",
           `const fs = require("fs");
            fs.read(0, () => {});
-           const seen = new Set();
+           const results = new Set();
            for (let i = 0; i < 200; i++) {
              await new Promise(setImmediate);
-             try { fs.fchmodSync(0, 0o666); seen.add("ok"); } catch (error) { seen.add(error.code); }
+             try { fs.fchmodSync(0, 0o666); results.add("ok"); } catch (error) { results.add(error.code); }
            }
-           console.log(...seen);
+           console.log(...results);
            process.exit(0);`,
         ],
         env: bunEnv,
@@ -9469,17 +9675,20 @@ describe.skipIf(!isWindows)("on Windows", () => {
     });
   });
 
-  describe("still differs from Node.js", () => {
-    answers(
+  describe("known differences from Node.js", () => {
+    defineTests(
       [
         [
-          "COPYFILE_FICLONE_FORCE",
-          at => fs.copyFileSync(at("f"), at("g"), fs.constants.COPYFILE_FICLONE_FORCE),
+          "COPYFILE_FICLONE_FORCE fails with ENOSYS",
+          tmpPath => fs.copyFileSync(tmpPath("f"), tmpPath("g"), fs.constants.COPYFILE_FICLONE_FORCE),
           "ENOSYS -4054 copyfile",
         ],
         [
-          "readlink of a junction made with a trailing slash",
-          at => (fs.symlinkSync(at("d") + "\\", at("j"), "junction"), fs.readlinkSync(at("j")) === at("d")),
+          "readlink omits the trailing slash of a junction target",
+          tmpPath => {
+            fs.symlinkSync(tmpPath("d") + "\\", tmpPath("j"), "junction");
+            return fs.readlinkSync(tmpPath("j")) === tmpPath("d");
+          },
           true,
         ],
       ],
@@ -9488,7 +9697,7 @@ describe.skipIf(!isWindows)("on Windows", () => {
   });
 });
 
-it.skipIf(!isWindows)("the first calls end with a higher priority than a timer", async () => {
+it.skipIf(!isWindows)("the first fs completions boost the thread priority more than a timer", async () => {
   const run = async () => {
     await using proc = Bun.spawn({
       cmd: [
@@ -9497,29 +9706,40 @@ it.skipIf(!isWindows)("the first calls end with a higher priority than a timer",
         `import { dlopen } from "bun:ffi";
          import { openSync, read } from "node:fs";
          import { promisify } from "node:util";
-         const query = { args: ["i64", "u32", "ptr", "u32", "ptr"], returns: "i32" };
+         const querySignature = { args: ["i64", "u32", "ptr", "u32", "ptr"], returns: "i32" };
          const ntdll = dlopen("ntdll.dll", {
-           NtQueryInformationThread: query,
-           NtQueryInformationProcess: query,
+           NtQueryInformationThread: querySignature,
+           NtQueryInformationProcess: querySignature,
            NtSetInformationThread: { args: ["i64", "u32", "ptr", "u32"], returns: "i32" },
          }).symbols;
-         const basic = new Int32Array(12);
-         const base = (ntdll.NtQueryInformationProcess(-1n, 0, basic, basic.byteLength, null), basic[6]);
-         const priority = () => (ntdll.NtQueryInformationThread(-2n, 0, basic, basic.byteLength, null), basic[10]);
-         const after = async wait => {
-           for (const end = performance.now() + 1000; priority() > base; ) if (performance.now() > end) throw "still raised";
-           await wait();
-           return priority();
+         const CURRENT_PROCESS = -1n;
+         const CURRENT_THREAD = -2n;
+         const ProcessBasicInformation = 0;
+         const ThreadBasicInformation = 0;
+         const ThreadPriority = 2;
+         const basicInfo = new Int32Array(12);
+         ntdll.NtQueryInformationProcess(CURRENT_PROCESS, ProcessBasicInformation, basicInfo, basicInfo.byteLength, null);
+         const basePriority = basicInfo[6 /* PROCESS_BASIC_INFORMATION.BasePriority */];
+         const getPriority = () => {
+           ntdll.NtQueryInformationThread(CURRENT_THREAD, ThreadBasicInformation, basicInfo, basicInfo.byteLength, null);
+           return basicInfo[10 /* THREAD_BASIC_INFORMATION.Priority */];
          };
-         const [fd, buffers] = [openSync(process.execPath), [Buffer.alloc(8 << 20), Buffer.alloc(32 << 20)]];
+         const measureWakePriority = async wait => {
+           for (const deadline = performance.now() + 1000; getPriority() > basePriority; )
+             if (performance.now() > deadline) throw "priority boost did not decay";
+           await wait();
+           return getPriority();
+         };
+         const fd = openSync(process.execPath);
+         const buffers = [Buffer.alloc(8 << 20), Buffer.alloc(32 << 20)];
          await Bun.sleep(1);
-         const timer = await after(() => Bun.sleep(5));
-         let calls;
-         const first = await after(() => (calls = buffers.map(it => promisify(read)(fd, it)))[0]);
-         ntdll.NtSetInformationThread(-2n, 2, new Int32Array([base]), 4);
-         const between = priority();
-         await calls[1];
-         console.log(first > timer, between === base, priority() > timer);`,
+         const timerPriority = await measureWakePriority(() => Bun.sleep(5));
+         let reads;
+         const firstReadPriority = await measureWakePriority(() => (reads = buffers.map(buffer => promisify(read)(fd, buffer)))[0]);
+         ntdll.NtSetInformationThread(CURRENT_THREAD, ThreadPriority, new Int32Array([basePriority]), 4);
+         const resetPriority = getPriority();
+         await reads[1];
+         console.log(firstReadPriority > timerPriority, resetPriority === basePriority, getPriority() > timerPriority);`,
       ],
       env: { ...bunEnv, BUN_GC_TIMER_DISABLE: "1", UV_THREADPOOL_SIZE: "1" },
       stdout: "pipe",
@@ -9529,5 +9749,6 @@ it.skipIf(!isWindows)("the first calls end with a higher priority than a timer",
     expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
     return stdout;
   };
+  // Two of the three runs have to pass.
   expect((await Promise.all([run(), run(), run()])).sort().slice(1)).toEqual(["true true true\n", "true true true\n"]);
 });

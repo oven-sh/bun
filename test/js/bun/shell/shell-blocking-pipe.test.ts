@@ -32,12 +32,12 @@ test.skipIf(isWindows)("writing > send buffer size (with a variable) doesn't blo
   }
 });
 
-test("builtins that wait for their input do not hold up file calls", async () => {
-  using dir = tempDir("shell-waiting-builtins", {
+test("builtins blocked on input do not starve file I/O", async () => {
+  using dir = tempDir("shell-blocked-builtins", {
     "file.txt": "read",
     "producer.js": `
       require("fs").writeFileSync("started-" + process.argv[2], "");
-      while (!require("fs").existsSync("go")) Bun.sleepSync(1);
+      for (const deadline = Date.now() + 30_000; !require("fs").existsSync("go") && Date.now() < deadline; ) Bun.sleepSync(1);
       console.log(process.argv[2]);
     `,
     "main.js": `

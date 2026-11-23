@@ -3555,10 +3555,10 @@ impl BunXFastPath {
         };
 
         let mut command_line = Vec::new();
-        let mut wide = bun_paths::w_path_buffer_pool::get();
+        let mut wbuf = bun_paths::w_path_buffer_pool::get();
         for arg in passthrough {
             command_line.push(u16::from(b' '));
-            let arg = strings::convert_utf8_to_utf16_in_buffer(&mut wide[..], arg);
+            let arg = strings::convert_utf8_to_utf16_in_buffer(&mut wbuf[..], arg);
             sys::windows_format::command_line::push_argument(&mut command_line, arg);
         }
         // `direct_launch_callback` →

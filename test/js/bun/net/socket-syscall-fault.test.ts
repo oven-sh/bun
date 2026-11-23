@@ -250,7 +250,7 @@ describe.skipIf(!fault.available())("poll_start failure is reported, not a crash
 // A paused socket whose peer hung up is taken out of epoll by the dispatcher
 // (EPOLLHUP is level-triggered and cannot be masked) and registered again by
 // resume(), which is a fresh EPOLL_CTL_ADD and can fail the way the first one
-// can. epoll only: the others never park the fd, so their resume is a
+// can. epoll only: other backends never park the fd, so their resume is a
 // plain filter/poll change with nothing for the hook to fail. onread mode, because
 // like in node only that mode's pause() stops the handle (a plain pause() keeps
 // reading into the stream's buffer, which would deliver the reply as data here).

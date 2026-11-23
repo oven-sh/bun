@@ -1520,7 +1520,7 @@ it("argument validation errors name the argument", () => {
 });
 
 describe.skipIf(!isWindows)("lookup() on Windows", () => {
-  test("many lookups at once, next to file calls", async () => {
+  test("resolves concurrent lookups alongside file reads", async () => {
     const families = Array.from({ length: 60 }, (_, i) => [0, 4, 6][i % 3]);
     const [results] = await Promise.all([
       Promise.all(
@@ -1528,14 +1528,14 @@ describe.skipIf(!isWindows)("lookup() on Windows", () => {
       ),
       Promise.all(families.map(() => Bun.file(import.meta.path).bytes())),
     ]);
-    const loopback = { 0: ["127.0.0.1", "::1"], 4: ["127.0.0.1"], 6: ["::1"] };
-    expect(results.map(all => all.map(({ address }) => address).sort())).toEqual(
-      families.map(family => loopback[family]),
+    const loopbackByFamily = { 0: ["127.0.0.1", "::1"], 4: ["127.0.0.1"], 6: ["::1"] };
+    expect(results.map(addresses => addresses.map(({ address }) => address).sort())).toEqual(
+      families.map(family => loopbackByFamily[family]),
     );
   });
 });
 
-test.skipIf(!isWindows)("a name that is not ASCII is looked up in its ASCII form", async () => {
-  const wide = "localhost".replace(/./g, letter => String.fromCharCode(letter.charCodeAt(0) + 0xfee0));
-  expect(await dns.promises.lookup(wide)).toEqual(await dns.promises.lookup("localhost"));
+test.skipIf(!isWindows)("dns.promises.lookup maps a fullwidth hostname to ASCII", async () => {
+  const fullwidth = "localhost".replace(/./g, letter => String.fromCharCode(letter.charCodeAt(0) + 0xfee0));
+  expect(await dns.promises.lookup(fullwidth)).toEqual(await dns.promises.lookup("localhost"));
 });

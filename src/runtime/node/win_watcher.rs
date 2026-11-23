@@ -1,4 +1,4 @@
-//! The backend of `fs.watch()` on Windows.
+//! Windows backend of `fs.watch()`.
 
 #![cfg(windows)]
 
@@ -7,7 +7,7 @@ use core::ffi::c_void;
 use std::rc::Rc;
 
 use bun_core::{Timespec, TimespecMockMode, WStr, ZStr};
-use bun_iocp::{AsyncFile, Completion, Request};
+use bun_iocp::{Completion, OverlappedFile, Request};
 use bun_jsc as jsc;
 use bun_ptr::CellExt as _;
 use bun_sys as sys;
@@ -31,22 +31,22 @@ pub(crate) static fs_watch: bun_output::ScopedLogger =
 pub(crate) type Handle = Rc<PathWatcher>;
 
 pub(crate) struct PathWatcher {
-    /// The `FSWatcher`, which has the only [`Handle`].
+    /// The `FSWatcher`, which owns the only [`Handle`].
     owner: *mut c_void,
     last_event: Cell<ChangeEvent>,
     target: Target,
     recursive: bool,
-    /// Has the only handle to the directory, which keeps its parents from being renamed.
-    read: Cell<Option<Request>>,
-    spare: Cell<Vec<u8>>,
-    /// Whether the last read ended with `BUFFER_OVERFLOW`.
-    was_cut: Cell<bool>,
+    /// Owns the only directory handle, which blocks renaming its parents while it is open.
+    pending_read: Cell<Option<Request>>,
+    spare_buffer: Cell<Vec<u8>>,
+    /// Whether the last read completed with `BUFFER_OVERFLOW`.
+    is_last_read_truncated: Cell<bool>,
 }
 
 enum Target {
-    /// Without short names.
+    /// The path with 8.3 names expanded.
     Directory(Vec<u16>),
-    /// Its directory is what is watched.
+    /// Watched through its parent directory.
     File {
         name: Vec<u16>,
         short_name: Vec<u16>,
@@ -57,14 +57,14 @@ impl Target {
     fn open(path: &WStr) -> Result<(Target, std::os::windows::io::OwnedHandle), Win32Error> {
         let (target, mut directory) =
             if w::GetFileAttributesW(path)? & w::FILE_ATTRIBUTE_DIRECTORY != 0 {
-                let long = w::long_path(path).unwrap_or_else(|_| path.to_vec());
-                (Target::Directory(long), path.to_vec())
+                let long_path = w::get_long_path_name(path).unwrap_or_else(|_| path.to_vec());
+                (Target::Directory(long_path), path.to_vec())
             } else {
                 let name = bun_paths::basename(path);
-                let short = w::short_path(path).unwrap_or_default();
+                let short_path = w::get_short_path_name(path).unwrap_or_default();
                 let target = Target::File {
                     name: name.to_vec(),
-                    short_name: bun_paths::basename(&short).to_vec(),
+                    short_name: bun_paths::basename(&short_path).to_vec(),
                 };
                 match &path[..path.len() - name.len()] {
                     [] => (target, bun_core::w!(".").to_vec()),
@@ -82,10 +82,10 @@ impl Target {
         Ok((target, handle))
     }
 
-    /// `None` for a neighbour of the file.
-    fn name_to_report(&self, Change { name, action }: Change) -> Option<Vec<u16>> {
+    /// `None` for a sibling of the watched file.
+    fn resolve_filename(&self, Change { name, action }: Change) -> Option<Vec<u16>> {
         match self {
-            // It is spelled as whoever made the change has opened it.
+            // The record spells the name as the writer opened it, which can be in 8.3 form.
             Target::Directory(directory)
                 if has_short_name(&name)
                     && !matches!(
@@ -93,32 +93,32 @@ impl Target {
                         w::FILE_ACTION_REMOVED | w::FILE_ACTION_RENAMED_OLD_NAME
                     ) =>
             {
-                Some(long_name(directory, &name).unwrap_or(name))
+                Some(expand_short_names(directory, &name).unwrap_or(name))
             }
             Target::Directory(_) => Some(name),
             Target::File {
-                name: long,
+                name: long_name,
                 short_name,
-            } => [long, short_name]
+            } => [long_name, short_name]
                 .iter()
-                .any(|it| w::eq_ignore_case(it, &name))
-                .then(|| long.clone()),
+                .any(|candidate| w::eq_ignore_case(candidate, &name))
+                .then(|| long_name.clone()),
         }
     }
 }
 
 fn has_short_name(path: &[u16]) -> bool {
-    (path.split(|&unit| bun_paths::is_sep(unit)))
+    path.split(|&unit| bun_paths::is_sep(unit))
         .any(|name| name.len() <= "12345678.123".len() && name.contains(&u16::from(b'~')))
 }
 
-fn long_name(directory: &[u16], name: &[u16]) -> Option<Vec<u16>> {
+fn expand_short_names(directory: &[u16], name: &[u16]) -> Option<Vec<u16>> {
     let path = [directory, bun_core::w!("\\"), name, &[0]].concat();
-    let long = w::long_path(WStr::from_slice_with_nul(&path)).ok()?;
+    let long_path = w::get_long_path_name(WStr::from_slice_with_nul(&path)).ok()?;
     let is_separator = |&unit: &u16| bun_paths::is_sep(unit);
     let depth = name.split(is_separator).count();
-    let parent = long.rsplitn(depth + 1, is_separator).nth(depth)?;
-    Some(long[parent.len() + 1..].to_vec())
+    let parent = long_path.rsplitn(depth + 1, is_separator).nth(depth)?;
+    Some(long_path[parent.len() + 1..].to_vec())
 }
 
 #[derive(Clone, Copy)]
@@ -162,44 +162,47 @@ impl ChangeEvent {
 }
 
 impl PathWatcher {
-    fn read_changes(self: &Rc<Self>, file: &Rc<AsyncFile>) -> Result<(), NTSTATUS> {
+    fn read_changes(self: &Rc<Self>, file: &Rc<OverlappedFile>) -> Result<(), NTSTATUS> {
         const FILTER: u32 = w::FileNotifyChangeFilter::all().bits();
-        // The system holds as much as the first read had room for, and a share takes no more than 64 KiB.
-        let size = if self.recursive { 64 * 1024 } else { 4096 };
-        let mut buffer = self.spare.take();
+        // The first read sets the size of the system's change buffer; network shares accept at most 64 KiB.
+        let buffer_size = if self.recursive { 64 * 1024 } else { 4096 };
+        let mut buffer = self.spare_buffer.take();
         buffer.clear();
-        buffer.reserve_exact(size);
-        let (this, next) = (Rc::downgrade(self), Rc::clone(file));
-        let done = move |completion| {
+        buffer.reserve_exact(buffer_size);
+        let this = Rc::downgrade(self);
+        let owned_file = Rc::clone(file);
+        let on_complete = move |completion| {
             if let Some(this) = this.upgrade() {
-                this.on_changes(&next, completion);
+                this.on_changes(&owned_file, completion);
             }
         };
-        let read = file.read_changes(buffer, size, FILTER, self.recursive, done);
-        self.read.set(Some(read.map_err(|refused| refused.status)?));
+        let request = file
+            .read_changes(buffer, buffer_size, FILTER, self.recursive, on_complete)
+            .map_err(|completion| completion.status)?;
+        self.pending_read.set(Some(request));
         Ok(())
     }
 
-    fn on_changes(self: &Rc<Self>, file: &Rc<AsyncFile>, completion: Completion) {
+    fn on_changes(self: &Rc<Self>, file: &Rc<OverlappedFile>, completion: Completion) {
         let Completion { status, buffer, .. } = completion;
         let timestamp = Timespec::now(TimespecMockMode::ForceRealTime).ms_unsigned();
-        // One is how a share can say that there were too many.
-        let is_cut = status == NTSTATUS::BUFFER_OVERFLOW;
-        let was_cut = self.was_cut.replace(is_cut);
-        if !NT_SUCCESS(status) && (was_cut || !is_cut) {
-            return self.fail(file, status, timestamp);
+        // A network share can report lost changes as `BUFFER_OVERFLOW`; only a repeated one is an error.
+        let is_truncated = status == NTSTATUS::BUFFER_OVERFLOW;
+        let was_truncated = self.is_last_read_truncated.replace(is_truncated);
+        if !NT_SUCCESS(status) && (was_truncated || !is_truncated) {
+            return self.emit_error(file, status, timestamp);
         }
         let records = match status {
             NTSTATUS::SUCCESS => &buffer[..],
             _ => &[],
         };
         let changes: Vec<_> = directory_changes::parse(records).collect();
-        self.spare.set(buffer);
-        let next = self.read_changes(file);
+        self.spare_buffer.set(buffer);
+        let next_read = self.read_changes(file);
         for change in changes {
             let Ok(change) = change else {
-                // There were too many. Forward `(event, null)` like node, unsuppressed.
-                self.send(Event::NoFilename(WatchEventKind::Change), false);
+                // Changes were lost. Forward `(event, null)` like node, unsuppressed.
+                self.enqueue_event(Event::NoFilename(WatchEventKind::Change), false);
                 continue;
             };
             let event_type = match change.action {
@@ -207,34 +210,36 @@ impl PathWatcher {
                 w::FILE_ACTION_ADDED..=w::FILE_ACTION_RENAMED_NEW_NAME => WatchEventKind::Rename,
                 _ => continue,
             };
-            if let Some(name) = self.target.name_to_report(change) {
+            if let Some(name) = self.target.resolve_filename(change) {
                 self.emit(&name, timestamp, event_type);
             }
         }
-        if let Err(status) = next {
-            self.fail(file, status, timestamp);
+        if let Err(status) = next_read {
+            self.emit_error(file, status, timestamp);
         }
     }
 
-    fn fail(&self, file: &AsyncFile, status: NTSTATUS, timestamp: u64) {
+    fn emit_error(&self, file: &OverlappedFile, status: NTSTATUS, timestamp: u64) {
         let error = Win32Error::from_ntstatus(status);
-        if let (Win32Error::ACCESS_DENIED, Target::Directory(path)) = (error, &self.target) {
+        if error == Win32Error::ACCESS_DENIED
+            && let Target::Directory(path) = &self.target
+        {
             let was_deleted = matches!(status, NTSTATUS::DELETE_PENDING | NTSTATUS::FILE_DELETED);
             if w::is_delete_pending(file.handle().raw()).unwrap_or(was_deleted) {
                 self.emit(path, timestamp, WatchEventKind::Rename);
-                return self.send(Event::Deleted(sys::E::ENOENT), false);
+                return self.enqueue_event(Event::Deleted(sys::E::ENOENT), false);
             }
-            // That was withdrawn, which does not bring the watch back.
+            // The pending delete was cancelled, but the watch does not resume.
             if was_deleted {
-                return self.send(Event::Deleted(sys::E::EPERM), false);
+                return self.enqueue_event(Event::Deleted(sys::E::EPERM), false);
             }
         }
-        let err = sys::Error::from_code(error.to_node_e(), sys::Tag::watch);
-        self.send(Event::Error { err, close: true }, false);
+        let err = sys::Error::from_code(error.to_node_errno(), sys::Tag::watch);
+        self.enqueue_event(Event::Error { err, close: true }, false);
     }
 
-    /// In a task of its own, so that microtasks run between two events.
-    fn send(&self, event: Event, is_file: bool) {
+    /// One task per event, so that microtasks run between events.
+    fn enqueue_event(&self, event: Event, is_file: bool) {
         FSWatcher::on_path_update(Some(self.owner), event, is_file);
         FSWatcher::on_update_end(Some(self.owner));
     }
@@ -252,10 +257,13 @@ impl PathWatcher {
             timestamp,
         );
 
-        if !(self.last_event).with_taken(|last| last.emit(hash, timestamp, event_type)) {
+        let should_emit = self
+            .last_event
+            .with_taken(|last| last.emit(hash, timestamp, event_type));
+        if !should_emit {
             return;
         }
-        self.send(event_type.to_event(path.into()), is_file);
+        self.enqueue_event(event_type.to_event(path.into()), is_file);
     }
 
     /// JS-thread entry point from `FSWatcher.detach()`.
@@ -286,24 +294,25 @@ pub(crate) fn watch(
         },
     };
 
-    let error = |err: Win32Error| sys::Error::from_code(err.to_node_e(), sys::Tag::watch);
-    let mut wide = bun_paths::w_path_buffer_pool::get();
-    let wide = sys::windows_format::wide::encode(event_path, &mut wide[..]);
-    let wide = wide.map_err(|err| error(err.into()))?;
-    let (target, handle) = Target::open(wide).map_err(error)?;
+    let to_watch_error =
+        |err: Win32Error| sys::Error::from_code(err.to_node_errno(), sys::Tag::watch);
+    let mut wide_buf = bun_paths::w_path_buffer_pool::get();
+    let wide_path = sys::windows_format::wtf16::encode(event_path, &mut wide_buf[..])
+        .map_err(|err| to_watch_error(err.into()))?;
+    let (target, handle) = Target::open(wide_path).map_err(to_watch_error)?;
     let this = Rc::new(PathWatcher {
         owner,
         last_event: Cell::default(),
         recursive: recursive && matches!(target, Target::Directory(_)),
         target,
-        read: Cell::new(None),
-        spare: Cell::default(),
-        was_cut: Cell::new(false),
+        pending_read: Cell::new(None),
+        spare_buffer: Cell::default(),
+        is_last_read_truncated: Cell::new(false),
     });
     let handle = bun_iocp::Handle::from_owned(handle);
-    let file = AsyncFile::exclusive(vm.uws_loop().port(), handle);
-    (this.read_changes(&Rc::new(file)))
-        .map_err(|status| error(Win32Error::from_ntstatus(status)))?;
+    let file = OverlappedFile::new_exclusive(vm.uws_loop().port(), handle);
+    this.read_changes(&Rc::new(file))
+        .map_err(|status| to_watch_error(Win32Error::from_ntstatus(status)))?;
 
     sys::Result::Ok(this)
 }

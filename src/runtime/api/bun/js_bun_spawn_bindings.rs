@@ -24,7 +24,7 @@ use bun_sys::{self as sys, SignalCode};
 // Process / spawn machinery is local to this crate (api/bun/process.rs).
 use crate::api::bun_process::ExtraPipe;
 use crate::api::bun_process::SpawnResultExt as _;
-use crate::api::bun_process::{self as spawn, Rusage, SpawnOptions};
+use crate::api::bun_process::{self as spawn, Rusage, SpawnOptions, Stdio as SpawnOptionsStdio};
 // User-facing JS `Stdio` enum (extract/as_spawn_option/is_piped).
 use crate::api::bun_spawn::stdio::{self, Stdio};
 use crate::api::bun_subprocess::subprocess_pipe_reader::PipeReader;
@@ -59,8 +59,6 @@ fn subprocess_ipc_owner(ptr: *mut SubprocessT<'_>) -> Option<IPC::SendQueueOwner
 }
 
 bun_output::declare_scope!(Subprocess, hidden);
-
-type SpawnOptionsStdio = spawn::Stdio;
 
 // Reading the symbol address has no precondition (the value itself is a
 // rodata `const char*`); kept `safe` to match the identical declaration in
@@ -830,7 +828,7 @@ fn spawn_maybe_sync(
                     #[cfg(not(unix))]
                     {
                         // On Windows, ConPTY supplies stdio via PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE.
-                        // Set stdio to .ignore so that no pipes are made.
+                        // Set stdio to .ignore so that spawn creates no pipes.
                         stdio[0] = Stdio::Ignore;
                         stdio[1] = Stdio::Ignore;
                         stdio[2] = Stdio::Ignore;
@@ -1345,7 +1343,7 @@ fn spawn_maybe_sync(
                 core::mem::replace(slot, ExtraPipe::Unavailable).into_owned()
             });
             let ipc_pipe = ipc_pipe.expect("Stdio::Ipc makes a pipe");
-            let ipc_pipe = bun_io::Pipe::from_exclusive(loop_handle.loop_().port(), ipc_pipe);
+            let ipc_pipe = bun_io::Pipe::new_exclusive(loop_handle.loop_().port(), ipc_pipe);
             ipc_err = ipc_data.windows_configure_server(ipc_pipe).err();
         }
         if ipc_err.is_none() {

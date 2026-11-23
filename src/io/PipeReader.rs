@@ -390,15 +390,19 @@ impl PosixBufferedReader {
         }
     }
 
-    /// For our end of a pipe that this process has made.
-    pub fn start_own_pipe(&self, ev: EventLoopHandle, pipe: sys::File) -> sys::Result<ReadResult> {
+    /// For our end of a pipe that this process created.
+    pub fn start_exclusive_pipe(
+        &self,
+        ev: EventLoopHandle,
+        pipe: sys::File,
+    ) -> sys::Result<ReadResult> {
         self.start(ev, pipe.into(), true)
     }
 
-    /// The same, but nothing is read until `unpause`.
-    pub fn set_own_pipe(&self, ev: EventLoopHandle, pipe: sys::File) {
+    /// Like `start_exclusive_pipe`, but reads nothing until `unpause`.
+    pub fn set_exclusive_pipe(&self, ev: EventLoopHandle, pipe: sys::File) {
         self.update_flags(|f| f.insert(ReaderFlags::IS_PAUSED));
-        let _ = self.start_own_pipe(ev, pipe);
+        let _ = self.start_exclusive_pipe(ev, pipe);
     }
 
     /// A poll that cannot be armed is a read that failed. `Err` is for Windows.
@@ -807,7 +811,7 @@ pub struct WindowsBufferedReader {
 
 #[cfg(windows)]
 pub enum ReadEvent {
-    /// Not empty.
+    /// Never empty.
     Data(Vec<u8>),
     Eof,
     Err(sys::Error),
@@ -866,7 +870,7 @@ impl WindowsBufferedReader {
     }
 
     fn set_source_owner(&self) {
-        // SAFETY: the contract of `set_owner`, and the source does not outlast `self`.
+        // SAFETY: `set_owner`'s caller keeps the owner valid, and the source does not outlive `self`.
         self.with_source(|source| unsafe { source.set_owner(self.owner.get()) });
     }
 
@@ -876,7 +880,7 @@ impl WindowsBufferedReader {
 
     fn read_memfd(&self) {}
 
-    /// The source reads into a buffer of its own, so nothing about the reader has to wait for it.
+    /// The source owns the buffer of a read in flight, so the reader never has to wait for one.
     pub fn has_pending_read(&self) -> bool {
         false
     }
@@ -905,13 +909,17 @@ impl WindowsBufferedReader {
         sys::Result::Ok(())
     }
 
-    pub fn start_own_pipe(&self, ev: EventLoopHandle, pipe: sys::File) -> sys::Result<ReadResult> {
-        self.start_with_pipe(Pipe::from_exclusive(ev.loop_().port(), pipe))?;
+    pub fn start_exclusive_pipe(
+        &self,
+        ev: EventLoopHandle,
+        pipe: sys::File,
+    ) -> sys::Result<ReadResult> {
+        self.start_with_pipe(Pipe::new_exclusive(ev.loop_().port(), pipe))?;
         sys::Result::Ok(ReadResult::Pending)
     }
 
-    pub fn set_own_pipe(&self, ev: EventLoopHandle, pipe: sys::File) {
-        self.set_pipe(Pipe::from_exclusive(ev.loop_().port(), pipe));
+    pub fn set_exclusive_pipe(&self, ev: EventLoopHandle, pipe: sys::File) {
+        self.set_pipe(Pipe::new_exclusive(ev.loop_().port(), pipe));
     }
 
     pub fn start_with_pipe(&self, pipe: Pipe) -> sys::Result<()> {
@@ -919,7 +927,7 @@ impl WindowsBufferedReader {
         self.start_with_current_source()
     }
 
-    /// Reading starts later, or never.
+    /// Does not start reading.
     pub fn set_pipe(&self, pipe: Pipe) {
         self.set_source(pipe.into());
     }
@@ -936,7 +944,9 @@ impl WindowsBufferedReader {
         file: MaybeOwnedFile,
         _: bool,
     ) -> sys::Result<ReadResult> {
-        let offset = (self.has_flag(ReaderFlags::USE_PREAD)).then(|| self.offset.get() as u64);
+        let offset = self
+            .has_flag(ReaderFlags::USE_PREAD)
+            .then(|| self.offset.get() as u64);
         self.set_source(ReadSource::open(ev.loop_().port(), file, offset)?);
         self.start_with_current_source()?;
         sys::Result::Ok(ReadResult::Pending)
@@ -962,17 +972,16 @@ impl WindowsBufferedReader {
         self.with_source(ReadSource::pause);
     }
 
-    /// What a child has written by now, to pass to `read` without waiting for the loop to find it.
-    pub fn take_available(&self) -> Option<IoEvent> {
-        self.with_source(ReadSource::take_available)?
-            .map(IoEvent::Read)
+    /// Returns data that is already in the pipe, as an event to pass to `read`, without waiting for the event loop.
+    pub fn try_read(&self) -> Option<IoEvent> {
+        self.with_source(ReadSource::try_read)?.map(IoEvent::Read)
     }
 
     pub fn release_handle(&self) {
         self.close_source();
     }
 
-    /// `false` if there was none.
+    /// Returns `false` if there was no source.
     fn close_source(&self) -> bool {
         self.update_flags(|f| f.insert(ReaderFlags::IS_PAUSED));
         self.source.take().is_some()
@@ -995,7 +1004,7 @@ impl WindowsBufferedReader {
     }
 
     /// Returns the state of the chunk in the buffer.
-    fn begin(&self, event: Option<IoEvent>) -> Result<ReadState, ReadResult> {
+    fn consume_event(&self, event: Option<IoEvent>) -> Result<ReadState, ReadResult> {
         let event = match event {
             // we cannot sync read pipes on Windows so we just check if we are paused to resume the reading
             None => return Err(self.unpause()),
@@ -1025,14 +1034,14 @@ impl WindowsBufferedReader {
     }
 
     fn append(&self, data: Vec<u8>) {
-        let spare = self.buffer.with_taken(|buffer| {
+        let spare_buffer = self.buffer.with_taken(|buffer| {
             if buffer.is_empty() {
                 return mem::replace(buffer, data);
             }
             buffer.extend_from_slice(&data);
             data
         });
-        self.with_source(|source| source.recycle(spare));
+        self.with_source(|source| source.reuse_buffer(spare_buffer));
     }
 
     fn advance(&self, state: ReadState) -> ReadResult {
@@ -1040,7 +1049,7 @@ impl WindowsBufferedReader {
             return self.close();
         }
         if !self.has_flag(ReaderFlags::IS_PAUSED) {
-            self.with_source(|source| source.read_on(self.clamp_len(usize::MAX)));
+            self.with_source(|source| source.continue_read(self.clamp_len(usize::MAX)));
         }
         ReadResult::Pending
     }
@@ -1057,7 +1066,7 @@ impl WindowsBufferedReader {
 
     /// See `PosixBufferedReader::read`.
     pub fn read(&self, _: EventLoopHandle, event: Option<IoEvent>) -> ReadResult {
-        match self.begin(event) {
+        match self.consume_event(event) {
             Ok(state) => self.advance(state),
             Err(result) => result,
         }
@@ -1070,7 +1079,7 @@ impl WindowsBufferedReader {
         event: Option<IoEvent>,
         mut on_chunk: impl FnMut(Chunk<'_>, ReadState) -> bool,
     ) -> ReadResult {
-        let state = match self.begin(event) {
+        let state = match self.consume_event(event) {
             Ok(state) => state,
             Err(result) => return result,
         };
@@ -1080,7 +1089,7 @@ impl WindowsBufferedReader {
             on_chunk(Chunk::Owned(buffer), state);
         } else if !buffer.is_empty() {
             on_chunk(Chunk::Buffer(&mut buffer), state);
-            self.with_source(|source| source.recycle(buffer));
+            self.with_source(|source| source.reuse_buffer(buffer));
         }
         self.advance(state)
     }

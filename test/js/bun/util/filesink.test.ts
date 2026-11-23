@@ -1168,7 +1168,7 @@ describe("FileSink on a pipe stays alive until end() has drained the buffer", ()
         `
           const child = Bun.spawn(
             [process.execPath, "-e", ${JSON.stringify(reader)}, ${JSON.stringify(flag)}],
-            // On Windows it would end with its parent, before it prints its count.
+            // On Windows a non-detached child is killed with its parent, before it prints its count.
             { stdin: "pipe", stdout: "inherit", stderr: "inherit", detached: ${isWindows} },
           );
           try {
@@ -1662,22 +1662,22 @@ describe.concurrent("start() on an open writer", () => {
     expect(result).toEqual({ target: "short", initial: "", closed: "all" });
   });
 
-  // Elsewhere a file is written before the call returns.
+  // On POSIX a file write completes before the call returns.
   describe.skipIf(!isWindows).each(["flush", "end"])("start({ path }) with a pending %s()", method => {
-    it.each(["setImmediate(run)", "process.once('beforeExit', run)"])("settles it, in %s", async schedule => {
+    it.each(["setImmediate(main)", "process.once('beforeExit', main)"])("resolves it in %s", async schedule => {
       const result = await run(`
-        async function run() {
+        async function main() {
           const initial = join(dir, "initial.txt");
           const target = join(dir, "target.txt");
           const writer = Bun.file(initial).writer();
           writer.write(Buffer.alloc(8 << 20));
-          const next = writer.${method}().then(() => {
+          const pendingSize = writer.${method}().then(() => {
             const { size } = fs.statSync(initial);
             writer.write("second");
             return size;
           });
           writer.start({ path: target });
-          const size = await next;
+          const size = await pendingSize;
           await writer.end();
           console.log(JSON.stringify({ size, target: read(target), closed: await closed() }));
         }

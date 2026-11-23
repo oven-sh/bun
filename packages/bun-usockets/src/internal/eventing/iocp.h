@@ -20,7 +20,7 @@
 
 #include "internal/loop_data.h"
 
-/* The functions of this backend are in src/uws_sys/iocp.rs, which mirrors what is below. */
+/* Implemented in src/uws_sys/iocp.rs. The definitions below are mirrored there and in src/uws_sys/Loop.rs. */
 
 #define LIBUS_SOCKET_READABLE 1
 #define LIBUS_SOCKET_WRITABLE 2
@@ -41,9 +41,10 @@ struct us_loop_t {
      * If non-zero, the event loop will return immediately so we can skip the GC safepoint. */
     unsigned int pending_wakeups;
 
-    /* Whether a socket was written to since the last wait */
+    /* Whether a stream socket was written to since the last wait */
     int has_sent;
 
+    /* Box<Rc<bun_iocp::Port>> */
     void *port;
 };
 

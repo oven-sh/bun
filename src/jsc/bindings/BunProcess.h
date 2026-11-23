@@ -28,14 +28,14 @@ inline constexpr char reportedLibuvVersion[] = "1.48.0";
 #endif
 
 #if OS(WINDOWS)
-// Microseconds. CpuUsage in src/sys/windows_format/cpu_time.rs.
+// Mirrors CpuUsage in src/sys/windows_format/cpu_time.rs. Times are in microseconds.
 struct CpuUsage {
     uint64_t user { 0 };
     uint64_t system { 0 };
 };
 static_assert(sizeof(CpuUsage) == 16);
 
-// Zero, or the errno of the error in JavaScript.
+// Return 0 or a libuv error code.
 extern "C" int Bun__Process__getCpuUsage(CpuUsage*);
 extern "C" int Bun__Process__getThreadCpuUsage(CpuUsage*);
 #endif

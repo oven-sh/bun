@@ -1,4 +1,4 @@
-//! Who is told of I/O: a tag and a pointer, so that this crate does not name the types.
+//! The receiver of I/O events: a tag and a pointer, so that this crate does not depend on the owner types.
 
 use crate::max_buf::Kind;
 
@@ -89,7 +89,7 @@ pub enum IoEvent {
 impl IoEvent {
     pub fn write_error(&self) -> Option<&bun_sys::Error> {
         match self {
-            IoEvent::Write(crate::pipe_writer::WriteEvent::Failed(err)) => Some(err),
+            IoEvent::Write(crate::pipe_writer::WriteEvent::Err(err)) => Some(err),
             _ => None,
         }
     }
@@ -112,7 +112,6 @@ impl IoEvent {
 }
 
 unsafe extern "Rust" {
-    /// # Safety
-    /// `owner.ptr` points to a live value of the type `__bun_run_io` casts `owner.tag` to.
+    /// SAFETY: `owner.ptr` points to a live value of the type `__bun_run_io` casts `owner.tag` to.
     pub(crate) fn __bun_run_io(owner: Owner, event: IoEvent);
 }

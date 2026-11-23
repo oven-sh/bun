@@ -554,7 +554,7 @@ impl PinnedArrayBuffer {
         !self.buffer.can_be_freed_while_pinned() || self.snapshot(global)
     }
 
-    /// From now on this reads a copy of the bytes. Returns `false` if the copy can't be allocated.
+    /// Copies the bytes, and later reads use the copy. Returns `false` if the copy can't be allocated.
     pub fn snapshot(&mut self, global: &JSGlobalObject) -> bool {
         if self.buffer.byte_len == 0 || self.copy.is_some() {
             return true;

@@ -39,8 +39,9 @@ unsafe extern "C" fn highway_memrmem16(
             core::slice::from_raw_parts(needle, needle_len),
         )
     };
-    let found = (0..len).rfind(|&at| haystack[at..].starts_with(needle));
-    found.unwrap_or(usize::MAX)
+    (0..len)
+        .rfind(|&start| haystack[start..].starts_with(needle))
+        .unwrap_or(usize::MAX)
 }
 
 #[unsafe(no_mangle)]

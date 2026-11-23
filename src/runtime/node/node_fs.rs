@@ -9,14 +9,14 @@ use core::mem::MaybeUninit;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 #[cfg(windows)]
-use crate::io_order::{KeptOpen, Key, Turn};
+use crate::io_order::{self, Key, RetainedFile};
 use crate::webcore;
 use bun_core::vec::{BorrowedBuf, BorrowedCursor, append_with};
 use bun_core::{String as BunString, Utf8WithString, ZBox, ZStr};
 use bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext;
 use bun_io::JsKeepAlive;
 #[cfg(windows)]
-use bun_iocp::blocking::Cancel;
+use bun_iocp::blocking::CancelToken;
 use bun_jsc::AbortSignal;
 use bun_jsc::debugger::AsyncTaskTracker;
 use bun_jsc::virtual_machine::VirtualMachine;
@@ -195,7 +195,7 @@ const IOV_MAX: usize = libc::UIO_MAXIOV as usize;
 #[cfg(all(unix, not(any(target_os = "linux", target_os = "android"))))]
 const IOV_MAX: usize = libc::IOV_MAX as usize;
 #[cfg(windows)]
-const IOV_MAX: usize = usize::MAX;
+const IOV_MAX: usize = core::ffi::c_uint::MAX as usize;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Local cross-crate shims
@@ -1129,9 +1129,8 @@ mod _async_tasks {
         fn paths(&self) -> [Option<&PathLike<'static>>; 2] {
             [None, None]
         }
-        /// The descriptor that the operation is for.
         #[cfg(windows)]
-        fn descriptor(&mut self) -> Option<&mut FD> {
+        fn fd_mut(&mut self) -> Option<&mut FD> {
             None
         }
     }
@@ -1144,7 +1143,7 @@ mod _async_tasks {
     }
 
     #[cfg(windows)]
-    fn fd_of<'a>(file: &'a mut PathOrFileDescriptor<'static>) -> Option<&'a mut FD> {
+    fn as_fd_mut<'a>(file: &'a mut PathOrFileDescriptor<'static>) -> Option<&'a mut FD> {
         match file {
             PathOrFileDescriptor::Path(_) => None,
             PathOrFileDescriptor::Fd(fd) => Some(fd),
@@ -1154,7 +1153,7 @@ mod _async_tasks {
     /// Forward [`FsArgument`] to the inherent `from_js` each `args::*` struct
     /// already defines.
     macro_rules! impl_fs_argument {
-    ( $( $ty:ty $( => |$args:ident| [$first:expr, $second:expr] )? $( = $descriptor:ident )? ),+ $(,)? ) => {
+    ( $( $ty:ty $( => |$args:ident| [$first:expr, $second:expr] )? $( = $fd:ident )? ),+ $(,)? ) => {
         $(
         // SAFETY: `from_js_async` parses paths and data thread-isolated / pinned
         // and rooted; the remaining fields are plain data.
@@ -1162,7 +1161,7 @@ mod _async_tasks {
         impl FsArgument for $ty {
             #[inline] fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> { <$ty>::from_js(ctx, arguments) }
             $( fn paths(&self) -> [Option<&PathLike<'static>>; 2] { let $args = self; [$first, $second] } )?
-            $( #[cfg(windows)] fn descriptor(&mut self) -> Option<&mut FD> { Some(&mut self.$descriptor) } )?
+            $( #[cfg(windows)] fn fd_mut(&mut self) -> Option<&mut FD> { Some(&mut self.$fd) } )?
         } )+
     };
 }
@@ -1216,7 +1215,7 @@ mod _async_tasks {
             }
         }
         #[cfg(windows)]
-        fn descriptor(&mut self) -> Option<&mut FD> {
+        fn fd_mut(&mut self) -> Option<&mut FD> {
             Some(&mut self.fd)
         }
     }
@@ -1232,7 +1231,7 @@ mod _async_tasks {
             self.buffers.write_back(bytes_read as usize);
         }
         #[cfg(windows)]
-        fn descriptor(&mut self) -> Option<&mut FD> {
+        fn fd_mut(&mut self) -> Option<&mut FD> {
             Some(&mut self.fd)
         }
     }
@@ -1259,8 +1258,8 @@ mod _async_tasks {
             [path_of(&self.path), None]
         }
         #[cfg(windows)]
-        fn descriptor(&mut self) -> Option<&mut FD> {
-            fd_of(&mut self.path)
+        fn fd_mut(&mut self) -> Option<&mut FD> {
+            as_fd_mut(&mut self.path)
         }
     }
     impl FsArgument for args::WriteFile<'static> {
@@ -1277,8 +1276,8 @@ mod _async_tasks {
             [path_of(&self.file), None]
         }
         #[cfg(windows)]
-        fn descriptor(&mut self) -> Option<&mut FD> {
-            fd_of(&mut self.file)
+        fn fd_mut(&mut self) -> Option<&mut FD> {
+            as_fd_mut(&mut self.file)
         }
     }
     impl FsArgument for args::AppendFile<'static> {
@@ -1296,8 +1295,8 @@ mod _async_tasks {
             [path_of(&self.0.file), None]
         }
         #[cfg(windows)]
-        fn descriptor(&mut self) -> Option<&mut FD> {
-            fd_of(&mut self.0.file)
+        fn fd_mut(&mut self) -> Option<&mut FD> {
+            as_fd_mut(&mut self.0.file)
         }
     }
 
@@ -1399,28 +1398,28 @@ mod _async_tasks {
     pub(crate) struct AsyncFSTask<R, A, const F: NodeFSFunctionEnum> {
         pub(crate) result: Maybe<R>,
         pub args: ThreadIsolated<A>,
-        /// For a call that can wait for ever.
+        /// Set for device I/O, which can block indefinitely.
         #[cfg(windows)]
-        cancel: Option<Cancel>,
+        cancel_token: Option<CancelToken>,
         #[cfg(windows)]
-        held: Held,
+        guards: IoGuards,
     }
 
-    /// Until the call returns.
+    /// Released as soon as the operation returns.
     #[cfg(windows)]
     #[derive(Default)]
-    struct Held {
+    struct IoGuards {
         _pending_write: Option<bun_iocp::PendingWrite>,
         device: Option<Device>,
-        _turn: Option<Turn>,
+        _order_guard: Option<io_order::OrderGuard>,
     }
 
     /// A pipe, a console or another device.
     #[cfg(windows)]
     struct Device {
-        /// In place of `shown` in the arguments.
-        file: KeptOpen,
-        shown: FD,
+        /// Replaces `original_fd` in the arguments.
+        file: RetainedFile,
+        original_fd: FD,
     }
     // SAFETY: results are plain data / owned buffers / WTF strings built off
     // thread for hand-off (`ret::*`); `ThreadIsolated<A>` is Send by its contract.
@@ -1553,7 +1552,7 @@ mod _async_tasks {
             use NodeFSFunctionEnum::{Read, ReadFile, Readv};
             cfg!(windows) && (Self::IS_WRITE || matches!(F, Read | ReadFile | Readv))
         };
-        const RUNS_IN_FINAL_WAIT: bool =
+        const SHOULD_RUN_DURING_TEARDOWN: bool =
             cfg!(windows) && (Self::IS_WRITE || matches!(F, NodeFSFunctionEnum::Close));
         const IS_FILE_IO: bool = {
             use NodeFSFunctionEnum::*;
@@ -1567,21 +1566,21 @@ mod _async_tasks {
             this: &mut Self,
             done: bun_jsc::Completion<Self>,
         ) -> Option<bun_jsc::Completion<Self>> {
-            this.result = this.call();
+            this.result = this.run_operation();
             #[cfg(windows)]
-            this.let_go();
+            this.release_guards();
             Some(done)
         }
 
         #[cfg(windows)]
         unsafe fn cancel(this: *mut Self) {
-            // A Worker waits for its writes, as in Node.js.
+            // Only main-thread shutdown cancels a write: a Worker waits for its writes, as in Node.js.
             let vm = VirtualMachine::get();
-            // SAFETY: fn contract. Nothing writes to the field.
-            if let Some(cancel) = unsafe { &(*this).cancel }
+            // SAFETY: fn contract; the field is not written after the job is created.
+            if let Some(cancel_token) = unsafe { &(*this).cancel_token }
                 && (!Self::IS_WRITE || vm.is_shutting_down() && vm.is_main_thread.get())
             {
-                cancel.cancel();
+                cancel_token.cancel();
             }
         }
 
@@ -1638,20 +1637,21 @@ mod _async_tasks {
             matches!(F, AppendFile | Write | WriteFile | Writev)
         };
 
-        fn call(&self) -> Maybe<R> {
-            let call =
+        fn run_operation(&self) -> Maybe<R> {
+            let dispatch =
                 || NodeFS::dispatch::<R, A, F>(&mut NodeFS::default(), &self.args, Flavor::Async);
             #[cfg(windows)]
-            if let Some(cancel) = &self.cancel {
+            if let Some(cancel_token) = &self.cancel_token {
                 let tag = if Self::IS_WRITE {
                     sys::Tag::write
                 } else {
                     sys::Tag::read
                 };
-                return (cancel.run(call))
+                return cancel_token
+                    .run(dispatch)
                     .unwrap_or_else(|| Err(sys::Error::from_code(E::ECANCELED, tag)));
             }
-            call()
+            dispatch()
         }
 
         /// `callback`: the `node:fs` callback to call with the result. `None` returns a promise.
@@ -1671,9 +1671,9 @@ mod _async_tasks {
                 // may be niche-optimised; never construct an all-zero `Result`.
                 result: Err(sys::Error::default()),
                 #[cfg(windows)]
-                cancel: None,
+                cancel_token: None,
                 #[cfg(windows)]
-                held: Held::default(),
+                guards: IoGuards::default(),
             };
             let js = AsyncFSJs {
                 completion,
@@ -1690,40 +1690,41 @@ mod _async_tasks {
 
         #[cfg(windows)]
         fn start(mut self, cx: &bun_jsc::JsThread<'_>, js: AsyncFSJs) {
-            let Some(fd) = self.args.descriptor() else {
+            let Some(fd) = self.args.fd_mut() else {
                 let port = cx.vm().uws_loop().port();
-                self.held._pending_write = Self::IS_WRITE.then(|| port.pending_write());
+                self.guards._pending_write = Self::IS_WRITE.then(|| port.add_pending_write());
                 return bun_jsc::Job::<Self>::schedule(cx, self, js);
             };
-            let mut key = Key::descriptor(*fd);
-            if let Some(pinned) = windows::pinned(*fd) {
-                *fd = pinned;
+            let mut key = Key::from_fd(*fd);
+            if let Some(pinned_fd) = windows::pin_fd_generation(*fd) {
+                *fd = pinned_fd;
             } else if !<Self as bun_jsc::JobContext>::CANCELLABLE {
-                // What reads or writes the device keeps it open.
+                // Not ordered: in-flight device reads and writes retain the file themselves.
                 return bun_jsc::Job::<Self>::schedule(cx, self, js);
             } else {
                 if !Self::IS_WRITE {
-                    key = Key::device_input(*fd);
+                    key = Key::from_device_input(*fd);
                 }
-                let file = KeptOpen::new(*fd);
-                let shown = core::mem::replace(fd, file.fd());
-                self.held.device = Some(Device { file, shown });
-                self.cancel = Some(Cancel::default());
+                let file = RetainedFile::new(*fd);
+                let original_fd = core::mem::replace(fd, file.fd());
+                self.guards.device = Some(Device { file, original_fd });
+                self.cancel_token = Some(CancelToken::default());
             }
-            Turn::after_earlier(cx, key, Self::IS_WRITE, |turn| {
-                let can_block = self.held.device.is_some();
-                self.held._turn = Some(turn);
-                bun_jsc::Job::<Self>::create(cx, self, js).for_device_if(can_block)
+            io_order::OrderGuard::enqueue_job(cx, key, Self::IS_WRITE, |order_guard| {
+                let can_block = self.guards.device.is_some();
+                self.guards._order_guard = Some(order_guard);
+                bun_jsc::Job::<Self>::create(cx, self, js).use_device_pool(can_block)
             });
         }
 
         #[cfg(windows)]
-        fn let_go(&mut self) {
-            let held = core::mem::take(&mut self.held);
-            if let (Some(device), Err(err)) = (&held.device, &mut self.result)
+        fn release_guards(&mut self) {
+            let guards = core::mem::take(&mut self.guards);
+            if let Some(device) = &guards.device
+                && let Err(err) = &mut self.result
                 && err.fd == device.file.fd()
             {
-                err.fd = device.shown;
+                err.fd = device.original_fd;
             }
         }
     }
@@ -5704,10 +5705,10 @@ impl NodeFS {
 
         let mut name = template();
         #[cfg(windows)]
-        let made = windows::mkdtemp(&mut name, bun_boringssl_sys::rand_bytes);
+        let result = windows::mkdtemp(&mut name, bun_boringssl_sys::rand_bytes);
         #[cfg(not(windows))]
-        let made = sys::mkdtemp(&mut name);
-        match made {
+        let result = sys::mkdtemp(&mut name);
+        match result {
             Ok(name) => Ok(encode_path_result(name, args.encoding)),
             // As Node, whose async forms name what libc tried.
             Err(err) if flavor == Flavor::Sync || cfg!(windows) => {
@@ -7298,14 +7299,14 @@ impl NodeFS {
                 paths::to_native_in_place(target.as_mut_slice());
                 &target
             };
-            let create = match resolved_link_type {
+            let create_link = match resolved_link_type {
                 ResolvedLinkType::File => sys::symlink,
-                ResolvedLinkType::Dir => windows::symlink_directory,
-                ResolvedLinkType::Junction => windows::junction,
+                ResolvedLinkType::Dir => windows::symlink_dir,
+                ResolvedLinkType::Junction => windows::create_junction,
             };
-            return create(processed_target, args.new_path.slice_z(&mut to_buf)).map_err(|err| {
-                err.with_path_dest(args.target_path.slice(), args.new_path.slice())
-            });
+            return create_link(processed_target, args.new_path.slice_z(&mut to_buf)).map_err(
+                |err| err.with_path_dest(args.target_path.slice(), args.new_path.slice()),
+            );
         }
         #[cfg(not(windows))]
         match sys::symlink(
@@ -8162,7 +8163,7 @@ impl NodeFS {
                 let is_dir = stat_ & windows::FILE_ATTRIBUTE_DIRECTORY != 0;
                 // `symlink_w`/`symlink_or_junction` (not raw `CreateSymbolicLinkW`)
                 // so unprivileged creation is requested. UNC targets skip the junction
-                // fallback: a junction cannot lead to a share.
+                // fallback: a junction cannot target a network share.
                 let link_result = if is_dir && !is_unc {
                     sys::symlink_or_junction(&path_to_show(dest), &path_to_show(target), None)
                 } else {

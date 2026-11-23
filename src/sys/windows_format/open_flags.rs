@@ -1,15 +1,15 @@
-//! What the flags of `open` ask of `NtCreateFile`.
+//! Translates `open` flags into `NtCreateFile` parameters.
 
 use crate::{Mode, O};
 
-/// Only JavaScript can ask for these two.
+// Only `from_uv` sets these two.
 const WRITE_THROUGH: i32 = 0o10000;
 const DIRECT: i32 = 0o40000;
 
-/// A hint for the cache.
+/// Cache hint for sequential access.
 pub const SEQUENTIAL: i32 = 0o100000;
 
-/// The numbers of `fs.constants`.
+/// The values of `fs.constants` and the flags they map to.
 const UV_FLAGS: [(i32, i32); 9] = [
     (0x0001, O::WRONLY),
     (0x0002, O::RDWR),
@@ -22,15 +22,15 @@ const UV_FLAGS: [(i32, i32); 9] = [
     (0x0800_0000, WRITE_THROUGH),
 ];
 
-/// Drops the flags that have no effect.
+/// Drops flags that have no effect.
 pub fn from_uv(flags: i32) -> i32 {
-    let set = UV_FLAGS.iter().filter(|(uv, _)| flags & uv != 0);
-    set.fold(0, |all, (_, ours)| all | ours)
+    let matching = UV_FLAGS.iter().filter(|(uv_flag, _)| flags & uv_flag != 0);
+    matching.fold(0, |result, (_, flag)| result | flag)
 }
 
 pub fn to_uv(flags: i32) -> i32 {
-    let set = UV_FLAGS.iter().filter(|(_, ours)| flags & ours != 0);
-    set.fold(0, |all, (uv, _)| all | uv)
+    let matching = UV_FLAGS.iter().filter(|(_, flag)| flags & flag != 0);
+    matching.fold(0, |result, (uv_flag, _)| result | uv_flag)
 }
 
 const FILE_WRITE_DATA: u32 = 0x0002;
@@ -56,17 +56,17 @@ const FILE_ATTRIBUTE_READONLY: u32 = 0x0001;
 const FILE_ATTRIBUTE_NORMAL: u32 = 0x0080;
 
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) struct Create {
+pub(crate) struct CreateParams {
     pub(crate) access: u32,
     pub(crate) disposition: u32,
     pub(crate) options: u32,
     pub(crate) attributes: u32,
-    /// The caller sets the size to 0 behind the open.
-    pub(crate) truncate: bool,
+    /// The caller truncates the file after opening it.
+    pub(crate) should_truncate: bool,
 }
 
-/// `mode` is without the bits of the umask. `None` if the flags do not go together.
-pub(crate) fn translate(flags: i32, mode: Mode) -> Option<Create> {
+/// `mode` already has the umask applied. `None` for an invalid combination of flags.
+pub(crate) fn translate(flags: i32, mode: Mode) -> Option<CreateParams> {
     let has = |flag| flags & flag != 0;
     let mut access = match (has(O::WRONLY), has(O::RDWR)) {
         (false, false) => FILE_GENERIC_READ,
@@ -88,8 +88,8 @@ pub(crate) fn translate(flags: i32, mode: Mode) -> Option<Create> {
             FILE_CREATE
         }
     };
-    let truncate = has(O::TRUNC) && !has(O::CREAT);
-    if truncate {
+    let should_truncate = has(O::TRUNC) && !has(O::CREAT);
+    if should_truncate {
         if access & FILE_WRITE_DATA == 0 {
             return None;
         }
@@ -114,12 +114,12 @@ pub(crate) fn translate(flags: i32, mode: Mode) -> Option<Create> {
     if has(O::CREAT) && mode & 0o200 == 0 {
         attributes |= FILE_ATTRIBUTE_READONLY;
     }
-    Some(Create {
+    Some(CreateParams {
         access,
         disposition,
         options,
         attributes,
-        truncate,
+        should_truncate,
     })
 }
 
@@ -128,7 +128,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn maps_the_numbers_of_node() {
+    fn converts_to_and_from_uv_flags() {
         let flags = O::RDWR | O::CREAT | O::EXCL | O::TRUNC | O::APPEND;
         assert_eq!(from_uv(0x70A), flags);
         assert_eq!(to_uv(flags), 0x70A);
@@ -137,7 +137,7 @@ mod tests {
 
     #[test]
     fn translates_flags() {
-        for (uv, access, disposition, options) in [
+        for (uv_flags, access, disposition, options) in [
             (0x000, 0x12_0089, 1, 0x4020),
             (0x400, 0x12_0089, 1, 0x4020),
             (0x002, 0x12_019F, 1, 0x4020),
@@ -151,17 +151,17 @@ mod tests {
             (0x0400_0001, 0x12_0196, 1, 0x4022),
             (0x0C00_0001, 0x12_0196, 1, 0x4022),
         ] {
-            let expected = Create {
+            let expected = CreateParams {
                 access,
                 disposition,
                 options,
                 attributes: 0x80,
-                truncate: uv == 0x201,
+                should_truncate: uv_flags == 0x201,
             };
-            assert_eq!(translate(from_uv(uv), 0o644), Some(expected));
+            assert_eq!(translate(from_uv(uv_flags), 0o644), Some(expected));
         }
-        for uv in [0x003, 0x200, 0x209, 0x0200_0009] {
-            assert_eq!(translate(from_uv(uv), 0o644), None);
+        for uv_flags in [0x003, 0x200, 0x209, 0x0200_0009] {
+            assert_eq!(translate(from_uv(uv_flags), 0o644), None);
         }
         assert_eq!(translate(SEQUENTIAL, 0).unwrap().options, 0x4024);
         assert_eq!(translate(O::CREAT, 0o444).unwrap().attributes, 0x81);

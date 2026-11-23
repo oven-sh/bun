@@ -355,13 +355,13 @@ const IS_UV_FS_COPYFILE_DISABLED =
     await gcTick();
   });
 
-  it("Bun.file lastModified after 2038", async () => {
+  it("Bun.file lastModified supports dates after 2038", async () => {
     using dir = tempDir("bun-file-lastmodified-2038", { file: "" });
     fs.utimesSync(path.join(String(dir), "file"), 2 ** 31 + 5, 2 ** 31 + 5);
     expect(Bun.file(path.join(String(dir), "file")).lastModified).toBe((2 ** 31 + 5) * 1000);
-    const read = Bun.file(path.join(String(dir), "file"));
-    await read.text();
-    expect(read.lastModified).toBe((2 ** 31 + 5) * 1000);
+    const file = Bun.file(path.join(String(dir), "file"));
+    await file.text();
+    expect(file.lastModified).toBe((2 ** 31 + 5) * 1000);
   });
 
   it("Bun.file as a Blob", async () => {
@@ -1691,15 +1691,15 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
       );
       expect(retry.bodyUsed).toBe(false);
       expect((await retry.arrayBuffer()).byteLength).toBe(CHUNK * COUNT);
-      const missing = join(String(dir), "missing", "c");
-      await expect(Bun.write(missing, await fetch(server.url), { createPath: false })).rejects.toThrow(
-        expect.objectContaining({ code: "ENOENT", path: missing }),
+      const missingPath = join(String(dir), "missing", "c");
+      await expect(Bun.write(missingPath, await fetch(server.url), { createPath: false })).rejects.toThrow(
+        expect.objectContaining({ code: "ENOENT", path: missingPath }),
       );
-      // A folder that cannot be made is what the error names.
+      // The error names the directory that could not be created.
       fs.writeFileSync(join(String(dir), "file"), "");
-      const below = join(String(dir), "file", "folder");
-      const failed = await Bun.write(join(below, "d"), await fetch(server.url)).catch(error => error);
-      expect(failed).toMatchObject(
+      const dirUnderFile = join(String(dir), "file", "subdir");
+      const mkdirError = await Bun.write(join(dirUnderFile, "d"), await fetch(server.url)).catch(error => error);
+      expect(mkdirError).toMatchObject(
         isWindows ? { code: "ENOTDIR", syscall: "mkdir", path: expect.not.stringMatching(/d$/) } : { code: "ENOTDIR" },
       );
     });
@@ -1765,11 +1765,11 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
     ["a string written to a read-only file descriptor", `Bun.write(Bun.file(fs.openSync(file, "r")), "x")`, "EBADF"],
     [
       "a stream written to a read-only file descriptor",
-      `Bun.write(Bun.file(fs.openSync(file, "r")), new ReadableStream({ pull: c => (c.enqueue(new Uint8Array(1)), c.close()) }))`,
+      `Bun.write(Bun.file(fs.openSync(file, "r")), new ReadableStream({ pull(c) { c.enqueue(new Uint8Array(1)); c.close(); } }))`,
       "EBADF",
     ],
     [
-      "the output of a child written to a read-only file descriptor",
+      "a subprocess's stdout written to a read-only file descriptor",
       `Bun.write(Bun.file(fs.openSync(file, "r")), Bun.spawn([process.execPath, "--version"]).stdout)`,
       "EBADF",
     ],
@@ -1826,32 +1826,32 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
 });
 
 // A directory cannot be renamed on Windows while a file in it is open.
-describe.skipIf(!isWindows || IS_UV_FS_COPYFILE_DISABLED)("a file is closed soon while other threads compute", () => {
+describe.skipIf(!isWindows || IS_UV_FS_COPYFILE_DISABLED)("closes the file while the work pool is saturated", () => {
   it.each([
     ["Bun.write()", `await Bun.write(file, "abc")`],
     ["text()", `await Bun.file(file).text()`],
     ["stream()", `for await (const _ of Bun.file(file).stream());`],
     ["writer()", `const sink = Bun.file(file).writer(); sink.write("x"); await sink.end()`],
     [
-      "a Response",
+      "Response",
       `using server = Bun.serve({ port: 0, fetch: () => new Response(Bun.file(file)) }); await (await fetch(server.url)).text()`,
     ],
-    ["a redirect of the shell", "await Bun.$\\`echo hi > \\${file}\\`".replaceAll("\\", "")],
-    ["a FileHandle", `await (await fs.promises.open(file)).close()`],
+    ["shell redirect", "await Bun.$`echo hi > ${file}`"],
+    ["FileHandle", `await (await fs.promises.open(file)).close()`],
     ["createReadStream()", `for await (const _ of fs.createReadStream(file));`],
-  ])("%s", async (_, use) => {
-    using dir = tempDir("closed-soon", { "d/f": "hello" });
+  ])("%s", async (_, operation) => {
+    using dir = tempDir("bun-write-close-busy-pool", { "subdir/file": "hello" });
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
         `import fs from "fs";
-         const file = "d/f";
-         let finished = 0;
-         for (let i = 0; i < 4; i++) require("crypto").pbkdf2("a", "b", 2e7, 32, "sha256", () => finished++);
-         { ${use} }
-         for (;;) { try { fs.renameSync("d", "e"); break; } catch { await Bun.sleep(1); } }
-         console.log(finished);
+         const file = "subdir/file";
+         let completedCount = 0;
+         for (let i = 0; i < 4; i++) require("crypto").pbkdf2("a", "b", 2e7, 32, "sha256", () => completedCount++);
+         { ${operation} }
+         for (;;) { try { fs.renameSync("subdir", "renamed"); break; } catch { await Bun.sleep(1); } }
+         console.log(completedCount);
          process.reallyExit(0);`,
       ],
       cwd: String(dir),

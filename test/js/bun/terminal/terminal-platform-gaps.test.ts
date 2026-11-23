@@ -279,7 +279,7 @@ describe("Bun.Terminal platform behaviour", () => {
   // resize
   // ──────────────────────────────────────────────────────────────────────────
 
-  // ConPTY has no window to watch, and only tells a reader of its input about a new size.
+  // ConPTY has no window to watch and reports a resize only to a process that reads console input.
   test.todoIf(isWindows)("SAME: resize while child is running fires SIGWINCH in child", async () => {
     const { output } = await runInTerminal(
       `process.on('SIGWINCH', () => setImmediate(() => {

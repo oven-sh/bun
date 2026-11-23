@@ -1,4 +1,4 @@
-//! The jobs behind `Bun.file()` and `Bun.write()`.
+//! Windows file jobs for `Bun.file()` and `Bun.write()`.
 
 mod blocking;
 mod copy_file;

@@ -3,11 +3,11 @@ import { bunEnv, bunExe, isDebug, isLinux, isWindows, tempDir } from "harness";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
-// When reading cannot start on a subprocess's stdout/stderr pipe, the error goes
+// When a subprocess's stdout/stderr reader fails to start, the error goes
 // through on_read_result (as a register_poll failure does on POSIX), so the pipe
 // is torn down and detached from the Subprocess before the exit callback runs.
 //
-// JS cannot make that fail on a freshly-spawned stdio pipe, so this uses a
+// JS cannot trigger that failure on a freshly spawned stdio pipe, so this uses a
 // debug-only fault-injection env var.
 
 test.skipIf(!isWindows || !isDebug)(
@@ -50,7 +50,7 @@ try {
   },
 );
 
-test.skipIf(!isWindows || !isDebug)("spawn: a child whose IPC channel cannot start is ended (windows)", async () => {
+test.skipIf(!isWindows || !isDebug)("spawn: kills the child if its IPC channel fails to start (windows)", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -626,6 +626,21 @@ test.skipIf(!isLinux || !cc)(
   },
 );
 
+test.skipIf(!isLinux || !cc)("child_process emits error, exit and close when the pidfd fails to register", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const child = require("child_process").spawn("sleep", ["30"]);
+       for (const event of ["error", "exit", "close"]) child.on(event, () => console.log(event));`,
+    ],
+    env: { ...bunEnv, FAIL_EPOLL_CTL: "pidfd-add", LD_PRELOAD: join(String(dir), "shim.so") },
+    stderr: "inherit",
+  });
+  expect(await proc.stdout.text()).toBe("error\nexit\nclose\n");
+  expect(await proc.exited).toBe(0);
+});
+
 // The shell did not finish a command whose exit came with an error, and left one it gave up on starting to its SIGTERM
 // and unreaped.
 describe.skipIf(!isLinux || !cc)("a shell command is ended, reaped and finished", () => {
@@ -639,21 +654,6 @@ describe.skipIf(!isLinux || !cc)("a shell command is ended, reaped and finished"
       exitCode: 0,
     });
   });
-});
-
-test.skipIf(!isLinux || !cc)("child_process closes a child whose pidfd fails to register", async () => {
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `const child = require("child_process").spawn("sleep", ["30"]);
-       for (const event of ["error", "exit", "close"]) child.on(event, () => console.log(event));`,
-    ],
-    env: { ...bunEnv, FAIL_EPOLL_CTL: "pidfd-add", LD_PRELOAD: join(String(dir), "shim.so") },
-    stderr: "inherit",
-  });
-  expect(await proc.stdout.text()).toBe("error\nexit\nclose\n");
-  expect(await proc.exited).toBe(0);
 });
 
 // The same goes for what the CLI runs: it reported the script as failed and exited, and the script ran on.

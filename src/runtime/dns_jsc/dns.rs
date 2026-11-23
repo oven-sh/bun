@@ -92,7 +92,7 @@ const CARES_TIMEOUT_CHECK_INTERVAL_MS: i64 = 1000;
 pub(crate) mod dns_sd;
 
 // ──────────────────────────────────────────────────────────────────────────
-// resolver_pool (Windows): the threads that wait for the resolver.
+// resolver_pool (Windows): threads that block in getaddrinfo.
 // ──────────────────────────────────────────────────────────────────────────
 
 #[cfg(windows)]
@@ -101,13 +101,13 @@ mod resolver_pool {
 
     use bun_threading::fifo_pool::{Config, FifoPool};
 
-    pub(super) static FOR_SCRIPT: LazyLock<FifoPool> = LazyLock::new(|| {
+    pub(super) static SCRIPT_POOL: LazyLock<FifoPool> = LazyLock::new(|| {
         FifoPool::new(Config {
-            has_new_threads: true,
+            has_warmup: true,
             ..config()
         })
     });
-    pub(super) static FOR_SOCKETS: LazyLock<FifoPool> = LazyLock::new(|| FifoPool::new(config()));
+    pub(super) static SOCKET_POOL: LazyLock<FifoPool> = LazyLock::new(|| FifoPool::new(config()));
 
     fn config() -> Config {
         Config {
@@ -115,7 +115,7 @@ mod resolver_pool {
             max_threads: bun_core::get_thread_count().max(4).into(),
             stack_size: 1024 * 1024,
             on_thread_start: bun_core::Output::Source::configure_thread_no_js,
-            has_new_threads: false,
+            has_warmup: false,
         }
     }
 }
@@ -164,22 +164,22 @@ mod lib_c {
             &global.js_thread(this.vm().root_context()),
             LibcLookup {
                 #[cfg(windows)]
-                answer: Answer::ask(query),
+                state: LookupState::start(query),
                 #[cfg(not(windows))]
                 backend: LibcBackend::Query(query),
             },
             LibcRequest(Some(pending)),
         );
         #[cfg(windows)]
-        job.run_here();
+        job.run_inline();
         #[cfg(not(windows))]
-        job.start();
+        job.schedule();
     }
 
-    /// The blocking `getaddrinfo` of one libc-backend lookup. On Windows the job only waits for the `resolver_pool`.
+    /// The blocking `getaddrinfo` of one libc-backend lookup. On Windows the job only delivers the result from `resolver_pool`.
     struct LibcLookup {
         #[cfg(windows)]
-        answer: Arc<Guarded<Answer>>,
+        state: Arc<Guarded<LookupState>>,
         #[cfg(not(windows))]
         backend: LibcBackend,
     }
@@ -206,11 +206,11 @@ mod lib_c {
         ) -> Option<bun_jsc::Completion<Self>> {
             #[cfg(windows)]
             {
-                // The job can be gone before the lock is released.
-                let answer = Arc::clone(&this.answer);
-                match &mut *answer.lock() {
-                    Answer::Pending(waiting) => waiting.replace(done),
-                    Answer::Settled(_) => Some(done),
+                // The guard must not borrow the job, which can be freed once `done` is handed over.
+                let state = Arc::clone(&this.state);
+                match &mut *state.lock() {
+                    LookupState::Pending(completion) => completion.replace(done),
+                    LookupState::Completed(_) => Some(done),
                 }
             }
             #[cfg(not(windows))]
@@ -227,9 +227,9 @@ mod lib_c {
             bun_output::scoped_log!(DNSLookup, "then");
             let query = request.0.take().expect("query");
             #[cfg(windows)]
-            let result = match &mut *this.answer.lock() {
-                Answer::Settled(result) => core::mem::replace(result, Err(0)),
-                Answer::Pending(_) => unreachable!(),
+            let result = match &mut *this.state.lock() {
+                LookupState::Completed(result) => core::mem::replace(result, Err(0)),
+                LookupState::Pending(_) => unreachable!(),
             };
             #[cfg(not(windows))]
             let result = match this.backend {
@@ -240,64 +240,66 @@ mod lib_c {
             query.complete_native(result);
             Ok(())
         }
-        /// The VM does not wait for the resolver.
+        /// Completes the job without waiting for `getaddrinfo` to return.
         #[cfg(windows)]
         unsafe fn cancel(this: *mut Self) {
-            // SAFETY: fn contract. Nothing writes to the field.
-            let answer = unsafe { &(*this).answer };
-            Answer::settle(answer, Err(bun_sys::windows::ws2_32::WSA_E_CANCELLED));
+            // SAFETY: fn contract; the field is not written after the job is created.
+            let state = unsafe { &(*this).state };
+            LookupState::complete(state, Err(bun_sys::windows::ws2_32::WSA_E_CANCELLED));
         }
     }
 
-    /// Shared by the job and the thread that asks the resolver.
+    /// Shared by the job and the `resolver_pool` thread.
     #[cfg(windows)]
-    enum Answer {
+    enum LookupState {
         /// `None` until the job has run.
         Pending(Option<bun_jsc::Completion<LibcLookup>>),
-        Settled(Result<GetAddrInfoResultList, i32>),
+        Completed(Result<GetAddrInfoResultList, i32>),
     }
 
     #[cfg(windows)]
-    impl Answer {
-        fn ask(query: GetAddrInfo) -> Arc<Guarded<Self>> {
-            let answer = Arc::new(Guarded::new(Self::Pending(None)));
-            let this = Arc::clone(&answer);
-            let is_answer = (bun_core::ip_address::parse_strict(&query.name)).is_some_and(|ip| {
-                let other = if ip.is_ipv4() {
+    impl LookupState {
+        fn start(query: GetAddrInfo) -> Arc<Guarded<Self>> {
+            let state = Arc::new(Guarded::new(Self::Pending(None)));
+            let this = Arc::clone(&state);
+            let ip_literal = bun_core::ip_address::parse_strict(&query.name);
+            let can_resolve_inline = ip_literal.is_some_and(|ip| {
+                let other_family = if ip.is_ipv4() {
                     bun_dns::Family::Inet6
                 } else {
                     bun_dns::Family::Inet
                 };
-                query.options.family != other
+                query.options.family != other_family
             });
-            let ask = move || {
-                if matches!(*this.lock(), Self::Settled(_)) {
+            let resolve = move || {
+                if matches!(*this.lock(), Self::Completed(_)) {
                     return;
                 }
                 let mut port_buf = [0u8; 5];
                 let port = bun_fmt::int_as_bytes(&mut port_buf, query.port);
                 let hints = query.options.to_libc();
                 let result = AddrInfoList::lookup(Some(&query.name), Some(port), hints.as_ref());
-                Self::settle(&this, result.map(|list| bun_dns::to_result_list(&list)));
+                Self::complete(&this, result.map(|list| bun_dns::to_result_list(&list)));
             };
-            match is_answer {
-                true => ask(),
-                false => resolver_pool::FOR_SCRIPT.go(ask),
+            if can_resolve_inline {
+                resolve();
+            } else {
+                resolver_pool::SCRIPT_POOL.go(resolve);
             }
-            answer
+            state
         }
 
-        /// Only the first call counts.
-        fn settle(this: &Guarded<Self>, result: Result<GetAddrInfoResultList, i32>) {
-            let mut answer = this.lock();
-            let Self::Pending(waiting) = &mut *answer else {
+        /// Only the first call has an effect.
+        fn complete(this: &Guarded<Self>, result: Result<GetAddrInfoResultList, i32>) {
+            let mut state = this.lock();
+            let Self::Pending(completion) = &mut *state else {
                 return;
             };
-            let waiting = waiting.take();
-            *answer = Self::Settled(result);
-            drop(answer);
-            if let Some(done) = waiting {
-                done.finish();
+            let completion = completion.take();
+            *state = Self::Completed(result);
+            drop(state);
+            if let Some(completion) = completion {
+                completion.finish();
             }
         }
     }
@@ -1161,7 +1163,8 @@ pub(crate) mod internal {
             let mut hints: AddrInfo = bun_core::ffi::zeroed();
             hints.ai_family = netc::AF_UNSPEC;
             hints.ai_socktype = netc::SOCK_STREAM;
-            let (host, service) = (host.map(ZStr::as_bytes), service.map(ZStr::as_bytes));
+            let host = host.map(ZStr::as_bytes);
+            let service = service.map(ZStr::as_bytes);
             AddrInfoList::lookup(host, service, Some(&hints))
         };
         #[cfg(not(windows))]
@@ -1372,9 +1375,9 @@ pub(crate) mod internal {
         is_cache_hit: Option<&mut bool>,
     ) -> Option<Arc<Request>> {
         #[cfg(windows)]
-        let ascii = host.and_then(bun_dns::to_ascii);
+        let ascii_host = host.and_then(bun_dns::to_ascii);
         #[cfg(windows)]
-        let host = ascii.as_deref().or(host);
+        let host = ascii_host.as_deref().or(host);
         let key = RequestKey::init(host, port);
 
         let mut guard = global_cache().lock();
@@ -1480,7 +1483,7 @@ pub(crate) mod internal {
     /// finished (see `SharedConnection::close_for_terminate`).
     pub(super) fn run_on_work_pool(req: Arc<Request>) {
         #[cfg(windows)]
-        resolver_pool::FOR_SOCKETS.go(move || work_pool_callback(req));
+        resolver_pool::SOCKET_POOL.go(move || work_pool_callback(req));
         #[cfg(not(windows))]
         let _ = bun_threading::work_pool::WorkPool::go(req, work_pool_callback);
     }
@@ -1595,7 +1598,7 @@ pub(crate) mod internal {
 // ──────────────────────────────────────────────────────────────────────────
 
 #[cfg(windows)]
-type PollType = (bun_iocp::SocketWatch, bun_iocp::Hold);
+type PollType = (bun_iocp::SocketRegistration, bun_iocp::LoopRef);
 #[cfg(not(windows))]
 type PollType = bun_io::OwnedFilePoll;
 
@@ -1857,34 +1860,41 @@ impl c_ares::ChannelContainer for Resolver {
         #[cfg(windows)]
         self.polls.with_mut(|polls| {
             use bun_collections::array_hash_map::MapEntry;
-            use bun_iocp::{Hold, Readiness, SocketWatch, Watcher};
-            const READ: Readiness =
-                (Readiness::RECEIVE.union(Readiness::DISCONNECT)).union(Readiness::ABORT);
+            use bun_iocp::{LoopRef, Readiness, ReadinessHandler, SocketRegistration};
+            const READ: Readiness = Readiness::RECEIVE
+                .union(Readiness::DISCONNECT)
+                .union(Readiness::ABORT);
             const WRITE: Readiness = Readiness::SEND.union(Readiness::CONNECT_FAIL);
 
-            let (watch, _) = match polls.entry(fd) {
+            let (registration, _) = match polls.entry(fd) {
                 MapEntry::Occupied(entry) => entry.into_mut(),
                 MapEntry::Vacant(entry) => {
                     let this = self.as_ctx_ptr();
-                    let watcher = Watcher::Callback(std::rc::Rc::new(move |ready: Readiness| {
-                        // An error counts as both: https://github.com/nodejs/node/blob/8a41d9b636be86350cd32847c3f89d327c4f6ff7/src/cares_wrap.cc#L93
-                        let has = |events| ready.intersects(events | Readiness::WATCH_FAILED);
-                        // SAFETY: the watch is in a field of `this`.
-                        unsafe { RefPtr::init_ref(this) }.on_dns_poll(fd, has(READ), has(WRITE));
-                    }));
+                    let handler =
+                        ReadinessHandler::Callback(std::rc::Rc::new(move |ready: Readiness| {
+                            // An error counts as both: https://github.com/nodejs/node/blob/8a41d9b636be86350cd32847c3f89d327c4f6ff7/src/cares_wrap.cc#L93
+                            let is_ready =
+                                |events| ready.intersects(events | Readiness::POLL_FAILED);
+                            // SAFETY: `this` owns the registration in `polls`, so it is live when this runs.
+                            unsafe { RefPtr::init_ref(this) }.on_dns_poll(
+                                fd,
+                                is_ready(READ),
+                                is_ready(WRITE),
+                            );
+                        }));
                     let port = Loop::get().port();
-                    let Ok(watch) = SocketWatch::new(port, fd, watcher) else {
+                    let Ok(registration) = SocketRegistration::new(port, fd, handler) else {
                         return;
                     };
-                    let hold = Hold::new(port);
-                    hold.set(true);
-                    entry.insert((watch, hold))
+                    let loop_ref = LoopRef::new(port);
+                    loop_ref.set(true);
+                    entry.insert((registration, loop_ref))
                 }
             };
             let mut interest = Readiness::empty();
             interest.set(READ, readable);
             interest.set(WRITE, writable);
-            watch.set_interest(interest);
+            registration.set_interest(interest);
         });
         #[cfg(not(windows))]
         self.polls.with_mut(|polls| {
@@ -2130,9 +2140,9 @@ impl Resolver {
         context: bun_jsc::ContextId,
     ) -> JsResult<JSValue> {
         #[cfg(windows)]
-        let ascii = bun_dns::to_ascii(name);
+        let ascii_name = bun_dns::to_ascii(name);
         #[cfg(windows)]
-        let name = ascii.as_deref().unwrap_or(name);
+        let name = ascii_name.as_deref().unwrap_or(name);
         if !bun_dns::is_valid_hostname(name) {
             let promise = JSPromiseStrong::init(global_this);
             let promise_value = promise.value();
@@ -2161,7 +2171,7 @@ impl Resolver {
             return self.c_ares_lookup_with_normalized_name(&query, global_this, context);
         }
 
-        // The answer goes to the loop that asked first, and only its own turns while a macro runs.
+        // The result is posted to the loop of the first lookup, and only the macro loop ticks while a macro runs.
         let hash = query.hash() ^ self.vm().current_loop_kind() as u64;
         let kind = QueryKind::HostNative;
         let (promise, pending) =

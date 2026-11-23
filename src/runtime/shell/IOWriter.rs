@@ -365,7 +365,7 @@ impl IOWriter {
             // Set before the fallible `__start` so a later enqueue does not
             // retry it.
             s.started = true;
-            // A first write that is refused runs the children, which may drop every other `Rc`.
+            // A first write that fails synchronously runs the children, which may drop every other `Rc`.
             #[cfg(windows)]
             let _keepalive = self.keepalive();
             if let Err(e) = self.__start() {
@@ -407,7 +407,8 @@ impl IOWriter {
             if self.writer.is_watching() {
                 return WriteOutcome::Suspended;
             }
-            let (file, pollable) = (MaybeOwnedFile::Borrowed(s.file.fd()), s.flags.pollable);
+            let file = MaybeOwnedFile::Borrowed(s.file.fd());
+            let pollable = s.flags.pollable;
             if let Err(e) = self.writer.start(self, self.io_evtloop(), file, pollable) {
                 return WriteOutcome::Failed(e);
             }

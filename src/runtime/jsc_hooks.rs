@@ -738,7 +738,7 @@ fn auto_tick(vm: &VirtualMachine) {
     // ── tick_immediate_tasks ────────────────────────────────────────────
     // After this call `immediate_tasks` reflects next-tick immediates, so
     // the `has_pending_immediate` read below is correct.
-    let ran_immediates = el.immediate_task_count() > 0;
+    let did_run_immediates = el.immediate_task_count() > 0;
     el.tick_immediate_tasks();
     let has_yielded_tasks = el.promote_yield_tasks();
 
@@ -782,9 +782,9 @@ fn auto_tick(vm: &VirtualMachine) {
         // `tickImmediateTasks` swaps `next_immediate_tasks` in, so this
         // reflects next-tick immediates (queued during the drain above).
         // A started idle handle keeps the poll from blocking, like in libuv.
-        // What the caller waits for may have happened in an immediate.
+        // An immediate that just ran may have satisfied the condition the caller waits on.
         let has_pending_immediate = has_yielded_tasks
-            || ran_immediates
+            || did_run_immediates
             || uv_idle_started
             || el.immediate_task_count() > 0
             || el.has_pending_tasks();

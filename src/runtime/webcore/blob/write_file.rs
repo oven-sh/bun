@@ -3,16 +3,17 @@ use core::ptr::NonNull;
 
 use bun_jsc::node_path::PathOrFileDescriptor;
 use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue, SystemError};
+#[cfg(not(windows))]
+use bun_ptr::RefPtr;
+#[cfg(not(windows))]
+use bun_sys::{self as sys, Fd};
 
+#[cfg(not(windows))]
+use crate::webcore::blob::Store;
+#[cfg(not(windows))]
+use crate::webcore::blob::fd_job::{self, FdJob, FdOp, Interest, JobFd, Step};
 use crate::webcore::blob::{self, Blob, SizeType};
 use crate::webcore::body;
-#[cfg(not(windows))]
-use {
-    crate::webcore::blob::Store,
-    crate::webcore::blob::fd_job::{self, FdJob, FdOp, Interest, JobFd, Step},
-    bun_ptr::RefPtr,
-    bun_sys::{self as sys, Fd},
-};
 
 #[cfg(windows)]
 pub(crate) use super::windows::WriteFile;

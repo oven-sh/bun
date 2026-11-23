@@ -1119,6 +1119,7 @@ dependencies = [
  "bun_http_types",
  "bun_install",
  "bun_io",
+ "bun_iocp",
  "bun_js_parser",
  "bun_js_printer",
  "bun_jsc_macros",

@@ -67,7 +67,7 @@ pub(crate) struct FSWatcher {
 
     /// The JS wrapper holds one ref, and so does each task queued for the JS thread.
     ref_count: ThreadSafeRefCount<FSWatcher>,
-    /// What the next task delivers. Under the lock of `PathWatcherManager`.
+    /// What the next task delivers. On POSIX, under the lock of `PathWatcherManager`.
     pending_events: JsCell<Events>,
 
     /// Armed until `detach()`: the watcher closes with the context that started it.
@@ -219,7 +219,7 @@ pub(crate) enum Event {
     /// `Change` when the OS event queue overflowed and changes were lost.
     #[cfg(not(any(target_os = "macos", target_os = "freebsd")))]
     NoFilename(WatchEventKind),
-    /// It ends the watch of a directory, as in libuv 1.53: https://github.com/libuv/libuv/pull/5013
+    /// Deleting the watched directory ends the watch, as in libuv 1.53: https://github.com/libuv/libuv/pull/5013
     #[cfg(windows)]
     Deleted(bun_sys::E),
     Abort,
@@ -502,7 +502,7 @@ impl FSWatcher {
         self.close();
     }
 
-    /// As with an abort, the error is not thrown if nothing listens for it.
+    /// Reported like an abort: not thrown when there is no 'error' listener.
     #[cfg(windows)]
     fn emit_deleted(self: &RefPtr<Self>, errno: bun_sys::E) {
         if !self.closed.get() {
@@ -714,7 +714,7 @@ impl FSWatcher {
         };
         let cwd = bun_resolver::fs::FileSystem::get().top_level_dir();
         let mut file_path = bun_paths::Path::resolve(&[cwd, slice]);
-        // Windows has no use for one.
+        // The Windows backend does not need the trailing separator.
         if cfg!(not(windows)) {
             file_path.copy_trailing_sep_from(slice);
         }

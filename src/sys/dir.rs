@@ -325,7 +325,7 @@ impl Dir {
 
     /// `symlinkat(target, self.fd, link)`. The
     /// `is_directory` flag is a no-op on POSIX;
-    /// on Windows callers use `windows::junction` instead.
+    /// on Windows callers use `windows::create_junction` instead.
     pub fn sym_link(&self, target: &[u8], link_name: &[u8], _is_directory: bool) -> Maybe<()> {
         let target = Path::from(target);
         let link_name = Path::from(link_name);

@@ -8,7 +8,7 @@ use bun_threading::SignalRing;
 
 const BUFFER_SIZE: usize = 8192;
 
-/// Signal numbers queued on any thread for the main loop, by signal handlers and by the events of a Windows console.
+/// Signal numbers queued for the main loop by signal handlers and Windows console events, on any thread.
 #[derive(Default)]
 pub struct PosixSignalHandle {
     ring: SignalRing<BUFFER_SIZE>,
@@ -29,15 +29,15 @@ impl PosixSignalHandle {
     /// Called by the main thread, the ring's single consumer.
     pub(crate) fn drain(&self, event_loop: &EventLoop) {
         #[cfg(windows)]
-        let mut seen = 0u32;
+        let mut seen_mask = 0u32;
         while let Some(signal) = self.ring.dequeue() {
-            // As in Node.js, the events of a console are not counted.
+            // Repeated console events coalesce into one signal, as in Node.js.
             #[cfg(windows)]
             {
-                if seen & 1 << signal != 0 {
+                if seen_mask & (1 << signal) != 0 {
                     continue;
                 }
-                seen |= 1 << signal;
+                seen_mask |= 1 << signal;
             }
             // `Task` is a plain `{ tag, ptr }` pair (no bitfield packing), so build it
             // directly — `bun_runtime::dispatch::run_task` unpacks `task.ptr as usize as u8`.

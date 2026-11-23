@@ -513,7 +513,7 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
     if (will_idle_inside_event_loop && loop->data.jsc_vm)
         Bun__JSC_onBeforeWait(loop->data.jsc_vm, &released_heap_access);
 
-    /* After the last thing that can change a poll. */
+    /* Must come after everything that can change a poll. */
     if (us_internal_loop_prepare_wait(loop))
         will_idle_inside_event_loop = 0;
 

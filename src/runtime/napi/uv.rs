@@ -10,7 +10,7 @@
 //!   `type` from it ([`UvHandle`], [`UvReq`]). Bun owns the fields after those.
 //! - Only `uv_async_send` and `uv_queue_work` work off the loop's JS thread. A handle is valid
 //!   until its `close_cb` has run, and a request until its `after_work_cb` has run.
-//! - A `uv_loop_t*` points to a [`UvLoop`]. Each VM has one. Only its `data` word is ABI.
+//! - A `uv_loop_t*` points to a [`UvLoop`]. Each VM has one. Only `data` (and `iocp` on Windows) is ABI.
 //! - `uv_async_send` sets the handle's `pending` flag and posts at most one
 //!   dispatch task per loop through the VM's [`VmHandle`], where libuv writes to an
 //!   eventfd. The task walks the loop's handles on the JS thread like `uv__async_io`.
@@ -92,14 +92,14 @@ const UV_WORK: c_uint = 7;
 // Same `flags` value as libuv (src/uv-common.h).
 const UV_HANDLE_CLOSING: c_uint = 0x01;
 
-/// `sizeof` and `offsetof` in the 64-bit headers, which uv-polyfills.c asserts too.
+/// `sizeof` and `offsetof` values of the 64-bit headers. uv-polyfills.c asserts the same values.
 mod layout {
     pub(super) const HANDLE_SIZE: usize = 96;
-    pub(super) const ASYNC_CB: usize = if cfg!(windows) { 208 } else { 96 };
+    pub(super) const ASYNC_CB_OFFSET: usize = if cfg!(windows) { 208 } else { 96 };
     pub(super) const ASYNC_SIZE: usize = if cfg!(windows) { 224 } else { 128 };
-    pub(super) const WATCHER_CB: usize = if cfg!(windows) { 112 } else { 96 };
+    pub(super) const WATCHER_CB_OFFSET: usize = if cfg!(windows) { 112 } else { 96 };
     pub(super) const WATCHER_SIZE: usize = 120;
-    pub(super) const TIMER_CB: usize = if cfg!(windows) { 152 } else { 96 };
+    pub(super) const TIMER_CB_OFFSET: usize = if cfg!(windows) { 152 } else { 96 };
     pub(super) const TIMER_SIZE: usize = if cfg!(windows) { 160 } else { 152 };
     pub(super) const REQ_SIZE: usize = if cfg!(windows) { 112 } else { 64 };
     pub(super) const WORK_SIZE: usize = if cfg!(windows) { 176 } else { 128 };
@@ -172,7 +172,7 @@ pub(crate) struct UvLoop {
     data: Cell<*mut c_void>,
     #[cfg(windows)]
     reserved: [usize; 6],
-    /// `uv_loop_t.iocp`. Some addons read it, and there is no port that they could use.
+    /// `uv_loop_t.iocp`, which some addons read. Always `INVALID_HANDLE_VALUE`.
     #[cfg(windows)]
     iocp: bun_sys::windows::HANDLE,
     shared: UvLoopShared,
@@ -240,7 +240,7 @@ impl<T> HandleList<T> {
     }
 
     /// SAFETY: same as [`Self::add`].
-    unsafe fn add_first(&self, handle: &HandleRef<'_, T>) {
+    unsafe fn prepend(&self, handle: &HandleRef<'_, T>) {
         self.listed
             .with_taken(|listed| listed.insert(0, handle.ptr));
     }
@@ -520,7 +520,7 @@ pub(crate) struct HandleFields<T> {
     loop_: NonNull<UvLoop>,
     type_: c_uint,
     close_cb: Cell<Option<UvCloseCb>>,
-    /// `ref_state` and `reserved` replace `handle_queue`, `u` and the link of the closing list.
+    /// `ref_state` and `reserved` replace `handle_queue`, `u` and `next_closing` (`endgame_next` on Windows).
     ref_state: RefState,
     reserved: [*mut c_void; 6],
     flags: Cell<c_uint>,
@@ -622,8 +622,8 @@ impl HandleRef<'_> {
         }
     }
 
-    /// For the functions that only use `flags` in libuv, so they also work on zeroed memory.
-    fn initialized(&self) -> Option<&HandleFields<()>> {
+    /// For the functions that libuv implements on `flags` alone, which accept a zeroed handle.
+    fn as_initialized(&self) -> Option<&HandleFields<()>> {
         self.downcast().map(|_| &**self)
     }
 
@@ -665,7 +665,8 @@ pub(crate) struct AsyncFields {
     pending: AtomicI32,
 }
 
-const _: () = assert!(core::mem::offset_of!(UvAsync, fields.body.async_cb) == layout::ASYNC_CB);
+const _: () =
+    assert!(core::mem::offset_of!(UvAsync, fields.body.async_cb) == layout::ASYNC_CB_OFFSET);
 const _: () = assert!(core::mem::size_of::<UvAsync>() <= layout::ASYNC_SIZE);
 
 impl AsyncFields {
@@ -722,7 +723,7 @@ pub(crate) unsafe extern "C" fn uv_async_init(
 ///
 /// # Safety
 /// `handle` was initialized by `uv_async_init`, its `close_cb` has not run, and its loop is alive.
-/// Or else its `type` is not `UV_ASYNC`.
+/// Otherwise its `type` must be readable and not `UV_ASYNC`.
 #[unsafe(no_mangle)]
 pub(crate) unsafe extern "C" fn uv_async_send(handle: *mut UvAsync) -> c_int {
     // SAFETY: fn contract. Nothing writes `type` after init.
@@ -732,7 +733,7 @@ pub(crate) unsafe extern "C" fn uv_async_send(handle: *mut UvAsync) -> c_int {
     // SAFETY: fn contract. Nothing writes `loop` or `async_cb` after init.
     let (AsyncFields { pending, busy, .. }, loop_) =
         unsafe { (&(*handle).fields.body, (*handle).fields.loop_) };
-    // The callback has to see what the caller wrote, also if this send only reads `pending`.
+    // Makes the caller's writes visible to the callback even if this send only reads `pending`.
     fence(Ordering::SeqCst);
     if pending.load(Ordering::SeqCst) != 0 {
         // Already scheduled, or closed.
@@ -761,7 +762,8 @@ pub(crate) struct WatcherFields {
     cb: Cell<Option<UvWatcherCb>>,
 }
 
-const _: () = assert!(core::mem::offset_of!(UvWatcher, fields.body.cb) == layout::WATCHER_CB);
+const _: () =
+    assert!(core::mem::offset_of!(UvWatcher, fields.body.cb) == layout::WATCHER_CB_OFFSET);
 const _: () = assert!(core::mem::size_of::<UvWatcher>() <= layout::WATCHER_SIZE);
 
 impl UvWatcher {
@@ -800,9 +802,9 @@ impl HandleRef<'_, WatcherFields> {
         }
         self.body.cb.set(cb);
         let started = &self.uv_loop().watchers(self.type_).started;
-        // The newest one runs first: https://github.com/libuv/libuv/issues/3582
+        // The most recently started handle runs first: https://github.com/libuv/libuv/issues/3582
         // SAFETY: `uv_close` has not been called yet, and it stops the handle.
-        unsafe { started.add_first(self) };
+        unsafe { started.prepend(self) };
         self.ref_state.set_active(true);
         0
     }
@@ -887,7 +889,8 @@ pub(crate) struct TimerFields {
     timer_cb: Cell<Option<UvTimerCb>>,
 }
 
-const _: () = assert!(core::mem::offset_of!(UvTimer, fields.body.timer_cb) == layout::TIMER_CB);
+const _: () =
+    assert!(core::mem::offset_of!(UvTimer, fields.body.timer_cb) == layout::TIMER_CB_OFFSET);
 const _: () = assert!(core::mem::size_of::<UvTimer>() <= layout::TIMER_SIZE);
 
 /// Links a `uv_timer_t` into the timer heap. `dispatch.rs` recovers it from
@@ -1168,7 +1171,7 @@ pub(crate) unsafe extern "C" fn uv_close(handle: HandleRef<'_>, close_cb: Option
 /// is active.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn uv_ref(handle: HandleRef<'_>) {
-    if let Some(handle) = handle.initialized() {
+    if let Some(handle) = handle.as_initialized() {
         handle.ref_state.set_referenced(true);
     }
 }
@@ -1176,7 +1179,7 @@ pub(crate) extern "C" fn uv_ref(handle: HandleRef<'_>) {
 /// Implements `void uv_unref(uv_handle_t*)`. Idempotent.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn uv_unref(handle: HandleRef<'_>) {
-    if let Some(handle) = handle.initialized() {
+    if let Some(handle) = handle.as_initialized() {
         handle.ref_state.set_referenced(false);
     }
 }
@@ -1184,7 +1187,7 @@ pub(crate) extern "C" fn uv_unref(handle: HandleRef<'_>) {
 /// Implements `int uv_has_ref(const uv_handle_t*)`.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn uv_has_ref(handle: HandleRef<'_>) -> c_int {
-    let handle = handle.initialized();
+    let handle = handle.as_initialized();
     c_int::from(handle.is_some_and(|handle| handle.ref_state.referenced.get()))
 }
 
@@ -1193,7 +1196,7 @@ pub(crate) extern "C" fn uv_has_ref(handle: HandleRef<'_>) -> c_int {
 /// starts it in init.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn uv_is_active(handle: HandleRef<'_>) -> c_int {
-    let handle = handle.initialized();
+    let handle = handle.as_initialized();
     c_int::from(handle.is_some_and(|handle| handle.ref_state.active.get()))
 }
 
@@ -1201,7 +1204,8 @@ pub(crate) extern "C" fn uv_is_active(handle: HandleRef<'_>) -> c_int {
 /// has been called.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn uv_is_closing(handle: HandleRef<'_>) -> c_int {
-    c_int::from(handle.initialized().is_some_and(HandleFields::is_closing))
+    let handle = handle.as_initialized();
+    c_int::from(handle.is_some_and(HandleFields::is_closing))
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1221,7 +1225,7 @@ pub(crate) struct UvReq<T = ()> {
 struct ReqFields<T> {
     type_: c_uint,
     reserved: [*mut c_void; 6],
-    /// `UV_REQ_PRIVATE_FIELDS`, which only uv/win.h has.
+    /// `UV_REQ_PRIVATE_FIELDS`, which is empty in uv/unix.h.
     #[cfg(windows)]
     private: [usize; 6],
     body: T,

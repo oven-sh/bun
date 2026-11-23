@@ -1,10 +1,10 @@
-//! The text of `os.version()`.
+//! The string that `os.version()` returns.
 
-const FIRST_BUILD_OF_WINDOWS_11: u32 = 22000;
+const MIN_WINDOWS_11_BUILD: u32 = 22000;
 
-/// `name` is `ProductName` in the registry, which Windows 11 did not change.
-pub(crate) fn describe(mut name: Vec<u8>, major: u32, build: u32, service_pack: &[u8]) -> Vec<u8> {
-    if major == 10 && build >= FIRST_BUILD_OF_WINDOWS_11 && name.starts_with(b"Windows 10") {
+/// `name` is the registry value `ProductName`, which still starts with "Windows 10" on Windows 11.
+pub(crate) fn format(mut name: Vec<u8>, major: u32, build: u32, service_pack: &[u8]) -> Vec<u8> {
+    if major == 10 && build >= MIN_WINDOWS_11_BUILD && name.starts_with(b"Windows 10") {
         name["Windows 1".len()] = b'1';
     }
     if !name.is_empty() && !service_pack.is_empty() {
@@ -19,7 +19,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn names_the_version_that_runs() {
+    fn corrects_windows_11_and_appends_service_pack() {
         for (name, major, build, service_pack, expected) in [
             ("Windows 10 Pro", 10, 17763, "", "Windows 10 Pro"),
             ("Windows 10 Pro", 10, 21999, "", "Windows 10 Pro"),
@@ -32,8 +32,8 @@ mod tests {
             ("", 6, 7601, "SP 1", "SP 1"),
             ("", 10, 26300, "", ""),
         ] {
-            let found = describe(name.into(), major, build, service_pack.as_bytes());
-            assert_eq!(found, expected.as_bytes());
+            let actual = format(name.into(), major, build, service_pack.as_bytes());
+            assert_eq!(actual, expected.as_bytes());
         }
     }
 }

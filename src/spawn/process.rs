@@ -21,12 +21,12 @@ use bun_io::ParentDeathWatchdog;
 #[cfg(unix)]
 use bun_io::{FilePoll, KeepAlive, OwnedFilePoll};
 #[cfg(windows)]
-use bun_iocp::{Hold, Request};
+use bun_iocp::{LoopRef, Request};
 use bun_ptr::{JsCell, RefPtr};
 #[cfg(windows)]
 use bun_sys::windows as w;
 #[cfg(windows)]
-use bun_sys::windows::process::{self as windows_process, Inherited};
+use bun_sys::windows::process::{self as windows_process, InheritedHandles};
 use bun_sys::{self, Fd, Maybe};
 
 // posix_spawn(2) wrappers — owned by the `bun_spawn_sys` leaf crate.
@@ -96,7 +96,7 @@ pub use crate::{ProcessExit, ProcessExitHandler, ProcessExitKind};
 pub struct PendingExit {
     handler: ProcessExitHandler,
     status: Status,
-    /// Open until the handler has returned.
+    /// Keeps the process handle open until the handler returns.
     #[cfg(windows)]
     _handle: Option<OwnedHandle>,
 }
@@ -121,14 +121,14 @@ pub struct Process {
     status: OnceCell<Status>,
     #[cfg(unix)]
     poller: JsCell<Poller>,
-    /// Until its exit is reported.
+    /// `None` once the exit is reported.
     #[cfg(windows)]
     handle: JsCell<Option<OwnedHandle>>,
     #[cfg(windows)]
-    watch: JsCell<Option<Watch>>,
-    /// What `kill` has ended it with.
+    exit_wait: JsCell<Option<ExitWait>>,
+    /// The signal that `kill` terminated the process with, or 0.
     #[cfg(windows)]
-    signal: Cell<u8>,
+    exit_signal: Cell<u8>,
     pub(crate) ref_count: bun_ptr::ThreadSafeRefCount<Process>,
     exit_handler: Cell<ProcessExitHandler>,
     event_loop: EventLoopHandle,
@@ -139,9 +139,9 @@ pub struct Process {
 }
 
 #[cfg(windows)]
-struct Watch {
-    _exit: Request,
-    hold: Hold,
+struct ExitWait {
+    _request: Request,
+    loop_ref: LoopRef,
 }
 
 #[cfg(unix)]
@@ -344,7 +344,7 @@ impl Process {
         }
     }
 
-    /// On `Err` it is left running.
+    /// On `Err` the process is left running.
     pub fn watch(self: &RefPtr<Self>) -> bun_sys::Result<()> {
         #[cfg(windows)]
         return self.watch_windows();
@@ -412,7 +412,7 @@ impl Process {
         #[cfg(unix)]
         self.detach_poller();
         #[cfg(windows)]
-        self.watch.set(None);
+        self.exit_wait.set(None);
 
         #[cfg(any(target_os = "linux", target_os = "android"))]
         self.pidfd.set(None);
@@ -428,7 +428,7 @@ impl Process {
             }
         }
         #[cfg(windows)]
-        self.set_hold(false);
+        self.update_ref(false);
     }
 
     pub fn enable_keeping_event_loop_alive(&self) {
@@ -444,7 +444,7 @@ impl Process {
             }
         }
         #[cfg(windows)]
-        self.set_hold(true);
+        self.update_ref(true);
     }
 
     fn detach(&self) {
@@ -516,7 +516,7 @@ impl Process {
         #[cfg(windows)]
         if let Some(handle) = self.os_handle() {
             match windows_process::kill(handle, c_int::from(signal)) {
-                Ok(()) if self.signal.get() == 0 => self.signal.set(signal),
+                Ok(()) if self.exit_signal.get() == 0 => self.exit_signal.set(signal),
                 // if the process was already killed don't throw
                 Ok(()) | Err(bun_sys::E::ESRCH) => {}
                 Err(errno) => return Err(bun_sys::Error::from_code(errno, bun_sys::Tag::kill)),
@@ -544,7 +544,7 @@ pub struct Exited {
     pub code: u8,
     /// The platform's signal number, or `0` for none; see `Status::signal`.
     pub signal: u8,
-    /// Untruncated `GetExitCodeProcess` DWORD; `code` is its low byte.
+    /// Untruncated `GetExitCodeProcess` DWORD; `code` is its low byte, or 1 if only that byte is 0.
     /// NTSTATUS crash codes only survive here (0xC0000409 → `code` 9).
     #[cfg(windows)]
     pub raw: u32,
@@ -673,80 +673,93 @@ impl Process {
 }
 
 #[cfg(windows)]
+const SIGKILL: c_int = bun_core::SignalCode::SIGKILL as c_int;
+
+#[cfg(windows)]
 impl Process {
     fn watch_windows(self: &RefPtr<Self>) -> bun_sys::Result<()> {
         let Some(handle) = self.handle.get() else {
             return Ok(());
         };
-        if self.watch.get().is_none() {
-            // A port that shuts down drops it without a call, and not every owner is dropped with its thread.
+        if self.exit_wait.get().is_none() {
+            // Port shutdown drops `on_exit` without calling it, and not every owner is dropped at thread exit.
             let process = scopeguard::guard(self.clone(), |process| {
-                if process.watch.take().is_some() {
+                if process.exit_wait.take().is_some() {
                     process.handle.set(None);
                 }
             });
             let on_exit = move || {
                 let mut rusage = rusage_zeroed();
-                if let Some(exit) = process.take_exit(&mut rusage) {
+                if let Some(exit) = process.collect_exit(&mut rusage) {
                     exit.dispatch(&rusage);
                 }
             };
             let port = self.event_loop.loop_().port();
-            let exit = Request::wait(port, handle.as_handle(), on_exit);
-            let Ok(exit) = exit.map(Request::after_input) else {
-                let (errno, tag) = (bun_sys::E::ENOMEM, bun_sys::Tag::uv_spawn);
-                return Err(bun_sys::Error::from_code(errno, tag));
+            let request = Request::wait(port, handle.as_handle(), on_exit);
+            let Ok(request) = request.map(Request::mark_hangup) else {
+                return Err(bun_sys::Error::from_code(
+                    bun_sys::E::ENOMEM,
+                    bun_sys::Tag::uv_spawn,
+                ));
             };
-            let hold = Hold::new(port);
-            self.watch.set(Some(Watch { _exit: exit, hold }));
+            let loop_ref = LoopRef::new(port);
+            self.exit_wait.set(Some(ExitWait {
+                _request: request,
+                loop_ref,
+            }));
         }
-        self.set_hold(true);
+        self.update_ref(true);
         Ok(())
     }
 
     fn wait_windows(self: &RefPtr<Self>, sync_: bool, rusage: &mut Rusage) -> Option<PendingExit> {
-        let timeout = if sync_ { w::INFINITE } else { 0 };
-        if w::kernel32::WaitForSingleObject(self.os_handle()?, timeout) == 0 {
-            return self.take_exit(rusage);
+        let timeout_ms = if sync_ { w::INFINITE } else { 0 };
+        if w::kernel32::WaitForSingleObject(self.os_handle()?, timeout_ms) == w::WAIT_OBJECT_0 {
+            return self.collect_exit(rusage);
         }
         let err = self.watch_windows().err()?;
         let status = self.kill_and_reap(rusage).unwrap_or(Status::Err(err));
         Some(self.on_exit(status))
     }
 
-    /// Once it has ended.
-    fn take_exit(&self, rusage: &mut Rusage) -> Option<PendingExit> {
+    /// The process must have exited.
+    fn collect_exit(&self, rusage: &mut Rusage) -> Option<PendingExit> {
         let handle = self.os_handle()?;
         *rusage = process_rusage(handle);
-        Some(self.on_exit(self.final_status(handle)))
+        Some(self.on_exit(self.resolve_exit_status(handle)))
     }
 
-    fn final_status(&self, handle: w::HANDLE) -> Status {
-        match self.signal.get() {
-            0 => exit_status(handle),
+    fn resolve_exit_status(&self, handle: w::HANDLE) -> Status {
+        match self.exit_signal.get() {
+            0 => query_exit_status(handle),
             signal => Status::Signaled(signal),
         }
     }
 
-    /// As on POSIX, but there is nothing to reap.
+    /// Same contract as on POSIX. Windows has nothing to reap.
     pub fn kill_and_reap(&self, rusage: &mut Rusage) -> Option<Status> {
         let handle = self.os_handle()?;
-        if self.signal.get() == 0 {
-            // `None` if this is what ends it, or if it is still there.
-            windows_process::kill(handle, 9).err()?;
-            windows_process::kill(handle, 0).err()?;
+        // No status if this call terminates the process, or if it is still running.
+        if self.exit_signal.get() == 0
+            && (windows_process::kill(handle, SIGKILL).is_ok()
+                || windows_process::kill(handle, 0).is_ok())
+        {
+            return None;
         }
         *rusage = process_rusage(handle);
-        Some(self.final_status(handle)).filter(|status| !matches!(status, Status::Err(_)))
-    }
-
-    fn set_hold(&self, value: bool) {
-        if let Some(watch) = self.watch.get() {
-            watch.hold.set(value);
+        match self.resolve_exit_status(handle) {
+            Status::Err(_) => None,
+            status => Some(status),
         }
     }
 
-    /// `None` once its exit is reported.
+    fn update_ref(&self, value: bool) {
+        if let Some(exit_wait) = self.exit_wait.get() {
+            exit_wait.loop_ref.set(value);
+        }
+    }
+
+    /// `None` once the exit is reported.
     pub fn rusage(&self) -> Option<Rusage> {
         self.os_handle().map(process_rusage)
     }
@@ -757,10 +770,13 @@ impl Process {
 }
 
 #[cfg(windows)]
-fn exit_status(process: w::HANDLE) -> Status {
+fn query_exit_status(process: w::HANDLE) -> Status {
     match windows_process::exit_code(process) {
         Ok(raw) => Status::Exited(Exited {
-            code: (raw as u8).max(u8::from(raw != 0)),
+            code: match raw as u8 {
+                0 if raw != 0 => 1,
+                low_byte => low_byte,
+            },
             signal: 0,
             raw,
         }),
@@ -1208,7 +1224,8 @@ pub trait SpawnResultExt: Sized {
 impl SpawnResultExt for SpawnResult {
     fn to_process_handle(self, event_loop: EventLoopHandle) -> ProcessHandle {
         #[cfg(unix)]
-        let reaped = (self.has_exited)
+        let reaped = self
+            .has_exited
             .then(|| posix_spawn::wait4(self.pid, 0, Some(&mut rusage_zeroed())))
             .and_then(|result| Status::from(self.pid, &result));
         #[cfg(windows)]
@@ -1226,9 +1243,9 @@ impl SpawnResultExt for SpawnResult {
             #[cfg(windows)]
             handle: JsCell::new(self.handle),
             #[cfg(windows)]
-            watch: JsCell::new(None),
+            exit_wait: JsCell::new(None),
             #[cfg(windows)]
-            signal: Cell::new(0),
+            exit_signal: Cell::new(0),
             status: reaped.map_or_default(OnceCell::from),
             exit_handler: Cell::default(),
         }))
@@ -1277,11 +1294,11 @@ mod spawn_process_body {
         argv: CStrList<'_>,
         envp: Option<CStrList<'_>>,
     ) -> bun_sys::Result<SpawnResult> {
-        let inherited = Inherited::Only(options.inherited_handle);
-        let (child, pipes) = create_process(options, inherited, argv, envp)?;
+        let inherited_handles = InheritedHandles::Explicit(options.inherited_handle);
+        let (child, pipes) = create_process(options, inherited_handles, argv, envp)?;
         let mut pipes = pipes.into_iter().map(|pipe| pipe.map(File::from));
         Ok(SpawnResult {
-            pid: child.id as PidT,
+            pid: child.pid as PidT,
             handle: Some(child.handle),
             stdin: pipes.next().flatten(),
             stdout: pipes.next().flatten(),
@@ -1293,143 +1310,150 @@ mod spawn_process_body {
         })
     }
 
-    /// With our end of the pipe, for each descriptor of the child that is one.
+    /// Also returns, for each fd of the child, the parent's end of the pipe created for it.
     #[cfg(windows)]
     fn create_process(
         options: &SpawnOptions<'_>,
-        inherited: Inherited,
+        inherited_handles: InheritedHandles,
         argv: CStrList<'_>,
         envp: Option<CStrList<'_>>,
     ) -> bun_sys::Result<(windows_process::Child, Vec<Option<OwnedHandle>>)> {
-        use bun_sys::windows_format::{crt_descriptors, wide};
+        use bun_sys::windows_format::{crt_descriptors, wtf16};
         use bun_sys::{E, Error, O, Tag};
         use w::{PipeDirection, PipeMode, PipePair};
         use windows_process::{Command, Console, Descriptor, Invocation};
 
         bun_analytics::features::spawn.fetch_add(1, Ordering::Relaxed);
 
-        let standard = [&options.stdin, &options.stdout, &options.stderr];
-        let count = standard.len() + options.extra_fds.len();
-        let refused = |errno| Error::from_code(errno, Tag::uv_spawn);
-        if options.uid.is_some() || options.gid.is_some() || count > crt_descriptors::MAX_COUNT {
-            return Err(refused(E::ENOTSUP));
+        let stdio_options = [&options.stdin, &options.stdout, &options.stderr];
+        let fd_count = stdio_options.len() + options.extra_fds.len();
+        let map_errno = |errno| Error::from_code(errno, Tag::uv_spawn);
+        if options.uid.is_some() || options.gid.is_some() || fd_count > crt_descriptors::MAX_COUNT {
+            return Err(map_errno(E::ENOTSUP));
         }
 
-        let path = |text: &[u8]| {
-            let mut units = vec![0; text.len() + 1];
-            let path = wide::encode(text, &mut units).map_err(|_| refused(E::ENOENT))?;
+        let encode_path = |path: &[u8]| {
+            let mut buf = vec![0; path.len() + 1];
+            let path = wtf16::encode(path, &mut buf).map_err(|_| map_errno(E::ENOENT))?;
             Ok::<_, Error>(path.to_vec())
         };
-        let wide_list = |list: CStrList<'_>| {
+        let encode_list = |list: CStrList<'_>| {
             let strings = list.unterminated().iter().map_while(|string| *string);
-            let to_wide = |text: &[u8]| {
-                let mut units = vec![0; text.len()];
-                let len =
-                    bun_core::strings::convert_utf8_to_utf16_in_buffer(&mut units, text).len();
-                units.truncate(len);
-                units
+            let to_utf16 = |text: &[u8]| {
+                let mut buf = vec![0; text.len()];
+                let len = bun_core::strings::convert_utf8_to_utf16_in_buffer(&mut buf, text).len();
+                buf.truncate(len);
+                buf
             };
             strings
-                .map(|string| to_wide(string.to_cstr().to_bytes()))
+                .map(|string| to_utf16(string.to_cstr().to_bytes()))
                 .collect()
         };
         let file = options.argv0.or_else(|| argv.first());
         let command = Command::resolve(Invocation {
-            file: path(file.expect("argv[0] is required").to_cstr().to_bytes())?,
-            arguments: wide_list(argv),
+            file: encode_path(file.expect("argv[0] is required").to_cstr().to_bytes())?,
+            arguments: encode_list(argv),
             has_verbatim_arguments: options.verbatim_arguments,
-            environment: wide_list(envp.unwrap_or_else(|| bun_core::os::environ())),
+            environment: encode_list(envp.unwrap_or_else(|| bun_core::os::environ())),
             cwd: (!options.cwd.is_empty())
-                .then(|| path(&options.cwd))
+                .then(|| encode_path(&options.cwd))
                 .transpose()?,
         })
-        .map_err(refused)?;
+        .map_err(map_errno)?;
 
-        let error = |err| Error::from_win32(err, Tag::uv_spawn);
-        let inherit = |fd: Fd| {
+        let map_win32_error = |err| Error::from_win32(err, Tag::uv_spawn);
+        let duplicate_fd = |fd: Fd| {
             let tag = fd.stdio_tag();
             if tag == Some(bun_core::Stdio::StdIn) {
-                w::named_pipe::expect_rival();
+                w::named_pipe::mark_concurrent_reader();
             }
             match Descriptor::duplicate(fd.native()) {
                 Err(w::Win32Error::INVALID_HANDLE) if !fd.is_valid() || tag.is_some() => Ok(None),
-                result => result.map(Some).map_err(error),
+                result => result.map(Some).map_err(map_win32_error),
             }
         };
-        let (mut descriptors, mut pipes) = (Vec::with_capacity(count), Vec::with_capacity(count));
-        let mut inherits_any = false;
-        // One pipe for stdout and stderr, which is handed out as the one that the other is redirected to.
-        let merged_into = match standard {
+        let mut descriptors = Vec::with_capacity(fd_count);
+        let mut pipes = Vec::with_capacity(fd_count);
+        let mut has_inherited_fd = false;
+        // stdout and stderr share one pipe. The parent's end goes in the slot of the `Dup2` target.
+        let merge_target = match stdio_options {
             [_, Stdio::Dup2(_), Stdio::Buffer] => Some(2),
             [_, Stdio::Buffer, Stdio::Dup2(_)] => Some(1),
             _ => None,
         };
-        let pair = |theirs| {
-            w::pipe_pair(PipeMode::Overlapped, theirs, PipeDirection::Duplex).map_err(error)
+        let create_pipe = |child_mode| {
+            w::create_pipe_pair(PipeMode::Overlapped, child_mode, PipeDirection::Duplex)
+                .map_err(map_win32_error)
         };
-        let mut merged = match merged_into {
+        let mut merged_pipe = match merge_target {
             Some(target) => {
-                let PipePair { ours, theirs } = pair(PipeMode::Synchronous)?;
+                let PipePair { ours, theirs } = create_pipe(PipeMode::Synchronous)?;
                 Some((target, Some(ours), theirs))
             }
             None => None,
         };
 
-        for (index, stdio) in standard.into_iter().chain(&*options.extra_fds).enumerate() {
-            let is_standard = index < standard.len();
-            let (target, stdio) = match (index, stdio) {
-                (1 | 2, Stdio::Dup2(_)) => match standard[3 - index] {
+        for (index, stdio) in stdio_options
+            .into_iter()
+            .chain(&*options.extra_fds)
+            .enumerate()
+        {
+            let is_stdio = index < stdio_options.len();
+            let (source_index, stdio) = match (index, stdio) {
+                (1 | 2, Stdio::Dup2(_)) => match stdio_options[3 - index] {
                     Stdio::Dup2(_) => (index, &Stdio::Inherit),
                     other => (3 - index, other),
                 },
                 _ => (index, stdio),
             };
             let mut pipe = None;
-            let descriptor = match (stdio, &mut merged) {
+            let descriptor = match (stdio, &mut merged_pipe) {
                 (_, Some((target, ours, theirs))) if matches!(index, 1 | 2) => {
-                    inherits_any = true;
+                    has_inherited_fd = true;
                     pipe = ours.take_if(|_| index == *target);
-                    Some(Descriptor::duplicate(theirs.as_raw_handle()).map_err(error)?)
+                    Some(Descriptor::duplicate(theirs.as_raw_handle()).map_err(map_win32_error)?)
                 }
                 (Stdio::Dup2(_), _) => panic!("TODO dup2 extra fd"),
                 (Stdio::Ignore, _) if options.pseudoconsole.is_some() => None,
                 // ipc option inside stdin, stderr or stdout is not supported.
-                (Stdio::Ignore | Stdio::Ipc, _) if is_standard => {
-                    let null_device = match Descriptor::null_device(index == 0) {
-                        // An AppContainer may not open it. A pipe without a writer is as empty.
+                (Stdio::Ignore | Stdio::Ipc, _) if is_stdio => {
+                    let null_device = match Descriptor::open_null_device(index == 0) {
+                        // Opening `NUL` can fail in an AppContainer. A pipe without a writer also reads as EOF.
                         Err(_) if index == 0 => {
-                            Descriptor::pipe(pair(PipeMode::Synchronous)?.theirs)
+                            Descriptor::from_pipe(create_pipe(PipeMode::Synchronous)?.theirs)
                         }
                         result => result,
                     };
-                    Some(null_device.map_err(error)?)
+                    Some(null_device.map_err(map_win32_error)?)
                 }
                 (Stdio::Ignore, _) => None,
                 (Stdio::Buffer | Stdio::SocketFd | Stdio::Ipc, _) => {
-                    let PipePair { ours, theirs } = pair(match is_standard {
-                        true => PipeMode::Synchronous,
-                        false => PipeMode::Overlapped,
-                    })?;
+                    let child_mode = if is_stdio {
+                        PipeMode::Synchronous
+                    } else {
+                        PipeMode::Overlapped
+                    };
+                    let PipePair { ours, theirs } = create_pipe(child_mode)?;
                     pipe = Some(ours);
-                    Some(Descriptor::pipe(theirs).map_err(error)?)
+                    Some(Descriptor::from_pipe(theirs).map_err(map_win32_error)?)
                 }
                 (Stdio::Inherit, _) => {
-                    inherits_any = true;
-                    inherit(Fd::from_crt(target as i32))?
+                    has_inherited_fd = true;
+                    duplicate_fd(Fd::from_crt(source_index as i32))?
                 }
                 (Stdio::Pipe(fd), _) => {
-                    inherits_any = true;
-                    inherit(*fd)?
+                    has_inherited_fd = true;
+                    duplicate_fd(*fd)?
                 }
                 (Stdio::Path(path), _) => {
-                    inherits_any = true;
+                    has_inherited_fd = true;
                     let access = match index {
                         0 => O::RDONLY,
                         1 | 2 => O::WRONLY,
                         _ => O::RDWR,
                     };
                     let path = bun_core::ZBox::from_bytes(path);
-                    inherit(bun_sys::File::open(&path, access | O::CREAT, 0o644)?.fd())?
+                    duplicate_fd(bun_sys::File::open(&path, access | O::CREAT, 0o644)?.fd())?
                 }
             };
             descriptors.push(descriptor);
@@ -1438,17 +1462,17 @@ mod spawn_process_body {
 
         let options = windows_process::Options {
             descriptors: &descriptors,
-            inherited,
+            inherited_handles,
             console: match options.pseudoconsole {
                 Some(console) => Console::Pseudo(console),
-                None if options.hide_window && !inherits_any => Console::Hidden,
+                None if options.hide_window && !has_inherited_fd => Console::Hidden,
                 None => Console::Shared,
             },
-            hides_window: options.hide_window,
+            hide_window: options.hide_window,
             is_detached: options.detached,
             job: options.job,
         };
-        let child = windows_process::spawn(command, &options).map_err(refused)?;
+        let child = windows_process::spawn(command, &options).map_err(map_errno)?;
         Ok((child, pipes))
     }
 
@@ -1557,13 +1581,14 @@ mod spawn_process_body {
         fn spawn_windows(options: &Options<'_>, argv: CStrList<'_>) -> Maybe<Result> {
             let has_pipes =
                 [options.stdin, options.stdout, options.stderr].contains(&SyncStdio::Buffer);
-            // Otherwise the child is the foreground program on our console.
+            // Without pipes, the child is the foreground program on our console.
             let _child = (!has_pipes).then(crate::ctrl_c::Child::enter);
             let (child, mut pipes) = create_process(
                 &options.to_spawn_options(false),
-                match has_pipes {
-                    true => Inherited::Only(None),
-                    false => Inherited::All,
+                if has_pipes {
+                    InheritedHandles::Explicit(None)
+                } else {
+                    InheritedHandles::All
                 },
                 argv,
                 options.envp,
@@ -1571,12 +1596,12 @@ mod spawn_process_body {
             let process = child.handle.as_raw_handle();
             let [stdout, stderr] = bun_iocp::read_to_end([pipes[1].take(), pipes[2].take()])
                 .map_err(|err| {
-                    let _ = windows_process::kill(process, 9);
+                    let _ = windows_process::kill(process, SIGKILL);
                     bun_sys::Error::from_win32(err, bun_sys::Tag::read)
                 })?;
             w::kernel32::WaitForSingleObject(process, w::INFINITE);
             Ok(Result {
-                status: exit_status(process),
+                status: query_exit_status(process),
                 stdout,
                 stderr,
             })

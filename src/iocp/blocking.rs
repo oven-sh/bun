@@ -1,4 +1,4 @@
-//! Threads for calls that return only when somebody else has done something, which would use up a pool of a fixed size.
+//! Threads for calls that can block indefinitely, which would exhaust a fixed-size pool.
 
 use core::cell::Cell;
 use core::time::Duration;
@@ -13,97 +13,103 @@ use crate::sys::{self, Packet, Timeout, WaitPacket};
 
 const STACK_SIZE: usize = 256 * 1024;
 
-/// For a `job` that would keep a thread of the pool for good. `false` if the system has no thread to give.
-pub fn spawn_endless(job: impl FnOnce() + Send + 'static) -> bool {
-    let thread = std::thread::Builder::new().stack_size(STACK_SIZE);
+/// For a `job` that would occupy a pool thread forever.
+pub fn try_spawn_dedicated(job: impl FnOnce() + Send + 'static) -> bool {
+    let builder = std::thread::Builder::new().stack_size(STACK_SIZE);
     let run = || {
         bun_core::Output::Source::configure_thread_no_js();
         job();
     };
-    thread.name("Watcher".into()).spawn(run).is_ok()
+    builder.name("Watcher".into()).spawn(run).is_ok()
 }
 
-/// `job` starts at once, on a thread of its own.
+/// `job` does not queue behind other jobs: the pool has no thread limit.
 pub fn spawn(job: impl FnOnce() + Send + 'static) {
     static POOL: FifoPool = FifoPool::new(Config {
         name: "Blocking I/O",
         max_threads: usize::MAX,
         stack_size: STACK_SIZE,
-        on_thread_start: match cfg!(test) {
-            true => || {},
-            false => bun_core::Output::Source::configure_thread_no_js,
+        on_thread_start: if cfg!(test) {
+            || {}
+        } else {
+            bun_core::Output::Source::configure_thread_no_js
         },
-        has_new_threads: false,
+        has_warmup: false,
     });
     POOL.go(job);
 }
 
-/// Holds a thread back until another one waits, for whatever it is.
+/// Blocks one thread until another thread enters a wait of any kind.
 /// <https://learn.microsoft.com/en-us/windows/win32/fileio/i-o-completion-ports#threads-and-concurrency>
-pub struct Turnstile {
+pub struct ConcurrencyGate {
     port: OwnedHandle,
-    signal: Option<WaitPacket>,
+    wait_packet: Option<WaitPacket>,
 }
 
-impl Turnstile {
-    pub fn new() -> Result<Turnstile, Win32Error> {
-        Ok(Turnstile {
+impl ConcurrencyGate {
+    pub fn new() -> Result<ConcurrencyGate, Win32Error> {
+        Ok(ConcurrencyGate {
             port: sys::create_port(1)?,
-            signal: WaitPacket::new().map_err(Win32Error::from_ntstatus)?,
+            wait_packet: WaitPacket::new().map_err(Win32Error::from_ntstatus)?,
         })
     }
 
-    /// Lets one `wait` end. From now on, none does while this thread runs.
-    pub fn admit(&self) {
-        for _ in 0..=self.take(Timeout::Now) {
-            sys::post(&self.port, 0, 0);
+    /// Releases one `wait`. From now on no `wait` returns while the calling thread is running.
+    pub fn post(&self) {
+        // The dequeue associates this thread with the port. A packet that it removes is posted again.
+        for _ in 0..=self.dequeue(Timeout::Zero) {
+            sys::post_packet(&self.port, 0, 0);
         }
     }
 
-    /// Lets one `wait` end once `object` is signalled. Does nothing if that is still to come from the last time.
-    pub fn admit_after(&self, object: BorrowedHandle<'_>) {
-        if let Some(signal) = &self.signal {
-            let _ = signal.associate(&self.port, object, 0, 0);
+    /// Releases one `wait` once `object` is signaled. Does nothing while the previous call is still pending.
+    pub fn post_on_signal(&self, object: BorrowedHandle<'_>) {
+        if let Some(wait_packet) = &self.wait_packet {
+            let _ = wait_packet.associate(&self.port, object, 0, 0);
         }
     }
 
     pub fn wait(&self) {
-        self.take(Timeout::Never);
+        self.dequeue(Timeout::Infinite);
     }
 
-    fn take(&self, timeout: Timeout) -> usize {
-        sys::remove_packets(&self.port, &[Cell::new(Packet::EMPTY)], timeout)
+    fn dequeue(&self, timeout: Timeout) -> usize {
+        sys::dequeue_packets(&self.port, &[Cell::new(Packet::EMPTY)], timeout)
     }
 }
 
-struct Thread {
+struct InterruptibleThread {
     handle: OwnedHandle,
-    interrupt: OwnedHandle,
+    interrupt_event: OwnedHandle,
 }
 
-impl Thread {
-    fn current() -> Option<Arc<Thread>> {
-        let (handle, interrupt) = (sys::open_current_thread()?, w::CreateEventW().ok()?);
-        Some(Arc::new(Thread { handle, interrupt }))
+impl InterruptibleThread {
+    fn current() -> Option<Arc<InterruptibleThread>> {
+        let handle = sys::open_current_thread()?;
+        let interrupt_event = w::CreateEventW().ok()?;
+        Some(Arc::new(InterruptibleThread {
+            handle,
+            interrupt_event,
+        }))
     }
 }
 
 #[derive(Default)]
 struct CancelState {
     is_cancelled: bool,
-    is_retried: bool,
-    thread: Option<Arc<Thread>>,
+    has_retry_job: bool,
+    thread: Option<Arc<InterruptibleThread>>,
 }
 
-/// Interrupts the I/O that another thread waits for.
+/// Interrupts the blocking I/O of another thread.
 #[derive(Clone, Default)]
-pub struct Cancel(Arc<Guarded<CancelState>>);
+pub struct CancelToken(Arc<Guarded<CancelState>>);
 
-impl Cancel {
-    /// `None` if it was cancelled before it started.
+impl CancelToken {
+    /// Returns `None` if the token was cancelled before `io` started.
     pub fn run<R>(&self, io: impl FnOnce() -> R) -> Option<R> {
         thread_local! {
-            static THREAD: Option<Arc<Thread>> = Thread::current();
+            static THREAD: Option<Arc<InterruptibleThread>> = InterruptibleThread::current();
         }
         let thread = THREAD.with(Clone::clone);
         {
@@ -116,11 +122,11 @@ impl Cancel {
         let Some(thread) = thread else {
             return Some(io());
         };
-        let result = w::interruptible(thread.interrupt.as_handle(), io);
+        let result = w::with_interrupt_event(thread.interrupt_event.as_handle(), io);
         let mut state = self.0.lock();
         state.thread = None;
         if state.is_cancelled {
-            w::reset_event(&thread.interrupt);
+            w::reset_event(&thread.interrupt_event);
         }
         Some(result)
     }
@@ -129,12 +135,12 @@ impl Cancel {
         self.0.lock().is_cancelled
     }
 
-    /// Leaves I/O that has started alone.
-    pub fn cancel_unless_started(&self) {
+    /// Does not interrupt I/O that has already started.
+    pub fn mark_cancelled(&self) {
         self.0.lock().is_cancelled = true;
     }
 
-    /// `run` has most likely returned when this does.
+    /// `run` has usually returned when this returns. Otherwise a background job keeps retrying.
     pub fn cancel(&self) {
         for _ in 0..16 {
             if self.try_cancel() {
@@ -142,28 +148,28 @@ impl Cancel {
             }
             std::thread::yield_now();
         }
-        // There is nothing to cancel yet while the thread waits for the I/O of another process on the same file.
-        if core::mem::replace(&mut self.0.lock().is_retried, true) {
+        // There is nothing to cancel yet while the thread waits for another process's I/O on the same file.
+        if core::mem::replace(&mut self.0.lock().has_retry_job, true) {
             return;
         }
         let this = self.clone();
         spawn(move || {
-            let mut pause = Duration::from_micros(500);
+            let mut backoff = Duration::from_micros(500);
             while !this.try_cancel() {
-                std::thread::sleep(pause);
-                pause = (pause * 2).min(Duration::from_millis(250));
+                std::thread::sleep(backoff);
+                backoff = (backoff * 2).min(Duration::from_millis(250));
             }
         });
     }
 
-    /// `true` once the thread is out of `run`. The lock keeps it from starting I/O for somebody else.
+    /// Returns `true` once the thread has left `run`. The lock keeps it from starting unrelated I/O meanwhile.
     fn try_cancel(&self) -> bool {
         let mut state = self.0.lock();
         state.is_cancelled = true;
         let Some(thread) = &state.thread else {
             return true;
         };
-        w::set_event(&thread.interrupt);
+        w::set_event(&thread.interrupt_event);
         sys::cancel_synchronous_io(thread.handle.as_raw_handle());
         false
     }

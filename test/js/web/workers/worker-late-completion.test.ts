@@ -63,12 +63,12 @@ const ROWS: Row[] = [
   },
   { name: "Bun.file().text()", worker: `Bun.file(process.execPath).slice(0, 65536).text();`, ticket: "read_file.rs" },
   {
-    name: "Bun.write() of bytes",
+    name: "Bun.write from a Buffer",
     worker: `Bun.write(workerData.dir + "/out.bin", Buffer.alloc(1 << 20, 7));`,
     ticket: "write_file.rs",
   },
   {
-    name: "Bun.write() of a file",
+    name: "Bun.write from a Bun.file()",
     worker: `Bun.write(workerData.dir + "/out.bin", Bun.file(workerData.dir + "/in.bin"));`,
     ticket: "copy_file.rs",
     files: { "in.bin": "x" },

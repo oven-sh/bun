@@ -556,17 +556,18 @@ describe("WriteStream.prototype.getColorDepth", () => {
   });
 });
 
-describe.concurrent("in a terminal", () => {
-  // What the child prints comes back redrawn by ConPTY, so it reports over a socket: `say(value)`. `await heard()`
-  // waits for the test's `tell()`.
+describe.concurrent("stdio in a terminal", () => {
+  // ConPTY redraws what the child prints, so the child reports over a socket with `send(value)`.
+  // `await waitForContinue()` in the child resumes when the test calls `sendContinue()`.
   const prelude = `
-    const fs = require("fs"), tty = require("tty");
+    const fs = require("fs");
+    const tty = require("tty");
     const control = require("net").connect(Number(process.env.CONTROL_PORT), "127.0.0.1").setNoDelay();
-    const told = require("readline").createInterface({ input: control })[Symbol.asyncIterator]();
-    const say = (value, then) => control.write(JSON.stringify(value) + "\\n", then);
-    const heard = () => told.next();
-    const turns = async () => { for (let i = 0; i < 20; i++) await Bun.sleep(1); };
-    const report = (stream, name = "data") => stream.on("data", chunk => say([name, String(chunk)])).on("end", () => say([name, "end"]));
+    const controlLines = require("readline").createInterface({ input: control })[Symbol.asyncIterator]();
+    const send = (value, callback) => control.write(JSON.stringify(value) + "\\n", callback);
+    const waitForContinue = () => controlLines.next();
+    const settleEventLoop = async () => { for (let i = 0; i < 20; i++) await Bun.sleep(1); };
+    const forwardData = stream => stream.on("data", chunk => send(["data", String(chunk)])).on("end", () => send(["data", "end"]));
     const k32 = process.platform === "win32" && require("bun:ffi").dlopen("kernel32.dll", {
       SetConsoleCtrlHandler: { args: ["ptr", "i32"], returns: "i32" },
       GenerateConsoleCtrlEvent: { args: ["u32", "u32"], returns: "i32" },
@@ -583,16 +584,21 @@ describe.concurrent("in a terminal", () => {
       WaitForSingleObject: { args: ["i64", "u32"], returns: "u32" },
       ReadConsoleOutputCharacterW: { args: ["i64", "ptr", "u32", "u32", "ptr"], returns: "i32" },
     }).symbols;
-    const screenHas = text => {
-      const line = new Uint16Array(80);
-      k32.ReadConsoleOutputCharacterW(k32.GetStdHandle(-11), line, 80, 0, new Uint32Array(1));
-      return String.fromCharCode(...line).includes(text);
+    const STD_INPUT_HANDLE = -10;
+    const STD_OUTPUT_HANDLE = -11;
+    const isOnFirstRow = text => {
+      const row = new Uint16Array(80);
+      k32.ReadConsoleOutputCharacterW(k32.GetStdHandle(STD_OUTPUT_HANDLE), row, 80, 0, new Uint32Array(1));
+      return String.fromCharCode(...row).includes(text);
     };
-    // A CI agent starts the tests with Ctrl+C ignored, which is inherited.
+    // CI agents run with Ctrl+C ignored, and child processes inherit that setting.
     if (k32) k32.SetConsoleCtrlHandler(null, 0);
   `;
-  async function start(main: string, files: Record<string, string> = {}) {
-    const dir = tempDir("tty-input", { ...files, "main.js": `${prelude}\nheard().then(async () => { ${main} });` });
+  async function spawnChild(script: string, files: Record<string, string> = {}) {
+    const dir = tempDir("tty-input", {
+      ...files,
+      "main.js": `${prelude}\nwaitForContinue().then(async () => { ${script} });`,
+    });
     const server = createServer();
     await once(server.listen(0, "127.0.0.1"), "listening");
     const connected = once(server, "connection");
@@ -604,35 +610,35 @@ describe.concurrent("in a terminal", () => {
       env: { ...bunEnv, CONTROL_PORT: String((server.address() as AddressInfo).port) },
       terminal: { cols: 80, rows: 24, data: (_, chunk) => void (screen += decoder.decode(chunk, { stream: true })) },
     });
-    const early = proc.exited.then(code => Promise.reject(new Error(`exited with ${code}:\n${screen}`)));
-    const [control] = (await Promise.race([connected, early])) as [Socket];
-    early.catch(() => {});
+    const earlyExit = proc.exited.then(code => Promise.reject(new Error(`exited with ${code}:\n${screen}`)));
+    const [control] = (await Promise.race([connected, earlyExit])) as [Socket];
+    earlyExit.catch(() => {});
     control.on("error", () => {}).write("\n");
-    const lines = createInterface({ input: control })[Symbol.asyncIterator]();
-    const next = async () => {
-      const { done, value } = await lines.next();
-      if (done) throw new Error(`nothing more was said, exit code ${await proc.exited}:\n${screen}`);
+    const messages = createInterface({ input: control })[Symbol.asyncIterator]();
+    const receive = async () => {
+      const { done, value } = await messages.next();
+      if (done) throw new Error(`control socket closed, exit code ${await proc.exited}:\n${screen}`);
       return JSON.parse(value);
     };
     return {
       proc,
-      next,
+      receive,
       screen: () => screen,
-      async shows(text: string) {
+      async waitForScreen(text: string) {
         for (const deadline = Date.now() + 4000; !screen.includes(text) && Date.now() < deadline;) await Bun.sleep(2);
         expect(screen).toContain(text);
       },
       type: (keys: string) => void proc.terminal!.write(keys),
-      tell: () => void control.write("\n"),
-      /** The data that arrives until it is as long as `expected`. Anything else that is said fails. */
-      async gets(expected: string, name = "data") {
-        let got = "";
-        while (got.length < expected.length) {
-          const said = await next();
-          expect(said).toEqual([name, expect.any(String)]);
-          got += said[1];
+      sendContinue: () => void control.write("\n"),
+      /** Collects data messages up to the length of `expected`. Any other message fails the test. */
+      async expectData(expected: string, source = "data") {
+        let received = "";
+        while (received.length < expected.length) {
+          const message = await receive();
+          expect(message).toEqual([source, expect.any(String)]);
+          received += message[1];
         }
-        expect(got).toBe(expected);
+        expect(received).toBe(expected);
       },
       async [Symbol.asyncDispose]() {
         proc.kill("SIGKILL");
@@ -645,9 +651,10 @@ describe.concurrent("in a terminal", () => {
     };
   }
   const eol = isWindows ? "\r\n" : "\n";
+  const STATUS_CONTROL_C_EXIT = 0xc000013a;
 
   describe("raw mode", () => {
-    const raw = `process.stdin.setRawMode(true); process.stdin.setEncoding("utf8"); report(process.stdin);`;
+    const rawReadScript = `process.stdin.setRawMode(true); process.stdin.setEncoding("utf8"); forwardData(process.stdin);`;
 
     it.each([
       ["a letter", "a"],
@@ -656,421 +663,456 @@ describe.concurrent("in a terminal", () => {
       ["Ctrl+C", "\x03"],
       ["Ctrl+D", "\x04"],
       ["Ctrl+Z", "\x1a"],
-      ["the arrows", "\x1b[A\x1b[B\x1b[C\x1b[D"],
+      ["arrow keys", "\x1b[A\x1b[B\x1b[C\x1b[D"],
       ["F1", "\x1bOP"],
       ["Delete", "\x1b[3~"],
       ["Alt+a", "\x1ba"],
-      ["characters of two and three bytes", "é世"],
-      ["a character of four bytes", "\u{1F600}"],
-    ])("gives %s as it is typed, once", async (_, keys) => {
-      await using child = await start(`process.on("SIGINT", () => say("SIGINT")); ${raw} say("ready");`);
-      expect(await child.next()).toBe("ready");
+      ["2- and 3-byte UTF-8 characters", "é世"],
+      ["a 4-byte UTF-8 character", "\u{1F600}"],
+    ])("delivers %s immediately and only once", async (_, keys) => {
+      await using child = await spawnChild(
+        `process.on("SIGINT", () => send("SIGINT")); ${rawReadScript} send("ready");`,
+      );
+      expect(await child.receive()).toBe("ready");
       child.type(keys);
-      await child.gets(keys);
+      await child.expectData(keys);
       child.type("!");
-      await child.gets("!");
+      await child.expectData("!");
     });
 
-    it("gives all of a long paste", async () => {
-      await using child = await start(`${raw} say("ready");`);
-      expect(await child.next()).toBe("ready");
+    it("delivers a long paste in full", async () => {
+      await using child = await spawnChild(`${rawReadScript} send("ready");`);
+      expect(await child.receive()).toBe("ready");
       const paste = Buffer.alloc(isWindows ? 6000 : 900, "paste é|").toString();
       child.type(paste);
-      await child.gets(paste);
+      await child.expectData(paste);
     });
 
-    it("keeps what is typed while paused", async () => {
-      await using child = await start(`
-        ${raw}
-        await turns();
+    it("delivers input typed while paused after resume()", async () => {
+      await using child = await spawnChild(`
+        ${rawReadScript}
+        await settleEventLoop();
         process.stdin.pause();
-        say("paused");
-        await heard();
-        await turns();
-        say("resuming");
+        send("paused");
+        await waitForContinue();
+        await settleEventLoop();
+        send("resuming");
         process.stdin.resume();
       `);
-      expect(await child.next()).toBe("paused");
+      expect(await child.receive()).toBe("paused");
       child.type("kept");
-      child.tell();
-      expect(await child.next()).toBe("resuming");
-      await child.gets("kept");
+      child.sendContinue();
+      expect(await child.receive()).toBe("resuming");
+      await child.expectData("kept");
     });
 
-    it.each(["pause()", "unref()", "destroy()"])("%s lets the process go while a read is waiting", async call => {
-      await using child = await start(`${raw} await turns(); process.stdin.${call}; control.end();`);
+    it.each(["pause()", "unref()", "destroy()"])("%s lets the process exit during a raw read", async call => {
+      await using child = await spawnChild(
+        `${rawReadScript} await settleEventLoop(); process.stdin.${call}; control.end();`,
+      );
       expect(await child.proc.exited).toBe(0);
     });
 
-    it("reports a new size while it reads", async () => {
-      await using child = await start(`
-        ${raw}
-        process.stdout.on("resize", () => say(["resize", process.stdout.columns, process.stdout.rows]));
-        process.on("SIGWINCH", () => say("SIGWINCH"));
-        await turns();
-        say("ready");
+    it("emits 'resize' and SIGWINCH while reading", async () => {
+      await using child = await spawnChild(`
+        ${rawReadScript}
+        process.stdout.on("resize", () => send(["resize", process.stdout.columns, process.stdout.rows]));
+        process.on("SIGWINCH", () => send("SIGWINCH"));
+        await settleEventLoop();
+        send("ready");
       `);
-      expect(await child.next()).toBe("ready");
+      expect(await child.receive()).toBe("ready");
       child.proc.terminal!.resize(100, 30);
-      expect([await child.next(), await child.next()]).toEqual([["resize", 100, 30], "SIGWINCH"]);
+      expect([await child.receive(), await child.receive()]).toEqual([["resize", 100, 30], "SIGWINCH"]);
       child.type("!");
-      await child.gets("!");
+      await child.expectData("!");
     });
   });
 
   describe("line mode", () => {
-    const line = `process.stdin.setEncoding("utf8"); report(process.stdin);`;
+    const lineReadScript = `process.stdin.setEncoding("utf8"); forwardData(process.stdin);`;
 
-    it("gives a line once Enter is pressed", async () => {
-      await using child = await start(`${line} say("ready"); await heard(); await turns(); say("nothing yet");`);
-      expect(await child.next()).toBe("ready");
+    it("delivers a line only after Enter", async () => {
+      await using child = await spawnChild(
+        `${lineReadScript} send("ready"); await waitForContinue(); await settleEventLoop(); send("nothing yet");`,
+      );
+      expect(await child.receive()).toBe("ready");
       child.type("héllo 世");
-      child.tell();
-      expect(await child.next()).toBe("nothing yet");
+      child.sendContinue();
+      expect(await child.receive()).toBe("nothing yet");
       child.type("\r");
-      await child.gets(`héllo 世${eol}`);
+      await child.expectData(`héllo 世${eol}`);
     });
 
-    it("gives lines that were typed ahead one after the other", async () => {
-      await using child = await start(`say("ready"); await heard(); ${line}`);
-      expect(await child.next()).toBe("ready");
+    it("delivers type-ahead lines in order", async () => {
+      await using child = await spawnChild(`send("ready"); await waitForContinue(); ${lineReadScript}`);
+      expect(await child.receive()).toBe("ready");
       child.type("one\rtwo\r\rthree\r");
-      child.tell();
-      await child.gets(`one${eol}two${eol}${eol}three${eol}`);
+      child.sendContinue();
+      await child.expectData(`one${eol}two${eol}${eol}three${eol}`);
     });
 
-    it("gives a long line of three-byte characters whole", async () => {
-      await using child = await start(`${line} say("ready");`);
-      expect(await child.next()).toBe("ready");
+    it("delivers a long line of 3-byte characters intact", async () => {
+      await using child = await spawnChild(`${lineReadScript} send("ready");`);
+      expect(await child.receive()).toBe("ready");
       const text = Buffer.alloc(3 * (isWindows ? 2000 : 300), "世").toString();
       child.type(text + "\r");
-      await child.gets(text + eol);
+      await child.expectData(text + eol);
     });
 
-    it.each(["pause()", "unref()", "destroy()"])("%s lets the process go while a read is waiting", async call => {
-      await using child = await start(`${line} await turns(); process.stdin.${call}; control.end();`);
+    it.each(["pause()", "unref()", "destroy()"])("%s lets the process exit during a line read", async call => {
+      await using child = await spawnChild(
+        `${lineReadScript} await settleEventLoop(); process.stdin.${call}; control.end();`,
+      );
       expect(await child.proc.exited).toBe(0);
     });
 
-    it("process.exit() does not wait for the read", async () => {
-      await using child = await start(`${line} await turns(); process.exit(3);`);
+    it("process.exit() does not wait for a pending read", async () => {
+      await using child = await spawnChild(`${lineReadScript} await settleEventLoop(); process.exit(3);`);
       expect(await child.proc.exited).toBe(3);
     });
 
-    it("pause() and resume() add nothing to the input", async () => {
-      await using child = await start(`
-        ${line}
-        for (let i = 0; i < 5; i++) await turns(), process.stdin.pause(), await turns(), process.stdin.resume();
-        await turns();
-        say("ready");
+    it("pause() and resume() do not produce extra input", async () => {
+      await using child = await spawnChild(`
+        ${lineReadScript}
+        for (let i = 0; i < 5; i++) {
+          await settleEventLoop();
+          process.stdin.pause();
+          await settleEventLoop();
+          process.stdin.resume();
+        }
+        await settleEventLoop();
+        send("ready");
       `);
-      expect(await child.next()).toBe("ready");
+      expect(await child.receive()).toBe("ready");
       child.type("x\r");
-      await child.gets(`x${eol}`);
+      await child.expectData(`x${eol}`);
     });
 
-    it("Ctrl+C is a SIGINT and not the end of the input", async () => {
-      await using child = await start(`process.on("SIGINT", name => say(name)); ${line} await turns(); say("ready");`);
-      expect(await child.next()).toBe("ready");
+    it("Ctrl+C raises SIGINT and does not end stdin", async () => {
+      await using child = await spawnChild(
+        `process.on("SIGINT", name => send(name)); ${lineReadScript} await settleEventLoop(); send("ready");`,
+      );
+      expect(await child.receive()).toBe("ready");
       for (const text of ["one", "two"]) {
         child.type("\x03");
-        expect(await child.next()).toBe("SIGINT");
+        expect(await child.receive()).toBe("SIGINT");
         child.type(text + "\r");
-        await child.gets(text + eol);
+        await child.expectData(text + eol);
       }
     });
 
-    it("Ctrl+C ends a process that does not listen", async () => {
-      await using child = await start(`${line} await turns(); say("ready");`);
-      expect(await child.next()).toBe("ready");
+    it("Ctrl+C terminates a process without a SIGINT listener", async () => {
+      await using child = await spawnChild(`${lineReadScript} await settleEventLoop(); send("ready");`);
+      expect(await child.receive()).toBe("ready");
       child.type("\x03");
       await child.proc.exited;
-      // STATUS_CONTROL_C_EXIT is 0xC000013A.
-      if (isWindows) expect(child.proc.exitCode! & 0xff).toBe(0x3a);
+      if (isWindows) expect(child.proc.exitCode! & 0xff).toBe(STATUS_CONTROL_C_EXIT & 0xff);
       else expect(child.proc.signalCode).toBe("SIGINT");
     });
 
-    it("the end-of-file key ends process.stdin at the start of a line", async () => {
-      await using child = await start(`${line} say("ready");`);
-      expect(await child.next()).toBe("ready");
+    it("the EOF key at the start of a line ends process.stdin", async () => {
+      await using child = await spawnChild(`${lineReadScript} send("ready");`);
+      expect(await child.receive()).toBe("ready");
       child.type("one\r");
-      await child.gets(`one${eol}`);
+      await child.expectData(`one${eol}`);
       child.type(isWindows ? "\x1a\r" : "\x04");
-      expect(await child.next()).toEqual(["data", "end"]);
+      expect(await child.receive()).toEqual(["data", "end"]);
     });
 
-    it.skipIf(!isWindows)("Ctrl+Z in the middle of a line is data", async () => {
-      await using child = await start(`${line} say("ready");`);
-      expect(await child.next()).toBe("ready");
+    it.skipIf(!isWindows)("Ctrl+Z in the middle of a line is delivered as data", async () => {
+      await using child = await spawnChild(`${lineReadScript} send("ready");`);
+      expect(await child.receive()).toBe("ready");
       child.type("a\x1az\r");
-      await child.gets("a\x1az\r\n");
+      await child.expectData("a\x1az\r\n");
     });
 
-    it("gives a character of four bytes", async () => {
-      await using child = await start(`${line} say("ready");`);
-      expect(await child.next()).toBe("ready");
+    it("delivers a line with a 4-byte UTF-8 character", async () => {
+      await using child = await spawnChild(`${lineReadScript} send("ready");`);
+      expect(await child.receive()).toBe("ready");
       child.type("\u{1F600}\r");
-      await child.gets(`\u{1F600}${eol}`);
+      await child.expectData(`\u{1F600}${eol}`);
     });
 
-    it("Ctrl+C drops what was typed of the line", async () => {
-      await using child = await start(`process.on("SIGINT", name => say(name)); ${line} await turns(); say("ready");`);
-      expect(await child.next()).toBe("ready");
+    it("Ctrl+C discards the partially typed line", async () => {
+      await using child = await spawnChild(
+        `process.on("SIGINT", name => send(name)); ${lineReadScript} await settleEventLoop(); send("ready");`,
+      );
+      expect(await child.receive()).toBe("ready");
       child.type("dropped");
-      await child.shows("dropped");
+      await child.waitForScreen("dropped");
       child.type("\x03");
-      expect(await child.next()).toBe("SIGINT");
+      expect(await child.receive()).toBe("SIGINT");
       child.type("kept\r");
-      await child.gets(`kept${eol}`);
+      await child.expectData(`kept${eol}`);
     });
 
     it.each([
       ["fs.readFileSync(0)", `fs.readFileSync(0, "utf8")`],
       ["Bun.stdin.text()", `await Bun.stdin.text()`],
-    ])("the end-of-file key ends %s", async (_, read) => {
-      await using child = await start(`await new Promise(sent => say("ready", sent)); say(${read});`);
-      expect(await child.next()).toBe("ready");
+    ])("the EOF key ends %s", async (_, readExpression) => {
+      await using child = await spawnChild(
+        `await new Promise(resolve => send("ready", resolve)); send(${readExpression});`,
+      );
+      expect(await child.receive()).toBe("ready");
       child.type("one\rtwo\r" + (isWindows ? "\x1a\r" : "\x04"));
-      expect(await child.next()).toBe(`one${eol}two${eol}`);
+      expect(await child.receive()).toBe(`one${eol}two${eol}`);
     });
   });
 
-  it("the mode can change while a read is waiting", async () => {
-    await using child = await start(`
+  it("setRawMode() takes effect while a read is pending", async () => {
+    await using child = await spawnChild(`
       process.stdin.setEncoding("utf8");
-      report(process.stdin);
-      for (const raw of [true, false, true, true, false, false, true]) {
-        await turns();
-        process.stdin.setRawMode(raw);
-        say(raw);
-        await heard();
+      forwardData(process.stdin);
+      for (const isRaw of [true, false, true, true, false, false, true]) {
+        await settleEventLoop();
+        process.stdin.setRawMode(isRaw);
+        send(isRaw);
+        await waitForContinue();
       }
     `);
     for (let i = 0; i < 7; i++) {
-      const raw = await child.next();
-      child.type(raw ? `${i}` : `${i}\r`);
-      await child.gets(raw ? `${i}` : `${i}${eol}`);
-      child.tell();
+      const isRaw = await child.receive();
+      child.type(isRaw ? `${i}` : `${i}\r`);
+      await child.expectData(isRaw ? `${i}` : `${i}${eol}`);
+      child.sendContinue();
     }
   });
 
-  it("the mode can change inside a 'data' listener", async () => {
-    await using child = await start(`
+  it("setRawMode() takes effect inside a 'data' listener", async () => {
+    await using child = await spawnChild(`
       process.stdin.on("data", () => process.stdin.setRawMode(!process.stdin.isRaw));
-      report(process.stdin);
-      say("ready");
+      forwardData(process.stdin);
+      send("ready");
     `);
-    expect(await child.next()).toBe("ready");
+    expect(await child.receive()).toBe("ready");
     for (let i = 0; i < 6; i++) {
       child.type(i % 2 ? `${i}` : `${i}\r`);
-      await child.gets(i % 2 ? `${i}` : `${i}${eol}`);
+      await child.expectData(i % 2 ? `${i}` : `${i}${eol}`);
     }
   });
 
-  it.each([false, true])("a child takes the input while stdin is paused (raw before: %p)", async raw => {
-    await using child = await start(
+  it.each([false, true])("a subprocess reads the input while stdin is paused (initially raw: %p)", async isRaw => {
+    await using child = await spawnChild(
       `
-        process.stdin.setRawMode(${raw});
-        report(process.stdin);
-        await turns();
+        process.stdin.setRawMode(${isRaw});
+        forwardData(process.stdin);
+        await settleEventLoop();
         process.stdin.setRawMode(false);
         process.stdin.pause();
-        const inner = Bun.spawn([process.execPath, "inner.js"], { stdio: ["inherit", "pipe", "inherit"] });
-        for await (const chunk of inner.stdout) say(["inner", String(Buffer.from(chunk))]);
-        await inner.exited;
-        process.stdin.setRawMode(${raw});
+        const grandchild = Bun.spawn([process.execPath, "grandchild.js"], { stdio: ["inherit", "pipe", "inherit"] });
+        for await (const chunk of grandchild.stdout) send(["grandchild", String(Buffer.from(chunk))]);
+        await grandchild.exited;
+        process.stdin.setRawMode(${isRaw});
         process.stdin.resume();
-        say("resumed");
+        send("resumed");
       `,
       {
-        "inner.js": `process.stdin.once("data", chunk => process.stdout.write(chunk, () => process.exit(0))); process.stdout.write("ready|");`,
+        "grandchild.js": `process.stdin.once("data", chunk => process.stdout.write(chunk, () => process.exit(0))); process.stdout.write("ready|");`,
       },
     );
-    await child.gets("ready|", "inner");
+    await child.expectData("ready|", "grandchild");
     child.type("one\r");
-    await child.gets(`one${eol}`, "inner");
-    expect(await child.next()).toBe("resumed");
+    await child.expectData(`one${eol}`, "grandchild");
+    expect(await child.receive()).toBe("resumed");
     child.type("two\r");
-    await child.gets(raw ? "two\r" : `two${eol}`);
+    await child.expectData(isRaw ? "two\r" : `two${eol}`);
   });
 
   it("readline edits a line and ends on Ctrl+D", async () => {
-    await using child = await start(`
+    await using child = await spawnChild(`
       const lines = require("readline").createInterface({ input: process.stdin, output: process.stdout });
-      lines.on("line", line => say(line)).on("close", () => say("close"));
-      say("ready");
+      lines.on("line", line => send(line)).on("close", () => send("close"));
+      send("ready");
     `);
-    expect(await child.next()).toBe("ready");
+    expect(await child.receive()).toBe("ready");
     child.type("ac\x1b[Db\r");
-    expect(await child.next()).toBe("abc");
+    expect(await child.receive()).toBe("abc");
     child.type("\x04");
-    expect(await child.next()).toBe("close");
+    expect(await child.receive()).toBe("close");
   });
 
   it.each([
-    ["process.stdout.write()", `await new Promise(done => process.stdout.write(text, done))`],
+    ["process.stdout.write()", `await new Promise(resolve => process.stdout.write(text, resolve))`],
     ["console.log()", `console.log(text)`],
     ["Bun.write(Bun.stdout)", `await Bun.write(Bun.stdout, text)`],
     [
       "fs.writeSync(1)",
-      `for (let at = 0, bytes = Buffer.from(text); at < bytes.length; ) at += fs.writeSync(1, bytes, at)`,
+      `for (let offset = 0, bytes = Buffer.from(text); offset < bytes.length; ) offset += fs.writeSync(1, bytes, offset)`,
     ],
-  ])("%s prints a long text to its end", async (_, print) => {
-    await using child = await start(`
+  ])("%s prints long output in full", async (_, printScript) => {
+    await using child = await spawnChild(`
       process.stdout.write("");
       const text = Buffer.alloc(60_000, "\\u4e16 line\\n").toString() + "THE-END";
-      ${print};
-      say("printed");
+      ${printScript};
+      send("printed");
     `);
-    expect(await child.next()).toBe("printed");
-    await child.shows("THE-END");
+    expect(await child.receive()).toBe("printed");
+    await child.waitForScreen("THE-END");
     expect(child.screen()).not.toContain(String.fromCodePoint(0xfffd));
   });
 
-  describe.skipIf(!isWindows)("of Windows", () => {
+  describe.skipIf(!isWindows)("Windows console", () => {
     const build = Number(release().split(".")[2]);
+    const WINDOWS_11_24H2_BUILD = 26100;
+    const CTRL_C_EVENT = 0;
+    const CTRL_BREAK_EVENT = 1;
 
-    it("the standard handles are character devices of the console", async () => {
-      await using child = await start(
-        `say([0, 1, 2].map(fd => { const { mode, nlink, rdev } = fs.fstatSync(fd); return [mode.toString(8), nlink, rdev >> 16, tty.isatty(fd)].join(); }))`,
+    it("fstat reports fds 0-2 as console character devices", async () => {
+      await using child = await spawnChild(
+        `send([0, 1, 2].map(fd => { const { mode, nlink, rdev } = fs.fstatSync(fd); return [mode.toString(8), nlink, rdev >> 16, tty.isatty(fd)].join(); }))`,
       );
-      expect(await child.next()).toEqual(["20000,1,80,true", "20000,1,80,true", "20000,1,80,true"]);
+      // 80 is FILE_DEVICE_CONSOLE.
+      expect(await child.receive()).toEqual(["20000,1,80,true", "20000,1,80,true", "20000,1,80,true"]);
     });
 
     it.each([
-      ["SIGINT", 0],
-      ["SIGBREAK", 1],
-    ])("%s reaches every listener, each time", async (signal, event) => {
-      await using child = await start(`
-        process.on("${signal}", name => say("first " + name));
-        process.once("${signal}", name => say("once " + name));
-        for (;;) k32.GenerateConsoleCtrlEvent(${event}, 0), await heard();
+      ["SIGINT", CTRL_C_EVENT],
+      ["SIGBREAK", CTRL_BREAK_EVENT],
+    ])("%s reaches on() listeners every time and once() listeners once", async (signal, ctrlEvent) => {
+      await using child = await spawnChild(`
+        process.on("${signal}", name => send("first " + name));
+        process.once("${signal}", name => send("once " + name));
+        for (;;) {
+          k32.GenerateConsoleCtrlEvent(${ctrlEvent}, 0);
+          await waitForContinue();
+        }
       `);
-      expect([await child.next(), await child.next()]).toEqual([`first ${signal}`, `once ${signal}`]);
-      child.tell();
-      expect(await child.next()).toBe(`first ${signal}`);
-      child.tell();
-      expect(await child.next()).toBe(`first ${signal}`);
+      expect([await child.receive(), await child.receive()]).toEqual([`first ${signal}`, `once ${signal}`]);
+      child.sendContinue();
+      expect(await child.receive()).toBe(`first ${signal}`);
+      child.sendContinue();
+      expect(await child.receive()).toBe(`first ${signal}`);
     });
 
     it.each([
-      ["SIGINT", 0, "SIGBREAK"],
-      ["SIGBREAK", 1, "SIGINT"],
-    ])("%s ends the process again once its listener is gone", async (signal, event, other) => {
-      await using child = await start(`
-        process.on("${other}", () => say("wrong"));
-        process.once("${signal}", name => say(name));
-        for (;;) k32.GenerateConsoleCtrlEvent(${event}, 0), await heard();
+      ["SIGINT", CTRL_C_EVENT, "SIGBREAK"],
+      ["SIGBREAK", CTRL_BREAK_EVENT, "SIGINT"],
+    ])("%s terminates the process after its listener is removed", async (signal, ctrlEvent, otherSignal) => {
+      await using child = await spawnChild(`
+        process.on("${otherSignal}", () => send("wrong"));
+        process.once("${signal}", name => send(name));
+        for (;;) {
+          k32.GenerateConsoleCtrlEvent(${ctrlEvent}, 0);
+          await waitForContinue();
+        }
       `);
-      expect(await child.next()).toBe(signal);
-      child.tell();
-      expect((await child.proc.exited) & 0xff).toBe(0x3a);
+      expect(await child.receive()).toBe(signal);
+      child.sendContinue();
+      expect((await child.proc.exited) & 0xff).toBe(STATUS_CONTROL_C_EXIT & 0xff);
     });
 
-    it("a listener alone does not keep the process running", async () => {
-      await using child = await start(
+    it("signal listeners do not keep the process alive", async () => {
+      await using child = await spawnChild(
         `for (const name of ["SIGINT", "SIGBREAK", "SIGHUP", "SIGWINCH"]) process.on(name, () => {}); control.end();`,
       );
       expect(await child.proc.exited).toBe(0);
     });
 
     it.each([
-      ["in the middle of the screen", 3],
-      ["on the last line", 40],
-    ])("the cursor stays where it is when a line read is given up %s", async (_, lines) => {
-      await using child = await start(`
-        const cursor = () => {
+      ["mid-screen", 3],
+      ["last row", 40],
+    ])("cancelling a line read does not move the cursor (%s)", async (_, lineCount) => {
+      await using child = await spawnChild(`
+        const getCursor = () => {
           const info = new Int16Array(11);
-          k32.GetConsoleScreenBufferInfo(k32.GetStdHandle(-11), info);
+          k32.GetConsoleScreenBufferInfo(k32.GetStdHandle(STD_OUTPUT_HANDLE), info);
           return [info[2], info[3]];
         };
-        fs.writeSync(1, Buffer.alloc(${lines}, "\\n") + "prompt> ");
-        const before = cursor();
-        report(process.stdin);
-        await turns();
+        fs.writeSync(1, Buffer.alloc(${lineCount}, "\\n") + "prompt> ");
+        const cursorBefore = getCursor();
+        forwardData(process.stdin);
+        await settleEventLoop();
         process.stdin.setRawMode(true);
-        await turns();
-        say([before, cursor()]);
+        await settleEventLoop();
+        send([cursorBefore, getCursor()]);
       `);
-      const [before, after] = await child.next();
-      expect(before[0]).toBe(8);
-      expect(after).toEqual(before);
+      const [cursorBefore, cursorAfter] = await child.receive();
+      expect(cursorBefore[0]).toBe(8);
+      expect(cursorAfter).toEqual(cursorBefore);
     });
 
-    // Before Windows 11 24H2, close() does not end the console while a child is attached.
-    it.skipIf(build < 26100)("closing the console is a SIGHUP", async () => {
-      await using child = await start(
-        `process.on("SIGHUP", name => (say(name), heard().then(() => process.exit(5)))); say("ready");`,
+    // On earlier builds, close() does not close the console while a child is attached.
+    it.skipIf(build < WINDOWS_11_24H2_BUILD)("closing the console raises SIGHUP", async () => {
+      await using child = await spawnChild(
+        `process.on("SIGHUP", name => { send(name); waitForContinue().then(() => process.exit(5)); }); send("ready");`,
       );
-      expect(await child.next()).toBe("ready");
+      expect(await child.receive()).toBe("ready");
       child.proc.terminal!.close();
-      expect(await child.next()).toBe("SIGHUP");
-      child.tell();
+      expect(await child.receive()).toBe("SIGHUP");
+      child.sendContinue();
       expect(await child.proc.exited).toBe(5);
     });
 
     it.each([
-      ["returns", "process.stdin.pause()"],
+      ["exits normally", "process.stdin.pause()"],
       ["calls process.exit()", "process.exit(0)"],
       ["throws", "throw new Error('expected')"],
       [
-        "is interrupted",
+        "receives Ctrl+C",
         "require('bun:ffi').dlopen('kernel32.dll', { GenerateConsoleCtrlEvent: { args: ['u32', 'u32'], returns: 'i32' } }).symbols.GenerateConsoleCtrlEvent(0, 0)",
       ],
-    ])("modes and code pages are as before after a process in raw mode %s", async (_, leave) => {
-      await using child = await start(
+    ])("console modes and code pages are restored after a raw-mode process %s", async (_, exitScript) => {
+      await using child = await spawnChild(
         `
           process.on("SIGINT", () => {});
-          k32.SetConsoleCP(850), k32.SetConsoleOutputCP(850);
-          const state = () => [...[-10, -11].map(std => {
+          k32.SetConsoleCP(850);
+          k32.SetConsoleOutputCP(850);
+          const getConsoleState = () => [...[STD_INPUT_HANDLE, STD_OUTPUT_HANDLE].map(stdHandle => {
             const mode = new Uint32Array(1);
-            k32.GetConsoleMode(k32.GetStdHandle(std), mode);
+            k32.GetConsoleMode(k32.GetStdHandle(stdHandle), mode);
             return mode[0];
           }), k32.GetConsoleCP(), k32.GetConsoleOutputCP()];
-          const before = state();
-          const inner = Bun.spawn([process.execPath, "inner.js"], { stdio: ["inherit", "inherit", "ignore"] });
+          const before = getConsoleState();
+          const grandchild = Bun.spawn([process.execPath, "grandchild.js"], { stdio: ["inherit", "inherit", "ignore"] });
           while (!fs.existsSync("raw")) await Bun.sleep(1);
-          const during = state();
-          fs.writeFileSync("leave", "");
-          await inner.exited;
-          say({ before, during, after: state() });
+          const during = getConsoleState();
+          fs.writeFileSync("exit", "");
+          await grandchild.exited;
+          send({ before, during, after: getConsoleState() });
         `,
         {
-          "inner.js": `
+          "grandchild.js": `
             const fs = require("fs");
             process.stdin.setRawMode(true).resume();
             fs.writeFileSync("raw", "");
-            while (!fs.existsSync("leave")) Bun.sleepSync(1);
-            setImmediate(() => { ${leave} });
+            while (!fs.existsSync("exit")) Bun.sleepSync(1);
+            setImmediate(() => { ${exitScript} });
           `,
         },
       );
-      const { before, during, after } = await child.next();
+      const { before, during, after } = await child.receive();
+      const CP_UTF8 = 65001;
       expect(during[0]).not.toBe(before[0]);
-      expect(during.slice(2)).toEqual([65001, 65001]);
+      expect(during.slice(2)).toEqual([CP_UTF8, CP_UTF8]);
       expect(after).toEqual(before);
     });
 
-    // What was typed before raw mode began, or after another program changed the mode, is still a key event.
-    describe("a key that the console did not turn into an escape sequence", () => {
-      const conin = `
+    // Input typed before raw mode is enabled, or after another process changes the mode, arrives in this form.
+    describe("KEY_EVENT records without ENABLE_VIRTUAL_TERMINAL_INPUT", () => {
+      const keyEventPrelude = `
         process.stdin.setRawMode(true).setEncoding("utf8");
-        k32.SetConsoleMode(k32.GetStdHandle(-10), 0x8 /* ENABLE_WINDOW_INPUT */);
-        report(process.stdin);
-        function press(keys) {
-          const records = Buffer.alloc(20 * keys.length);
-          keys.forEach(([down, key, char, state = 0, repeat = 1], i) => {
-            records.writeUInt16LE(1 /* KEY_EVENT */, 20 * i);
-            records.writeInt32LE(down, 20 * i + 4);
-            records.writeUInt16LE(repeat, 20 * i + 8);
-            records.writeUInt16LE(key, 20 * i + 10);
-            records.writeUInt16LE(char, 20 * i + 14);
-            records.writeUInt32LE(state, 20 * i + 16);
+        k32.SetConsoleMode(k32.GetStdHandle(STD_INPUT_HANDLE), 0x8 /* ENABLE_WINDOW_INPUT */);
+        forwardData(process.stdin);
+        const INPUT_RECORD_SIZE = 20;
+        function writeKeyEvents(events) {
+          const records = Buffer.alloc(INPUT_RECORD_SIZE * events.length);
+          events.forEach(([isKeyDown, virtualKey, char, controlKeyState = 0, repeatCount = 1], i) => {
+            records.writeUInt16LE(1 /* KEY_EVENT */, INPUT_RECORD_SIZE * i);
+            records.writeInt32LE(isKeyDown, INPUT_RECORD_SIZE * i + 4);
+            records.writeUInt16LE(repeatCount, INPUT_RECORD_SIZE * i + 8);
+            records.writeUInt16LE(virtualKey, INPUT_RECORD_SIZE * i + 10);
+            records.writeUInt16LE(char, INPUT_RECORD_SIZE * i + 14);
+            records.writeUInt32LE(controlKeyState, INPUT_RECORD_SIZE * i + 16);
           });
-          k32.WriteConsoleInputW(k32.GetStdHandle(-10), records, keys.length, new Uint32Array(1));
+          k32.WriteConsoleInputW(k32.GetStdHandle(STD_INPUT_HANDLE), records, events.length, new Uint32Array(1));
         }
       `;
-      const [ALT, CTRL, SHIFT, ENHANCED, RIGHT_ALT] = [0x2, 0x8, 0x10, 0x100, 0x1];
+      const LEFT_ALT_PRESSED = 0x2;
+      const LEFT_CTRL_PRESSED = 0x8;
+      const SHIFT_PRESSED = 0x10;
+      const ENHANCED_KEY = 0x100;
+      const RIGHT_ALT_PRESSED = 0x1;
       const VK = {
         MENU: 0x12,
         F1: 0x70,
@@ -1082,40 +1124,50 @@ describe.concurrent("in a terminal", () => {
         DELETE: 0x2e,
         SHIFT: 0x10,
       };
-      const tap = (key: number, char = 0, state = 0, repeat = 1) => [
-        [1, key, char, state, repeat],
-        [0, key, char, state],
+      const keystroke = (virtualKey: number, char = 0, controlKeyState = 0, repeatCount = 1) => [
+        [1, virtualKey, char, controlKeyState, repeatCount],
+        [0, virtualKey, char, controlKeyState],
       ];
 
       it.each([
-        ["a letter", tap(0x41, 0x61), "a"],
-        ["a letter that repeats", tap(0x41, 0x61, 0, 3), "aaa"],
-        ["a modifier on its own", tap(VK.SHIFT, 0, SHIFT), ""],
-        ["F1", tap(VK.F1), "\x1b[[A"],
-        ["F5", tap(VK.F5), "\x1b[[E"],
-        ["F12", tap(VK.F12), "\x1b[24~"],
-        ["Shift+F1", tap(VK.F1, 0, SHIFT), "\x1b[23~"],
-        ["Up", tap(VK.UP, 0, ENHANCED), "\x1b[A"],
-        ["Up that repeats", tap(VK.UP, 0, ENHANCED, 2), "\x1b[A\x1b[A"],
-        ["Ctrl+Left", tap(VK.LEFT, 0, ENHANCED | CTRL), "\x1b[1;5D"],
-        ["Shift+Home", tap(VK.HOME, 0, ENHANCED | SHIFT), "\x1b[1;2~"],
-        ["Delete", tap(VK.DELETE, 0, ENHANCED), "\x1b[3~"],
-        ["Alt+Up", tap(VK.UP, 0, ENHANCED | ALT), "\x1b\x1b[A"],
-        ["Alt+a", [[1, VK.MENU, 0, ALT], ...tap(0x41, 0x61, ALT), [0, VK.MENU, 0, 0]], "\x1ba"],
-        ["AltGr+e", tap(0x45, 0x20ac, RIGHT_ALT | CTRL), "€"],
+        ["a letter", keystroke(0x41, 0x61), "a"],
+        ["a repeated letter", keystroke(0x41, 0x61, 0, 3), "aaa"],
+        ["a lone modifier to no input", keystroke(VK.SHIFT, 0, SHIFT_PRESSED), ""],
+        ["F1", keystroke(VK.F1), "\x1b[[A"],
+        ["F5", keystroke(VK.F5), "\x1b[[E"],
+        ["F12", keystroke(VK.F12), "\x1b[24~"],
+        ["Shift+F1", keystroke(VK.F1, 0, SHIFT_PRESSED), "\x1b[23~"],
+        ["Up", keystroke(VK.UP, 0, ENHANCED_KEY), "\x1b[A"],
+        ["repeated Up", keystroke(VK.UP, 0, ENHANCED_KEY, 2), "\x1b[A\x1b[A"],
+        ["Ctrl+Left", keystroke(VK.LEFT, 0, ENHANCED_KEY | LEFT_CTRL_PRESSED), "\x1b[1;5D"],
+        ["Shift+Home", keystroke(VK.HOME, 0, ENHANCED_KEY | SHIFT_PRESSED), "\x1b[1;2~"],
+        ["Delete", keystroke(VK.DELETE, 0, ENHANCED_KEY), "\x1b[3~"],
+        ["Alt+Up", keystroke(VK.UP, 0, ENHANCED_KEY | LEFT_ALT_PRESSED), "\x1b\x1b[A"],
         [
-          "Alt and digits of the keypad",
-          [[1, VK.MENU, 0, ALT], ...[0x60, 0x61, 0x62, 0x68].flatMap(key => tap(key, 0, ALT)), [0, VK.MENU, 0x20ac, 0]],
+          "Alt+a",
+          [[1, VK.MENU, 0, LEFT_ALT_PRESSED], ...keystroke(0x41, 0x61, LEFT_ALT_PRESSED), [0, VK.MENU, 0, 0]],
+          "\x1ba",
+        ],
+        ["AltGr+e", keystroke(0x45, 0x20ac, RIGHT_ALT_PRESSED | LEFT_CTRL_PRESSED), "€"],
+        [
+          "Alt+numpad code",
+          [
+            [1, VK.MENU, 0, LEFT_ALT_PRESSED],
+            ...[0x60, 0x61, 0x62, 0x68].flatMap(key => keystroke(key, 0, LEFT_ALT_PRESSED)),
+            [0, VK.MENU, 0x20ac, 0],
+          ],
           "€",
         ],
-        ["a surrogate pair", [...tap(0, 0xd83d), ...tap(0, 0xde00)], "\u{1F600}"],
-      ])("%s", async (_, keys, expected) => {
-        await using child = await start(`${conin} press(${JSON.stringify([...keys, ...tap(0x31, 0x21)])});`);
-        await child.gets(expected + "!");
+        ["a surrogate pair", [...keystroke(0, 0xd83d), ...keystroke(0, 0xde00)], "\u{1F600}"],
+      ])("translates %s", async (_, events, expected) => {
+        await using child = await spawnChild(
+          `${keyEventPrelude} writeKeyEvents(${JSON.stringify([...events, ...keystroke(0x31, 0x21)])});`,
+        );
+        await child.expectData(expected + "!");
       });
 
-      it("every function key, plain and with Shift, Ctrl and both", async () => {
-        const table: [number, string][] = [
+      it("translates navigation and function keys with every Shift and Ctrl combination", async () => {
+        const sequencesByKey: [number, string][] = [
           [0x21, "5~ 5;2~ 5;5~ 5;6~"],
           [0x22, "6~ 6;2~ 6;5~ 6;6~"],
           [0x23, "4~ 4;2~ 4;5~ 4;6~"],
@@ -1140,72 +1192,87 @@ describe.concurrent("in a terminal", () => {
           [0x7a, "23~ 23$ 23^ 23@"],
           [0x7b, "24~ 24$ 24^ 24@"],
         ];
-        const keys = table.flatMap(([key]) => [0, SHIFT, CTRL, SHIFT | CTRL].flatMap(state => tap(key, 0, state)));
-        await using child = await start(`${conin} press(${JSON.stringify(keys)});`);
-        await child.gets(table.flatMap(([, sequences]) => sequences.split(" ").map(it => "\x1b[" + it)).join(""));
+        const events = sequencesByKey.flatMap(([key]) =>
+          [0, SHIFT_PRESSED, LEFT_CTRL_PRESSED, SHIFT_PRESSED | LEFT_CTRL_PRESSED].flatMap(state =>
+            keystroke(key, 0, state),
+          ),
+        );
+        await using child = await spawnChild(`${keyEventPrelude} writeKeyEvents(${JSON.stringify(events)});`);
+        await child.expectData(
+          sequencesByKey.flatMap(([, sequences]) => sequences.split(" ").map(sequence => "\x1b[" + sequence)).join(""),
+        );
       });
     });
 
-    const openConin = `const input = new tty.ReadStream(fs.openSync("\\\\\\\\.\\\\CONIN$", "r+")).setEncoding("utf8");`;
+    const openConinScript = `const input = new tty.ReadStream(fs.openSync("\\\\\\\\.\\\\CONIN$", "r+")).setEncoding("utf8");`;
 
-    // The echo shows that the console is reading the line.
-    describe("a line that has been begun", () => {
-      async function begin(then: string, files?: Record<string, string>) {
-        const child = await start(`report(process.stdin); say("ready"); await heard(); ${then}`, files);
-        expect(await child.next()).toBe("ready");
+    describe("line read in progress", () => {
+      async function spawnWithLineReadInProgress(script: string, files?: Record<string, string>) {
+        const child = await spawnChild(
+          `forwardData(process.stdin); send("ready"); await waitForContinue(); ${script}`,
+          files,
+        );
+        expect(await child.receive()).toBe("ready");
         child.type("abc");
-        await child.shows("abc");
-        child.tell();
+        // The echo confirms that the line read is in progress.
+        await child.waitForScreen("abc");
+        child.sendContinue();
         return child;
       }
 
-      it("is handed over when raw mode begins", async () => {
-        await using child = await begin(`process.stdin.setRawMode(true);`);
-        await child.gets("abc");
+      it("delivers its input when raw mode is enabled", async () => {
+        await using child = await spawnWithLineReadInProgress(`process.stdin.setRawMode(true);`);
+        await child.expectData("abc");
         child.type("d");
-        await child.gets("d");
+        await child.expectData("d");
       });
 
-      it("goes on after pause() and resume()", async () => {
-        await using child = await begin(
-          `process.stdin.pause(); await turns(); say("paused"); await heard(); process.stdin.resume();`,
+      it("continues after pause() and resume()", async () => {
+        await using child = await spawnWithLineReadInProgress(
+          `process.stdin.pause(); await settleEventLoop(); send("paused"); await waitForContinue(); process.stdin.resume();`,
         );
-        expect(await child.next()).toBe("paused");
+        expect(await child.receive()).toBe("paused");
         child.type("def\r");
-        child.tell();
-        await child.gets("abcdef\r\n");
+        child.sendContinue();
+        await child.expectData("abcdef\r\n");
       });
 
-      it("is all there is after many changes of the mode", async () => {
-        await using child = await begin(`
-          for (let i = 0; i < 6; i++) process.stdin.setRawMode(true), process.stdin.setRawMode(false), await Bun.sleep(1);
+      it("continues after repeated mode changes", async () => {
+        await using child = await spawnWithLineReadInProgress(`
+          for (let i = 0; i < 6; i++) {
+            process.stdin.setRawMode(true);
+            process.stdin.setRawMode(false);
+            await Bun.sleep(1);
+          }
           console.log("changed");
         `);
-        await child.shows("changed");
+        await child.waitForScreen("changed");
         child.type("def\r");
-        await child.gets("abcdef\r\n");
+        await child.expectData("abcdef\r\n");
       });
 
-      it("is kept while a child reads the next one", async () => {
-        await using child = await begin(
+      it("continues after a subprocess reads a line", async () => {
+        await using child = await spawnWithLineReadInProgress(
           `
             process.stdin.pause();
-            const inner = Bun.spawn([process.execPath, "inner.js"], { stdio: ["inherit", "pipe", "inherit"] });
-            say(await inner.stdout.text());
+            const grandchild = Bun.spawn([process.execPath, "grandchild.js"], { stdio: ["inherit", "pipe", "inherit"] });
+            send(await grandchild.stdout.text());
             process.stdin.resume();
           `,
-          { "inner.js": `console.error("inner"); for await (const line of console) { console.log(line); break; }` },
+          {
+            "grandchild.js": `console.error("grandchild"); for await (const line of console) { console.log(line); break; }`,
+          },
         );
-        await child.shows("inner");
-        child.type("theirs\r");
-        expect(await child.next()).toBe("theirs\n");
-        await child.gets("abc");
+        await child.waitForScreen("grandchild");
+        child.type("second\r");
+        expect(await child.receive()).toBe("second\n");
+        await child.expectData("abc");
       });
 
       it.each(["process.stdin.pause()", "process.stdin.destroy()", "process.exit(0)"])(
-        "does not keep the process after %s",
-        async leave => {
-          await using child = await begin(`control.unref(); ${leave};`);
+        "does not keep the process alive after %s",
+        async exitScript => {
+          await using child = await spawnWithLineReadInProgress(`control.unref(); ${exitScript};`);
           expect(await child.proc.exited).toBe(0);
         },
       );
@@ -1214,118 +1281,121 @@ describe.concurrent("in a terminal", () => {
     it.each([
       ["line", "false", "a\x1eb\r", "a\x1eb\r\n"],
       ["raw", "true", "a\x1eb", "a\x1eb"],
-    ])("Ctrl+^ is data in %s mode", async (_, raw, keys, expected) => {
-      await using child = await start(`report(process.stdin.setRawMode(${raw})); say("ready");`);
-      expect(await child.next()).toBe("ready");
+    ])("Ctrl+^ is delivered as data in %s mode", async (_, isRaw, keys, expected) => {
+      await using child = await spawnChild(`forwardData(process.stdin.setRawMode(${isRaw})); send("ready");`);
+      expect(await child.receive()).toBe("ready");
       child.type(keys);
-      await child.gets(expected);
+      await child.expectData(expected);
     });
 
     // microsoft/terminal#18816
     it.each([
-      ["the line before it", ``],
-      ["raw mode", `process.stdin.setRawMode(true).setRawMode(false);`],
-      ["pause()", `process.stdin.pause(); await Bun.sleep(0); process.stdin.resume();`],
-    ])("a line arrives that is typed right after %s", async (_, before) => {
-      await using child = await start(`
-        const ready = async () => { ${before} say("ready"); };
-        report(process.stdin).on("data", ready);
-        ready();
+      ["the previous line", ``],
+      ["leaving raw mode", `process.stdin.setRawMode(true).setRawMode(false);`],
+      ["pause() and resume()", `process.stdin.pause(); await Bun.sleep(0); process.stdin.resume();`],
+    ])("delivers a line typed immediately after %s", async (_, setupScript) => {
+      await using child = await spawnChild(`
+        const sendReady = async () => { ${setupScript} send("ready"); };
+        forwardData(process.stdin).on("data", sendReady);
+        sendReady();
       `);
       for (let i = 0, deadline = Date.now() + 1000; i < 300 && Date.now() < deadline; i++) {
-        expect(await child.next()).toBe("ready");
+        expect(await child.receive()).toBe("ready");
         child.type("a");
         for (const end = performance.now() + (i % 16) / 100; performance.now() < end;);
         child.type("\r");
-        await child.gets("a\r\n");
+        await child.expectData("a\r\n");
       }
     });
 
-    it("a line is echoed while the script is busy", async () => {
-      await using child = await start(`
-        report(process.stdin);
-        await turns();
-        say("ready", () => { while (!screenHas("abc")) Bun.sleepSync(1); say("echoed"); });
+    it("echoes input while the event loop is blocked", async () => {
+      await using child = await spawnChild(`
+        forwardData(process.stdin);
+        await settleEventLoop();
+        send("ready", () => { while (!isOnFirstRow("abc")) Bun.sleepSync(1); send("echoed"); });
       `);
-      expect(await child.next()).toBe("ready");
+      expect(await child.receive()).toBe("ready");
       child.type("abc");
-      expect(await child.next()).toBe("echoed");
+      expect(await child.receive()).toBe("echoed");
     });
 
-    it("a line is echoed after raw mode while the script is busy", async () => {
-      await using child = await start(`
-        report(process.stdin.setRawMode(true));
-        await turns();
+    it("echoes input after leaving raw mode while the event loop is blocked", async () => {
+      await using child = await spawnChild(`
+        forwardData(process.stdin.setRawMode(true));
+        await settleEventLoop();
         process.stdin.setRawMode(false);
-        await turns();
-        say("ready", () => { while (!screenHas("abc")) Bun.sleepSync(1); say("echoed"); });
+        await settleEventLoop();
+        send("ready", () => { while (!isOnFirstRow("abc")) Bun.sleepSync(1); send("echoed"); });
       `);
-      expect(await child.next()).toBe("ready");
+      expect(await child.receive()).toBe("ready");
       child.type("abc");
-      expect(await child.next()).toBe("echoed");
+      expect(await child.receive()).toBe("echoed");
     });
 
-    it("pause() is not the end of the input for another process", async () => {
-      await using child = await start(
+    it("pause() does not end the line read of another process", async () => {
+      await using child = await spawnChild(
         `
-          const inner = Bun.spawn(["cmd.exe", "/d", "/v:on", "/c", "ask.cmd"], { stdio: ["inherit", "pipe", "inherit"] });
-          await heard();
+          const grandchild = Bun.spawn(["cmd.exe", "/d", "/v:on", "/c", "read-line.cmd"], { stdio: ["inherit", "pipe", "inherit"] });
+          await waitForContinue();
           process.stdin.resume();
-          await turns();
+          await settleEventLoop();
           process.stdin.pause();
-          await turns();
-          say("paused");
-          say(await inner.stdout.text());
+          await settleEventLoop();
+          send("paused");
+          send(await grandchild.stdout.text());
         `,
-        { "ask.cmd": "@echo asks 1>&2\r\n@set /p line=\r\n@echo [!line!]\r\n" },
+        { "read-line.cmd": "@echo prompting 1>&2\r\n@set /p line=\r\n@echo [!line!]\r\n" },
       );
-      await child.shows("asks");
+      await child.waitForScreen("prompting");
       for (const deadline = Date.now() + 4000; !child.screen().includes("#") && Date.now() < deadline;) {
         child.type("#");
         await Bun.sleep(10);
       }
-      child.tell();
-      expect(await child.next()).toBe("paused");
+      child.sendContinue();
+      expect(await child.receive()).toBe("paused");
       child.type("c\r");
-      expect(await child.next()).toStartWith("[#");
+      expect(await child.receive()).toStartWith("[#");
     });
 
-    it.each([false, true])("a change of the screen buffer does not keep the process busy (raw: %p)", async raw => {
-      await using child = await start(`
-        const input = k32.GetStdHandle(-10);
-        k32.WriteConsoleInputW(input, new Uint16Array(10).fill(8, 0, 1), 1, new Uint32Array(1));
-        k32.SetConsoleActiveScreenBuffer(k32.GetStdHandle(-11));
-        say(k32.WaitForSingleObject(input, 0));
-        report(process.stdin.setRawMode(${raw}));
+    it.each([false, true])("resets the input handle after a screen buffer switch (raw: %p)", async isRaw => {
+      await using child = await spawnChild(`
+        const input = k32.GetStdHandle(STD_INPUT_HANDLE);
+        k32.WriteConsoleInputW(input, new Uint16Array(10).fill(8 /* MENU_EVENT */, 0, 1), 1, new Uint32Array(1));
+        k32.SetConsoleActiveScreenBuffer(k32.GetStdHandle(STD_OUTPUT_HANDLE));
+        send(k32.WaitForSingleObject(input, 0));
+        forwardData(process.stdin.setRawMode(${isRaw}));
         while (k32.WaitForSingleObject(input, 0) === 0) await Bun.sleep(1);
-        say("reset");
+        send("reset");
       `);
-      expect(await child.next()).toBe(0);
-      expect(await child.next()).toBe("reset");
+      expect(await child.receive()).toBe(0);
+      expect(await child.receive()).toBe("reset");
       child.type("a\r");
-      await child.gets(raw ? "a\r" : "a\r\n");
+      await child.expectData(isRaw ? "a\r" : "a\r\n");
     });
 
-    it("the wait for a line ends with the console", async () => {
-      await using child = await start(`
-        const { dlopen } = require("bun:ffi"), host = new BigUint64Array(1);
+    it("a pending line read ends when the console host exits", async () => {
+      await using child = await spawnChild(`
+        const { dlopen } = require("bun:ffi");
+        const ProcessConsoleHostProcess = 49;
+        const hostPid = new BigUint64Array(1);
         dlopen("ntdll.dll", {
           NtQueryInformationProcess: { args: ["i64", "u32", "ptr", "u32", "ptr"], returns: "i32" },
-        }).symbols.NtQueryInformationProcess(-1, 49, host, 8, null);
-        report(process.stdin);
-        await turns();
-        process.kill(Number(host[0] & ~3n));
+        }).symbols.NtQueryInformationProcess(-1, ProcessConsoleHostProcess, hostPid, 8, null);
+        forwardData(process.stdin);
+        await settleEventLoop();
+        // The two low bits are flags.
+        process.kill(Number(hostPid[0] & ~3n));
       `);
-      expect(await child.next()).toEqual(["data", "end"]);
+      expect(await child.receive()).toEqual(["data", "end"]);
     });
 
-    it("SIGWINCH comes from a console that has a window", async () => {
+    it("resizing a console from AllocConsole() raises SIGWINCH", async () => {
       await using proc = Bun.spawn({
         cmd: [
           bunExe(),
           "-e",
           `require("bun:ffi").dlopen("kernel32.dll", { AllocConsole: { args: [], returns: "i32" } }).symbols.AllocConsole();
-           process.on("SIGWINCH", () => (console.log("resized"), process.exit()));
+           process.on("SIGWINCH", () => { console.log("resized"); process.exit(); });
            let columns = 60;
            const resize = () => Bun.spawn(["mode.com", "con", "cols=" + columns++], { stdin: "inherit", onExit: resize });
            resize();`,
@@ -1339,14 +1409,21 @@ describe.concurrent("in a terminal", () => {
       expect(await proc.exited).toBe(0);
     });
 
-    it("tty_wrap takes the modes of Node.js, on the input only", async () => {
-      await using child = await start(`
-        const { TTY } = process.binding("tty_wrap"), mode = new Uint32Array(1);
-        const set = (fd, value) => [new TTY(fd, {}).setRawMode(value), (k32.GetConsoleMode(k32.GetStdHandle(-10), mode), mode[0] & 0x207)];
-        say([set(0, 1), set(0, 3), set(0, 2), set(0, 9), set(1, 1), set(0, 0)]);
+    it("tty_wrap setRawMode() accepts uv_tty_mode_t values on the input handle only", async () => {
+      await using child = await spawnChild(`
+        const { TTY } = process.binding("tty_wrap");
+        const consoleMode = new Uint32Array(1);
+        const setMode = (fd, ttyMode) => {
+          const errno = new TTY(fd, {}).setRawMode(ttyMode);
+          k32.GetConsoleMode(k32.GetStdHandle(STD_INPUT_HANDLE), consoleMode);
+          // ENABLE_VIRTUAL_TERMINAL_INPUT (0x200) and ENABLE_{PROCESSED,LINE,ECHO}_INPUT (0x7)
+          return [errno, consoleMode[0] & 0x207];
+        };
+        send([setMode(0, 1), setMode(0, 3), setMode(0, 2), setMode(0, 9), setMode(1, 1), setMode(0, 0)]);
       `);
-      const [ENOTSUP, EINVAL] = [-4049, -4071];
-      expect(await child.next()).toEqual([
+      const ENOTSUP = -4049;
+      const EINVAL = -4071;
+      expect(await child.receive()).toEqual([
         [0, 0],
         [0, 0x200],
         [ENOTSUP, 0x200],
@@ -1356,16 +1433,16 @@ describe.concurrent("in a terminal", () => {
       ]);
     });
 
-    it("SIGWINCH is heard by a listener that has replaced another", async () => {
-      await using child = await start(`
-        const first = () => {};
-        process.on("SIGWINCH", first).off("SIGWINCH", first).on("SIGWINCH", () => say(process.stdout.getWindowSize()));
+    it("SIGWINCH reaches a listener added after the previous one was removed", async () => {
+      await using child = await spawnChild(`
+        const firstListener = () => {};
+        process.on("SIGWINCH", firstListener).off("SIGWINCH", firstListener).on("SIGWINCH", () => send(process.stdout.getWindowSize()));
         process.stdin.resume();
-        say("ready");
+        send("ready");
       `);
-      expect(await child.next()).toBe("ready");
+      expect(await child.receive()).toBe("ready");
       child.proc.terminal!.resize(70, 20);
-      expect(await child.next()).toEqual([70, 20]);
+      expect(await child.receive()).toEqual([70, 20]);
     });
 
     it("a process without a console can listen for SIGWINCH", async () => {
@@ -1379,96 +1456,116 @@ describe.concurrent("in a terminal", () => {
       expect(await proc.exited).toBe(0);
     });
 
-    describe("output of the shell", () => {
-      const output =
+    describe("Bun shell output", () => {
+      const outputPrelude =
         `
-        const out = k32.GetStdHandle(-11), mode = new Uint32Array(1), info = new Int16Array(11);
-        const modes = () => (k32.GetConsoleMode(out, mode), mode[0]);
-        const column = () => (k32.GetConsoleScreenBufferInfo(out, info), info[2]);
+        const ENABLE_VIRTUAL_TERMINAL_PROCESSING = 4;
+        const DISABLE_NEWLINE_AUTO_RETURN = 8;
+        const output = k32.GetStdHandle(STD_OUTPUT_HANDLE);
+        const mode = new Uint32Array(1);
+        const info = new Int16Array(11);
+        const getMode = () => {
+          k32.GetConsoleMode(output, mode);
+          return mode[0];
+        };
+        const getCursorColumn = () => {
+          k32.GetConsoleScreenBufferInfo(output, info);
+          return info[2];
+        };
       ` + "const write = bytes => Bun.$`cat < ${Buffer.from(bytes)}`;";
 
-      it("adds the carriage return that the console was told not to", async () => {
-        await using child = await start(`
-          ${output}
-          k32.SetConsoleMode(out, modes() | 4 | 8);
+      it("adds carriage returns when DISABLE_NEWLINE_AUTO_RETURN is set", async () => {
+        await using child = await spawnChild(`
+          ${outputPrelude}
+          k32.SetConsoleMode(output, getMode() | ENABLE_VIRTUAL_TERMINAL_PROCESSING | DISABLE_NEWLINE_AUTO_RETURN);
           const columns = [];
-          for (const text of ["ab\\ncd", "\\r\\nefg", "\\n"]) await write(text), columns.push(column());
-          say(columns);
+          for (const text of ["ab\\ncd", "\\r\\nefg", "\\n"]) {
+            await write(text);
+            columns.push(getCursorColumn());
+          }
+          send(columns);
         `);
-        expect(await child.next()).toEqual([2, 3, 0]);
+        expect(await child.receive()).toEqual([2, 3, 0]);
       });
 
-      it("turns escape sequences on", async () => {
-        await using child = await start(`
-          ${output}
-          k32.SetConsoleMode(out, modes() & ~4);
+      it("sets ENABLE_VIRTUAL_TERMINAL_PROCESSING", async () => {
+        await using child = await spawnChild(`
+          ${outputPrelude}
+          k32.SetConsoleMode(output, getMode() & ~ENABLE_VIRTUAL_TERMINAL_PROCESSING);
           await write("x");
-          say(modes() & 4);
+          send(getMode() & ENABLE_VIRTUAL_TERMINAL_PROCESSING);
         `);
-        expect(await child.next()).toBe(4);
+        expect(await child.receive()).toBe(4);
       });
     });
 
     it.each([
-      ["Bun.stdout.writer()", `const sink = Bun.stdout.writer(), write = bytes => (sink.write(bytes), sink.flush());`],
       [
-        "a writer on CONOUT$",
-        `const sink = Bun.file("CONOUT$").writer(), write = bytes => (sink.write(bytes), sink.flush());`,
+        "Bun.stdout.writer()",
+        `const sink = Bun.stdout.writer(); const write = bytes => { sink.write(bytes); return sink.flush(); };`,
       ],
       [
-        "a writer on a descriptor",
-        `const sink = Bun.file(fs.openSync("CONOUT$", "r+")).writer(), write = bytes => sink.write(bytes);`,
+        "a FileSink on CONOUT$",
+        `const sink = Bun.file("CONOUT$").writer(); const write = bytes => { sink.write(bytes); return sink.flush(); };`,
       ],
-      ["the shell", "const write = bytes => Bun.$`cat < ${Buffer.from(bytes)}`;"],
-    ])("%s does not cut a long text inside a character", async (_, open) => {
-      await using child = await start(`
-        ${open}
+      [
+        "a FileSink on a CONOUT$ fd",
+        `const sink = Bun.file(fs.openSync("CONOUT$", "r+")).writer(); const write = bytes => sink.write(bytes);`,
+      ],
+      ["the Bun shell", "const write = bytes => Bun.$`cat < ${Buffer.from(bytes)}`;"],
+    ])("%s does not split a surrogate pair in long output", async (_, writerScript) => {
+      await using child = await spawnChild(`
+        ${writerScript}
         await write(Buffer.alloc(8191, "x") + "\\u{1F600}" + Buffer.alloc(9000, "y") + "the end");
-        say("written");
-        await heard();
+        send("written");
+        await waitForContinue();
       `);
-      expect(await child.next()).toBe("written");
-      await child.shows("the end");
+      expect(await child.receive()).toBe("written");
+      await child.waitForScreen("the end");
       expect(child.screen()).toContain("\u{1F600}y");
     });
 
     it.each(["r+", "w", "w+"])("CONOUT$ can be opened with %j", async flags => {
-      await using child = await start(`fs.writeSync(fs.openSync("CONOUT$", "${flags}"), "opened"); await heard();`);
-      await child.shows("opened");
+      await using child = await spawnChild(
+        `fs.writeSync(fs.openSync("CONOUT$", "${flags}"), "opened"); await waitForContinue();`,
+      );
+      await child.waitForScreen("opened");
     });
 
-    it("a character can come in two writes", async () => {
-      await using child = await start(`
-        const sink = Bun.file(fs.openSync("CONOUT$", "r+")).writer(), bytes = Buffer.from("<\\u4e16>");
-        sink.write(bytes.subarray(0, 2)), sink.write(bytes.subarray(2));
-        await heard();
+    it("prints a UTF-8 character split across two writes", async () => {
+      await using child = await spawnChild(`
+        const sink = Bun.file(fs.openSync("CONOUT$", "r+")).writer();
+        const bytes = Buffer.from("<\\u4e16>");
+        sink.write(bytes.subarray(0, 2));
+        sink.write(bytes.subarray(2));
+        await waitForContinue();
       `);
-      await child.shows("\u4e16>");
+      await child.waitForScreen("\u4e16>");
     });
 
     it("a ReadStream on CONIN$ reads a line", async () => {
-      await using child = await start(`${openConin} report(input); say("ready");`);
-      expect(await child.next()).toBe("ready");
-      // It is read with ReadFile(), which older consoles answer in ASCII only.
-      const text = build < 26100 ? "hello" : "h\u00e9llo";
+      await using child = await spawnChild(`${openConinScript} forwardData(input); send("ready");`);
+      expect(await child.receive()).toBe("ready");
+      // This stream uses ReadFile(), which returns only ASCII on earlier builds.
+      const text = build < WINDOWS_11_24H2_BUILD ? "hello" : "h\u00e9llo";
       child.type(text + "\r");
-      await child.gets(text + "\r\n");
+      await child.expectData(text + "\r\n");
     });
 
     // setRawMode() emits "called on something that is not a TTY".
-    it.todo("a ReadStream on CONIN$ goes into raw mode and can be destroyed", async () => {
-      await using child = await start(`
-        ${openConin}
-        report(input.setRawMode(true));
-        say("ready");
-        await heard();
+    it.todo("a ReadStream on CONIN$ supports setRawMode() and destroy()", async () => {
+      await using child = await spawnChild(`
+        ${openConinScript}
+        forwardData(input.setRawMode(true));
+        send("ready");
+        await waitForContinue();
         input.setRawMode(false).destroy();
         control.end();
       `);
-      expect(await child.next()).toBe("ready");
+      expect(await child.receive()).toBe("ready");
       child.type("k");
-      await child.gets("k");
-      child.tell();
+      await child.expectData("k");
+      child.sendContinue();
       expect(await child.proc.exited).toBe(0);
     });
   });

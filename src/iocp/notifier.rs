@@ -9,16 +9,16 @@ use crate::port::{Shared, key};
 use crate::slab::Token;
 use crate::sys::{self, WaitPacket};
 
-/// Queues the packet of a request once an object is signalled.
+/// Queues a request's packet once an object is signaled.
 #[derive(Default)]
 pub(crate) struct Notifier {
     packet: OnceCell<WaitPacket>,
-    /// Ends the wait of the thread that stands in for the packet where the system has none.
-    cancel: Cell<Option<Arc<OwnedHandle>>>,
+    /// Ends the wait of the fallback thread, which is used where wait completion packets are unavailable.
+    cancel_event: Cell<Option<Arc<OwnedHandle>>>,
 }
 
 impl Notifier {
-    /// The part of `associate` that takes resources.
+    /// Creates the wait completion packet ahead of `associate`.
     pub(crate) fn prepare(&self) -> Result<Option<&WaitPacket>, NTSTATUS> {
         if let Some(packet) = self.packet.get() {
             return Ok(Some(packet));
@@ -28,40 +28,40 @@ impl Notifier {
 
     pub(crate) fn associate(
         &self,
-        port: &Arc<Shared>,
+        shared: &Arc<Shared>,
         target: BorrowedHandle<'_>,
-        request: Token,
+        token: Token,
     ) -> Result<(), NTSTATUS> {
         match self.prepare()? {
-            Some(packet) => packet.associate(&port.handle, target, key::REQUEST, request.to_raw()),
-            None => {
-                (self.wait_on_thread(port, target, request)).ok_or(NTSTATUS::INSUFFICIENT_RESOURCES)
-            }
+            Some(packet) => packet.associate(&shared.handle, target, key::REQUEST, token.to_raw()),
+            None => self
+                .spawn_waiter(shared, target, token)
+                .ok_or(NTSTATUS::INSUFFICIENT_RESOURCES),
         }
     }
 
-    fn wait_on_thread(
+    fn spawn_waiter(
         &self,
-        port: &Arc<Shared>,
+        shared: &Arc<Shared>,
         target: BorrowedHandle<'_>,
-        request: Token,
+        token: Token,
     ) -> Option<()> {
         let target = target.try_clone_to_owned().ok()?;
-        let cancel = Arc::new(bun_sys::windows::CreateEventW().ok()?);
-        self.cancel.set(Some(Arc::clone(&cancel)));
-        let port = Arc::clone(port);
+        let cancel_event = Arc::new(bun_sys::windows::CreateEventW().ok()?);
+        self.cancel_event.set(Some(Arc::clone(&cancel_event)));
+        let shared = Arc::clone(shared);
         blocking::spawn(move || {
-            bun_sys::windows::wait_for_any(&[cancel.as_handle(), target.as_handle()]);
-            sys::post(&port.handle, key::REQUEST, request.to_raw());
+            bun_sys::windows::wait_for_any(&[cancel_event.as_handle(), target.as_handle()]);
+            sys::post_packet(&shared.handle, key::REQUEST, token.to_raw());
         });
         Some(())
     }
 
-    /// `false` if the packet is still to come.
-    pub(crate) fn cancel(&self) -> bool {
-        if let Some(cancel) = self.cancel.take() {
-            bun_sys::windows::set_event(&cancel);
+    /// Returns `false` if the wait completion packet is already on its way to the port.
+    pub(crate) fn try_cancel(&self) -> bool {
+        if let Some(cancel_event) = self.cancel_event.take() {
+            bun_sys::windows::set_event(&cancel_event);
         }
-        self.packet.get().is_none_or(WaitPacket::cancel)
+        self.packet.get().is_none_or(WaitPacket::try_cancel)
     }
 }

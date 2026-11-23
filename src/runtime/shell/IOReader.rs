@@ -39,7 +39,7 @@ type Readers = Vec<ChildPtr>;
 struct State {
     #[cfg(not(windows))]
     file: sys::CloseOnDrop,
-    /// `None` once `closes_at_eof` has closed it.
+    /// `None` after EOF if `should_close_on_eof`.
     #[cfg(windows)]
     file: Option<sys::CloseOnDrop>,
     buf: Vec<u8>,
@@ -50,12 +50,11 @@ struct State {
     evtloop: EventLoopHandle,
     #[cfg(windows)]
     is_reading: bool,
-    /// True after EOF, at which the Windows reader closes its source.
+    /// True after EOF. The Windows reader closes its source at EOF.
     #[cfg(windows)]
     reached_eof: bool,
-    /// No other command gets `file`.
     #[cfg(windows)]
-    closes_at_eof: bool,
+    should_close_on_eof: bool,
     /// Weak self-ref so `keepalive()` can bump the strong count from `&self`
     /// without unsafe Rc-pointer reconstruction. Set via `Rc::new_cyclic` in
     /// `init()` (the sole constructor).
@@ -109,7 +108,7 @@ impl IOReader {
                 #[cfg(windows)]
                 reached_eof: false,
                 #[cfg(windows)]
-                closes_at_eof: false,
+                should_close_on_eof: false,
                 self_weak: std::rc::Weak::clone(w),
                 interp: None,
             }),
@@ -122,15 +121,15 @@ impl IOReader {
         this
     }
 
-    /// For a file that one builtin has opened. What runs next may rename the directory that it is in.
-    pub(crate) fn init_for_one_command(
+    /// For a file that no other command shares. Closes it at EOF on Windows, where an open handle blocks renaming its directory.
+    pub(crate) fn init_exclusive(
         file: sys::File,
         evtloop: EventLoopHandle,
     ) -> std::rc::Rc<IOReader> {
         let this = Self::init(file, evtloop);
         #[cfg(windows)]
         {
-            this.state().closes_at_eof = true;
+            this.state().should_close_on_eof = true;
         }
         this
     }
@@ -146,7 +145,11 @@ impl IOReader {
         #[cfg(not(windows))]
         return self.state().file.fd();
         #[cfg(windows)]
-        return (self.state().file.as_ref()).map_or(Fd::INVALID, |file| file.fd());
+        return self
+            .state()
+            .file
+            .as_ref()
+            .map_or(Fd::INVALID, |file| file.fd());
     }
 
     pub(crate) fn memory_cost(&self) -> usize {
@@ -313,7 +316,7 @@ impl IOReader {
         {
             let s = self.state();
             s.reached_eof = true;
-            if s.closes_at_eof {
+            if s.should_close_on_eof {
                 s.file = None;
             }
         }

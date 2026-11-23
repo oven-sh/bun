@@ -687,7 +687,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
 
             Self::reset_output_flags(self.reader(kind), pipe.fd());
             let event_loop = self.event_loop().as_event_loop_ctx();
-            match self.reader(kind).start_own_pipe(event_loop, pipe) {
+            match self.reader(kind).start_exclusive_pipe(event_loop, pipe) {
                 Ok(result) => _ = self.note_read_result(result),
                 Err(err) => self.exit_with_error(err.into()),
             }

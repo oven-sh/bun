@@ -1,23 +1,23 @@
-//! It takes longer to put a thread to sleep and to wake it than many a wait lasts.
+//! Adaptive spinning: many waits are shorter than the time it takes to put a thread to sleep and wake it.
 
 use std::sync::LazyLock;
 
-/// Enough for two other threads to wake up, one after the other, and answer.
-const AWAKE_NS: u64 = 75_000;
-const BUSY_NS: u64 = 150_000;
-/// What follows can be work of another kind.
-const IDLE_NS: u64 = 1_000_000;
+/// Long enough for two other threads to wake up one after the other and reply.
+const MAX_SPIN_NS: u64 = 75_000;
+const LONG_WAIT_THRESHOLD_NS: u64 = 150_000;
+/// The workload may have changed after a wait this long.
+const IDLE_THRESHOLD_NS: u64 = 1_000_000;
 
-/// How many waits a phase has.
-const TRIAL: u16 = 8;
-const MAX_AWAKE: u16 = 512;
-const MAX_ASLEEP: u16 = 256;
-/// So many waits in a row that outlast the limit end a phase awake.
+/// Phase lengths are counted in waits.
+const MIN_PHASE_LEN: u16 = 8;
+const MAX_SPIN_PHASE_LEN: u16 = 512;
+const MAX_SLEEP_PHASE_LEN: u16 = 256;
+/// This many consecutive waits that outlast the spin limit end a spin phase.
 const MAX_MISSES: u8 = 2;
 
-/// `available_parallelism` ignores the affinity.
+/// `available_parallelism` ignores the affinity mask.
 #[cfg(windows)]
-fn is_on_one_cpu() -> bool {
+fn is_single_cpu() -> bool {
     use bun_sys::windows::{BOOL, GetCurrentProcess, HANDLE};
     unsafe extern "system" {
         safe fn GetProcessAffinityMask(
@@ -26,106 +26,121 @@ fn is_on_one_cpu() -> bool {
             lpSystemAffinityMask: &mut usize,
         ) -> BOOL;
     }
-    let (mut process, mut system) = (0, 0);
-    GetProcessAffinityMask(GetCurrentProcess(), &mut process, &mut system);
-    process.is_power_of_two()
+    let mut process_mask = 0;
+    let mut system_mask = 0;
+    GetProcessAffinityMask(GetCurrentProcess(), &mut process_mask, &mut system_mask);
+    process_mask.is_power_of_two()
 }
 
 #[cfg(not(windows))]
-fn is_on_one_cpu() -> bool {
+fn is_single_cpu() -> bool {
     !std::thread::available_parallelism().is_ok_and(|count| count.get() > 1)
 }
 
-pub fn has_other_cpu() -> bool {
-    static ANSWER: LazyLock<bool> = LazyLock::new(|| !is_on_one_cpu());
-    *ANSWER
+pub fn has_multiple_cpus() -> bool {
+    static HAS_MULTIPLE_CPUS: LazyLock<bool> = LazyLock::new(|| !is_single_cpu());
+    *HAS_MULTIPLE_CPUS
 }
 
-/// Has a thread look for work before it goes to sleep, for as long as the work comes faster for it.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum Phase {
+    Sleep,
+    Spin,
+}
+
+/// Lets a thread spin before it sleeps, for as long as that makes work arrive faster.
 #[derive(Copy, Clone)]
-pub struct Spin {
-    is_awake: bool,
-    /// The end of the first wait of this phase, which is still at the pace of the one before.
-    began_at_ns: u64,
-    waits: u16,
-    len: u16,
-    /// More of it has piled up for a thread that has slept.
-    work: u64,
-    /// From one wait to the next, in the last phase asleep.
-    gap_asleep_ns: u64,
-    /// The same for a piece of work.
-    pace_asleep_ns: u64,
-    next_len_asleep: u16,
-    misses: u8,
+pub struct AdaptiveSpin {
+    phase: Phase,
+    /// End of the first wait of the phase, which still follows the pace of the previous phase.
+    phase_start_ns: u64,
+    wait_count: u16,
+    phase_len: u16,
+    /// Separate from `wait_count` because more work piles up while a thread sleeps.
+    work_count: u64,
+    /// Mean time per wait in the last completed sleep phase.
+    baseline_wait_interval_ns: u64,
+    /// Mean time per work item in the same phase.
+    baseline_work_interval_ns: u64,
+    next_sleep_phase_len: u16,
+    miss_count: u8,
 }
 
-impl Spin {
-    pub const fn new() -> Spin {
-        Spin {
-            is_awake: false,
-            began_at_ns: 0,
-            waits: 0,
-            len: TRIAL,
-            work: 0,
-            gap_asleep_ns: 0,
-            pace_asleep_ns: 0,
-            next_len_asleep: TRIAL,
-            misses: 0,
+impl AdaptiveSpin {
+    pub const fn new() -> AdaptiveSpin {
+        AdaptiveSpin {
+            phase: Phase::Sleep,
+            phase_start_ns: 0,
+            wait_count: 0,
+            phase_len: MIN_PHASE_LEN,
+            work_count: 0,
+            baseline_wait_interval_ns: 0,
+            baseline_work_interval_ns: 0,
+            next_sleep_phase_len: MIN_PHASE_LEN,
+            miss_count: 0,
         }
     }
 
     pub fn limit_ns(&self) -> u64 {
-        if self.is_awake && has_other_cpu() {
-            // What is so much later than for a thread that sleeps may be waiting for this CPU.
-            AWAKE_NS.min(2 * self.gap_asleep_ns)
+        if self.phase == Phase::Spin && has_multiple_cpus() {
+            // Work that takes more than twice the baseline to arrive may be waiting for this CPU.
+            MAX_SPIN_NS.min(2 * self.baseline_wait_interval_ns)
         } else {
             0
         }
     }
 
-    /// With the time asleep, if it came to that after `awake_ns`. `work` was done since the last time.
-    pub fn waited(&mut self, from_ns: u64, to_ns: u64, awake_ns: u64, work: u64) {
-        let ns = to_ns.saturating_sub(from_ns);
-        if self.is_awake && awake_ns > 0 {
-            self.misses = if ns > awake_ns { self.misses + 1 } else { 0 };
+    /// `start_ns..end_ns` includes any sleep after the spin. `work_count` is the work done since the last call.
+    pub fn record_wait(&mut self, start_ns: u64, end_ns: u64, spin_limit_ns: u64, work_count: u64) {
+        let wait_ns = end_ns.saturating_sub(start_ns);
+        if self.phase == Phase::Spin && spin_limit_ns > 0 {
+            self.miss_count = if wait_ns > spin_limit_ns {
+                self.miss_count + 1
+            } else {
+                0
+            };
         }
-        let is_lost = self.misses == MAX_MISSES;
-        if ns > IDLE_NS {
-            self.next_len_asleep = (self.next_len_asleep / 2).max(TRIAL);
+        let has_max_misses = self.miss_count == MAX_MISSES;
+        if wait_ns > IDLE_THRESHOLD_NS {
+            self.next_sleep_phase_len = (self.next_sleep_phase_len / 2).max(MIN_PHASE_LEN);
         }
-        if ns > BUSY_NS || (is_lost && self.len > TRIAL) {
-            return self.begin(false, self.next_len_asleep);
+        if wait_ns > LONG_WAIT_THRESHOLD_NS || (has_max_misses && self.phase_len > MIN_PHASE_LEN) {
+            return self.begin_phase(Phase::Sleep, self.next_sleep_phase_len);
         }
-        if self.waits == 0 {
-            (self.began_at_ns, self.work) = (to_ns, 0);
+        if self.wait_count == 0 {
+            self.phase_start_ns = end_ns;
+            self.work_count = 0;
         } else {
-            self.work += work.max(1);
+            self.work_count += work_count.max(1);
         }
-        self.waits += 1;
-        if self.waits <= self.len && !is_lost {
+        self.wait_count += 1;
+        if self.wait_count <= self.phase_len && !has_max_misses {
             return;
         }
-        let phase_ns = to_ns.saturating_sub(self.began_at_ns);
-        let pace_ns = phase_ns / self.work;
-        if !self.is_awake {
-            self.gap_asleep_ns = phase_ns / u64::from(self.len);
-            self.pace_asleep_ns = pace_ns;
-            self.begin(true, TRIAL);
-        } else if is_lost || pace_ns * 8 > self.pace_asleep_ns * 7 {
-            self.begin(false, self.next_len_asleep);
-            self.next_len_asleep = (self.len * 2).min(MAX_ASLEEP);
-        } else if self.len < MAX_AWAKE {
-            if self.len > TRIAL {
-                self.next_len_asleep = TRIAL;
+        let phase_ns = end_ns.saturating_sub(self.phase_start_ns);
+        let work_interval_ns = phase_ns / self.work_count;
+        if self.phase == Phase::Sleep {
+            self.baseline_wait_interval_ns = phase_ns / u64::from(self.phase_len);
+            self.baseline_work_interval_ns = work_interval_ns;
+            self.begin_phase(Phase::Spin, MIN_PHASE_LEN);
+        } else if has_max_misses || work_interval_ns * 8 > self.baseline_work_interval_ns * 7 {
+            self.begin_phase(Phase::Sleep, self.next_sleep_phase_len);
+            self.next_sleep_phase_len = (self.phase_len * 2).min(MAX_SLEEP_PHASE_LEN);
+        } else if self.phase_len < MAX_SPIN_PHASE_LEN {
+            if self.phase_len > MIN_PHASE_LEN {
+                self.next_sleep_phase_len = MIN_PHASE_LEN;
             }
-            self.begin(true, self.len * 4);
+            self.begin_phase(Phase::Spin, self.phase_len * 4);
         } else {
-            self.begin(false, TRIAL);
+            self.begin_phase(Phase::Sleep, MIN_PHASE_LEN);
         }
     }
 
-    fn begin(&mut self, is_awake: bool, len: u16) {
-        (self.is_awake, self.len, self.waits, self.misses) = (is_awake, len, 0, 0);
+    fn begin_phase(&mut self, phase: Phase, len: u16) {
+        self.phase = phase;
+        self.phase_len = len;
+        self.wait_count = 0;
+        self.miss_count = 0;
     }
 }
 
@@ -133,67 +148,76 @@ impl Spin {
 mod tests {
     use super::*;
 
-    const WAKE_NS: u64 = 20_000;
+    const WAKE_LATENCY_NS: u64 = 20_000;
 
-    /// The percentage of waits that start awake. `next` says when work comes, from the number and the start of a wait.
-    fn awake(spin: &mut Spin, next: impl Fn(u64, u64) -> u64) -> u64 {
-        let (mut now, mut count) = (1, 0);
+    /// `next_arrival` maps the index and the start time of a wait to the time at which work arrives.
+    fn spin_percent(spin: &mut AdaptiveSpin, next_arrival: impl Fn(u64, u64) -> u64) -> u64 {
+        let mut now = 1;
+        let mut spin_count = 0;
         for index in 0..10_000 {
-            let (from, comes) = (now + 5_000, next(index, now + 5_000));
-            let is_caught = comes - from <= spin.limit_ns();
-            count += u64::from(spin.limit_ns() > 0);
-            now = comes + if is_caught { 0 } else { WAKE_NS };
-            spin.waited(from, now, spin.limit_ns(), 1);
+            let start = now + 5_000;
+            let arrival = next_arrival(index, start);
+            let is_hit = arrival - start <= spin.limit_ns();
+            spin_count += u64::from(spin.limit_ns() > 0);
+            now = arrival + if is_hit { 0 } else { WAKE_LATENCY_NS };
+            spin.record_wait(start, now, spin.limit_ns(), 1);
         }
-        count / 100
+        spin_count / 100
     }
 
     #[test]
-    fn stays_awake_only_where_it_pays() {
-        if !has_other_cpu() {
+    fn spins_only_when_work_arrives_faster() {
+        if !has_multiple_cpus() {
             return;
         }
-        let spin = &mut Spin::new();
-        for answer_ns in [2_000, 20_000, 70_000] {
-            assert!(awake(spin, |_, now| now + answer_ns) > 90);
+        let spin = &mut AdaptiveSpin::new();
+        for reply_ns in [2_000, 20_000, 70_000] {
+            assert!(spin_percent(spin, |_, now| now + reply_ns) > 90);
         }
-        assert!(awake(spin, |index, now| now + [9_000, 90_000][index as usize % 2]) > 90);
-        for pace_ns in [30_000, 40_000, 80_000, 120_000] {
-            assert!(awake(spin, |_, now| now.next_multiple_of(pace_ns)) < 8);
+        assert!(spin_percent(spin, |index, now| now + [9_000, 90_000][index as usize % 2]) > 90);
+        for interval_ns in [30_000, 40_000, 80_000, 120_000] {
+            assert!(spin_percent(spin, |_, now| now.next_multiple_of(interval_ns)) < 8);
         }
-        assert!(awake(spin, |_, now| now + 90_000) < 6);
-        assert_eq!(awake(spin, |_, now| now + 200_000), 0);
-        let pause = |index| if index % 100 == 0 { 5_000_000 } else { 9_000 };
-        assert!(awake(spin, |index, now| now + pause(index)) > 80);
-        let pauses = |index| if index % 22 < 2 { 100_000 } else { 9_000 };
-        assert!(awake(spin, |index, now| now + pauses(index)) > 40);
+        assert!(spin_percent(spin, |_, now| now + 90_000) < 6);
+        assert_eq!(spin_percent(spin, |_, now| now + 200_000), 0);
+        let with_idle_gaps = |index| if index % 100 == 0 { 5_000_000 } else { 9_000 };
+        assert!(spin_percent(spin, |index, now| now + with_idle_gaps(index)) > 80);
+        let with_misses = |index| if index % 22 < 2 { 100_000 } else { 9_000 };
+        assert!(spin_percent(spin, |index, now| now + with_misses(index)) > 40);
     }
 
     #[test]
-    fn sleeps_where_that_only_makes_the_batches_larger() {
-        for pace_ns in [7_000, 10_000, 15_000] {
-            let (mut spin, mut now, mut awake) = (Spin::new(), 1_u64, 0);
+    fn fixed_rate_work_rarely_spins() {
+        for interval_ns in [7_000, 10_000, 15_000] {
+            let mut spin = AdaptiveSpin::new();
+            let mut now = 1_u64;
+            let mut spin_count = 0;
             for _ in 0..10_000 {
-                let (last, from) = (now, now + 1_000);
-                awake += u64::from(spin.limit_ns() > 0);
-                now = from.next_multiple_of(pace_ns) + WAKE_NS * u64::from(spin.limit_ns() == 0);
-                spin.waited(from, now, spin.limit_ns(), now / pace_ns - last / pace_ns);
+                let last_end = now;
+                let start = now + 1_000;
+                spin_count += u64::from(spin.limit_ns() > 0);
+                now = start.next_multiple_of(interval_ns)
+                    + WAKE_LATENCY_NS * u64::from(spin.limit_ns() == 0);
+                let work_count = now / interval_ns - last_end / interval_ns;
+                spin.record_wait(start, now, spin.limit_ns(), work_count);
             }
-            assert!(awake < 1_000, "{pace_ns} {awake}");
+            assert!(spin_count < 1_000, "{interval_ns} {spin_count}");
         }
     }
 
     #[test]
-    fn loses_little_where_the_work_needs_this_cpu() {
-        for turn_ns in [5_000, 20_000, 60_000] {
-            let (mut spin, mut now, mut lost) = (Spin::new(), 1, 0);
+    fn spin_overhead_is_low_when_producer_needs_this_cpu() {
+        for cycle_ns in [5_000, 20_000, 60_000] {
+            let mut spin = AdaptiveSpin::new();
+            let mut now = 1;
+            let mut wasted_ns = 0;
             for _ in 0..10_000 {
-                let from = now + turn_ns / 2;
-                lost += spin.limit_ns();
-                now = from + spin.limit_ns() + turn_ns / 2;
-                spin.waited(from, now, spin.limit_ns(), 1);
+                let start = now + cycle_ns / 2;
+                wasted_ns += spin.limit_ns();
+                now = start + spin.limit_ns() + cycle_ns / 2;
+                spin.record_wait(start, now, spin.limit_ns(), 1);
             }
-            assert!(lost * 40 < now, "{turn_ns}");
+            assert!(wasted_ns * 40 < now, "{cycle_ns}");
         }
     }
 }

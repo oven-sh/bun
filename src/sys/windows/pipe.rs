@@ -1,4 +1,4 @@
-//! Connected pipe ends that have no name.
+//! Anonymous pipe pairs.
 
 use core::ptr;
 use std::os::windows::io::{AsRawHandle as _, FromRawHandle as _, OwnedHandle};
@@ -25,30 +25,32 @@ impl PipeMode {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum PipeDirection {
-    OursReads,
-    OursWrites,
+    /// From `theirs` to `ours`.
+    Inbound,
+    /// From `ours` to `theirs`.
+    Outbound,
     Duplex,
 }
 
-/// Neither is inheritable. `ours` is the server end.
+/// Neither handle is inheritable. `ours` is the server end.
 pub struct PipePair {
     pub ours: OwnedHandle,
     pub theirs: OwnedHandle,
 }
 
-const QUOTA: u32 = 64 * 1024;
-const READ: u32 = w::GENERIC_READ | w::FILE_WRITE_ATTRIBUTES | w::SYNCHRONIZE;
-const WRITE: u32 = w::GENERIC_WRITE | w::FILE_READ_ATTRIBUTES | w::SYNCHRONIZE;
+const PIPE_QUOTA: u32 = 64 * 1024;
+const READ_ACCESS: u32 = w::GENERIC_READ | w::FILE_WRITE_ATTRIBUTES | w::SYNCHRONIZE;
+const WRITE_ACCESS: u32 = w::GENERIC_WRITE | w::FILE_READ_ATTRIBUTES | w::SYNCHRONIZE;
 
-/// Calls `open` with the place for the new handle and the attributes that name `name` below `root`.
-fn open_with(
+/// `open` writes the new handle to its first argument.
+fn create_nt_handle(
     root: Option<HANDLE>,
     name: Option<&[u16]>,
     open: impl FnOnce(*mut HANDLE, *const w::OBJECT_ATTRIBUTES, *mut IO_STATUS_BLOCK) -> NTSTATUS,
 ) -> Result<OwnedHandle, Win32Error> {
     let mut io: IO_STATUS_BLOCK = bun_core::ffi::zeroed();
     let mut handle = ptr::null_mut();
-    let status = nt::with_attributes(root, name, |attributes| {
+    let status = nt::with_object_attributes(root, name, |attributes| {
         open(&raw mut handle, attributes, &raw mut io)
     });
     if !NT_SUCCESS(status) {
@@ -58,13 +60,13 @@ fn open_with(
     Ok(unsafe { OwnedHandle::from_raw_handle(handle) })
 }
 
-fn open_below(
+fn open_file(
     root: Option<HANDLE>,
     name: Option<&[u16]>,
     access: u32,
     options: u32,
 ) -> Result<OwnedHandle, Win32Error> {
-    open_with(root, name, |handle, attributes, io| {
+    create_nt_handle(root, name, |handle, attributes, io| {
         let share = w::FILE_SHARE_READ | w::FILE_SHARE_WRITE;
         // SAFETY: the pointers are valid for the call.
         unsafe { ntdll::NtOpenFile(handle, access, attributes, io, share, options) }
@@ -74,7 +76,7 @@ fn open_below(
 pub fn open_pipe_file_system(mode: PipeMode) -> Result<OwnedHandle, Win32Error> {
     let name = bun_core::wstr!("\\Device\\NamedPipe\\").as_slice();
     let access = w::GENERIC_READ | w::SYNCHRONIZE;
-    open_below(None, Some(name), access, mode.create_options())
+    open_file(None, Some(name), access, mode.create_options())
 }
 
 fn pipe_file_system() -> Result<HANDLE, Win32Error> {
@@ -86,23 +88,23 @@ fn pipe_file_system() -> Result<HANDLE, Win32Error> {
     Ok(ROOT.get_or_init(|| root).as_raw_handle())
 }
 
-pub fn pipe_pair(
-    ours: PipeMode,
-    theirs: PipeMode,
+pub fn create_pipe_pair(
+    our_mode: PipeMode,
+    their_mode: PipeMode,
     direction: PipeDirection,
 ) -> Result<PipePair, Win32Error> {
-    // What the server shares is what the client may do.
+    // The server's share access determines the access that the client can request.
     let (our_access, their_access, share) = match direction {
-        PipeDirection::OursReads => (READ, WRITE, w::FILE_SHARE_WRITE),
-        PipeDirection::OursWrites => (WRITE, READ, w::FILE_SHARE_READ),
+        PipeDirection::Inbound => (READ_ACCESS, WRITE_ACCESS, w::FILE_SHARE_WRITE),
+        PipeDirection::Outbound => (WRITE_ACCESS, READ_ACCESS, w::FILE_SHARE_READ),
         PipeDirection::Duplex => (
-            READ | WRITE,
-            READ | WRITE,
+            READ_ACCESS | WRITE_ACCESS,
+            READ_ACCESS | WRITE_ACCESS,
             w::FILE_SHARE_READ | w::FILE_SHARE_WRITE,
         ),
     };
-    let server = open_with(Some(pipe_file_system()?), None, |handle, attributes, io| {
-        // Required, and only used to wait for an instance by name. 50 ms is what `CreateNamedPipeW` has.
+    let server = create_nt_handle(Some(pipe_file_system()?), None, |handle, attributes, io| {
+        // Required, but only used to wait for an instance by name. 50 ms is the `CreateNamedPipeW` default.
         let default_timeout: i64 = -500_000;
         // SAFETY: the pointers are valid for the call.
         unsafe {
@@ -113,22 +115,22 @@ pub fn pipe_pair(
                 io,
                 share,
                 w::FILE_CREATE,
-                ours.create_options(),
+                our_mode.create_options(),
                 w::FILE_PIPE_BYTE_STREAM_TYPE,
                 w::FILE_PIPE_BYTE_STREAM_MODE,
                 w::FILE_PIPE_QUEUE_OPERATION,
                 1,
-                QUOTA,
-                QUOTA,
+                PIPE_QUOTA,
+                PIPE_QUOTA,
                 &raw const default_timeout,
             )
         }
     })?;
-    let client = open_below(
+    let client = open_file(
         Some(server.as_raw_handle()),
         None,
         their_access,
-        w::FILE_NON_DIRECTORY_FILE | theirs.create_options(),
+        w::FILE_NON_DIRECTORY_FILE | their_mode.create_options(),
     )?;
     Ok(PipePair {
         ours: server,
@@ -144,39 +146,39 @@ mod tests {
     use super::*;
     use crate::{IoVec, IoVecMut};
 
-    fn receive(to: &OwnedHandle) -> Result<usize, Win32Error> {
+    fn read(reader: &OwnedHandle) -> Result<usize, Win32Error> {
         let mut buf = [MaybeUninit::uninit(); 8];
-        sync_io::readv(to.as_raw_handle(), &[IoVecMut::new(&mut buf)], None)
+        sync_io::readv(reader.as_raw_handle(), &[IoVecMut::new(&mut buf)], None)
     }
 
-    fn send(from: &OwnedHandle, to: &OwnedHandle) -> Result<usize, Win32Error> {
-        sync_io::writev(from.as_raw_handle(), &[IoVec::new(b"abc")], None)?;
-        receive(to)
+    fn write_and_read(writer: &OwnedHandle, reader: &OwnedHandle) -> Result<usize, Win32Error> {
+        sync_io::writev(writer.as_raw_handle(), &[IoVec::new(b"abc")], None)?;
+        read(reader)
     }
 
     #[test]
-    fn carries_bytes_in_the_directions_asked_for() {
+    fn data_flows_only_in_requested_direction() {
         use PipeDirection::*;
-        for ours in [PipeMode::Overlapped, PipeMode::Synchronous] {
-            for theirs in [PipeMode::Overlapped, PipeMode::Synchronous] {
-                for (direction, out, back) in [
-                    (OursReads, Err(Win32Error::ACCESS_DENIED), Ok(3)),
-                    (OursWrites, Ok(3), Err(Win32Error::ACCESS_DENIED)),
+        for our_mode in [PipeMode::Overlapped, PipeMode::Synchronous] {
+            for their_mode in [PipeMode::Overlapped, PipeMode::Synchronous] {
+                for (direction, outbound_result, inbound_result) in [
+                    (Inbound, Err(Win32Error::ACCESS_DENIED), Ok(3)),
+                    (Outbound, Ok(3), Err(Win32Error::ACCESS_DENIED)),
                     (Duplex, Ok(3), Ok(3)),
                 ] {
-                    let pair = pipe_pair(ours, theirs, direction).unwrap();
-                    assert_eq!(send(&pair.ours, &pair.theirs), out);
-                    assert_eq!(send(&pair.theirs, &pair.ours), back);
+                    let pair = create_pipe_pair(our_mode, their_mode, direction).unwrap();
+                    assert_eq!(write_and_read(&pair.ours, &pair.theirs), outbound_result);
+                    assert_eq!(write_and_read(&pair.theirs, &pair.ours), inbound_result);
                 }
             }
         }
     }
 
     #[test]
-    fn closing_one_end_breaks_the_other() {
+    fn read_fails_with_broken_pipe_after_peer_closes() {
         let mode = PipeMode::Overlapped;
-        let pair = pipe_pair(mode, mode, PipeDirection::OursReads).unwrap();
+        let pair = create_pipe_pair(mode, mode, PipeDirection::Inbound).unwrap();
         drop(pair.theirs);
-        assert_eq!(receive(&pair.ours), Err(Win32Error::BROKEN_PIPE));
+        assert_eq!(read(&pair.ours), Err(Win32Error::BROKEN_PIPE));
     }
 }

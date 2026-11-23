@@ -1,8 +1,6 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
-// A stress check of the many-subprocess teardown path. With ~300+ children it
-// used to panic on Windows, intermittently.
 test("tearing down hundreds of spawned subprocesses at exit does not overflow the loop active-handle counter", async () => {
   const N = 350;
   const fixture = /* js */ `

@@ -151,8 +151,8 @@ impl Channel {
             let Ok(pipe) = Pipe::open_duplex(vm.uws_loop().port(), fd) else {
                 return false;
             };
-            pipe.read_ahead();
-            vm.rare_data().reads_from_test_coordinator.set(true);
+            pipe.enable_read_ahead();
+            vm.rare_data().has_test_coordinator_pipe.set(true);
             // `pipe` closes it.
             end.into_raw();
             return self.adopt_pipe(pipe);
@@ -172,10 +172,10 @@ impl Channel {
         }
     }
 
-    /// `adopt`, for the end that the coordinator keeps.
-    pub(crate) fn adopt_own(&self, vm: &VirtualMachine, end: File) -> bool {
+    /// `adopt` for the coordinator's end, which it shares with no other process.
+    pub(crate) fn adopt_exclusive(&self, vm: &VirtualMachine, end: File) -> bool {
         #[cfg(windows)]
-        return self.adopt_pipe(Pipe::from_exclusive(vm.uws_loop().port(), end));
+        return self.adopt_pipe(Pipe::new_exclusive(vm.uws_loop().port(), end));
         #[cfg(not(windows))]
         self.adopt(vm, end)
     }
@@ -184,7 +184,7 @@ impl Channel {
     fn adopt_pipe(&self, pipe: Pipe) -> bool {
         let this = core::ptr::from_ref(self).cast_mut();
         let owner = Owner::new(PollTag::TestParallelChannel, this.cast());
-        // SAFETY: both are fields of `self`, which does not move once it is adopted.
+        // SAFETY: `owner` points to `self`, which holds the reader and the writer and does not move after adoption.
         unsafe {
             self.backend.reader.set_owner(owner);
             self.backend.writer.set_owner(owner);
@@ -197,7 +197,7 @@ impl Channel {
     // -- write ---------------------------------------------------------------
 
     /// Queue and write a complete encoded frame. If the kernel accepts only
-    /// part of it (or there's already a backlog), the remainder lands in `out`
+    /// part of it (or there's already a backlog), the remainder is buffered
     /// and the writable callback finishes it.
     pub(crate) fn send(&self, frame_bytes: &[u8]) {
         if self.done.get() {
@@ -209,7 +209,7 @@ impl Channel {
             if writer.has_pending_data() {
                 writer.enqueue(frame_bytes);
             } else {
-                writer.write_now(self, &[frame_bytes]);
+                writer.try_write(self, &[frame_bytes]);
             }
         }
         #[cfg(not(windows))]
@@ -365,14 +365,14 @@ impl Channel {
         if let IoEvent::Write(_) = event {
             return self.backend.writer.on_io(self, event);
         }
-        let result =
-            (self.backend.reader).read_chunks(bun_io::js_vm_ctx(), Some(event), |chunk, _| {
-                self.ingest(&chunk);
-                true
-            });
+        let reader = &self.backend.reader;
+        let result = reader.read_chunks(bun_io::js_vm_ctx(), Some(event), |chunk, _| {
+            self.ingest(&chunk);
+            true
+        });
         if !matches!(result, ReadResult::Pending) {
             self.done.set(true);
-            self.backend.reader.deinit();
+            reader.deinit();
             self.backend.writer.close(self);
         }
     }

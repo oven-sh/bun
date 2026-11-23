@@ -857,13 +857,15 @@ fn start_second_process(
     Global::exit(1)
 }
 
-/// From descriptor 3 on.
+/// Whether each inherited descriptor is open, starting at descriptor 3.
 #[cfg(windows)]
 fn list_inherited_extra_descriptors() -> Box<[bool]> {
-    use bun_sys::windows_format::crt_descriptors::{MAX_COUNT, are_open};
-    let were_open = are_open(bun_sys::windows::inherited_descriptors()).take(MAX_COUNT);
-    ((0..).zip(were_open).skip(3))
-        .map(|(number, was_open)| was_open && Fd::from_crt(number).native() as isize > 0)
+    use bun_sys::windows_format::crt_descriptors::{MAX_COUNT, open_states};
+    let initial_states = open_states(bun_sys::windows::inherited_descriptors()).take(MAX_COUNT);
+    (0..)
+        .zip(initial_states)
+        .skip(3)
+        .map(|(fd, was_open)| was_open && Fd::from_crt(fd).native() as isize > 0)
         .collect()
 }
 

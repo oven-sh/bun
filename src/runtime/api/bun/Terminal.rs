@@ -346,7 +346,10 @@ impl Terminal {
         let event_loop = terminal.event_loop_handle.as_event_loop_ctx();
 
         // Start writer with the write fd - adds a ref.
-        match (terminal.writer).start_own_pipe(&*terminal, event_loop, pty_result.write) {
+        match terminal
+            .writer
+            .start_exclusive_pipe(&*terminal, event_loop, pty_result.write)
+        {
             sys::Result::Ok(()) => terminal.writer_ref.set(Some(terminal.clone())),
             sys::Result::Err(_) => {
                 // The writer did not take its ref, and the reader never started.
@@ -357,7 +360,10 @@ impl Terminal {
         }
 
         // Start reader with the read fd - adds a ref.
-        let Ok(result) = terminal.reader.start_own_pipe(event_loop, pty_result.read) else {
+        let Ok(result) = terminal
+            .reader
+            .start_exclusive_pipe(event_loop, pty_result.read)
+        else {
             return Err(terminal.fail_reader_start());
         };
         terminal.reader_ref.set(Some(terminal.clone()));
@@ -880,12 +886,12 @@ fn create_pty_posix(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError> {
 fn create_pty_windows(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError> {
     use windows::{PipeDirection, PipeMode};
     // ConPTY uses synchronous I/O.
-    let pair = |direction| {
-        windows::pipe_pair(PipeMode::Overlapped, PipeMode::Synchronous, direction)
+    let create_pipe = |direction| {
+        windows::create_pipe_pair(PipeMode::Overlapped, PipeMode::Synchronous, direction)
             .map_err(|_| CreatePtyError::OpenPtyFailed)
     };
-    let output = pair(PipeDirection::OursReads)?;
-    let input = pair(PipeDirection::OursWrites)?;
+    let output = create_pipe(PipeDirection::Inbound)?;
+    let input = create_pipe(PipeDirection::Outbound)?;
 
     let size = windows::COORD {
         X: clamp_to_coord(cols),

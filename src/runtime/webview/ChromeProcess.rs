@@ -72,7 +72,7 @@ fn unreaped() -> &'static super::Unreaped<ChromeProcess> {
 /// Of the Chrome that C++ talks to, which is the newest of the main thread. 0: none.
 static PID: AtomicI32 = AtomicI32::new(0);
 
-/// `Process` only reports the signal of a kill that went through it.
+/// The pid killed by id, since `Process` only reports the signal of its own `kill`.
 #[cfg(windows)]
 static TERMINATED_PID: AtomicI32 = AtomicI32::new(0);
 
@@ -104,7 +104,7 @@ extern "C" fn Bun__Chrome__kill() {
                 return;
             }
         }
-        if bun_sys::windows::process::kill_by_id(pid as u32, 9).is_ok() {
+        if bun_sys::windows::process::kill_pid(pid as u32, 9).is_ok() {
             TERMINATED_PID.store(pid, Ordering::Relaxed);
         }
     }
@@ -669,17 +669,17 @@ struct Endpoints {
 #[cfg(windows)]
 impl Endpoints {
     fn create(event_loop: EventLoopHandle) -> crate::Result<Endpoints> {
-        use bun_sys::windows::{PipeDirection, PipeMode, pipe_pair};
-        let pair = |direction| {
-            let pair = pipe_pair(PipeMode::Overlapped, PipeMode::Synchronous, direction)
+        use bun_sys::windows::{PipeDirection, PipeMode, create_pipe_pair};
+        let create_pipe = |direction| {
+            let pair = create_pipe_pair(PipeMode::Overlapped, PipeMode::Synchronous, direction)
                 .map_err(|err| bun_sys::Error::from_win32(err, bun_sys::Tag::uv_pipe))?;
-            let ours = Pipe::from_exclusive(event_loop.loop_().port(), pair.ours);
+            let ours = Pipe::new_exclusive(event_loop.loop_().port(), pair.ours);
             // Pending commands keep the loop alive (Transport::updateKeepAlive), not the pipes.
             ours.update_ref(false);
             bun_sys::Result::Ok((ours, File::from(pair.theirs)))
         };
-        let (cmd, cmd_child) = pair(PipeDirection::OursWrites)?;
-        let (reply, reply_child) = pair(PipeDirection::OursReads)?;
+        let (cmd, cmd_child) = create_pipe(PipeDirection::Outbound)?;
+        let (reply, reply_child) = create_pipe(PipeDirection::Inbound)?;
         Ok(Endpoints {
             child: Some([cmd_child, reply_child]),
             cmd,
@@ -709,9 +709,10 @@ impl Endpoints {
             },
         });
         let self_ptr = chrome.as_ptr();
-        let (process, pipes) = (&chrome.process, &chrome.pipes);
+        let process = &chrome.process;
+        let pipes = &chrome.pipes;
 
-        // SAFETY: both are fields of what `owner` points to, which is in the box.
+        // SAFETY: `owner` points to the boxed `pipes`, which holds the reader and the writer.
         unsafe {
             let owner = Owner::new(PollTag::ChromePipes, (&raw mut (*self_ptr).pipes).cast());
             pipes.reply.set_owner(owner);
@@ -720,7 +721,10 @@ impl Endpoints {
         pipes.cmd.set_pipe(self.cmd);
         // Unlike POSIX the exit can't be delivered before we return (it comes
         // through this thread's loop), so the exit handler is installed after.
-        let started = (pipes.reply.start_with_pipe(self.reply)).and_then(|()| process.watch());
+        let started = pipes
+            .reply
+            .start_with_pipe(self.reply)
+            .and_then(|()| process.watch());
         if let Err(err) = started {
             scoped_log!(Chrome, "read_start/watch failed: {}", err);
             let _ = process.kill(9);
@@ -749,11 +753,13 @@ impl WindowsPipes {
         if let IoEvent::Write(_) = event {
             return self.cmd.on_io(self, event);
         }
-        let result = (self.reply).read_chunks(bun_io::js_vm_ctx(), Some(event), |chunk, _| {
-            scoped_log!(Chrome, "read {} bytes", chunk.len());
-            PipeEvent::Data(Box::from(&*chunk)).post(self.generation);
-            true
-        });
+        let result = self
+            .reply
+            .read_chunks(bun_io::js_vm_ctx(), Some(event), |chunk, _| {
+                scoped_log!(Chrome, "read {} bytes", chunk.len());
+                PipeEvent::Data(Box::from(&*chunk)).post(self.generation);
+                true
+            });
         if !matches!(result, ReadResult::Pending) {
             PipeEvent::Closed.post(self.generation);
         }

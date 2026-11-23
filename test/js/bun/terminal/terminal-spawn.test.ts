@@ -518,8 +518,8 @@ describe("Bun.Terminal subprocess integration", () => {
     expect(exitCode).toBe(0);
   });
 
-  // A line read blocks a thread in ReadConsoleW, which can outlast the stream
-  // that asked for it. The child cancels the stream, fills the heap with
+  // A line read blocks a thread in ReadConsoleW and can outlive the stream
+  // that started it. The child cancels the stream, fills the heap with
   // ArrayBuffer probes and reports any mutation.
   test.skipIf(!isWindows)("cancelling a parked console stdin read does not corrupt the heap", async () => {
     using dir = tempDir("conpty-stdin-read-cancel", {

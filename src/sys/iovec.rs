@@ -19,9 +19,9 @@ fn raw(base: *mut u8, len: usize) -> Raw {
     }
 }
 
-/// `raw` in pieces that one request can take. An empty buffer is one piece.
+/// Splits `raw` into chunks of at most `MAX_COUNT` bytes. An empty buffer yields one chunk.
 #[cfg(windows)]
-fn parts(raw: Raw) -> impl Iterator<Item = (*mut u8, usize)> {
+fn split_chunks(raw: Raw) -> impl Iterator<Item = (*mut u8, usize)> {
     use crate::MAX_COUNT;
     (0..raw.iov_len.max(1))
         .step_by(MAX_COUNT)
@@ -54,8 +54,8 @@ impl<'a> IoVec<'a> {
     }
 
     #[cfg(windows)]
-    pub(crate) fn parts(vecs: &[Self]) -> impl Iterator<Item = (*mut u8, usize)> {
-        vecs.iter().flat_map(|vec| parts(vec.0))
+    pub(crate) fn chunks(vecs: &[Self]) -> impl Iterator<Item = (*mut u8, usize)> {
+        vecs.iter().flat_map(|vec| split_chunks(vec.0))
     }
 }
 
@@ -95,8 +95,8 @@ impl<'a> IoVecMut<'a> {
     }
 
     #[cfg(windows)]
-    pub(crate) fn parts(vecs: &[Self]) -> impl Iterator<Item = (*mut u8, usize)> {
-        vecs.iter().flat_map(|vec| parts(vec.0))
+    pub(crate) fn chunks(vecs: &[Self]) -> impl Iterator<Item = (*mut u8, usize)> {
+        vecs.iter().flat_map(|vec| split_chunks(vec.0))
     }
 }
 

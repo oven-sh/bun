@@ -19,7 +19,7 @@
 #ifndef UWS_LOOP_H
 #define UWS_LOOP_H
 
-/* The loop is lazily created per-thread and run with run() */
+/* The loop is lazily created per-thread */
 
 #include "LoopData.h"
 #include <cerrno>
@@ -132,7 +132,6 @@ public:
         return getLazyLoop().loop;
     }
 
-    /* A thread that ran a loop is exiting */
     static void freeLoopAtThreadExit() {
         if (getLazyLoop().loop) {
             getLazyLoop().loop->free();

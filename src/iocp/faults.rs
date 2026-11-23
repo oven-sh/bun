@@ -1,56 +1,63 @@
-//! System calls that fail on demand. Their entries in the import table of the test program are replaced.
+//! Makes system calls fail on demand by replacing their entries in the test binary's import address table (IAT).
 
 use core::cell::RefCell;
 use core::ffi::{CStr, c_char, c_void};
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use bun_windows_sys::Win32Error;
+use bun_windows_sys::kernel32::{PAGE_READWRITE, SetLastError};
 
-/// In the environment of a run for which ntdll has none.
-pub(crate) const NO_WAIT_PACKETS: &str = "BUN_IOCP_TEST_NO_WAIT_PACKETS";
-
-type Plan = Box<dyn FnMut(&[usize]) -> Option<usize>>;
+/// If set, `GetProcAddress` does not find the wait completion packet functions.
+pub(crate) const NO_WAIT_PACKETS_ENV: &str = "BUN_IOCP_TEST_NO_WAIT_PACKETS";
 
 thread_local! {
-    static PLANS: RefCell<Vec<(Call, Plan)>> = const { RefCell::new(Vec::new()) };
+    static INTERCEPTORS: RefCell<Vec<(Call, Box<dyn FnMut(&[usize]) -> Option<usize>>)>> =
+        const { RefCell::new(Vec::new()) };
 }
 
 #[link(name = "kernel32")]
 unsafe extern "system" {
-    safe fn SetLastError(error: u32);
-    fn VirtualProtect(address: *mut c_void, size: usize, new: u32, old: &mut u32) -> i32;
+    fn VirtualProtect(
+        address: *mut c_void,
+        size: usize,
+        new_protect: u32,
+        old_protect: &mut u32,
+    ) -> i32;
 }
 
 #[must_use]
-pub(crate) struct Intercepted(Call);
+pub(crate) struct InterceptGuard(Call);
 
-impl Drop for Intercepted {
+impl Drop for InterceptGuard {
     fn drop(&mut self) {
-        PLANS.with_borrow_mut(|plans| plans.retain(|(call, _)| *call != self.0));
+        INTERCEPTORS
+            .with_borrow_mut(|interceptors| interceptors.retain(|(call, _)| *call != self.0));
     }
 }
 
-/// `plan` gets the arguments of the calls of this thread, and returns the result of those that are not made.
+/// `interceptor` gets the arguments of each `call` on this thread. `Some` skips the call and becomes its result.
 pub(crate) fn intercept(
     call: Call,
-    plan: impl FnMut(&[usize]) -> Option<usize> + 'static,
-) -> Intercepted {
-    PLANS.with_borrow_mut(|plans| plans.push((call, Box::new(plan))));
-    Intercepted(call)
+    interceptor: impl FnMut(&[usize]) -> Option<usize> + 'static,
+) -> InterceptGuard {
+    INTERCEPTORS.with_borrow_mut(|interceptors| interceptors.push((call, Box::new(interceptor))));
+    InterceptGuard(call)
 }
 
-pub(crate) fn fail(call: Call, mut times: usize, result: usize) -> Intercepted {
+pub(crate) fn fail(call: Call, mut count: usize, result: usize) -> InterceptGuard {
     intercept(call, move |_| {
-        times = times.checked_sub(1)?;
+        count = count.checked_sub(1)?;
         Some(result)
     })
 }
 
-fn planned(call: Call, args: &[usize]) -> Option<usize> {
-    let result = PLANS.try_with(|plans| {
-        let mut plans = plans.try_borrow_mut().ok()?;
-        let (_, plan) = plans.iter_mut().find(|(it, _)| *it == call)?;
-        plan(args)
+fn run_interceptor(call: Call, args: &[usize]) -> Option<usize> {
+    let result = INTERCEPTORS.try_with(|interceptors| {
+        let mut interceptors = interceptors.try_borrow_mut().ok()?;
+        let (_, interceptor) = interceptors
+            .iter_mut()
+            .find(|(target, _)| *target == call)?;
+        interceptor(args)
     });
     let result = result.ok()??;
     let error = match call {
@@ -61,29 +68,29 @@ fn planned(call: Call, args: &[usize]) -> Option<usize> {
     Some(result)
 }
 
-macro_rules! word {
+macro_rules! arg_type {
     ($arg:ident) => {
         usize
     };
 }
 
-/// The address of the stand-in, and where it looks for that of the function.
-macro_rules! stand_in {
-    ($name:ident($($arg:ident)*) $result:expr) => {{
-        static REAL: AtomicUsize = AtomicUsize::new(0);
-        extern "system" fn stand_in($($arg: usize),*) -> usize {
-            let real = || {
-                type Real = extern "system" fn($(word!($arg)),*) -> usize;
-                // SAFETY: it takes as many arguments, each in a register or a slot of the stack.
-                let real = unsafe { core::mem::transmute::<usize, Real>(REAL.load(Ordering::Relaxed)) };
-                real($($arg),*)
+/// Evaluates to the hook's address and the static that must hold the original function's address.
+macro_rules! define_hook {
+    ($name:ident($($arg:ident)*) $handler:expr) => {{
+        static ORIGINAL: AtomicUsize = AtomicUsize::new(0);
+        extern "system" fn hook($($arg: usize),*) -> usize {
+            let call_original = || {
+                type OriginalFn = extern "system" fn($(arg_type!($arg)),*) -> usize;
+                // SAFETY: the original takes the same number of arguments, each in one register or stack slot.
+                let original = unsafe { core::mem::transmute::<usize, OriginalFn>(ORIGINAL.load(Ordering::Relaxed)) };
+                original($($arg),*)
             };
-            $result(&[$($arg),*], real)
+            $handler(&[$($arg),*], call_original)
         }
-        ((stand_in as *const ()).expose_provenance(), &REAL)
+        ((hook as *const ()).expose_provenance(), &ORIGINAL)
     }};
     ($name:ident($($arg:ident)*)) => {
-        stand_in!($name($($arg)*) |args, real| planned(Call::$name, args).unwrap_or_else(real))
+        define_hook!($name($($arg)*) |args, call_original| run_interceptor(Call::$name, args).unwrap_or_else(call_original))
     };
 }
 
@@ -91,53 +98,52 @@ macro_rules! replace_import {
     ($name:ident $($rest:tt)*) => {{
         unsafe extern "C" {
             #[link_name = concat!("__imp_", stringify!($name))]
-            static mut ENTRY: usize;
+            static mut IAT_ENTRY: usize;
         }
-        const PAGE_READWRITE: u32 = 4;
-        let (stand_in, real) = stand_in!($name $($rest)*);
-        let entry = &raw mut ENTRY;
-        // SAFETY: the loader has filled the entry, and there is no other thread yet.
+        let (hook, original) = define_hook!($name $($rest)*);
+        let entry = &raw mut IAT_ENTRY;
+        // SAFETY: the loader has filled the entry, and no other thread exists yet.
         unsafe {
             VirtualProtect(entry.cast(), size_of::<usize>(), PAGE_READWRITE, &mut 0);
-            real.store(entry.replace(stand_in), Ordering::Relaxed);
+            original.store(entry.replace(hook), Ordering::Relaxed);
         }
     }};
 }
 
-macro_rules! calls {
+macro_rules! define_calls {
     (
         imported { $($imported:ident $imported_args:tt)* }
-        looked_up { $($looked_up:ident $looked_up_args:tt)* }
+        dynamic { $($dynamic:ident $dynamic_args:tt)* }
     ) => {
         #[derive(Copy, Clone, PartialEq, Eq, Debug)]
-        pub(crate) enum Call { $($imported,)* $($looked_up,)* }
+        pub(crate) enum Call { $($imported,)* $($dynamic,)* }
 
-        extern "C" fn install() {
+        extern "C" fn install_hooks() {
             $(replace_import!($imported $imported_args);)*
-            replace_import!(GetProcAddress(module name) look_up);
+            replace_import!(GetProcAddress(module name) resolve_proc_address);
         }
 
-        fn look_up(args: &[usize], real: impl FnOnce() -> usize) -> usize {
-            let address = real();
+        fn resolve_proc_address(args: &[usize], call_original: impl FnOnce() -> usize) -> usize {
+            let address = call_original();
             if args[1] <= u16::MAX.into() {
                 return address;
             }
-            // SAFETY: what is no ordinal is a name.
+            // SAFETY: `lpProcName` is not an ordinal, so it is a NUL-terminated name.
             let name = unsafe { CStr::from_ptr(core::ptr::with_exposed_provenance::<c_char>(args[1])) };
-            $(if name.to_bytes() == stringify!($looked_up).as_bytes() {
-                if std::env::var_os(NO_WAIT_PACKETS).is_some() {
+            $(if name.to_bytes() == stringify!($dynamic).as_bytes() {
+                if std::env::var_os(NO_WAIT_PACKETS_ENV).is_some() {
                     return 0;
                 }
-                let (stand_in, real) = stand_in!($looked_up $looked_up_args);
-                real.store(address, Ordering::Relaxed);
-                return stand_in;
+                let (hook, original) = define_hook!($dynamic $dynamic_args);
+                original.store(address, Ordering::Relaxed);
+                return hook;
             })*
             address
         }
     };
 }
 
-calls! {
+define_calls! {
     imported {
         CreateEventW(a b c d)
         CreateIoCompletionPort(a b c d)
@@ -161,13 +167,14 @@ calls! {
         SwitchToThread()
         WSAIoctl(a b c d e f g h i)
     }
-    looked_up {
+    dynamic {
         NtCreateWaitCompletionPacket(a b c)
         NtAssociateWaitCompletionPacket(a b c d e f g h)
         NtCancelWaitCompletionPacket(a b)
     }
 }
 
+/// The CRT runs this initializer before `main`.
 #[used]
 #[unsafe(link_section = ".CRT$XCU")]
-static INSTALL: extern "C" fn() = install;
+static INSTALL_HOOKS: extern "C" fn() = install_hooks;

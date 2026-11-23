@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use bun_collections::{BoundedArray, MultiArrayList};
 use bun_core::{feature_flags, output as Output, strings, zstr};
+use bun_errno::SystemErrno;
 use bun_sys::{self as sys, CloseOnDrop, File};
 use bun_threading::Guarded;
 
@@ -137,7 +138,7 @@ impl Watcher {
             platform: Platform::new(top_level_dir)?,
             ctx,
         });
-        // What changes before the first read is not reported. An error comes back in `watch_loop`.
+        // Changes made before the first read are not reported. `watch_loop` retries and reports a failure.
         #[cfg(windows)]
         let _ = thread.platform.watcher.prepare();
         let this = Arc::new(Watcher {
@@ -193,7 +194,6 @@ impl Watcher {
             spawn().map_err(|_| first)
         });
         handle.map(drop).map_err(|e| {
-            use bun_errno::SystemErrno;
             crate::Error::Sys(SystemErrno::from_io_error(&e).unwrap_or(SystemErrno::EAGAIN))
         })
     }

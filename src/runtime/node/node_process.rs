@@ -246,19 +246,19 @@ mod _impl {
         )
     }
 
-    /// Without `--title` or an assignment it is what the console was called when it was first read.
+    /// Without `--title` or an assignment, the first read caches the console title.
     #[cfg(windows)]
     #[unsafe(export_name = "Bun__Process__getTitle")]
     extern "C" fn get_title(_global: *const JSGlobalObject) -> BunString {
-        const DEFAULT: &[u8] = b"bun";
+        const DEFAULT_TITLE: &[u8] = b"bun";
         let mut title = crate::cli::Bun__Node__ProcessTitle.lock();
         if title.is_none()
-            && let Ok(of_console) = bun_sys::windows::console_title::get()
+            && let Ok(console_title) = bun_sys::windows::console_title::get()
         {
-            let of_console = of_console.filter(|it| !it.is_empty());
-            *title = Some(of_console.as_deref().unwrap_or(DEFAULT).into());
+            let console_title = console_title.filter(|bytes| !bytes.is_empty());
+            *title = Some(console_title.as_deref().unwrap_or(DEFAULT_TITLE).into());
         }
-        BunString::clone_utf8(title.as_deref().unwrap_or(DEFAULT))
+        BunString::clone_utf8(title.as_deref().unwrap_or(DEFAULT_TITLE))
     }
 
     // TODO: https://github.com/nodejs/node/blob/master/deps/uv/src/unix/darwin-proctitle.c
@@ -267,7 +267,7 @@ mod _impl {
         // `to_owned_slice` is infallible (Vec<u8>).
         let new_title: Box<[u8]> = newvalue.to_owned_slice().into_boxed_slice();
 
-        // There may be no console.
+        // Fails if the process has no console.
         #[cfg(windows)]
         let _ = bun_sys::windows::console_title::set(&new_title);
 

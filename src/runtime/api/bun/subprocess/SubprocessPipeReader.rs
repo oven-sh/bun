@@ -85,23 +85,24 @@ impl PipeReader {
         }
     }
 
-    /// What `read_all` does on POSIX.
+    /// Synchronously reads what is in the pipe, like `read_all` does on POSIX.
     #[cfg(windows)]
     pub(crate) fn read_available(self: &RefPtr<Self>) {
-        if let Some(event) = self.reader.take_available() {
+        if let Some(event) = self.reader.try_read() {
             self.on_read_result(self.reader.read(self.event_loop, Some(event)));
         }
     }
 
     pub(crate) fn start(self: &RefPtr<Self>, lazy: bool) {
         self.start_ref.set(Some(self.clone()));
-        (self.reader).update_flags(|f| f.insert(ReaderFlags::SOCKET | ReaderFlags::NONBLOCKING));
+        self.reader
+            .update_flags(|f| f.insert(ReaderFlags::SOCKET | ReaderFlags::NONBLOCKING));
         let pipe = self.stdio_result.take().unwrap();
         if lazy {
-            // Until JS first pulls, so that the child blocks on the pipe.
-            return self.reader.set_own_pipe(self.event_loop, pipe);
+            // No read until JS first pulls, so that the child blocks on the pipe.
+            return self.reader.set_exclusive_pipe(self.event_loop, pipe);
         }
-        let started = self.reader.start_own_pipe(self.event_loop, pipe);
+        let started = self.reader.start_exclusive_pipe(self.event_loop, pipe);
         self.on_read_result(started.unwrap_or_else(ReadResult::Err));
     }
 

@@ -1,4 +1,4 @@
-//! Amounts of CPU time, which the system counts in ticks of 100 ns.
+//! CPU times, which Windows reports in 100 ns ticks.
 
 const TICKS_PER_US: u64 = 10;
 const TICKS_PER_MS: u64 = 10_000;
@@ -62,8 +62,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn leaves_the_idle_time_out_of_the_system_time() {
-        let times = |idle, kernel| {
+    fn sys_time_excludes_idle_time() {
+        let to_times = |idle, kernel| {
             ProcessorTimes::from(ProcessorTicks {
                 idle,
                 kernel,
@@ -79,20 +79,20 @@ mod tests {
             idle: 2_739_259_687,
             irq: 325_546,
         };
-        assert_eq!(times(27_392_596_875_000, 27_515_562_031_250), expected);
+        assert_eq!(to_times(27_392_596_875_000, 27_515_562_031_250), expected);
     }
 
     #[test]
-    fn keeps_days_and_microseconds() {
-        const SECOND: u64 = 10_000_000;
+    fn cpu_usage_converts_ticks_to_microseconds() {
+        const TICKS_PER_SECOND: u64 = 10_000_000;
         for (ticks, microseconds) in [
             (0, 0),
             (9, 0),
             (1_234_567, 123_456),
-            (86_399 * SECOND, 86_399_000_000),
-            (86_400 * SECOND, 86_400_000_000),
-            (90_061 * SECOND + 5, 90_061_000_000),
-            (31 * 86_400 * SECOND + 10, 2_678_400_000_001),
+            (86_399 * TICKS_PER_SECOND, 86_399_000_000),
+            (86_400 * TICKS_PER_SECOND, 86_400_000_000),
+            (90_061 * TICKS_PER_SECOND + 5, 90_061_000_000),
+            (31 * 86_400 * TICKS_PER_SECOND + 10, 2_678_400_000_001),
         ] {
             let CpuUsage { user, system } = CpuUsage::from_ticks(ticks, ticks + 10);
             assert_eq!((user, system), (microseconds, microseconds + 1));

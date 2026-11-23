@@ -643,7 +643,7 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
             "bcryptprimitives.dll",
             "ntdll.dll",
             "ole32.dll",
-            // WTF's backtraces, and a helper of its that release builds strip.
+            // Only debug builds keep the WTF code that imports these.
             ...(cfg.debug ? ["SHELL32.dll", "dbghelp.dll"] : []),
           ],
           exact: true,

@@ -80,7 +80,7 @@ it("setImmediate should not keep the process alive forever", async () => {
   expect(await Promise.race([success(), fail()])).toBe(true);
 });
 
-it("a promise that native code waits for can be settled by an immediate", async () => {
+it("setImmediate fires while Bun.build() blocks on a plugin's setup() promise", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -93,7 +93,7 @@ it("a promise that native code waits for can be settled by an immediate", async 
       socket.close();
       console.log("built");`,
     ],
-    // Its timer would wake the loop.
+    // The GC timer would wake the event loop.
     env: { ...bunEnv, BUN_GC_TIMER_DISABLE: "1" },
     stderr: "inherit",
   });

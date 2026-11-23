@@ -1,4 +1,4 @@
-//! Safe forms of the file calls of ntdll.
+//! Safe wrappers for the ntdll file APIs.
 
 use core::ffi::c_void;
 use core::ptr;
@@ -8,21 +8,20 @@ use bun_core::ffi::{Zeroable, zeroed};
 use bun_core::{WStr, wstr};
 use bun_paths::WPathBuffer;
 use bun_paths::path_buffer_pool::PoolGuard;
-use bun_windows_sys::externs::{
-    self as w, FILE_INFORMATION_CLASS as FileClass, FS_INFORMATION_CLASS as VolumeClass,
-};
+use bun_windows_sys::externs::{self as w, FILE_INFORMATION_CLASS, FS_INFORMATION_CLASS};
 
 use super::{
-    HANDLE, IO_STATUS_BLOCK, NT_SUCCESS, NTSTATUS, Win32Error, find_export, ntdll, sync_io,
+    HANDLE, IO_STATUS_BLOCK, LONG_PATH_PREFIX, NT_SUCCESS, NTSTATUS, Win32Error, find_export,
+    ntdll, sync_io,
 };
-use crate::windows_format::names;
+use crate::windows_format::path_syntax;
 
-fn counted(units: &[u16]) -> Result<w::UNICODE_STRING, NTSTATUS> {
-    let len = u16::try_from(size_of_val(units)).map_err(|_| NTSTATUS::NAME_TOO_LONG)?;
+fn to_unicode_string(text: &[u16]) -> Result<w::UNICODE_STRING, NTSTATUS> {
+    let len = u16::try_from(size_of_val(text)).map_err(|_| NTSTATUS::NAME_TOO_LONG)?;
     // https://github.com/rust-lang/rust/issues/143078
-    let (buffer, capacity) = match units {
+    let (buffer, capacity) = match text {
         [] => (WStr::EMPTY.as_ptr(), 2),
-        _ => (units.as_ptr(), len),
+        _ => (text.as_ptr(), len),
     };
     Ok(w::UNICODE_STRING {
         Length: len,
@@ -31,13 +30,13 @@ fn counted(units: &[u16]) -> Result<w::UNICODE_STRING, NTSTATUS> {
     })
 }
 
-/// Calls `call` with the attributes that name `name` below `root`. `None` is for a pipe without a name.
-pub(super) fn with_attributes(
+/// `name` is relative to `root`, and is `None` for an unnamed pipe.
+pub(super) fn with_object_attributes(
     root: Option<HANDLE>,
     name: Option<&[u16]>,
     call: impl FnOnce(&mut w::OBJECT_ATTRIBUTES) -> NTSTATUS,
 ) -> NTSTATUS {
-    let mut name = match name.map_or(Ok(zeroed()), counted) {
+    let mut name = match name.map_or(Ok(zeroed()), to_unicode_string) {
         Ok(name) => name,
         Err(status) => return status,
     };
@@ -52,110 +51,111 @@ pub(super) fn with_attributes(
     call(&mut attributes)
 }
 
-pub(super) fn with_attributes_to_open(
+pub(super) fn with_file_object_attributes(
     root: Option<HANDLE>,
     name: &[u16],
     call: impl FnOnce(&mut w::OBJECT_ATTRIBUTES) -> NTSTATUS,
 ) -> NTSTATUS {
-    let mut quality = w::SECURITY_QUALITY_OF_SERVICE {
+    let mut qos = w::SECURITY_QUALITY_OF_SERVICE {
         Length: size_of::<w::SECURITY_QUALITY_OF_SERVICE>() as u32,
         ImpersonationLevel: w::SecurityAnonymous,
         ContextTrackingMode: 0,
         EffectiveOnly: 0,
     };
-    with_attributes(root, Some(name), |attributes| {
-        if !names::names_device(name) {
-            attributes.SecurityQualityOfService = (&raw mut quality).cast();
+    with_object_attributes(root, Some(name), |attributes| {
+        if !path_syntax::is_device_name(name) {
+            attributes.SecurityQualityOfService = (&raw mut qos).cast();
         }
         call(attributes)
     })
 }
 
-/// The NT name that the file calls of kernel32 make of a path.
-pub(super) enum Name {
+/// A Win32 path converted to an NT path the way the kernel32 file APIs convert it.
+pub(super) enum NtPath {
     Verbatim(PoolGuard<WPathBuffer>, usize),
     Resolved(w::UNICODE_STRING, w::RTL_RELATIVE_NAME_U),
 }
 
-/// SAFETY: `string` describes units that live as long as it does.
-unsafe fn units(string: &w::UNICODE_STRING) -> &[u16] {
+/// SAFETY: `string.Buffer` is readable for `string.Length` bytes as long as `string` is borrowed.
+unsafe fn as_wide_slice(string: &w::UNICODE_STRING) -> &[u16] {
     // SAFETY: fn contract.
     unsafe { core::slice::from_raw_parts(string.Buffer, usize::from(string.Length) / 2) }
 }
 
-impl Name {
-    /// The path is `buf[..len]`.
+impl NtPath {
+    /// Converts the Win32 path in `buf[..len]`.
     pub(super) fn new(mut buf: PoolGuard<WPathBuffer>, len: usize) -> Result<Self, Win32Error> {
-        if len > 4 && buf.starts_with(&super::LONG_PATH_PREFIX) {
+        if len > LONG_PATH_PREFIX.len() && buf.starts_with(&LONG_PATH_PREFIX) {
             buf[1] = b'?'.into();
             return Ok(Self::Verbatim(buf, len));
         }
         buf[len] = 0;
         let path = WStr::from_buf(&buf[..], len);
-        let (mut full, mut relative) = (zeroed(), zeroed());
-        // SAFETY: `path` is NUL-terminated, and the others are null or valid out-params.
+        let mut full_name = zeroed();
+        let mut relative = zeroed();
+        // SAFETY: `path` is NUL-terminated, and the other arguments are null or valid out-params.
         let status = unsafe {
             ntdll::RtlDosPathNameToRelativeNtPathName_U_WithStatus(
                 path.as_ptr(),
-                &raw mut full,
+                &raw mut full_name,
                 ptr::null_mut(),
                 &raw mut relative,
             )
         };
         match status {
-            NTSTATUS::SUCCESS => Ok(Self::Resolved(full, relative)),
+            NTSTATUS::SUCCESS => Ok(Self::Resolved(full_name, relative)),
             NTSTATUS::NO_MEMORY => Err(Win32Error::NOT_ENOUGH_MEMORY),
             _ => Err(Win32Error::PATH_NOT_FOUND),
         }
     }
 
-    pub(super) fn full(&self) -> &[u16] {
+    pub(super) fn full_name(&self) -> &[u16] {
         match self {
             Self::Verbatim(buf, len) => &buf[..*len],
             // SAFETY: `self` owns the buffer.
-            Self::Resolved(full, _) => unsafe { units(full) },
+            Self::Resolved(full_name, _) => unsafe { as_wide_slice(full_name) },
         }
     }
 
-    /// Below the current directory, if that is where the path starts.
-    pub(super) fn parts(&self) -> (Option<HANDLE>, &[u16]) {
+    /// `RootDirectory` and `ObjectName`. The root of a relative path is the current directory handle.
+    pub(super) fn root_and_name(&self) -> (Option<HANDLE>, &[u16]) {
         match self {
             Self::Resolved(_, relative) if relative.RelativeName.Length > 0 => {
-                // SAFETY: it is the end of the buffer that `self` owns.
-                let name = unsafe { units(&relative.RelativeName) };
+                // SAFETY: `RelativeName` is a suffix of the buffer that `self` owns.
+                let name = unsafe { as_wide_slice(&relative.RelativeName) };
                 (Some(relative.ContainingDirectory), name)
             }
-            _ => (None, self.full()),
+            _ => (None, self.full_name()),
         }
     }
 }
 
-impl Drop for Name {
+impl Drop for NtPath {
     fn drop(&mut self) {
-        if let Self::Resolved(full, relative) = self {
-            // SAFETY: both are as ntdll filled them.
+        if let Self::Resolved(full_name, relative) = self {
+            // SAFETY: ntdll initialized both, and neither was modified.
             unsafe {
                 ntdll::RtlReleaseRelativeName(relative);
-                ntdll::RtlFreeUnicodeString(full);
+                ntdll::RtlFreeUnicodeString(full_name);
             }
         }
     }
 }
 
-/// SAFETY: it has the layout that `CLASS` names, and takes any bytes.
-pub(super) unsafe trait Info<Class>: Zeroable {
+/// SAFETY: `Self` has the layout of the structure for `CLASS`, and every bit pattern is valid.
+pub(super) unsafe trait NtInformation<Class>: Zeroable {
     const CLASS: Class;
 }
 
-macro_rules! info {
-    ($Class:ident: $($Info:ident = $class:ident,)*) => {$(
-        // SAFETY: integers, as the headers declare them.
-        unsafe impl Info<$Class> for w::$Info {
+macro_rules! impl_nt_information {
+    ($Class:ident: $($Struct:ident = $class:ident,)*) => {$(
+        // SAFETY: all fields are integers, laid out as in the SDK headers.
+        unsafe impl NtInformation<$Class> for w::$Struct {
             const CLASS: $Class = $Class::$class;
         }
     )*};
 }
-info!(FileClass:
+impl_nt_information!(FILE_INFORMATION_CLASS:
     FILE_ACCESS_INFORMATION = FileAccessInformation,
     FILE_ALL_INFORMATION = FileAllInformation,
     FILE_BASIC_INFORMATION = FileBasicInformation,
@@ -170,49 +170,57 @@ info!(FileClass:
     FILE_STANDARD_INFORMATION = FileStandardInformation,
     FILE_STAT_BASIC_INFORMATION = FileStatBasicInformation,
 );
-info!(VolumeClass:
+impl_nt_information!(FS_INFORMATION_CLASS:
     FILE_FS_DEVICE_INFORMATION = FileFsDeviceInformation,
     FILE_FS_SIZE_INFORMATION = FileFsSizeInformation,
     FILE_FS_VOLUME_INFORMATION = FileFsVolumeInformation,
 );
 
-fn check(status: NTSTATUS) -> Result<(), NTSTATUS> {
-    NT_SUCCESS(status).then_some(()).ok_or(status)
-}
-
-fn fill<T: Zeroable>(call: impl FnOnce(*mut c_void, u32) -> NTSTATUS) -> Result<T, NTSTATUS> {
-    let mut info: T = zeroed();
-    match call((&raw mut info).cast(), size_of::<T>() as u32) {
-        // The name behind the fields was cut.
-        NTSTATUS::BUFFER_OVERFLOW => Ok(info),
-        status => check(status).map(|()| info),
+fn check_status(status: NTSTATUS) -> Result<(), NTSTATUS> {
+    if NT_SUCCESS(status) {
+        Ok(())
+    } else {
+        Err(status)
     }
 }
 
-pub(super) fn query<T: Info<FileClass>>(file: HANDLE) -> Result<T, NTSTATUS> {
+fn fill_info<T: Zeroable>(call: impl FnOnce(*mut c_void, u32) -> NTSTATUS) -> Result<T, NTSTATUS> {
+    let mut info: T = zeroed();
+    match call((&raw mut info).cast(), size_of::<T>() as u32) {
+        // Only the trailing variable-length name was truncated.
+        NTSTATUS::BUFFER_OVERFLOW => Ok(info),
+        status => check_status(status).map(|()| info),
+    }
+}
+
+pub(super) fn query_file_info<T: NtInformation<FILE_INFORMATION_CLASS>>(
+    file: HANDLE,
+) -> Result<T, NTSTATUS> {
     let mut io: IO_STATUS_BLOCK = zeroed();
-    // SAFETY: `info` is writable for `len` bytes, and the call waits for the request.
-    fill(|info, len| unsafe {
+    // SAFETY: `info` is writable for `len` bytes, and the call returns after the request completes.
+    fill_info(|info, len| unsafe {
         ntdll::NtQueryInformationFile(file, &raw mut io, info, len, T::CLASS)
     })
 }
 
-pub(super) fn query_volume<T: Info<VolumeClass>>(file: HANDLE) -> Result<T, NTSTATUS> {
+pub(super) fn query_volume_info<T: NtInformation<FS_INFORMATION_CLASS>>(
+    file: HANDLE,
+) -> Result<T, NTSTATUS> {
     let mut io: IO_STATUS_BLOCK = zeroed();
-    // SAFETY: as in `query`.
-    fill(|info, len| unsafe {
+    // SAFETY: as in `query_file_info`.
+    fill_info(|info, len| unsafe {
         ntdll::NtQueryVolumeInformationFile(file, &raw mut io, info, len, T::CLASS)
     })
 }
 
-/// The first entry of `directory` that matches `pattern`.
-pub(super) fn query_entry<T: Info<FileClass>>(
+/// Returns the first entry of `directory` that matches `pattern`.
+pub(super) fn query_directory_entry<T: NtInformation<FILE_INFORMATION_CLASS>>(
     directory: HANDLE,
     pattern: &[u16],
 ) -> Result<T, NTSTATUS> {
-    let mut pattern = counted(pattern)?;
+    let mut pattern = to_unicode_string(pattern)?;
     let null = ptr::null_mut();
-    fill(|info, len| {
+    fill_info(|info, len| {
         let (status, _) = sync_io::complete(directory, |io| {
             // SAFETY: the pointers are null or valid until `complete` returns.
             unsafe {
@@ -243,13 +251,13 @@ type NtQueryInformationByName = unsafe extern "system" fn(
     *mut IO_STATUS_BLOCK,
     *mut c_void,
     u32,
-    FileClass,
+    FILE_INFORMATION_CLASS,
 ) -> NTSTATUS;
 
 static QUERY_BY_NAME: LazyLock<Option<NtQueryInformationByName>> = LazyLock::new(|| {
-    // SAFETY: both modules stay loaded. The first is not called, and the second has this type.
+    // SAFETY: neither module is unloaded. The first export is never called; the second has this type.
     unsafe {
-        // It came with `FileStatBasicInformation`.
+        // Feature probe: this export shipped together with `FileStatBasicInformation`.
         find_export::<*mut c_void>(wstr!("kernelbase.dll"), c"GetFileInformationByName")?;
         find_export(wstr!("ntdll.dll"), c"NtQueryInformationByName")
     }
@@ -259,33 +267,40 @@ pub(super) fn has_stat_basic() -> bool {
     QUERY_BY_NAME.is_some()
 }
 
-/// Does not follow the last component.
-pub(super) fn stat_basic_by_name(name: &Name) -> Result<w::FILE_STAT_BASIC_INFORMATION, NTSTATUS> {
+/// Does not follow a reparse point in the last component.
+pub(super) fn query_stat_basic_by_name(
+    nt_path: &NtPath,
+) -> Result<w::FILE_STAT_BASIC_INFORMATION, NTSTATUS> {
     let query = QUERY_BY_NAME.ok_or(NTSTATUS::NOT_IMPLEMENTED)?;
-    let (root, name) = name.parts();
+    let (root, name) = nt_path.root_and_name();
     let mut io: IO_STATUS_BLOCK = zeroed();
-    fill(|info, len| {
-        with_attributes_to_open(root, name, |attributes| {
-            let class = FileClass::FileStatBasicInformation;
+    fill_info(|info, len| {
+        with_file_object_attributes(root, name, |attributes| {
+            let class = FILE_INFORMATION_CLASS::FileStatBasicInformation;
             // SAFETY: the pointers are valid for the call.
             unsafe { query(attributes, &raw mut io, info, len, class) }
         })
     })
 }
 
-pub(super) fn set<T: Info<FileClass>>(file: HANDLE, mut info: T) -> Result<(), NTSTATUS> {
+pub(super) fn set_file_info<T: NtInformation<FILE_INFORMATION_CLASS>>(
+    file: HANDLE,
+    mut info: T,
+) -> Result<(), NTSTATUS> {
     let mut io: IO_STATUS_BLOCK = zeroed();
-    let (info, len) = ((&raw mut info).cast(), size_of::<T>() as u32);
-    // SAFETY: `info` is readable for `len` bytes, and the call waits for the request.
-    check(unsafe { ntdll::NtSetInformationFile(file, &raw mut io, info, len, T::CLASS) })
+    let info = (&raw mut info).cast();
+    let len = size_of::<T>() as u32;
+    // SAFETY: `info` is readable for `len` bytes, and the call returns after the request completes.
+    check_status(unsafe { ntdll::NtSetInformationFile(file, &raw mut io, info, len, T::CLASS) })
 }
 
-/// With how much of `output` it has filled.
+/// Returns the status and the number of bytes written to `output`.
 fn fs_control(file: HANDLE, code: u32, input: &[u8], output: &mut [u8]) -> (NTSTATUS, usize) {
     let null = ptr::null_mut();
-    let or_null = |buf: *mut u8, len: usize| if len == 0 { null } else { buf.cast() };
+    let ptr_or_null = |buf: *mut u8, len: usize| if len == 0 { null } else { buf.cast() };
     sync_io::complete(file, |io| {
-        // SAFETY: the buffers are valid for their lengths until `complete` returns, and hold no pointers for the codes below.
+        // SAFETY: the buffers are valid for their lengths until `complete` returns.
+        // The control codes that this module passes have no pointers in their buffers.
         unsafe {
             ntdll::NtFsControlFile(
                 file,
@@ -294,9 +309,9 @@ fn fs_control(file: HANDLE, code: u32, input: &[u8], output: &mut [u8]) -> (NTST
                 null,
                 io,
                 code,
-                or_null(input.as_ptr().cast_mut(), input.len()),
+                ptr_or_null(input.as_ptr().cast_mut(), input.len()),
                 input.len() as u32,
-                or_null(output.as_mut_ptr(), output.len()),
+                ptr_or_null(output.as_mut_ptr(), output.len()),
                 output.len() as u32,
             )
         }
@@ -305,22 +320,22 @@ fn fs_control(file: HANDLE, code: u32, input: &[u8], output: &mut [u8]) -> (NTST
 
 pub(super) fn get_reparse_point(file: HANDLE, buf: &mut [u8]) -> Result<&[u8], NTSTATUS> {
     let (status, len) = fs_control(file, w::FSCTL_GET_REPARSE_POINT, &[], buf);
-    check(status)?;
+    check_status(status)?;
     buf.get(..len).ok_or(NTSTATUS::BUFFER_OVERFLOW)
 }
 
 pub(super) fn set_reparse_point(file: HANDLE, data: &[u8]) -> Result<(), NTSTATUS> {
-    check(fs_control(file, w::FSCTL_SET_REPARSE_POINT, data, &mut []).0)
+    check_status(fs_control(file, w::FSCTL_SET_REPARSE_POINT, data, &mut []).0)
 }
 
-/// The head of `FILE_PIPE_PEEK_BUFFER`.
+/// Returns the fixed-size header of `FILE_PIPE_PEEK_BUFFER`.
 pub(super) fn peek_pipe(pipe: HANDLE) -> Result<[u32; 4], NTSTATUS> {
     const FSCTL_PIPE_PEEK: u32 = 0x0011_400C;
-    let mut head = [[0; 4]; 4];
-    match fs_control(pipe, FSCTL_PIPE_PEEK, &[], head.as_flattened_mut()).0 {
-        // There is data behind it.
+    let mut header = [[0; 4]; 4];
+    match fs_control(pipe, FSCTL_PIPE_PEEK, &[], header.as_flattened_mut()).0 {
+        // The pipe holds data, and the buffer only has room for the header.
         NTSTATUS::BUFFER_OVERFLOW => {}
-        status => check(status)?,
+        status => check_status(status)?,
     }
-    Ok(head.map(u32::from_ne_bytes))
+    Ok(header.map(u32::from_ne_bytes))
 }

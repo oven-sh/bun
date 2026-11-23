@@ -196,13 +196,13 @@ impl Loop {
 
     pub fn is_active(&self) -> bool {
         #[cfg(windows)]
-        if self.port().is_held() || self.port().is_closing() {
+        if self.port().has_loop_refs() || self.port().has_abandoned_requests() {
             return true;
         }
         self.active.get() > 0
     }
 
-    /// How many things a tick can wait for.
+    /// `num_polls`, plus the port's pending callbacks on Windows.
     pub fn poll_count(&self) -> i32 {
         #[cfg(windows)]
         return self.num_polls.get() + self.port().callback_count() as i32;
@@ -270,7 +270,7 @@ impl Loop {
         unsafe { c::us_quic_loop_flush_if_pending(self) };
     }
 
-    /// `None` if the process has run out of descriptors.
+    /// `None` if the epoll/kqueue descriptor or completion port cannot be created.
     pub fn create<H: LoopHandler>() -> Option<NonNull<Loop>> {
         // SAFETY: us_create_loop allocates and returns a new loop
         let p = unsafe { c::us_create_loop(Some(H::WAKEUP), H::PRE, H::POST, 0) };
@@ -409,7 +409,7 @@ unsafe extern "C" {
     fn bun_free_loop_at_thread_exit();
 }
 
-/// Frees this thread's uws loop, after everything registered on it is gone.
+/// Frees this thread's uws loop. Call after everything registered on it is gone.
 ///
 /// SAFETY: what `Loop::get` returned on this thread is not used again.
 pub unsafe fn free_thread_loop() {

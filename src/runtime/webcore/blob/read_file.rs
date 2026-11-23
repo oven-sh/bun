@@ -1,22 +1,27 @@
 use core::marker::PhantomData;
+#[cfg(not(windows))]
+use core::mem::MaybeUninit;
 
 use scopeguard::ScopeGuard;
 
+#[cfg(not(windows))]
+use crate::webcore::blob::fd_job::{self, FdJob, FdOp, Interest, JobFd, Step, Target};
+#[cfg(not(windows))]
+use crate::webcore::blob::store::Data;
 use crate::webcore::blob::{Blob, SizeType};
+#[cfg(not(windows))]
+use crate::webcore::blob::{MAX_SIZE, Store};
 use crate::webcore::node_types::PathOrFileDescriptor;
 use bun_core::String as BunString;
+#[cfg(not(windows))]
+use bun_core::vec::{BorrowedBuf, BorrowedCursor, append_with};
+#[cfg(not(windows))]
+use bun_jsc as jsc;
 use bun_jsc::{AnyPromise, JSGlobalObject, JSPromiseStrong, JSValue, JsResult, SystemError};
 #[cfg(not(windows))]
-use {
-    crate::webcore::blob::fd_job::{self, FdJob, FdOp, Interest, JobFd, Step, Target},
-    crate::webcore::blob::store::Data,
-    crate::webcore::blob::{MAX_SIZE, Store},
-    bun_core::vec::{BorrowedBuf, BorrowedCursor, append_with},
-    bun_jsc as jsc,
-    bun_ptr::RefPtr,
-    bun_sys::Fd,
-    core::mem::MaybeUninit,
-};
+use bun_ptr::RefPtr;
+#[cfg(not(windows))]
+use bun_sys::Fd;
 
 #[cfg(windows)]
 pub(crate) use super::windows::ReadFile;

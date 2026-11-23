@@ -5,7 +5,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 // https://github.com/oven-sh/bun/issues/26286
 // Bun.Terminal callbacks not invoked inside AsyncLocalStorage.run()
 
-// The first data of a ConPTY is an escape sequence of its own.
+// ConPTY emits its own escape sequence before the child's output.
 test.skipIf(isWindows)("Bun.Terminal data callback works inside AsyncLocalStorage.run()", async () => {
   const storage = new AsyncLocalStorage();
 

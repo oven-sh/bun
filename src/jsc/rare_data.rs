@@ -202,7 +202,7 @@ pub struct RareData {
     /// per-file isolation swap so the worker keeps its link to the coordinator.
     pub(crate) test_parallel_ipc_group: SocketGroup,
     #[cfg(windows)]
-    pub reads_from_test_coordinator: core::cell::Cell<bool>,
+    pub has_test_coordinator_pipe: core::cell::Cell<bool>,
     /// The client sockets of the VM's own contexts.
     pub(crate) socket_groups: SocketGroups,
 
@@ -265,7 +265,7 @@ impl Default for RareData {
             spawn_ipc_group: SocketGroup::default(),
             test_parallel_ipc_group: SocketGroup::default(),
             #[cfg(windows)]
-            reads_from_test_coordinator: Default::default(),
+            has_test_coordinator_pipe: Default::default(),
             socket_groups: SocketGroups::default(),
             default_client_ssl_ctx: JsCell::new(None),
             listening_sockets_for_watch_mode: Mutex::new(Vec::new()),

@@ -115,7 +115,7 @@ struct us_allocated_t {
 #define IS_EINTR(rc) (rc == SOCKET_ERROR && WSAGetLastError() == WSAEINTR)
 #define LIBUS_ERR WSAGetLastError()
 #define LIBUS_ECONNRESET WSAECONNRESET
-/* What the runtime translates to ECANCELED. */
+/* The Winsock code that the runtime maps to ECANCELED. */
 #define LIBUS_ECANCELED WSAEINTR
 #else
 #include <errno.h>
@@ -259,9 +259,9 @@ size_t us_internal_accept_poll_event(struct us_poll_t *p);
 int us_internal_poll_type(struct us_poll_t *p);
 void us_internal_poll_set_type(struct us_poll_t *p, int poll_type);
 int us_internal_loop_has_polls(us_loop_r loop);
-/* Nonzero if us_internal_loop_wait is known to return at once. */
+/* Nonzero if us_internal_loop_wait is known not to block. */
 int us_internal_loop_prepare_wait(us_loop_r loop);
-/* Must not allocate or free: the thread's heaps may be with the allocator's scavenger. */
+/* Must not allocate or free: the thread's heaps may be handed off to mimalloc's scavenger. */
 void us_internal_loop_wait(us_loop_r loop, const struct timespec *timeout, int will_idle);
 void us_internal_loop_dispatch(us_loop_r loop);
 

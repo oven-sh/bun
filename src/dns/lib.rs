@@ -467,28 +467,28 @@ pub fn is_valid_hostname(name: &[u8]) -> bool {
         .all(|label| (1..=63).contains(&label.len()) && label.iter().all(|&b| is_hostname_byte(b)))
 }
 
-/// The UTS #46 form of a name that is not ASCII, if that is a valid host name.
+/// UTS #46 ToASCII. `None` if `name` is already ASCII or does not convert to a valid host name.
 #[cfg(windows)]
 pub fn to_ascii(name: &[u8]) -> Option<Vec<u8>> {
     unsafe extern "C" {
-        /// Has no bytes when `domain` does not convert.
+        /// Empty when `domain` does not convert.
         safe fn Bun__idnaToASCII(domain: &BunString) -> BunString;
     }
     if name.len() > AddrInfoList::MAX_NAME_LEN || bun_core::strings::is_all_ascii(name) {
         return None;
     }
     let ascii = Bun__idnaToASCII(&bun_core::StringView::borrow_utf8(name)).to_owned_slice();
-    let is_name =
-        bun_core::ip_address::to_ip_address(&ascii).is_none() && !ends_in_a_number(&ascii);
-    (is_name && is_valid_hostname(&ascii)).then_some(ascii)
+    let is_dns_name =
+        bun_core::ip_address::to_ip_address(&ascii).is_none() && !has_numeric_last_label(&ascii);
+    (is_dns_name && is_valid_hostname(&ascii)).then_some(ascii)
 }
 
 /// https://url.spec.whatwg.org/#ends-in-a-number-checker
 #[cfg(windows)]
-fn ends_in_a_number(name: &[u8]) -> bool {
+fn has_numeric_last_label(name: &[u8]) -> bool {
     let name = name.strip_suffix(b".").unwrap_or(name);
-    let dot = bun_core::strings::last_index_of_char(name, b'.');
-    match &name[dot.map_or(0, |dot| dot + 1)..] {
+    let last_dot = bun_core::strings::last_index_of_char(name, b'.');
+    match &name[last_dot.map_or(0, |dot| dot + 1)..] {
         [b'0', b'x', digits @ ..] => digits.iter().all(u8::is_ascii_hexdigit),
         digits => digits.iter().all(u8::is_ascii_digit),
     }

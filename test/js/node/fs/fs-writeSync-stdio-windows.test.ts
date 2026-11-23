@@ -1,5 +1,5 @@
-// fds 0 to 2 are those of the C runtime, whatever `SetStdHandle` (or
-// `AllocConsole`/`AttachConsole`) does to the result of `GetStdHandle()`.
+// fds 0-2 are CRT descriptors: `SetStdHandle`, `AllocConsole` and `AttachConsole`
+// change what `GetStdHandle()` returns but do not rebind them.
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";

@@ -3105,7 +3105,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     }
 
     pub(crate) fn get_fd<'a>(&self, heap: &JsHeap<'a>) -> JsLocal<'a> {
-        // On Windows it is a handle, which has no `.crt()`.
+        // On Windows the fd is a SOCKET handle, for which `.crt()` panics.
         use bun_sys_jsc::FdJsc as _;
         JsLocal::new(
             heap,

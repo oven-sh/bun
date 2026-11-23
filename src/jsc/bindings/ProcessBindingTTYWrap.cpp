@@ -171,7 +171,7 @@ JSC_DEFINE_HOST_FUNCTION(jsTTYSetMode, (JSC::JSGlobalObject * globalObject, Call
         return {};
     }
 #if OS(WINDOWS)
-    // Only the console knows of some escape sequences, like those of bracketed paste.
+    // Some input sequences, such as bracketed paste, only arrive with ENABLE_VIRTUAL_TERMINAL_INPUT.
     if (mode_)
         mode_ = UV_TTY_MODE_RAW_VT;
 #endif

@@ -122,7 +122,7 @@ pub(crate) fn send_helper_primary<'a>(
                 return Ok(None);
             }
             let peer_pid = subprocess.pid() as u32;
-            native_handle = crate::ipc::Handle::export(native_fd, peer_pid, handle, false);
+            native_handle = crate::ipc::Handle::init_export(native_fd, peer_pid, handle, false);
             if native_handle.is_none() {
                 return Ok(None);
             }

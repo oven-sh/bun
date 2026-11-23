@@ -74,7 +74,7 @@ extern "C" int Bun__doesMacOSVersionSupportSendRecvMsgX();
 #endif
 
 #if defined(_WIN32)
-/* Winsock is started on first use; every entry point below that creates
+/* Winsock is initialized on first use; every entry point below that creates
  * a socket or resolves an address makes sure that has happened first. */
 extern "C" void bsd_winsock_ensure(void);
 
@@ -872,7 +872,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_accept_socket(LIBUS_SOCKET_DESCRIPTOR fd, struct bsd
         internal_finalize_bsd_addr(addr);
 
 #if (defined(SOCK_CLOEXEC) && defined(SOCK_NONBLOCK)) || defined(_WIN32)
-        // skip the extra fcntl calls. On Windows it is non-blocking like the listening socket.
+        // skip the extra fcntl calls. On Windows the socket inherits non-blocking mode from the listener.
         return accepted_fd.release();
 #else
         return bsd_set_nonblocking(apple_no_sigpipe(accepted_fd.release()));

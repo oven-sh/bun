@@ -310,8 +310,7 @@ pub use pipe_writer::{
 #[cfg(windows)]
 pub use source::{Pipe, PipeConnect, PipeServer};
 
-pub use pipe_reader::ReaderFlags;
-pub use pipe_reader::{BufferedReader, ReadResult};
+pub use pipe_reader::{BufferedReader, ReadResult, ReaderFlags};
 
 pub use open_for_writing_mod::{open_for_writing, open_for_writing_impl};
 
@@ -1464,7 +1463,7 @@ pub mod waker {
     #[derive(Default)]
     pub struct WindowsWaker {
         is_woken: bun_threading::Guarded<bool>,
-        woken: bun_threading::Condition,
+        condition: bun_threading::Condition,
     }
 
     #[cfg(windows)]
@@ -1476,13 +1475,13 @@ pub mod waker {
         pub fn wait(&self) {
             let mut is_woken = self.is_woken.lock();
             while !core::mem::take(&mut *is_woken) {
-                self.woken.wait_guarded(&mut is_woken);
+                self.condition.wait_guarded(&mut is_woken);
             }
         }
 
         pub fn wake(&self) {
             *self.is_woken.lock() = true;
-            self.woken.notify_one();
+            self.condition.notify_one();
         }
     }
 }

@@ -133,15 +133,18 @@ impl FdExt for Fd {
                         fd: self,
                         ..Default::default()
                     }),
-                    // As in Node.js, these stay open.
+                    // Node.js does not close the standard descriptors either.
                     DecodeWindows::Crt(0..=2) => None,
                     DecodeWindows::Crt(file_number) => {
                         unsafe extern "C" {
                             safe fn _close(fd: c_int) -> c_int;
                         }
                         let close = || _close(file_number) == 0;
-                        (!sys::windows::file_position::closing(self, close))
-                            .then(|| sys::Error::new(sys::E::EBADF, sys::Tag::close).with_fd(self))
+                        if sys::windows::fd_table::try_close(self, close) {
+                            None
+                        } else {
+                            Some(sys::Error::new(sys::E::EBADF, sys::Tag::close).with_fd(self))
+                        }
                     }
                     DecodeWindows::Windows(handle) => {
                         unsafe extern "system" {

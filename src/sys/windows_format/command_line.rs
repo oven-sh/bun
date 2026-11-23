@@ -1,4 +1,4 @@
-//! The program and the command line for `CreateProcessW`. None of the strings ends with a NUL.
+//! Program lookup and command lines for `CreateProcessW`. Strings are not NUL-terminated.
 
 use bun_core::w;
 use bun_paths::portable::is_sep;
@@ -9,44 +9,43 @@ const DOT: u16 = b'.' as u16;
 const QUOTE: u16 = b'"' as u16;
 const SPACE: u16 = b' ' as u16;
 
-fn is_any(unit: u16, set: &[u8]) -> bool {
+fn is_one_of(unit: u16, set: &[u8]) -> bool {
     set.iter().any(|&byte| u16::from(byte) == unit)
 }
 
-fn has_any(text: &[u16], set: &[u8]) -> bool {
-    text.iter().any(|&unit| is_any(unit, set))
+fn contains_any(text: &[u16], set: &[u8]) -> bool {
+    text.iter().any(|&unit| is_one_of(unit, set))
 }
 
 fn eq_ignore_ascii_case(a: &[u16], b: &[u16]) -> bool {
-    let lower = |unit: u16| u8::try_from(unit).map_or(unit, |b| b.to_ascii_lowercase().into());
-    a.iter()
-        .map(|&it| lower(it))
-        .eq(b.iter().map(|&it| lower(it)))
+    let to_lower =
+        |&unit: &u16| u8::try_from(unit).map_or(unit, |byte| byte.to_ascii_lowercase().into());
+    a.iter().map(to_lower).eq(b.iter().map(to_lower))
 }
 
-/// An argument that the program would not see as it was given.
+/// An argument that cannot be represented on the command line.
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) struct CannotQuote;
+pub(crate) struct InvalidArgument;
 
-/// For the parser of the C runtime.
+/// Quotes `argument` for the C runtime's command line parser.
 pub fn push_argument(out: &mut Vec<u16>, argument: &[u16]) {
-    if !argument.is_empty() && !has_any(argument, b" \t\"") {
+    if !argument.is_empty() && !contains_any(argument, b" \t\"") {
         return out.extend_from_slice(argument);
     }
     out.push(QUOTE);
-    let mut backslashes = 0;
+    let mut backslash_count = 0;
     for &unit in argument {
         if unit == QUOTE {
-            out.extend(core::iter::repeat_n(BACKSLASH, backslashes + 1));
+            out.extend(core::iter::repeat_n(BACKSLASH, backslash_count + 1));
         }
-        backslashes = if unit == BACKSLASH {
-            backslashes + 1
+        backslash_count = if unit == BACKSLASH {
+            backslash_count + 1
         } else {
             0
         };
         out.push(unit);
     }
-    out.extend(core::iter::repeat_n(BACKSLASH, backslashes));
+    out.extend(core::iter::repeat_n(BACKSLASH, backslash_count));
     out.push(QUOTE);
 }
 
@@ -54,15 +53,15 @@ pub(crate) fn join_verbatim(arguments: &[Vec<u16>]) -> Vec<u16> {
     arguments.join(&SPACE)
 }
 
-pub(crate) fn join(arguments: &[Vec<u16>]) -> Result<Vec<u16>, CannotQuote> {
-    let mut out = Vec::with_capacity(arguments.iter().map(|it| it.len() + 3).sum());
-    let Some((name, rest)) = arguments.split_first() else {
+pub(crate) fn join(arguments: &[Vec<u16>]) -> Result<Vec<u16>, InvalidArgument> {
+    let mut out = Vec::with_capacity(arguments.iter().map(|argument| argument.len() + 3).sum());
+    let Some((program, rest)) = arguments.split_first() else {
         return Ok(out);
     };
-    if name.contains(&QUOTE) {
-        return Err(CannotQuote);
+    if program.contains(&QUOTE) {
+        return Err(InvalidArgument);
     }
-    push_argument(&mut out, name);
+    push_argument(&mut out, program);
     for argument in rest {
         out.push(SPACE);
         push_argument(&mut out, argument);
@@ -70,72 +69,82 @@ pub(crate) fn join(arguments: &[Vec<u16>]) -> Result<Vec<u16>, CannotQuote> {
     Ok(out)
 }
 
-/// `full_path` is from `GetFullPathNameW`.
+/// `full_path` is the output of `GetFullPathNameW`.
 pub(crate) fn is_batch_file(full_path: &[u16]) -> bool {
     full_path.last_chunk::<4>().is_some_and(|extension| {
         [w!(".bat"), w!(".cmd")]
             .iter()
-            .any(|batch| eq_ignore_ascii_case(extension, batch))
+            .any(|batch_extension| eq_ignore_ascii_case(extension, batch_extension))
     })
 }
 
-fn is_plain_for_cmd(argument: &[u16]) -> bool {
-    let is_plain = |&unit: &u16| {
+fn can_omit_cmd_quotes(argument: &[u16]) -> bool {
+    let is_unquoted = |&unit: &u16| {
         u8::try_from(unit).is_ok_and(|byte| byte.is_ascii_alphanumeric())
-            || is_any(unit, b"#$*+-./:=?@\\_")
+            || is_one_of(unit, b"#$*+-./:=?@\\_")
     };
-    let mut parts = argument.split(|&unit| unit == u16::from(b'='));
+    let mut segments = argument.split(|&unit| unit == u16::from(b'='));
     !argument.is_empty()
-        && argument.iter().all(is_plain)
-        && parts.all(|part| part.last() != Some(&BACKSLASH))
+        && argument.iter().all(is_unquoted)
+        && segments.all(|segment| segment.last() != Some(&BACKSLASH))
 }
 
-fn push_for_cmd(out: &mut Vec<u16>, text: &[u16], needs_quotes: bool) -> Result<(), CannotQuote> {
-    if has_any(text, b"\"\r\n") {
-        return Err(CannotQuote);
+fn push_cmd_argument(
+    out: &mut Vec<u16>,
+    argument: &[u16],
+    should_quote: bool,
+) -> Result<(), InvalidArgument> {
+    if contains_any(argument, b"\"\r\n") {
+        return Err(InvalidArgument);
     }
-    out.extend(needs_quotes.then_some(QUOTE));
-    for &unit in text {
+    if should_quote {
+        out.push(QUOTE);
+    }
+    for &unit in argument {
         out.push(unit);
         if unit == u16::from(b'%') {
-            // Expands to nothing, and leaves no pair of them around the name of a variable.
+            // `%cd:~,%` expands to an empty string and keeps the preceding `%` literal.
             out.extend_from_slice(w!("%cd:~,%"));
         }
     }
-    if needs_quotes {
-        let backslashes = text.iter().rev().take_while(|&&it| it == BACKSLASH).count();
-        out.extend(core::iter::repeat_n(BACKSLASH, backslashes));
+    if should_quote {
+        let backslash_count = argument
+            .iter()
+            .rev()
+            .take_while(|&&unit| unit == BACKSLASH)
+            .count();
+        out.extend(core::iter::repeat_n(BACKSLASH, backslash_count));
         out.push(QUOTE);
     }
     Ok(())
 }
 
-/// For `cmd.exe` to run the batch file at `full_path`. `arguments` does not have the name of the program.
-pub(crate) fn join_for_batch_file(
+/// The `cmd.exe` command line that runs a batch file. `arguments` excludes the program name.
+pub(crate) fn build_batch_command(
     full_path: &[u16],
     arguments: &[Vec<u16>],
     is_verbatim: bool,
-) -> Result<Vec<u16>, CannotQuote> {
+) -> Result<Vec<u16>, InvalidArgument> {
     let mut out = Vec::new();
     out.extend_from_slice(w!("cmd.exe /d /e:ON /v:OFF /s /c \""));
-    // It does not know the prefix.
-    push_for_cmd(&mut out, &without_verbatim_prefix(full_path), true)?;
+    // `cmd.exe` does not support the `\\?\` prefix.
+    push_cmd_argument(&mut out, &strip_verbatim_prefix(full_path), true)?;
     for argument in arguments {
         out.push(SPACE);
         if is_verbatim {
             out.extend_from_slice(argument);
         } else {
-            push_for_cmd(&mut out, argument, !is_plain_for_cmd(argument))?;
+            push_cmd_argument(&mut out, argument, !can_omit_cmd_quotes(argument))?;
         }
     }
     out.push(QUOTE);
     Ok(out)
 }
 
-pub(crate) fn with_verbatim_prefix(full_path: &[u16]) -> Vec<u16> {
+pub(crate) fn add_verbatim_prefix(full_path: &[u16]) -> Vec<u16> {
     match full_path {
         [_, COLON, ..] => [w!("\\\\?\\"), full_path].concat(),
-        [BACKSLASH, BACKSLASH, _, BACKSLASH, ..] if is_any(full_path[2], b"?.") => {
+        [BACKSLASH, BACKSLASH, _, BACKSLASH, ..] if is_one_of(full_path[2], b"?.") => {
             full_path.to_vec()
         }
         [BACKSLASH, rest @ ..] => [w!("\\\\?\\UNC"), rest].concat(),
@@ -143,7 +152,7 @@ pub(crate) fn with_verbatim_prefix(full_path: &[u16]) -> Vec<u16> {
     }
 }
 
-pub(crate) fn without_verbatim_prefix(path: &[u16]) -> Vec<u16> {
+pub(crate) fn strip_verbatim_prefix(path: &[u16]) -> Vec<u16> {
     match path.strip_prefix(w!("\\\\?\\")) {
         Some(rest @ [_, COLON, BACKSLASH, ..]) => rest.to_vec(),
         Some(rest) if rest.starts_with(w!("UNC\\")) => [&path[..2], &rest[4..]].concat(),
@@ -151,32 +160,35 @@ pub(crate) fn without_verbatim_prefix(path: &[u16]) -> Vec<u16> {
     }
 }
 
-/// `C:` or `\\server\share`
-fn root_of(absolute: &[u16]) -> &[u16] {
-    if !absolute.iter().take(2).all(|&unit| is_sep(unit)) {
-        return &absolute[..absolute.len().min(2)];
+/// The root of an absolute path without its separator: `C:` or `\\server\share`.
+fn volume(path: &[u16]) -> &[u16] {
+    if !path.iter().take(2).all(|&unit| is_sep(unit)) {
+        return &path[..path.len().min(2)];
     }
-    let is_verbatim_unc = absolute
+    let is_verbatim_unc = path
         .get(2..8)
-        .is_some_and(|it| eq_ignore_ascii_case(it, w!("?\\unc\\")));
-    let mut separators = (0..absolute.len()).filter(|&index| is_sep(absolute[index]));
+        .is_some_and(|prefix| eq_ignore_ascii_case(prefix, w!("?\\unc\\")));
+    let mut separators = (0..path.len()).filter(|&index| is_sep(path[index]));
     let end = separators.nth(if is_verbatim_unc { 5 } else { 3 });
-    &absolute[..end.unwrap_or(absolute.len())]
+    &path[..end.unwrap_or(path.len())]
 }
 
 fn push_directory(out: &mut Vec<u16>, directory: &[u16]) {
     out.extend_from_slice(directory);
-    if directory.last().is_some_and(|&last| !is_any(last, b"\\/:")) {
+    if directory
+        .last()
+        .is_some_and(|&last| !is_one_of(last, b"\\/:"))
+    {
         out.push(BACKSLASH);
     }
 }
 
-/// With a separator at its end.
+/// A file name can be appended directly to the result.
 fn resolve_directory(cwd: &[u16], directory: &[u16]) -> Vec<u16> {
     let mut out = Vec::new();
     match *directory {
         [first, second, _, ..] if is_sep(first) && is_sep(second) => {}
-        [first, ..] if is_sep(first) => out.extend_from_slice(root_of(cwd)),
+        [first, ..] if is_sep(first) => out.extend_from_slice(volume(cwd)),
         [_, COLON, third, ..] if is_sep(third) => {}
         [_, COLON, ref relative @ ..] => {
             if cwd
@@ -194,11 +206,11 @@ fn resolve_directory(cwd: &[u16], directory: &[u16]) -> Vec<u16> {
     out
 }
 
-/// The entries of `PATH`. One that is quoted can have a `;` in it.
-fn path_entries(mut path: &[u16]) -> impl Iterator<Item = &[u16]> {
+/// A quoted entry of `PATH` may contain `;`.
+fn split_paths(mut path_env: &[u16]) -> impl Iterator<Item = &[u16]> {
     core::iter::from_fn(move || {
-        let (&first, rest) = path.split_first()?;
-        let is_quote = |unit: &u16| is_any(*unit, b"\"'");
+        let (&first, rest) = path_env.split_first()?;
+        let is_quote = |unit: &u16| is_one_of(*unit, b"\"'");
         let quoted_len = if is_quote(&first) {
             1 + rest
                 .iter()
@@ -207,9 +219,9 @@ fn path_entries(mut path: &[u16]) -> impl Iterator<Item = &[u16]> {
         } else {
             0
         };
-        let mut parts = path[quoted_len..].splitn(2, |&unit| unit == u16::from(b';'));
-        let mut entry = &path[..quoted_len + parts.next().map_or(0, <[u16]>::len)];
-        path = parts.next().unwrap_or_default();
+        let mut split = path_env[quoted_len..].splitn(2, |&unit| unit == u16::from(b';'));
+        let mut entry = &path_env[..quoted_len + split.next().map_or(0, <[u16]>::len)];
+        path_env = split.next().unwrap_or_default();
         if entry.first().is_some_and(is_quote) {
             entry = &entry[1..];
         }
@@ -221,29 +233,29 @@ fn path_entries(mut path: &[u16]) -> impl Iterator<Item = &[u16]> {
     .filter(|entry| !entry.is_empty())
 }
 
-pub(crate) struct Search<'a> {
-    /// Of the new process, and absolute.
+pub(crate) struct SearchOptions<'a> {
+    /// Absolute working directory of the new process.
     pub(crate) cwd: &'a [u16],
-    pub(crate) path: &'a [u16],
-    pub(crate) includes_cwd: bool,
+    pub(crate) path_env: &'a [u16],
+    pub(crate) should_check_cwd: bool,
 }
 
-/// As Node.js does it.
+/// Uses the same search order as Node.js.
 pub(crate) fn find_program(
     file: &[u16],
-    search: &Search<'_>,
+    options: &SearchOptions<'_>,
     is_file: impl Fn(&mut Vec<u16>) -> bool,
 ) -> Option<Vec<u16>> {
-    let name_start = file.iter().rposition(|&unit| is_any(unit, b"\\/:"));
-    let (directory, name) = file.split_at(name_start.map_or(0, |index| index + 1));
-    if name.iter().all(|&unit| is_any(unit, b". ")) {
+    let last_separator = file.iter().rposition(|&unit| is_one_of(unit, b"\\/:"));
+    let (directory, name) = file.split_at(last_separator.map_or(0, |index| index + 1));
+    if name.iter().all(|&unit| is_one_of(unit, b". ")) {
         return None;
     }
     let first_dot = name.iter().position(|&unit| unit == DOT);
     let has_extension = first_dot.is_some_and(|index| index + 1 < name.len());
 
-    let find_in = |directory: &[u16]| {
-        let mut candidate = resolve_directory(search.cwd, directory);
+    let search_directory = |directory: &[u16]| {
+        let mut candidate = resolve_directory(options.cwd, directory);
         candidate.extend_from_slice(name);
         if has_extension && is_file(&mut candidate) {
             return Some(candidate);
@@ -251,9 +263,9 @@ pub(crate) fn find_program(
         if name.last().is_some_and(|&last| last != DOT) {
             candidate.push(DOT);
         }
-        let stem_len = candidate.len();
+        let extension_start = candidate.len();
         for extension in [w!("com"), w!("exe")] {
-            candidate.truncate(stem_len);
+            candidate.truncate(extension_start);
             candidate.extend_from_slice(extension);
             if is_file(&mut candidate) {
                 return Some(candidate);
@@ -263,32 +275,33 @@ pub(crate) fn find_program(
     };
 
     if !directory.is_empty() {
-        return find_in(directory);
+        return search_directory(directory);
     }
-    let cwd = search.includes_cwd.then_some(&[][..]);
-    cwd.into_iter()
-        .chain(path_entries(search.path))
-        .find_map(find_in)
+    let cwd_entry = options.should_check_cwd.then_some(&[][..]);
+    cwd_entry
+        .into_iter()
+        .chain(split_paths(options.path_env))
+        .find_map(search_directory)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn wide(text: &str) -> Vec<u16> {
+    fn to_wide(text: &str) -> Vec<u16> {
         text.encode_utf16().collect()
     }
 
-    fn all_wide(texts: &[&str]) -> Vec<Vec<u16>> {
-        texts.iter().map(|it| wide(it)).collect()
+    fn to_wide_list(texts: &[&str]) -> Vec<Vec<u16>> {
+        texts.iter().map(|text| to_wide(text)).collect()
     }
 
-    fn narrow(text: &[u16]) -> String {
+    fn from_wide(text: &[u16]) -> String {
         String::from_utf16(text).unwrap()
     }
 
     #[test]
-    fn arguments() {
+    fn join_quotes_arguments() {
         for (argument, quoted) in [
             ("", r#""""#),
             ("HelloWorld", "HelloWorld"),
@@ -305,91 +318,105 @@ mod tests {
                 r#""c:\path\to\node.exe --eval \"require('c:\\path\\to\\test.js')\"""#,
             ),
         ] {
-            let line = join(&all_wide(&["x", argument])).unwrap();
-            assert_eq!(narrow(&line), format!("x {quoted}"));
+            let command_line = join(&to_wide_list(&["x", argument])).unwrap();
+            assert_eq!(from_wide(&command_line), format!("x {quoted}"));
         }
     }
 
     #[test]
-    fn name_of_the_program() {
-        let line = |name| join(&all_wide(&[name, "a"])).map(|it| narrow(&it));
-        assert_eq!(line(r"C:\a b\").unwrap(), r#""C:\a b\\" a"#);
-        assert_eq!(line("").unwrap(), r#""" a"#);
+    fn join_quotes_program_name() {
+        let join_program =
+            |program| join(&to_wide_list(&[program, "a"])).map(|joined| from_wide(&joined));
+        assert_eq!(join_program(r"C:\a b\").unwrap(), r#""C:\a b\\" a"#);
+        assert_eq!(join_program("").unwrap(), r#""" a"#);
         assert_eq!(join(&[]), Ok(vec![]));
     }
 
     #[test]
-    fn verbatim() {
-        let line = join_verbatim(&all_wide(&["cmd.exe", "/c", r#""a b" c"#]));
-        assert_eq!(narrow(&line), r#"cmd.exe /c "a b" c"#);
+    fn join_verbatim_adds_only_spaces() {
+        let command_line = join_verbatim(&to_wide_list(&["cmd.exe", "/c", r#""a b" c"#]));
+        assert_eq!(from_wide(&command_line), r#"cmd.exe /c "a b" c"#);
     }
 
     #[test]
-    fn batch_files() {
-        assert!(is_batch_file(&wide(r"C:\a.CMD")));
-        assert!(is_batch_file(&wide(r"C:\.bat")));
-        assert!(!is_batch_file(&wide(r"C:\a.cmd.exe")));
-        assert!(!is_batch_file(&wide("bat")));
+    fn detects_batch_files_and_builds_command() {
+        assert!(is_batch_file(&to_wide(r"C:\a.CMD")));
+        assert!(is_batch_file(&to_wide(r"C:\.bat")));
+        assert!(!is_batch_file(&to_wide(r"C:\a.cmd.exe")));
+        assert!(!is_batch_file(&to_wide("bat")));
 
-        let line = |path, arguments: &[&str], is_verbatim| {
-            let line = join_for_batch_file(&wide(path), &all_wide(arguments), is_verbatim)?;
-            Ok(narrow(&line[29..]))
+        let build = |path, arguments: &[&str], is_verbatim| {
+            let command_line =
+                build_batch_command(&to_wide(path), &to_wide_list(arguments), is_verbatim)?;
+            Ok(from_wide(&command_line[29..]))
         };
         assert_eq!(
-            line(r"C:\a b\x.cmd", &["k=v", "c d", "", r"e f\", "g&h"], false),
+            build(r"C:\a b\x.cmd", &["k=v", "c d", "", r"e f\", "g&h"], false),
             Ok(r#" ""C:\a b\x.cmd" k=v "c d" "" "e f\\" "g&h"""#.to_owned())
         );
         assert_eq!(
-            line(r"\\?\C:\x.cmd", &["%b%"], false),
+            build(r"\\?\C:\x.cmd", &["%b%"], false),
             Ok(r#" ""C:\x.cmd" "%%cd:~,%b%%cd:~,%"""#.to_owned())
         );
         assert_eq!(
-            line(r"\\?\UNC\s\x.cmd", &[r#""a b" c"#], true),
+            build(r"\\?\UNC\s\x.cmd", &[r#""a b" c"#], true),
             Ok(r#" ""\\s\x.cmd" "a b" c""#.to_owned())
         );
         for argument in ["a\"b", "a\nb", "a\rb"] {
-            assert_eq!(line(r"C:\x.cmd", &[argument], false), Err(CannotQuote));
+            assert_eq!(build(r"C:\x.cmd", &[argument], false), Err(InvalidArgument));
         }
     }
 
     #[test]
-    fn verbatim_prefix() {
-        for (plain, verbatim) in [(r"C:\a", r"\\?\C:\a"), (r"\\s\t\a", r"\\?\UNC\s\t\a")] {
-            assert_eq!(narrow(&with_verbatim_prefix(&wide(plain))), verbatim);
-            assert_eq!(narrow(&with_verbatim_prefix(&wide(verbatim))), verbatim);
-            assert_eq!(narrow(&without_verbatim_prefix(&wide(verbatim))), plain);
-            assert_eq!(narrow(&without_verbatim_prefix(&wide(plain))), plain);
+    fn adds_and_strips_verbatim_prefix() {
+        for (path, verbatim) in [(r"C:\a", r"\\?\C:\a"), (r"\\s\t\a", r"\\?\UNC\s\t\a")] {
+            assert_eq!(from_wide(&add_verbatim_prefix(&to_wide(path))), verbatim);
+            assert_eq!(
+                from_wide(&add_verbatim_prefix(&to_wide(verbatim))),
+                verbatim
+            );
+            assert_eq!(from_wide(&strip_verbatim_prefix(&to_wide(verbatim))), path);
+            assert_eq!(from_wide(&strip_verbatim_prefix(&to_wide(path))), path);
         }
     }
 
     #[test]
-    fn entries_of_path() {
-        let entries = |path| path_entries(&wide(path)).map(narrow).collect::<Vec<_>>();
-        assert_eq!(entries("a;b;;c;"), ["a", "b", "c"]);
-        assert_eq!(entries(r#";"a;b";'c;d';e""#), ["a;b", "c;d", "e"]);
-        for path in ["", ";"] {
-            assert_eq!(entries(path), [""; 0]);
-        }
-    }
-
-    fn candidates(file: &str, cwd: &str, path: &str, includes_cwd: bool) -> Vec<String> {
-        let tried = core::cell::RefCell::new(Vec::new());
-        let search = Search {
-            cwd: &wide(cwd),
-            path: &wide(path),
-            includes_cwd,
+    fn split_paths_unquotes_and_skips_empty_entries() {
+        let split = |path_env| {
+            split_paths(&to_wide(path_env))
+                .map(from_wide)
+                .collect::<Vec<_>>()
         };
-        find_program(&wide(file), &search, |candidate| {
-            tried.borrow_mut().push(narrow(candidate));
+        assert_eq!(split("a;b;;c;"), ["a", "b", "c"]);
+        assert_eq!(split(r#";"a;b";'c;d';e""#), ["a;b", "c;d", "e"]);
+        for path_env in ["", ";"] {
+            assert_eq!(split(path_env), [""; 0]);
+        }
+    }
+
+    fn collect_candidates(
+        file: &str,
+        cwd: &str,
+        path_env: &str,
+        should_check_cwd: bool,
+    ) -> Vec<String> {
+        let candidates = core::cell::RefCell::new(Vec::new());
+        let options = SearchOptions {
+            cwd: &to_wide(cwd),
+            path_env: &to_wide(path_env),
+            should_check_cwd,
+        };
+        find_program(&to_wide(file), &options, |candidate| {
+            candidates.borrow_mut().push(from_wide(candidate));
             false
         });
-        tried.into_inner()
+        candidates.into_inner()
     }
 
     #[test]
-    fn order_of_the_search() {
+    fn find_program_tries_candidates_in_order() {
         assert_eq!(
-            candidates("x", r"C:\w", r"D:\p;rel", true),
+            collect_candidates("x", r"C:\w", r"D:\p;rel", true),
             [
                 r"C:\w\x.com",
                 r"C:\w\x.exe",
@@ -400,25 +427,25 @@ mod tests {
             ]
         );
         assert_eq!(
-            candidates("x.y", r"C:\", r"D:\p\", false),
+            collect_candidates("x.y", r"C:\", r"D:\p\", false),
             [r"D:\p\x.y", r"D:\p\x.y.com", r"D:\p\x.y.exe"]
         );
         assert_eq!(
-            candidates("x.", r"C:\", "", true),
+            collect_candidates("x.", r"C:\", "", true),
             [r"C:\x.com", r"C:\x.exe"]
         );
-        assert_eq!(candidates("", r"C:\", "a", true), [""; 0]);
+        assert_eq!(collect_candidates("", r"C:\", "a", true), [""; 0]);
     }
 
     #[test]
-    fn names_with_a_directory() {
-        let first = |file, cwd| candidates(file, cwd, "unused", true).remove(0);
-        assert_eq!(first("./x.exe", r"C:\w"), r"C:\w\./x.exe");
-        assert_eq!(first(r"D:\x.exe", r"C:\w"), r"D:\x.exe");
-        assert_eq!(first(r"\\s\t\x.exe", r"C:\w"), r"\\s\t\x.exe");
-        assert_eq!(first("c:x.exe", r"C:\w"), r"C:\w\x.exe");
-        assert_eq!(first(r"c:y\x.exe", r"C:\w"), r"C:\w\y\x.exe");
-        assert_eq!(first("D:x.exe", r"C:\w"), "D:x.exe");
-        assert_eq!(first(r"\x.exe", r"C:\w"), r"C:\x.exe");
+    fn find_program_resolves_directory_against_cwd() {
+        let first_candidate = |file, cwd| collect_candidates(file, cwd, "unused", true).remove(0);
+        assert_eq!(first_candidate("./x.exe", r"C:\w"), r"C:\w\./x.exe");
+        assert_eq!(first_candidate(r"D:\x.exe", r"C:\w"), r"D:\x.exe");
+        assert_eq!(first_candidate(r"\\s\t\x.exe", r"C:\w"), r"\\s\t\x.exe");
+        assert_eq!(first_candidate("c:x.exe", r"C:\w"), r"C:\w\x.exe");
+        assert_eq!(first_candidate(r"c:y\x.exe", r"C:\w"), r"C:\w\y\x.exe");
+        assert_eq!(first_candidate("D:x.exe", r"C:\w"), "D:x.exe");
+        assert_eq!(first_candidate(r"\x.exe", r"C:\w"), r"C:\x.exe");
     }
 }

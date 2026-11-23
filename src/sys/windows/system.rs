@@ -1,10 +1,10 @@
-//! Memory, uptime and version of the system.
+//! System memory, uptime and OS version.
 
 use bun_core::wstr;
 
 use super::registry::Key;
 use super::{BOOL, DWORD, FALSE, NTSTATUS};
-use crate::windows_format::{product_name, wide};
+use crate::windows_format::{product_name, wtf16};
 
 #[repr(C)]
 struct MEMORYSTATUSEX {
@@ -58,8 +58,11 @@ pub fn physical_memory() -> Option<PhysicalMemory> {
         dwLength: size_of::<MEMORYSTATUSEX>() as DWORD,
         ..bun_core::ffi::zeroed()
     };
-    // SAFETY: `status` is as large as it says.
-    (unsafe { GlobalMemoryStatusEx(&mut status) } != FALSE).then_some(PhysicalMemory {
+    // SAFETY: `dwLength` is the size of `status`.
+    if unsafe { GlobalMemoryStatusEx(&mut status) } == FALSE {
+        return None;
+    }
+    Some(PhysicalMemory {
         total: status.ullTotalPhys,
         available: status.ullAvailPhys,
     })
@@ -70,21 +73,21 @@ pub fn version() -> OSVERSIONINFOW {
         dwOSVersionInfoSize: size_of::<OSVERSIONINFOW>() as DWORD,
         ..bun_core::ffi::zeroed()
     };
-    // SAFETY: `info` is as large as it says. The result is always `STATUS_SUCCESS`.
+    // SAFETY: `dwOSVersionInfoSize` is the size of `info`. The call always returns `STATUS_SUCCESS`.
     unsafe { RtlGetVersion(&mut info) };
     info
 }
 
 impl OSVERSIONINFOW {
-    /// Such as `Windows 11 Pro`, in WTF-8. Empty if the registry does not say.
+    /// For example `Windows 11 Pro`, in WTF-8. A missing registry value counts as empty.
     pub fn product_name(&self) -> Vec<u8> {
         let name = Key::open(wstr!("SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion"))
-            .and_then(|key| key.text(wstr!("ProductName")));
-        product_name::describe(
+            .and_then(|key| key.query_string(wstr!("ProductName")));
+        product_name::format(
             name.unwrap_or_default(),
             self.dwMajorVersion,
             self.dwBuildNumber,
-            &wide::decode_until_nul(self.szCSDVersion.iter().copied()),
+            &wtf16::decode_until_nul(self.szCSDVersion.iter().copied()),
         )
     }
 }

@@ -1,4 +1,4 @@
-//! The lists of processors and of network interfaces, for `node:os` and for `process.report`.
+//! CPU and network interface lists for `node:os` and `process.report`.
 
 use core::fmt::Arguments;
 use core::net::IpAddr;
@@ -8,7 +8,7 @@ use bun_jsc::bindgen::JsScope;
 use bun_jsc::bun_string_jsc::create_utf8_for_js;
 use bun_jsc::{JSGlobalObject, JSValue, JsResult, SystemError};
 use bun_sys::windows::cpu::{Processor, processors};
-use bun_sys::windows_format::adapters::{Interface, InterfaceAddress};
+use bun_sys::windows_format::adapter_addresses::{Interface, InterfaceAddress};
 use bun_sys::windows_format::cpu_time::ProcessorTimes;
 
 use super::os::CPUTimes;
@@ -25,29 +25,25 @@ impl From<ProcessorTimes> for CPUTimes {
     }
 }
 
-fn put_model_and_speed(
-    global: &JSGlobalObject,
-    cpu: JSValue,
-    processor: &Processor,
-) -> JsResult<()> {
+fn put_cpu_fields(global: &JSGlobalObject, cpu: JSValue, processor: &Processor) -> JsResult<()> {
     let model = match &processor.model {
         Some(model) => create_utf8_for_js(global, model)?,
         None => global.common_strings().unknown(),
     };
     cpu.put(global, b"model", model);
-    let speed = JSValue::js_number(processor.mhz.unwrap_or(0).into());
+    let speed = JSValue::js_number(processor.speed_mhz.unwrap_or(0).into());
     cpu.put(global, b"speed", speed);
     Ok(())
 }
 
-/// `None` if the system does not say.
+/// `None` if the system query fails.
 pub(crate) fn cpus(global: &JSGlobalObject) -> JsResult<Option<JSValue>> {
     let Some(processors) = processors() else {
         return Ok(None);
     };
     let cpus = JSValue::create_array_from_iter(global, processors, |processor| {
         let cpu = JSValue::create_empty_object(global, 3);
-        put_model_and_speed(global, cpu, &processor)?;
+        put_cpu_fields(global, cpu, &processor)?;
         let times = CPUTimes::from(processor.times).to_value(global);
         cpu.put(global, b"times", times);
         Ok(cpu)
@@ -55,29 +51,29 @@ pub(crate) fn cpus(global: &JSGlobalObject) -> JsResult<Option<JSValue>> {
     cpus.map(Some)
 }
 
-fn cpus_of_report(global: &JSGlobalObject) -> JsResult<JSValue> {
+fn create_report_cpus(global: &JSGlobalObject) -> JsResult<JSValue> {
     let Some(processors) = processors() else {
         return JSValue::create_empty_array(global, 0);
     };
     JSValue::create_array_from_iter(global, processors, |processor| {
         let cpu = JSValue::create_empty_object(global, 7);
-        put_model_and_speed(global, cpu, &processor)?;
-        CPUTimes::from(processor.times).put_into(cpu, global);
+        put_cpu_fields(global, cpu, &processor)?;
+        CPUTimes::from(processor.times).put_fields(cpu, global);
         Ok(cpu)
     })
 }
 
 #[unsafe(no_mangle)]
 extern "C" fn Bun__Os__createReportCpus(global: &JSGlobalObject) -> JSValue {
-    bun_jsc::to_js_host_fn_result(global, cpus_of_report(global))
+    bun_jsc::to_js_host_fn_result(global, create_report_cpus(global))
 }
 
-/// For an address, with or without the length of its prefix.
+/// `args` is an IP address with an optional prefix length, which fits the buffer.
 fn format_address(global: &JSGlobalObject, args: Arguments<'_>) -> JsResult<JSValue> {
     create_utf8_for_js(global, bun_fmt::buf_print_infallible(&mut [0; 64], args))
 }
 
-fn put_address_netmask_and_family(
+fn put_address_fields(
     global: &JSGlobalObject,
     entry: JSValue,
     address: &InterfaceAddress,
@@ -112,22 +108,22 @@ pub(crate) fn network_interfaces(cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         let err = SystemError {
             message: BunString::static_("uv_interface_addresses failed"),
             code: BunString::static_("ERR_SYSTEM_ERROR"),
-            errno: bun_errno::e_to_uv(errno),
+            errno: bun_errno::errno_to_uv(errno),
             syscall: BunString::static_("uv_interface_addresses"),
             ..Default::default()
         };
         global.throw_value(err.to_error_instance(global))
     })?;
 
-    let by_name = JSValue::create_empty_object(global, 8);
+    let interfaces_by_name = JSValue::create_empty_object(global, 8);
     for interface in &interfaces {
         // The OS picks the interface name, so it can be an array index like "0".
         let name = StringView::from_bytes(&interface.name);
-        let entries = match by_name.get_own(global, &name)? {
+        let entries = match interfaces_by_name.get_own(global, &name)? {
             Some(entries) => entries,
             None => {
                 let entries = JSValue::create_empty_array(global, 0)?;
-                by_name.put_may_be_index(global, &name, entries)?;
+                interfaces_by_name.put_may_be_index(global, &name, entries)?;
                 entries
             }
         };
@@ -135,7 +131,7 @@ pub(crate) fn network_interfaces(cx: &mut JsScope<'_>) -> JsResult<JSValue> {
 
         for (index, address) in (first_index..).zip(&interface.addresses) {
             let entry = JSValue::create_empty_object(global, 7);
-            put_address_netmask_and_family(global, entry, address)?;
+            put_address_fields(global, entry, address)?;
             put_mac(global, entry, interface)?;
             entry.put(global, b"internal", interface.is_loopback.into());
             let cidr = format_args!("{}/{}", address.ip, address.prefix_len);
@@ -144,13 +140,17 @@ pub(crate) fn network_interfaces(cx: &mut JsScope<'_>) -> JsResult<JSValue> {
             entries.put_index(global, index, entry)?;
         }
     }
-    Ok(by_name)
+    Ok(interfaces_by_name)
 }
 
-fn network_interfaces_of_report(global: &JSGlobalObject) -> JsResult<JSValue> {
+fn create_report_network_interfaces(global: &JSGlobalObject) -> JsResult<JSValue> {
     let interfaces = bun_sys::windows::network_interfaces().unwrap_or_default();
-    let addresses = (interfaces.iter())
-        .flat_map(|interface| interface.addresses.iter().map(move |it| (interface, it)));
+    let addresses = interfaces.iter().flat_map(|interface| {
+        interface
+            .addresses
+            .iter()
+            .map(move |address| (interface, address))
+    });
 
     let entries = JSValue::create_empty_array(global, 0)?;
     for (index, (interface, address)) in (0..).zip(addresses) {
@@ -158,7 +158,7 @@ fn network_interfaces_of_report(global: &JSGlobalObject) -> JsResult<JSValue> {
         let name = create_utf8_for_js(global, &interface.name)?;
         entry.put(global, b"name", name);
         entry.put(global, b"internal", interface.is_loopback.into());
-        put_address_netmask_and_family(global, entry, address)?;
+        put_address_fields(global, entry, address)?;
         put_scope_id(global, entry, address);
         put_mac(global, entry, interface)?;
         entries.put_index(global, index, entry)?;
@@ -168,5 +168,5 @@ fn network_interfaces_of_report(global: &JSGlobalObject) -> JsResult<JSValue> {
 
 #[unsafe(no_mangle)]
 extern "C" fn Bun__Os__createReportNetworkInterfaces(global: &JSGlobalObject) -> JSValue {
-    bun_jsc::to_js_host_fn_result(global, network_interfaces_of_report(global))
+    bun_jsc::to_js_host_fn_result(global, create_report_network_interfaces(global))
 }

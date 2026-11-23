@@ -420,6 +420,7 @@ void us_internal_rearm_writable(struct us_socket_t *s) {
  * take any failed send for backpressure. No write may close under its caller: the writable event does. */
 static ssize_t us_internal_reject_excess_send(struct us_socket_t *s, ssize_t written, size_t length) {
 #ifdef LIBUS_USE_IOCP
+    /* Every stream send passes through here. */
     s->group->loop->has_sent = 1;
 #endif
     if (written < 0 || (size_t) written <= length) {
@@ -461,7 +462,7 @@ int us_socket_stalled_write_means_peer_gone(struct us_socket_t *s) {
         return 0;
     }
     int err = WSAGetLastError();
-    /* WSAESHUTDOWN is our own shutdown(SD_SEND). */
+    /* WSAESHUTDOWN means our own shutdown(SD_SEND) ran, not a peer reset. */
     return err != WSAEWOULDBLOCK && err != WSAESHUTDOWN;
 #else
     return 1;

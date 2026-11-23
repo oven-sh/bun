@@ -1,4 +1,4 @@
-//! Readiness of sockets, from the driver behind Winsock.
+//! Socket readiness through `IOCTL_AFD_POLL` requests to AFD, the driver behind Winsock.
 
 use core::cell::{Cell, RefCell, UnsafeCell};
 use core::ffi::c_void;
@@ -6,6 +6,7 @@ use core::ptr::{self, NonNull};
 use std::os::windows::io::{AsRawHandle as _, OwnedHandle};
 use std::rc::Rc;
 
+use bun_core::time::{NS_PER_MS, NS_PER_S};
 use bun_sys::windows::StatusBlock;
 use bun_windows_sys::{HANDLE, NT_ERROR, NTSTATUS, ULONG, Win32Error};
 
@@ -14,30 +15,32 @@ use crate::slab::{Slab, Token};
 use crate::sys::{self, Packet};
 
 bitflags::bitflags! {
-    /// All of them are reported for as long as they hold.
+    /// `AFD_POLL_*` events. All are level-triggered.
     #[derive(Copy, Clone, PartialEq, Eq, Default, Debug)]
     pub struct Readiness: u32 {
         const RECEIVE = 0x1;
         const SEND = 0x4;
-        /// The peer will send no more. What it has sent may still be unread.
+        /// The peer shut down its send side. Received data may still be unread.
         const DISCONNECT = 0x8;
         const ABORT = 0x10;
         const ACCEPT = 0x80;
         const CONNECT_FAIL = 0x100;
-        /// The socket cannot be watched. It is reported unasked, and tried again after a second.
-        const WATCH_FAILED = 1 << 31;
+        /// The poll request itself failed. Reported regardless of interest; the poll is retried after one second.
+        const POLL_FAILED = 1 << 31;
     }
 }
 
-/// Reported unasked when the last handle to the socket is closed.
-const LOCAL_CLOSE: ULONG = 0x20;
+/// Reported regardless of interest when the last handle to the socket is closed.
+const AFD_POLL_LOCAL_CLOSE: ULONG = 0x20;
+
+const MAX_BACKOFF_NS: u64 = NS_PER_S;
 
 /// `AFD_POLL_INFO` for one socket.
 #[repr(C)]
 #[derive(Copy, Clone, Default)]
-struct PollInfo {
+struct AfdPollInfo {
     timeout: i64,
-    count: ULONG,
+    handle_count: ULONG,
     is_exclusive: ULONG,
     socket: usize,
     events: ULONG,
@@ -45,442 +48,462 @@ struct PollInfo {
 }
 
 #[derive(Clone)]
-pub enum Watcher {
-    /// Handed to the caller of [`Port::dispatch`].
-    Foreign(NonNull<c_void>),
+pub enum ReadinessHandler {
+    /// Passed to the caller of [`Port::dispatch`] in an [`Event::Socket`].
+    UserData(NonNull<c_void>),
     Callback(Rc<dyn Fn(Readiness)>),
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Default)]
-enum State {
+enum PollStatus {
     #[default]
     Idle,
-    /// Until the result is dispatched.
-    Polling(Readiness),
-    /// Until `key::POLL_AGAIN`.
-    Resting,
+    /// Holds the submitted interest until the result is dispatched.
+    Pending(Readiness),
+    /// Waiting for `key::POLL_RETRY`.
+    Backoff,
 }
 
 #[derive(Default)]
-struct Attempt {
+struct PollRequest {
     status: StatusBlock,
-    info: UnsafeCell<PollInfo>,
-    /// The system uses the other two until the packet is here.
+    info: UnsafeCell<AfdPollInfo>,
+    /// The kernel owns `status` and `info` until the completion packet is dequeued.
     is_in_flight: Cell<bool>,
 }
 
-impl Attempt {
-    fn result(&self) -> Option<(NTSTATUS, PollInfo)> {
-        // SAFETY: the system is not using it.
-        (!self.is_in_flight.get()).then(|| (self.status.get().0, unsafe { self.info.get().read() }))
+impl PollRequest {
+    fn result(&self) -> Option<(NTSTATUS, AfdPollInfo)> {
+        if self.is_in_flight.get() {
+            return None;
+        }
+        // SAFETY: the request is not in flight, so the kernel does not write `info`.
+        Some((self.status.get().0, unsafe { self.info.get().read() }))
     }
 }
 
-/// Set in the context of a packet for `attempts[1]`.
-const SECOND_ATTEMPT: usize = Token::SPARE_BIT;
+/// Set in the packet context of `requests[1]`.
+const SECOND_REQUEST_BIT: usize = Token::SPARE_BIT;
 
-fn context(token: Token, attempt: usize) -> usize {
-    token.to_raw() | (attempt * SECOND_ATTEMPT)
+fn encode_context(token: Token, request_index: usize) -> usize {
+    token.to_raw() | (request_index * SECOND_REQUEST_BIT)
 }
 
-/// Of two polls of one socket only one hears of events. So they are exclusive: a newer one ends the one before.
+/// AFD notifies only one of two concurrent polls on a socket, so each poll is exclusive and completes the previous one.
 #[derive(Default)]
-struct Poll {
-    attempts: [Attempt; 2],
-    current: Cell<usize>,
-    socket: Cell<usize>,
-    group: Cell<usize>,
+struct SocketState {
+    requests: [PollRequest; 2],
+    current_request: Cell<usize>,
+    base_socket: Cell<usize>,
+    poll_group: Cell<usize>,
     interest: Cell<Readiness>,
-    state: Cell<State>,
-    is_changed: Cell<bool>,
-    rested_at_ns: Cell<u64>,
-    times_rested: Cell<u32>,
-    watcher: RefCell<Option<Watcher>>,
+    poll_status: Cell<PollStatus>,
+    is_update_queued: Cell<bool>,
+    last_backoff_ns: Cell<u64>,
+    backoff_exponent: Cell<u32>,
+    handler: RefCell<Option<ReadinessHandler>>,
 }
 
-impl Poll {
-    /// After a poll that has ended with nothing to report, or that there was no memory for.
-    fn rest_ns(&self) -> u64 {
-        const MS: u64 = 1_000_000;
-        let transfer = Readiness::RECEIVE | Readiness::SEND | Readiness::ACCEPT;
-        if !self.interest.get().intersects(transfer) {
-            return 1000 * MS;
+impl SocketState {
+    /// The delay before retrying a poll that completed without events or failed for lack of memory.
+    fn next_backoff_ns(&self) -> u64 {
+        const RESET_THRESHOLD_NS: u64 = 250 * NS_PER_MS;
+        const MAX_EXPONENT: u32 = 6;
+        let data_events = Readiness::RECEIVE | Readiness::SEND | Readiness::ACCEPT;
+        if !self.interest.get().intersects(data_events) {
+            return MAX_BACKOFF_NS;
         }
         let now = now_ns();
-        let is_recurring = now.saturating_sub(self.rested_at_ns.replace(now)) < 250 * MS;
-        let times = if is_recurring {
-            self.times_rested.get()
+        let elapsed_ns = now.saturating_sub(self.last_backoff_ns.replace(now));
+        let exponent = if elapsed_ns < RESET_THRESHOLD_NS {
+            self.backoff_exponent.get()
         } else {
             0
         };
-        self.times_rested.set((times + 1).min(6));
-        (MS << times) / 2
+        self.backoff_exponent.set((exponent + 1).min(MAX_EXPONENT));
+        (NS_PER_MS << exponent) / 2
     }
 }
 
-/// The time to cancel a poll grows with the number of polls on its handle.
-const GROUP_SIZE: usize = 32;
+/// The time to cancel a poll grows with the number of polls on its AFD handle.
+const MAX_POLL_GROUP_SIZE: usize = 32;
 
-struct Group {
+struct PollGroup {
     device: Option<OwnedHandle>,
-    members: usize,
+    socket_count: usize,
 }
 
-struct Groups {
-    all: Vec<Group>,
-    /// Has capacity for all of them, so that `leave` does not allocate.
-    with_room: Vec<usize>,
+struct PollGroups {
+    groups: Vec<PollGroup>,
+    /// Indices of the groups that are not full. Has capacity for every group, so `release` does not allocate.
+    available: Vec<usize>,
 }
 
-impl Groups {
-    fn join(&mut self, port: &OwnedHandle) -> Result<usize, Win32Error> {
-        if self.with_room.is_empty() {
-            self.all.push(Group {
+impl PollGroups {
+    fn acquire(&mut self, port: &OwnedHandle) -> Result<usize, Win32Error> {
+        if self.available.is_empty() {
+            self.groups.push(PollGroup {
                 device: None,
-                members: 0,
+                socket_count: 0,
             });
-            self.with_room.reserve(self.all.len());
-            self.with_room.push(self.all.len() - 1);
+            self.available.reserve(self.groups.len());
+            self.available.push(self.groups.len() - 1);
         }
-        let index = self.with_room[self.with_room.len() - 1];
-        let group = &mut self.all[index];
+        let index = self.available[self.available.len() - 1];
+        let group = &mut self.groups[index];
         if group.device.is_none() {
             let device = sys::open_afd_device()?;
-            sys::bind(port, device.as_raw_handle(), key::SOCKET)?;
+            sys::bind_file(port, device.as_raw_handle(), key::SOCKET)?;
             sys::set_notification_modes(
                 device.as_raw_handle(),
                 sys::FILE_SKIP_COMPLETION_PORT_ON_SUCCESS | sys::FILE_SKIP_SET_EVENT_ON_HANDLE,
             )?;
             group.device = Some(device);
         }
-        group.members += 1;
-        if group.members == GROUP_SIZE {
-            self.with_room.pop();
+        group.socket_count += 1;
+        if group.socket_count == MAX_POLL_GROUP_SIZE {
+            self.available.pop();
         }
         Ok(index)
     }
 
-    fn leave(&mut self, index: usize) {
-        let group = &mut self.all[index];
-        if group.members == GROUP_SIZE {
-            self.with_room.push(index);
+    fn release(&mut self, index: usize) {
+        let group = &mut self.groups[index];
+        if group.socket_count == MAX_POLL_GROUP_SIZE {
+            self.available.push(index);
         }
-        group.members -= 1;
-        if group.members == 0 && self.with_room.last() != Some(&index) {
+        group.socket_count -= 1;
+        if group.socket_count == 0 && self.available.last() != Some(&index) {
             group.device = None;
         }
     }
 
     fn device(&self, index: usize) -> HANDLE {
-        let device = self.all[index].device.as_ref();
+        let device = self.groups[index].device.as_ref();
         device
-            .expect("a group with members is open")
+            .expect("a non-empty poll group has an open device")
             .as_raw_handle()
     }
 }
 
 pub(crate) struct Sockets {
-    slab: RefCell<Slab<Poll>>,
-    groups: RefCell<Groups>,
-    changed: RefCell<Vec<Token>>,
-    callbacks: Cell<usize>,
+    slab: RefCell<Slab<SocketState>>,
+    poll_groups: RefCell<PollGroups>,
+    update_queue: RefCell<Vec<Token>>,
+    callback_count: Cell<usize>,
 }
 
 impl Sockets {
     pub(crate) const fn new() -> Sockets {
         Sockets {
             slab: RefCell::new(Slab::new()),
-            groups: RefCell::new(Groups {
-                all: Vec::new(),
-                with_room: Vec::new(),
+            poll_groups: RefCell::new(PollGroups {
+                groups: Vec::new(),
+                available: Vec::new(),
             }),
-            changed: RefCell::new(Vec::new()),
-            callbacks: Cell::new(0),
+            update_queue: RefCell::new(Vec::new()),
+            callback_count: Cell::new(0),
         }
     }
 
     pub(crate) fn callback_count(&self) -> usize {
-        self.callbacks.get()
+        self.callback_count.get()
     }
 
-    /// After `submit_changed`: whether one has to wait for a packet that is queued.
-    pub(crate) fn has_changed(&self) -> bool {
-        !self.changed.borrow().is_empty()
+    /// After `submit_updates`, the only updates left are waiting for an already queued completion packet.
+    pub(crate) fn has_queued_updates(&self) -> bool {
+        !self.update_queue.borrow().is_empty()
     }
 
-    fn get(&self, token: Token) -> Option<Rc<Poll>> {
+    fn get(&self, token: Token) -> Option<Rc<SocketState>> {
         self.slab.borrow().get(token).cloned()
     }
 
-    fn mark_changed(&self, token: Token, poll: &Poll) {
-        if !poll.is_changed.replace(true) {
-            self.changed.borrow_mut().push(token);
+    fn queue_update(&self, token: Token, state: &SocketState) {
+        if !state.is_update_queued.replace(true) {
+            self.update_queue.borrow_mut().push(token);
         }
     }
 
-    fn find(&self, context: usize) -> Option<(Token, Rc<Poll>, usize)> {
-        let token = Token::from_raw(context & !SECOND_ATTEMPT)?;
+    fn find_request(&self, context: usize) -> Option<(Token, Rc<SocketState>, usize)> {
+        let token = Token::from_raw(context & !SECOND_REQUEST_BIT)?;
         Some((
             token,
             self.get(token)?,
-            usize::from(context & SECOND_ATTEMPT != 0),
+            usize::from(context & SECOND_REQUEST_BIT != 0),
         ))
     }
 
-    fn release_unless_in_flight(&self, token: Token, poll: &Poll) {
-        if !poll.attempts.iter().any(|it| it.is_in_flight.get()) {
-            poll.state.set(State::Idle);
-            self.groups.borrow_mut().leave(poll.group.get());
+    fn maybe_release(&self, token: Token, state: &SocketState) {
+        if !state.requests.iter().any(|req| req.is_in_flight.get()) {
+            state.poll_status.set(PollStatus::Idle);
+            self.poll_groups
+                .borrow_mut()
+                .release(state.poll_group.get());
             self.slab.borrow_mut().release(token);
         }
     }
 
-    fn submit(&self, token: Token, poll: &Poll, index: usize) {
+    fn submit_poll(&self, token: Token, state: &SocketState, index: usize) {
         const IOCTL_AFD_POLL: ULONG = 0x0001_2024;
-        const SIZE: ULONG = size_of::<PollInfo>() as ULONG;
+        const INFO_SIZE: ULONG = size_of::<AfdPollInfo>() as ULONG;
 
-        let (attempt, interest) = (&poll.attempts[index], poll.interest.get());
-        let info = attempt.info.get();
-        assert!(!attempt.is_in_flight.get());
-        attempt.status.set(NTSTATUS::PENDING, 0);
-        // SAFETY: the system is not using the attempt, and the slot stays until its packet is here.
+        let request = &state.requests[index];
+        let interest = state.interest.get();
+        let info = request.info.get();
+        assert!(!request.is_in_flight.get());
+        request.status.set(NTSTATUS::PENDING, 0);
+        // SAFETY: the request is not in flight, and its slot stays allocated until the completion packet is dequeued.
         let status = unsafe {
-            info.write(PollInfo {
+            info.write(AfdPollInfo {
                 timeout: i64::MAX,
-                count: 1,
+                handle_count: 1,
                 is_exclusive: 1,
-                socket: poll.socket.get(),
+                socket: state.base_socket.get(),
                 events: interest.bits(),
                 status: 0,
             });
             sys::NtDeviceIoControlFile(
-                self.groups.borrow().device(poll.group.get()),
+                self.poll_groups.borrow().device(state.poll_group.get()),
                 ptr::null_mut(),
                 ptr::null_mut(),
-                context(token, index),
-                attempt.status.as_ptr(),
+                encode_context(token, index),
+                request.status.as_ptr(),
                 IOCTL_AFD_POLL,
                 info.cast(),
-                SIZE,
+                INFO_SIZE,
                 info.cast(),
-                SIZE,
+                INFO_SIZE,
             )
         };
-        poll.current.set(index);
-        poll.state.set(State::Polling(interest));
-        attempt.is_in_flight.set(status == NTSTATUS::PENDING);
+        state.current_request.set(index);
+        state.poll_status.set(PollStatus::Pending(interest));
+        request.is_in_flight.set(status == NTSTATUS::PENDING);
         if status != NTSTATUS::PENDING {
-            attempt.status.set(status, 0);
+            request.status.set(status, 0);
         }
     }
 
-    fn cancel(&self, poll: &Poll, attempt: &Attempt) {
-        sys::cancel(
-            self.groups.borrow().device(poll.group.get()),
-            &attempt.status,
+    fn cancel_poll(&self, state: &SocketState, request: &PollRequest) {
+        sys::cancel_io(
+            self.poll_groups.borrow().device(state.poll_group.get()),
+            &request.status,
         );
     }
 
-    /// `false` if it has to wait for a packet that is queued.
-    fn submit_interest(&self, port: &Port, token: Token, poll: &Poll) -> bool {
-        let (asked, index) = match poll.state.get() {
-            State::Polling(asked) => (asked, 1 - poll.current.get()),
-            State::Idle | State::Resting => (Readiness::empty(), poll.current.get()),
+    /// Returns `false` if the request it needs is still in flight; retry once its packet is dequeued.
+    fn try_update_poll(&self, port: &Port, token: Token, state: &SocketState) -> bool {
+        let (pending_events, index) = match state.poll_status.get() {
+            PollStatus::Pending(events) => (events, 1 - state.current_request.get()),
+            PollStatus::Idle | PollStatus::Backoff => {
+                (Readiness::empty(), state.current_request.get())
+            }
         };
-        if asked.contains(poll.interest.get()) {
+        if pending_events.contains(state.interest.get()) {
             return true;
         }
-        let (attempt, older) = (&poll.attempts[index], &poll.attempts[1 - index]);
-        if attempt.is_in_flight.get() {
-            self.cancel(poll, attempt);
+        let request = &state.requests[index];
+        let previous = &state.requests[1 - index];
+        if request.is_in_flight.get() {
+            self.cancel_poll(state, request);
             return false;
         }
-        // A newer one only ends the first that it finds.
-        if older.is_in_flight.get() {
-            self.cancel(poll, older);
+        // A new exclusive poll completes only the first pending poll that AFD finds.
+        if previous.is_in_flight.get() {
+            self.cancel_poll(state, previous);
         }
-        self.submit(token, poll, index);
-        let packet = Packet::new(key::SOCKET, context(token, index));
-        match attempt
+        self.submit_poll(token, state, index);
+        let packet = Packet::new(key::SOCKET, encode_context(token, index));
+        match request
             .result()
             .map(|(_, info)| Readiness::from_bits_truncate(info.events))
         {
             None => {}
-            // Once we have written to a peer that is gone, `recv` does not tell any more that it left in good order.
+            // In this iteration: after a write to a closed peer, `recv` no longer reports the graceful close.
             Some(ready) if ready.contains(Readiness::DISCONNECT) => port.defer(packet),
-            // It may be a reason to send no more, and `send` takes any amount once another socket has made some room.
-            Some(ready) if ready.contains(Readiness::RECEIVE) => port.defer_to_next_turn(packet),
+            // Before the next batch: the data may stop a sender, and `send` accepts any amount once buffer space is free.
+            Some(ready) if ready.contains(Readiness::RECEIVE) => {
+                port.defer_to_next_iteration(packet)
+            }
             Some(_) => port.post(packet),
         }
         true
     }
 
-    pub(crate) fn submit_changed(&self, port: &Port) {
-        self.changed.borrow_mut().retain(|&token| {
-            let Some(poll) = self.get(token) else {
+    pub(crate) fn submit_updates(&self, port: &Port) {
+        self.update_queue.borrow_mut().retain(|&token| {
+            let Some(state) = self.get(token) else {
                 return false;
             };
-            poll.is_changed
-                .set(!self.submit_interest(port, token, &poll));
-            poll.is_changed.get()
+            let is_blocked = !self.try_update_poll(port, token, &state);
+            state.is_update_queued.set(is_blocked);
+            is_blocked
         });
     }
 
-    /// For a packet from the system. `false` if there is nothing to `complete`. It neither allocates nor frees.
-    pub(crate) fn receive(&self, context: usize) -> bool {
-        let Some((token, poll, index)) = self.find(context) else {
+    /// Records a dequeued packet without allocating or freeing. Returns `false` if there is nothing to `complete`.
+    pub(crate) fn accept_packet(&self, context: usize) -> bool {
+        let Some((token, state, index)) = self.find_request(context) else {
             return false;
         };
-        let attempt = &poll.attempts[index];
-        if attempt.status.get().0 == NTSTATUS::PENDING {
+        let request = &state.requests[index];
+        if request.status.get().0 == NTSTATUS::PENDING {
             return false;
         }
-        attempt.is_in_flight.set(false);
-        if poll.watcher.borrow().is_none() {
-            self.release_unless_in_flight(token, &poll);
+        request.is_in_flight.set(false);
+        if state.handler.borrow().is_none() {
+            self.maybe_release(token, &state);
             return false;
         }
-        index == poll.current.get()
+        index == state.current_request.get()
     }
 
     pub(crate) fn complete(&self, port: &Port, context: usize, on_event: &impl Fn(Event)) {
-        let Some((token, poll, index)) = self.find(context) else {
+        let Some((token, state, index)) = self.find_request(context) else {
             return;
         };
-        // It may have been polled again since.
-        let (true, State::Polling(_), Some((status, info)), Some(watcher)) = (
-            index == poll.current.get(),
-            poll.state.get(),
-            poll.attempts[index].result(),
-            poll.watcher.borrow().clone(),
-        ) else {
+        // The socket may have been polled again since the packet was queued.
+        if index != state.current_request.get()
+            || !matches!(state.poll_status.get(), PollStatus::Pending(_))
+        {
+            return;
+        }
+        let Some((status, info)) = state.requests[index].result() else {
             return;
         };
-        poll.state.set(State::Idle);
-        let ready = if info.count == 0
+        let Some(handler) = state.handler.borrow().clone() else {
+            return;
+        };
+        state.poll_status.set(PollStatus::Idle);
+        if info.handle_count == 0
             || matches!(
                 status,
                 NTSTATUS::CANCELLED | NTSTATUS::INSUFFICIENT_RESOURCES | NTSTATUS::NO_MEMORY
-            ) {
-            poll.state.set(State::Resting);
-            return port.delay(key::POLL_AGAIN, token, poll.rest_ns());
-        } else if NT_ERROR(status) {
-            const SECOND_NS: u64 = 1_000_000_000;
-            poll.state.set(State::Resting);
-            port.delay(key::POLL_AGAIN, token, SECOND_NS);
-            Readiness::WATCH_FAILED
+            )
+        {
+            state.poll_status.set(PollStatus::Backoff);
+            port.delay(key::POLL_RETRY, token, state.next_backoff_ns());
+            return;
+        }
+        let ready = if NT_ERROR(status) {
+            state.poll_status.set(PollStatus::Backoff);
+            port.delay(key::POLL_RETRY, token, MAX_BACKOFF_NS);
+            Readiness::POLL_FAILED
         } else {
-            if info.events & LOCAL_CLOSE != 0 {
-                poll.interest.take();
+            if info.events & AFD_POLL_LOCAL_CLOSE != 0 {
+                state.interest.take();
             }
-            self.mark_changed(token, &poll);
-            Readiness::from_bits_truncate(info.events) & poll.interest.get()
+            self.queue_update(token, &state);
+            Readiness::from_bits_truncate(info.events) & state.interest.get()
         };
         if ready.is_empty() {
             return;
         }
-        match watcher {
-            Watcher::Foreign(address) => on_event(Event::Socket(address, ready)),
-            Watcher::Callback(callback) => callback(ready),
+        match handler {
+            ReadinessHandler::UserData(user_data) => on_event(Event::Socket(user_data, ready)),
+            ReadinessHandler::Callback(callback) => callback(ready),
         }
     }
 
-    pub(crate) fn poll_again(&self, context: usize) {
+    pub(crate) fn retry_poll(&self, context: usize) {
         if let Some(token) = Token::from_raw(context)
-            && let Some(poll) = self.get(token)
-            && poll.state.get() == State::Resting
+            && let Some(state) = self.get(token)
+            && state.poll_status.get() == PollStatus::Backoff
         {
-            self.mark_changed(token, &poll);
+            self.queue_update(token, &state);
         }
     }
 
-    fn abandon(&self, token: Token) {
-        let Some(poll) = self.get(token) else { return };
-        let Some(watcher) = poll.watcher.take() else {
+    fn deregister(&self, token: Token) {
+        let Some(state) = self.get(token) else { return };
+        let Some(handler) = state.handler.take() else {
             return;
         };
-        if let Watcher::Callback(_) = watcher {
-            self.callbacks.update(|count| count - 1);
+        if let ReadinessHandler::Callback(_) = handler {
+            self.callback_count.update(|count| count - 1);
         }
-        poll.interest.take();
-        for attempt in poll.attempts.iter().filter(|it| it.is_in_flight.get()) {
-            self.cancel(&poll, attempt);
+        state.interest.take();
+        for request in state.requests.iter().filter(|req| req.is_in_flight.get()) {
+            self.cancel_poll(&state, request);
         }
-        self.release_unless_in_flight(token, &poll);
+        self.maybe_release(token, &state);
     }
 
-    pub(crate) fn abandon_all(&self) {
-        let used: Vec<Token> = self.slab.borrow().used().map(|(token, _)| token).collect();
-        for token in used {
-            self.abandon(token);
+    pub(crate) fn deregister_all(&self) {
+        let tokens: Vec<Token> = self.slab.borrow().iter().map(|(token, _)| token).collect();
+        for token in tokens {
+            self.deregister(token);
         }
     }
 
-    /// After `abandon_all`.
-    pub(crate) fn is_system_writing(&self) -> bool {
-        self.slab.borrow().used().next().is_some()
+    /// Valid only once every socket is deregistered.
+    pub(crate) fn has_polls_in_flight(&self) -> bool {
+        self.slab.borrow().iter().next().is_some()
     }
 
     pub(crate) fn leak_in_flight(&self) {
-        for (_, poll) in self.slab.borrow().used() {
-            let _ = Rc::into_raw(Rc::clone(poll));
+        for (_, state) in self.slab.borrow().iter() {
+            let _ = Rc::into_raw(Rc::clone(state));
         }
     }
 }
 
-/// Reports the readiness of a socket until it is dropped, which does not touch the socket.
-pub struct SocketWatch {
+/// Reports a socket's readiness until dropped. Dropping it does not use the socket handle.
+pub struct SocketRegistration {
     port: Rc<Port>,
     token: Token,
 }
 
-impl SocketWatch {
+impl SocketRegistration {
     pub fn new(
         port: &Rc<Port>,
         socket: usize,
-        watcher: Watcher,
-    ) -> Result<SocketWatch, Win32Error> {
-        if port.is_shut_down() {
+        handler: ReadinessHandler,
+    ) -> Result<SocketRegistration, Win32Error> {
+        if port.is_shutdown() {
             return Err(Win32Error::OPERATION_ABORTED);
         }
         let sockets = &port.sockets;
-        let socket = sys::base_socket(socket)?;
-        let group = (sockets.groups.borrow_mut()).join(&port.shared.handle)?;
-        let (token, poll) = sockets.slab.borrow_mut().acquire();
-        if let Watcher::Callback(_) = watcher {
-            sockets.callbacks.update(|count| count + 1);
+        let base_socket = sys::find_base_socket(socket)?;
+        let poll_group = sockets
+            .poll_groups
+            .borrow_mut()
+            .acquire(&port.shared.handle)?;
+        let (token, state) = sockets.slab.borrow_mut().acquire();
+        if let ReadinessHandler::Callback(_) = handler {
+            sockets.callback_count.update(|count| count + 1);
         }
-        poll.socket.set(socket);
-        poll.group.set(group);
-        poll.interest.take();
-        poll.is_changed.set(false);
-        poll.watcher.replace(Some(watcher));
+        state.base_socket.set(base_socket);
+        state.poll_group.set(poll_group);
+        state.interest.take();
+        state.is_update_queued.set(false);
+        state.handler.replace(Some(handler));
         let port = Rc::clone(port);
-        Ok(SocketWatch { port, token })
+        Ok(SocketRegistration { port, token })
     }
 
     pub fn set_interest(&self, interest: Readiness) {
         let sockets = &self.port.sockets;
-        if let Some(poll) = sockets.get(self.token)
-            && poll.watcher.borrow().is_some()
-            && !poll.interest.replace(interest).contains(interest)
+        if let Some(state) = sockets.get(self.token)
+            && state.handler.borrow().is_some()
+            && !state.interest.replace(interest).contains(interest)
         {
-            sockets.mark_changed(self.token, &poll);
+            sockets.queue_update(self.token, &state);
         }
     }
 
-    /// For a [`Watcher::Foreign`] that has moved.
-    pub fn set_address(&self, address: NonNull<c_void>) {
-        if let Some(poll) = self.port.sockets.get(self.token)
-            && let Some(Watcher::Foreign(old)) = &mut *poll.watcher.borrow_mut()
+    /// Affects only a [`ReadinessHandler::UserData`] registration.
+    pub fn set_user_data(&self, user_data: NonNull<c_void>) {
+        if let Some(state) = self.port.sockets.get(self.token)
+            && let Some(ReadinessHandler::UserData(current)) = &mut *state.handler.borrow_mut()
         {
-            *old = address;
+            *current = user_data;
         }
     }
 }
 
-impl Drop for SocketWatch {
+impl Drop for SocketRegistration {
     fn drop(&mut self) {
-        self.port.sockets.abandon(self.token);
+        self.port.sockets.deregister(self.token);
     }
 }

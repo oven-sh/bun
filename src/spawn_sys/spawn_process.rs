@@ -300,12 +300,12 @@ pub struct SpawnOptions<'a> {
     pub verbatim_arguments: bool,
     #[cfg(windows)]
     pub hide_window: bool,
-    /// In place of stdin, stdout and stderr.
+    /// ConPTY supplies stdin, stdout and stderr.
     #[cfg(windows)]
     pub pseudoconsole: Option<&'a bun_sys::windows::PseudoConsole>,
     #[cfg(windows)]
     pub job: Option<BorrowedHandle<'a>>,
-    /// An inheritable handle, which the child is told the value of.
+    /// An inheritable handle. The caller tells the child its value.
     #[cfg(windows)]
     pub inherited_handle: Option<bun_sys::windows::HANDLE>,
 }

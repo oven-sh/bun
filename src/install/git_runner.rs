@@ -1191,7 +1191,7 @@ impl GitSubprocess {
             let _ = bun_sys::set_nonblocking(pipe.fd());
             self.remaining_fds.set(self.remaining_fds.get() + 1);
             reader.update_flags(|f| f.insert(ReaderFlags::NONBLOCKING | ReaderFlags::SOCKET));
-            let result = reader.start_own_pipe(self.event_loop.as_event_loop_ctx(), pipe)?;
+            let result = reader.start_exclusive_pipe(self.event_loop.as_event_loop_ctx(), pipe)?;
             self.note_read_result(result);
         }
 

@@ -193,7 +193,7 @@ impl<'a> ProcessHandle<'a> {
             if let Some(pipe) = pipe {
                 let _ = bun_sys::set_nonblocking(pipe.fd());
                 let event_loop = handle.output.shared.event_loop.as_event_loop_ctx();
-                let _ = reader.start_own_pipe(event_loop, pipe)?;
+                let _ = reader.start_exclusive_pipe(event_loop, pipe)?;
             }
         }
 
@@ -242,7 +242,7 @@ impl<'a> ProcessHandle<'a> {
     fn drain_and_close_pipes(&mut self) {
         for kind in [Kind::Stdout, Kind::Stderr] {
             #[cfg(windows)]
-            if let Some(event) = self.reader(kind).take_available() {
+            if let Some(event) = self.reader(kind).try_read() {
                 self.read(kind, Some(event));
             }
             #[cfg(unix)]

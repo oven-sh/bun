@@ -90,11 +90,11 @@ mod _impl {
     impl CPUTimes {
         pub(crate) fn to_value(self, global_this: &JSGlobalObject) -> JSValue {
             let ret = JSValue::create_empty_object(global_this, 5);
-            self.put_into(ret, global_this);
+            self.put_fields(ret, global_this);
             ret
         }
 
-        pub(crate) fn put_into(self, ret: JSValue, global_this: &JSGlobalObject) {
+        pub(crate) fn put_fields(self, ret: JSValue, global_this: &JSGlobalObject) {
             ret.put(
                 global_this,
                 b"user",

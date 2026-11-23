@@ -5,7 +5,7 @@ import { constants } from "node:os";
 import path from "node:path";
 import source from "./uv-stub-stuff/uv_impl.c";
 
-// libuv has numbers of its own on Windows, where os.constants.errno has the C runtime's.
+// On Windows libuv defines its own error numbers, while os.constants.errno holds the C runtime's.
 const UV_EBUSY = isWindows ? -4082 : -constants.errno.EBUSY;
 const UV_ECANCELED = isWindows ? -4081 : -constants.errno.ECANCELED;
 const UV_EINVAL = isWindows ? -4071 : -constants.errno.EINVAL;
@@ -58,13 +58,13 @@ describe("uv stubs", () => {
 
     const libuvDir = path.join(__dirname, "../../src/jsc/bindings/libuv");
     await Bun.$`cp -R ${libuvDir} ${path.join(tempdir, "libuv")}`;
-    // --ignore-scripts skips the implicit `node-gyp rebuild` bun install runs for a
-    // root binding.gyp package; build:napi below is the single, explicit gyp build.
     // node-gyp copies the flags that node was built with, and MSVC rejects the ones for clang-cl.
     const flags = isWindows ? ["--bun"] : [];
+    // --ignore-scripts skips the implicit `node-gyp rebuild` bun install runs for a
+    // root binding.gyp package; build:napi below is the single, explicit gyp build.
     await Bun.$`${bunExe()} i --ignore-scripts && ${bunExe()} ${flags} build:napi`.env(bunEnv).cwd(tempdir);
 
-    // Without backslashes, because some scripts nest it in a template literal.
+    // Forward slashes, because some scripts embed the path in a nested template literal.
     addonPath = path.join(tempdir, "./build/Release/uv_test.node").replaceAll("\\", "/");
     nativeModule = require(addonPath);
   });
@@ -86,11 +86,11 @@ describe("uv stubs", () => {
   });
 
   test.each([
-    // A uv_mutex_t is a critical section on Windows, which its owner can always enter again.
+    // On Windows uv_mutex_t is a CRITICAL_SECTION, which is always recursive.
     ["uv_mutex_init", false, isWindows ? 0 : UV_EBUSY],
     ["uv_mutex_init_recursive", true, 0],
-  ])("uv_mutex_trylock on a held mutex from %s", (_, recursive, onTheOwner) => {
-    expect(nativeModule.testMutexContended(recursive)).toEqual([onTheOwner, UV_EBUSY, 0]);
+  ])("uv_mutex_trylock fails on another thread while the mutex is locked (%s)", (_, isRecursive, ownerResult) => {
+    expect(nativeModule.testMutexContended(isRecursive)).toEqual([ownerResult, UV_EBUSY, 0]);
   });
 
   test("process IDs", () => {
@@ -110,30 +110,39 @@ describe("uv stubs", () => {
     expect(nativeModule.testUvOnce()).toBe(1);
   });
 
-  test("uv_once makes the other threads wait for the callback", () => {
+  test("uv_once blocks concurrent callers until the callback returns", () => {
     expect(nativeModule.testOnceRace()).toEqual([1, 8]);
   });
 
-  test("uv_cwd counts bytes of UTF-8 and needs room for the NUL", () => {
+  test("uv_cwd measures UTF-8 bytes and requires space for the NUL terminator", () => {
     using dir = tempDir("uv-cwd", { "é中😀": { "file": "" } });
     process.chdir(path.join(String(dir), "é中😀"));
     try {
       const cwd = process.cwd();
       const size = Buffer.byteLength(cwd);
-      for (const tooSmall of [1, size - 1, size]) {
-        expect(nativeModule.cwdWithSize(tooSmall)).toEqual({ rc: UV_ENOBUFS, size: size + 1, overran: false });
+      for (const capacity of [1, size - 1, size]) {
+        expect(nativeModule.testCwdCapacity(capacity)).toEqual({
+          rc: UV_ENOBUFS,
+          size: size + 1,
+          isSentinelModified: false,
+        });
       }
-      expect(nativeModule.cwdWithSize(size + 1)).toEqual({ rc: 0, size, cwd, overran: false });
+      expect(nativeModule.testCwdCapacity(size + 1)).toEqual({ rc: 0, size, cwd, isSentinelModified: false });
     } finally {
       // Windows can't remove the current directory.
       process.chdir(tempdir);
     }
   });
 
-  test("uv_cwd keeps the separator of the root", () => {
+  test("uv_cwd keeps the trailing separator of a root directory", () => {
     const { root } = path.parse(tempdir);
     process.chdir(root);
-    expect(nativeModule.cwdWithSize(16)).toEqual({ rc: 0, size: root.length, cwd: root, overran: false });
+    expect(nativeModule.testCwdCapacity(16)).toEqual({
+      rc: 0,
+      size: root.length,
+      cwd: root,
+      isSentinelModified: false,
+    });
   });
 
   test("uv_cwd returns the cwd and rejects a missing or too-small buffer", () => {
@@ -210,13 +219,13 @@ describe("uv stubs", () => {
           const addon = require(${JSON.stringify(addonPath)});
           const isTTY = process.stdin.isTTY;
           process.stdin.setRawMode(true);
-          const raw = [addon.stdinIsRaw()];
+          const rawStates = [addon.isStdinRaw()];
           const afterRaw = addon.testTtyResetMode();
-          raw.push(addon.stdinIsRaw());
+          rawStates.push(addon.isStdinRaw());
           const concurrent = addon.testTtyResetModeConcurrent();
           fs.closeSync(0);
           const afterClose = addon.testTtyResetMode();
-          fs.writeFileSync(${JSON.stringify(resultPath)}, JSON.stringify({ isTTY, raw, afterRaw, concurrent, afterClose }));
+          fs.writeFileSync(${JSON.stringify(resultPath)}, JSON.stringify({ isTTY, rawStates, afterRaw, concurrent, afterClose }));
         `,
       ],
       env: bunEnv,
@@ -235,7 +244,7 @@ describe("uv stubs", () => {
     }
     expect(JSON.parse(readFileSync(resultPath, "utf8"))).toEqual({
       isTTY: true,
-      raw: [true, false],
+      rawStates: [true, false],
       afterRaw: 0,
       concurrent: { busy: expect.any(Number), unexpected: 0 },
       afterClose: isWindows ? 0 : -constants.errno.EBADF,
@@ -281,24 +290,24 @@ describe("uv stubs", () => {
   });
 
   const ERROR_INVALID_PARAMETER = 87;
-  const unknown = "Unknown system error -2147483648";
+  const unknownErrorText = "Unknown system error -2147483648";
   test.concurrent.each([
     [isWindows ? ERROR_INVALID_PARAMETER : constants.errno.EINVAL, 64, UV_EINVAL, "EINVAL", "invalid argument"],
     [UV_EBUSY, 4, UV_EBUSY, "EBUSY", "resource busy or locked"],
     [-4095, 64, -4095, "EOF", "end of file"],
     [-3008, 64, -3008, "EAI_NONAME", "unknown node or service"],
-    [-(2 ** 31), 64, -(2 ** 31), unknown, unknown],
-  ])("error %d has a name and a message", async (error, size, code, name, message) => {
+    [-(2 ** 31), 64, -(2 ** 31), unknownErrorText, unknownErrorText],
+  ])("uv_err_name and uv_strerror describe error %d", async (systemError, bufferSize, code, name, message) => {
     const { stdout, stderr, exitCode } = await runInChild(
-      `console.log(JSON.stringify(addon.describeError(${error}, ${size})));`,
+      `console.log(JSON.stringify(addon.describeError(${systemError}, ${bufferSize})));`,
     );
     expect(stderr).toBe("");
     expect(JSON.parse(stdout)).toEqual({
       code,
       name,
       message,
-      nameInBuffer: name.slice(0, size - 1),
-      messageInBuffer: message.slice(0, size - 1),
+      nameInBuffer: name.slice(0, bufferSize - 1),
+      messageInBuffer: message.slice(0, bufferSize - 1),
     });
     expect(exitCode).toBe(0);
   });
@@ -323,18 +332,18 @@ describe("uv stubs", () => {
     expect(exitCode).toBe(0);
   });
 
-  test.concurrent("uv_get_osfhandle and uv_open_osfhandle share files with node:fs", async () => {
+  test.concurrent("uv_get_osfhandle and uv_open_osfhandle interoperate with node:fs", async () => {
     using dir = tempDir("uv-osfhandle", {});
     const { stdout, stderr, exitCode } = await runInChild(`
       const fs = require("node:fs");
       const file = ${JSON.stringify(path.join(String(dir), "file"))};
-      const written = fs.openSync(file, "w");
-      console.log(addon.writeThroughOsfhandle(written));
-      fs.closeSync(written);
-      const read = addon.openAsFd(file);
-      console.log(fs.readFileSync(read, "utf8"));
-      fs.closeSync(read);
-      console.log(addon.writeThroughOsfhandle(read), addon.writeThroughOsfhandle(99999), addon.openAsFd(file + "x"));
+      const writeFd = fs.openSync(file, "w");
+      console.log(addon.testOsfhandleWrite(writeFd));
+      fs.closeSync(writeFd);
+      const readFd = addon.testOsfhandleOpen(file);
+      console.log(fs.readFileSync(readFd, "utf8"));
+      fs.closeSync(readFd);
+      console.log(addon.testOsfhandleWrite(readFd), addon.testOsfhandleWrite(99999), addon.testOsfhandleOpen(file + "x"));
     `);
     expect(stderr).toBe("");
     expect(stdout).toBe("5\nhello\n-1 -1 -1\n");
@@ -366,28 +375,27 @@ describe("uv stubs", () => {
   test.concurrent("returns UV_EINVAL for a missing loop, a missing callback or the wrong handle type", async () => {
     const { stdout, stderr, exitCode } = await runInChild(`console.log(JSON.stringify(addon.testErrors()));`);
     expect(stderr).toBe("");
-    const EINVAL = UV_EINVAL;
     expect(JSON.parse(stdout)).toEqual([
-      EINVAL, // uv_async_init without a loop
-      EINVAL, // uv_check_init without a loop
-      EINVAL, // uv_timer_init without a loop
-      EINVAL, // uv_queue_work without a work_cb
-      EINVAL, // uv_cancel on a request that isn't a work request
-      EINVAL, // uv_idle_start without a callback
-      EINVAL, // uv_timer_start without a callback
-      EINVAL, // uv_timer_again on a timer that was never started
-      EINVAL, // uv_prepare_start on an idle handle
-      EINVAL, // uv_prepare_stop on an idle handle
-      EINVAL, // uv_idle_start on a timer
-      EINVAL, // uv_timer_start on an idle handle
-      EINVAL, // uv_timer_stop on an idle handle
-      EINVAL, // uv_timer_again on an idle handle
-      EINVAL, // uv_async_send on a timer
+      UV_EINVAL, // uv_async_init without a loop
+      UV_EINVAL, // uv_check_init without a loop
+      UV_EINVAL, // uv_timer_init without a loop
+      UV_EINVAL, // uv_queue_work without a work_cb
+      UV_EINVAL, // uv_cancel on a request that isn't a work request
+      UV_EINVAL, // uv_idle_start without a callback
+      UV_EINVAL, // uv_timer_start without a callback
+      UV_EINVAL, // uv_timer_again on a timer that was never started
+      UV_EINVAL, // uv_prepare_start on an idle handle
+      UV_EINVAL, // uv_prepare_stop on an idle handle
+      UV_EINVAL, // uv_idle_start on a timer
+      UV_EINVAL, // uv_timer_start on an idle handle
+      UV_EINVAL, // uv_timer_stop on an idle handle
+      UV_EINVAL, // uv_timer_again on an idle handle
+      UV_EINVAL, // uv_async_send on a timer
     ]);
     expect(exitCode).toBe(0);
   });
 
-  test.concurrent("a handle that was never initialized is inactive", async () => {
+  test.concurrent("an uninitialized handle is inactive", async () => {
     const { stdout, stderr, exitCode } = await runInChild(`console.log(JSON.stringify(addon.testZeroedHandle()));`);
     expect(stderr).toBe("");
     expect(JSON.parse(stdout)).toEqual([0, 0, 0, UV_EINVAL]);
@@ -639,7 +647,7 @@ describe("uv stubs", () => {
     expect(exitCode).toBe(0);
   });
 
-  test.concurrent("the watcher that was started last runs first", async () => {
+  test.concurrent("check handles run in reverse start order", async () => {
     const { stdout, stderr, exitCode } = await runInChild(`addon.testWatcherOrder(report);`);
     expect(stderr).toBe("");
     expect(stdout).toBe([2, 1, 0, 3, 2, 1, 0].map((index, i) => `check ${index} ${i + 1}\n`).join(""));

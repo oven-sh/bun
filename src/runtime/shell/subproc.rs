@@ -1200,7 +1200,9 @@ impl PipeReader {
 
     fn start(self: &Rc<Self>, eager: bool) {
         let pipe = self.stdio_result.take().unwrap();
-        let started = (self.reader).start_own_pipe(self.event_loop.as_event_loop_ctx(), pipe);
+        let started = self
+            .reader
+            .start_exclusive_pipe(self.event_loop.as_event_loop_ctx(), pipe);
         match started {
             Ok(ReadResult::Pending) => {}
             Ok(result) => return self.on_read_result(result),

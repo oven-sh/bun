@@ -69,7 +69,7 @@ impl Worker {
             } else {
                 &self.err
             };
-            if let Some(event) = reader.take_available() {
+            if let Some(event) = reader.try_read() {
                 self.on_io(kind, event);
             }
         }
@@ -127,17 +127,17 @@ impl Worker {
             this.reset_pipes();
         });
 
+        let compiled_program = if cfg!(unix) {
+            coord.compiled_program.map(Stdio::Pipe)
+        } else {
+            None
+        };
         let options = SpawnOptions {
             stdin: Stdio::Ignore,
             stdout: Stdio::Buffer,
             stderr: Stdio::Buffer,
             extra_fds: core::iter::once(Stdio::Buffer)
-                .chain(
-                    coord
-                        .compiled_program
-                        .map(Stdio::Pipe)
-                        .filter(|_| cfg!(unix)),
-                )
+                .chain(compiled_program)
                 .collect(),
             cwd: coord.cwd.to_vec().into_boxed_slice(),
             stream: true,
@@ -160,16 +160,16 @@ impl Worker {
         })?;
         let stdout = spawned.stdout.take();
         let stderr = spawned.stderr.take();
-        let channel = spawned.extra_pipes.swap_remove(0).into_owned();
+        let ipc_pipe = spawned.extra_pipes.swap_remove(0).into_owned();
         this.process = Some(spawned.to_process_handle(this.event_loop));
         for (reader, pipe) in [(&this.out, stdout), (&this.err, stderr)] {
             if let Some(pipe) = pipe {
                 let _ = reader
-                    .start_own_pipe(this.event_loop.as_event_loop_ctx(), pipe)
+                    .start_exclusive_pipe(this.event_loop.as_event_loop_ctx(), pipe)
                     .map_err(|_| crate::Error::PipeStartFailed)?;
             }
         }
-        if !channel.is_some_and(|end| this.ipc.adopt_own(coord.vm, end)) {
+        if !ipc_pipe.is_some_and(|end| this.ipc.adopt_exclusive(coord.vm, end)) {
             return Err(crate::Error::ChannelAdoptFailed);
         }
 

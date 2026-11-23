@@ -117,8 +117,7 @@ static constexpr us_socket_vtable_t s_hostVTable = {
     .on_handshake = nullptr,
 };
 
-// us_poll_start_rc doesn't touch loop.active.
-// Track our own ref against view count. A view with
+// us_poll_start_rc doesn't touch loop.active. Track our own ref against view count. A view with
 // pending ops keeps itself alive via visitChildren → promise → reaction
 // → closure → view, so "any views" covers "any pending".
 void HostClient::updateKeepAlive()

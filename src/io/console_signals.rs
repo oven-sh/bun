@@ -1,4 +1,4 @@
-//! The signals that Node.js makes of the events of a console.
+//! Maps console events to the signals that Node.js emits for them.
 
 use core::ffi::c_int;
 use core::sync::atomic::{AtomicU32, Ordering};
@@ -17,14 +17,14 @@ unsafe extern "C" {
     safe fn Bun__onPosixSignal(signal: c_int);
 }
 
-/// A bit for each signal that has a listener.
-static WATCHED: AtomicU32 = AtomicU32::new(0);
+/// One bit per signal that has a listener.
+static WATCHED_SIGNALS: AtomicU32 = AtomicU32::new(0);
 
 fn is_watched(signal: c_int) -> bool {
-    WATCHED.load(Ordering::SeqCst) & (1 << signal) != 0
+    WATCHED_SIGNALS.load(Ordering::SeqCst) & (1 << signal) != 0
 }
 
-fn raise(signal: c_int) -> bool {
+fn try_raise_signal(signal: c_int) -> bool {
     let is_watched = is_watched(signal);
     if is_watched {
         Bun__onPosixSignal(signal);
@@ -34,10 +34,10 @@ fn raise(signal: c_int) -> bool {
 
 extern "system" fn on_control_event(event: DWORD) -> BOOL {
     let is_handled = match event {
-        w::CTRL_C_EVENT => raise(SIGINT),
-        w::CTRL_BREAK_EVENT => raise(SIGBREAK),
-        // The system ends the process as soon as this returns, or else after some seconds.
-        w::CTRL_CLOSE_EVENT if raise(SIGHUP) => loop {
+        w::CTRL_C_EVENT => try_raise_signal(SIGINT),
+        w::CTRL_BREAK_EVENT => try_raise_signal(SIGBREAK),
+        // Windows terminates the process when this handler returns, or after a few seconds if it does not.
+        w::CTRL_CLOSE_EVENT if try_raise_signal(SIGHUP) => loop {
             std::thread::park();
         },
         _ => return FALSE,
@@ -48,7 +48,7 @@ extern "system" fn on_control_event(event: DWORD) -> BOOL {
     is_handled.into()
 }
 
-/// The newest handler is called first, so this one gets what no other wants.
+/// Handlers run last-registered first, so this one only sees events that no later handler has handled.
 #[unsafe(no_mangle)]
 extern "C" fn Bun__installConsoleControlHandler() {
     w::SetConsoleCtrlHandler(Some(on_control_event), TRUE);
@@ -57,37 +57,45 @@ extern "C" fn Bun__installConsoleControlHandler() {
 #[unsafe(no_mangle)]
 extern "C" fn Bun__watchConsoleSignal(signal: c_int, is_watched: bool) {
     if !is_watched {
-        WATCHED.fetch_and(!(1 << signal), Ordering::SeqCst);
+        WATCHED_SIGNALS.fetch_and(!(1 << signal), Ordering::SeqCst);
         return;
     }
-    WATCHED.fetch_or(1 << signal, Ordering::SeqCst);
+    WATCHED_SIGNALS.fetch_or(1 << signal, Ordering::SeqCst);
     if signal == SIGWINCH {
         watch_window_size();
     }
 }
 
-static WINDOW_SIZE: Guarded<Option<(u16, u16)>> = Guarded::new(None);
+static LAST_WINDOW_SIZE: Guarded<Option<(u16, u16)>> = Guarded::new(None);
 
-/// `false` if there is no console.
+/// Returns `false` if there is no console.
 pub(crate) fn check_window_size() -> bool {
     static OUTPUT: OnceLock<Option<OwnedHandle>> = OnceLock::new();
     let output = OUTPUT.get_or_init(|| console::open(bun_core::wstr!("CONOUT$")).ok());
-    let mut last = WINDOW_SIZE.lock();
-    let size = (output.as_ref()).and_then(|output| console::window_size(output.as_raw_handle()));
+    let mut last_size = LAST_WINDOW_SIZE.lock();
+    let size = output
+        .as_ref()
+        .and_then(|output| console::window_size(output.as_raw_handle()));
     let Some(size) = size else { return false };
-    if last.replace(size).is_some_and(|last| last != size) {
-        raise(SIGWINCH);
+    if last_size
+        .replace(size)
+        .is_some_and(|previous| previous != size)
+    {
+        try_raise_signal(SIGWINCH);
     }
     true
 }
 
-/// A pseudo console has no window, and only tells who reads its input.
+/// A pseudoconsole has no window and only reports a resize through its input records.
 fn watch_window_size() {
     static ONCE: Once = Once::new();
     ONCE.call_once(|| {
-        *WINDOW_SIZE.lock() = None;
-        if check_window_size() {
-            bun_iocp::blocking::spawn_endless(|| console::watch_layout(|| _ = check_window_size()));
+        *LAST_WINDOW_SIZE.lock() = None;
+        let has_console = check_window_size();
+        if has_console {
+            bun_iocp::blocking::try_spawn_dedicated(|| {
+                console::run_resize_message_loop(|| _ = check_window_size())
+            });
         }
     });
 }

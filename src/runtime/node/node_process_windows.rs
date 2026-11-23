@@ -1,4 +1,4 @@
-//! What `BunProcess.cpp` gets from the C library on other systems.
+//! Windows implementations of what `BunProcess.cpp` gets from libc on POSIX.
 
 use core::ffi::c_int;
 
@@ -6,30 +6,30 @@ use bun_sys::windows::process_info::{self, ResourceUsage};
 use bun_sys::windows::{self, Win32Error, Win32ErrorExt as _};
 use bun_sys::windows_format::cpu_time::CpuUsage;
 
-/// Returns 0, or the `errno` of the error in JavaScript.
-fn store<T>(result: Result<T, Win32Error>, out: &mut T) -> c_int {
+/// Returns 0 or a libuv error code.
+fn store_result<T>(result: Result<T, Win32Error>, out: &mut T) -> c_int {
     match result {
         Ok(value) => {
             *out = value;
             0
         }
-        Err(error) => bun_errno::e_to_uv(error.to_node_e()),
+        Err(error) => bun_errno::errno_to_uv(error.to_node_errno()),
     }
 }
 
 #[unsafe(no_mangle)]
 extern "C" fn Bun__Process__getCpuUsage(usage: &mut CpuUsage) -> c_int {
-    store(process_info::cpu_usage(), usage)
+    store_result(process_info::cpu_usage(), usage)
 }
 
 #[unsafe(no_mangle)]
 extern "C" fn Bun__Process__getThreadCpuUsage(usage: &mut CpuUsage) -> c_int {
-    store(process_info::cpu_usage_of_current_thread(), usage)
+    store_result(process_info::thread_cpu_usage(), usage)
 }
 
 #[unsafe(no_mangle)]
 extern "C" fn Bun__Process__getResourceUsage(usage: &mut ResourceUsage) -> c_int {
-    store(process_info::resource_usage(), usage)
+    store_result(process_info::resource_usage(), usage)
 }
 
 fn store_size(size: Option<usize>, out: &mut usize) -> c_int {
@@ -53,7 +53,7 @@ extern "C" fn Bun__Process__getParentId() -> i32 {
     windows::parent_process_id().map_or(-1, |id| id as i32)
 }
 
-/// SAFETY: `bytes` is readable for `len` bytes, which nothing writes to during the call.
+/// SAFETY: `bytes` is valid for reads of `len` bytes and is not mutated during the call.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn Bun__Process__writeAllToStdio(fd: i32, bytes: *const u8, len: usize) -> bool {
     // SAFETY: fn contract.

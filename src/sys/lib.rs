@@ -51,7 +51,7 @@ impl SystemError {
     #[inline]
     pub fn get_errno(&self) -> E {
         #[cfg(windows)]
-        if let Some(e) = bun_errno::uv_to_e(self.errno) {
+        if let Some(e) = bun_errno::uv_to_errno(self.errno) {
             return e;
         }
         e_from_negated(self.errno)
@@ -3551,7 +3551,7 @@ mod windows_impl {
     /// `DuplicateHandle` with `bInheritHandle = FALSE`, the equivalent of the
     /// POSIX arm's `F_DUPFD_CLOEXEC`.
     pub fn dup(fd: Fd) -> Maybe<Fd> {
-        w::file_position::duplicate(fd).map_err(|er| Error::from_win32(er, Tag::dup).with_fd(fd))
+        w::fd_table::duplicate(fd).map_err(|er| Error::from_win32(er, Tag::dup).with_fd(fd))
     }
     pub fn getcwd(buf: &mut [u8]) -> Maybe<usize> {
         // GetCurrentDirectoryW + WTF16→UTF8.
@@ -3735,8 +3735,8 @@ mod windows_impl {
         Ok(size.max(0) as u64)
     }
     pub fn pipe() -> Maybe<[Fd; 2]> {
-        use w::{PipeDirection::OursReads, PipeMode::Synchronous};
-        let pair = w::pipe_pair(Synchronous, Synchronous, OursReads)
+        use w::{PipeDirection::Inbound, PipeMode::Synchronous};
+        let pair = w::create_pipe_pair(Synchronous, Synchronous, Inbound)
             .map_err(|er| Error::from_win32(er, Tag::pipe))?;
         Ok([pair.ours, pair.theirs].map(|end| File::from(end).into_raw()))
     }
@@ -3744,7 +3744,7 @@ mod windows_impl {
         w::guess_handle(fd) == w::HandleKind::Tty
     }
     pub fn lseek(fd: Fd, offset: i64, whence: i32) -> Maybe<i64> {
-        w::file_position::using(fd, |handle| {
+        w::fd_table::with_position_locked(fd, |handle| {
             let mut new: i64 = 0;
             // SAFETY: `new` is a valid out-param.
             match unsafe { w::SetFilePointerEx(handle, offset, &raw mut new, whence as u32) } {
@@ -3798,13 +3798,13 @@ pub fn pread_buf(fd: Fd, mut cursor: BorrowedCursor<'_, u8>, off: i64) -> Maybe<
 }
 
 #[cfg(windows)]
-use windows::fs::{pread_owned, pwrite_owned};
+use windows::fs::{pread_no_restore, pwrite_no_restore};
 #[cfg(unix)]
-use {pread_uninit as pread_owned, pwrite as pwrite_owned};
+use {pread_uninit as pread_no_restore, pwrite as pwrite_no_restore};
 
-fn pread_owned_buf(fd: Fd, mut cursor: BorrowedCursor<'_, u8>, off: i64) -> Maybe<usize> {
+fn pread_no_restore_buf(fd: Fd, mut cursor: BorrowedCursor<'_, u8>, off: i64) -> Maybe<usize> {
     // SAFETY: as in `read_buf`.
-    unsafe { pread_owned(fd, cursor.as_mut(), off).inspect(|&n| _ = cursor.advance(n)) }
+    unsafe { pread_no_restore(fd, cursor.as_mut(), off).inspect(|&n| _ = cursor.advance(n)) }
 }
 
 #[cfg(unix)]
@@ -7699,7 +7699,7 @@ mod win_symlink_impl {
                 },
             }
         }
-        windows::junction(abs_fallback_junction_target.unwrap_or(target), dest)
+        windows::create_junction(abs_fallback_junction_target.unwrap_or(target), dest)
     }
 
     /// `unlinkW` — `DeleteFileW` with errno mapping.

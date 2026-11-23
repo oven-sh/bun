@@ -861,18 +861,18 @@ impl<'a> SecurityScanSubprocess<'a> {
         self.finish_spawn(spawned, ipc_read, json_pipe)
     }
 
-    /// `Stdio::Buffer` in `extra_fds` gives the child an overlapped end, and it reads and writes synchronously.
+    /// The child does synchronous I/O on both fds, and `Stdio::Buffer` in `extra_fds` would give it overlapped ends.
     #[cfg(windows)]
     fn spawn_windows(&mut self, argv: &[&ZStr], envp: bun_core::CStrList<'_>) -> Result<(), Error> {
-        use bun_sys::windows::{PipeDirection, PipeMode, pipe_pair};
+        use bun_sys::windows::{PipeDirection, PipeMode, create_pipe_pair};
 
-        let pipe = |direction| {
-            let pair = pipe_pair(PipeMode::Overlapped, PipeMode::Synchronous, direction)
+        let create_pipe = |direction| {
+            let pair = create_pipe_pair(PipeMode::Overlapped, PipeMode::Synchronous, direction)
                 .map_err(|_| crate::Error::IPCPipeFailed)?;
             Ok::<_, Error>((File::from(pair.ours), File::from(pair.theirs)))
         };
-        let (ipc_read, ipc_write) = pipe(PipeDirection::OursReads)?;
-        let (json_write, json_read) = pipe(PipeDirection::OursWrites)?;
+        let (ipc_read, ipc_write) = create_pipe(PipeDirection::Inbound)?;
+        let (json_write, json_read) = create_pipe(PipeDirection::Outbound)?;
         let extra_fds: Box<[Stdio]> =
             Box::new([Stdio::Pipe(ipc_write.fd()), Stdio::Pipe(json_read.fd())]);
 
@@ -908,7 +908,7 @@ impl<'a> SecurityScanSubprocess<'a> {
         let event_loop = self.event_loop_handle;
         let result = self
             .ipc_reader
-            .start_own_pipe(event_loop.as_event_loop_ctx(), ipc_read)
+            .start_exclusive_pipe(event_loop.as_event_loop_ctx(), ipc_read)
             .map_err(|e| e.to_zig_err())?;
         self.on_read_result(result);
 
@@ -1034,7 +1034,7 @@ impl<'a> SecurityScanSubprocess<'a> {
                 // it will not report — decrement here or the wait for `is_done` hangs.
             }
             #[cfg(windows)]
-            while let Some(event) = self.ipc_reader.take_available() {
+            while let Some(event) = self.ipc_reader.try_read() {
                 self.on_io(event);
                 if self.has_received_ipc {
                     return;

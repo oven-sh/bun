@@ -111,7 +111,7 @@ it("process.title with UTF-16 characters", () => {
   expect(process.title).toBe("bun");
 });
 
-describe.skipIf(!isWindows)("process.title in a console of its own", () => {
+describe.skipIf(!isWindows)("process.title with a dedicated console", () => {
   async function run(code) {
     using dir = tempDir("process-title-console", {
       "index.js": `
@@ -144,25 +144,25 @@ describe.skipIf(!isWindows)("process.title in a console of its own", () => {
     ["\u4e16", 341, true],
     ["\u4e16", 342, false],
     ["", 1, false],
-  ])("starts as, and stays, the title %j x %d: %p", async (text, count, isUsed) => {
+  ])("is initialized once from the console title %j x %d (used: %p)", async (text, count, isUsed) => {
     const title = repeat(text, count);
-    const seen = await run(`
+    const result = await run(`
       setConsoleTitle(${JSON.stringify(title)});
-      const first = process.title;
+      const initialTitle = process.title;
       setConsoleTitle("changed");
-      return [first, process.title];
+      return [initialTitle, process.title];
     `);
-    expect(seen).toEqual(isUsed ? [title, title] : ["bun", "bun"]);
+    expect(result).toEqual(isUsed ? [title, title] : ["bun", "bun"]);
   });
 
-  it.concurrent("is shown by the console when it is assigned", async () => {
-    const seen = await run(`
+  it.concurrent("updates the console title on assignment", async () => {
+    const result = await run(`
       return ["caf\\u00e9 \\u{1f30d}", "before\\0after", "", Buffer.alloc(100_000, "x").toString()].map(title => {
         process.title = title;
         return [process.title === title, getConsoleTitle()];
       });
     `);
-    expect(seen).toEqual([
+    expect(result).toEqual([
       [true, "caf\u00e9 \u{1f30d}"],
       [true, "before"],
       [true, ""],
@@ -1409,22 +1409,22 @@ describe.concurrent(() => {
     expect(maxRSS() + slack).toBeGreaterThan(rss());
   });
 
-  it.skipIf(!isWindows)("process.report lists the processors and addresses that node:os does", () => {
+  it.skipIf(!isWindows)("process.report cpus and networkInterfaces match node:os", () => {
     const { header } = process.report.getReport();
-    const number = expect.any(Number);
+    const anyNumber = expect.any(Number);
     expect(header.cpus).toEqual(
       cpus().map(({ model, speed }) => ({
         model,
         speed,
-        user: number,
+        user: anyNumber,
         nice: 0,
-        sys: number,
-        idle: number,
-        irq: number,
+        sys: anyNumber,
+        idle: anyNumber,
+        irq: anyNumber,
       })),
     );
-    const byName = Object.groupBy(header.networkInterfaces, ({ name }) => name);
-    expect({ ...byName }).toEqual(
+    const interfacesByName = Object.groupBy(header.networkInterfaces, ({ name }) => name);
+    expect({ ...interfacesByName }).toEqual(
       Object.fromEntries(
         Object.entries(networkInterfaces()).map(([name, entries]) => [
           name,
@@ -1590,7 +1590,7 @@ describe.concurrent(() => {
       ).toThrow("The property 'prevValue.system' is invalid. Received -1");
     });
 
-    // Windows counts CPU time in steps of 15.6 ms.
+    // Windows reports CPU time in 15.6 ms ticks.
     it.skipIf(process.platform === "win32")("works with diff", () => {
       const init = process.cpuUsage();
       init.system = 0;
@@ -1622,22 +1622,24 @@ describe.concurrent(() => {
           return { user: userCPUTime, system: systemCPUTime };
         },
       ],
-    ])("%s has the microseconds of %s", (_, name, pseudoHandle, read) => {
+    ])("%s matches %s to the microsecond", (_, functionName, pseudoHandle, getUsage) => {
       const { symbols } = dlopen("kernel32.dll", {
-        [name]: { args: ["i64", "ptr", "ptr", "ptr", "ptr"], returns: "i32" },
+        [functionName]: { args: ["i64", "ptr", "ptr", "ptr", "ptr"], returns: "i32" },
       });
       const [creation, exit, kernel, user] = Array.from({ length: 4 }, () => new BigUint64Array(1));
-      const reference = () => {
-        expect(symbols[name](pseudoHandle, creation, exit, kernel, user)).not.toBe(0);
+      const queryTimes = () => {
+        expect(symbols[functionName](pseudoHandle, creation, exit, kernel, user)).not.toBe(0);
         return { user: Number(user[0] / 10n), system: Number(kernel[0] / 10n) };
       };
-      // The times move in steps of 15.625 ms, and one step in eight ends on a whole millisecond.
-      const seen = new Set();
-      while (seen.size < 3) {
-        const [before, actual, after] = [reference(), read(), reference()];
-        expect(actual.user).toBeWithin(before.user, after.user + 1);
-        expect(actual.system).toBeWithin(before.system, after.system + 1);
-        seen.add(actual.user + actual.system);
+      // CPU times advance in 15.625 ms ticks; only every eighth tick lands on a whole millisecond.
+      const distinctTotals = new Set();
+      while (distinctTotals.size < 3) {
+        const lower = queryTimes();
+        const actual = getUsage();
+        const upper = queryTimes();
+        expect(actual.user).toBeWithin(lower.user, upper.user + 1);
+        expect(actual.system).toBeWithin(lower.system, upper.system + 1);
+        distinctTotals.add(actual.user + actual.system);
       }
     });
 

@@ -1,9 +1,8 @@
-//! What a Windows event loop waits on. The [`Port`] owns every byte that the system may still write, so whoever started a request can be dropped at any time.
+//! The I/O completion port that a Windows event loop waits on. The [`Port`] owns all memory that the kernel may still write to, so a request can be dropped at any time.
 
 #![cfg(windows)]
 
 mod afd;
-mod bell;
 pub mod blocking;
 #[cfg(test)]
 mod faults;
@@ -16,8 +15,9 @@ mod sys;
 #[cfg(test)]
 mod tests;
 mod timer;
+mod wake_event;
 
-pub use afd::{Readiness, SocketWatch, Watcher};
-pub use port::{Event, Hold, PendingWrite, Port, Waker};
+pub use afd::{Readiness, ReadinessHandler, SocketRegistration};
+pub use port::{Event, LoopRef, PendingWrite, Port, Waker, WriteProgress};
 pub use read_to_end::read_to_end;
-pub use request::{AsyncFile, Completion, Handle, Remote, Request};
+pub use request::{Completer, Completion, Handle, OverlappedFile, Request};

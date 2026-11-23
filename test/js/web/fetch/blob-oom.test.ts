@@ -221,7 +221,7 @@ describe.concurrent.skipIf(!fitsOneChild)("byte sources at the 2 GiB string limi
 // length through u32 on the way panicked at exactly 2^32, and JSC aborts when
 // it is asked to adopt more than that. The file is sparse, but each case still
 // reads a real 4 GiB into the child. Skipped on Windows, where NTFS also
-// allocates them on the disk.
+// allocates the full size on disk.
 const describeFourGiB = fitsAllChildren ? describe.concurrent : describe;
 describeFourGiB.skipIf(isWindows || !fitsOneChild)("Bun.file().arrayBuffer() at the 4 GiB ArrayBuffer limit", () => {
   async function readSparseFileAsArrayBuffer(size: number): Promise<ChildResult> {

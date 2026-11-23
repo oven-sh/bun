@@ -42,7 +42,7 @@ use crate::jsc_hooks::timer_all;
 pub(crate) struct WindowsNamedPipe {
     pub(crate) wrapper: JsCell<Option<SSLWrapper>>,
     pub(crate) root: Cell<*mut WindowsNamedPipe>,
-    connecting: Cell<Option<PipeConnect>>,
+    pending_connect: Cell<Option<PipeConnect>>,
     /// The per-thread VM singleton outlives this struct (it is torn down only
     /// at thread exit, after every named pipe is closed), so `&'static` is the
     /// honest model here rather than a threaded lifetime.
@@ -147,7 +147,7 @@ impl WindowsNamedPipe {
     /// that way), which runs that task. A callback that uses `self` after it
     /// dispatched to a handler holds this guard, so the free waits until the
     /// callback is done. `inflight_write_ref` does the same around an in-flight write,
-    /// and `connect` around the connect.
+    /// and the `PipeConnect` callback around the connect.
     ///
     /// Only for paths that cannot run after `on_close` released the
     /// connection's ref (reads stop and the wrapper goes away in
@@ -164,10 +164,12 @@ impl WindowsNamedPipe {
         if let IoEvent::Write(_) = event {
             return self.writer.on_io(self, event);
         }
-        let result = (self.reader).read_chunks(self.vm.loop_ctx(), Some(event), |chunk, _| {
-            self.on_read(&chunk);
-            true
-        });
+        let result = self
+            .reader
+            .read_chunks(self.vm.loop_ctx(), Some(event), |chunk, _| {
+                self.on_read(&chunk);
+                true
+            });
         match result {
             ReadResult::Pending => return,
             // we received FIN but we dont allow half-closed connections right now
@@ -185,7 +187,10 @@ impl WindowsNamedPipe {
     fn on_read(&self, data: &[u8]) {
         bun_output::scoped_log!(WindowsNamedPipe, "onRead ({})", data.len());
         self.reset_timeout();
-        if (self.with_wrapper(|w| w.receive_data(&mut &*self, data))).is_none() {
+        if self
+            .with_wrapper(|w| w.receive_data(&mut &*self, data))
+            .is_none()
+        {
             (self.handlers.on_data)(self.handlers.ctx, data);
         }
     }
@@ -302,7 +307,7 @@ impl WindowsNamedPipe {
     #[bun_uws::uws_callback(export = "WindowsNamedPipe__pause_stream")]
     pub(crate) fn pause_stream(&self) -> bool {
         self.reader.pause();
-        self.reader.has_source() || self.connecting.is_some()
+        self.reader.has_source() || self.pending_connect.is_some()
     }
 
     #[bun_uws::uws_callback(export = "WindowsNamedPipe__flush")]
@@ -326,7 +331,7 @@ impl WindowsNamedPipe {
     pub(crate) fn new(handlers: Handlers, vm: &'static VirtualMachine) -> WindowsNamedPipe {
         WindowsNamedPipe {
             vm,
-            connecting: Cell::new(None),
+            pending_connect: Cell::new(None),
             wrapper: JsCell::new(None),
             root: Cell::new(core::ptr::null_mut()),
             handlers,
@@ -418,11 +423,11 @@ impl WindowsNamedPipe {
         self.init_tls_wrapper(ssl_options, owned_ctx).transpose()?;
 
         let context = self.keep_alive();
-        let connecting = PipeConnect::start(self.vm.uws_loop().port(), path, move |result| {
-            context.named_pipe.connecting.take();
+        let pending_connect = PipeConnect::start(self.vm.uws_loop().port(), path, move |result| {
+            context.named_pipe.pending_connect.take();
             context.named_pipe.on_connect(result);
         })?;
-        self.connecting.set(Some(connecting));
+        self.pending_connect.set(Some(pending_connect));
         Ok(())
     }
 
@@ -479,7 +484,7 @@ impl WindowsNamedPipe {
         }
         self.reader.set_pipe(pipe.clone());
         self.writer.start_with_pipe(self, pipe);
-        // What was queued could not be written.
+        // A failed write of the queued data has already closed the pipe.
         if !self.reader.has_source() {
             return false;
         }
@@ -510,16 +515,18 @@ impl WindowsNamedPipe {
         i32::try_from(encoded_data.len()).expect("int cast")
     }
 
-    /// `close`, for a pipe that may still be connecting, which `close` has nothing to end for.
+    /// Cancels a pending connect, which `on_connect` reports as `ECANCELED`, or else closes the pipe.
     #[bun_uws::uws_callback(export = "WindowsNamedPipe__close")]
     pub(crate) fn close_or_cancel_connect(&self) {
-        let Some(connecting) = self.connecting.take() else {
+        let Some(pending_connect) = self.pending_connect.take() else {
             return self.close();
         };
         let _keep_alive = self.keep_alive();
-        drop(connecting);
-        let (errno, tag) = (bun_sys::E::ECANCELED, bun_sys::Tag::connect);
-        self.on_connect(Err(bun_sys::Error::from_code(errno, tag)));
+        drop(pending_connect);
+        self.on_connect(Err(bun_sys::Error::from_code(
+            bun_sys::E::ECANCELED,
+            bun_sys::Tag::connect,
+        )));
     }
 
     fn close(&self) {

@@ -67,21 +67,21 @@ it.skipIf(!isWindows)("homedir follows process.env.USERPROFILE", async () => {
   const result = await bunRun([
     "-e",
     `
-      const read = () => {
+      const getHomedir = () => {
         try {
           return require("os").homedir();
         } catch ({ code, errno, syscall }) {
           return { code, errno, syscall };
         }
       };
-      const long = "C:\\\\" + Buffer.alloc(1000, "x");
-      const results = ["C:\\\\\\u4e16\\u{1f30d}\\\\", long, "abc", "\\u4e16", "ab", ""].map(value => {
+      const longPath = "C:\\\\" + Buffer.alloc(1000, "x");
+      const results = ["C:\\\\\\u4e16\\u{1f30d}\\\\", longPath, "abc", "\\u4e16", "ab", ""].map(value => {
         process.env.USERPROFILE = value;
-        return read() === value ? "same" : read();
+        return getHomedir() === value ? "same" : getHomedir();
       });
       process.env.HOME = "C:\\\\not-used";
       delete process.env.USERPROFILE;
-      results.push(read() !== process.env.HOME && require("fs").statSync(read()).isDirectory());
+      results.push(getHomedir() !== process.env.HOME && require("fs").statSync(getHomedir()).isDirectory());
       console.log(JSON.stringify(results));
     `,
   ]);
@@ -511,14 +511,14 @@ describe.concurrent.skipIf(!isWindows)("on Windows", () => {
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: expected + "\n", stderr: "", exitCode: 0 });
   });
 
-  it("version() and release() agree on Windows 11", () => {
+  it("version() matches the build in release() and machine() matches process.arch", () => {
     expect(os.release()).toMatch(/^10\.0\.\d+$/);
     const build = Number(os.release().split(".")[2]);
     expect(os.version()).toMatch(build >= 22000 ? /^Windows (11|Server) / : /^Windows (10|Server) /);
     expect(os.machine()).toBe(process.arch === "x64" ? "x86_64" : "arm64");
   });
 
-  it("the netmask of an interface is its prefix", () => {
+  it("networkInterfaces() cidr prefix length matches the netmask", () => {
     const addresses = Object.values(os.networkInterfaces()).flat();
     expect(addresses.map(({ address, internal }) => internal && address)).toContain("127.0.0.1");
     for (const { family, netmask, cidr, address } of addresses) {
@@ -526,14 +526,17 @@ describe.concurrent.skipIf(!isWindows)("on Windows", () => {
         family === "IPv4"
           ? netmask.split(".").map(Number)
           : netmask.split(":").map(group => parseInt(group || "0", 16));
-      const ones = groups.reduce((sum, group) => sum + group.toString(2).replaceAll("0", "").length, 0);
-      expect(cidr).toBe(`${address}/${ones}`);
+      const prefixLength = groups.reduce((sum, group) => sum + group.toString(2).replaceAll("0", "").length, 0);
+      expect(cidr).toBe(`${address}/${prefixLength}`);
     }
   });
 
-  it("a priority falls into one of six classes", async () => {
+  it("setPriority() maps values to Windows priority classes", async () => {
     await using proc = Bun.spawn({ cmd: [bunExe(), "-e", "setInterval(() => {}, 1e6)"], env: bunEnv });
-    const after = priority => (os.setPriority(proc.pid, priority), os.getPriority(proc.pid));
-    expect([-14, -8, -7, -1, 0, 9, 10, 18, 19].map(after)).toEqual([-14, -14, -7, -7, 0, 0, 10, 10, 19]);
+    const setAndGetPriority = priority => {
+      os.setPriority(proc.pid, priority);
+      return os.getPriority(proc.pid);
+    };
+    expect([-14, -8, -7, -1, 0, 9, 10, 18, 19].map(setAndGetPriority)).toEqual([-14, -14, -7, -7, 0, 0, 10, 10, 19]);
   });
 });

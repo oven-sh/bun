@@ -67,7 +67,7 @@ test("shell should handle cwd paths with disabled 8.3 names on Windows", async (
 
   await Bun.write(join(deepPath, "test.js"), `console.log("hello");`);
 
-  // This should not panic, even if GetShortPathNameW fails. It runs where the volume has short names.
+  // This should not panic, even if GetShortPathNameW fails. The spawn succeeds on volumes with 8.3 names.
   const outcome = await Promise.try(() => $`${bunExe()} test.js`.cwd(deepPath).env(bunEnv).text()).catch(e => e);
   if (outcome !== "hello\n") expect(outcome).toBeInstanceOf(Error);
 });

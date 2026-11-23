@@ -941,8 +941,8 @@ extern "C" void bun_initialize_process()
             // version. We will just check _open result.
             _close(fd);
             bun_is_stdio_null[fd] = 1;
-            int opened = _open("nul", O_RDWR);
-            RELEASE_ASSERT(opened == fd);
+            int nullFd = _open("nul", O_RDWR);
+            RELEASE_ASSERT(nullFd == fd);
             constexpr DWORD standardHandles[] = { STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE };
             SetStdHandle(standardHandles[fd], reinterpret_cast<HANDLE>(_get_osfhandle(fd)));
         }

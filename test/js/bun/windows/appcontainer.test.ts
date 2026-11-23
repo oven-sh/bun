@@ -250,8 +250,8 @@ async function main() {
   const s = Bun.spawnSync({ cmd: [process.execPath, "-e", "console.log('SPAWN_OK')"], stdio: ["inherit", "pipe", "pipe"] });
   r.spawnPiped = s.exitCode === 0 && s.stdout.toString().includes("SPAWN_OK");
 
-  // The component walk lstats the drive root (denied). The native one does
-  // without the mount manager, like the rest of Bun.
+  // realpathSync lstats the drive root (denied). realpathSync.native falls back
+  // to the NT path when the mount manager query is denied.
   r.realpath = (() => {
     const errno = fn => { try { fn(); return "OK"; } catch (e) { return e.code || e.name; } };
     return { sync: errno(() => fs.realpathSync(".")), native: errno(() => fs.realpathSync.native(".")) };
@@ -366,7 +366,7 @@ main().then(
       expect(r.spawnPiped).toBe(true);
       expect(r.realpath).toEqual({ sync: "EPERM", native: "OK" });
       // Namespace denial vs name collision both surface as ERROR_ACCESS_DENIED,
-      // which is EADDRINUSE as in Node.js.
+      // which maps to EADDRINUSE as in Node.js.
       expect(["EACCES", "EADDRINUSE"]).toContain(r.pipeNonLocal);
       expect(r.pipeLocal).toBe("LISTENED");
       expect(r.forkIpc).toBe("OK");

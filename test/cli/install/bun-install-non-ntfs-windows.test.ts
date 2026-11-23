@@ -127,17 +127,17 @@ describe.skipIf(!isElevatedWindows)("bun install on a non-NTFS Windows volume", 
         version: "0.0.2",
       });
 
-      // FAT32 has neither POSIX deletes nor links.
-      const at = (name: string) => join(mount, "files", name);
-      mkdirSync(at("folder"), { recursive: true });
-      writeFileSync(at("read-only"), "abc", { mode: 0o444 });
-      expect(statSync(at("read-only"))).toMatchObject({ size: 3, mode: 0o100444 });
-      expect(await Bun.write(at("copy"), Bun.file(at("read-only")), { mode: 0o666 })).toBe(3);
-      renameSync(at("copy"), at("renamed"));
-      expect(() => symlinkSync(at("folder"), at("junction"), "junction")).toThrow();
-      unlinkSync(at("read-only"));
-      rmdirSync(at("folder"));
-      expect(readdirSync(at("."))).toEqual(["renamed"]);
+      // FAT32 supports neither POSIX delete semantics nor links.
+      const volumePath = (name: string) => join(mount, "files", name);
+      mkdirSync(volumePath("subdir"), { recursive: true });
+      writeFileSync(volumePath("read-only"), "abc", { mode: 0o444 });
+      expect(statSync(volumePath("read-only"))).toMatchObject({ size: 3, mode: 0o100444 });
+      expect(await Bun.write(volumePath("copy"), Bun.file(volumePath("read-only")), { mode: 0o666 })).toBe(3);
+      renameSync(volumePath("copy"), volumePath("renamed"));
+      expect(() => symlinkSync(volumePath("subdir"), volumePath("junction"), "junction")).toThrow();
+      unlinkSync(volumePath("read-only"));
+      rmdirSync(volumePath("subdir"));
+      expect(readdirSync(volumePath("."))).toEqual(["renamed"]);
     } finally {
       // The vdisk has to be detached before `dir`'s disposal can remove the
       // mount point and the backing .vhd; failures here are non-actionable.

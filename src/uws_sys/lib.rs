@@ -487,7 +487,7 @@ pub mod fault_inject {
     /// `us_internal_init_loop_ssl_data`.
     pub const SSL_LOOP_BUFFER: c_int = 10;
     /// Not a syscall: poll registration in `us_poll_start_rc`
-    /// (`SocketWatch::new` on Windows, `EPOLL_CTL_ADD` / `kevent` on
+    /// (`SocketRegistration::new` on Windows, `EPOLL_CTL_ADD` / `kevent` on
     /// epoll/kqueue).
     pub const POLL_START: c_int = 11;
     /// Not a syscall: the JS `Buffer` allocated for a TLS session/keylog

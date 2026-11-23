@@ -8,11 +8,11 @@ use bstr::BStr;
 use bun_core::{Timespec, TimespecMockMode, strings};
 use bun_event_loop::EventLoopTimer::{OwnedTimer, State as TimerState, Tag as TimerTag};
 use bun_http::Headers;
+use bun_http_jsc::headers_jsc::try_from_fetch_headers;
 use bun_http_types::ETag::Header;
 use bun_jsc::bindgen::{JsHeap, JsScope};
 use bun_jsc::{
-    ArrayBuffer, ContextId, FetchHeaders, GlobalRef, JSGlobalObject, JSUint8Array, JSValue, JsCell,
-    JsRef, JsResult,
+    ArrayBuffer, ContextId, FetchHeaders, GlobalRef, JSUint8Array, JSValue, JsCell, JsRef, JsResult,
 };
 use bun_ptr::RefPtr;
 use bun_removable_features::removable_definition;
@@ -130,7 +130,7 @@ pub(crate) struct GrpcCall {
     consumed: Cell<usize>,
     has_last_request: Cell<bool>,
     waits_for_request: Cell<bool>,
-    is_paused: Cell<bool>,
+    holds_window: Cell<bool>,
     wrote_headers: Cell<bool>,
     /// What ended the call, if the handler did not.
     interruption: JsCell<Option<Failure>>,
@@ -200,7 +200,7 @@ impl GrpcCall {
             consumed: Cell::new(0),
             has_last_request: Cell::new(false),
             waits_for_request: Cell::new(false),
-            is_paused: Cell::new(false),
+            holds_window: Cell::new(false),
             wrote_headers: Cell::new(false),
             interruption: JsCell::new(None),
         });
@@ -419,18 +419,12 @@ impl GrpcCall {
     }
 
     fn control_flow(&self) {
-        let Some(response) = self.response() else {
+        let Some(stream) = self.stream.get() else {
             return;
         };
-        let is_full = self.unread().len() >= HIGH_WATER_MARK
-            && !self.has_last_request.get()
-            && self.has_next();
-        if self.is_paused.replace(is_full) == is_full {
-            return;
-        }
-        match is_full {
-            true => response.pause(),
-            false => response.resume(),
+        let is_full = self.unread().len() >= HIGH_WATER_MARK && self.has_next();
+        if self.holds_window.replace(is_full) != is_full {
+            bun_opaque::opaque_deref_mut(stream.response).hold_request_window(is_full);
         }
     }
 
@@ -480,9 +474,8 @@ impl GrpcCall {
             return false;
         };
         let response = bun_opaque::opaque_deref_mut(stream.response);
-        if self.is_paused.get() {
-            // A paused stream does not time out.
-            AnyResponse::H2(stream.response).resume();
+        if self.holds_window.get() {
+            response.hold_request_window(false);
         }
         let is_trailers_only = !self.write_headers(this, response) && frame.is_none();
         if let Some(frame) = frame {
@@ -494,7 +487,7 @@ impl GrpcCall {
         };
         write_status(response, write, code, message);
         let trailers = this.and_then(js::response_trailers_get_cached);
-        write_metadata(&self.global, trailers, response, write);
+        write_metadata(trailers, response, write);
         response.end_without_body(false);
         if AnyResponse::H2(stream.response).get_buffered_amount() > 0 {
             response.timeout(stream.server.config().idle_timeout);
@@ -509,7 +502,7 @@ impl GrpcCall {
         }
         write_protocol_headers(response);
         let headers = this.and_then(js::response_headers_get_cached);
-        write_metadata(&self.global, headers, response, h2::Response::write_header)
+        write_metadata(headers, response, h2::Response::write_header)
     }
 
     fn fields(&self) -> impl Iterator<Item = &[u8]> + Clone {
@@ -758,7 +751,6 @@ fn write_status(response: &mut h2::Response, write: WriteField, code: u8, messag
 
 /// False if there was nothing to write.
 fn write_metadata(
-    global: &JSGlobalObject,
     metadata: Option<JSValue>,
     response: &mut h2::Response,
     write: WriteField,
@@ -767,12 +759,9 @@ fn write_metadata(
         return false;
     };
     let metadata = bun_opaque::opaque_deref(metadata.as_ptr());
-    let fields = match bun_http_jsc::headers_jsc::from_fetch_headers(global, Some(metadata), None) {
-        Ok(fields) => fields,
-        Err(too_large) => {
-            let _ = global.take_exception(too_large);
-            return false;
-        }
+    let Some(fields) = try_from_fetch_headers(Some(metadata), None) else {
+        AnyResponse::H2(response).force_close();
+        return false;
     };
     let mut has_written = false;
     for field in fields.iter() {

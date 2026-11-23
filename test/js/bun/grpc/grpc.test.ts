@@ -1,7 +1,7 @@
 import * as grpcJs from "@grpc/grpc-js";
 import { GrpcError, Status, type CallOptions } from "bun:grpc";
 import { describe, expect, spyOn, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir, tls } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir, tls } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { once } from "node:events";
 import http2 from "node:http2";
@@ -681,6 +681,20 @@ describe.concurrent("deadlines and cancellation", () => {
     }
   }, 30_000);
 
+  test("idleTimeout ends a call whose client floods it and does not read", async () => {
+    await using it = serve({ bidi: (requests: AsyncIterable<any>) => requests }, {}, { idleTimeout: 1 });
+    const session = http2.connect(it.server.url).on("error", () => {});
+    try {
+      const headers = { ":method": "POST", ":path": "/test.v1.Echo/Bidi", "content-type": "application/grpc" };
+      const neverRead = session.request(headers).on("error", () => {});
+      const request = frame(Message.encode({ blob: new Uint8Array(1 << 14) }));
+      for (let i = 0; i < 128; i++) neverRead.write(request);
+      expect((await once(session, "goaway"))[0]).toBe(http2.constants.NGHTTP2_NO_ERROR);
+    } finally {
+      session.destroy();
+    }
+  }, 30_000);
+
   test("an iterator that waits for its next message is closed when the call ends", async () => {
     const closed = [Promise.withResolvers<void>(), Promise.withResolvers<void>()];
     const waiting = ({ resolve }: (typeof closed)[0]) => ({
@@ -859,6 +873,31 @@ describe.concurrent("sizes", () => {
       clearImmediate(immediate);
     }
     expect(new Set(turns).size).toBeGreaterThan(12);
+  });
+
+  // Validating the values takes 3 seconds in a release build, and minutes in a debug build.
+  test.serial.skipIf(isDebug || isASAN)("metadata that totals 4 GiB or more resets the stream", async () => {
+    const value = Buffer.alloc(2 ** 28, "a").toString("latin1");
+    const fill = (headers: Headers) => {
+      for (let i = 0; i < 16; i++) headers.append("set-cookie", value);
+    };
+    const closed = Promise.withResolvers<void>();
+    await using it = serve({
+      unary: (_: any, context: any) => (fill(context.responseTrailers), {}),
+      *serverStream(_: any, context: any) {
+        fill(context.responseHeaders);
+        try {
+          while (true) yield {};
+        } finally {
+          closed.resolve();
+        }
+      },
+      clientStream: echo.clientStream,
+    });
+    expect(await failure(it.client.unary({}))).toMatchObject({ code: Status.INTERNAL });
+    expect(await failure(it.client.serverStream({}))).toMatchObject({ code: Status.INTERNAL });
+    await closed.promise;
+    expect((await it.client.clientStream([{ number: 1 }])).number).toBe(1);
   });
 
   test("maxReceiveMessageLength", async () => {

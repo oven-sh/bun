@@ -81,6 +81,16 @@ function openNodeHTTPHandle(position: number): Open {
   };
 }
 
+const createGrpcRoute = (realm: Realm, start: (call: object) => void) => bindingOf(realm, "native:Bindgen:grpc_binding.bind.ts:createRoute")(true, 1024, start);
+
+const openGrpcCall: Open = async realm => {
+  const { promise, resolve } = Promise.withResolvers<object>();
+  const server = Bun.serve({ port: 0, http2: true, routes: { "/a": createGrpcRoute(realm, resolve) } });
+  const headers = { "content-type": "application/grpc" };
+  fetch(`http://localhost:${server.port}/a`, { method: "POST", headers, body: new Uint8Array(5), protocol: "http2" }).catch(noop);
+  return { value: await promise, close: () => server.stop(true) };
+};
+
 function spawnChild() {
   return Bun.spawn({ cmd: [process.execPath, "-e", "await Bun.sleep(2000)"], stdin: "pipe", stdout: "pipe", stderr: "ignore" });
 }
@@ -301,6 +311,8 @@ const openers: (Open & { className?: string })[] = [
   openServer(() => ({ development: true })),
   openServer(() => ({ development: true, tls: createTLSOptions() })),
   openNodeHTTPHandle(4),
+  openGrpcCall,
+  realm => ({ value: createGrpcRoute(realm, noop), close: noop }),
   openSubprocess,
   openResourceUsage,
   openFileSink,

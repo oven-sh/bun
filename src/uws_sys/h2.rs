@@ -122,6 +122,10 @@ impl Response {
     pub fn grow_request_window(&mut self) {
         c::uws_h2_res_grow_request_window(self)
     }
+    /// `pause` or `resume`, with the idle timeout left running.
+    pub fn hold_request_window(&mut self, hold: bool) {
+        c::uws_h2_res_hold_request_window(self, hold)
+    }
     pub(crate) fn pause(&mut self) {
         c::uws_h2_res_pause(self)
     }
@@ -655,6 +659,7 @@ mod c {
         ) -> bool;
         pub(super) safe fn uws_h2_res_end_without_body(res: &mut Response, close: bool);
         pub(super) safe fn uws_h2_res_grow_request_window(res: &mut Response);
+        pub(super) safe fn uws_h2_res_hold_request_window(res: &mut Response, hold: bool);
         pub(super) safe fn uws_h2_res_pause(res: &mut Response);
         pub(super) safe fn uws_h2_res_resume(res: &mut Response);
         pub(super) fn uws_h2_res_write_status(res: *mut Response, p: *const u8, n: usize);

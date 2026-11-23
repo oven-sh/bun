@@ -601,7 +601,9 @@ class ServerCall {
       const interruption = this.#interrupted();
       if (interruption !== undefined) throw interruption;
       if (this.#hasEnded) throw new GrpcError(Status.CANCELLED, "The call ended before the last request");
-      await new Promise<void>(resolve => (this.#onReadable = resolve));
+      const { promise, resolve } = Promise.withResolvers<void>();
+      this.#onReadable = resolve;
+      await promise;
     }
   }
 
@@ -621,7 +623,10 @@ class ServerCall {
       while (this.#responses !== undefined) {
         const { done, value } = await iterator.next();
         if (done || this.#responses === undefined) break;
-        if (!this.native.write(this.#frame(value))) await new Promise<void>(resolve => (this.#onWritable = resolve));
+        if (this.native.write(this.#frame(value))) continue;
+        const { promise, resolve } = Promise.withResolvers<void>();
+        this.#onWritable = resolve;
+        await promise;
       }
       this.#responses = undefined;
       this.#end(Status.OK, "");

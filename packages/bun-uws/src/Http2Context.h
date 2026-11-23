@@ -226,6 +226,7 @@ struct Http2Response {
     /* inStream has been given its fin=true call. */
     bool finDelivered = false;
     bool paused = false;
+    bool windowHeld = false;
     /* Linked in conn->writable. */
     bool wantsWrite = false;
     /* setTimeout(): this stream's idle budget in seconds; 0 = never time
@@ -291,6 +292,8 @@ struct Http2Response {
 
     inline Http2Response *pause();
     inline Http2Response *resume();
+    /* pause() / resume() with the idle timeout left running. */
+    inline void holdReceiveWindow(bool hold);
     /* The handler started consuming the body: widen this stream's window. */
     inline void growReceiveWindow();
     inline Http2Response *cork(MoveOnlyFunction<void()> &&fn);
@@ -1073,7 +1076,7 @@ inline void Http2Connection::replenishStreamWindow(Http2Response *stream, uint32
     stream->unackedReceive += bytes;
     /* A stream not yet granted the wide window keeps only its initial
      * allowance: that is what bounds body bytes parked per stream. */
-    if (stream->wide && !stream->paused && stream->unackedReceive >= stream->receiveWindow / 2) {
+    if (stream->wide && !stream->windowHeld && stream->unackedReceive >= stream->receiveWindow / 2) {
         writeWindowUpdate(stream->id, stream->unackedReceive);
         stream->unackedReceive = 0;
     }
@@ -1804,6 +1807,7 @@ inline bool Http2Response::drain() {
 inline Http2Response *Http2Response::pause() {
     if (paused) return this;
     paused = true;
+    holdReceiveWindow(true);
     /* Like HTTP/1: a request the app has paused doesn't idle out. */
     pausedTimeoutS = timeoutS;
     timeoutS = 0;
@@ -1816,12 +1820,17 @@ inline Http2Response *Http2Response::resume() {
     paused = false;
     timeoutS = pausedTimeoutS;
     conn->recomputeIdleTimeout();
-    if (!dead && !remoteClosed && unackedReceive) {
+    holdReceiveWindow(false);
+    return this;
+}
+
+inline void Http2Response::holdReceiveWindow(bool hold) {
+    windowHeld = hold;
+    if (!hold && !dead && !remoteClosed && unackedReceive) {
         conn->writeWindowUpdate(id, unackedReceive);
         unackedReceive = 0;
         conn->scheduleFlush();
     }
-    return this;
 }
 
 inline void Http2Response::growReceiveWindow() {

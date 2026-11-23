@@ -8,16 +8,10 @@
 
 use core::marker::PhantomData;
 
-// By limiting maximum string and buffer lengths, we can store u32s in the
-// edit graph instead of usize's, halving our memory footprint. The
-// downside is that `(2 * (actual.len + expected.len))` must be less than
-// 4Gb. If this becomes a problem in real user scenarios, we can adjust this.
-//
-// Note that overflows are much more likely to occur in real user scenarios
-// than in our own testing, so overflow checks _must_ be handled. Do _not_
-// use `assert` unless you also use `@setRuntimeSafety(true)`.
+// Positions are stored as u32, which halves the memory of a level.
 const MAXLEN: u64 = u32::MAX as u64;
-const MAX_TRACE_BYTES: usize = 64 * 1024 * 1024;
+// Bounds the work of a diff and the changes it prints. Node limits only the length of the inputs.
+const MAX_LEVELS_TIMES_DIAGONALS: usize = 16 * 1024 * 1024;
 // Type aliasing to make future refactors easier
 #[allow(non_camel_case_types)]
 type uint = u32;
@@ -113,8 +107,6 @@ impl<'a> Line for &'a [u16] {
 pub(crate) struct Differ<L, const CHECK_COMMA_DISPARITY: bool = false>(PhantomData<L>);
 
 impl<L: Line, const CHECK_COMMA_DISPARITY: bool> Differ<L, CHECK_COMMA_DISPARITY> {
-    // `V = [-MAX, MAX]`.
-
     #[inline]
     fn eql(a: L, b: L) -> bool {
         L::line_eq::<CHECK_COMMA_DISPARITY>(a, b)
@@ -129,137 +121,81 @@ impl<L: Line, const CHECK_COMMA_DISPARITY: bool> Differ<L, CHECK_COMMA_DISPARITY
     /// - [Node- `myers_diff.js`](https://github.com/nodejs/node/blob/main/lib/internal/assert/myers_diff.js)
     /// - [An O(ND) Difference Algorithm and Its Variations](http://www.xmailserver.org/diff2.pdf)
     pub(crate) fn diff(actual: &[L], expected: &[L]) -> Result<DiffList<L>, Error> {
-        // const MAX \in [0, M+N]
-        // let V: int array = [-MAX..MAX]. V is a flattened representation of the edit graph.
-        let (max, graph_size): (uint, uint) = 'blk: {
-            // This is to preserve overflow protections even when runtime safety
-            // checks are disabled. We don't know what kind of stuff users are
-            // diffing in the wild.
-            let _max: usize = actual.len() + expected.len();
-            let _graph_size: usize = (2 * _max) + 1;
+        let max = actual.len() + expected.len();
+        if max as u64 > MAXLEN {
+            return Err(Error::InputsTooLarge);
+        }
+        let max_levels = MAX_LEVELS_TIMES_DIAGONALS / (2 * max + 1);
 
-            if (_max as u64) > MAXLEN {
-                return Err(Error::InputsTooLarge);
-            }
-            if (_graph_size as u64) > MAXLEN {
-                return Err(Error::DiffTooLarge);
-            }
+        // `trace[d]` is the state before edit level `d` is searched.
+        let mut trace: Vec<Level> = vec![Level {
+            low: 1,
+            furthest: vec![0],
+        }];
+        let mut low: int = 0;
+        let mut high: int = 0;
 
-            // const m:
+        while trace.len() <= max_levels {
+            let width = us((high - low) / 2) + 1;
+            let previous = &trace[trace.len() - 1];
+            let first_above = previous.index_above(low);
+            let mut furthest: Vec<uint> = Vec::with_capacity(width);
+            let mut next_low = low - 1;
+            let mut next_high = high + 1;
 
-            break 'blk (
-                u32::try_from(_max).expect("int cast"),
-                u32::try_from(_graph_size).expect("int cast"),
-            );
-        };
-
-        let mut graph: Vec<uint> = vec![0; graph_size as usize];
-
-        let mut trace: Vec<Box<[uint]>> = Vec::new();
-        // reserve enough space for each frame to avoid realloc on ptr list. Lists may end up in the heap, but
-        // this list is at the very from (and ∴ on stack).
-        trace.reserve_exact((max as usize) + 1);
-
-        // ================================================================
-        // ==================== actual implementation =====================
-        // ================================================================
-
-        for _diff_level in 0..=(max as usize) {
-            let diff_level: int = i64::try_from(_diff_level).expect("int cast"); // why is this always usize?
-            let trace_bytes = (_diff_level + 1)
-                .saturating_mul(graph_size as usize)
-                .saturating_mul(core::mem::size_of::<uint>());
-            if trace_bytes > MAX_TRACE_BYTES {
-                return Err(Error::DiffTooLarge);
-            }
-            let new_trace: Box<[uint]> = graph.clone().into_boxed_slice();
-            trace.push(new_trace);
-
-            let diag_start: int = -diff_level;
-            let diag_end: int = diff_level;
-
-            // for k ← -D in steps of 2 do
-            let mut diag_idx = diag_start;
-            while diag_idx <= diag_end {
-                // if k = -D or K ≠ D and V[k-1] < V[k+1] then
-                //     x ← V[k+1]
-                // else
-                //     x ← V[k-1] + 1
-                debug_assert!(diag_idx + i64::from(max) >= 0); // sanity check. Fine to be stripped in release.
-                let k: uint = u(diag_idx + i64::from(max));
-
-                let uk = k as usize;
-                let mut x: uint = if diag_idx == diag_start
-                    || (diag_idx != diag_end && graph[uk - 1] < graph[uk + 1])
-                {
-                    graph[uk + 1]
+            for idx in 0..width {
+                let diag_idx = low + 2 * i(idx);
+                let above = first_above + idx;
+                let mut x = if previous.comes_from_above(above) {
+                    previous.furthest[above] as usize
                 } else {
-                    graph[uk - 1] + 1
+                    previous.furthest[above - 1] as usize + 1
                 };
+                let mut y = us(i(x) - diag_idx);
 
-                // y = x - diag_idx
-                let mut y: usize = 'blk: {
-                    let x2: int = i64::from(x);
-                    let y: int = x2 - diag_idx;
-                    debug_assert!(y >= 0 && (y as u64) <= MAXLEN); // sanity check. Fine to be stripped in release.
-                    break 'blk usize::try_from(y).expect("int cast");
-                };
-
-                while (x as usize) < actual.len()
-                    && y < expected.len()
-                    && Self::eql(actual[x as usize], expected[y])
-                {
+                while x < actual.len() && y < expected.len() && Self::eql(actual[x], expected[y]) {
                     x += 1;
                     y += 1;
                 }
-                graph[k as usize] = x;
-                if (x as usize) >= actual.len() && y >= expected.len() {
-                    // todo: arena
-                    return Self::backtrack(&trace, actual, expected);
-                }
+                furthest.push(u(x));
 
-                diag_idx += 2;
+                // After a diagonal has used up an input, no shortest path continues along it or beyond it.
+                if x == actual.len() {
+                    if y == expected.len() {
+                        return Ok(Self::backtrack(&trace, actual, expected));
+                    }
+                    next_high = diag_idx - 1;
+                    break;
+                }
+                if y == expected.len() {
+                    next_low = diag_idx + 1;
+                }
             }
+
+            trace.push(Level { low, furthest });
+            low = next_low;
+            high = next_high;
         }
 
-        unreachable!(
-            "unreachable. Diffing should always reach the end of either `actual` or `expected` first."
-        );
+        Err(Error::DiffTooLarge)
     }
 
-    fn backtrack(
-        trace: &[Box<[uint]>],
-        actual: &[L],
-        expected: &[L],
-    ) -> Result<DiffList<L>, Error> {
-        let max = i(actual.len() + expected.len());
+    fn backtrack(trace: &[Level], actual: &[L], expected: &[L]) -> DiffList<L> {
         let mut x = i(actual.len());
         let mut y = i(expected.len());
 
         let mut result: DiffList<L> = Vec::new();
-        if trace.is_empty() {
-            return Ok(result);
-        }
 
-        // for (let diffLevel = trace.length - 1; diffLevel >= 0; diffLevel--) {
-        let mut diff_level: usize = trace.len();
-        while diff_level > 0 {
-            diff_level -= 1;
-            let graph = &trace[diff_level];
-            let diagonal_index: int = x - y;
-
-            let diag_offset = u(diagonal_index + max);
-            let prev_diagonal_index: int = if diagonal_index == -i(diff_level)
-                || (diagonal_index != i(diff_level)
-                    && graph[us(diag_offset - 1)] < graph[us(diag_offset + 1)])
-            {
-                diagonal_index + 1
+        for (diff_level, level) in trace.iter().enumerate().rev() {
+            let above = level.index_above(x - y);
+            let idx = if level.comes_from_above(above) {
+                above
             } else {
-                diagonal_index - 1
+                above - 1
             };
 
-            let prev_x: int = i(graph[us(prev_diagonal_index + max)]); // v[prevDiagonalIndex + max]
-            let prev_y: int = prev_x - prev_diagonal_index;
+            let prev_x: int = i(level.furthest[idx]);
+            let prev_y: int = prev_x - (level.low + 2 * i(idx));
 
             result.reserve(us((x - prev_x).max(y - prev_y)));
             while x > prev_x && y > prev_y {
@@ -301,7 +237,32 @@ impl<L: Line, const CHECK_COMMA_DISPARITY: bool> Differ<L, CHECK_COMMA_DISPARITY
             }
         }
 
-        Ok(result)
+        result
+    }
+}
+
+/// The furthest `x` on each diagonal (`x - y`) at one edit level, without
+/// diagonals that no shortest path can still use. Node keeps every diagonal.
+struct Level {
+    low: int,
+    /// `furthest[n]` is the furthest `x` on diagonal `low + 2 * n`.
+    furthest: Vec<uint>,
+}
+
+impl Level {
+    /// Index in `furthest` of diagonal `diagonal + 1`, past the end if that one is not kept.
+    /// Diagonal `diagonal - 1` is one before it.
+    #[inline]
+    fn index_above(&self, diagonal: int) -> usize {
+        us((diagonal + 1 - self.low) / 2)
+    }
+
+    /// Whether the diagonal between those at `above - 1` and `above` is entered from the one at
+    /// `above`: it is the only one of the two that is kept, or it reaches strictly further.
+    #[inline]
+    fn comes_from_above(&self, above: usize) -> bool {
+        above == 0
+            || (above < self.furthest.len() && self.furthest[above - 1] < self.furthest[above])
     }
 }
 

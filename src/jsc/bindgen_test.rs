@@ -15,8 +15,8 @@ use crate::generated_bindgen::bindgen_test::{
     js_TestNonFinal, js_TestNote, js_TestRefCounted, js_TestRefCountedNote, js_TestShape,
     js_TestSquare,
 };
-use crate::{JSGlobalObject, JSString, JSValue, JsClass, JsResult, WrapperGuard};
-use bun_ptr::{AsCtxPtr as _, RefPtr};
+use crate::{JSGlobalObject, JSString, JSValue, JsCell, JsClass, JsRef, JsResult, WrapperGuard};
+use bun_ptr::RefPtr;
 
 // This example should be kept in sync with bindgen's documentation
 pub(crate) fn add<'a>(heap: &JsHeap<'a>, a: i32, b: i32) -> bindgen::Result<'a, i32> {
@@ -547,6 +547,7 @@ pub(crate) struct TestRefCounted {
     ref_count: Cell<u32>,
     value: Cell<i32>,
     finalized: Cell<bool>,
+    pub(crate) this_value: JsCell<JsRef>,
 }
 
 impl Drop for TestRefCounted {
@@ -557,16 +558,17 @@ impl Drop for TestRefCounted {
 
 impl TestRefCounted {
     pub(crate) fn finalize(&self) {
-        self.finalized.set(true);
+        self.finalized.set(self.this_value.get().is_finalized());
     }
 
-    pub(crate) fn constructor(value: i32) -> *mut Self {
+    pub(crate) fn constructor(value: i32) -> RefPtr<Self> {
         REF_COUNTED_ALIVE.fetch_add(1, Ordering::SeqCst);
-        bun_core::heap::into_raw(Box::new(TestRefCounted {
+        RefPtr::new(TestRefCounted {
             ref_count: Cell::new(1),
             value: Cell::new(value),
             finalized: Cell::new(false),
-        }))
+            this_value: JsCell::new(JsRef::empty()),
+        })
     }
 
     pub(crate) fn get_value(&self) -> i32 {
@@ -603,9 +605,9 @@ impl TestRefCounted {
         Ok(self.value.get())
     }
 
-    pub(crate) fn keep(&self) {
-        // SAFETY: `self` is live.
-        KEPT.set(Some(unsafe { RefPtr::init_ref(self.as_ctx_ptr()) }));
+    pub(crate) fn keep(self: &RefPtr<Self>, this_value: JsWrapper<'_, Self>) {
+        this_value.set_js_ref_weak();
+        KEPT.set(Some(self.clone()));
     }
 
     pub(crate) fn dispose(&self) {
@@ -619,8 +621,8 @@ impl TestRefCounted {
         (self.value.get() >= 0).then_some(this_value)
     }
 
-    pub(crate) fn is_same(&self, other: Option<&Self>) -> bool {
-        other.is_some_and(|other| core::ptr::eq(self, other))
+    pub(crate) fn is_same(&self, other: Option<&RefPtr<Self>>) -> bool {
+        other.is_some_and(|other| core::ptr::eq(self, other.as_ptr()))
     }
 
     pub(crate) fn kept() -> Vec<i32> {
@@ -628,6 +630,11 @@ impl TestRefCounted {
             Some(kept) => vec![kept.value.get(), i32::from(kept.finalized.get())],
             None => Vec::new(),
         })
+    }
+
+    pub(crate) fn kept_object(_: &JsHeap<'_>) -> JSValue {
+        KEPT.with_borrow(|kept| Some(kept.as_ref()?.this_value.get().get()))
+            .unwrap_or(JSValue::NULL)
     }
 
     pub(crate) fn release() {
@@ -827,15 +834,15 @@ pub(crate) struct TestNonFinal {
 }
 
 pub(crate) trait TestNonFinalExt {
-    fn constructor(value: i32) -> *mut Self;
+    fn constructor(value: i32) -> RefPtr<TestNonFinal>;
     fn get_value(&self) -> i32;
     fn doubled<'a>(heap: &JsHeap<'a>, value: i32) -> JsLocal<'a>;
 }
 
 impl TestNonFinalExt for TestNonFinal {
-    fn constructor(value: i32) -> *mut Self {
+    fn constructor(value: i32) -> RefPtr<Self> {
         let ref_count = Cell::new(1);
-        RefPtr::new(Self { ref_count, value }).into_raw()
+        RefPtr::new(Self { ref_count, value })
     }
 
     fn get_value(&self) -> i32 {
@@ -855,7 +862,7 @@ impl TestNonFinalExt for TestNonFinal {
 impl JsClass for TestNonFinal {
     fn to_js(mut self, global: &JSGlobalObject) -> JSValue {
         self.value = self.value.wrapping_mul(2);
-        js_TestNonFinal::to_js(RefPtr::new(self).into_raw(), global)
+        js_TestNonFinal::to_js(RefPtr::new(self), global)
     }
 
     fn from_js(value: &JSValue) -> Option<WrapperGuard<'_, Self>> {
@@ -1004,7 +1011,7 @@ pub(crate) fn make_native_promise_context(cx: &mut JsScope<'_>) -> JSValue {
     // Only the destructor of a cell that still has its pointer reads the tag, and the test takes the pointer.
     Bun__NativePromiseContext__create(
         cx.global(),
-        TestRefCounted::constructor(42).cast(),
+        TestRefCounted::constructor(42).into_raw().cast(),
         0,
         JSValue::ZERO,
     )

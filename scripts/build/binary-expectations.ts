@@ -17,13 +17,13 @@
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { Config } from "./config.ts";
+import { linksWithLld, type Config } from "./config.ts";
 import {
   overridesDarwinAllocator,
   replacedLibcAllocationSymbols,
   replacedOperatorNewSymbols,
 } from "./deps/mimalloc.ts";
-import { definesLibcFunctions, libcFunctionsScriptPath, versionScriptPath } from "./flags.ts";
+import { definesLibcFunctions, libcFunctionsScriptPath, rustLtoInLink, versionScriptPath } from "./flags.ts";
 
 export type BinaryFormat = "elf" | "macho" | "pe";
 
@@ -123,6 +123,7 @@ export interface BinaryExpectations {
    *
    * A match means that something reachable calls it: find the caller. In the
    * engine it belongs under `#if ASSERT_ENABLED`, in Rust behind the feature.
+   * It also has what LTO has to inline: see `inlinedSymbols()`.
    */
   forbiddenSymbols?: string[];
   elf?: {
@@ -333,6 +334,10 @@ function forbiddenImports(cfg: Config): string[] {
     // from the shared libstdc++/libc++ legitimately).
     forbidden.push("__cxa_guard_*");
   }
+  if (cfg.linux && cfg.abi === "gnu") {
+    // glibc loads libgcc_s for it at its first use, which a hardened program refuses.
+    forbidden.push("pthread_exit");
+  }
   return forbidden;
 }
 
@@ -342,7 +347,7 @@ function forbiddenImports(cfg: Config): string[] {
  * static-build carve-out the way WTF's export macros do), so every bmalloc.lib
  * member the link pulls carries `-export:` directives. Remove once
  * oven-sh/WebKit builds bmalloc with BEXPORT empty (`-DBEXPORT=`); the export
- * check then holds bun.exe to the Node-API / V8 / libuv / llhttp set alone.
+ * check then holds bun.exe to the Node-API / V8 / libuv set alone.
  *
  * The 23 names, from `llvm-readobj --coff-exports` on a released
  * bun-windows-x64 bun.exe: 22 MSVC-mangled members of namespace bmalloc
@@ -399,6 +404,14 @@ function testOnlySymbols(cfg: Config): string[] | undefined {
     "*7bun_aot2ir9generated11record_text*",
     "*RUNTIME_FUNCTION_TOKENS*",
   ];
+}
+
+/**
+ * An `always_inline` C++ function that only Rust calls. It stays behind if the CPU features of the two halves do not
+ * let LTO inline it: rustCpuTargetFlags() in rust.ts.
+ */
+function inlinedSymbols(cfg: Config): string[] {
+  return cfg.lto && rustLtoInLink(cfg) && linksWithLld(cfg) && !cfg.hardened ? ["*highway_brotli_short_codes"] : [];
 }
 
 /**
@@ -483,7 +496,7 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
     ...(cfg.abi === "android" ? ["liblog.so"] : []),
   ];
   const staticInitializers = cfg.asan ? undefined : runtimeInitializers(cfg);
-  const forbiddenSymbols = testOnlySymbols(cfg);
+  const forbiddenSymbols = testOnlySymbols(cfg)?.concat(inlinedSymbols(cfg));
 
   switch (format) {
     case "elf": {
@@ -603,14 +616,11 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
           // Node-API and the V8 / node C++ embedder API are exported from the
           // source with __declspec(dllexport) (NAPI_EXTERN, BUN_EXPORT), the
           // C++ ones under their MSVC-mangled names; symbols.def adds libuv.
-          // llhttp_*: node.exe exports llhttp's C API (its header dllexports
-          // on _WIN32) and so does bun.exe, from the same header.
           patterns: [
             "napi_*",
             "node_api_*",
             "?*@v8@@*",
             "?*@node@@*",
-            "llhttp_*",
             ...PREBUILT_BMALLOC_DLLEXPORTS.patterns,
             // The debug WebKit prebuilt's libpas exports its system-heap entry
             // points the same way (`-export:` directives in the archive

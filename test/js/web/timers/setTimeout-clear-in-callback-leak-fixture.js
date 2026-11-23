@@ -1,8 +1,5 @@
 // Regression: calling clearTimeout(t), t.refresh(), or setting t._repeat inside t's own
-// setTimeout callback leaked the native TimeoutObject. In fire(), state is set to .FIRED
-// before the callback runs; any transition away from .FIRED during the callback
-// (cancel() -> .CANCELLED, or reschedule() -> .ACTIVE via refresh/convertToInterval) left
-// the heap ref unreleased because the post-callback cleanup only checked for .FIRED.
+// setTimeout callback leaked the native TimeoutObject.
 
 const mode = process.argv[2];
 if (mode !== "clear" && mode !== "refresh" && mode !== "repeat") {

@@ -6132,6 +6132,22 @@ console.log(typeof outmost.inner);
         `console.log(sum);\n`,
     }),
   },
+  // Whoever imports the entry may reach every object below what it exports. Each of these objects may point at any other one, and the walk went through the fields
+  // of all objects for each field of one.
+  ...["", " beside a file that the build leaves out"].map(beside => ({
+    name: `objects that point at one another through an array that the entry exports${beside}`,
+    counted: "objects",
+    size: 500,
+    entry: "main.mjs",
+    flags: beside ? ["--external", "./outside.node"] : [],
+    write: (size: number) => ({
+      "main.mjs":
+        `export const nodes = [];\nexport const nodeAt = position => nodes[position];\n` +
+        lines(size, index => `nodes.push({ id: ${index}, field${index}: ${index}, parent: nodeAt(${index >> 1}), add(value) { return value + this.field${index}; } });`) +
+        `let sum = 0;\nfor (const node of nodes) sum += node.id;\nconsole.log(sum);\n` +
+        (beside ? `export default globalThis.addon ? require("./outside.node") : nodes;\n` : ""),
+    }),
+  })),
   {
     name: "closures that are set in one Map under texts of their own",
     counted: "closures",

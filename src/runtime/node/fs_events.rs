@@ -5,6 +5,7 @@ use core::sync::atomic::{AtomicPtr, Ordering};
 
 use bun_core::zstr;
 use bun_ptr::AliasableBox;
+use bun_sys::{DynLib, RTLD};
 use bun_threading::{Guarded, Mutex, Semaphore, UnboundedQueue};
 
 // Both siblings are wired into `crate::node`, and intra-crate module cycles
@@ -78,22 +79,6 @@ const K_FS_EVENTS_RENAMED: c_int = K_FS_EVENT_STREAM_EVENT_FLAG_ITEM_CREATED
 static FSEVENTS_DEFAULT_LOOP_MUTEX: Mutex = Mutex::new();
 static FSEVENTS_DEFAULT_LOOP: std::sync::OnceLock<&'static FSEventsLoop> =
     std::sync::OnceLock::new();
-
-fn dlsym<T>(handle: *mut c_void, symbol: &core::ffi::CStr) -> Option<T> {
-    const { assert!(core::mem::size_of::<T>() == core::mem::size_of::<*mut c_void>()) };
-    // SAFETY: handle is a valid dlopen handle; symbol is NUL-terminated
-    let ptr = unsafe { bun_sys::c::dlsym(handle, symbol.as_ptr()) };
-    if ptr.is_null() {
-        return None;
-    }
-    // SAFETY: genuine FFI — dlsym yields an opaque address that must be reinterpreted
-    // as the symbol's true type. Callers monomorphise T to the matching `extern "C" fn`
-    // (or pointer-sized data symbol) declared by CoreFoundation/CoreServices; the const
-    // assert above enforces size parity, and the null check rules out the absent-symbol
-    // case so the resulting fn pointer is always non-null. Not expressible via
-    // `as`, which can't cast data→fn pointers.
-    Some(unsafe { core::mem::transmute_copy::<*mut c_void, T>(&ptr) })
-}
 
 // Clone/Copy: bitwise OK — resolved fn pointers plus a framework-static
 // `*const CFStringRef`; the dlopen handle they came from is leaked (never
@@ -178,74 +163,52 @@ static FSEVENTS_CF: std::sync::OnceLock<CoreFoundation> = std::sync::OnceLock::n
 static FSEVENTS_CS: std::sync::OnceLock<CoreServices> = std::sync::OnceLock::new();
 
 fn init_core_foundation() -> CoreFoundation {
-    let fsevents_cf_handle = bun_sys::dlopen(
-        zstr!("/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation"),
-        bun_sys::RTLD::LAZY | bun_sys::RTLD::LOCAL,
-    );
-    let Some(fsevents_cf_handle) = fsevents_cf_handle else {
-        panic!("Cannot Load CoreFoundation");
+    let path =
+        zstr!("/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation");
+    let load = || {
+        // SAFETY: a framework of the system, which stays loaded, and the types that its headers give the symbols.
+        unsafe {
+            let cf = DynLib::open_with_flags(path, RTLD::LAZY | RTLD::LOCAL)?.leak();
+            Some(CoreFoundation {
+                array_create: cf.lookup_as(zstr!("CFArrayCreate"))?,
+                retain: cf.lookup_as(zstr!("CFRetain"))?,
+                release: cf.lookup_as(zstr!("CFRelease"))?,
+                run_loop_add_source: cf.lookup_as(zstr!("CFRunLoopAddSource"))?,
+                run_loop_get_current: cf.lookup_as(zstr!("CFRunLoopGetCurrent"))?,
+                run_loop_remove_source: cf.lookup_as(zstr!("CFRunLoopRemoveSource"))?,
+                run_loop_run: cf.lookup_as(zstr!("CFRunLoopRun"))?,
+                run_loop_source_create: cf.lookup_as(zstr!("CFRunLoopSourceCreate"))?,
+                run_loop_source_signal: cf.lookup_as(zstr!("CFRunLoopSourceSignal"))?,
+                run_loop_stop: cf.lookup_as(zstr!("CFRunLoopStop"))?,
+                run_loop_wake_up: cf.lookup_as(zstr!("CFRunLoopWakeUp"))?,
+                string_create_with_file_system_representation: cf
+                    .lookup_as(zstr!("CFStringCreateWithFileSystemRepresentation"))?,
+                run_loop_default_mode: cf.lookup_as(zstr!("kCFRunLoopDefaultMode"))?,
+            })
+        }
     };
-
-    CoreFoundation {
-        array_create: dlsym(fsevents_cf_handle, c"CFArrayCreate")
-            .unwrap_or_else(|| panic!("Cannot Load CoreFoundation")),
-        retain: dlsym(fsevents_cf_handle, c"CFRetain")
-            .unwrap_or_else(|| panic!("Cannot Load CoreFoundation")),
-        release: dlsym(fsevents_cf_handle, c"CFRelease")
-            .unwrap_or_else(|| panic!("Cannot Load CoreFoundation")),
-        run_loop_add_source: dlsym(fsevents_cf_handle, c"CFRunLoopAddSource")
-            .unwrap_or_else(|| panic!("Cannot Load CoreFoundation")),
-        run_loop_get_current: dlsym(fsevents_cf_handle, c"CFRunLoopGetCurrent")
-            .unwrap_or_else(|| panic!("Cannot Load CoreFoundation")),
-        run_loop_remove_source: dlsym(fsevents_cf_handle, c"CFRunLoopRemoveSource")
-            .unwrap_or_else(|| panic!("Cannot Load CoreFoundation")),
-        run_loop_run: dlsym(fsevents_cf_handle, c"CFRunLoopRun")
-            .unwrap_or_else(|| panic!("Cannot Load CoreFoundation")),
-        run_loop_source_create: dlsym(fsevents_cf_handle, c"CFRunLoopSourceCreate")
-            .unwrap_or_else(|| panic!("Cannot Load CoreFoundation")),
-        run_loop_source_signal: dlsym(fsevents_cf_handle, c"CFRunLoopSourceSignal")
-            .unwrap_or_else(|| panic!("Cannot Load CoreFoundation")),
-        run_loop_stop: dlsym(fsevents_cf_handle, c"CFRunLoopStop")
-            .unwrap_or_else(|| panic!("Cannot Load CoreFoundation")),
-        run_loop_wake_up: dlsym(fsevents_cf_handle, c"CFRunLoopWakeUp")
-            .unwrap_or_else(|| panic!("Cannot Load CoreFoundation")),
-        string_create_with_file_system_representation: dlsym(
-            fsevents_cf_handle,
-            c"CFStringCreateWithFileSystemRepresentation",
-        )
-        .unwrap_or_else(|| panic!("Cannot Load CoreFoundation")),
-        run_loop_default_mode: dlsym(fsevents_cf_handle, c"kCFRunLoopDefaultMode")
-            .unwrap_or_else(|| panic!("Cannot Load CoreFoundation")),
-    }
+    load().expect("Cannot Load CoreFoundation")
 }
 
 fn init_core_services() -> CoreServices {
-    let fsevents_cs_handle = bun_sys::dlopen(
-        zstr!("/System/Library/Frameworks/CoreServices.framework/Versions/A/CoreServices"),
-        bun_sys::RTLD::LAZY | bun_sys::RTLD::LOCAL,
-    );
-    let Some(fsevents_cs_handle) = fsevents_cs_handle else {
-        panic!("Cannot Load CoreServices");
+    let path = zstr!("/System/Library/Frameworks/CoreServices.framework/Versions/A/CoreServices");
+    let load = || {
+        // SAFETY: as in `init_core_foundation`.
+        unsafe {
+            let cs = DynLib::open_with_flags(path, RTLD::LAZY | RTLD::LOCAL)?.leak();
+            Some(CoreServices {
+                fs_event_stream_create: cs.lookup_as(zstr!("FSEventStreamCreate"))?,
+                fs_event_stream_invalidate: cs.lookup_as(zstr!("FSEventStreamInvalidate"))?,
+                fs_event_stream_release: cs.lookup_as(zstr!("FSEventStreamRelease"))?,
+                fs_event_stream_schedule_with_run_loop: cs
+                    .lookup_as(zstr!("FSEventStreamScheduleWithRunLoop"))?,
+                fs_event_stream_start: cs.lookup_as(zstr!("FSEventStreamStart"))?,
+                fs_event_stream_stop: cs.lookup_as(zstr!("FSEventStreamStop"))?,
+                k_fs_event_stream_event_id_since_now: 18446744073709551615,
+            })
+        }
     };
-
-    CoreServices {
-        fs_event_stream_create: dlsym(fsevents_cs_handle, c"FSEventStreamCreate")
-            .unwrap_or_else(|| panic!("Cannot Load CoreServices")),
-        fs_event_stream_invalidate: dlsym(fsevents_cs_handle, c"FSEventStreamInvalidate")
-            .unwrap_or_else(|| panic!("Cannot Load CoreServices")),
-        fs_event_stream_release: dlsym(fsevents_cs_handle, c"FSEventStreamRelease")
-            .unwrap_or_else(|| panic!("Cannot Load CoreServices")),
-        fs_event_stream_schedule_with_run_loop: dlsym(
-            fsevents_cs_handle,
-            c"FSEventStreamScheduleWithRunLoop",
-        )
-        .unwrap_or_else(|| panic!("Cannot Load CoreServices")),
-        fs_event_stream_start: dlsym(fsevents_cs_handle, c"FSEventStreamStart")
-            .unwrap_or_else(|| panic!("Cannot Load CoreServices")),
-        fs_event_stream_stop: dlsym(fsevents_cs_handle, c"FSEventStreamStop")
-            .unwrap_or_else(|| panic!("Cannot Load CoreServices")),
-        k_fs_event_stream_event_id_since_now: 18446744073709551615,
-    }
+    load().expect("Cannot Load CoreServices")
 }
 
 pub(crate) struct FSEventsLoop {

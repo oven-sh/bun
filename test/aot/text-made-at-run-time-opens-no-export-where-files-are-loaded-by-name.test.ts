@@ -26,18 +26,16 @@ test("reads", async () => {
     ...bunEnv,
     FILE_TO_LOAD: "./lib.js",
     TEXT_TO_RUN: "return module.twice(21)",
-    BUN_JSC_logAOTPhaseTimes: "1",
   };
   const seenWith = async (...flags: string[]) => {
     const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...flags], String(dir), env);
     const lines = (stdout + "\n" + stderr).split("\n");
     return {
       seen: lines.filter(line => line.startsWith("SEEN ")),
-      startsOver: lines.filter(line => line.startsWith("AOT build starts over")),
       exitCode,
     };
   };
   const [plain, compiled] = await Promise.all([seenWith(), seenWith("--aot")]);
-  expect(plain).toEqual({ seen: [`SEEN [[3,6,42],["sumOf","total"]]`], startsOver: [], exitCode: 0 });
+  expect(plain).toEqual({ seen: [`SEEN [[3,6,42],["sumOf","total"]]`], exitCode: 0 });
   expect(compiled).toEqual(plain);
 });

@@ -4008,6 +4008,41 @@ it("clientError after a kept-alive request reuses the connection's socket and un
   }
 });
 
+it.each([
+  ["100-Continue", "checkContinue"],
+  ["a, 1, 100-continue;b", "checkContinue"],
+  [Buffer.alloc(40, "1 ").toString() + Buffer.alloc(40, "a ") + "100-continue", "checkContinue"],
+  ["1100-continue", "checkExpectation"],
+  ["100-continue_", "checkExpectation"],
+  ["100-continu", "checkExpectation"],
+  ["\x11\x10\x10-continue", "checkExpectation"],
+])("Expect: %j emits %s", async (value, expected) => {
+  await using server = createServer({ insecureHTTPParser: true });
+  for (const event of ["checkContinue", "checkExpectation"]) server.on(event, (req, res) => res.end(event));
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const socket = connect((server.address() as AddressInfo).port, "127.0.0.1");
+  let received = "";
+  socket.on("data", chunk => (received += chunk));
+  socket.write(`GET / HTTP/1.1\r\nHost: localhost\r\nExpect: ${value}\r\nConnection: close\r\n\r\n`);
+  await once(socket, "close");
+  expect(received).toContain(expected);
+});
+
+it("rawPacket of 'clientError' has the method of a dispatched request as it was sent", async () => {
+  const payload = "POST / HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n\r\nzz\r\n";
+  await using server = createServer(req => req.resume());
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const errors: unknown[] = [];
+  server.on("clientError", (error: any, serverSocket) => {
+    errors.push({ code: error.code, rawPacket: String(error.rawPacket) });
+    serverSocket.end();
+  });
+  const socket = connect((server.address() as AddressInfo).port, "127.0.0.1");
+  socket.end(payload);
+  await once(socket.resume(), "close");
+  expect(errors).toEqual([{ code: "HPE_INVALID_CHUNK_SIZE", rawPacket: payload }]);
+});
+
 describe("malformed request line reaches 'connection' and 'clientError' with a writable socket", () => {
   it.each([
     ["method token followed by CRLF", "BOGUS\r\n\r\n"],
@@ -4016,6 +4051,7 @@ describe("malformed request line reaches 'connection' and 'clientError' with a w
     ["CONNECT-prefixed token followed by CRLF", "CONNECTX\r\n\r\n"],
     ["single method char followed by CRLF", "G\r\n\r\n"],
     ["single method char with full line", "G / HTTP/1.1\r\nHost: localhost\r\n\r\n"],
+    ["byte above 0x7f in the method", "G\u00c9T / HTTP/1.1\r\nHost: localhost\r\n\r\n"],
   ])("%s", async (_name, payload) => {
     const events: string[] = [];
     const { promise: errored, resolve: onErrored, reject: onErroredFail } = Promise.withResolvers<void>();
@@ -6570,6 +6606,50 @@ it("connectionListener pauses reads when queued pipelined responses back up", as
   expect(dispatched).toBe(N);
   clientSide.destroy();
   serverSide.destroy();
+});
+
+it.each([
+  "GET / HTTP/1.1\r\nHost: x\r\nProxy-Connection: close\r\n\r\n",
+  "GET / HTTP/1.0\r\nConnection: keep-alive\r\n\r\n",
+])("connectionListener answers %j with Connection: close and ends the connection", async request => {
+  const server = createServer((req, res) => res.setHeader("Content-Length", 0).end());
+  const [clientSide, serverSide] = duplexPair();
+  try {
+    server.emit("connection", serverSide);
+    clientSide.write(request);
+    expect(await text(clientSide)).toEndWith("\r\nConnection: close\r\n\r\n");
+  } finally {
+    clientSide.destroy();
+    serverSide.destroy();
+  }
+});
+
+describe.each<[string, http.RequestListener]>([
+  ["socket.write()", ({ socket }) => socket.write("HTTP/1.1 101 Switching Protocols\r\n\r\n")],
+  ["res.end()", (req, res) => res.writeHead(101, { Connection: "upgrade", Upgrade: "a" }).end()],
+])("connectionListener lets the 'request' listener switch protocols with %s", (_, switchProtocols) => {
+  it.each(["", "Transfer-Encoding: chunked\r\n", "Content-Length: 99\r\n"])("with %j", async framing => {
+    const server = createServer((req, res) => {
+      switchProtocols(req, res);
+      req.socket.on("data", data => req.socket.write(data));
+    });
+    const [clientSide, serverSide] = duplexPair();
+    try {
+      server.emit("connection", serverSide);
+      const reads = clientSide.setEncoding("latin1")[Symbol.asyncIterator]();
+      clientSide.write(`POST / HTTP/1.1\r\nHost: x\r\nConnection: upgrade\r\nUpgrade: a\r\n${framing}\r\n`);
+      expect(await reads.next()).toEqual({ value: expect.stringMatching(/^HTTP\/1.1 101 /), done: false });
+      for (const value of ["GET / HTTP/1.1\r\n", "one\r\n", "two"]) {
+        clientSide.write(value);
+        expect(await reads.next()).toEqual({ value, done: false });
+      }
+      clientSide.end();
+      expect(await reads.next()).toEqual({ value: undefined, done: true });
+    } finally {
+      clientSide.destroy();
+      serverSide.destroy();
+    }
+  });
 });
 
 // https://github.com/oven-sh/bun/issues/4733

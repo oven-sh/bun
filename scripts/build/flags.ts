@@ -15,13 +15,10 @@ import { join } from "node:path";
 import { bunExeName, linksWithLld, type Config } from "./config.ts";
 import { overridesDarwinAllocator, replacedOperatorNewSymbols } from "./deps/mimalloc.ts";
 import { quote, slash } from "./shell.ts";
-import type { DepName } from "./source.ts";
 import { loadFeatures } from "./trim/features.ts";
 import { ucrtServicingLibDir } from "./winsysroot.ts";
 
-export const safeStackDependencies: readonly DepName[] = ["brotli", "libdeflate", "libwebp", "lshpack", "zlib", "zstd"];
-
-export function usesSafeStack(c: Pick<Config, "hardened" | "x64" | "abi" | "asan">): boolean {
+function usesSafeStack(c: Pick<Config, "hardened" | "x64" | "abi" | "asan">): boolean {
   return c.hardened && c.x64 && c.abi === "gnu" && !c.asan;
 }
 
@@ -33,10 +30,6 @@ export function fuzzilliCoverageFlags(cfg: Pick<Config, "cwd" | "fuzzilli" | "fu
     "-fsanitize-coverage=trace-pc-guard",
     ...(cfg.fuzzilliCompilerOnly ? [`-fsanitize-coverage-allowlist=${list}`] : []),
   ];
-}
-
-export function safeStackFlags(c: Pick<Config, "hardened" | "x64" | "abi" | "asan">, dependency: DepName): string[] {
-  return usesSafeStack(c) && safeStackDependencies.includes(dependency) ? ["-fsanitize=safe-stack"] : [];
 }
 
 export type FlagValue = string | string[] | ((cfg: Config) => string | string[]);
@@ -79,6 +72,10 @@ export interface Flag {
 //   -march/-mcpu/-mtune. Split out for computeCpuTargetFlags().
 // ═══════════════════════════════════════════════════════════════════════════
 
+/**
+ * The same as `MARCH_FLAG` in oven-sh/WebKit's .github/scripts/lanes.mjs. They change together: on arm64 LLVM inlines
+ * no function into one with another tune CPU, so LTO would inline nothing between bun and the prebuilt.
+ */
 export const cpuTargetFlags: Flag[] = [
   {
     flag: "-mcpu=apple-m1",
@@ -86,14 +83,9 @@ export const cpuTargetFlags: Flag[] = [
     desc: "Target Apple M1 (works on all Apple Silicon)",
   },
   {
-    flag: ["-march=armv8-a+crc", "-mtune=ampere1"],
-    when: c => (c.linux || c.freebsd) && c.arm64 && c.abi !== "android" && !c.hardened,
-    desc: "ARM64 Linux/FreeBSD: ARMv8-A base + CRC, tuned for Ampere (Graviton-like)",
-  },
-  {
     flag: "-march=armv8-a+crc",
-    when: c => c.linux && c.arm64 && c.abi !== "android" && c.hardened,
-    desc: "ARM64 Linux, hardened: ARMv8-A base + CRC. No -mtune: it keeps the fortified wrappers out of line",
+    when: c => (c.linux || c.freebsd) && c.arm64 && c.abi !== "android",
+    desc: "ARM64 Linux/FreeBSD: ARMv8-A base + CRC. No -mtune: it keeps the fortified wrappers out of line",
   },
   {
     flag: ["-march=armv8-a+crc", "-mtune=cortex-a78"],
@@ -102,8 +94,7 @@ export const cpuTargetFlags: Flag[] = [
   },
   {
     // No -mtune: Windows-on-ARM hardware is Snapdragon (Oryon / Cortex-X), and
-    // generic tuning is what MSVC, Chromium and Rust ship there. (ampere1's
-    // tuning pads every function and loop to 64 bytes.)
+    // generic tuning is what MSVC, Chromium and Rust ship there.
     flag: "/clang:-march=armv8-a+crc",
     when: c => c.windows && c.arm64,
     desc: "ARM64 Windows: ARMv8-A base + CRC, generic tuning (clang-cl prefix required)",
@@ -269,6 +260,12 @@ export const globalFlags: Flag[] = [
   // ─── CPU target ───
   ...cpuTargetFlags,
   {
+    // rustc's default for the target, so without it LTO inlines no Rust into C++. Also in WebKit's `MARCH_FLAG`.
+    flag: "/clang:-moutline-atomics",
+    when: c => c.windows && c.arm64,
+    desc: "ARM64 Windows: LSE atomics where the CPU has them, as clang does by itself for the other ARM64 targets",
+  },
+  {
     // CMake auto-added these via CMAKE_OSX_DEPLOYMENT_TARGET/CMAKE_OSX_SYSROOT;
     // we must add explicitly. Without this, clang/ld64 default to the host SDK
     // version — CI builds get minos=15.0, breaking macOS 13/14 users at launch.
@@ -298,7 +295,7 @@ export const globalFlags: Flag[] = [
   {
     // cmake's Release/RelWithDebInfo build types append this to
     // CMAKE_<LANG>_FLAGS_<TYPE> automatically. Deps only see globalFlags, so
-    // it must be here — otherwise every assert() in zstd/boringssl/mimalloc/etc.
+    // it must be here — otherwise every assert() in boringssl/mimalloc/etc.
     // stays live in release. (bun's own NDEBUG in `defines` below is
     // redundant after this, but harmless.)
     flag: "-DNDEBUG",
@@ -369,7 +366,7 @@ export const globalFlags: Flag[] = [
   {
     flag: ["-g", "-gz=zstd"],
     when: c => c.unix && c.release && c.debugInfo === "full",
-    desc: "Full debug info (types and variables) where no LTO link has to carry it: local release, asan, the non-LTO CI lanes",
+    desc: "Full debug info (types and variables) where no LTO link has to carry it: asan, assertions, --lto=off",
   },
   {
     // -glldb implies -fstandalone-debug: every TU emits the definition of
@@ -628,7 +625,7 @@ export const globalFlags: Flag[] = [
   },
   {
     // Windows (cross) uses ThinLTO like darwin: clang-cl accepts -flto=thin
-    // directly (core option), the WebKit windows-amd64-lto prebuilt is
+    // directly (core option), the WebKit windows -lto prebuilts are
     // ThinLTO-summaried bitcode, and rustc's -Clinker-plugin-lto bitcode is
     // too, so lld-link runs one uniform ThinLTO graph with cross-language
     // importing. lld-link does LTO automatically when it sees bitcode
@@ -650,7 +647,7 @@ export const globalFlags: Flag[] = [
     // Unix only (not windows): on COFF, whole-program vtable opt drops
     // vtable symbols that associative COMDAT sections still name as their
     // parent and the LTO codegen aborts ("Associative COMDAT symbol
-    // '??_7...' does not exist"). The WebKit windows-amd64-lto prebuilt is
+    // '??_7...' does not exist"). The WebKit windows -lto prebuilts are
     // built without it for the same reason.
     flag: ["-fforce-emit-vtables", "-fwhole-program-vtables"],
     when: c => c.unix && c.lto,
@@ -661,8 +658,8 @@ export const globalFlags: Flag[] = [
     // Every summaried bitcode module in the link must agree on the
     // EnableSplitLTOUnit flag or lld dies with "inconsistent LTO Unit
     // splitting". -fwhole-program-vtables (above) defaults the split ON for
-    // C++ on ELF targets but it's a cxx-only flag, so the C modules (zlib,
-    // c-ares, mimalloc, boringssl's .c files, ...) would disagree. Force it
+    // C++ on ELF targets but it's a cxx-only flag, so the C modules
+    // (c-ares, mimalloc, boringssl's .c files, ...) would disagree. Force it
     // OFF everywhere instead of on: split LTO units shunt every module's
     // vtables + type metadata into a merged regular-LTO half — a serial
     // merged module, which is exactly what ThinLTO is supposed to avoid.
@@ -720,7 +717,7 @@ export const bunOnlyFlags: Flag[] = [
   {
     flag: "-DBUN_SAFE_STACK=1",
     when: c => usesSafeStack(c),
-    desc: "Hardened: every thread gets the second stack that the libraries compiled with SafeStack keep their arrays on",
+    desc: "Hardened: every thread gets the second stack that what is compiled with SafeStack keeps its arrays on",
   },
 
   // ─── Build profiling ───
@@ -755,7 +752,7 @@ export const bunOnlyFlags: Flag[] = [
   },
   // C standard: gnu17 on unix (cmake: C_STANDARD 17 with C_EXTENSIONS
   // default ON → -std=gnu17). Can't go to C23 — MSVC doesn't support it.
-  // Most .c files are usockets/llhttp which would compile fine without,
+  // Most .c files are usockets, which would compile fine without,
   // but explicit is better than compiler-default drift.
   {
     flag: "-std=gnu17",
@@ -972,6 +969,11 @@ export const defines: Flag[] = [
     flag: "U_DISABLE_RENAMING=1",
     when: c => c.darwin,
     desc: "Disable ICU symbol renaming (using system ICU)",
+  },
+  {
+    flag: "BUN_SYSTEM_ICU=1",
+    when: usesIcuOfLinuxSystem,
+    desc: "src/icu is empty, so ICU's version is not checked against it",
   },
 
   // ─── Feature toggles ───
@@ -1699,6 +1701,16 @@ export function rustLtoInLink(c: Config): boolean {
   return c.release && !c.asan && c.rustLto;
 }
 
+/** The static ICU of a local WebKit (deps/webkit.ts). */
+export function linuxIcuRoot(c: Config): string | undefined {
+  return c.linux && c.abi !== "android" ? process.env.BUN_ICU_ROOT || undefined : undefined;
+}
+
+/** The system's ICU can have any version, so bun links its code too, in place of src/icu. */
+export function usesIcuOfLinuxSystem(c: Config): boolean {
+  return c.linux && c.abi !== "android" && c.webkit === "local" && linuxIcuRoot(c) === undefined;
+}
+
 /** The link optimises bitcode: the C/C++'s (`lto`), the Rust crates', or both. */
 function linkRunsLto(c: Config): boolean {
   return c.lto || rustLtoInLink(c);
@@ -1935,7 +1947,6 @@ export function bunIncludes(cfg: Config): string[] {
     join(cwd, "src/uws_sys"),
     codegenDir,
     vendorDir,
-    join(vendorDir, "zlib"),
     // NODEJS_HEADERS_PATH comes from the nodejs dep; added separately
   ];
 
@@ -1944,12 +1955,6 @@ export function bunIncludes(cfg: Config): string[] {
   } else {
     // libuv stubs for unix (real libuv used on windows)
     includes.push(join(cwd, "src/jsc/bindings/libuv"));
-  }
-
-  // musl doesn't ship sys/queue.h (glibc-only BSDism). lshpack bundles
-  // a compat copy for this case.
-  if (cfg.linux && cfg.abi === "musl") {
-    includes.push(join(vendorDir, "lshpack/compat/queue"));
   }
 
   return includes;
@@ -1997,10 +2002,30 @@ export const fileOverrides: FileOverride[] = [
     desc: "Vendored electron/rcedit; VersionInfo ctor throws std::system_error caught in OnEnumResourceLanguage. Self-contained throw/catch — already excluded from PCH",
   },
   {
+    file: "src/jsc/bindings/highway_brotli.cpp",
+    extraFlags: ["-O2"],
+    when: c => c.debug,
+    desc: "Same as highway_json.cpp below: the kernels run for every byte that Brotli compresses.",
+  },
+  {
+    file: "src/jsc/bindings/highway_brotli.cpp",
+    // For -mcpu=apple-m1, clang lists `ccidx` on each function, and rustc does not. For all C++ at once, it would be
+    // -Wl,-mllvm,-mattr=+ccidx in the link, which makes the executable 2 MB larger.
+    extraFlags: ["-Xclang", "-target-feature", "-Xclang", "-ccidx"],
+    when: c => c.darwin && c.arm64 && c.lto && rustLtoInLink(c),
+    desc: "LTO inlines a function only into one that has all of its CPU features, and these are called from Rust loops.",
+  },
+  {
     file: "src/jsc/bindings/highway_byte_set.cpp",
     extraFlags: ["-O2"],
     when: c => c.debug,
     desc: "Same as highway_json.cpp below: the kernel runs over every line of an HTTP response head.",
+  },
+  {
+    file: "src/jsc/bindings/highway_checksums.cpp",
+    extraFlags: ["-O2"],
+    when: c => c.debug,
+    desc: "Same as highway_json.cpp below: the kernels run over every byte of what is in a gzip or zlib stream.",
   },
   {
     file: "src/jsc/bindings/highway_jpeg.cpp",
@@ -2015,10 +2040,46 @@ export const fileOverrides: FileOverride[] = [
     desc: "Same as highway_json.cpp below: the kernels run over every byte of a PNG image.",
   },
   {
+    file: "src/jsc/bindings/highway_webp_decoder.cpp",
+    extraFlags: ["-O2"],
+    when: c => c.debug,
+    desc: "Same as highway_json.cpp below: the kernels run over every pixel of a WebP image.",
+  },
+  {
+    file: "src/jsc/bindings/highway_webp_encoder.cpp",
+    extraFlags: ["-O2"],
+    when: c => c.debug,
+    desc: "Same as highway_json.cpp below: the kernels run over every pixel of a WebP image.",
+  },
+  {
+    file: "src/jsc/bindings/highway_zlib.cpp",
+    extraFlags: ["-O2"],
+    when: c => c.debug,
+    desc: "Same as highway_json.cpp below: the kernels run in the loops of a DEFLATE stream.",
+  },
+  {
     file: "src/jsc/bindings/highway_xml.cpp",
     extraFlags: ["-O2"],
     when: c => c.debug,
     desc: "Same as highway_json.cpp below: the XML structural-index kernel must be optimized even in debug builds.",
+  },
+  {
+    file: "src/jsc/bindings/highway_zstd.cpp",
+    extraFlags: ["-O2"],
+    when: c => c.debug,
+    desc: "Same as highway_json.cpp below: the kernels run over every literal that zstd compresses.",
+  },
+  {
+    file: "src/jsc/bindings/highway_zstd.cpp",
+    extraFlags: ["-fsanitize=safe-stack"],
+    when: usesSafeStack,
+    desc: "It sorts input into arrays on the stack, and never calls back into JavaScript.",
+  },
+  {
+    file: "src/jsc/bindings/highway_zstd.cpp",
+    extraFlags: ["-fstack-clash-protection"],
+    when: c => c.x64 && (c.linux || c.freebsd),
+    desc: "A frame of several pages gets probed, like those of the Rust code that calls it.",
   },
   {
     file: "src/jsc/bindings/highway_json.cpp",
@@ -2156,10 +2217,7 @@ export function computeCpuTargetFlags(cfg: Config): string[] {
  */
 export function extraFlagsFor(cfg: Config, srcRelPath: string): string[] {
   const key = srcRelPath.replaceAll("\\", "/");
-  for (const o of fileOverrides) {
-    if (o.file !== key) continue;
-    if (o.when && !o.when(cfg)) continue;
-    return resolveFlagValue(o.extraFlags, cfg);
-  }
-  return [];
+  return fileOverrides
+    .filter(o => o.file === key && (!o.when || o.when(cfg)))
+    .flatMap(o => resolveFlagValue(o.extraFlags, cfg));
 }

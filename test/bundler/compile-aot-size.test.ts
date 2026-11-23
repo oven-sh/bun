@@ -48,7 +48,7 @@ const findToolStrings = (file: Buffer) =>
   allToolStrings.filter(each => file.includes(each.slice(each.indexOf(": ") + 2)));
 
 // Keys that ICU's date, number and currency formatters look up in its data.
-const formatterStrings = ["/DateTimePatterns%atTime", "CurrencyPlurals", "currencySpacing", "surroundingMatch"];
+const formatterStrings = ["dayPeriod/format/abbreviated", "CurrencyPlurals", "currencySpacing", "CurrencyUnitPatterns"];
 
 // What the engine calls the doors through which the host lays, runs and ends a mock, where it counts what they do: MockDoor in AOTModules.cpp.
 // Only `bun:test` lays a mock. A door that a program without it keeps is reached by a way that the feature Test does not own, and all that stands behind the door with it:
@@ -96,7 +96,8 @@ const mostMappedBytes: Record<string, number> = { "": 70_150_000, "--trim": 27_3
 // And with oven-sh/WebKit#1036, from 26,919,547 and 1%.
 // And with oven-sh/WebKit#1040, from 29,515,694, with the room it had.
 // And behind oven-sh/bun#48714, from 30,813,843.
-const mostBytesOfCompiler = 30_900_000;
+// And with oven-sh/WebKit#1083, from 30,906,666, against 30,888,250 with the engine before it.
+const mostBytesOfCompiler = 30_920_000;
 
 const importsItsArguments = `
   import { join } from "node:path";

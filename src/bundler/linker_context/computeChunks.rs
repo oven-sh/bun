@@ -5,7 +5,7 @@ use std::io::Write as _;
 use bun_alloc::Arena; // bumpalo::Bump re-export
 use bun_collections::{ArrayHashMap, AutoBitSet, VecExt, index_sort};
 use bun_core::strings;
-use bun_paths::resolve_path;
+use bun_paths::Path;
 use bun_sourcemap::SourceMapPieces;
 use bun_wyhash::{self, Wyhash};
 
@@ -594,12 +594,12 @@ pub(crate) fn compute_chunks<'a>(
             continue;
         }
 
-        if chunk.entry_point.is_entry_point()
+        let mirrors_source = chunk.entry_point.is_entry_point()
             && (matches!(chunk.content, chunk::Content::Html)
                 || (kinds[chunk.entry_point.source_index() as usize]
                     == crate::EntryPoint::Kind::UserSpecified
-                    && !chunk.flags.contains(chunk::Flags::HAS_HTML_CHUNK)))
-        {
+                    && !chunk.flags.contains(chunk::Flags::HAS_HTML_CHUNK)));
+        if mirrors_source {
             // Use fileWithTarget template if there are HTML imports and user hasn't manually set naming
             if has_server_html_imports && bv2.transpiler().options.entry_naming.is_empty() {
                 chunk.template = PathTemplate::FILE_WITH_TARGET.into();
@@ -638,6 +638,8 @@ pub(crate) fn compute_chunks<'a>(
                 b"."
             };
             let mut real_path_buf = bun_paths::path_buffer_pool::get();
+            let in_memory;
+            let mut is_real = true;
             let dir: &[u8] = 'dir: {
                 let Ok(dir_file) = bun_sys::File::openat(
                     bun_sys::Fd::cwd(),
@@ -645,9 +647,8 @@ pub(crate) fn compute_chunks<'a>(
                     bun_sys::O::PATH | bun_sys::O::DIRECTORY,
                     0,
                 ) else {
-                    let Some(normalized) = resolve_path::normalize_buf_checked::<
-                        bun_paths::platform::Auto,
-                    >(dir_path, &mut real_path_buf.0) else {
+                    // An entry point that is only in memory. `/a/b.js` is written to `a/b.js`.
+                    let Ok(normalized) = Path::resolve(&[b"/", dir_path]).check_len() else {
                         log.add_error_fmt(
                             None,
                             bun_ast::Loc::EMPTY,
@@ -658,7 +659,10 @@ pub(crate) fn compute_chunks<'a>(
                         );
                         return Err(crate::Error::BuildFailed);
                     };
-                    break 'dir &*normalized;
+                    in_memory = normalized;
+                    is_real = false;
+                    let has_volume = !bun_paths::volume(&in_memory).is_empty();
+                    break 'dir &in_memory[usize::from(!has_volume)..];
                 };
 
                 match dir_file.get_path(&mut real_path_buf) {
@@ -679,7 +683,18 @@ pub(crate) fn compute_chunks<'a>(
             };
 
             let root_dir = &this.resolver.opts.root_dir;
-            chunk.template.placeholder.dir = resolve_path::relative_alloc(root_dir, dir)?;
+            chunk.template.placeholder.dir = Path::relative(root_dir, dir).as_bytes().into();
+            // In an executable `node:fs` finds `D:/a/b.js`, and not `../a/b.js`.
+            if !is_real
+                && bun_paths::climbs_out(&chunk.template.placeholder.dir)
+                && !this.options.compile_mode.is_executable()
+            {
+                chunk.template.resolve_dir(root_dir);
+            }
+        }
+
+        if !mirrors_source {
+            chunk.template.placeholder.replace_backslashes();
         }
     }
 

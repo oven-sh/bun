@@ -15,8 +15,7 @@ use bun_collections::VecExt;
 use bun_core::strings;
 use bun_core::{self, FeatureFlags, declare_scope, scoped_log};
 use bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext;
-use bun_event_loop::ConcurrentTask::ConcurrentTask;
-use bun_event_loop::{BoxedTask, Posted};
+use bun_event_loop::BoxedTask;
 use bun_sys::Fd;
 use bun_threading::thread_pool as ThreadPoolLib;
 
@@ -39,7 +38,6 @@ use crate::html_scanner::scan_import_records;
 use crate::options::{self, Loader};
 use crate::transpiler::{MacroJSCtx, Transpiler};
 use crate::{ContentHasher, UseDirective, perf, target_from_hashbang};
-use bun_resolver::cache::SourceFd;
 use bun_resolver::fs::{ByteOrderMark, PathResolverExt as _};
 use bun_resolver::{self as _resolver, Resolver};
 
@@ -121,7 +119,7 @@ pub struct Result<'a> {
     pub(crate) task: AnyTaskWithExtraContext,
     pub(crate) ctx: bun_ptr::ParentRef<BundleV2<'static>, bun_ptr::Mut>,
     pub(crate) value: ResultValue<'a>,
-    pub(crate) file_to_watch: Option<SourceFd>,
+    pub(crate) file_to_watch: Option<bun_sys::MaybeOwnedFile>,
     /// This is used for native onBeforeParsePlugins to store
     /// a function pointer and context pointer to free the
     /// returned source code by the plugin. After `value`, which may borrow it.
@@ -813,9 +811,14 @@ pub mod parse_worker {
                 let module_type = opts.module_type;
                 // Borrowed here: `topts` is a `&mut` that ends earlier borrows of the options.
                 opts.macro_remap = Some(&topts.macro_remap);
-                return if let Some(res) =
-                    (crate::cache::JavaScript {}).parse(bump, opts, &topts.define, log, source)?
-                {
+                return if let Some(res) = (crate::cache::JavaScript {}).parse(
+                    bump,
+                    opts,
+                    &topts.define,
+                    log,
+                    source,
+                    None,
+                )? {
                     // `Cached`/`AlreadyBundled` are runtime-loader
                     // states that never reach the bundler's `getAST`, so unwrap.
                     match res {
@@ -1599,7 +1602,7 @@ pub mod parse_worker {
         // the parent via offset_of; a `&mut` here would (a) shrink provenance to
         // the inner field and (b) alias with any `&`/`&mut` to the wrapper.
         result: *mut OnBeforeParseResult,
-        original_file: Option<SourceFd>,
+        original_file: Option<bun_sys::MaybeOwnedFile>,
     }
 
     #[repr(C)]
@@ -2562,7 +2565,9 @@ pub mod parse_worker {
         debug_assert!(this.source_index.is_valid()); // forgot to set source_index
 
         let mut file_to_watch = match this.contents_or_fd {
-            ContentsOrFd::Fd { file, .. } => file.unwrap_valid().map(SourceFd::Borrowed),
+            ContentsOrFd::Fd { file, .. } => {
+                file.unwrap_valid().map(bun_sys::MaybeOwnedFile::Borrowed)
+            }
             ContentsOrFd::Contents(_) => None,
         };
 
@@ -2656,15 +2661,11 @@ pub mod parse_worker {
         let ctx = result.ctx;
         match ctx.any_loop() {
             bun_event_loop::AnyEventLoop::Js { .. } => {
-                let ct = ConcurrentTask::create_boxed(result);
                 let poster = ctx
                     .js_poster
                     .as_ref()
                     .expect("JS-owned bundle has a poster");
-                if let Posted::Refused(ct) = poster.post(ct) {
-                    // SAFETY: the task made above.
-                    unsafe { ct.task.into_boxed::<Result>() }.release_unrun();
-                }
+                poster.post_boxed(result);
             }
             bun_event_loop::AnyEventLoop::Mini(mini) => {
                 // SAFETY: `task` is the field at that offset; `on_complete_mini` takes the box back.

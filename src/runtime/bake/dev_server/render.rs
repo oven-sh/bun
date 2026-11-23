@@ -41,10 +41,10 @@ impl DevServer {
                     )
                     .get()
                         as usize];
-                    let mut buf = paths::path_buffer_pool::get();
+                    let mut buf = paths::Path::new();
                     let s = bun_string_jsc::create_utf8_for_js(
                         global,
-                        relative_path(&self.graphs.root, &mut *buf, name),
+                        relative_path(&self.graphs.root, &mut buf, name),
                     )?;
                     router_type.server_file_string = jsc::StrongOptional::create(s, global);
                     break 'str s;
@@ -67,10 +67,10 @@ impl DevServer {
                     let arr = JSValue::create_empty_array(global, n)?;
                     route = self.router.route_ptr(route_index);
                     {
-                        let mut buf = paths::path_buffer_pool::get();
+                        let mut buf = paths::Path::new();
                         let route_name = relative_path(
                             &self.graphs.root,
-                            &mut *buf,
+                            &mut buf,
                             &keys[from_opaque_file_id::<{ bake::Side::Server }>(
                                 route.file_page.unwrap(),
                             )
@@ -85,10 +85,10 @@ impl DevServer {
                     n = 1;
                     loop {
                         if let Some(layout) = route.file_layout {
-                            let mut buf = paths::path_buffer_pool::get();
+                            let mut buf = paths::Path::new();
                             let layout_name = relative_path(
                                 &self.graphs.root,
-                                &mut *buf,
+                                &mut buf,
                                 &keys[from_opaque_file_id::<{ bake::Side::Server }>(layout).get()
                                     as usize],
                             );
@@ -210,8 +210,8 @@ impl DevServer {
         let route_bundle = &mut self.route_bundles[route_bundle_index.get() as usize];
         debug_assert!(matches!(route_bundle.data, route_bundle::Data::Html(_)));
 
-        let blob: bun_ptr::ThisPtr<StaticRoute> = match &route_bundle.data.html().cached_response {
-            Some(blob) => blob.this_ptr(),
+        let blob = match &route_bundle.data.html().cached_response {
+            Some(blob) => blob.clone(),
             None => {
                 let payload = Self::generate_html_payload(
                     &self.graph_safety_lock,
@@ -229,12 +229,11 @@ impl DevServer {
                         ..Default::default()
                     },
                 );
-                let blob = response.this_ptr();
-                route_bundle.data.html_mut().cached_response = Some(response);
-                blob
+                route_bundle.data.html_mut().cached_response = Some(response.clone());
+                response
             }
         };
-        StaticRoute::on_with_method(blob, method, resp);
+        blob.on_with_method(method, resp);
     }
 }
 
@@ -434,11 +433,11 @@ impl DevServer {
                 })),
             });
             // `script_requests` keeps `deferred` alive until the response removes this handler.
-            resp.on_aborted_this(
-                |deferred: bun_ptr::ThisPtr<DeferredScriptRequest>, _: AnyResponse| {
+            resp.on_aborted_ref(
+                |deferred: bun_ptr::RefPtr<DeferredScriptRequest>, _: AnyResponse| {
                     deferred.response.set(None)
                 },
-                deferred.this_ptr(),
+                &deferred,
             );
             current_bundle.script_requests.push(deferred);
             return;
@@ -457,8 +456,8 @@ impl DevServer {
             return;
         }
         let source_map_id = route_bundle.source_map_id();
-        let client_bundle: bun_ptr::ThisPtr<StaticRoute> = match &route_bundle.client_bundle {
-            Some(client_bundle) => client_bundle.this_ptr(),
+        let client_bundle = match &route_bundle.client_bundle {
+            Some(client_bundle) => client_bundle.clone(),
             None => {
                 let root = match &route_bundle.data {
                     route_bundle::Data::Framework(fw) => {
@@ -479,13 +478,13 @@ impl DevServer {
                         ..Default::default()
                     },
                 );
-                let client_bundle = bundle.this_ptr();
-                self.route_bundles[bundle_index.get() as usize].client_bundle = Some(bundle);
-                client_bundle
+                self.route_bundles[bundle_index.get() as usize].client_bundle =
+                    Some(bundle.clone());
+                bundle
             }
         };
         self.source_maps.add_weak_ref(source_map_id);
-        StaticRoute::on_with_method(client_bundle, method, resp);
+        client_bundle.on_with_method(method, resp);
     }
 }
 

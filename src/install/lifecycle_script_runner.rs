@@ -17,8 +17,7 @@ use bun_core::{CStrList, CStrRef, CStringList, ZStr};
 #[cfg(unix)]
 use bun_spawn::SpawnResultExt as _;
 use bun_spawn::{
-    Process, ProcessExit, ProcessExitKind, ProcessHandle, Rusage, SpawnOptions, SpawnProcessResult,
-    Status,
+    ProcessExit, ProcessExitKind, ProcessHandle, SpawnOptions, SpawnProcessResult, Status,
 };
 #[cfg(unix)]
 use bun_sys::Fd;
@@ -112,9 +111,8 @@ impl YarnCommands {
 pub fn strip_bin_dirs(path: &[u8]) -> Vec<u8> {
     let mut result = Vec::with_capacity(path.len());
     for entry in bun_core::strings::split(path, &[bun_paths::DELIMITER]) {
-        let dir = bun_core::strings::without_trailing_slash(entry);
-        let is_bin_dir = bun_paths::basename(dir) == b".bin"
-            && bun_paths::dirname(dir)
+        let is_bin_dir = bun_paths::basename(entry) == b".bin"
+            && bun_paths::dirname(entry)
                 .is_some_and(|parent| bun_paths::basename(parent) == b"node_modules");
         if !is_bin_dir {
             if !result.is_empty() {
@@ -436,30 +434,17 @@ impl<'a> InstallCtx<'a> {
     }
 }
 
-// `io_heap::Intrusive` takes the comparator via `HeapContext::less` on the
-// `Context` type, so `sort_by_started_at` is provided via a trait impl on a
-// ZST `StartedAtCtx`.
-#[derive(Default, Clone, Copy)]
-pub struct StartedAtCtx;
-pub type List<'a> = io_heap::Intrusive<LifecycleScriptSubprocess<'a>, StartedAtCtx>;
+pub type List<'a> = io_heap::Intrusive<LifecycleScriptSubprocess<'a>>;
 
 impl<'a> io_heap::HeapNode for LifecycleScriptSubprocess<'a> {
     #[inline]
     fn heap(&self) -> &io_heap::IntrusiveField<Self> {
         &self.heap
     }
-}
 
-impl<'a> io_heap::HeapContext<LifecycleScriptSubprocess<'a>> for StartedAtCtx {
     #[inline]
-    unsafe fn less(
-        &self,
-        a: *mut LifecycleScriptSubprocess<'a>,
-        b: *mut LifecycleScriptSubprocess<'a>,
-    ) -> bool {
-        // SAFETY: `a`/`b` are live heap nodes owned by the intrusive heap; the
-        // heap only calls `less` on nodes it has been handed via `insert`.
-        unsafe { (*a).started_at < (*b).started_at }
+    fn less(&self, other: &Self) -> bool {
+        self.started_at < other.started_at
     }
 }
 
@@ -491,7 +476,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
     }
 
     fn event_loop(&self) -> bun_event_loop::EventLoopHandle {
-        bun_event_loop::EventLoopHandle::from_any(&self.manager().event_loop)
+        self.manager().event_loop
     }
 
     /// `true` if the reader has ended.
@@ -704,17 +689,17 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             (Kind::Stderr, spawned.stderr.take()),
         ] {
             #[cfg(unix)]
-            if let Some(fd) = stdio.map(bun_sys::File::into_raw) {
+            if let Some(file) = stdio {
                 if spawned.memfds[kind as usize + 1] {
-                    self.reader(kind).start_memfd(fd);
+                    self.reader(kind).start_memfd(file);
                     continue;
                 }
-                let _ = bun_sys::set_nonblocking(fd);
+                let _ = bun_sys::set_nonblocking(file.fd());
                 self.remaining_fds += 1;
 
-                Self::reset_output_flags(self.reader(kind), fd);
+                Self::reset_output_flags(self.reader(kind), file.fd());
                 let event_loop = self.event_loop().as_event_loop_ctx();
-                match self.reader(kind).start(event_loop, fd, true) {
+                match self.reader(kind).start(event_loop, file.into(), true) {
                     Ok(result) => _ = self.note_read_result(result),
                     Err(err) => self.exit_with_error(err.into()),
                 }
@@ -747,19 +732,12 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             let event_loop = (*this).event_loop();
             let process = (*this)
                 .process
-                .insert(spawned.to_process_handle(event_loop))
-                .this_ptr();
+                .insert(spawned.to_process_handle(event_loop));
             process.set_exit_handler(ProcessExit::new(ProcessExitKind::LifecycleScript, this));
 
-            if let Err(err) = Process::watch_or_reap(process) {
-                if !process.has_exited() {
-                    // SAFETY: all-zero is a valid Rusage (#[repr(C)] POD).
-                    Process::on_exit(
-                        process,
-                        Status::Err(err),
-                        &bun_core::ffi::zeroed::<Rusage>(),
-                    );
-                }
+            let mut rusage = bun_core::ffi::zeroed();
+            if let Some(exit) = process.watch_or_exit(&mut rusage) {
+                exit.dispatch(&rusage);
             }
         }
     }

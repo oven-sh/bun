@@ -70,9 +70,9 @@ impl DevServer {
             let Some(page) = self.router.route_ptr(*route_index).file_page else {
                 continue;
             };
-            let mut buf = paths::path_buffer_pool::get();
+            let mut buf = paths::Path::new();
             let rel_path = self.relative_path(
-                &mut *buf,
+                &mut buf,
                 &keys[from_opaque_file_id::<{ bake::Side::Server }>(page).get() as usize],
             );
             report_hidden_page(route_path, rel_path);
@@ -144,12 +144,12 @@ impl router::InsertionHandler for Graphs {
             (ty.collision_noun(),),
         );
         bun_core::pretty_errorln!("  - <blue>{}<r>", bstr::BStr::new(rel_path));
-        let mut buf = paths::path_buffer_pool::get();
+        let mut buf = paths::Path::new();
         bun_core::pretty_errorln!(
             "  - <blue>{}<r>",
             bstr::BStr::new(relative_path(
                 &self.root,
-                &mut *buf,
+                &mut buf,
                 &self.server.bundled_files.keys()
                     [from_opaque_file_id::<{ bake::Side::Server }>(other_id).get() as usize]
             ))
@@ -181,10 +181,9 @@ pub(super) fn from_opaque_file_id<const SIDE: bake::Side>(
 
 impl DevServer {
     /// Returns posix style path, suitible for URLs and reproducible hashes.
-    /// The caller must provide a PathBuffer from the pool.
     pub(crate) fn relative_path<'a>(
         &self,
-        relative_path_buf: &'a mut PathBuffer,
+        relative_path_buf: &'a mut paths::Path,
         path: &'a [u8],
     ) -> &'a [u8] {
         relative_path(&self.graphs.root, relative_path_buf, path)
@@ -194,7 +193,7 @@ impl DevServer {
 /// `DevServer::relative_path`, given `Graphs::root`.
 pub(super) fn relative_path<'a>(
     root: &[u8],
-    relative_path_buf: &'a mut PathBuffer,
+    relative_path_buf: &'a mut paths::Path,
     path: &'a [u8],
 ) -> &'a [u8] {
     if !paths::is_absolute(path) {
@@ -205,19 +204,6 @@ pub(super) fn relative_path<'a>(
         return &path[root.len() + 1..];
     }
 
-    if path.len() + root.len() * 2 >= paths::MAX_PATH_BYTES {
-        return path;
-    }
-
-    // `relative_platform_buf` with ALWAYS_COPY=true writes into
-    // `relative_path_buf[..len]` (same invariant `relative_buf_z` relies
-    // on); capture the length, drop the shared borrow, then re-slice
-    // mutably to convert separators in place.
-    let rel_len = bun_paths::resolve_path::relative_platform_buf::<
-        bun_paths::resolve_path::platform::Auto,
-        true,
-    >(&mut relative_path_buf[..], root, path)
-    .len();
-    bun_paths::resolve_path::platform_to_posix_in_place::<u8>(&mut relative_path_buf[..rel_len]);
-    &relative_path_buf[..rel_len]
+    *relative_path_buf = paths::Path::relative(root, path).into_portable();
+    relative_path_buf
 }

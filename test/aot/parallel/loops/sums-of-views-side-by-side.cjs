@@ -1,140 +1,22 @@
-// Nests that add up products of elements of views: the sums of several columns are computed side by side. Every number of columns and terms, NaN, infinities, stores among what is read, positions that wrap around or leave the view.
 // STATISTIC: ViewSumNests >= 3
-function compiled(global, buffer) {
-  "use asm";
-  var singles = new global.Float32Array(buffer);
-  function multiply(columns, terms, into) {
-    columns = columns | 0;
-    terms = terms | 0;
-    into = into | 0;
-    var row = 0, column = 0, term = 0, at = 0, sum = 0.0;
-    row = 1;
-    do {
-      column = 1;
-      do {
-        at = into + (row * 164 | 0) + (column << 2) | 0;
-        singles[at >> 2] = 0.0;
-        sum = 0.0;
-        term = 1;
-        do {
-          sum = sum + +singles[16 + (row * 164 | 0) + (term << 2) >> 2] * +singles[6744 + (term * 164 | 0) + (column << 2) >> 2];
-          term = term + 1 | 0;
-        } while ((term | 0) != (terms | 0));
-        singles[at >> 2] = sum;
-        column = column + 1 | 0;
-      } while ((column | 0) != (columns | 0));
-      row = row + 1 | 0;
-    } while ((row | 0) != 4);
-  }
-  // Positions wrap around, and the steps of the columns are known at run time.
-  function correlate(columns, terms, from, stride, scale) {
-    columns = columns | 0;
-    terms = terms | 0;
-    from = from | 0;
-    stride = stride | 0;
-    scale = +scale;
-    var column = 0, term = 0, first = 0, sum = 0.0, other = 0.0;
-    do {
-      sum = scale;
-      other = 0.0;
-      term = 0;
-      do {
-        sum = sum - +singles[(from + (column * stride | 0) | 0) + (term << 2) >> 2] * scale;
-        other = other + (+singles[term << 2 >> 2] + +singles[(column << 2) + (term << 3) >> 2]);
-        term = term + 1 | 0;
-      } while ((term | 0) < (terms | 0));
-      singles[20000 + (column << 2) >> 2] = sum;
-      singles[24000 + (column << 3) >> 2] = other;
-      column = column + 1 | 0;
-    } while ((column | 0) < (columns | 0));
-  }
-  return { multiply: multiply, correlate: correlate };
-}
-// The sum enters with a constant; the first store is replaced; what is stored is computed of the sum and of what is there.
-function doubles(global, buffer) {
-  "use asm";
-  var numbers = new global.Float64Array(buffer);
-  function smooth(columns, terms, into) {
-    columns = columns | 0;
-    terms = terms | 0;
-    into = into | 0;
-    var column = 0, term = 0, sum = 0.0;
-    while ((column | 0) < (columns | 0)) {
-      sum = 0.5;
-      term = 0;
-      while ((term | 0) < (terms | 0)) {
-        sum = sum + +numbers[column + term << 3 >> 3] / +numbers[300 + term << 3 >> 3];
-        term = term + 1 | 0;
-      }
-      numbers[into + (column << 3) >> 3] = sum * 0.25 + +numbers[into + (column << 3) >> 3];
-      column = column + 1 | 0;
-    }
-  }
-  return { smooth: smooth };
-}
-function product(a, b, c, n) {
-  for (let row = 0; row < n; row++) {
-    for (let column = 0; column < n; column++) {
-      let sum = 0;
-      for (let term = 0; term < n; term++) sum += a[row * n + term] * b[term * n + column];
-      c[row * n + column] = sum;
-    }
-  }
-}
-let seed = 1;
-function next() {
-  seed = (seed * 1103515245 + 12345) & 0x7fffffff;
-  return seed;
-}
-function fill(view, values) {
-  for (let index = 0; index < view.length; index++) {
-    const random = next();
-    view[index] = random % 7 ? (random % 2000 - 1000) / 64 : values[(random >> 8) % values.length];
-  }
-}
-// Every NaN counts as one.
-function hash(view) {
-  let result = 7;
-  for (let index = 0; index < view.length; index++) {
-    const word = view[index];
-    result = Math.imul(result ^ ((word & 0x7fffffff) > 0x7f800000 ? 1 : word), 16777619) >>> 0;
-  }
-  return result;
-}
-const buffer = new ArrayBuffer(32768), words = new Uint32Array(buffer);
-const singles = new Float32Array(buffer), numbers = new Float64Array(buffer);
-const { multiply, correlate } = compiled({ Float32Array: Float32Array }, buffer);
-const { smooth } = doubles({ Float64Array: Float64Array }, buffer);
-const contents = [[0.1, -3], [0, -0], [1e30, -1e30, 1e-30], [Infinity, 2], [NaN, 0.5]];
-for (const values of contents) {
-  const lines = [];
-  for (let columns = 2; columns < 24; columns++) {
-    fill(singles, values);
-    multiply(columns, 2 + columns, 13472);
-    lines.push(hash(words));
-  }
-  fill(singles, values);
-  for (const into of [13472, 16, 180, 6744, 7000, -800, 40000, 2147483600]) {
-    multiply(13, 12, into);
-    lines.push(hash(words));
-    if (hash(words) % 2) fill(singles, values);
-  }
-  for (const [columns, terms, from, stride] of [[9, 9, 0, 4], [12, 8, 400, 164], [17, 20, 4000, -4], [10, 30, 2147483000, 4], [10, 30, 0, 1073741824], [8, 9, 19960, 8], [8, 9, 100, 2], [30, 16, 100, 0]]) {
-    fill(singles, values);
-    correlate(columns, terms, from, stride, 0.75);
-    lines.push(hash(words));
-  }
-  for (const [columns, terms, into] of [[8, 8, 8000], [33, 12, 8000], [20, 8, 800], [20, 8, 80], [12, 4000, 16000], [5, 9, 32760], [9, 9, 2360]]) {
-    fill(numbers, values);
-    smooth(columns, terms, into);
-    lines.push(hash(words));
-  }
-  for (const [first, second] of [[0, 4000], [4000, 4000], [300, 600], [0, 0]]) {
-    const a = new Float64Array(buffer, first * 2, 529), b = new Float64Array(buffer, second * 2, 529), c = new Float64Array(buffer, 16000, 529);
-    fill(numbers, values);
-    product(a, b, c, 23);
-    product(b, c, a, 23);
-    lines.push(hash(words));
-  }
-  console.log(lines.join(" "));
-}
+"use strict";
+// Nests that add up products of elements of views: the sums of several columns are made side by side. Every number of columns and terms, NaN, infinities, stores among what is read, places that wrap around or leave the view.
+const one = JSON.parse("1");
+function product(a, b, out, rows, terms, columns) { for (let i = 0; i < rows; i++) for (let j = 0; j < columns; j++) { let sum = 0; for (let k = 0; k < terms; k++) sum += a[i * terms + k] * b[k * columns + j]; out[i * columns + j] = sum; } return out; }
+function weighted(a, w, out, terms, columns) { for (let j = 0; j < columns; j++) { let sum = 0; for (let k = 0; k < terms; k++) sum += a[k * columns + j] * w[k]; out[j] = sum; } return out; }
+function folded(x, h, out, n, terms) { for (let i = 0; i < n; i++) { let sum = 0; for (let k = 0; k < terms; k++) sum += x[i + k] * h[k]; out[i] = sum; } return out; }
+function added(a, b, out, rows, terms, columns) { for (let i = 0; i < rows; i++) for (let j = 0; j < columns; j++) { let sum = out[i * columns + j]; for (let k = 0; k < terms; k++) sum += a[i * terms + k] * b[k * columns + j]; out[i * columns + j] = sum; } return out; }
+function wrapped(x, h, out, n, terms) { for (let i = 0; i < n; i++) { let sum = 0; for (let k = 0; k < terms; k++) sum += x[(i + k) % n] * h[k]; out[i] = sum; } return out; }
+const filled = (Kind, n, f) => Kind.from({ length: n }, (_, i) => f(i));
+const told = view => Array.from(view, x => Object.is(x, -0) ? "-0" : String(x)).join();
+const plain = i => i % 7 - 3 + i % 3 * .5;
+for (let turn = 0; turn < 20; turn++) { product(filled(Float64Array, 36, plain), filled(Float64Array, 36, plain), new Float64Array(36), 6, 6, 6); weighted(filled(Float64Array, 64, plain), filled(Float64Array, 8, plain), new Float64Array(8), 8, 8); folded(filled(Float64Array, 40, plain), filled(Float64Array, 8, plain), new Float64Array(32), 32, 8); added(filled(Float64Array, 36, plain), filled(Float64Array, 36, plain), new Float64Array(36), 6, 6, 6); wrapped(filled(Float64Array, 32, plain), filled(Float64Array, 8, plain), new Float64Array(32), 32, 8); }
+let line = 0;
+for (let columns = 1; columns < 11; columns++) for (const terms of [0, 1, 2, 3, 5, 8]) { const a = filled(Float64Array, 3 * terms, plain), b = filled(Float64Array, terms * columns, i => plain(i + 1)); console.log(++line, told(product(a, b, new Float64Array(3 * columns), 3, terms, columns)), told(weighted(b, a, new Float64Array(columns), terms, columns)), told(added(a, b, new Float64Array(3 * columns).fill(.25), 3, terms, columns))); }
+for (let terms = 0; terms < 7; terms++) console.log(terms, told(folded(filled(Float64Array, 20, plain), filled(Float64Array, terms, plain), new Float64Array(20), 20, terms)), told(wrapped(filled(Float64Array, 9, plain), filled(Float64Array, terms, plain), new Float64Array(9), 9, terms)));
+for (const odd of [NaN, Infinity, -Infinity, -0, 1e308, 5e-324]) { const a = filled(Float64Array, 16, i => i === 5 ? odd : plain(i)), b = filled(Float64Array, 16, i => i === 6 ? odd : plain(i + 2)); console.log(String(odd), told(product(a, b, new Float64Array(16), 4, 4, 4)), told(folded(a, b, new Float64Array(8), 8, 4)), told(weighted(a, b, new Float64Array(4), 4, 4))); }
+for (const Kind of [Float32Array, Int32Array, Uint8Array, Int16Array, Float64Array]) console.log(Kind.name, told(product(filled(Kind, 16, plain), filled(Kind, 16, i => i * 3), new Kind(16), 4, 4, 4)), told(product(filled(Float64Array, 16, plain), filled(Kind, 16, i => i * 3), new Float32Array(16), 4, 4, 4)));
+// What is stored lies among what is read, and places leave the view.
+const all = filled(Float64Array, 64, plain); console.log(told(product(all.subarray(0, 16), all.subarray(8, 24), all.subarray(4, 20), 4, 4, 4)), told(all)); console.log(told(folded(all, all.subarray(0, 4), all.subarray(1), 30, 4)));
+console.log(told(product(filled(Float64Array, 10, plain), filled(Float64Array, 16, plain), new Float64Array(10), 4, 4, 4)), told(weighted(filled(Float64Array, 5, plain), filled(Float64Array, 3, plain), new Float64Array(6), 4, 4)), told(folded(filled(Float64Array, 6, plain), filled(Float64Array, 4, plain), new Float64Array(12), 12, 4)));
+console.log(told(product(filled(Float64Array, 16, plain), filled(Float64Array, 16, plain), new Float64Array(16), 4 * one, "4", 4)), told(weighted([1, 2, 3, 4], [5, 6], new Float64Array(2), 2, 2)), product(filled(Float64Array, 4, plain), filled(Float64Array, 4, plain), [], 2, 2, 2).join());

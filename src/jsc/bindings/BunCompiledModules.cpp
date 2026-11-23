@@ -735,12 +735,12 @@ static std::optional<AOT::ModuleID> evaluatedOriginalKeyModule(Zig::GlobalObject
     if (!isBunTest || !key.endsWith("?actual"_s))
         return std::nullopt;
     auto module = findModuleForPath(key.left(key.length() - "?actual"_s.length()));
-    if (!module || !((AOT::isUnderActualKey(globalObject, *module) && (AOT::evaluatedBy(globalObject, *module) != AOT::LoadedBy::EarlierTestFile || key.contains(makeString(PLATFORM_SEP, "node_modules"_s, PLATFORM_SEP)))) || (ranDuringWaitingMock(globalObject, *module) && !AOT::isRetainedByInFlightLoads(globalObject, *module))) || AOT::isEvicted(globalObject, *module) || AOT::wasReleasedByLoader(globalObject, *module) || AOT::isOriginalEvicted(globalObject, *module) || AOT::mockedModuleEvaluationError(globalObject, *module))
+    if (!module || !((AOT::isUnderActualKey(globalObject, *module) && !hasMockOverFileOfPreload(globalObject, key.left(key.length() - "?actual"_s.length())) && (AOT::evaluatedBy(globalObject, *module) != AOT::LoadedBy::EarlierTestFile || key.contains(makeString(PLATFORM_SEP, "node_modules"_s, PLATFORM_SEP)))) || (ranDuringWaitingMock(globalObject, *module) && !AOT::isRetainedByInFlightLoads(globalObject, *module))) || AOT::isEvicted(globalObject, *module) || AOT::wasReleasedByLoader(globalObject, *module) || AOT::isOriginalEvicted(globalObject, *module) || AOT::mockedModuleEvaluationError(globalObject, *module))
         return std::nullopt;
     return module;
 }
 
-JSPromise* compiledModuleSource(Zig::GlobalObject* globalObject, const String& key, const ScriptFetchParameters* attributes)
+JSPromise* compiledModuleSource(Zig::GlobalObject* globalObject, const String& key, const ScriptFetchParameters* attributes, const String& importer)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -774,6 +774,10 @@ JSPromise* compiledModuleSource(Zig::GlobalObject* globalObject, const String& k
     AbstractModuleRecord* record = AOT::moduleRecord(globalObject, *module);
     if (scope.exception()) [[unlikely]]
         return rejected();
+    if (isBunTest) {
+        auto importing = importer.isEmpty() ? std::nullopt : findModuleForPath(importer);
+        AOT::noteImporterOfFetch(globalObject, *module, importing && !AOT::isEvicted(globalObject, *importing) ? *importing : AOT::ModuleID());
+    }
     // Another fetch in flight may request the module once it is mocked.
     bool isAlone = globalObject->onLoadPlugins.waitingMockFetches.isEmpty() && !AOT::hasBatchedFetches(globalObject);
     // A require() cannot wait.
@@ -2342,6 +2346,13 @@ static bool isSpy(JSGlobalObject* globalObject, const String& mocked)
     BUN_END_REMOVABLE_ENTRY_POINT
 }
 
+static bool isRequiringMock(JSGlobalObject* globalObject, const String& mocked)
+{
+    BUN_BEGIN_REMOVABLE_ENTRY_POINT(Test, ReturnDefault, bool)
+    return isRequiringModuleMock(defaultGlobalObject(globalObject), mocked);
+    BUN_END_REMOVABLE_ENTRY_POINT
+}
+
 static bool hasSynchronousFactory(JSGlobalObject* globalObject, const String& mocked, bool isOriginalSynchronous)
 {
     BUN_BEGIN_REMOVABLE_ENTRY_POINT(Test, ReturnDefault, bool)
@@ -2431,6 +2442,7 @@ const AOT::ModuleHost compiledModuleHost = {
     &wasFetchedByTestFile,
     &hasSynchronousFactory,
     &isSpy,
+    &isRequiringMock,
     &sourceAfterRelease,
     &hasPendingPatch,
     &evictOriginal,
@@ -2438,7 +2450,7 @@ const AOT::ModuleHost compiledModuleHost = {
     &isESModuleInNode,
 };
 // A member missing from the initializer is null, which tells the engine that the host does not support it.
-static_assert(sizeof(AOT::ModuleHost) == 67 * sizeof(void*));
+static_assert(sizeof(AOT::ModuleHost) == 68 * sizeof(void*));
 
 void recordRefusedLoad(JSGlobalObject*, const String& path);
 bool recordAddonLoadedFromDisk(JSGlobalObject*, const String& path);
@@ -2760,7 +2772,7 @@ const AOT::ModuleHost compiledModuleHost {};
 std::optional<AOT::ModuleID> compiledModuleForPath(const String&) { return std::nullopt; }
 std::optional<bool> isHiddenFromRequireCache(const String&) { return false; }
 std::optional<AOT::ModuleID> findMockedModule(const String&) { return std::nullopt; }
-JSPromise* compiledModuleSource(Zig::GlobalObject*, const String&, const ScriptFetchParameters*) { return nullptr; }
+JSPromise* compiledModuleSource(Zig::GlobalObject*, const String&, const ScriptFetchParameters*, const String&) { return nullptr; }
 JSPromise* importCompiledModule(Zig::GlobalObject*, const String&, const ScriptFetchParameters*, int64_t) { return nullptr; }
 JSValue requireCompiledModuleForTestRunner(Zig::GlobalObject*, const String&) { return {}; }
 bool requireCompiledModule(Zig::GlobalObject*, JSCommonJSModule*, const String&, bool) { return false; }

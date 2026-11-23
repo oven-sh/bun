@@ -26,6 +26,7 @@ function socket<SSL extends boolean>(ssl: SSL) {
     rustPath: ssl ? "crate::socket::TLSSocket" : "crate::socket::TCPSocket",
     refCounted: true,
     finalize: true,
+    thisValue: "this_value",
     memoryCost: true,
     /** `handlers` is shared with the listener and its other sockets. `duplex*` serve a `TLSSocket` over a `Duplex`. */
     internalFields: [

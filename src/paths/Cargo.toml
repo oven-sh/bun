@@ -10,18 +10,15 @@ path = "lib.rs"
 workspace = true
 
 [dependencies]
-strum.workspace = true
 bstr.workspace = true
 const_format.workspace = true
-libc.workspace = true
 bun_alloc.workspace = true
 bun_core.workspace = true
 bun_errno.workspace = true
-
-thiserror.workspace = true
+bun_highway.workspace = true
 
 [dev-dependencies]
 # Nominal `SIMDUTFResult`/`Status` for the test-only simdutf stubs in
-# `string_paths.rs` — Miri requires the stub's signature to match the extern
+# `path_tests.rs` — Miri requires the stub's signature to match the extern
 # declaration's types exactly, not just their ABI layout.
 bun_simdutf_sys.workspace = true

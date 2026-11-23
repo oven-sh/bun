@@ -66,6 +66,9 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> bun_react_compiler::Host
         let mut all = self.p.import_items_for_namespace.iter();
         all.find_map(|(namespace, items)| (items.get(name)?.ref_ == item).then_some(*namespace))
     }
+    fn is_raw_template(&self, ref_: js_ast::Ref) -> bool {
+        self.p.runtime_imports.at(b"__rawTemplate") == Some(ref_)
+    }
     fn source(&self) -> &[u8] {
         &self.p.source.contents
     }

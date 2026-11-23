@@ -68,7 +68,7 @@ pub trait OwnedTask: IntrusiveWorkTask + Send + 'static {
 /// `task: Task` field. Expands to [`bun_core::intrusive_field!`].
 ///
 /// ```ignore
-/// intrusive_work_task!(ReadFile, task);
+/// intrusive_work_task!(UninstallTask, task);
 /// intrusive_work_task!([Ctx] CryptoJob<Ctx>, task);
 /// ```
 #[macro_export]

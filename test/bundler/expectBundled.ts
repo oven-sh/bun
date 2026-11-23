@@ -390,6 +390,12 @@ export type MappingSnapshot = [
   generated_mapping: string,
 ];
 
+/** The CSS files in a bundled stylesheet that is not minified, in order. `[]` if the build did not write `file`. */
+export function cssFilesIn(api: BundlerTestBundleAPI, file: string): string[] {
+  if (!existsSync(api.join(file))) return [];
+  return Array.from(api.readFile(file).matchAll(/^\/\* (\S+\.css) \*\/$/gm), match => match[1]);
+}
+
 export interface BundlerTestBundleAPI {
   root: string;
   outfile: string;

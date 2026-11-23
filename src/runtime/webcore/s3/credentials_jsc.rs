@@ -227,18 +227,18 @@ pub(crate) fn get_credentials_with_options(
             if let Some(utf8) =
                 get_truthy_string_utf8(opts, global_object, b"contentDisposition", true)?
             {
-                if contains_newline_or_cr(utf8.slice()) {
+                if contains_newline_or_nul(utf8.slice()) {
                     return Err(global_object.throw_invalid_arguments(format_args!(
-                        "contentDisposition must not contain newline characters (CR/LF)"
+                        "contentDisposition must not contain newline characters (CR/LF) or null bytes"
                     )));
                 }
                 new_credentials.content_disposition = Some(utf8);
             }
 
             if let Some(utf8) = get_truthy_string_utf8(opts, global_object, b"type", true)? {
-                if contains_newline_or_cr(utf8.slice()) {
+                if contains_newline_or_nul(utf8.slice()) {
                     return Err(global_object.throw_invalid_arguments(format_args!(
-                        "type must not contain newline characters (CR/LF)"
+                        "type must not contain newline characters (CR/LF) or null bytes"
                     )));
                 }
                 new_credentials.content_type = Some(utf8);
@@ -247,9 +247,9 @@ pub(crate) fn get_credentials_with_options(
             if let Some(utf8) =
                 get_truthy_string_utf8(opts, global_object, b"contentEncoding", true)?
             {
-                if contains_newline_or_cr(utf8.slice()) {
+                if contains_newline_or_nul(utf8.slice()) {
                     return Err(global_object.throw_invalid_arguments(format_args!(
-                        "contentEncoding must not contain newline characters (CR/LF)"
+                        "contentEncoding must not contain newline characters (CR/LF) or null bytes"
                     )));
                 }
                 new_credentials.content_encoding = Some(utf8);
@@ -263,6 +263,6 @@ pub(crate) fn get_credentials_with_options(
     Ok(new_credentials)
 }
 
-fn contains_newline_or_cr(value: &[u8]) -> bool {
-    strings::index_of_any(value, b"\r\n").is_some()
+fn contains_newline_or_nul(value: &[u8]) -> bool {
+    strings::index_of_any(value, b"\r\n\0").is_some()
 }

@@ -886,7 +886,7 @@ static int us_install_ca_buffers(SSL_CTX *ctx, X509_STORE *store, STACK_OF(CRYPT
   us_unique_ptr<CRYPTO_BUFFER *[], free> bufs{(CRYPTO_BUFFER **)malloc(total * sizeof(CRYPTO_BUFFER *))};
   if (bufs == NULL) return 0;
   /* Not by sorting: of several certificates with one subject, BoringSSL tries only the first it comes to. */
-  std::unordered_set<std::string_view> seen, subjects;
+  std::unordered_set<std::string_view> seen;
   for (size_t i = 0; i < total; i++) {
     CRYPTO_BUFFER *cert = sk_CRYPTO_BUFFER_value(certs, i);
     if (seen.emplace((const char *)CRYPTO_BUFFER_data(cert), CRYPTO_BUFFER_len(cert)).second) bufs[n++] = cert;
@@ -894,12 +894,16 @@ static int us_install_ca_buffers(SSL_CTX *ctx, X509_STORE *store, STACK_OF(CRYPT
   us_unique_ptr<X509_LAZY_CERT_SET, X509_LAZY_CERT_SET_free> set{X509_LAZY_CERT_SET_new(bufs.get(), n)};
   us_crypto_buffer_stack_ptr names{sk_CRYPTO_BUFFER_new_null()};
   if (set == NULL || names == NULL || !X509_STORE_add_lazy_cert_set(store, set.get())) return 0;
+  std::unordered_set<uint32_t> subjects;
   for (size_t i = 0; i < n; i++) {
     const uint8_t *subject;
     size_t subject_len;
     if (!X509_LAZY_CERT_SET_get0_subject(set.get(), i, &subject, &subject_len)) return 0;
-    /* For auto-chain, which only sees the flags of the store. With nothing to choose from, it sends what is out of date. */
-    if (!subjects.emplace((const char *)subject, subject_len).second) {
+    const uint8_t *cursor = subject;
+    us_unique_ptr<X509_NAME, X509_NAME_free> parsed{d2i_X509_NAME(NULL, &cursor, subject_len)};
+    if (parsed == NULL) return 0;
+    /* Auto-chain only sees the flags of the store. With nothing to choose from, it sends what is out of date. */
+    if (!subjects.insert(X509_NAME_hash(parsed.get())).second) {
       X509_STORE_set_flags(store, X509_V_FLAG_IGNORE_EXPIRED_TRUST_ANCHORS);
     }
     us_crypto_buffer_ptr name{CRYPTO_BUFFER_new(subject, subject_len, NULL)};

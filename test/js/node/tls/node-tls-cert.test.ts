@@ -1013,6 +1013,19 @@ describe("expired or not-yet-valid CA in the trust set", () => {
   });
 
   it.each([
+    ["as a PrintableString", "\x13\x15Bun Test Intermediate"],
+    ["in capitals", "\x0c\x15BUN TEST INTERMEDIATE"],
+  ])("...also when the expired copy spells its name %s", async (_, name) => {
+    const der = Buffer.from(F["int-expired"].replace(/-----[^\n]+-----|\s/g, ""), "base64");
+    const subject = der.indexOf("\x0c\x15Bun Test Intermediate");
+    expect(subject).toBeGreaterThan(0);
+    der.write(name, subject);
+    const expired = `-----BEGIN CERTIFICATE-----\n${der.toString("base64")}\n-----END CERTIFICATE-----\n`;
+    expect(await connect(F.leaf, [F.root], {}, [expired])).toBe("CERT_HAS_EXPIRED");
+    expect(await connect(F.leaf, [F.root], {}, [expired, F["int-valid"]])).toBe("authorized");
+  });
+
+  it.each([
     [["root", "int-valid", "int-constrained-valid"], null],
     [["root", "int-constrained-valid", "int-valid"], "UNSPECIFIED"],
   ])("the first copy counts for the certificate of a client, ca: %p", async (names, expected) => {

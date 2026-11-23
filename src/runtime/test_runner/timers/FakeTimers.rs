@@ -1405,11 +1405,18 @@ fn not_active_error(global: &JSGlobalObject) -> JsError {
 
 /// Whether the fake clock is on. When it is off, `vi` throws as Vitest does, and `jest` warns as Jest does, so the caller returns.
 /// The first thing a control does: `console.warn` is the script's, and can turn the clock on or off.
-#[optimize(size)]
+#[inline]
 fn faked(global: &JSGlobalObject, flavor: Flavor) -> JsResult<bool> {
     if is_active() {
         return Ok(true);
     }
+    not_faked(global, flavor)
+}
+
+#[cold]
+#[inline(never)]
+#[optimize(size)]
+fn not_faked(global: &JSGlobalObject, flavor: Flavor) -> JsResult<bool> {
     match flavor {
         Flavor::Vi => Err(not_active_error(global)),
         Flavor::Jest => {
@@ -1419,7 +1426,7 @@ fn faked(global: &JSGlobalObject, flavor: Flavor) -> JsResult<bool> {
     }
 }
 
-#[cold]
+#[optimize(size)]
 fn warn_not_active(global: &JSGlobalObject) -> JsResult<()> {
     let console = global.to_js_value().get(global, "console")?;
     let warn = match console {
@@ -1598,6 +1605,7 @@ fn milliseconds_argument(global: &JSGlobalObject, ms: JsLocal<'_>, function: &st
     Ok(ms)
 }
 
+#[inline]
 #[optimize(size)]
 fn advance_timers_to_next_timer(
     global: &JSGlobalObject,
@@ -1612,6 +1620,7 @@ fn advance_timers_to_next_timer(
     rethrow(global, this_value, FakeTimers::run_to_next_timer(global, steps))
 }
 
+#[inline]
 #[optimize(size)]
 fn advance_timers_by_time(
     global: &JSGlobalObject,
@@ -1655,6 +1664,7 @@ pub(crate) fn advance_by_ms(global: &JSGlobalObject, ms: f64) -> Result<JSValue,
     advance(global, ms)
 }
 
+#[inline]
 #[optimize(size)]
 fn advance_timers_to_next_frame(
     global: &JSGlobalObject,
@@ -1669,6 +1679,7 @@ fn advance_timers_to_next_frame(
     rethrow(global, this_value, advance(global, to_next_frame as f64))
 }
 
+#[inline]
 fn run_only_pending_timers(
     global: &JSGlobalObject,
     this_value: JsLocal<'_>,
@@ -1680,6 +1691,7 @@ fn run_only_pending_timers(
     rethrow(global, this_value, FakeTimers::run_only_pending(global))
 }
 
+#[inline]
 fn run_all_timers(
     global: &JSGlobalObject,
     this_value: JsLocal<'_>,
@@ -1691,6 +1703,7 @@ fn run_all_timers(
     rethrow(global, this_value, FakeTimers::run_all(global))
 }
 
+#[inline]
 fn run_all_ticks(
     global: &JSGlobalObject,
     this_value: JsLocal<'_>,

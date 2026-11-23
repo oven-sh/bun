@@ -52,6 +52,7 @@ class ExtendedDOMIsoSubspaces;
 class JSBuiltinFunctions;
 
 class DOMWrapperWorld;
+class JSVMClientData;
 }
 
 #include "root.h"
@@ -132,6 +133,25 @@ private:
 
     JSC::Heap& m_heap;
     size_t m_sizeAfterLastCollection { 0 };
+};
+
+// Turns the JS thread's loop when a collection of its heap ends on another thread, or was handed over and ends on the JS
+// thread: only that thread runs the epilogue, which sweeps what the collection freed, and the loop has to see the timer
+// that the epilogue arms. Attached where JSVMClientData::handsOverUnfinishedCollections.
+class CollectionEndWake final : public JSC::HeapObserver {
+    WTF_MAKE_NONCOPYABLE(CollectionEndWake);
+
+public:
+    CollectionEndWake(JSC::Heap&, WebCore::JSVMClientData&);
+    ~CollectionEndWake() final;
+
+private:
+    void willGarbageCollect() final {}
+    // Heap::didFinishCollection() calls this in the end phase, on the thread that conducts the collection.
+    void didGarbageCollect(JSC::CollectionScope) final;
+
+    JSC::Heap& m_heap;
+    WebCore::JSVMClientData& m_clientData;
 };
 }
 
@@ -269,6 +289,13 @@ public:
     // Their GCRequest::didFinishEndPhase, made once (JSC__VM__collectAsyncIdle).
     RefPtr<WTF::SharedTask<void()>> idleCollectionDidFinish;
 
+    // Whether the JS thread also gives up heap access for a collection that is unfinished when its wait has lasted a
+    // while (Bun__JSC_onQuietWait), not only for the idle ones above.
+    static bool canHandOverUnfinishedCollections();
+    const bool handsOverUnfinishedCollections { canHandOverUnfinishedCollections() };
+    // Whether the JS thread did that for the collection in progress. Read where that collection ends, on either thread.
+    std::atomic<bool> handedOverCollection { false };
+
     void* bunVM;
     // A count on the Rust VmHandle for this VM: what any *other* thread uses to post work / ref the loop (never bunVM).
     RefPtr<const ::BunVmHandleRef> vmHandle;
@@ -359,6 +386,7 @@ private:
     Bun::NodeVMSourceOriginCache m_nodeVMSourceOriginCache;
 
     Bun::HeapSizeAfterLastCollection m_heapSizeAfterLastCollection;
+    Bun::CollectionEndWake m_collectionEndWake;
 
     SentinelLinkedList<JSVMClientDataClient, BasicRawSentinelNode<JSVMClientDataClient>> m_clients;
     Vector<VersionSqlite3*> m_sqliteDatabases;

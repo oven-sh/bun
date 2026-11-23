@@ -21,6 +21,11 @@ pub fn is_shutting_down(this: &VirtualMachine) -> bool {
     this.is_shutting_down()
 }
 
+// HOST_EXPORT(Bun__VirtualMachine__isInspectorEnabled, c)
+pub fn is_inspector_enabled(this: &VirtualMachine) -> bool {
+    this.is_inspector_enabled()
+}
+
 // HOST_EXPORT(Bun__VM__scriptExecutionStatus, c)
 pub fn script_execution_status(this: &VirtualMachine) -> i32 {
     this.script_execution_status() as i32

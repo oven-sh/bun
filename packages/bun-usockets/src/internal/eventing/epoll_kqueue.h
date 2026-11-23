@@ -95,7 +95,8 @@ struct us_loop_t {
     unsigned int bun_polls;
 
     /* Incremented atomically by wakeup(), swapped to 0 before epoll/kqueue.
-     * If non-zero, the event loop will return immediately so we can skip the GC safepoint. */
+     * If non-zero, the event loop will return immediately so we can skip the GC safepoint.
+     * Not with epoll once the wakeup was consumed by the tick before: see us_loop_run_bun_tick. */
     unsigned int pending_wakeups;
 
     /* The list of ready polls */

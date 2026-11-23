@@ -15,6 +15,7 @@
 #include <JavaScriptCore/CachedTypes.h>
 #include <JavaScriptCore/PrelinkedModuleGraph.h>
 #include <wtf/MainThread.h>
+#include <wtf/NumberOfCores.h>
 
 #include "JSDOMConstructorBase.h"
 
@@ -27,6 +28,33 @@
 #include "ConsoleObject.h"
 #include "StrongRootBlock.h"
 #include "IsolatedModuleCache.h"
+
+namespace Bun {
+
+CollectionEndWake::CollectionEndWake(JSC::Heap& heap, WebCore::JSVMClientData& clientData)
+    : m_heap(heap)
+    , m_clientData(clientData)
+{
+    if (m_clientData.handsOverUnfinishedCollections)
+        m_heap.addObserver(this);
+}
+
+CollectionEndWake::~CollectionEndWake()
+{
+    if (m_clientData.handsOverUnfinishedCollections)
+        m_heap.removeObserver(this);
+}
+
+void CollectionEndWake::didGarbageCollect(JSC::CollectionScope)
+{
+    // The JS thread ends a collection that it handed over when the collector thread could not stop it: that thread
+    // leaves the phase to the JS thread's next poll. The poll may be the loop's, where the wait's timeout is already
+    // chosen and does not have the timer that the epilogue arms for the sweeper.
+    if (m_clientData.handedOverCollection.exchange(false) || !m_heap.vm().currentThreadIsHoldingAPILock())
+        Bun__VmHandle__wake(m_clientData.vmHandle.get());
+}
+
+}
 
 namespace WebCore {
 using namespace JSC;
@@ -56,7 +84,21 @@ JSVMClientData::JSVMClientData(VM& vm, RefPtr<JSC::SourceProvider> sourceProvide
     , CLIENT_ISO_SUBSPACE_INIT(m_domNamespaceObjectSpace)
     , m_clientSubspaces(makeUnique<ExtendedDOMClientIsoSubspaces>())
     , m_heapSizeAfterLastCollection(vm.heap)
+    , m_collectionEndWake(vm.heap, *this)
 {
+}
+
+bool JSVMClientData::canHandOverUnfinishedCollections()
+{
+#if OS(LINUX) || OS(DARWIN)
+    // One marker: with helper threads the collector thread waits for them while the JS thread has heap access
+    // (Collector::runConcurrentPhase), and a Worker that sleeps on an unfinished collection keeps them (#49314).
+    // More than one CPU: on the JS thread's own CPU the collector thread marks while that thread has events to answer.
+    return JSC::Options::numberOfGCMarkers() == 1 && !JSC::Options::runsCompiledImage() && WTF::numberOfProcessorCores() > 1;
+#else
+    // Windows: the libuv loop dispatches inside its poll, so it cannot take heap access back first. FreeBSD: untried.
+    return false;
+#endif
 }
 
 #undef CLIENT_ISO_SUBSPACE_INIT

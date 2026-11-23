@@ -327,6 +327,18 @@ static napi_value perform_set(const Napi::CallbackInfo &info) {
   return ok(env);
 }
 
+// perform_set_element(object, index, value)
+static napi_value perform_set_element(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  uint32_t index;
+  NODE_API_CALL(env, napi_get_value_uint32(env, info[1], &index));
+  napi_status status = napi_set_element(env, info[0], index, info[2]);
+  if (status != napi_ok) {
+    NODE_API_ASSERT(env, status == napi_pending_exception);
+  }
+  return ok(env);
+}
+
 // perform_instanceof(object, constructor) ->
 //   { status, result, pending, exception }
 static napi_value perform_instanceof(const Napi::CallbackInfo &info) {
@@ -681,6 +693,7 @@ void register_js_test_helpers(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, call_and_get_exception);
   REGISTER_FUNCTION(env, exports, perform_get);
   REGISTER_FUNCTION(env, exports, perform_set);
+  REGISTER_FUNCTION(env, exports, perform_set_element);
   REGISTER_FUNCTION(env, exports, define_properties);
   REGISTER_FUNCTION(env, exports, perform_instanceof);
   REGISTER_FUNCTION(env, exports, perform_get_prototype);

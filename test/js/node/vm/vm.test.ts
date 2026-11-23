@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows, normalizeBunSnapshot, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, nodeExeAtLeast, normalizeBunSnapshot, tempDir } from "harness";
 import assert from "node:assert";
 import { totalmem } from "node:os";
 import * as pathNamespace from "node:path";
@@ -2506,6 +2506,208 @@ describe.each([
   });
 });
 
+// JavaScriptCore stores to an index key through putByIndex(), which has no parameter for the receiver.
+describe.each([
+  ["DONT_CONTEXTIFY", () => createContext(constants.DONT_CONTEXTIFY)],
+  ["a contextified object", () => createContext({})],
+])("a store to an index key of globalThis in %s", (_, makeContext) => {
+  function receiverName(inner: object, receiver: unknown) {
+    if (receiver === inner) return "globalThis";
+    if (receiver === globalThis) return "the outer globalThis";
+    return typeof receiver;
+  }
+
+  test("calls a setter on the global's prototype chain with globalThis as `this`", () => {
+    const ctx = makeContext();
+    const inner = runInContext("this", ctx);
+    const receivers: string[] = [];
+    const strict = (name: string) =>
+      function (this: unknown) {
+        receivers.push(`${name} ${receiverName(inner, this)}`);
+      };
+    // A sloppy function replaces a missing `this` with the global object of its own realm, the outer one here.
+    const sloppy = Function(
+      "push",
+      "return function () { push(this); }",
+    )((receiver: unknown) => receivers.push(`sloppy ${receiverName(inner, receiver)}`));
+    Object.defineProperties(runInContext("Object.prototype", ctx), {
+      0: { set: strict("strict"), configurable: true },
+      1: { set: sloppy, configurable: true },
+      1000000000: { set: strict("far"), configurable: true },
+    });
+    inner.report = (receiver: unknown) => receivers.push(`inner ${receiverName(inner, receiver)}`);
+    runInContext(`Object.defineProperty(Object.prototype, 2, { set() { "use strict"; report(this); } });`, ctx);
+
+    runInContext(
+      `globalThis[0] = 1;
+      globalThis[1] = 1;
+      globalThis[2] = 1;
+      globalThis[1000000000] = 1;
+      globalThis[String(0)] = 1;
+      Reflect.set(globalThis, 1, 1);
+      Object.assign(globalThis, { 2: 1 });
+      (function () { "use strict"; globalThis[0] = 1; })();`,
+      ctx,
+    );
+    inner[0] = 1;
+    inner[1] = 1;
+    inner[2] = 1;
+    expect(receivers).toEqual([
+      "strict globalThis",
+      "sloppy globalThis",
+      "inner globalThis",
+      "far globalThis",
+      "strict globalThis",
+      "sloppy globalThis",
+      "inner globalThis",
+      "strict globalThis",
+      "strict globalThis",
+      "sloppy globalThis",
+      "inner globalThis",
+    ]);
+  });
+
+  test("passes globalThis as the receiver to a Proxy on the global's prototype chain", () => {
+    const ctx = makeContext();
+    const inner = runInContext("this", ctx);
+    const traps: string[] = [];
+    const proxy = new Proxy(
+      {},
+      {
+        set(target, key, value, receiver) {
+          traps.push(`set ${String(key)} ${receiverName(inner, receiver)}`);
+          return true;
+        },
+      },
+    );
+    Object.setPrototypeOf(inner, Object.create(proxy));
+
+    runInContext(
+      `globalThis[0] = 1;
+      Reflect.set(globalThis, 1, 1);
+      (function () { "use strict"; globalThis[2] = 1; })();`,
+      ctx,
+    );
+    inner[3] = 1;
+    expect(traps).toEqual(["set 0 globalThis", "set 1 globalThis", "set 2 globalThis", "set 3 globalThis"]);
+  });
+
+  test("reaches a setter behind a Proxy that has no set trap with globalThis as `this`", () => {
+    const ctx = makeContext();
+    const inner = runInContext("this", ctx);
+    const receivers: string[] = [];
+    const target = Object.create(null, {
+      0: {
+        set() {
+          receivers.push(receiverName(inner, this));
+        },
+      },
+    });
+    Object.setPrototypeOf(inner, new Proxy(target, {}));
+
+    runInContext(`globalThis[0] = 1; globalThis[1] = "own";`, ctx);
+    expect(receivers).toEqual(["globalThis"]);
+    // A store that no setter takes ends on the global, as before.
+    expect({ onGlobal: Object.hasOwn(inner, 1), onTarget: Object.hasOwn(target, 1), value: inner[1] }).toEqual({
+      onGlobal: true,
+      onTarget: false,
+      value: "own",
+    });
+  });
+});
+
+// With a contextified object, an accessor that is defined on globalThis is the object's.
+test("DONT_CONTEXTIFY: an index setter that is globalThis's own gets globalThis as `this`", () => {
+  const ctx = createContext(constants.DONT_CONTEXTIFY);
+  const inner = runInContext("this", ctx);
+  const receivers: string[] = [];
+  const receiverName = (receiver: unknown) =>
+    receiver === inner ? "globalThis" : receiver === globalThis ? "the outer globalThis" : typeof receiver;
+  Object.defineProperties(inner, {
+    0: {
+      set() {
+        receivers.push(`strict ${receiverName(this)}`);
+      },
+      configurable: true,
+    },
+    1: {
+      set: Function(
+        "push",
+        "return function () { push(this); }",
+      )((receiver: unknown) => receivers.push(`sloppy ${receiverName(receiver)}`)),
+      configurable: true,
+    },
+  });
+
+  runInContext(
+    `globalThis[0] = 1;
+    globalThis[1] = 1;
+    Reflect.set(globalThis, 0, 1);
+    (function () { "use strict"; globalThis[1] = 1; })();`,
+    ctx,
+  );
+  inner[0] = 1;
+  expect(receivers).toEqual([
+    "strict globalThis",
+    "sloppy globalThis",
+    "strict globalThis",
+    "sloppy globalThis",
+    "strict globalThis",
+  ]);
+});
+
+test.concurrent("DONT_CONTEXTIFY: an index setter's `this` is globalThis in every JIT tier", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const vm = require("node:vm");
+      console.log(vm.runInContext(\`
+        var wrong = 0;
+        var accessor = { set() { "use strict"; if (this !== globalThis) wrong++; } };
+        Object.defineProperty(globalThis, 0, accessor);
+        Object.defineProperty(Object.prototype, 1, accessor);
+        (function () {
+          for (var i = 0; i < 10000; i++) {
+            globalThis[0] = i;
+            globalThis[1] = i;
+          }
+        })();
+        (function () {
+          "use strict";
+          for (var i = 0; i < 10000; i++) {
+            globalThis[0] = i;
+            globalThis[1] = i;
+          }
+        })();
+        wrong\`, vm.createContext(vm.constants.DONT_CONTEXTIFY)));`,
+    ],
+    // Makes tier-up happen at a fixed iteration instead of whenever the JIT threads finish, and reach the last tier.
+    env: { ...bunEnv, BUN_JSC_useConcurrentJIT: "0", BUN_JSC_thresholdForFTLOptimizeAfterWarmUp: "1000" },
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "0\n", stderr: "", exitCode: 0 });
+});
+
+// The fixture stores to an index key of globalThis in 35 ways, with each of 4 things in the way of the store. It prints
+// what each store called and with which receiver. Node.js is the reference. DONT_CONTEXTIFY is from Node.js v22.8.0.
+const nodeForIndexStores = nodeExeAtLeast("22.8.0");
+test.skipIf(!nodeForIndexStores).concurrent.each(["main", "DONT_CONTEXTIFY"])(
+  "stores to an index key of globalThis call what they call in Node.js: %s",
+  async realm => {
+    const fixture = join(import.meta.dir, "vm-global-index-stores-fixture.cjs");
+    async function run(exe: string) {
+      await using proc = Bun.spawn({ cmd: [exe, fixture, realm], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    }
+    const [fromBun, fromNode] = await Promise.all([run(bunExe()), run(nodeForIndexStores!)]);
+    expect(fromNode.stdout.trim().split("\n")).toHaveLength(4 * 35);
+    expect(fromBun).toEqual(fromNode);
+  },
+);
+
 // A cycle would make a missing-name lookup loop forever, so this runs in a subprocess with a timeout.
 test.concurrent("setting a context's globalThis prototype to form a cycle is rejected", async () => {
   const fixture = /* js */ `
@@ -2661,8 +2863,8 @@ test.concurrent("DONT_CONTEXTIFY: an accessor's `this` is globalThis in every JI
         })();
         wrong\`, vm.createContext(vm.constants.DONT_CONTEXTIFY)));`,
     ],
-    // Makes tier-up happen at a fixed iteration instead of whenever the JIT threads finish.
-    env: { ...bunEnv, BUN_JSC_useConcurrentJIT: "0" },
+    // Makes tier-up happen at a fixed iteration instead of whenever the JIT threads finish, and reach the last tier.
+    env: { ...bunEnv, BUN_JSC_useConcurrentJIT: "0", BUN_JSC_thresholdForFTLOptimizeAfterWarmUp: "1000" },
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);

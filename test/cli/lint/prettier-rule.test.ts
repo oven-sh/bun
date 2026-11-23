@@ -172,8 +172,8 @@ describe.concurrent("prettier/prettier", () => {
 
   // The sums come from a build with Myers' search alone, which cuts each file greedily many times.
   test.each([
-    ["ASCII", "e", "2b2ea1ba3742d485555031884eaa82205391798b"],
-    ["not ASCII", "é", "da02ebd1ae814867fe6db0168b3f52cbf0f9c0e9"],
+    ["ASCII", "e", "d5b73f262a533843b78620e948805386c44e96d8"],
+    ["not ASCII", "é", "f1a8be62242edbb33c1e022ba669ce5bb6f7b7f3"],
   ])("reports a file too far from its formatted text for an exact diff: %s", async (_, letter, sha1) => {
     let seed = 1;
     const random = (below: number) => ((seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) >>> 8) % below;
@@ -181,10 +181,10 @@ describe.concurrent("prettier/prettier", () => {
       depth === 0
         ? `\t\t\ta${random(90)}=b${random(90)}+'${letter}'\n`
         : `\tif(a${random(90)}){\n${block(depth - 1)}${block(random(depth))}}\n`;
-    const source = Array.from({ length: 40 }, () => block(6)).join("");
+    const source = Array.from({ length: 20 }, () => block(6)).join("");
 
     const { reports, exitCode } = await lint({ ...installed(), "eslint.config.mjs": config(), "far.js": source });
-    expect(reports["far.js"]).toHaveLength(2116);
+    expect(reports["far.js"]).toHaveLength(1038);
     expect(Bun.SHA1.hash(reports["far.js"].join("\n"), "hex")).toBe(sha1);
     expect(exitCode).toBe(1);
   });

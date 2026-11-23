@@ -22,6 +22,9 @@
 mod bit_rows;
 mod bits;
 mod lines;
+#[cfg(test)]
+#[path = "../parsers/native_test_shims.rs"]
+mod native_test_shims;
 pub mod patch;
 pub mod tokens;
 
@@ -70,6 +73,8 @@ impl Hunk {
 pub trait Elem: Copy + Eq {
     /// Whether the elements are token ids, to which the unique-token anchor split applies.
     const ANCHORED: bool = false;
+    /// How many ids there are, if the type says so.
+    const IDS: Option<usize> = None;
     /// The element as an index into a table.
     fn id(self) -> usize;
     fn is_newline(self) -> bool {
@@ -83,18 +88,9 @@ pub trait Elem: Copy + Eq {
     /// nothing.
     fn find(hay: &[Self], needle: &[Self], budget: &mut isize) -> Option<usize> {
         let (first, rest) = needle.split_first()?;
-        let places = hay.len().checked_sub(needle.len())? + 1;
+        let last = hay.len().checked_sub(needle.len())?;
         let mut at = 0;
-        while at < places && *budget > 0 {
-            if at % LANES == 0
-                && at + LANES <= places
-                && let Some(cost) = cost_of_misses(&hay[at..], needle)
-                && cost < *budget
-            {
-                *budget -= cost;
-                at += LANES;
-                continue;
-            }
+        while at <= last && *budget > 0 {
             *budget -= 1;
             if hay[at] == *first {
                 let same = Self::common_prefix(&hay[at + 1..], rest);
@@ -123,28 +119,6 @@ pub trait Elem: Copy + Eq {
         }
         i
     }
-}
-
-/// Places that `cost_of_misses` compares at once, in vector registers.
-const LANES: usize = 32;
-/// Elements of the needle that `cost_of_misses` compares. If one place matches them all, the work is lost.
-const ROUNDS: usize = 16;
-
-/// What `Elem::find` charges for the first `LANES` places of `hay`, if the start of `needle` is at none of them.
-/// `memmem16` cannot give this: partial matches are charged too.
-#[inline(always)]
-fn cost_of_misses<T: Elem>(hay: &[T], needle: &[T]) -> Option<isize> {
-    let mut cost = LANES as isize;
-    let mut same = [true; LANES];
-    for (places, &e) in hay.array_windows::<LANES>().zip(needle).take(ROUNDS) {
-        same = core::array::from_fn(|i| same[i] & (places[i] == e));
-        let count: u8 = same.iter().map(|&it| u8::from(it)).sum();
-        if count == 0 {
-            return Some(cost);
-        }
-        cost += isize::from(count);
-    }
-    None
 }
 
 /// How much of a needle is looked for first. `MemMemPickAnchors` (highway_strings.cpp) reads a longer one three times.
@@ -180,6 +154,7 @@ impl Elem for u32 {
 
 /// A code unit of UTF-16.
 impl Elem for u16 {
+    const IDS: Option<usize> = Some(1 << 16);
     #[inline]
     fn id(self) -> usize {
         self as usize
@@ -191,6 +166,7 @@ impl Elem for u16 {
 }
 
 impl Elem for u8 {
+    const IDS: Option<usize> = Some(1 << 8);
     #[inline]
     fn id(self) -> usize {
         self as usize
@@ -316,9 +292,9 @@ struct Myers<'a, 's, T: Elem> {
     bits_fit: bool,
     /// Scratch for the ends of a box's two sides, back to front.
     reversed: [Vec<T>; 2],
-    /// Elements of `a` per edit between the corners and the points of the last greedy cut. Only chooses between
+    /// Elements of `a` per edit between the corners and the points where `middle` last gave up. Only chooses between
     /// `reach` and `middle`.
-    pace: usize,
+    pace: Option<usize>,
     policy: Policy,
     /// Steps left out of `policy.work`.
     work_left: isize,
@@ -395,11 +371,10 @@ impl Anchors {
                 self.tails[pos] = idx as u32;
             }
         }
-        if self.tails.len() < needed {
+        let Some(&(mut cur)) = self.tails.last().filter(|_| self.tails.len() >= needed) else {
             return false;
-        }
+        };
         // Reuse `tails` to hold the run itself, last to first.
-        let mut cur = *self.tails.last().unwrap();
         self.tails.clear();
         while cur != u32::MAX {
             self.tails.push(cur);
@@ -423,24 +398,24 @@ impl Anchors {
     }
 }
 
-/// A sub-box `a[alo..ahi] × b[blo..bhi]` still to be solved.
+/// A sub-box `a[alo..ahi] × b[blo..bhi]` still to be solved. There can be one for each anchor.
 struct Job {
-    alo: usize,
-    ahi: usize,
-    blo: usize,
-    bhi: usize,
-    probe: usize,
+    alo: u32,
+    ahi: u32,
+    blo: u32,
+    bhi: u32,
+    probe: u32,
     /// Whether an exhaustive attempt is still allowed in this box; false
     /// below a greedy cut, where the result is approximate anyway.
     exhaustive: bool,
     /// For a box whose corners are on a minimal path of a box that `bits`
     /// solved: its first and last entry of `corridor`, which are as far apart
     /// as it has edits.
-    levels: Option<(usize, usize)>,
+    levels: Option<(u32, u32)>,
     /// The box has at least this many edits.
-    least: usize,
+    least: u32,
     /// How much of `corridor` this box and those below it on the stack need.
-    keep: usize,
+    keep: u32,
 }
 
 impl Job {
@@ -452,15 +427,15 @@ impl Job {
         keep: usize,
     ) -> Self {
         Self {
-            alo,
-            ahi,
-            blo,
-            bhi,
-            probe,
+            alo: alo as u32,
+            ahi: ahi as u32,
+            blo: blo as u32,
+            bhi: bhi as u32,
+            probe: probe as u32,
             exhaustive,
             levels: None,
             least: 0,
-            keep,
+            keep: keep as u32,
         }
     }
 }
@@ -485,7 +460,7 @@ impl<'a, 's, T: Elem> Myers<'a, 's, T> {
             corridor,
             bits_fit: false,
             reversed: [Vec::new(), Vec::new()],
-            pace: 0,
+            pace: None,
             policy,
             work_left: policy.work as isize,
             half_left: match policy.half_match {
@@ -505,7 +480,8 @@ impl<'a, 's, T: Elem> Myers<'a, 's, T> {
     /// justifies; failing that (or if the box is too big to justify any), a
     /// box with a strong skeleton of unique, in-order common lines is cut at
     /// those; and only then is it cut greedily at the point of furthest
-    /// progress.
+    /// progress. `search` charges these attempts and finds what they would
+    /// find, but need not make them.
     fn run(
         &mut self,
         a_rng: Range<usize>,
@@ -522,18 +498,12 @@ impl<'a, 's, T: Elem> Myers<'a, 's, T> {
             true,
             0,
         ));
-        while let Some(Job {
-            mut alo,
-            mut ahi,
-            mut blo,
-            mut bhi,
-            probe,
-            exhaustive,
-            levels,
-            least,
-            keep,
-        }) = stack.pop()
-        {
+        while let Some(job) = stack.pop() {
+            let [mut alo, mut ahi, mut blo, mut bhi] =
+                [job.alo, job.ahi, job.blo, job.bhi].map(|it| it as usize);
+            let [probe, least, keep] = [job.probe, job.least, job.keep].map(|it| it as usize);
+            let levels = (job.levels).map(|(first, last)| (first as usize, last as usize));
+            let exhaustive = job.exhaustive;
             self.corridor.truncate(keep);
             let p = T::common_prefix(&self.a[alo..ahi], &self.b[blo..bhi]);
             alo += p;
@@ -606,8 +576,8 @@ impl<'a, 's, T: Elem> Myers<'a, 's, T> {
                     ];
                     if let Some((first, last)) = levels {
                         let half = first + (last - first).div_ceil(2);
-                        halves[0].levels = Some((first, half));
-                        halves[1].levels = Some((half, last));
+                        halves[0].levels = Some((first as u32, half as u32));
+                        halves[1].levels = Some((half as u32, last as u32));
                     }
                     stack.extend(halves);
                     continue;
@@ -624,7 +594,7 @@ impl<'a, 's, T: Elem> Myers<'a, 's, T> {
                 continue;
             }
             let (f, r) = fronts.unwrap_or_else(|| self.fronts(bx, depth));
-            self.pace = ((f.0 - alo) + (ahi - r.0)) / (2 * depth + 1);
+            self.pace = Some(pace(bx, depth, (f, r)));
 
             // Cut at whichever of the two points lie strictly inside the box
             // (both, if the forward one precedes the reverse one). If they cross:
@@ -657,7 +627,7 @@ impl<'a, 's, T: Elem> Myers<'a, 's, T> {
                 // An outer part has at least `depth` edits: a greedy point is exactly that far from its corner, or
                 // the search would have got further, and further from the other, as the box has over 2 * depth.
                 if c == 0 || c + 1 == n {
-                    job.least = depth;
+                    job.least = depth as u32;
                 }
                 stack.push(job);
             }
@@ -692,7 +662,13 @@ impl<'a, 's, T: Elem> Myers<'a, 's, T> {
         self.work_left -= ((half + 1) * (half + 2 - distance % 2)) as isize;
         match (at, levels) {
             (Some(at), _) => Found::Split(at, None),
-            (None, Some(levels)) => Found::Split(self.split_in_corridor(bx, levels), Some(levels)),
+            (None, Some(levels)) => match self.split_in_corridor(bx, levels) {
+                Some(at) => Found::Split(at, Some(levels)),
+                None => match self.middle(bx, half) {
+                    Split::Exact(at, _) => Found::Split(at, None),
+                    Split::Greedy(f, r) => Found::TooFar(half, Some((f, r))),
+                },
+            },
             (None, None) => {
                 let first = self.corridor.len();
                 let levels = (first, first + distance);
@@ -739,13 +715,19 @@ impl<'a, 's, T: Elem> Myers<'a, 's, T> {
         let deepest = |me: &Self| probe.max(me.second_depth(bx, probe, exhaustive));
         // Close to the policy's depth, `bits` saves little if the search succeeds and is lost if it fails.
         let is_close = 2 * crossover > probe && 2 * crossover > deepest(self);
-        let depth = if is_close { deepest(self) } else { crossover };
+        let mut depth = if is_close { deepest(self) } else { crossover };
+        let patience = match crossover * 5 / 2 {
+            patience if patience <= probe => patience,
+            patience => patience.min(deepest(self)),
+        };
         let mut beyond = least.saturating_sub(1);
         let mut expected = least + least / 8;
         if least <= 2 * depth {
-            match self.middle(bx, depth) {
+            match self.middle_with_patience(bx, &mut depth, patience) {
                 Split::Exact(at, distance) => return Solved::Distance(distance, Some(at)),
-                Split::Greedy(f, r) if is_close => return Solved::TooFar(Some((f, r))),
+                Split::Greedy(f, r) if depth == deepest(self) => {
+                    return Solved::TooFar(Some((f, r)));
+                }
                 Split::Greedy(f, r) => {
                     let progress = (f.0 - bx.0) + (f.1 - bx.2) + (bx.1 - r.0) + (bx.3 - r.1);
                     expected = expected.max(2 * depth * (n + m) / progress.max(1));
@@ -755,8 +737,10 @@ impl<'a, 's, T: Elem> Myers<'a, 's, T> {
         }
         let mut limit = 2 * deepest(self);
         if beyond < limit && expected >= GUESS_FROM {
-            limit = self.guess(bx, limit);
-            expected = limit;
+            let guess = self.guess(bx, limit);
+            if guess < limit {
+                (limit, expected) = (guess, guess);
+            }
         }
         match self.measure(bx, beyond, expected, limit) {
             Some(distance) => Solved::Distance(distance, None),
@@ -797,7 +781,14 @@ impl<'a, 's, T: Elem> Myers<'a, 's, T> {
         // In words. `middle` takes about depth * depth steps of several words each, so a failed try adds little.
         let budget = depth * depth + REACH_EXTRA;
         // At the pace of the last cut.
-        let strips = 2 * (depth * self.pace / STRIP + 1);
+        let pace = self.pace.unwrap_or_else(|| {
+            let depth = depth.min(MIN_PROBE);
+            match self.middle(bx, depth) {
+                Split::Greedy(f, r) => pace(bx, depth, (f, r)),
+                Split::Exact(..) => 0,
+            }
+        });
+        let strips = 2 * (depth * pace / STRIP + 1);
         if strips * (depth + EXTRA_ROWS) * bits::WORDS <= budget
             && let Some(fronts) = self.reach(bx, depth, budget)
         {
@@ -836,8 +827,11 @@ impl<'a, 's, T: Elem> Myers<'a, 's, T> {
         let bits = self.bits.get_or_insert_default();
         if !self.bits_fit {
             self.bits_fit = true;
-            let ids = self.a.iter().chain(self.b).map(|e| e.id()).max();
-            bits.reserve_ids(ids.unwrap_or(0) + 1);
+            let elements = self.a.len() + self.b.len();
+            bits.reserve_ids(T::IDS.filter(|&ids| ids <= elements).unwrap_or_else(|| {
+                let ids = self.a.iter().chain(self.b).map(|e| e.id());
+                ids.max().unwrap_or(0) + 1
+            }));
         }
         bits
     }
@@ -880,7 +874,7 @@ impl<'a, 's, T: Elem> Myers<'a, 's, T> {
     }
 
     /// The point at which `middle` would cut a box whose corners are on a minimal path of a box that `bits` solved.
-    fn split_in_corridor(&mut self, bx: Rect, levels: (usize, usize)) -> Point {
+    fn split_in_corridor(&mut self, bx: Rect, levels: (usize, usize)) -> Option<Point> {
         let (mut alo, mut ahi, mut blo, mut bhi) = bx;
         let half = levels.0 + (levels.1 - levels.0).div_ceil(2);
         let even = (levels.1 - levels.0) % 2 == 0;
@@ -893,7 +887,7 @@ impl<'a, 's, T: Elem> Myers<'a, 's, T> {
         }
         if first == half {
             let same = T::common_prefix(&self.a[alo..ahi], &self.b[blo..bhi]);
-            return (alo + same, blo + same);
+            return Some((alo + same, blo + same));
         }
         let last = (half + 1..levels.1).find(shared).unwrap_or(levels.1);
         if last < levels.1 {
@@ -909,10 +903,10 @@ impl<'a, 's, T: Elem> Myers<'a, 's, T> {
                 .enumerate()
                 .map(|(e, c)| ((c.hi - c.lo) as usize / 2).min(e).min(distance - e))
                 .sum();
-            if steps * WORDS_PER_STEP > words(n.max(m), n.min(m), distance) {
-                let pass = self.forward(bx, distance);
-                debug_assert!(matches!(pass, Pass::Within(d) if d == distance));
-                return self.trace(bx, (first, last), half, even);
+            if steps * WORDS_PER_STEP > words(n.max(m), n.min(m), distance)
+                && matches!(self.forward(bx, distance), Pass::Within(found) if found == distance)
+            {
+                return Some(self.trace(bx, (first, last), half, even));
             }
         }
         self.middle_in_corridor(bx, (first, last), half, even)
@@ -925,7 +919,7 @@ impl<'a, 's, T: Elem> Myers<'a, 's, T> {
         (first, last): (usize, usize),
         half: usize,
         even: bool,
-    ) -> Point {
+    ) -> Option<Point> {
         let a = &self.a[alo..ahi];
         let b = &self.b[blo..bhi];
         let corridor = &self.corridor[first..=last];
@@ -984,9 +978,10 @@ impl<'a, 's, T: Elem> Myers<'a, 's, T> {
             false => diagonals.find(meets),
             true => diagonals.rfind(meets),
         };
-        let k = k.unwrap();
+        debug_assert!(k.is_some(), "a minimal path runs through the corridor");
+        let k = k?;
         let x = self.vf[(k + off) as usize];
-        (alo + x as usize, blo + (x - k) as usize)
+        Some((alo + x as usize, blo + (x - k) as usize))
     }
 
     /// Patience-style split: tokens that occur exactly once on each side of
@@ -1046,14 +1041,26 @@ impl<'a, 's, T: Elem> Myers<'a, 's, T> {
     /// past the most elements of `a` and `b` together; of several, the one past the fewest of
     /// `a`. (A diagonal can fall short of its furthest point only if a move leaves the grid,
     /// and then a point on that edge is further.)
-    fn middle(&mut self, (alo, ahi, blo, bhi): Rect, depth: usize) -> Split {
+    fn middle(&mut self, bx: Rect, mut depth: usize) -> Split {
+        let patience = depth;
+        self.middle_with_patience(bx, &mut depth, patience)
+    }
+
+    /// `middle`, which raises `depth` to `patience` if it has found few matches by then, as next to a block that was
+    /// moved. Such steps take far less than `WORDS_PER_STEP`.
+    fn middle_with_patience(
+        &mut self,
+        (alo, ahi, blo, bhi): Rect,
+        depth: &mut usize,
+        patience: usize,
+    ) -> Split {
         let a = &self.a[alo..ahi];
         let b = &self.b[blo..bhi];
         let n = a.len() as i32;
         let m = b.len() as i32;
         let delta = n - m;
         let dmax = (n + m + 1) / 2;
-        let bmax = dmax.min(depth as i32);
+        let bmax = dmax.min(patience as i32);
         // Diagonals k ∈ [-bmax-1, bmax+1] are addressable.
         let off = bmax + 1;
         let size = (2 * bmax + 3) as usize;
@@ -1129,23 +1136,7 @@ impl<'a, 's, T: Elem> Myers<'a, 's, T> {
             };
         }
 
-        let mut d: i32 = 0;
-        if front {
-            while d <= bmax {
-                round!(d, true, false);
-                d += 1;
-            }
-        } else {
-            while d <= bmax {
-                round!(d, false, true);
-                d += 1;
-            }
-        }
-
-        // With an unrestricted search the fronts always meet.
-        debug_assert!(bmax < dmax);
-
-        // Each diagonal still holds its furthest point; pick the one with the
+        // Each diagonal holds its furthest point; pick the one with the
         // most progress (x + y = 2x - k) in each direction.
         let best = |v: &[i32]| {
             let mut best = (-1i32, 0i32, 0i32);
@@ -1157,8 +1148,29 @@ impl<'a, 's, T: Elem> Myers<'a, 's, T> {
             }
             (best.1, best.2)
         };
-        let (fx, fy) = best(vf);
-        let (bx, by) = best(vb);
+
+        let mut d: i32 = 0;
+        let ((fx, fy), (bx, by)) = loop {
+            let last = bmax.min(*depth as i32);
+            if front {
+                while d <= last {
+                    round!(d, true, false);
+                    d += 1;
+                }
+            } else {
+                while d <= last {
+                    round!(d, false, true);
+                    d += 1;
+                }
+            }
+            // With an unrestricted search the fronts always meet.
+            debug_assert!(last < dmax);
+            let (f, r) = (best(vf), best(vb));
+            if last == bmax || f.0 + f.1 + r.0 + r.1 > 4 * last {
+                break (f, r);
+            }
+            *depth = patience;
+        };
         Split::Greedy(
             (alo + fx as usize, blo + fy as usize),
             (alo + (n - bx) as usize, blo + (m - by) as usize),
@@ -1201,6 +1213,10 @@ enum Solved {
     Distance(usize, Option<Point>),
     /// Past the policy's depth, with the points that `middle` gave if it went that deep.
     TooFar(Option<(Point, Point)>),
+}
+
+fn pace((alo, ahi, ..): Rect, depth: usize, (f, r): (Point, Point)) -> usize {
+    ((f.0 - alo) + (ahi - r.0)) / (2 * depth + 1)
 }
 
 /// The steps of `middle` if it finds nothing within `depth`.
@@ -1968,9 +1984,9 @@ fn push_nonempty(hunks: &mut Vec<Hunk>, h: Hunk) {
 /// If the shorter of `a`/`b` occurs inside the longer: (longer is a, offset).
 fn contains(a: &[u8], b: &[u8]) -> Option<(bool, usize)> {
     if a.len() >= b.len() {
-        index_of(a, b).map(|i| (true, i))
+        index_of_by_start(a, b).map(|i| (true, i))
     } else {
-        index_of(b, a).map(|i| (false, i))
+        index_of_by_start(b, a).map(|i| (false, i))
     }
 }
 
@@ -2818,7 +2834,7 @@ mod tests {
             let (at, first) = match levels {
                 Some((first, last)) => {
                     assert_eq!(last - first, distance);
-                    (m.split_in_corridor(bx, (first, last)), first)
+                    (m.split_in_corridor(bx, (first, last)).unwrap(), first)
                 }
                 None => {
                     assert!(m.guess(bx, no_limit) >= distance);

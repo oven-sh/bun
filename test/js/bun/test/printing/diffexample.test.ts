@@ -902,8 +902,8 @@ test("large diffs are exact rather than abandoned part-way", () => {
 });
 
 test.each([
-  ["within its limit", 3_000, 923, 890, "e439007adb20cfff2f828857685a9657a14de0d5"],
-  ["past its limit", 30_000, 9176, 8962, "2a818be3bfa3e858455561feb1244d532667f765"],
+  ["within its limit", 3_000, 923, 890, "625f49296c562c4fa8047d64e1403379f0330fc0"],
+  ["past its limit", 30_000, 9176, 8962, "970415288248b05350a9c9399b4aff0e6f123478"],
 ])(
   "texts with many edits and few kinds of lines get the diff of Myers' search, %s",
   (_, lines, removed, added, sha1) => {
@@ -920,7 +920,8 @@ test.each([
       message = cleanAnsiEscapes((e as Error).message);
     }
     expect(message.slice(-60).trimEnd()).toEndWith(`\n\n- Expected  - ${removed}\n+ Received  + ${added}`);
-    expect(Bun.SHA1.hash(message, "hex")).toBe(sha1);
+    // How many unchanged lines are shown depends on the environment.
+    expect(Bun.SHA1.hash(message.match(/^[-+] .*/gm)!.join("\n"), "hex")).toBe(sha1);
   },
 );
 

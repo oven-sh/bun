@@ -42,6 +42,14 @@ pub(crate) enum Pass {
     Beyond(usize),
 }
 
+struct Masks(Box<[Row; MASKS]>);
+
+impl Default for Masks {
+    fn default() -> Self {
+        Self(Box::new([ZEROS; MASKS]))
+    }
+}
+
 #[derive(Default)]
 pub(crate) struct Bits {
     /// The strip of this pass that `slot`, `masks` and `elements` describe. `None`: they are left from an earlier pass.
@@ -49,7 +57,7 @@ pub(crate) struct Bits {
     /// Element to index in `masks`; 0 for all but `elements`.
     slot: Vec<u16>,
     /// By slot: the strip's columns with the element. Slot 0 stays empty.
-    masks: Option<Box<[Row; MASKS]>>,
+    masks: Masks,
     /// The strip's elements, each once.
     elements: Vec<u32>,
     strips: Vec<Strip>,
@@ -164,7 +172,7 @@ impl Bits {
         for id in self.elements.drain(..) {
             self.slot[id as usize] = 0;
         }
-        let masks = self.masks.get_or_insert_with(|| Box::new([ZEROS; MASKS]));
+        let masks = &mut *self.masks.0;
         for (i, &e) in columns.iter().enumerate() {
             let slot = &mut self.slot[e.id()];
             if *slot == 0 {
@@ -224,6 +232,7 @@ impl Bits {
         self.clear();
         // The LCS of the columns so far and the rows above block `first`.
         let (mut first, mut lcs_top) = (0usize, 0usize);
+        let mut edits = delta;
         for (s, columns) in a.chunks(STRIP).enumerate() {
             let x = s * STRIP + columns.len();
             let carries = self.carries.len();
@@ -248,16 +257,13 @@ impl Bits {
                 if rest > 0 {
                     lcs += (self.carries[c] >> (64 - rest)).count_ones() as usize;
                 }
-                let edits = 2 * (x - lcs) - delta;
+                edits = 2 * (x - lcs) - delta;
                 if edits > bound {
                     return Pass::Beyond(x);
                 }
-                if x == n {
-                    return Pass::Within(edits);
-                }
             }
         }
-        unreachable!()
+        Pass::Within(edits)
     }
 
     /// Of the points at most `edits` edits from the start, the one with the largest x + y; of several, the one with the
@@ -352,7 +358,7 @@ impl Bits {
                     continue;
                 }
                 self.load_masks(s, columns);
-                let masks = self.masks.as_deref().unwrap();
+                let masks = &*self.masks.0;
                 for (y, e) in (top + 1..).zip(&b[top..last]) {
                     lcs += (carries >> 63) as usize;
                     let mask = &masks[self.slot[e.id()] as usize % MASKS];
@@ -401,7 +407,7 @@ impl Bits {
             let y = at as usize * 64;
             let rows = &b[y..b.len().min(y + 64)];
             let carries_in = self.carries_into(s, at);
-            let masks = self.masks.as_deref().unwrap();
+            let masks = &*self.masks.0;
             let out = block(&mut v, rows, &self.slot, masks, carries_in);
             self.carries.push(out);
             lcs += out.count_ones() as usize;
@@ -436,7 +442,7 @@ impl Bits {
     /// Recomputes rows `top..=last` of strip `s`, all of one block. The strip's masks have to be loaded.
     fn fill_rows<T: Elem>(&mut self, b: &[T], s: usize, top: usize, last: usize) {
         let (mut v, mut carries_in) = self.start_rows(s, top, last);
-        let masks = self.masks.as_deref().unwrap();
+        let masks = &*self.masks.0;
         for e in &b[top..last] {
             let mask = &masks[self.slot[e.id()] as usize % MASKS];
             let old = v;

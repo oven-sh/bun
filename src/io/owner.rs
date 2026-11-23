@@ -85,6 +85,16 @@ pub enum IoEvent {
     Write(crate::pipe_writer::WriteEvent),
 }
 
+#[cfg(windows)]
+impl IoEvent {
+    pub fn write_error(&self) -> Option<&bun_sys::Error> {
+        match self {
+            IoEvent::Write(crate::pipe_writer::WriteEvent::Failed(err)) => Some(err),
+            _ => None,
+        }
+    }
+}
+
 /// What a poll that fired tells its owner.
 #[cfg(not(windows))]
 #[derive(Copy, Clone)]

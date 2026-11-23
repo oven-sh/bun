@@ -210,6 +210,11 @@ impl FileSink {
     }
 
     pub(crate) fn on_writer_io(&self, event: IoEvent) {
+        // For `on_close`, which comes before `on_error` for a file.
+        #[cfg(windows)]
+        if let Some(err) = event.write_error() {
+            self.record_stream_error(streams::StreamError::Error(err.clone()));
+        }
         self.writer.on_io(self, event);
     }
 

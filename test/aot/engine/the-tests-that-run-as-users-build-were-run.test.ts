@@ -35,7 +35,8 @@ else
         stderr: "pipe",
       });
       const [text, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
-      const isMade = exitCode === 0 && text.includes("\nmodule ");
+      // As ./answers.ts holds it: a tool that writes to stderr has made no test.
+      const isMade = exitCode === 0 && !stderr && text.includes("\nmodule ");
       expect({ file, isMade, stderr: isMade ? "" : stderr.slice(-600) }).toEqual({ file, isMade: true, stderr: "" });
       mkdirSync(dirname(join(String(made), file)), { recursive: true });
       writeFileSync(join(String(made), file), text);

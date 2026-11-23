@@ -5367,7 +5367,6 @@ pub mod bv2_impl {
             Some(parse)
         }
 
-        /// A task reads the primary path, also when `active` (`Result::path`) is the secondary one.
         /// The "sideEffects" answer for the module at `path`. For a file on disk that the resolver found, the package.json files above the file decide.
         fn side_effects_of_module(
             &mut self,
@@ -5390,6 +5389,7 @@ pub mod bv2_impl {
                 .side_effects_for_file(path.text)
         }
 
+        /// A task reads the primary path, also when `active` (`Result::path`) is the secondary one.
         fn parse_task_path(
             &self,
             result: &_resolver::Result<'_>,

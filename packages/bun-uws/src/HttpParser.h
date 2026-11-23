@@ -543,43 +543,42 @@ struct HttpResponseData;
             return url;
         }
 
-        /* getUrlForRouting() and request.url drop the authority of an absolute-form target, so it has to be
-         * a bare host[:port] (RFC 9110 4.2.1, 4.2.4) and the one that Host names (RFC 9112 3.2). */
+        /* RFC 3986 3.2.2: unreserved, sub-delims and the '%' of pct-encoded. */
+        static bool isRegNameByte(unsigned char c)
+        {
+            return (unsigned char) ((c | 32) - 'a') < 26 || (c >= '0' && c <= '9') || (c >= '$' && c <= '.')
+                || c == '_' || c == '~' || c == '!' || c == ';' || c == '=';
+        }
+
+        /* The authority of an absolute-form target is a non-empty uri-host [ ":" port ] (RFC 9110 4.2.1, 4.2.4). */
         bool hasValidTargetAuthority()
         {
             std::string_view url = getUrl();
-            size_t schemeLength = absoluteFormSchemeLength(url);
-            if (!schemeLength) {
+            size_t hostStart = absoluteFormSchemeLength(url);
+            if (!hostStart) {
                 return true;
             }
 
-            const std::string_view defaultPort = schemeLength == 7 ? std::string_view(":80") : std::string_view(":443");
-            auto withoutDefaultPort = [defaultPort](std::string_view hostAndPort) {
-                if (hostAndPort.ends_with(defaultPort)) {
-                    hostAndPort.remove_suffix(defaultPort.length());
-                }
-                return hostAndPort;
-            };
-
-            size_t authorityEnd = schemeLength;
-            for (; authorityEnd < url.length() && url[authorityEnd] != '/'; authorityEnd++) {
-                if (url[authorityEnd] == '@' || url[authorityEnd] == '#' || url[authorityEnd] == '\\') {
-                    return false;
-                }
+            const bool isIPLiteral = hostStart < url.length() && url[hostStart] == '[';
+            hostStart += isIPLiteral;
+            size_t i = hostStart;
+            while (i < url.length() && (isRegNameByte(url[i]) || (isIPLiteral && url[i] == ':'))) {
+                i++;
             }
-            std::string_view authority = withoutDefaultPort(url.substr(schemeLength, authorityEnd - schemeLength));
-            if (authority.empty() || authority[0] == ':') {
+            if (i == hostStart || (isIPLiteral && (i == url.length() || url[i++] != ']'))) {
                 return false;
             }
-            for (Header *h = headers; (++h)->key.length();) {
-                if (h->key.length() == 4 && !strncasecmp(h->key.data(), "host", 4)) {
-                    std::string_view host = withoutDefaultPort(h->value);
-                    if (host.length() != authority.length() || strncasecmp(host.data(), authority.data(), host.length())) {
+
+            if (i < url.length() && url[i] == ':') {
+                unsigned int port = 0;
+                for (i++; i < url.length() && url[i] >= '0' && url[i] <= '9'; i++) {
+                    port = port * 10 + (unsigned int) (url[i] - '0');
+                    if (port > 65535) {
                         return false;
                     }
                 }
             }
-            return true;
+            return i == url.length() || url[i] == '/';
         }
 
         /* Hack: this should be getMethod */
@@ -1499,7 +1498,7 @@ struct HttpResponseData;
             const char *querySeparatorPtr = (const char *) memchr(req->headers->value.data(), '?', req->headers->value.length());
             req->querySeparator = (unsigned int) ((querySeparatorPtr ? querySeparatorPtr : req->headers->value.data() + req->headers->value.length()) - req->headers->value.data());
 
-            /* node:http hands the raw target to the listener, so it has no host to choose. */
+            /* node:http hands the raw target to the listener. */
             if (!IsNodeHttp && req->headers->value.data()[0] != '/' && !req->hasValidTargetAuthority()) [[unlikely]] {
                 return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_INVALID_REQUEST);
             }

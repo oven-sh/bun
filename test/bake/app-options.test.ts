@@ -302,7 +302,7 @@ test.concurrent("Bun.serve({ app }) routes on the request target's pathname", as
           hostname: "127.0.0.1",
           port: server.port,
           socket: {
-            open: socket => void socket.write(requestLine + " HTTP/1.1\\r\\nHost: " + new URL(origin).host + "\\r\\nConnection: close\\r\\n\\r\\n"),
+            open: socket => void socket.write(requestLine + " HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n"),
             data: (socket, chunk) => void (response += chunk),
             close: resolve,
             error: (socket, error) => reject(error),

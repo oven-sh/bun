@@ -961,7 +961,7 @@ it("route precedence for mix of method-specific routes and any routes", async ()
   );
 });
 
-it("routes absolute-form request targets by path and keeps their query in request.url", async () => {
+it("routes absolute-form request targets by path and takes the host of request.url from the target", async () => {
   const seen: { matched: string; url: string }[] = [];
   await using server = Bun.serve({
     port: 0,
@@ -990,7 +990,7 @@ it("routes absolute-form request targets by path and keeps their query in reques
       socket: {
         open(socket) {
           socket.write(
-            `GET https://${hostHeader}/admin/secret HTTP/1.1\r\nHost: ${hostHeader}\r\nConnection: close\r\n\r\n`,
+            `GET https://spoofed.example/admin/secret HTTP/1.1\r\nHost: ${hostHeader}\r\nConnection: close\r\n\r\n`,
           );
         },
         data(socket, chunk) {
@@ -1012,10 +1012,10 @@ it("routes absolute-form request targets by path and keeps their query in reques
   expect(seen).toHaveLength(1);
   expect(seen[0].matched).toBe("route");
 
-  // The scheme of request.url comes from the listener, not from the request line.
+  // The host comes from the request line, the scheme from the listener.
   const url = new URL(seen[0].url);
   expect(url.protocol).toBe("http:");
-  expect(url.host).toBe(hostHeader);
+  expect(url.host).toBe("spoofed.example");
   expect(url.pathname).toBe("/admin/secret");
 
   // A normal origin-form request still hits the same named route.
@@ -1026,7 +1026,7 @@ it("routes absolute-form request targets by path and keeps their query in reques
   expect(seen[0].matched).toBe("route");
   expect(new URL(seen[0].url).pathname).toBe("/admin/secret");
 
-  for (const target of [`http://${hostHeader}?a=b`, `http://${hostHeader}?redirect=/elsewhere`]) {
+  for (const target of ["http://spoofed.example?a=b", "http://spoofed.example?redirect=/elsewhere"]) {
     seen.length = 0;
     const rawResponse = await new Promise<string>((resolve, reject) => {
       let received = "";
@@ -1054,7 +1054,7 @@ it("routes absolute-form request targets by path and keeps their query in reques
     expect(seen).toHaveLength(1);
     expect(seen[0].matched).toBe("fallback");
     const rawUrl = new URL(seen[0].url);
-    expect(rawUrl.host).toBe(hostHeader);
+    expect(rawUrl.host).toBe("spoofed.example");
     expect(rawUrl.pathname).toBe("/");
     expect(rawUrl.search).toBe(new URL(target).search);
   }
@@ -1098,21 +1098,35 @@ describe.concurrent("absolute-form request target and the Host header", () => {
   const get = (target: string, host: string) => `GET ${target} HTTP/1.1\r\nHost: ${host}\r\nConnection: close\r\n\r\n`;
   const badRequest = "HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n";
 
+  const long = Buffer.alloc(200, "a").toString();
+
   test.each([
+    ["http://target.example/path?q=1", "header.example:8080", "http://target.example/path?q=1"],
     ["http://a.example/x", "a.example", "http://a.example/x"],
-    ["http://a.example", "a.example", "http://a.example/"],
-    ["http://a.example?b.example/", "a.example", "http://a.example/?b.example/"],
-    ["http://a.example/b.example", "a.example", "http://a.example/b.example"],
-    ["http://a.example:8080/x", "a.example:8080", "http://a.example:8080/x"],
-    ["HTTP://A.Example/x", "a.eXAMPLE", "http://a.example/x"],
-    ["http://a.example:80/x", "a.example", "http://a.example/x"],
-    ["http://a.example/x", "a.example:80", "http://a.example/x"],
-    ["https://a.example:443/x", "a.example", "http://a.example/x"],
-    ["https://a.example/x", "a.example:443", "http://a.example:443/x"],
-    ["http://[::1]:80/x", "[::1]", "http://[::1]/x"],
-    ["http://[::80]/x", "[::80]:80", "http://[::80]/x"],
-    ["/http://b.example/x", "a.example", "http://a.example/http://b.example/x"],
-  ])("accepts %s with Host: %s", async (target, host, url) => {
+    ["http://a.example/route", "b.example", "http://a.example/route"],
+    ["http://a.example", "b.example", "http://a.example/"],
+    ["http://a.example?b.example/", "b.example", "http://a.example/?b.example/"],
+    ["http://a.example/b.example", "b.example", "http://a.example/b.example"],
+    ["http://a.example/@b.example#c", "b.example", "http://a.example/@b.example#c"],
+    ["http://a.example:8080/x", "a.example", "http://a.example:8080/x"],
+    ["http://a.example/x", "a.example:8080", "http://a.example/x"],
+    ["http://a.example:80/x", "b.example", "http://a.example/x"],
+    ["HTTP://A.Example/x", "b.example", "http://a.example/x"],
+    ["https://a.example/x", "b.example", "http://a.example/x"],
+    ["https://a.example:443/x", "b.example", "http://a.example:443/x"],
+    ["http://[::1]:8080/x", "[::2]", "http://[::1]:8080/x"],
+    ["http://a.example/x", "", "http://a.example/x"],
+    ["http://a.example/x", "not a host", "http://a.example/x"],
+    [`http://a.example/${long}`, "b.example", `http://a.example/${long}`],
+    ["http://a.example:/x", "b.example", "http://a.example/x"],
+    ["http://a.example:65535/x", "b.example", "http://a.example:65535/x"],
+    ["http://a.example:8080", "b.example", "http://a.example:8080/"],
+    ["http://[::1]", "b.example", "http://[::1]/"],
+    ["http://[::ffff:1.2.3.4]/x", "b.example", "http://[::ffff:102:304]/x"],
+    ["http://%61_~-!$&'()*+,;=.example/x", "b.example", "http://a_~-!$&'()*+,;=.example/x"],
+    ["/x", "b.example", "http://b.example/x"],
+    ["/http://a.example/x", "b.example", "http://b.example/http://a.example/x"],
+  ])("%s with Host: %j", async (target, host, url) => {
     const seen: string[] = [];
     await using server = serve(seen);
     expect(await exchange(server.port!, get(target, host))).toStartWith("HTTP/1.1 200 OK\r\n");
@@ -1120,119 +1134,125 @@ describe.concurrent("absolute-form request target and the Host header", () => {
   });
 
   test.each([
-    ["http://target.example/path?q=1", "header.example:8080"],
-    ["https://b.example/x", "a.example"],
-    ["HTTP://b.example/x", "a.example"],
-    ["http://b.example/route", "a.example"],
-    ["http://b.example/static", "a.example"],
-    ["http://b.example", "a.example"],
-    ["http://b.example?a.example/", "a.example"],
-    ["http://a.example.b/x", "a.example"],
-    ["http://a.example/x", "a.example.b"],
-    ["http://a.example./x", "a.example"],
-    ["http://a.example:8080/x", "a.example"],
-    ["http://a.example/x", "a.example:8080"],
-    ["http://a.example:8080/x", "a.example:8081"],
-    ["http://a.example:443/x", "a.example"],
-    ["http://a.example/x", "a.example:443"],
-    ["https://a.example:80/x", "a.example"],
-    ["https://a.example/x", "a.example:80"],
-    ["http://a.example:80:80/x", "a.example:80"],
-    ["http://user@a.example/x", "a.example"],
-    ["http://a.example@b.example/x", "a.example"],
-    ["http://a.example#@b.example/x", "a.example"],
-    ["http://a.example\\@b.example/x", "a.example"],
-    ["http:///x", "a.example"],
-    ["http://a.example/x", ""],
-    ["http://[::1]/x", "[::2]"],
-    ["http://a.example/x", "a.example\r\nHost: b.example"],
-    ["http://a.example/x", "b.example\r\nHost: a.example"],
-    ["http://user@a.example/x", "user@a.example"],
-    ["http://a.example#/route", "a.example#"],
-    ["http://a.example\\/route", "a.example\\"],
-    ["http:///route", ""],
-    ["http://:80/route", ":80"],
-    ["http://:8080/route", ":8080"],
-  ])("rejects %s with Host: %j", async (target, host) => {
+    ["POST", "POST http://a.example/x HTTP/1.1\r\nHost: b\r\nConnection: close\r\nContent-Length: 2\r\n\r\nhi"],
+    ["CONNECT", "CONNECT http://a.example/x HTTP/1.1\r\nHost: b\r\nConnection: close\r\n\r\n"],
+    ["HTTP/1.0", "GET http://a.example/x HTTP/1.0\r\nHost: b\r\n\r\n"],
+    ["HTTP/1.0 without Host", "GET http://a.example/x HTTP/1.0\r\n\r\n"],
+  ])("uses the host of the target: %s", async (_label, request) => {
     const seen: string[] = [];
     await using server = serve(seen);
-    expect(await exchange(server.port!, get(target, host))).toBe(badRequest);
-    expect(seen).toEqual([]);
+    expect(await exchange(server.port!, request)).toStartWith("HTTP/1.1 200 OK\r\n");
+    expect(seen).toEqual(["http://a.example/x"]);
   });
 
-  test.each([
-    ["POST", "POST http://b.example/x HTTP/1.1\r\nHost: a.example\r\nContent-Length: 2\r\n\r\nhi"],
-    ["CONNECT", "CONNECT http://b.example/x HTTP/1.1\r\nHost: a.example\r\n\r\n"],
-    ["HTTP/1.0", "GET http://b.example/x HTTP/1.0\r\nHost: a.example\r\n\r\n"],
-    ["HTTP/1.0 without Host", "GET http://b.example#/route HTTP/1.0\r\n\r\n"],
-    [
-      "WebSocket upgrade",
-      "GET http://b.example/x HTTP/1.1\r\nHost: a.example\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n" +
-        "Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
-    ],
-  ])("rejects a bad authority: %s", async (_label, request) => {
-    const seen: string[] = [];
-    await using server = serve(seen);
-    expect(await exchange(server.port!, request)).toBe(badRequest);
-    expect(seen).toEqual([]);
-  });
-
-  test("rejects a mismatch over TLS", async () => {
+  test("a TLS listener keeps https:", async () => {
     const seen: string[] = [];
     await using server = serve(seen, true);
-    expect(await exchange(server.port!, get("https://b.example/x", "a.example"), true)).toBe(badRequest);
-    expect(await exchange(server.port!, get("https://a.example/x", "a.example"), true)).toStartWith(
+    expect(await exchange(server.port!, get("http://a.example/x", "b.example"), true)).toStartWith(
       "HTTP/1.1 200 OK\r\n",
     );
     expect(seen).toEqual(["https://a.example/x"]);
   });
 
-  test("answers the requests pipelined before a mismatch", async () => {
+  test("the handler can see that the two disagree, also after an await", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      async fetch(req) {
+        await new Promise(setImmediate);
+        return new Response(`${req.url} ${req.clone().url} ${req.headers.get("host")}`);
+      },
+    });
+    expect(await exchange(server.port!, get("http://a.example/x", "b.example"))).toEndWith(
+      "\r\n\r\nhttp://a.example/x http://a.example/x b.example",
+    );
+  });
+
+  test("an authority-form CONNECT target is unchanged", async () => {
     const seen: string[] = [];
     await using server = serve(seen);
-    const response = await exchange(
-      server.port!,
-      "GET http://a.example/first HTTP/1.1\r\nHost: a.example\r\n\r\n" + get("http://b.example/second", "a.example"),
-    );
-    expect(response).toStartWith("HTTP/1.1 200 OK\r\n");
-    expect(response).toEndWith("fetch" + badRequest);
-    expect(seen).toEqual(["http://a.example/first"]);
+    const request = "CONNECT a.example:443 HTTP/1.1\r\nHost: b.example\r\nConnection: close\r\n\r\n";
+    expect(await exchange(server.port!, request)).toStartWith("HTTP/1.1 200 OK\r\n");
+    expect(seen).toEqual(["a.example:443"]);
   });
 
   test.each([
-    ["HTTP/1.0 request without Host", "GET http://b.example/x HTTP/1.0\r\n\r\n", "/x"],
-    [
-      "authority-form CONNECT",
-      "CONNECT b.example:443 HTTP/1.1\r\nHost: a.example\r\nConnection: close\r\n\r\n",
-      "b.example:443",
-    ],
-  ])("accepts an %s", async (_label, request, url) => {
+    "http://user@a.example/route",
+    "https://user:pass@a.example/static",
+    "http://a.example@b.example/x",
+    "http://a.example#/route",
+    "http://a.example#@b.example/x",
+    "http://a.example\\/route",
+    "http://a.example\\@b.example/x",
+    "http:///route",
+    "http://?/route",
+    "http://:80/route",
+    "http://:8080/route",
+    "http://",
+    "http://a<example/route",
+    "http://a|example/route",
+    "http://a\x7fexample/route",
+    "http://münchen.example/route",
+    "http://a.example:80:80/route",
+    "http://a.example:x/route",
+    "http://a.example:80x/route",
+    "http://a.example:65536/route",
+    "http://a.example:4294967376/route",
+    "http://[::1/route",
+    "http://[::1",
+    "http://[]/route",
+    "http://[",
+    "http://[::1]x/route",
+    "http://a[::1]/route",
+  ])("rejects %s", async target => {
     const seen: string[] = [];
     await using server = serve(seen);
-    expect(await exchange(server.port!, request)).toStartWith("HTTP/1.1 200 OK\r\n");
-    expect(seen).toEqual([url]);
+    expect(await exchange(server.port!, get(target, "a.example"))).toBe(badRequest);
+    expect(await exchange(server.port!, `GET ${target} HTTP/1.0\r\n\r\n`)).toBe(badRequest);
+    expect(seen).toEqual([]);
+  });
+
+  test.each([
+    ["TLS", true, ""],
+    [
+      "WebSocket upgrade",
+      false,
+      "Upgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n",
+    ],
+  ])("rejects a malformed authority: %s", async (_label, secure, headers) => {
+    const seen: string[] = [];
+    await using server = serve(seen, secure);
+    const request = `GET http://user@a.example/x HTTP/1.1\r\nHost: a.example\r\nConnection: Upgrade\r\n${headers}\r\n`;
+    expect(await exchange(server.port!, request, secure)).toBe(badRequest);
+    expect(seen).toEqual([]);
   });
 
   test.each(["a.example", "a.example:80", "a.example:8080", "[::1]:8080", "user:pass@a.example"])(
-    "accepts fetch() of http://%s/x through it as a proxy",
+    "fetch() of http://%s/x with its own Host through it as a proxy",
     async authority => {
       const seen: string[] = [];
       await using server = serve(seen);
-      const response = await fetch(`http://${authority}/x`, { proxy: { url: server.url.href, respectNoProxy: false } });
+      const response = await fetch(`http://${authority}/x`, {
+        headers: { Host: "b.example" },
+        proxy: { url: server.url.href, respectNoProxy: false },
+      });
       expect(await response.text()).toBe("fetch");
       expect(seen).toEqual([`http://${new URL(`http://${authority}`).host}/x`]);
     },
   );
 
-  test("node:http passes a mismatch to the listener", async () => {
+  test("node:http passes the raw target to the listener", async () => {
     await using server = http.createServer((req, res) => {
       res.setHeader("Content-Length", Buffer.byteLength(`${req.url} ${req.headers.host}`));
       res.end(`${req.url} ${req.headers.host}`);
     });
     await once(server.listen(0, "127.0.0.1"), "listening");
-    const response = await exchange((server.address() as net.AddressInfo).port, get("http://b.example/x", "a.example"));
+    const response = await exchange(
+      (server.address() as net.AddressInfo).port,
+      get("http://u@b.example/x", "a.example"),
+    );
     expect(response).toStartWith("HTTP/1.1 200 OK\r\n");
-    expect(response).toEndWith("\r\n\r\nhttp://b.example/x a.example");
+    expect(response).toEndWith("\r\n\r\nhttp://u@b.example/x a.example");
   });
 });
 

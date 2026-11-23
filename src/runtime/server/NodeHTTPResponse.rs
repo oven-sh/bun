@@ -57,16 +57,7 @@ mod connection {
             self.0.get()
         }
 
-        /// A WebSocket adopts the socket. Only the current response can hand it over.
-        pub(super) fn take_for_upgrade(&self, flags: Flags) -> Option<uws::AnyResponse> {
-            if flags.contains(Flags::CURRENT) {
-                self.0.take()
-            } else {
-                None
-            }
-        }
-
-        /// The socket closed, or the server socket took the connection back.
+        /// The socket closed, or the server socket or a WebSocket took the connection.
         pub(super) fn release(&self) {
             self.0.set(None);
         }
@@ -529,7 +520,7 @@ impl NodeHTTPResponse {
 
     /// Upgrades the connection for the `ws` package, which has already negotiated and built
     /// `handshake` (the full response head). Returns the `ServerWebSocket`, or `None` if the
-    /// upgrade failed, in which case nothing was written.
+    /// upgrade failed.
     pub(crate) fn upgrade_for_ws_package(
         &self,
         global: &JSGlobalObject,
@@ -539,7 +530,7 @@ impl NodeHTTPResponse {
         max_payload_length: u32,
         auto_pong: bool,
         skip_utf8_validation: bool,
-        deflate_params: Option<&uws_sys::response::PerMessageDeflateParams>,
+        deflate_params: Option<bun_websocket::deflate::Params>,
     ) -> JsResult<Option<JSValue>> {
         if !self.can_upgrade() {
             return Ok(None);
@@ -553,12 +544,13 @@ impl NodeHTTPResponse {
         let Some(handler) = server.ws_package_handler() else {
             return Ok(None);
         };
-        let Some(context) = server.ws_package_context(
+        let behavior = uws::WebSocketBehavior::for_ws_package(
             max_payload_length,
             auto_pong,
             skip_utf8_validation,
             deflate_params.is_some(),
-        ) else {
+        );
+        let Some(context) = server.ws_package_context(behavior) else {
             return Ok(None);
         };
 
@@ -566,11 +558,13 @@ impl NodeHTTPResponse {
         // SAFETY: `init` just stored `ws` inline in its JS wrapper, which `ws` keeps alive.
         let ws_ref = unsafe { &*ws };
 
-        let armed_reader = self.armed_this_value.get();
-        let Some(raw_response) = self.connection.take_for_upgrade(self.flags.get()) else {
+        // If it fails, this is still an HTTP response, and uws still calls it.
+        let Some(raw_response) = self.writer().filter(|raw| raw.write_handshake(handshake)) else {
             ws_ref.discard_unopened();
             return Ok(None);
         };
+        let armed_reader = self.armed_this_value.get();
+        self.connection.release();
         self.update_flags(|f| f.insert(Flags::UPGRADED));
         self.span.set_status(101);
         self.end_span();
@@ -582,29 +576,17 @@ impl NodeHTTPResponse {
         // During the upgrade the connection counts as neither HTTP nor WebSocket. Hold a pending
         // request so a stopped server doesn't drain if this is its last connection.
         let pending = PendingRequest::new(server);
-        let upgraded = !raw_response
-            .upgrade_raw(
-                ws,
-                handshake,
-                deflate_params,
-                // S008: `WebSocketUpgradeContext` is an `opaque_ffi!` ZST — safe deref. The app owns it.
-                bun_opaque::opaque_deref_mut(context.as_ptr()),
-            )
-            .is_null();
+        raw_response.become_web_socket(ws, deflate_params, &context);
         drop(pending);
-        if upgraded {
-            self.bytes_written
-                .set(self.bytes_written.get().saturating_add(handshake.len()));
-        } else {
-            ws_ref.discard_unopened();
-        }
+        self.bytes_written
+            .set(self.bytes_written.get().saturating_add(handshake.len()));
 
         // Last step: a reader that waits for the body gets its 'end', like Node 25 and older.
         if ended_unfinished_body && !armed_reader.is_empty() {
             self.on_data_or_aborted(b"", true, AbortEvent::None, armed_reader);
         }
 
-        Ok(if upgraded { ws_ref.js_value() } else { None })
+        Ok(ws_ref.js_value())
     }
 
     pub(crate) fn maybe_stop_reading_body(&self, this_value: JSValue) {

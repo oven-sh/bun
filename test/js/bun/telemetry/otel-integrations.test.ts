@@ -510,6 +510,48 @@ describe("WebSocket", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("a message that arrives while a handler runs the event loop has a span of its own, and both end at the close", async () => {
+    const second = Promise.withResolvers<void>();
+    using server = Bun.serve({
+      port: 0,
+      fetch: (req, srv) => void srv.upgrade(req),
+      websocket: {
+        message(ws, m) {
+          if (m === "second") {
+            second.resolve();
+          } else {
+            client.send("second");
+            // It runs the event loop until an async setup() settles.
+            Bun.build({
+              entrypoints: ["/a.js"],
+              files: { "/a.js": "" },
+              plugins: [{ name: "wait", setup: () => second.promise }],
+            });
+            ws.terminate();
+          }
+          Bun.otel.span(`in ${m}`, () => {});
+          return new Promise(() => {});
+        },
+      },
+    });
+    const client = new WebSocket(`ws://127.0.0.1:${server.port}/`);
+    client.onopen = () => client.send("1");
+    await new Promise(resolve => (client.onclose = resolve));
+    const got = await collect();
+    const messages = got.filter(s => s.name === "websocket.message");
+    expect(
+      messages.map(s => [
+        s.attributes["websocket.message.length"],
+        s.parentSpanId,
+        s.status.code,
+        got.filter(child => child.parentSpanId === s.spanId).map(child => child.name),
+      ]),
+    ).toEqual([
+      [1, undefined, 2, ["in 1"]],
+      [6, undefined, 2, ["in second"]],
+    ]);
+  });
+
   test("message handlers that never settle do not pile up on an open socket, and slow ones all end their span", async () => {
     await using proc = Bun.spawn({
       cmd: [

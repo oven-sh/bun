@@ -171,17 +171,6 @@ unsafe extern "C" fn Bun__Http1Request__field(
     out.write(request.field(name).unwrap_or_default().into());
 }
 
-/// SAFETY: `name` has `len` bytes.
-#[unsafe(no_mangle)]
-unsafe extern "C" fn Bun__Http1Request__clearField(
-    request: &Request<'_>,
-    name: *const u8,
-    len: usize,
-) {
-    // SAFETY: forwarded.
-    request.clear_field(unsafe { bun_core::ffi::slice(name, len) });
-}
-
 #[unsafe(no_mangle)]
 extern "C" fn Bun__Http1Request__fieldAt(
     request: &Request<'_>,

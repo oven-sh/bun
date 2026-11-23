@@ -96,6 +96,8 @@ function normalizeOutput(stdout: string) {
       .replace(/\(\d+(?:\.\d+)? m?s\)/gi, data => " ".repeat(data.length))
       // normalize "Compiled successfully in Xms/Xs" timestamps
       .replace(/Compiled successfully in (\d|\.)+(ms|s)/gi, "Compiled successfully in 1000ms")
+      // "Finished TypeScript in Xms ..." has its time in the middle of the line, so its length must not matter
+      .replace(/Finished TypeScript in (\d|\.)+(ms|s)/gi, "Finished TypeScript in 1000ms")
       // remove "in Xms" timing at end of lines (e.g., "in 36.8ms")
       .replace(/\bin \d+(?:\.\d+)?m?s\b/gi, data => " ".repeat(data.length))
       // remove "took Xms" timing (e.g., "Running next.config.js took 14ms")

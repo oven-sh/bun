@@ -597,11 +597,11 @@ void JSDatabaseSync::closeInternal(bool mayCallScript)
 
 ASCIILiteral JSDatabaseSync::reentryRefusalSlow() const
 {
-    // close() always works, and what comes after it reports the closed database.
+    // A closed database reports itself.
     if (!m_db)
         return {};
     if (m_inAuthorizer)
-        return "database cannot be used in an authorizer callback"_s;
+        return "database cannot be accessed from an authorizer callback"_s;
     return {};
 }
 
@@ -1094,6 +1094,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncEnableLoadExtension, (JSGlobalObject * gl
 {
     THIS_DATABASE();
     REQUIRE_DB_OPEN(self);
+    REQUIRE_REENTRY_ALLOWED(self);
     JSValue arg0 = callFrame->argument(0);
     if (!arg0.isBoolean()) {
         return throwNodeArgType(globalObject, scope, "allow"_s, "a boolean"_s);
@@ -1547,6 +1548,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncEnableDefensive, (JSGlobalObject * global
 {
     THIS_DATABASE();
     REQUIRE_DB_OPEN(self);
+    REQUIRE_REENTRY_ALLOWED(self);
     JSValue arg0 = callFrame->argument(0);
     if (!arg0.isBoolean()) {
         return throwNodeArgType(globalObject, scope, "active"_s, "a boolean"_s);
@@ -1654,6 +1656,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncSetAuthorizer, (JSGlobalObject * globalOb
 {
     THIS_DATABASE();
     REQUIRE_DB_OPEN(self);
+    REQUIRE_REENTRY_ALLOWED(self);
     JSValue arg0 = callFrame->argument(0);
     if (arg0.isNull()) {
         sqlite3_set_authorizer(self->connection(), nullptr, nullptr);
@@ -1818,6 +1821,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncCreateTagStore, (JSGlobalObject * globalO
 {
     THIS_DATABASE();
     REQUIRE_DB_OPEN(self);
+    REQUIRE_REENTRY_ALLOWED(self);
     // Node: `int capacity = args[0].As<Number>()->Value()` then passed as
     // size_t to LRUCache. No clamp: -1 wraps to SIZE_MAX (unlimited), 0 stays 0.
     // JSC::toInt32 avoids the double→int UB Node has for NaN/±Inf/>2^31.
@@ -2589,6 +2593,9 @@ static EncodedJSValue closeStatement(JSGlobalObject* globalObject, ThrowScope& s
 {
     if (self->m_busyDepth || self->isStepping()) [[unlikely]]
         return throwNodeState(globalObject, scope, "statement is currently executing"_s);
+    // This would release its locks and change the outcome of the statement that the authorizer runs for.
+    if (sqlite3_stmt_busy(self->statement()))
+        REQUIRE_REENTRY_ALLOWED(self->database());
     JSDatabaseSync::BusyScope busy { self->database() };
     self->database()->finalizeStatement(*self);
     CHECK_UDF_EXCEPTION(scope);
@@ -2855,6 +2862,9 @@ JSC_DEFINE_HOST_FUNCTION(jsStatementSyncIteratorReturn, (JSGlobalObject * global
     // after db.close() doesn't surface a spurious error (matches this
     // module's own [Symbol.dispose]() convention).
     JSStatementSync* stmt = self->statement();
+    // Not marked as done, so that a later return() can reset the statement.
+    if (!self->done() && stmt && !stmt->isFinalized())
+        REQUIRE_REENTRY_ALLOWED(stmt->database());
     // Only reset the statement if this iterator still owns it: when a later
     // iterate()/run()/get()/all() bumped the reset generation, the statement
     // was already reset and may be mid-iteration under a newer iterator —
@@ -2864,9 +2874,6 @@ JSC_DEFINE_HOST_FUNCTION(jsStatementSyncIteratorReturn, (JSGlobalObject * global
     // UDF re-entered return()); sqlite3_reset on a running VDBE is misuse.
     bool ownsRun = !self->done() && stmt && !stmt->isFinalized() && !stmt->isStepping()
         && self->capturedGeneration() == stmt->resetGeneration();
-    // Not marked as done, so that a later return() can reset the statement.
-    if (ownsRun && !stmt->database()->reentryRefusal().isNull()) [[unlikely]]
-        return JSValue::encode(createIterResult(vm, globalObject, true, jsNull()));
     self->setDone();
     if (ownsRun) {
         BUSY_SCOPE_STMT(stmt);

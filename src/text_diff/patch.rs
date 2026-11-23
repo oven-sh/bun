@@ -4,11 +4,13 @@
 // jsdiff is Copyright (c) 2009-2015, Kevin Decker <kpdecker@gmail.com>,
 // licensed under the BSD 3-Clause License.
 
-use core::cell::OnceCell;
+use core::cell::{Cell, OnceCell};
 use core::ops::Range;
 use std::io::Write as _;
 
-use bun_core::strings::{is_js_line_terminator, is_js_whitespace, to_utf16_alloc_for_real};
+use bun_core::strings::{
+    contains_char, is_js_line_terminator, is_js_whitespace, to_utf16_alloc_for_real,
+};
 use bun_core::{UnwrapOrOom as _, slice_as_bytes};
 
 use crate::tokens::{Edit, Split, Unit, is, line_start};
@@ -104,7 +106,8 @@ pub fn hunks<'a, T: Unit>(
 pub fn write_file_header<T: Unit>(out: &mut Vec<T>, marker: &[u8], name: &[u8], header: &[T]) {
     extend_ascii(out, marker);
     extend_ascii(out, &quote(name));
-    if !header.is_empty() {
+    // Without the tab, GNU patch ends the name at a space.
+    if !header.is_empty() || contains_char(name, b' ') {
         out.push(T::from_u8(b'\t'));
         out.extend_from_slice(header);
     }
@@ -142,7 +145,8 @@ const ESCAPES: [(u8, u8); 9] = [
 /// As Git and GNU diff quote a file name in UTF-8. The result is ASCII.
 fn quote(name: &[u8]) -> Vec<u8> {
     let is_plain = |byte: u8| matches!(byte, 0x20..=0x7E) && !matches!(byte, b'"' | b'\\');
-    if name.iter().all(|&byte| is_plain(byte)) {
+    let is_padded = name.starts_with(b" ") || name.ends_with(b" ");
+    if !is_padded && name.iter().all(|&byte| is_plain(byte)) {
         return name.to_vec();
     }
     let mut out = vec![b'"'];
@@ -209,9 +213,14 @@ pub enum ParseError {
     },
 }
 
+/// How much of the patch a message repeats.
+const MAX_QUOTED: usize = 256;
+
 impl core::fmt::Display for ParseError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        let text = bun_core::EncodedSlice::utf16;
+        let text = |text: &'_ Name| {
+            bun_core::EncodedSlice::utf16(&text[..text.len().min(MAX_QUOTED)]).to_string()
+        };
         match self {
             Self::MissingFileHeader { marker, name } => {
                 write!(f, "Missing \"{marker} ...\" file header for {}", text(name))
@@ -328,6 +337,7 @@ fn unquote<T: Unit>(text: &[T]) -> Option<(Name, &[T])> {
         if let Some(escape) = strip(rest, b"\\")
             && let Some((digits, after)) = escape.split_first_chunk::<3>()
             && digits.iter().all(|&it| matches!(it.into(), 0x30..=0x37))
+            && digits[0].into() <= 0x33
         {
             let value = digits.iter().fold(0, |n, &it| n * 8 + it.into() - 0x30);
             bytes.push(value as u8);
@@ -517,11 +527,11 @@ impl<'a, T: Unit> Parser<'a, T> {
             ..*self
         };
         ahead.advance();
-        let is_before_new = ahead
-            .peek()
-            .and_then(|it| after_marker(it, b"+++"))
-            .is_some();
-        if is(line.first(), b'-') && is_before_new {
+        // The stars start a hunk of `diff -c`.
+        let is_continued = ahead.peek().is_some_and(|it| {
+            after_marker(it, b"+++").is_some() || strip(it, &[b'*'; 15]).is_some()
+        });
+        if is(line.first(), b'-') && (is_continued || self.is_after_index()) {
             return true;
         }
         if self.number >= self.next_header.number {
@@ -539,6 +549,18 @@ impl<'a, T: Unit> Parser<'a, T> {
             };
         }
         !self.next_header.is_git
+    }
+
+    /// After `Index:` or its rule.
+    fn is_after_index(&self) -> bool {
+        let end = self
+            .line
+            .as_ref()
+            .and_then(|line| line.start.checked_sub(1));
+        end.is_some_and(|end| {
+            let line = without_cr(&self.text[line_start(self.text, end)..end]);
+            index_name(line).is_some() || is_rule(line)
+        })
     }
 
     fn file(&mut self) -> Result<FilePatch, ParseError> {
@@ -617,7 +639,7 @@ impl<'a, T: Unit> Parser<'a, T> {
                 Some(Operation::Keep) => (added, removed) = (added + 1, removed + 1),
                 Some(Operation::NoNewline) => {}
                 None => {
-                    let line = widen(line);
+                    let line = widen(&line[..line.len().min(MAX_QUOTED)]);
                     return Err(ParseError::InvalidLine { at, line });
                 }
             }
@@ -745,7 +767,13 @@ fn convert_line_endings<T: Unit>(terminated: &[&[T]], hunks: &mut [Vec<Step<'_, 
             let steps = hunks.iter_mut().flatten();
             steps.for_each(|step| step.cr = step.has_line_ending.then(|| T::from_u8(b'\r')));
         }
-    } else if with_cr == 0 && steps().all(|step| step.cr.is_some() || !step.has_line_ending) {
+    } else if with_cr == 0
+        && steps().all(|step| step.cr.is_some() || !step.has_line_ending)
+        // On a line without a newline it is text.
+        && steps().any(|step| {
+            step.cr.is_some() && (step.has_line_ending || step.operation == Operation::NoNewline)
+        })
+    {
         let steps = hunks.iter_mut().flatten();
         steps.for_each(|step| step.cr = None);
     }
@@ -787,7 +815,13 @@ struct Source<'a, T> {
     lines: Vec<&'a [T]>,
     /// Of the first 0, 1, 2 .. lines. Trying a place takes one step, however much of the hunk matches there.
     hashes: OnceCell<Vec<u64>>,
+    /// What is left for trying places, in all hunks together.
+    work: Cell<usize>,
 }
+
+/// Hunks can be made to each search the whole source, or to have its hash everywhere.
+const WORK: usize = 1 << 22;
+const WORK_PER_UNIT: usize = 16;
 
 impl<T: Unit> Source<'_, T> {
     /// The place from `min` on, nearest to `wanted`, that has what the hunk keeps and removes.
@@ -823,14 +857,24 @@ impl<T: Unit> Source<'_, T> {
         });
         let hash = old().fold(0, |hash, step| roll(hash, step.text));
         let shift = HASH_BASE.wrapping_pow(old_lines as u32);
-        let mut around = (1..=(max - nearest).max(nearest - min)).flat_map(|distance| {
+        let around = (1..=(max - nearest).max(nearest - min)).flat_map(|distance| {
             let later = Some(nearest + distance).filter(|&at| at <= max);
             let earlier = nearest.checked_sub(distance).filter(|&at| at >= min);
             later.into_iter().chain(earlier)
         });
-        around.find(|&at| {
-            hashes[at + old_lines].wrapping_sub(hashes[at].wrapping_mul(shift)) == hash && fits(at)
-        })
+        let units: usize = old().map(|step| step.text.len() + 1).sum();
+        let mut work = self.work.get();
+        for at in around {
+            if hashes[at + old_lines].wrapping_sub(hashes[at].wrapping_mul(shift)) == hash {
+                if fits(at) {
+                    self.work.set(work);
+                    return Some(at);
+                }
+                work = work.checked_sub(units)?;
+            }
+            work = work.checked_sub(1)?;
+        }
+        None
     }
 }
 
@@ -862,8 +906,11 @@ pub fn apply<T: Unit>(
     }
 
     let mut out = Vec::with_capacity(source.len() + 1);
-    let hashes = OnceCell::new();
-    let source = Source { lines, hashes };
+    let source = Source {
+        lines,
+        hashes: OnceCell::new(),
+        work: Cell::new(WORK + WORK_PER_UNIT * source.len()),
+    };
     let copy = |out: &mut Vec<T>, range: Range<usize>| {
         for line in &source.lines[range] {
             out.extend_from_slice(line);
@@ -907,5 +954,13 @@ pub fn apply<T: Unit>(
     }
     copy(&mut out, copied..source.lines.len());
     out.pop();
+    // Half of a line ending, unless a line without a newline had it.
+    if is(out.last(), b'\r') && !is(rest.last(), b'\r') {
+        let mut steps = steps.iter().flatten();
+        let last_added = steps.rfind(|step| step.operation == Operation::Add);
+        if last_added.is_none_or(|step| step.has_line_ending) {
+            return Ok(None);
+        }
+    }
     Ok(Some(out))
 }

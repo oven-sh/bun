@@ -423,6 +423,23 @@ describe("RedisClient tls.checkServerIdentity", () => {
     });
   });
 
+  test.each<[any]>([[{}], ["text"], [false]])("is %p: the constructor throws", checkServerIdentity => {
+    expect(() => new RedisClient("rediss://localhost", { tls: { ca, checkServerIdentity } })).toThrow(
+      expect.objectContaining({
+        code: "ERR_INVALID_ARG_TYPE",
+        message: expect.stringContaining("tls.checkServerIdentity"),
+      }),
+    );
+  });
+
+  test.each<[any]>([[undefined], [null]])("is %p: the name check stays", async checkServerIdentity => {
+    await withServer(agent1, async port => {
+      expect(await ping(`rediss://localhost:${port}`, { ca, checkServerIdentity })).toBe(
+        "ERR_TLS_CERT_ALTNAME_INVALID",
+      );
+    });
+  });
+
   test("is called for every connection, also of a duplicate", async () => {
     await withServer(agent1, async port => {
       const checkServerIdentity = mock(() => undefined);

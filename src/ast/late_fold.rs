@@ -181,8 +181,7 @@ impl<'a> LateFold<'a> {
         matches!(expr.unwrap_inlined().data, Data::EString(_))
     }
 
-    /// The statement that replaces the `if` statement `s`, when cross-module values decide
-    /// its test: the branch that runs, after what the test runs for effect.
+    /// The statement that replaces `s` when cross-module values decide its test.
     pub fn fold_if(&self, s: &S::If, loc: crate::Loc, spine: &mut Vec<Expr>) -> Option<Stmt> {
         // `if (effect(), E.A)`: the parser merges a preceding expression statement in.
         let (effects, test) = match &s.test.data {

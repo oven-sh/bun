@@ -465,9 +465,10 @@ impl<'a, 's> TreeWriter<'a, 's> {
             SymbolOrigin::Local if outside_names.contains(symbol.name) => {
                 ModuleItems::name_shadowing_local(self.atoms, symbol.name)
             }
-            SymbolOrigin::Source | SymbolOrigin::Local | SymbolOrigin::NamespaceMember(_) => {
-                self.atoms.intern(symbol.name)
-            }
+            SymbolOrigin::Source
+            | SymbolOrigin::Local
+            | SymbolOrigin::NamespaceMember(_)
+            | SymbolOrigin::DefinedPath => self.atoms.intern(symbol.name),
             _ => {
                 let index = symbol.reference.inner_index();
                 if let Some(&name) = self.item_names.get(&index) {

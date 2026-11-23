@@ -580,12 +580,9 @@ impl TreeWriter<'_, '_> {
     ) -> Written<(ExprId, Chain)> {
         let (right, chain) = self.write_chain_base(callee, link)?;
         let written = self.file[right];
-        let is_member = match written.kind {
-            ExprKind::Dot { .. } | ExprKind::Index { .. } => true,
-            // The value of "--define a=b.c" is one name
-            ExprKind::Ident(name) => contains_char(self.atoms.bytes(name), b'.'),
-            _ => false,
-        };
+        let is_member = matches!(written.kind, ExprKind::Dot { .. } | ExprKind::Index { .. })
+            || matches!(callee.data, ExprData::EIdentifier(id)
+                if self.origin_of(id.ref_) == SymbolOrigin::DefinedPath);
         if kind != E::CallKind::Plain || !is_member {
             return Ok((right, chain));
         }
@@ -654,7 +651,10 @@ impl TreeWriter<'_, '_> {
         if let ExprData::EIdentifier(name) = &unary.value.data
             && unary.op == OpCode::UnTypeof
             && !unary.flags.contains(typeof_flag)
-            && self.origin_of(name.ref_) == SymbolOrigin::Source
+            && matches!(
+                self.origin_of(name.ref_),
+                SymbolOrigin::Source | SymbolOrigin::DefinedPath
+            )
         {
             let range = (self.file[operand].pos, self.file[operand].end);
             let left = self.write_number_literal(0.0, range);

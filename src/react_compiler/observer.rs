@@ -19,6 +19,8 @@ pub enum SymbolOrigin {
     Source,
     /// `namespace.name`, which the parser rewrote to a synthetic import.
     NamespaceMember(Ref),
+    /// The `b.c` of `--define a=b.c`, which is one symbol.
+    DefinedPath,
     Local,
     Outlined,
     JsxImport(JsxImportKind),
@@ -157,6 +159,10 @@ impl Observation<'_> {
         }
         if host.is_raw_template(reference) {
             return SymbolOrigin::RawTemplate;
+        }
+        let symbol = host.symbols().get(reference.inner_index() as usize);
+        if symbol.is_some_and(bun_ast::Symbol::is_dotted_define) {
+            return SymbolOrigin::DefinedPath;
         }
         // The parser also lists `a` of `import { a }` and of `const { a } = require()` under a namespace, one that has
         // no name in the source.

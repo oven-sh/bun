@@ -969,11 +969,27 @@ async function runTests(downloaded: Promise<string> | undefined, printed: Promis
   // The AoT programs come first and no test runs beside them. Their driver gets a job per core: it and this runner only wait.
   const aotWidth = parallelism > 1 ? parallelism : Math.min(parallelSafeCap, availableParallelism());
 
-  type AotOutput = { exitCode: number | null; signal: string | null; stdout: string; stderr: string };
+  type AotOutput = {
+    exitCode: number | null;
+    signal: string | null;
+    stdout: string;
+    stderr: string;
+    overLimit?: string;
+  };
   type AotDriverLine =
     | { file: string; state: "compiling" }
     | { file: string; state: "pass"; compileMs: number; runMs: number; plainMs: number }
-    | { file: string; state: "fail"; stage: string; message: string; expected?: AotOutput; actual?: AotOutput }
+    | {
+        file: string;
+        state: "fail";
+        stage: string;
+        message: string;
+        expected?: AotOutput;
+        actual?: AotOutput;
+        buildAgain?: AotOutput;
+        expectedAgain?: AotOutput;
+        actualAgain?: AotOutput;
+      }
     | { file: string; state: "skip"; message: string };
   type AotVerdict = Exclude<AotDriverLine, { state: "compiling" }>;
 
@@ -1695,6 +1711,7 @@ async function runTests(downloaded: Promise<string> | undefined, printed: Promis
         ? []
         : [
             `${title}: ${output.signal ?? `exit code ${output.exitCode}`}`,
+            output.overLimit,
             output.stdout.trimEnd(),
             output.stderr.trimEnd(),
           ].filter(Boolean);
@@ -1728,6 +1745,9 @@ async function runTests(downloaded: Promise<string> | undefined, printed: Promis
         "",
         ...describeAotOutput(`expected, from bun ${title}`, verdict.expected),
         ...describeAotOutput("actual, compiled ahead of time", verdict.actual),
+        ...describeAotOutput("the build behind the same frames", verdict.buildAgain),
+        ...describeAotOutput("expected, behind the same frames", verdict.expectedAgain),
+        ...describeAotOutput("actual, behind the same frames", verdict.actualAgain),
       ].join("\n");
       const failure = {
         ...result,

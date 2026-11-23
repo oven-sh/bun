@@ -3935,9 +3935,10 @@ pub mod bv2_impl {
                 let loaders = &*input_files.loader;
                 let targets = self.graph.ast.items_target();
                 let mut has_unusable_output_path = false;
+                let is_executable = self.transpiler.options.compile_mode.is_executable();
                 // Without an output directory the paths are only returned, so they can have any length.
-                let opens_output_paths = !self.transpiler.resolver.opts.output_dir.is_empty()
-                    || self.transpiler.options.compile_mode.is_executable();
+                let opens_output_paths =
+                    !self.transpiler.resolver.opts.output_dir.is_empty() || is_executable;
                 let mut templates: Vec<(usize, options::PathTemplate)> = Vec::new();
 
                 for reachable_source in reachable_files {
@@ -3982,6 +3983,10 @@ pub mod bv2_impl {
 
                             template.placeholder.name = pathname.base.to_vec().into_boxed_slice();
                             template.placeholder.dir = pathname.dir.to_vec().into_boxed_slice();
+                            // In an executable `node:fs` finds `D:/a/b.txt`, and not `./b.txt`.
+                            if bun_paths::is_absolute(&relative) && !is_executable {
+                                template.resolve_dir(&self.transpiler.options.root_dir);
+                            }
                             let mut ext: &[u8] = pathname.ext;
                             if !ext.is_empty() && ext[0] == b'.' {
                                 ext = &ext[1..];
@@ -4019,7 +4024,6 @@ pub mod bv2_impl {
                     }
                 }
 
-                let is_executable = self.transpiler.options.compile_mode.is_executable();
                 // The output path of a copied file -> its output file and its module.
                 let mut copied: bun_collections::StringHashMap<(u32, usize)> = Default::default();
                 for (index, mut template) in templates {

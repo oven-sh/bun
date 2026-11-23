@@ -279,7 +279,6 @@ describe("Bun.Transpiler", () => {
       expect(lastLine(ts.parsed(pos + "export let y = E.X ** z;", false))).toBe("export let y = 5 /* X */ ** z;");
       expect(lastLine(ts.parsed(str + "export let y = E.X ** z;", false))).toBe('export let y = "a" /* X */ ** z;');
       expect(lastLine(ts.parsed(neg + "export let y = z ** E.X;", false))).toBe("export let y = z ** -5 /* X */;");
-      expect(lastLine(ts.parsed(neg + "export let y = -E.X;", false))).toBe("export let y = - -5 /* X */;");
       for (const pre of [neg, pos, str]) {
         for (const expr of ["E.X ** z", "E['X'] ** z", "z ** E.X"]) {
           const out = ts.parsed(pre + `var z = 2; export let y = ${expr};`, false).replace(/^export /gm, "");

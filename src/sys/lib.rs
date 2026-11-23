@@ -777,6 +777,8 @@ pub mod signal_code;
 pub use signal_code::SignalCode;
 #[cfg(unix)]
 pub mod beneath;
+#[cfg(any(target_os = "linux", target_os = "android"))]
+pub mod cached;
 pub mod tmp;
 pub use tmp::Tmpfile;
 // `windows/mod.rs` is `#![cfg(windows)]`-gated internally; on POSIX this
@@ -1187,7 +1189,7 @@ impl Tag {
     pub const read: Tag = Tag(38);
     pub const readlink: Tag = Tag(39);
     pub const rename: Tag = Tag(40);
-    pub(crate) const stat: Tag = Tag(41);
+    pub const stat: Tag = Tag(41);
     pub const statfs: Tag = Tag(42);
     pub const symlink: Tag = Tag(43);
     #[cfg(not(windows))]
@@ -1988,8 +1990,9 @@ mod posix_impl {
         // glibc: libc 0.2.x exposes the full surface directly.
         #[cfg(all(target_os = "linux", not(target_env = "musl")))]
         pub(super) use libc::{
-            STATX_ATIME, STATX_BLOCKS, STATX_BTIME, STATX_CTIME, STATX_GID, STATX_INO, STATX_MODE,
-            STATX_MTIME, STATX_NLINK, STATX_SIZE, STATX_TYPE, STATX_UID, statx,
+            STATX_ATIME, STATX_BLOCKS, STATX_BTIME, STATX_CTIME, STATX_GID, STATX_INO,
+            STATX_MNT_ID, STATX_MODE, STATX_MTIME, STATX_NLINK, STATX_SIZE, STATX_TYPE, STATX_UID,
+            statx,
         };
 
         // musl/Android: `libc` gates `statx`/`STATX_*` behind a build-script
@@ -2014,6 +2017,7 @@ mod posix_impl {
             pub(crate) const STATX_SIZE: c_uint = 0x0200;
             pub(crate) const STATX_BLOCKS: c_uint = 0x0400;
             pub(crate) const STATX_BTIME: c_uint = 0x0800;
+            pub(crate) const STATX_MNT_ID: c_uint = 0x1000;
 
             #[repr(C)]
             #[derive(Copy, Clone)]
@@ -2024,7 +2028,7 @@ mod posix_impl {
             }
 
             // `struct statx` from `<linux/stat.h>` — fixed 256-byte layout the
-            // kernel writes. Only the fields `statx_impl` reads are named; the
+            // kernel writes. Only the fields that this module reads are named; the
             // rest is reserved padding.
             #[repr(C)]
             #[derive(Copy, Clone)]
@@ -2049,7 +2053,8 @@ mod posix_impl {
                 pub stx_rdev_minor: u32,
                 pub stx_dev_major: u32,
                 pub stx_dev_minor: u32,
-                __pad1: [u64; 14],
+                pub stx_mnt_id: u64,
+                __pad1: [u64; 13],
             }
             const _: () = assert!(core::mem::size_of::<statx>() == 256);
 
@@ -2188,40 +2193,73 @@ mod posix_impl {
             }
 
             // SAFETY: rc == 0 ⇒ kernel populated the buffer.
-            let buf = unsafe { buf.assume_init() };
-            return Ok(PosixStat {
-                dev: statx_makedev(buf.stx_dev_major, buf.stx_dev_minor),
-                ino: buf.stx_ino,
-                mode: buf.stx_mode as u64,
-                nlink: buf.stx_nlink as u64,
-                uid: buf.stx_uid as u64,
-                gid: buf.stx_gid as u64,
-                rdev: statx_makedev(buf.stx_rdev_major, buf.stx_rdev_minor),
-                size: buf.stx_size,
-                blksize: buf.stx_blksize as u64,
-                blocks: buf.stx_blocks,
-                atim: Timespec {
-                    sec: buf.stx_atime.tv_sec,
-                    nsec: buf.stx_atime.tv_nsec as i64,
-                },
-                mtim: Timespec {
-                    sec: buf.stx_mtime.tv_sec,
-                    nsec: buf.stx_mtime.tv_nsec as i64,
-                },
-                ctim: Timespec {
-                    sec: buf.stx_ctime.tv_sec,
-                    nsec: buf.stx_ctime.tv_nsec as i64,
-                },
-                birthtim: if buf.stx_mask & lx::STATX_BTIME != 0 {
-                    Timespec {
-                        sec: buf.stx_btime.tv_sec,
-                        nsec: buf.stx_btime.tv_nsec as i64,
-                    }
-                } else {
-                    Timespec { sec: 0, nsec: 0 }
-                },
-            });
+            return Ok(posix_stat_of_statx(&unsafe { buf.assume_init() }));
         }
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn posix_stat_of_statx(buf: &lx::statx) -> PosixStat {
+        PosixStat {
+            dev: statx_makedev(buf.stx_dev_major, buf.stx_dev_minor),
+            ino: buf.stx_ino,
+            mode: buf.stx_mode as u64,
+            nlink: buf.stx_nlink as u64,
+            uid: buf.stx_uid as u64,
+            gid: buf.stx_gid as u64,
+            rdev: statx_makedev(buf.stx_rdev_major, buf.stx_rdev_minor),
+            size: buf.stx_size,
+            blksize: buf.stx_blksize as u64,
+            blocks: buf.stx_blocks,
+            atim: Timespec {
+                sec: buf.stx_atime.tv_sec,
+                nsec: buf.stx_atime.tv_nsec as i64,
+            },
+            mtim: Timespec {
+                sec: buf.stx_mtime.tv_sec,
+                nsec: buf.stx_mtime.tv_nsec as i64,
+            },
+            ctim: Timespec {
+                sec: buf.stx_ctime.tv_sec,
+                nsec: buf.stx_ctime.tv_nsec as i64,
+            },
+            birthtim: if buf.stx_mask & lx::STATX_BTIME != 0 {
+                Timespec {
+                    sec: buf.stx_btime.tv_sec,
+                    nsec: buf.stx_btime.tv_nsec as i64,
+                }
+            } else {
+                Timespec { sec: 0, nsec: 0 }
+            },
+        }
+    }
+
+    /// `fstatx` from memory, with the mount id. 9p asks its server all the same: only for a mount that `cached` classified.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    pub(crate) fn fstatx_in_memory(fd: Fd, mask: u32) -> Option<(PosixStat, u64)> {
+        const AT_STATX_DONT_SYNC: c_int = 0x4000;
+        let mut buf = core::mem::MaybeUninit::<lx::statx>::uninit();
+        loop {
+            // SAFETY: the path is an empty C string; `buf` is a valid out-param.
+            let rc = unsafe {
+                lx::statx(
+                    fd.native(),
+                    c"".as_ptr(),
+                    libc::AT_EMPTY_PATH | AT_STATX_DONT_SYNC,
+                    mask | lx::STATX_MNT_ID | lx::STATX_NLINK,
+                    buf.as_mut_ptr(),
+                )
+            };
+            if rc == 0 {
+                break;
+            }
+            if rc < 0 && last_errno() == libc::EINTR {
+                continue;
+            }
+            return None;
+        }
+        // SAFETY: rc == 0 ⇒ kernel populated the buffer.
+        let buf = unsafe { buf.assume_init() };
+        (buf.stx_mask & lx::STATX_MNT_ID != 0).then(|| (posix_stat_of_statx(&buf), buf.stx_mnt_id))
     }
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -3128,11 +3166,15 @@ mod posix_impl {
         Ok(rc)
     }
     pub fn chdir(path: &ZStr) -> Maybe<()> {
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        let _change = crate::cached::WorkingDirectoryChange::begin();
         // SAFETY: `ZStr::as_ptr()` yields a valid NUL-terminated C string.
         check_p!(unsafe { libc::chdir(path.as_ptr()) }, Tag::chdir, path);
         Ok(())
     }
     pub fn fchdir(fd: Fd) -> Maybe<()> {
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        let _change = crate::cached::WorkingDirectoryChange::begin();
         check!(safe_libc::fchdir(fd.native()), Tag::fchdir);
         Ok(())
     }

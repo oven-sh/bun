@@ -318,6 +318,8 @@ pub mod feature_flag {
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_UV_FS_COPYFILE, "BUN_FEATURE_FLAG_DISABLE_UV_FS_COPYFILE", {});
     new_feature_flag!(pub BUN_DUMP_STATE_ON_CRASH, "BUN_DUMP_STATE_ON_CRASH", {});
     new_feature_flag!(pub BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS, "BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS", {});
+    // The JS thread answers an async `stat` or `lstat` that the kernel holds in its caches (Linux).
+    new_feature_flag!(pub BUN_FEATURE_FLAG_EXPERIMENTAL_ASYNC_FS_FAST_PATH, "BUN_FEATURE_FLAG_EXPERIMENTAL_ASYNC_FS_FAST_PATH", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE, "BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE", {});
     // Offer "h2" in the fetch() TLS ALPN list and speak HTTP/2 when the
     // server selects it. Off by default while the client implementation

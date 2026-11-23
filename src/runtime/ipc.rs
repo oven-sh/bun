@@ -30,8 +30,6 @@ use bun_sys::windows::libuv as uv;
 use bun_sys::windows::libuv::{UvHandle as _, UvStream as _};
 use bun_sys::{CloseOnDrop, Fd};
 
-use crate::socket::offered_fd::Offer;
-
 // `bun.cpp.*` — generated C++ dispatch shims for IPC handle (de)serialization
 // (`IPCSerialize` / `IPCParse`) are declared once in `bun_jsc::cpp` and called
 // through that module's safe wrappers; no local extern block needed.
@@ -933,6 +931,13 @@ impl SendQueueOwner {
         }
     }
 
+    fn takes_cluster_handle(self) -> bool {
+        match self {
+            SendQueueOwner::Subprocess(_) => false,
+            SendQueueOwner::Instance => crate::node::node_cluster_binding::is_child_listening(),
+        }
+    }
+
     fn this_jsvalue(self) -> JSValue {
         match self {
             // SAFETY: an attached owner is live (it holds a ref on the SendQueue).
@@ -1188,10 +1193,12 @@ impl SendQueue {
     }
 
     /// User disconnect(): reports disconnected now but, like node, closes only once the handles are acked. What is queued behind goes out first.
+    /// A cluster channel waits only for a handle that is written.
     pub(crate) fn disconnect(&self) {
         if self.socket_is_open()
             && !self.pending_close.get()
-            && (self.waiting_for_ack.get().is_some() || self.delivers_queued_handle())
+            && (self.waiting_for_ack.get().is_some()
+                || (self.has_queued_handle() && !self.is_cluster_channel()))
         {
             self.close_after_flush.set(true);
             return;
@@ -1199,13 +1206,16 @@ impl SendQueue {
         self.close_socket_next_tick(true);
     }
 
-    /// node:cluster drops it: a worker can take a connection during the wait, and the primary, which gets no answer, gives it to a second worker.
-    fn delivers_queued_handle(&self) -> bool {
+    fn has_queued_handle(&self) -> bool {
         self.queue.get().iter().any(|item| item.handle.is_some())
-            && !self.owner.get().is_some_and(|owner| match owner {
-                SendQueueOwner::Subprocess(_) => self.internal_msg_queue.get().is_ready(),
-                SendQueueOwner::Instance => crate::node::node_cluster_binding::is_child_listening(),
-            })
+    }
+
+    /// A worker can take a connection while a close waits. The primary gets no answer, and gives it to a second worker.
+    fn is_cluster_channel(&self) -> bool {
+        self.owner.get().is_some_and(|owner| match owner {
+            SendQueueOwner::Subprocess(_) => self.internal_msg_queue.get().is_ready(),
+            SendQueueOwner::Instance => crate::node::node_cluster_binding::is_child_listening(),
+        })
     }
 
     fn start_message(
@@ -1767,7 +1777,8 @@ impl SendQueue {
             this.update_ref(&global);
         } else if let Some(reply) = early_reply
             && this.waiting_for_ack.get().is_some()
-            && (this.is_connected() || this.close_after_flush.get())
+            && !this.pending_close.get()
+            && !this.windows.get().try_close_after_write
         {
             this.on_ack_nack(&global, reply);
         } else {
@@ -2008,10 +2019,9 @@ fn handle_ipc_message(
         match icmd {
             IPCCommand::Handle(msg_data) => {
                 #[cfg(windows)]
-                let received =
-                    import_windows_socket_payload(global_this, msg_data)?.map(Offer::new);
+                let received = import_windows_socket_payload(global_this, msg_data)?;
                 #[cfg(not(windows))]
-                let received = send_queue.incoming_fd.take().map(Offer::new);
+                let received = send_queue.incoming_fd.take();
 
                 let packet = if received.is_some() {
                     get_ack_packet(send_queue.mode)
@@ -2048,8 +2058,8 @@ fn handle_ipc_message(
                 let _scope = global_this.bun_vm().enter_event_loop_scope();
                 let fd_js = received_fd_to_js(received.fd());
                 let emit = ipc_parse(global_this, target, msg_data, fd_js)?;
-                // Before the listener, which can end the thread.
-                received.leave_untried_to_script();
+                // The object that `ipc_parse` made closes it. Before the listener, which can end the thread.
+                received.into_raw();
                 if emit.is_callable() {
                     emit.call_for_running_script(global_this, JSValue::UNDEFINED, &[])?;
                 }
@@ -2081,12 +2091,11 @@ fn handle_ipc_message(
                 {
                     #[cfg(windows)]
                     {
-                        received =
-                            import_windows_socket_payload(global_this, msg_data)?.map(Offer::new);
+                        received = import_windows_socket_payload(global_this, msg_data)?;
                     }
                     #[cfg(not(windows))]
                     {
-                        received = send_queue.incoming_fd.take().map(Offer::new);
+                        received = send_queue.incoming_fd.take();
                     }
                     let packet = if received.is_some() {
                         get_ack_packet(send_queue.mode)
@@ -2109,8 +2118,9 @@ fn handle_ipc_message(
             }
         }
         if let Some(owner) = send_queue.owner.get() {
-            let handle_js =
-                (received.as_ref()).map_or(JSValue::UNDEFINED, |it| received_fd_to_js(it.fd()));
+            let handle_js = received
+                .filter(|_| owner.takes_cluster_handle())
+                .map_or(JSValue::UNDEFINED, |fd| received_fd_to_js(fd.into_raw()));
             owner.handle_ipc_message(&message, handle_js)?;
         }
     }

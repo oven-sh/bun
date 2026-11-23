@@ -1603,124 +1603,12 @@ test.concurrent("a Worker thread that sets up node:cluster does not take the mes
   expect(exitCode).toBe(0);
 });
 
-// Workers answer a connection with their id. The first to listen is the first to get one.
-async function runRoundRobin(workers: number, primary: string, worker: string) {
-  using dir = tempDir("cluster-round-robin", {
-    "index.js": `
-      const cluster = require("node:cluster");
-      const { once } = require("node:events");
-      const fs = require("node:fs");
-      const net = require("node:net");
-      const unblock = () => fs.writeFileSync("go", "");
-      const block = () => {
-        const deadline = Date.now() + 120_000;
-        while (!fs.existsSync("go") && Date.now() < deadline) Bun.sleepSync(1);
-      };
-      // For a peer that is blocked.
-      const fill = async channel => {
-        let written;
-        do {
-          written = false;
-          channel.send(Buffer.alloc(2 << 20, "x").toString(), () => (written = true));
-          await new Promise(setImmediate);
-        } while (written);
-      };
-      if (cluster.isPrimary) {
-        cluster.schedulingPolicy = cluster.SCHED_RR;
-        const workers = [];
-        let port;
-        while (workers.length < ${workers}) {
-          workers.push(cluster.fork());
-          [{ port }] = await once(workers.at(-1), "listening");
-        }
-        const [first, second] = workers;
-        const ask = (message, worker = first) => (worker.send(message), once(worker, "message"));
-        const accepted = new Promise(resolve => {
-          require("node:diagnostics_channel").subscribe("net.server.socket", () => setImmediate(resolve));
-        });
-        const request = () =>
-          new Promise(resolve => {
-            let reply = "";
-            const socket = net.connect(port, "127.0.0.1").setEncoding("utf8");
-            socket.on("data", data => (reply += data)).on("error", () => {});
-            socket.on("close", () => resolve("reply " + reply));
-          });
-        ${primary}
-        process.exit(0);
-      } else {
-        const server = net.createServer(socket => socket.end(String(cluster.worker.id))).listen(0, "127.0.0.1");
-        ${worker}
-      }
-    `,
-  });
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "--no-orphans", "index.js"],
-    env: bunEnv,
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  return { stdout: stdout.trim().split(/\r?\n/), stderr, exitCode };
-}
-
-test.concurrent.each([
-  {
-    name: "is served by an onconnection that is wrapped to run later",
-    workers: 1,
-    primary: `
-      await ask("wrap");
-      console.log(await request());
-    `,
-    worker: `
-      process.on("message", () => {
-        const { onconnection } = server._handle;
-        server._handle.onconnection = function () {
-          setImmediate(() => onconnection.apply(this, arguments));
-        };
-        process.send("wrapped");
-      });
-    `,
-    stdout: ["reply 1"],
-  },
-  {
-    name: "is not closed through the handle of an earlier one",
-    workers: 1,
-    primary: `
-      const closed = once(first, "message");
-      console.log(await request());
-      await closed;
-      console.log(await request());
-    `,
-    worker: `
-      let earlier;
-      server.once("connection", socket =>
-        socket.on("close", () => {
-          // The next one gets the same number.
-          let next;
-          while (${!isWindows} && (next = fs.openSync("/dev/null")) < earlier.fd);
-          if (next) fs.closeSync(next);
-          process.send("closed");
-        }),
-      );
-      process.on("internalMessage", (_, handle) => {
-        if (${!isWindows} && earlier && earlier.fd !== handle.fd) console.log("another number");
-        earlier?.close();
-        earlier = handle;
-      });
-    `,
-    stdout: ["reply 1", "reply 1"],
-  },
-])("a round-robin connection $name", async ({ workers, primary, worker, stdout }) => {
-  expect(await runRoundRobin(workers, primary, worker)).toEqual({ stdout, stderr: "", exitCode: 0 });
-});
-
 // The peer is unblocked when a close that does not wait is done. Windows goes on writing after the write in progress.
 test.concurrent.skipIf(isWindows).each([
   {
     side: "primary",
     primary: `
-      await ask("start");
+      await ask(first, "start");
       await fill(first);
       const reply = request();
       await accepted;
@@ -1747,24 +1635,69 @@ test.concurrent.skipIf(isWindows).each([
     `,
   },
 ])("one worker accepts a connection if the $side disconnects with a queued handle", async ({ primary, worker }) => {
-  const result = await runRoundRobin(
-    2,
-    `
-      const gone = Promise.all([once(first, "disconnect"), once(first, "exit")]);
-      ${primary}
-      console.log(await reply);
-      await gone;
-      // Behind whatever the primary has passed on.
-      await ask("sync", second);
-      console.log("accepted by " + fs.readFileSync("accepted", "utf8"));
+  using dir = tempDir("cluster-queued-handle", {
+    "index.js": `
+      const cluster = require("node:cluster");
+      const { once } = require("node:events");
+      const fs = require("node:fs");
+      const net = require("node:net");
+      const unblock = () => fs.writeFileSync("go", "");
+      const block = () => {
+        const deadline = Date.now() + 120_000;
+        while (!fs.existsSync("go") && Date.now() < deadline) Bun.sleepSync(1);
+      };
+      // For a peer that is blocked.
+      const fill = async channel => {
+        let written;
+        do {
+          written = false;
+          channel.send(Buffer.alloc(2 << 20, "x").toString(), () => (written = true));
+          await new Promise(setImmediate);
+        } while (written);
+      };
+      if (cluster.isPrimary) {
+        cluster.schedulingPolicy = cluster.SCHED_RR;
+        // The first to listen is the first to get a connection.
+        const first = cluster.fork();
+        await once(first, "listening");
+        const second = cluster.fork();
+        const [{ port }] = await once(second, "listening");
+        const gone = Promise.all([once(first, "disconnect"), once(first, "exit")]);
+        const ask = (worker, message) => (worker.send(message), once(worker, "message"));
+        const accepted = new Promise(resolve => {
+          require("node:diagnostics_channel").subscribe("net.server.socket", () => setImmediate(resolve));
+        });
+        const request = () =>
+          new Promise(resolve => {
+            let reply = "";
+            const socket = net.connect(port, "127.0.0.1").setEncoding("utf8");
+            socket.on("data", data => (reply += data)).on("error", () => {});
+            socket.on("close", () => resolve("reply " + reply));
+          });
+        ${primary}
+        console.log(await reply);
+        await gone;
+        // Behind whatever the primary has passed on.
+        await ask(second, "sync");
+        console.log("accepted by " + fs.readFileSync("accepted", "utf8"));
+        process.exit(0);
+      } else {
+        const id = String(cluster.worker.id);
+        net.createServer(socket => (fs.appendFileSync("accepted", id), socket.end(id))).listen(0, "127.0.0.1");
+        process.on("message", message => {
+          if (message === "sync") process.send("synced");
+          if (message === "start") { ${worker} }
+        });
+      }
     `,
-    `
-      server.prependListener("connection", () => fs.appendFileSync("accepted", String(cluster.worker.id)));
-      process.on("message", message => {
-        if (message === "sync") process.send("synced");
-        if (message === "start") { ${worker} }
-      });
-    `,
-  );
-  expect(result).toEqual({ stdout: ["reply 2", "accepted by 2"], stderr: "", exitCode: 0 });
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--no-orphans", "index.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "reply 2\naccepted by 2\n", stderr: "", exitCode: 0 });
 });

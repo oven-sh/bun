@@ -675,16 +675,15 @@ impl<const SSL: bool> NewSocket<SSL> {
                 // `LIBUS_SOCKET_DESCRIPTOR` is `c_int` on POSIX, `SOCKET`
                 // (`usize`) on Windows; `Fd::native()` is `c_int` / HANDLE
                 // (`*mut c_void`) respectively; cast to bridge the Rust-side `usize` alias.
-                let fd = f.native() as uws::LIBUS_SOCKET_DESCRIPTOR;
                 let s = group.from_fd(
                     kind,
                     ssl_ctx,
                     core::mem::size_of::<*mut c_void>() as c_int,
-                    fd,
+                    f.native() as uws::LIBUS_SOCKET_DESCRIPTOR,
                     flags,
                     false,
                 );
-                if super::offered_fd::settle(fd, NonNull::new(s)).is_none() {
+                if s.is_null() {
                     return Err(crate::Error::ConnectionFailed);
                 }
                 *NativeRef::of(s) = NativeRef::new(self.clone());

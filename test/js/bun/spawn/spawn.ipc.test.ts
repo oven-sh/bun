@@ -1030,8 +1030,8 @@ describe.concurrent.skipIf(!isLinux)("a message handler that runs the event loop
 // Linux only: reads /proc/self/fd.
 describe.concurrent.skipIf(!isLinux)("a received descriptor", () => {
   // The tag byte makes the receiver ignore the message that carries the descriptor, and `line` then claims it.
-  const sendDescriptorWith = (line: string, open = "listen()") => `
-    const server = await ${open};
+  const sendDescriptorWith = (line: string) => `
+    const server = await listen();
     write("\\x02");
     process.send("ignored", server, () => {
       server.close();
@@ -1039,14 +1039,6 @@ describe.concurrent.skipIf(!isLinux)("a received descriptor", () => {
     });
     write(${JSON.stringify(line + "\n")});
   `;
-
-  // epoll refuses a regular file.
-  const openFileAsServer = `listen().then(server => {
-    const { fd } = server._handle;
-    fs.closeSync(fd);
-    while (fs.openSync("empty.js") < fd);
-    return server;
-  })`;
 
   it("is closed once if dgram.Native cannot adopt it", async () => {
     const result = await runPair(
@@ -1074,108 +1066,6 @@ describe.concurrent.skipIf(!isLinux)("a received descriptor", () => {
     });
   });
 
-  it("is closed if net.Server cannot listen on it", async () => {
-    const result = await runPair(
-      `
-        process.on("uncaughtException", error => console.log(error.syscall, error.code));
-        const before = openFds();
-        await spawnChild().exited;
-        await turn();
-        console.log("leaked", openFds() - before);
-      `,
-      sendDescriptorWith(
-        JSON.stringify({ cmd: "NODE_HANDLE", type: "net.Server" }),
-        `new Promise(resolve => {
-          const socket = require("node:dgram").createSocket("udp4").bind(0, "127.0.0.1", () => resolve(socket));
-        })`,
-      ),
-    );
-    expect(result).toEqual({ stdout: ["listen EINVAL", "leaked 0"], stderr: "", exitCode: 0 });
-  });
-
-  it("is closed if net.Socket cannot adopt it", async () => {
-    const result = await runPair(
-      `
-        const before = openFds();
-        await spawnChild({ ipc: (_, __, socket) => socket?.on("error", error => console.log(error.syscall)) }).exited;
-        await turn();
-        console.log("leaked", openFds() - before);
-      `,
-      sendDescriptorWith(JSON.stringify({ cmd: "NODE_HANDLE", type: "net.Socket", msg: 1 }), openFileAsServer),
-    );
-    expect(result).toEqual({ stdout: ["connect", "leaked 0"], stderr: "", exitCode: 0 });
-  });
-
-  it("is closed once if the net.Socket that adopts it is destroyed before connect() returns", async () => {
-    const result = await runPair(
-      `
-        let next;
-        const { Socket } = require("node:net");
-        const { connect } = Socket.prototype;
-        Socket.prototype.connect = function ({ fd }) {
-          connect.apply(this, arguments);
-          this._handle.terminate();
-          this._handle = null;
-          // The number is free now.
-          while ((next = fs.openSync("/dev/null")) < fd);
-          throw new Error("took it: " + (next === fd));
-        };
-        process.on("uncaughtException", error => console.log(error.message));
-        await spawnChild().exited;
-        await turn();
-        console.log(fs.fstatSync(next).isCharacterDevice());
-      `,
-      `
-        const server = await listen();
-        const socket = require("node:net").connect(server.address().port, "127.0.0.1", () => {
-          process.send("socket", socket, () => process.exit(0));
-        });
-      `,
-    );
-    expect(result).toEqual({ stdout: ["took it: true", "true"], stderr: "", exitCode: 0 });
-  });
-
-  it("is closed once if a subscriber closes the net.Server that listens on it", async () => {
-    const result = await runPair(
-      `
-        let next;
-        require("node:diagnostics_channel").subscribe("tracing:net.server.listen:asyncEnd", ({ server }) => {
-          const { fd } = server._handle;
-          server.close();
-          // The number is free now.
-          while ((next = fs.openSync("/dev/null")) < fd);
-          console.log("took it:", next === fd);
-        });
-        await spawnChild().exited;
-        await turn();
-        console.log(fs.fstatSync(next).isCharacterDevice());
-      `,
-      `
-        const server = await listen();
-        process.send("server", server, () => server.close());
-      `,
-    );
-    expect(result).toEqual({ stdout: ["took it: true", "true"], stderr: "", exitCode: 0 });
-  });
-
-  it("is left open for a listen() that is patched to run later", async () => {
-    const result = await runPair(
-      `
-        const { Server } = require("node:net");
-        const original = Server.prototype.listen;
-        Server.prototype.listen = function () {
-          setImmediate(() => original.apply(this, arguments));
-        };
-        spawnChild({ ipc: (message, _, server) => server.close(() => console.log(message)) });
-      `,
-      `
-        const server = await listen();
-        process.send("server", server, () => server.close());
-      `,
-    );
-    expect(result).toEqual({ stdout: ["server"], stderr: "", exitCode: 0 });
-  });
-
   it("is closed by a parent, which has no use for one in a cluster message", async () => {
     const result = await runPair(
       `
@@ -1189,99 +1079,29 @@ describe.concurrent.skipIf(!isLinux)("a received descriptor", () => {
     expect(result).toEqual({ stdout: ["leaked 0"], stderr: "", exitCode: 0 });
   });
 
-  it.each([
-    { by: "a child that queues a cluster message, because node:cluster is not loaded", setup: "" },
-    { by: "a worker that has no use for it", setup: `require("node:cluster")` },
-    {
-      by: "a worker that waits for another reply",
-      setup: `require("node:cluster").worker.disconnect()`,
-      message: { ack: 1 },
-    },
-    {
-      by: "a worker once, if a listener closes the handle later",
-      setup: `
-        require("node:net").createServer(socket => socket.on("error", () => {})).listen(0);
-        process.on("internalMessage", (_, handle) => {
-          if (!handle) return;
-          process.prependListener("message", () => {
-            let next;
-            while ((next = fs.openSync("/dev/null")) < handle.fd);
-            if (next !== handle.fd) console.log("still open");
-            handle.close();
-            fs.closeSync(next);
-          });
-        })`,
-      first: '\x02{"ack":1,"key":"k","sockname":{}}\n',
-      message: { act: "newconn", key: "k" },
-      open: openFileAsServer,
-    },
-    {
-      by: "script alone, if a listener closes the number",
-      setup: `
-        let next;
-        require("node:net").createServer(socket => {
-          socket.on("error", () => {});
-          next = fs.openSync("/dev/null");
-        }).listen(0);
-        process.on("internalMessage", (_, handle) => handle && fs.closeSync(handle.fd));
-        process.prependListener("message", () => fs.closeSync(next))`,
-      first: '\x02{"ack":1,"key":"k","sockname":{}}\n',
-      message: { act: "newconn", key: "k" },
-    },
-    {
-      by: "script alone, if a listen() on the number fails later",
-      setup: `
-        const { createServer } = require("node:net");
-        const server = createServer().listen(0);
-        process.on("internalMessage", (_, handle) => {
-          if (!handle) return;
-          server._handle.onconnection = () => fs.closeSync(handle.fd);
-          process.prependListener("message", () => {
-            const next = fs.openSync("/dev/null");
-            if (next !== handle.fd) console.log("another number");
-            createServer().on("error", () => {}).listen({ fd: next, exclusive: true });
-            fs.closeSync(next);
-          });
-        })`,
-      first: '\x02{"ack":1,"key":"k","sockname":{}}\n',
-      message: { act: "newconn", key: "k" },
-    },
-    {
-      by: "a worker that cannot adopt the connection",
-      setup: `require("node:net").createServer(socket => socket.on("error", () => {})).listen(0)`,
-      first: '\x02{"ack":1,"key":"k","sockname":{}}\n',
-      message: { act: "newconn", key: "k" },
-      open: openFileAsServer,
-    },
-  ])("is closed by $by", async ({ setup, first = "", message, open }) => {
+  it("is closed by a child that queues a cluster message, because node:cluster is not loaded", async () => {
     const result = await runPair(
       `
         // Both ends of the channel are children.
-        const spawnEnd = (role, channel, env) =>
+        const spawnEnd = (role, channel) =>
           spawnChild({
             cmd: [process.execPath, "child.js", role],
-            env: { ...process.env, NODE_CHANNEL_FD: "3", NODE_CHANNEL_SERIALIZATION_MODE: "json", ...env },
+            env: { ...process.env, NODE_CHANNEL_FD: "3", NODE_CHANNEL_SERIALIZATION_MODE: "json" },
             stdio: ["ignore", "inherit", "inherit", channel],
             ipc: undefined,
           });
-        const receiver = spawnEnd("receive", "pipe", ${setup && `{ NODE_UNIQUE_ID: "1" }`});
+        const receiver = spawnEnd("receive", "pipe");
         await Promise.all([receiver.exited, spawnEnd("send", receiver.stdio[3]).exited]);
       `,
       `
         if (process.argv[2] === "send") {
-          until("ready");
-          write(${JSON.stringify(first)});
-          ${sendDescriptorWith("\x02" + JSON.stringify({ $hasHandle: true, ...message }), open)}
+          ${sendDescriptorWith('\x02{"$hasHandle":true}')}
         } else {
-          const { disconnect } = process;
-          process.disconnect = () => {};
           process.on("message", () => {
             console.log("leaked", openFds() - before);
-            disconnect.call(process);
+            process.disconnect();
           });
-          ${setup};
           const before = openFds();
-          fs.writeFileSync("ready", "");
         }
       `,
     );

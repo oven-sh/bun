@@ -594,7 +594,7 @@ impl UDPSocket {
 
         let loop_ = uws::Loop::get();
         let created = if let Some(fd) = config.fd {
-            let adopted = uws::udp::Socket::create_from_fd(
+            uws::udp::Socket::create_from_fd(
                 loop_,
                 on_data,
                 on_drain,
@@ -604,8 +604,7 @@ impl UDPSocket {
                 config.shared_fd,
                 Some(&mut err),
                 this_ptr.cast::<c_void>(),
-            );
-            super::offered_fd::settle(fd as uws::LIBUS_SOCKET_DESCRIPTOR, adopted)
+            )
         } else {
             uws::udp::Socket::create(
                 loop_,
@@ -1858,7 +1857,6 @@ pub(crate) fn dgram_adopt_fd(fd: i32) -> bun_sys::Result<()> {
         // No-op for tracked descriptors: an adopted fd stays read-only rather
         // than becoming closable again through a second wrap.
         dgram_register_owned_fd(fd);
-        super::offered_fd::claim(fd);
         // libuv's uv_udp_open unconditionally sets SO_REUSEADDR (kept for
         // backwards compat, libuv#4551); best-effort like it is there.
         let _ = uws::udp::raw::bsd_set_reuseaddr(fd);

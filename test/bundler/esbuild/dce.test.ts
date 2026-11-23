@@ -8,6 +8,70 @@ import { dedent, itBundled } from "../expectBundled";
 
 // To understand what `dce: true` is doing, see ../expectBundled.md's "dce: true" section
 
+// A grid of operators over constant values, for a test that builds it twice: with values that the
+// same file declares, which the parser folds, and with the same values imported from another file.
+// `ref` is how a row reads a value. `scope` is the parameter that gives `evaluate` those values.
+function foldGrid(members: Record<string, string>, ref: (name: string) => string, scope: string) {
+  const names = Object.keys(members);
+  const rows: { kind: string; text: string }[] = [];
+  const add = (template: (...operands: string[]) => string, ...operands: string[]) =>
+    rows.push({ kind: template(...operands.map(() => ref("x"))), text: template(...operands.map(ref)) });
+  for (const op of ["+", "-", "~", "!", "typeof ", "void "]) {
+    for (const a of names) add(v => `${op}${v}`, a);
+  }
+  for (const op of "+ - * / % ** << >> >>> & | ^ < > <= >= == != === !== && || ??".split(" ")) {
+    for (const a of names) for (const b of names) add((l, r) => `${l} ${op} ${r}`, a, b);
+  }
+  // Through one more operator, and with an operand that only the run knows.
+  for (const a of names) {
+    add((v, one, three) => `(${v} | ${one}) + ${three}`, a, "One", "Three");
+    add((v, one, three) => `${three} * (${v} - ${one})`, a, "One", "Three");
+    add(v => `${v} ? "yes" : "no"`, a);
+    add((v, one, three) => `!${v} ? ${one} : ${three}`, a, "One", "Three");
+    add((v, text, one) => `${v} + ${text} + ${one}`, a, "Text", "One");
+    add((v, text, one) => `${one} + ${v} + ${text}`, a, "Text", "One");
+    add((v, three) => `unknown + (${v} | ${three})`, a, "Three");
+    add(v => `(${v} && unknown) + 1`, a);
+    add(v => `(${v} || unknown) + 1`, a);
+    add(v => `\`<\${${v}}>\``, a);
+  }
+  const format = `v => (typeof v === "string" ? JSON.stringify(v) : Object.is(v, -0) ? "-0" : String(v))`;
+  const values = Object.fromEntries(names.map(name => [name, (0, eval)(members[name])]));
+  // The text of each row, without the comment that names an enum member.
+  const printed = (text: string) =>
+    text
+      .split("\n")
+      .filter(line => line.startsWith("t("))
+      .map(line => line.replace(/\s*\/\*.*?\*\//g, ""));
+  return {
+    names,
+    body: `
+      const out: string[] = [];
+      const format = ${format};
+      const unknown = Number("4");
+      const t = (v: unknown) => out.push(format(v));
+      ${rows.map(row => `t(${row.text});`).join("\n")}
+      console.log(out.join("\\n"));
+    `,
+    /** What the rows print when the engine evaluates them. */
+    stdout: new Function(scope, "unknown", `return [${rows.map(row => row.text).join(",")}]`)(values, 4)
+      .map((0, eval)(format))
+      .join("\n"),
+    /** The kinds of row that the two outputs print differently. */
+    differences(same: string, cross: string) {
+      const [sameRows, crossRows] = [printed(same), printed(cross)];
+      expect([sameRows.length, crossRows.length]).toEqual([rows.length, rows.length]);
+      const kinds: Record<string, { rows: number; example: string }> = {};
+      rows.forEach((row, i) => {
+        if (sameRows[i] === crossRows[i]) return;
+        kinds[row.kind] ??= { rows: 0, example: `${crossRows[i]} where the same file prints ${sameRows[i]}` };
+        kinds[row.kind].rows++;
+      });
+      return kinds;
+    },
+  };
+}
+
 describe("bundler", () => {
   itBundled("dce/PackageJsonSideEffectsFalseKeepNamedImportES6", {
     files: {
@@ -3619,7 +3683,7 @@ describe("bundler", () => {
   // The criterion is the same-file output: each row must print and run the same for an enum that
   // another file declares as for one that the same file declares.
   {
-    const members: Record<string, string> = {
+    const members = {
       Zero: "0",
       NegZero: "-0",
       One: "1",
@@ -3631,78 +3695,27 @@ describe("bundler", () => {
       P53: "9007199254740992",
       Inf: "1 / 0",
       NaN_: "0 / 0",
-      Name: '"name"',
+      Text: '"name"',
       Empty: '""',
       Digits: '"12"',
     };
-    const names = Object.keys(members);
-    const unary = ["+", "-", "~", "!", "typeof ", "void "];
-    const binary = "+ - * / % ** << >> >>> & | ^ < > <= >= == != === !== && || ??".split(" ");
-    const rows = [
-      ...unary.flatMap(op => names.map(a => `${op}E.${a}`)),
-      ...binary.flatMap(op => names.flatMap(a => names.map(b => `E.${a} ${op} E.${b}`))),
-      // Through one more operator, and with an operand that only the run knows.
-      ...names.flatMap(a => [
-        `(E.${a} | E.One) + E.Three`,
-        `E.Three * (E.${a} - E.One)`,
-        `E.${a} ? "yes" : "no"`,
-        `!E.${a} ? E.One : E.Three`,
-        `E.${a} + E.Name + E.One`,
-        `E.One + E.${a} + E.Name`,
-        `unknown + (E.${a} | E.Three)`,
-        `(E.${a} && unknown) + 1`,
-        `(E.${a} || unknown) + 1`,
-        `\`<\${E.${a}}>\``,
-      ]),
-    ];
-    const declaration = `enum E { ${names.map(name => `${name} = ${members[name]}`).join(", ")} }`;
-    const format = `v => (typeof v === "string" ? JSON.stringify(v) : Object.is(v, -0) ? "-0" : String(v))`;
-    const body = `
-      const out: string[] = [];
-      const format = ${format};
-      const unknown = Number("4");
-      const t = (v: unknown) => out.push(format(v));
-      ${rows.map(row => `t(${row});`).join("\n")}
-      console.log(out.join("\\n"));
-    `;
-    const E = Object.fromEntries(names.map(name => [name, (0, eval)(members[name])]));
-    const expected = new Function("E", "unknown", `return [${rows.join(",")}]`)(E, 4)
-      .map((0, eval)(format))
-      .join("\n");
-    // The text of each row, without the comment that names the enum member.
-    const printedRows = (text: string) =>
-      text
-        .split("\n")
-        .filter(line => line.startsWith("t("))
-        .map(line => line.replace(/\s*\/\*.*?\*\//g, ""));
-
+    const grid = foldGrid(members, name => `E.${name}`, "E");
+    const declaration = `enum E { ${grid.names.map(name => `${name} = ${members[name]}`).join(", ")} }`;
     itBundled("dce/CrossModuleEnumFoldMatchesSameFile", {
       files: {
-        "/same.ts": `${declaration}\n${body}`,
-        "/cross.ts": `import { E } from "./enum";\n${body}`,
+        "/same.ts": `${declaration}\n${grid.body}`,
+        "/cross.ts": `import { E } from "./enum";\n${grid.body}`,
         "/enum.ts": `export ${declaration}`,
       },
       entryPoints: ["/same.ts", "/cross.ts"],
       minifySyntax: true,
       run: [
-        { file: "/out/same.js", stdout: expected },
-        { file: "/out/cross.js", stdout: expected },
+        { file: "/out/same.js", stdout: grid.stdout },
+        { file: "/out/cross.js", stdout: grid.stdout },
       ],
       onAfterBundle(api) {
-        const same = printedRows(api.readFile("/out/same.js"));
-        const cross = printedRows(api.readFile("/out/cross.js"));
-        expect(cross.length).toBe(rows.length);
-        expect(same.length).toBe(rows.length);
-        // Where the late fold stops short of the parser: one line for each kind of row.
-        const differences = new Map<string, { rows: number; example: string }>();
-        for (let i = 0; i < rows.length; i++) {
-          if (same[i] === cross[i]) continue;
-          const kind = rows[i].replace(/E\.\w+/g, "E.x");
-          const entry = differences.get(kind);
-          if (entry) entry.rows++;
-          else differences.set(kind, { rows: 1, example: `${cross[i]} where the same file prints ${same[i]}` });
-        }
-        expect(Object.fromEntries(differences)).toMatchInlineSnapshot(`
+        // Where the late fold stops short of the parser.
+        expect(grid.differences(api.readFile("/out/same.js"), api.readFile("/out/cross.js"))).toMatchInlineSnapshot(`
           {
             "\`<\${E.x}>\`": {
               "example": "t(\`<\${0}>\`); where the same file prints t("<0>");",

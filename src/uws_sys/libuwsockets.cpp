@@ -99,16 +99,6 @@ static auto makeBehavior(const uws_socket_behavior_t &behavior, void *upgradeCon
   return generic_handler;
 }
 
-/* glibc's strncasecmp consults the locale, at 160 instructions a request. */
-template <size_t N>
-static inline bool uws_header_is(std::string_view k, const char (&lowerCase)[N]) {
-  if (k.length() != N - 1) return false;
-  for (size_t i = 0; i < N - 1; i++) {
-    if ((static_cast<unsigned char>(k[i]) | 0x20) != static_cast<unsigned char>(lowerCase[i])) return false;
-  }
-  return true;
-}
-
 extern "C"
 {
 
@@ -1323,99 +1313,9 @@ extern "C"
     return uwsReq->setYield(yield);
   }
 
-  size_t uws_req_get_url(uws_req_t *res, const char **dest)
+  const void *uws_req_get_parsed(uws_req_t *res)
   {
-    uWS::HttpRequest *uwsReq = (uWS::HttpRequest *)res;
-    std::string_view value = uwsReq->getFullUrl();
-    *dest = value.data();
-    return value.length();
-  }
-
-  size_t uws_req_get_method(uws_req_t *res, const char **dest)
-  {
-    uWS::HttpRequest *uwsReq = (uWS::HttpRequest *)res;
-    std::string_view value = uwsReq->getMethod();
-    *dest = value.data();
-    return value.length();
-  }
-
-size_t uws_req_get_header(uws_req_t *res, const char *lower_case_header,
-                            size_t lower_case_header_length, const char **dest) nonnull_fn_decl;
-
-  size_t uws_req_get_header(uws_req_t *res, const char *lower_case_header,
-                            size_t lower_case_header_length, const char **dest)
-  {
-    uWS::HttpRequest *uwsReq = (uWS::HttpRequest *)res;
-
-    std::string_view value = uwsReq->getHeader(
-        stringViewFromC(lower_case_header, lower_case_header_length));
-    *dest = value.data();
-    return value.length();
-  }
-
-  /* One pass over the header block for the headers telemetry needs. */
-  struct uws_header_slice_t {
-    const char *ptr;
-    size_t len;
-  };
-  struct uws_telemetry_headers_t {
-    struct uws_header_slice_t host, user_agent, traceparent, tracestate, baggage, forwarded, x_forwarded_for;
-    /* Length of the path part of the URL (up to '?'). */
-    uint32_t path_len;
-    /* The request line said HTTP/1.0. */
-    uint8_t http10;
-    /* More than one tracestate / baggage field was present (combine them). */
-    uint8_t tracestate_repeated;
-    uint8_t baggage_repeated;
-    /* More than one traceparent field: W3C says the header is then invalid. */
-    uint8_t traceparent_repeated;
-  };
-  void uws_req_telemetry_headers(uws_req_t *res, struct uws_telemetry_headers_t *out)
-  {
-    uWS::HttpRequest *uwsReq = (uWS::HttpRequest *)res;
-    memset(out, 0, sizeof(*out));
-    out->path_len = (uint32_t)uwsReq->getUrl().length();
-    out->http10 = uwsReq->isAncient() ? 1 : 0;
-    for (auto header : *uwsReq)
-    {
-      std::string_view k = header.first;
-      struct uws_header_slice_t *slot = nullptr;
-      switch (k.length()) {
-      case 4: if (uws_header_is(k, "host")) slot = &out->host; break;
-      case 10: if (uws_header_is(k, "user-agent")) slot = &out->user_agent;
-               else if (uws_header_is(k, "tracestate")) slot = &out->tracestate; break;
-      case 11: if (uws_header_is(k, "traceparent")) slot = &out->traceparent; break;
-      case 7: if (uws_header_is(k, "baggage")) slot = &out->baggage; break;
-      case 9: if (uws_header_is(k, "forwarded")) slot = &out->forwarded; break;
-      case 15: if (uws_header_is(k, "x-forwarded-for")) slot = &out->x_forwarded_for; break;
-      default: break;
-      }
-      if (slot && !slot->ptr) {
-        slot->ptr = header.second.data();
-        slot->len = header.second.length();
-      } else if (slot == &out->tracestate) {
-        /* W3C: multiple tracestate / baggage fields are one list; flag it so
-         * the caller re-reads that header joined (rare). */
-        out->tracestate_repeated = 1;
-      } else if (slot == &out->baggage) {
-        out->baggage_repeated = 1;
-      } else if (slot == &out->traceparent) {
-        out->traceparent_repeated = 1;
-      }
-    }
-  }
-
-  /* Every value of a (lower-case) header name, in order; for repeated headers. */
-  typedef void (*uws_header_value_handler)(const char *value, size_t value_len, void *user_data);
-  void uws_req_for_each_header_value(uws_req_t *res, const char *lower_case_name, size_t name_len, uws_header_value_handler handler, void *user_data)
-  {
-    uWS::HttpRequest *uwsReq = (uWS::HttpRequest *)res;
-    std::string_view name(lower_case_name, name_len);
-    for (auto header : *uwsReq)
-    {
-      if (header.first.length() == name.length() && !strncasecmp(header.first.data(), name.data(), name.length()))
-        handler(header.second.data(), header.second.length(), user_data);
-    }
+    return ((uWS::HttpRequest *)res)->parsed;
   }
 
   size_t uws_req_get_parameter(uws_req_t *res, unsigned short index,
@@ -1427,10 +1327,13 @@ size_t uws_req_get_header(uws_req_t *res, const char *lower_case_header,
     return value.length();
   }
 
-  bool uws_req_has_transfer_encoding(uws_req_t *res)
+  void *uws_res_get_parser(int ssl, uws_res_r res)
   {
-    uWS::HttpRequest *uwsReq = (uWS::HttpRequest *)res;
-    return uwsReq->getHasTransferEncoding();
+    if (ssl ? uWS::HttpContext<true>::isClosedOrUpgraded((us_socket_t *)res) : uWS::HttpContext<false>::isClosedOrUpgraded((us_socket_t *)res))
+      return nullptr;
+    if (ssl)
+      return static_cast<uWS::HttpParser *>(((uWS::HttpResponse<true> *)res)->getHttpResponseData());
+    return static_cast<uWS::HttpParser *>(((uWS::HttpResponse<false> *)res)->getHttpResponseData());
   }
 
   us_socket_t *uws_res_upgrade(int ssl, uws_res_r res, void *data,

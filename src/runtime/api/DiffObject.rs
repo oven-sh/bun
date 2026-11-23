@@ -2,8 +2,8 @@ use core::ops::Range;
 use std::borrow::Cow;
 
 use bun_core::String;
-use bun_core::strings::CodeUnits;
-use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsScope, to_js};
+use bun_core::strings::{CodeUnits, copy_u16_into_u8};
+use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsScope};
 use bun_jsc::{
     ErrorCode, JSArray, JSArrayIterator, JSGlobalObject, JSMap, JSValue, JsResult,
     MarkedArgumentBuffer,
@@ -12,15 +12,26 @@ use bun_text_diff::patch;
 use bun_text_diff::tokens::{Edit, Split, Unit, diff_ids, diff_text};
 
 use crate::generated_bindgen::diff_object::{
-    Change, FilePatch, Hunk, HunkToApply, HunksOptions, Options, PatchOptions, PatchToApply,
+    ArrayChange, Change, FilePatch, Hunk, HunkToApply, HunksOptions, Options, PatchOptions,
+    PatchToApply,
 };
 
 trait JsUnit: Unit {
     fn of(string: &String) -> Cow<'_, [Self]>;
+    /// `operation`, which is ASCII, and then `text`. If there is no memory, a string that throws when it is converted.
+    fn line(operation: u8, text: &[Self]) -> String;
 }
 impl JsUnit for u8 {
     fn of(string: &String) -> Cow<'_, [u8]> {
         Cow::Borrowed(string.latin1())
+    }
+    fn line(operation: u8, text: &[u8]) -> String {
+        let (line, units) = String::create_uninitialized_latin1(1 + text.len());
+        if let [first, rest @ ..] = units {
+            *first = operation;
+            rest.copy_from_slice(text);
+        }
+        line
     }
 }
 impl JsUnit for u16 {
@@ -30,6 +41,23 @@ impl JsUnit for u16 {
         } else {
             Cow::Owned(string.latin1().iter().map(|&unit| unit.into()).collect())
         }
+    }
+    fn line(operation: u8, text: &[u16]) -> String {
+        // ASCII is stored as Latin-1, as in `String::clone_utf16`. A loop without an early exit is vectorized.
+        if text.iter().fold(0, |all, &unit| all | unit) < 0x80 {
+            let (line, units) = String::create_uninitialized_latin1(1 + text.len());
+            if let [first, rest @ ..] = units {
+                *first = operation;
+                copy_u16_into_u8(rest, text);
+            }
+            return line;
+        }
+        let (line, units) = String::create_uninitialized_utf16(1 + text.len());
+        if let [first, rest @ ..] = units {
+            *first = operation.into();
+            rest.copy_from_slice(text);
+        }
+        line
     }
 }
 
@@ -153,6 +181,9 @@ split_by! {
     chars: Split::Chars;
 }
 
+/// `MAX_STORAGE_VECTOR_LENGTH`. Asking for a longer array with every element in place ends the process.
+const MAX_COPY_LENGTH: u32 = 1 << 28;
+
 /// Numbers values so that two have the same number if they are `===`.
 struct ValueIds {
     map: JSValue,
@@ -160,55 +191,57 @@ struct ValueIds {
 }
 
 impl ValueIds {
-    /// A copy of `array`, which a getter can change, and the number of each element.
-    fn read(&mut self, global: &JSGlobalObject, array: JSValue) -> JsResult<(JSValue, Vec<u32>)> {
+    /// The number of each element. The elements go into `copy`, which is empty, because a getter can change `array`.
+    fn read(
+        &mut self,
+        global: &JSGlobalObject,
+        array: JSValue,
+        copy: &mut MarkedArgumentBuffer,
+    ) -> JsResult<Vec<u32>> {
         let Some(map) = JSMap::from_js(self.map) else {
             return Err(global.throw_out_of_memory());
         };
         let map = JSMap::opaque_mut(map.as_ptr());
         let mut elements = JSArrayIterator::init(array, global)?;
-        if elements.len > i32::MAX as u32 {
+        if elements.len > MAX_COPY_LENGTH {
             return Err(global.throw_out_of_memory());
         }
-        MarkedArgumentBuffer::new(|copy| {
-            let mut ids = Vec::new();
-            while let Some(element) = elements.next()? {
-                copy.append(element);
-                if copy.size() == ids.len() {
-                    return Err(global.throw_out_of_memory());
-                }
-                // To a `Map`, NaN is the same as NaN.
-                let is_nan = element.is_number() && element.as_number().is_nan();
-                if !is_nan {
-                    let known = map.get(global, element)?;
-                    if known.is_number() {
-                        ids.push(known.as_number() as u32);
-                        continue;
-                    }
-                    map.set(global, element, JSValue::js_number(self.distinct.into()))?;
-                }
-                ids.push(self.distinct);
-                self.distinct += 1;
+        let mut ids = Vec::new();
+        while let Some(element) = elements.next()? {
+            copy.append(element);
+            if copy.size() == ids.len() {
+                return Err(global.throw_out_of_memory());
             }
-            Ok((copy.construct_array(global)?, ids))
-        })
+            // To a `Map`, NaN is the same as NaN.
+            let is_nan = element.is_number() && element.as_number().is_nan();
+            if !is_nan {
+                let known = map.get(global, element)?;
+                if known.is_number() {
+                    ids.push(known.as_number() as u32);
+                    continue;
+                }
+                map.set(global, element, JSValue::js_number(self.distinct.into()))?;
+            }
+            ids.push(self.distinct);
+            self.distinct += 1;
+        }
+        Ok(ids)
     }
 }
 
-pub(crate) fn arrays<'a>(
+fn array_changes<'a>(
     cx: &mut JsScope<'a>,
-    old: JsLocal<'a, JSArray>,
-    new: JsLocal<'a, JSArray>,
-    options: &Options,
+    (old, old_copy): (JSValue, &mut MarkedArgumentBuffer),
+    (new, new_copy): (JSValue, &mut MarkedArgumentBuffer),
+    max_edits: usize,
 ) -> bindgen::Result<'a, Option<JsLocal<'a, JSArray>>> {
-    let max_edits = max_edits(&cx.heap, options.max_edit_length)?;
     let global = cx.global();
     let mut ids = ValueIds {
         map: JSMap::create(global),
         distinct: 0,
     };
-    let (old, a) = ids.read(global, old.to_js())?;
-    let (new, b) = ids.read(global, new.to_js())?;
+    let a = ids.read(global, old, old_copy)?;
+    let b = ids.read(global, new, new_copy)?;
     ids.map.ensure_still_alive();
 
     let Some(hunks) = diff_ids(&a, &b, ids.distinct as usize, max_edits) else {
@@ -219,25 +252,34 @@ pub(crate) fn arrays<'a>(
         tokens: hunk,
     });
     let runs = runs(edits, b.len(), |from| b.len() - from);
+    let (old, new) = (&*old_copy, &*new_copy);
     let changes = cx.heap.create_array(runs, |heap, run| {
         let Run { kind, range, count } = run;
         let from = if kind == Kind::Removed { old } else { new };
-        // SAFETY: each index of the copies is an own data property, so reading one runs no JavaScript.
-        let global = unsafe { heap.global() };
-        let value = heap.create_array(range, |heap, index| {
-            to_js::any(heap, from.get_index(global, index as u32)?)
-        })?;
-        let members = [
-            ("value", value.as_value()),
-            ("added", to_js::bool(heap, kind == Kind::Added)?),
-            ("removed", to_js::bool(heap, kind == Kind::Removed)?),
-            ("count", to_js::usize(heap, count)?),
-        ];
-        to_js::record(heap, members, to_js::any)
+        let change = ArrayChange {
+            value: heap.create_array_of(from, range)?,
+            added: kind == Kind::Added,
+            removed: kind == Kind::Removed,
+            count,
+        };
+        change.into_js(heap)
     })?;
-    old.ensure_still_alive();
-    new.ensure_still_alive();
     Ok(Some(changes))
+}
+
+pub(crate) fn arrays<'a>(
+    cx: &mut JsScope<'a>,
+    old: JsLocal<'a, JSArray>,
+    new: JsLocal<'a, JSArray>,
+    options: &Options,
+) -> bindgen::Result<'a, Option<JsLocal<'a, JSArray>>> {
+    let max_edits = max_edits(&cx.heap, options.max_edit_length)?;
+    MarkedArgumentBuffer::new(|old_copy| {
+        MarkedArgumentBuffer::new(|new_copy| {
+            let (old, new) = ((old.to_js(), old_copy), (new.to_js(), new_copy));
+            array_changes(cx, old, new, max_edits)
+        })
+    })
 }
 
 fn hunk_with<L>(hunk: patch::PatchHunk<L>, line: impl FnMut(L) -> String) -> Hunk {
@@ -258,12 +300,10 @@ fn hunks_of<T: JsUnit>(
 ) -> Option<Vec<Hunk>> {
     let (a, b) = (T::of(old), T::of(new));
     let edits = diff_text(Split::Lines, &a, &b, max_edits)?;
-    let mut scratch = Vec::new();
     let hunks = patch::hunks(&a, &b, &edits, context).map(|hunk| {
-        hunk_with(hunk, |line| {
-            scratch.clear();
-            line.write(&mut scratch);
-            clone_units(&scratch)
+        hunk_with(hunk, |line| match line {
+            patch::Line::Text(operation, text) => T::line(operation, text),
+            patch::Line::NoNewline => String::clone_latin1(patch::NO_NEWLINE),
         })
     });
     Some(hunks.collect())
@@ -471,7 +511,12 @@ pub(crate) fn apply_patch<'a>(
     match patch {
         PatchToApply::Text(text) => by_width!([source, &text], apply_text(heap, source, &text)),
         PatchToApply::Hunks(hunks) => {
-            let strings = hunks.iter().flat_map(|hunk| &hunk.lines).chain([source]);
+            let lines = || hunks.iter().flat_map(|hunk| &hunk.lines);
+            // One string can be in there many times.
+            if lines().map(String::length).sum::<usize>() > String::max_length() {
+                return Err(heap.string_too_long());
+            }
+            let strings = lines().chain([source]);
             by_width!(strings, apply_hunks(heap, source, &hunks))
         }
     }

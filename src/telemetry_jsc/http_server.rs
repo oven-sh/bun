@@ -22,23 +22,23 @@ fn list_header<'a>(
     req: &'a AnyRequest,
     name: &[u8],
     first: Option<&'a [u8]>,
-    repeated: u8,
+    may_repeat: bool,
 ) -> Option<Cow<'a, [u8]>> {
-    match repeated {
-        0 => first.map(Cow::Borrowed),
-        _ => first.and_then(|_| req.header_joined(name)),
+    match may_repeat {
+        false => first.map(Cow::Borrowed),
+        true => first.and_then(|_| req.header_joined(name)),
     }
 }
 
 fn remote_parent(req: &AnyRequest, h: &TelemetryHeaders<'_>) -> Parent {
     let state = bun_telemetry::state();
-    let ctx = (h.traceparent())
-        .filter(|_| state.propagate_trace_context && h.traceparent_repeated == 0)
+    let ctx = (h.traceparent)
+        .filter(|_| state.propagate_trace_context && !h.traceparent_repeats)
         .and_then(propagation::parse_traceparent);
     let trace_state =
-        ctx.and_then(|_| list_header(req, b"tracestate", h.tracestate(), h.tracestate_repeated));
+        ctx.and_then(|_| list_header(req, b"tracestate", h.tracestate, h.tracestate_may_repeat));
     let baggage = (state.propagate_baggage)
-        .then(|| list_header(req, b"baggage", h.baggage(), h.baggage_repeated))
+        .then(|| list_header(req, b"baggage", h.baggage, h.baggage_may_repeat))
         .flatten();
     Parent {
         ctx,
@@ -74,7 +74,7 @@ fn describe_request(
     facts.version = match resp {
         AnyResponse::H3(_) => HttpVersion::Http3,
         AnyResponse::H2(_) => HttpVersion::Http2,
-        AnyResponse::TCP(_) | AnyResponse::SSL(_) if h.http10 != 0 => HttpVersion::Http10,
+        AnyResponse::TCP(_) | AnyResponse::SSL(_) if h.is_http_1_0 => HttpVersion::Http10,
         AnyResponse::TCP(_) | AnyResponse::SSL(_) => HttpVersion::Http11,
     };
     let ask = || match resp.get_remote_socket_info() {
@@ -86,17 +86,14 @@ fn describe_request(
         None => &ask(),
     };
     let url = req.url();
-    let path_len = match h.path_len {
-        u32::MAX => bun_core::strings::index_of_char_usize(url, b'?').unwrap_or(url.len()),
-        known => known as usize,
-    };
+    let path_len = bun_core::strings::index_of_char_usize(url, b'?').unwrap_or(url.len());
     facts.set_request(
         peer,
         url,
         path_len,
-        forwarded_client(h.forwarded(), h.x_forwarded_for()),
-        h.host().unwrap_or_default(),
-        h.user_agent().unwrap_or_default(),
+        forwarded_client(h.forwarded, h.x_forwarded_for),
+        h.host.unwrap_or_default(),
+        h.user_agent.unwrap_or_default(),
     );
     for header in &bun_telemetry::state().capture_request_headers {
         if let Some(value) = req.header_joined(header.name()) {

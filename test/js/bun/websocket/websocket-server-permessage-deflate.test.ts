@@ -115,6 +115,32 @@ async function secondCopySize(peer: Peer, n: number): Promise<number> {
 }
 
 describe.concurrent("Bun.serve perMessageDeflate", () => {
+  test.each([
+    ["15.3", "at once", false],
+    ["15.3", "later", false],
+    ["15.4", "at once", true],
+    ["15.4", "later", true],
+  ])("Safari %s, upgraded %s, compresses: %p", async (version, when, compresses) => {
+    let offer: string | null = null;
+    await using server = serve({
+      port: 0,
+      async fetch(req, server) {
+        if (when === "later") await new Promise(setImmediate);
+        server.upgrade(req);
+        offer = req.headers.get("sec-websocket-extensions");
+      },
+      websocket: { perMessageDeflate: true, message() {} },
+    });
+    using client = await RawClient.upgrade(server.port, {
+      headers: {
+        "Sec-WebSocket-Extensions": "permessage-deflate",
+        "User-Agent": `Mozilla/5.0 Version/${version} Safari/605.1.15`,
+      },
+    });
+    expect(!!client.header("sec-websocket-extensions")).toBe(compresses);
+    expect(offer).toBe(compresses ? "permessage-deflate" : "");
+  });
+
   describe("dedicated compressor sizes", () => {
     test.each([
       // [compress option, window header, n that fits in the window, n that doesn't]

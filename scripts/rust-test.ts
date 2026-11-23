@@ -73,6 +73,7 @@ const crates = [
   "bun_telemetry_cold",
   "bun_threading",
   "bun_test_schedule",
+  "bun_text_diff",
   "bun_trim",
   "bun_valkey",
   "bun_webp",

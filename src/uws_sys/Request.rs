@@ -1,6 +1,9 @@
 use core::ffi::c_ushort;
 use std::borrow::Cow;
 
+use bun_core::strings;
+use bun_http1::request::Field;
+
 use crate::h3::Request as H3Request;
 
 /// Transport-agnostic request handle. Static/file routes (and RangeRequest)
@@ -21,6 +24,7 @@ impl AnyRequest {
             Self::H3(r) => bun_opaque::opaque_deref_mut(*r).header(name),
         }
     }
+    /// Every value of `name` (lower-case), joined with `", "` when it repeats.
     pub fn header_joined(&self, name: &[u8]) -> Option<Cow<'_, [u8]>> {
         match self {
             Self::H1(r) => bun_opaque::opaque_deref_mut(*r).header_joined(name),
@@ -31,26 +35,21 @@ impl AnyRequest {
         match self {
             Self::H1(r) => bun_opaque::opaque_deref_mut(*r).telemetry_headers(),
             Self::H3(r) => {
-                let r = bun_opaque::opaque_deref_mut(*r);
+                let r = || bun_opaque::opaque_deref_mut(*r);
                 TelemetryHeaders {
-                    host: RawSlice::of(r.header(b"host")),
-                    user_agent: RawSlice::of(r.header(b"user-agent")),
-                    traceparent: RawSlice::of(r.header(b"traceparent")),
-                    tracestate: RawSlice::of(r.header(b"tracestate")),
-                    baggage: RawSlice::of(r.header(b"baggage")),
-                    forwarded: RawSlice::of(r.header(b"forwarded")),
-                    x_forwarded_for: RawSlice::of(r.header(b"x-forwarded-for")),
-                    path_len: u32::MAX,
-                    http10: 0,
-                    // H3 cannot see repeats in one pass; the caller joins.
-                    tracestate_repeated: 1,
-                    baggage_repeated: 1,
-                    // (a valid traceparent has no comma; a joined repeat does)
-                    traceparent_repeated: r
-                        .header_joined(b"traceparent")
-                        .is_some_and(|v| bun_core::strings::contains_char(&v, b','))
-                        as u8,
-                    _req: core::marker::PhantomData,
+                    host: r().header(b"host"),
+                    user_agent: r().header(b"user-agent"),
+                    traceparent: r().header(b"traceparent"),
+                    tracestate: r().header(b"tracestate"),
+                    baggage: r().header(b"baggage"),
+                    forwarded: r().header(b"forwarded"),
+                    x_forwarded_for: r().header(b"x-forwarded-for"),
+                    is_http_1_0: false,
+                    tracestate_may_repeat: true,
+                    baggage_may_repeat: true,
+                    // A valid one has no comma.
+                    traceparent_repeats: (r().header_joined(b"traceparent"))
+                        .is_some_and(|value| strings::contains_char(&value, b',')),
                 }
             }
         }
@@ -80,172 +79,96 @@ bun_opaque::opaque_ffi! {
     pub struct Request;
 }
 
-/// `(ptr, len)` of a header value inside the request; null = absent.
-#[repr(C)]
-#[derive(Clone, Copy)]
-struct RawSlice {
-    ptr: *const u8,
-    len: usize,
-}
-
-impl RawSlice {
-    const NONE: RawSlice = RawSlice {
-        ptr: core::ptr::null(),
-        len: 0,
-    };
-    #[inline]
-    fn of(s: Option<&[u8]>) -> RawSlice {
-        match s {
-            Some(s) => RawSlice {
-                ptr: s.as_ptr(),
-                len: s.len(),
-            },
-            None => RawSlice::NONE,
-        }
-    }
-}
-
-/// Values of the headers telemetry reads, found in one pass over the header
-/// block. Mirrors `uws_telemetry_headers_t`.
-#[repr(C)]
+/// The first value of each header that telemetry reads.
+#[derive(Default)]
 pub struct TelemetryHeaders<'a> {
-    host: RawSlice,
-    user_agent: RawSlice,
-    traceparent: RawSlice,
-    tracestate: RawSlice,
-    baggage: RawSlice,
-    forwarded: RawSlice,
-    x_forwarded_for: RawSlice,
-    /// Length of the path part of `url()` (up to `?`); `u32::MAX` if unknown.
-    pub path_len: u32,
-    /// The request line said `HTTP/1.0` (H1 only).
-    pub http10: u8,
-    /// More than one `tracestate` / `baggage` field was present: use `header_joined`.
-    pub tracestate_repeated: u8,
-    pub baggage_repeated: u8,
-    /// More than one `traceparent` field: the header is invalid (W3C trace-context).
-    pub traceparent_repeated: u8,
-    _req: core::marker::PhantomData<&'a Request>,
+    pub host: Option<&'a [u8]>,
+    pub user_agent: Option<&'a [u8]>,
+    pub traceparent: Option<&'a [u8]>,
+    pub tracestate: Option<&'a [u8]>,
+    pub baggage: Option<&'a [u8]>,
+    pub forwarded: Option<&'a [u8]>,
+    pub x_forwarded_for: Option<&'a [u8]>,
+    pub is_http_1_0: bool,
+    pub tracestate_may_repeat: bool,
+    pub baggage_may_repeat: bool,
+    pub traceparent_repeats: bool,
 }
 
-impl<'a> TelemetryHeaders<'a> {
-    #[inline]
-    fn get(&self, s: RawSlice) -> Option<&'a [u8]> {
-        if s.ptr.is_null() {
-            return None;
-        }
-        // SAFETY: ptr/len describe a slice owned by the request for its lifetime.
-        Some(unsafe { bun_core::ffi::slice(s.ptr, s.len) })
-    }
-    pub fn host(&self) -> Option<&'a [u8]> {
-        self.get(self.host)
-    }
-    pub fn user_agent(&self) -> Option<&'a [u8]> {
-        self.get(self.user_agent)
-    }
-    pub fn traceparent(&self) -> Option<&'a [u8]> {
-        self.get(self.traceparent)
-    }
-    pub fn tracestate(&self) -> Option<&'a [u8]> {
-        self.get(self.tracestate)
-    }
-    pub fn baggage(&self) -> Option<&'a [u8]> {
-        self.get(self.baggage)
-    }
-    pub fn forwarded(&self) -> Option<&'a [u8]> {
-        self.get(self.forwarded)
-    }
-    pub fn x_forwarded_for(&self) -> Option<&'a [u8]> {
-        self.get(self.x_forwarded_for)
-    }
-}
-
-/// `uws_*_for_each_header_value` callback: joins values into `*user`
-/// (an `Option<Vec<u8>>`) with `", "`.
-pub(crate) unsafe extern "C" fn push_joined_header_value(
-    value: *const u8,
-    len: usize,
-    user: *mut core::ffi::c_void,
-) {
-    // SAFETY: `user` is the `&mut Option<Cow<[u8]>>` the caller passed alongside this callback.
-    let out = unsafe { &mut *user.cast::<Option<Cow<'_, [u8]>>>() };
-    // SAFETY: value/len is a slice owned by the request for its lifetime (the
-    // same storage `header()` borrows from).
-    let v = unsafe { bun_core::ffi::slice(value, len) };
-    match out {
-        None => *out = Some(Cow::Borrowed(v)),
+pub(crate) fn join_header_value<'a>(joined: &mut Option<Cow<'a, [u8]>>, value: &'a [u8]) {
+    match joined {
+        None => *joined = Some(Cow::Borrowed(value)),
         Some(joined) => {
-            let buf = joined.to_mut();
-            buf.extend_from_slice(b", ");
-            buf.extend_from_slice(v);
+            let joined = joined.to_mut();
+            joined.extend_from_slice(b", ");
+            joined.extend_from_slice(value);
         }
     }
+}
+
+/// `name` is a token, so it has none of the control bytes that `| 0x20` would take for `-`.
+#[inline(always)]
+fn is_named<const N: usize>(name: &[u8], lowercase: &[u8; N]) -> bool {
+    <&[u8; N]>::try_from(name).is_ok_and(|name| name.map(|byte| byte | 0x20) == *lowercase)
 }
 
 impl Request {
     pub fn set_yield(&mut self, yield_: bool) {
         c::uws_req_set_yield(self, yield_)
     }
+    pub fn parsed(&self) -> &bun_http1::request::Request<'_> {
+        // SAFETY: http1.rs lent it to the handler that has `self` on its stack.
+        unsafe { &*c::uws_req_get_parsed(self).cast() }
+    }
     pub fn url(&self) -> &[u8] {
-        let mut ptr: *const u8 = core::ptr::null();
-        let len = c::uws_req_get_url(self, &mut ptr);
-        // SAFETY: ptr/len describe a valid slice owned by the request for its lifetime;
-        // ffi::slice tolerates the (null, 0) shape uWS returns when no URL is present.
-        unsafe { bun_core::ffi::slice(ptr, len) }
+        self.parsed().target()
     }
     pub fn method(&self) -> &[u8] {
-        let mut ptr: *const u8 = core::ptr::null();
-        let len = c::uws_req_get_method(self, &mut ptr);
-        // SAFETY: ptr/len describe a valid slice owned by the request for its lifetime;
-        // ffi::slice tolerates the (null, 0) shape uWS returns when no method is present.
-        unsafe { bun_core::ffi::slice(ptr, len) }
+        self.parsed().lowercase_method()
     }
-    pub fn telemetry_headers(&self) -> TelemetryHeaders<'_> {
-        let mut out = TelemetryHeaders {
-            host: RawSlice::NONE,
-            user_agent: RawSlice::NONE,
-            traceparent: RawSlice::NONE,
-            tracestate: RawSlice::NONE,
-            baggage: RawSlice::NONE,
-            forwarded: RawSlice::NONE,
-            x_forwarded_for: RawSlice::NONE,
-            path_len: u32::MAX,
-            http10: 0,
-            tracestate_repeated: 0,
-            baggage_repeated: 0,
-            traceparent_repeated: 0,
-            _req: core::marker::PhantomData,
+    #[inline]
+    fn telemetry_headers(&self) -> TelemetryHeaders<'_> {
+        let request = self.parsed();
+        let mut headers = TelemetryHeaders {
+            is_http_1_0: request.is_http_1_0(),
+            ..Default::default()
         };
-        c::uws_req_telemetry_headers(self, &mut out);
-        out
+        for Field { name, value } in request.fields() {
+            let first = match name.len() {
+                4 if is_named(name, b"host") => &mut headers.host,
+                7 if is_named(name, b"baggage") => {
+                    headers.baggage_may_repeat = headers.baggage.is_some();
+                    &mut headers.baggage
+                }
+                9 if is_named(name, b"forwarded") => &mut headers.forwarded,
+                10 if is_named(name, b"user-agent") => &mut headers.user_agent,
+                10 if is_named(name, b"tracestate") => {
+                    headers.tracestate_may_repeat = headers.tracestate.is_some();
+                    &mut headers.tracestate
+                }
+                11 if is_named(name, b"traceparent") => {
+                    headers.traceparent_repeats = headers.traceparent.is_some();
+                    &mut headers.traceparent
+                }
+                15 if is_named(name, b"x-forwarded-for") => &mut headers.x_forwarded_for,
+                _ => continue,
+            };
+            first.get_or_insert(value);
+        }
+        headers
     }
-    /// Every value of `name` (lower-case): the field itself when it occurs
-    /// once, every field joined with `", "` when it repeats; `None` when absent.
-    pub fn header_joined(&self, name: &[u8]) -> Option<Cow<'_, [u8]>> {
-        let mut out: Option<Cow<'_, [u8]>> = None;
-        // SAFETY: name is a valid slice; the callback only runs during the call with `out` alive.
-        unsafe {
-            c::uws_req_for_each_header_value(
-                self,
-                name.as_ptr(),
-                name.len(),
-                push_joined_header_value,
-                (&raw mut out).cast(),
-            )
-        };
-        out
+    fn header_joined(&self, name: &[u8]) -> Option<Cow<'_, [u8]>> {
+        let mut joined = None;
+        for field in self.parsed().fields() {
+            if strings::eql_case_insensitive_ascii_check_length(field.name, name) {
+                join_header_value(&mut joined, field.value);
+            }
+        }
+        joined
     }
     pub fn header(&self, name: &[u8]) -> Option<&[u8]> {
         debug_assert!(name[0].is_ascii_lowercase());
-
-        let mut ptr: *const u8 = core::ptr::null();
-        // SAFETY: uws_req_get_header writes a pointer into request-owned storage and returns its length
-        let len = unsafe { c::uws_req_get_header(self, name.as_ptr(), name.len(), &raw mut ptr) };
-        if len == 0 {
-            return None;
-        }
-        // SAFETY: ptr/len describe a valid slice owned by the request for its lifetime
-        Some(unsafe { bun_core::ffi::slice(ptr, len) })
+        self.parsed().field(name).filter(|value| !value.is_empty())
     }
     /// The parser's verdict on the Transfer-Encoding header, the one that
     /// selects chunked body framing. `header(b"transfer-encoding")` sees only
@@ -253,7 +176,7 @@ impl Request {
     /// with the framing for "Transfer-Encoding:" followed by
     /// "Transfer-Encoding: chunked".
     pub fn has_transfer_encoding(&self) -> bool {
-        c::uws_req_has_transfer_encoding(self)
+        self.parsed().has_transfer_encoding()
     }
     pub fn parameter(&self, index: u16) -> &[u8] {
         let mut ptr: *const u8 = core::ptr::null();
@@ -265,35 +188,19 @@ impl Request {
 }
 
 mod c {
-    use super::{Request, TelemetryHeaders};
-    use core::ffi::c_ushort;
+    use super::Request;
+    use core::ffi::{c_ushort, c_void};
 
     unsafe extern "C" {
         pub(super) safe fn uws_req_set_yield(res: &mut Request, yield_: bool);
+        pub(super) safe fn uws_req_get_parsed(res: &Request) -> *const c_void;
         // Out-param `dest` is a `&mut *const u8` (non-null, valid for write); the C
         // shim only stores a pointer into request-owned storage and returns its
         // length — no read-through-ptr precondition, so `safe fn`.
-        pub(super) safe fn uws_req_get_url(res: &Request, dest: &mut *const u8) -> usize;
-        pub(super) safe fn uws_req_get_method(res: &Request, dest: &mut *const u8) -> usize;
-        pub(super) safe fn uws_req_telemetry_headers(res: &Request, out: &mut TelemetryHeaders<'_>);
-        pub(super) fn uws_req_for_each_header_value(
-            res: *const Request,
-            lower_case_name: *const u8,
-            name_len: usize,
-            handler: unsafe extern "C" fn(*const u8, usize, *mut core::ffi::c_void),
-            user_data: *mut core::ffi::c_void,
-        );
-        pub(super) fn uws_req_get_header(
-            res: *const Request,
-            lower_case_header: *const u8,
-            lower_case_header_length: usize,
-            dest: *mut *const u8,
-        ) -> usize;
         pub(super) safe fn uws_req_get_parameter(
             res: &Request,
             index: c_ushort,
             dest: &mut *const u8,
         ) -> usize;
-        pub(super) safe fn uws_req_has_transfer_encoding(res: &Request) -> bool;
     }
 }

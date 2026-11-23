@@ -4,6 +4,7 @@
 
 use core::ffi::{c_char, c_int, c_void};
 use core::ptr;
+use std::borrow::Cow;
 
 use crate::SocketAddress;
 use crate::response::{State, WriteResult};
@@ -63,21 +64,25 @@ impl Request {
         // SAFETY: uws returns a pointer+len pair valid for the lifetime of the request
         unsafe { bun_core::ffi::slice(p, n) }
     }
-    /// Every value of `name` (lower-case): the field itself when it occurs
-    /// once, every field joined with `", "` when it repeats; `None` when absent.
-    pub fn header_joined(&mut self, name: &[u8]) -> Option<std::borrow::Cow<'_, [u8]>> {
-        let mut out: Option<std::borrow::Cow<'_, [u8]>> = None;
-        // SAFETY: self is a live FFI handle; the callback only runs during the call with `out` alive.
+    pub(crate) fn header_joined(&mut self, name: &[u8]) -> Option<Cow<'_, [u8]>> {
+        unsafe extern "C" fn join(value: *const u8, len: usize, joined: *mut c_void) {
+            // SAFETY: `joined` is the local below, and the request owns `value` like the result of `header()`.
+            let (joined, value) =
+                unsafe { (&mut *joined.cast(), bun_core::ffi::slice(value, len)) };
+            crate::request::join_header_value(joined, value);
+        }
+        let mut joined: Option<Cow<'_, [u8]>> = None;
+        // SAFETY: self is a live FFI handle, and `join` only runs during the call.
         unsafe {
             c::uws_h3_req_for_each_header_value(
                 self,
                 name.as_ptr(),
                 name.len(),
-                crate::request::push_joined_header_value,
-                (&raw mut out).cast(),
+                join,
+                (&raw mut joined).cast(),
             )
         };
-        out
+        joined
     }
 
     pub fn header(&mut self, name: &[u8]) -> Option<&[u8]> {

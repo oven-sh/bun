@@ -33,6 +33,12 @@
 
 #include "MoveOnlyFunction.h"
 
+#include <climits>
+
+#if defined(_WIN32)
+#define strncasecmp _strnicmp
+#endif
+
 /* todo: tryWrite is missing currently, only send smaller segments with write */
 
 namespace uWS {
@@ -372,7 +378,7 @@ public:
     }
 
     /* Manually upgrade to WebSocket. Typically called in upgrade handler. Immediately calls open handler.
-     * NOTE: Will invalidate 'this' as socket might change location in memory. Throw away after use.
+     * NOTE: Will invalidate 'this'. Throw away after use.
      * Returns nullptr and leaves userData untouched if the socket is closed or shut down. Nothing was written in
      * that case, unless the 101 overflowed the cork buffer and that write is what closed the socket. */
     template <typename UserData>
@@ -524,21 +530,13 @@ private:
             responseData->~HttpResponseData();
         }
 
-        /* Before we adopt and potentially change socket, check which cork slot
-         * we occupy so we can transfer it to the new WebSocket. */
+        /* Before we adopt, check which cork slot we occupy so we can transfer it to the new WebSocket. */
         LoopData *loopData = Super::getLoopData();
         int corkedSlot = loopData->findCorkSlot(this);
 
-        /* Read before the adoption below, which can move this socket. An upgrade of another connection must leave the parsed socket alone. */
-        const bool upgradingParsedSocket = httpContextData->isParsing((us_socket_t *) this);
-
-        /* Adopting a socket invalidates it, do not rely on it directly to carry any data */
-        /* The old ext size is only used as an upper bound to keep the block in
-         * place (and as the copy length when it cannot be). The base size is
-         * always correct here: a node:http compat socket's block is bigger, so
-         * under-stating it is an in-bounds under-copy of an already-destructed
-         * ext, while over-stating it for a Bun.serve socket would read out of
-         * bounds. */
+        /* onData tells the upgrade by the kind of its socket, so that has to stay in place.
+         * The block of a node:http compat socket is bigger still. */
+        static_assert(sizeof(WebSocketData) + sizeof(UserData) <= sizeof(HttpResponseData<SSL>));
         us_socket_t *usSocket = us_socket_adopt((us_socket_t *) this, webSocketContext->getSocketGroup(),
             WebSocketContext<SSL, true, UserData>::socketKind(),
             sizeof(HttpResponseData<SSL>), sizeof(WebSocketData) + sizeof(UserData));
@@ -553,12 +551,6 @@ private:
         webSocket->init(perMessageDeflate, compressOptions, std::move(backpressure), socketData, httpContextData->onSocketClosed);
         if (httpContextData->onSocketUpgraded) {
             httpContextData->onSocketUpgraded(socketData, SSL, usSocket);
-        }
-
-        /* We should only mark this if inside the parser; if upgrading "async" we cannot set this */
-        if (upgradingParsedSocket) {
-            /* We need to tell the Http parser that we changed socket */
-            httpContextData->upgradedWebSocket = webSocket;
         }
 
         /* Arm maxLifetime timeout */

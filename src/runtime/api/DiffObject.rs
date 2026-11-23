@@ -153,6 +153,9 @@ split_by! {
     chars: Split::Chars;
 }
 
+/// `MAX_STORAGE_VECTOR_LENGTH`. Asking for a longer array with every element in place ends the process.
+const MAX_COPY_LENGTH: u32 = 1 << 28;
+
 /// Numbers values so that two have the same number if they are `===`.
 struct ValueIds {
     map: JSValue,
@@ -167,7 +170,7 @@ impl ValueIds {
         };
         let map = JSMap::opaque_mut(map.as_ptr());
         let mut elements = JSArrayIterator::init(array, global)?;
-        if elements.len > i32::MAX as u32 {
+        if elements.len > MAX_COPY_LENGTH {
             return Err(global.throw_out_of_memory());
         }
         MarkedArgumentBuffer::new(|copy| {
@@ -471,7 +474,12 @@ pub(crate) fn apply_patch<'a>(
     match patch {
         PatchToApply::Text(text) => by_width!([source, &text], apply_text(heap, source, &text)),
         PatchToApply::Hunks(hunks) => {
-            let strings = hunks.iter().flat_map(|hunk| &hunk.lines).chain([source]);
+            let lines = || hunks.iter().flat_map(|hunk| &hunk.lines);
+            // One string can be in there many times.
+            if lines().map(String::length).sum::<usize>() > String::max_length() {
+                return Err(heap.string_too_long());
+            }
+            let strings = lines().chain([source]);
             by_width!(strings, apply_hunks(heap, source, &hunks))
         }
     }

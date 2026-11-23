@@ -978,7 +978,7 @@ describe("Bun.serve http2 in-process", () => {
 describe("Bun.serve http2 writes outside a socket event", () => {
   function spawnFixture(env: Record<string, string>, ...args: string[]) {
     return Bun.spawn({
-      cmd: [bunExe(), join(import.meta.dir, "serve-http2-idle-loop-fixture.ts"), ...args],
+      cmd: [bunExe(), join(import.meta.dir, "serve-http2-publish-fixture.ts"), ...args],
       // bun test does not kill the child of a concurrent test that times out. With this, a
       // fixture that does not exit ends when the test process does.
       env: { ...bunEnv, BUN_FEATURE_FLAG_NO_ORPHANS: "1", ...env },

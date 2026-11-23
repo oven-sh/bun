@@ -1,5 +1,6 @@
 import { diff } from "bun";
 import { describe, expect, test } from "bun:test";
+import { isDebug } from "harness";
 
 // Unless a test says otherwise, what is expected is what the package `diff` 9.0.0 returns.
 
@@ -358,6 +359,13 @@ describe("large inputs, on which diff is quadratic", () => {
     const patch = diff.createPatch(a, b);
     expect(diff.applyPatch(a, patch) === b).toBeTrue();
     expect(patch.split("\n ").length - 1).toBeGreaterThanOrEqual(33_000);
+  });
+
+  test.skipIf(isDebug)("past the limit of the search, a long run of equal characters stays unchanged", () => {
+    const times = (letter: string, n: number) => Buffer.alloc(n, letter).toString();
+    const a = "x" + times("c", 20_000) + times("x", 100_000) + "d";
+    const b = "xd" + times("x", 100_000) + times("c", 20_000);
+    expect(edits(diff.chars(a, b))).toBeLessThan(41_000);
   });
 });
 

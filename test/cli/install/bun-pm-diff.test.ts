@@ -2356,6 +2356,24 @@ describe.concurrent("bun pm diff (engine invariants)", () => {
     15_000,
   );
 
+  // Takes about a second in a release build.
+  test.skipIf(isDebug)(
+    "a long run of equal lines that only the reverse search reaches stays unchanged",
+    async () => {
+      const { text, exitCode } = await pretty(
+        {
+          "a/data.txt": times("c\n", 10_000) + times("x\n", 100_000) + "d\n",
+          "b/data.txt": "d\n" + times("x\n", 100_000) + "c\n",
+        },
+        ["--raw", "--stat"],
+      );
+      const added = Number(text.match(/\n1 file  \+(\d+) -\d+\n$/)?.[1]);
+      expect(added).toBeLessThan(100);
+      expect(exitCode).toBe(0);
+    },
+    30_000,
+  );
+
   test("un-minified display: a bare `if(x)a(),b()` body splits like a block one; minified CSS/JSON keep plain gutters", async () => {
     const pad = "/*" + Buffer.alloc(300, "x").toString() + "*/";
     // The edit sits inside the `if` so the split body is in the shown context (`f` is renamed in lockstep to `a_`).

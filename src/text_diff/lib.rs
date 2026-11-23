@@ -219,7 +219,7 @@ pub(crate) struct Policy {
     pub exhaustive_per_elem: usize,
     pub exhaustive_quota: usize,
     /// Total steps for the whole diff; once spent, unsolved boxes are emitted
-    /// as wholesale replacements.
+    /// as wholesale replacements. Also the start of `Myers::drop_left`.
     pub work: usize,
     /// Not 0: before a box is searched it is cut as fast-diff cuts it (see
     /// `CharDiff::diff_as_fast_diff`), which may spend this many steps per
@@ -238,6 +238,9 @@ struct Myers<'a, 's, T: Elem> {
     work_left: isize,
     /// Steps left for `policy.half_match`.
     half_left: isize,
+    /// Elements of reverse progress that cuts at the forward point may still throw away. The next box compares them
+    /// again, and `work_left` does not count that.
+    drop_left: isize,
     /// Scratch for the unique-token anchor split; sized by the largest id
     /// and only allocated if some box ever needs it.
     anchors: Option<Anchors>,
@@ -319,6 +322,7 @@ impl<'a, 's, T: Elem> Myers<'a, 's, T> {
                 0 => 0,
                 per_element => (per_element * (a.len() + b.len()) + HALF_MATCH_FLOOR) as isize,
             },
+            drop_left: policy.work as isize,
             anchors: None,
         }
     }
@@ -443,14 +447,21 @@ impl<'a, 's, T: Elem> Myers<'a, 's, T> {
 
             let inside = |p: (usize, usize)| p != (alo, blo) && p != (ahi, bhi);
             // Cut at whichever of the two points lie strictly inside the box
-            // (both, if the forward one precedes the reverse one).
+            // (both, if the forward one precedes the reverse one). If they cross:
+            // the forward one until `drop_left` is spent, then the one that got further.
             let mut cuts = [(alo, blo); 4];
             let mut n = 1;
-            if inside(f) {
+            let in_order = f.0 <= r.0 && f.1 <= r.1 && f != r;
+            let forward = (f.0 - alo) + (f.1 - blo);
+            let reverse = (ahi - r.0) + (bhi - r.1);
+            if inside(f) && (in_order || self.drop_left > 0 || forward >= reverse) {
                 cuts[n] = f;
                 n += 1;
+                if !in_order {
+                    self.drop_left -= reverse as isize;
+                }
             }
-            if inside(r) && (n == 1 || (f.0 <= r.0 && f.1 <= r.1 && f != r)) {
+            if inside(r) && (n == 1 || in_order) {
                 cuts[n] = r;
                 n += 1;
             }
@@ -1952,8 +1963,10 @@ mod tests {
         CharDiff::default().diff(a, b).to_vec()
     }
 
+    const UNLIMITED: usize = usize::MAX >> 2;
+
     /// Minimal-ish edit script between two sequences as a hunk list.
-    fn diff_slices<T: Elem>(a: &[T], b: &[T], probe: usize) -> Vec<Hunk> {
+    fn diff_slices<T: Elem>(a: &[T], b: &[T], probe: usize, work: usize) -> Vec<Hunk> {
         let mut hunks = Vec::new();
         let p = T::common_prefix(a, b);
         if p == a.len() && p == b.len() {
@@ -1982,7 +1995,7 @@ mod tests {
                 exhaustive_max: probe,
                 exhaustive_per_elem: 0,
                 exhaustive_quota: 0,
-                work: usize::MAX >> 2,
+                work,
                 half_match: 0,
             },
         );
@@ -2062,7 +2075,7 @@ mod tests {
                     _ => {}
                 }
             }
-            let hunks = diff_slices(&a, &b, 1024);
+            let hunks = diff_slices(&a, &b, 1024, UNLIMITED);
             let kept = check_script(&a, &b, &hunks);
             assert_eq!(
                 kept,
@@ -2079,7 +2092,7 @@ mod tests {
             let n = 50 + rng.below(200) as usize;
             let a: Vec<u32> = (0..n).map(|_| rng.below(3) as u32).collect();
             let b: Vec<u32> = (0..n).map(|_| rng.below(3) as u32).collect();
-            let hunks = diff_slices(&a, &b, 2);
+            let hunks = diff_slices(&a, &b, 2, UNLIMITED);
             let kept = check_script(&a, &b, &hunks);
             let opt = lcs_len(&a, &b);
             assert!(kept <= opt);
@@ -2214,6 +2227,53 @@ mod tests {
             assert!(found.eq((0..count as u32).map(Some)));
             assert_eq!(interner.find(unknown.as_bytes()), None);
         }
+    }
+
+    fn text(parts: &[(&str, usize)]) -> Vec<u8> {
+        let parts = parts.iter().map(|&(part, n)| part.repeat(n));
+        parts.collect::<String>().into_bytes()
+    }
+
+    #[test]
+    fn greedy_cut_drops_the_reverse_point_until_that_has_cost_the_budget() {
+        let a = text(&[("c", 10_000), ("x", 20_000), ("d", 1)]);
+        let b = text(&[("d", 1), ("x", 20_000), ("c", 1)]);
+        let kept = |work| check_script(&a, &b, &diff_slices(&a, &b, MIN_PROBE, work));
+        assert_eq!(kept(UNLIMITED), 1);
+        assert!(kept(80_000) >= 20_000 - MIN_PROBE);
+    }
+
+    #[test]
+    fn greedy_cut_past_the_budget() {
+        // Unique ids cut the diff in two. The first part spends the budget.
+        let kept_after = |a: &[(&str, usize)], b: &[(&str, usize)]| {
+            let ids = |first: &[(&str, usize)], second| -> Vec<u32> {
+                let [first, second] = [first, second].map(|it| text(it).into_iter().map(u32::from));
+                first.chain(1000..21_000).chain(second).collect()
+            };
+            let a = ids(&[("c", 10_000), ("x", 20_000), ("d", 1)], a);
+            let b = ids(&[("d", 1), ("x", 20_000), ("c", 1)], b);
+            check_script(&a, &b, &diff_slices(&a, &b, 128, 400_000))
+        };
+        let before = 20_000 - MIN_PROBE + 20_000;
+        // The forward point got further.
+        let a = [("d", 1), ("x", 20_000), ("c", 10_000)];
+        let b = [("c", 1), ("x", 20_000), ("d", 1)];
+        assert!(kept_after(&a, &b) >= before + 20_000);
+        // The reverse point got further, but both are taken.
+        let a = [("c", 100), ("y", 50), ("c", 1000), ("x", 5000), ("d", 1)];
+        let b = [("y", 50), ("e", 1000), ("x", 5000), ("e", 1)];
+        assert!(kept_after(&a, &b) >= before + 5050);
+    }
+
+    #[test]
+    fn greedy_cut_at_both_points_drops_nothing() {
+        let a = text(&[("c", 1000), ("x", 1000), ("d", 1), ("z", 60_000), ("e", 1)]);
+        let b = text(&[("d", 1), ("x", 1000), ("c", 100), ("z", 60_000), ("f", 1)]);
+        assert_eq!(
+            diff_slices(&a, &b, MIN_PROBE, 100_000),
+            diff_slices(&a, &b, MIN_PROBE, UNLIMITED)
+        );
     }
 
     fn render(a: &[u8], b: &[u8], hunks: &[Hunk]) -> String {

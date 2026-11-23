@@ -263,10 +263,10 @@ for (const state of ${JSON.stringify(of.map(([, state]) => state))})
 
   // Linux raises SIGBUS with BUS_ADRERR for a page that its file does not hold. Code that is running faults like this
   // when its file is cut, so x30 is not taken for the return address of what runs there. x86-64 looks at the stack.
-  test.concurrent.if(takesRealFaults && isGlibc)("a real call of a page that its file does not hold", async () => {
+  test.concurrent.if(takesRealFaults && isLinux)("a real call of a page that its file does not hold", async () => {
     using dir = tempDir("crash-call-of-page-without-file", { "empty": "" });
     const mapped = `(() => {
-      const { mmap } = require("bun:ffi").dlopen("libc.so.6", {
+      const { mmap } = require("bun:ffi").dlopen(${JSON.stringify(libcPathForDlopen())}, {
         mmap: { args: ["ptr", "usize", "i32", "i32", "i32", "i64"], returns: "ptr" },
       }).symbols;
       // PROT_READ | PROT_EXEC, MAP_PRIVATE

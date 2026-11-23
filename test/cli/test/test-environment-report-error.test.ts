@@ -113,7 +113,7 @@ const withWindow = (name: string) => `// ${VITEST} ${name}
   });
 
   test("${name}: nobody listens", () => {
-    reportError(new Error("unheard"));
+    reportError(new Error("unheard in ${name}"));
     console.log("${name} unheard", JSON.stringify(printedByWindow));
   });`;
 
@@ -144,25 +144,35 @@ describe.concurrent("reportError() in a DOM environment", () => {
         "3.test.js": withWindow("happy-dom"),
         "4.test.js": withoutWindow,
       });
-      // Bun's own function prints what nothing cancels with console.error(), and the window prints nothing.
-      const [reporter, name, printedByWindow] =
-        reportError === "absent" ? ["Bun", "reportError", []] : ["the window", "bound reportError", ["not canceled"]];
-      const heard = ["bare", "globalThis", "window", "at import", "not canceled"].map(
-        error => `${error} by ${reporter}`,
-      );
-      const withListener = JSON.stringify({ heard, name, isOneFunction: true, isAssignable: true, printedByWindow });
+      const windowHasOne = reportError !== "absent";
+      // What nothing cancels: a window with the function prints it, and Bun's own function calls console.error().
+      const byWindow = (...messages: string[]) => (windowHasOne ? messages : []);
+      const byBun = (...messages: string[]) => (windowHasOne ? [] : messages.map(message => `error: ${message}`));
+      const withListener = JSON.stringify({
+        heard: ["bare", "globalThis", "window", "at import", "not canceled"].map(
+          message => `${message} by ${windowHasOne ? "the window" : "Bun"}`,
+        ),
+        name: windowHasOne ? "bound reportError" : "reportError",
+        isOneFunction: true,
+        isAssignable: true,
+        printedByWindow: byWindow("not canceled"),
+      });
 
       const { printed, stderr, verdicts, exitCode } = await bunTest(String(dir), args);
       expect(printed).toEqual([
         native,
         `jsdom ${withListener}`,
         // The runner hears what no listener of a jsdom file hears, and cancels it.
-        `jsdom unheard ${JSON.stringify(printedByWindow)}`,
+        `jsdom unheard ${JSON.stringify(byWindow("not canceled"))}`,
         `happy-dom ${withListener}`,
-        `happy-dom unheard ${JSON.stringify(reportError === "absent" ? [] : ["not canceled", "unheard"])}`,
+        `happy-dom unheard ${JSON.stringify(byWindow("not canceled", "unheard in happy-dom"))}`,
         native,
       ]);
-      expect(stderr).toContain("error: unheard");
+      expect(stderr.match(/^error: .+$/gm)).toEqual([
+        ...byBun("not canceled"),
+        "error: unheard in jsdom",
+        ...byBun("not canceled", "unheard in happy-dom"),
+      ]);
       expect(verdicts).toEqual({
         "without a window": "pass",
         "jsdom: a listener hears it": "pass",

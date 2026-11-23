@@ -330,24 +330,18 @@ impl TlsConfig {
             if config.keylog {
                 bun_quic_tls::enable_key_log(&owned);
             }
+            let id = config.session_context();
+            if ssl::SSL_CTX_set_session_id_context(ctx, id.as_ptr(), id.len()) != 1 {
+                return Err("failed to set the session ID context");
+            }
             if config.is_server {
                 if config.verify_client {
                     // SSL_VERIFY_PEER alone matches Node's TLS 1.3 semantics (see QuicSession::maybe_report_handshake).
                     ssl::SSL_CTX_set_verify(ctx, ssl::SSL_VERIFY_PEER, None);
                 }
                 bun_quic_tls::enable_alpn(&owned);
-                // A session is only resumed with the context that it was established with.
-                let mut id = [0; 16];
-                ssl::rand_bytes(&mut id);
-                if ssl::SSL_CTX_set_session_id_context(ctx, id.as_ptr(), id.len()) != 1 {
-                    return Err("failed to set the session ID context");
-                }
             } else {
                 bun_quic_tls::enable_tickets(&owned);
-                let id = config.client_session_context();
-                if ssl::SSL_CTX_set_session_id_context(ctx, id.as_ptr(), id.len()) != 1 {
-                    return Err("failed to set the session ID context");
-                }
                 if ssl::SSL_CTX_set_alpn_protos(ctx, config.alpn.as_ptr(), config.alpn.len()) != 0 {
                     return Err("failed to set ALPN protocols");
                 }
@@ -381,9 +375,14 @@ impl TlsConfig {
     }
 
     /// Who the peers of a session are, and how that has been established.
-    fn client_session_context(&self) -> [u8; bun_sha_hmac::SHA256::DIGEST] {
+    fn session_context(&self) -> [u8; bun_sha_hmac::SHA256::DIGEST] {
         let mut hasher = bun_sha_hmac::SHA256::init();
-        hasher.update(&[self.verify_hostname.into()]);
+        let flags = [
+            self.verify_hostname,
+            self.is_server && self.verify_client,
+            self.is_server && self.enable_early_data,
+        ];
+        hasher.update(&flags.map(u8::from));
         for list in [
             self.servername.as_slice(),
             &self.certs_pem,

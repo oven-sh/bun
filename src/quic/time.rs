@@ -11,7 +11,7 @@ pub struct Duration(u64);
 
 impl Instant {
     /// The deadline of a timer that is not set.
-    pub(crate) const NEVER: Self = Self(u64::MAX);
+    pub const NEVER: Self = Self(u64::MAX);
 
     pub const fn from_micros(micros: u64) -> Self {
         Self(micros)

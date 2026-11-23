@@ -41,6 +41,27 @@ fn packets_that_are_ahead_of_the_end_of_the_hello() {
 }
 
 #[test]
+fn packet_that_is_ahead_of_the_hello_in_its_datagram() {
+    let mut raw = Raw::client().with_ticket();
+    raw.send_all(&[
+        (Early, "stream 0 0 a"),
+        (Initial, "hello"),
+        (Early, "fin 0 1 b"),
+    ]);
+    assert_eq!(raw.events(), "ready, 0 opened, 0 fin ab");
+}
+
+#[test]
+fn packet_for_another_connection_is_not_passed_over() {
+    let mut raw = Raw::client().with_ticket();
+    let hello = raw.packet(Initial, "hello");
+    raw.destination = b"another0".to_vec();
+    let datagram = [raw.packet(Early, "stream 0 0 a"), hello].concat();
+    raw.deliver(&datagram);
+    assert_eq!(raw.peer.endpoint.connection_count(), 0);
+}
+
+#[test]
 fn packets_that_arrive_with_the_hello() {
     for (first, last, ack) in [
         ("hello", "ping", "1[ack 0-30]"),

@@ -3,6 +3,7 @@ use bun_quic::Layer::{Application, Transport};
 use bun_quic::{Config, Duration, Layer, PreferredAddress, StreamId};
 
 use crate::harness::http3;
+use crate::harness::messages::{GET, OK};
 use crate::harness::raw::Kind::{Handshake, Initial};
 use crate::harness::raw::{RTT, Raw};
 use crate::harness::wire::{MAX, bytes, filler};
@@ -373,6 +374,60 @@ fn server_closes_when_the_client_knows_that_it_goes_away() {
         assert_eq!((raw.now - start).as_millis(), after);
         assert_eq!(raw.close, Some((Application, 0x100)));
     }
+}
+
+#[test]
+fn client_that_does_not_acknowledge_the_notice_seems_to_be_gone() {
+    let mut raw = Raw::client().config(http3).connected_with("");
+    raw.send("ack");
+    let last = *raw.received[2].last().unwrap();
+    raw.forget();
+    raw.connection().go_away();
+    assert_eq!(raw.take()[0].number, last + 2);
+    for (after, is_deserted) in [(SETTLING_PERIOD / 3 - 1, false), (2, true)] {
+        raw.advance(after);
+        assert_eq!(raw.connection().deserted_from() <= raw.now, is_deserted);
+    }
+}
+
+#[test]
+fn client_that_does_not_acknowledge_the_last_response_seems_to_be_gone() {
+    for (len, fin, after, answer, expected) in [
+        (1, false, 1000, "", [false, false]),
+        (1, false, 1000, "ack", [false, false]),
+        (1, true, 999, "", [true, false]),
+        (1, true, 1000, "ack", [true, false]),
+        (60_000, true, 999, "", [false, false]),
+        (60_000, true, 1000, "", [false, true]),
+        (60_000, true, 1000, "ping", [false, false]),
+    ] {
+        let mut raw = Raw::client().config(http3).connected_with("");
+        raw.write_http3(0, &format!("headers {GET}"), true);
+        assert!(raw.peer.send_headers(0, OK));
+        raw.peer.send(0, &filler(0, len), fin);
+        raw.process();
+        raw.advance(after);
+        if !answer.is_empty() {
+            raw.send(answer);
+        }
+        let (now, it) = (raw.now, raw.connection());
+        assert_eq!(
+            [it.has_sent_everything(), it.deserted_from() <= now],
+            expected
+        );
+    }
+}
+
+#[test]
+fn other_frames_do_not_take_the_room_of_the_notice_and_the_close() {
+    let mut raw = Raw::client().config(http3).connected_with("");
+    raw.write_http3(0, &format!("headers {GET}"), true);
+    assert!(raw.peer.send_headers(0, OK));
+    raw.peer.send(0, &[0; 100_000], false);
+    raw.forget();
+    raw.connection().go_away();
+    raw.abort(Transport, 1, &[]);
+    assert_eq!(raw.frames(), "stream 3 9 #070104, close 0x1");
 }
 
 #[test]

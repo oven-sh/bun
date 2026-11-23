@@ -153,6 +153,13 @@ impl Connection {
         }
     }
 
+    /// Gives up on writing. The peer need not be told if everything arrives without being sent again.
+    pub fn reset_unless_delivered(&mut self, id: StreamId, code: u64) {
+        if let Some((stream, state)) = self.stream(id) {
+            state.reset_unless_delivered(id, stream, code);
+        }
+    }
+
     /// Gives up on writing, unless the end has been written.
     pub fn reset_unfinished(&mut self, id: StreamId, code: u64) {
         if let Some((stream, state)) = self.stream(id)
@@ -170,9 +177,20 @@ impl Connection {
         }
     }
 
+    /// Those that had none at the last call either.
+    pub fn stop_streams_without_context(&mut self, code: u64) {
+        let mut streams =
+            (self.streams.table).sorted(|_, it| it.context.is_null() && !it.is_internal());
+        streams.retain_mut(|it| !it.1.mark(Flags::LACKS_CONTEXT));
+        for id in Vec::from_iter(streams.into_iter().map(|it| it.0)) {
+            self.stop(id, code);
+        }
+    }
+
     pub fn set_paused(&mut self, id: StreamId, is_paused: bool) {
         if let Some((stream, state)) = self.stream(id) {
             stream.flags.set(Flags::PAUSED, is_paused);
+            state.credit(id, stream);
             state.mark_readable(id, stream);
         }
     }
@@ -222,12 +240,19 @@ impl Connection {
         })
     }
 
+    /// No more requests are allowed after GOAWAY, which limits how many are left to cancel.
+    fn counts_cancelled_requests(&self) -> bool {
+        self.side.is_server() && !self.streams.table.is_going_away
+    }
+
     pub(super) fn on_reset_stream(&mut self, id: StreamId, code: u64, final_size: u64) -> Result {
+        let counts = self.counts_cancelled_requests();
         let Some((stream, state)) = self.streams.accept(id, Half::Receive)? else {
             return Ok(());
         };
         let is_complete = stream.is_read_to_end() && stream.read_offset() == final_size;
-        if self.side.is_server() && is_unanswered(stream) {
+        // RFC 9000 §3.5: the peer has to reset a stream that is stopped.
+        if counts && is_unanswered(stream) && !stream.flags.contains(Flags::STOPPED) {
             state.add_load(Load::Heavy);
         }
         match &stream.role {
@@ -242,10 +267,11 @@ impl Connection {
     }
 
     pub(super) fn on_stop_sending(&mut self, id: StreamId, code: u64) -> Result {
+        let counts = self.counts_cancelled_requests();
         match self.streams.accept(id, Half::Send)? {
             Some((stream, _)) if stream.is_internal() => return Err(CRITICAL_STREAM_CLOSED),
             Some((stream, state)) => {
-                if self.side.is_server() && is_unanswered(stream) {
+                if counts && is_unanswered(stream) {
                     state.add_load(Load::Heavy);
                 }
                 let answer = match (&stream.role, code) {
@@ -334,12 +360,17 @@ impl Connection {
                 return Ok(None);
             }
         };
-        let (context, has_data) = (stream.context, stream.has_ready());
+        let (context, has_data, has_kept) = (stream.context, stream.has_ready(), stream.has_kept());
         let (mut has_more, mut is_cut_off) = (false, false);
         if let Role::Message(message) = &mut stream.role {
             if let Some(fields) = message.take_fields(has_data) {
                 state.made_progress = true;
-                let has_kept = stream.has_kept();
+                if message.has_many_interim_responses() {
+                    state.add_load(Load::Light);
+                }
+                if !has_kept {
+                    message.interim_responses_in_a_row = 0;
+                }
                 if fields.section == Section::Head && self.config.has_priorities {
                     self.apply_request_priority(id);
                 }
@@ -378,7 +409,8 @@ impl Connection {
 
 fn is_unanswered(stream: &Stream) -> bool {
     matches!(stream.role, Role::Message(_))
-        && !(stream.flags).intersects(Flags::WRITE_DONE | Flags::RESET_BY_PEER)
+        && !stream.flags.contains(Flags::WRITE_DONE)
+        && (stream.flags.contains(Flags::STOPPED) || !stream.flags.contains(Flags::RESET_BY_PEER))
 }
 
 /// `data` is what comes next on the stream.
@@ -423,9 +455,17 @@ fn try_read(
     {
         message.decode_collected(has_data, reader)?;
     }
-    let mut takes_more = feed(stream, data, reader)?;
+    let rest = feed(stream, data, reader)?;
+    let mut takes_more = rest.is_empty();
+    if !takes_more {
+        stream.keep(stream.read_offset(), rest)?;
+    }
     while takes_more && let Some((known, chunk)) = stream.take_kept() {
-        takes_more = feed(stream, chunk.get(known..).unwrap_or_default(), reader)?;
+        let offset = stream.read_offset() - known as u64;
+        takes_more = feed(stream, chunk.get(known..).unwrap_or_default(), reader)?.is_empty();
+        if !takes_more {
+            stream.put_back(offset, chunk);
+        }
     }
     stream.check_kept()?;
     match (&stream.role, reader) {
@@ -436,9 +476,13 @@ fn try_read(
     }
 }
 
-/// Returns false if some of `data` had to be kept for later.
+/// Returns what has to be kept for later.
 #[inline]
-fn feed(stream: &mut Stream, data: &[u8], reader: &mut Option<Reader>) -> Result<bool, Fault> {
+fn feed<'a>(
+    stream: &mut Stream,
+    data: &'a [u8],
+    reader: &mut Option<Reader>,
+) -> Result<&'a [u8], Fault> {
     let len = match (stream.reader(), reader) {
         ((Role::Message(message), ready), Some(reader)) => message.read(data, ready, reader)?,
         ((_, mut ready), _) => {
@@ -447,9 +491,5 @@ fn feed(stream: &mut Stream, data: &[u8], reader: &mut Option<Reader>) -> Result
         }
     };
     stream.advance(len);
-    let rest = data.get(len..).unwrap_or_default();
-    if !rest.is_empty() {
-        stream.keep(stream.read_offset(), rest)?;
-    }
-    Ok(rest.is_empty())
+    Ok(data.get(len..).unwrap_or_default())
 }

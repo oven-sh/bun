@@ -5,7 +5,7 @@ use bun_quic::Layer::Transport;
 use bun_quic::{Batch, ConnectionId, Duration, Instant, StreamId, TokenBucket};
 
 use crate::harness::paths::NEW;
-use crate::harness::raw::Kind::{Initial, Short};
+use crate::harness::raw::Kind::{Early, Initial, Short};
 use crate::harness::raw::{RTT, Raw};
 use crate::harness::wire::hex;
 
@@ -138,21 +138,24 @@ fn stateless_resets() {
     raw.forget();
     for (id, token) in ids {
         for (len, random, expected) in [
-            (21, 0, None),
-            (22, 0, Some(21)),
-            (43, 0, Some(42)),
-            (44, 0, Some(43)),
-            (1200, 0, Some(43)),
-            (1200, 18, Some(61)),
+            (28, 0, None),
+            (29, 0, Some(21)),
+            (29, 7, Some(28)),
+            (61, 8, Some(21)),
+            (62, 0, Some(43)),
+            (62, 18, Some(61)),
             (1200, 19, Some(43)),
-            (50, 18, Some(49)),
             (1200, 0xff, Some(51)),
         ] {
             let mut stray = [&[0x40], &id[..]].concat();
             stray.resize(len, 0);
             *raw.peer.crypto.planned.borrow_mut() = vec![vec![random; 62]];
-            let is_sent = raw.peer.endpoint.reset(&raw.addresses, &stray);
-            assert_eq!(is_sent, expected.is_some());
+            let is_sent = [0, 99].map(|after| {
+                let now = raw.now + Duration::from_millis(after);
+                raw.peer.endpoint.reset(now, &raw.addresses, &stray)
+            });
+            assert_eq!(is_sent, [expected.is_some(), false]);
+            raw.advance(100);
             let expected = expected.map(|len| {
                 let first = random & 0x7f | 0x40;
                 [&[first][..], &vec![random; len - 17], &token].concat()
@@ -165,10 +168,11 @@ fn stateless_resets() {
 #[test]
 fn replies_go_one_by_one() {
     let mut raw = Raw::client();
-    let runs = [(1, 40, 40), (1, 40, 40), (1, 30, 30), (2, 40, 40)];
-    for (port, len, _) in runs {
+    let runs = [(1, 43, 43), (1, 43, 43), (1, 21, 21), (2, 43, 43)];
+    for (id, (port, len, _)) in (0x40..).zip(runs) {
         raw.act_as(port);
-        (raw.peer.endpoint).reset(&raw.addresses, &vec![0x40; len + 1]);
+        *raw.peer.crypto.planned.borrow_mut() = vec![vec![0; 62]];
+        (raw.peer.endpoint).reset(raw.now, &raw.addresses, &vec![id; 2 * len]);
     }
     let mut batch = Batch::default();
     assert_eq!(raw.runs(&mut batch, 2), runs[..2]);
@@ -220,7 +224,7 @@ fn probes_go_one_by_one() {
         assert_eq!(raw.runs(&mut batch, 100).len(), runs);
         assert_eq!(batch.len(), 3);
         raw.now = raw.peer.endpoint.timeout().unwrap();
-        raw.peer.endpoint.handle_timeouts(raw.now);
+        raw.peer.endpoint.handle_timeouts(raw.now, || raw.now);
     }
 }
 
@@ -509,6 +513,7 @@ fn clients_are_answered_two_at_a_time() {
         raw.peer.handle.unwrap()
     });
     let endpoint = &mut raw.peer.endpoint;
+    endpoint.poll_event(raw.now);
     endpoint.get_mut(handles[2]).unwrap().abort_silently();
     for answered in [&[][..], &[0, 1], &[0, 1, 3], &[0, 1, 3, 4]] {
         for (at, &it) in handles.iter().enumerate() {
@@ -517,7 +522,63 @@ fn clients_are_answered_two_at_a_time() {
         }
         let is_due = endpoint.timeout() == Some(Instant::default());
         assert_eq!(is_due, answered.len() < 4);
-        endpoint.handle_timeouts(raw.now);
+        endpoint.handle_timeouts(raw.now, || raw.now);
+    }
+}
+
+#[test]
+fn more_clients_are_answered_if_the_application_takes_long() {
+    for (away, cost, answered) in [
+        (2, 0, 2),
+        (3, 0, 3),
+        (128, 0, 128),
+        (129, 0, 128),
+        (129, 500, 40),
+        (129, 15_000, 2),
+        (10, 3000, 4),
+        (9, 3000, 3),
+    ] {
+        let mut raw = Raw::client();
+        raw.waits = false;
+        raw.peer.endpoint.poll_event(raw.now);
+        let handles = Vec::from_iter((1..=130).map(|port| {
+            raw.act_as(port);
+            raw.send_in(Initial, "hello");
+            raw.peer.handle.unwrap()
+        }));
+        let endpoint = &mut raw.peer.endpoint;
+        let mut clock = raw.now + Duration::from_millis(away);
+        endpoint.handle_timeouts(clock, || {
+            clock = clock + Duration::from_micros(cost);
+            clock
+        });
+        let has_read_hello = |it| endpoint.get(it).unwrap().peer_parameters().is_some();
+        assert_eq!(
+            handles.into_iter().filter(|&it| has_read_hello(it)).count(),
+            answered
+        );
+    }
+}
+
+#[test]
+fn connections_can_take_turns_with_their_events() {
+    for (takes_turns, expected) in [(false, [0, 0, 0, 1, 1, 1]), (true, [0, 1, 0, 1, 0, 1])] {
+        let mut raw = Raw::client().with_ticket();
+        raw.waits = false;
+        let [_, second] = [1, 2].map(|port| {
+            raw.act_as(port);
+            raw.send_all(&[(Initial, "hello"), (Early, "stream 0 0 a")]);
+            raw.peer.handle.unwrap()
+        });
+        raw.peer.endpoint.handle_timeouts(raw.now, || raw.now);
+        let mut order = Vec::new();
+        while let Some((handle, ..)) = raw.peer.endpoint.poll_event(raw.now) {
+            order.push(u8::from(handle == second));
+            if takes_turns {
+                raw.peer.endpoint.take_turns();
+            }
+        }
+        assert_eq!(order, expected);
     }
 }
 
@@ -590,10 +651,11 @@ fn a_connection_ends_even_if_it_never_gets_to_send() {
     let now = raw.now;
     raw.connection().abort(now, Transport, 1, b"");
     assert!(!raw.peer.poll(now));
-    (raw.peer.endpoint).handle_timeouts(now + Duration::from_millis(100));
+    let soon = now + Duration::from_millis(100);
+    raw.peer.endpoint.handle_timeouts(soon, || soon);
     let end = raw.peer.endpoint.timeout().unwrap();
     assert!(end > now + Duration::from_millis(3 * (RTT + 25)));
-    raw.peer.endpoint.handle_timeouts(end);
+    raw.peer.endpoint.handle_timeouts(end, || end);
     assert!(raw.peer.poll(end));
     assert_eq!(raw.peer.events(), "closed: Local");
     assert!(raw.peer.endpoint.timeout().unwrap() > end);

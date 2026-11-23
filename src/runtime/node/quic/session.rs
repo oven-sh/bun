@@ -63,6 +63,9 @@ const LISTENER_FLAG_DATAGRAM_STATUS: u32 = 0x4;
 const LISTENER_FLAG_SESSION_TICKET: u32 = 0x8;
 const LISTENER_FLAG_NEW_TOKEN: u32 = 0x10;
 const LISTENER_FLAG_ORIGIN: u32 = 0x20;
+const LISTENER_FLAG_STREAM: u32 = 0x40;
+const MAX_EARLY_EVENTS: usize = 512;
+const MAX_EARLY_LEN: u64 = 256 * 1024;
 
 /// RFC 9412 sec 2: each Origin-Entry is a 16-bit length prefix followed by
 /// the ASCII origin.
@@ -286,6 +289,9 @@ pub(crate) struct QuicSession {
     state: Cell<*mut SessionState>,
     stats: Cell<*mut u64>,
     events: JsCell<VecDeque<SessionEvent>>,
+    /// For listeners that may be set after `opened`.
+    early_events: JsCell<Vec<SessionEvent>>,
+    holds_early_events: Cell<bool>,
     /// A graceful close requested while a dispatch was on the stack: applied
     /// on the next depth-0 pass so its GOAWAY/CONNECTION_CLOSE does not share
     /// a flight with data written by the same dispatch (node's close lands an
@@ -340,6 +346,8 @@ impl QuicSession {
             state: Cell::new(null_mut()),
             stats: Cell::new(null_mut()),
             events: JsCell::new(VecDeque::new()),
+            early_events: JsCell::new(Vec::new()),
+            holds_early_events: Cell::new(is_server),
             pending_graceful: JsCell::new(None),
             verneg: Cell::new(None),
             self_close: JsCell::new(None),
@@ -564,6 +572,9 @@ impl QuicSession {
             ep.schedule_process();
         }
     }
+    pub(super) fn flushes_at_once(&self) -> bool {
+        self.endpoint_ref().is_some_and(|ep| !ep.scope_held())
+    }
     pub(super) fn mark_pending(&self) {
         if let Some(ep) = self.endpoint_ref() {
             ep.mark_driver_pending();
@@ -761,9 +772,18 @@ impl QuicSession {
             if dispatched_js && let Some(endpoint) = self.endpoint_ref() {
                 endpoint.drive_if_overdue(self);
             }
+            if self.holds_early_events.get() && !self.is_early() {
+                self.holds_early_events.set(false);
+                let early = self.early_events.with_mut(core::mem::take).into_iter();
+                (self.events).with_mut(|e| early.rev().for_each(|it| e.push_front(it)));
+            }
             let Some(event) = self.events.with_mut(VecDeque::pop_front) else {
                 break;
             };
+            if self.holds_early_events.get() && self.lacks_listener(&event) {
+                self.early_events.with_mut(|e| e.push(event));
+                continue;
+            }
             if let SessionEvent::GoawayReceived {
                 overtakes_data: true,
             } = event
@@ -785,12 +805,15 @@ impl QuicSession {
             let endpoint = self.endpoint.get();
             // SAFETY: teardown clears `endpoint` before the endpoint can die.
             let defer_closes = !endpoint.is_null() && unsafe { (*endpoint).defer_closes.get() };
-            if (dispatched_js || defer_closes)
-                && matches!(
-                    event,
-                    SessionEvent::Closed(_) | SessionEvent::GoawayReceived { .. }
-                )
-            {
+            let is_deferred = match event {
+                SessionEvent::Closed(_) | SessionEvent::GoawayReceived { .. } => {
+                    dispatched_js || defer_closes
+                }
+                // What waits for `opened` has to run ahead of them.
+                SessionEvent::HandshakeDone => defer_closes && !self.early_events.get().is_empty(),
+                _ => false,
+            };
+            if is_deferred {
                 self.events.with_mut(|e| e.push_front(event));
                 self.schedule_process();
                 break;
@@ -817,6 +840,26 @@ impl QuicSession {
             || !self.unclaimed_streams.get().is_empty()
         {
             self.mark();
+        }
+    }
+
+    fn is_early(&self) -> bool {
+        !self.handshake_reported.get()
+            && self.early_events.get().len() < MAX_EARLY_EVENTS
+            && (self.get(|it| it.stats().bytes_received < MAX_EARLY_LEN)).unwrap_or_else(|| {
+                (self.events.get().iter()).any(|it| matches!(it, SessionEvent::HandshakeDone))
+            })
+    }
+
+    fn lacks_listener(&self, event: &SessionEvent) -> bool {
+        let is_stream = |it: &SessionEvent| matches!(it, SessionEvent::StreamReady { .. });
+        match event {
+            SessionEvent::HandshakeDone => false,
+            SessionEvent::Datagram { .. } => !self.has_listener(LISTENER_FLAG_DATAGRAM),
+            _ => {
+                is_stream(event) && !self.has_listener(LISTENER_FLAG_STREAM)
+                    || self.early_events.get().iter().any(is_stream)
+            }
         }
     }
 
@@ -1328,7 +1371,7 @@ impl QuicSession {
         self.is_server && (self.hsk_snapshot.get().as_ref()).is_some_and(|s| s.early_data.1)
     }
 
-    fn is_http3(&self) -> bool {
+    pub(super) fn is_http3(&self) -> bool {
         self.application == Application::Http3
     }
 
@@ -1427,6 +1470,7 @@ impl QuicSession {
         });
         self.conn.set(None);
         self.events.with_mut(VecDeque::clear);
+        self.early_events.with_mut(Vec::clear);
         let ep = self.endpoint.replace(null_mut());
         if !ep.is_null() {
             // SAFETY: endpoint is alive (endpoint_js Strong held below). Its
@@ -2002,6 +2046,7 @@ impl QuicSession {
             );
         }
         if self.is_server {
+            self.apply_peer_datagram_budget();
             self.flush_pending_graceful();
         }
         self.open_pending_streams(Direction::Bidirectional);

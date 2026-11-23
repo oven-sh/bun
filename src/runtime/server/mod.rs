@@ -225,6 +225,8 @@ pub(crate) struct NewServer<const SSL: bool, const DEBUG: bool> {
     /// `h3_listener` after a graceful stop. It lives as long as `h3_app`, and a
     /// later abrupt stop closes the connections that are still draining through it.
     pub(crate) h3_draining_listener: core::cell::Cell<Option<*mut uws_sys::h3::ListenSocket>>,
+    /// Whether any of them is worth waiting for.
+    h3_is_draining: Cell<bool>,
     /// Cached `h3=":<port>"; ma=86400` for Alt-Svc on H1 responses; formatted
     /// once in onH3Listen so renderMetadata doesn't reformat per-request.
     pub(crate) h3_alt_svc: JsCell<Box<[u8]>>,
@@ -1466,7 +1468,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     pub(crate) fn is_closed(&self) -> bool {
         self.pending_requests.get() == 0
             && !self.has_listener()
-            && self.h3_draining_listener.get().is_none()
+            && !self.h3_is_draining.get()
             && !self.has_active_web_sockets()
             && !self.has_loop_holding_connections()
     }
@@ -1475,7 +1477,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     /// no open HTTP connection. The wrapper may only go `Weak` from here on
     /// (see [`Self::js_value_for_dispatch`]).
     pub(crate) fn is_drained(&self) -> bool {
-        self.is_closed() && !self.has_active_connections()
+        self.is_closed()
+            && !self.has_active_connections()
+            && self.h3_draining_listener.get().is_none()
     }
 
     pub(crate) fn has_listener(&self) -> bool {
@@ -1540,11 +1544,12 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         if Self::HAS_H3 {
             let h3l = self.h3_listener.take();
             // Graceful: GOAWAY + drain via the still-open UDP socket; the
-            // engine rejects new conns and the timer keeps in-flight streams
+            // engine ignores new conns and the timer keeps in-flight streams
             // progressing until deinit. Abrupt: close the fd now.
             if !abrupt {
                 if let (Some(h3l), Some(h3a)) = (h3l, self.h3_app()) {
                     self.h3_draining_listener.set(Some(h3l));
+                    self.h3_is_draining.set(true);
                     // `stop()` runs `deinit_if_we_can` right after this returns.
                     self.deinit_running.set(true);
                     // S008: `h3::App` is an `opaque_ffi!` ZST — safe deref.
@@ -1553,6 +1558,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     self.deinit_running.set(false);
                 }
             } else if let Some(h3l) = h3l.or_else(|| self.h3_draining_listener.take()) {
+                self.h3_is_draining.set(false);
                 // S008: `h3::ListenSocket` is an `opaque_ffi!` ZST — safe deref.
                 bun_opaque::opaque_deref_mut(h3l).close();
             }
@@ -1669,10 +1675,13 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }
     }
 
-    extern "C" fn on_h3_drained(this: *mut c_void) {
+    extern "C" fn on_h3_drained(this: *mut c_void, is_over: bool) {
         // SAFETY: the server owns the app that calls this.
         let this = unsafe { &*this.cast::<Self>() };
-        this.h3_draining_listener.set(None);
+        this.h3_is_draining.set(false);
+        if is_over {
+            this.h3_draining_listener.set(None);
+        }
         this.deinit_if_we_can();
     }
 
@@ -1916,6 +1925,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             h2_app: JsCell::new(None),
             h3_listener: core::cell::Cell::new(None),
             h3_draining_listener: core::cell::Cell::new(None),
+            h3_is_draining: Cell::new(false),
             h3_alt_svc: JsCell::new(Box::<[u8]>::default()),
             js_value: JsCell::new(jsc::JsRef::empty()),
             pending_requests: core::cell::Cell::new(0),

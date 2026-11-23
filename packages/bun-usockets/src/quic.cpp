@@ -331,6 +331,7 @@ static_assert(sizeof(AES_KEY) == 244 && alignof(AES_KEY) == 4, "update the type 
 static void us_quic_require_tls13(SSL_CTX *ssl) {
     SSL_CTX_set_min_proto_version(ssl, TLS1_3_VERSION);
     SSL_CTX_set_max_proto_version(ssl, TLS1_3_VERSION);
+    SSL_CTX_clear_options(ssl, SSL_OP_NO_TLSv1_3);
 }
 
 /* `default_ctx` is for a context that takes over from it by SNI. */

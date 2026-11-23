@@ -141,7 +141,7 @@ impl Client {
         // SAFETY: `host` is a string.
         if unsafe { us_quic_parse_address(host.as_ptr(), &mut address) } {
             let ip = SocketAddr::from(address).ip();
-            let connection = self.connect_to((ip, origin.port).into(), origin, true, context);
+            let connection = self.connect_to((ip, origin.port).into(), origin, context);
             return connection.map(Connecting::Started);
         }
         let (loop_, mut request) = (self.engine.loop_, core::ptr::null_mut());
@@ -172,7 +172,7 @@ impl Client {
         let connection = addresses.map(SocketAddr::from).find_map(|mut peer| {
             peer.set_port(origin.port);
             us_quic_is_routable(&peer.into()).then_some(())?;
-            self.connect_to(peer, origin, false, context)
+            self.connect_to(peer, origin, context)
         });
         lookup.is_useful = connection.is_some();
         connection
@@ -189,7 +189,6 @@ impl Client {
         &self,
         mut peer: SocketAddr,
         origin: &Origin,
-        is_ip_literal: bool,
         context: Context,
     ) -> Option<Connection> {
         let local = self.socket()?.local();
@@ -204,8 +203,8 @@ impl Client {
             ZBox::from_bytes(origin.hostname),
             origin.reject_unauthorized,
         );
-        // RFC 6066 §3.
-        if !is_ip_literal && !tls.ssl_mut().set_servername(&host) {
+        // Also an address, against RFC 6066 §3, as some servers do not find their certificate otherwise.
+        if !tls.ssl_mut().set_servername(&host) {
             return None;
         }
         tls.offer(Version::V1.http3_alpn())?;

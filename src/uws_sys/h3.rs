@@ -413,8 +413,8 @@ impl App {
         }
         Ok(())
     }
-    /// `on_drained` is called when there are no connections left, which can be before this returns.
-    pub fn close(&mut self, on_drained: extern "C" fn(*mut c_void), user: *mut c_void) {
+    /// See `us_quic_socket_context_shutdown`.
+    pub fn close(&mut self, on_drained: extern "C" fn(*mut c_void, bool), user: *mut c_void) {
         c::uws_h3_app_close(self, on_drained, user)
     }
     pub fn clear_routes(&mut self) {
@@ -608,7 +608,7 @@ mod c {
         pub(super) fn uws_h3_app_destroy(app: *mut App);
         pub(super) safe fn uws_h3_app_close(
             app: &mut App,
-            on_drained: extern "C" fn(*mut c_void),
+            on_drained: extern "C" fn(*mut c_void, bool),
             user: *mut c_void,
         );
         pub(super) safe fn uws_h3_app_clear_routes(app: &mut App);

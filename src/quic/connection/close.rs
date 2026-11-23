@@ -143,6 +143,28 @@ impl Connection {
         self.streams.table.has_undelivered_application_data()
     }
 
+    /// Whether the application is done, and all that may be missing is acknowledgments.
+    pub fn has_sent_everything(&self) -> bool {
+        let table = &self.streams.table;
+        !self.is_receiving()
+            || !table.has_application_streams() && !table.has_unsent_application_data()
+    }
+
+    /// From when on the application is done and the peer seems to be gone, unless something arrives.
+    pub fn deserted_from(&self) -> Instant {
+        let table = &self.streams.table;
+        let oldest = self.spaces.data.sent.packets.front();
+        let Some(oldest) = oldest.filter(|_| !table.has_application_streams()) else {
+            return Instant::NEVER;
+        };
+        let timeout = self.idle_timeout.max(self.min_idle_timeout());
+        (oldest.flight.at).max(self.timers.get(Timer::Idle) - timeout)
+            + match self.is_delivering() || table.has_unsettled_requests() {
+                true => self.settling_period().max(MIN_YIELDING_PERIOD),
+                false => self.settling_period() / 3,
+            }
+    }
+
     /// For the end of [`Self::close`] and [`Self::go_away`].
     pub fn set_close_error(&mut self, layer: Layer, code: u64, reason: &[u8]) {
         if self.is_receiving() {
@@ -266,7 +288,7 @@ impl Connection {
     }
 
     pub(super) fn leave_time_for_an_answer(&mut self, now: Instant) {
-        let deadline = now + self.probe_timeout();
+        let deadline = now + self.probe_timeout().min(MAX_SETTLING_PERIOD);
         (self.timers).set(Timer::Idle, deadline.max(self.timers.get(Timer::Idle)));
     }
 
@@ -300,7 +322,7 @@ impl Connection {
     }
 
     /// For when the application may be silent for `timeout`, or for ever if it is zero, until it has no streams left.
-    pub fn allow_silence(&mut self, now: Instant, timeout: Duration) {
+    pub fn allow_silence(&mut self, timeout: Duration) {
         if !timeout.is_zero() && timeout <= self.idle_timeout || !self.is_receiving() {
             return;
         }
@@ -309,11 +331,10 @@ impl Connection {
             self.progress_timeout = timeout;
         }
         self.timers.stop(Timer::Progress);
-        self.restart_progress_timer(now);
+        self.note_progress();
         if self.keep_alive == KeepAlive::Never {
             self.keep_alive = KeepAlive::WhileStreamsAreOpen;
-            self.start_keep_alive(now);
-            self.streams.state.owed |= Control::PING;
+            self.start_keep_alive(self.timers.get(Timer::Idle) - self.idle_timeout);
         }
     }
 
@@ -339,7 +360,11 @@ impl Connection {
     pub fn ask_for_answer(&mut self) {
         self.silence.is_watched = true;
         self.streams.state.owed |= Control::PING;
-        // A gap tends to be acknowledged without delay (RFC 9000 §13.2.1).
+        self.hasten_ack();
+    }
+
+    /// A gap tends to be acknowledged without delay (RFC 9000 §13.2.1).
+    pub(super) fn hasten_ack(&mut self) {
         if self.next_skip != u64::MAX {
             self.next_skip = self.spaces.data.next_number;
         }

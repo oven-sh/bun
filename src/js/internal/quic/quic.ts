@@ -2918,6 +2918,7 @@ class QuicSession {
       validateFunction(fn, "onstream");
       inner.onstream = FunctionPrototypeBind(fn, this);
     }
+    inner.state.hasStreamListener = fn !== undefined;
   }
 
   /** @type {OnDatagramCallback} */

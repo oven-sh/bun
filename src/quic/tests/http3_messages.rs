@@ -11,6 +11,63 @@ const BOTH: &[Side] = &[Client, Server];
 const FIRST: StreamId = StreamId(0);
 
 #[test]
+fn interim_responses_can_go_on() {
+    let mut raw = Raw::http3(Server).exchange();
+    for _ in 0..300 {
+        raw.write_http3(0, "headers :status=102", false);
+        assert_eq!(raw.events(), "0 Interim :status=102");
+    }
+    let frames = "headers :status=102, ".repeat(100) + "headers :status=200, data a";
+    raw.write_http3(0, &frames, true);
+    let events = "0 Interim :status=102, ".repeat(100) + "0 Head :status=200, 0 fin a, 0 closed";
+    assert_eq!(raw.events(), events);
+}
+
+#[test]
+fn field_sections_can_arrive_side_by_side() {
+    let raw = Raw::http3(Server).http3_config(|it| {
+        (it.kept_fields.size, it.tolerated_fields.size) = (20_000, 20_000);
+    });
+    let mut raw = raw.with("max_streams_bidi=100").connected_with("");
+    let head = http3(&format!("headers :status=200 a={}", "~".repeat(19_000)));
+    let (most, rest) = head.split_at(head.len() - 1);
+    let ids = Vec::from_iter((0..100).map(|_| raw.request(GET)));
+    for part in [most, rest] {
+        ids.iter().for_each(|&id| raw.write(id, part, false));
+    }
+    let heads = raw.peer.log.iter().filter(|it| it.ends_with("a=~19000"));
+    assert_eq!(heads.count(), 100);
+}
+
+#[test]
+fn as_many_heads_can_arrive_side_by_side_as_requests_are_allowed() {
+    let raw = Raw::http3(Client).config(|it| it.parameters.initial_max_streams_bidi = 300);
+    let raw = raw.http3_config(|it| {
+        (it.kept_fields.size, it.tolerated_fields.size) = (10_000, 10_000);
+    });
+    let mut raw = raw.connected_with("");
+    let head = http3(&format!("headers {GET} a={}", "~".repeat(9000)));
+    let (most, rest) = head.split_at(head.len() - 1);
+    for part in [most, rest] {
+        (0..300).for_each(|at| raw.write(4 * at, part, false));
+    }
+    let heads = raw.peer.log.iter().filter(|it| it.ends_with("a=~9000"));
+    assert_eq!(heads.count(), 300);
+}
+
+#[test]
+fn responses_that_have_no_context_can_be_stopped() {
+    let mut raw = Raw::http3(Server).connected_with("");
+    let [kept, _] = [raw.request(GET), raw.request(GET)];
+    (raw.connection()).set_stream_context(StreamId(kept), std::ptr::dangling_mut());
+    raw.forget();
+    raw.connection().stop_streams_without_context(7);
+    assert_eq!(raw.frames(), "");
+    raw.connection().stop_streams_without_context(7);
+    assert!(raw.frames().starts_with("stop_sending 4 0x7, stream 6 "));
+}
+
+#[test]
 fn every_split_of_a_message() {
     for (side, interim) in [
         (Client, &[][..]),

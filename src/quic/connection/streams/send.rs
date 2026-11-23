@@ -258,10 +258,16 @@ impl State {
     ) {
         if stream.mark(Flags::STOPPED_BY_PEER) {
             self.notify(id, stream, StreamEvent::Stopped(code));
-            match stream.flags.contains(Flags::FIN_SENT) && stream.send.first_lost().is_none() {
-                true => stream.deferred_reset_code = answer,
-                false => self.reset(id, stream, answer),
-            }
+            self.reset_unless_delivered(id, stream, answer);
+        }
+    }
+
+    pub(crate) fn reset_unless_delivered(&mut self, id: StreamId, stream: &mut Stream, code: u64) {
+        if stream.flags.contains(Flags::FIN_SENT) && stream.send.first_lost().is_none() {
+            stream.flags.insert(Flags::DEFERS_RESET);
+            stream.deferred_reset_code = code;
+        } else {
+            self.reset(id, stream, code);
         }
     }
 
@@ -642,7 +648,7 @@ impl Streams {
         if stream.flags.intersects(Flags::RESET | Flags::SEND_DONE) {
             return;
         }
-        if stream.flags.contains(Flags::STOPPED_BY_PEER) {
+        if stream.flags.contains(Flags::DEFERS_RESET) {
             return state.reset(id, stream, stream.deferred_reset_code);
         }
         stream.send.on_lost(range);
@@ -668,6 +674,26 @@ impl Streams {
                 true
             }
             _ => false,
+        }
+    }
+
+    /// For the last packet of the connection. Another frame can follow.
+    #[cold]
+    pub(crate) fn write_unacked_data(
+        &mut self,
+        id: StreamId,
+        out: &mut Vec<u8>,
+        end: usize,
+        sent: &mut Frames,
+    ) {
+        if let Some((stream, state)) = self.get_mut(id)
+            && let (len, last) = (stream.send.len(), stream.send.end())
+            && (1..=MAX_REPEATED_LEN).contains(&len)
+            && last <= stream.send_limit
+            && state.sent + stream.send.unsent_len() <= state.send_limit
+            && out.len() + 2 * MAX_REPEATED_LEN as usize <= end
+        {
+            write_stream_frame(id, stream, last - len..last, out, end, sent);
         }
     }
 

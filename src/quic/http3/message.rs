@@ -9,7 +9,8 @@ use crate::connection::streams::Ready;
 use crate::error::{Error, http3_code};
 use crate::stream_id::{Side, StreamId};
 
-const MAX_INTERIM_RESPONSES: u8 = 32;
+const USUAL_INTERIM_RESPONSES: u8 = 32;
+const MAX_INTERIM_RESPONSES_IN_A_ROW: u8 = 200;
 
 #[derive(Default, Clone, Copy, PartialEq, Eq)]
 enum Part {
@@ -32,6 +33,8 @@ pub(crate) struct Message {
     /// Whether they come after the data that the application has not got yet.
     fields_follow_data: bool,
     interim_responses: u8,
+    /// Without a wait for more bytes.
+    pub(crate) interim_responses_in_a_row: u8,
     /// How much of the body is yet to be announced by DATA frames, if that is known.
     expected_len: Option<u64>,
     /// From the `priority` field of a request.
@@ -104,6 +107,11 @@ impl Message {
 
     pub(crate) fn awaits_head(&self) -> bool {
         self.part == Part::Head
+    }
+
+    #[inline]
+    pub(crate) fn has_many_interim_responses(&self) -> bool {
+        self.interim_responses > USUAL_INTERIM_RESPONSES
     }
 
     /// Whether more is to come from the bytes that have been read.
@@ -253,8 +261,9 @@ impl Message {
                 return Ok(Section::Trailers);
             }
             Expected::Response if summary.status < 200 => {
-                self.interim_responses += 1;
-                if self.interim_responses > MAX_INTERIM_RESPONSES {
+                self.interim_responses = self.interim_responses.saturating_add(1);
+                self.interim_responses_in_a_row += 1;
+                if self.interim_responses_in_a_row > MAX_INTERIM_RESPONSES_IN_A_ROW {
                     return Err(Fault::Stream(http3_code::EXCESSIVE_LOAD));
                 }
                 return Ok(Section::Interim);

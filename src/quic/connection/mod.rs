@@ -449,6 +449,11 @@ impl Connection {
                     || self.streams.table.has_application_streams()
                 {
                     self.streams.state.owed |= Control::PING;
+                    if self.keep_alive == KeepAlive::WhileStreamsAreOpen
+                        && !core::mem::replace(&mut self.has_sent_since_receiving, true)
+                    {
+                        self.leave_time_for_an_answer(now);
+                    }
                 }
                 (self.timers).set(Timer::KeepAlive, now + self.keep_alive_period);
             }

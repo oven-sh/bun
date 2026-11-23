@@ -471,6 +471,13 @@ impl Table {
         (self.map.values()).any(|stream| !stream.is_internal() && stream.has_unacked_data())
     }
 
+    pub(super) fn has_unsent_application_data(&self) -> bool {
+        let mut streams =
+            (self.map.values()).filter(|it| !it.is_internal() && it.has_unacked_data());
+        streams
+            .any(|it| it.send.unsent_len() > 0 || it.send.first_lost().is_some() || it.owes_fin())
+    }
+
     /// How many streams can be opened.
     pub(crate) fn available(&self, direction: Direction) -> u64 {
         let counts = self.counts(direction);

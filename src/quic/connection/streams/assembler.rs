@@ -77,4 +77,10 @@ impl Assembler {
             first.remove_entry()
         })
     }
+
+    /// Undoes [`Self::pop`].
+    pub(crate) fn put_back(&mut self, offset: u64, chunk: Vec<u8>) {
+        self.held += chunk.len();
+        self.chunks.insert(offset, chunk);
+    }
 }

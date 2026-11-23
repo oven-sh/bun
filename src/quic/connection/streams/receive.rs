@@ -35,6 +35,10 @@ impl Stream {
         Some(((self.read - offset) as usize, chunk))
     }
 
+    pub(crate) fn put_back(&mut self, offset: u64, chunk: Vec<u8>) {
+        self.kept.put_back(offset, chunk);
+    }
+
     #[inline]
     pub(crate) fn has_kept(&self) -> bool {
         !self.kept.is_empty()
@@ -207,7 +211,9 @@ impl State {
         let consumed = in_order - stream.ready.len() as u64 - stream.held;
         let counted = match self.limits_unread_data {
             true => consumed,
-            false => in_order,
+            false if stream.flags.contains(Flags::PAUSED) => in_order,
+            // The application is going to take it as soon as it finds the time.
+            false => (in_order - stream.ready.len() as u64).max(stream.counted),
         };
         self.consumed += counted - core::mem::replace(&mut stream.counted, counted);
         stream.consumed = consumed;

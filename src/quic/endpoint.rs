@@ -11,7 +11,7 @@ use crate::cid::{ConnectionId, LocalId, ResetToken};
 use crate::config::Config;
 use crate::connection::handshake::Awaited;
 use crate::connection::{Connection, Introduction, Remains};
-use crate::crypto::{Crypto, InitialSecret, retry_tag};
+use crate::crypto::{Crypto, InitialSecret, TAG_LEN, retry_tag};
 use crate::deadlines::Deadlines;
 use crate::error::{Layer, transport_code};
 use crate::event::{CloseReason, Context, Event};
@@ -24,7 +24,7 @@ use crate::packet::{
 };
 use crate::path::{AMPLIFICATION_FACTOR, Addresses, is_reserved_port, without_zone};
 use crate::stream_id::{Side, StreamId};
-use crate::time::Instant;
+use crate::time::{Duration, Instant};
 use crate::tls;
 use crate::token::{Scope, Tokens, Validation};
 use crate::token_bucket::TokenBucket;
@@ -33,6 +33,10 @@ use crate::version::Version;
 const MAX_REPLIES: usize = 256;
 /// RFC 9000 §10.3.
 const USUAL_RESET_LENS: Range<usize> = 43..62;
+/// What may be a stateless reset itself gets one that is shorter than any packet for us, and that is not answered.
+const MIN_STRAY_LEN: usize = 1 + LocalId::LEN + 4 + TAG_LEN;
+const RECENT_RESETS: usize = 64;
+const RESET_INTERVAL: Duration = Duration::from_millis(100);
 /// As many of the largest ones as a run of a [`Batch`] can have.
 const DATAGRAMS_PER_TURN: usize = 44;
 /// While the socket sets the pace, it takes long until all have had their turn.
@@ -40,11 +44,15 @@ const DATAGRAMS_PER_SHORT_TURN: usize = 8;
 /// Of the number of connections that are put in order. The others are not going to transmit soon.
 const SORTED_BITS: u32 = 9;
 /// The other clients wait until the established connections have been served.
-const HELLOS_PER_PASS: usize = 2;
+const MIN_HELLOS_PER_PASS: usize = 2;
+/// If there has been that much time for other things, or as much as it takes.
+const TIME_PER_HELLO: Duration = Duration::from_millis(1);
+const MAX_HELLOS_PER_PASS: u64 = 128;
+const MAX_HELLO_TIME_PER_PASS: Duration = Duration::from_millis(20);
 /// Into how many the clients are divided by their addresses.
 const GROUPS: usize = 64;
 const MAX_AWAITING_HELLO: usize = 1024;
-const MAX_AWAITING_TURN: usize = 1024;
+const MAX_AWAITING_TURN: usize = 2048;
 const MAX_AWAITING_FINISHED: usize = 8192;
 const UNVALIDATED_CLIENTS: TokenBucket = TokenBucket::new(100.0, 512.0);
 const VERSION_NEGOTIATIONS: TokenBucket = TokenBucket::new(100.0, 200.0);
@@ -140,6 +148,11 @@ impl Queue {
         }
     }
 
+    fn is_full_for(&self, group: u8) -> bool {
+        let group_len = self.group_lens.get(usize::from(group)).copied();
+        self.len >= self.max_len && usize::from(group_len.unwrap_or(0)) >= self.max_len / GROUPS / 2
+    }
+
     fn leave(&mut self, group: u8) {
         self.len -= 1;
         self.change_group_len(group, -1);
@@ -204,6 +217,10 @@ pub struct Endpoint {
     connections: usize,
     awaiting_hello: Queue,
     awaiting_turn: Queue,
+    polled_at: Instant,
+    time_for_hellos: Duration,
+    /// Some of the IDs for which a stateless reset has been sent, and from when on they can have another one.
+    recent_resets: [([u8; LocalId::LEN], Instant); RECENT_RESETS],
     awaiting_finished: Queue,
     /// A client gives its permit back when its address is validated. Without one it has to see to that first.
     unvalidated_clients: TokenBucket,
@@ -239,6 +256,9 @@ impl Endpoint {
             connections: 0,
             awaiting_hello: Queue::new(MAX_AWAITING_HELLO),
             awaiting_turn: Queue::new(MAX_AWAITING_TURN),
+            polled_at: Instant::default(),
+            time_for_hellos: Duration::ZERO,
+            recent_resets: [Default::default(); _],
             awaiting_finished: Queue::new(MAX_AWAITING_FINISHED),
             unvalidated_clients: UNVALIDATED_CLIENTS,
             version_negotiations: VERSION_NEGOTIATIONS,
@@ -264,6 +284,10 @@ impl Endpoint {
                 generation: it.generation,
             })
             .collect()
+    }
+
+    pub fn connections(&self) -> impl Iterator<Item = &Connection> {
+        (self.slots.all.iter()).filter_map(|it| it.connection.as_deref())
     }
 
     #[inline]
@@ -339,15 +363,20 @@ impl Endpoint {
             connection.receive_first(now, &incoming.packet, incoming.rest, incoming.len, shared);
             connection
         });
-        let network = match addresses.peer.ip().to_canonical() {
+        let group = self.group(&addresses);
+        let slot = self.slots.at_mut(handle.slot);
+        (slot.has_permit, slot.group) = (incoming.has_permit, group);
+        self.track_handshake(now, handle.slot);
+        handle
+    }
+
+    fn group(&self, client: &Addresses) -> u8 {
+        let network = match client.peer.ip().to_canonical() {
             IpAddr::V4(ip) => ip.to_bits().into(),
             IpAddr::V6(ip) => ip.to_bits() >> 64,
         };
         let hash = self.shared.routes.by_initial_id.hasher().hash_one(network);
-        let slot = self.slots.at_mut(handle.slot);
-        (slot.has_permit, slot.group) = (incoming.has_permit, (hash % GROUPS as u64) as u8);
-        self.track_handshake(now, handle.slot);
-        handle
+        (hash % GROUPS as u64) as u8
     }
 
     fn queue(&mut self, awaited: Awaited) -> (&mut Queue, &Slots) {
@@ -417,17 +446,26 @@ impl Endpoint {
     }
 
     /// RFC 9000 §10.3. Returns whether it is going to be sent.
-    pub fn reset(&mut self, from: &Addresses, stray: &[u8]) -> bool {
-        let Some(id) = stray.get(1..1 + LocalId::LEN).filter(|_| {
-            stray.len() > MIN_RESET_LEN
+    pub fn reset(&mut self, now: Instant, from: &Addresses, stray: &[u8]) -> bool {
+        let Some(id) = (stray.get(1..).and_then(<[u8]>::first_chunk)).filter(|_| {
+            stray.len() >= MIN_STRAY_LEN
                 && stray.first() >= Some(&FIXED_BIT)
                 && !is_reserved_port(from.peer.port())
         }) else {
             return false;
         };
+        if let Some(recent) = (self.recent_resets).get_mut(usize::from(id[0]) % RECENT_RESETS) {
+            if recent.0 == *id && now < recent.1 {
+                return false;
+            }
+            *recent = (*id, now + RESET_INTERVAL);
+        }
         let [first, len, rest @ ..] = self.shared.crypto.random::<{ USUAL_RESET_LENS.end }>();
-        let len = USUAL_RESET_LENS.start + usize::from(len) % USUAL_RESET_LENS.len();
-        let len = len.min(stray.len() - 1);
+        let lens = match stray.len() < USUAL_RESET_LENS.end {
+            true => MIN_RESET_LEN..MIN_STRAY_LEN,
+            false => USUAL_RESET_LENS,
+        };
+        let len = lens.start + usize::from(len) % lens.len();
         let mut out = vec![first & !LONG_HEADER | FIXED_BIT];
         out.extend(rest.iter().take(len - 1 - ResetToken::LEN));
         out.extend_from_slice(&self.shared.tokens.reset_token(id).0);
@@ -469,6 +507,9 @@ impl Endpoint {
             };
         };
         let slot = self.slots.at_mut(index);
+        if slot.awaited == Some(Awaited::Hello) && self.awaiting_turn.is_full_for(slot.group) {
+            return None;
+        }
         if let Some(connection) = &mut slot.connection {
             connection.receive(now, from, datagram, &mut self.shared);
             enqueue(&mut self.with_events, &mut slot.may_have_events, index);
@@ -517,6 +558,16 @@ impl Endpoint {
         if accepted.is_empty() || len < MIN_DATAGRAM_LEN {
             return None;
         }
+        // The order in RFC 9000 §12.2 is not required.
+        if let Some(early) = LongHeader::read(datagram).filter(|it| it.kind == LongKind::EarlyData)
+            && let Some(rest) =
+                (datagram.get(early.len..)).filter(|it| it.first() >= Some(&LONG_HEADER))
+            && let Some(initial) = LongHeader::read(rest)
+            && (initial.kind, &initial.destination) == (LongKind::Initial, &early.destination)
+        {
+            let (early, initial) = (early.len, initial.len);
+            datagram.get_mut(..early + initial)?.rotate_left(early);
+        }
         let invariants = Invariants::read(datagram).filter(|it| it.version != 0)?;
         if !accepted.iter().any(|it| it.number() == invariants.version) {
             let max_len = (invariants.source.len()).max(invariants.destination.len());
@@ -533,6 +584,10 @@ impl Endpoint {
                 && header.destination.len() >= MIN_INITIAL_ID_LEN
                 && invariants.first & FIXED_BIT != 0
         })?;
+        // The client is going to send it again.
+        if self.awaiting_turn.is_full_for(self.group(from)) {
+            return None;
+        }
         let scope = Scope {
             version: header.version,
             peer: from.peer,
@@ -636,6 +691,7 @@ impl Endpoint {
 
     #[inline]
     pub fn poll_event(&mut self, now: Instant) -> Option<(Handle, Context, Event)> {
+        self.polled_at = now;
         loop {
             let index = *self.with_events.front()?;
             let slot = self.slots.at_mut(index);
@@ -656,6 +712,12 @@ impl Endpoint {
                 return Some((handle, connection.context, Event::Closed(connection)));
             }
         }
+    }
+
+    /// The connection with the latest event lets the others go first.
+    pub fn take_turns(&mut self) {
+        let next = self.with_events.pop_front();
+        self.with_events.extend(next);
     }
 
     fn retire(&mut self, now: Instant, index: u32, connection: &mut Connection) {
@@ -779,7 +841,8 @@ impl Endpoint {
         self.deadlines.first().map(|it| it.0)
     }
 
-    pub fn handle_timeouts(&mut self, now: Instant) {
+    /// `clock` tells how long it takes. Returns the time at the end.
+    pub fn handle_timeouts(&mut self, now: Instant, mut clock: impl FnMut() -> Instant) -> Instant {
         while let Some((_, index)) = self.deadlines.first().filter(|it| it.0 <= now) {
             let slot = self.slots.at_mut(index);
             match (slot.connection.as_mut()).map(|it| (it.timeout(), it)) {
@@ -795,8 +858,12 @@ impl Endpoint {
             }
         }
         self.favor_longest_waiting(now);
-        let mut turns = 0..HELLOS_PER_PASS;
-        while turns.next().is_some()
+        let away = now - core::mem::replace(&mut self.polled_at, now);
+        self.time_for_hellos =
+            (self.time_for_hellos + away).min(TIME_PER_HELLO * MAX_HELLOS_PER_PASS);
+        let (mut turns, mut start) = (0..MIN_HELLOS_PER_PASS, now);
+        while (turns.next().is_some()
+            || self.time_for_hellos >= TIME_PER_HELLO && start < now + MAX_HELLO_TIME_PER_PASS)
             && let Some(handle) = self.awaiting_turn.pop(Awaited::Turn, &self.slots)
         {
             if let Some((connection, shared)) = self.touch(handle)
@@ -804,8 +871,12 @@ impl Endpoint {
             {
                 connection.answer_hello(now, shared);
             }
+            let end = clock();
+            self.time_for_hellos = self.time_for_hellos - (end - start).max(TIME_PER_HELLO);
+            start = end;
             self.track_handshake(now, handle.slot);
         }
+        start
     }
 
     /// What is sent last is the first to find a queue full.

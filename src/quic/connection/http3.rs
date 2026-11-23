@@ -14,6 +14,7 @@ use crate::http3::{
 };
 use crate::stream_id::{Direction, Side, StreamId};
 use crate::time::{Duration, Instant};
+use crate::transport_parameters::TransportParameters;
 
 const MAX_UNACKED_INSTRUCTIONS_LEN: u64 = 64 * 1024;
 const MAX_INSTRUCTION_DELAY: Duration = Duration::from_secs(1);
@@ -22,17 +23,23 @@ const MAX_ORIGIN_FRAMES: u8 = 16;
 const MAX_EARLY_PRIORITIES: usize = 128;
 
 impl Streams {
-    pub(super) fn start_http3(&mut self, config: &Http3Config, side: Side) -> Option<Box<Http3>> {
+    pub(super) fn start_http3(
+        &mut self,
+        config: &Http3Config,
+        local: &TransportParameters,
+        side: Side,
+    ) -> Option<Box<Http3>> {
         let ids = preambles(config, side).map(|(kind, preamble)| {
             let (id, stream) =
                 (self.table).open(Direction::Unidirectional, Some(kind), &self.state)?;
             self.state.write(id, stream, &[&preamble]);
             Some(id)
         });
-        match ids {
-            [Some(a), Some(b), Some(c)] => Some(Box::new(Http3::new(config, [a, b, c]))),
-            _ => None,
-        }
+        let [Some(a), Some(b), Some(c)] = ids else {
+            return None;
+        };
+        let max_requests = local.initial_max_streams_bidi as usize;
+        Some(Box::new(Http3::new(config, max_requests, [a, b, c])))
     }
 
     /// Returns how much of the stream is waiting to be acknowledged.
@@ -138,6 +145,7 @@ impl Connection {
             };
             (self.streams).write_internal(http3.control_stream, &go_away_frame(id));
             if self.side.is_server() {
+                self.hasten_ack();
                 self.reject(|_, stream| {
                     matches!(&stream.role, Role::Message(it) if it.awaits_head())
                         && !stream.flags.contains(Flags::READ_DONE)

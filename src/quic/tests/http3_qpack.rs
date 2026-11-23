@@ -35,6 +35,22 @@ fn acknowledges_insertions_and_sections() {
 }
 
 #[test]
+fn encoder_that_does_without_the_table_need_not_read_cancellations() {
+    let raw = Raw::http3(Server).with("max_streams_bidi=30000 max_stream_data_uni=100");
+    let mut raw = raw.connected_with("");
+    for _ in 0..300 {
+        for _ in 0..100 {
+            let id = StreamId(raw.peer.open(Direction::Bidirectional));
+            raw.connection().stop(id, 0);
+            raw.connection().reset(id, 0);
+        }
+        raw.forget();
+        raw.send("ack");
+    }
+    assert_eq!(raw.http3_error(), None);
+}
+
+#[test]
 fn instructions_wait_for_a_packet() {
     let mut raw = Raw::http3(Client).exchange();
     raw.write_encoder(&format!("{CAPACITY}, {INSERT_AB}"));

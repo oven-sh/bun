@@ -22,7 +22,7 @@ use bun_quic::{
 };
 use bun_uws as uws;
 use bun_uws::quic::drivers::{Driver, Order, Registration};
-use bun_uws::quic::io::{Binding, Outbox, now, or_loopback};
+use bun_uws::quic::io::{self, Binding, Outbox, now, or_loopback};
 
 use crate::jsc_hooks::timer_all;
 use crate::socket::SocketAddress;
@@ -429,6 +429,9 @@ fn config_from_js(
     parameters.initial_max_stream_data_bidi_remote = window;
     parameters.max_idle_timeout_millis = DEFAULT_MAX_IDLE_TIMEOUT_SECS * MS_PER_SEC;
     parameters.max_datagram_frame_size = DEFAULT_DATAGRAM_FRAME_SIZE;
+    if !is_http3 {
+        parameters.initial_max_stream_data_uni = window;
+    }
     if side.is_client() && !is_http3 {
         parameters.initial_max_streams_uni = RAW_CLIENT_MAX_STREAMS_UNI;
     }
@@ -987,7 +990,7 @@ impl QuicEndpoint {
         };
         if !bucket.take(now, 1) {
             self.add_stat(IDX_STATS_STATELESS_RESET_RATE_LIMITED, 1);
-        } else if self.quic().reset(from, stray) {
+        } else if self.quic().reset(now, from, stray) {
             self.add_stat(IDX_STATS_STATELESS_RESET_COUNT, 1);
         } else {
             bucket.put_back(1);
@@ -1076,7 +1079,7 @@ impl QuicEndpoint {
         }
         let _send_scope = self.send_scope();
         let now = now();
-        self.quic().handle_timeouts(now);
+        self.quic().handle_timeouts(now, io::now);
         self.outbox.borrow_mut().start_pass(now);
         for _ in 0..MAX_ROUNDS {
             self.collect_events();

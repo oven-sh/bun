@@ -317,7 +317,7 @@ fn resets_until_that_is_acknowledged() {
     raw.now = raw.now + Duration::from_secs(1);
     assert_eq!(raw.frames(), "reset_stream 0 0x7 2, ping");
     raw.now = raw.now + Duration::from_secs(1);
-    raw.peer.endpoint.handle_timeouts(raw.now);
+    raw.peer.endpoint.handle_timeouts(raw.now, || raw.now);
     raw.send(&format!("ack {first}"));
     assert_eq!(raw.frames(), "ping, ping");
 }
@@ -441,6 +441,25 @@ fn is_stopped_after_the_end() {
 }
 
 #[test]
+fn gives_up_after_the_end() {
+    for (fin, is_lost, at_once, later) in [
+        (false, false, "reset_stream 0 0x7 1", ""),
+        (true, false, "", ""),
+        (true, true, "", "reset_stream 0 0x7 1"),
+    ] {
+        let mut raw = Raw::server().connected();
+        raw.peer.open(Bidirectional);
+        raw.peer.send(0, b"a", fin);
+        drop(if is_lost { raw.lose() } else { raw.frames() });
+        raw.connection().reset_unless_delivered(StreamId(0), 7);
+        assert_eq!(raw.frames(), at_once);
+        raw.request_packets("bcd");
+        raw.send("ack");
+        assert_eq!(raw.frames(), later);
+    }
+}
+
+#[test]
 fn gives_up_on_both_halves() {
     let mut raw = Raw::client().connected();
     raw.send("stream 0 0 a");
@@ -461,6 +480,7 @@ fn ignores_calls_for_streams_that_are_not_there() {
     connection.finish(id);
     connection.reset(id, 0);
     connection.reset_unfinished(id, 0);
+    connection.reset_unless_delivered(id, 0);
     connection.stop(id, 0);
     connection.consume(id, 1);
     connection.set_paused(id, true);
@@ -1996,7 +2016,7 @@ fn what_is_about_to_be_sent_again_can_be_acknowledged() {
         raw.peer.send(2, b"", true);
         raw.forget();
         raw.now = raw.peer.endpoint.timeout().unwrap();
-        raw.peer.endpoint.handle_timeouts(raw.now);
+        raw.peer.endpoint.handle_timeouts(raw.now, || raw.now);
         raw.send(&format!(
             "ack {}-{}",
             first + acked.start(),

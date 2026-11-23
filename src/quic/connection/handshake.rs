@@ -593,7 +593,7 @@ impl Connection {
         if let Some(config) = &self.config.http3
             && self.http3.is_none()
         {
-            let http3 = self.streams.start_http3(config, self.side);
+            let http3 = (self.streams).start_http3(config, &self.config.parameters, self.side);
             self.http3 = Some(http3.ok_or(Error::http3(
                 http3_code::GENERAL_PROTOCOL_ERROR,
                 "peer allows too few unidirectional streams",

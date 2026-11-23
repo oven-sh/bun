@@ -582,6 +582,14 @@ impl Connection {
             let number = draft.packet.number;
             (space.received).write_ack(now, number, out, end - MIN_FRAME_ROOM);
         }
+        if id == SpaceId::Data
+            && self.streams.table.is_going_away
+            && self.side.is_server()
+            && let Some(http3) = &self.http3
+        {
+            let sent = &mut space.sent.frames;
+            (self.streams).write_unacked_data(http3.control_stream, out, end, sent);
+        }
         self.close_frame.write(id, out, end);
         draft.is_expanded = id == SpaceId::Initial && self.side.is_client();
         draft.finish(out)

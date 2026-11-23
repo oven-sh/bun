@@ -14,7 +14,6 @@ use bun_quic::{
 };
 use bun_quic_tls::Session;
 
-use super::drivers::Driver;
 use super::engine::{Application, Engine, Socket, dispatch_events};
 use super::io::{now, write_ip};
 use super::{Connection, Header, Stream};
@@ -81,20 +80,22 @@ struct Callbacks {
 struct Server {
     engine: Engine,
     config: Rc<Config>,
-    idle_timeout: Duration,
     tls: OwnedSslCtx,
     names: OnceCell<Rc<ServerNames>>,
     callbacks: Callbacks,
     user: *mut c_void,
     headers: Cell<Vec<Header>>,
     is_closing: Cell<bool>,
+    /// In which turn of the loop it began to look like it.
+    deserted_since: Cell<Option<u64>>,
+    is_deserted: Cell<bool>,
     on_drained: Cell<Option<(OnDrained, *mut c_void)>>,
 }
 
-type OnDrained = unsafe extern "C" fn(*mut c_void);
+type OnDrained = unsafe extern "C" fn(*mut c_void, bool);
 
 std::thread_local! {
-    /// The sockets that are closed when the handler that asked for it has returned.
+    /// The sockets that are closed when the handler that asked for it has returned, or the last connection is gone.
     static PENDING_CLOSES: RefCell<Vec<Weak<Socket>>> = const { RefCell::new(Vec::new()) };
 }
 
@@ -105,8 +106,7 @@ impl Application for Server {
     }
 
     fn on_incoming(&self, now: Instant, incoming: Incoming<'_>) {
-        let tls = Session::new(&self.tls, Side::Server).filter(|_| !self.is_closing.get());
-        let Some(mut tls) = tls else {
+        let Some(mut tls) = Session::new(&self.tls, Side::Server) else {
             return self.engine.endpoint().refuse(incoming);
         };
         if let Some(names) = self.names.get().cloned() {
@@ -119,19 +119,15 @@ impl Application for Server {
 
     #[inline]
     fn on_event(&self, connection: Connection, _: Context, event: Event) {
-        match event {
-            Event::Stream(id, response, event) => {
-                self.on_stream_event(connection.stream(id), response, event);
-            }
-            Event::Ready => {
-                connection.update(|it| it.allow_silence(now(), self.idle_timeout));
-            }
-            _ => {}
+        if let Event::Stream(id, response, event) = event {
+            self.on_stream_event(connection.stream(id), response, event);
         }
     }
 
     fn on_processed(&self) {
-        let is_drained = self.is_closing.get() && self.engine.connection_count() == 0;
+        let is_drained = self.is_closing.get()
+            && self.engine.connection_count() == 0
+            && !self.engine.has_unsent();
         if is_drained || PENDING_CLOSES.with_borrow(|it| !it.is_empty()) {
             for socket in self.engine.sockets() {
                 if socket.is_close_pending.take() || is_drained {
@@ -141,14 +137,39 @@ impl Application for Server {
             PENDING_CLOSES
                 .with_borrow_mut(|it| it.retain(|it| it.upgrade().is_some_and(|it| it.is_open())));
         }
-        if is_drained && let Some((on_drained, user)) = self.on_drained.take() {
-            // SAFETY: they came together.
-            unsafe { on_drained(user) };
+        let Some((on_drained, user)) = self.on_drained.get() else {
+            return;
+        };
+        if is_drained {
+            self.on_drained.set(None);
+            self.engine.reset_alarm(Instant::NEVER);
+        } else if self.is_deserted.get() || !self.has_only_deserted_connections() {
+            return;
         }
+        self.is_deserted.set(true);
+        // SAFETY: they came together.
+        unsafe { on_drained(user, is_drained) };
     }
 }
 
 impl Server {
+    fn has_only_deserted_connections(&self) -> bool {
+        let (engine, now) = (&self.engine, now());
+        let later = engine.find_map(|it| Some(it.deserted_from()).filter(|&it| it > now));
+        if later.is_some() || engine.has_unsent() {
+            self.deserted_since.set(None);
+            engine.reset_alarm(later.unwrap_or(Instant::NEVER));
+            return false;
+        }
+        // The answers may be waiting in the socket.
+        let turn = engine.loop_.iteration_number();
+        let since = self.deserted_since.get().unwrap_or(turn);
+        self.deserted_since.set(Some(since));
+        let has_read = turn >= since + 2;
+        engine.reset_alarm(if has_read { Instant::NEVER } else { now });
+        has_read
+    }
+
     #[inline]
     fn on_stream_event(&self, stream: Stream, response: *mut c_void, event: StreamEvent) {
         let callbacks = &self.callbacks;
@@ -234,8 +255,7 @@ extern "C" fn us_create_quic_socket_context(
         }),
         ..Config::server()
     };
-    let idle_timeout = Duration::from_secs(idle_timeout_secs.min(MAX_IDLE_TIMEOUT_SECS).into());
-    match idle_timeout {
+    match Duration::from_secs(idle_timeout_secs.min(MAX_IDLE_TIMEOUT_SECS).into()) {
         Duration::ZERO => config.progress_timeout = Duration::ZERO,
         timeout => {
             config.parameters.max_idle_timeout_millis = timeout.as_millis();
@@ -245,13 +265,14 @@ extern "C" fn us_create_quic_socket_context(
     Rc::into_raw(Rc::new_cyclic(|this| Server {
         engine: Engine::new(loop_, Weak::<Server>::clone(this), VERSIONS),
         config: Rc::new(config),
-        idle_timeout,
         tls,
         names: OnceCell::new(),
         callbacks: *callbacks,
         user,
         headers: Cell::default(),
         is_closing: Cell::new(false),
+        deserted_since: Cell::new(None),
+        is_deserted: Cell::new(false),
         on_drained: Cell::new(None),
     }))
 }
@@ -266,6 +287,9 @@ extern "C" fn us_quic_socket_context_shutdown(
         return;
     }
     server.on_drained.set(Some((on_drained, user)));
+    server.engine.ignore_new_clients();
+    let sockets = server.engine.sockets();
+    PENDING_CLOSES.with_borrow_mut(|it| it.extend(sockets.iter().map(Rc::downgrade)));
     let now = now();
     (server.engine).for_each_connection(|connection| match connection.is_ready() {
         true => connection.go_away(),
@@ -274,7 +298,10 @@ extern "C" fn us_quic_socket_context_shutdown(
             connection.abort(now, Layer::Transport, code, &[]);
         }
     });
-    server.process();
+    if !server.engine.is_processing() {
+        server.engine.start_transmitting();
+        server.on_processed();
+    }
 }
 
 /// # Safety
@@ -287,7 +314,7 @@ unsafe extern "C" fn us_quic_socket_context_free(server: *const Server) {
     server.engine.stop_processing();
     server.engine.sockets().iter().for_each(|it| it.close());
     (server.engine).for_each_connection(bun_quic::Connection::abort_silently);
-    dispatch_events(&*server);
+    dispatch_events(&*server, Instant::NEVER);
 }
 
 /// # Safety
@@ -317,19 +344,38 @@ unsafe extern "C" fn us_quic_socket_context_listen(
     flags: c_int,
 ) -> *const Socket {
     let port = port as u16;
-    // `stop(true)` promises that the port is free when it returns.
-    for socket in PENDING_CLOSES.with_borrow(Vec::clone) {
-        if let Some(socket) = socket.upgrade().filter(|it| it.local().port() == port) {
-            socket.close();
-        }
-    }
+    // `stop(true)` promises that the port is free when it returns,
+    release_port(port, |it| it.is_close_pending.get());
     // SAFETY: the caller's.
     let host = (!host.is_null()).then(|| unsafe { ZStr::from_c_ptr(host) });
     // TIME_WAIT, which it is there for, is a matter of TCP.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     let flags = flags & !crate::LIBUS_LISTEN_REUSE_ADDR;
-    let socket = server.engine.bind(server, host, port, flags);
+    let bind = || server.engine.bind(server, host, port, flags);
+    let socket = bind().or_else(|| {
+        // and so does `stop()` on an idle server.
+        let now = now();
+        release_port(port, |it| {
+            let is_busy = |it: &bun_quic::Connection| {
+                (!it.has_sent_everything() && it.deserted_from() > now).then_some(())
+            };
+            let engine = it.owner.engine();
+            !engine.has_unsent() && engine.find_map(is_busy).is_none()
+        });
+        bind()
+    });
     socket.map_or(core::ptr::null(), |it| Rc::as_ptr(&it))
+}
+
+fn release_port(port: u16, is_over: impl Fn(&Socket) -> bool) {
+    for socket in PENDING_CLOSES.with_borrow(Vec::clone) {
+        if let Some(socket) =
+            (socket.upgrade()).filter(|it| it.local().port() == port && is_over(it))
+        {
+            us_quic_listen_socket_close(&socket);
+            socket.close();
+        }
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -417,7 +463,7 @@ extern "C" fn us_quic_stream_close(stream: &Stream) {
 #[unsafe(no_mangle)]
 extern "C" fn us_quic_stream_timeout(stream: &Stream, secs: c_uint) {
     let timeout = Duration::from_secs(secs.into());
-    (stream.connection).update(|it| it.allow_silence(now(), timeout));
+    (stream.connection).update(|it| it.allow_silence(timeout));
 }
 
 #[unsafe(no_mangle)]

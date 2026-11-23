@@ -2,7 +2,6 @@
 #define UWS_H3CONTEXT_H
 
 #include "quic.h"
-#include "HttpContext.h"
 #include "Loop.h"
 #include "Http3ContextData.h"
 #include "Http3Request.h"
@@ -65,7 +64,6 @@ struct Http3Context {
 
         Ptr ctx = std::make_unique<Http3Context>();
         ctx->loopData = (LoopData *) us_loop_ext((us_loop_t *) loop);
-        ctx->idleTimeoutSecs = idleTimeoutSecs;
         /* Same limit as Http2Context::maxHeaderListSize. */
         ctx->quic.reset(us_create_quic_socket_context((us_loop_t *) loop, &options, idleTimeoutSecs,
             BUN_DEFAULT_MAX_HTTP_HEADER_SIZE ? BUN_DEFAULT_MAX_HTTP_HEADER_SIZE : 64 * 1024, &callbacks, ctx.get()));
@@ -73,15 +71,15 @@ struct Http3Context {
         return ctx;
     }
 
-    unsigned idleTimeoutSecs = 0;
-
     Http3ContextData *getContextData() { return &data; }
 
     void onHttp(std::string_view method, std::string_view pattern,
                 MoveOnlyFunction<void(Http3Response *, Http3Request *)> &&handler) {
         Http3ContextData *cd = getContextData();
         std::span<const std::string_view> methods{&method, 1};
-        if (method == "*") methods = detail::supportedHttpMethods;
+        /* Those of Http3App, and then the tree for the others. */
+        static constexpr std::string_view all[] = {"GET", "POST", "OPTIONS", "DELETE", "PATCH", "PUT", "HEAD", "CONNECT", "TRACE", "*"};
+        if (method == "*") methods = all;
         cd->router.add(methods, pattern, [handler = std::move(handler)](auto *router) mutable {
             /* Copy out: the handler may reload routes, replacing `router`
              * (and its user data) while we're inside it. */
@@ -98,7 +96,7 @@ struct Http3Context {
         return us_quic_socket_context_listen(quic.get(), host, port, flags);
     }
 
-    void shutdown(void (*onDrained)(void *), void *user) { us_quic_socket_context_shutdown(quic.get(), onDrained, user); }
+    void shutdown(void (*onDrained)(void *, bool), void *user) { us_quic_socket_context_shutdown(quic.get(), onDrained, user); }
 
     bool addServerName(const char *hostname, us_bun_socket_context_options_t options) {
         return us_quic_socket_context_add_server_name(quic.get(), hostname, &options);

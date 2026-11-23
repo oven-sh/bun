@@ -9,7 +9,7 @@ use crate::error::{Error, Result};
 use crate::event::Event;
 use crate::frame::kind;
 
-const MAX_UNDELIVERED_LEN: usize = 1024 * 1024;
+const MAX_UNDELIVERED_LEN: usize = 8 * 1024 * 1024;
 /// What a datagram counts for on top of its length.
 const OVERHEAD: usize = 64;
 

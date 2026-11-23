@@ -988,6 +988,27 @@ test("stream.closed waits until the end has been sent", async () => {
   client.destroy();
 });
 
+test("headers can follow the end of an empty body", async () => {
+  await using server = await listen(session => void (session.onstream = () => {}), {
+    sni: { "*": { keys: [key], certs: [cert] } },
+    onheaders() {
+      setImmediate(() => {
+        this.setBody(null);
+        this.sendHeaders({ ":status": "204" });
+      });
+    },
+  });
+  const client = await connect(server.address!, { servername: "localhost", verifyPeer: "manual" } as SessionOptions);
+  using _ = { [Symbol.dispose]: () => client.destroy(undefined, { code: 0x100n, type: "application" }) };
+  let status;
+  const stream = await client.createBidirectionalStream({
+    headers: { ":method": "GET", ":path": "/", ":scheme": "https", ":authority": "localhost" },
+    onheaders: headers => void (status = headers[":status"]),
+  });
+  expect(await Array.fromAsync(stream)).toEqual([]);
+  expect(status).toBe("204");
+});
+
 test("streams can be read one after the other, in any order", async () => {
   const sizes = [2, 3, 4].map(megabytes => megabytes << 20);
   const streams: QuicStream[] = [];

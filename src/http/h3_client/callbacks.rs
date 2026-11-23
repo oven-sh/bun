@@ -80,6 +80,10 @@ fn on_stream_event(
     event: StreamEvent,
 ) {
     if stream_ptr.is_null() {
+        // If only the end was missing, the server need not be interrupted.
+        if matches!(event, StreamEvent::Data { is_last: false, .. }) {
+            qstream.stop(http3_code::REQUEST_CANCELLED);
+        }
         return;
     }
     let stream = stream_mut(stream_ptr);
@@ -93,7 +97,7 @@ fn on_stream_event(
         }
         StreamEvent::Data { data, is_last } => {
             stream.body_buffer = data;
-            stream.idle_seconds = 0;
+            stream.session_mut().made_progress = true;
             let progress = if is_last {
                 Progress::Complete
             } else {
@@ -101,14 +105,19 @@ fn on_stream_event(
             };
             stream.session_mut().deliver(stream, progress);
         }
-        StreamEvent::Writable if stream.headers_sent => encode::drain_send_body(stream, qstream),
+        StreamEvent::Writable if stream.headers_sent => {
+            stream.session_mut().made_progress = true;
+            encode::drain_send_body(stream, qstream);
+        }
         StreamEvent::Writable => {
-            stream.headers_sent = true;
+            (stream.headers_sent, stream.idle_seconds) = (true, 0);
             if let Err(e) = encode::write_request(stream, qstream) {
                 stream.session_mut().fail(stream_ptr, e);
             }
         }
-        StreamEvent::Reset(http3_code::MESSAGE_ERROR) if stream.status_code == 0 => {
+        StreamEvent::Reset(http3_code::MESSAGE_ERROR)
+            if (stream.client.as_ref()).is_none_or(|it| it.state.content_length.is_none()) =>
+        {
             (stream.session_mut()).fail(stream, crate::Error::HTTP3ProtocolError);
         }
         StreamEvent::Stopped(_) if qstream.has_received() => {}
@@ -142,6 +151,6 @@ fn on_headers(stream: &mut Stream, fields: &Fields) {
         }
     }
     stream.decoded_headers = headers;
-    stream.idle_seconds = 0;
+    session.made_progress = true;
     session.deliver(stream, Progress::Partial);
 }

@@ -131,6 +131,16 @@ fn gives_no_credit_while_paused() {
 }
 
 #[test]
+fn gives_credit_when_the_application_gets_around_to_it() {
+    let mut raw = with_windows(Raw::client(), 100, [0, 900, 0]);
+    raw.peer.polls = false;
+    raw.send("stream 0 0 *100");
+    assert_eq!(raw.frames(), "");
+    raw.peer.polls = true;
+    assert_eq!(raw.frames(), "max_data 200");
+}
+
+#[test]
 fn tells_whether_the_peer_is_short_of_credit() {
     for (connection, stream) in [(80, 800), (800, 80)] {
         let raw = Raw::client().config(|it| it.limits_unread_data = true);

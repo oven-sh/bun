@@ -40,6 +40,8 @@ pub struct ClientSession {
     pub(crate) closed: bool,
     pub(crate) registry_index: u32,
     idle_seconds: u32,
+    /// Since the last sweep, with any of the requests. The others may be waiting for their turn.
+    pub(crate) made_progress: bool,
 
     /// The requests that are in flight or wait for a stream, oldest first.
     pub(crate) pending: Vec<AliasableBox<Stream>>,
@@ -72,6 +74,7 @@ impl ClientSession {
             closed: false,
             registry_index: u32::MAX,
             idle_seconds: 0,
+            made_progress: false,
             pending: Vec::new(),
         })
     }
@@ -216,7 +219,6 @@ impl ClientSession {
             qs.set_context(core::ptr::null_mut());
             // The server can respond before it has got the whole request.
             qs.reset_unfinished(http3_code::REQUEST_CANCELLED);
-            qs.stop(http3_code::NO_ERROR);
         }
         if let Some(i) = self.pending.iter().position(|s| s.as_ptr() == stream) {
             self.pending.remove(i);
@@ -231,7 +233,7 @@ impl ClientSession {
         if let Some(qs) = stream_ref(stream).qstream {
             // A server that has responded may be about to read what is left of the request.
             if stream_ref(stream).status_code == 0 {
-                qs.reset(http3_code::REQUEST_CANCELLED);
+                qs.reset_unless_delivered(http3_code::REQUEST_CANCELLED);
             }
             qs.stop(http3_code::REQUEST_CANCELLED);
         }
@@ -299,9 +301,17 @@ impl ClientSession {
                 self.close_if_idle();
             }
         }
+        if let Some(connection) = self.connection {
+            // Their end is long in coming.
+            connection.stop_streams_without_context(http3_code::REQUEST_CANCELLED);
+        }
+        let made_progress = core::mem::take(&mut self.made_progress);
         let streams: Vec<_> = self.pending.iter().map(AliasableBox::as_ptr).collect();
         for stream in streams {
             let st = stream_mut(stream);
+            if made_progress {
+                st.idle_seconds = 0;
+            }
             let Some(client) = st.client.as_ref().filter(|_| !st.read_paused) else {
                 continue;
             };
@@ -363,7 +373,7 @@ impl ClientSession {
             // `is_done()`: Content-Length: 0 can arrive as `HasBody` (e.g. an SSE content-type).
             if result == HeaderResult::Finished || client.state.is_done() {
                 if client.state.flags.is_redirect_pending {
-                    self.cancel(stream);
+                    self.detach(stream);
                     return client.do_redirect_multiplexed();
                 }
                 client.store_metadata(response);

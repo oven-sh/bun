@@ -117,6 +117,7 @@ pub(super) struct Inbound {
 struct PendingHeaders {
     joined: Vec<u8>,
     count: c_int,
+    is_interim: bool,
     is_trailing: bool,
     is_last: bool,
 }
@@ -143,6 +144,7 @@ pub(crate) struct QuicStream {
     awaits_reader: Cell<bool>,
     priority: Cell<Priority>,
     pending_headers: JsCell<VecDeque<PendingHeaders>>,
+    has_sent_head: Cell<bool>,
     trailers_requested: Cell<bool>,
     blocked_reported: Cell<bool>,
     announce_suppressed: Cell<bool>,
@@ -175,6 +177,7 @@ impl QuicStream {
             awaits_reader: Cell::new(false),
             priority: Cell::default(),
             pending_headers: JsCell::new(VecDeque::new()),
+            has_sent_head: Cell::new(false),
             trailers_requested: Cell::new(false),
             blocked_reported: Cell::new(false),
             announce_suppressed: Cell::new(false),
@@ -609,10 +612,15 @@ impl QuicStream {
     }
 
     fn kick_write(&self) {
-        self.want_write();
-        if let Some(session) = self.session_ref() {
-            session.schedule_process();
+        let Some(session) = self.session_ref() else {
+            return;
+        };
+        let can_end = self.has_sent_head.get() || self.id.get().is_some() && !session.is_http3();
+        match self.outbound.get().data.is_empty() && session.flushes_at_once() {
+            true if can_end => self.drain_outbound(),
+            _ => self.want_write(),
         }
+        session.schedule_process();
     }
 
     pub(super) fn end_read_side(&self, global: &JSGlobalObject) {
@@ -970,10 +978,12 @@ impl QuicStream {
         use crate::webcore::encoding::BunStringEncode as _;
         let joined = bun_core::String::from_js(header_string, global)?
             .encode(crate::node::types::Encoding::Latin1);
-        let is_trailing = kind.coerce_to_i32(global)? as u32 == QUIC_STREAM_HEADERS_KIND_TRAILING;
+        let kind = kind.coerce_to_i32(global)? as u32;
+        let is_trailing = kind == QUIC_STREAM_HEADERS_KIND_TRAILING;
         let headers = PendingHeaders {
             joined,
             count: header_count,
+            is_interim: kind == QUIC_STREAM_HEADERS_KIND_HINTS,
             is_trailing,
             is_last: is_trailing
                 || flags.coerce_to_i32(global)? & (QUIC_STREAM_HEADERS_FLAGS_TERMINAL as i32) != 0,
@@ -999,6 +1009,7 @@ impl QuicStream {
         if !fields.is_some_and(|it| session.send_headers(id, &it)) {
             return false;
         }
+        self.has_sent_head.update(|it| it || !headers.is_interim);
         if headers.is_last {
             self.with_state(|s| s.fin_sent = 1);
             self.update(Connection::finish);

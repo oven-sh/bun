@@ -21,8 +21,11 @@ use crate::config::Http3Config;
 use crate::error::{Error, Result, http3_code};
 use crate::stream_id::{Side, StreamId};
 
-/// How many field sections of the largest size can be held, and how many bytes in any case.
+/// How many field sections can be held, of the largest size and of that which is announced, and how many bytes in any
+/// case.
 const COLLECTED_SECTIONS: usize = 4;
+const MIN_COLLECTED_KEPT_SECTIONS: usize = 100;
+const MAX_COLLECTED_KEPT_LEN: usize = 16 * 1024 * 1024;
 const MIN_MAX_COLLECTED: usize = 1024 * 1024;
 
 /// RFC 9114 §6.2.
@@ -74,7 +77,13 @@ impl From<bun_qpack::Error> for Error {
 }
 
 impl Http3 {
-    pub(crate) fn new(config: &Http3Config, [control, decoder, encoder]: [StreamId; 3]) -> Self {
+    pub(crate) fn new(
+        config: &Http3Config,
+        max_requests: usize,
+        [control, decoder, encoder]: [StreamId; 3],
+    ) -> Self {
+        let kept_sections = max_requests.max(MIN_COLLECTED_KEPT_SECTIONS);
+        let kept_len = (config.kept_fields.size).saturating_mul(kept_sections);
         Self {
             decoder: bun_qpack::Decoder::new(
                 control::MAX_TABLE_CAPACITY,
@@ -90,6 +99,7 @@ impl Http3 {
             collected: 0,
             max_collected: (config.tolerated_fields.size)
                 .saturating_mul(COLLECTED_SECTIONS)
+                .max(kept_len.min(MAX_COLLECTED_KEPT_LEN))
                 .max(MIN_MAX_COLLECTED),
             peer_accepts_datagrams: None,
             peer_go_away: None,

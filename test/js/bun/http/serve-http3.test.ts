@@ -1484,6 +1484,59 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
     if (!client.destroyed) client.close().catch(() => {});
   });
 
+  test("slow handlers leave the event loop its turn, and server.stop() does not run the rest", async () => {
+    let handled = 0;
+    const turn = Promise.withResolvers<[number, number]>();
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      http1: false,
+      fetch() {
+        if (++handled === 1) {
+          setImmediate(() => {
+            const before = handled;
+            server.stop();
+            turn.resolve([before, handled]);
+          });
+        }
+        Bun.sleepSync(5);
+        return new Response();
+      },
+    });
+    await using endpoint = new QuicEndpoint();
+    const client = await connect(`127.0.0.1:${server.port}`, {
+      endpoint,
+      servername: "localhost",
+      verifyPeer: "manual",
+    });
+    await client.opened;
+    const open = () => client.createBidirectionalStream({ headers: requestHeaders("/") });
+    for (const stream of await Promise.all(Array.from({ length: 20 }, open))) stream.closed.catch(() => {});
+    const [[before, after]] = await Promise.all([turn.promise, client.closed]);
+    expect(before).toBeLessThan(5);
+    expect(after).toBe(before);
+  });
+
+  test("server.stop() frees the port if no request is in flight", async () => {
+    const serve = (port: number) => Bun.serve({ port, tls, http3: true, http1: false, fetch: () => new Response() });
+    await using first = serve(0);
+    const port = first.port!;
+    await using endpoint = new QuicEndpoint();
+    const goaway = Promise.withResolvers<void>();
+    const client = await connect(`127.0.0.1:${port}`, {
+      endpoint,
+      servername: "localhost",
+      verifyPeer: "manual",
+      ongoaway: () => goaway.resolve(),
+    } as SessionOptions);
+    await client.opened;
+    first.stop();
+    await using second = serve(port);
+    await Promise.all([goaway.promise, client.closed]);
+    expect((await fetchH3(port, "/")).status).toBe(200);
+  });
+
   // The follow-up GET should cleanly fail to connect, and the process must
   // still be alive to exit 0 on its own.
   test("server.stop() with live H3 connections does not UAF", async () => {

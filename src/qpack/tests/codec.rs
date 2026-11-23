@@ -1306,6 +1306,21 @@ mod decoder_instructions {
     }
 
     #[test]
+    fn cancellations_end_if_the_table_is_not_used() {
+        let mut decoder = Decoder::new(4096, 2);
+        (0..4097).for_each(|_| decoder.cancel_stream(0));
+        assert_eq!(drain(decoder.instructions()), [0x40; 4096]);
+        assert_eq!(show_on(&mut decoder, 4, "0200"), "blocked");
+        decoder.cancel_stream(4);
+        decoder.cancel_stream(8);
+        feed(&mut decoder, &hex("3fe11f")).unwrap();
+        decoder.cancel_stream(12);
+        feed(&mut decoder, &hex("4161 00 20")).unwrap();
+        decoder.cancel_stream(16);
+        assert_eq!(drain(decoder.instructions()), [0x44, 0x4c, 0x50, 0x01]);
+    }
+
+    #[test]
     fn nothing_is_due_without_a_table() {
         let mut decoder = Decoder::new(0, 0);
         decoder.cancel_stream(0);

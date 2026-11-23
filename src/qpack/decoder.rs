@@ -7,6 +7,8 @@ use crate::{Error, Result, static_table};
 
 const MIN_BUFFER_LEN: usize = 1024;
 const FEW_INSTRUCTIONS_LEN: usize = 32;
+/// Some encoders that do without the table do not read them.
+const MAX_IDLE_CANCELLATIONS: usize = 4096;
 
 /// All names are stored.
 type Table = DynamicTable<About>;
@@ -47,6 +49,8 @@ pub struct Decoder {
     blocked: Vec<Blocked>,
     partial: Vec<u8>,
     instructions: Vec<u8>,
+    /// Before the first sign that the table is in use.
+    idle_cancellations: usize,
 }
 
 /// The fields of a section. What is left of them need not be read.
@@ -88,6 +92,7 @@ impl Decoder {
             blocked: Vec::new(),
             partial: Vec::new(),
             instructions: Vec::new(),
+            idle_cancellations: 0,
         }
     }
 
@@ -247,8 +252,13 @@ impl Decoder {
 
     /// For when a stream is reset or given up on before all of it has been read.
     pub fn cancel_stream(&mut self, stream_id: u64) {
+        let is_idle =
+            self.table.max_size() == 0 && self.insert_count == 0 && self.blocked.is_empty();
+        self.idle_cancellations += usize::from(is_idle);
         self.blocked.retain(|other| other.stream_id != stream_id);
-        if self.max_table_capacity != 0 {
+        if self.max_table_capacity != 0
+            && (!is_idle || self.idle_cancellations <= MAX_IDLE_CANCELLATIONS)
+        {
             integer::write(0x40, 6, stream_id as usize, |byte| {
                 self.instructions.push(byte)
             });

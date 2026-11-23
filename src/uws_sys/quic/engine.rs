@@ -15,11 +15,12 @@ use bun_quic::{
 use bun_quic_tls::BoringSsl;
 
 use super::drivers::{Driver, Order, Registration};
-use super::io::{Binding, Outbox, now};
+use super::io::{self, Binding, Outbox, now};
 use crate::{Loop, udp};
 
 /// After which the rest of the loop gets its turn.
 const MAX_ROUNDS: usize = 16;
+const MAX_PASS_TIME: Duration = Duration::from_millis(4);
 
 unsafe extern "C" {
     safe fn us_internal_enable_sweep_timer(loop_: &Loop);
@@ -37,7 +38,7 @@ pub(super) trait Application: Driver {
 pub(super) struct Engine {
     pub(super) loop_: &'static Loop,
     registration: Registration,
-    accepted: &'static [Version],
+    accepted: Cell<&'static [Version]>,
     endpoint: RefCell<Endpoint>,
     outbox: RefCell<Outbox>,
     /// Also the closed ones.
@@ -63,12 +64,12 @@ impl<T: Application> Driver for T {
             return;
         }
         let now = now();
-        engine.endpoint().handle_timeouts(now);
+        let deadline = engine.endpoint().handle_timeouts(now, io::now) + MAX_PASS_TIME;
         engine.outbox.borrow_mut().start_pass(now);
         for _ in 0..MAX_ROUNDS {
-            dispatch_events(self);
+            let is_late = dispatch_events(self, deadline);
             engine.transmit();
-            if !engine.endpoint().has_events() || engine.outbox.borrow().is_pass_over() {
+            if is_late || !engine.endpoint().has_events() || engine.outbox.borrow().is_pass_over() {
                 break;
             }
         }
@@ -88,11 +89,12 @@ impl<T: Application> Driver for T {
     }
 }
 
-pub(super) fn dispatch_events(application: &impl Application) {
-    let (engine, now) = (application.engine(), now());
+/// Returns whether it has stopped because of `deadline`.
+pub(super) fn dispatch_events(application: &impl Application, deadline: Instant) -> bool {
+    let (engine, start) = (application.engine(), now());
     loop {
-        let Some((handle, context, event)) = engine.endpoint().poll_event(now) else {
-            return;
+        let Some((handle, context, event)) = engine.endpoint().poll_event(start) else {
+            return false;
         };
         if matches!(event, Event::Closed(_)) {
             #[cfg(not(windows))]
@@ -105,6 +107,10 @@ pub(super) fn dispatch_events(application: &impl Application) {
         );
         application.on_event(engine.connection(handle), context, event);
         if takes_time && engine.is_overdue() {
+            engine.endpoint().take_turns();
+            if now() >= deadline {
+                return true;
+            }
             engine.transmit();
         }
     }
@@ -119,7 +125,7 @@ impl Engine {
         Self {
             loop_,
             registration: Registration::new(loop_, owner, Order::Any),
-            accepted,
+            accepted: Cell::new(accepted),
             endpoint: RefCell::new(Endpoint::new(&BoringSsl)),
             outbox: RefCell::default(),
             sockets: RefCell::default(),
@@ -141,11 +147,28 @@ impl Engine {
         self.endpoint.borrow().connection_count()
     }
 
+    pub(super) fn has_unsent(&self) -> bool {
+        self.outbox.borrow().has_unsent()
+    }
+
+    /// Their packets may get to another server when they are sent again.
+    pub(super) fn ignore_new_clients(&self) {
+        self.accepted.set(&[]);
+    }
+
+    pub(super) fn find_map<T>(&self, f: impl Fn(&bun_quic::Connection) -> Option<T>) -> Option<T> {
+        self.endpoint.borrow().connections().find_map(f)
+    }
+
+    pub(super) fn reset_alarm(&self, at: Instant) {
+        self.alarm.set(Some(at));
+        self.registration.forget_timeout();
+    }
+
     /// Unless it is set already.
     pub(super) fn set_alarm(&self, after: Duration) {
         if self.alarm.get().is_none() {
-            self.alarm.set(Some(now() + after));
-            self.registration.forget_timeout();
+            self.reset_alarm(now() + after);
         }
     }
 
@@ -205,6 +228,12 @@ impl Engine {
     fn is_overdue(&self) -> bool {
         let is_busy = self.endpoint.borrow().waiting_with_events() > 1;
         self.outbox.borrow_mut().is_overdue(is_busy)
+    }
+
+    /// Without a word to the application.
+    pub(super) fn start_transmitting(&self) {
+        self.outbox.borrow_mut().start_pass(now());
+        self.transmit();
     }
 
     pub(super) fn lift_limit(&self) {
@@ -278,13 +307,15 @@ extern "C" fn on_data(udp: *mut udp::Socket, buffer: *mut udp::PacketBuffer, cou
         return;
     };
     let receive = |from: &Addresses, datagram: &mut [u8]| {
-        let unrouted = (engine.endpoint()).receive(now, from, datagram, engine.accepted);
+        let accepted = engine.accepted.get();
+        let unrouted = (engine.endpoint.borrow_mut()).receive(now, from, datagram, accepted);
         if let Some(Unrouted::Incoming(incoming)) = unrouted {
             socket.owner.on_incoming(now, incoming);
         }
     };
     // SAFETY: they are our arguments.
     let read = unsafe { binding.for_each_datagram(buffer, count, receive) };
+    engine.registration.forget_timeout();
     (engine.outbox.borrow_mut()).reads_on(&read, &engine.endpoint.borrow());
 }
 
@@ -353,6 +384,10 @@ impl Connection {
         self.update(|it| it.close(now()));
     }
 
+    pub fn stop_streams_without_context(&self, code: u64) {
+        self.update(|it| it.stop_streams_without_context(code));
+    }
+
     #[inline]
     pub fn recycle(&self, fields: Fields) {
         self.engine.endpoint.borrow_mut().recycle(fields);
@@ -414,8 +449,8 @@ impl Stream {
         self.connection.update(|it| it.stop(self.id, code));
     }
 
-    pub fn reset(&self, code: u64) {
-        self.connection.update(|it| it.reset(self.id, code));
+    pub fn reset_unless_delivered(&self, code: u64) {
+        (self.connection).update(|it| it.reset_unless_delivered(self.id, code));
     }
 
     pub fn reset_unfinished(&self, code: u64) {

@@ -404,7 +404,7 @@ fn probe_timeout_backs_off_while_nothing_can_be_sent() {
     raw.request_packets("a");
     let mut now = raw.now + Duration::from_millis(100);
     for timeout in [135, 270].map(Duration::from_millis) {
-        raw.peer.endpoint.handle_timeouts(now);
+        raw.peer.endpoint.handle_timeouts(now, || now);
         now = now + timeout;
         assert_eq!(raw.peer.endpoint.timeout(), Some(now));
     }
@@ -590,7 +590,7 @@ fn what_is_acknowledged_before_the_probe_is_sent_is_left_out() {
     raw.shake_hands();
     raw.request_packets("a");
     raw.now = raw.now + Duration::from_millis(100);
-    raw.peer.endpoint.handle_timeouts(raw.now);
+    raw.peer.endpoint.handle_timeouts(raw.now, || raw.now);
     raw.send("ack");
     assert_eq!(
         raw.outline(),

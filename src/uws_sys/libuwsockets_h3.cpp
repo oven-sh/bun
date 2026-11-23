@@ -48,7 +48,7 @@ uws_h3_app_t* uws_h3_create_app(struct us_bun_socket_context_options_t options, 
 }
 
 void uws_h3_app_destroy(uws_h3_app_t* app) { delete (H3App*)app; }
-void uws_h3_app_close(uws_h3_app_t* app, void (*on_drained)(void*), void* user) { ((H3App*)app)->close(on_drained, user); }
+void uws_h3_app_close(uws_h3_app_t* app, void (*on_drained)(void*, bool), void* user) { ((H3App*)app)->close(on_drained, user); }
 void uws_h3_app_clear_routes(uws_h3_app_t* app) { ((H3App*)app)->clearRoutes(); }
 
 bool uws_h3_app_add_server_name(uws_h3_app_t* app, const char* hostname,
@@ -177,11 +177,7 @@ bool uws_h3_res_has_responded(uws_h3_res_t* res) { return ((Http3Response*)res)-
 size_t uws_h3_res_get_buffered_amount(uws_h3_res_t* res) { return ((Http3Response*)res)->getBufferedAmount(); }
 
 void uws_h3_res_reset_timeout(uws_h3_res_t*) {}
-void uws_h3_res_timeout(uws_h3_res_t* res, uint8_t seconds)
-{
-    Http3Response* response = (Http3Response*)res;
-    if (seconds != response->context->idleTimeoutSecs) us_quic_stream_timeout(&response->stream, seconds);
-}
+void uws_h3_res_timeout(uws_h3_res_t* res, uint8_t seconds) { us_quic_stream_timeout(&((Http3Response*)res)->stream, seconds); }
 void uws_h3_res_end_sendfile(uws_h3_res_t* res, uint64_t, bool close)
 {
     /* sendfile path falls back to plain end-of-stream over QUIC. */

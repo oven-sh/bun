@@ -152,7 +152,7 @@ impl Peer {
                 (self.closed, self.streams) = (None, BTreeMap::new());
             }
             Some(Unrouted::Stray(stray)) if self.resets => {
-                self.endpoint.reset(from, stray);
+                self.endpoint.reset(now, from, stray);
             }
             Some(Unrouted::Stray(_)) => self.log.push("stray".into()),
             None => {}
@@ -165,7 +165,7 @@ impl Peer {
         assert!(self.turns < 1_000_000, "does not end");
         let (mut batch, mut datagrams) = (Batch::default(), Vec::new());
         for _ in 0..10_000 {
-            self.endpoint.handle_timeouts(now);
+            self.endpoint.handle_timeouts(now, || now);
             while self.polls && self.poll(now) {}
             batch.clear();
             self.endpoint.poll_transmit(now, &mut batch, 64, |_| {});

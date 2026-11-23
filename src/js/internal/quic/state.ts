@@ -253,13 +253,14 @@ class QuicSessionState {
     this.#offset = byteOffset;
   }
 
-  // Bit positions must match the SessionListenerFlags enum in session.cc.
+  // Bit positions must match LISTENER_FLAG_* in src/runtime/node/quic/session.rs.
   static #LISTENER_PATH_VALIDATION = 1 << 0;
   static #LISTENER_DATAGRAM = 1 << 1;
   static #LISTENER_DATAGRAM_STATUS = 1 << 2;
   static #LISTENER_SESSION_TICKET = 1 << 3;
   static #LISTENER_NEW_TOKEN = 1 << 4;
   static #LISTENER_ORIGIN = 1 << 5;
+  static #LISTENER_STREAM = 1 << 6;
 
   #getListenerFlag(flag) {
     const handle = this.#handle;
@@ -332,6 +333,10 @@ class QuicSessionState {
   }
   set hasOriginListener(val) {
     this.#setListenerFlag(QuicSessionState.#LISTENER_ORIGIN, val);
+  }
+
+  set hasStreamListener(val) {
+    this.#setListenerFlag(QuicSessionState.#LISTENER_STREAM, val);
   }
 
   /** @type {boolean} */

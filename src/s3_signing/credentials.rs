@@ -11,8 +11,6 @@ use bun_ptr::{RefCount, RefPtr};
 use super::acl::ACL;
 use super::storage_class::StorageClass;
 
-bun_core::declare_scope!(AWS, visible);
-
 use bun_core::fmt::buf_print;
 
 /// Format into a fresh `Vec<u8>` and return it.

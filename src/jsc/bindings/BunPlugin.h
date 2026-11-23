@@ -111,6 +111,11 @@ public:
             WTF::BitVector compiledImportChain = {};
             // givenTheOriginal for compiled files that required the mocked file.
             WTF::Vector<uint32_t, 2> compiledRequirersGivenOriginal = {};
+            // The fetch of the mocked module called the factory, see jsFunctionRunModuleMockLater(), and goes on when the factory ends.
+            bool isCalledByFetch = false;
+            // While requireOriginalModule() loads the original of the mocked module for the factory: its key, and the modules that this load is the first to fetch.
+            // Empty if the factory can't be called again, see JSModuleMock::restartsWithOriginal.
+            WTF::UncheckedKeyHashSet<String> loadOfOwnOriginal = {};
         };
         // givenTheOriginal for compiled modules, by the specifier of the mock. They are evicted when the mock ends.
         WTF::UncheckedKeyHashMap<String, WTF::Vector<uint32_t, 2>> compiledModulesGivenOriginal = {};

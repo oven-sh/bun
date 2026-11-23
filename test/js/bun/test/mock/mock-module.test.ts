@@ -3508,7 +3508,15 @@ describe.concurrent("an export the factory did not return", () => {
 
 describe.concurrent("import cycles through a mocked module", () => {
   // m0 imports m1, m1 imports m2, and so on. The last one imports m0, which is the mocked module.
-  function cycleOf(length: number, only?: string[]) {
+  const kindsWithoutHelperForOriginal = [
+    "importOriginal",
+    "importActual",
+    "requireActual",
+    "automock",
+    "spy",
+    "helper",
+  ];
+  function cycleOf(length: number, only = kindsWithoutHelperForOriginal) {
     const files: Record<string, string> = {
       "log.ts": `export const order = (globalThis.order ??= []);`,
       "outside.ts": `
@@ -3519,7 +3527,7 @@ describe.concurrent("import cycles through a mocked module", () => {
         export const sees = () => [seesNext(), name];
       `,
       "helper.ts": `
-        import { vi } from "bun:test";
+        import { jest, vi } from "bun:test";
         import { order } from "./log";
         export function mockFromHere() {
           vi.doMock("./m0", async importOriginal => {
@@ -3527,6 +3535,11 @@ describe.concurrent("import cycles through a mocked module", () => {
             order.push("factory");
             return { ...original, name: "mock" };
           });
+        }
+        export function partialOf(name, overrides) {
+          const original = jest.requireActual(name);
+          order.push("factory");
+          return { ...original, ...overrides };
         }
       `,
     };
@@ -3564,13 +3577,15 @@ describe.concurrent("import cycles through a mocked module", () => {
         order.push("factory");
         return { ...jest.requireActual("./m0"), name: "mock" };
       });`,
+      // The text of the factory does not show that it asks for the original.
+      requireActualInHelper: `jest.mock("./m0", () => require("./helper").partialOf("./m0", { name: "mock" }));`,
       automock: `vi.mock("./m0");`,
       spy: `vi.mock("./m0", { spy: true });`,
       helper: `mockFromHere();`,
     };
     for (const [entry, order] of Object.entries(entries)) {
       for (const [kind, mock] of Object.entries(mocks)) {
-        if (only && !only.includes(kind)) continue;
+        if (!only.includes(kind)) continue;
         const hasFactory = kind !== "automock" && kind !== "spy";
         files[`${kind}-${entry}.test.ts`] = `
           import { expect, jest, test, vi } from "bun:test";
@@ -3742,6 +3757,265 @@ describe.concurrent("import cycles through a mocked module", () => {
       },
       1,
     );
+  });
+
+  describe("the factory calls jest.requireActual() where its own text does not show it", () => {
+    // store imports drift, and drift imports store. drift is the mocked module.
+    const cycle = {
+      "log.ts": `export const order = (globalThis.order ??= []);`,
+      "store.ts": `
+        import { order } from "./log";
+        import { checkDrift } from "./drift";
+        order.push("store");
+        export const seesDrift = () => checkDrift();
+      `,
+      "drift.ts": `
+        import { order } from "./log";
+        import { seesDrift } from "./store";
+        order.push("drift");
+        export const checkDrift = () => "real";
+        export const other = "other";
+        export const throughStore = () => seesDrift();
+      `,
+      "helpers.ts": `
+        import { jest, vi } from "bun:test";
+        import { order } from "./log";
+        export const withActual = (name, overrides) => {
+          order.push("factory");
+          return { ...jest.requireActual(name), ...overrides };
+        };
+        export const withActualAsync = async (name, overrides) => {
+          order.push("factory");
+          return { ...(await vi.importActual(name)), ...overrides };
+        };
+      `,
+      "drift.mock.ts": `
+        import { jest } from "bun:test";
+        import { order } from "./log";
+        order.push("factory");
+        const actual = jest.requireActual("./drift");
+        export const { other, throughStore } = actual;
+        export const checkDrift = () => "mock";
+      `,
+    };
+    const overrides = `{ checkDrift: () => "mock" }`;
+    const helper = `require("./helpers").withActual("./drift", ${overrides})`;
+    const partial = `(order.push("factory"), { ...jest.requireActual("./drift"), checkDrift: () => "mock" })`;
+    const testFile = (mock: string, entry: string, order: string[], values: unknown[]) => `
+      import { expect, jest, mock, test, vi } from "bun:test";
+      import { order } from "./log";
+      ${mock}
+      ${entry}
+      test("each module of the cycle runs once, and the original is linked to the module that the test file has", async () => {
+        const store = await import("./store");
+        const drift = await import("./drift");
+        expect([drift.checkDrift(), drift.other, store.seesDrift(), drift.throughStore()]).toEqual(${JSON.stringify(values, (_, value) => value ?? null)}.map(value => value ?? undefined));
+        expect(order).toEqual(${JSON.stringify(order)});
+      });
+    `;
+
+    test.each([2, 4, 20])(
+      "in a cycle of %d modules, the modules run in the order of a factory that shows it",
+      async length => {
+        await expectFixturesToPass(cycleOf(length, ["requireActualInHelper"]), 3, ["--isolate"]);
+      },
+    );
+
+    test("from every function that mocks, and however the factory gets to the call", async () => {
+      const staticImport = `import "./store";`;
+      const importCall = `await import("./store");`;
+      const mocked = ["mock", "other", "mock", "mock"];
+      // The first call of the factory ends at the request. The second call is made when the original has run.
+      const again = ["factory", "drift", "factory", "store"];
+      const mocks: Record<string, [mock: string, entry: string, order?: string[], values?: unknown[]]> = {
+        "jest-mock": [`jest.mock("./drift", () => ${helper});`, staticImport],
+        "jest-doMock": [`jest.doMock("./drift", () => ${helper});`, importCall],
+        "vi-mock": [`vi.mock("./drift", () => ${helper});`, staticImport],
+        "vi-doMock": [`vi.doMock("./drift", () => ${helper});`, importCall],
+        "mock-module": [`mock.module("./drift", () => ${helper});`, importCall],
+        "createMockFromModule": [
+          `jest.mock("./drift", () => (order.push("factory"), jest.createMockFromModule("./drift")));`,
+          staticImport,
+          again,
+          [undefined, "other", undefined, undefined],
+        ],
+        "jest-fn": [`jest.mock("./drift", jest.fn(() => ${partial}));`, staticImport],
+        "closure": [`jest.mock("./drift", () => make());\nfunction make() { return ${partial}; }`, staticImport],
+        "after-await": [`vi.mock("./drift", async () => (await import("./log"), ${helper}));`, staticImport],
+        "caught": [
+          `jest.mock("./drift", () => { try { return ${helper}; } catch { return { checkDrift: () => "fallback" }; } });`,
+          staticImport,
+        ],
+        "caught-after-await": [
+          `vi.mock("./drift", async () => { await import("./log"); try { return ${helper}; } catch { return { checkDrift: () => "fallback" }; } });`,
+          staticImport,
+        ],
+        // The factory's module asks in its body. It runs again for the second call.
+        "module-of-the-mock": [`jest.mock("./drift", () => require("./drift.mock"));`, staticImport],
+        // The test file imports the mocked module, and nothing else of the cycle.
+        "mocked-first": [
+          `jest.mock("./drift", () => ${helper});`,
+          `import "./drift";`,
+          ["factory", "store", "drift", "factory"],
+        ],
+      };
+      const files: Record<string, string> = { ...cycle };
+      for (const [name, [mock, entry, order = again, values = mocked]] of Object.entries(mocks))
+        files[`${name}.test.ts`] = testFile(mock, entry, order, values);
+      await expectFixturesToPass(files, Object.keys(mocks).length, ["--isolate"]);
+    });
+
+    test("the first call of the factory ends with an error where it asks", async () => {
+      await expectFixturesToPass(
+        {
+          ...cycle,
+          "caught.test.ts": `
+            import { expect, jest, test } from "bun:test";
+            import { order } from "./log";
+            import { seesDrift } from "./store";
+            jest.mock("./drift", () => {
+              try {
+                return ${helper};
+              } catch (error) {
+                order.push(error.message.replace(/".*"/, '"drift"'));
+                return { checkDrift: () => "fallback" };
+              }
+            });
+            test("and what that call returns is not the mock", () => {
+              expect(order).toEqual([
+                "factory",
+                'The mock factory of "drift" asked for the original while a module that imports it was loading. It is called again once the original has loaded',
+                "drift",
+                "factory",
+                "store",
+              ]);
+              expect(seesDrift()).toBe("mock");
+            });
+          `,
+        },
+        1,
+      );
+    });
+
+    test("beside a mock that has no factory, in a cycle of four modules", async () => {
+      await expectFixturesToPass(
+        {
+          "log.ts": cycle["log.ts"],
+          "helpers.ts": cycle["helpers.ts"],
+          "appStore.ts": `import { order } from "./log"; import { editorStore } from "./editorStore"; order.push("appStore"); export const appStore = { name: "app", editor: () => editorStore.name };`,
+          "editorStore.ts": `import { order } from "./log"; import { report } from "./feedback"; order.push("editorStore"); export const editorStore = { name: "editor", report: () => report() };`,
+          "feedback.ts": `import { order } from "./log"; import { fluxStore } from "./fluxStore"; order.push("feedback"); export const report = () => fluxStore.name; export const other = "other";`,
+          "fluxStore.ts": `import { order } from "./log"; import { appStore } from "./appStore"; order.push("fluxStore"); export const fluxStore = { name: "flux", app: () => appStore.name };`,
+          "automock.test.ts": `
+            import { expect, jest, test } from "bun:test";
+            import { order } from "./log";
+            import * as entry from "./appStore";
+            jest.mock("./appStore");
+            jest.mock("./feedback", () => require("./helpers").withActual("./feedback", { report: () => "mocked" }));
+            test("the original loads, and each module runs once", async () => {
+              const feedback = await import("./feedback");
+              expect([feedback.report(), feedback.other, jest.isMockFunction(entry.appStore.editor)]).toEqual(["mocked", "other", true]);
+              expect(order).toEqual(["factory", "fluxStore", "feedback", "factory", "editorStore", "appStore"]);
+            });
+          `,
+        },
+        1,
+      );
+    });
+
+    test("the factory is called once where the original gets no copy of a module", async () => {
+      await expectFixturesToPass(
+        {
+          ...cycle,
+          "leaf.ts": `import { order } from "./log"; import "./dep"; order.push("leaf"); export const value = "real"; export const other = "other";`,
+          "dep.ts": `import { order } from "./log"; order.push("dep");`,
+          "user.ts": `import { order } from "./log"; import { value, other } from "./leaf"; order.push("user"); export const sees = () => [value, other];`,
+          "no-cycle.test.ts": `
+            import { expect, jest, test } from "bun:test";
+            import { order } from "./log";
+            import { sees } from "./user";
+            jest.mock("./leaf", () => require("./helpers").withActual("./leaf", { value: "mock" }));
+            test("without a cycle", () => {
+              expect(order).toEqual(["factory", "dep", "leaf", "user"]);
+              expect(sees()).toEqual(["mock", "other"]);
+            });
+          `,
+          "no-cycle-async.test.ts": `
+            import { expect, test, vi } from "bun:test";
+            import { order } from "./log";
+            import { sees } from "./user";
+            vi.mock("./leaf", () => require("./helpers").withActualAsync("./leaf", { value: "mock" }));
+            test("without a cycle, with vi.importActual()", () => {
+              expect(order).toEqual(["factory", "dep", "leaf", "user"]);
+              expect(sees()).toEqual(["mock", "other"]);
+            });
+          `,
+          "never-asks.test.ts": `
+            import { expect, jest, test } from "bun:test";
+            import { order } from "./log";
+            import { seesDrift } from "./store";
+            jest.mock("./drift", () => (order.push("factory"), { checkDrift: () => "mock" }));
+            test("in a cycle, if it never asks: the original does not run", () => {
+              expect(order).toEqual(["factory", "store"]);
+              expect(seesDrift()).toBe("mock");
+            });
+          `,
+          "parameter.test.ts": `
+            import { expect, jest, test } from "bun:test";
+            import { order } from "./log";
+            import { seesDrift } from "./store";
+            jest.mock("./drift", _importOriginal => ${helper});
+            test("in a cycle, if it declares the parameter: the original runs first", () => {
+              expect(order).toEqual(["drift", "factory", "store"]);
+              expect(seesDrift()).toBe("mock");
+            });
+          `,
+        },
+        4,
+        ["--isolate"],
+      );
+    });
+
+    // Each of these is called once, before the original, and a module of the cycle runs a second time for the original.
+    test("a factory that awaits vi.importActual(), one of two in a cycle, or one under require() is not called again", async () => {
+      const once = `["mock", "other", "mock", "mock"]`;
+      const body = `
+        const store = await import("./store");
+        const drift = await import("./drift");
+        expect([drift.checkDrift(), drift.other, store.seesDrift(), drift.throughStore()]).toEqual(${once});
+        expect(order.filter(name => name === "store")).toEqual(["store"]);
+      `;
+      await expectFixturesToPass(
+        {
+          ...cycle,
+          "importActual.test.ts": `
+            import { expect, test, vi } from "bun:test";
+            import { order } from "./log";
+            vi.mock("./drift", () => require("./helpers").withActualAsync("./drift", ${overrides}));
+            import "./store";
+            test.failing("store runs once", async () => {${body}});
+          `,
+          "two-in-a-cycle.test.ts": `
+            import { expect, jest, test } from "bun:test";
+            import { order } from "./log";
+            jest.mock("./drift", () => ${helper});
+            jest.mock("./store", () => require("./helpers").withActual("./store", {}));
+            import "./store";
+            test.failing("store runs once", async () => {${body}});
+          `,
+          "require.test.ts": `
+            import { expect, jest, test } from "bun:test";
+            import { order } from "./log";
+            jest.mock("./drift", () => ${helper});
+            test.failing("store runs once", async () => {
+              require("./store");${body}
+            });
+          `,
+        },
+        3,
+        ["--isolate"],
+      );
+    });
   });
 
   test("a factory that fails", async () => {

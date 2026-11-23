@@ -107,6 +107,13 @@ test/js/bun/test/mock/mock-module.test.ts: a module that is evicted while it is 
 test/js/bun/test/mock/mock-module.test.ts: a module that is linked, but not evaluated yet, when it is mocked > a Vitest test file with no mock call of its own still runs its imports one at a time > the transpiler cache doesn't mix up a file run as a test with the same file imported
 test/js/bun/test/mock/mock-module.test.ts: a test file that has mocked modules > doesn't leak the modules that imported a mock after it ends
 test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends > also when the file fails to load, or has already removed the mock itself
+test/js/bun/test/mock/mock-module.test.ts: import cycles through a mocked module > the factory calls jest.requireActual() where its own text does not show it > a factory that awaits vi.importActual(), one of two in a cycle, or one under require() is not called again
+test/js/bun/test/mock/mock-module.test.ts: import cycles through a mocked module > the factory calls jest.requireActual() where its own text does not show it > beside a mock that has no factory, in a cycle of four modules
+test/js/bun/test/mock/mock-module.test.ts: import cycles through a mocked module > the factory calls jest.requireActual() where its own text does not show it > from every function that mocks, and however the factory gets to the call
+test/js/bun/test/mock/mock-module.test.ts: import cycles through a mocked module > the factory calls jest.requireActual() where its own text does not show it > in a cycle of 2 modules, the modules run in the order of a factory that shows it
+test/js/bun/test/mock/mock-module.test.ts: import cycles through a mocked module > the factory calls jest.requireActual() where its own text does not show it > in a cycle of 20 modules, the modules run in the order of a factory that shows it
+test/js/bun/test/mock/mock-module.test.ts: import cycles through a mocked module > the factory calls jest.requireActual() where its own text does not show it > in a cycle of 4 modules, the modules run in the order of a factory that shows it
+test/js/bun/test/mock/mock-module.test.ts: import cycles through a mocked module > the factory calls jest.requireActual() where its own text does not show it > the first call of the factory ends with an error where it asks
 test/js/bun/test/mock/mock-module.test.ts: requiring the original of a module in a cycle before its async factory runs throws, and the mock still loads
 test/js/bun/test/vitest-flavor.test.ts: [test] globals = "vitest" > is part of the transpiler cache key
 test/js/bun/test/import-meta-env.test.ts: import.meta.env > in other realms

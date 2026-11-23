@@ -4251,8 +4251,14 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
 
     // Not implied by hasVirtualModules(), since a factory keeps running after Bun.plugin.clearAll() removes every mock.
     bool moduleMocksRun = !globalObject->onLoadPlugins.runningModuleMocks.isEmpty();
-    if (!isImportCall && !keyString.isEmpty() && !keyString[0] && Bun::moduleMockImportsByKey(globalObject, referrerString)) [[unlikely]]
-        return Identifier::fromString(vm, moduleMocksRun ? Bun::keyOfImportWhileModuleMocksRun(globalObject, keyString.substring(1), referrerString, true) : keyString.substring(1));
+    if (!isImportCall && !keyString.isEmpty() && !keyString[0] && Bun::moduleMockImportsByKey(globalObject, referrerString)) [[unlikely]] {
+        String original = keyString.substring(1);
+        if (moduleMocksRun) {
+            original = Bun::keyOfImportWhileModuleMocksRun(globalObject, original, referrerString, true);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+        return Identifier::fromString(vm, original);
+    }
     WTF::String resolved;
     bool hasModuleMocks = globalObject->onLoadPlugins.hasVirtualModules();
     if (hasModuleMocks) {
@@ -4282,8 +4288,10 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
     }
     if (hasModuleMocks) [[unlikely]]
         resolved = Bun::packageImportKey(globalObject, resolved, referrerString, true);
-    if (moduleMocksRun) [[unlikely]]
+    if (moduleMocksRun) [[unlikely]] {
         resolved = Bun::keyOfImportWhileModuleMocksRun(globalObject, resolved, referrerString, true);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
     Identifier resolvedKey = Identifier::fromString(vm, resolved);
     if (hasModuleMocks) [[unlikely]] {
         Bun::evictModuleThatNothingFetches(globalObject, resolvedKey);

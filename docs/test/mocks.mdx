@@ -805,6 +805,7 @@ test("lazy import", async () => {
 - Every module outside `node_modules` that imports the mocked module gets the mock. In Vitest, a module that's first loaded while the factory runs gets the original and keeps it.
 - If two factories import each other's modules, the one that asks last gets the original. Vitest calls one of the two factories a second time instead.
 - A factory that uses `importOriginal` is called after the original module is evaluated, not before, so after the factories that don't use it. A factory that declares the parameter counts as using it, so the original is evaluated even if the factory never calls it.
+- A factory can call `jest.requireActual()` for its own module where Bun does not see the call beforehand, such as in a helper function. If the module is in an import cycle that is still loading, Bun ends that call of the factory with an error, evaluates the original, and calls the factory again. What the factory did before `jest.requireActual()` happens twice. Declare the `importOriginal` parameter on the factory, and Bun calls the factory once, after the original.
 - `export * from` a mocked module re-exports the original's export names if the factory uses `importOriginal`. Names the factory adds aren't re-exported, and names it leaves out are re-exported as `undefined`.
 - If two files import each other and both have hoisted calls, they wait on each other and the run fails with an error that names both files. Keep the hoisted calls in only one of them.
 

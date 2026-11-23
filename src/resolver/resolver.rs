@@ -408,6 +408,8 @@ pub struct Resolver<'a> {
 
     pub care_about_bin_folder: bool,
     pub care_about_scripts: bool,
+    /// `finalize_result` answers "sideEffects" from the import that found the file. Only `bun build --compile --aot` asks.
+    pub side_effects_from_import: bool,
 
     /// Read the "browser" field in package.json files?
     /// For Bun's runtime, we don't.
@@ -561,6 +563,7 @@ impl<'a> Resolver<'a> {
             timer: Timer::start().unwrap_or_else(|_| panic!("Timer fail")),
             care_about_bin_folder: from.care_about_bin_folder,
             care_about_scripts: from.care_about_scripts,
+            side_effects_from_import: from.side_effects_from_import,
             care_about_browser_field: from.care_about_browser_field,
             // `DebugLogs` owns Vecs — per-worker fresh.
             debug_logs: None,
@@ -922,6 +925,7 @@ impl<'a> Resolver<'a> {
             care_about_browser_field,
             care_about_bin_folder: false,
             care_about_scripts: false,
+            side_effects_from_import: false,
             debug_logs: None,
             elapsed: 0,
             watcher: None,
@@ -1878,19 +1882,20 @@ impl<'a> Resolver<'a> {
                 }
             }
 
-            let mut needs_side_effects = true;
+            let mut needs_side_effects = self.side_effects_from_import;
             if let Some(existing) = result.package_json {
-                // if we don't have it here, they might put it in a sideEfffects
-                // map of the parent package.json
-                // TODO: check if webpack also does this parent lookup
-                use crate::package_json::SideEffects as PJSideEffects;
-                needs_side_effects = matches!(
-                    existing.side_effects,
-                    PJSideEffects::Unspecified | PJSideEffects::Glob(_) | PJSideEffects::Mixed(_)
-                );
+                if self.side_effects_from_import {
+                    use crate::package_json::SideEffects as PJSideEffects;
+                    needs_side_effects = matches!(
+                        existing.side_effects,
+                        PJSideEffects::Unspecified
+                            | PJSideEffects::Glob(_)
+                            | PJSideEffects::Mixed(_)
+                    );
 
-                result.primary_side_effects_data =
-                    primary_side_effects(&existing.side_effects, path.text());
+                    result.primary_side_effects_data =
+                        primary_side_effects(&existing.side_effects, path.text());
+                }
 
                 if existing.name.is_empty() || self.care_about_bin_folder {
                     result.package_json = None;
@@ -4351,6 +4356,63 @@ impl<'a> Resolver<'a> {
 
     pub fn read_dir_info(&mut self, path: &[u8]) -> crate::CrateResult<Option<DirInfoRef>> {
         self.dir_info_cached_maybe_log(false, path)
+    }
+
+    /// The "sideEffects" answer of the package.json files above a file on disk. The import that found the file is no input.
+    pub fn side_effects_for_file(&mut self, path: &[u8]) -> SideEffects {
+        use crate::package_json::SideEffects as PJSideEffects;
+        let has_field = |pkg: &PackageJSON| !matches!(pkg.side_effects, PJSideEffects::Unspecified);
+
+        let Some(dir_path) = bun_paths::dirname(path) else {
+            return SideEffects::HasSideEffects;
+        };
+        let Ok(Some(dir)) = self.read_dir_info(dir_path) else {
+            return SideEffects::HasSideEffects;
+        };
+        let Some(nearest) = dir.package_json_for_module_type else {
+            return SideEffects::HasSideEffects;
+        };
+        if !nearest.name.is_empty() {
+            return primary_side_effects(&nearest.side_effects, path);
+        }
+        let mut nameless = None;
+        if has_field(nearest) {
+            let answer = primary_side_effects(&nearest.side_effects, path);
+            if answer != SideEffects::NoSideEffectsPackageJson {
+                return answer;
+            }
+            nameless = Some(answer);
+        }
+
+        let mut next = Some(dir);
+        let mut is_nearest = true;
+        while let Some(info) = next {
+            next = info.get_parent();
+            let Some(pkg) = info.package_json() else {
+                continue;
+            };
+            if core::mem::take(&mut is_nearest) {
+                continue;
+            }
+            if pkg.name.is_empty() {
+                if nameless.is_none() && has_field(pkg) {
+                    break;
+                }
+                continue;
+            }
+            return match nameless {
+                None => primary_side_effects(&pkg.side_effects, path),
+                // A `false` with no "name" turns on automatic barrel optimization only below a package that says `false` too.
+                Some(_) if !matches!(pkg.side_effects, PJSideEffects::False) => {
+                    SideEffects::NoSideEffectsPackageJsonArray
+                }
+                Some(answer) => answer,
+            };
+        }
+        match nameless {
+            Some(_) => SideEffects::NoSideEffectsPackageJsonArray,
+            None => SideEffects::HasSideEffects,
+        }
     }
 
     /// Like `readDirInfo`, but returns `null` instead of throwing an error.

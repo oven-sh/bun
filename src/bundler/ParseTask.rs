@@ -236,6 +236,7 @@ impl<'a> ParseTask<'a> {
     pub(crate) fn init(
         resolve_result: &_resolver::Result<'_>,
         path: Fs::Path<'a>,
+        side_effects: bun_ast::SideEffects,
         source_index: Index,
         // Take `&mut` so the stored BACKREF retains
         // write provenance for `on_complete` (a `&BundleV2` param would shrink
@@ -258,7 +259,7 @@ impl<'a> ParseTask<'a> {
                 dir: resolve_result.dirname_fd,
                 file: resolve_result.file_fd,
             },
-            side_effects: resolve_result.primary_side_effects_data,
+            side_effects,
             // D042: resolver-side and bundler-side `jsx::Pragma` are the SAME
             // nominal type (`bun_options_types::jsx::Pragma`). Preserves
             // jsxImportSource/runtime/etc. from tsconfig.json.

@@ -2477,6 +2477,8 @@ pub mod bv2_impl {
                 .expect("oom");
             let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap)); // OOM/capacity: fire-and-forget
 
+            let side_effects =
+                self.side_effects_of_module(&result, &path, target, EntryPathSource::Resolver);
             self.graph.input_files.append(crate::Graph::InputFile {
                 source: bun_ast::Source {
                     path,
@@ -2485,10 +2487,16 @@ pub mod bv2_impl {
                     ..Default::default()
                 },
                 loader,
-                side_effects: result.primary_side_effects_data,
+                side_effects,
                 ..Default::default()
             })?;
-            let mut task = Box::new(ParseTask::init(&result, path, source_index, self));
+            let mut task = Box::new(ParseTask::init(
+                &result,
+                path,
+                side_effects,
+                source_index,
+                self,
+            ));
             task.loader = Some(loader);
             task.known_target = target;
             task.jsx.development = self
@@ -2577,7 +2585,7 @@ pub mod bv2_impl {
                 .expect("oom");
             let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap)); // OOM/capacity: fire-and-forget
 
-            let side_effects = result.primary_side_effects_data;
+            let side_effects = self.side_effects_of_module(result, &path, target, path_source);
             self.graph.input_files.append(crate::Graph::InputFile {
                 source: bun_ast::Source {
                     path,
@@ -2590,7 +2598,13 @@ pub mod bv2_impl {
                 ..Default::default()
             })?;
             let task_path = self.parse_task_path(result, path, target);
-            let mut task = Box::new(ParseTask::init(result, task_path, source_index, self));
+            let mut task = Box::new(ParseTask::init(
+                result,
+                task_path,
+                side_effects,
+                source_index,
+                self,
+            ));
             task.loader = Some(loader);
             task.is_entry_point = is_entry_point;
             task.known_target = target;
@@ -5354,6 +5368,28 @@ pub mod bv2_impl {
         }
 
         /// A task reads the primary path, also when `active` (`Result::path`) is the secondary one.
+        /// The "sideEffects" answer for the module at `path`. For a file on disk that the resolver found, the package.json files above the file decide.
+        fn side_effects_of_module(
+            &mut self,
+            result: &_resolver::Result<'_>,
+            path: &Fs::Path<'_>,
+            target: options::Target,
+            path_source: EntryPathSource,
+        ) -> bun_ast::SideEffects {
+            let from_result = result.primary_side_effects_data;
+            if from_result != bun_ast::SideEffects::HasSideEffects
+                || path_source == EntryPathSource::OnResolvePlugin
+                || !path.is_file()
+                || !bun_paths::is_absolute(path.text)
+                || self.file_map.is_some_and(|files| files.contains(path.text))
+            {
+                return from_result;
+            }
+            self.transpiler_for_target(target)
+                .resolver
+                .side_effects_for_file(path.text)
+        }
+
         fn parse_task_path(
             &self,
             result: &_resolver::Result<'_>,
@@ -5884,6 +5920,7 @@ pub mod bv2_impl {
                         let mut resolve_task = Box::new(ParseTask::init(
                             &file_map_result,
                             file_map_result.path_pair.primary,
+                            bun_ast::SideEffects::HasSideEffects,
                             bun_ast::Index::INVALID,
                             self,
                         ));
@@ -5911,7 +5948,6 @@ pub mod bv2_impl {
                         }
                         resolve_task.jsx = jsx;
                         resolve_task.loader = Some(import_record_loader);
-                        resolve_task.side_effects = bun_ast::SideEffects::HasSideEffects;
                         entry.insert(resolve_task);
                         continue;
                     }
@@ -6303,9 +6339,16 @@ pub mod bv2_impl {
                     .path_with_pretty_initialized(path, target)
                     .expect("oom");
                 bun_core::scoped_log!(Bundle, "created ParseTask: {}", bstr::BStr::new(&path.text));
+                let path_source = match ctx.plugin_answer {
+                    PluginAnswer::Path(_) => EntryPathSource::OnResolvePlugin,
+                    _ => EntryPathSource::Resolver,
+                };
+                let side_effects =
+                    self.side_effects_of_module(&resolve_result, path, target, path_source);
                 let mut resolve_task = Box::new(ParseTask::init(
                     &resolve_result,
                     self.parse_task_path(&resolve_result, import_record.path, target),
+                    side_effects,
                     bun_ast::Index::INVALID,
                     self,
                 ));

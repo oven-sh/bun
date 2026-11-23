@@ -100,7 +100,9 @@ impl FileFinder {
             options.conditions.require.insert(condition, ());
         }
         let resolver = &transpiler.resolver;
-        FileFinder(Resolver::for_worker(resolver, resolver.log, options))
+        let mut resolver = Resolver::for_worker(resolver, resolver.log, options);
+        resolver.side_effects_from_import = true;
+        FileFinder(resolver)
     }
 
     pub fn find(&mut self, search: &FileSearch<'_>) -> FoundCode {

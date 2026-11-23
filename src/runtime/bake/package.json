@@ -1,5 +1,4 @@
 {
-  "sideEffects": false,
   "type": "module",
   "imports": {
     "#stack-trace": {

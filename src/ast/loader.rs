@@ -264,6 +264,7 @@ pub enum SideEffects {
     /// imports of this file can still be removed, but other files in the
     /// same package can be side-effectful, so the barrel optimization must
     /// not defer this file's re-exports without resolving them.
+    /// A `"sideEffects": false` in a "package.json" with no "name" gives this value too.
     NoSideEffectsPackageJsonArray,
 
     /// This file is considered to have no side effects because the AST was empty

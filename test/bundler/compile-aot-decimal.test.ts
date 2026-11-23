@@ -1,0 +1,331 @@
+// The tests of Decimal that build executables. By the name of this file, CI builds a few at a time, and with the Bun that
+// has no debug information (buildsManyExecutables in scripts/runner.node.ts).
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import path from "node:path";
+import { locksEnvironment } from "../aot/hardened";
+import { unsupported } from "../aot/harness/compiler";
+import { raiseDefaultTimeout } from "../aot/harness/default-timeout";
+import "../aot/harness/real-executables";
+import { canTrim } from "./compile-trim-features";
+
+raiseDefaultTimeout(120_000);
+
+const env = { ...bunEnv, BUN_JSC_useDecimal: "1", NO_COLOR: "1" };
+const { BUN_JSC_useDecimal: _, ...off } = env;
+
+async function spawn(cmd: string[], cwd: string, variables: Record<string, string | undefined> = env) {
+  await using proc = Bun.spawn({ cmd, cwd, env: variables, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
+}
+
+const executable = isWindows ? "program.exe" : "program";
+
+async function compile(flags: string[], cwd: string, variables: typeof off) {
+  const cmd = [bunExe(), "build", "--compile", ...flags, "main.js", "--outfile", executable];
+  const { stderr, exitCode } = await spawn(cmd, cwd, variables);
+  expect({ stderr: exitCode ? stderr : "", exitCode }).toEqual({ stderr: "", exitCode: 0 });
+}
+
+async function compileAndRun(
+  flags: string[],
+  sources: Record<string, string>,
+  variables: typeof off,
+  variablesOfRun: typeof off = off,
+) {
+  using dir = tempDir("decimal-executable", sources);
+  await compile(flags, String(dir), variables);
+  return await spawn([path.join(String(dir), executable)], String(dir), variablesOfRun);
+}
+
+describe.concurrent("an executable", () => {
+  test("has Decimal without the variable", async () => {
+    const sources = { "main.js": `console.log(new Decimal("0.1").add(new Decimal("0.2")).toString());` };
+    const result = await compileAndRun(["--bytecode", "--format=esm"], sources, env);
+    expect(result).toEqual({ stdout: "0.3\n", stderr: "", exitCode: 0 });
+  });
+
+  test("hands it on to an executable that it builds", async () => {
+    const sources = {
+      "main.js": `
+        const outfile = process.cwd() + "/inner" + (process.platform === "win32" ? ".exe" : "");
+        await Bun.build({ entrypoints: [process.cwd() + "/inner.js"], compile: { outfile, executablePath: ${JSON.stringify(bunExe())} } });
+        console.write(Bun.spawnSync([outfile]).stdout);
+      `,
+      "inner.js": `console.log(typeof Decimal);`,
+    };
+    expect(await compileAndRun([], sources, env)).toEqual({ stdout: "function\n", stderr: "", exitCode: 0 });
+  });
+
+  test("leaves the last word to the variable", async () => {
+    const sources = { "main.js": `console.log(typeof Decimal);` };
+    const result = await compileAndRun([], sources, env, { ...off, BUN_JSC_useDecimal: "0" });
+    expect(result).toEqual({ stdout: "undefined\n", stderr: "", exitCode: 0 });
+  });
+
+  test("that was built without it has none", async () => {
+    const result = await compileAndRun(["--compile-jit-policy=2"], { "main.js": "console.log(typeof Decimal);" }, off);
+    expect(result).toEqual({ stdout: "undefined\n", stderr: "", exitCode: 0 });
+  });
+
+  test.skipIf(!!unsupported).concurrent.each([
+    ["an alias", `const D = Decimal; console.log(["1.50"].map(text => new D(text)).join());`],
+    [
+      "a method added",
+      `Decimal.prototype.half = function () { return this.divide(new Decimal(2)); }; console.log(String(new Decimal(3).half()));`,
+    ],
+    [
+      "an accessor handed over",
+      `console.log(new Decimal("1.45").add(new Decimal("0.01")).toFixed({ get digits() { return 1; } }));`,
+    ],
+    ["a polyfill", `globalThis.Decimal ??= function () {}; console.log([1.5].map(x => new Decimal(x)).join());`],
+  ])("--aot knows that the global is there: %s", async (_, source) => {
+    const result = await compileAndRun(["--aot"], { "main.js": source }, env);
+    expect(result).toEqual({ stdout: "1.5\n", stderr: "", exitCode: 0 });
+  });
+
+  test.skipIf(!!unsupported).each([[[]], [["--aot-references", "wide"]], ...(canTrim ? [[["--trim"]]] : [])])(
+    "--aot %j computes with Decimals in place, and calls what is none",
+    async flags => {
+      const source = `
+        class Line {
+          constructor(price, quantity) { this.price = price; this.quantity = quantity; }
+          total() { return this.price.multiply(new Decimal(this.quantity)); }
+        }
+        function invoice(lines, parts) {
+          let sum = new Decimal(0);
+          const texts = [];
+          for (const line of lines) {
+            const total = line.total();
+            sum = total.greaterThan(new Decimal(500)) ? sum.add(total.multiply(new Decimal(95)).divide(new Decimal(100)).round(2)) : sum.add(total);
+            if (line.quantity === 9) texts.push(total.toFixed({ digits: 1 }), total.negate());
+          }
+          Bun.gc(true);
+          return [sum, sum.divide(parts).round(2, "ceil"), texts.length, texts.at(-2), texts.at(-1)].join();
+        }
+        const lines = Array.from({ length: 20000 }, (_, i) => new Line(new Decimal((i * 7919 % 100003) + "e-2"), 1 + i % 9));
+        console.log(invoice(lines, new Decimal(7)));
+        class Free extends Decimal {}
+        Object.assign(Free.prototype, { ["multi" + "ply"]: () => new Decimal(0) });
+        console.log(invoice([new Line(new Free(5), 9)], new Decimal(1)));
+        try { invoice(lines, 7); } catch (error) { console.log(error.name); }
+        Reflect.set(Decimal.prototype, "round", () => new Decimal(1));
+        console.log(invoice(lines.slice(0, 20), new Decimal(7)));
+      `;
+      const result = await compileAndRun(["--aot", ...flags], { "main.js": source }, env);
+      expect(result).toEqual({
+        stdout: [
+          "47532015.16,6790287.88,4444,4634.5,-4634.46",
+          "0,0,2,0.0,-0",
+          "TypeError",
+          "1221.11,1,4,3115.8,-3115.8",
+          "",
+        ].join("\n"),
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
+
+  test.skipIf(!!unsupported)("--aot leaves alone what was kept of a running total", async () => {
+    const totals = `
+        declare const Decimal: any;
+        const step = new Decimal("1.25");
+        function* sums(limit: number): Generator<number, number, any> {
+          let sum = 0;
+          for (let i = 0; i < limit; i++) sum += Number(yield sum) || 1;
+          return sum;
+        }
+        function besideGenerator(held: any, total: any) {
+          const kept: any[] = [];
+          for (let round = 0; round < 4; round++) {
+            kept.push(total);
+            const it = sums(round);
+            held.y = held.inner.z;
+            while (true) {
+              if (it.next(held.x++).done) break;
+              total = total.add(step);
+            }
+          }
+          return [...kept, total].join();
+        }
+        console.log(besideGenerator(JSON.parse('{"x":3,"y":2,"inner":{"z":3}}'), new Decimal(1)));
+        console.log(besideGenerator({ x: 1, y: 2, inner: { z: 1 } }, new Decimal(2)));
+
+        class Settings { static text = "ab".repeat(2); }
+        function besideReads(at: number, total: any) {
+          const kept: any[] = [], seen: number[] = [];
+          for (let round = 0; round < 3; round++) {
+            kept.push(total);
+            for (let i = 0; i < 8; i++) {
+              seen.push(Settings.text.length);
+              if (i === at % 8) {
+                total = total.add(step);
+                "x".replace(/x/, () => (Settings.text = "b"));
+              }
+              seen.push(Settings.text.indexOf("b"));
+            }
+          }
+          return [...kept, total].join() + " " + seen.slice(0, 6).join("");
+        }
+        const unseen: any = new Map([["read", besideReads]]);
+        console.log(unseen.get("read")(1, new Decimal(3)));
+      `;
+    const sources = { "main.js": `import "./totals.ts";`, "totals.ts": totals };
+    expect(await compileAndRun(["--aot"], sources, env)).toEqual({
+      stdout: "1,1,2.25,4.75,8.5\n2,2,3.25,5.75,9.5\n3,4.25,5.5,6.75 414010\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test.skipIf(!!unsupported || locksEnvironment)(
+    "--aot without the variable leaves it to the run whether the global is there",
+    async () => {
+      using dir = tempDir("decimal-executable", {
+        "main.js": `
+          const D = globalThis.Decimal ?? class { toString() { return "polyfill"; } };
+          console.log(["1.50"].map(text => new D(text)).join());
+        `,
+      });
+      await compile(["--aot"], String(dir), off);
+      const run = (variables: typeof off) => spawn([path.join(String(dir), executable)], String(dir), variables);
+      expect(await run(off)).toEqual({ stdout: "polyfill\n", stderr: "", exitCode: 0 });
+      expect(await run(env)).toEqual({ stdout: "1.5\n", stderr: "", exitCode: 0 });
+    },
+  );
+
+  test.skipIf(!!unsupported || !canTrim)("--aot --trim keeps what toLocaleString() needs", async () => {
+    const sources = { "main.js": `console.log(new Decimal("1234.5").toLocaleString("en-US"));` };
+    const result = await compileAndRun(["--aot", "--trim"], sources, env);
+    expect(result).toEqual({ stdout: "1,234.5\n", stderr: "", exitCode: 0 });
+  });
+});
+
+test.concurrent.each([
+  ["StructuredClone", "Operators", "1.5 TypeError 3"],
+  ["ToJSON", "Operators", 'DataCloneError "1.5" 3'],
+])("an executable keeps BUN_JSC_useDecimal%s and %s, and no other option", async (first, second, expected) => {
+  const source = `
+    const x = new Decimal("1.5");
+    const outcome = f => { try { return String(f()); } catch (error) { return error.name; } };
+    console.write([() => structuredClone(x), () => JSON.stringify(x), () => x + x].map(outcome).join(" "));
+  `;
+  const variables = { ...env, ["BUN_JSC_useDecimal" + first]: "1", ["BUN_JSC_useDecimal" + second]: "1" };
+  const result = await compileAndRun(["--bytecode", "--format=esm"], { "main.js": source }, variables);
+  expect(result).toEqual({ stdout: expected, stderr: "", exitCode: 0 });
+});
+
+// Compiled code has no operators, so == would compare identity where bun run compares values.
+test.skipIf(!!unsupported).concurrent.each([
+  ["--aot", ["build", "--compile", "--aot", "main.js"]],
+  ["bun compile", ["compile", "main.js"]],
+  ["compile.aot", ["build.js"]],
+])("%s refuses BUN_JSC_useDecimalOperators", async (subject, command) => {
+  using dir = tempDir("decimal-executable", {
+    "main.js": "console.log(new Decimal(1) == new Decimal(1));",
+    "build.js": `await Bun.build({ entrypoints: ["main.js"], compile: { aot: true, outfile: "program" } });`,
+  });
+  const variables = { ...env, BUN_JSC_useDecimalOperators: "1" };
+  const { stderr, exitCode } = await spawn([bunExe(), ...command], String(dir), variables);
+  expect(stderr).toContain(`${subject} doesn't support BUN_JSC_useDecimalOperators`);
+  expect(exitCode).toBe(1);
+});
+
+test
+  .skipIf(!!unsupported || locksEnvironment)
+  .concurrent("an --aot executable does not take BUN_JSC_useDecimalOperators from the environment", async () => {
+    const sources = {
+      "main.js": `console.log(new Decimal(1) == new Decimal(1), eval("new Decimal(1) == new Decimal(1)"));`,
+    };
+    const result = await compileAndRun(["--aot"], sources, env, { ...off, BUN_JSC_useDecimalOperators: "1" });
+    expect(result).toEqual({ stdout: "false false\n", stderr: "", exitCode: 0 });
+  });
+
+const literals = { ...env, BUN_JSC_useDecimalLiterals: "1" };
+
+// With "bun run" and "bun build", which share the program.
+describe.concurrent("literals", () => {
+  const files = {
+    "rate.cjs": `module.exports = { rate: .07m };`,
+    "main.js": `
+      import { rate } from "./rate.cjs";
+      class Decimal {}
+      const price = 19.99m, literal = () => 1m, negative = (sign = -1.50m) => sign;
+      class Account { balance = -0m; static limit = 1_000m; }
+      let total = 0m;
+      for (let i = 0; i < 10; i++) total = total.add(0.1m);
+      console.log([price.multiply(rate).round(2), total, negative(), - -1m, -(1m), (-1m).abs(), 1e6145m].join());
+      console.log(1m.divide(new Account().balance).toString(), Account.limit.toString(), { [1.50m]: 1 }[1.5]);
+      console.log(typeof 1m, typeof -1m, !0m, !-0m, -0m ? 1 : 2, 1m === 1m, literal() === literal(), price === price);
+      console.log(-1m instanceof Decimal, -1m instanceof globalThis.Decimal, new Array(-1m).length);
+      for (const f of [() => -1m.abs(), () => +1m, () => 1m + 1m, () => "a" + -1m, () => -price, () => 1m.nothing()]) {
+        try {
+          console.log(f());
+        } catch (error) {
+          console.log(error.name);
+        }
+      }
+    `,
+  };
+  const printed = [
+    "1.4,1,-1.5,1,-1,1,Infinity",
+    "-Infinity 1000 1",
+    "object object false false 1 false false true",
+    "false true 1",
+    ...Array(6).fill("TypeError"),
+    "",
+  ].join("\n");
+
+  test("bun run", async () => {
+    using dir = tempDir("decimal-literal", files);
+    expect(await spawn([bunExe(), "main.js"], String(dir), literals)).toEqual({
+      stdout: printed,
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test.each([[["--format=esm"]], [["--format=cjs"]], [["--minify"]], [["--format=cjs", "--bytecode"]]])(
+    "bun build %j",
+    async flags => {
+      using dir = tempDir("decimal-literal", files);
+      const built = await spawn(
+        [bunExe(), "build", "--target=bun", "--outdir=out", ...flags, "main.js"],
+        String(dir),
+        literals,
+      );
+      expect(built.stderr).toBe("");
+      expect(await spawn([bunExe(), "out/main.js"], String(dir), literals)).toEqual({
+        stdout: printed,
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
+
+  test("an executable has them without the variables", async () => {
+    const result = await compileAndRun(["--bytecode", "--format=esm"], files, literals);
+    expect(result).toEqual({ stdout: printed, stderr: "", exitCode: 0 });
+  });
+
+  test("also in what it loads from disk", async () => {
+    const sources = {
+      "main.js": `console.log(String(-1m), String((await import(process.cwd() + "/late.ts")).default));`,
+      "late.ts": `export default 1.50m as unknown;`,
+    };
+    const result = await compileAndRun(["--compile-jit-policy=2"], sources, literals);
+    expect(result).toEqual({ stdout: "-1 1.5\n", stderr: "", exitCode: 0 });
+  });
+
+  test.skipIf(!!unsupported)("--aot", async () => {
+    expect(await compileAndRun(["--aot"], files, literals)).toEqual({ stdout: printed, stderr: "", exitCode: 0 });
+  });
+
+  test.skipIf(!!unsupported || !canTrim)("--aot --trim", async () => {
+    const sources = { "main.js": `console.log(1234.5m.toLocaleString("en-US"), -0.125m.round(2).toString());` };
+    const result = await compileAndRun(["--aot", "--trim"], sources, literals);
+    expect(result).toEqual({ stdout: "1,234.5 -0.12\n", stderr: "", exitCode: 0 });
+  });
+});

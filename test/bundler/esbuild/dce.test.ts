@@ -3117,6 +3117,19 @@ describe("bundler", () => {
       // "y_keep" comes after a call, so it is not in the const prefix.
       "/out/cross-module-entry.js": 3,
     },
+    // The three circular entries read "foo" in the file that declares it, before it has a value.
+    // esbuild keeps those reads. Bun's parser inlines a read of the same file (#18477), so two of
+    // them print 123. The read through the import is not inlined: that file has an import.
+    run: [
+      { file: "/out/exported-entry.js", stdout: "1 2" },
+      { file: "/out/re-exported-entry.js", stdout: "1 2" },
+      { file: "/out/cross-module-entry.js", stdout: "1 1" },
+      { file: "/out/print-shorthand-entry.js", stdout: "{\n  foo: 123,\n  _bar: -321,\n}" },
+      { file: "/out/circular-import-entry.js", stdout: "123" },
+      { file: "/out/circular-re-export-entry.js", stdout: "undefined\n0" },
+      { file: "/out/circular-re-export-star-entry.js", stdout: "123" },
+      { file: "/out/non-circular-export-entry.js", stdout: "123 123" },
+    ],
     onAfterBundle(api) {
       api.expectFile("/out/print-shorthand-entry.js").toContain("console.log({ foo: 123, _bar: -321 });");
       api.expectFile("/out/non-circular-export-entry.js").toContain("console.log(123, bar());");
@@ -3215,43 +3228,58 @@ describe("bundler", () => {
       `);
     },
   });
-  // Where a constant must be declared: in the const prefix of a file that
-  // imports nothing.
-  itBundled("dce/CrossModuleConstInliningPrefix", {
-    files: {
-      "/entry.js": /* js */ `
-        import { before, after_keep } from "./after-statement.js";
-        import { afterInit_keep } from "./after-initializer.js";
-        import { imports_keep } from "./has-import.js";
-        import { let_keep, reassigned } from "./not-const.js";
-        console.log(before, after_keep, afterInit_keep, imports_keep, let_keep, reassigned());
-      `,
-      "/after-statement.js": /* js */ `
-        export const before = 1;
-        sideEffect();
-        export const after_keep = 2;
-        export function sideEffect() {}
-      `,
-      "/after-initializer.js": /* js */ `
-        const computed = Math.random();
-        export const afterInit_keep = 3;
-        export { computed };
-      `,
-      "/has-import.js": /* js */ `
-        import "./empty.js";
-        export const imports_keep = 4;
-      `,
-      "/empty.js": "",
-      "/not-const.js": /* js */ `
-        export let let_keep = 5;
-        export function reassigned() { return ++let_keep; }
-      `,
-    },
-    minifySyntax: true,
-    dce: true,
-    dceKeepMarkerCount: 9,
-    run: { stdout: "1 2 3 4 5 6" },
-  });
+  // Where a constant must be declared: in the const prefix of a file that imports nothing. The
+  // prefix ends at the first statement, or the first initializer, that can run code.
+  {
+    const cases: { before: string; inlined: boolean; ts?: boolean }[] = [
+      { before: `"use strict";`, inlined: true },
+      { before: `debugger;`, inlined: true },
+      { before: `// A comment.`, inlined: true },
+      { before: `let uninitialized;`, inlined: true },
+      { before: `const text = "abcd";`, inlined: true },
+      { before: `const arrow = () => notCalled(), fn = function () {};`, inlined: true },
+      { before: `const list = ["a", []], empty = {};`, inlined: true },
+      { before: `export const other = 1;`, inlined: true },
+      { before: `type T = number; interface I { x: T }`, inlined: true, ts: true },
+      { before: `export enum E { A = 1 }`, inlined: true, ts: true },
+      { before: `enum Unused { A = 1 }`, inlined: true, ts: true },
+      { before: `globalThis.sideEffect = 1;`, inlined: false },
+      { before: `function declared() {}`, inlined: false },
+      { before: `class C { static { globalThis.sideEffect = 2; } }`, inlined: false },
+      { before: `export default Math.random();`, inlined: false },
+      { before: `const { a } = globalThis;`, inlined: false },
+      { before: `const computed = Math.random();`, inlined: false },
+      { before: `let counter = 0;`, inlined: false },
+      { before: `export const long = 3.14159265;`, inlined: false },
+      { before: `const numbers = [1, 2];`, inlined: false },
+      { before: `namespace N { export const a = 1; }`, inlined: false, ts: true },
+    ];
+    const file = (i: number) => `/case${i}.${cases[i].ts ? "ts" : "js"}`;
+    itBundled("dce/CrossModuleConstInliningPrefix", {
+      files: {
+        "/entry.js": `
+          ${cases.map((_, i) => `import { c${i} } from ".${file(i)}";`).join("\n")}
+          import { withImport } from "./has-import.js";
+          import { notConst, reassign } from "./not-const.js";
+          import { notExported } from "./not-exported.js";
+          console.log(${cases.map((_, i) => `c${i}`).join(", ")});
+          console.log(withImport, notConst, reassign(), notExported());
+        `,
+        ...Object.fromEntries(cases.map((c, i) => [file(i), `${c.before}\nexport const c${i} = ${i};`])),
+        "/has-import.js": `import "./empty.js"; export const withImport = 1;`,
+        "/empty.js": "",
+        "/not-const.js": `export let notConst = 2; export function reassign() { return ++notConst; }`,
+        "/not-exported.js": `const local = 4; export function notExported() { return local; }`,
+      },
+      minifySyntax: true,
+      run: { stdout: `${cases.map((_, i) => i).join(" ")}\n1 2 3 4` },
+      onAfterBundle(api) {
+        const out = api.readFile("/out.js");
+        expect(out).toContain(`console.log(${cases.map((c, i) => (c.inlined ? i : `c${i}`)).join(", ")});`);
+        expect(out).toContain("console.log(withImport, notConst, reassign(), notExported());");
+      },
+    });
+  }
   // Which reads are replaced: the ones of an import binding.
   itBundled("dce/CrossModuleConstInliningBindingForms", {
     files: {
@@ -3306,9 +3334,10 @@ describe("bundler", () => {
       `);
     },
   });
-  // The code that a direct eval runs reads an import by its name. So a file
-  // that has a direct eval keeps its reads. A direct eval in the file that
-  // declares the constant changes nothing.
+  // A file that has a direct eval prints what it printed before constants were inlined: the
+  // reads and the declaration stay. esbuild inlines here. Bun does not promise that the code
+  // of an eval can read an import. A direct eval in the file that declares the constant
+  // changes nothing.
   itBundled("dce/CrossModuleConstInliningDirectEval", {
     files: {
       "/eval-in-importer.js": /* js */ `
@@ -3411,6 +3440,169 @@ describe("bundler", () => {
     run: { stdout: "always" },
     onAfterBundle(api) {
       api.expectFile("/out.js").toContain("if (DEV)");
+    },
+  });
+  // "{ __proto__ }" defines a property. "{ __proto__: value }" sets the prototype.
+  itBundled("dce/CrossModuleConstInliningProtoShorthand", {
+    files: {
+      "/entry.js": /* js */ `
+        import { __proto__, P } from "./leaf.js";
+        const own = { __proto__ };
+        const set = { __proto__: P };
+        console.log(Object.hasOwn(own, "__proto__"), Object.getPrototypeOf(own) === Object.prototype);
+        console.log(Object.hasOwn(set, "__proto__"), Object.getPrototypeOf(set) === null);
+      `,
+      "/leaf.js": /* js */ `
+        export const __proto__ = null, P = null;
+      `,
+    },
+    minifySyntax: true,
+    run: { stdout: "true true\nfalse true" },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain(`own = { ["__proto__"]: null }`);
+      expect(out).toContain(`set = { __proto__: null }`);
+    },
+  });
+  // In a statement list, nothing is left of a statement that a constant decides.
+  itBundled("dce/CrossModuleConstInliningStatements", {
+    files: {
+      "/entry.js": /* js */ `
+        import { DEV, PROD } from "./env.js";
+        const log = (...args) => console.log(...args);
+        if (DEV) { for (const v of ["DROP"]) log(v); }
+        DEV && log("DROP");
+        PROD || log("DROP");
+        if (PROD) { log("one"); for (const v of ["two"]) log(v); }
+        if (PROD) { let scoped = "three"; log(scoped); }
+        function inFunction() {
+          log("before");
+          if (DEV) { for (const v of ["DROP"]) log(v); }
+          log("between");
+          if (PROD) { for (const v of ["four"]) log(v); }
+          switch (1) {
+            case 1:
+              if (DEV) log("DROP");
+              if (PROD) { log("five"); log("six"); }
+          }
+        }
+        inFunction();
+      `,
+      "/env.js": /* js */ `
+        export const DEV = false, PROD = true;
+      `,
+    },
+    minifySyntax: true,
+    dce: true,
+    run: { stdout: "one\ntwo\nthree\nbefore\nbetween\nfour\nfive\nsix" },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toMatchInlineSnapshot();
+    },
+  });
+  // Each row must print and run the same for a constant of another file as for one of the same file.
+  {
+    const members = {
+      Zero: "0",
+      NegZero: "-0",
+      One: "1",
+      Three: "3",
+      Neg: "-1",
+      Half: "0.5",
+      U32: "4294967295",
+      Inf: "1 / 0",
+      NaN_: "0 / 0",
+      Text: '"ab"',
+      Empty: '""',
+      Digits: '"12"',
+      True: "true",
+      False: "false",
+      Null: "null",
+      Undefined: "undefined",
+    };
+    const grid = foldGrid(members, name => name, `{ ${Object.keys(members).join(", ")} }`);
+    const declaration = `const ${grid.names.map(name => `${name} = ${members[name]}`).join(", ")};`;
+    itBundled("dce/CrossModuleConstInliningMatchesSameFile", {
+      files: {
+        "/same.ts": `${declaration}\n${grid.body}`,
+        "/cross.ts": `import { ${grid.names.join(", ")} } from "./consts";\n${grid.body}`,
+        "/consts.ts": `export ${declaration}`,
+      },
+      entryPoints: ["/same.ts", "/cross.ts"],
+      minifySyntax: true,
+      run: [
+        { file: "/out/same.js", stdout: grid.stdout },
+        { file: "/out/cross.js", stdout: grid.stdout },
+      ],
+      onAfterBundle(api) {
+        expect(grid.differences(api.readFile("/out/same.js"), api.readFile("/out/cross.js"))).toMatchInlineSnapshot();
+      },
+    });
+  }
+  // The other output formats, and a leaf that a require() wraps.
+  for (const format of ["cjs", "iife"] as const) {
+    itBundled(`dce/CrossModuleConstInliningFormat_${format}`, {
+      files: {
+        "/entry.js": /* js */ `
+          import { DEV, N } from "./env.js";
+          import { viaRequire } from "./lazy.js";
+          if (DEV) console.log("DROP");
+          console.log(N + 1, viaRequire().N, { N });
+          export { N };
+        `,
+        "/lazy.js": /* js */ `
+          export const viaRequire = () => require("./env.js");
+        `,
+        "/env.js": /* js */ `
+          export const DEV = false, N = 41;
+        `,
+      },
+      format,
+      minifySyntax: true,
+      dce: true,
+      run: { stdout: "42 41 {\n  N: 41,\n}" },
+      onAfterBundle(api) {
+        expect(api.readFile("/out.js")).toContain("console.log(42, viaRequire().N, { N: 41 })");
+      },
+    });
+  }
+  // An entry point that exports the constant again keeps the declaration, in its own chunk or in
+  // a chunk that it shares.
+  itBundled("dce/CrossModuleConstInliningSplittingKeepsExport", {
+    files: {
+      "/a.js": /* js */ `
+        import { X } from "./leaf.js";
+        console.log("a", X + 1);
+        export { X };
+      `,
+      "/b.js": /* js */ `
+        import { X } from "./leaf.js";
+        console.log("b", X + 2);
+        export * as ns from "./leaf.js";
+      `,
+      "/c.js": /* js */ `
+        import { X } from "./barrel.js";
+        console.log("c", X + 3);
+      `,
+      "/barrel.js": /* js */ `
+        export { X } from "./leaf.js";
+      `,
+      "/leaf.js": /* js */ `
+        export const X = 40;
+      `,
+      "/check.js": /* js */ `
+        const a = await import("./out/a.js");
+        const b = await import("./out/b.js");
+        await import("./out/c.js");
+        console.log(a.X, b.ns.X);
+      `,
+    },
+    entryPoints: ["/a.js", "/b.js", "/c.js"],
+    splitting: true,
+    format: "esm",
+    minifySyntax: true,
+    run: { file: "/check.js", stdout: "a 41\nb 42\nc 43\n40 40" },
+    onAfterBundle(api) {
+      api.expectFile("/out/c.js").toContain(`console.log("c", 43)`);
     },
   });
   itBundled("dce/ConstValueInliningAssign", {

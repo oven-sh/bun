@@ -1091,7 +1091,11 @@ console.log("release",3);
 
 **Mode:** `--minify-syntax` (bundle mode)
 
-Inlines a `const` that another module exports, and folds what the value decides. The value must be `null`, `undefined`, a boolean, a short number, or a string of at most 3 characters. The module that declares it must import nothing, and the declaration must come before any statement that can run code: a module in an import cycle can be read before it runs, so its constants are not inlined.
+Inlines a `const` that another module exports, and folds what the value decides. The constant must meet three conditions:
+
+- **Value:** `null`, `undefined`, a boolean, an integer, another number that prints in 8 characters or fewer, or a string of at most 3 UTF-16 code units.
+- **Declaring module:** it imports nothing: no `import`, no `export ... from`, no `require()` and no `import()`. A module in an import cycle can be read before it runs.
+- **Position:** only these come before it in the module: comments, directives, type-only declarations, TypeScript enums, other constants that are inlined, and declarations whose initializer is a string, a function, `{}` or an array of those.
 
 ```js Input
 // env.js

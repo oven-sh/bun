@@ -1294,34 +1294,9 @@ extern "C"
     return uwsReq->setYield(yield);
   }
 
-  size_t uws_req_get_url(uws_req_t *res, const char **dest)
+  const void *uws_req_get_parsed(uws_req_t *res)
   {
-    uWS::HttpRequest *uwsReq = (uWS::HttpRequest *)res;
-    std::string_view value = uwsReq->getFullUrl();
-    *dest = value.data();
-    return value.length();
-  }
-
-  size_t uws_req_get_method(uws_req_t *res, const char **dest)
-  {
-    uWS::HttpRequest *uwsReq = (uWS::HttpRequest *)res;
-    std::string_view value = uwsReq->getMethod();
-    *dest = value.data();
-    return value.length();
-  }
-
-size_t uws_req_get_header(uws_req_t *res, const char *lower_case_header,
-                            size_t lower_case_header_length, const char **dest) nonnull_fn_decl;
-
-  size_t uws_req_get_header(uws_req_t *res, const char *lower_case_header,
-                            size_t lower_case_header_length, const char **dest)
-  {
-    uWS::HttpRequest *uwsReq = (uWS::HttpRequest *)res;
-
-    std::string_view value = uwsReq->getHeader(
-        stringViewFromC(lower_case_header, lower_case_header_length));
-    *dest = value.data();
-    return value.length();
+    return ((uWS::HttpRequest *)res)->parsed;
   }
 
   size_t uws_req_get_parameter(uws_req_t *res, unsigned short index,
@@ -1333,10 +1308,13 @@ size_t uws_req_get_header(uws_req_t *res, const char *lower_case_header,
     return value.length();
   }
 
-  bool uws_req_has_transfer_encoding(uws_req_t *res)
+  void *uws_res_get_parser(int ssl, uws_res_r res)
   {
-    uWS::HttpRequest *uwsReq = (uWS::HttpRequest *)res;
-    return uwsReq->getHasTransferEncoding();
+    if (ssl ? uWS::HttpContext<true>::isClosedOrUpgraded((us_socket_t *)res) : uWS::HttpContext<false>::isClosedOrUpgraded((us_socket_t *)res))
+      return nullptr;
+    if (ssl)
+      return static_cast<uWS::HttpParser *>(((uWS::HttpResponse<true> *)res)->getHttpResponseData());
+    return static_cast<uWS::HttpParser *>(((uWS::HttpResponse<false> *)res)->getHttpResponseData());
   }
 
   us_socket_t *uws_res_upgrade(int ssl, uws_res_r res, void *data,

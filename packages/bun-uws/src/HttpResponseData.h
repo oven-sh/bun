@@ -25,6 +25,8 @@
 
 #include "MoveOnlyFunction.h"
 
+#include <string>
+
 namespace uWS {
 
 template <bool SSL>
@@ -76,8 +78,8 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
         /* Run borrowed onWritable */
         bool ret = borrowedOnWritable(response, offset, writableUserData);
 
-        /* The callback runs application code; if it closed the socket, this object is destructed. */
-        if (us_socket_is_closed((us_socket_t *) response)) {
+        /* The callback runs application code; if it closed or upgraded the socket, this object is destructed. */
+        if (HttpContext<SSL>::isClosedOrUpgraded((us_socket_t *) response)) {
             return ret;
         }
 
@@ -230,19 +232,11 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
     /* Current state (content-length sent, status sent, write called, etc */
     uint32_t state = 0;
     uint8_t idleTimeout = 10; // default HTTP_TIMEOUT 10 seconds
-    /* The parser writes this through a bool& (getHeaders / consumePostPadded),
-     * so it cannot live in `state`. */
-    bool isConnectRequest = false;
     /* Cleartext HTTP/2 preface sniffing: bytes of "PRI * HTTP/2.0..." matched
      * and held back so far (0-3) while the first read(s) were too short to
      * decide; PROTOCOL_DECIDED once this connection is known to be HTTP/1. */
     static constexpr unsigned char PROTOCOL_DECIDED = 255;
     unsigned char h2PrefaceMatched = 0;
-
-    /* Chunk-extension bytes consumed on the current chunk-size line, reset per
-     * chunk (llhttp's on_chunk_header); capped at MAX_CHUNK_EXTENSION_SIZE for
-     * both Bun.serve and node:http servers. */
-    uint64_t chunkedExtensionsByteCount = 0;
 
     /* node:http server compat: number of pipelined responses dispatched to JS
      * that have not yet become this connection's current response. While
@@ -295,12 +289,6 @@ struct HttpResponseData<SSL, true> : HttpResponseData<SSL, false> {
      * chunked framing for the response body. HTTP_NODE_HAS_RESPONSE_TRAILERS in
      * the shared flags word mirrors !empty(). */
     std::string nodeHttpResponseTrailers;
-    /* Raw bytes of the trailer section received after the final 0-size chunk
-     * of the current request's chunked body, including its terminating CRLF.
-     * Cleared when a new request is dispatched; consumed by the JS layer when
-     * the request reaches EOF (req.trailers/rawTrailers). The parser gets it
-     * as a nullable pointer (see HttpParser::consumePostPadded). */
-    std::string nodeHttpRequestTrailers;
     bool headersCompleted = false;
     /* Timeout sweep already reported this message; reset when it completes. */
     bool requestTimeoutReported = false;

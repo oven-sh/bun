@@ -1,2 +1,2 @@
 import { bench } from "./run";
-bench("three.js", "busyping.js", "before;", "5", "http$");
+bench("three.js", "busyall.js", "", "^Bun.write,^writer,^file,^Response,^fsp,^handle,^[23]00 ,^create,^pipeline", "4", "20");

@@ -1,2 +1,2 @@
 import { bench } from "./run";
-bench("three.js", "slowturn.js", ";1000_2000;1000_500;500_500", "all");
+bench("cond.js", "3", "http ,tcp ,dns,lines into,child std,ipc,fs.read", "before;", "5");

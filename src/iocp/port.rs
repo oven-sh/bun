@@ -39,15 +39,6 @@ pub(crate) mod key {
 
 const BATCH: usize = 128;
 
-/// Temporary, for `test/integration/tmp-bench`.
-fn tune(index: usize, usual: u64) -> u64 {
-    static VALUES: std::sync::LazyLock<Vec<u64>> = std::sync::LazyLock::new(|| {
-        let text = std::env::var("BUN_TMP_TUNE").unwrap_or_default();
-        text.split(',').filter_map(|it| it.parse().ok()).collect()
-    });
-    VALUES.get(index).copied().unwrap_or(usual)
-}
-
 /// The part of a [`Port`] that other threads use.
 pub(crate) struct Shared {
     pub(crate) handle: OwnedHandle,
@@ -551,16 +542,11 @@ impl Port {
         let mut now = now_ns();
         let busy_ns = now.saturating_sub(self.busy_since_ns.get());
         let deadline = now + busy_ns.clamp(MIN_NS, MAX_NS);
-        let (start, mut streams_until) = (now, 0);
         for round in 0.. {
             let goes_on = (round < MIN_ROUNDS || now <= deadline)
                 && (self.dispatch_deferred(on_event)
-                    || ((if self.expects_more.take() {
-                        streams_until = start + busy_ns.min(tune(0, 0) * 1000);
-                        busy_ns > MIN_NS || now < streams_until
-                    } else {
-                        now < streams_until
-                    }) && busy_ns > tune(1, 2000) * 1000
+                    || (self.expects_more.take()
+                        && busy_ns > MIN_NS
                         && self.dispatch_soon(on_event)));
             if !goes_on {
                 break;

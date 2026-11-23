@@ -1,2 +1,2 @@
 import { bench } from "./run";
-bench("three.js", "busyping.js", "before;", "5", "net, timers");
+bench("cond.js", "all", "fs.read,fs.write,x32,bursts of 32,Bun.write,stdio ping,child stdin", "before;", "7");

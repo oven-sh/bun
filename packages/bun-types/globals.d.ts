@@ -1025,10 +1025,16 @@ declare var CryptoKey: {
 interface CryptoKeyPair extends Bun.__internal.NodeCryptoWebcryptoCryptoKeyPair {}
 
 interface Position {
+  /**
+   * The source line. For a line of at most 1,000 bytes this is the whole line,
+   * and `lineText[column - 1]` is the character the message points at. For a
+   * longer line it can be an excerpt of about 120 bytes around that character.
+   */
   lineText: string;
   file: string;
   namespace: string;
   line: number;
+  /** 1-based column in the whole line, in UTF-16 code units. */
   column: number;
   length: number;
   offset: number;

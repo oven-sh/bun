@@ -517,6 +517,9 @@ impl Loc {
 // Location
 // ───────────────────────────────────────────────────────────────────────────
 
+/// A line up to this many bytes is stored whole in [`Location::line_text`], so `column` indexes it.
+pub const MAX_WHOLE_LINE_LEN: usize = 1000;
+
 /// Owns its bytes: a diagnostic outlives the [`Source`] it describes.
 #[derive(Clone)]
 pub struct Location {
@@ -542,6 +545,9 @@ pub struct Location {
     // but there is a place where this is emitted in output, implying one based character offset
     pub column: i32,
 }
+
+// `length` and `line_text_start_column` share one word, so the start column adds no bytes.
+const _: () = assert!(core::mem::size_of::<Location>() == 72);
 
 impl Default for Location {
     fn default() -> Self {
@@ -640,12 +646,12 @@ impl Location {
                 None => source.init_error_position(r.loc),
             };
             let mut full_line = &source.contents[data.line_start..data.line_end];
-            // An error in the last 80 bytes keeps the whole line: bake's overlay pads by `column`.
+            // A longer line with more than 80 bytes after the error is cut to about 120 bytes around it.
             let offset_in_line = clamp_error_offset(&source.contents, r.loc)
                 .saturating_sub(data.line_start)
                 .min(full_line.len());
             let mut line_text_start_column = 0;
-            if full_line.len() > 80 + offset_in_line {
+            if full_line.len() > MAX_WHOLE_LINE_LEN && full_line.len() > 80 + offset_in_line {
                 let mut lo = offset_in_line.saturating_sub(40);
                 let mut hi = (offset_in_line + 80).min(full_line.len());
                 while lo > 0 && !bun_core::strings::is_utf8_char_boundary(full_line[lo]) {
@@ -1561,6 +1567,7 @@ impl Log {
         self.add_formatted_msg(Kind::Warn, Some(source), range, text, Box::default(), false);
         if let Some(location) = self.msgs.last_mut().and_then(|m| m.data.location.as_mut()) {
             location.line_text = None;
+            location.line_text_start_column = 0;
         }
     }
 

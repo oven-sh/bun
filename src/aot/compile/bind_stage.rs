@@ -1326,7 +1326,7 @@ fn keep_where_parsers_refused_data(
             line: place.line,
             column: place.column,
             offset: place.offset,
-            length: place.length,
+            length: place.length as usize,
         });
     }
 }

@@ -1,22 +1,23 @@
 # -- source: main.js
-# function Emitter(object) { if (object) return mix(object); this.count = 0; }
-# function mix(object) { for (var key in Emitter.prototype) object[key] = Emitter.prototype[key]; return object; }
-# Emitter.prototype.on = function () { this.count = (this.count || 0) + 1; return this; };
-# Emitter.prototype.total = function () { return this.count || 0; };
-# function Door(n) { this.n = n; }
-# function Gate(n) { this.n = n; }
-# Emitter(Door.prototype);
-# Emitter(Gate.prototype);
-# function run(count) { var total = 0; for (var i = 0; i < count; i++) { var door = new Door(i), gate = new Gate(i), plain = new Emitter(); total += door.on().on().total() + gate.on().total() + plain.on().on().on().total(); } return total; }
+# function Lends(name) { this.name = name; }
+# Lends.prototype.adds = function (much) { this.sum = (this.sum | 0) + much; return this; };
+# Lends.prototype.halves = function () { return (this.sum | 0) >> 1; };
+# function gives(other) { var names = Object.keys(Lends.prototype); while (names.length > 0) { var name = names.pop(); other[name] = Lends.prototype[name]; } return names; }
+# function Purse(n) { this.n = n; }
+# function Chest(n) { this.n = n; }
+# function shares(to) { return gives(to.prototype); }
+# shares(Purse);
+# shares(Chest);
+# function run(count) { var total = 0; for (var i = 0; i < count; i++) { var purse = new Purse(i), chest = new Chest(i), plain = new Lends("p"); total += purse.adds(i).adds(3).halves() + chest.halves() + plain.adds(2).adds(4).adds(i).halves(); } return total; }
 # print(run(10));
 # -- end of source
 # The source of the copy is the prototype object of another constructor function, and the target comes through two calls. What statements lay on the one prototype object by name is expected under the same names on each of the others.
 # RUN: run-in-shell
-# CHECK: 60
+# CHECK: 85
 # CHECK-NEXT: exited with 0
 # RUN(CALLED): run-in-shell mechanisms=all-Inlining
-# CALLED: 60
+# CALLED: 85
 # CALLED-NEXT: exited with 0
 # RUN(CLOSED): run-in-shell mechanisms=all-Guesses
-# CLOSED: 60
+# CLOSED: 85
 # CLOSED-NEXT: exited with 0

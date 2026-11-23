@@ -8,7 +8,7 @@ use bun_core::ffi::FfiSlice;
 use bun_exe_format::identity::{HostDescription, IdentityError, find_process_identity};
 use bun_options_types::standalone_path::is_bun_standalone_file_path;
 use bun_resolver::StandaloneModuleGraph;
-use bun_resolver::compiled_program::{CompiledEntryPoint, CompiledProgram};
+use bun_resolver::compiled_program::{CompiledEntryPoint, CompiledProgram, compare_source_paths};
 
 use crate::virtual_machine::standalone_module_graph;
 use crate::{JSGlobalObject, JSValue};
@@ -361,6 +361,14 @@ pub fn entry_module_key<'a>(path: &'a [u8]) -> &'a [u8] {
     standalone_module_graph().map_or(path, |graph| entry_module_key_in(graph, path))
 }
 
+/// The key of the module that a program names by the name of a file of the executable. `None`: another module lies at that path, and the resolver finds it. The file of an entry point `part.cjs` is called `part.js`.
+pub(crate) fn key_of_named_file(name: &'static [u8]) -> Option<&'static [u8]> {
+    let key = entry_module_key(name);
+    let is_other_module =
+        || compiled_program().is_some_and(|program| program.holds_module_at(name));
+    (compare_source_paths(key, name).is_eq() || !is_other_module()).then_some(key)
+}
+
 fn module_key_in(
     graph: &'static dyn StandaloneModuleGraph,
     entry: &'static CompiledEntryPoint,
@@ -430,11 +438,7 @@ pub fn is_entry_point_beside_thread(path: &[u8]) -> bool {
 
 // On Windows the path of a compiled module has backslashes, and the resolver joins the path of a file of the executable with forward slashes.
 fn with_separators_of_image(path: &[u8]) -> std::borrow::Cow<'_, [u8]> {
-    if cfg!(windows) && bun_core::strings::contains_char(path, b'/') {
-        let to_backslash = |&byte: &u8| if byte == b'/' { b'\\' } else { byte };
-        return path.iter().map(to_backslash).collect();
-    }
-    path.into()
+    bun_paths::to_native(path)
 }
 
 fn may_hold_module_path_starting_with(start: &[u8]) -> bool {

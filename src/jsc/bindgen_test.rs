@@ -15,8 +15,8 @@ use crate::generated_bindgen::bindgen_test::{
     js_TestNonFinal, js_TestNote, js_TestRefCounted, js_TestRefCountedNote, js_TestShape,
     js_TestSquare,
 };
-use crate::{JSGlobalObject, JSString, JSValue, JsClass, JsResult, WrapperGuard};
-use bun_ptr::{AsCtxPtr as _, RefPtr};
+use crate::{JSGlobalObject, JSString, JSValue, JsCell, JsClass, JsRef, JsResult, WrapperGuard};
+use bun_ptr::RefPtr;
 
 // This example should be kept in sync with bindgen's documentation
 pub(crate) fn add<'a>(heap: &JsHeap<'a>, a: i32, b: i32) -> bindgen::Result<'a, i32> {
@@ -547,6 +547,7 @@ pub(crate) struct TestRefCounted {
     ref_count: Cell<u32>,
     value: Cell<i32>,
     finalized: Cell<bool>,
+    pub(crate) this_value: JsCell<JsRef>,
 }
 
 impl Drop for TestRefCounted {
@@ -557,7 +558,7 @@ impl Drop for TestRefCounted {
 
 impl TestRefCounted {
     pub(crate) fn finalize(&self) {
-        self.finalized.set(true);
+        self.finalized.set(self.this_value.get().is_finalized());
     }
 
     pub(crate) fn constructor(value: i32) -> RefPtr<Self> {
@@ -566,6 +567,7 @@ impl TestRefCounted {
             ref_count: Cell::new(1),
             value: Cell::new(value),
             finalized: Cell::new(false),
+            this_value: JsCell::new(JsRef::empty()),
         })
     }
 
@@ -603,9 +605,9 @@ impl TestRefCounted {
         Ok(self.value.get())
     }
 
-    pub(crate) fn keep(&self) {
-        // SAFETY: `self` is live.
-        KEPT.set(Some(unsafe { RefPtr::init_ref(self.as_ctx_ptr()) }));
+    pub(crate) fn keep(self: &RefPtr<Self>, this_value: JsWrapper<'_, Self>) {
+        this_value.set_js_ref_weak();
+        KEPT.set(Some(self.clone()));
     }
 
     pub(crate) fn dispose(&self) {
@@ -619,8 +621,8 @@ impl TestRefCounted {
         (self.value.get() >= 0).then_some(this_value)
     }
 
-    pub(crate) fn is_same(&self, other: Option<&Self>) -> bool {
-        other.is_some_and(|other| core::ptr::eq(self, other))
+    pub(crate) fn is_same(&self, other: Option<&RefPtr<Self>>) -> bool {
+        other.is_some_and(|other| core::ptr::eq(self, other.as_ptr()))
     }
 
     pub(crate) fn kept() -> Vec<i32> {
@@ -628,6 +630,11 @@ impl TestRefCounted {
             Some(kept) => vec![kept.value.get(), i32::from(kept.finalized.get())],
             None => Vec::new(),
         })
+    }
+
+    pub(crate) fn kept_object(_: &JsHeap<'_>) -> JSValue {
+        KEPT.with_borrow(|kept| Some(kept.as_ref()?.this_value.get().get()))
+            .unwrap_or(JSValue::NULL)
     }
 
     pub(crate) fn release() {

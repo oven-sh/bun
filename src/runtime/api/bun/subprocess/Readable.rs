@@ -9,7 +9,7 @@ use crate::node::types::FdJsc as _;
 use crate::api::bun_spawn::stdio::Stdio;
 use crate::webcore::ReadableStream;
 use bun_io::max_buf;
-use bun_ptr::RefPtr;
+use bun_ptr::{Attached, RefPtr};
 
 use super::subprocess_pipe_reader::PipeReader;
 use super::{StdioResult, Subprocess};
@@ -17,7 +17,7 @@ use super::{StdioResult, Subprocess};
 pub(crate) enum Readable {
     Fd(Fd),
     /// Becomes `Buffer` or `Errored` when the read ends.
-    Pipe(RefPtr<PipeReader>),
+    Pipe(Attached<PipeReader>),
     Inherit,
     Ignore,
     Closed,
@@ -31,7 +31,7 @@ impl Readable {
     /// A ref of the caller's own, for a call that can end the read and so replace `self`.
     pub(crate) fn pipe(&self) -> Option<RefPtr<PipeReader>> {
         match self {
-            Readable::Pipe(pipe) => Some(pipe.clone()),
+            Readable::Pipe(pipe) => Some(RefPtr::clone(pipe)),
             _ => None,
         }
     }
@@ -115,27 +115,17 @@ impl Readable {
     pub(crate) fn close(this: &JsCell<Self>) {
         match this.get() {
             Readable::Fd(_) => this.set(Readable::Closed),
-            Readable::Pipe(pipe) => PipeReader::close(&pipe.clone()),
+            Readable::Pipe(pipe) => RefPtr::clone(pipe).close(),
             _ => {}
         }
     }
 
     pub(crate) fn finalize(&mut self) {
-        match self {
-            Readable::Fd(_) => {
-                *self = Readable::Closed;
-            }
-            Readable::Pipe(_) => {
-                let Readable::Pipe(pipe) = mem::replace(self, Readable::Closed) else {
-                    unreachable!()
-                };
-                pipe.finalize();
-            }
-            Readable::Buffer(_) | Readable::Errored(..) => {
-                *self = Readable::Closed;
-            }
-            _ => {}
+        #[cfg(unix)]
+        if let Readable::Pipe(pipe) = self {
+            pipe.finalize();
         }
+        *self = Readable::Closed;
     }
 
     pub(crate) fn to_js(&mut self, cx: &bun_jsc::JsThread<'_>, _exited: bool) -> JsResult<JSValue> {
@@ -172,10 +162,7 @@ impl Readable {
         match self {
             Readable::Fd(fd) => Ok(fd.to_js(global)),
             Readable::Pipe(_) => {
-                let Readable::Pipe(pipe) = mem::replace(self, Readable::Closed) else {
-                    unreachable!()
-                };
-                pipe.detach();
+                *self = Readable::Closed;
                 Ok(JSValue::UNDEFINED)
             }
             Readable::Buffer(_) => {

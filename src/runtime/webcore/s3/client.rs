@@ -431,7 +431,7 @@ pub(crate) fn on_reject_upload_stream(
     context: Option<RefPtr<NetworkSink>>,
 ) {
     if let Some(sink) = context {
-        NetworkSink::on_pump_rejected(&sink, err.to_js());
+        sink.on_pump_rejected(err.to_js());
     }
 }
 
@@ -511,7 +511,7 @@ pub(crate) fn upload_stream(
 
             if let Some(err) = byte_stream.take_pending_error() {
                 byte_stream.detach_sink(Some(&err));
-                NetworkSink::on_pump_rejected(&sink, err.to_js(cx.global()));
+                sink.on_pump_rejected(err.to_js(cx.global()));
                 return Ok(end_promise_value);
             }
 
@@ -541,12 +541,12 @@ pub(crate) fn upload_stream(
         sink.as_non_null(),
     );
     if let Some(err) = pump.to_error() {
-        NetworkSink::on_pump_rejected(&sink, err);
+        sink.on_pump_rejected(err);
         return Ok(end_promise_value);
     }
     let Some(promise) = pump.as_any_promise() else {
         if pump.is_termination_exception() {
-            NetworkSink::on_pump_terminated(&sink);
+            sink.on_pump_terminated();
         } else {
             // A direct stream closed inside `pull()`.
             sink.finish_input();
@@ -565,7 +565,7 @@ pub(crate) fn upload_stream(
         bun_jsc::js_promise::Status::Fulfilled => sink.on_pump_done(),
         bun_jsc::js_promise::Status::Rejected => {
             promise.set_handled(cx.global().vm());
-            NetworkSink::on_pump_rejected(&sink, promise.result(cx.global().vm()));
+            sink.on_pump_rejected(promise.result(cx.global().vm()));
         }
     }
     Ok(end_promise_value)
@@ -645,6 +645,7 @@ fn download_stream(
             mutex: Default::default(),
             request_error: None,
             reported_response_buffer: MutableString::default(),
+            is_out_of_memory: false,
             // `State::default()` sets
             // `has_more = true` (bit 48). Passing 0 here would start the task with
             // `has_more == false`, tripping the `assert(state.has_more)` in

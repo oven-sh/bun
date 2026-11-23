@@ -334,14 +334,9 @@ fn importer_file(lockfile: &Lockfile, parent: PackageID) -> Option<Box<[u8]>> {
     match parent_res.tag {
         ResolutionTag::Root => Some(Box::from(&b"package.json"[..])),
         ResolutionTag::Workspace => {
-            let dir = strings::without_trailing_slash(parent_res.workspace().slice(buf));
-            let mut file: Vec<u8> = Vec::with_capacity(dir.len() + b"/package.json".len());
-            if !dir.is_empty() {
-                file.extend_from_slice(dir);
-                file.push(b'/');
-            }
-            file.extend_from_slice(b"package.json");
-            Some(file.into_boxed_slice())
+            let dir = parent_res.workspace().slice(buf);
+            let file = bun_paths::Path::from_parts(&[dir, b"package.json"]).into_portable();
+            Some(file.as_bytes().into())
         }
         _ => None,
     }

@@ -3,10 +3,10 @@
 // # each deed goes by a name out of JSON.parse, so Link sees none of them, and each has a function of its own: a guard that has ended once would hide the next deed
 // # f15 = make, f16 = makeBelow, f18 = makeMoved, f20 = makeFew, f22 = makeSelf, f23 = makeHalf, f24 = makeTwice, f27 = makeSighted
 // # nothing is written of these fields, so their slots are held to what is seen stored in them, and an allocation lists no value that is not proven to fit its slot. The forms, and a second run of the answers, are those with the typed slots withheld.
-// # `parent` is stored undefined and nothing more in sight: whoever fills it is not seen, and its slot is held to nothing.
+// # `owner` is stored undefined and nothing more in sight: whoever fills it is not seen, and its slot is held to nothing.
 // # RUN(UNSEEN): facts enforced mechanisms=all
-// # UNSEEN: "kind" source=seen
-// # UNSEEN-NOT: "parent"
+// # UNSEEN: "weight" source=seen
+// # UNSEEN-NOT: "owner"
 // # RUN(FORM): walk f15 mechanisms=-TypedSlots
 // # FORM-LABEL: code f15:Body
 // # FORM: = NewObject {{*}}fields=[0, 1, 2, 3, 4, 5]
@@ -52,8 +52,8 @@ let log = "";
 let seen = "";
 function show(o: any) { const text = Object.keys(o).join() + " " + JSON.stringify(o) + log; log = ""; return text; }
 function attempt(run: (value?: any) => unknown, value?: unknown) { try { return show(run(value)); } catch (e) { const text = (e as Error).name + log; log = ""; return text; } }
-function Node(this: any, kind: number, pos: number, end: number) { this.pos = pos; this.end = end; this.kind = kind; this.id = 0; this.flags = 0; this.parent = undefined; }
-function make(kind: number) { return new (Node as any)(kind, -1, kind + 1); }
+function Sack(this: any, weight: number, shelf: number, row: number) { this.weight = weight; this.owner = undefined; this.row = row; this.shelf = shelf; this.seals = 3; this.knots = 2; }
+function make(weight: number) { return new (Sack as any)(weight, -4, weight * 2 + 1); }
 function Below(this: any, a: unknown, b: unknown) { this.a = a; this.b = b; this.c = "c"; }
 function makeBelow(a: unknown) { return new (Below as any)(a, 2); }
 function Fixed(this: any, a: unknown, b: unknown) { this.a = a; this.b = b; this.c = "c"; }

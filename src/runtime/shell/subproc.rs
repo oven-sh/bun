@@ -7,7 +7,7 @@ use std::rc::Rc;
 use crate::api::bun::process::SpawnResultExt as _;
 #[cfg(windows)]
 use crate::api::bun::process::WindowsOptions;
-use crate::api::bun::process::{self as bun_process, Process, SpawnOptions, Status};
+use crate::api::bun::process::{self as bun_process, SpawnOptions, Status};
 use crate::api::bun::subprocess as JscSubprocess;
 use crate::shell::interpreter::{Interpreter, NodeId};
 use crate::shell::io_writer::{self, IOWriter};
@@ -347,10 +347,9 @@ impl ShellSubprocess {
                 }
             }
             // Nothing reports its exit from here on, so nothing would reap it either.
-            let _ = Process::kill_and_reap(
-                subproc.proc().this_ptr(),
-                &mut bun_core::ffi::zeroed::<bun_spawn::Rusage>(),
-            );
+            let _ = subproc
+                .proc()
+                .kill_and_reap(&mut bun_core::ffi::zeroed::<bun_spawn::Rusage>());
             subproc.proc().set_exit_handler_default();
             // Dropping `subproc` runs `ShellSubprocess::drop` → `finalize_sync`.
         }
@@ -509,7 +508,7 @@ impl ShellSubprocess {
 
         let stdio0 = core::mem::replace(&mut spawn_args.stdio[0], Stdio::Ignore);
 
-        // `to_process` consumes the result for pid/pidfd; pull the fd handles out first.
+        // `to_process_handle` consumes the result for pid/pidfd; pull the fd handles out first.
         let spawn_stdin = spawn_result.stdin.take();
         let spawn_stdout = spawn_result.stdout.take();
         let spawn_stderr = spawn_result.stderr.take();
@@ -583,10 +582,9 @@ impl ShellSubprocess {
         // below are scoped so no borrow of the Subprocess spans the
         // re-entrant `watch`/`start`/`read_all` calls.
         unsafe {
-            Process::set_exit_handler(
-                (*subprocess).proc(),
-                bun_spawn::ProcessExit::new(bun_spawn::ProcessExitKind::Shell, subprocess),
-            );
+            let handler =
+                bun_spawn::ProcessExit::new(bun_spawn::ProcessExitKind::Shell, subprocess);
+            (*subprocess).proc().set_exit_handler(handler);
         }
         if let Some(id) = cmd_parent.interp.context.get() {
             // Freed already (the graph was collected): `interrupted()` ends the script.
@@ -1364,7 +1362,8 @@ impl PipeReader {
         rc.reader.set_source(match result {
             StdioResult::Buffer(buf) => bun_io::Source::Pipe(buf),
             StdioResult::BufferFd(fd) => {
-                bun_io::Source::File(bun_io::Source::open_file(event_loop.loop_(), fd))
+                let file = bun_sys::File::from_fd(fd).into();
+                bun_io::Source::File(bun_io::Source::open_file(event_loop.loop_(), file))
             }
             StdioResult::UnownedFd(_) | StdioResult::Unavailable => panic!("Shouldn't happen."),
         });
@@ -1378,11 +1377,10 @@ impl PipeReader {
             .reader
             .start_with_current_pipe()
             .map(|()| ReadResult::Pending);
-        // `reader` owns the fd from here.
         #[cfg(not(windows))]
         let started = self.reader.start(
             self.event_loop.as_event_loop_ctx(),
-            self.stdio_result.take().unwrap().into_raw(),
+            self.stdio_result.take().unwrap().into(),
             true,
         );
         match started {

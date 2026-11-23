@@ -356,6 +356,26 @@ describe("node:http server timeout enforcement", () => {
     }
   });
 
+  test("destroy() drops the request behind Content-Length: 0 when the head took two reads", async () => {
+    const urls: string[] = [];
+    const server = http.createServer((req, res) => {
+      urls.push(req.url!);
+      if (req.url === "/first") res.end();
+      else req.socket.destroy();
+    });
+    const port = await listen(server);
+    try {
+      const socket = net.connect(port, "127.0.0.1");
+      socket.on("error", () => {});
+      socket.once("data", () => socket.write("Content-Length: 0\r\n\r\nGET /third HTTP/1.1\r\nHost: a\r\n\r\n"));
+      socket.write("GET /first HTTP/1.1\r\nHost: a\r\n\r\nPOST /second HTTP/1.1\r\nHost: a\r\n");
+      await new Promise(resolve => socket.on("close", resolve));
+      expect(urls).toEqual(["/first", "/second"]);
+    } finally {
+      server.close();
+    }
+  });
+
   // A POST whose body stalls is pipelined behind a GET that is never answered,
   // so the GET's response still owns the socket when the inactivity timeout
   // fires. Like Node's socketOnTimeout (`parser.incoming`), the request that is

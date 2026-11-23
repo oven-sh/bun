@@ -56,6 +56,8 @@ pub(crate) static CONTENT_OR_DELETE: ByteSet = ByteSet::new(&[b'\t'..=b'\t', b' 
 
 pub(crate) static ABOVE_SPACE: ByteSet = ByteSet::new(core::slice::from_ref(&(b'!'..=0xff)));
 
+pub(crate) static NOT_COMMA: ByteSet = ByteSet::new(&[0..=b'+', b'-'..=0xff]);
+
 pub(crate) static NOT_QUESTION_MARK: ByteSet = ByteSet::new(&[0..=b'>', b'@'..=0xff]);
 
 pub(crate) static NOT_SLASH: ByteSet = ByteSet::new(&[0..=b'.', b'0'..=0xff]);

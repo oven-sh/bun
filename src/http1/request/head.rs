@@ -352,7 +352,7 @@ pub fn parse_trailers(section: &[u8], has_lenient_values: bool) -> Vec<Field<'_>
 /// By llhttp's grammar of `Connection`, where a control character ends the list.
 fn has_element(mut list: &[u8], expected: &[u8]) -> bool {
     loop {
-        let (element, rest) = split_run(list, &LIST_ELEMENT);
+        let (element, rest) = split_short_run(list, &LIST_ELEMENT);
         let is_expected = eql_ignoring_case(strings::trim(element, BLANKS), expected);
         match rest {
             [] => return is_expected,
@@ -366,6 +366,12 @@ fn has_element(mut list: &[u8], expected: &[u8]) -> bool {
 #[inline]
 pub(super) fn split_run<'a>(bytes: &'a [u8], set: &ByteSet) -> (&'a [u8], &'a [u8]) {
     (bytes.split_at_checked(set.prefix_len(bytes))).unwrap_or((bytes, &[]))
+}
+
+/// For lists, which can have thousands of elements.
+#[inline]
+pub(super) fn split_short_run<'a>(bytes: &'a [u8], set: &ByteSet) -> (&'a [u8], &'a [u8]) {
+    (bytes.split_at_checked(set.short_prefix_len(bytes))).unwrap_or((bytes, &[]))
 }
 
 /// A Bloom filter without collisions among the common names of request fields.

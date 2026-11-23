@@ -2616,18 +2616,19 @@ bitflags! {
 /// `/(?:^|\W)100-continue(?:$|\W)/i`
 fn expects_continue(value: &[u8]) -> bool {
     const TOKEN: &[u8] = b"100-continue";
+    const START: &[u8] = b"100-";
     let is_word =
         |byte: Option<&u8>| byte.is_some_and(|&byte| byte.is_ascii_alphanumeric() || byte == b'_');
     let mut from = 0;
-    while let Some(at) = strings::index_of_char_pos(value, TOKEN[0], from) {
-        let (before, rest) = value.split_at(at);
+    while let Some(at) = strings::index_of(&value[from..], START) {
+        let (before, rest) = value.split_at(from + at);
         if strings::has_prefix_case_insensitive(rest, TOKEN)
             && !is_word(before.last())
             && !is_word(rest.get(TOKEN.len()))
         {
             return true;
         }
-        from = at + 1;
+        from += at + START.len();
     }
     false
 }

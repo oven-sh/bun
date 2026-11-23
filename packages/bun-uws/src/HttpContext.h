@@ -872,9 +872,10 @@ private:
         return s;
     }
 
-    /* JavaScript closed the socket, or upgraded it after the peer's FIN, which the loop reports only once. */
+    /* JavaScript closed the socket, or upgraded it after the peer's FIN, which the loop reports only once.
+     * A WebSocket drops what it has not sent at the FIN, so with bytes left it stays open. */
     static us_socket_t *passOnEnd(us_socket_t *s) {
-        return us_socket_is_closed(s) ? s : us_dispatch_end(s);
+        return us_socket_is_closed(s) || !((AsyncSocket<SSL> *) s)->hasFullyDrained() ? s : us_dispatch_end(s);
     }
 
     template <bool IsNodeHttp>
@@ -1030,12 +1031,12 @@ private:
                     httpContextData->onSocketData(httpResponseData->socketData, SSL, s, "", 0, true);
                 }
                 /* No more of that body can come. A request that still waits for it holds the event loop, so end it like onClose does. */
-                if (!us_socket_is_closed(s) && (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_TUNNEL_AFTER_BODY)) {
+                if (!isClosedOrUpgraded(s) && (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_TUNNEL_AFTER_BODY)) {
                     httpResponseData->state &= ~HttpResponseData<SSL>::HTTP_NODE_TUNNEL_AFTER_BODY;
                     httpResponseData->isConnectRequest = true;
                     if (httpResponseData->inStream) {
                         httpResponseData->inStream((HttpResponse<SSL> *) s, "", 0, true, httpResponseData->userData);
-                        if (!us_socket_is_closed(s)) {
+                        if (!isClosedOrUpgraded(s)) {
                             httpResponseData->inStream = nullptr;
                         }
                     }

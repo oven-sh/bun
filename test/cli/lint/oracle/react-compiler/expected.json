@@ -4284,6 +4284,180 @@
     ]
    }
   },
+  "loops": {
+   "exit": 1,
+   "files": 3,
+   "diagnostics": {
+    "cycles.jsx": [
+     {
+      "code": "react(immutability)",
+      "help": "Do not mutate component props or hook arguments. If the value should change, update it where it is owned and pass an update callback, or use local state",
+      "labels": [
+       {
+        "label": "value cannot be modified",
+        "span": {
+         "column": 3,
+         "length": 2,
+         "line": 75,
+         "offset": 1548
+        }
+       }
+      ],
+      "message": "This value cannot be modified",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "Modifying a value returned from 'useState()', which should not be modified directly. Use the setter function to update instead",
+      "labels": [
+       {
+        "label": "value cannot be modified",
+        "span": {
+         "column": 3,
+         "length": 2,
+         "line": 64,
+         "offset": 1327
+        }
+       }
+      ],
+      "message": "This value cannot be modified",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(set-state-in-render)",
+      "help": "Calling setState during render may trigger an infinite loop.\n* To reset state when other state/props change, store the previous value in state and update conditionally.\n* To derive data from other state/props, compute the derived data during render without using state",
+      "labels": [
+       {
+        "label": "Found setState() in render",
+        "span": {
+         "column": 3,
+         "length": 2,
+         "line": 11,
+         "offset": 248
+        }
+       }
+      ],
+      "message": "Cannot call setState during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-render",
+      "severity": "error"
+     },
+     {
+      "code": "react(set-state-in-render)",
+      "help": "Calling setState during render may trigger an infinite loop.\n* To reset state when other state/props change, store the previous value in state and update conditionally.\n* To derive data from other state/props, compute the derived data during render without using state",
+      "labels": [
+       {
+        "label": "Found setState() in render",
+        "span": {
+         "column": 3,
+         "length": 2,
+         "line": 24,
+         "offset": 508
+        }
+       }
+      ],
+      "message": "Cannot call setState during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-render",
+      "severity": "error"
+     },
+     {
+      "code": "react(set-state-in-render)",
+      "help": "Calling setState during render may trigger an infinite loop.\n* To reset state when other state/props change, store the previous value in state and update conditionally.\n* To derive data from other state/props, compute the derived data during render without using state",
+      "labels": [
+       {
+        "label": "Found setState() in render",
+        "span": {
+         "column": 3,
+         "length": 2,
+         "line": 37,
+         "offset": 778
+        }
+       }
+      ],
+      "message": "Cannot call setState during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-render",
+      "severity": "error"
+     },
+     {
+      "code": "react(set-state-in-render)",
+      "help": "Calling setState during render may trigger an infinite loop.\n* To reset state when other state/props change, store the previous value in state and update conditionally.\n* To derive data from other state/props, compute the derived data during render without using state",
+      "labels": [
+       {
+        "label": "Found setState() in render",
+        "span": {
+         "column": 3,
+         "length": 2,
+         "line": 49,
+         "offset": 1029
+        }
+       }
+      ],
+      "message": "Cannot call setState during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-render",
+      "severity": "error"
+     }
+    ],
+    "one-local.jsx": [
+     {
+      "code": "react(immutability)",
+      "help": "Do not mutate component props or hook arguments. If the value should change, update it where it is owned and pass an update callback, or use local state",
+      "labels": [
+       {
+        "label": "value cannot be modified",
+        "span": {
+         "column": 3,
+         "length": 4,
+         "line": 8,
+         "offset": 169
+        }
+       }
+      ],
+      "message": "This value cannot be modified",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(set-state-in-render)",
+      "help": "Calling setState during render may trigger an infinite loop.\n* To reset state when other state/props change, store the previous value in state and update conditionally.\n* To derive data from other state/props, compute the derived data during render without using state",
+      "labels": [
+       {
+        "label": "Found setState() in render",
+        "span": {
+         "column": 3,
+         "length": 3,
+         "line": 19,
+         "offset": 405
+        }
+       }
+      ],
+      "message": "Cannot call setState during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-render",
+      "severity": "error"
+     }
+    ],
+    "typed-cycle.ts": [
+     {
+      "code": "react(set-state-in-render)",
+      "help": "Calling setState during render may trigger an infinite loop.\n* To reset state when other state/props change, store the previous value in state and update conditionally.\n* To derive data from other state/props, compute the derived data during render without using state",
+      "labels": [
+       {
+        "label": "Found setState() in render",
+        "span": {
+         "column": 3,
+         "length": 2,
+         "line": 11,
+         "offset": 358
+        }
+       }
+      ],
+      "message": "Cannot call setState during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-render",
+      "severity": "error"
+     }
+    ]
+   }
+  },
   "node_modules": {
    "exit": 1,
    "files": 4,
@@ -4627,6 +4801,71 @@
     ],
     "suppressed": []
    },
+   "cycles.jsx": {
+    "messages": [
+     {
+      "ruleId": "react-hooks/set-state-in-render",
+      "severity": 2,
+      "message": "Error: Cannot call setState during render\n\nCalling setState during render may trigger an infinite loop.\n* To reset state when other state/props change, store the previous value in state and update conditionally: https://react.dev/reference/react/useState#storing-information-from-previous-renders\n* To derive data from other state/props, compute the derived data during render without using state.\n\n   9 |     for (let i = 0; i < props.n; i++) v0 = v1;\n  10 |   } while (props.again);\n> 11 |   v0(1);\n     |   ^^ Found setState() in render\n  12 |   return s;\n  13 | }\n  14 |",
+      "line": 11,
+      "column": 3,
+      "endLine": 11,
+      "endColumn": 5,
+      "suggestions": []
+     },
+     {
+      "ruleId": "react-hooks/set-state-in-render",
+      "severity": 2,
+      "message": "Error: Cannot call setState during render\n\nCalling setState during render may trigger an infinite loop.\n* To reset state when other state/props change, store the previous value in state and update conditionally: https://react.dev/reference/react/useState#storing-information-from-previous-renders\n* To derive data from other state/props, compute the derived data during render without using state.\n\n  22 |     for (const x of props.xs) v0 = v1;\n  23 |   } while (props.again);\n> 24 |   v0(1);\n     |   ^^ Found setState() in render\n  25 |   return s + t;\n  26 | }\n  27 |",
+      "line": 24,
+      "column": 3,
+      "endLine": 24,
+      "endColumn": 5,
+      "suggestions": []
+     },
+     {
+      "ruleId": "react-hooks/set-state-in-render",
+      "severity": 2,
+      "message": "Error: Cannot call setState during render\n\nCalling setState during render may trigger an infinite loop.\n* To reset state when other state/props change, store the previous value in state and update conditionally: https://react.dev/reference/react/useState#storing-information-from-previous-renders\n* To derive data from other state/props, compute the derived data during render without using state.\n\n  35 |     while (props.c()) v0 = v1;\n  36 |   } while (props.again);\n> 37 |   v0(1);\n     |   ^^ Found setState() in render\n  38 |   return s + t;\n  39 | }\n  40 |",
+      "line": 37,
+      "column": 3,
+      "endLine": 37,
+      "endColumn": 5,
+      "suggestions": []
+     },
+     {
+      "ruleId": "react-hooks/set-state-in-render",
+      "severity": 2,
+      "message": "Error: Cannot call setState during render\n\nCalling setState during render may trigger an infinite loop.\n* To reset state when other state/props change, store the previous value in state and update conditionally: https://react.dev/reference/react/useState#storing-information-from-previous-renders\n* To derive data from other state/props, compute the derived data during render without using state.\n\n  47 |     for (let i = 0; i < props.n; i++) v0 = v1;\n  48 |   } while (props.again);\n> 49 |   v0(1);\n     |   ^^ Found setState() in render\n  50 |   return s;\n  51 | }\n  52 |",
+      "line": 49,
+      "column": 3,
+      "endLine": 49,
+      "endColumn": 5,
+      "suggestions": []
+     },
+     {
+      "ruleId": "react-hooks/immutability",
+      "severity": 2,
+      "message": "Error: This value cannot be modified\n\nModifying a value returned from 'useState()', which should not be modified directly. Use the setter function to update instead.\n\n  62 |     for (let i = 0; i < props.n; i++) v0 = v1;\n  63 |   } while (props.again);\n> 64 |   v0.push(1);\n     |   ^^ value cannot be modified\n  65 |   return [s, t];\n  66 | }\n  67 |",
+      "line": 64,
+      "column": 3,
+      "endLine": 64,
+      "endColumn": 5,
+      "suggestions": []
+     },
+     {
+      "ruleId": "react-hooks/immutability",
+      "severity": 2,
+      "message": "Error: This value cannot be modified\n\nModifying component props or hook arguments is not allowed. Consider using a local variable instead.\n\n  73 |     for (let i = 0; i < props.n; i++) v0 = v1;\n  74 |   } while (props.again);\n> 75 |   v0.push(1);\n     |   ^^ value cannot be modified\n  76 |   return <div>{v0}</div>;\n  77 | }\n  78 |",
+      "line": 75,
+      "column": 3,
+      "endLine": 75,
+      "endColumn": 5,
+      "suggestions": []
+     }
+    ],
+    "suppressed": []
+   },
    "defaults-with-jsx.jsx": {
     "messages": [
      {
@@ -4912,6 +5151,31 @@
     ],
     "suppressed": []
    },
+   "one-local.jsx": {
+    "messages": [
+     {
+      "ruleId": "react-hooks/immutability",
+      "severity": 2,
+      "message": "Error: This value cannot be modified\n\nModifying component props or hook arguments is not allowed. Consider using a local variable instead.\n\n   6 |     if (item) list = extra;\n   7 |   }\n>  8 |   list.push(1);\n     |   ^^^^ value cannot be modified\n   9 |   return <div>{list}</div>;\n  10 | }\n  11 |",
+      "line": 8,
+      "column": 3,
+      "endLine": 8,
+      "endColumn": 7,
+      "suggestions": []
+     },
+     {
+      "ruleId": "react-hooks/set-state-in-render",
+      "severity": 2,
+      "message": "Error: Cannot call setState during render\n\nCalling setState during render may trigger an infinite loop.\n* To reset state when other state/props change, store the previous value in state and update conditionally: https://react.dev/reference/react/useState#storing-information-from-previous-renders\n* To derive data from other state/props, compute the derived data during render without using state.\n\n  17 |     if (item) set = setB;\n  18 |   }\n> 19 |   set(1);\n     |   ^^^ Found setState() in render\n  20 |   return (\n  21 |     <div>\n  22 |       {a}",
+      "line": 19,
+      "column": 3,
+      "endLine": 19,
+      "endColumn": 6,
+      "suggestions": []
+     }
+    ],
+    "suppressed": []
+   },
    "react-by-its-name.jsx": {
     "messages": [
      {
@@ -4932,6 +5196,21 @@
       "column": 47,
       "endLine": 5,
       "endColumn": 56,
+      "suggestions": []
+     }
+    ],
+    "suppressed": []
+   },
+   "typed-cycle.ts": {
+    "messages": [
+     {
+      "ruleId": "react-hooks/set-state-in-render",
+      "severity": 2,
+      "message": "Error: Cannot call setState during render\n\nCalling setState during render may trigger an infinite loop.\n* To reset state when other state/props change, store the previous value in state and update conditionally: https://react.dev/reference/react/useState#storing-information-from-previous-renders\n* To derive data from other state/props, compute the derived data during render without using state.\n\n<dir>/typed-cycle.ts:11:3\n   9 |     for (let i = 0; i < props.n; i++) v0 = v1;\n  10 |   } while (props.again);\n> 11 |   v0(1);\n     |   ^^ Found setState() in render\n  12 |   return s;\n  13 | }\n  14 |",
+      "line": 11,
+      "column": 3,
+      "endLine": 11,
+      "endColumn": 5,
       "suggestions": []
      }
     ],

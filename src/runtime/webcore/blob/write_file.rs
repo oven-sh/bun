@@ -78,7 +78,13 @@ impl FdOp for WriteFile {
 
         #[cfg(any(target_os = "linux", target_os = "android"))]
         if !self.could_block && self.range.len() > 1024 {
-            let _ = sys::preallocate_file(fd.get().native(), 0, self.range.len() as i64);
+            // Preallocating grows the file, and O_APPEND writes after its end.
+            let appends = pathlike.is_fd()
+                && sys::get_fcntl_flags(fd.get())
+                    .is_ok_and(|flags| flags as i32 & sys::O::APPEND != 0);
+            if !appends {
+                let _ = sys::preallocate_file(fd.get().native(), 0, self.range.len() as i64);
+            }
         }
         let step = self.step(fd.get(), false)?;
         Ok((fd, step))

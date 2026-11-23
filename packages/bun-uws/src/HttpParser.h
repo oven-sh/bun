@@ -549,11 +549,11 @@ struct HttpResponseData;
         {
             std::string_view url = getUrl();
             size_t schemeLength = absoluteFormSchemeLength(url);
-            if (!schemeLength) [[likely]] {
+            if (!schemeLength) {
                 return true;
             }
 
-            const std::string_view defaultPort = schemeLength == 7 ? ":80" : ":443";
+            const std::string_view defaultPort = schemeLength == 7 ? std::string_view(":80") : std::string_view(":443");
             auto withoutDefaultPort = [defaultPort](std::string_view hostAndPort) {
                 if (hostAndPort.ends_with(defaultPort)) {
                     hostAndPort.remove_suffix(defaultPort.length());
@@ -561,9 +561,14 @@ struct HttpResponseData;
                 return hostAndPort;
             };
 
-            std::string_view authority = url.substr(schemeLength);
-            authority = withoutDefaultPort(authority.substr(0, authority.find('/')));
-            if (authority.empty() || authority.find_first_of("@#\\") != std::string_view::npos) {
+            size_t authorityEnd = schemeLength;
+            for (; authorityEnd < url.length() && url[authorityEnd] != '/'; authorityEnd++) {
+                if (url[authorityEnd] == '@' || url[authorityEnd] == '#' || url[authorityEnd] == '\\') {
+                    return false;
+                }
+            }
+            std::string_view authority = withoutDefaultPort(url.substr(schemeLength, authorityEnd - schemeLength));
+            if (authority.empty()) {
                 return false;
             }
             for (Header *h = headers; (++h)->key.length();) {
@@ -1495,7 +1500,7 @@ struct HttpResponseData;
             req->querySeparator = (unsigned int) ((querySeparatorPtr ? querySeparatorPtr : req->headers->value.data() + req->headers->value.length()) - req->headers->value.data());
 
             /* node:http hands the raw target to the listener, so it has no host to choose. */
-            if (!IsNodeHttp && !req->hasValidTargetAuthority()) [[unlikely]] {
+            if (!IsNodeHttp && req->headers->value.data()[0] != '/' && !req->hasValidTargetAuthority()) [[unlikely]] {
                 return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_INVALID_REQUEST);
             }
 

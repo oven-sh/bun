@@ -3389,6 +3389,30 @@ describe("bundler", () => {
     minifySyntax: true,
     run: { stdout: "c sees undefined\nentry sees 1" },
   });
+  // A reader can run before the leaf file: "c.js" is in a cycle with the barrel. It gets the
+  // value, as in esbuild. Without the inlining the bundle printed "undefined", and the program
+  // that is not bundled throws a ReferenceError.
+  itBundled("dce/CrossModuleConstInliningCycleThroughBarrel", {
+    files: {
+      "/entry.js": /* js */ `
+        import { X } from "./barrel.js";
+        console.log("entry sees", X);
+      `,
+      "/barrel.js": /* js */ `
+        import "./c.js";
+        export { X } from "./leaf.js";
+      `,
+      "/c.js": /* js */ `
+        import { X } from "./barrel.js";
+        console.log("c sees", X);
+      `,
+      "/leaf.js": /* js */ `
+        export const X = 1;
+      `,
+    },
+    minifySyntax: true,
+    run: { stdout: "c sees 1\nentry sees 1" },
+  });
   itBundled("dce/CrossModuleConstInliningSplitting", {
     files: {
       "/a.js": /* js */ `

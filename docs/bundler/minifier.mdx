@@ -1097,6 +1097,8 @@ Inlines a `const` that another module exports, and folds what the value decides.
 - **Declaring module:** it imports nothing: no `import`, no `export ... from`, no `require()` and no `import()`. A module in an import cycle can be read before it runs.
 - **Position:** only these come before it in the module: comments, directives, type-only declarations, TypeScript enums, other constants that are inlined, and declarations whose initializer is a string, a function, `{}` or an array of those.
 
+A module that reads the constant through a re-export inside an import cycle can run before the declaring module. It gets the value. The program that is not bundled throws a `ReferenceError` there.
+
 ```js Input
 // env.js
 export const DEV = false;

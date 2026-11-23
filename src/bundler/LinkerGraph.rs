@@ -910,7 +910,7 @@ impl<'a> LinkerGraph<'a> {
             let named_exports = self.ast.items_named_exports();
             for source_index in &self.reachable_files {
                 let id = source_index.get() as usize;
-                // A file that imports nothing is in no import cycle: it runs before its readers.
+                // esbuild's rule: the declaring file is in no import cycle. A reader can be in one.
                 if import_records[id].len() == 0 && named_exports[id].count() > 0 {
                     collect_leaf_const_values(
                         parts[id].as_slice(),

@@ -249,6 +249,10 @@ impl<P> Client<P> {
         &self.config
     }
 
+    pub fn is_dialing(&self) -> bool {
+        matches!(self.state, Opening(Step::Dial, _))
+    }
+
     pub fn is_connected(&self) -> bool {
         match self.state {
             Select | Ready | SpareSelect | Spare => true,

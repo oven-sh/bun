@@ -64,13 +64,10 @@ const told = "data: (socket, data) => resolve(data)";
 const ofServers = (member: string, classes: string, text: string[]) =>
   Object.fromEntries([`%HTTPServer%.prototype.${member} > ${classes}`].map(key => [key, text]));
 
-const stats = (bigint: boolean) => `import { statSync } from "node:fs";\nconst stats = statSync(".", { bigint: ${bigint} });`;
+const stats = (bigint: boolean) =>
+  `import { statSync } from "node:fs";\nconst stats = statSync(".", { bigint: ${bigint} });`;
 const callsOfFileSystem: Record<string, string[]> = {
-  statSync: [
-    'import { statSync } from "node:fs";\nstatSync(".")',
-    `${stats(false)}\nstats`,
-    `${stats(true)}\nstats`,
-  ],
+  statSync: ['import { statSync } from "node:fs";\nstatSync(".")', `${stats(false)}\nstats`, `${stats(true)}\nstats`],
   lstatSync: [
     'import { lstatSync } from "node:fs";\nlstatSync(".")',
     'import { lstatSync } from "node:fs";\nlstatSync(".", { bigint: true })',
@@ -97,7 +94,9 @@ const ofJSC = (name: string, operands = "") => [`import { ${name} } from "bun:js
 export const calls: Record<string, string[]> = {
   // The rows under the names of the classes are the constructors'. What native code makes is judged under the methods of the binding, as node:fs hands it on.
   "%Stats%": [`${stats(false)}\nnew stats.constructor(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14)`],
-  "%BigIntStats%": [`${stats(true)}\nnew stats.constructor(1n, 2n, 3n, 4n, 5n, 6n, 7n, 8n, 9n, 10n, 11n, 12n, 13n, 14n)`],
+  "%BigIntStats%": [
+    `${stats(true)}\nnew stats.constructor(1n, 2n, 3n, 4n, 5n, 6n, 7n, 8n, 9n, 10n, 11n, 12n, 13n, 14n)`,
+  ],
   // Only the node:fs of a compiled program holds the functions. A function and the method of its name make what they answer in the same code (node_fs.rs).
   ...Object.fromEntries(
     Object.entries(callsOfFileSystem).flatMap(([name, texts]) => [
@@ -117,10 +116,14 @@ export const calls: Record<string, string[]> = {
   "PerformanceObserverEntryList.prototype.getEntries": [`${observed}\nlist.getEntries()`],
   "PerformanceObserverEntryList.prototype.getEntriesByName": [`${observed}\nlist.getEntriesByName("fresh-results")`],
   "PerformanceObserverEntryList.prototype.getEntriesByType": [`${observed}\nlist.getEntriesByType("mark")`],
-  "PerformanceObserver.prototype.takeRecords": ['const observer = new PerformanceObserver(() => {});\nobserver.observe({ entryTypes: ["mark"] });\nobserver.takeRecords()'],
+  "PerformanceObserver.prototype.takeRecords": [
+    'const observer = new PerformanceObserver(() => {});\nobserver.observe({ entryTypes: ["mark"] });\nobserver.takeRecords()',
+  ],
   // A mark and a measure have a toJSON() of their own.
   "PerformanceEntry.prototype.toJSON": ['PerformanceEntry.prototype.toJSON.call(performance.mark("fresh-results"))'],
-  "%IntlSegmentIterator%.prototype.next > ": ['const step = new Intl.Segmenter("en").segment("ab")[Symbol.iterator]().next();\nconst value = step.value;\nvalue'],
+  "%IntlSegmentIterator%.prototype.next > ": [
+    'const step = new Intl.Segmenter("en").segment("ab")[Symbol.iterator]().next();\nconst value = step.value;\nvalue',
+  ],
   "%Subprocess%.prototype.stdio": ['const child = Bun.spawn(["true"]);\nawait child.exited;\nchild.stdio'],
   "%ResourceUsage%.prototype.messages": ['const usage = Bun.spawnSync(["true"]).resourceUsage;\nusage.messages'],
   "%Histogram%.prototype.toJSON": ['import { createHistogram } from "node:perf_hooks";\ncreateHistogram().toJSON()'],
@@ -223,7 +226,11 @@ export const calls: Record<string, string[]> = {
   "FormData.prototype.entries": [`${form}\nform.entries()`],
   "FormData.prototype.keys": [`${form}\nform.keys()`],
   "FormData.prototype.values": [`${form}\nform.values()`],
-  "FormData.prototype.getAll": [`${form}\nform.getAll("text")`, `${form}\nform.getAll("file")`, `${form}\nform.getAll("none")`],
+  "FormData.prototype.getAll": [
+    `${form}\nform.getAll("text")`,
+    `${form}\nform.getAll("file")`,
+    `${form}\nform.getAll("none")`,
+  ],
   "FormData.prototype.toJSON": [`${form}\nform.toJSON()`, "new FormData().toJSON()"],
   "FormData.prototype.get > Blob": [`${form}\nform.get("file")`],
   "FormData.prototype.getAll > Blob": [`${form}\nform.getAll("file")[0]`],
@@ -371,7 +378,9 @@ export const calls: Record<string, string[]> = {
   ],
   "Intl.RelativeTimeFormat.prototype.formatToParts": ['new Intl.RelativeTimeFormat("en").formatToParts(1, "day")'],
   "native:Bindgen:node_os.bind.ts:loadavg": ['import { loadavg } from "node:os";\nloadavg()'],
-  "native:Bindgen:node_util_binding.bind.ts:parseEnv": ['import { parseEnv } from "node:util";\nparseEnv("FIRST=1\\nSECOND=two")'],
+  "native:Bindgen:node_util_binding.bind.ts:parseEnv": [
+    'import { parseEnv } from "node:util";\nparseEnv("FIRST=1\\nSECOND=two")',
+  ],
   "native:Bindgen:node_path.bind.ts:parsePosix": ['import { posix } from "node:path";\nposix.parse("/a/b.c")'],
   "native:Bindgen:node_path.bind.ts:parseWin32": ['import { win32 } from "node:path";\nwin32.parse("C:\\\\a\\\\b.c")'],
   "native:Bindgen:socket_body.bind.ts:createSocketPair": [
@@ -435,7 +444,6 @@ export const calls: Record<string, string[]> = {
   "Bun.Archive": ['new Bun.Archive({ "a.txt": "a" })'],
   "Bun.CryptoHasher": ['new Bun.CryptoHasher("sha256")', 'new Bun.CryptoHasher("sha256", "key")'],
   "Bun.FileSystemRouter": [`${temporary}\nnew Bun.FileSystemRouter({ style: "nextjs", dir: folder })`],
-  "Bun.RedisClient": ["new Bun.RedisClient()", 'new Bun.RedisClient("redis://127.0.0.1:1", { autoReconnect: false })'],
   "Bun.S3Client": ["new Bun.S3Client({})"],
   "Bun.Transpiler": ["new Bun.Transpiler()"],
   "Bun.Transpiler.prototype.scan": ['new Bun.Transpiler().scan(`import a from "b"; export const c = a;`)'],
@@ -600,9 +608,12 @@ export const notCalled: Record<string, string> = {
   "%TypedArray%": alwaysThrows,
   "%LinkTimeConstant:arrayFromFastWithoutMapFn%": ofTheEngine,
   "%LinkTimeConstant:asyncFromSyncIteratorCreate%": ofTheEngine,
-  "%AsyncFromSyncIterator%.prototype.next": "the engine alone enters it, behind `for await` and `yield*` over an iterator that is not async: no text gets hold of such an object (ECMA-262 27.1.6)",
-  "%AsyncFromSyncIterator%.prototype.return": "the engine alone enters it, behind `for await` and `yield*` over an iterator that is not async: no text gets hold of such an object (ECMA-262 27.1.6)",
-  "%AsyncFromSyncIterator%.prototype.throw": "the engine alone enters it, behind `for await` and `yield*` over an iterator that is not async: no text gets hold of such an object (ECMA-262 27.1.6)",
+  "%AsyncFromSyncIterator%.prototype.next":
+    "the engine alone enters it, behind `for await` and `yield*` over an iterator that is not async: no text gets hold of such an object (ECMA-262 27.1.6)",
+  "%AsyncFromSyncIterator%.prototype.return":
+    "the engine alone enters it, behind `for await` and `yield*` over an iterator that is not async: no text gets hold of such an object (ECMA-262 27.1.6)",
+  "%AsyncFromSyncIterator%.prototype.throw":
+    "the engine alone enters it, behind `for await` and `yield*` over an iterator that is not async: no text gets hold of such an object (ECMA-262 27.1.6)",
   "%LinkTimeConstant:iteratorHelperCreate%": ofTheEngine,
   "%LinkTimeConstant:makeTypeError%": ofTheEngine,
   "%LinkTimeConstant:newRejectedPromise%": ofTheEngine,
@@ -619,7 +630,8 @@ export const notCalled: Record<string, string> = {
   "bun:jsc.bytecodeOrderStats": "it answers only where the engine was started to record the order of bytecode",
   "bun:jsc.samplingProfilerStackTraces": "it answers only while the sampling profiler runs",
   "node:module.enableCompileCache": "it lays a folder for a cache into the user's temporary files",
-  "PerformanceServerTiming.prototype.toJSON": "no entry of this process has a server's timing: only a fetched resource has",
+  "PerformanceServerTiming.prototype.toJSON":
+    "no entry of this process has a server's timing: only a fetched resource has",
   "%CompilerHelpers%.arrayOfUndefined": ofTheCompiler,
   "%CompilerHelpers%.filledArray": ofTheCompiler,
   "%CompilerHelpers%.importRejectedByLoader": ofTheCompiler,

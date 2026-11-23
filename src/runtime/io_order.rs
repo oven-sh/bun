@@ -1,6 +1,6 @@
 //! A pool runs several tasks at once. Jobs with the same [`Key`] run one after the other, in the order of the calls.
 
-use core::cell::OnceCell;
+use core::cell::{Cell, RefCell, RefMut};
 use std::collections::VecDeque;
 use std::sync::Arc;
 
@@ -34,16 +34,30 @@ impl Key {
     }
 }
 
-/// The jobs behind the one that has the [`Turn`].
-type Queues = Arc<Guarded<ArrayHashMap<Key, VecDeque<Unstarted>>>>;
+/// The jobs behind the one that has the [`Turn`]. `None` if nobody has it.
+type Queue = Arc<Guarded<Option<VecDeque<Unstarted>>>>;
 
 #[derive(Default)]
-pub(crate) struct IoOrder(OnceCell<Queues>);
+pub(crate) struct IoOrder {
+    queues: RefCell<ArrayHashMap<Key, Queue>>,
+    prune_at: Cell<usize>,
+}
+
+impl IoOrder {
+    fn queue(&self, key: Key) -> RefMut<'_, Queue> {
+        RefMut::map(self.queues.borrow_mut(), |queues| {
+            if queues.len() >= self.prune_at.get() {
+                queues.retain(|_, queue| Arc::strong_count(queue) > 1);
+                self.prune_at.set(64 + 2 * queues.len());
+            }
+            queues.entry(key).or_default()
+        })
+    }
+}
 
 /// The next job starts when the task that drops this returns.
 pub(crate) struct Turn {
-    queues: Queues,
-    key: Key,
+    queue: Queue,
     start_next: fn(Unstarted),
     _pending: Option<PendingWrite>,
 }
@@ -57,14 +71,19 @@ impl Turn {
         create: impl FnOnce(Turn) -> Unstarted,
     ) {
         let order = &crate::jsc_hooks::runtime_state_of(cx.vm()).io_order;
-        let queues = order.0.get_or_init(Queues::default);
-        let turn = Turn {
-            queues: Arc::clone(queues),
-            key,
+        let queue = order.queue(key);
+        let job = create(Turn {
+            queue: Arc::clone(&queue),
             start_next: Unstarted::start_after_this_task,
             _pending: is_write.then(|| cx.vm().uws_loop().port().pending_write()),
-        };
-        start_or_queue(queues, key, create(turn));
+        });
+        let mut waiting = queue.lock();
+        if let Some(waiting) = &mut *waiting {
+            return waiting.push_back(job);
+        }
+        *waiting = Some(VecDeque::new());
+        drop(waiting);
+        job.start();
     }
 
     /// For a task that goes on to wait.
@@ -73,24 +92,14 @@ impl Turn {
     }
 }
 
-fn start_or_queue(queues: &Queues, key: Key, job: Unstarted) {
-    let mut queues = queues.lock();
-    if let Some(queue) = queues.get_mut(&key) {
-        return queue.push_back(job);
-    }
-    queues.insert(key, VecDeque::new());
-    drop(queues);
-    job.start();
-}
-
 impl Drop for Turn {
     fn drop(&mut self) {
-        let mut queues = self.queues.lock();
-        let Some(next) = queues.get_mut(&self.key).and_then(VecDeque::pop_front) else {
-            queues.swap_remove(&self.key);
+        let mut waiting = self.queue.lock();
+        let Some(next) = waiting.as_mut().and_then(VecDeque::pop_front) else {
+            *waiting = None;
             return;
         };
-        drop(queues);
+        drop(waiting);
         (self.start_next)(next);
     }
 }

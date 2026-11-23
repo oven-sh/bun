@@ -413,7 +413,8 @@ pub fn spawn(mut command: Command, options: &Options<'_>) -> Result<Child, E> {
     ];
     let jobs = jobs.into_iter().flatten();
     let job_handles: Vec<_> = jobs.clone().map(|job| job.as_raw_handle()).collect();
-    let first_attempt = (!is_reparse_point).then(|| create_process(&job_handles));
+    let first_attempt =
+        (!is_reparse_point && !job_handles.is_empty()).then(|| create_process(&job_handles));
     match first_attempt {
         // Jobs that this process joined after `jobs` were created can conflict with them.
         Some(Err(

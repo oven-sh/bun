@@ -15,7 +15,7 @@ use bun_sys::{Fd, FdExt as _};
 use bun_windows_sys::{HANDLE, NT_ERROR, NTSTATUS, ULONG, ntdll};
 
 use crate::notifier::Notifier;
-use crate::port::{Port, Shared, key};
+use crate::port::{Port, Shared, key, now_ns};
 use crate::slab::{Slab, Token};
 use crate::sys::{self, Packet, Timeout};
 
@@ -365,28 +365,30 @@ impl Request {
 
     /// For a request on a pipe. On `Ok` the callback does not run.
     pub fn cancel_and_wait(self) -> Result<Completion, Request> {
-        /// 1 ms.
-        const POLL_TIMEOUT: Timeout = Timeout::Relative(10_000);
-        const MAX_POLLS: u32 = 1000;
+        const TIMEOUT_NS: u64 = 1_000_000_000;
         let requests = &self.port.requests;
         let slot = match requests.get(self.token) {
             Some(slot) if slot.state.get() == State::PendingIo => slot,
             _ => return self.take_sync_completion(),
         };
         self.cancel();
-        for _ in 0..MAX_POLLS {
-            if slot.status.get().0 != NTSTATUS::PENDING {
-                let completion = slot.take_completion();
-                let _callback = requests.take_callback(&slot);
-                slot.state.set(State::PendingSignal);
-                if slot.notifier.try_cancel() {
-                    requests.slab.borrow_mut().release(self.token);
-                }
-                return Ok(completion);
+        let deadline_ns = now_ns() + TIMEOUT_NS;
+        let mut is_timed_out = false;
+        while slot.status.get().0 == NTSTATUS::PENDING {
+            if is_timed_out {
+                return Err(self);
             }
-            self.port.prefetch_packets(POLL_TIMEOUT);
+            let remaining_ns = deadline_ns.saturating_sub(now_ns());
+            let timeout = Timeout::Relative(remaining_ns.div_ceil(100) as i64);
+            is_timed_out = !self.port.prefetch_packets(timeout);
         }
-        Err(self)
+        let completion = slot.take_completion();
+        let _callback = requests.take_callback(&slot);
+        slot.state.set(State::PendingSignal);
+        if slot.notifier.try_cancel() {
+            requests.slab.borrow_mut().release(self.token);
+        }
+        Ok(completion)
     }
 
     /// Asks the kernel to cancel pending file I/O. The callback runs either way.

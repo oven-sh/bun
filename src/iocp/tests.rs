@@ -19,6 +19,7 @@ use bun_threading::spin::has_multiple_cpus;
 
 use crate::blocking::{self, CancelToken, ConcurrencyGate};
 use crate::faults::{self, Call, fail, intercept};
+use crate::port::key;
 use crate::sys;
 use crate::{
     Completer, Completion, Event, Handle, LoopRef, OverlappedFile, Port, Readiness,
@@ -1377,14 +1378,57 @@ fn cancel_and_wait_returns_request_when_cancel_is_ignored() {
         let read = start_read(&file, &result);
         let success = to_return_value(NTSTATUS::SUCCESS);
         let ignored_cancel = fail(Call::NtCancelIoFileEx, 1, success);
-        let timeout = to_return_value(NTSTATUS::TIMEOUT);
-        let instant_timeout = fail(Call::NtRemoveIoCompletionEx, usize::MAX, timeout);
+        let timeouts = Rc::new(RefCell::new(Vec::new()));
+        let timeouts_clone = Rc::clone(&timeouts);
+        let instant_timeout = intercept(Call::NtRemoveIoCompletionEx, move |args| {
+            // SAFETY: `args[4]` is the `Timeout` pointer, which is null or valid during the call.
+            let timeout = unsafe { ptr::with_exposed_provenance::<i64>(args[4]).as_ref() };
+            timeouts_clone.borrow_mut().push(timeout.copied());
+            Some(to_return_value(NTSTATUS::TIMEOUT))
+        });
+        freeze_clock();
         let _read = read.cancel_and_wait().err().unwrap();
+        FROZEN_TIME.set(None);
+        assert_eq!(timeouts.take(), [Some(-10_000_000)]);
         drop((ignored_cancel, instant_timeout));
         peer.write_all(b"late").unwrap();
         run_until(&port, || result.borrow().is_some());
         assert_eq!(result.take().unwrap().buffer, b"late");
     }
+}
+
+#[test]
+fn cancel_and_wait_drains_port_after_deadline() {
+    let port = Port::new().unwrap();
+    let (file, peer) = create_pipe(&port, OverlappedFile::new_exclusive);
+    let read = start_read(&file, &Rc::default());
+    for _ in 0..300 {
+        sys::post_packet(&port.shared.handle, key::TIMER, 0);
+    }
+    peer.write_all(b"last").unwrap();
+    CLOCK_STEP.set(Duration::from_secs(2));
+    assert_eq!(read.cancel_and_wait().ok().unwrap().buffer, b"last");
+}
+
+#[test]
+fn cancel_and_wait_outlasts_unrelated_packets() {
+    let port = Port::new().unwrap();
+    let (file, peer) = create_pipe(&port, OverlappedFile::new_exclusive);
+    let read = start_read(&file, &Rc::default());
+    let success = to_return_value(NTSTATUS::SUCCESS);
+    let _ignored_cancel = fail(Call::NtCancelIoFileEx, 1, success);
+    let port_clone = Rc::clone(&port);
+    let mut dequeue_count = 0;
+    let _guard = intercept(Call::NtRemoveIoCompletionEx, move |_| {
+        dequeue_count += 1;
+        if dequeue_count < 2000 {
+            sys::post_packet(&port_clone.shared.handle, key::TIMER, 0);
+        } else {
+            peer.write_all(b"last").unwrap();
+        }
+        None
+    });
+    assert_eq!(read.cancel_and_wait().ok().unwrap().buffer, b"last");
 }
 
 #[test]

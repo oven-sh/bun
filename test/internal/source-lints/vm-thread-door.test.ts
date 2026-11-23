@@ -51,8 +51,8 @@ const PATTERNS: [name: string, re: RegExp][] = [
   ["worker_pool.schedule(Batch)", /\)\s*\.schedule\(\s*(?:bun_threading::thread_pool::)?Batch::from/g],
   ["HTTPThread::schedule", /\bHTTPThread::schedule\s*\(/g],
   ["thread spawn", /\bthread::(?:Builder::new\s*\(|spawn\s*\()/g],
-  ["FilePool, DEVICE_POOL", /\bFilePool::(?:go|get)\b|\bDEVICE_POOL\.(?:schedule|go)/g],
-  ["blocking::spawn", /\bblocking::(?:spawn\s*\(|\{[^}]*\bspawn\b)/g],
+  ["FifoPool", /\bFifoPool::new\b|\bFilePool::(?:go|get)\b|\b[A-Z_]*POOL\s*\.\s*(?:schedule|go)\w*\s*\(/g],
+  ["blocking::spawn", /\bblocking::(?:\{[^}]*\b)?(?:spawn|try_spawn_dedicated)\b/g],
 ];
 
 const tracked: Set<string> | null = (() => {

@@ -5,10 +5,12 @@ import { run as runCommand } from "../aot/harness/run";
 
 // `bun build --compile` without any other flag: the folder that holds the embedded files acts like a folder of a
 // read-only file system.
-test.skipIf(isWindows)("the embedded root of an executable can be entered and cannot be written to", async () => {
-  using dir = tempDir("compile-embedded-root", {
-    "asset.txt": "hello asset",
-    "main.ts": `
+test.concurrent.skipIf(isWindows)(
+  "the embedded root of an executable can be entered and cannot be written to",
+  async () => {
+    using dir = tempDir("compile-embedded-root", {
+      "asset.txt": "hello asset",
+      "main.ts": `
       import fs from "node:fs";
       import path from "node:path";
       import asset from "./asset.txt" with { type: "file" };
@@ -47,46 +49,68 @@ test.skipIf(isWindows)("the embedded root of an executable can be entered and ca
       result.stillThere = fs.readFileSync(asset, "utf8");
       console.log(JSON.stringify(result));
     `,
+    });
+    const executable = join(String(dir), "main");
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", join(String(dir), "main.ts"), "--outfile", executable],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect({ stderr: await build.stderr.text(), exitCode: await build.exited }).toMatchObject({ exitCode: 0 });
+    const { stdout, stderr, exitCode } = await runCommand([executable], String(dir));
+    expect({ result: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
+      result: {
+        chdir: "fine",
+        cwdIsRoot: true,
+        resolve: true,
+        relativeRead: "hello asset",
+        childStartsOutside: true,
+        chdirIntoFile: "ENOTDIR",
+        chdirNowhere: "ENOENT",
+        glob: ["hello asset"],
+        globInRelativeCwd: 1,
+        symlinkTarget: "target.txt",
+        chdirOutByRelativePath: "fine",
+        outByRelativePath: true,
+        back: true,
+        writeFresh: "EROFS",
+        writeOver: "EROFS",
+        mkdirFresh: "EROFS",
+        mkdirRoot: "EEXIST",
+        mkdirRootRecursive: "fine",
+        mkdirDeepRecursive: "EROFS",
+        unlink: "EROFS",
+        rmForce: "EROFS",
+        rmForceNothing: "fine",
+        rename: "EROFS",
+        chmod: "EROFS",
+        bunWrite: "EROFS",
+        stillThere: "hello asset",
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+);
+
+test.concurrent("Bun.file().text() reports a relative path as written inside the embedded root", async () => {
+  using dir = tempDir("compile-embedded-root-error-path", {
+    "asset.txt": "hello asset",
+    "main.ts": `
+      import { dirname } from "node:path";
+      import asset from "./asset.txt" with { type: "file" };
+      process.chdir(dirname(asset));
+      const { code, syscall, path } = await Bun.file("missing.txt").text().catch(error => error);
+      console.log(JSON.stringify({ code, syscall, path }));
+    `,
   });
-  const executable = join(String(dir), "main");
-  await using build = Bun.spawn({
-    cmd: [bunExe(), "build", "--compile", join(String(dir), "main.ts"), "--outfile", executable],
-    env: bunEnv,
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  expect({ stderr: await build.stderr.text(), exitCode: await build.exited }).toMatchObject({ exitCode: 0 });
-  const { stdout, stderr, exitCode } = await runCommand([executable], String(dir));
-  expect({ result: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
-    result: {
-      chdir: "fine",
-      cwdIsRoot: true,
-      resolve: true,
-      relativeRead: "hello asset",
-      childStartsOutside: true,
-      chdirIntoFile: "ENOTDIR",
-      chdirNowhere: "ENOENT",
-      glob: ["hello asset"],
-      globInRelativeCwd: 1,
-      symlinkTarget: "target.txt",
-      chdirOutByRelativePath: "fine",
-      outByRelativePath: true,
-      back: true,
-      writeFresh: "EROFS",
-      writeOver: "EROFS",
-      mkdirFresh: "EROFS",
-      mkdirRoot: "EEXIST",
-      mkdirRootRecursive: "fine",
-      mkdirDeepRecursive: "EROFS",
-      unlink: "EROFS",
-      rmForce: "EROFS",
-      rmForceNothing: "fine",
-      rename: "EROFS",
-      chmod: "EROFS",
-      bunWrite: "EROFS",
-      stillThere: "hello asset",
-    },
+  const executable = join(String(dir), isWindows ? "main.exe" : "main");
+  const build = await runCommand([bunExe(), "build", "--compile", "main.ts", "--outfile", executable], String(dir));
+  expect(build).toMatchObject({ exitCode: 0 });
+  expect(await runCommand([executable], String(dir))).toEqual({
+    stdout: `{"code":"ENOENT","syscall":"open","path":"missing.txt"}\n`,
     stderr: "",
     exitCode: 0,
   });

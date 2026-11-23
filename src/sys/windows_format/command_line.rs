@@ -1,5 +1,6 @@
 //! Program lookup and command lines for `CreateProcessW`. Strings are not NUL-terminated.
 
+use bun_core::strings::has_prefix_case_insensitive_t;
 use bun_core::w;
 use bun_paths::portable::is_sep;
 
@@ -155,7 +156,9 @@ pub(crate) fn add_verbatim_prefix(full_path: &[u16]) -> Vec<u16> {
 pub(crate) fn strip_verbatim_prefix(path: &[u16]) -> Vec<u16> {
     match path.strip_prefix(w!("\\\\?\\")) {
         Some(rest @ [_, COLON, BACKSLASH, ..]) => rest.to_vec(),
-        Some(rest) if rest.starts_with(w!("UNC\\")) => [&path[..2], &rest[4..]].concat(),
+        Some(rest) if has_prefix_case_insensitive_t(rest, b"UNC\\") => {
+            [&path[..2], &rest[4..]].concat()
+        }
         _ => path.to_vec(),
     }
 }
@@ -378,6 +381,8 @@ mod tests {
             assert_eq!(from_wide(&strip_verbatim_prefix(&to_wide(verbatim))), path);
             assert_eq!(from_wide(&strip_verbatim_prefix(&to_wide(path))), path);
         }
+        let lowercase = to_wide(r"\\?\unc\s\t\a");
+        assert_eq!(from_wide(&strip_verbatim_prefix(&lowercase)), r"\\s\t\a");
     }
 
     #[test]

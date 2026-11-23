@@ -118,7 +118,7 @@ impl Utf16Decoder {
 
     pub fn push(&mut self, unit: u16, out: &mut Vec<u8>) {
         let pending_surrogate = self.high_surrogate.take();
-        let is_high_surrogate = (0xD800..0xDC00).contains(&unit);
+        let is_high_surrogate = bun_core::strings::u16_is_lead(unit);
         self.high_surrogate = is_high_surrogate.then_some(unit);
         let units = pending_surrogate
             .into_iter()

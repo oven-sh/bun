@@ -6,10 +6,10 @@ use bun_sys::{self as sys, E, File, FileKind, O, Tag};
 
 use super::blocking::BlockingIo;
 use crate::io_order::{Key, RetainedFile};
-use crate::node::fs::{DEFAULT_PERMISSION, error_for_caller};
+use crate::node::fs::DEFAULT_PERMISSION;
 use crate::node::types::PathLikeExt as _;
 use crate::webcore::blob::mkdirp;
-use crate::webcore::node_types::{PathLike, PathOrFileDescriptor};
+use crate::webcore::node_types::PathOrFileDescriptor;
 
 /// What a job opens.
 pub(super) enum Target {
@@ -50,10 +50,7 @@ impl Target {
     pub(super) fn attach_path(&self, err: sys::Error) -> sys::Error {
         match self {
             Self::Fd(_) => err,
-            Self::Path { original_path, .. } => error_for_caller(
-                [Some(&PathLike::borrowed(original_path)), None],
-                err.with_path(original_path),
-            ),
+            Self::Path { original_path, .. } => err.with_path(original_path),
         }
     }
 }

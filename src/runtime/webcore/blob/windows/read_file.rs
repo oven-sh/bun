@@ -7,6 +7,7 @@ use bun_sys::{self as sys, E, Stat, Tag};
 use super::blocking::{BlockingIo, BlockingTask};
 use super::job_file::{JobFile, Target, is_device, strip_error_context};
 use crate::io_order::{self, Key};
+use crate::node::fs::error_for_caller;
 use crate::webcore::blob::read_file::{
     PendingReadFileCompletion, ReadFileCompletion, directory_error,
 };
@@ -68,7 +69,11 @@ impl JobContext for ReadFile {
         let result = match this.blocking_task.take_result().unwrap_or(this.result) {
             Ok(bytes) => Ok(bytes.into()),
             Err(_) if this.is_directory => Err(directory_error(pathlike(&this.store))),
-            Err(err) => Err(err.into()),
+            Err(err) => Err(match pathlike(&this.store) {
+                PathOrFileDescriptor::Path(path) => error_for_caller([Some(path), None], err),
+                PathOrFileDescriptor::Fd(_) => err,
+            }
+            .into()),
         };
         completion.complete(result)
     }

@@ -1221,6 +1221,7 @@ int bsd_set_defer_accept(LIBUS_SOCKET_DESCRIPTOR listenFd) {
 int bsd_socket_export(LIBUS_SOCKET_DESCRIPTOR fd, unsigned int target_pid, void *info_out) {
 #ifdef _WIN32
     static_assert(sizeof(WSAPROTOCOL_INFOW) == 628, "SOCKET_INFO_LEN in src/sys/windows_format/ipc_frame.rs");
+    static_assert(alignof(WSAPROTOCOL_INFOW) == 4, "ProtocolInfo in src/runtime/ipc.rs");
     if (WSADuplicateSocketW(fd, (DWORD) target_pid, (WSAPROTOCOL_INFOW *) info_out) != 0) {
         return WSAGetLastError();
     }

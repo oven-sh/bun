@@ -1,6 +1,8 @@
 //! Lexical operations on Win32 paths and NT names.
 
-use bun_core::strings::{eql_case_insensitive_t, last_index_of_char_t};
+use bun_core::strings::{
+    eql_case_insensitive_t, has_prefix_case_insensitive_t, last_index_of_char_t,
+};
 use bun_core::{WStr, w, wstr};
 use bun_paths::portable::is_sep;
 
@@ -9,19 +11,14 @@ const COLON: u16 = b':' as u16;
 const DOT: u16 = b'.' as u16;
 const QUESTION_MARK: u16 = b'?' as u16;
 
-fn has_prefix_case_insensitive(text: &[u16], prefix: &[u8]) -> bool {
-    text.get(..prefix.len())
-        .is_some_and(|start| eql_case_insensitive_t(start, prefix))
-}
-
 fn is_volume_device(path: &[u16]) -> bool {
     let [a, b, DOT | QUESTION_MARK, c, device @ ..] = path else {
         return false;
     };
     let component_count = device.split(|&unit| is_sep(unit)).count();
     [a, b, c].into_iter().all(|&unit| is_sep(unit))
-        && (has_prefix_case_insensitive(device, b"Volume{") && component_count == 1
-            || has_prefix_case_insensitive(device, b"GLOBALROOT") && component_count == 3)
+        && (has_prefix_case_insensitive_t(device, b"Volume{") && component_count == 1
+            || has_prefix_case_insensitive_t(device, b"GLOBALROOT") && component_count == 3)
 }
 
 /// Length of the Win32 path without one trailing separator. A volume root keeps its separator.
@@ -44,11 +41,11 @@ pub(crate) fn is_device_name(nt_name: &[u16]) -> bool {
     let Some(name) = nt_name.strip_prefix(w!("\\??\\")) else {
         return false;
     };
-    if has_prefix_case_insensitive(name, b"UNC\\") {
+    if has_prefix_case_insensitive_t(name, b"UNC\\") {
         let share = name.split(|&unit| unit == BACKSLASH).nth(2);
         return share.is_some_and(|share| eql_case_insensitive_t(share, b"pipe"));
     }
-    !matches!(name, [_, COLON, ..]) && !has_prefix_case_insensitive(name, b"Volume{")
+    !matches!(name, [_, COLON, ..]) && !has_prefix_case_insensitive_t(name, b"Volume{")
 }
 
 /// Maps the NT name of a console device to its Win32 path.

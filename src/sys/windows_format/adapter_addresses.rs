@@ -443,20 +443,20 @@ mod tests {
     #[test]
     fn netmask_matches_prefix_len() {
         const ALL_ONES: &str = "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff";
-        for (ip, on_link_prefix_length, prefix_len, netmask) in [
-            ("10.0.0.1", 0, 0, "0.0.0.0"),
-            ("10.0.0.1", 1, 1, "128.0.0.0"),
-            ("10.0.0.1", 9, 9, "255.128.0.0"),
-            ("10.0.0.1", 31, 31, "255.255.255.254"),
-            ("10.0.0.1", 32, 32, "255.255.255.255"),
-            ("fd00::1", 0, 0, "::"),
-            ("fd00::1", 1, 1, "8000::"),
-            ("fd00::1", 63, 63, "ffff:ffff:ffff:fffe::"),
-            ("fd00::1", 64, 64, "ffff:ffff:ffff:ffff::"),
-            ("fd00::1", 128, 128, ALL_ONES),
+        for (ip, prefix_len, netmask) in [
+            ("10.0.0.1", 0, "0.0.0.0"),
+            ("10.0.0.1", 1, "128.0.0.0"),
+            ("10.0.0.1", 9, "255.128.0.0"),
+            ("10.0.0.1", 31, "255.255.255.254"),
+            ("10.0.0.1", 32, "255.255.255.255"),
+            ("fd00::1", 0, "::"),
+            ("fd00::1", 1, "8000::"),
+            ("fd00::1", 63, "ffff:ffff:ffff:fffe::"),
+            ("fd00::1", 64, "ffff:ffff:ffff:ffff::"),
+            ("fd00::1", 128, ALL_ONES),
         ] {
             let mut builder = BufferBuilder::new();
-            let unicast = builder.append_unicast(ip, 0, on_link_prefix_length, 0);
+            let unicast = builder.append_unicast(ip, 0, prefix_len, 0);
             let first = builder.new_adapter(&[0x61], unicast, 0);
             let address = parse_interfaces(&builder.finish(&first), BASE_ADDRESS)[0].addresses[0];
             assert_eq!(address.prefix_len, prefix_len);

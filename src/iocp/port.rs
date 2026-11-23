@@ -640,8 +640,8 @@ impl Port {
         }
     }
 
-    /// Dequeues packets, which makes the kernel write the results of their requests, and defers the dispatch.
-    pub(crate) fn prefetch_packets(&self, timeout: Timeout) {
+    /// Dequeues packets, which makes the kernel write the results of their requests, and defers the dispatch. Returns `false` on timeout.
+    pub(crate) fn prefetch_packets(&self, timeout: Timeout) -> bool {
         let packets = [const { Cell::new(Packet::EMPTY) }; BATCH_SIZE];
         let removed_count = sys::dequeue_packets(&self.shared.handle, &packets, timeout);
         for packet in packets[..removed_count].iter().map(Cell::get) {
@@ -649,6 +649,7 @@ impl Port {
                 self.defer(packet);
             }
         }
+        removed_count > 0
     }
 
     pub fn dispatch(&self, on_event: impl Fn(Event)) {

@@ -91,6 +91,7 @@
     ]
   },
   "src/runtime/dns_jsc/dns.rs": {
+    "FifoPool": 4,
     "WorkPool::schedule*": 1,
     "unsafe impl Send": [
       "DNSRequestOwner",
@@ -199,7 +200,7 @@
     "WorkPool::schedule*": 1
   },
   "src/runtime/webcore/blob/windows/blocking.rs": {
-    "FilePool, DEVICE_POOL": 1
+    "FifoPool": 1
   },
   "src/runtime/webcore/fetch/FetchTasklet.rs": {
     "HTTPThread::schedule": 1

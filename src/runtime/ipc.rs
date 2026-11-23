@@ -673,23 +673,28 @@ pub(crate) struct Handle {
     pub cluster_seq: Option<i32>,
 }
 
+/// `WSAPROTOCOL_INFOW`.
+#[cfg(windows)]
+#[repr(C, align(4))]
+struct ProtocolInfo([u8; ipc_frame::SOCKET_INFO_LEN]);
+
 /// A socket duplicated for the peer process with `WSADuplicateSocketW`.
 #[cfg(windows)]
 struct ExportedSocket {
     fd: Fd,
     peer_pid: u32,
-    info: Box<[u8; ipc_frame::SOCKET_INFO_LEN]>,
+    info: Box<ProtocolInfo>,
     is_connected: bool,
 }
 
 #[cfg(windows)]
 impl ExportedSocket {
     fn new(fd: Fd, peer_pid: u32) -> Option<Self> {
-        let mut info = Box::new([0; ipc_frame::SOCKET_INFO_LEN]);
+        let mut info = Box::new(ProtocolInfo([0; ipc_frame::SOCKET_INFO_LEN]));
         let socket = fd.native() as bun_uws::LIBUS_SOCKET_DESCRIPTOR;
-        // SAFETY: `info` has room for the `WSAPROTOCOL_INFOW` that the call writes.
+        // SAFETY: `info` has the size and alignment of the `WSAPROTOCOL_INFOW` that the call writes.
         let rc = unsafe {
-            bun_uws::socket_transfer::bsd_socket_export(socket, peer_pid, info.as_mut_ptr().cast())
+            bun_uws::socket_transfer::bsd_socket_export(socket, peer_pid, (&raw mut *info).cast())
         };
         (rc == 0).then(|| Self {
             fd,
@@ -701,7 +706,7 @@ impl ExportedSocket {
 
     fn as_socket_transfer(&self) -> ipc_frame::SocketTransfer<'_> {
         ipc_frame::SocketTransfer {
-            info: &self.info,
+            info: &self.info.0,
             is_connected: self.is_connected,
         }
     }
@@ -731,11 +736,11 @@ impl Drop for ImportedSocket {
 
 #[cfg(windows)]
 fn import_socket(info: &[u8; ipc_frame::SOCKET_INFO_LEN]) -> Option<ImportedSocket> {
-    let mut info = *info;
+    let mut info = ProtocolInfo(*info);
     let mut err = 0;
-    // SAFETY: `info` has the size of the `WSAPROTOCOL_INFOW` that the call reads.
+    // SAFETY: `info` has the size and alignment of the `WSAPROTOCOL_INFOW` that the call reads.
     let socket = unsafe {
-        bun_uws::socket_transfer::bsd_socket_import(info.as_mut_ptr().cast(), &raw mut err)
+        bun_uws::socket_transfer::bsd_socket_import((&raw mut info).cast(), &raw mut err)
     };
     (socket != bun_uws::LIBUS_SOCKET_DESCRIPTOR::MAX)
         .then(|| ImportedSocket(Fd::from_system(socket as *mut c_void)))

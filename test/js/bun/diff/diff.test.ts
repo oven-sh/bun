@@ -768,6 +768,7 @@ describe("parsePatch", () => {
     ["diff -c, then a git section", "*** o\n--- n\n***************\ndiff --git a/g b/g\n", 'Missing "+++ ..." file header for n'],
     ["Index: and ---, then a git section", "Index: f\n--- f\ndiff --git a/g b/g\n", 'Missing "+++ ..." file header for f'],
     ["a rule and ---, then a git section", `Index: f\r\n${"=".repeat(67)}\r\n--- f\r\ndiff --git a/g b/g\r\n`, 'Missing "+++ ..." file header for f'],
+    ["a rule and ---, then a hunk", `${"=".repeat(67)}\n--- f\n${body}`, 'Missing "+++ ..." file header for f'],
     ["only ---, then a combined hunk", "--- f\n@@@ -1 -1 +1 @@@\ndiff --git a/g b/g\n", 'Missing "+++ ..." file header for f'],
     ["--- and +++ without hunks, then a git section", "diff --cc f\n--- a/f\n+++ b/f\ndiff --git a/g b/g\n", [
       { oldFileName: "a/f", oldHeader: "", newFileName: "b/f", newHeader: "", hunks: [] },
@@ -796,6 +797,10 @@ describe("parsePatch", () => {
       { isGit: true, oldFileName: "a/f", oldHeader: "", newFileName: "b/f", newHeader: "", hunks: [hunk] },
       { isGit: true, oldFileName: "a/g", newFileName: "b/g", hunks: [] },
     ]],
+    ["--- after a rule in a commit message", `Subject: x\n\n${"=".repeat(67)}\n--- x\ndiff --git a/f b/f\n${body}`, [{ isGit: true, oldFileName: "a/f", newFileName: "b/f", hunks: [hunk] }]],
+    ["--- after a rule in the second commit", `diff --git a/f b/f\n${body}-- \n\n${"=".repeat(67)}\n--- x\ndiff --git a/f b/f\n${body}`, Array(2).fill({ isGit: true, oldFileName: "a/f", newFileName: "b/f", hunks: [hunk] })],
+    ["--- after a rule on the first line", `${"=".repeat(67)}\n--- x\ndiff --git a/f b/f\n${body}`, [{ isGit: true, oldFileName: "a/f", newFileName: "b/f", hunks: [hunk] }]],
+    ["--- before stars in a commit message", `Subject: x\n\n--- x\n***************\ndiff --git a/f b/f\n${body}`, [{ isGit: true, oldFileName: "a/f", newFileName: "b/f", hunks: [hunk] }]],
     ["a removed line too many that starts with --", `${body}--- x\ndiff --git a/f b/f\n`, "Hunk at line 1 has more lines than expected (expected 1 old lines and 1 new lines)"],
     // diff makes two entries of each file.
     ["svn diff --git", `Index: e\n${"=".repeat(67)}\ndiff --git a/e b/e\nnew file mode 100644\nIndex: f\n${"=".repeat(67)}\ndiff --git a/f b/f\n--- a/f\t(revision 1)\n+++ b/f\t(working copy)\n${body}`, [
@@ -819,6 +824,7 @@ describe("parsePatch", () => {
   // prettier-ignore
   test.each([
     ["git format-patch", `Subject: x\n\n---\n f | 2 +-\n\ndiff --git a/f b/f\n--- a/f\n+++ b/f\n${body}-- \n2.43.0\n`, [{ isGit: true, oldFileName: "a/f", oldHeader: "", newFileName: "b/f", newHeader: "", hunks: [withCR] }]],
+    ["--- between a rule and stars in a commit message", `${"=".repeat(67)}\n--- x\n***************\ndiff --git a/f b/f\n${body}`, [{ isGit: true, oldFileName: "a/f", newFileName: "b/f", hunks: [withCR] }]],
     ["markers alone in the text around the hunks", `+++\nIndex:\ndiff -r abc\n${body}\n---\n+++\n`, [{ hunks: [withCR] }]],
     ["names from diff --git", 'diff --git a/f b/f\ndiff --git "a/\\t" b/世\n', [
       { isGit: true, oldFileName: "a/f", newFileName: "b/f", hunks: [] },

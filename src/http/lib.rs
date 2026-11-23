@@ -48,8 +48,6 @@ pub mod signals;
 #[path = "ThreadSafeStreamBuffer.rs"]
 pub mod thread_safe_stream_buffer;
 mod verbose;
-#[path = "websocket.rs"]
-pub mod websocket;
 
 // ── crate-root re-exports ──
 pub use async_http::AsyncHTTP;

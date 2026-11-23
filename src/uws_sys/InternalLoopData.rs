@@ -108,6 +108,14 @@ impl InternalLoopData {
         self.parent_ptr.set(ptr);
     }
 
+    /// For a handler that may run outside of a tick. It can close sockets, then tick the loop.
+    pub(crate) fn keeping_closed_sockets<R>(&self, f: impl FnOnce() -> R) -> R {
+        self.tick_depth.update(|depth| depth + 1);
+        let result = f();
+        self.tick_depth.update(|depth| depth - 1);
+        result
+    }
+
     #[inline]
     pub fn get_parent_raw(&self) -> (c_char, *mut c_void) {
         let (tag, ptr) = (self.parent_tag.get(), self.parent_ptr.get());

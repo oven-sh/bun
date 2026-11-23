@@ -819,7 +819,6 @@ dependencies = [
  "bun_boringssl",
  "bun_collections",
  "bun_core",
- "bun_deflate",
  "bun_errno",
  "bun_highway",
  "bun_http",
@@ -829,9 +828,9 @@ dependencies = [
  "bun_jsc",
  "bun_opaque",
  "bun_ptr",
- "bun_sha_hmac",
  "bun_uws",
  "bun_uws_sys",
+ "bun_websocket",
  "bun_zlib",
  "strum",
  "thiserror",
@@ -1754,6 +1753,7 @@ dependencies = [
  "bun_valkey",
  "bun_watcher",
  "bun_webp",
+ "bun_websocket",
  "bun_which",
  "bun_wyhash",
  "bun_zlib",
@@ -2227,11 +2227,13 @@ dependencies = [
  "bun_core",
  "bun_errno",
  "bun_hpack",
+ "bun_http1",
  "bun_http_types",
  "bun_libuv_sys",
  "bun_opaque",
  "bun_paths",
  "bun_ptr",
+ "bun_websocket",
  "bun_windows_sys",
  "libc",
  "strum",
@@ -2273,6 +2275,19 @@ dependencies = [
  "bun_alloc",
  "bun_highway",
  "thiserror",
+]
+
+[[package]]
+name = "bun_websocket"
+version = "0.0.0"
+dependencies = [
+ "bun_base64",
+ "bun_collections",
+ "bun_core",
+ "bun_deflate",
+ "bun_sha_hmac",
+ "bun_wyhash",
+ "bun_zlib",
 ]
 
 [[package]]

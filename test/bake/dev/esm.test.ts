@@ -103,6 +103,57 @@ devTest("live bindings through export from", {
   },
   test: liveBindingTest.test,
 });
+for (const [name, reexport] of [
+  ["export from", `export { value, value as renamed, set } from './state.js';`],
+  ["export clause", `import { value, set } from './state.js'; export { value, value as renamed, set };`],
+]) {
+  const dep = {
+    "node_modules/dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0", type: "module" }),
+    "node_modules/dep/state.js": `
+      export let value;
+      export function set() {
+        value = 1;
+      }
+    `,
+    "node_modules/dep/index.js": reexport,
+  };
+  const read = `'value=' + dep.value + ' renamed=' + dep.renamed`;
+  devTest(`live bindings through ${name} in node_modules`, {
+    framework: minimalFramework,
+    files: {
+      ...dep,
+      "routes/index.ts": `
+        import * as dep from 'dep';
+        export default function(req, meta) {
+          const before = ${read};
+          dep.set();
+          return new Response(before + ' -> ' + ${read});
+        }
+      `,
+    },
+    async test(dev) {
+      await dev.fetch("/").equals("value=undefined renamed=undefined -> value=1 renamed=1");
+    },
+  });
+  devTest(`live bindings through ${name} in node_modules (client)`, {
+    files: {
+      ...dep,
+      "index.html": emptyHtmlFile({
+        scripts: ["index.ts"],
+      }),
+      "index.ts": `
+        import * as dep from 'dep';
+        const before = ${read};
+        dep.set();
+        console.log(before + ' -> ' + ${read});
+      `,
+    },
+    async test(dev) {
+      await using c = await dev.client();
+      await c.expectMessage("value=undefined renamed=undefined -> value=1 renamed=1");
+    },
+  });
+}
 // devTest("live bindings through export star", {
 //   framework: minimalFramework,
 //   files: {

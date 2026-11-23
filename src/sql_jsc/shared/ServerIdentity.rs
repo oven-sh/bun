@@ -1,4 +1,4 @@
-//! `tls.checkServerIdentity(hostname, cert)` for the SQL drivers and the Redis client.
+//! `tls.checkServerIdentity(hostname, cert)` for the SQL drivers.
 
 use crate::jsc::{JSGlobalObject, JSValue, JsResult, VirtualMachine, bun_string_jsc};
 use bun_boringssl_sys::X509;
@@ -10,7 +10,7 @@ unsafe extern "C" {
     safe fn Bun__X509__toJSLegacyEncoding(cert: &mut X509, global: &JSGlobalObject) -> JSValue;
 }
 
-pub fn callback_of(global: &JSGlobalObject, tls: JSValue) -> JsResult<Option<JSValue>> {
+pub(crate) fn callback_of(global: &JSGlobalObject, tls: JSValue) -> JsResult<Option<JSValue>> {
     if !tls.is_object() {
         return Ok(None);
     }
@@ -20,7 +20,7 @@ pub fn callback_of(global: &JSGlobalObject, tls: JSValue) -> JsResult<Option<JSV
 }
 
 /// `Err` is what the connection fails with. Runs user code, which can close the connection.
-pub fn check(
+pub(crate) fn check(
     global: &JSGlobalObject,
     callback: JSValue,
     socket: &AnySocket,

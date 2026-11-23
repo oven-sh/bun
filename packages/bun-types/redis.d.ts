@@ -38,24 +38,7 @@ declare module "bun" {
      * TLS options. `serverName` sets the SNI and the name the certificate is
      * verified against, which default to the URL host.
      */
-    tls?:
-      | boolean
-      | (Bun.TLSOptions & {
-          /**
-           * Replaces the built-in check of the host name, as in `node:tls`. Bun
-           * calls it once for each connection, after the certificate chain
-           * verified and before it sends the user name or the password. Bun
-           * does not call it with `rejectUnauthorized: false`. The certificate
-           * has no `issuerCertificate`, and `this` is `undefined`.
-           *
-           * @param hostname `serverName`, or else the URL host. `"localhost"`
-           * for a unix socket.
-           * @returns `undefined` to accept the certificate. A returned or thrown
-           * `Error`, or any other truthy value such as a promise, fails the
-           * connection.
-           */
-          checkServerIdentity?: NonNullable<import("node:tls").ConnectionOptions["checkServerIdentity"]> | undefined;
-        });
+    tls?: boolean | Bun.TLSOptions;
 
     /**
      * Whether to enable auto-pipelining
@@ -76,8 +59,8 @@ declare module "bun" {
     /**
      * Creates a new Redis client
      *
-     * @param url URL to connect to, defaults to `process.env.REDIS_URL`,
-     * `process.env.VALKEY_URL`, or `"valkey://localhost:6379"`
+     * @param url URL to connect to, defaults to `process.env.VALKEY_URL`,
+     * `process.env.REDIS_URL`, or `"valkey://localhost:6379"`
      * @param options Additional options
      *
      * @example
@@ -2866,6 +2849,9 @@ declare module "bun" {
     /**
      * Subscribe to a Redis channel.
      *
+     * Subscribing disables automatic pipelining, so all commands are received
+     * immediately.
+     *
      * Subscribing moves the channel to a dedicated subscription state which
      * prevents most other commands from being executed until unsubscribed. Only
      * {@link ping `.ping()`}, {@link subscribe `.subscribe()`}, and
@@ -2888,6 +2874,9 @@ declare module "bun" {
     /**
      * Subscribe to multiple Redis channels.
      *
+     * Subscribing disables automatic pipelining, so all commands are received
+     * immediately.
+     *
      * Subscribing moves the channels to a dedicated subscription state in which
      * only a limited set of commands can be executed.
      *
@@ -2901,6 +2890,9 @@ declare module "bun" {
     /**
      * Unsubscribe from a single Redis channel.
      *
+     * If there are no more channels subscribed to, the client automatically
+     * re-enables pipelining if it was previously enabled.
+     *
      * Once all channels have been unsubscribed from, the client leaves the
      * subscription state. For further details on the subscription state, see
      * {@link subscribe `.subscribe()`}.
@@ -2911,6 +2903,9 @@ declare module "bun" {
 
     /**
      * Remove a listener from a given Redis channel.
+     *
+     * If there are no more channels subscribed to, the client automatically
+     * re-enables pipelining if it was previously enabled.
      *
      * Once all channels have been unsubscribed from, the client leaves the
      * subscription state. For further details on the subscription state, see
@@ -2926,6 +2921,9 @@ declare module "bun" {
     /**
      * Unsubscribe from all registered Redis channels.
      *
+     * The client automatically re-enables pipelining if it was previously
+     * enabled.
+     *
      * Once all channels have been unsubscribed from, the client leaves the
      * subscription state. For further details on the subscription state, see
      * {@link subscribe `.subscribe()`}.
@@ -2934,6 +2932,9 @@ declare module "bun" {
 
     /**
      * Unsubscribe from multiple Redis channels.
+     *
+     * If there are no more channels subscribed to, the client automatically
+     * re-enables pipelining if it was previously enabled.
      *
      * Once all channels have been unsubscribed from, the client leaves the
      * subscription state. For further details on the subscription state, see

@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/_http_server.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 371355a0a2f6c26d64277b6679930a86640b27449c378d7591a9931958086749.
+// Written against that file with the SHA-256 d1dda841562cd1d11006985855e370a14f819a537bb61819738a87080d74f079.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:_http_server"
@@ -1215,7 +1215,7 @@ Server.prototype[kRealListen] = function (
       bunServer: $Node.NativeHTTPServer,
       url: string,
       method: string,
-      // Native dispatch bitfield (kDispatch* in NodeHTTP.cpp): presence and token bits for the headers the dispatcher consults, so no header object or array is materialized unless user code reads them.
+      // Native dispatch bitfield (Dispatch in NodeHTTPResponse.rs): presence and token bits for the headers the dispatcher consults, so no header object or array is materialized unless user code reads them.
       dispatchBits: number,
       handle: $Node.NodeHTTPResponse,
       hasBody: boolean,
@@ -1667,7 +1667,7 @@ Server.prototype[kRealListen] = function (
         bunServer: $Node.NativeHTTPServer,
         url: string,
         method: string,
-        // Native dispatch bitfield (kDispatch* in NodeHTTP.cpp): presence and token bits for the headers the dispatcher consults, so no header object or array is materialized unless user code reads them.
+        // Native dispatch bitfield (Dispatch in NodeHTTPResponse.rs): presence and token bits for the headers the dispatcher consults, so no header object or array is materialized unless user code reads them.
         dispatchBits: number,
         handle: $Node.NodeHTTPResponse,
         hasBody: boolean,
@@ -2085,7 +2085,7 @@ function onServerRequestEvent(this: $Node.HttpServerSocket, event: NodeHTTPRespo
     }
   }
 }
-// uWS::HttpParserError
+// RequestError in src/http1/request/error.rs
 enum HttpParserError {
   HTTP_PARSER_ERROR_NONE = 0,
   HTTP_PARSER_ERROR_INVALID_CHUNKED_ENCODING = 1,
@@ -4567,7 +4567,7 @@ const RE_CONN_CLOSE = /(?:^|\W)close(?:$|\W)/i;
 const enum DispatchBits {
   // Native dispatch bitfield: presence/token bits for the request headers the
   // dispatcher consults, computed in one native pass over the raw headers
-  // (kDispatch* in src/jsc/bindings/NodeHTTP.cpp - keep in sync). This is what
+  // (Dispatch in src/runtime/server/NodeHTTPResponse.rs - keep in sync). This is what
   // lets the framework never materialize req.headers/req.rawHeaders unless
   // user code reads them.
   conn_close = 1 << 0,

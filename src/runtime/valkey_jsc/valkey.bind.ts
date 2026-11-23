@@ -227,17 +227,9 @@ export const RedisClient = b.class({
     args: { url: b.any, options: b.any },
     capability: "js",
     throws: true,
-    passStructure: true,
     length: 0,
   },
-  internalFields: [
-    "onconnect",
-    "onclose",
-    "connectionPromise",
-    "hello",
-    "subscriptionCallbackMap",
-    "checkServerIdentity",
-  ],
+  internalFields: ["onconnect", "onclose", "connectionPromise", "hello", "subscriptionCallbackMap"],
   /** Every member needs a declaration in packages/bun-types/redis.d.ts: redis-client-types.test.ts compares the two. */
   proto: Object.fromEntries(
     [
@@ -259,7 +251,7 @@ export const RedisClient = b.class({
       ["bufferedAmount", { getter: b.usize }] as const,
       ["close", { capability: "js", throws: true, passThis: true }] as const,
       ["connected", { getter: b.bool, pure: true }] as const,
-      ["duplicate", { returns: promise, capability: "js", throws: true, passThis: true }] as const,
+      ["duplicate", { returns: promise, capability: "js", throws: true }] as const,
       ["onclose", eventHandler] as const,
       ["onconnect", eventHandler] as const,
     ].sort(([x], [y]) => x.localeCompare(y)),

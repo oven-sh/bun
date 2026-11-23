@@ -80,6 +80,7 @@
 #include "GeneratedResolveMessage.h"
 #include "GeneratedResponse.h"
 #include "GeneratedTextDecoder.h"
+#include "GeneratedURLPattern.h"
 #include "BunPlugin.h"
 #include "BunProcess.h"
 #include "BunSecureContextCache.h"
@@ -159,7 +160,6 @@
 #include "streams/JSTextDecoderStream.h"
 #include "streams/JSTransformStream.h"
 #include "streams/JSTransformStreamDefaultController.h"
-#include "JSURLPattern.h"
 #include "JSURLSearchParams.h"
 #include "JSWasmStreamingCompiler.h"
 #include <JavaScriptCore/WebAssemblyCompileOptions.h>
@@ -178,6 +178,7 @@
 #include "NativePromiseContext.h"
 #include "napi.h"
 #include "NodeHTTP.h"
+#include "NodeDiagnosticsChannel.h"
 #include "NodeVM.h"
 #include "Performance.h"
 #include "ProcessBindingConstants.h"
@@ -1808,7 +1809,6 @@ WEBCORE_GENERATED_CONSTRUCTOR_GETTER(TextEncoderStream);
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(TextDecoderStream);
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(TransformStream)
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(TransformStreamDefaultController)
-WEBCORE_GENERATED_CONSTRUCTOR_GETTER(URLPattern);
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(URLSearchParams);
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(WebSocket);
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(Worker);
@@ -4336,27 +4336,14 @@ JSC::Identifier StandaloneGlobalObject::moduleLoaderResolve(JSGlobalObject* glob
     return GlobalObject::moduleLoaderResolve(globalObject, loader, key, referrer, WTF::move(fetcher), useImportMap);
 }
 
-JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalObject,
+JSC::JSPromise* GlobalObject::importModuleWithLoader(Zig::GlobalObject* globalObject,
     JSModuleLoader* loader,
     JSString* moduleNameValue,
-    RefPtr<JSC::ScriptFetchParameters> parameters,
-    const SourceOrigin& sourceOrigin,
-    bool deferred)
+    RefPtr<JSC::ScriptFetchParameters>&& parameters,
+    const SourceOrigin& sourceOrigin)
 {
-    UNUSED_PARAM(deferred);
-    auto* globalObject = static_cast<Zig::GlobalObject*>(jsGlobalObject);
-
     VM& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    Bun::noteImportCallForLint(globalObject);
-
-    {
-        JSC::JSPromise* result = NodeVM::importModule(globalObject, moduleNameValue, parameters, sourceOrigin);
-        RETURN_IF_EXCEPTION(scope, nullptr);
-        if (result) {
-            return result;
-        }
-    }
 
     // import() from code of a disposed Bun.ModuleGraph does not load into the graph's (dropped)
     // registry. Called by the host (a function of the graph it still holds) it rejects. Run by the
@@ -4430,6 +4417,36 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
         RETURN_IF_EXCEPTION(scope, nullptr);
     }
     return result;
+}
+
+JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalObject,
+    JSModuleLoader* loader,
+    JSString* moduleNameValue,
+    RefPtr<JSC::ScriptFetchParameters> parameters,
+    const SourceOrigin& sourceOrigin,
+    bool deferred)
+{
+    UNUSED_PARAM(deferred);
+    auto* globalObject = static_cast<Zig::GlobalObject*>(jsGlobalObject);
+
+    VM& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    Bun::noteImportCallForLint(globalObject);
+
+    {
+        JSC::JSPromise* result = NodeVM::importModule(globalObject, moduleNameValue, parameters, sourceOrigin);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        if (result) {
+            return result;
+        }
+    }
+
+    if (JSObject* hook = globalObject->diagnosticsHook(Bun::DiagnosticsHook::ModuleImport)) [[unlikely]] {
+        RELEASE_AND_RETURN(scope, Bun::traceImportCall(globalObject, hook, moduleNameValue, sourceOrigin, [&] {
+            return importModuleWithLoader(globalObject, loader, moduleNameValue, WTF::move(parameters), sourceOrigin);
+        }));
+    }
+    RELEASE_AND_RETURN(scope, importModuleWithLoader(globalObject, loader, moduleNameValue, WTF::move(parameters), sourceOrigin));
 }
 
 static JSC::JSPromise* rejectedInternalPromise(JSC::JSGlobalObject* globalObject, JSC::JSValue value)

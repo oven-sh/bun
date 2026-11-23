@@ -16,7 +16,7 @@ use bun_exe_format::identity::{
 };
 use bun_options_types::Format;
 use bun_options_types::aot_options::AotOptions;
-use bun_paths::resolve_path::{self, platform};
+use bun_paths::{Path, to_portable};
 use bun_resolver::compiled_program::{
     PathForFileSystemAlone, encode_files_for_file_system_alone, folders_up_to,
 };
@@ -203,7 +203,7 @@ fn identify(stat: &bun_sys::Stat, find_path: impl FnOnce() -> Option<Vec<u8>>) -
 fn real_path_of_link(path: &[u8]) -> Option<Vec<u8>> {
     let folder = bun_paths::dirname(path).filter(|folder| !folder.is_empty());
     let folder = real_path(folder.unwrap_or(b"."))?;
-    Some([&folder[..], b"/", bun_paths::basename(path)].concat())
+    Some(Path::from_parts(&[&folder, bun_paths::basename(path)]).to_vec())
 }
 fn real_path(path: &[u8]) -> Option<Vec<u8>> {
     let mut buffer = bun_paths::path_buffer_pool::get();
@@ -294,7 +294,7 @@ fn write_product(
             root_from_executable: root_from_executable.as_deref(),
             // The program holds `__dirname` or the like, so it tells the folder itself, and asks for its own modules by paths below it.
             root_on_build_machine: (build.holds_source_paths && !options.runs_in_place)
-                .then(|| trim_trailing_separators(&build.root_directory)),
+                .then(|| bun_paths::without_trailing_sep(&build.root_directory)),
             assets_named_at_root: &assets_named_at_root,
             refused_data: &build.refused_data,
             files_for_file_system_alone: &files_for_file_system_alone,
@@ -564,7 +564,7 @@ fn build_program(
     let working_directory = bun_sys::getcwd_alloc().ok();
     let to_absolute = |path: &[u8]| {
         let folder = working_directory.as_ref()?.as_bytes();
-        Some(resolve_path::join_abs_string::<platform::Auto>(folder, &[path]).to_vec())
+        Some(Path::resolve(&[folder, path]).to_vec())
     };
     let outfile = match request.product {
         CompileProduct::Executable { outfile } => to_absolute(outfile),
@@ -691,7 +691,7 @@ fn warn_about_shared_asset_names(
     let folders = bun_core::strings::split(named_at_root, b"\0");
     for (place, folder) in folders.filter(|it| !it.is_empty()).enumerate() {
         for file in output_files {
-            let path = bun_core::strings::remove_leading_dot_slash(&file.dest_path);
+            let path = bun_paths::without_leading_dot_slash(&file.dest_path);
             if let Some(below @ [b'/', ..]) = path.strip_prefix(folder) {
                 let name = [bun_paths::basename(folder), below].concat();
                 let paths = paths_by_name.entry(name).or_default();
@@ -701,7 +701,7 @@ fn warn_about_shared_asset_names(
     }
     let shared: Vec<Vec<u8>> = paths_by_name.keys().cloned().collect();
     for file in output_files {
-        let path = bun_core::strings::remove_leading_dot_slash(&file.dest_path);
+        let path = bun_paths::without_leading_dot_slash(&file.dest_path);
         if !path.starts_with(b"../") {
             let paths = paths_by_name.entry(path.to_vec()).or_default();
             paths.insert(0, (0, path));
@@ -765,29 +765,21 @@ fn emit_not_embedded_warnings(
     output_files: &[OutputFile],
     log: &mut bun_ast::Log,
 ) {
-    let root = with_forward_slashes(trim_trailing_separators(root_directory));
+    let root = to_portable(trim_trailing_separators(root_directory));
     let fs_only_paths = fs_only_paths.iter().filter(|it| !it.is_folder);
     let fs_only_paths = fs_only_paths.map(|it| &it.path_below_root[..]);
     let is_file = |file: &&OutputFile| file.output_kind.is_file_in_standalone_mode();
     let with_text = output_files.iter().filter(is_file);
     let with_text = with_text.filter(|file| !has_no_text(file));
-    let with_text = with_text.map(|it| bun_core::strings::remove_leading_dot_slash(&it.dest_path));
+    let with_text = with_text.map(|it| bun_paths::without_leading_dot_slash(&it.dest_path));
     let found: std::collections::BTreeSet<&[u8]> = fs_only_paths.chain(with_text).collect();
     for (path, warning) in &files_for_file_system.warnings_if_not_embedded {
-        let spelled = with_forward_slashes(path);
+        let spelled = to_portable(path);
         if !found.contains(spelled.get(root.len() + 1..).unwrap_or_default()) {
             log.warnings += 1;
             log.add_msg(warning.clone());
         }
     }
-}
-
-fn with_forward_slashes(path: &[u8]) -> Vec<u8> {
-    let slash = |byte: &u8| match *byte {
-        b'\\' if cfg!(windows) => b'/',
-        byte => byte,
-    };
-    path.iter().map(slash).collect()
 }
 
 fn holds_path_below(paths: &std::collections::BTreeSet<Vec<u8>>, folder: &[u8]) -> bool {
@@ -806,11 +798,9 @@ fn list_below(folder: &[u8]) -> Option<(Vec<Vec<u8>>, Vec<Vec<u8>>)> {
     let (mut files, mut folders) = (Vec::new(), Vec::new());
     while let Some(entry) = walker.next().ok()? {
         #[cfg(windows)]
-        let path = {
-            let mut buffer = bun_paths::path_buffer_pool::get();
-            let path = bun_paths::string_paths::from_w_path(&mut buffer[..], entry.path.as_slice());
-            with_forward_slashes(path.as_bytes())
-        };
+        let path = Path::from_parts(&[entry.path.as_slice()])
+            .into_portable()
+            .to_vec();
         #[cfg(not(windows))]
         let path = entry.path.as_bytes().to_vec();
         match entry.kind {
@@ -861,14 +851,14 @@ fn add_data_files_under_root(
     if data_files.is_empty() {
         return Vec::new();
     }
-    let root = with_forward_slashes(trim_trailing_separators(root_directory));
+    let root = to_portable(trim_trailing_separators(root_directory));
     let code = files_for_file_system.code_seen.iter();
-    let code: Paths = code.map(|it| with_forward_slashes(it)).collect();
+    let code: Paths = code.map(|it| to_portable(it).into_owned()).collect();
     let mut modules_without_text = modules_without_text(output_files);
     let taken: Paths = output_files
         .iter()
         .filter(|file| !has_no_text(file) && file.output_kind.is_file_in_standalone_mode())
-        .map(|file| bun_core::strings::remove_leading_dot_slash(&file.dest_path).to_vec())
+        .map(|file| bun_paths::without_leading_dot_slash(&file.dest_path).to_vec())
         .collect();
     let below_root = |path: &'_ [u8]| path.get(root.len() + 1..).unwrap_or_default().to_vec();
     let is_in_sight = |folder: &[u8]| {
@@ -880,10 +870,9 @@ fn add_data_files_under_root(
     // What an earlier build left where this one writes its executable is no file of the program.
     let outfile = bun_sys::getcwd_alloc().ok().map(|working_directory| {
         let folder = working_directory.as_bytes();
-        with_forward_slashes(resolve_path::join_abs_string::<platform::Auto>(
-            folder,
-            &[entry_name],
-        ))
+        Path::resolve(&[folder, entry_name])
+            .into_portable()
+            .to_vec()
     });
     let is_outfile = |path: &[u8]| {
         outfile.as_deref().is_some_and(|outfile| {
@@ -896,7 +885,7 @@ fn add_data_files_under_root(
 
     let mut data: std::collections::BTreeMap<Vec<u8>, OutputFile> = Default::default();
     for data_file in data_files {
-        let spelled = with_forward_slashes(data_file);
+        let spelled = to_portable(data_file).into_owned();
         let is_below_root = spelled.starts_with(&root) && spelled.get(root.len()) == Some(&b'/');
         let under_root = path_from_root(root_directory, b"/", data_file);
         if !is_below_root || under_root.is_none_or(|it| it != below_root(&spelled)) {
@@ -1031,7 +1020,7 @@ fn modules_without_text(output_files: &[OutputFile]) -> ModulesWithoutText {
         .enumerate()
         .filter(|(_, file)| has_no_text(file))
         .map(|(index, file)| {
-            let path = bun_core::strings::remove_leading_dot_slash(&file.dest_path);
+            let path = bun_paths::without_leading_dot_slash(&file.dest_path);
             (path.into(), index)
         })
         .collect()
@@ -1090,7 +1079,7 @@ fn add_assets_under_root(
         .filter(|(_, file)| !has_no_text(file) && file.output_kind.is_file_in_standalone_mode())
         .map(|(index, file)| {
             (
-                bun_core::strings::remove_leading_dot_slash(&file.dest_path).into(),
+                bun_paths::without_leading_dot_slash(&file.dest_path).into(),
                 Some(index),
             )
         })
@@ -1121,7 +1110,7 @@ fn add_assets_under_root(
             collected => collected.map_err(AssetError::NotCollected)?,
         }
 
-        let asset_path = trim_trailing_separators(asset);
+        let asset_path = bun_paths::without_trailing_sep(asset);
         let asset_name = to_embedded_name(bun_paths::basename(asset_path));
         let from_root = path_from_root(root_directory, working_directory.as_bytes(), asset_path);
         let embedded_path = from_root.as_deref().unwrap_or(&asset_name);
@@ -1214,7 +1203,7 @@ fn push_asset_paths(
     size_without_bytes: Option<u64>,
     paths: &mut Vec<PathForFileSystemAlone>,
 ) {
-    let path_below_root = bun_core::strings::remove_leading_dot_slash(path_below_root);
+    let path_below_root = bun_paths::without_leading_dot_slash(path_below_root);
     let is_above_root = path_below_root.starts_with(b"../");
     // `stat()` has a time for a file above the root only where the program does nothing but ask about the file.
     let has_time = !is_above_root || size_without_bytes.is_some();
@@ -1268,7 +1257,7 @@ fn find_assets_named_at_root(
             .iter()
             .filter(|file| file.output_kind.is_file_in_standalone_mode())
             .filter_map(|file| {
-                bun_core::strings::remove_leading_dot_slash(&file.dest_path).strip_prefix(base_name)
+                bun_paths::without_leading_dot_slash(&file.dest_path).strip_prefix(base_name)
             })
             .any(|rest| matches!(rest, [] | [b'/', ..]))
     };
@@ -1287,7 +1276,7 @@ fn find_assets_named_at_root(
         output_files
             .iter()
             .filter(|file| file.output_kind.is_file_in_standalone_mode())
-            .any(|file| bun_core::strings::remove_leading_dot_slash(&file.dest_path) == base_name)
+            .any(|file| bun_paths::without_leading_dot_slash(&file.dest_path) == base_name)
     };
     let folders = outside_folders
         .iter()
@@ -1304,20 +1293,19 @@ fn path_from_root(
     working_directory: &[u8],
     asset_path: &[u8],
 ) -> Option<Vec<u8>> {
-    let written_path = join_file_path(working_directory, asset_path);
+    let written_path = Path::resolve(&[working_directory, asset_path]);
     let written_folder = bun_paths::dirname(&written_path)?;
     let mut real_path_buffer = bun_paths::path_buffer_pool::get();
     let real_folder =
         bun_sys::realpath(&ZBox::from_bytes(written_folder), &mut real_path_buffer).ok();
 
-    let root_directory = trim_trailing_separators(root_directory);
-    let folders_below_root = |folder: &'_ [u8]| match folder.strip_prefix(root_directory)? {
-        [] => Some(Vec::new()),
-        [b'/' | b'\\', folders @ ..] => Some([folders, b"/"].concat()),
-        _ => None,
-    };
+    let folders_below_root =
+        |folder: &'_ [u8]| match bun_paths::strip_prefix(folder, root_directory)? {
+            [] => Some(Vec::new()),
+            folders => Some([folders, b"/"].concat()),
+        };
     let folders_above_root = |folder: &'_ [u8]| {
-        let relative = relative_file_path(root_directory, folder);
+        let relative = Path::relative(root_directory, folder);
         relative
             .starts_with(b"..")
             .then(|| [&relative[..], b"/"].concat())
@@ -1327,39 +1315,6 @@ fn path_from_root(
         .or_else(|| folders_below_root(written_folder))
         .or_else(|| folders_above_root(real_folder.unwrap_or(written_folder)))?;
     Some([&folders[..], bun_paths::basename(&written_path)].concat())
-}
-
-fn split_file_path(path: &[u8]) -> impl Iterator<Item = &[u8]> {
-    bun_core::strings::split(path, b"/").filter(|name| !name.is_empty() && *name != b".")
-}
-
-/// `path.resolve(folder, path)`. `resolve_path` takes a backslash for a separator on every host; off Windows it is part of a file's name.
-fn join_file_path(folder: &[u8], path: &[u8]) -> Vec<u8> {
-    if cfg!(windows) {
-        return resolve_path::join_abs_string::<platform::Auto>(folder, &[path]).to_vec();
-    }
-    let folder = split_file_path(folder).filter(|_| !path.starts_with(b"/"));
-    let mut names: Vec<&[u8]> = Vec::new();
-    for name in folder.chain(split_file_path(path)) {
-        match name {
-            b".." => drop(names.pop()),
-            _ => names.push(name),
-        }
-    }
-    [b"/", &names.join(&b"/"[..])[..]].concat()
-}
-
-/// `path.relative(from, to)` of two absolute paths, by the same rule.
-fn relative_file_path(from: &[u8], to: &[u8]) -> Vec<u8> {
-    if cfg!(windows) {
-        return resolve_path::relative(from, to).to_vec();
-    }
-    let from: Vec<&[u8]> = split_file_path(from).collect();
-    let to: Vec<&[u8]> = split_file_path(to).collect();
-    let shared = from.iter().zip(&to).take_while(|(a, b)| a == b).count();
-    let up = core::iter::repeat_n(&b".."[..], from.len() - shared);
-    let names: Vec<&[u8]> = up.chain(to[shared..].iter().copied()).collect();
-    names.join(&b"/"[..])
 }
 
 fn add_assets_in_place(
@@ -1382,17 +1337,15 @@ fn add_assets_in_place(
         collect_compile_assets(core::slice::from_ref(asset), b"", &mut files)
             .map_err(AssetError::NotCollected)?;
 
-        let asset_path = trim_trailing_separators(asset);
+        let asset_path = bun_paths::without_trailing_sep(asset);
         let asset_name = to_embedded_name(bun_paths::basename(asset_path));
-        let written_path = resolve_path::join_abs_string::<platform::Auto>(
-            working_directory.as_bytes(),
-            &[asset_path],
-        )
-        .to_vec();
-        let real_path = bun_sys::realpath(&ZBox::from_bytes(&written_path), &mut real_path_buffer)
-            .map_err(|error| AssetError::Unreadable {
-                asset: asset.clone(),
-                error,
+        let written_path = Path::resolve(&[working_directory.as_bytes(), asset_path]);
+        let real_path =
+            bun_sys::realpath(&written_path, &mut real_path_buffer).map_err(|error| {
+                AssetError::Unreadable {
+                    asset: asset.clone(),
+                    error,
+                }
             })?;
 
         for mut file in files {
@@ -1404,7 +1357,7 @@ fn add_assets_in_place(
             if embedded.contains(&written_dest[..]) {
                 continue;
             }
-            let at_real_path = (real_path != written_path.as_slice()).then(|| {
+            let at_real_path = (real_path != written_path.as_bytes()).then(|| {
                 let real_dest = graph_path(real_path, path_in_asset);
                 asset_output_file(real_dest, file.value.as_slice().to_vec())
             });
@@ -1430,8 +1383,11 @@ fn add_assets_in_place(
     Ok(())
 }
 
-pub(super) fn trim_trailing_separators(mut path: &[u8]) -> &[u8] {
-    while let [rest @ .., b'/' | b'\\'] = path {
+/// Empty for `/`, so that what is below `path` starts one byte after its end.
+fn trim_trailing_separators(mut path: &[u8]) -> &[u8] {
+    while let [rest @ .., last] = path
+        && bun_paths::is_sep(*last)
+    {
         path = rest;
     }
     path
@@ -1439,7 +1395,7 @@ pub(super) fn trim_trailing_separators(mut path: &[u8]) -> &[u8] {
 
 pub(super) fn graph_path(asset_path: &[u8], path_in_asset: &[u8]) -> Vec<u8> {
     let mut path = to_embedded_name(&[asset_path, path_in_asset].concat());
-    resolve_path::platform_to_posix_in_place(&mut path[..]);
+    bun_paths::to_portable_in_place(&mut path[..]);
     path
 }
 
@@ -1463,11 +1419,8 @@ pub(super) fn asset_output_file(dest: Vec<u8>, bytes: Vec<u8>) -> OutputFile {
 /// An executable that is shipped tells nobody the folders of the machine that built it, so a root that lies elsewhere is not written down.
 fn find_root_below_working_directory(root_directory: &[u8]) -> Option<Vec<u8>> {
     let working_directory = bun_sys::getcwd_alloc().ok()?;
-    let root = resolve_path::relative(
-        working_directory.as_bytes(),
-        trim_trailing_separators(root_directory),
-    );
-    let mut names = root.split(|&byte| bun_paths::is_sep_native(byte));
+    let root = Path::relative(working_directory.as_bytes(), root_directory);
+    let mut names = bun_paths::components(&root);
     let goes_up = names.next() == Some(b"..");
     (!goes_up || names.all(|name| name == b"..")).then(|| root.to_vec())
 }
@@ -1476,14 +1429,13 @@ fn find_root_below_working_directory(root_directory: &[u8]) -> Option<Vec<u8>> {
 /// where the two have no folder in common but the root of the disk, or where the way there names more than two folders: that tells where the program was built.
 fn find_root_from_executable(root_directory: &[u8], outfile: &[u8]) -> Option<Vec<u8>> {
     let working_directory = bun_sys::getcwd_alloc().ok()?;
-    let outfile =
-        resolve_path::join_abs_string::<platform::Auto>(working_directory.as_bytes(), &[outfile]);
-    let folder = resolve_path::dirname::<platform::Auto>(outfile);
-    let root = resolve_path::relative(folder, trim_trailing_separators(root_directory));
+    let outfile = Path::resolve(&[working_directory.as_bytes(), outfile]);
+    let folder = bun_paths::dirname_or_root(&outfile);
+    let root: &[u8] = &Path::relative(folder, root_directory);
     if bun_paths::is_absolute(root) {
         return None;
     }
-    let is_sep = |&byte: &u8| bun_paths::is_sep_native(byte);
+    let is_sep = |&byte: &u8| bun_paths::is_sep(byte);
     let ups = root.split(is_sep).take_while(|name| *name == b"..").count();
     let names = root.split(is_sep).filter(|name| !name.is_empty()).count() - ups;
     let depth = folder.split(is_sep).filter(|name| !name.is_empty()).count();
@@ -1522,7 +1474,7 @@ pub(super) fn pair_embedded_copies<'b>(
     // Of the files with one path the executable holds the first, and a pair needs a file.
     let mut paths: FxHashSet<Vec<u8>> = FxHashSet::default();
     for copy in output_files.iter_mut() {
-        let path = bun_core::strings::remove_leading_dot_slash(&copy.dest_path);
+        let path = bun_paths::without_leading_dot_slash(&copy.dest_path);
         let is_first = paths.insert(path.to_vec());
         let is_held = matches!(copy.value, options::OutputFileValue::Buffer { .. });
         let is_copy =

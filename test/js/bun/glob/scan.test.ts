@@ -661,6 +661,14 @@ describe("trailing directory separator", async () => {
   });
 });
 
+test("a pattern that ends in /./ keeps the dot", () => {
+  using dir = tempDir("glob-trailing-dot", { "a/x": "", "ab/x": "" });
+  expect([...new Glob("*/./").scanSync({ cwd: String(dir), onlyFiles: false })].sort()).toEqual([
+    `a${path.sep}.`,
+    `ab${path.sep}.`,
+  ]);
+});
+
 describe("absolute path pattern", async () => {
   test("works *", async () => {
     const tmpdir = tmpdirSync();
@@ -1314,4 +1322,9 @@ test.skipIf(isWindows)("closes a directory that got the number of a closed stand
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout, stderr, exitCode }).toEqual({ stdout: "nested/file.txt 0\n", stderr: "", exitCode: 0 });
+});
+
+test.skipIf(!isWindows)("./* from the root gives absolute paths below the root", () => {
+  const entries = [...new Glob("./*").scanSync({ cwd: "/", absolute: true, onlyFiles: false })];
+  expect(new Set(entries.map(entry => path.dirname(entry)))).toEqual(new Set([path.sep]));
 });

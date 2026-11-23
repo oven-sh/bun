@@ -1450,6 +1450,20 @@ describe("bun build --metafile-md", () => {
 });
 
 describe("bun build --metafile", () => {
+  test.skipIf(isWindows)("is valid JSON when the name of a chunk has a backslash", async () => {
+    using dir = tempDir("metafile-backslash", { "a.js": `import("./lazy.js");`, "lazy.js": `console.log(1);` });
+    const { metafile } = await Bun.build({
+      entrypoints: [`${dir}/a.js`],
+      outdir: `${dir}/out`,
+      splitting: true,
+      metafile: true,
+      naming: { entry: "[name].js", chunk: "c\\[name].[ext]" },
+    });
+    const imported = Object.values(metafile!.outputs).flatMap(output => output.imports.map(it => it.path));
+    expect(imported).toEqual(["./c\\lazy.js"]);
+    expect(Object.values(metafile!.inputs).flatMap(input => input.imports.map(it => it.path))).toEqual(imported);
+  });
+
   // Bun.spawn replaces a lone surrogate in a JS string with U+FFFD before it reaches argv,
   // so the raw bytes have to come from the shell. Windows argv is UTF-16 and cannot carry them.
   test.skipIf(isWindows)("escapes a lone surrogate and an invalid byte in an output path", async () => {

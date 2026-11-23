@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/internal/http.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 fb8173ad4b1d435f59685c97012314538ff32e2e02c603547e9fb33660589e61.
+// Written against that file with the SHA-256 8c9a37e7a9617d8c5fd06023005c4ecb34ffcd3dcd925c4d1cc8a0e74d6d21ca.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 const { isIPv4 } = require("internal/net/isIP");
@@ -123,6 +123,7 @@ const responseRoad: {
 // per-connection queue without widening node:_http_server's exports. The
 // fallback loads node:http (and with it _http_server) before reading these.
 const http1ServerPipeline: {
+  holdPipelinedTurn?: (socket: $Node.HttpSocket, handle: $Node.PipelinedTurn) => void;
   queuePipelinedResponse?: (socket: $Node.HttpSocket, res: $Node.ServerResponse, isAncient: boolean) => void;
   advanceResponsePipeline?: (
     server: $Node.HttpSocketServer | null | undefined,
@@ -544,6 +545,7 @@ declare global {
       keepAliveTimeout?: number;
       keepAliveTimeoutBuffer?: number;
       joinDuplicateHeaders?: boolean;
+      requireHostHeader?: boolean;
       httpAllowHalfOpen?: boolean;
       shouldUpgradeCallback?: (request: IncomingMessage) => boolean;
       [kIncomingMessage]?: IncomingMessageConstructor;

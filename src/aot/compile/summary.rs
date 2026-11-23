@@ -3,7 +3,7 @@ use crate::diagnostics::ProgramView;
 use crate::ir::{InParallel, collect_from_each, for_each_mut};
 use crate::link::ProgramModule;
 use crate::load::contents::entry_points::NameOfLoad;
-use crate::load::module_paths::with_separators_of_host;
+use crate::load::contents::worker_entries::source_path_of;
 use crate::load::sources::SourceKind;
 use crate::load::{
     EntryPointKind, PerProject, ProgramFile, ProjectId, Sources, file_size, is_host_path,
@@ -44,7 +44,7 @@ pub(super) fn collect_entry_point_paths(
             EntryPointPaths {
                 source_path: match is_host_path(file_name) {
                     true => public_path.clone(),
-                    false => with_separators_of_host(to_native(file_name), cfg!(windows)),
+                    false => source_path_of(file_name),
                 },
                 public_path,
             }
@@ -53,9 +53,7 @@ pub(super) fn collect_entry_point_paths(
 }
 
 fn folder_of(path: &[u8]) -> &[u8] {
-    let end = path
-        .iter()
-        .rposition(|&byte| bun_paths::is_sep_native(byte));
+    let end = path.iter().rposition(|&byte| bun_paths::is_sep(byte));
     &path[..end.unwrap_or(0)]
 }
 
@@ -70,10 +68,7 @@ pub(super) fn collect_program_file_paths(
         .map(|&file| {
             let paths = EntryPointPaths {
                 public_path: sources.public_path(file).to_vec(),
-                source_path: with_separators_of_host(
-                    to_native(files.module(file).file_name()),
-                    cfg!(windows),
-                ),
+                source_path: source_path_of(files.module(file).file_name()),
             };
             (file, paths)
         })

@@ -3,6 +3,7 @@
 //! `node_modules/.bin/lint`. With `--no-script` they are the commands whatever the project has.
 //! A `package.json` that names the script and can't be parsed stops `bun lint` and `bun fmt`, which can write files.
 
+use bun_core::strings::without_trailing_slash;
 use bun_core::{Global, UnwrapOrOom, env_var};
 
 use super::check_command::working_directory;
@@ -192,41 +193,16 @@ pub(crate) fn is_of_the_project(command: &[u8]) -> bool {
 }
 
 /// The directory that `--cwd <given>` names, as `bun run` takes it: `..` is folded before links are followed, and an empty
-/// value is the working directory. Unlike there, a `\` is part of a name on POSIX where there is such a name.
-pub(crate) fn directory_of_cwd(given: &[u8]) -> Vec<u8> {
-    use bun_paths::platform::Loose;
-    use bun_paths::resolve_path::{join_abs_string_spill, normalize_string_generic_t};
+/// value is the working directory.
+pub(crate) fn directory_of_cwd(given: &[u8]) -> bun_paths::Path {
     // An absolute one needs no working directory, which may be deleted.
     let base = match bun_paths::is_absolute(given) {
         true => b"/".to_vec(),
         false => working_directory(),
     };
-    if cfg!(windows) {
-        return join_abs_string_spill::<Loose>(&base, &mut Vec::new(), &[given]).to_vec();
-    }
-    // On POSIX, that function takes every `\` for a separator, also one in the name of the working directory.
-    let fold = |given: &[u8]| {
-        let path = [&base[..], b"/", given].concat();
-        let mut folded = vec![b'/'; path.len() + 1];
-        let rest = &mut folded[1..];
-        let is_separator = |byte| byte == b'/';
-        let len =
-            normalize_string_generic_t::<u8, false, false>(&path, rest, b'/', is_separator).len();
-        folded.truncate(1 + len);
-        folded
-    };
-    let as_written = fold(given);
-    let exists = |path: &[u8]| {
-        bun_sys::exists_at_type(bun_core::Fd::cwd(), &bun_core::ZBox::from_bytes(path)).is_ok()
-    };
-    if !bun_core::strings::contains_char(given, b'\\') || exists(&as_written) {
-        return as_written;
-    }
-    // `--cwd apps\web`, from a script that was written on Windows. `bun run` takes it on every platform.
-    let with_slashes: Vec<u8> = (given.iter())
-        .map(|byte| if *byte == b'\\' { b'/' } else { *byte })
-        .collect();
-    fold(&with_slashes)
+    // `--cwd apps\web`, from a script that was written on Windows.
+    let given = bun_sys::existing_spelling(bun_core::Fd::cwd(), given);
+    bun_paths::Path::resolve(&[&base, &given])
 }
 
 /// Decides what `bun <command>` runs, without looking at `command`'s own arguments.
@@ -256,7 +232,7 @@ pub(crate) fn runs(command: &[u8]) -> Result<Runs, Unparsable> {
     let cwd = match given {
         Some(given) => {
             let mut buffer = bun_paths::path_buffer_pool::get();
-            let given = bun_core::ZBox::from_vec(directory_of_cwd(given));
+            let given = directory_of_cwd(given);
             // The command says that it can't go there.
             let Ok(real) = bun_sys::realpath(&given, &mut buffer) else {
                 return Ok(Runs::Command);
@@ -266,10 +242,7 @@ pub(crate) fn runs(command: &[u8]) -> Result<Runs, Unparsable> {
         None => working_directory(),
     };
     let nearest = nearest_package_json(&cwd);
-    let dir = (nearest.as_ref()).map_or_else(
-        || bun_core::strings::without_trailing_slash(&cwd),
-        |it| it.0,
-    );
+    let dir = without_trailing_slash(nearest.as_ref().map_or(&cwd, |it| it.0));
     // In that script, and in what it runs, it is the command: `"lint": "bun lint"`.
     let running = env_var::BUN_INTERNAL_SCRIPTS_OF_COMMANDS::get();
     if running
@@ -300,11 +273,10 @@ pub(crate) fn runs(command: &[u8]) -> Result<Runs, Unparsable> {
 
 /// `bun run` puts the directory of the `package.json` in `PATH`, in front of every `node_modules/.bin`.
 fn is_executable_beside_package_json(name: &[u8], dir: &[u8], cwd: &[u8]) -> bool {
-    let mut buffer = bun_paths::path_buffer_pool::get();
     // On macOS a directory that can be searched is executable for `which`.
     name != b"check"
-        && bun_which::which(&mut buffer, dir, cwd, name).is_some_and(|found| {
-            bun_sys::exists_at_type(bun_core::Fd::cwd(), found).ok()
+        && bun_which::which(dir, cwd, name).is_some_and(|found| {
+            bun_sys::exists_at_type(bun_core::Fd::cwd(), &found).ok()
                 == Some(bun_sys::ExistsAtType::File)
         })
 }
@@ -335,19 +307,14 @@ fn has_script(name: &[u8], path: &[u8], contents: &[u8]) -> Result<bool, Unparsa
 }
 
 /// The path of `name` below `dir`, which is absolute.
-fn below(dir: &[u8], name: &[u8]) -> Vec<u8> {
-    use bun_paths::{platform::Auto, resolve_path::join_abs_string_spill};
-    // On POSIX, that function takes a `\` in a name for a separator.
-    if cfg!(windows) {
-        return join_abs_string_spill::<Auto>(dir, &mut Vec::new(), &[name]).to_vec();
-    }
-    let separator: &[u8] = if dir.ends_with(b"/") { b"" } else { b"/" };
-    [dir, separator, name].concat()
+fn below(dir: &[u8], name: &[u8]) -> bun_paths::Path {
+    let mut path = bun_paths::Path::from_parts(&[dir, name]);
+    path.copy_trailing_sep_from(name);
+    path
 }
 
 fn entry_kind(dir: &[u8], parts: &[&[u8]]) -> Option<bun_sys::ExistsAtType> {
-    let path = bun_core::ZBox::from_vec(below(dir, &parts.concat()));
-    bun_sys::exists_at_type(bun_core::Fd::cwd(), &path).ok()
+    bun_sys::exists_at_type(bun_core::Fd::cwd(), &below(dir, &parts.concat())).ok()
 }
 
 /// Those of the resolver that can be run: `bun lint -o lint.json` must not take the name away.
@@ -428,8 +395,8 @@ pub(super) fn nearest_package_json(mut dir: &[u8]) -> Option<(&[u8], Vec<u8>, Ve
     loop {
         let path = below(dir, b"package.json");
         if let Some(contents) = read_package_json(&path) {
-            let dir = bun_core::strings::without_trailing_slash(dir);
-            return Some((dir, path, contents));
+            let dir = bun_paths::without_trailing_sep(dir);
+            return Some((dir, path.to_vec(), contents));
         }
         dir = bun_paths::dirname(dir)?;
     }
@@ -476,15 +443,16 @@ fn command_of_script(name: &[u8]) -> Option<&'static [u8]> {
 /// this process in it. npm, pnpm and yarn say which script they run. Not all say of which package:
 /// then it is the one that this process is started in, not each one whose scripts it runs.
 fn package_of_inherited_script(command: &[u8]) -> Option<Vec<u8>> {
-    use bun_paths::{platform::Auto, resolve_path::dirname};
     if env_var::npm_lifecycle_event::get().and_then(command_of_script) != Some(command) {
         return None;
     }
     match env_var::npm_package_json::get() {
-        Some(of) => Some(bun_core::strings::without_trailing_slash(dirname::<Auto>(of)).to_vec()),
+        Some(of) => Some(without_trailing_slash(bun_paths::dirname_or_root(of)).to_vec()),
         None if env_var::BUN_INTERNAL_SCRIPTS_OF_COMMANDS::get().is_some() => None,
         None if env_var::BUN_INTERNAL_CHECK_SCRIPTS::get().is_some() => None,
-        None => Some(nearest_package_json(&working_directory())?.0.to_vec()),
+        None => {
+            Some(without_trailing_slash(nearest_package_json(&working_directory())?.0).to_vec())
+        }
     }
 }
 
@@ -493,8 +461,7 @@ pub(crate) fn note_package_script(env: &mut bun_dotenv::Loader, name: &[u8], dir
     use std::io::Write;
     let key = b"BUN_INTERNAL_SCRIPTS_OF_COMMANDS";
     // As `runs` finds it, wherever in the package the script is started.
-    let dir = nearest_package_json(dir)
-        .map_or_else(|| bun_core::strings::without_trailing_slash(dir), |it| it.0);
+    let dir = without_trailing_slash(nearest_package_json(dir).map_or(dir, |it| it.0));
     let mut running = env.get(key).unwrap_or_default().to_vec();
     let mut note = |command: &[u8], dir: &[u8]| {
         if !running_package_scripts(&running).any(|it| it == (command, dir)) {

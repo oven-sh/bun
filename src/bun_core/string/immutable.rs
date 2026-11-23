@@ -6,11 +6,10 @@ use core::mem::MaybeUninit;
 use core::num::NonZeroU8;
 
 use crate::BoundedArray;
-use crate::CrateError as Error;
 use crate::vec::{BorrowedBuf, BorrowedCursor};
 use bun_alloc::AllocError;
 use bun_highway as highway;
-use bun_simdutf_sys::simdutf::{self, WithUtf16Len};
+use bun_simdutf_sys::simdutf::{self, WithUtf8Len, WithUtf16Len};
 
 pub use self::unicode::{
     CodepointIterator, Cursor, NewCodePointIterator, UnsignedCodepointIterator,
@@ -39,10 +38,13 @@ pub use whitespace::{
 mod icu_collation;
 #[path = "immutable/icu_normalize.rs"]
 mod icu_normalize;
+#[path = "immutable/icu_properties.rs"]
+mod icu_properties;
 #[path = "immutable/unicode.rs"]
 mod unicode_draft;
 pub use icu_collation::{locale_compare, locale_compare_numeric_base};
 pub use icu_normalize::{NormalizationForm, normalize};
+pub use icu_properties::{is_id_continue, is_id_start};
 #[path = "immutable/utf16_offsets.rs"]
 mod utf16_offsets;
 pub use utf16_offsets::Utf16OffsetTable;
@@ -352,15 +354,6 @@ pub fn contains_char(self_: &[u8], char: u8) -> bool {
     index_of_char(self_, char).is_some()
 }
 
-/// `char` is an ASCII byte compared against each (possibly wider) element.
-#[inline]
-pub fn contains_char_t<T: PathByte>(self_: &[T], char: u8) -> bool {
-    match T::units(self_) {
-        CodeUnits::U8(s) => contains_char(s, char),
-        CodeUnits::U16(s) => highway::memmem16(s, &[u16::from(char)]).is_some(),
-    }
-}
-
 #[inline]
 pub fn contains(self_: &[u8], str: &[u8]) -> bool {
     index_of(self_, str).is_some()
@@ -415,15 +408,8 @@ pub fn contains_any(slice: &[u8], chars: &[u8]) -> bool {
 }
 
 pub fn index_of_any16(self_: &[u16], chars: &[u16]) -> Option<usize> {
-    index_of_any_t(self_, chars)
-}
-
-pub fn index_of_any_t<T: PathByte>(str: &[T], chars: &[T]) -> Option<usize> {
-    if let (CodeUnits::U8(s), CodeUnits::U8(c)) = (T::units(str), T::units(chars)) {
-        return index_of_any(s, c);
-    }
     // No multi-needle highway kernel for u16; `chars` is a short constant set.
-    str.iter().position(|c| chars.iter().any(|d| d == c))
+    self_.iter().position(|c| chars.iter().any(|d| d == c))
 }
 
 pub use contains as includes;
@@ -910,11 +896,6 @@ pub fn starts_with_case_insensitive_ascii(self_: &[u8], prefix: &[u8]) -> bool {
         && eql_case_insensitive_ascii(&self_[0..prefix.len()], prefix, false)
 }
 
-pub use crate::strings_impl::{
-    has_prefix_t, has_prefix_t as starts_with_generic, has_suffix_t,
-    has_suffix_t as ends_with_generic,
-};
-
 #[inline]
 pub fn ends_with(self_: &[u8], str: &[u8]) -> bool {
     str.is_empty() || self_.ends_with(str)
@@ -928,11 +909,6 @@ pub fn starts_with_char(self_: &[u8], char: u8) -> bool {
 #[inline]
 pub fn ends_with_char(self_: &[u8], char: u8) -> bool {
     !self_.is_empty() && self_[self_.len() - 1] == char
-}
-
-#[inline]
-pub fn ends_with_char_or_is_zero_length(self_: &[u8], char: u8) -> bool {
-    self_.is_empty() || self_[self_.len() - 1] == char
 }
 
 pub fn ends_with_any(self_: &[u8], str: &[u8]) -> bool {
@@ -1106,19 +1082,6 @@ pub fn append(self_: &[u8], other: &[u8]) -> Box<[u8]> {
     buf.into_boxed_slice()
 }
 
-#[inline]
-pub fn concat_buf_t<'a, T: Copy>(out: &'a mut [T], strs: &[&[T]]) -> Result<&'a mut [T], Error> {
-    let mut off: usize = 0;
-    for s in strs {
-        if s.len() > out.len() - off {
-            return Err(crate::CrateError::NoSpaceLeft);
-        }
-        out[off..off + s.len()].copy_from_slice(s);
-        off += s.len();
-    }
-    Ok(&mut out[0..off])
-}
-
 /// Returns a substring starting at `start` up to the end of the string.
 /// If `start` is greater than the string's length, returns an empty string.
 pub fn substring(self_: &[u8], start: Option<usize>, stop: Option<usize>) -> &[u8] {
@@ -1242,8 +1205,8 @@ pub fn index_of_newline_or_non_ascii_check_start<const CHECK_START: bool>(
 
 pub use highway::ByteSet;
 pub use highway::contains_newline_or_non_ascii_or_quote;
-pub use highway::line_starts;
 pub use highway::{ScannerStops, ScannerStopsBuffer};
+pub use highway::{byte_bits, line_starts};
 pub use highway::{pack_words, unpack_words};
 
 /// Supports:
@@ -1504,11 +1467,6 @@ pub fn trim_leading_char(slice: &[u8], char: u8) -> &[u8] {
         return &slice[i as usize..];
     }
     b""
-}
-
-/// prefix is of type &[u8] or &[u16]
-pub fn trim_prefix_comptime<'a, T: Eq>(buffer: &'a [T], prefix: &'static [T]) -> &'a [T] {
-    buffer.strip_prefix(prefix).unwrap_or(buffer)
 }
 
 /// Runtime variants — prefix/suffix may borrow from a non-static
@@ -2144,7 +2102,9 @@ pub use crate::strings_impl::trim_left;
 /// Strip trailing chars in `values_to_strip`.
 pub use crate::strings_impl::trim_right;
 
-pub use crate::strings_impl::{replace, replace_owned, replacement_size};
+pub use crate::strings_impl::{
+    replace, replace_char, replace_char_in_place, replace_owned, replacement_size,
+};
 
 // Defined in crate::fmt; re-exported here for back-compat.
 pub use crate::fmt::{ParseIntError, parse_int};
@@ -2209,25 +2169,10 @@ pub fn without_prefix<'a>(input: &'a [u8], prefix: &[u8]) -> &'a [u8] {
     }
 }
 
-// The full `paths` submodule lives in
-// `bun_paths::string_paths` (it depends upward on `bun_paths` resolve/pool
-// helpers and would cycle here). Callers reach the Windows path-shape
-// helpers (`to_nt_path` / `to_kernel32_path` / `from_w_path` / …) via
-// `bun_paths::strings::*`; this module re-exports only the path-shape
-// primitives that must live at tier-0 (`crate::strings_impl`) so `bun_paths`
-// itself can build on them.
-pub use crate::strings_impl::{
-    CodeUnits, CodeUnitsMut, PathByte, basename, basename_posix, basename_windows,
-    is_windows_absolute_path_missing_drive_letter, remove_leading_dot_slash,
-    without_trailing_slash,
-};
+pub use crate::strings_impl::{CodeUnits, CodeUnitsMut, PathByte, without_trailing_slash};
 // Re-export the bun_core implementation so callers can spell
 // `strings::convert_utf16_to_utf8_in_buffer` without reaching into `unicode`.
 pub use crate::strings_impl::convert_utf16_to_utf8_in_buffer;
-// Re-export the NUL-terminated variant so callers can spell
-// `strings::convert_utf8_to_utf16_in_buffer_z` (used by the Windows profilers
-// to widen output paths for `File::write_file_os_path`).
-pub use unicode_draft::convert_utf8_to_utf16_in_buffer_z;
 
 /// `strings.convertUTF8toUTF16InBuffer` — UTF-8 → UTF-16LE into a caller-supplied
 /// buffer (capacity ≥ `input.len()` u16). SIMD fast path via simdutf; on invalid
@@ -2260,7 +2205,7 @@ pub fn try_convert_utf8_to_utf16_in_buffer<'a>(
 }
 
 /// Returns false if `out` is too short (invalid byte → U+FFFD; lone surrogates pass through).
-fn try_write_wtf8_as_utf16(input: &[u8], mut out: BorrowedCursor<'_, u16>) -> bool {
+pub fn try_write_wtf8_as_utf16(input: &[u8], mut out: BorrowedCursor<'_, u16>) -> bool {
     if input.is_empty() {
         return true;
     }
@@ -2287,6 +2232,30 @@ fn try_write_wtf8_as_utf16(input: &[u8], mut out: BorrowedCursor<'_, u16>) -> bo
             _ => return false,
         }
         rest = &rest[adv..];
+    }
+    true
+}
+
+/// Returns false if `out` is too short (lone surrogates pass through, three bytes each).
+pub fn try_write_utf16_as_wtf8(input: &[u16], mut out: BorrowedCursor<'_, u8>) -> bool {
+    if input.is_empty() {
+        return true;
+    }
+    let bounded = WithUtf8Len::utf16_worst_case(input, out.capacity())
+        .unwrap_or_else(|| WithUtf8Len::utf16_with_replacement(input));
+    if bounded.utf8_len() > out.capacity() {
+        return false;
+    }
+    if simdutf::convert::utf16::to::utf8::with_errors::le(bounded, out.reborrow()).is_successful() {
+        return true;
+    }
+    let mut rest = input;
+    let mut bytes = [0u8; 4];
+    while !rest.is_empty() {
+        let (cp, adv) = decode_wtf16_raw(rest);
+        let len = encode_wtf8_rune(&mut bytes, cp);
+        out.append(&bytes[..len]);
+        rest = &rest[adv as usize..];
     }
     true
 }

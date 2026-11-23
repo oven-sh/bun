@@ -1,29 +1,14 @@
-//! Canonical `PathChar` — the one trait abstracting over `u8`/`u16` path code
-//! units. Replaces per-crate re-definitions of the same abstraction.
-//!
-//! Tier-0: depends only on `bun_core`. Higher crates **extend** this trait
-//! (`bun_paths::PathUnit`, `bun_sys::make_path::MakePathUnit`,
-//! `bun_runtime::node::path::PathCharCwd`, `bun_core::Ch`) — they never
-//! redefine the core surface.
+//! `PathChar`: what `bun_paths` and `node:path` need from a `u8` or `u16` code unit.
 
 use bun_core::strings;
 
 /// A path code unit: `u8` (UTF-8/WTF-8) or `u16` (WTF-16, Windows).
-///
-/// Supertrait `PathByte` provides `Eq + Pod`, `from_u8` and `units`. This
-/// trait adds the closed-set operations every path-generic fn in the codebase
-/// reaches for: ASCII comparison, case folding, widening to `u32`, the
-/// `bun.strings.literal(T, "...")` const-widened static, and the one
-/// transcoding write (`write_u8_part`) that lets `u16` call sites memcpy a
-/// UTF-8 part without an `if T::IS_U16` branch.
 pub trait PathChar: strings::PathByte + Ord {
     /// `true` iff `Self == u16` (WTF-16).
     const IS_U16: bool;
 
     // `from_u8` inherited from `PathByte`.
 
-    /// Widen losslessly to `u32` (for `is_windows_device_root_t` range checks
-    /// and other ASCII classification that wants a uniform integer type).
     fn as_u32(self) -> u32;
 
     /// `Some(b)` if this code unit is in the ASCII range (`<= 0x7F`), else
@@ -41,8 +26,7 @@ pub trait PathChar: strings::PathByte + Ord {
         self == Self::from_u8(c)
     }
 
-    /// ASCII upper-case (passes through non-ASCII unchanged). Used by
-    /// drive-letter handling in `resolve_path`.
+    /// ASCII upper-case (passes through non-ASCII unchanged).
     #[inline]
     fn to_ascii_upper(self) -> Self {
         match self.to_ascii() {
@@ -56,10 +40,6 @@ pub trait PathChar: strings::PathByte + Ord {
     /// the **closed set** of literals actually passed by callers (see the
     /// `match` in the `u16` impl). Zero allocation.
     fn lit(s: &'static [u8]) -> &'static [Self];
-
-    /// Write a UTF-8 path part into `dest` (transcoding to UTF-16 when
-    /// `Self == u16`, else memcpy). Returns units written.
-    fn write_u8_part(dest: &mut [Self], part: &[u8]) -> usize;
 }
 
 impl PathChar for u8 {
@@ -84,11 +64,6 @@ impl PathChar for u8 {
     fn lit(s: &'static [u8]) -> &'static [u8] {
         s
     }
-    #[inline]
-    fn write_u8_part(dest: &mut [u8], part: &[u8]) -> usize {
-        dest[..part.len()].copy_from_slice(part);
-        part.len()
-    }
 }
 
 impl PathChar for u16 {
@@ -108,18 +83,13 @@ impl PathChar for u16 {
             ($($b:literal),* $(,)?) => {{ static W: &[u16] = &[$($b as u16),*]; W }};
         }
         match s {
-            b"" => &[],
             b"." => w!(b'.'),
             b"/" => w!(b'/'),
             b"\\" => w!(b'\\'),
             b".." => w!(b'.', b'.'),
             b"./" => w!(b'.', b'/'),
             b"//" => w!(b'/', b'/'),
-            b"/\\" => w!(b'/', b'\\'),
-            b":\\" => w!(b':', b'\\'),
             b"UNC" => w!(b'U', b'N', b'C'),
-            b"\\:\\" => w!(b'\\', b':', b'\\'),
-            b"\\??\\" => w!(b'\\', b'?', b'?', b'\\'),
             // The literal set is closed (every `T::lit` call site is one of the
             // arms above). Reaching this arm is a porting bug — fail loudly in
             // debug, return empty in release rather than leak.
@@ -128,9 +98,5 @@ impl PathChar for u16 {
                 &[]
             }
         }
-    }
-    #[inline]
-    fn write_u8_part(dest: &mut [u16], part: &[u8]) -> usize {
-        strings::convert_utf8_to_utf16_in_buffer(dest, part).len()
     }
 }

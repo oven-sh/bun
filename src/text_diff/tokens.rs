@@ -8,7 +8,7 @@
 use bun_core::slice_as_bytes;
 use bun_core::strings::{CodeUnits, PathByte, count_char, is_js_whitespace};
 
-use crate::bit_rows::Matches;
+use crate::bit_rows::{Matches, diff_short};
 use crate::{EMPTY, Elem, Hunk, Interner, MAX_LEN, diff_shared_tokens, search_bounded};
 
 /// A code unit of a JS string: Latin-1 or UTF-16.
@@ -383,7 +383,22 @@ pub fn diff_text<T: Unit>(split: Split, a: &[T], b: &[T], max_edits: usize) -> O
 
 /// As [`diff_text`], of tokens that are numbers below `distinct`, at most `i32::MAX` on each side.
 pub fn diff_ids(a: &[u32], b: &[u32], distinct: usize, max_edits: usize) -> Option<Vec<Hunk>> {
-    let hunks = diff_shared_tokens(
+    let hunks = match b.len().div_ceil(64) {
+        _ if a.len() + distinct > SHORT => diff_long(a, b, distinct, max_edits),
+        0..=1 => diff_short::<1>(a, b, distinct),
+        2 => diff_short::<2>(a, b, distinct),
+        3..=4 => diff_short::<4>(a, b, distinct),
+        _ => diff_long(a, b, distinct, max_edits),
+    };
+    let edits: usize = hunks.iter().map(|h| h.deleted() + h.inserted()).sum();
+    (edits <= max_edits).then_some(hunks)
+}
+
+/// The most rows and masks of [`diff_short`], of up to 32 bytes each.
+const SHORT: usize = 1024;
+
+fn diff_long(a: &[u32], b: &[u32], distinct: usize, max_edits: usize) -> Vec<Hunk> {
+    diff_shared_tokens(
         a,
         b,
         distinct,
@@ -394,9 +409,7 @@ pub fn diff_ids(a: &[u32], b: &[u32], distinct: usize, max_edits: usize) -> Opti
                 shared_a, shared_b, distinct, max_edits, changed_a, changed_b,
             );
         },
-    );
-    let edits: usize = hunks.iter().map(|h| h.deleted() + h.inserted()).sum();
-    (edits <= max_edits).then_some(hunks)
+    )
 }
 
 /// Enough for Myers' search to find 8,192 insertions and as many deletions, and for 70,000 rows of 70,000 bits.

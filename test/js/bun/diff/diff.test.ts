@@ -291,12 +291,33 @@ describe("of several shortest diffs, the one that diff picks", () => {
   ])("%s", (_, fn, alphabet) => {
     const next = random(1);
     for (let i = 0; i < 150; i++) {
-      // The longer ones take several attempts of the search, and rounds of more than 64 steps.
-      const [a, b] = similarPair(next, alphabet, i % 50 ? 16 : 200);
+      // The longer ones take rows of several words, or a search with rounds of more than 64 steps.
+      const [a, b] = similarPair(next, alphabet, i % 25 ? 16 : i % 50 ? 200 : 600);
       const expected = reference(a, b);
       expect({ a, b, changes: short(fn(a.join(""), b.join(""))) }).toEqual({ a, b, changes: expected });
     }
   });
+});
+
+test.each([64, 65, 128, 129, 256, 257])("of several shortest diffs, the one that diff picks: %d new tokens", length => {
+  const next = random(length);
+  const letters = (count: number) => Array.from({ length: count }, () => "abc"[next(1000) % 3]);
+  const [a, b] = [
+    ["<", ...letters(100), ">"],
+    ["(", ...letters(length - 2), ")"],
+  ];
+  expect(short(diff.chars(a.join(""), b.join("")))).toEqual(reference(a, b));
+});
+
+test("of several shortest diffs of long inputs with few edits, the one that diff picks", () => {
+  const next = random(7);
+  const alphabet = ["a\n", "b\n", "\n", "}\n"];
+  const between = Array.from({ length: 300 }, (_, i) => `${i}\n`);
+  for (let i = 0; i < 40; i++) {
+    const [first, last] = [similarPair(next, alphabet, 16), similarPair(next, alphabet, 16)];
+    const [a, b] = [0, 1].map(side => [`${side}:\n`, ...first[side], ...between, ...last[side], `${side}:\n`]);
+    expect(short(diff.lines(a.join(""), b.join("")))).toEqual(reference(a, b));
+  }
 });
 
 test("of several shortest diffs of unrelated inputs, the one that diff picks", () => {
@@ -378,6 +399,22 @@ describe("maxEditLength", () => {
       ["=", "a", 1],
       ["+", "aaa", 3],
     ]);
+  });
+
+  // Too long for the table that short inputs use.
+  const shared = Array.from({ length: 1100 }, (_, i) => i % 7);
+  test.each([
+    ["equal", shared, shared, 0],
+    ["one starts with the other", shared, [...shared, 3, 3, 3], 3],
+    ["one is inside the other", shared, [3, ...shared, 3, 3], 3],
+    ["a pair of edits", [3, ...shared], [...shared, 3], 2],
+    ["a pair of edits, and lengths that differ", [3, ...shared], [...shared, 3, 3, 3, 3], 5],
+  ])("long inputs: %s", (_, a, b, expected) => {
+    const limits = [0, 1, 2, 3, 4, 5, 6];
+    const found = (from: number[], to: number[]) =>
+      limits.map(maxEditLength => diff.arrays(from, to, { maxEditLength })).map(it => it && edits(it));
+    const within = limits.map(limit => (limit < expected ? undefined : expected));
+    expect([found(a, b), found(b, a)]).toEqual([within, within]);
   });
 });
 

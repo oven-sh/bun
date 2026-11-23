@@ -1,10 +1,12 @@
-//! The script of [`tokens`](crate::tokens) for sequences that are far apart, where Myers' search is slow.
+//! The script of [`tokens`](crate::tokens) for sequences that are short, or so far apart that a search is slow.
 //!
 //! A row of the table of longest common subsequences goes up by 0 or 1 from one token of `b` to the next, so it is one
 //! bit per token. A token of `a` that is frequent in `b` makes the next row 64 bits at a time (Hyyrö, "Bit-parallel
 //! LCS-length computation revisited", 2004). A rare one only moves a 1 for each match (Hunt and Szymanski, 1977).
 
 use core::ops::Range;
+
+use crate::Hunk;
 
 const NOT_FREQUENT: u16 = u16::MAX;
 /// What a match of a rare token costs, in words of a row: it is somewhere else in memory each time.
@@ -56,11 +58,7 @@ impl Row {
     /// `mask` has a 1 for each match.
     fn advance(&mut self, mask: &[u64]) {
         let mut carry = false;
-        let mut next = |bits: u64, mask: u64| {
-            let sum;
-            (sum, carry) = (!bits).carrying_add(!bits & mask, carry);
-            !sum & (bits | mask)
-        };
+        let mut next = |bits, mask| next_word(bits, mask, &mut carry);
         // Within a pair, the carry stays in the flag of the processor.
         let (mask_pairs, last_mask) = mask[..self.bits.len()].as_chunks::<2>();
         let (pairs, last) = self.bits.as_chunks_mut::<2>();
@@ -71,6 +69,56 @@ impl Row {
             *bits = next(*bits, *mask);
         }
         self.summaries.iter_mut().for_each(|it| it.fill(u64::MAX));
+    }
+}
+
+#[inline]
+fn next_word(bits: u64, mask: u64, carry: &mut bool) -> u64 {
+    let sum;
+    (sum, *carry) = (!bits).carrying_add(!bits & mask, *carry);
+    !sum & (bits | mask)
+}
+
+/// Keeps all rows. `b` has at most 64 × `WORDS` tokens, so `% WORDS` only spares the bounds checks.
+pub(crate) fn diff_short<const WORDS: usize>(a: &[u32], b: &[u32], distinct: usize) -> Vec<Hunk> {
+    debug_assert!(b.len() <= 64 * WORDS);
+    let mut table = vec![[0u64; WORDS]; distinct + 1 + a.len()];
+    let (masks, rows) = table.split_at_mut(distinct);
+    for (at, &token) in b.iter().enumerate() {
+        masks[token as usize][at / 64 % WORDS] |= 1 << (at % 64);
+    }
+    let mut row = rows[0];
+    for (next, &token) in rows[1..].iter_mut().zip(a) {
+        let (mask, mut carry) = (masks[token as usize], false);
+        row = core::array::from_fn(|word| next_word(row[word], mask[word], &mut carry));
+        *next = row;
+    }
+
+    let goes_up = |x: usize, at: usize| rows[x][at / 64 % WORDS] >> (at % 64) & 1 == 1;
+    let mut hunks = Vec::with_capacity(16);
+    let (mut x, mut y) = (a.len(), b.len());
+    loop {
+        let (a_hi, b_hi) = (x, y);
+        while y > 0 && !goes_up(x, y - 1) {
+            y -= 1;
+        }
+        while x > 0 && (y == 0 || goes_up(x - 1, y - 1)) {
+            x -= 1;
+        }
+        if (x, y) != (a_hi, b_hi) {
+            let (a_lo, b_lo) = (x, y);
+            hunks.push(Hunk {
+                a_lo,
+                a_hi,
+                b_lo,
+                b_hi,
+            });
+        }
+        if y == 0 {
+            hunks.reverse();
+            return hunks;
+        }
+        (x, y) = (x - 1, y - 1);
     }
 }
 

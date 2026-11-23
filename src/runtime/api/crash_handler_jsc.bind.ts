@@ -21,6 +21,8 @@ export const FaultState = b.enumeration([
   "wordThatNoCallPushed",
   "wordBelowEveryCall",
   "stackThatCannotBeRead",
+  "wordBehindEndOfMemory",
+  "frameRecordThatIsNotAligned",
 ]);
 
 export const crashHandler = b.namespace({

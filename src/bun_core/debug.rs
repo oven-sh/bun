@@ -131,10 +131,22 @@ impl MemoryAccessor {
                 }
             }
         }
-        if !is_valid_memory(address) {
+        let Some(last) = address.checked_add(buf.len().saturating_sub(1)) else {
             return false;
+        };
+        let page_size = bun_alloc::page_size();
+        let (mut page, last_page) = (address & !(page_size - 1), last & !(page_size - 1));
+        // `is_valid_memory` answers for one page, and a read that is not aligned can end on the next one.
+        loop {
+            if !is_valid_memory(page) {
+                return false;
+            }
+            if page == last_page {
+                break;
+            }
+            page = page.wrapping_add(page_size);
         }
-        // SAFETY: is_valid_memory just confirmed the page at `address` is mapped.
+        // SAFETY: every page that the read spans is mapped.
         unsafe {
             core::ptr::copy_nonoverlapping(address as *const u8, buf.as_mut_ptr(), buf.len());
         }
@@ -381,7 +393,11 @@ fn caller_at_function_entry(
     #[cfg(target_arch = "aarch64")]
     {
         let return_address = strip_return_address_signature(link_register?);
-        let in_frame_record = fp.checked_add(StackIterator::PC_OFFSET).and_then(&mut load);
+        // As `StackIterator` reads it: a register that is 0 or not aligned holds no address of a frame record.
+        let in_frame_record = Some(fp)
+            .filter(|fp| *fp != 0 && fp.is_multiple_of(core::mem::align_of::<usize>()))
+            .and_then(|fp| fp.checked_add(StackIterator::PC_OFFSET))
+            .and_then(&mut load);
         // A return jumps to x30, and a function that has run without a call still has there what its frame record holds.
         if return_address == 0
             || return_address == strip_return_address_signature(pc)
@@ -838,7 +854,7 @@ pub fn capture_from_context(
 #[derive(Clone, Copy, Default)]
 pub struct FaultTrace {
     pub len: usize,
-    /// The second address is where the function goes on that called the first or jumped to it. What it called has not run.
+    /// The first address could not be fetched, and the second is where the function goes on that called it or jumped to it.
     pub starts_at_caller: bool,
 }
 

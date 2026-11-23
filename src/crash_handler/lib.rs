@@ -828,7 +828,7 @@ mod draft {
                 let _ = PANICKING.fetch_add(1, Ordering::SeqCst);
                 let addresses_in_trace: [usize; 20];
                 let trace_address_count: usize;
-                // The frames are described from an address whose call has not started its callee: the second where the first was not fetched.
+                // The frames are described from an address whose call has not started its callee. That is the second where the first was not fetched and is no compiled code: a compiled function may have run before its page could not be fetched.
                 let first_described_address: usize;
 
                 {
@@ -1068,7 +1068,10 @@ mod draft {
                                 false,
                             ),
                         };
-                        first_described_address = usize::from(starts_at_caller);
+                        first_described_address = usize::from(
+                            starts_at_caller
+                                && crate::compiled_frames::offset_in_code(addr_buf[0]).is_none(),
+                        );
                         &addr_buf[..idx.min(addr_buf.len())]
                     };
                     addresses_in_trace = addr_buf;

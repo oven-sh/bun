@@ -85,6 +85,8 @@ const illegalInstruction = Buffer.from([0x0f, 0x0b]);
 // `nop; xor eax, eax; call rax` and `push 8; pop rax; call rax`: a call of an address where nothing can run, as long as a near call.
 const callOfZero = Buffer.from([0x90, 0x31, 0xc0, 0xff, 0xd0]);
 const callOfEight = Buffer.from([0x6a, 0x08, 0x58, 0xff, 0xd0]);
+// `mov [rip - 6], eax`: a store to the instruction itself. No code may be written, so the fault has the address of its instruction.
+const storeToItself = Buffer.from([0x89, 0x05, 0xfa, 0xff, 0xff, 0xff]);
 
 class Executable {
   bytes: Buffer;
@@ -172,16 +174,21 @@ describe.skipIf(!isLinux || process.arch !== "x64" || isASAN)("a planted fault",
     expect(await run([join(cwd, "app")], cwd)).toEqual({ stdout: "started\ntotal 23\n", stderr: "", exitCode: 0 });
     return { id: id!, executable: new Executable(join(cwd, "app")) };
   }
-  /** What the processor could not run, where the fault is not the planted load: nothing is at that address. */
-  async function crash(cwd: string, id: string, notFetched?: "0x0" | "0x8") {
+  const plantedLoad = { address: "0x18", code: "8b 04 25 18 00 00 00" };
+  /**
+   * `address` is what the processor could not reach. `code` is the planted instruction, where the fault is not at the
+   * address of the instruction itself. `rip` is what that register held, where it is no place in the code.
+   */
+  async function crash(cwd: string, id: string, fault: { address: string; code?: string; rip?: string } = plantedLoad) {
+    const { address, code, rip } = fault;
     const { stdout, stderr, exitCode } = await run([join(cwd, "planted")], cwd);
     expect(stdout).toBe("started\n");
     expect(exitCode).not.toBe(0);
-    expect(stderr).toContain(`Segmentation fault at address ${notFetched ?? "0x18"}\n`);
+    expect(stderr).toMatch(new RegExp(`Segmentation fault at address ${address}\n`));
     expect(stderr.split("\n")).toContain("Build ID: " + id);
     // What the processor held: the planted instruction itself, and no value that says where anything was loaded.
     expect(stderr).toMatch(
-      notFetched ? /^Code at rip: not readable$/m : /^Code at rip: 8b 04 25 18 00 00 00( [0-9a-f]{2})*$/m,
+      code ? new RegExp(`^Code at rip: ${code}( [0-9a-f]{2})*$`, "m") : /^Code at rip: not readable$/m,
     );
     const registers = stderr.match(/^Registers:((?: r[a-z0-9]+=\S+){17})$/m)?.[1];
     expect(registers).toBeString();
@@ -191,7 +198,7 @@ describe.skipIf(!isLinux || process.arch !== "x64" || isASAN)("a planted fault",
       );
     }
     expect(registers).toMatch(/ rsp=stack\+0x0 /);
-    expect(registers).toMatch(notFetched ? new RegExp(` rip=${notFetched}$`) : / rip=code\+0x[0-9a-f]+$/);
+    expect(registers).toMatch(rip ? new RegExp(` rip=${rip}$`) : / rip=code\+0x[0-9a-f]+$/);
     const link = stderr.match(/^ (\S*\/\d+\.\d+\.\d+\/\S+)$/m)?.[1];
     expect(link).toBeString();
     const printed = framesOf(stderr.slice(stderr.indexOf("Compiled JavaScript on the stack:\n")));
@@ -279,7 +286,7 @@ describe.skipIf(!isLinux || process.arch !== "x64" || isASAN)("a planted fault",
       [callOfEight, "0x8"],
     ] as const) {
       executable.writeWithFaultAt(calls, join(String(dir), "planted"), call);
-      expect(await crash(String(dir), id, address)).toEqual([
+      expect(await crash(String(dir), id, { address, rip: address })).toEqual([
         "lineTotal app.ts:17:17",
         "total app.ts:11:43",
         "checkout app.ts:23:23",
@@ -313,7 +320,28 @@ console.log("total " + (outer(process.argv.length) + 20));
     const { id, executable } = await build(String(dir));
     const calls = executable.returnAddressesOfCallsOf("whole").map(behind => behind - callOfZero.length);
     executable.writeWithFaultAt(calls, join(String(dir), "planted"), callOfZero);
-    expect(await crash(String(dir), id, "0x0")).toEqual(["half app.ts:5:18", "outer app.ts:9:52", " app.ts:13:25"]);
+    expect(await crash(String(dir), id, { address: "0x0", rip: "0x0" })).toEqual([
+      "half app.ts:5:18",
+      "outer app.ts:9:52",
+      " app.ts:13:25",
+    ]);
+  });
+
+  // A fault at the address of its own instruction is also what a page of code gives that cannot be fetched. The function
+  // there may have run, so it stays on the list. Here it is the first instruction of priceOf, which has no frame record yet.
+  test("a fault at the address of the first instruction of a function: the function and all its callers", async () => {
+    using dir = tempDir("aot-crash-in-compiled-code", files);
+    const { id, executable } = await build(String(dir));
+    const entry = executable.addressOf("priceOf");
+    executable.writeWithFaultAt(entry, join(String(dir), "planted"), storeToItself);
+    // Where the executable is loaded does not change the place in the page.
+    const placeInPage = (entry % 4096).toString(16).padStart(3, "0").toUpperCase();
+    expect(await crash(String(dir), id, { address: `0x[0-9A-F]*${placeInPage}` })).toEqual([
+      "priceOf prices.ts:12:1",
+      "lineTotal app.ts:17:17",
+      "total app.ts:11:43",
+      "checkout app.ts:23:23",
+    ]);
   });
 });
 

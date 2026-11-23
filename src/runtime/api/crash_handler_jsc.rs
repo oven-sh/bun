@@ -249,6 +249,23 @@ pub(crate) fn fault_walk_starts_at_caller(state: FaultState) -> Option<bool> {
     #[cfg(all(unix, any(target_arch = "x86_64", target_arch = "aarch64")))]
     {
         use bun_core::debug::{capture_from_fault, frame_address, return_address_of_frame};
+        use bun_sys::Mmap;
+        use core::ptr::NonNull;
+
+        /// One page of memory whose next page is not mapped.
+        fn page_in_front_of_none() -> Option<Mmap> {
+            let page = bun_sys::page_size();
+            let access = libc::PROT_READ | libc::PROT_WRITE;
+            let flags = libc::MAP_PRIVATE | libc::MAP_ANON;
+            let both = Mmap::new(2 * page, access, flags, bun_sys::Fd::from_native(-1), 0).ok()?;
+            let first = both.into_raw().cast::<u8>();
+            let page_at = |start| NonNull::slice_from_raw_parts(start, page);
+            // SAFETY: the two pages are from one `mmap`, and each becomes the value's that is made of it.
+            unsafe {
+                drop(Mmap::from_raw(page_at(first.add(page))));
+                Some(Mmap::from_raw(page_at(first)))
+            }
+        }
 
         /// x86-64: `call rax` ends it.
         static CODE: [u8; 16] = [
@@ -261,6 +278,15 @@ pub(crate) fn fault_walk_starts_at_caller(state: FaultState) -> Option<bool> {
         let fp = frame_address();
         // SAFETY: `fp` is the frame record of this function.
         let caller = unsafe { return_address_of_frame(fp) };
+        let last_page = match state {
+            FaultState::WordBehindEndOfMemory | FaultState::FrameRecordThatIsNotAligned => {
+                Some(page_in_front_of_none()?)
+            }
+            _ => None,
+        };
+        let end_of_memory = last_page
+            .as_ref()
+            .map_or(0, |page| page.as_ptr().addr() + page.size());
 
         // Which word is what a call pushed, and what `pc`, the fault address and x30 are.
         let (pushed, pc, fault_address, link_register) = match state {
@@ -284,7 +310,19 @@ pub(crate) fn fault_walk_starts_at_caller(state: FaultState) -> Option<bool> {
             }
             FaultState::WordBelowEveryCall if cfg!(target_arch = "x86_64") => (1, 0, Some(0), 0),
             FaultState::StackThatCannotBeRead if cfg!(target_arch = "x86_64") => (0, 0, Some(0), 0),
+            // Of the 8 bytes in front of the word, where a call would be, the last one is not mapped.
+            FaultState::WordBehindEndOfMemory if cfg!(target_arch = "x86_64") => {
+                (end_of_memory + 1, 0, Some(0), 0)
+            }
+            FaultState::FrameRecordThatIsNotAligned if cfg!(target_arch = "aarch64") => {
+                (behind_call, NOT_MAPPED, Some(NOT_MAPPED), behind_call)
+            }
             _ => return None,
+        };
+        // The return address of a frame record at this address would end on the page that is not mapped. It has no callers.
+        let (fp, caller) = match state {
+            FaultState::FrameRecordThatIsNotAligned => (end_of_memory - 15, 0),
+            _ => (fp, caller),
         };
 
         // x86-64: a call leaves the stack pointer at the second word, and a return at the first.

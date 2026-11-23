@@ -88,11 +88,18 @@ describe.if(isPosix)("the stack trace of a fault at an address that cannot be ru
     expect(crash_handler.faultWalkStartsAtCaller(state)).toBe(false);
   });
 
-  // What the stack pointer is at where no call has pushed it.
+  // A frame record there would end on a page that is not mapped. None is read, and x30 is the caller.
+  test.if(isArm64)("a frame pointer that is not aligned", () => {
+    expect(crash_handler.faultWalkStartsAtCaller("frameRecordThatIsNotAligned")).toBe(true);
+  });
+
+  // What the stack pointer is at where no call has pushed it. The last one asks for bytes that end on a page that is
+  // not mapped: where the walk reads memory itself, as on macOS, it must not read those.
   test.if(process.arch === "x64").each([
     ["a word on the stack that no call instruction ends at", "wordThatNoCallPushed"],
     ["a word on the stack below 8", "wordBelowEveryCall"],
     ["a stack pointer that cannot be read", "stackThatCannotBeRead"],
+    ["a word on the stack that is one byte behind the end of memory", "wordBehindEndOfMemory"],
   ])("%s", (_, state) => {
     expect(crash_handler.faultWalkStartsAtCaller(state)).toBe(false);
   });
@@ -116,7 +123,7 @@ describe.if(isPosix)("the stack trace of a fault at an address that cannot be ru
   // bun:ffi needs memory that it can write and run, and ASAN answers a fault itself.
   const takesRealFaults = (isLinux || process.platform === "darwin") && !isASAN && !!without("a hardened build");
 
-  test.if(takesRealFaults)("a real call of an address where nothing is mapped", async () => {
+  test.concurrent.if(takesRealFaults)("a real call of an address where nothing is mapped", async () => {
     expect(await callOf("8")).toEqual({
       reason: "Segmentation fault",
       unplaced: 3,
@@ -125,7 +132,7 @@ describe.if(isPosix)("the stack trace of a fault at an address that cannot be ru
   });
 
   // macOS raises SIGBUS for what is mapped and cannot be run.
-  test.if(takesRealFaults)("a real call of memory that holds data", async () => {
+  test.concurrent.if(takesRealFaults)("a real call of memory that holds data", async () => {
     const signal = isLinux ? "SIGSEGV" : "SIGBUS";
     expect(await callOf(`require("bun:ffi").ptr(new Uint8Array(64))`)).toEqual({
       reason: isLinux ? "Segmentation fault" : "Bus error",
@@ -136,7 +143,7 @@ describe.if(isPosix)("the stack trace of a fault at an address that cannot be ru
 
   // Linux raises SIGBUS with BUS_ADRERR for a page that its file does not hold. Code that is running faults like this
   // when its file is cut, so x30 is not taken for the return address of what runs there. x86-64 looks at the stack.
-  test.if(takesRealFaults && isGlibc)("a real call of a page that its file does not hold", async () => {
+  test.concurrent.if(takesRealFaults && isGlibc)("a real call of a page that its file does not hold", async () => {
     using dir = tempDir("crash-call-of-page-without-file", { "empty": "" });
     const mapped = `(() => {
       const { mmap } = require("bun:ffi").dlopen("libc.so.6", {

@@ -901,6 +901,30 @@ test("large diffs are exact rather than abandoned part-way", () => {
   expect(message.slice(-120).trimEnd()).toEndWith(`\n\n- Expected  - ${changed}\n+ Received  + ${changed}`);
 });
 
+test.each([
+  ["within its limit", 3_000, 923, 890, "625f49296c562c4fa8047d64e1403379f0330fc0"],
+  ["past its limit", 30_000, 9176, 8962, "970415288248b05350a9c9399b4aff0e6f123478"],
+])(
+  "texts with many edits and few kinds of lines get the diff of Myers' search, %s",
+  (_, lines, removed, added, sha1) => {
+    let seed = 1;
+    const random = (below: number) => ((seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) >>> 8) % below;
+    const line = () => "line " + random(12);
+    const expected = Array.from({ length: lines }, line);
+    const received = expected.flatMap(it => [[it], [it], [it], [], [line()], [line(), it]][random(6)]);
+
+    let message = "";
+    try {
+      expect(received.join("\n")).toBe(expected.join("\n"));
+    } catch (e) {
+      message = cleanAnsiEscapes((e as Error).message);
+    }
+    expect(message.slice(-60).trimEnd()).toEndWith(`\n\n- Expected  - ${removed}\n+ Received  + ${added}`);
+    // How many unchanged lines are shown depends on the environment.
+    expect(Bun.SHA1.hash(message.match(/^[-+] .*/gm)!.join("\n"), "hex")).toBe(sha1);
+  },
+);
+
 test("prints a Response once", () => {
   let message = "";
   try {
@@ -922,6 +946,18 @@ test("prints a Response once", () => {
 +   },
   }
 `);
+});
+
+test("a long run of equal characters that only the reverse search reaches stays unchanged", () => {
+  const times = (letter: string, n: number) => Buffer.alloc(n, letter).toString();
+  let message = "";
+  try {
+    expect("xd" + times("x", 100_000) + "c").toBe("x" + times("c", 10_000) + times("x", 100_000) + "d");
+  } catch (e) {
+    message = cleanAnsiEscapes((e as Error).message);
+  }
+  // Changed and unchanged parts are shortened one by one: the `c`, and the `x` on both sides.
+  expect(message.match(/bytes truncated/g)).toHaveLength(3);
 });
 
 test("prints a React 19 element as JSX, without the fiber in its _owner", () => {

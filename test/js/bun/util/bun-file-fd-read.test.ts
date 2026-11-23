@@ -1,6 +1,6 @@
 import { dlopen, ptr } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
-import { closeSync, openSync, readSync, renameSync, writeSync } from "fs";
+import { closeSync, existsSync, openSync, readSync, renameSync, writeSync } from "fs";
 import { bunEnv, bunExe, isLinux, isWindows, libcPathForDlopen, tempDir } from "harness";
 import { constants } from "os";
 import { join } from "path";
@@ -51,6 +51,16 @@ describe.skipIf(isWindows)("Bun.file(fd) read", () => {
     expect(await withFd(path, fd => Bun.file(fd).text())).toBe("");
     expect((await withFd(path, fd => Bun.file(fd).arrayBuffer())).byteLength).toBe(0);
   });
+});
+
+test.skipIf(isWindows)("an empty slice of a pipe that nobody writes to resolves", async () => {
+  using dir = tempDir("bun-file-fd-read", {});
+  using fifo = openFifo(String(dir));
+  expect(await Bun.file(fifo.reader).slice(0, 0).text()).toBe("");
+});
+
+test.skipIf(!isLinux || !existsSync("/dev/ptmx"))("an empty slice of a silent terminal resolves", async () => {
+  expect(await Bun.file("/dev/ptmx").slice(0, 0).text()).toBe("");
 });
 
 test.skipIf(!isLinux)("an empty read of a FIFO by path stays open until its writer has written", async () => {

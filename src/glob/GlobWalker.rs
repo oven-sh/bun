@@ -1269,7 +1269,9 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
                 }
                 _ => break,
             };
-            let start = usize::from(dir_path.is_empty());
+            // On Windows `//.` starts a device path.
+            let has_sep = self.absolute && bun_paths::has_trailing_sep(dir_path);
+            let start = usize::from(dir_path.is_empty() || has_sep);
             dir_path.extend_from_slice(&dots[start..]);
             component_idx += 1;
         }

@@ -1331,7 +1331,7 @@ macro_rules! scoped_log {
 /// ```
 ///
 /// The two-arg form skips `declare_scope!` and just forwards to an existing
-/// `ScopedLogger` static (by path) — for hand-declared statics (keyword tagnames)
+/// `ScopedLogger` static (by path) — for hand-declared statics
 /// or scopes that live in another module.
 //
 // Nested-macro `$` escaping uses the "`$` token smuggle" so caller crates do

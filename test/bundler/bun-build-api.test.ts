@@ -10,6 +10,7 @@ import {
   isDebug,
   isWindows,
   MAX_PATH_BYTES,
+  substDrive,
   tempDir,
   tempDirWithFiles,
   tempDirWithFilesAnon,
@@ -2898,3 +2899,40 @@ test("the hash in a chunk's name follows everything that the chunk reaches, thro
   expect(first.filter(name => !changed.includes(name))).toHaveLength(count);
   expect(changed).toContain(first.find(name => name.startsWith("apart-"))!);
 });
+
+test.concurrent.skipIf(!isWindows).each(["api", "cli", "--no-bundle"])(
+  "does not overwrite an entry point in the root of a drive that stands for a directory (%s)",
+  async how => {
+    const source = "console.log(1); // source\n";
+    using dir = tempDir("build-subst-drive", {
+      "top.js": source,
+      "build.js": `await Bun.build({ entrypoints: [process.argv[2]], outdir: "out" });`,
+    });
+    using drive = substDrive(String(dir));
+    const entry = join(drive.root, "top.js");
+    const args =
+      how === "api" ? ["build.js", entry] : ["build", entry, "--outdir=out", ...(how === "cli" ? [] : [how])];
+    await using proc = Bun.spawn({ cmd: [bunExe(), ...args], cwd: drive.root, env: bunEnv, stderr: "pipe" });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(readFileSync(join(String(dir), "top.js"), "utf8")).toBe(source);
+    expect(readdirSync(join(String(dir), "out"))).toEqual(["top.js"]);
+    expect(exitCode).toBe(0);
+  },
+);
+
+test.skipIf(!isWindows)(
+  "[dir] of an asset on a drive that stands for a directory is relative to the root",
+  async () => {
+    using dir = tempDir("build-subst-drive-asset", {
+      "src/index.js": `import logo from "./img/logo.png"; console.log(logo);`,
+      "src/img/logo.png": "png",
+    });
+    using drive = substDrive(String(dir));
+    const { outputs } = await Bun.build({
+      entrypoints: [join(drive.root, "src", "index.js")],
+      naming: { asset: "[dir]/[name].[ext]" },
+    });
+    expect(outputs.map(output => path.normalize(output.path)).sort()).toEqual(["img\\logo.png", "index.js"]);
+  },
+);

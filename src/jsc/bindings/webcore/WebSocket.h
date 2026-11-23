@@ -427,6 +427,7 @@ private:
     bool m_proxyRejectUnauthorized { false };
     bool m_paused { false };
     bool m_unref { false };
+    bool m_didSendRequest { false };
     WebSocketConnectedOptions m_connectedOptions {};
     AnyWebSocket m_connectedWebSocket { nullptr };
     ConnectedWebSocketKind m_connectedWebSocketKind { ConnectedWebSocketKind::None };
@@ -442,7 +443,6 @@ private:
     JSValueInWrappedObject m_requestTracer;
     // From willSendRequest() to publishSentRequest().
     std::unique_ptr<SentRequest> m_sentRequest;
-    bool m_didSendRequest { false };
     // From the 101 to publishOpen().
     std::unique_ptr<AcceptedHandshake> m_acceptedHandshake;
 

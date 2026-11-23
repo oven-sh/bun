@@ -4,6 +4,7 @@
 use core::cell::Cell;
 use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::Error;
@@ -18,6 +19,7 @@ use crate::http_context::{HTTPSocket, PeerVerification};
 use crate::http_request_body::HTTPRequestBody;
 use crate::http_thread::WriteMessageType;
 use crate::internal_state::HTTPStage;
+use crate::request_trace::Endpoints;
 use crate::signals;
 use crate::ssl_config;
 use crate::{
@@ -63,6 +65,8 @@ pub struct ClientSession {
     pub(crate) verification: PeerVerification,
     /// The fetch session whose requests may multiplex onto this connection.
     pub(crate) pool: crate::PoolOptions,
+    /// Once it has carried a traced request.
+    endpoints: Option<Arc<Endpoints>>,
 
     /// Queued bytes for the socket; whole frames are written here and
     /// `flush()` drains as much as the socket accepts.
@@ -277,6 +281,7 @@ impl ClientSession {
             did_have_handshaking_error: client.flags.did_have_handshaking_error,
             verification: client.socket_verification(),
             pool: client.pool,
+            endpoints: client.traced_endpoints(),
             write_buffer: bun_io::StreamBuffer::default(),
             read_buffer: Vec::new(),
             streams: ArrayHashMap::default(),
@@ -528,7 +533,7 @@ impl ClientSession {
             HTTPStage::Body
         };
         client.state.response_stage = HTTPStage::Headers;
-        client.trace_socket(self.socket);
+        client.trace_socket(self.socket, &mut self.endpoints);
         client.trace_request_stage();
         stream_ref.client = Some(client);
 
@@ -1035,6 +1040,7 @@ impl ClientSession {
                 registry_ref,
                 b"",
                 self.pool,
+                None,
             );
         } else {
             NewHTTPContext::<true>::close_socket(self.socket);

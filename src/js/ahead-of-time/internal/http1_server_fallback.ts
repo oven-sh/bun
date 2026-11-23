@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/internal/http1_server_fallback.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 888ad531d1d6882090c167137352ae5973f2099ec8ab345ddd06345ee95d9739.
+// Written against that file with the SHA-256 41c21ef70f06121b91402db887ed060293ce3fa0ac17281efbd45af1ed670026.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // JS HTTP/1 server path over an arbitrary Duplex with a JS stand-in for NodeHTTPResponse.
@@ -484,11 +484,21 @@ function connectionListenerHTTP1(
     flushedUrl += url;
   };
 
-  parser[kOnHeadersComplete] = function onHttp1HeadersComplete() {
+  parser[kOnHeadersComplete] = function onHttp1HeadersComplete(
+    versionMajor: number,
+    versionMinor: number,
+    rawHeaders: string[] | undefined,
+    methodNum: number | undefined,
+    url: string | undefined,
+    _statusCode: number | undefined,
+    _statusMessage: string | undefined,
+    upgrade: boolean,
+    shouldKeepAlive: boolean,
+  ) {
     // The async context that one request enters ends before the next request of the chunk.
     const frame = AsyncContextFrame.current();
     try {
-      return dispatchHttp1Request.$apply(undefined, arguments as any);
+      return dispatchHttp1Request(versionMajor, versionMinor, rawHeaders, methodNum, url, upgrade, shouldKeepAlive);
     } finally {
       AsyncContextFrame.exchange(frame);
     }
@@ -500,8 +510,6 @@ function connectionListenerHTTP1(
     rawHeaders: string[] | undefined,
     methodNum: number | undefined,
     url: string | undefined,
-    _statusCode: number | undefined,
-    _statusMessage: string | undefined,
     upgrade: boolean,
     shouldKeepAlive: boolean,
   ) {

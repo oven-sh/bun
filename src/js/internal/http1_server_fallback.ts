@@ -427,17 +427,7 @@ function connectionListenerHTTP1(server, socket, options) {
     flushedUrl += url;
   };
 
-  parser[kOnHeadersComplete] = function onHttp1HeadersComplete() {
-    // The async context that one request enters ends before the next request of the chunk.
-    const frame = AsyncContextFrame.current();
-    try {
-      return dispatchHttp1Request.$apply(undefined, arguments);
-    } finally {
-      AsyncContextFrame.exchange(frame);
-    }
-  };
-
-  function dispatchHttp1Request(
+  parser[kOnHeadersComplete] = function onHttp1HeadersComplete(
     versionMajor,
     versionMinor,
     rawHeaders,
@@ -448,6 +438,16 @@ function connectionListenerHTTP1(server, socket, options) {
     upgrade,
     shouldKeepAlive,
   ) {
+    // The async context that one request enters ends before the next request of the chunk.
+    const frame = AsyncContextFrame.current();
+    try {
+      return dispatchHttp1Request(versionMajor, versionMinor, rawHeaders, methodNum, url, upgrade, shouldKeepAlive);
+    } finally {
+      AsyncContextFrame.exchange(frame);
+    }
+  };
+
+  function dispatchHttp1Request(versionMajor, versionMinor, rawHeaders, methodNum, url, upgrade, shouldKeepAlive) {
     if (rawHeaders === undefined) {
       rawHeaders = flushedHeaders;
       flushedHeaders = [];

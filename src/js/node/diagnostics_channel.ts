@@ -529,6 +529,32 @@ function traceSettlement(
   }
 }
 
+function wrapCallback(
+  callback: Traced,
+  asyncStart: AnyChannel,
+  asyncEnd: AnyChannel,
+  errorChannel: AnyChannel,
+  context: TraceContext,
+) {
+  return function wrappedCallback(this: unknown, err: unknown, res: unknown) {
+    if (err) {
+      publishError(errorChannel, context, err);
+    } else {
+      setResult(context, res);
+    }
+
+    const scopes = openWindow(asyncStart, asyncEnd, context);
+    let result;
+    try {
+      result = callback.$apply(this, arguments);
+    } catch (thrown) {
+      closeWindow(asyncEnd, context, scopes, true, thrown);
+    }
+    closeWindow(asyncEnd, context, scopes, false);
+    return result;
+  };
+}
+
 function emitNonThenableWarning(fn: Traced) {
   process.emitWarning(
     `tracePromise was called with the function '${fn.name || "<anonymous>"}', which returned a non-thenable.`,
@@ -668,30 +694,11 @@ class TracingChannel {
 
     const { error } = this;
     const end = this.#end;
-    const asyncStart = this.#asyncStart;
-    const asyncEnd = this.#asyncEnd;
-
-    function wrappedCallback(this: unknown, err: unknown, res: unknown) {
-      if (err) {
-        publishError(error, context!, err);
-      } else {
-        setResult(context!, res);
-      }
-
-      const scopes = openWindow(asyncStart, asyncEnd, context);
-      let result;
-      try {
-        result = callback.$apply(this, arguments);
-      } catch (thrown) {
-        closeWindow(asyncEnd, context, scopes, true, thrown);
-      }
-      closeWindow(asyncEnd, context, scopes, false);
-      return result;
-    }
 
     const callback: Traced = ArrayPrototypeAt.$call(args, position);
     validateFunction(callback, "callback");
-    ArrayPrototypeSplice.$call(args, position, 1, wrappedCallback);
+    const wrapped = wrapCallback(callback, this.#asyncStart, this.#asyncEnd, error, context);
+    ArrayPrototypeSplice.$call(args, position, 1, wrapped);
 
     const scopes = openWindow(this.#start, end, context);
 

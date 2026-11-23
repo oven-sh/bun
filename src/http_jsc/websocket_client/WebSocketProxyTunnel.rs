@@ -29,7 +29,7 @@ use bun_ptr::{CellExt, JsCell, RefPtr, RefPtrCellExt as _};
 use bun_uws::ssl_wrapper::{self, SslWrapper};
 use bun_uws::{NewSocketHandler, us_bun_verify_error_t};
 
-use crate::websocket_client::{CloseMode, ErrorCode, remote_address_of};
+use crate::websocket_client::{CloseMode, ErrorCode};
 
 use bun_http::ssl_config::SslConfig;
 
@@ -491,10 +491,10 @@ impl WebSocketProxyTunnel {
         !matches!(self.socket.get(), SocketUnion::None)
     }
 
-    pub(crate) fn remote_address(&self) -> Option<(core::net::IpAddr, u16)> {
+    pub(crate) fn remote_address(&self) -> Option<core::net::SocketAddr> {
         match self.socket.get() {
-            SocketUnion::Tcp(s) => remote_address_of(s),
-            SocketUnion::Ssl(s) => remote_address_of(s),
+            SocketUnion::Tcp(s) => s.remote_endpoint(),
+            SocketUnion::Ssl(s) => s.remote_endpoint(),
             SocketUnion::None => None,
         }
     }

@@ -1738,7 +1738,6 @@ impl<'a> HTTPClient<'a> {
             }
         }
         self.register_abort_tracker::<IS_SSL>(socket);
-        self.trace_socket::<IS_SSL>(socket);
         bun_core::scoped_log!(fetch, "Connected {} \n", BStr::new(self.url.href));
 
         // Arm the idle timer immediately so a stalled TLS handshake (server
@@ -1881,6 +1880,7 @@ impl<'a> HTTPClient<'a> {
             let _ = socket.set_keep_alive(true, 60);
         }
 
+        self.trace_socket::<IS_SSL>(socket, &mut None);
         self.on_open::<IS_SSL>(socket)?;
         if IS_SSL {
             self.configure_tls::<IS_SSL>(socket);
@@ -2454,7 +2454,9 @@ impl<'a> HTTPClient<'a> {
     }
 
     /// What [`Self::build_request`] adds that says nothing about the connection or the framing.
-    pub(crate) fn default_request_headers(&self) -> impl Iterator<Item = Header<'static>> + use<> {
+    pub(crate) fn default_request_headers<'h>(
+        &self,
+    ) -> impl Iterator<Item = Header<'h>> + Clone + use<'h> {
         let accept_encoding = (!self.flags.disable_decompression).then(accept_encoding_header);
         [get_user_agent_header(), ACCEPT_HEADER]
             .into_iter()
@@ -2519,6 +2521,7 @@ impl<'a> HTTPClient<'a> {
                 None,
                 self.unix_socket_path,
                 self.pool,
+                self.traced_endpoints(),
             );
         } else {
             GenHttpContext::<IS_SSL>::close_socket(socket);
@@ -2604,6 +2607,7 @@ impl InFlightRequest {
 
     fn start_<const IS_SSL: bool>(mut self) {
         self.unregister_abort_tracker();
+        self.trace_no_socket();
 
         // Aborted before connecting
         if self.signals.get(signals::Field::Aborted) {
@@ -3893,6 +3897,7 @@ impl<'a> HTTPClient<'a> {
                 None,
                 self.unix_socket_path,
                 self.pool,
+                self.traced_endpoints(),
             );
         } else {
             GenHttpContext::<IS_SSL>::close_socket(socket);
@@ -3999,6 +4004,7 @@ impl<'a> HTTPClient<'a> {
             None,
             b"",
             self.pool,
+            None,
         );
         Break(NextStep::Finish)
     }

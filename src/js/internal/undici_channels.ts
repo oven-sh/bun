@@ -6,7 +6,6 @@ const { checkIsHttpToken } = require("internal/validators");
 const { isIP } = require("internal/net/isIP");
 
 const ArrayPrototypeSlice = Array.prototype.slice;
-const BufferFrom = Buffer.from;
 const NumberParseInt = Number.parseInt;
 const ObjectAssign = Object.assign;
 const ObjectDefineProperty = Object.defineProperty;
@@ -378,19 +377,14 @@ function makeConnectParams(origin: string, servername: string | null, version?: 
   };
 }
 
-function toBuffers(fields: string[]) {
-  const buffers: Buffer[] = [];
-  for (let i = 0; i < fields.length; i++) $arrayPush(buffers, BufferFrom.$call(Buffer, fields[i], "latin1"));
-  return buffers;
-}
-
-function toBuffer(bytes: Uint8Array): Buffer {
-  return BufferFrom.$call(Buffer, bytes.buffer, bytes.byteOffset, bytes.byteLength);
-}
-
 function publishError(request: Request, error: unknown) {
-  onError.publish({ request, error });
+  if (onError.hasSubscribers) onError.publish({ request, error });
   request.aborted = true;
+}
+
+// Not at once: a subscriber may be the one to abort, ahead of others that have yet to hear of the request.
+function publishAbort(request: Request, reason: unknown) {
+  queueMicrotask(() => publishError(request, reason));
 }
 
 /** Returns what native code reports the steps of a request to, and those of the requests that it is redirected to. */
@@ -431,8 +425,10 @@ function traceRequests() {
         if (!onConnected.hasSubscribers && !onSendHeaders.hasSubscribers) break;
         const connectParams = makeConnectParams(origin, servername, `h${b}`);
         const socket = new Socket(connectParams, c, d, e, f);
-        if (wasConnecting) onConnected.publish({ connectParams, connector: undefined, socket });
-        onSendHeaders.publish({ request, headers: a, socket });
+        if (wasConnecting && onConnected.hasSubscribers) {
+          onConnected.publish({ connectParams, connector: undefined, socket });
+        }
+        if (onSendHeaders.hasSubscribers) onSendHeaders.publish({ request, headers: a, socket });
         break;
       }
       case RequestEvent.BodyChunkSent:
@@ -443,19 +439,19 @@ function traceRequests() {
         // `a`: according to that stream.
         if (isBodySent || (a && !hasBody)) break;
         isBodySent = true;
-        onBodySent.publish({ request });
+        if (onBodySent.hasSubscribers) onBodySent.publish({ request });
         break;
       case RequestEvent.ResponseHead:
         if (onHeaders.hasSubscribers) {
-          onHeaders.publish({ request, response: { statusCode: a, headers: toBuffers(c), statusText: b } });
+          onHeaders.publish({ request, response: { statusCode: a, headers: c, statusText: b } });
         }
         break;
       case RequestEvent.BodyChunkReceived:
-        if (onBodyChunkReceived.hasSubscribers) onBodyChunkReceived.publish({ request, chunk: toBuffer(a) });
+        if (onBodyChunkReceived.hasSubscribers) onBodyChunkReceived.publish({ request, chunk: a });
         break;
       case RequestEvent.ResponseEnd:
         isOver = request.completed = true;
-        onTrailers.publish({ request, trailers: [] });
+        if (onTrailers.hasSubscribers) onTrailers.publish({ request, trailers: [] });
         break;
       case RequestEvent.Error:
         isOver = true;
@@ -466,13 +462,10 @@ function traceRequests() {
         }
         publishError(request, a);
         break;
-      case RequestEvent.Abort: {
+      case RequestEvent.Abort:
         isOver = true;
-        // Not at once: a subscriber may be the one to abort, ahead of others that have yet to hear of the request.
-        const aborted = request;
-        queueMicrotask(() => publishError(aborted, a));
+        publishAbort(request, a);
         break;
-      }
     }
   };
 }

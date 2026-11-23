@@ -5,6 +5,7 @@
 
 #include "AsyncContextFrame.h"
 #include "BunString.h"
+#include "JSBuffer.h"
 #include "JSDOMExceptionHandling.h"
 #include "JSWebSocket.h"
 #include "ModuleGraph.h"
@@ -40,6 +41,20 @@ static JSArray* jsFields(JSGlobalObject* globalObject, std::span<const String> f
     RETURN_IF_EXCEPTION(scope, nullptr);
     for (size_t i = 0; i < fields.size(); ++i) {
         array->putDirectIndex(globalObject, i, jsString(vm, fields[i]));
+        RETURN_IF_EXCEPTION(scope, nullptr);
+    }
+    return array;
+}
+
+static JSArray* jsBuffers(JSGlobalObject* globalObject, std::span<const String> latin1Fields)
+{
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    JSArray* array = constructEmptyArray(globalObject, nullptr, latin1Fields.size());
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    for (size_t i = 0; i < latin1Fields.size(); ++i) {
+        auto* buffer = createBuffer(globalObject, byteCast<uint8_t>(latin1Fields[i].span8()));
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        array->putDirectIndex(globalObject, i, buffer);
         RETURN_IF_EXCEPTION(scope, nullptr);
     }
     return array;
@@ -219,7 +234,7 @@ void WebSocket::publishResponse(uint16_t statusCode, std::span<const uint8_t> st
     auto* globalObject = scriptExecutionContext()->jsGlobalObject();
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    JSArray* array = jsFields(globalObject, fields.span());
+    JSArray* array = jsBuffers(globalObject, fields.span());
     if (scope.exception()) [[unlikely]] {
         scope.clearExceptionExceptTermination();
         return;

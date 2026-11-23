@@ -1,7 +1,7 @@
 import { gc } from "bun";
 import { socketFaultInjection } from "bun:internal-for-testing";
 import { beforeEach, describe, expect, mock, test } from "bun:test";
-import { bunEnv, bunExe, tls as certificate, isWindows, nodeExe, normalizeBunSnapshot, tempDir } from "harness";
+import { bunEnv, bunExe, tls as certificate, isIPv6, isWindows, nodeExe, normalizeBunSnapshot, tempDir } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { execFile, spawn } from "node:child_process";
 import {
@@ -1791,6 +1791,38 @@ test.concurrent("node.test", async () => {
   expect(exitCode).toBe(1);
 });
 
+test.concurrent("node.test: a subscriber that comes during a test hears the rest of it", async () => {
+  using dir = tempDir("dc-node-test-late", {
+    "traced.test.js": `
+      const dc = require("node:diagnostics_channel");
+      const { test } = require("node:test");
+      test("over before", () => {});
+      test("outer", async t => {
+        t.afterEach(() => { throw new Error("hook"); });
+        await t.test("inner", () => {
+          for (const event of ["start", "end", "error"])
+            dc.subscribe("tracing:node.test:" + event, ({ name, nesting, error }) => console.log(event, nesting, name, error?.message));
+        });
+      });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "traced.test.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(normalizeBunSnapshot(stdout, dir)).toMatchInlineSnapshot(`
+    "bun test <version> (<revision>)
+    error 1 inner failed running afterEach hook
+    end 1 inner undefined
+    end 0 outer undefined"
+  `);
+  expect(exitCode).toBe(1);
+});
+
 const recordRequests = (describe = (event: string, message: any): unknown => event) =>
   record(
     "undici:",
@@ -1935,6 +1967,190 @@ describe("undici:* of fetch()", () => {
     ]);
   });
 
+  describe("socket has the addresses of the connection that carries the request", () => {
+    const recordPorts = () =>
+      record("undici:client:", ["sendHeaders"], (_, { socket }) => `${socket.localPort} ${socket.remotePort}`);
+
+    test.each<[string, (listener: http.RequestListener) => net.Server]>([
+      ["http", listener => http.createServer(listener)],
+      ["https", listener => https.createServer(certificate, listener)],
+      ["http2", listener => http2.createSecureServer(certificate, listener as any)],
+    ])("%s", async (kind, createServer) => {
+      const seen: string[] = [];
+      const sockets = new Set<net.Socket>();
+      const start = () =>
+        listening(
+          createServer(({ socket, url }, res) => {
+            seen.push(`${socket.remotePort} ${socket.localPort}`);
+            if (url !== "/") res.writeHead(302, { "location": url!.slice(2), "content-length": 0 });
+            res.end();
+          }).on("connection", socket => sockets.add(socket)),
+        );
+      await using first = await start();
+      await using second = await start();
+      using _ = { [Symbol.dispose]: () => sockets.forEach(socket => socket.destroy()) };
+      const [a, b] = [first, second].map(({ port }) => `${kind === "http" ? "http" : "https"}://127.0.0.1:${port}/`);
+      const load = async (url: string) => {
+        const options = { tls: { rejectUnauthorized: false }, protocol: kind === "http2" ? kind : undefined };
+        await (await fetch(url, options as any)).text();
+      };
+
+      // Nobody has asked for the addresses of this connection.
+      await load(a);
+      using published = recordPorts();
+      for (const url of [a, a, `${a}?${b}`, b, `${b}?${a}`]) await load(url);
+
+      expect(published.log).toEqual(seen.slice(1));
+      expect(seen).toHaveLength(8);
+      expect(new Set(seen).size).toBe(2);
+    });
+
+    test("several connections to the same server", async () => {
+      const seen: Record<string, number> = {};
+      const waiting: http.ServerResponse[] = [];
+      await using server = await listening(
+        http.createServer(({ socket, url }, res) => {
+          seen[url!] = socket.remotePort!;
+          if (waiting.push(res) === 3) waiting.splice(0).forEach(res => res.end());
+        }),
+      );
+      using _ = { [Symbol.dispose]: () => server.closeAllConnections() };
+      using published = record("undici:client:", ["sendHeaders"], (_, { request, socket }) => [
+        request.path,
+        socket.localPort,
+      ]);
+      for (const round of [1, 2, 3]) {
+        await Promise.all(
+          [1, 2, 3].map(async i => (await fetch(`http://127.0.0.1:${server.port}/${round}/${i}`)).text()),
+        );
+      }
+      expect(Object.fromEntries(published.log)).toEqual(seen);
+      expect(new Set(Object.values(seen)).size).toBe(3);
+    });
+
+    describe("through a proxy", () => {
+      ignoreAmbientNoProxy();
+
+      test("those of the tunnel", async () => {
+        const seen: string[] = [];
+        const sockets = new Set<net.Socket>();
+        using server = serve({ tls: certificate });
+        await using proxy = await listening(
+          createConnectProxy().on("connection", socket => {
+            sockets.add(socket);
+            seen.push(`${socket.remotePort} ${socket.localPort}`);
+          }),
+        );
+        using _ = { [Symbol.dispose]: () => sockets.forEach(socket => socket.destroy()) };
+        using published = recordPorts();
+        const options = { proxy: `http://127.0.0.1:${proxy.port}`, tls: { rejectUnauthorized: false } };
+        await (await fetch(server.url, options)).text();
+        await (await fetch(server.url, options)).text();
+        expect(published.log).toEqual([seen[0], seen[0]]);
+        expect(seen).toHaveLength(1);
+      });
+    });
+
+    test.skipIf(!isIPv6())("IPv6", async () => {
+      using server = serve({ hostname: "::1" });
+      using published = record("undici:client:", ["sendHeaders"], (_, { socket }) => ({ ...socket, localPort: 0 }));
+      await (await fetch(`http://[::1]:${server.port}`)).text();
+      await (await fetch(`http://[::1]:${server.port}`)).text();
+      const socket = {
+        remoteAddress: "::1",
+        remoteFamily: "IPv6",
+        remotePort: server.port,
+        localAddress: "::1",
+        localFamily: "IPv6",
+        localPort: 0,
+        _host: null,
+      };
+      expect(published.log).toEqual([socket, socket]);
+    });
+
+    test.skipIf(isWindows)("a Unix socket has none", async () => {
+      using dir = tempDir("dc-unix", {});
+      const unix = `${dir}/socket`;
+      using _ = serve({ unix, port: undefined, hostname: undefined });
+      using published = recordPorts();
+      await (await fetch("http://localhost", { unix })).text();
+      await (await fetch("http://localhost", { unix })).text();
+      expect(published.log).toEqual(["undefined undefined", "undefined undefined"]);
+    });
+
+    test("the connection is lost, and the request sent again", async () => {
+      const seen: string[] = [];
+      await using server = await listening(
+        net.createServer(socket =>
+          socket
+            .on("error", () => {})
+            .on("data", () => {
+              if (seen.push(`${socket.remotePort} ${socket.localPort}`) === 2) socket.destroy();
+              else socket.write(`HTTP/1.1 204 OK\r\nConnection: ${seen.length > 1 ? "close" : "keep-alive"}\r\n\r\n`);
+            }),
+        ),
+      );
+      using published = recordPorts();
+      await fetch(`http://127.0.0.1:${server.port}`);
+      await fetch(`http://127.0.0.1:${server.port}`);
+      expect(published.log).toEqual(seen);
+      expect(seen).toEqual([seen[0], seen[0], expect.any(String)]);
+    });
+
+    test.concurrent("HTTP/3 does not get those of the request that redirected to it", async () => {
+      using target = serve({ tls: certificate, http3: true });
+      using origin = serve();
+      expect(
+        await run(
+          `
+            const load = async url => (await fetch(url, { tls: { rejectUnauthorized: false } })).text();
+            load("${target.url}").then(() => {
+              dc.subscribe("undici:client:sendHeaders", ({ socket }) => console.log(socket.alpnProtocol, socket.remotePort));
+              return load("${origin.url}to?${target.url}");
+            });
+          `,
+          { env: { BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP3_CLIENT: "1" } },
+        ),
+      ).toEqual([`undefined ${origin.port}`, "h3 undefined"]);
+    });
+  });
+
+  test("the headers of the response are buffers with the bytes that were sent", async () => {
+    await using server = await listening(
+      net.createServer(socket =>
+        socket
+          .on("error", () => {})
+          .once("data", () => socket.end("HTTP/1.1 404 No\r\nA: \xe9\r\nb:\r\nContent-Length: 0\r\n\r\n", "latin1")),
+      ),
+    );
+    using published = record("undici:request:", ["headers"], (_, { response }) => response.headers);
+    await fetch(`http://127.0.0.1:${server.port}`);
+    await new Promise(resolve => (new WebSocket(`ws://127.0.0.1:${server.port}`).onclose = resolve));
+    const headers = ["A", "\xe9", "b", "", "Content-Length", "0"].map(text => Buffer.from(text, "latin1"));
+    expect(published.log).toStrictEqual([headers, headers]);
+  });
+
+  test("a subscriber that comes in the turn of the call misses nothing but create", async () => {
+    using server = serve();
+    using _ = listen("undici:request:error", () => {});
+    const response = fetch(server.url);
+    using published = recordRequests((event, { socket, headers, response }) => [
+      event,
+      socket?.remotePort,
+      headers?.slice(0, 5),
+      response?.statusCode,
+    ]);
+    await (await response).text();
+    expect(published.log.map(line => line.filter(Boolean))).toEqual([
+      ["client:beforeConnect"],
+      ["client:connected", server.port],
+      ["client:sendHeaders", server.port, "GET /"],
+      ["request:bodySent"],
+      ["request:headers", 200],
+      ["request:trailers"],
+    ]);
+  });
+
   test("everything is published in the async context of the call", async () => {
     using server = serve();
     const store = new AsyncLocalStorage();
@@ -1952,6 +2168,7 @@ describe("undici:* of fetch()", () => {
       { added: "1", list: "a, b" },
     ],
     ["push()", request => request.headers.push("added", "é"), { added: "é", own: "own" }],
+    ["a string of two-byte characters", request => request.headers.push("added", "é€".slice(0, 1)), { added: "é" }],
     ["a new list", request => (request.headers = ["added", "1"]), { added: "1", own: undefined, accept: "*/*" }],
     ["host", request => request.addHeader("host", "example.com"), { host: "example.com" }],
     ["connection", request => request.addHeader("connection", "close"), { connection: "close" }],
@@ -2070,6 +2287,7 @@ describe("undici:* of fetch()", () => {
     using published = record("undici:request:", ["bodyChunkReceived"], (_, { chunk }) => chunk);
     expect(await (await fetch(server.url)).text()).toBe("text");
     expect(Buffer.concat(published.log)).toEqual(Buffer.from(compressed));
+    expect(published.log.every(Buffer.isBuffer)).toBe(true);
   });
 
   test.each<[string, () => Promise<[string, object?, Disposable?]>]>([
@@ -2578,10 +2796,10 @@ function nextTurn() {
 }
 
 /** The lines that `script` prints. It has the module as `dc`. */
-async function run(script: string, options: { cwd?: string; stderr?: string } = {}) {
+async function run(script: string, options: { cwd?: string; env?: object; stderr?: string } = {}) {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", `const dc = require("node:diagnostics_channel");\n${script}`],
-    env: bunEnv,
+    env: { ...bunEnv, ...options.env },
     cwd: options.cwd,
     stdout: "pipe",
     stderr: "pipe",

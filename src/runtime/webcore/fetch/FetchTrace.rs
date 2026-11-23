@@ -1,13 +1,14 @@
 //! Publishes a `fetch()` to the `undici:*` channels of `node:diagnostics_channel`. See `internal/undici_channels.ts`.
 
 use core::net::SocketAddr;
+use std::borrow::Cow;
 
 use bun_core::String as BunString;
 use bun_http::request_trace::{Event, Hop, RequestTrace};
 use bun_http::{AsyncHTTP, Headers, Protocol};
 use bun_http_jsc::method_jsc::MethodJsc as _;
 use bun_jsc::{
-    JSGlobalObject, JSUint8Array, JSValue, JsCell, JsResult, StringJsc as _, Strong,
+    ArrayBuffer, JSGlobalObject, JSUint8Array, JSValue, JsCell, JsResult, StringJsc as _, Strong,
     StrongOptional, Weak, bun_string_jsc,
 };
 use bun_ptr::RefPtr;
@@ -181,14 +182,15 @@ impl Publisher {
                     Protocol::Http2 => 2,
                     Protocol::Http3 => 3,
                 };
+                let (local, remote) = endpoints.map_or((None, None), |of| (of.local, of.remote));
                 let arguments = [
                     number(RequestEvent::HeadSent),
                     bun_string_jsc::owned_latin1_into_js(global, head)?,
                     JSValue::js_number_from_int32(version),
-                    ip_to_js(global, endpoints.remote)?,
-                    port_to_js(endpoints.remote),
-                    ip_to_js(global, endpoints.local)?,
-                    port_to_js(endpoints.local),
+                    ip_to_js(global, remote)?,
+                    port_to_js(remote),
+                    ip_to_js(global, local)?,
+                    port_to_js(local),
                 ];
                 self.call(global, &arguments)
             }
@@ -200,21 +202,17 @@ impl Publisher {
             Event::DeclaredLengthSent => {
                 self.call(global, &[number(RequestEvent::BodySent), JSValue::TRUE])
             }
-            Event::ResponseHead {
-                status_code,
-                status_text,
-                headers,
-            } => {
+            Event::ResponseHead(response) => {
                 let arguments = [
                     number(RequestEvent::ResponseHead),
-                    JSValue::js_number_from_uint64(u64::from(status_code)),
-                    bun_string_jsc::create_utf8_for_js(global, &status_text)?,
-                    headers_to_js(global, &headers)?,
+                    JSValue::js_number_from_uint64(u64::from(response.status_code)),
+                    bun_string_jsc::create_utf8_for_js(global, response.status_text())?,
+                    headers_to_js(global, &response.headers, ArrayBuffer::create_buffer)?,
                 ];
                 self.call(global, &arguments)
             }
             Event::BodyChunkReceived(chunk) => {
-                let chunk = JSUint8Array::from_bytes(global, chunk)?;
+                let chunk = JSValue::create_buffer_from_box(global, chunk)?;
                 self.call(global, &[number(RequestEvent::BodyChunkReceived), chunk])
             }
             Event::ResponseEnd => self.call(global, &[number(RequestEvent::ResponseEnd)]),
@@ -263,18 +261,23 @@ fn arguments_of_hop(global: &JSGlobalObject, hop: &Hop) -> JsResult<[JSValue; 7]
         hop.method.to_js(global),
         bun_string_jsc::create_utf8_for_js(global, &hop.origin)?,
         bun_string_jsc::create_utf8_for_js(global, &hop.path)?,
-        headers_to_js(global, &hop.headers)?,
+        headers_to_js(global, &hop.headers, |global, text| {
+            BunString::clone_latin1(text).into_js(global)
+        })?,
         JSValue::from(hop.has_body),
         (hop.content_length).map_or(JSValue::NULL, JSValue::js_number_from_uint64),
     ])
 }
 
-fn headers_to_js(global: &JSGlobalObject, headers: &Headers) -> JsResult<JSValue> {
+fn headers_to_js(
+    global: &JSGlobalObject,
+    headers: &Headers,
+    to_js: fn(&JSGlobalObject, &[u8]) -> JsResult<JSValue>,
+) -> JsResult<JSValue> {
     let fields = JSValue::create_empty_array(global, headers.entries.len() * 2)?;
     let texts = headers.iter().flat_map(|h| [h.name(), h.value()]);
     for (index, text) in texts.enumerate() {
-        let text = BunString::clone_latin1(text).into_js(global)?;
-        fields.put_index(global, index as u32, text)?;
+        fields.put_index(global, index as u32, to_js(global, text)?)?;
     }
     Ok(fields)
 }
@@ -284,18 +287,20 @@ fn headers_from_js(global: &JSGlobalObject, fields: JSValue) -> JsResult<Option<
     if !fields.is_array() {
         return Ok(None);
     }
-    let bytes_of = |value: JSValue| -> JsResult<Vec<u8>> {
-        let text = value.to_bun_string(global)?;
-        Ok(if text.is_utf16() {
-            text.utf16().iter().map(|&unit| unit as u8).collect()
-        } else {
-            text.latin1().to_vec()
-        })
-    };
     let mut headers = Headers::default();
     let mut fields = fields.array_iterator(global)?;
+    bun_core::handle_oom((headers.entries).ensure_total_capacity(fields.len as usize / 2));
     while let (Some(name), Some(value)) = (fields.next()?, fields.next()?) {
-        headers.append(&bytes_of(name)?, &bytes_of(value)?);
+        let (name, value) = (name.to_bun_string(global)?, value.to_bun_string(global)?);
+        headers.append(&bytes_of(&name), &bytes_of(&value));
     }
     Ok(Some(headers))
+}
+
+fn bytes_of(text: &BunString) -> Cow<'_, [u8]> {
+    if text.is_utf16() {
+        text.utf16().iter().map(|&unit| unit as u8).collect()
+    } else {
+        Cow::Borrowed(text.latin1())
+    }
 }

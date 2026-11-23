@@ -1,9 +1,11 @@
 //! The steps of a request, for an owner that publishes them and has a say in the headers of each hop.
 
-use core::net::{IpAddr, SocketAddr};
+use core::net::SocketAddr;
 use std::collections::VecDeque;
+use std::sync::Arc;
 
-use bun_http_types::ETag::HeaderEntryColumns as _;
+use bun_core::strings;
+use bun_http_types::ETag::{Header, HeaderEntryColumns as _};
 use bun_http1::Response;
 use bun_ptr::RefPtr;
 use bun_threading::Guarded;
@@ -27,7 +29,7 @@ pub struct Hop {
     pub content_length: Option<u64>,
 }
 
-#[derive(Clone, Copy, Default)]
+/// Of a connection, which keeps them for the requests that follow.
 pub struct Endpoints {
     pub local: Option<SocketAddr>,
     pub remote: Option<SocketAddr>,
@@ -39,17 +41,13 @@ pub enum Event {
     HeadSent {
         head: Vec<u8>,
         protocol: Protocol,
-        endpoints: Endpoints,
+        endpoints: Option<Arc<Endpoints>>,
     },
     BodyChunkSent(Box<[u8]>),
     BodySent,
     /// A stream has written all that `Content-Length` announced. The response may be complete before it ends.
     DeclaredLengthSent,
-    ResponseHead {
-        status_code: u32,
-        status_text: Box<[u8]>,
-        headers: Headers,
-    },
+    ResponseHead(Response),
     /// Not decompressed.
     BodyChunkReceived(Box<[u8]>),
     ResponseEnd,
@@ -121,7 +119,7 @@ pub(crate) struct Tracing {
     /// Backs `header_buf`. It starts with the caller's, so what points there stays valid.
     buf: Vec<u8>,
     head: Vec<u8>,
-    endpoints: Endpoints,
+    endpoints: Option<Arc<Endpoints>>,
 }
 
 impl Tracing {
@@ -146,7 +144,7 @@ impl AsyncHTTP<'_> {
             own_disable_keepalive: self.client.flags.disable_keepalive,
             buf: Vec::new(),
             head: Vec::new(),
-            endpoints: Endpoints::default(),
+            endpoints: None,
         }));
         self.client.set_headers_of_hop(headers);
     }
@@ -185,10 +183,28 @@ impl HTTPClient<'_> {
     }
 
     #[inline]
-    pub(crate) fn trace_socket<const IS_SSL: bool>(&mut self, socket: HTTPSocket<IS_SSL>) {
+    pub(crate) fn trace_no_socket(&mut self) {
         if let Some(tracing) = &mut self.tracing {
-            tracing.endpoints = endpoints_of(socket);
+            tracing.endpoints = None;
         }
+    }
+
+    /// `kept` is what the connection of `socket` keeps.
+    #[inline]
+    pub(crate) fn trace_socket<const IS_SSL: bool>(
+        &mut self,
+        socket: HTTPSocket<IS_SSL>,
+        kept: &mut Option<Arc<Endpoints>>,
+    ) {
+        if let Some(tracing) = &mut self.tracing {
+            let endpoints = kept.get_or_insert_with(|| endpoints_of(socket));
+            tracing.endpoints = Some(Arc::clone(endpoints));
+        }
+    }
+
+    #[inline]
+    pub(crate) fn traced_endpoints(&self) -> Option<Arc<Endpoints>> {
+        self.tracing.as_ref()?.endpoints.clone()
     }
 
     #[inline]
@@ -209,11 +225,7 @@ impl HTTPClient<'_> {
     #[inline]
     pub(crate) fn trace_response_head(&mut self, response: &Response) {
         self.trace_request_stage();
-        self.trace(|_| Event::ResponseHead {
-            status_code: response.status_code,
-            status_text: response.status_text().into(),
-            headers: response.headers.clone(),
-        });
+        self.trace(|_| Event::ResponseHead(response.clone()));
     }
 
     #[inline]
@@ -250,7 +262,7 @@ impl HTTPClient<'_> {
             tracing.emit(Event::HeadSent {
                 head,
                 protocol: self.flags.protocol,
-                endpoints: tracing.endpoints,
+                endpoints: tracing.endpoints.clone(),
             });
             if let HTTPRequestBody::Bytes(body @ [_, ..]) = self.state.original_request_body
                 && tracing.trace.wants_sent_chunks
@@ -267,10 +279,10 @@ impl HTTPClient<'_> {
         let (Some(tracing), Some(headers)) = (&mut self.tracing, headers) else {
             return;
         };
-        let mut hop = Headers {
-            entries: Default::default(),
-            buf: self.header_buf[..tracing.own_len].to_vec(),
-        };
+        let mut hop = Headers::default();
+        bun_core::handle_oom(hop.entries.ensure_total_capacity(headers.entries.len()));
+        hop.buf.reserve_exact(tracing.own_len + headers.buf.len());
+        (hop.buf).extend_from_slice(&self.header_buf[..tracing.own_len]);
         for header in headers.iter() {
             hop.append(header.name(), header.value());
         }
@@ -281,16 +293,15 @@ impl HTTPClient<'_> {
     }
 
     fn hop(&self, body: &HTTPRequestBody<'_>) -> Hop {
-        let mut headers = Headers::default();
-        let names = self.header_entries.items_name();
-        for (&name, &value) in names.iter().zip(self.header_entries.items_value()) {
-            headers.append(self.header_str(name), self.header_str(value));
-        }
-        for default in self.default_request_headers() {
-            if headers.get(default.name()).is_none() {
-                headers.append(default.name(), default.value());
-            }
-        }
+        let own = (self.header_entries.items_name().iter())
+            .zip(self.header_entries.items_value())
+            .map(|(&name, &value)| Header::new(self.header_str(name), self.header_str(value)));
+        let defaults = self.default_request_headers().filter(|default| {
+            !own.clone().any(|header| {
+                strings::eql_case_insensitive_ascii(header.name(), default.name(), true)
+            })
+        });
+        let headers = Headers::copy_of(own.clone().chain(defaults));
 
         let (has_body, content_length) = match body {
             HTTPRequestBody::Stream(stream) => (true, stream.framing.content_length),
@@ -314,39 +325,37 @@ impl HTTPClient<'_> {
 }
 
 #[cold]
-fn endpoints_of<const IS_SSL: bool>(socket: HTTPSocket<IS_SSL>) -> Endpoints {
-    let address = |ip: Option<&[u8]>, port: Option<u16>| {
-        let ip = ip?;
-        let ip = <[u8; 4]>::try_from(ip)
-            .map(IpAddr::from)
-            .or_else(|_| <[u8; 16]>::try_from(ip).map(IpAddr::from))
-            .ok()?;
-        Some(SocketAddr::new(ip, port?))
-    };
-    let mut buf = [0u8; 64];
-    Endpoints {
-        local: address(socket.local_address(&mut buf), socket.local_port()),
-        remote: address(socket.remote_address(&mut buf), socket.remote_port()),
-    }
+fn endpoints_of<const IS_SSL: bool>(socket: HTTPSocket<IS_SSL>) -> Arc<Endpoints> {
+    Arc::new(Endpoints {
+        local: socket.local_endpoint(),
+        remote: socket.remote_endpoint(),
+    })
 }
 
 /// Without the empty line, and without what only a proxy is to read.
 #[cold]
 fn text_of_head(request: &Request<'_>, protocol: Protocol) -> Vec<u8> {
     let is_http1 = protocol == Protocol::Http1_1;
-    let mut text = if is_http1 {
-        [request.method, b" ", request.path, b" HTTP/1.1\r\n"].concat()
+    let (method, path) = (request.method, request.path);
+    let start: &[&[u8]] = if is_http1 {
+        &[method, b" ", path, b" HTTP/1.1\r\n"]
     } else {
-        let (method, path) = (request.method, request.path);
-        [
+        &[
             b":method: ",
             method,
             b"\r\n:scheme: https\r\n:path: ",
             path,
             b"\r\n",
         ]
-        .concat()
     };
+    let len_of_start: usize = start.iter().map(|part| part.len()).sum();
+    let len_of_fields: usize = (request.headers.iter())
+        .map(|header| header.name().len() + b": \r\n".len() + header.value().len())
+        .sum();
+    let mut text = Vec::with_capacity(len_of_start + len_of_fields + b":authority".len());
+    for part in start {
+        text.extend_from_slice(part);
+    }
     for header in request.headers {
         let name = header.name();
         if is_http1 {

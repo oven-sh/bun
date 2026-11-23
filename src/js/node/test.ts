@@ -2122,28 +2122,31 @@ const traceEndChannel = builtinChannel("tracing:node.test:end");
 const traceErrorChannel = builtinChannel("tracing:node.test:error");
 
 // `frame` is the async context with the stores that are bound to `start`.
-type Trace = { context: object; frame: unknown; failed: boolean };
+type Trace = { context: object | undefined; frame: unknown; failed: boolean };
 
 function isTraced() {
   return traceStartChannel.hasSubscribers || traceEndChannel.hasSubscribers || traceErrorChannel.hasSubscribers;
 }
 
-function startTrace(node: TestNode) {
-  const trace: Trace = (node.trace = {
-    context: {
-      __proto__: null,
-      name: node.name,
-      nesting: nestingOf(node),
-      file: node.filePath,
-      type: node.isSuite && node.parent !== undefined ? "suite" : "test",
-    },
-    frame: undefined,
-    failed: false,
+function contextOf(node: TestNode, trace: Trace) {
+  return (trace.context ??= {
+    __proto__: null,
+    name: node.name,
+    nesting: nestingOf(node),
+    file: node.filePath,
+    type: node.isSuite && node.parent !== undefined ? "suite" : "test",
   });
+}
+
+function startTrace(node: TestNode) {
+  const trace: Trace = (node.trace = { context: undefined, frame: undefined, failed: false });
   const { channel } = traceStartChannel;
-  if (channel === undefined) return;
+  if (channel !== undefined) publishTraceStart(channel, node, trace);
+}
+
+function publishTraceStart(channel: { withStoreScope(message: unknown): Disposable }, node: TestNode, trace: Trace) {
   runWithNode(node, () => {
-    const scope = channel.withStoreScope(trace.context);
+    const scope = channel.withStoreScope(contextOf(node, trace));
     trace.frame = AsyncContextFrame.current();
     scope[Symbol.dispose]();
   });
@@ -2159,7 +2162,7 @@ function traceError(node: TestNode, error: unknown) {
   if (trace === undefined || trace.failed) return;
   trace.failed = true;
   if (!traceErrorChannel.hasSubscribers) return;
-  runInTrace(node, () => traceErrorChannel.publish({ __proto__: null, ...trace.context, error }));
+  runInTrace(node, () => traceErrorChannel.publish({ __proto__: null, ...contextOf(node, trace), error }));
 }
 
 function traceHookError(node: TestNode, hook: keyof HookSets, cause: unknown) {
@@ -2172,8 +2175,12 @@ function endTrace(node: TestNode) {
   const { trace } = node;
   if (trace === undefined) return;
   endTracesOfSuites(node);
-  if (traceEndChannel.hasSubscribers) runInTrace(node, () => traceEndChannel.publish(trace.context));
+  if (traceEndChannel.hasSubscribers) publishTraceEnd(node, trace);
   node.trace = undefined;
+}
+
+function publishTraceEnd(node: TestNode, trace: Trace) {
+  runInTrace(node, () => traceEndChannel.publish(contextOf(node, trace)));
 }
 
 // bun:test runs no afterAll() of a suite without tests to run, and none behind a hook that times out.

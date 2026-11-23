@@ -9,7 +9,7 @@
 
 use core::cell::{Cell, RefCell};
 use core::mem::size_of;
-use core::net::IpAddr;
+use core::net::SocketAddr;
 
 use bun_boringssl::c::OwnedSslCtx;
 use bun_collections::LinearFifo;
@@ -1388,10 +1388,10 @@ impl<const SSL: bool> WebSocket<SSL> {
     }
 
     /// In tunnel mode this is the proxy's address.
-    pub(crate) fn remote_address(&self) -> Option<(IpAddr, u16)> {
+    pub(crate) fn remote_address(&self) -> Option<SocketAddr> {
         match self.tunnel() {
             Some(tunnel) => tunnel.remote_address(),
-            None => remote_address_of(self.tcp.get()),
+            None => self.tcp.get().remote_endpoint(),
         }
     }
 
@@ -1783,19 +1783,6 @@ impl<const SSL: bool> Drop for WebSocket<SSL> {
     }
 }
 
-/// `None` for a unix socket or a closed socket.
-pub(crate) fn remote_address_of<const SSL: bool>(socket: Socket<SSL>) -> Option<(IpAddr, u16)> {
-    let ip = ip_from_bytes(socket.remote_address(&mut [0u8; 64])?)?;
-    Some((ip, socket.remote_port()?))
-}
-
-fn ip_from_bytes(bytes: &[u8]) -> Option<IpAddr> {
-    <[u8; 4]>::try_from(bytes)
-        .map(IpAddr::from)
-        .or_else(|_| <[u8; 16]>::try_from(bytes).map(IpAddr::from))
-        .ok()
-}
-
 // HOST_EXPORT(Bun__WebSocket__addressOfSocket, c)
 pub fn bun__websocket__address_of_socket(
     socket: *mut bun_uws_sys::us_socket_t,
@@ -1805,11 +1792,9 @@ pub fn bun__websocket__address_of_socket(
 ) -> bool {
     let socket = Socket::<false>::from(socket);
     let endpoint = if is_local {
-        (socket.local_address(&mut [0u8; 64]))
-            .and_then(ip_from_bytes)
-            .zip(socket.local_port())
+        socket.local_endpoint()
     } else {
-        remote_address_of(socket)
+        socket.remote_endpoint()
     };
     write_remote_address(endpoint, address, port, &mut false)
 }
@@ -1817,17 +1802,17 @@ pub fn bun__websocket__address_of_socket(
 /// FFI form of [`WebSocket::remote_address`]. Returns false and leaves the out-params untouched
 /// when there's no address.
 fn write_remote_address(
-    remote: Option<(IpAddr, u16)>,
+    remote: Option<SocketAddr>,
     address: &mut BunString,
     port: &mut u16,
     is_ipv6: &mut bool,
 ) -> bool {
-    let Some((ip, remote_port)) = remote else {
+    let Some(remote) = remote else {
         return false;
     };
-    *address = BunString::create_format(format_args!("{ip}"));
-    *port = remote_port;
-    *is_ipv6 = ip.is_ipv6();
+    *address = BunString::create_format(format_args!("{}", remote.ip()));
+    *port = remote.port();
+    *is_ipv6 = remote.is_ipv6();
     true
 }
 

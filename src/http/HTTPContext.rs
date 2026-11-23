@@ -2,8 +2,10 @@ use core::cell::Cell;
 use core::ffi::{c_int, c_void};
 use core::ops::ControlFlow::{self, Break, Continue};
 use core::ptr::NonNull;
+use std::sync::Arc;
 
 use crate::http_thread::InitOpts as HTTPThreadInitOpts;
+use crate::request_trace::Endpoints;
 use crate::ssl_config::{self, SSLConfig};
 use crate::{
     self as http, AlpnOffer, AsyncHTTP, HTTPCertError, HTTPClient, InFlightRequest, InitError,
@@ -224,6 +226,8 @@ pub struct PooledSocket<const SSL: bool> {
     pub(crate) pool_id: u64,
     /// `PoolOptions::idle_timeout_seconds` of the session that parked it.
     pub(crate) idle_timeout_seconds: u32,
+    /// If the request that parked it was traced.
+    pub(crate) endpoints: Option<Arc<Endpoints>>,
 }
 
 /// `&mut` access to a pooled / found-slot HTTP/2 session, for the field
@@ -283,6 +287,7 @@ struct ExistingSocket<const SSL: bool> {
     /// Present if the socket negotiated "h2"; ownership transferred.
     h2_session: Option<RefPtr<h2::ClientSession>>,
     verification: PeerVerification,
+    endpoints: Option<Arc<Endpoints>>,
 }
 
 #[inline(never)]
@@ -635,6 +640,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
         h2_session: Option<RefPtr<h2::ClientSession>>,
         unix_path: &[u8],
         pool: crate::PoolOptions,
+        endpoints: Option<Arc<Endpoints>>,
     ) {
         // log("releaseSocket(0x{f})", .{bun.fmt.hexIntUpper(@intFromPtr(socket.socket))});
 
@@ -682,6 +688,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 h2_session,
                 pool_id: pool.id,
                 idle_timeout_seconds: pool.idle_timeout_seconds,
+                endpoints,
             };
             let parked = match transport {
                 Transport::Tcp => Self::park(self.pending_sockets.get_or_init(), pooled, pool),
@@ -931,6 +938,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 let tunnel = socket.proxy_tunnel.take();
                 let h2_session = socket.h2_session.take();
                 let verification = socket.verification;
+                let endpoints = socket.endpoints.take();
                 // SAFETY: `socket_ptr` is a fully-initialized hive slot.
                 let ok = unsafe { pool.put(socket_ptr) };
                 debug_assert!(ok);
@@ -951,6 +959,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
                     tunnel,
                     h2_session,
                     verification,
+                    endpoints,
                 });
             }
         }
@@ -1104,6 +1113,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
                     Self::tag_as_h2(sock, session.as_ptr());
                     return session.adopt(client);
                 }
+                client.trace_socket(sock, &mut found.endpoints);
                 let slot = Self::ext_slot(&sock).expect("connected");
                 if let Some(tunnel) = found.tunnel {
                     // Reattach the pooled tunnel BEFORE onOpen so the

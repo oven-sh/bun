@@ -65,7 +65,7 @@ pub(crate) fn on_internal_message_child<'a>(
     Ok(())
 }
 
-fn is_child_listening() -> bool {
+pub(crate) fn is_child_listening() -> bool {
     child_singleton().is_ready()
 }
 

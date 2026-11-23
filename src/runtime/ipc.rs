@@ -1187,17 +1187,25 @@ impl SendQueue {
         self.close_socket_next_tick(true);
     }
 
-    /// User disconnect(): reports disconnected now but, like node, closes only once every handle is acked. What is queued behind goes out first.
+    /// User disconnect(): reports disconnected now but, like node, closes only once the handles are acked. What is queued behind goes out first.
     pub(crate) fn disconnect(&self) {
         if self.socket_is_open()
             && !self.pending_close.get()
-            && (self.waiting_for_ack.get().is_some()
-                || self.queue.get().iter().any(|item| item.handle.is_some()))
+            && (self.waiting_for_ack.get().is_some() || self.delivers_queued_handle())
         {
             self.close_after_flush.set(true);
             return;
         }
         self.close_socket_next_tick(true);
+    }
+
+    /// node:cluster drops it: a worker can take a connection during the wait, and the primary, which gets no answer, gives it to a second worker.
+    fn delivers_queued_handle(&self) -> bool {
+        self.queue.get().iter().any(|item| item.handle.is_some())
+            && !self.owner.get().is_some_and(|owner| match owner {
+                SendQueueOwner::Subprocess(_) => self.internal_msg_queue.get().is_ready(),
+                SendQueueOwner::Instance => crate::node::node_cluster_binding::is_child_listening(),
+            })
     }
 
     fn start_message(
@@ -1759,6 +1767,7 @@ impl SendQueue {
             this.update_ref(&global);
         } else if let Some(reply) = early_reply
             && this.waiting_for_ack.get().is_some()
+            && (this.is_connected() || this.close_after_flush.get())
         {
             this.on_ack_nack(&global, reply);
         } else {

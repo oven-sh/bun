@@ -1611,6 +1611,20 @@ async function runRoundRobin(workers: number, primary: string, worker: string) {
       const { once } = require("node:events");
       const fs = require("node:fs");
       const net = require("node:net");
+      const unblock = () => fs.writeFileSync("go", "");
+      const block = () => {
+        const deadline = Date.now() + 120_000;
+        while (!fs.existsSync("go") && Date.now() < deadline) Bun.sleepSync(1);
+      };
+      // For a peer that is blocked.
+      const fill = async channel => {
+        let written;
+        do {
+          written = false;
+          channel.send(Buffer.alloc(2 << 20, "x").toString(), () => (written = true));
+          await new Promise(setImmediate);
+        } while (written);
+      };
       if (cluster.isPrimary) {
         cluster.schedulingPolicy = cluster.SCHED_RR;
         const workers = [];
@@ -1619,9 +1633,8 @@ async function runRoundRobin(workers: number, primary: string, worker: string) {
           workers.push(cluster.fork());
           [{ port }] = await once(workers.at(-1), "listening");
         }
-        const [first] = workers;
-        const ask = message => (first.send(message), once(first, "message"));
-        const unblock = () => fs.writeFileSync("go", "");
+        const [first, second] = workers;
+        const ask = (message, worker = first) => (worker.send(message), once(worker, "message"));
         const accepted = new Promise(resolve => {
           require("node:diagnostics_channel").subscribe("net.server.socket", () => setImmediate(resolve));
         });
@@ -1635,11 +1648,6 @@ async function runRoundRobin(workers: number, primary: string, worker: string) {
         ${primary}
         process.exit(0);
       } else {
-        const block = () =>
-          process.send("blocked", () => {
-            const deadline = Date.now() + 120_000;
-            while (!fs.existsSync("go") && Date.now() < deadline) Bun.sleepSync(1);
-          });
         const server = net.createServer(socket => socket.end(String(cluster.worker.id))).listen(0, "127.0.0.1");
         ${worker}
       }
@@ -1657,36 +1665,6 @@ async function runRoundRobin(workers: number, primary: string, worker: string) {
 }
 
 test.concurrent.each([
-  {
-    name: "goes to another worker while worker.process.disconnect() waits for an ack",
-    workers: 2,
-    primary: `
-      const other = net.createServer().listen(0, "127.0.0.1");
-      await once(other, "listening");
-      await ask("block");
-      first.send("handle", other);
-      first.process.disconnect();
-      console.log(await request());
-      unblock();
-    `,
-    worker: `process.once("message", block);`,
-    stdout: ["reply 2"],
-  },
-  {
-    name: "that is queued is served after worker.disconnect()",
-    workers: 1,
-    primary: `
-      await ask("block");
-      first.send(Buffer.alloc(2 << 20, "x").toString());
-      const reply = request();
-      await accepted;
-      first.disconnect();
-      unblock();
-      console.log(await reply);
-    `,
-    worker: `process.once("message", block);`,
-    stdout: ["reply 1"],
-  },
   {
     name: "is served by an onconnection that is wrapped to run later",
     workers: 1,
@@ -1735,4 +1713,58 @@ test.concurrent.each([
   },
 ])("a round-robin connection $name", async ({ workers, primary, worker, stdout }) => {
   expect(await runRoundRobin(workers, primary, worker)).toEqual({ stdout, stderr: "", exitCode: 0 });
+});
+
+// The peer is unblocked when a close that does not wait is done. Windows goes on writing after the write in progress.
+test.concurrent.skipIf(isWindows).each([
+  {
+    side: "primary",
+    primary: `
+      await ask("start");
+      await fill(first);
+      const reply = request();
+      await accepted;
+      first.process.disconnect();
+      setImmediate(unblock);
+    `,
+    worker: `process.send("blocked", block);`,
+  },
+  {
+    side: "worker",
+    primary: `
+      first.send("start");
+      block();
+      const reply = request();
+    `,
+    worker: `
+      const other = net.createServer().listen({ port: 0, host: "127.0.0.1", exclusive: true }, async () => {
+        await fill(process);
+        process.send("handle", other);
+        process.disconnect();
+        process.on("exit", unblock);
+        setImmediate(unblock);
+      });
+    `,
+  },
+])("one worker accepts a connection if the $side disconnects with a queued handle", async ({ primary, worker }) => {
+  const result = await runRoundRobin(
+    2,
+    `
+      const gone = Promise.all([once(first, "disconnect"), once(first, "exit")]);
+      ${primary}
+      console.log(await reply);
+      await gone;
+      // Behind whatever the primary has passed on.
+      await ask("sync", second);
+      console.log("accepted by " + fs.readFileSync("accepted", "utf8"));
+    `,
+    `
+      server.prependListener("connection", () => fs.appendFileSync("accepted", String(cluster.worker.id)));
+      process.on("message", message => {
+        if (message === "sync") process.send("synced");
+        if (message === "start") { ${worker} }
+      });
+    `,
+  );
+  expect(result).toEqual({ stdout: ["reply 2", "accepted by 2"], stderr: "", exitCode: 0 });
 });

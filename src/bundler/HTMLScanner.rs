@@ -76,7 +76,9 @@ impl<'a> HTMLScanner<'a> {
         let has_scheme =
             strings::index_of_any(url_path, b":/\\").is_some_and(|at| url_path[at] == b':');
         let with_slashes = match strings::replace_char(url_path, b'\\', b'/') {
-            Cow::Owned(converted) if !has_scheme => Cow::Owned([&converted, rest].concat()),
+            Cow::Owned(converted) if !has_scheme && bun_paths::volume(written).is_empty() => {
+                Cow::Owned([&converted, rest].concat())
+            }
             _ => Cow::Borrowed(written),
         };
         let input_path: &[u8] = &with_slashes;

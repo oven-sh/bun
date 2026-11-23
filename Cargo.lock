@@ -998,6 +998,7 @@ dependencies = [
  "bun_uws_sys",
  "enumset",
  "libc",
+ "rustc-hash",
  "strum",
  "thiserror",
 ]

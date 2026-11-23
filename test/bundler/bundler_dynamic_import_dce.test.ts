@@ -640,8 +640,9 @@ describe("bundler", () => {
       outdir: "/out",
       run: { file: "/out/entry.js", stdout: "bare ns,A\ncopy ns,A\ntest A\ntypeOf object,A\nreq ns,A" },
       onAfterBundle(api) {
-        // A read the linker can bind still reads the export directly.
-        if (name === "") api.expectFile("/out/entry.js").toContain("? a : 0");
+        // A read the linker can bind still reads the export directly. The
+        // export is a constant of a leaf file, so the read prints its value.
+        if (name === "") api.expectFile("/out/entry.js").toContain('? "A" : 0');
       },
     });
   }

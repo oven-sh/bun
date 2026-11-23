@@ -152,6 +152,8 @@ pub mod js_meta {
         pub(crate) needs_synthetic_default_export: bool,
         /// The printer inlines a value of another file here, so it runs `bun_ast::late_fold`.
         pub(crate) late_fold: bool,
+        /// Step 5 dropped the use of a leaf constant here, so the printer must print its value.
+        pub(crate) inlines_const: bool,
         pub(crate) wrap: WrapKind,
     }
     pub use crate::WrapKind as Wrap;
@@ -250,8 +252,8 @@ pub struct LinkerGraph<'a> {
 
     pub(crate) is_scb_bitset: BitSet,
 
-    /// This is for cross-module inlining of detected inlinable constants
-    // const_values: bun_ast::Ast::ConstValuesMap,
+    /// Cross-module inlining of constants: what `collect_leaf_const_values` records.
+    pub(crate) const_values: bun_ast::ast_result::ConstValuesMap,
     /// This is for cross-module inlining of TypeScript enum constants
     pub(crate) ts_enums: bun_ast::ast_result::TsEnumsMap,
     pub(crate) import_member_bindings: bun_ast::ast_result::ImportMemberBindings,
@@ -305,6 +307,7 @@ impl<'a> LinkerGraph<'a> {
             reachable_files: Vec::new(),
             stable_source_indices: Vec::new(),
             is_scb_bitset: BitSet::default(),
+            const_values: bun_ast::ast_result::ConstValuesMap::default(),
             ts_enums: bun_ast::ast_result::TsEnumsMap::default(),
             import_member_bindings: bun_ast::ast_result::ImportMemberBindings::default(),
             additional_output_files: Vec::new(),
@@ -655,6 +658,82 @@ impl<'a> LinkerGraph<'a> {
     }
 }
 
+/// True for the call that the parser makes of an enum: `((E) => { … })(E ||= {})`.
+fn fills_enum(value: &bun_ast::Expr, symbols: &symbol::Map) -> bool {
+    use bun_ast::{ExprData, OpCode};
+    let ExprData::ECall(call) = &value.data else {
+        return false;
+    };
+    let [arg] = call.args.slice() else {
+        return false;
+    };
+    let ExprData::EBinary(assign) = &arg.data else {
+        return false;
+    };
+    let ExprData::EIdentifier(name) = &assign.left.data else {
+        return false;
+    };
+    assign.op == OpCode::BinLogicalOrAssign
+        && symbols
+            .get_const(name.ref_)
+            .is_some_and(|symbol| symbol.kind == symbol::Kind::TsEnum)
+}
+
+/// Records the exported constants in esbuild's "const local prefix" of an import-free file.
+fn collect_leaf_const_values(
+    parts: &[bun_ast::Part],
+    named_exports: &bundled_ast::NamedExports,
+    symbols: &symbol::Map,
+    const_values: &mut bun_ast::ast_result::ConstValuesMap,
+) -> Result<(), crate::Error> {
+    use bun_ast::binding::Data as BindingData;
+    use bun_ast::{StmtData, late_fold};
+    let mut prefix = bun_ast::ast_result::ConstValuesMap::default();
+    'scan: for part in parts {
+        for stmt in part.stmts.slice() {
+            let local = match &stmt.data {
+                StmtData::SEmpty(_)
+                | StmtData::SComment(_)
+                | StmtData::SDebugger(_)
+                | StmtData::STypeScript(_)
+                | StmtData::SDirective(_) => continue,
+                // esbuild does not end the prefix at a TypeScript enum.
+                StmtData::SExpr(call) if fills_enum(&call.value, symbols) => continue,
+                StmtData::SLocal(local) => local,
+                _ => break 'scan,
+            };
+            for decl in local.decls.slice() {
+                let BindingData::BIdentifier(id) = &decl.binding.data else {
+                    break 'scan;
+                };
+                let Some(value) = &decl.value else {
+                    continue;
+                };
+                // A bundle prints a top-level `const` as `var`: the symbol kind has the source's.
+                if !local.kind.is_using()
+                    && symbols
+                        .get_const(id.r#ref)
+                        .is_some_and(|symbol| symbol.kind == symbol::Kind::Constant)
+                    && late_fold::is_const_value(value)
+                {
+                    prefix.put(id.r#ref, *value)?;
+                } else if !late_fold::is_safe_for_const_prefix(value) {
+                    break 'scan;
+                }
+            }
+        }
+    }
+    if prefix.count() > 0 {
+        // Only an export can be the target of an import.
+        for export in named_exports.values() {
+            if let Some(value) = prefix.get(&export.ref_) {
+                const_values.put(export.ref_, *value)?;
+            }
+        }
+    }
+    Ok(())
+}
+
 impl<'a> LinkerGraph<'a> {
     pub(crate) fn load(
         &mut self,
@@ -663,6 +742,7 @@ impl<'a> LinkerGraph<'a> {
         scb: &server_component_boundary::List,
         dynamic_import_entry_points: &[index::Int],
         entry_point_original_names: &IndexStringMap,
+        inline_const_values: bool,
     ) -> Result<(), crate::Error> {
         self.files.set_capacity(sources.len())?;
         for _ in sources {
@@ -824,7 +904,23 @@ impl<'a> LinkerGraph<'a> {
             self.symbols = symbol::Map::init_list(symbols);
         }
 
-        // TODO: const_values
+        if inline_const_values {
+            let import_records = self.ast.items_import_records();
+            let parts = self.ast.items_parts();
+            let named_exports = self.ast.items_named_exports();
+            for source_index in &self.reachable_files {
+                let id = source_index.get() as usize;
+                // esbuild's rule: the declaring file is in no import cycle. A reader can be in one.
+                if import_records[id].len() == 0 && named_exports[id].count() > 0 {
+                    collect_leaf_const_values(
+                        parts[id].as_slice(),
+                        &named_exports[id],
+                        &self.symbols,
+                        &mut self.const_values,
+                    )?;
+                }
+            }
+        }
 
         {
             let mut count: usize = 0;

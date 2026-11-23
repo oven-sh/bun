@@ -199,7 +199,6 @@ pub(crate) fn post_process_js_chunk(
             print_dce_annotations: c.options.emit_dce_annotations,
             mangled_props: Some(&c.mangled_props),
             module_info: None,
-            // .const_values = c.graph.const_values,
             ..Default::default()
         };
 
@@ -1255,7 +1254,6 @@ pub(crate) fn generate_entry_point_tail_js(
         minify_syntax: c.options.minify_syntax,
         mangled_props: Some(&c.mangled_props),
         module_info,
-        // .const_values = c.graph.const_values,
         ..Default::default()
     };
 

@@ -6,7 +6,7 @@ use core::ptr::NonNull;
 use bun_alloc::ArenaVecExt as _;
 use bun_alloc::{Arena as Bump, ArenaVec};
 
-use crate::ast_result::TsEnumsMap;
+use crate::ast_result::{ConstValuesMap, TsEnumsMap};
 use crate::const_fold::{numeric_binary, to_int32};
 use crate::expr::Data;
 use crate::nodes::InlinedEnumValueDecoded;
@@ -16,6 +16,7 @@ use crate::{E, Expr, OpCode, Ref, S, Stmt, StoreRef, symbol};
 pub struct LateFold<'a> {
     pub symbols: &'a symbol::Map,
     pub ts_enums: Option<&'a TsEnumsMap>,
+    pub const_values: Option<&'a ConstValuesMap>,
     /// See `js_printer::Options::has_dynamic_import_items`.
     pub has_dynamic_import_items: bool,
     pub bump: &'a Bump,
@@ -74,6 +75,118 @@ pub fn imported_enum_value(
         return None;
     }
     Some(ts_enums.get(&ref_)?.get(name)?.decode())
+}
+
+/// The literal a read of import `ref_` prints as. `do_step5` drops the same reads.
+#[inline]
+pub fn inlined_const(
+    symbols: &symbol::Map,
+    const_values: Option<&ConstValuesMap>,
+    ref_: Ref,
+) -> Option<Expr> {
+    let const_values = const_values?;
+    if symbols.get_const(ref_)?.kind != symbol::Kind::Import {
+        return None;
+    }
+    const_values.get(&symbols.follow(ref_)).copied()
+}
+
+/// esbuild's `ExprToConstValue`: the literals short enough to copy into every read.
+pub fn is_const_value(value: &Expr) -> bool {
+    match &value.data {
+        Data::ENull(_) | Data::EUndefined(_) | Data::EBoolean(_) => true,
+        // An integer, or a number that prints in 8 characters or fewer.
+        Data::ENumber(e) => {
+            let value = e.value();
+            value == (value as i64) as f64 || shortest_number_len(value) <= 8
+        }
+        Data::EString(e) => {
+            e.next.is_none()
+                && if e.is_utf8() {
+                    core::str::from_utf8(e.slice8())
+                        .is_ok_and(|string| string.encode_utf16().take(4).count() <= 3)
+                } else {
+                    e.slice16().len() <= 3
+                }
+        }
+        _ => false,
+    }
+}
+
+/// The length of Go's `strconv.FormatFloat(value, 'g', -1, 64)`, which esbuild measures.
+fn shortest_number_len(value: f64) -> usize {
+    struct Buffer {
+        bytes: [u8; 32],
+        len: usize,
+    }
+    impl core::fmt::Write for Buffer {
+        fn write_str(&mut self, string: &str) -> core::fmt::Result {
+            let end = self.len + string.len();
+            self.bytes
+                .get_mut(self.len..end)
+                .ok_or(core::fmt::Error)?
+                .copy_from_slice(string.as_bytes());
+            self.len = end;
+            Ok(())
+        }
+    }
+
+    if !value.is_finite() {
+        return 4;
+    }
+    // `{:e}` prints the shortest digits that round-trip: "-1.5e-7".
+    let mut buffer = Buffer {
+        bytes: [0; 32],
+        len: 0,
+    };
+    if core::fmt::Write::write_fmt(&mut buffer, format_args!("{value:e}")).is_err() {
+        return usize::MAX;
+    }
+    let text = &buffer.bytes[..buffer.len];
+    let Some(e) = bun_core::strings::index_of_char_usize(text, b'e') else {
+        return usize::MAX;
+    };
+    let sign = usize::from(value.is_sign_negative());
+    let digits = text[..e]
+        .iter()
+        .filter(|byte| byte.is_ascii_digit())
+        .count();
+    let Some(exponent) = core::str::from_utf8(&text[e + 1..])
+        .ok()
+        .and_then(|exponent| exponent.parse::<i32>().ok())
+    else {
+        return usize::MAX;
+    };
+    // Go's shortest `%g` switches to an exponent below 1e-4 and from 1e6 on.
+    if !(-4..6).contains(&exponent) {
+        // "1.5e-07": at least two exponent digits.
+        let exponent_digits = (text.len() - e - 1 - usize::from(exponent < 0)).max(2);
+        return sign + digits + usize::from(digits > 1) + 2 + exponent_digits;
+    }
+    let exponent = exponent as isize;
+    sign + if exponent < 0 {
+        // "0.0015"
+        1 + (-exponent) as usize + digits
+    } else if digits as isize <= exponent + 1 {
+        (exponent + 1) as usize
+    } else {
+        digits + 1
+    }
+}
+
+/// esbuild's `isSafeForConstLocalPrefix`: an initializer that cannot run other code.
+pub fn is_safe_for_const_prefix(value: &Expr) -> bool {
+    match &value.data {
+        Data::EMissing(_)
+        | Data::EString(_)
+        | Data::ERegExp(_)
+        | Data::EBigInt(_)
+        | Data::EFunction(_)
+        | Data::EArrow(_) => true,
+        Data::EArray(e) => e.items.iter().all(is_safe_for_const_prefix),
+        Data::EObject(e) => e.properties.len() == 0,
+        _ => false,
+    }
 }
 
 /// `ToBoolean` of a primitive literal.
@@ -181,6 +294,27 @@ impl<'a> LateFold<'a> {
         matches!(expr.unwrap_inlined().data, Data::EString(_))
     }
 
+    /// True when the statement `expr;` folds to a primitive literal, which nothing reads.
+    pub fn is_unused_literal(&self, expr: Expr, spine: &mut Vec<Expr>) -> bool {
+        matches!(
+            &expr.data,
+            Data::EBinary(_) | Data::EIf(_) | Data::EUnary(_)
+        ) && self.to_boolean(expr, spine).is_some()
+    }
+
+    /// True when nothing is scoped to the block and its first statement cannot become a directive.
+    pub fn can_open_block(&self, stmts: &[Stmt], spine: &mut Vec<Expr>) -> bool {
+        if let Some(StmtData::SExpr(first)) = stmts.first().map(|stmt| &stmt.data)
+            && self.is_string(first.value, spine)
+        {
+            return false;
+        }
+        !matches!(
+            stmts.first().map(|stmt| &stmt.data),
+            Some(StmtData::SDirective(_))
+        ) && declares_no_scoped_name(stmts)
+    }
+
     /// The statement that replaces `s` when cross-module values decide its test.
     pub fn fold_if(&self, s: &S::If, loc: crate::Loc, spine: &mut Vec<Expr>) -> Option<Stmt> {
         // `if (effect(), E.A)`: the parser merges a preceding expression statement in.
@@ -249,6 +383,15 @@ impl<'a> LateFold<'a> {
     /// The literal that a reference to a value of another file stands for.
     fn inlined(&self, expr: Expr) -> Option<Folded> {
         let value = match &expr.data {
+            Data::EImportIdentifier(e) => {
+                return Some(Folded {
+                    expr: Expr {
+                        data: inlined_const(self.symbols, self.const_values, e.ref_)?.data,
+                        loc: expr.loc,
+                    },
+                    reduced: false,
+                });
+            }
             Data::EDot(e) if e.optional_chain.is_none() => self.enum_value(e.target, &e.name)?,
             Data::EIndex(e) if e.optional_chain.is_none() => {
                 let Data::EString(name) = &e.index.data else {
@@ -278,7 +421,7 @@ impl<'a> LateFold<'a> {
 
     fn visit(&self, expr: Expr, spine: &mut Vec<Expr>) -> Option<Folded> {
         match &expr.data {
-            Data::EDot(_) | Data::EIndex(_) => self.inlined(expr),
+            Data::EImportIdentifier(_) | Data::EDot(_) | Data::EIndex(_) => self.inlined(expr),
             Data::EUnary(e) => {
                 if !self.stack_check.is_safe_to_recurse() {
                     return None;

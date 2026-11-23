@@ -1544,11 +1544,13 @@ for (const [key, blob] of build.outputs) {
     } satisfies BundlerTestBundleAPI;
 
     // DCE keep scan
+    // A test writes the keys of `dceKeepMarkerCount` with "/" on every platform.
+    const keepMarkerKey = (fullpath: string) => fullpath.slice(root.length).replaceAll("\\", "/");
     let keepMarkers: Record<string, number> = typeof dceKeepMarkerCount === "object" ? dceKeepMarkerCount : {};
     let keepMarkersFound = 0;
     if (dce && typeof dceKeepMarkerCount !== "number" && dceKeepMarkerCount !== false) {
       for (const file of Object.entries(files)) {
-        keepMarkers[outfile ? outfile : path.join(outdir!, file[0]).slice(root.length).replace(/\.ts$/, ".js")] ??= [
+        keepMarkers[outfile ? outfile : keepMarkerKey(path.join(outdir!, file[0])).replace(/\.ts$/, ".js")] ??= [
           ...String(file[1]).matchAll(/KEEP/gi),
         ].length;
       }
@@ -1604,7 +1606,7 @@ for (const [key, blob] of build.outputs) {
               if (dce) {
                 const content = readFileSync(fullpath, "utf8");
                 const dceFails = [...content.replace(/\/\*.*?\*\//g, "").matchAll(/FAIL|FAILED|DROP|REMOVE/gi)];
-                const key = fullpath.slice(root.length);
+                const key = keepMarkerKey(fullpath);
                 if (dceFails.length) {
                   throw new Error("DCE test did not remove all expected code in " + key + ".");
                 }

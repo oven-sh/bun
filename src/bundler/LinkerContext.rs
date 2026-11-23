@@ -316,6 +316,8 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
             &parse_graph.server_component_boundaries,
             bundle.dynamic_import_entry_points.keys(),
             &parse_graph.entry_point_original_names,
+            bundle.transpiler.options.minify_syntax
+                && bundle.transpiler.options.output_format != Format::InternalBakeDev,
         )?;
 
         let runtime_named_exports = &graph.ast.items_named_exports()[Index::RUNTIME.get() as usize];
@@ -1724,7 +1726,7 @@ impl<'a> LinkerContext<'_, 'a> {
             commonjs_module_exports_assigned_deoptimized: ast
                 .flags
                 .contains(AstFlags::COMMONJS_MODULE_EXPORTS_ASSIGNED_DEOPTIMIZED),
-            // .const_values = c.graph.const_values,
+            const_values: flags.inlines_const.then_some(&self.graph.const_values),
             ts_enums: Some(&self.graph.ts_enums),
             late_fold: flags.late_fold,
             import_member_bindings: Some(&self.graph.import_member_bindings),

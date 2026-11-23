@@ -1314,8 +1314,8 @@ pub struct Options<'a> {
     pub input_module_type: bundle_opts::ModuleType,
     pub module_type: bundle_opts::Format,
 
-    // /// Used for cross-module inlining of import items when bundling
-    // const_values: Ast.ConstValuesMap = .{},
+    /// Borrowed from `LinkerGraph.const_values`: constants whose reads print as their value.
+    pub const_values: Option<&'a js_ast::ast_result::ConstValuesMap>,
     /// Borrowed from `LinkerGraph.ts_enums` (one shared map for the whole
     /// bundle); the printer only reads from it.
     pub ts_enums: Option<&'a TsEnumsMap>,
@@ -1383,6 +1383,7 @@ impl<'a> Default for Options<'a> {
             require_or_import_meta_source: None,
             input_module_type: bundle_opts::ModuleType::Unknown,
             module_type: bundle_opts::Format::Esm,
+            const_values: None,
             ts_enums: None,
             late_fold: false,
             import_member_bindings: None,
@@ -2055,7 +2056,7 @@ pub(crate) mod __gated_printer {
         pub(crate) fn print_block_body(&mut self, stmts: &[Stmt]) {
             for stmt in stmts {
                 self.print_semicolon_if_needed();
-                self.print_stmt(*stmt).expect("unreachable");
+                self.print_stmt_in_list(*stmt).expect("unreachable");
             }
         }
 
@@ -4313,10 +4314,23 @@ pub(crate) mod __gated_printer {
                         }
                     }
 
+                    // The linker dropped this use, so a name printed here can have no declaration.
+                    debug_assert!(!did_print || self.inlined_const(e.ref_).is_none());
                     if !did_print {
-                        self.print_space_before_identifier();
-                        self.add_source_mapping(expr.loc);
-                        self.print_symbol(e.ref_);
+                        if let Some(value) = self.inlined_const(e.ref_) {
+                            self.print_expr(
+                                Expr {
+                                    data: value.data,
+                                    loc: expr.loc,
+                                },
+                                level,
+                                flags,
+                            );
+                        } else {
+                            self.print_space_before_identifier();
+                            self.add_source_mapping(expr.loc);
+                            self.print_symbol(e.ref_);
+                        }
                     }
                 }
                 ExprData::EAwait(e) => {
@@ -4942,7 +4956,15 @@ pub(crate) mod __gated_printer {
                         self.print_space_before_identifier();
                         self.add_source_mapping(key.loc);
                         let mut allow_shorthand = true;
-                        if !IS_JSON && lexer::is_identifier(key_str.slice8()) {
+                        // `{ __proto__ }` defines a property. `{ __proto__: value }` sets the prototype.
+                        if !IS_JSON
+                            && key_str.slice8() == b"__proto__"
+                            && item.flags.contains(js_ast::flags::Property::WasShorthand)
+                            && matches!(item.value.map(|value| value.data),
+                                Some(ExprData::EImportIdentifier(e)) if self.inlined_const(e.ref_).is_some())
+                        {
+                            self.print(b"[\"__proto__\"]");
+                        } else if !IS_JSON && lexer::is_identifier(key_str.slice8()) {
                             self.print_identifier(key_str.slice8());
                         } else {
                             allow_shorthand = false;
@@ -4970,6 +4992,7 @@ pub(crate) mod __gated_printer {
                                     if let Some(symbol) = self.symbols().get_const(ref_) {
                                         if symbol.namespace_alias.is_none()
                                             && key_str.slice8() == self.name_for_symbol(e.ref_)
+                                            && self.inlined_const(e.ref_).is_none()
                                         {
                                             if let Some(initial) = &item.initializer {
                                                 self.print_initializer(*initial);
@@ -5013,6 +5036,7 @@ pub(crate) mod __gated_printer {
                                                 key_str.slice16(),
                                                 self.name_for_symbol(e.ref_),
                                             )
+                                            && self.inlined_const(e.ref_).is_none()
                                         {
                                             if let Some(initial) = &item.initializer {
                                                 self.print_initializer(*initial);
@@ -6004,7 +6028,7 @@ pub(crate) mod __gated_printer {
                         self.indent();
                         for st in c_body.iter() {
                             self.print_semicolon_if_needed();
-                            self.print_stmt(*st).expect("unreachable");
+                            self.print_stmt_in_list(*st).expect("unreachable");
                         }
                         self.unindent();
                     }
@@ -6718,10 +6742,17 @@ pub(crate) mod __gated_printer {
             )
         }
 
+        /// The value that a read of the import `ref_` prints as.
+        #[inline]
+        fn inlined_const(&self, ref_: Ref) -> Option<Expr> {
+            js_ast::late_fold::inlined_const(self.symbols(), self.options.const_values, ref_)
+        }
+
         fn late_fold(&self) -> js_ast::late_fold::LateFold<'a> {
             js_ast::late_fold::LateFold {
                 symbols: self.symbols(),
                 ts_enums: self.options.ts_enums,
+                const_values: self.options.const_values,
                 has_dynamic_import_items: self.options.has_dynamic_import_items,
                 bump: self.bump,
                 stack_check: self.stack_check,
@@ -6764,6 +6795,48 @@ pub(crate) mod __gated_printer {
             }
             self.late_fold_spine = spine;
             folded
+        }
+
+        /// Prints a statement of a list, where the late fold can leave several statements or none.
+        #[inline]
+        pub(crate) fn print_stmt_in_list(&mut self, stmt: Stmt) -> crate::Result<()> {
+            if self.options.late_fold
+                && matches!(stmt.data, StmtData::SIf(_) | StmtData::SExpr(_))
+                && self.print_late_folded_in_list(stmt)?
+            {
+                return Ok(());
+            }
+            self.print_stmt(stmt)
+        }
+
+        /// Returns true when it printed what is left of `stmt`.
+        #[inline(never)]
+        fn print_late_folded_in_list(&mut self, stmt: Stmt) -> crate::Result<bool> {
+            let folded = self.late_folded_stmt(stmt);
+            let mut spine = core::mem::take(&mut self.late_fold_spine);
+            let late_fold = self.late_fold();
+            let (is_empty, open_block) = match &folded.data {
+                StmtData::SEmpty(_) => (true, false),
+                // `DEV && debug()` folds to a literal that nothing reads.
+                StmtData::SExpr(s) => (late_fold.is_unused_literal(s.value, &mut spine), false),
+                StmtData::SBlock(block) => (
+                    false,
+                    late_fold.can_open_block(slice_of(block.stmts), &mut spine),
+                ),
+                _ => (false, false),
+            };
+            self.late_fold_spine = spine;
+            if is_empty {
+                return Ok(true);
+            }
+            if let (true, StmtData::SBlock(block)) = (open_block, &folded.data) {
+                for stmt in slice_of(block.stmts) {
+                    self.print_semicolon_if_needed();
+                    self.print_stmt_in_list(*stmt)?;
+                }
+                return Ok(true);
+            }
+            Ok(false)
         }
 
         /// The `else` branch to print for `s`. An `else` that the late fold emptied is left out.
@@ -8079,7 +8152,7 @@ pub(crate) fn print_with_writer_and_platform<
 
         for part in parts {
             for stmt in slice_of(part.stmts).iter() {
-                if let Err(err) = printer.print_stmt(*stmt) {
+                if let Err(err) = printer.print_stmt_in_list(*stmt) {
                     return PrintResult::Err(err);
                 }
                 printer.print_semicolon_if_needed();

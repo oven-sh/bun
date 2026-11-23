@@ -197,6 +197,13 @@ impl LinkerContext<'_, '_> {
         let tlsp_ast = &c.graph.ast.items_top_level_symbols_to_parts()[id as usize];
 
         let our_imports_to_bind: &RefImportData = &imports_to_bind[id as usize];
+        // A file with a direct `eval` keeps its reads, as before constants were inlined.
+        let imports_leaf_const = c.graph.const_values.count() > 0
+            && !c.graph.ast.items_module_scope()[id as usize].contains_direct_eval
+            && our_imports_to_bind
+                .values()
+                .iter()
+                .any(|import| c.graph.const_values.contains(&import.data.import_ref));
         for (part_index, part) in parts.as_mut_slice().iter_mut().enumerate() {
             // Now that all files have been parsed, determine which property
             // accesses off of imported symbols are inlined enum values and
@@ -266,7 +273,23 @@ impl LinkerContext<'_, '_> {
 
             // TODO: inline function calls here
 
-            // TODO: Inline cross-module constants
+            // The printer prints these reads as values (`late_fold::inlined_const`).
+            if imports_leaf_const {
+                let uses = part.symbol_uses.count();
+                part.symbol_uses.retain(|ref_, _| {
+                    !(c.graph
+                        .symbols
+                        .get_const(*ref_)
+                        .is_some_and(|symbol| symbol.kind == bun_ast::symbol::Kind::Import)
+                        && our_imports_to_bind.get(ref_).is_some_and(|import| {
+                            c.graph.const_values.contains(&import.data.import_ref)
+                        }))
+                });
+                if part.symbol_uses.count() != uses {
+                    meta_flags.inlines_const = true;
+                    meta_flags.late_fold = true;
+                }
+            }
 
             // Now that we know this, we can determine cross-part dependencies
             // PERF: iterate the keys slice directly (the index-based

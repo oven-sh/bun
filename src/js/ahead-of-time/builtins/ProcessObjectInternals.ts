@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/builtins/ProcessObjectInternals.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 cafb95414af99fdb168abad8de39c9804a6354f34149cf895b8e2bd2ad9e5ec5.
+// Written against that file with the SHA-256 a0e2a825e8f33b8bbbf8e99ec88171c15fc49cb62a07e8d2329131b02b690eb1.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 /*
@@ -204,9 +204,8 @@ export function getStdinStream(process: NodeJS.Process, fd: number, isTTY: boole
 
   stream.fd = fd;
 
-  // The descriptor belongs to the process: reading resumes after 'end' (see the
-  // 'resume' handler) and children inherit it. Destroying stdin, which the
-  // 'end' handler below does, must not close it.
+  // The descriptor belongs to the process and children inherit it. Destroying
+  // stdin, which the 'end' handler below does, must not close it.
   stream._destroy = function (this: StdinStream, err: Error | null, cb: $Node.ErrorCallback) {
     cb(err);
   };
@@ -311,6 +310,8 @@ export function getStdinStream(process: NodeJS.Process, fd: number, isTTY: boole
 
   stream.on("resume", () => {
     if (stream.isPaused()) return; // fake resume
+    // After EOF, _undestroy() would clear `ended` and 'end' would never be emitted.
+    if (stream_reachedEof) return;
     $debug('on("resume");');
     own();
     stream._undestroy();

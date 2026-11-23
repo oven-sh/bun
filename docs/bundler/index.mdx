@@ -1452,6 +1452,8 @@ The bundler always loads `export *` re-exports (it never defers them) to avoid c
 
 **Automatic mode:** Packages with `"sideEffects": false` in their `package.json` get barrel optimization automatically — no `optimizeImports` config needed. Use `optimizeImports` for packages that don't have this field.
 
+**Which `package.json` decides:** the bundler reads `sideEffects` for a file from the `package.json` files above that file. The import that found the file does not matter: `import "pkg/sub"` and `import "pkg/esm/sub.js"` get the same answer for the same file. The nearest `package.json` that has a `name` or a `sideEffects` field decides. A `package.json` with neither, such as `{ "type": "module" }`, is passed over, but only up to a `package.json` with a `name`: a `sideEffects` field in a `package.json` with no `name` does not apply below another `package.json`. `"sideEffects": false` in a `package.json` with no `name` lets the bundler remove unused files. It turns on automatic barrel optimization only if the nearest `package.json` with a `name` above it also says `false`.
+
 **Plugins:** Resolve and load plugins work with barrel optimization. Deferred submodules go through the plugin pipeline when they are eventually loaded.
 
 ### Re-exported namespaces

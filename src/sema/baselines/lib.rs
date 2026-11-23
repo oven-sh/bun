@@ -9,7 +9,9 @@ use bun_sema::check::compute_ecma_line_starts;
 use bun_sema::config::{self, Project};
 use bun_sema::json::Json;
 use bun_sema::messages::text;
-use bun_sema::resolve::{Host, displayed_path, join, to_path};
+use bun_sema::resolve::{
+    Host, displayed_path, get_relative_path_from_directory, join, parent_directory, to_path,
+};
 use bun_sema::session::Session;
 use bun_sema::util::SharedSort;
 use bun_sema_driver::{Category, Diagnostic, Report, Request, TaskSize};
@@ -34,7 +36,7 @@ macro_rules! error_line {
 }
 
 pub fn write_line(to: bun_core::Fd, line: std::fmt::Arguments<'_>) {
-    let _ = bun_sys::File::from_fd(to).write_all(format!("{line}\n").as_bytes());
+    let _ = bun_sys::File::borrow(&to).write_all(format!("{line}\n").as_bytes());
 }
 
 fn read_file(path: &str) -> Option<Vec<u8>> {
@@ -316,7 +318,7 @@ impl Virtual {
     }
 
     fn add_directories_above(&mut self, path: &[u8]) {
-        let mut dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Posix>(path);
+        let mut dir = parent_directory(path);
         loop {
             if self
                 .directories
@@ -327,7 +329,7 @@ impl Virtual {
             {
                 break;
             }
-            dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Posix>(dir);
+            dir = parent_directory(dir);
         }
     }
 
@@ -1747,12 +1749,13 @@ fn run_one(
         let moves = !files.options.declaration_dir.is_empty() || !out_dir.is_empty();
         let looked_up = match common.filter(|it| moves && !it.is_empty()) {
             Some(common) => {
-                use bun_paths::{platform::Posix, resolve_path::relative_normalized};
                 let dir = match out_dir.is_empty() {
                     true => cwd.as_bytes(),
                     false => &out_dir[..],
                 };
-                join(dir, relative_normalized::<Posix, true>(common, path))
+                let relative =
+                    get_relative_path_from_directory(common, path, files.is_case_sensitive);
+                join(dir, &relative)
             }
             None => path.to_vec(),
         };

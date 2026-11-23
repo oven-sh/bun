@@ -46,9 +46,6 @@ pub(crate) fn mysql_error_to_js(
         Error::OutOfMemory => {
             return global_object.create_out_of_memory_error();
         }
-        Error::ShortRead => {
-            unreachable!("Assertion failed: ShortRead should be handled by the caller in mysql");
-        }
     };
 
     let default_message;

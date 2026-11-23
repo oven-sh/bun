@@ -24,9 +24,8 @@ use bun_aot::engine::{EngineResult, ExecutableIdentity, TargetImageForm};
 use bun_aot::module_list::ModuleList;
 use bun_aot::report::SourceTexts;
 use bun_aot::statistics::{Stage, Statistics};
-use bun_ast::{Loc, Log};
+use bun_ast::Log;
 use bun_options_types::aot_options::AotOptions;
-use bun_paths::string_paths::without_trailing_slash_windows_path;
 use bun_resolver::package_names::{
     BuildPaths, FurtherPackageName, PackageName, PathAlias, add_hidden_names, add_written_names,
 };
@@ -41,10 +40,10 @@ pub use services::FileFinder;
 pub use services::FilesForFileSystem;
 use services::{BundlerServices, NamesWanted, is_at_or_below};
 
-pub struct PluginSetup {
+pub struct PluginSetup<'a> {
     pub plugins: NonNull<JSBundlerPlugin>,
     pub context: bun_event_loop::ContextId,
-    pub completion: dispatch::CompletionHandle,
+    pub completion: dispatch::CompletionHandle<'a>,
 }
 
 pub struct AotBuildRequest<'r, 'a> {
@@ -65,7 +64,7 @@ pub struct AotBuildRequest<'r, 'a> {
     pub arena: &'a bun_alloc::Arena,
     pub event_loop: EventLoop,
     pub worker_pool: Option<NonNull<bun_threading::ThreadPool>>,
-    pub plugins: Option<PluginSetup>,
+    pub plugins: Option<PluginSetup<'a>>,
     pub file_map: Option<&'a FileMap>,
     pub typescript_libs: Libs<'r>,
 }
@@ -155,7 +154,11 @@ pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailu
     };
     // SAFETY: the log outlives the build, and nothing below this call reaches the transpiler.
     let Some(options) = options_from_bundler(&input, unsafe { &mut *log }) else {
-        return Err(failure_before_pipeline(false));
+        return Err(AotBuildFailure {
+            stage: None,
+            is_internal_error: false,
+            statistics: Statistics::default(),
+        });
     };
     transpiler.options.root_dir = Box::from(&options.paths.root_directory[..]);
     transpiler
@@ -164,27 +167,14 @@ pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailu
         .root_dir
         .clone_from(&transpiler.options.root_dir);
 
-    let started = BundleV2::init_without_starting_threads(
+    let mut bundle = BundleV2::init_without_starting_threads(
         transpiler,
         None,
         arena,
         event_loop,
-        false,
         worker_pool,
         arena,
     );
-    let mut bundle = match started {
-        Ok(bundle) => bundle,
-        Err(error) => {
-            // SAFETY: the log outlives the build, and the reference ends with the statement.
-            unsafe { &mut *log }.add_error_fmt(
-                None,
-                Loc::EMPTY,
-                format_args!("{} while starting the build", error.name()),
-            );
-            return Err(failure_before_pipeline(true));
-        }
-    };
     bundle.file_map = file_map;
     if let Some(setup) = plugins {
         bundle.plugins = Some(setup.plugins);
@@ -193,12 +183,12 @@ pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailu
     }
 
     let working_directory = crate::bun_fs::FileSystem::get().top_level_dir();
-    let working_directory = without_trailing_slash_windows_path(working_directory);
+    let working_directory = bun_paths::without_trailing_sep(working_directory);
     let assets_by_absolute_paths = assets
         .iter()
         .map(|asset| {
             let path = paths::absolute_path(working_directory, asset);
-            without_trailing_slash_windows_path(&path).to_vec()
+            bun_paths::without_trailing_sep(&path).to_vec()
         })
         .collect();
     // `options::root_directory` widens a root that nobody wrote to the assets below the working directory.
@@ -292,9 +282,8 @@ pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailu
         }));
         further_package_names.sort_by(|a, b| a.path.cmp(&b.path));
     }
-    bundle.deinit_without_freeing_arena();
-    bun_sema_driver::wake_idle_region_threads();
     drop(bundle);
+    bun_sema_driver::wake_idle_region_threads();
 
     match result {
         Ok(compilation) => {
@@ -307,7 +296,7 @@ pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailu
             let is_source_replaced = replaced_file.is_some_and(|replaced| {
                 let mut sources = compilation.program_files.iter();
                 sources.any(|source| source.source_path == replaced)
-                    || embedded.iter().any(|file| file.src_path.text == replaced)
+                    || embedded.iter().any(|file| &*file.src_path == replaced)
             });
             let mut build = output::finish_build(compilation, &names, embedded);
             build.is_source_replaced = is_source_replaced;
@@ -330,13 +319,5 @@ pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailu
             is_internal_error,
             statistics,
         }),
-    }
-}
-
-fn failure_before_pipeline(is_internal_error: bool) -> AotBuildFailure {
-    AotBuildFailure {
-        stage: None,
-        is_internal_error,
-        statistics: Statistics::default(),
     }
 }

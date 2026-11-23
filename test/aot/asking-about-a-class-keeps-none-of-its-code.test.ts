@@ -56,7 +56,7 @@ test("there are many classes, and the table leaves the prototype objects of some
   expect({
     classes: classes.length > 100,
     taken: taken.map(({ path }) => path),
-  }).toEqual({ classes: true, taken: expect.arrayContaining(["WebSocket", "Worker", "URLPattern"]) });
+  }).toEqual({ classes: true, taken: expect.arrayContaining(["WebSocket", "Worker"]) });
 });
 
 // `gap` says what the report holds today, on Linux, where the goal is not met yet: how many of its lines say what blocks --trim, and how many

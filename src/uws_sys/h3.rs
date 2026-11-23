@@ -10,7 +10,7 @@ use crate::response::{State, WriteResult};
 use crate::socket_context::BunSocketContextOptions;
 use crate::thunk;
 use crate::{AnyRequest, AnyResponse};
-use bun_ptr::ThisPtr;
+use bun_ptr::{AnyRefCounted, RefPtr};
 
 // ──────────────────────────────────────────────────────────────────────────
 // ListenSocket
@@ -209,21 +209,19 @@ impl Response {
 
     pub(crate) fn on_writable<UD, H>(&mut self, _handler: H, ud: *mut UD)
     where
-        H: Fn(&mut UD, u64, &mut Response) -> bool + Copy + 'static,
+        H: Fn(*mut UD, u64, &mut Response) -> bool + Copy + 'static,
     {
         // Safe fn item: nested local thunk, only coerced to the C-ABI
         // fn-pointer type passed to C; body wraps its raw-ptr ops explicitly.
         extern "C" fn cb<UD, H>(r: *mut Response, off: u64, p: *mut c_void) -> bool
         where
-            H: Fn(&mut UD, u64, &mut Response) -> bool + Copy + 'static,
+            H: Fn(*mut UD, u64, &mut Response) -> bool + Copy + 'static,
         {
-            // SAFETY: uWS callback contract — `r` live, `p` is the registered `*mut UD`.
-            unsafe {
-                let Some(ud) = thunk::user_mut::<UD>(p) else {
-                    return true;
-                };
-                thunk::zst::<H>()(ud, off, thunk::handle_mut(r))
+            if p.is_null() {
+                return true;
             }
+            // SAFETY: uWS callback contract — `r` is live for the call.
+            unsafe { thunk::zst::<H>()(p.cast::<UD>(), off, thunk::handle_mut(r)) }
         }
         c::uws_h3_res_on_writable(self, Some(cb::<UD, H>), ud.cast())
     }
@@ -232,21 +230,19 @@ impl Response {
     }
     pub(crate) fn on_aborted<UD, H>(&mut self, _handler: H, ud: *mut UD)
     where
-        H: Fn(&mut UD, &mut Response) + Copy + 'static,
+        H: Fn(*mut UD, &mut Response) + Copy + 'static,
     {
         // Safe fn item: nested local thunk, only coerced to the C-ABI
         // fn-pointer type passed to C; body wraps its raw-ptr ops explicitly.
         extern "C" fn cb<UD, H>(r: *mut Response, p: *mut c_void)
         where
-            H: Fn(&mut UD, &mut Response) + Copy + 'static,
+            H: Fn(*mut UD, &mut Response) + Copy + 'static,
         {
-            // SAFETY: uWS callback contract — `r` live, `p` is the registered `*mut UD`.
-            unsafe {
-                let Some(ud) = thunk::user_mut::<UD>(p) else {
-                    return;
-                };
-                thunk::zst::<H>()(ud, thunk::handle_mut(r));
+            if p.is_null() {
+                return;
             }
+            // SAFETY: uWS callback contract — `r` is live for the call.
+            unsafe { thunk::zst::<H>()(p.cast::<UD>(), thunk::handle_mut(r)) }
         }
         c::uws_h3_res_on_aborted(self, Some(cb::<UD, H>), ud.cast())
     }
@@ -255,21 +251,19 @@ impl Response {
     }
     pub fn on_timeout<UD, H>(&mut self, _handler: H, ud: *mut UD)
     where
-        H: Fn(&mut UD, &mut Response) + Copy + 'static,
+        H: Fn(*mut UD, &mut Response) + Copy + 'static,
     {
         // Safe fn item: nested local thunk, only coerced to the C-ABI
         // fn-pointer type passed to C; body wraps its raw-ptr ops explicitly.
         extern "C" fn cb<UD, H>(r: *mut Response, p: *mut c_void)
         where
-            H: Fn(&mut UD, &mut Response) + Copy + 'static,
+            H: Fn(*mut UD, &mut Response) + Copy + 'static,
         {
-            // SAFETY: uWS callback contract — `r` live, `p` is the registered `*mut UD`.
-            unsafe {
-                let Some(ud) = thunk::user_mut::<UD>(p) else {
-                    return;
-                };
-                thunk::zst::<H>()(ud, thunk::handle_mut(r));
+            if p.is_null() {
+                return;
             }
+            // SAFETY: uWS callback contract — `r` is live for the call.
+            unsafe { thunk::zst::<H>()(p.cast::<UD>(), thunk::handle_mut(r)) }
         }
         c::uws_h3_res_on_timeout(self, Some(cb::<UD, H>), ud.cast())
     }
@@ -278,7 +272,7 @@ impl Response {
     }
     pub(crate) fn on_data<UD, H>(&mut self, _handler: H, ud: *mut UD)
     where
-        H: Fn(&mut UD, &mut Response, &[u8], bool) + Copy + 'static,
+        H: Fn(*mut UD, &mut Response, &[u8], bool) + Copy + 'static,
     {
         // Safe fn item: nested local thunk, only coerced to the C-ABI
         // fn-pointer type passed to C; body wraps its raw-ptr ops explicitly.
@@ -289,16 +283,15 @@ impl Response {
             last: bool,
             p: *mut c_void,
         ) where
-            H: Fn(&mut UD, &mut Response, &[u8], bool) + Copy + 'static,
+            H: Fn(*mut UD, &mut Response, &[u8], bool) + Copy + 'static,
         {
-            // SAFETY: uWS callback contract — `r` live, `chunk_ptr[..len]` valid,
-            // `p` is the registered `*mut UD`.
+            if p.is_null() {
+                return;
+            }
+            // SAFETY: uWS callback contract — `r` live and `chunk_ptr[..len]` valid for the call.
             unsafe {
-                let Some(ud) = thunk::user_mut::<UD>(p) else {
-                    return;
-                };
                 thunk::zst::<H>()(
-                    ud,
+                    p.cast::<UD>(),
                     thunk::handle_mut(r),
                     thunk::c_slice(chunk_ptr, len),
                     last,
@@ -391,12 +384,34 @@ macro_rules! h3_route_methods {
     )*};
 }
 
-impl App {
-    pub fn create(opts: &BunSocketContextOptions, idle_timeout_s: u32) -> Option<*mut App> {
-        // SAFETY: opts is `#[repr(C)]` passed by value; uws owns the returned handle
+/// Never made when `!SSL`, so that a server without TLS links none of this.
+pub struct OwnedApp<const SSL: bool>(core::ptr::NonNull<App>);
+
+impl<const SSL: bool> OwnedApp<SSL> {
+    pub fn new(opts: &BunSocketContextOptions, idle_timeout_s: u32) -> Option<Self> {
+        if !SSL {
+            return None;
+        }
+        // SAFETY: opts is `#[repr(C)]` passed by value
         let p = unsafe { c::uws_h3_create_app(*opts, idle_timeout_s) };
-        if p.is_null() { None } else { Some(p) }
+        core::ptr::NonNull::new(p).map(Self)
     }
+
+    pub fn as_ptr(&self) -> *mut App {
+        self.0.as_ptr()
+    }
+}
+
+impl<const SSL: bool> Drop for OwnedApp<SSL> {
+    fn drop(&mut self) {
+        if SSL {
+            // SAFETY: created in `new`, destroyed once.
+            unsafe { c::uws_h3_app_destroy(self.as_ptr()) }
+        }
+    }
+}
+
+impl App {
     pub fn add_server_name_with_options(
         &mut self,
         hostname: &bun_core::ZStr,
@@ -407,13 +422,6 @@ impl App {
             return Err(AddServerNameError::FailedToAddServerName);
         }
         Ok(())
-    }
-    /// # Safety
-    /// `this` must be a live App handle previously returned by `App::create`;
-    /// it is freed by this call and must not be used afterwards.
-    pub unsafe fn destroy(this: *mut Self) {
-        // SAFETY: caller contract above
-        unsafe { c::uws_h3_app_destroy(this) }
     }
     pub fn close(&mut self) {
         c::uws_h3_app_close(self)
@@ -445,20 +453,33 @@ impl App {
     }
 
     /// `route` for an intrusively-refcounted `U` as the route userdata; see
-    /// [`method_this`](Self::method_this).
-    fn route_this<U: 'static, H>(which: RouteKind, this: &mut App, pattern: &[u8], ud: ThisPtr<U>)
-    where
-        H: Fn(ThisPtr<U>, AnyRequest, AnyResponse) + Copy + 'static,
+    /// [`method_ref`](Self::method_ref).
+    fn route_ref<U: AnyRefCounted + 'static, H>(
+        which: RouteKind,
+        this: &mut App,
+        pattern: &[u8],
+        owner: &RefPtr<U>,
+    ) where
+        H: Fn(RefPtr<U>, AnyRequest, AnyResponse) + Copy + 'static,
     {
-        extern "C" fn cb<U: 'static, H>(res: *mut Response, req: *mut Request, p: *mut c_void)
-        where
-            H: Fn(ThisPtr<U>, AnyRequest, AnyResponse) + Copy + 'static,
+        extern "C" fn cb<U: AnyRefCounted + 'static, H>(
+            res: *mut Response,
+            req: *mut Request,
+            p: *mut c_void,
+        ) where
+            H: Fn(RefPtr<U>, AnyRequest, AnyResponse) + Copy + 'static,
         {
-            // SAFETY: `p` is the `ThisPtr` registered with this thunk; the registrant holds a ref on it while the route is registered.
-            let this = unsafe { ThisPtr::new(p.cast::<U>()) };
-            thunk::zst::<H>()(this, AnyRequest::H3(req), AnyResponse::H3(res));
+            // SAFETY: `p` is the pointer registered with this thunk; the registrant holds a ref on it while the route is registered.
+            let owner = unsafe { RefPtr::init_ref(p.cast::<U>()) };
+            thunk::zst::<H>()(owner, AnyRequest::H3(req), AnyResponse::H3(res));
         }
-        Self::route_raw(which, this, pattern, Some(cb::<U, H>), ud.as_ptr().cast());
+        Self::route_raw(
+            which,
+            this,
+            pattern,
+            Some(cb::<U, H>),
+            owner.as_ptr().cast(),
+        );
     }
 
     fn route_raw(
@@ -505,28 +526,28 @@ impl App {
     }
 
     /// [`method`](Self::method) with an intrusively-refcounted `U` as the
-    /// route userdata. The registrant keeps a ref on `this` for as long as the
-    /// route is registered, so the trampoline can hand the handler a `ThisPtr`.
-    pub fn method_this<U: 'static, H>(
+    /// route userdata. The registrant keeps a ref on `owner` for as long as the
+    /// route is registered, so the trampoline can hand the handler a ref of its own.
+    pub fn method_ref<U: AnyRefCounted + 'static, H>(
         &mut self,
         m: bun_http_types::Method::Method,
         p: &[u8],
         _h: H,
-        this: ThisPtr<U>,
+        owner: &RefPtr<U>,
     ) where
-        H: Fn(ThisPtr<U>, AnyRequest, AnyResponse) + Copy + 'static,
+        H: Fn(RefPtr<U>, AnyRequest, AnyResponse) + Copy + 'static,
     {
         if let Some(kind) = RouteKind::from_method(m) {
-            Self::route_this::<U, H>(kind, self, p, this);
+            Self::route_ref::<U, H>(kind, self, p, owner);
         }
     }
 
-    /// [`any`](Self::any) counterpart of [`method_this`](Self::method_this).
-    pub fn any_this<U: 'static, H>(&mut self, p: &[u8], _h: H, this: ThisPtr<U>)
+    /// [`any`](Self::any) counterpart of [`method_ref`](Self::method_ref).
+    pub fn any_ref<U: AnyRefCounted + 'static, H>(&mut self, p: &[u8], _h: H, owner: &RefPtr<U>)
     where
-        H: Fn(ThisPtr<U>, AnyRequest, AnyResponse) + Copy + 'static,
+        H: Fn(RefPtr<U>, AnyRequest, AnyResponse) + Copy + 'static,
     {
-        Self::route_this::<U, H>(RouteKind::Any, self, p, this);
+        Self::route_ref::<U, H>(RouteKind::Any, self, p, owner);
     }
 
     pub fn listen_with_config<UD, H>(&mut self, ud: *mut UD, _handler: H, config: &ListenConfig)

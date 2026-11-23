@@ -1,5 +1,5 @@
 //! `Bun.Image` — Sharp-shaped image pipeline backed by the statically linked
-//! libjpeg-turbo / libwebp codecs, `bun_png` and the highway resize kernel.
+//! `bun_jpeg`, `bun_png` and `bun_webp` codecs and the highway resize kernel.
 //!
 //! Shape: the constructor only captures the *input* (path or bytes). Chainable
 //! mutators (`resize`, `rotate`, `flip`, `flop`, `jpeg`/`png`/`webp`) each
@@ -66,11 +66,11 @@ pub(crate) struct Image {
     /// synchronously after the first await.
     last_width: Cell<i32>,
     last_height: Cell<i32>,
-    /// Strong while at least one PipelineTask is in flight, weak otherwise. The
+    /// Strong while at least one `PendingTask` is alive, weak otherwise. The
     /// Strong→wrapper→sourceJS-slot chain is what keeps the borrowed ArrayBuffer
     /// alive across the WorkPool roundtrip; switching to weak when idle lets GC
     /// collect the wrapper.
-    this_ref: JsCell<JsRef>,
+    pub(crate) this_ref: JsCell<JsRef>,
     pending_tasks: Cell<u32>,
 }
 
@@ -236,7 +236,7 @@ macro_rules! coerce_int {
     }};
 }
 
-/// Size cap for `.path` sources, applied at fstat time before reading
+/// Size cap for files. `.path` sources check it at fstat time, before reading
 /// anything. This is the *encoded* file, not the decoded RGBA — `maxPixels`
 /// covers the latter once we have a header. 256 MiB comfortably fits any
 /// real-world image (a 268 MP JPEG is ~80 MB) while keeping a single
@@ -667,8 +667,7 @@ impl Image {
     /// nobody mutates a buffer they just handed to a decoder. The contract is
     /// documented and `.shared`/`.resizable` are refused at construction. The
     /// codec layer is hardened so a hostile mid-decode mutation degrades to
-    /// `DecodeFailed`, not OOB/heap-leak — see `codec_jpeg.rs` cropping +
-    /// post-check, `codec_webp.rs` owned canvas. (If the attacker already runs
+    /// `DecodeFailed`, not OOB/heap-leak. (If the attacker already runs
     /// JS in-process the threat model is moot anyway; the surface that matters
     /// is hostile *bytes*, which the codec validation handles.)
     fn pin_for_task(
@@ -868,7 +867,6 @@ impl Image {
     ) -> JsResult<JSValue> {
         let cx = cx.js_thread();
         let global = cx.global();
-        let this_value = this_value.to_js();
         // Header-only probe is a few dozen byte reads — when the bytes are already
         // in memory it's cheaper to do it inline than to bounce off the WorkPool
         // (~0.4 ms roundtrip). Path-backed sources still go async for the file I/O.
@@ -879,7 +877,7 @@ impl Image {
         let view;
         let bytes: Option<&[u8]> = match self.source.get() {
             Source::JsBuffer => {
-                view = js::source_js_get_cached(this_value)
+                view = js::source_js_get_cached(this_value.to_js())
                     .and_then(|v: JSValue| v.as_array_buffer(global));
                 view.as_ref().map(ArrayBuffer::byte_slice)
             }
@@ -927,7 +925,7 @@ impl Image {
     ) -> JsResult<JSValue> {
         self.schedule(
             &cx.js_thread(),
-            this_value.to_js(),
+            this_value,
             Kind::Encode(self.pipeline.get().output),
             Deliver::Uint8Array,
         )
@@ -940,7 +938,7 @@ impl Image {
     ) -> JsResult<JSValue> {
         self.schedule(
             &cx.js_thread(),
-            this_value.to_js(),
+            this_value,
             Kind::Encode(self.pipeline.get().output),
             Deliver::Buffer,
         )
@@ -953,7 +951,7 @@ impl Image {
     ) -> JsResult<JSValue> {
         self.schedule(
             &cx.js_thread(),
-            this_value.to_js(),
+            this_value,
             Kind::Encode(self.pipeline.get().output),
             Deliver::Blob,
         )
@@ -966,7 +964,7 @@ impl Image {
     ) -> JsResult<JSValue> {
         self.schedule(
             &cx.js_thread(),
-            this_value.to_js(),
+            this_value,
             Kind::Encode(self.pipeline.get().output),
             Deliver::Base64,
         )
@@ -981,7 +979,7 @@ impl Image {
     ) -> JsResult<JSValue> {
         self.schedule(
             &cx.js_thread(),
-            this_value.to_js(),
+            this_value,
             Kind::Encode(self.pipeline.get().output),
             Deliver::DataUrl,
         )
@@ -1012,7 +1010,7 @@ impl Image {
                 )));
             }
         }
-        self.schedule(&cx, this_value.to_js(), Kind::Placeholder, Deliver::DataUrl)
+        self.schedule(&cx, this_value, Kind::Placeholder, Deliver::DataUrl)
     }
 
     /// Terminal: encode and write to `path` on the work pool (no round-trip of
@@ -1063,7 +1061,7 @@ impl Image {
         }
         self.schedule(
             &cx,
-            this_value.to_js(),
+            this_value,
             Kind::Encode(output),
             Deliver::WriteDest(Strong::create(dest, global)),
         )
@@ -1074,14 +1072,25 @@ impl Image {
     fn schedule(
         &self,
         cx: &bun_jsc::JsThread<'_>,
-        this_value: JSValue,
+        this_value: JsWrapper<'_, Self>,
         kind: Kind,
         deliver: Deliver,
     ) -> JsResult<JSValue> {
+        let pending = PendingTask::new(self, this_value, cx.global());
         if matches!(self.source.get(), Source::Blob(_)) {
-            return BlobReadChain::start(self, cx, this_value, kind, deliver);
+            return BlobReadChain::start(self, cx, pending, kind, deliver);
         }
-        let (input, pin) = match self.pin_for_task(this_value, cx.global()) {
+        Self::schedule_pipeline(cx, pending, kind, deliver)
+    }
+
+    fn schedule_pipeline(
+        cx: &bun_jsc::JsThread<'_>,
+        pending: PendingTask,
+        kind: Kind,
+        deliver: Deliver,
+    ) -> JsResult<JSValue> {
+        let this = pending.image(cx);
+        let (input, pin) = match this.pin_for_task(this.this_ref.get().get(), cx.global()) {
             Ok(i) => i,
             Err(PinError::Detached) => {
                 drop(deliver);
@@ -1097,11 +1106,11 @@ impl Image {
             }
         };
         let work = PipelineTask {
-            pipeline: self.pipeline.get(),
+            pipeline: this.pipeline.get(),
             input,
             kind,
-            max_pixels: self.max_pixels,
-            auto_orient: self.auto_orient,
+            max_pixels: this.max_pixels,
+            auto_orient: this.auto_orient,
             result: TaskResult::Err(codecs::Error::DecodeFailed),
         };
         let promise = jsc::JSPromiseStrong::init(cx.global());
@@ -1113,7 +1122,7 @@ impl Image {
                 promise,
                 deliver,
                 _pin: pin,
-                image: PendingTask::new(self, this_value, cx.global()),
+                image: pending,
             },
         );
         Ok(promise_value)
@@ -1132,7 +1141,7 @@ impl Image {
         &self,
         global: &JSGlobalObject,
         this_value: JSValue,
-    ) -> JsResult<(codecs::Encoded, &'static ZStr)> {
+    ) -> JsResult<(Vec<u8>, &'static ZStr)> {
         bun_removable_features::removable_definition!(Image, Self::encode_for_body);
         // The body-init contract is synchronous, so a `.blob` source can't go
         // through the async read chain here. For the common case (file by path)
@@ -1212,20 +1221,21 @@ impl Image {
 /// read+decode+ops+encode. After the first read, subsequent terminals on the
 /// same instance reuse the `.owned` bytes without re-reading.
 struct BlobReadChain {
-    image: *const Image,
+    image: PendingTask,
     global: bun_ptr::BackRef<JSGlobalObject>,
     /// The context of the script that asked: the task the read is followed by is that script's.
     context: jsc::ContextId,
     kind: Kind,
     deliver: Deliver,
     outer: jsc::JSPromiseStrong,
+    is_file: bool,
 }
 
 impl BlobReadChain {
     fn start(
         image: &Image,
         cx: &bun_jsc::JsThread<'_>,
-        this_value: JSValue,
+        pending: PendingTask,
         kind: Kind,
         deliver: Deliver,
     ) -> JsResult<JSValue> {
@@ -1242,23 +1252,20 @@ impl BlobReadChain {
                 .global()
                 .throw(format_args!("Image: Blob source is no longer a Blob")));
         };
-
-        // Same Strong-ref contract as the regular pending_tasks bump — keeps
-        // the wrapper (and its sourceJS slot) alive until the read settles.
-        if image.pending_tasks.get() == 0 {
-            image
-                .this_ref
-                .with_mut(|r| r.set_strong(this_value, cx.global()));
+        let (is_file, blob) = (blob.needs_to_read_file(), blob.dupe());
+        if is_file {
+            // One byte more than the cap tells that the file is over it.
+            blob.size.set(blob.size.get().min(MAX_INPUT_FILE_BYTES + 1));
         }
-        image.pending_tasks.set(image.pending_tasks.get() + 1);
 
         let chain = Box::new(BlobReadChain {
-            image: std::ptr::from_ref::<Image>(image),
+            image: pending,
             global: bun_ptr::BackRef::new(cx.global()),
             context: cx.context().id(),
             kind,
             deliver,
             outer: jsc::JSPromiseStrong::init(cx.global()),
+            is_file,
         });
         let promise = chain.outer.value();
         // `on_read_bytes` runs on the JS thread: in this call for in-memory bytes, else later.
@@ -1269,53 +1276,35 @@ impl BlobReadChain {
     /// JS thread — `read_bytes_to_handler` guarantees this. `r.ok` is owned by us.
     fn on_read_bytes_impl(self, r: ReadBytesResult) -> JsResult<()> {
         let global = self.global.get();
-        // SAFETY: `image` is a BACKREF kept alive by the Strong `this_ref`
-        // bump in `start()`; we are on the JS thread. R-2: shared deref —
-        // mutation goes through `Cell`/`JsCell`.
-        let image = unsafe { &*self.image };
         let mut outer = self.outer;
         let kind = self.kind;
         let deliver = self.deliver;
-        // `bun.destroy(self)` — Box drops at end of scope.
-
-        image.pending_tasks.set(image.pending_tasks.get() - 1);
-        if image.pending_tasks.get() == 0 {
-            image.this_ref.with_mut(|r| r.downgrade());
-        }
-        // `defer outer.deinit()` — `JSPromiseStrong` Drop handles this.
 
         match r {
+            ReadBytesResult::Ok(bytes)
+                if self.is_file && bytes.len() as u64 > MAX_INPUT_FILE_BYTES =>
+            {
+                drop(deliver);
+                let error = reject_error(global, codecs::Error::TooManyPixels);
+                outer.reject(global, Ok(error))
+            }
             ReadBytesResult::Ok(bytes) => {
+                let cx = global.js_thread(global.bun_vm().context_of(self.context));
+                let image = self.image.image(&cx);
                 // Concurrent terminals can have started multiple BlobReadChains
                 // (no in-flight serialisation — `start()` re-enters every time
                 // it sees `.blob`). The FIRST resolver wins and swaps to
                 // `.owned`; that buffer is then *borrowed* by `pin_for_task`
                 // into a worker-thread PipelineTask. A later resolver MUST NOT
                 // drop the source (it would free what the worker is reading)
-                // — drop the redundant read instead and re-enter `schedule()`
+                // — drop the redundant read instead and schedule the pipeline
                 // on the already-swapped source.
                 if matches!(image.source.get(), Source::Blob(_)) {
                     image.source.set(Source::Owned(bytes));
                 } else {
                     drop(bytes);
                 }
-                let Some(this_value) = image.this_ref.get().try_get() else {
-                    drop(deliver);
-                    return outer.reject(
-                        global,
-                        Ok(global.create_error_instance(format_args!(
-                            "Image: collected before read completed"
-                        ))),
-                    );
-                };
-                // Source is now `.owned`; this re-entry takes the regular path. If `schedule()` threw,
-                // `deliver` was already dropped there and the pending exception is the rejection.
-                let inner = image.schedule(
-                    &global.js_thread(global.bun_vm().context_of(self.context)),
-                    this_value,
-                    kind,
-                    deliver,
-                );
+                let inner = Image::schedule_pipeline(&cx, self.image, kind, deliver);
                 outer.settle(global, inner)
             }
             ReadBytesResult::Err(e) => {
@@ -1377,11 +1366,9 @@ pub(crate) struct PendingTask(jsc::JsPtr<Image>);
 // SAFETY: the Image is stored inline in its wrapper, which the Strong we hold keeps alive.
 unsafe impl bun_jsc::job::JsAffine for PendingTask {}
 impl PendingTask {
-    fn new(image: &Image, this_value: JSValue, global: &JSGlobalObject) -> Self {
+    fn new(image: &Image, this_value: JsWrapper<'_, Image>, global: &JSGlobalObject) -> Self {
         if image.pending_tasks.get() == 0 {
-            image
-                .this_ref
-                .with_mut(|r| r.set_strong(this_value, global));
+            this_value.set_js_ref_strong(global);
         }
         image.pending_tasks.set(image.pending_tasks.get() + 1);
         // SAFETY: see the JsAffine note.
@@ -1395,7 +1382,7 @@ impl PendingTask {
 }
 impl Drop for PendingTask {
     fn drop(&mut self) {
-        // JS thread (a job's Js side is only ever dropped there).
+        // JS thread: a job's Js side and a `BlobReadChain` are only ever dropped there.
         // SAFETY: as `image()`.
         let image = unsafe { &*self.0.as_ptr() };
         image.pending_tasks.set(image.pending_tasks.get() - 1);
@@ -1478,7 +1465,7 @@ pub(crate) enum Kind {
 
 pub(crate) enum TaskResult {
     Encoded {
-        out: codecs::Encoded,
+        out: Vec<u8>,
         format: codecs::Format,
         w: u32,
         h: u32,
@@ -1730,59 +1717,16 @@ impl PipelineTask {
         );
         match result {
             TaskResult::Encoded { out, format, .. } => {
-                // Ownership of `out.bytes` is transferred to JS below; suppress
-                // the codec `Drop` so the deallocator runs exactly once (via the
-                // ArrayBuffer/Buffer finalizer or explicit drop).
-                let out = mem::ManuallyDrop::new(out);
-                // SAFETY: `out.bytes` is a non-null fat pointer into a live
-                // codec allocation; valid until `out.free` runs.
-                let out_slice: &[u8] = unsafe { out.bytes.as_ref() };
                 match &mut js.deliver {
-                    // The codec's own allocation is handed straight to JS with the
-                    // codec's free as the finalizer — no dupe of the output.
-                    Deliver::Uint8Array => {
-                        // SAFETY: see `out_slice` above; mutability is for the
-                        // `from_bytes` signature only — JS takes ownership.
-                        let mut_slice = unsafe {
-                            core::slice::from_raw_parts_mut(
-                                out.bytes.as_ptr().cast::<u8>(),
-                                out_slice.len(),
-                            )
-                        };
-                        // SAFETY: `out.bytes` is the codec-owned allocation
-                        // whose ownership transfers to JSC; `out.free` frees
-                        // it exactly once at GC and ignores the null ctx.
-                        let v = unsafe {
-                            ArrayBuffer::from_bytes(mut_slice, jsc::JSType::Uint8Array)
-                                .to_js_with_context(global, core::ptr::null_mut(), Some(out.free))
-                        };
-                        match v {
-                            Ok(v) => promise.resolve(global, v)?,
-                            Err(_) => return promise.reject(global, Err(jsc::JsError::Thrown)),
-                        }
-                    }
-                    // createBufferWithCtx returns plain JSValue (its C++ side asserts
-                    // the no-throw contract), so the .uint8array catch is unmatched
-                    // here by construction, not omission.
-                    Deliver::Buffer => promise.settle(
+                    Deliver::Uint8Array => promise.settle(
                         global,
-                        // SAFETY: `out.bytes` is the codec-owned allocation whose
-                        // ownership transfers to JSC; `ctx` is null and `out.free`
-                        // ignores it.
-                        unsafe {
-                            JSValue::create_buffer_with_ctx(
-                                global,
-                                out.bytes,
-                                core::ptr::null_mut(),
-                                out.free,
-                            )
-                        },
+                        ArrayBuffer::from_default_allocator(global, jsc::JSType::Uint8Array, out),
                     )?,
+                    Deliver::Buffer => {
+                        promise.settle(global, JSValue::create_buffer(global, out))?
+                    }
                     Deliver::Blob => {
-                        // Blob.Store frees via an Allocator; dupe for that path.
-                        let owned = out_slice.to_vec();
-                        drop(mem::ManuallyDrop::into_inner(out));
-                        let blob = Blob::init(owned, global);
+                        let blob = Blob::init(out, global);
                         blob.content_type
                             .set(crate::webcore::blob::BlobContentType::Static(
                                 format.mime().as_bytes(),
@@ -1791,10 +1735,6 @@ impl PipelineTask {
                         promise.resolve(global, blob.into_js(global))?;
                     }
                     tag @ (Deliver::Base64 | Deliver::DataUrl) => {
-                        // This arm copies the bytes out — re-arm `Encoded::drop` so
-                        // the codec allocation is freed at scope exit (RAII), not by
-                        // a JS finalizer.
-                        let _out = mem::ManuallyDrop::into_inner(out);
                         // `data:` and `;base64,` are both ASCII so the prefix
                         // length is exact; one buffer holds prefix+payload.
                         let mut pre_buf = [0u8; 40];
@@ -1812,34 +1752,23 @@ impl PipelineTask {
                         } else {
                             b""
                         };
-                        let mut buf = vec![0u8; pre.len() + base64::encode_len(out_slice)];
+                        let mut buf = vec![0u8; pre.len() + base64::encode_len(&out)];
                         buf[..pre.len()].copy_from_slice(pre);
-                        let wrote = pre.len() + base64::encode(&mut buf[pre.len()..], out_slice);
+                        let wrote = pre.len() + base64::encode(&mut buf[pre.len()..], &out);
                         let str = match bun_string_jsc::create_utf8_for_js(global, &buf[..wrote]) {
                             Ok(s) => s,
                             Err(_) => return promise.reject(global, Err(jsc::JsError::Thrown)),
                         };
                         promise.resolve(global, str)?;
                     }
-                    // `.write(dest)` — wrap the codec buffer as a Buffer (codec's
-                    // own free is the finalizer; no dupe), hand it to the SAME
+                    // `.write(dest)` — wrap the codec buffer as a Buffer, hand it to the SAME
                     // implementation `Bun.write` uses, and resolve our promise
                     // with that Promise<number>. So `dest` may be a path string,
                     // `Bun.file()`, `Bun.s3()`, or an fd — anything `Bun.write`
                     // accepts — and we don't reimplement any of it.
                     Deliver::WriteDest(dest) => {
                         let dest_js = dest.get();
-                        // SAFETY: `out.bytes` is the codec-owned allocation whose
-                        // ownership transfers to JSC; `ctx` is null and `out.free`
-                        // ignores it.
-                        let data = match unsafe {
-                            JSValue::create_buffer_with_ctx(
-                                global,
-                                out.bytes,
-                                core::ptr::null_mut(),
-                                out.free,
-                            )
-                        } {
+                        let data = match JSValue::create_buffer(global, out) {
                             Ok(d) => d,
                             Err(e) => return promise.reject(global, Err(e)),
                         };

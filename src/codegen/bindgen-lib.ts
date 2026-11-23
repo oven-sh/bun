@@ -48,7 +48,7 @@ export const { u8, u16, i32, u32, u64, usize } = integers;
 /** Strict: only a number. `.loose` for `ToNumber`, then `.allowBigInt`. As a result, `b.f64.asDate`. */
 export const f64 = new DoubleType();
 
-/** A `bun_core::String`. Strict: only a string. `.loose` for `ToString`, then `.utf8` for `&[u8]`. `.local` for the JS string itself. */
+/** A `bun_core::String`. Strict: only a string. `.loose` for `ToString`, then `.utf8` for `&[u8]`. `.usv` for a `USVString`. `.local` for the JS string itself. */
 export const string = new StringType();
 
 /** The JS value itself, as a `JsLocal<'a>`. `.stringObjectAsString`, `.orAbsent`. */
@@ -62,6 +62,9 @@ export { objectType as object } from "./bindgen-lib-internal.ts";
 
 /** An array, as a `JsLocal<'a, JSArray>`: `b.array(T)` converts its elements. */
 export { jsArrayType as jsArray } from "./bindgen-lib-internal.ts";
+
+/** A `URL`, as a `JsLocal<'a, DOMURL>`. */
+export { urlType as url } from "./bindgen-lib-internal.ts";
 export { class_ as class };
 
 /** A typed array, `DataView` or `ArrayBuffer` that is not shared, as a `JsLocal<'a, BufferSource>`. `.arrayBuffer`. */
@@ -70,8 +73,8 @@ export const bufferSource = new BufferSourceType();
 /** Bytes that C++ passes to one of a class's `calledFromCpp`. */
 export const byteSpan = new ByteSpanType();
 
-/** An internal field that holds one `JSCell` subclass: `b.cell("JSC::JSPromise", "JavaScriptCore/JSPromise.h")`. */
-export const cell = (cpp: string, header: string) => new CellClass(cpp, header);
+/** An internal field that holds one `JSCell` subclass: `b.cell("JSC::JSPromise", "JavaScriptCore/JSPromise.h")`. `rust` is the type that Rust holds it as. */
+export const cell = (cpp: string, header: string, rust?: string) => new CellClass(cpp, header, rust);
 
 /** The bytes of a string, a buffer or a `Blob`: which of them, what becomes of anything else, and how the body holds them. */
 export const bytes = (options: BytesOptions) => new BytesType(options);
@@ -89,7 +92,7 @@ export const blob = new RefType(
 /** The context of a promise reaction that `JSValue::then` was given: a `*mut` of the type at `rustPath`. */
 export const promisePtr = (rustPath: string) => new PromisePtrType(rustPath);
 
-/** The context of a promise reaction that is a `NativePromiseContext` cell: what `take` hands back, an `Option<NonNull<..>>` of the type at `rustPath`. */
+/** The context of a promise reaction that is a `NativePromiseContext` cell: what `take` hands back, an `Option<RefPtr<..>>` of the type at `rustPath`. */
 export const nativePromiseContext = (rustPath: string) => new NativePromiseContextType(rustPath);
 
 /** `null` or `undefined`, as an alternative of a union. */

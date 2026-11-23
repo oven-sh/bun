@@ -10,8 +10,7 @@ use bun_core::{self, Global, Output, env_var};
 use bun_options_types::command_tag::{ALWAYS_LOADS_CONFIG, Tag as CommandTag};
 use bun_options_types::context::Context;
 use bun_options_types::schema::api;
-use bun_paths::PathBuffer;
-use bun_paths::resolve_path::{self, platform};
+use bun_paths::{ParentEqual, Path, is_parent_or_equal};
 use bun_standalone_graph::StandaloneModuleGraph::StandaloneModuleGraph;
 
 use crate::bunfig::{Bunfig, Counts};
@@ -31,30 +30,15 @@ fn exit_code_of_failure(cmd: CommandTag) -> u32 {
 
 // ─── bunfig loading ──────────────────────────────────────────────────────────
 
-/// `None` when `dir/path` does not fit: nothing could be opened at such a path anyway.
-fn join_config_path<'buf>(
-    dir: &[u8],
-    path: &[u8],
-    buf: &'buf mut PathBuffer,
-) -> Option<&'buf ZStr> {
-    let max_len = buf.len() - 1;
-    let len = resolve_path::join_abs_string_buf_checked::<platform::Auto>(
-        dir,
-        &mut buf[..max_len],
-        &[path],
-    )?
-    .len();
-    buf[len] = 0;
-    Some(ZStr::from_buf(&buf[..], len))
-}
-
 /// The XDG specification says to ignore `$XDG_CONFIG_HOME` when it is empty or a relative path.
-fn get_home_config_path(buf: &mut PathBuffer) -> Option<&ZStr> {
-    let dir = [env_var::XDG_CONFIG_HOME.get(), env_var::HOME.get()]
+fn get_home_config_path() -> Option<Path> {
+    let config_home = (env_var::XDG_CONFIG_HOME.get())
+        .map(|dir| bun_sys::existing_spelling(bun_sys::Fd::cwd(), dir));
+    let dir = [config_home.as_deref(), env_var::HOME.get()]
         .into_iter()
         .flatten()
         .find(|dir| bun_paths::is_fully_qualified(dir))?;
-    join_config_path(dir, b".bunfig.toml", buf)
+    Some(Path::resolve(&[dir, b".bunfig.toml"]))
 }
 
 /// Like npm, skips a config file that was found automatically but can't be read.
@@ -146,9 +130,8 @@ pub fn load_global_bunfig(cmd: CommandTag, ctx: Context<'_>) {
     }
     ctx.has_loaded_global_config = true;
 
-    let mut config_buf = bun_paths::path_buffer_pool::get();
-    if let Some(path) = get_home_config_path(&mut config_buf) {
-        if let Err(err) = load_bunfig(cmd, ConfigFile::User, path, ctx, None, Counts::Everything) {
+    if let Some(path) = get_home_config_path() {
+        if let Err(err) = load_bunfig(cmd, ConfigFile::User, &path, ctx, None, Counts::Everything) {
             report_bunfig_load_failure(cmd, ctx.log, err);
         }
     }
@@ -157,24 +140,19 @@ pub fn load_global_bunfig(cmd: CommandTag, ctx: Context<'_>) {
 /// Whether `[install.security] scanner` is set in the user's global `.bunfig.toml` or in any
 /// `bunfig.toml` from `dir` up to `root`. `Err` holds the path of a config file that doesn't parse.
 pub fn has_security_scanner(dir: &[u8], root: &[u8]) -> Result<bool, Box<[u8]>> {
-    let mut config_buf = bun_paths::path_buffer_pool::get();
-    if let Some(path) = get_home_config_path(&mut config_buf)
-        && file_has_security_scanner(path)?
+    if let Some(path) = get_home_config_path()
+        && file_has_security_scanner(&path)?
     {
         return Ok(true);
     }
-    let mut next_dir = Some(bun_paths::string_paths::without_trailing_slash_windows_path(dir));
-    while let Some(dir) = next_dir {
-        if let Some(path) = join_config_path(dir, b"bunfig.toml", &mut config_buf)
-            && file_has_security_scanner(path)?
-        {
+    for dir in bun_paths::ancestors(dir) {
+        if file_has_security_scanner(&Path::resolve(&[dir, b"bunfig.toml"]))? {
             return Ok(true);
         }
         // Stop at `root`. If `dir` is outside `root`, only `dir` itself is read, not its parents.
-        next_dir = match resolve_path::is_parent_or_equal(root, dir) {
-            resolve_path::ParentEqual::Parent => bun_core::dirname(dir),
-            _ => None,
-        };
+        if is_parent_or_equal(root, dir) != ParentEqual::Parent {
+            break;
+        }
     }
     Ok(false)
 }
@@ -190,18 +168,13 @@ fn file_has_security_scanner(config_path: &ZStr) -> Result<bool, Box<[u8]>> {
 /// Reads the `[install]` section of the `bunfig.toml` in `dir`, the way `bun install` run in `dir`
 /// would. `Err` holds the path of the file if it doesn't parse.
 pub fn load_install_section(dir: &[u8]) -> Result<Option<Box<api::BunInstall>>, Box<[u8]>> {
-    let mut config_buf = bun_paths::path_buffer_pool::get();
-    match join_config_path(dir, b"bunfig.toml", &mut config_buf) {
-        Some(config_path) => read_install_section(config_path),
-        None => Ok(None),
-    }
+    read_install_section(&Path::resolve(&[dir, b"bunfig.toml"]))
 }
 
 /// Like [`load_install_section`], but reads the user's global `.bunfig.toml`.
 pub fn load_user_install_section() -> Result<Option<Box<api::BunInstall>>, Box<[u8]>> {
-    let mut config_buf = bun_paths::path_buffer_pool::get();
-    match get_home_config_path(&mut config_buf) {
-        Some(config_path) => read_install_section(config_path),
+    match get_home_config_path() {
+        Some(config_path) => read_install_section(&config_path),
         None => Ok(None),
     }
 }
@@ -264,7 +237,7 @@ fn report_bunfig_load_failure_as(
                 .to_vec()
                 .into();
         }
-        let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+        let _ = log.print(Output::error_writer());
         if is_of_tool {
             Global::exit(exit_code_of_failure(cmd));
         }
@@ -303,7 +276,6 @@ pub fn load_config_for_tool(
 
     load_global_bunfig(cmd, ctx);
 
-    let mut config_buf = bun_paths::path_buffer_pool::get();
     let mut config_path_: &[u8] = user_config_path_.unwrap_or(b"");
 
     let mut auto_loaded: bool = false;
@@ -334,12 +306,8 @@ pub fn load_config_for_tool(
     if config_path_.is_empty() {
         return Ok(());
     }
-    let config_path: Option<&ZStr> = if config_path_[0] == b'/' {
-        if config_path_.len() < config_buf.len() {
-            Some(resolve_path::z(config_path_, &mut config_buf))
-        } else {
-            None
-        }
+    let config_path = if config_path_[0] == b'/' {
+        Path::from(config_path_)
     } else {
         if ctx.args.absolute_working_dir.is_none() {
             let mut secondbuf = bun_paths::path_buffer_pool::get();
@@ -350,13 +318,15 @@ pub fn load_config_for_tool(
             ctx.args.absolute_working_dir = Some(Box::<[u8]>::from(&secondbuf[..cwd_len]));
         }
 
-        join_config_path(
-            ctx.args.absolute_working_dir.as_deref().unwrap(),
-            config_path_,
-            &mut config_buf,
-        )
+        let cwd = ctx.args.absolute_working_dir.as_deref().unwrap();
+        let mut config_path = Path::resolve(&[
+            cwd,
+            &bun_sys::typed_spelling(cwd, config_path_, bun_paths::from_portable),
+        ]);
+        config_path.copy_trailing_sep_from(config_path_);
+        config_path
     };
-    let Some(config_path) = config_path else {
+    let Ok(config_path) = config_path.check_len() else {
         return unreadable_config(
             cmd,
             auto_loaded,
@@ -369,7 +339,7 @@ pub fn load_config_for_tool(
     if !auto_loaded {
         ctx.test_options.config_file = Some(config_path.as_bytes().into());
     }
-    if let Err(err) = load_config_path_for_tool(cmd, auto_loaded, config_path, ctx, tool) {
+    if let Err(err) = load_config_path_for_tool(cmd, auto_loaded, &config_path, ctx, tool) {
         report_bunfig_load_failure(cmd, ctx.log, err);
     }
     Ok(())
@@ -397,16 +367,13 @@ pub fn load_config_above_for_tool(
     tool: &mut dyn FnMut(&bun_ast::Expr, &[u8]) -> Result<Above, (bun_ast::Loc, Vec<u8>)>,
 ) -> Option<()> {
     let cwd = ctx.args.absolute_working_dir.clone()?;
-    let mut buffer = bun_paths::path_buffer_pool::get();
     let mut shown = b"bunfig.toml".to_vec();
-    let mut below = join_config_path(&cwd, &shown, &mut buffer)?
-        .as_bytes()
-        .to_vec();
+    let mut below = Path::resolve(&[&cwd, &shown]);
     loop {
         shown.splice(0..0, *b"../");
-        let path = join_config_path(&cwd, &shown, &mut buffer)?;
+        let path = Path::resolve(&[&cwd, &shown]);
         // The root is its own parent.
-        if path.as_bytes() == below {
+        if path.as_bytes() == below.as_bytes() {
             return None;
         }
         let is_optional = above == Above::Optional;
@@ -420,7 +387,7 @@ pub fn load_config_above_for_tool(
         if let Err(err) = load_bunfig(
             cmd,
             ConfigFile::Project,
-            path,
+            &path,
             &mut *ctx,
             Some(read),
             counts,
@@ -442,8 +409,7 @@ pub fn load_config_above_for_tool(
         if above == Above::Unwanted {
             return Some(());
         }
-        below.clear();
-        below.extend_from_slice(path.as_bytes());
+        below = path;
     }
 }
 

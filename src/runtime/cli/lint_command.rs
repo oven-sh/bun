@@ -7,7 +7,7 @@ use bstr::BStr;
 use bun_core::{Global, Output, ZStr};
 use bun_lint_driver::cli::{Options, UsageError};
 use bun_lint_driver::{Environment, Outcome, Script, Stream, bunfig, git};
-use bun_sys::File;
+use bun_sys::{Fd, File};
 
 use super::check_command::working_directory;
 use super::command::{ContextData, Tag};
@@ -24,7 +24,7 @@ const HAS_TEST_RUNNER: bool = bun_core::Environment::IS_CANARY || bun_core::Envi
 
 fn change_directory(cwd: &[u8]) {
     // Free the copy here, because `exit` doesn't return and nothing would free it later.
-    let changed = bun_sys::chdir(&bun_core::ZBox::from_vec(directory_of_cwd(cwd)));
+    let changed = bun_sys::chdir(&directory_of_cwd(cwd));
     if let bun_sys::Result::Err(err) = changed {
         Output::err(
             err,
@@ -109,7 +109,9 @@ const PROGRAM_IS_ON_STDIN: &[u8] = b"\x1e--bun-lint-program--\x1e";
 pub(crate) fn read_program_from_stdin(ctx: &mut ContextData) {
     let mut program = Vec::new();
     if *ctx.runtime_options.eval.script == *PROGRAM_IS_ON_STDIN
-        && File::stdin().read_to_end_into(&mut program).is_ok()
+        && File::borrow(&Fd::stdin())
+            .read_to_end_into(&mut program)
+            .is_ok()
     {
         ctx.runtime_options.eval.script = program.leak();
         ctx.runtime_options.eval.reads_configuration = true;
@@ -154,13 +156,27 @@ fn run_script(script: &Script) -> Result<Vec<u8>, Vec<u8>> {
     argv.push(Box::from(PROGRAM_IS_ON_STDIN));
     let parts = script.source.iter().map(|it| it.text());
     let input: Vec<&[u8]> = std::iter::once(script.head).chain(parts).collect();
-    let adapt = |variables: &mut bun_dotenv::Map| {
-        Script::NOT_INHERITED
-            .iter()
-            .for_each(|name| variables.remove(name));
-        true
+    let run = |loads_all: bool| {
+        let adapt = |variables: &mut bun_dotenv::Map| {
+            Script::NOT_INHERITED
+                .iter()
+                .for_each(|name| variables.remove(name));
+            !loads_all
+                || (variables.put(b"BUN_FEATURE_FLAG_DISABLE_DEFERRED_REQUIRE", b"1")).is_ok()
+        };
+        run_to_end(argv.clone(), script.cwd, &adapt, &input)
     };
-    match run_to_end(argv, script.cwd, &adapt, &input)? {
+    let mut result = run(script.loads_all)?;
+    // It may have failed for want of what loading a module does.
+    let has = bun_core::strings::contains;
+    let errors: [&[u8]; 3] = [b"TypeError: ", b"ReferenceError: ", b"Cannot find "];
+    if !result.is_ok()
+        && has(&result.stdout, Script::MARKER)
+        && errors.iter().any(|it| has(&result.stderr, it))
+    {
+        result = run(true)?;
+    }
+    match result {
         result if result.is_ok() => Ok(result.stdout),
         result => Err(result.stderr),
     }
@@ -168,9 +184,8 @@ fn run_script(script: &Script) -> Result<Vec<u8>, Vec<u8>> {
 
 /// Runs git and waits for it to exit.
 fn run_git(command: &git::Command) -> Result<git::Finished, git::NotRun> {
-    let mut buffer = bun_paths::path_buffer_pool::get();
     let path = bun_core::env_var::PATH.get().unwrap_or(b"");
-    let Some(found) = bun_which::which(&mut buffer, path, command.cwd, b"git") else {
+    let Some(found) = bun_which::which(path, command.cwd, b"git") else {
         return Err(git::NotRun::NotFound);
     };
     let argv = std::iter::once(found.as_bytes())
@@ -203,12 +218,10 @@ fn run_to_end(
     use crate::api::bun::process::sync::{Options as SpawnOptions, SyncStdio, spawn};
     let mut variables = bun_dotenv::Loader::init();
     let is_ready = variables.load_process().is_ok() && adapt(&mut variables.map);
-    let Some(envp) = is_ready
-        .then(|| variables.map.create_null_delimited_env_map().ok())
-        .flatten()
-    else {
+    if !is_ready {
         return Err(b"Could not start a process: out of memory".to_vec());
-    };
+    }
+    let envp = variables.map.to_envp();
     let [read_end, write_end] = match bun_sys::pipe() {
         Ok(ends) => ends.map(File::from_fd),
         Err(err) => return Err([&b"Could not start a process: "[..], err.name()].concat()),
@@ -224,11 +237,11 @@ fn run_to_end(
         stderr: SyncStdio::Buffer,
         stdin: SyncStdio::Pipe(read_end.handle()),
         cwd: Box::<[u8]>::from(cwd),
-        envp: Some(envp.as_ptr()),
+        envp: Some(envp.as_list()),
         #[cfg(windows)]
         windows: crate::api::bun::process::WindowsOptions {
             loop_: bun_jsc::EventLoopHandle::init_mini(bun_event_loop::MiniEventLoop::init_global(
-                None, None,
+                None,
             )),
             ..Default::default()
         },
@@ -264,8 +277,12 @@ pub(crate) fn usage_error(command: &str, message: &[u8]) -> ! {
 pub(crate) fn print(stdout: &[u8], stderr: &[u8], exit_code: u8) -> u8 {
     let write_result = bun_sys::write_all_to_stdio(bun_core::Fd::stdout(), stdout);
     let _ = Output::error_writer().write_all(stderr);
+    let reader_is_gone = |error: &bun_sys::Error| {
+        use bun_sys::E;
+        matches!(error.get_errno(), E::EPIPE | E::ENOTCONN | E::ECONNRESET)
+    };
     let exit_code = match write_result {
-        Err(error) if error.get_errno() != bun_sys::E::EPIPE => {
+        Err(error) if !reader_is_gone(&error) => {
             let why = error.msg().unwrap_or(b"unknown error");
             Output::err_generic(
                 "Cannot write standard output: {}: {}",
@@ -287,6 +304,7 @@ pub(crate) fn run_and_exit(
     run: impl FnOnce(&Environment) -> Outcome,
 ) -> ! {
     disallow_code_generation_before(command);
+    super::short_run::expect_many_threads();
     if let Some(cwd) = cwd_before(command) {
         change_directory(cwd);
     }

@@ -1,4 +1,3 @@
-#![feature(allocator_api)]
 #![warn(unused_must_use)]
 // Allow `use bun_css as css;` from inside the crate — the ported submodules
 // were translated against the crate's public surface and refer to it by name.
@@ -282,16 +281,6 @@ pub struct Location {
     pub(crate) line: u32,
     /// The column number within a line, starting at 1. Counted in UTF-16 code units.
     pub(crate) column: u32,
-}
-
-impl Location {
-    pub fn dummy() -> Location {
-        Location {
-            source_index: u32::MAX,
-            line: u32::MAX,
-            column: u32::MAX,
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug)]

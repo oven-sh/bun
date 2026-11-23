@@ -232,3 +232,6 @@ feature ImageDataOperations "what compiled code calls for objects, maps and sets
 
 feature DirectEvalOperations "what compiled code calls for a direct eval, which throws where the build forbids code from strings"
   entered-from compiled-code
+
+feature OrderRecorder "what --aot-record-order adds: the recorder of an order file"
+  entered-from startup

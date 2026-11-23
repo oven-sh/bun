@@ -6,7 +6,7 @@ use crate::hir_from_data::{DataModule, DataModuleTree, DataValue, HostValue, mod
 use crate::resolve::{
     CodeHost, CodeImportKind, CodeOptions, CodeParseRequest, CodeRead, CodeRequest, FinishedFile,
     HostPayload, HostResolution, LoaderRequest, MacroRequest, ParsedCode, ParsedFile,
-    TransformRequest, TreeChange, is_declaration_file_name,
+    TransformRequest, TreeChange, is_declaration_file_name, parent_directory,
 };
 use bun_threading::io_thread_pool;
 use std::sync::Once;
@@ -69,7 +69,7 @@ pub(super) struct StatementsHost {
     pub(super) events: Guarded<Vec<HostEvent>>,
     pub(super) is_case_sensitive: bool,
     pub(super) threads: usize,
-    pub(super) io_pool: Option<io_thread_pool::Ref>,
+    pub(super) io_pool: Option<&'static bun_threading::ThreadPool>,
 }
 
 impl Default for StatementsHost {
@@ -109,7 +109,7 @@ impl StatementsHost {
         OUTPUT.call_once(bun_core::output::stdio::init);
         StatementsHost {
             threads,
-            io_pool: Some(io_thread_pool::acquire().into()),
+            io_pool: Some(io_thread_pool::get()),
             ..self
         }
     }
@@ -202,7 +202,7 @@ impl Host for StatementsHost {
     fn is_dir(&self, path: &[u8]) -> bool {
         let is_same = |directory: &[u8]| is_same_path(directory, path, self.is_case_sensitive);
         let mut directories =
-            (self.files.iter()).flat_map(|file| ancestors(dirname::<Posix>(file.0.as_bytes())));
+            (self.files.iter()).flat_map(|file| ancestors(parent_directory(file.0.as_bytes())));
         directories.any(is_same)
     }
 
@@ -287,7 +287,7 @@ impl Host for StatementsHost {
     }
 
     fn io_pool(&self) -> Option<&bun_threading::ThreadPool> {
-        self.io_pool.as_deref()
+        self.io_pool
     }
 }
 

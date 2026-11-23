@@ -7,7 +7,8 @@
 // getTestContext) are observable without a separate runner process.
 
 const { jest } = Bun;
-const { kEmptyObject, throwNotImplemented } = require("internal/shared");
+const { kEmptyObject, throwNotImplemented, builtinChannel } = require("internal/shared");
+const AsyncContextFrame = require("internal/async_context_frame");
 const {
   validateBoolean,
   validateInteger,
@@ -1551,7 +1552,14 @@ function getTestContext(): TestContext | SuiteContext | undefined {
 // `timeout`/`signal` are snapshotted at creation (Node validates and stores them
 // on the TestHook). `result` memoizes a before hook's one run, like Node's
 // runOnce(): every replay observes the same outcome, including the failure.
-type Hook = { fn: Function; timeout: number | undefined; signal: AbortSignal | undefined; result?: Promise<void> };
+// `frame` is the async context that the hook was declared in, and runs in.
+type Hook = {
+  fn: Function;
+  timeout: number | undefined;
+  signal: AbortSignal | undefined;
+  frame: unknown;
+  result?: Promise<void>;
+};
 type HookSets = { before: Hook[]; after: Hook[]; beforeEach: Hook[]; afterEach: Hook[] };
 
 class TestNode {
@@ -1581,6 +1589,11 @@ class TestNode {
   firstSubtestError: unknown = undefined;
   // First failure from a before hook created while this test was running.
   hookFailure: unknown = undefined;
+  // From tracing:node.test:start to tracing:node.test:end.
+  trace: Trace | undefined = undefined;
+  tracedSuites: TestNode[] | undefined = undefined;
+  // What this collection-phase suite has registered with bun:test's afterAll() and has not run yet.
+  pendingAfterAll = 0;
   #ctx: TestContext | undefined;
   #suiteCtx: SuiteContext | undefined;
   #tags: readonly string[] | undefined;
@@ -2097,7 +2110,136 @@ function createHook(arg0: unknown, arg1: unknown): Hook {
   // Node validates hook options in the TestHook constructor and snapshots them.
   validateTimeoutAndSignal(options);
   const { signal, timeout } = options;
-  return { fn, timeout, signal, result: undefined };
+  return { fn, timeout, signal, frame: AsyncContextFrame.current(), result: undefined };
+}
+
+// -----------------------------------------------------------------------------
+// The "node.test" tracing channel
+// -----------------------------------------------------------------------------
+
+const traceStartChannel = builtinChannel("tracing:node.test:start");
+const traceEndChannel = builtinChannel("tracing:node.test:end");
+const traceErrorChannel = builtinChannel("tracing:node.test:error");
+
+// `frame` is the async context with the stores that are bound to `start`.
+type Trace = { context: object | undefined; frame: unknown; failed: boolean };
+
+function isTraced() {
+  return traceStartChannel.hasSubscribers || traceEndChannel.hasSubscribers || traceErrorChannel.hasSubscribers;
+}
+
+function contextOf(node: TestNode, trace: Trace) {
+  return (trace.context ??= {
+    __proto__: null,
+    name: node.name,
+    nesting: nestingOf(node),
+    file: node.filePath,
+    type: node.isSuite && node.parent !== undefined ? "suite" : "test",
+  });
+}
+
+function startTrace(node: TestNode) {
+  const trace: Trace = (node.trace = { context: undefined, frame: undefined, failed: false });
+  const { channel } = traceStartChannel;
+  if (channel !== undefined) publishTraceStart(channel, node, trace);
+}
+
+function publishTraceStart(channel: { withStoreScope(message: unknown): Disposable }, node: TestNode, trace: Trace) {
+  runWithNode(node, () => {
+    const scope = channel.withStoreScope(contextOf(node, trace));
+    trace.frame = AsyncContextFrame.current();
+    scope[Symbol.dispose]();
+  });
+}
+
+function runInTrace<T>(node: TestNode, fn: () => T): T {
+  const frame = node.trace?.frame;
+  return frame === undefined ? runWithNode(node, fn) : AsyncContextFrame.run(frame, fn);
+}
+
+function traceError(node: TestNode, error: unknown) {
+  const { trace } = node;
+  if (trace === undefined || trace.failed) return;
+  trace.failed = true;
+  if (!traceErrorChannel.hasSubscribers) return;
+  runInTrace(node, () => traceErrorChannel.publish({ __proto__: null, ...contextOf(node, trace), error }));
+}
+
+function traceHookError(node: TestNode, hook: keyof HookSets, cause: unknown) {
+  const error = makeTestFailure(`failed running ${hook} hook`, "hookFailed");
+  error.cause = cause;
+  traceError(node, error);
+}
+
+function endTrace(node: TestNode) {
+  const { trace } = node;
+  if (trace === undefined) return;
+  endTracesOfSuites(node);
+  if (traceEndChannel.hasSubscribers) publishTraceEnd(node, trace);
+  node.trace = undefined;
+}
+
+function publishTraceEnd(node: TestNode, trace: Trace) {
+  runInTrace(node, () => traceEndChannel.publish(contextOf(node, trace)));
+}
+
+// bun:test runs no afterAll() of a suite without tests to run, and none behind a hook that times out.
+function endTracesOfSuites(parent: TestNode) {
+  const suites = parent.tracedSuites;
+  parent.tracedSuites = undefined;
+  suites?.forEach(endTrace);
+}
+
+function traceSkipped(node: TestNode) {
+  startTrace(node);
+  endTrace(node);
+}
+
+// A collection-phase suite ends with the last thing it has registered here.
+function registerAfterAll(owner: TestNode, hook?: Hook) {
+  bunTest().afterAll((done: (error?: unknown) => void) => {
+    const finish = (error?: unknown) => {
+      if (--owner.pendingAfterAll === 0) endTrace(owner);
+      done(error);
+    };
+    endTracesOfSuites(owner);
+    // Node runs the root test when the others are over.
+    if (owner.parent === undefined && owner.trace === undefined) startTrace(owner);
+    if (hook === undefined) return finish();
+    Promise.resolve(runHook(hook, owner, hookArgFor(owner))).then(
+      () => finish(),
+      err => {
+        traceHookError(owner, "after", err);
+        finish(err ?? new Error("after hook failed"));
+      },
+    );
+  });
+  owner.pendingAfterAll++;
+}
+
+function traceRootOf(node: TestNode) {
+  const { parent } = node;
+  if (parent!.parent === undefined && parent!.pendingAfterAll === 0 && isTraced()) registerAfterAll(parent!);
+}
+
+function collectTracedSuite(suite: TestNode, fn: TestFn) {
+  (suite.parent!.tracedSuites ??= []).push(suite);
+  registerAfterAll(suite);
+  // bun:test runs nothing of a suite whose callback fails.
+  const fail = (error: unknown) => {
+    traceError(suite, error);
+    endTrace(suite);
+  };
+  let build: unknown;
+  try {
+    startTrace(suite);
+    build = runInTrace(suite, () => fn(suite.getSuiteCtx()));
+  } catch (error) {
+    fail(error);
+    throw error;
+  }
+  if ($isPromise(build)) build.$then(undefined, fail);
+  return build;
 }
 
 // -----------------------------------------------------------------------------
@@ -2234,7 +2376,8 @@ async function raceWithTimeoutAndSignal(
 
 async function runHook(hook: Hook, owner: TestNode, arg: unknown) {
   const { timeout, signal } = hook;
-  const run = () => runWithNode(owner, () => invokeTestFn(hook.fn as Function, arg));
+  const run = () =>
+    AsyncContextFrame.run(hook.frame, runWithNode, undefined, owner, () => invokeTestFn(hook.fn as Function, arg));
   try {
     if (signal === undefined) {
       await awaitWithTimeout(run, timeout);
@@ -2305,6 +2448,8 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
   }
 
   try {
+    // In front of the hooks, as Node documents it. It publishes behind them, so not at all when one fails.
+    if (node.trace === undefined) startTrace(node);
     for (const ancestor of ancestors) {
       for (const hook of ancestor.hooks.beforeEach) {
         await runHook(hook, ancestor, ctx);
@@ -2312,6 +2457,7 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
     }
   } catch (err) {
     failure = err;
+    traceHookError(node, "beforeEach", err);
   }
 
   if (failure === undefined) {
@@ -2321,7 +2467,7 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
     const stop = createStopController(node.options.timeout);
     try {
       const runBody = async () => {
-        await runWithNode(node, () => invokeTestFn(fn, ctx));
+        await runInTrace(node, () => invokeTestFn(fn, ctx));
         // Wait for inline subtests created during the body (awaited or not),
         // including ones scheduled while earlier subtests were running.
         await drainSubtestChain(node);
@@ -2332,13 +2478,15 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
       } catch (err) {
         // A body that throws or rejects with a nullish value must still fail.
         failure = err ?? makeTestFailure("test failed");
+        traceError(node, err);
       }
 
       // A before hook created while the test was running failed (Node fails the
       // test with the hook's error).
-      failure ??= node.hookFailure;
+      const { hookFailure, plan } = node;
+      failure ??= hookFailure;
+      if (hookFailure !== undefined) traceHookError(node, "before", hookFailure);
 
-      const { plan } = node;
       if (failure === undefined && plan !== null) {
         try {
           const pending = plan.check();
@@ -2355,6 +2503,7 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
           }
         } catch (err) {
           failure = err;
+          traceError(node, err);
         }
       }
     } finally {
@@ -2395,6 +2544,7 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
         await runHook(hook, ancestor, ctx);
       } catch (err) {
         if (!acceptedXfail) failure ??= err;
+        traceHookError(node, "afterEach", err);
       }
     }
   }
@@ -2404,6 +2554,7 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
       await runHook(hook, node, ctx);
     } catch (err) {
       if (!acceptedXfail) failure ??= err;
+      traceHookError(node, "after", err);
     }
   }
 
@@ -2415,6 +2566,7 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
 
   node.passed = failure === undefined;
   node.error = failure ?? (acceptedXfail ? bodyFailure : null);
+  endTrace(node);
   reportNodeToRunParent(node, started);
   return failure;
 }
@@ -2428,10 +2580,13 @@ function scheduleSubtest(parent: TestNode, child: TestNode, fn: TestFn, ownTodo:
     }
     let failure: unknown;
     try {
+      startTrace(child);
       await runOwnBeforeHooks(parent);
       failure = await executeTestNode(child, fn);
     } catch (err) {
       failure = err;
+      traceHookError(child, "before", err);
+      endTrace(child);
     }
     // Check the child's own todo declaration (options.todo or test.todo(...)),
     // not the inherited todoFlag: a subtest that threw must still fail a
@@ -2475,13 +2630,15 @@ function scheduleSuiteSubtest(parent: TestNode, suite: TestNode, build: unknown,
         await build;
       } catch (err) {
         recordSuiteFailure(suite, err);
+        traceError(suite, err);
       }
     }
     try {
       await runOwnBeforeHooks(suite);
     } catch (err) {
-      // A failing suite-level before hook fails the suite, like Node.
+      // A failing suite-level before hook fails the suite, like Node, which does not publish it.
       recordSuiteFailure(suite, err);
+      traceHookError(suite, "before", err);
     }
     // Wait for children created during the callback and any they schedule.
     await drainSubtestChain(suite);
@@ -2490,8 +2647,10 @@ function scheduleSuiteSubtest(parent: TestNode, suite: TestNode, build: unknown,
         await runHook(hook, suite, suite.getSuiteCtx());
       } catch (err) {
         recordSuiteFailure(suite, err);
+        traceHookError(suite, "after", err);
       }
     }
+    endTrace(suite);
     suite.finished = true;
     suite.passed = suite.failedSubtests === 0;
     if (runChildReporterEnabled) {
@@ -2610,9 +2769,10 @@ function addTest(
       child.ownTags = ownTags;
       if (mode === "skip" || options.skip) {
         // Chain onto subtestChain so the directive lands after earlier siblings.
-        const chained = (runningNode.subtestChain = runningNode.subtestChain.then(() =>
-          reportDirectiveOnlyNode(child, "skip"),
-        ));
+        const chained = (runningNode.subtestChain = runningNode.subtestChain.then(() => {
+          traceSkipped(child);
+          reportDirectiveOnlyNode(child, "skip");
+        }));
         return chained.then(() => undefined);
       }
       const ownTodo = mode === "todo" || !!options.todo;
@@ -2625,6 +2785,7 @@ function addTest(
   const parent = currentCollectionParent();
   const node = new TestNode(name, parent, options, false, false);
   node.ownTags = ownTags;
+  traceRootOf(node);
 
   const { test } = bunTest();
   const passOptions = bunTestOptions(options);
@@ -2638,6 +2799,7 @@ function addTest(
     // event fires in execution order (not at collection time).
     if (runChildReporterEnabled && effectiveMode === "skip") {
       const runner = function (done: (err?: unknown) => void) {
+        traceSkipped(node);
         reportDirectiveOnlyNode(node, "skip");
         markCurrentResult(false, done);
         done(undefined);
@@ -2667,6 +2829,7 @@ function addTest(
     } else {
       register(name, body);
     }
+    if (effectiveMode === "skip") traceSkipped(node);
     return Promise.resolve(undefined);
   }
 
@@ -2706,9 +2869,10 @@ function addSuite(
     suite.ownTags = ownTags;
     if (mode === "skip" || options.skip) {
       // Chain onto subtestChain so the directive lands after earlier siblings.
-      const chained = (runningNode.subtestChain = runningNode.subtestChain.then(() =>
-        reportDirectiveOnlyNode(suite, "skip"),
-      ));
+      const chained = (runningNode.subtestChain = runningNode.subtestChain.then(() => {
+        traceSkipped(suite);
+        reportDirectiveOnlyNode(suite, "skip");
+      }));
       return chained.then(() => undefined);
     }
     const ownTodo = mode === "todo" || !!options.todo;
@@ -2724,11 +2888,13 @@ function addSuite(
     // collecting children onto the suite's own subtest chain.
     let build: unknown;
     try {
-      build = runWithNode(suite, () => fn(suite.getSuiteCtx()));
+      startTrace(suite);
+      build = runInTrace(suite, () => fn(suite.getSuiteCtx()));
     } catch (err) {
       // The callback threw after possibly registering children: fail the suite
       // but still schedule it so those children are awaited and rolled up.
       recordSuiteFailure(suite, err);
+      traceError(suite, err);
     }
     if (build != null && typeof (build as PromiseLike<unknown>).then === "function") {
       // Attach a handler now: the real await happens when the suite's turn
@@ -2744,6 +2910,7 @@ function addSuite(
   const parent = currentCollectionParent();
   const suiteNode = new TestNode(name, parent, options, true, false);
   suiteNode.ownTags = ownTags;
+  traceRootOf(suiteNode);
 
   const { describe } = bunTest();
 
@@ -2753,12 +2920,9 @@ function addSuite(
 
   // Node never invokes a skipped suite's callback (it does run a todo one), so
   // the children are never declared and side effects in the body never happen.
-  const wrapped =
-    effectiveMode === "skip"
-      ? kDefaultFunction
-      : () => {
-          return runWithNode(suiteNode, () => fn(suiteNode.getSuiteCtx()));
-        };
+  const body = effectiveMode === "skip" ? kDefaultFunction : fn;
+  const wrapped = () =>
+    isTraced() ? collectTracedSuite(suiteNode, body) : runWithNode(suiteNode, () => body(suiteNode.getSuiteCtx()));
 
   const passOptions = bunTestOptions(options);
 
@@ -2840,7 +3004,10 @@ function before(arg0: unknown, arg1: unknown) {
   beforeAll((done: (error?: unknown) => void) => {
     Promise.resolve(runHook(hook, owner, hookArgFor(owner))).then(
       () => done(),
-      err => done(err ?? new Error("before hook failed")),
+      err => {
+        traceHookError(owner, "before", err);
+        done(err ?? new Error("before hook failed"));
+      },
     );
   });
 }
@@ -2852,13 +3019,7 @@ function after(arg0: unknown, arg1: unknown) {
     owner.hooks.after.push(hook);
     return;
   }
-  const { afterAll } = bunTest();
-  afterAll((done: (error?: unknown) => void) => {
-    Promise.resolve(runHook(hook, owner, hookArgFor(owner))).then(
-      () => done(),
-      err => done(err ?? new Error("after hook failed")),
-    );
-  });
+  registerAfterAll(owner, hook);
 }
 
 function beforeEach(arg0: unknown, arg1: unknown) {

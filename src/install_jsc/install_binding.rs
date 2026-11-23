@@ -9,14 +9,12 @@ pub(crate) fn parse_lockfile(cx: &mut JsScope<'_>, cwd: &[u8]) -> bun_jsc::JsRes
         WriteStream, WriteStreamOptions, json_stringify,
     };
     use bun_install::lockfile::{LoadResult, Lockfile};
-    use bun_paths::resolve_path;
-    use bun_sys::FdExt as _;
 
     let global = cx.global();
     let mut log = bun_ast::Log::init();
 
     let dir = match bun_sys::open_dir_absolute_not_for_deleting_or_renaming(cwd) {
-        Ok(d) => d,
+        Ok(d) => bun_sys::File::from_fd(d),
         Err(err) => {
             return Err(global.throw(format_args!(
                 "failed to open: {}, '{}'",
@@ -25,13 +23,8 @@ pub(crate) fn parse_lockfile(cx: &mut JsScope<'_>, cwd: &[u8]) -> bun_jsc::JsRes
             )));
         }
     };
-    // `defer dir.close()` — closed at fn return.
-    let dir = scopeguard::guard(dir, |d| d.close());
 
-    let lockfile_path = resolve_path::join_abs_string_z::<resolve_path::platform::Auto>(
-        cwd,
-        &[b"bun.lockb".as_slice()],
-    );
+    let lockfile_path = bun_paths::Path::resolve(&[cwd, b"bun.lockb"]);
 
     let mut lockfile_ = Lockfile::default();
 
@@ -46,7 +39,8 @@ pub(crate) fn parse_lockfile(cx: &mut JsScope<'_>, cwd: &[u8]) -> bun_jsc::JsRes
     // SAFETY: loading a lockfile runs no script, so nothing else reaches the manager meanwhile.
     let manager = unsafe { &mut *vm.package_manager() };
 
-    let load_result: LoadResult = lockfile_.load_from_dir::<true>(*dir, Some(manager), &mut log);
+    let load_result: LoadResult =
+        lockfile_.load_from_dir::<true>(dir.fd(), Some(manager), &mut log);
 
     match load_result {
         LoadResult::Err(err) => {

@@ -956,9 +956,9 @@ extern "C" void Bun__stopCPUProfiler(JSC::VM* vm, BunString* outJSON, BunString*
     WTF::String textResult;
     Bun::stopCPUProfiler(*vm, outJSON ? &jsonResult : nullptr, outText ? &textResult : nullptr);
     if (outJSON)
-        *outJSON = Bun::toStringRef(jsonResult);
+        *outJSON = Bun::toStringRef(jsonResult).leak();
     if (outText)
-        *outText = Bun::toStringRef(textResult);
+        *outText = Bun::toStringRef(textResult).leak();
 }
 
 // Returns the sampling profiler's text report: top functions, then top bytecodes.
@@ -976,5 +976,5 @@ extern "C" void Bun__SamplingProfiler__report(JSC::VM* vm, BunString* out)
         profiler->reportTopFunctions(report);
         profiler->reportTopBytecodes(report);
     }
-    *out = Bun::toStringRef(report.toString());
+    *out = Bun::toStringRef(report.toString()).leak();
 }

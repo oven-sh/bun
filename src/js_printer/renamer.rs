@@ -1,5 +1,4 @@
 use core::cmp::Ordering;
-use core::mem::ManuallyDrop;
 
 use bun_alloc::Arena as Bump;
 
@@ -14,7 +13,6 @@ use bun_collections::{HashMap, StringHashMap, VecExt};
 use bun_core::Output;
 use bun_core::{MutableString, strings};
 use bun_options_types::Format;
-use bun_ptr::BackRef;
 use enum_map::EnumMap;
 
 /// Renamed-name strings are either borrowed from `Symbol.original_name` (AST
@@ -22,7 +20,7 @@ use enum_map::EnumMap;
 /// arena-backed lifetime-erased slice wrapper that centralises the raw deref
 /// (one `unsafe` in `StoreStr::slice`), so the renamer's name-table reads stay
 /// safe. Phase B may later thread `'bump` and rewrite to `&'bump [u8]`.
-type NameStr = bun_ast::StoreStr;
+pub type NameStr = bun_ast::StoreStr;
 
 #[inline]
 const fn name_str_empty() -> NameStr {
@@ -39,7 +37,7 @@ const SLOT_NAMESPACES: [SlotNamespace; 4] = [
 
 /// Lifetime-erased name slice used as the `NumberRenamer` interner key. Every
 /// key points either at `Symbol::original_name` (an AST-arena slice that
-/// strictly outlives the renamer) or at bytes bump-allocated from the
+/// strictly outlives the renamer), at a pinned name (`'a`) or at bytes from the
 /// renamer's own `arena`, so the borrow contract documented on
 /// `StoreStr::slice` is always satisfied.
 #[derive(Clone, Copy)]
@@ -75,73 +73,57 @@ impl core::borrow::Borrow<[u8]> for NameKey {
     }
 }
 
-pub struct NoOpRenamer<'a> {
-    // `symbol::Map` is `Vec<Vec<Symbol>>` (owning). Unlike `MinifyRenamer`/`NumberRenamer` (which the bundler builds over a
-    // *borrowed* `LinkerGraph.symbols` and so wrap in `ManuallyDrop`),
-    // `NoOpRenamer` is only constructed by `print_ast` / `print_json`, whose
-    // callers always pass an *owned* Map freshly built by
-    // `Map::init_with_one_list(mem::take(&mut ast.symbols))`. Owning + dropping
-    // here is required: `ManuallyDrop` leaked the per-file `Vec<Symbol>` on
-    // every transpile (require-cache.test.ts "files transpiled and loaded don't
-    // leak the output source code" — `await import()` re-transpiles each
-    // iteration, so the leak compounds to OOM).
-    pub(crate) symbols: symbol::Map,
-    pub(crate) source: &'a bun_ast::Source<'a>,
-}
-
-impl<'a> NoOpRenamer<'a> {
-    pub fn init(symbols: symbol::Map, source: &'a bun_ast::Source<'a>) -> NoOpRenamer<'a> {
-        NoOpRenamer { symbols, source }
-    }
-
-    fn name_for_symbol(&self, ref_: Ref) -> &[u8] {
-        if ref_.is_source_contents_slice() {
-            return &self.source.contents[ref_.source_index() as usize
-                ..(ref_.source_index() + ref_.inner_index()) as usize];
-        }
-
-        let resolved = self.symbols.follow(ref_);
-
-        if let Some(symbol) = self.symbols.get_const(resolved) {
-            // SAFETY: `original_name` is an AST-arena slice that outlives the renamer.
-            symbol.original_name.slice()
-        } else {
-            Output::panic(format_args!(
-                "Invalid symbol {} in {}",
-                ref_,
-                bstr::BStr::new(self.source.path.text)
-            ));
-        }
-    }
-
-    pub(crate) fn to_renamer(&self) -> Renamer<'_> {
-        Renamer::NoOpRenamer(self)
-    }
-}
-
 /// The names are assigned before printing starts, so the printer only reads them.
 #[derive(Clone, Copy)]
-pub enum Renamer<'a> {
-    NumberRenamer(&'a NumberRenamer),
-    NoOpRenamer(&'a NoOpRenamer<'a>),
-    MinifyRenamer(&'a MinifyRenamer),
+pub struct Renamer<'a> {
+    pub(crate) symbols: &'a symbol::Map,
+    kind: RenamerKind<'a>,
+}
+
+#[derive(Clone, Copy)]
+enum RenamerKind<'a> {
+    Number(&'a NumberRenamer<'a>, &'a CrossChunkNames<'a>),
+    NoOp(&'a bun_ast::Source<'a>),
+    Minify(&'a MinifyRenamer),
 }
 
 impl<'a> Renamer<'a> {
-    pub(crate) fn symbols(self) -> &'a symbol::Map {
-        match self {
-            Renamer::NumberRenamer(r) => &r.symbols,
-            Renamer::NoOpRenamer(r) => &r.symbols,
-            Renamer::MinifyRenamer(r) => &r.symbols,
-        }
+    pub(crate) fn no_op(symbols: &'a symbol::Map, source: &'a bun_ast::Source<'a>) -> Self {
+        let kind = RenamerKind::NoOp(source);
+        Renamer { symbols, kind }
     }
 
-    pub fn name_for_symbol(self, ref_: Ref) -> &'a [u8] {
-        match self {
-            Renamer::NumberRenamer(r) => r.name_for_symbol(ref_),
-            Renamer::NoOpRenamer(r) => r.name_for_symbol(ref_),
-            Renamer::MinifyRenamer(r) => r.name_for_symbol(ref_),
+    pub fn name_for_symbol(&self, ref_: Ref) -> &'a [u8] {
+        match self.kind {
+            RenamerKind::Number(r, cross_chunk_names) => {
+                r.name_for_symbol(self.symbols, cross_chunk_names, ref_)
+            }
+            RenamerKind::NoOp(source) => original_name_for_symbol(self.symbols, source, ref_),
+            RenamerKind::Minify(r) => r.name_for_symbol(self.symbols, ref_),
         }
+    }
+}
+
+fn original_name_for_symbol<'a>(
+    symbols: &'a symbol::Map,
+    source: &'a bun_ast::Source<'a>,
+    ref_: Ref,
+) -> &'a [u8] {
+    if ref_.is_source_contents_slice() {
+        return &source.contents
+            [ref_.source_index() as usize..(ref_.source_index() + ref_.inner_index()) as usize];
+    }
+
+    let resolved = symbols.follow(ref_);
+
+    if let Some(symbol) = symbols.get_const(resolved) {
+        symbol.original_name.slice()
+    } else {
+        Output::panic(format_args!(
+            "Invalid symbol {} in {}",
+            ref_,
+            bstr::BStr::new(source.path.text)
+        ));
     }
 }
 
@@ -229,8 +211,6 @@ pub struct MinifyRenamer {
     pub(crate) reserved_names: StringHashMap<u32>,
     pub(crate) slots: SymbolSlotList,
     pub(crate) top_level_symbol_to_slot: TopLevelSymbolSlotMap,
-    pub(crate) symbols: ManuallyDrop<symbol::Map>,
-    pub(crate) owns_symbols: bool,
     /// Backs `TinyString::String` slot-name allocations.
     pub(crate) arena: Bump,
     /// Set once use counts are in; `finish` names the slots with it. Kept
@@ -238,20 +218,10 @@ pub struct MinifyRenamer {
     pub name_minifier: Option<js_ast::NameMinifier>,
 }
 
-impl Drop for MinifyRenamer {
-    fn drop(&mut self) {
-        if self.owns_symbols {
-            // SAFETY: `owns_symbols` is only set on the owned-Map path; dropped exactly once.
-            unsafe { ManuallyDrop::drop(&mut self.symbols) };
-        }
-    }
-}
-
 pub(crate) type TopLevelSymbolSlotMap = HashMap<Ref, usize>;
 
 impl MinifyRenamer {
     pub fn init(
-        symbols: symbol::Map,
         first_top_level_slots: &js_ast::SlotCounts,
         mut reserved_names: StringHashMap<u32>,
     ) -> Result<Box<MinifyRenamer>, bun_alloc::AllocError> {
@@ -268,8 +238,6 @@ impl MinifyRenamer {
         reserved_names.put(b"$", 1).expect("unreachable");
 
         Ok(Box::new(MinifyRenamer {
-            symbols: ManuallyDrop::new(symbols),
-            owns_symbols: false,
             reserved_names,
             slots,
             top_level_symbol_to_slot: TopLevelSymbolSlotMap::default(),
@@ -278,9 +246,14 @@ impl MinifyRenamer {
         }))
     }
 
-    pub fn name_for_symbol(&self, ref_: Ref) -> &[u8] {
-        let ref_ = self.symbols.follow(ref_);
-        let symbol: &Symbol = self.symbols.get_const(ref_).unwrap();
+    pub fn as_renamer<'a>(&'a self, symbols: &'a symbol::Map) -> Renamer<'a> {
+        let kind = RenamerKind::Minify(self);
+        Renamer { symbols, kind }
+    }
+
+    fn name_for_symbol<'a>(&'a self, symbols: &'a symbol::Map, ref_: Ref) -> &'a [u8] {
+        let ref_ = symbols.follow(ref_);
+        let symbol: &Symbol = symbols.get_const(ref_).unwrap();
 
         let ns = symbol.slot_namespace();
         if ns == SlotNamespace::MustNotBeRenamed {
@@ -304,6 +277,7 @@ impl MinifyRenamer {
 
     pub fn accumulate_symbol_use_counts(
         &mut self,
+        symbols: &symbol::Map,
         top_level_symbols: &mut Vec<StableSymbolCount>,
         symbol_uses: &js_ast::part::SymbolUseMap,
         stable_source_indices: &[u32],
@@ -311,6 +285,7 @@ impl MinifyRenamer {
         // ArrayHashMap exposes parallel keys()/values() slices, no .iter().
         for (key, value) in symbol_uses.keys().iter().zip(symbol_uses.values().iter()) {
             self.accumulate_symbol_use_count(
+                symbols,
                 top_level_symbols,
                 *key,
                 value.count_estimate(),
@@ -322,13 +297,14 @@ impl MinifyRenamer {
 
     pub fn accumulate_symbol_use_count(
         &mut self,
+        symbols: &symbol::Map,
         top_level_symbols: &mut Vec<StableSymbolCount>,
         ref_: Ref,
         count: u32,
         stable_source_indices: &[u32],
     ) -> Result<(), bun_alloc::AllocError> {
-        let ref_ = self.symbols.follow_printed(ref_);
-        let symbol: &Symbol = self.symbols.get_const(ref_).unwrap();
+        let ref_ = symbols.follow_printed(ref_);
+        let symbol: &Symbol = symbols.get_const(ref_).unwrap();
 
         let ns = symbol.slot_namespace();
         if ns == SlotNamespace::MustNotBeRenamed {
@@ -354,6 +330,7 @@ impl MinifyRenamer {
 
     pub fn allocate_top_level_symbol_slots(
         &mut self,
+        symbols: &symbol::Map,
         top_level_symbols: &[StableSymbolCount],
     ) -> Result<(), bun_alloc::AllocError> {
         // Upper bound (a ref can repeat across files); sizes the map and the
@@ -362,8 +339,7 @@ impl MinifyRenamer {
             .ensure_total_capacity(top_level_symbols.len())?;
         self.slots[SlotNamespace::Default].reserve(top_level_symbols.len());
         for stable in top_level_symbols {
-            let symbol: &Symbol = self.symbols.get_const(stable.ref_).unwrap();
-            // Reshaped for borrowck — capture symbol fields before mut-borrowing slots
+            let symbol: &Symbol = symbols.get_const(stable.ref_).unwrap();
             let ns = symbol.slot_namespace();
             let must_start_with_capital = symbol.must_start_with_capital_letter_for_jsx();
             let slots = &mut self.slots[ns];
@@ -394,22 +370,27 @@ impl MinifyRenamer {
     }
 
     /// The accumulated use count of a top-level symbol in this chunk, if it has one.
-    pub fn top_level_count(&self, ref_: Ref) -> Option<u32> {
-        let ref_ = self.symbols.follow(ref_);
+    pub fn top_level_count(&self, symbols: &symbol::Map, ref_: Ref) -> Option<u32> {
+        let ref_ = symbols.follow(ref_);
         let slot = *self.top_level_symbol_to_slot.get(&ref_)?;
-        let ns = self.symbols.get_const(ref_).unwrap().slot_namespace();
+        let ns = symbols.get_const(ref_).unwrap().slot_namespace();
         Some(self.slots[ns][slot].count)
     }
 
     /// Gives top-level symbol `ref_` the name `name` ahead of
     /// `assign_names_by_frequency`, which then hands `name` to nothing else.
     /// Used for bindings that cross chunks, so every chunk calls them the same.
-    pub fn pin(&mut self, ref_: Ref, name: &[u8]) -> Result<(), bun_alloc::AllocError> {
-        let ref_ = self.symbols.follow(ref_);
+    pub fn pin(
+        &mut self,
+        symbols: &symbol::Map,
+        ref_: Ref,
+        name: &[u8],
+    ) -> Result<(), bun_alloc::AllocError> {
+        let ref_ = symbols.follow(ref_);
         let Some(&slot) = self.top_level_symbol_to_slot.get(&ref_) else {
             return Ok(());
         };
-        let ns = self.symbols.get_const(ref_).unwrap().slot_namespace();
+        let ns = symbols.get_const(ref_).unwrap().slot_namespace();
         let slot = &mut self.slots[ns][slot];
         slot.name = TinyString::init(name, &self.arena)?;
         slot.pinned = true;
@@ -539,30 +520,27 @@ impl SlotAndCount {
     }
 }
 
-/// The linker's one name for each binding that crosses chunks. Values live in the linker arena.
-pub type CrossChunkNames = HashMap<Ref, &'static [u8]>;
+/// The linker's one name for each binding that crosses chunks.
+pub type CrossChunkNames<'a> = HashMap<Ref, &'a [u8]>;
 
 type FileRowMap =
     bun_collections::hashbrown::HashMap<u32, u32, core::hash::BuildHasherDefault<IdHasher>>;
 
 /// Source index -> row of `NumberRenamer::names`.
-enum RowOfSource {
+enum RowOfSource<'a> {
     /// The linker's table for all chunks, where the files of a chunk have consecutive rows.
-    Shared(BackRef<[u32]>),
+    Shared(&'a [u32]),
     /// A file is in several chunks (no code splitting): this chunk's files only.
     Own(FileRowMap),
 }
 
-pub struct NumberRenamer {
-    // See `NoOpRenamer.symbols` — non-owning view.
-    pub(crate) symbols: ManuallyDrop<symbol::Map>,
-    row_of_source: RowOfSource,
+/// `'a` is the linker's arena.
+pub struct NumberRenamer<'a> {
+    row_of_source: RowOfSource<'a>,
     /// The row of the chunk's first file. Row `first_row + i` is `names[i]`.
     first_row: u32,
     /// By file of the chunk, then inner index.
     pub(crate) names: Box<[Vec<NameStr>]>,
-    /// Names of symbols of other chunks' files. This renamer reserves them and stores no copy.
-    cross_chunk_names: BackRef<CrossChunkNames>,
     /// Backs top-level renamed-name slices in `names` and interned keys.
     pub(crate) arena: Bump,
     /// Every name seen in the chunk's root scope → index into `slots`.
@@ -672,7 +650,7 @@ trait NameScopes {
         let id = self.id_of(name);
         let use_ = self.find(id);
         if let NameUse::Unused = use_ {
-            let unchanged = !normalized || strings::eql_long(name, input_name.slice(), true);
+            let unchanged = !normalized || strings::eql_long(name, input_name.slice());
             let name = if unchanged {
                 input_name
             } else {
@@ -771,7 +749,7 @@ fn numbered_name_buffer(name: &[u8]) -> MutableString {
 
 /// `candidate[..prefix_len]` followed by `n`.
 fn write_numbered_name(candidate: &mut MutableString, prefix_len: usize, n: u32) {
-    candidate.reset_to(prefix_len);
+    candidate.list.truncate(prefix_len);
     candidate.append_int(u64::from(n)).expect("unreachable");
 }
 
@@ -794,7 +772,7 @@ fn store_name(names: &mut Vec<NameStr>, inner_index: u32, name: NameStr) {
     names[inner_index as usize] = name;
 }
 
-impl NameScopes for NumberRenamer {
+impl NameScopes for NumberRenamer<'_> {
     fn keep_name(&self, name: &[u8]) -> NameStr {
         NameStr::new(self.arena.alloc_slice_copy(name))
     }
@@ -823,23 +801,19 @@ impl NameScopes for NumberRenamer {
     }
 }
 
-impl NumberRenamer {
+impl<'a> NumberRenamer<'a> {
     /// `files_in_chunk`: the files whose symbols the chunk declares, to size
     /// the name table. `symbols` spans the whole bundle and every chunk's
     /// renamer is alive at once, so sizing from it costs a bundle-sized table
     /// per chunk.
     pub fn init(
-        symbols: symbol::Map,
+        symbols: &symbol::Map,
         root_names: &StringHashMap<u32>,
         files_in_chunk: &[u32],
-        shared_rows: Option<&[u32]>,
-        cross_chunk_names: &CrossChunkNames,
-    ) -> Result<Box<NumberRenamer>, bun_alloc::AllocError> {
+        shared_rows: Option<&'a [u32]>,
+    ) -> Result<Box<Self>, bun_alloc::AllocError> {
         let (row_of_source, first_row) = match (shared_rows, files_in_chunk.first()) {
-            (Some(rows), Some(&first)) => (
-                RowOfSource::Shared(BackRef::new(rows)),
-                rows[first as usize],
-            ),
+            (Some(rows), Some(&first)) => (RowOfSource::Shared(rows), rows[first as usize]),
             _ => {
                 let rows = files_in_chunk.iter().copied().zip(0u32..).collect();
                 (RowOfSource::Own(rows), 0)
@@ -852,11 +826,9 @@ impl NumberRenamer {
         let capacity = root_names.len() + symbols_in_chunk / 4;
 
         let mut r = Box::new(NumberRenamer {
-            symbols: ManuallyDrop::new(symbols),
             row_of_source,
             first_row,
             names: vec![Vec::new(); files_in_chunk.len()].into_boxed_slice(),
-            cross_chunk_names: BackRef::new(cross_chunk_names),
             arena: Bump::new(),
             ids: NameIds::with_capacity_and_hasher(capacity, Default::default()),
             slots: Vec::with_capacity(capacity),
@@ -875,17 +847,27 @@ impl NumberRenamer {
         // Debug-only, presence-checked symbol dump.
         #[cfg(debug_assertions)]
         if bun_core::env_var::BUN_DUMP_SYMBOLS.get().is_some() {
-            r.symbols.dump();
+            symbols.dump();
         }
 
         Ok(r)
+    }
+
+    /// `cross_chunk_names`: this renamer reserves the names of other chunks' symbols and stores no copy.
+    pub fn as_renamer<'r>(
+        &'r self,
+        symbols: &'r symbol::Map,
+        cross_chunk_names: &'r CrossChunkNames<'r>,
+    ) -> Renamer<'r> {
+        let kind = RenamerKind::Number(self, cross_chunk_names);
+        Renamer { symbols, kind }
     }
 
     /// The row of `names` for a file of the chunk. `None`: the file is in another chunk.
     #[inline]
     fn row(&self, source_index: u32) -> Option<usize> {
         let row = match &self.row_of_source {
-            RowOfSource::Shared(rows) => rows.get().get(source_index as usize)?,
+            RowOfSource::Shared(rows) => rows.get(source_index as usize)?,
             RowOfSource::Own(rows) => rows.get(&source_index)?,
         };
         let row = row.wrapping_sub(self.first_row) as usize;
@@ -897,8 +879,8 @@ impl NumberRenamer {
         (self.names.len(), self.names.iter().map(Vec::len).sum())
     }
 
-    pub fn add_top_level_symbol(&mut self, input_ref: Ref) {
-        let ref_ = self.symbols.follow(input_ref);
+    pub fn add_top_level_symbol(&mut self, symbols: &symbol::Map, input_ref: Ref) {
+        let ref_ = symbols.follow(input_ref);
 
         // A symbol of another chunk's file prints under its `cross_chunk_names` entry.
         let Some(row) = self.row(ref_.source_index()) else {
@@ -913,7 +895,7 @@ impl NumberRenamer {
         }
 
         // Don't rename unbound symbols, symbols marked as reserved names, labels, or private names
-        let symbol: &Symbol = self.symbols.get_const(ref_).unwrap();
+        let symbol: &Symbol = symbols.get_const(ref_).unwrap();
         if symbol.slot_namespace() != SlotNamespace::Default {
             return;
         }
@@ -928,9 +910,9 @@ impl NumberRenamer {
     /// Gives top-level symbol `ref_` the name `name` (taken to be free in the
     /// root scope) so later symbols are numbered around it. Used for bindings
     /// that cross chunks, so every chunk calls them the same.
-    pub fn pin_top_level_symbol(&mut self, ref_: Ref, name: &'static [u8]) {
-        let ref_ = self.symbols.follow(ref_);
-        if self.symbols.get_const(ref_).unwrap().slot_namespace() != SlotNamespace::Default {
+    pub fn pin_top_level_symbol(&mut self, symbols: &symbol::Map, ref_: Ref, name: &'a [u8]) {
+        let ref_ = symbols.follow(ref_);
+        if symbols.get_const(ref_).unwrap().slot_namespace() != SlotNamespace::Default {
             return;
         }
         let name = NameStr::new(name);
@@ -947,10 +929,11 @@ impl NumberRenamer {
 
     pub fn add_top_level_declared_symbols(
         &mut self,
-        declared_symbols: &mut js_ast::DeclaredSymbolList,
+        symbols: &symbol::Map,
+        declared_symbols: &js_ast::DeclaredSymbolList,
     ) {
         js_ast::DeclaredSymbol::for_each_top_level_symbol(declared_symbols, self, |r, ref_| {
-            r.add_top_level_symbol(ref_)
+            r.add_top_level_symbol(symbols, ref_)
         });
     }
 
@@ -961,21 +944,25 @@ impl NumberRenamer {
         }
     }
 
-    pub fn name_for_symbol(&self, ref_: Ref) -> &[u8] {
+    fn name_for_symbol<'r>(
+        &'r self,
+        symbols: &'r symbol::Map,
+        cross_chunk_names: &CrossChunkNames<'r>,
+        ref_: Ref,
+    ) -> &'r [u8] {
         if ref_.is_source_contents_slice() {
             unreachable!("Unexpected unbound symbol!\n{}", ref_);
         }
 
-        let resolved = self.symbols.follow(ref_);
+        let resolved = symbols.follow(ref_);
 
         let source_index = resolved.source_index();
         let inner_index = resolved.inner_index();
 
         let Some(row) = self.row(source_index) else {
-            let symbol =
-                &self.symbols.symbols_for_source[source_index as usize][inner_index as usize];
+            let symbol = &symbols.symbols_for_source[source_index as usize][inner_index as usize];
             if symbol.slot_namespace() == SlotNamespace::Default {
-                if let Some(&name) = self.cross_chunk_names.get().get(&resolved) {
+                if let Some(&name) = cross_chunk_names.get(&resolved) {
                     return name;
                 }
             }
@@ -994,7 +981,7 @@ impl NumberRenamer {
         }
 
         // SAFETY: `original_name` is an AST-arena slice that outlives the renamer.
-        self.symbols.symbols_for_source[source_index as usize][inner_index as usize]
+        symbols.symbols_for_source[source_index as usize][inner_index as usize]
             .original_name
             .slice()
     }
@@ -1004,7 +991,9 @@ impl NumberRenamer {
 /// chunk is named (`NumberRenamer`), which it only reads; files can run in
 /// parallel. `into_names` hands the result back for `NumberRenamer::absorb`.
 pub struct NestedRenamer<'r> {
-    root: &'r NumberRenamer,
+    root: &'r NumberRenamer<'r>,
+    symbols: &'r symbol::Map,
+    cross_chunk_names: &'r CrossChunkNames<'r>,
     uses: &'r ScopeUses<'r>,
     source_index: u32,
     /// This file's names; starts as the top-level ones.
@@ -1098,12 +1087,13 @@ impl<'r> NestedRenamer<'r> {
     /// `arena`: where made-up names go; must outlive printing (the bundler
     /// passes the worker thread's arena).
     pub fn new(
-        root: &'r NumberRenamer,
+        root: &'r NumberRenamer<'r>,
+        cross_chunk_names: &'r CrossChunkNames<'r>,
         uses: &'r ScopeUses<'r>,
         source_index: u32,
         arena: &'r bun_alloc::Arena,
     ) -> Self {
-        let symbol_count = root.symbols.symbols_for_source[source_index as usize].len();
+        let symbol_count = uses.symbols.symbols_for_source[source_index as usize].len();
         let mut names = Vec::with_capacity(symbol_count);
         if let Some(row) = root.row(source_index) {
             names.extend_from_slice(&root.names[row]);
@@ -1111,6 +1101,8 @@ impl<'r> NestedRenamer<'r> {
         names.resize(symbol_count, name_str_empty());
         NestedRenamer {
             root,
+            symbols: uses.symbols,
+            cross_chunk_names,
             uses,
             source_index,
             names,
@@ -1126,6 +1118,26 @@ impl<'r> NestedRenamer<'r> {
         }
     }
 
+    /// Reserves `name` for this file. Call it before `assign_names_recursive`.
+    pub fn reserve(&mut self, name: NameStr) {
+        debug_assert_eq!(self.scope, ROOT_SCOPE);
+        let id = match self.id_of(name.slice()) {
+            Some(id) => id,
+            None => self.intern(name),
+        };
+        if self.slot(id).scope != NO_SCOPE {
+            return;
+        }
+        self.set_slot(
+            id,
+            NameSlot {
+                scope: ROOT_SCOPE,
+                count: 1,
+                owner: Ref::NONE,
+            },
+        );
+    }
+
     pub fn into_names(self) -> NestedNames {
         NestedNames {
             source_index: self.source_index,
@@ -1134,11 +1146,16 @@ impl<'r> NestedRenamer<'r> {
     }
 
     fn assign_name(&mut self, input_ref: Ref) {
-        let symbols = &self.root.symbols;
+        let symbols = self.symbols;
         let ref_ = symbols.follow(input_ref);
         // A link out of the file leads to a top-level symbol, already named.
         if ref_.source_index() != self.source_index {
-            debug_assert!(!self.root.name_for_symbol(ref_).is_empty());
+            debug_assert!(
+                !self
+                    .root
+                    .name_for_symbol(symbols, self.cross_chunk_names, ref_)
+                    .is_empty()
+            );
             return;
         }
         // Don't rename the same symbol more than once
@@ -1452,13 +1469,22 @@ pub fn compute_reserved_names_for_scope(
     symbols: &symbol::Map,
     names: &mut StringHashMap<u32>,
 ) {
+    for_each_reserved_name_in_scope(scope, symbols, &mut |name| {
+        names.put(name.slice(), 1).expect("unreachable");
+    });
+}
+
+/// Calls `f` with every name that `scope` must keep.
+pub fn for_each_reserved_name_in_scope(
+    scope: &js_ast::Scope,
+    symbols: &symbol::Map,
+    f: &mut impl FnMut(NameStr),
+) {
     for member in scope.members.values() {
         let symbol: &Symbol = symbols.get_const(member.ref_).unwrap();
         if symbol.kind == symbol::Kind::Unbound || symbol.must_not_be_renamed() {
             // SAFETY: `original_name` is an AST-arena slice.
-            names
-                .put(symbol.original_name.slice(), 1)
-                .expect("unreachable");
+            f(symbol.original_name);
         }
     }
 
@@ -1466,9 +1492,7 @@ pub fn compute_reserved_names_for_scope(
         let symbol: &Symbol = symbols.get_const(*ref_).unwrap();
         if symbol.kind == symbol::Kind::Unbound || symbol.must_not_be_renamed() {
             // SAFETY: `original_name` is an AST-arena slice.
-            names
-                .put(symbol.original_name.slice(), 1)
-                .expect("unreachable");
+            f(symbol.original_name);
         }
     }
 
@@ -1477,7 +1501,7 @@ pub fn compute_reserved_names_for_scope(
         for child in scope.children.slice() {
             // `StoreRef<Scope>: Deref<Target = Scope>` — safe arena-backed deref.
             if child.contains_direct_eval || child.contains_with {
-                compute_reserved_names_for_scope(child, symbols, names);
+                for_each_reserved_name_in_scope(child, symbols, f);
             }
         }
     }

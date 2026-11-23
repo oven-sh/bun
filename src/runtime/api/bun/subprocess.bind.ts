@@ -26,6 +26,7 @@ export const Subprocess = b.class({
   rustPath: "crate::api::bun::subprocess::Subprocess<'static>",
   refCounted: true,
   finalize: true,
+  thisValue: "this_value",
   memoryCost: true,
   internalFields: ["exitedPromise", "ipcCallback", "onDisconnectCallback", "onExitCallback", "terminal"],
   proto: {
@@ -37,7 +38,7 @@ export const Subprocess = b.class({
       capability: "js",
       passThis: true,
     },
-    kill: { args: { signal: b.any }, capability: "js", throws: true, passThis: true },
+    kill: { args: { signal: b.any }, capability: "js", throws: true },
     killed: { getter: b.bool },
     pid: { getter: b.i32 },
     readable: { ...output, throws: true, cache: "stdout", rustName: "stdout" },

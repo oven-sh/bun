@@ -22,7 +22,7 @@ pub use bun_install_types::resolver_hooks::Repository;
 /// The environment of every `git` process that `bun install` spawns.
 pub(crate) struct GitEnv {
     /// `KEY=VALUE\0` array for spawn.
-    pub(crate) envp: bun_dotenv::NullDelimitedEnvMap,
+    pub(crate) envp: bun_core::CStringList,
     /// `git` resolved on the env's `PATH`. `None` when git is not installed.
     pub(crate) git: Option<ZBox>,
     /// False for the provisional environment that only `CONFIG_QUERY` itself runs in.
@@ -71,12 +71,11 @@ impl GitEnv {
         }
 
         // The spawn does no `PATH` search; resolve `git` on the child's `PATH`.
-        let mut git_buf = bun_paths::path_buffer_pool::get();
-        let git = bun_which::which(&mut git_buf, map.get(b"PATH").unwrap_or(b""), b"", b"git")
-            .map(|git| ZBox::from_bytes(git.as_bytes()));
+        let git =
+            bun_which::which(map.get(b"PATH").unwrap_or(b""), b"", b"git").map(|git| git.to_zbox());
 
         GitEnv {
-            envp: bun_core::handle_oom(map.create_null_delimited_env_map()),
+            envp: map.to_envp(),
             git,
             is_settled: configured.is_some(),
         }

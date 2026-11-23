@@ -1,8 +1,8 @@
-use core::cell::Cell;
 use core::cmp::Ordering;
 
 use bun_collections::index_sort;
 use bun_core::{Output, strings};
+use bun_paths::Path;
 use bun_semver::{ExternalString, String as SemverString};
 
 use crate::bun_json::Expr;
@@ -143,8 +143,8 @@ impl<'a> ResolverContext for TarballResolver<'a> {
 fn read_contained_package_json(package_dir: &[u8], folder: &[u8]) -> bun_sys::Maybe<Vec<u8>> {
     use bun_sys::O;
     let mut dir = bun_sys::Dir::open(package_dir)?;
-    for component in strings::split_any(folder, b"/\\") {
-        if !matches!(component, b"" | b".") {
+    for component in bun_paths::components(folder) {
+        if component != b"." {
             dir = dir.open_at_with(component, O::RDONLY | O::CLOEXEC | O::NOFOLLOW)?;
         }
     }
@@ -276,13 +276,15 @@ impl PackageManager {
             let row = self.lockfile.buffers.dependencies[next].clone();
             next += 1;
             let buf = self.lockfile.buffers.string_bytes.as_slice();
-            if row.version.tag != VersionTag::Folder
-                || row.behavior.is_bundled()
+            let dependency::Value::Folder(folder) = &row.version.value else {
+                continue;
+            };
+            if row.behavior.is_bundled()
                 || (self.lockfile.overrides).contains_name(row.name_hash, row.name.slice(buf), buf)
             {
                 continue;
             }
-            let folder = row.version.folder().slice(buf).to_vec();
+            let folder = bun_paths::from_portable(folder.slice(buf)).into_owned();
             // The resolver rejects a folder outside the package, so its package.json is not read.
             if crate::bin::bin_target_escapes_package_dir(&folder) {
                 continue;
@@ -311,7 +313,7 @@ impl PackageManager {
             };
             let path = bun_resolver::fs::FileSystem::get()
                 .dirname_store()
-                .append(&[package_dir, b"/", &folder, b"/package.json"].concat())?;
+                .append(&Path::from_parts(&[package_dir, &folder, b"package.json"]))?;
             let source = bun_ast::Source::init_path_string(path, &json[..]);
 
             for declared in parse(self, &source)? {
@@ -322,20 +324,18 @@ impl PackageManager {
                 {
                     continue;
                 }
-                let adopted = match declared.version.tag {
-                    VersionTag::Folder => self.rebase_contained_folder(declared, &folder)?,
-                    VersionTag::Npm
-                    | VersionTag::DistTag
-                    | VersionTag::Git
-                    | VersionTag::Github => declared,
-                    VersionTag::Tarball
-                        if matches!(
-                            declared.version.tarball().uri,
-                            dependency::tarball::Uri::Remote(_)
-                        ) =>
-                    {
-                        declared
+                let adopted = match &declared.version.value {
+                    &dependency::Value::Folder(path) => {
+                        self.rebase_contained_folder(declared, path, &folder)?
                     }
+                    dependency::Value::Npm(_)
+                    | dependency::Value::DistTag(_)
+                    | dependency::Value::Git(_)
+                    | dependency::Value::Github(_)
+                    | dependency::Value::Tarball(dependency::TarballInfo {
+                        uri: dependency::URI::Remote(_),
+                        ..
+                    }) => declared,
                     // `workspace:`, `link:`, `catalog:` and a tarball's path mean something in the
                     // project of the package's author. Here they would be read in the user's.
                     _ => continue,
@@ -359,26 +359,24 @@ impl PackageManager {
     }
 
     /// Returns `row`, a `file:` dependency that the package.json in the folder `base` declares,
-    /// with its path made relative to the package's root.
+    /// with its path `folder` made relative to the package's root.
     fn rebase_contained_folder(
         &mut self,
         row: Dependency,
+        folder: SemverString,
         base: &[u8],
     ) -> Result<Dependency, bun_alloc::AllocError> {
-        let folder = (row.version.folder()).slice(self.lockfile.buffers.string_bytes.as_slice());
+        let folder = folder.slice(self.lockfile.buffers.string_bytes.as_slice());
+        let folder: &[u8] = &bun_paths::from_portable(folder);
         // An absolute path is left as it is, and the resolver rejects it.
         if bun_paths::is_absolute(folder) {
             return Ok(row);
         }
-        let joined = [base, b"/", folder].concat();
-        let mut spill = Vec::new();
-        let literal = [
-            b"file:".as_slice(),
-            bun_paths::resolve_path::normalize_string_spill::<true, bun_paths::platform::Loose>(
-                &mut spill, &joined,
-            ),
-        ]
-        .concat();
+        let joined = Path::join(&[base, folder]).into_portable();
+        let literal = match bun_paths::without_trailing_sep(&joined) {
+            b"." => b"file:".to_vec(),
+            joined => [b"file:", joined].concat(),
+        };
         let literal = self.lockfile.string_buf().append(&literal)?;
         let sliced = literal.sliced(self.lockfile.buffers.string_bytes.as_slice());
         let version = dependency::parse_with_tag(
@@ -605,13 +603,9 @@ impl PackageManager {
             return true;
         };
         let install_peer = self.look_ahead.in_peer_pass;
-        if let Err(err) = run_tasks::resolve_waiters_of_appended_package(
-            self,
-            task_id,
-            &package,
-            install_peer,
-            &Cell::new(false),
-        ) {
+        if let Err(err) =
+            run_tasks::resolve_waiters_of_appended_package(self, task_id, &package, install_peer)
+        {
             let dependency = self.lockfile.buffers.dependencies[row as usize].clone();
             enqueue::add_dependency_error(self, &dependency, err);
         }
@@ -625,7 +619,6 @@ impl PackageManager {
     pub(crate) fn process_dependency_list_item(
         &mut self,
         item: &TaskCallbackContext,
-        any_root: Option<&Cell<bool>>,
         install_peer: bool,
     ) -> Result<(), crate::Error> {
         match *item {
@@ -656,12 +649,6 @@ impl PackageManager {
                         install_peer,
                         from_command: false,
                     })?;
-                }
-                if is_root
-                    && let Some(any_root) = any_root
-                    && self.lockfile.buffers.resolutions[dependency_id as usize] != resolution
-                {
-                    any_root.set(true);
                 }
             }
             // A linker's `run_tasks` starts this checkout. Here it would be dropped.

@@ -80,6 +80,10 @@ const callsOfFileSystem: Record<string, string[]> = {
     'import { readdirSync } from "node:fs";\nreaddirSync("/", { withFileTypes: true })',
   ],
   readFileSync: ['import { readFileSync } from "node:fs";\nreadFileSync("/etc/hostname")'],
+  fstatSync: [
+    'import { fstatSync } from "node:fs";\nfstatSync(0)',
+    'import { fstatSync } from "node:fs";\nfstatSync(0, { bigint: true })',
+  ],
 };
 const observed = [
   "const { promise, resolve } = Promise.withResolvers();",
@@ -101,7 +105,6 @@ export const calls: Record<string, string[]> = {
       [`native:Bindgen:node_fs_binding.bind.ts:${name}`, texts],
     ]),
   ),
-  "%NodeJSFS%.prototype.fstatSync": ['import { fstatSync } from "node:fs";\nfstatSync(0)'],
   "%NodeJSFS%.prototype.realpathSync": ['import { realpathSync } from "node:fs";\nrealpathSync("/", "buffer")'],
   ...Object.fromEntries(
     ["atime", "birthtime", "ctime", "mtime"].flatMap(name => [
@@ -398,6 +401,7 @@ export const calls: Record<string, string[]> = {
     'import { createZstdCompress } from "node:zlib";\nnew (createZstdCompress()._handle.constructor)(10)',
   ],
   "%SecureContext%": ['import { createSecureContext } from "node:tls";\ncreateSecureContext().context'],
+  "%HTTPParser%": ['import { HTTPParser } from "node:_http_common";\nnew HTTPParser()'],
   CompressionStream: ['new CompressionStream("gzip")'],
   DecompressionStream: ['new DecompressionStream("gzip")'],
   FinalizationRegistry: ["new FinalizationRegistry(() => {})"],
@@ -405,6 +409,11 @@ export const calls: Record<string, string[]> = {
   Iterator: ["new (class extends Iterator {})()"],
   URL: ['new URL("https://user:secret@example.com:8080/a/b?first=1#part")', 'new URL("/a", "https://example.com")'],
   URLPattern: ['new URLPattern({ pathname: "/a/:b" })', 'new URLPattern("/a/*", "https://example.com")'],
+  "URLPattern.prototype.exec": [
+    'new URLPattern({ pathname: "/a/:b" }).exec("https://example.com/a/1")',
+    'new URLPattern({ pathname: "/a/:b?" }).exec({ pathname: "/a" })',
+    'new URLPattern().exec("/a", "https://example.com")',
+  ],
   "Error.prepareStackTrace > Array": [
     'let handed;\nError.prepareStackTrace = (error, sites) => ((handed = sites), "");\nvoid new Error("x").stack;\nError.prepareStackTrace = undefined;\nhanded',
   ],
@@ -426,6 +435,7 @@ export const calls: Record<string, string[]> = {
   "Bun.Archive": ['new Bun.Archive({ "a.txt": "a" })'],
   "Bun.CryptoHasher": ['new Bun.CryptoHasher("sha256")', 'new Bun.CryptoHasher("sha256", "key")'],
   "Bun.FileSystemRouter": [`${temporary}\nnew Bun.FileSystemRouter({ style: "nextjs", dir: folder })`],
+  "Bun.RedisClient": ["new Bun.RedisClient()", 'new Bun.RedisClient("redis://127.0.0.1:1", { autoReconnect: false })'],
   "Bun.S3Client": ["new Bun.S3Client({})"],
   "Bun.Transpiler": ["new Bun.Transpiler()"],
   "Bun.Transpiler.prototype.scan": ['new Bun.Transpiler().scan(`import a from "b"; export const c = a;`)'],

@@ -9,7 +9,7 @@ use bun_archive::tar;
 use bun_collections::VecExt as _;
 use bun_core::MutableString;
 use bun_core::fmt as bun_fmt;
-use bun_core::strings::{self, StringOrTinyString};
+use bun_core::strings;
 use bun_core::{Global, Output, pretty, prettyln};
 use bun_http as http;
 use bun_install::dependency::{self, TagExt as _};
@@ -20,7 +20,7 @@ use bun_install::npm::{self, PackageManifest};
 use bun_install::package_manager::options::Do;
 use bun_install::package_manager::workspace_manifests::WorkspaceManifests;
 use bun_install::{PackageManager, resolution};
-use bun_sys::{Fd, FdExt as _, dir_iterator as DirIterator};
+use bun_sys::{Fd, dir_iterator as DirIterator};
 use bun_url::URL;
 
 use crate::cli::pm_diff_normalize as normalize;
@@ -90,16 +90,20 @@ pub(crate) fn exec(
     let args: Vec<Vec<u8>> = typed
         .iter()
         .map(|&arg| {
-            use bun_paths::resolve_path::{join_abs_string, platform};
-            match (arg.strip_prefix(b"~/"), bun_core::env_var::HOME.get()) {
-                (Some(rest), Some(home)) => {
-                    join_abs_string::<platform::Auto>(home, &[rest]).to_vec()
-                }
+            use bun_paths::Path;
+            let home = bun_core::env_var::HOME.get_not_empty();
+            let (base, typed) = match (arg.strip_prefix(b"~/"), home) {
+                (Some(rest), Some(home)) => (Path::resolve(&[original_cwd, home]), rest),
                 _ if looks_like_path(arg) && !bun_paths::is_absolute(arg) => {
-                    join_abs_string::<platform::Auto>(original_cwd, &[arg]).to_vec()
+                    (Path::from(original_cwd), arg)
                 }
-                _ => arg.to_vec(),
-            }
+                _ => return arg.to_vec(),
+            };
+            let spelling = bun_sys::typed_spelling(&base, typed, bun_paths::from_portable);
+            let mut path = Path::resolve(&[&base, &spelling]);
+            // The trailing separator is what tells a directory named `lib.tgz/` from a tarball.
+            path.copy_trailing_sep_from(arg);
+            path.to_vec()
         })
         .collect();
 
@@ -208,12 +212,7 @@ impl<'a> Filter<'a> {
 }
 
 fn looks_like_path(spec: &[u8]) -> bool {
-    spec.starts_with(b".")
-        || spec.starts_with(b"/")
-        || spec.starts_with(b"~/")
-        || (cfg!(windows)
-            && (spec.starts_with(b"\\")
-                || (spec.len() > 2 && spec[1] == b':' && matches!(spec[2], b'\\' | b'/'))))
+    spec.starts_with(b".") || spec.starts_with(b"~/") || bun_paths::is_absolute(spec)
 }
 
 fn classify(spec: &[u8]) -> Spec {
@@ -384,8 +383,7 @@ fn is_npm_name(name: &[u8]) -> bool {
 }
 
 fn root_package_name(pm: &PackageManager, original_cwd: &[u8]) -> Vec<u8> {
-    let mut path = original_cwd.to_vec();
-    path.extend_from_slice(b"/package.json");
+    let path = bun_paths::Path::from_parts(&[original_cwd, b"package.json"]);
     // The folder we are in, before the workspace root the manager walked up to.
     if let Ok(bytes) = bun_sys::File::read_from(Fd::cwd(), &path)
         && let Some(name) = package_json_name(&bytes)
@@ -416,7 +414,7 @@ fn installed_version(pm: &mut PackageManager, name: &[u8]) -> Option<(Vec<u8>, V
         LoadResult::NotFound => false,
         // A lockfile that exists but will not load is reported as that, not as "package not installed".
         broken @ LoadResult::Err(_) => {
-            let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+            let _ = log.print(Output::error_writer());
             crate::cli::package_manager_command::PackageManagerCommand::handle_load_lockfile_errors_for(
                 &broken, log_level, "",
             );
@@ -539,7 +537,7 @@ fn read_tarball_into(bytes: &[u8], tree: &mut Tree) -> Result<(), crate::Error> 
         Output::err_generic("{}: {}", (BStr::new(&tree.label), message));
         Global::exit(1);
     };
-    let mut reader = bun_archive::open_memory(bytes, tar::Dialect::General)
+    let mut reader = bun_archive::open_memory(bytes, tar::Dialect::Npm)
         .map_err(|err| fail(err, "failed to read tarball"))?;
     while let Some(entry) = reader
         .next_entry()
@@ -550,17 +548,11 @@ fn read_tarball_into(bytes: &[u8], tree: &mut Tree) -> Result<(), crate::Error> 
         }
         let perm = (entry.perm() & 0o777) as bun_sys::Mode;
         let size = usize::try_from(entry.size().max(0)).expect("int cast");
-        let path = bun_archive::display_path(entry)?;
-        let path: &[u8] = &path;
-        // npm tarballs root everything under one folder (usually `package/`).
-        let rel = match strings::index_of_char(path, b'/') {
-            Some(i) => &path[i as usize + 1..],
-            None => path,
-        };
+        let rel = bun_paths::Path::from(&bun_archive::normalize_npm_entry_path(entry));
         if rel.is_empty() {
             continue;
         }
-        let rel = rel.to_vec();
+        let rel = rel.into_portable().to_vec();
         let mut data = Vec::new();
         if let Err(err) = reader.read_data(size, &mut data) {
             if let tar::Error::Alloc(err) = err {
@@ -594,8 +586,8 @@ fn read_dir_tree(
         modes: BTreeMap::new(),
         registry_entry: None,
     };
-    let root_fd = match bun_sys::open_dir_at(Fd::cwd(), root) {
-        Ok(fd) => fd,
+    let root_dir = match bun_sys::Dir::open(root) {
+        Ok(dir) => dir,
         Err(err) => {
             Status::clear();
             Output::err(err, "failed to open {}", (BStr::new(root),));
@@ -615,7 +607,7 @@ fn read_dir_tree(
     // A package (has a package.json) is read as `bun pm pack` would publish it: `files`, .npmignore/.gitignore,
     // bins — not the whole checkout with its vendor/ and build/.
     'package: {
-        if let Ok(pkg) = bun_sys::File::read_from(root_fd, b"package.json") {
+        if let Ok(pkg) = bun_sys::File::read_from(&root_dir, b"package.json") {
             // This has to come before the parse below, because it parses other package.json files.
             let manifests = as_published_by.and_then(|pm| manifests_for(pm, root, &pkg));
             let bump = Bump::new();
@@ -641,21 +633,19 @@ fn read_dir_tree(
                 }
                 // pack's own error paths crash without unwinding: no status line to print over.
                 Status::clear();
-                let dir = bun_sys::Dir::from_fd(root_fd);
                 let (queue, _bins) = crate::cli::pack_command::published_files(
-                    &dir,
+                    &root_dir,
                     root,
                     &json,
                     &bump,
                     bun_install::package_manager::LogLevel::Silent,
                 )?;
-                let _ = dir.into_raw();
                 for path in queue.into_paths() {
                     let rel = path.as_bytes();
-                    match bun_sys::File::read_from(root_fd, rel) {
+                    match bun_sys::File::read_from(&root_dir, rel) {
                         Ok(bytes) => {
                             #[cfg(not(windows))]
-                            if let Ok(st) = bun_sys::fstatat(root_fd, path.as_zstr()) {
+                            if let Ok(st) = bun_sys::fstatat(&root_dir, path.as_zstr()) {
                                 tree.modes.insert(rel.to_vec(), st.st_mode as u32 & 0o777);
                             }
                             tree.files.insert(rel.to_vec(), bytes);
@@ -668,14 +658,14 @@ fn read_dir_tree(
                     None => pkg,
                 };
                 tree.files.insert(b"package.json".to_vec(), pkg);
-                root_fd.close();
                 return Ok(tree);
             }
         }
     }
-    let mut stack: Vec<(Fd, Vec<u8>)> = vec![(root_fd, Vec::new())];
+    let mut stack = vec![(root_dir, Vec::new())];
     while let Some((dir, prefix)) = stack.pop() {
-        let mut it = DirIterator::iterate(dir);
+        let mut it = DirIterator::iterate_owned(dir);
+        let dir = it.dir();
         loop {
             let entry = match it.next() {
                 Ok(Some(entry)) => entry,
@@ -717,7 +707,7 @@ fn read_dir_tree(
             match kind {
                 bun_sys::FileKind::Directory if own_kind == bun_sys::FileKind::SymLink => {}
                 bun_sys::FileKind::Directory => match bun_sys::open_dir_at(dir, name) {
-                    Ok(sub) => stack.push((sub, rel)),
+                    Ok(sub) => stack.push((bun_sys::Dir::from_fd(sub), rel)),
                     Err(err) => fail(err, &rel),
                 },
                 bun_sys::FileKind::File => match bun_sys::File::read_from(dir, name) {
@@ -743,7 +733,6 @@ fn read_dir_tree(
                 _ => {}
             }
         }
-        dir.close();
     }
     Ok(tree)
 }
@@ -844,7 +833,7 @@ fn fetch_registry_tree(
 
     let mut log = bun_ast::Log::init();
     let manifest = match PackageManifest::parse(
-        scope,
+        scope.manifest_cache_key(),
         &mut log,
         body.list.as_slice(),
         name,
@@ -943,7 +932,7 @@ fn fetch_registry_tree(
     if tarball_url.is_empty() {
         tarball_url = bun_install::extract_tarball::build_url_with_printer(
             scope.url.href(),
-            &StringOrTinyString::init_append_if_needed(name, &mut BumpAppender(&bump))?,
+            name,
             found.version,
             &manifest.string_buf,
             |args| -> Result<Vec<u8>, bun_alloc::AllocError> {
@@ -983,13 +972,6 @@ fn fetch_registry_tree(
     Ok(tree)
 }
 
-struct BumpAppender<'a>(&'a Bump);
-impl bun_core::strings::Appender for BumpAppender<'_> {
-    fn append(&mut self, s: &[u8]) -> Result<&[u8], bun_alloc::AllocError> {
-        Ok(self.0.alloc_slice_copy(s))
-    }
-}
-
 fn registry_get(
     pm: &PackageManager,
     scope: &npm::registry::Scope,
@@ -1024,19 +1006,19 @@ fn registry_get(
     }
 
     let mut response_buf = MutableString::init(64 * 1024)?;
-    let display_url = url.href.to_vec();
-    let mut req = pm.registry_request(
+    let display_url = url.href;
+    let req = pm.registry_request(
         http::Method::GET,
         url,
         headers.entries,
         headers.content.written_slice(),
         b"",
     );
-    let res = match pm.send_with_retries(&mut req, &mut response_buf) {
+    let res = match pm.send_with_retries(req, &mut response_buf) {
         Ok(r) => r,
         Err(err) => {
             Status::clear();
-            let url = bun_core::fmt::redacted_npm_url(&display_url);
+            let url = bun_core::fmt::redacted_npm_url(display_url);
             Output::err(
                 err,
                 "GET {} failed",
@@ -1047,7 +1029,7 @@ fn registry_get(
     };
     if res.status_code() >= 400 {
         Status::clear();
-        npm::response_error::<false>(&req, &res, for_error, &mut response_buf)?;
+        npm::response_error::<false>(display_url, &res, for_error, &mut response_buf)?;
     }
     Ok(response_buf)
 }
@@ -2195,7 +2177,6 @@ fn string_pairs(e: Option<&bun_ast::Expr>, bump: &Bump) -> Vec<(Vec<u8>, Vec<u8>
 /// Returns one of `INSTALL_FIELDS` as sorted pairs, normalized so that two spellings that install
 /// the same thing compare equal. A registry rewrites some fields when a package is published.
 fn install_view(json: &bun_ast::Expr, field: &[u8], bump: &Bump) -> Vec<(Vec<u8>, Vec<u8>)> {
-    use bun_paths::resolve_path::{join_abs_string_checked, platform};
     let Some(value) = json.get(field) else {
         return Vec::new();
     };
@@ -2211,11 +2192,12 @@ fn install_view(json: &bun_ast::Expr, field: &[u8], bump: &Bump) -> Vec<(Vec<u8>
             }
             for (name, path) in &mut pairs {
                 *name = bun_paths::basename(name).to_vec();
-                if let Some(normal) =
-                    join_abs_string_checked::<platform::Posix>(b"/", &[path.as_slice()])
-                {
-                    *path = normal.to_vec();
+                let mut normal = bun_paths::Path::from(b"/");
+                normal.push_inside(&strings::replace_char(path, b'\\', b'/'));
+                if path.ends_with(b"/") {
+                    normal.push_trailing_sep();
                 }
+                *path = normal.to_vec();
             }
         }
         b"directories" => pairs.retain(|(name, _)| name == b"bin"),

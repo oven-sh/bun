@@ -9,8 +9,8 @@ use super::{
     WhereTestsLayNamesAbove,
 };
 use crate::builtins::runtime_uses::{
-    ENTRIES_LEADING_TO_HOOK_OF_INSTANCEOF, Mentions, RuntimeUses, SyntaxWithHelpers, is_evaluator,
-    is_unknown_module_loader, reaches_unknown_module_loader,
+    ENTRIES_LEADING_TO_HOOK_OF_INSTANCEOF, Mentions, RoadsToNamespaces, RuntimeUses,
+    SyntaxWithHelpers, is_evaluator, is_unknown_module_loader, reaches_unknown_module_loader,
 };
 use crate::builtins::table::{
     self, BuiltinId, BuiltinName, Intrinsic, Mutability, Platforms, RuntimeFunction, RuntimeModule,
@@ -21,7 +21,7 @@ use bun_sema::bind::{
     Binding, BindingInitializer, CommonJsVariable, Decl, InitialState, Parent, SymbolId,
 };
 use bun_sema::fold::{Constant, Decision, KnownSets};
-use bun_sema::hir::{BinOp, ExprId, ExprKind, Flags, FnId, MemberKey, UnOp};
+use bun_sema::hir::{BinOp, Chain, ExprId, ExprKind, Flags, FnId, MemberKey, UnOp};
 use bun_sema::import_sites::find_module_printed_as_require;
 use bun_sema::util::{FxHashMap, FxHashSet, SharedSort};
 use core::cell::{Cell, OnceCell, RefCell};
@@ -308,12 +308,15 @@ pub(super) struct ResolverOutput {
     pub(super) hands_module_cache_on: bool,
     pub(super) gets_at_entries_of_module_cache: bool,
     pub(super) members_read: Vec<BuiltinName>,
+    pub(super) escaped_objects: Vec<BuiltinId>,
     pub(super) reads_by_unknown_key: bool,
     pub(super) may_call_evaluator: bool,
     pub(super) global_object_may_be_looked_through: bool,
     pub(super) aliases_global_object: bool,
     pub(super) syntax: SyntaxWithHelpers,
     pub(super) may_hand_values_to_natives: bool,
+    pub(super) roads_to_namespaces: RoadsToNamespaces,
+    pub(super) namespace_names_read: Vec<BuiltinName>,
 }
 
 #[derive(Copy, Clone)]
@@ -351,6 +354,7 @@ pub(super) struct Resolver<'a, 's> {
     names_by_variable: OnceCell<Vec<(u32, u32)>>,
     pub(super) kept_variables: RefCell<FxHashMap<(SymbolId, BuiltinId), bool>>,
     pub(super) variables_asked_for_numbers: RefCell<FxHashMap<(SymbolId, u32), bool>>,
+    pub(super) variables_that_may_be_undefined: RefCell<FxHashMap<SymbolId, bool>>,
     pub(super) variables_let_out_of_sight: OnceCell<FxHashSet<SymbolId>>,
     known_sets: RefCell<KnownSets<'a, 's>>,
     evaluated: Range<u32>,
@@ -492,6 +496,7 @@ impl<'a, 's> Resolver<'a, 's> {
             names_by_variable: OnceCell::new(),
             kept_variables: RefCell::default(),
             variables_asked_for_numbers: RefCell::default(),
+            variables_that_may_be_undefined: RefCell::default(),
             variables_let_out_of_sight: OnceCell::new(),
             known_sets: RefCell::new(KnownSets::new(
                 input.hir,
@@ -584,8 +589,6 @@ impl<'a, 's> Resolver<'a, 's> {
     }
 
     /// `const steps = Symbol.iterator; list[steps]`: the value that a computed key is taken for, where it is a well-known symbol. The wire holds a read under a computed key there, and the engine
-    /// follows the one symbol to it through names that are filled once. A `var` holds `undefined` until it is filled, and a mock of a test run replaces what a module exports: the engine meets
-    /// more than one value in such a key and takes it for a key that nobody knows. So must the load.
     pub(super) fn symbol_that_key_is(
         &self,
         key: ExprId,
@@ -594,11 +597,25 @@ impl<'a, 's> Resolver<'a, 's> {
         let symbol = table::well_known_symbol(value.path.id)?;
         let (hir, bound) = (self.input.hir, self.input.bound);
         let mut followed: SmallVec<[SymbolId; 4]> = SmallVec::new();
+        let mut is_key_itself = true;
         let mut current = key;
         loop {
             current = hir.skip_type_assertions(current);
             current = match hir[current].kind {
-                ExprKind::Dot { .. } | ExprKind::Index { .. } => hir.member_key(current)?.0,
+                ExprKind::Dot { chain, .. } | ExprKind::Index { chain, .. } => {
+                    let is_constant = || {
+                        let value = self.value_of(current);
+                        value.is_some_and(|it| it.path.mutability == Mutability::AlwaysLocked)
+                    };
+                    match chain {
+                        Chain::No => is_key_itself = false,
+                        Chain::Start | Chain::Continue if is_key_itself && !is_constant() => {
+                            return None;
+                        }
+                        Chain::Start | Chain::Continue => {}
+                    }
+                    hir.member_key(current)?.0
+                }
                 ExprKind::Binary {
                     op: BinOp::Comma,
                     right,
@@ -615,7 +632,10 @@ impl<'a, 's> Resolver<'a, 's> {
                         followed.push(variable);
                         match bound.binding_initializer(hir, variable) {
                             BindingInitializer::Expression(initializer) => initializer,
-                            BindingInitializer::PatternProperty { source, .. } => source,
+                            BindingInitializer::PatternProperty { source, .. } => {
+                                is_key_itself = false;
+                                source
+                            }
                             _ => return None,
                         }
                     }
@@ -756,7 +776,7 @@ impl<'a, 's> Resolver<'a, 's> {
                 | Decision::Constant(_)
                 | Decision::Data(_)
                 | Decision::DeferredData => {
-                    if matches!(kind, ExprKind::This) {
+                    if matches!(kind, ExprKind::This | ExprKind::Super) {
                         self.found_or_this.push(expr);
                     }
                     self.states.set_code(expr, UNRESOLVED);
@@ -994,12 +1014,15 @@ impl<'a, 's> Resolver<'a, 's> {
             exposed: &exposed,
             linked_functions: &output.linked_functions,
             members_read: &sorted_unique(output.members_read),
+            escaped_objects: &sorted_unique(output.escaped_objects),
             reads_by_unknown_key: output.reads_by_unknown_key,
             may_call_evaluator: output.may_call_evaluator,
             global_object_may_be_looked_through: output.global_object_may_be_looked_through,
             aliases_global_object: output.aliases_global_object,
             syntax: output.syntax,
             may_hand_values_to_natives: output.may_hand_values_to_natives,
+            roads_to_namespaces: output.roads_to_namespaces,
+            namespace_names_read: &sorted_unique(output.namespace_names_read),
             called: &output.called,
             is_of_program: input.dialect == SourceDialect::Program,
             holds_language: input.holds_language,
@@ -1160,7 +1183,6 @@ impl<'a, 's> Resolver<'a, 's> {
             mentioned,
             source_evaluator_escapes,
             may_call_unnamed_evaluator,
-            #[cfg(test)]
             exposed,
             uses,
             loads_unknown_modules,

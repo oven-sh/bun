@@ -27,9 +27,10 @@ use crate::import_sites::{
     is_module_that_reaches_modules, reaches_modules_unnamed, touches_export,
     write_from_other_folder, write_question_where_file_lies, write_start_from_other_folder,
 };
+use crate::module_format::ModuleFormat;
 use crate::resolve::{
     CodeHost, CodeRead, DeclaredSideEffects, EnclosingPackage, FinishedFile, HostPayload,
-    ParsedFile, TranspileSettings, is_declaration_file_name,
+    ParsedFile, TranspileSettings, basename, is_declaration_file_name,
 };
 use bun_threading::guarded::GuardedLock;
 use bun_threading::{Condvar, Mutex};
@@ -289,6 +290,7 @@ impl<'a, 's: 'r, 'r> CodeLoadContext<'a, 's, 'r> {
                 }
             }
             import_what_is_required(self, &mut state);
+            share_commonjs_modules(self, &mut state);
             ordered = Some(order_files(self, &mut state));
         };
         match early_prefetch.get() {
@@ -773,7 +775,7 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
                     io.each_while(
                         (),
                         |(), (), _| self.work(LoadSteps::Read, start),
-                        &mut vec![(); io.max_threads()],
+                        &vec![(); io.max_threads()],
                         || process(LoadSteps::Process),
                     );
                 }
@@ -1885,8 +1887,7 @@ fn find_texts_of_other_files<'s>(
             is_library: false,
             host_values: analyzed.host_values,
             jsx: analyzed.jsx_mode,
-            own_name: (context.session.arena())
-                .alloc_slice_copy(bun_paths::basename_posix(holder.target.key.path)),
+            own_name: (context.session.arena()).alloc_slice_copy(basename(holder.target.key.path)),
         };
         let (hir, bound) = (&holding.parse.hir, &holding.parse.bound);
         let (decisions, fold) = (&analyzed.analysis.decisions, context.inputs.fold);
@@ -2138,56 +2139,60 @@ struct OrderedFiles<'s, 'r> {
 fn share_modules_among_types<'r>(
     host: &dyn CodeHost,
     files: &mut [WalkedFile<'_, 'r>],
-    mut entry_points: VecDeque<u32>,
-    scanned: usize,
+    entry_points: VecDeque<u32>,
+    builds_executable: bool,
 ) {
     let is_call_with_written_type = |target: &CodeTarget<'_>| {
-        !target.has_shared_type
+        builds_executable
+            && !target.has_shared_type
             && target.has_type_of_shared_kind
             && target.has_loader_attribute
             && target.is_linked_by_bundler
     };
-    let is_shared = |target: &CodeTarget<'_>| {
-        target.has_shared_type || (scanned > 0 && is_call_with_written_type(target))
-    };
+    let is_shared =
+        |target: &CodeTarget<'_>| target.has_shared_type || is_call_with_written_type(target);
     let has_shared_type = |file: &WalkedFile<'_, '_>| file.code_targets().iter().any(is_shared);
     if !files.iter().any(has_shared_type) {
         return;
     }
-    let mut first_forms: FxHashMap<&'r [u8], u32> = FxHashMap::default();
     let mut seen = vec![false; files.len()];
-    let mut scanned_level: Vec<u32> = entry_points.drain(..scanned).collect();
-    while !scanned_level.is_empty() {
-        scanned_level.retain(|&index| !std::mem::replace(&mut seen[index as usize], true));
-        for shares_statements in [true, false] {
-            for &index in &scanned_level {
+    // Another entry point of an executable is the file of a Worker, which has modules of its own.
+    let graphs: Vec<VecDeque<u32>> = match builds_executable {
+        true => entry_points
+            .into_iter()
+            .map(|it| VecDeque::from([it]))
+            .collect(),
+        false => vec![entry_points],
+    };
+    for mut later in graphs {
+        let mut first_forms: FxHashMap<&'r [u8], u32> = FxHashMap::default();
+        // What one load reaches by statements runs before the calls in it do.
+        while let Some(root) = later.pop_front() {
+            let mut level = VecDeque::from([root]);
+            let mut loaded_together = Vec::new();
+            while let Some(index) = level.pop_front() {
+                if std::mem::replace(&mut seen[index as usize], true) {
+                    continue;
+                }
+                loaded_together.push(index);
                 for next in 0..files[index as usize].code_targets().len() {
                     let target = files[index as usize].code_targets()[next];
-                    if is_shared(&target) && target.has_shared_type == shares_statements {
+                    if target.has_shared_type {
                         share_form(host, files, &mut first_forms, index, next);
+                    }
+                    let reached = files[index as usize].targets[next];
+                    match target.is_loaded_with_importer {
+                        true => level.push_back(reached),
+                        false => later.push_back(reached),
                     }
                 }
             }
-        }
-        let targets = scanned_level
-            .iter()
-            .flat_map(|&index| &files[index as usize].targets);
-        scanned_level = targets.copied().collect();
-    }
-    let (mut level, mut later) = (VecDeque::new(), entry_points);
-    while let Some(index) = level.pop_front().or_else(|| later.pop_front()) {
-        if std::mem::replace(&mut seen[index as usize], true) {
-            continue;
-        }
-        for next in 0..files[index as usize].code_targets().len() {
-            let target = files[index as usize].code_targets()[next];
-            if target.has_shared_type {
-                share_form(host, files, &mut first_forms, index, next);
-            }
-            let reached = files[index as usize].targets[next];
-            match target.is_loaded_with_importer {
-                true => level.push_back(reached),
-                false => later.push_back(reached),
+            for index in loaded_together {
+                for next in 0..files[index as usize].code_targets().len() {
+                    if is_call_with_written_type(&files[index as usize].code_targets()[next]) {
+                        share_form(host, files, &mut first_forms, index, next);
+                    }
+                }
             }
         }
     }
@@ -2212,11 +2217,57 @@ fn share_form<'r>(
         return;
     }
     let reached = *first_forms.entry(path).or_insert(asked_for);
+    retarget_load(files, index, next, reached);
+}
+
+fn retarget_load(files: &mut [WalkedFile<'_, '_>], importer: u32, next: usize, reached: u32) {
     let key = files[reached as usize].target.key;
-    let file = &mut files[index as usize];
+    let file = &mut files[importer as usize];
     file.targets[next] = reached;
     if let Some(parsed) = &mut file.parsed {
         parsed.code.targets[next].key = key;
+    }
+}
+
+fn share_commonjs_modules<'r>(
+    context: &CodeLoadContext<'_, '_, 'r>,
+    state: &mut WalkState<'_, 'r>,
+) {
+    let is_commonjs = |file: &WalkedFile<'_, '_>| {
+        let LoadKey { path, loader } = file.target.key;
+        file.parsed.as_ref().is_some_and(|parsed| {
+            let analysis = &parsed.code.analyzed.analysis;
+            let where_imported = context.resolver.module_type_where_imported(path);
+            analysis.module_format == ModuleFormat::CommonJs
+                && analysis.module_formats.get(where_imported) == ModuleFormat::CommonJs
+                && context.host.loads_as_code(path, loader)
+        })
+    };
+    let find_form_without_type = |form: &WalkedFile<'_, 'r>| {
+        let key = context.canonical_key(LoadKey {
+            loader: HostLoader::default(),
+            ..form.target.key
+        });
+        let index = *state.index_of.get(&key)?;
+        is_commonjs(&state.files[index as usize]).then_some(index)
+    };
+    let forms = (state.files.iter().zip(0u32..))
+        .filter(|(file, _)| file.target.key.loader != HostLoader::default() && is_commonjs(file));
+    let mut replacements: FxHashMap<u32, u32> = forms
+        .filter_map(|(file, form)| Some((form, find_form_without_type(file)?)))
+        .collect();
+    if replacements.is_empty() {
+        return;
+    }
+    let is_of_program = find_files_of_program(context, state);
+    replacements.retain(|_, shared| is_of_program[*shared as usize]);
+    for importer in 0..state.files.len() as u32 {
+        for next in 0..state.files[importer as usize].code_targets().len() {
+            let loaded = state.files[importer as usize].targets[next];
+            if let Some(&shared) = replacements.get(&loaded) {
+                retarget_load(&mut state.files, importer, next, shared);
+            }
+        }
     }
 }
 
@@ -2230,11 +2281,8 @@ fn order_files<'s, 'r>(
         (entry_points.iter().copied()).partition(|it| context.runs_first(it.key));
     let indexes = first.into_iter().chain(others);
     let indexes = indexes.map(|it| index_of[&context.canonical_key(it.key)]);
-    let scanned = match context.inputs.code.builds_executable {
-        true => context.written_entry_point_count(),
-        false => 0,
-    };
-    share_modules_among_types(context.host, files, indexes.collect(), scanned);
+    let builds_executable = context.inputs.code.builds_executable;
+    share_modules_among_types(context.host, files, indexes.collect(), builds_executable);
     let mut roots: Vec<u32> = Vec::with_capacity(entry_points.len());
     let mut order: Vec<u32> = Vec::with_capacity(files.len());
     let mut seen = vec![false; files.len()];

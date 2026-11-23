@@ -37,14 +37,11 @@ use crate::mal_prelude::*;
 
 use bun_ast::Source;
 use bun_collections::AutoBitSet;
-use bun_collections::VecExt;
-use bun_core::strings;
 use bun_io::Write;
 use bun_js_printer::Encoding;
-use bun_paths::resolve_path::{platform, platform_to_posix_in_place, relative_normalized};
+use bun_paths::Path;
 use bun_resolver::fs::FileSystem;
 
-use crate::Graph::Graph;
 use crate::chunk::Content;
 use crate::options::{Loader, OutputFile, OutputKind};
 use crate::options_impl::LoaderExt as _;
@@ -104,13 +101,13 @@ fn write_entry_item<W: Write + ?Sized>(
 // Extremely unfortunate, but necessary due to E.String not accepting pre-escaped input and this happening at the very end.
 pub(crate) fn write_escaped_json<W: Write + ?Sized>(
     index: u32,
-    graph: &Graph,
+    bundle: &BundleV2<'_>,
     linker_graph: &LinkerGraph<'_>,
     chunks: &[Chunk],
     writer: &mut W,
 ) -> Result<(), crate::Error> {
     let mut bytes: Vec<u8> = Vec::new();
-    write(index, graph, linker_graph, chunks, &mut bytes)?;
+    write(index, bundle, linker_graph, chunks, &mut bytes)?;
     bun_js_printer::write_pre_quoted_string::<_, b'"', false, true, { Encoding::Utf8 }>(
         &bytes, writer,
     )?;
@@ -119,37 +116,33 @@ pub(crate) fn write_escaped_json<W: Write + ?Sized>(
 
 pub(crate) fn write<W: Write + ?Sized>(
     index: u32,
-    graph: &Graph,
+    bundle: &BundleV2<'_>,
     linker_graph: &LinkerGraph<'_>,
     chunks: &[Chunk],
     writer: &mut W,
 ) -> Result<(), crate::Error> {
     write_with_assets(
         index,
-        graph,
+        bundle,
         linker_graph,
         chunks,
-        &graph.additional_output_files,
+        &linker_graph.additional_output_files,
         writer,
     )
 }
 
 pub(crate) fn write_with_assets<W: Write + ?Sized>(
     index: u32,
-    graph: &Graph,
+    bundle: &BundleV2<'_>,
     linker_graph: &LinkerGraph<'_>,
     chunks: &[Chunk],
     assets: &[OutputFile],
     writer: &mut W,
 ) -> Result<(), crate::Error> {
-    let browser_source_index = graph.html_imports.html_source_indices.slice()[index as usize];
-    let server_source_index = graph.html_imports.server_source_indices.slice()[index as usize];
-    let sources: &[Source] = graph.input_files.items_source();
-    // SAFETY: graph points to BundleV2.graph.
-    let bv2: &BundleV2<'_> = unsafe {
-        &*bun_core::from_field_ptr!(BundleV2<'static>, graph, std::ptr::from_ref::<Graph>(graph))
-    };
-    let options = &bv2.transpiler().options;
+    let browser_source_index = linker_graph.html_source_indices[index as usize];
+    let server_source_index = bundle.graph.html_imports[index as usize];
+    let sources: &[Source] = bundle.graph.input_files.items_source();
+    let options = &bundle.transpiler().options;
     // Same size as the files' entry bits: the linker's list also holds the dynamic imports.
     let mut entry_point_bits = AutoBitSet::init_empty(linker_graph.entry_points.len())?;
     let mut chunks_to_write = AutoBitSet::init_empty(chunks.len())?;
@@ -180,8 +173,9 @@ pub(crate) fn write_with_assets<W: Write + ?Sized>(
                 if inject_compiler_filesystem_prefix {
                     temp_buffer.clear();
                     temp_buffer.extend_from_slice(public_path);
-                    temp_buffer
-                        .extend_from_slice(strings::remove_leading_dot_slash(&ch.final_rel_path));
+                    temp_buffer.extend_from_slice(bun_paths::without_leading_dot_slash(
+                        &ch.final_rel_path,
+                    ));
                     bun_js_printer::write_json_string::<_, { Encoding::Utf8 }>(
                         &temp_buffer,
                         writer,
@@ -249,7 +243,7 @@ pub(crate) fn write_with_assets<W: Write + ?Sized>(
                 temp_buffer.clear();
                 temp_buffer.extend_from_slice(public_path);
                 temp_buffer
-                    .extend_from_slice(strings::remove_leading_dot_slash(&ch.final_rel_path));
+                    .extend_from_slice(bun_paths::without_leading_dot_slash(&ch.final_rel_path));
                 &temp_buffer[..]
             } else {
                 &ch.final_rel_path
@@ -305,7 +299,7 @@ pub(crate) fn write_with_assets<W: Write + ?Sized>(
                 let path: &[u8] = if inject_compiler_filesystem_prefix {
                     temp_buffer.clear();
                     temp_buffer.extend_from_slice(public_path);
-                    temp_buffer.extend_from_slice(strings::remove_leading_dot_slash(
+                    temp_buffer.extend_from_slice(bun_paths::without_leading_dot_slash(
                         &output_file.dest_path,
                     ));
                     &temp_buffer[..]
@@ -330,34 +324,27 @@ pub(crate) fn write_with_assets<W: Write + ?Sized>(
 }
 
 pub mod html_import_manifest {
-    use crate::Graph::Graph;
-    use crate::{LinkerGraph, chunk::Chunk};
+    use crate::{BundleV2, LinkerGraph, chunk::Chunk};
 
     pub(crate) fn count_escaped_json(
         index: u32,
-        graph: &Graph,
+        bundle: &BundleV2<'_>,
         linker_graph: &LinkerGraph<'_>,
         chunks: &[Chunk],
     ) -> usize {
         let mut counter = bun_io::DiscardingWriter::new();
-        let _ = super::write_escaped_json(index, graph, linker_graph, chunks, &mut counter);
+        let _ = super::write_escaped_json(index, bundle, linker_graph, chunks, &mut counter);
         counter.count
     }
 
     pub(crate) fn write_escaped_json(
         index: u32,
-        graph: &Graph,
+        bundle: &BundleV2<'_>,
         linker_graph: &LinkerGraph<'_>,
         chunks: &[Chunk],
-        w: &mut &mut [u8],
-    ) -> Result<(), core::fmt::Error> {
-        let taken = core::mem::take(w);
-        let mut fbs = bun_io::FixedBufferStream::new_mut(taken);
-        super::write_escaped_json(index, graph, linker_graph, chunks, &mut fbs)
-            .map_err(|_| core::fmt::Error)?;
-        let bun_io::FixedBufferStream { buffer, pos } = fbs;
-        *w = &mut buffer[pos..];
-        Ok(())
+        out: &mut Vec<u8>,
+    ) -> Result<(), crate::Error> {
+        super::write_escaped_json(index, bundle, linker_graph, chunks, out)
     }
 }
 
@@ -368,10 +355,6 @@ fn source_path_relative_to_root<'b>(
     path: &[u8],
 ) -> &'b [u8] {
     buf.clear();
-    buf.extend_from_slice(strings::remove_leading_dot_slash(relative_normalized::<
-        platform::Auto,
-        false,
-    >(root_dir, path)));
-    platform_to_posix_in_place(&mut buf[..]);
+    buf.extend_from_slice(&Path::relative(root_dir, path).into_portable());
     buf
 }

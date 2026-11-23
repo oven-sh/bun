@@ -7,7 +7,7 @@
 import { $ } from "bun";
 import { beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { existsSync, mkdirSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
 import path from "path";
 import { createTestBuilder, sortedShellOutput } from "../util";
 const TestBuilder = createTestBuilder(import.meta.path);
@@ -145,9 +145,23 @@ foo/
     }
   });
 
-  // The DirTask parent/child hand-off had a lost-wakeup window between
-  // `subtask_count.load() > 1` and `need_to_wait.store(true)`: the last
-  // child could decrement and read `need_to_wait == false` in between,
+  test("-dv prints the directory it removed", async () => {
+    using dir = tempDir("rm-dv", { captured: {}, redirected: {} });
+    const captured = await $`rm -dv captured`.cwd(String(dir)).quiet();
+    const redirected = await $`rm -dv redirected > out`.cwd(String(dir)).quiet();
+    expect({
+      captured: { output: captured.stdout.toString(), exitCode: captured.exitCode },
+      redirected: { output: await Bun.file(path.join(String(dir), "out")).text(), exitCode: redirected.exitCode },
+      left: readdirSync(String(dir)),
+    }).toEqual({
+      captured: { output: "captured\n", exitCode: 0 },
+      redirected: { output: "redirected\n", exitCode: 0 },
+      left: ["out"],
+    });
+  });
+
+  // The DirTask parent/child hand-off had a lost-wakeup window: the last
+  // child could finish before the parent had said that it was waiting,
   // stranding the parent DirTask forever. A directory with exactly one
   // subdirectory is the minimal trigger; the window is a few instructions
   // so this is a stress probe rather than a deterministic repro.
@@ -483,4 +497,53 @@ test("operands longer than the path scratch buffers are reported, not a crash", 
     ...(isWindows ? {} : { upToRoot: { exitCode: 1, stderr: 'rm: "/" may not be removed\n' } }),
   });
   expect(exitCode).toBe(0);
+});
+
+test.skipIf(isWindows)("the root check reads a backslash as part of a name, as the removal does", async () => {
+  // Without -r no directory can be removed, whatever the check decides.
+  const { exitCode, stderr } = await $`rm ${"/no-such-dir\\x\\y/.."}`.quiet();
+  expect(stderr.toString()).toBe('rm: "/no-such-dir\\x\\y/.." may not be removed\n');
+  expect(exitCode).toBe(1);
+});
+
+test("an empty operand names nothing", async () => {
+  using dir = tempDir("rm-empty-operand", { "a.txt": "", "sub/b.txt": "" });
+  const { exitCode } = await $`rm -rf ${""}`.cwd(String(dir)).quiet();
+  expect(readdirSync(String(dir), { recursive: true }).sort()).toEqual(["a.txt", "sub", path.join("sub", "b.txt")]);
+  expect(exitCode).toBe(0);
+});
+
+test("removes a directory that is written with ./", async () => {
+  using dir = tempDir("rm-dot-slash", { "sub/b.txt": "" });
+  const { exitCode } = await $`rm -r ./sub`.cwd(String(dir)).quiet();
+  expect(readdirSync(String(dir))).toEqual([]);
+  expect(exitCode).toBe(0);
+});
+
+test.skipIf(!isWindows)("-f forgives a name that ends in . or .. only if its parent is not there", async () => {
+  using dir = tempDir("rm-dot", { "sub/b.txt": "" });
+  const results: Record<string, [string, number]> = {};
+  for (const operand of [".", "sub/.", "sub/b.txt/.", "sub/b.txt/..", "missing/.", "missing/..", "sub/missing/."]) {
+    const { exitCode, stderr } = await $`rm -rf ${operand}`.cwd(String(dir)).quiet();
+    results[operand] = [stderr.toString(), exitCode];
+  }
+  expect(results).toEqual({
+    ".": ["rm: .: Invalid argument\n", 1],
+    "sub/.": ["rm: sub/.: Invalid argument\n", 1],
+    "sub/b.txt/.": ["rm: sub/b.txt/.: Invalid argument\n", 1],
+    "sub/b.txt/..": ["rm: sub/b.txt/..: Invalid argument\n", 1],
+    "missing/.": ["", 0],
+    "missing/..": ["", 0],
+    "sub/missing/.": ["", 0],
+  });
+  expect(existsSync(path.join(String(dir), "sub", "b.txt"))).toBe(true);
+});
+
+test.skipIf(!isWindows)("refuses an operand that starts with two slashes", async () => {
+  using dir = tempDir("rm-two-slashes", { "sub/deep/b.txt": "" });
+  const operand = "//./" + path.join(String(dir), "sub").replaceAll("\\", "/");
+  const { exitCode, stderr } = await $`rm -rf ${operand}`.quiet();
+  expect(stderr.toString()).toBe(`rm: ${operand}: Invalid argument\n`);
+  expect(existsSync(path.join(String(dir), "sub", "deep", "b.txt"))).toBe(true);
+  expect(exitCode).toBe(1);
 });

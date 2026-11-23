@@ -355,6 +355,21 @@ pub fn define_property_call(hir: &File, e: ExprId) -> Option<(ExprId, ExprId)> {
     .then_some((object, key))
 }
 
+/// The first `require(..)`, `module.exports = ..` or `exports.a = ..` of a file, which makes one that neither imports nor
+/// exports a CommonJS module.
+pub fn find_commonjs_indicator(hir: &File) -> Option<ExprId> {
+    (0..hir.exprs.len() as u32).map(ExprId).find(|&e| {
+        matches!(hir[e].kind, ExprKind::Call(_) | ExprKind::Assign { .. })
+            && (require_argument(hir, e).is_some()
+                || matches!(
+                    assignment_declaration_kind(hir, e),
+                    JsDeclarationKind::ModuleExports
+                        | JsDeclarationKind::ExportsProperty(_)
+                        | JsDeclarationKind::ObjectDefinePropertyExports
+                ))
+    })
+}
+
 /// `IsRequireCall`: returns the argument if `e` is `require(x)`.
 pub fn require_argument(hir: &File, e: ExprId) -> Option<ExprId> {
     let ExprKind::Call(c) = hir[e].kind else {
@@ -600,6 +615,7 @@ impl<'s> Symbols<'s> {
             many: ArenaVec::new_in(arena),
         };
         all.list.reserve_exact(symbols.len() + namespaces);
+        crate::util::prefault(all.list.spare_capacity_mut());
         all.rest.reserve_exact(symbols.len() - plain + namespaces);
         all.many.reserve_exact(many);
         for symbol in symbols {

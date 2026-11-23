@@ -9,15 +9,14 @@ use std::sync::OnceLock;
 use bun_core::strings::{last_index_of, split};
 use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{
-    Binding, BindingInitializer, Bound, Decl, FnOwner, FunctionFlags, Parent, PatParent,
-    PrivateNameId, SymbolId,
+    Binding, BindingInitializer, Bound, ClassOwner, Decl, FnOwner, FunctionFlags, Parent,
+    PatParent, PrivateNameId, SymbolId,
 };
 use bun_sema::check::aot::FunctionRef;
 use bun_sema::fold::Decision;
 use bun_sema::hir::{
-    self, ClassId, ExprId, ExprKind, Flags, FnBody, FnId, FnKind, IdList, ImportEqualsId,
-    MemberKey, MemberKind, ModifierKind, NodeData, PatId, PatKind, PropKey, StmtId, StmtKind, UnOp,
-    VarDeclId, VarKind,
+    self, ClassId, ExprId, ExprKind, Flags, FnBody, FnId, FnKind, IdList, MemberKey, MemberKind,
+    ModifierKind, NodeData, PatId, PatKind, PropKey, StmtId, StmtKind, UnOp, VarDeclId, VarKind,
 };
 use bun_sema::import_sites::ImportSiteKind;
 use bun_sema::module_format::{ThisPositions, evaluates_own_this};
@@ -38,7 +37,7 @@ use crate::known_helpers::{self, Helper, KnownHelpers, resolve_callee};
 use crate::link::{Beside, run_steps_beside};
 use crate::load::Sources;
 use crate::load::react_compiler::POSITION;
-use crate::load::sources::{ParsedSource, SourceKind, parsed_source};
+use crate::load::sources::{ParsedSource, SourceKind, may_evaluate_text, parsed_source};
 use crate::lower::LeftOutDeclarations;
 use crate::modules::{
     Candidates, ExportBinding, ExportLookup, ExportUse, ImportBinding, KnownMemberValues,
@@ -218,6 +217,7 @@ struct FileUnits {
     interests: Vec<Vec<Interest>>,
     star_targets: Vec<FileId>,
     statements_with_elements: Vec<(u32, ModuleRef)>,
+    class_expressions_in_parts: Vec<(u32, ClassId)>,
     loaded_by_calls: Vec<FileId>,
     is_region_reached: Vec<AtomicBool>,
     modules: Vec<ModuleUnits>,
@@ -930,6 +930,24 @@ impl<'a, 's> FileScan<'a, 's> {
         self.collect_function_units(has_decorators);
         self.link_pieces();
         self.place_units();
+        self.list_class_expressions_in_parts();
+    }
+
+    fn list_class_expressions_in_parts(&mut self) {
+        for class in (0..self.hir.classes.len() as u32).map(ClassId) {
+            let ClassOwner::Expr(written) = self.bound.class_owner[class.idx()] else {
+                continue;
+            };
+            let Some(unit) = self.region_of(written).checked_sub(1) else {
+                continue;
+            };
+            match self.units.units[unit as usize].part {
+                Part::Declarator(_) | Part::Class(_) | Part::Statement(_) => {
+                    self.units.class_expressions_in_parts.push((unit, class));
+                }
+                Part::Bodies | Part::InnerModule(_) => {}
+            }
+        }
     }
 
     fn region_of(&self, expression: ExprId) -> u32 {
@@ -1485,13 +1503,10 @@ impl<'a, 's> FileScan<'a, 's> {
             }
             self.units.interests[TOP_LEVEL as usize].extend(quiet_files.map(Interest::UsedImport));
         }
-        for import in (0..hir.import_equals.len() as u32).map(ImportEqualsId) {
-            if let Binding::Symbol(symbol) = bound.entity_root_binding(import) {
-                self.add_name_that_is_no_expression(symbol);
-            }
-        }
-        for reference in bound.runtime.implicit_references() {
-            if let Binding::Symbol(symbol) = reference.binding {
+        let analysis = self.input.files.analysis(self.file);
+        let read_without_expression = analysis.bindings_read_without_expression(hir, bound);
+        for binding in read_without_expression {
+            if let Binding::Symbol(symbol) = binding {
                 self.add_name_that_is_no_expression(symbol);
             }
         }
@@ -2650,7 +2665,7 @@ impl<'a, 's> Walk<'a, 's> {
                 bound
                     .ids(bound.fns[function.idx()].returns)
                     .any(|statement: StmtId| match hir[statement].kind {
-                        StmtKind::Return(returned) => returned.some().is_some_and(&can_read_this),
+                        StmtKind::Return(returned) => returned.some().is_some_and(can_read_this),
                         _ => true,
                     })
             }
@@ -2810,7 +2825,7 @@ impl<'a, 's> Walk<'a, 's> {
                 reacher.reach_every_export(module);
             }
         }
-        let is_read_by_evaluated_text = self.may_evaluate_text();
+        let is_read_by_evaluated_text = may_evaluate_text(input.files);
         if is_read_by_evaluated_text || input.graph.runs_code_out_of_sight() {
             reacher.hand_on_data_objects();
         }
@@ -2865,27 +2880,11 @@ impl<'a, 's> Walk<'a, 's> {
         found_lists
     }
 
-    /// `f.constructor(text)` evaluates too, where a file names an evaluator only to test it.
-    fn may_evaluate_text(&self) -> bool {
-        let files = self.input.files;
-        let sources = || {
-            let files_compiled = files.compiled_files().iter();
-            files_compiled.filter_map(|&file| parsed_source(files, file))
-        };
-        sources().any(|source| source.builtins.evaluator_comes_out())
-            || (sources().any(|source| source.builtins.mentions_evaluator())
-                && (files.compiled_files().iter()).any(|&file| {
-                    parsed_source(files, file).is_some_and(|source| {
-                        source.builtins.may_call_unnamed_evaluator(files.hir(file))
-                    })
-                }))
-    }
-
     fn reach_entry_points_seeded_last(&self, found: &mut Found, seeded_last: &[FileId]) {
         let input = self.input;
         let mut reacher = Reacher { walk: self, found };
         let hands_on_module_objects =
-            !input.files_started_by_runner.is_empty() || self.may_evaluate_text();
+            !input.files_started_by_runner.is_empty() || may_evaluate_text(input.files);
         for &file in seeded_last {
             reacher.reach_every_export(ModuleRef::File(file));
             if hands_on_module_objects {
@@ -4463,6 +4462,11 @@ pub(crate) fn find_left_out_code_seeding_last(
                 Part::Statement(statement) => {
                     declarations.leave_out_statement(file, input.files.hir(file), statement);
                 }
+            }
+        }
+        for &(unit, class) in &units.class_expressions_in_parts {
+            if !is_marked(&units.is_region_reached[unit as usize + 1]) {
+                left_out.declarations.leave_out_class(file, class);
             }
         }
     }

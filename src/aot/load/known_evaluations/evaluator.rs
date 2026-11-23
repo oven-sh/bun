@@ -1,12 +1,14 @@
+use std::cell::RefCell;
 use std::rc::Rc;
 
-use bun_paths::platform::Posix;
-use bun_paths::resolve_path::dirname;
 use bun_sema::atom::{Atom, Interner, known};
+use bun_sema::fold::Constant;
 use bun_sema::hir::{
     BinOp, Call, CallId, Chain, ClassId, ExprId, ExprKind, File, Flags, FnBody, FnId, FnKind,
-    IdList, MemberKind, PatId, PatKind, PropKey, PropKind, StmtId, StmtKind, UnOp, VarKind,
+    IdList, ImportId, ImportedName, MemberKind, PatId, PatKind, PropKey, PropKind, StmtId,
+    StmtKind, UnOp, VarKind,
 };
+use bun_sema::resolve::parent_directory;
 use bun_sema_driver::host::from_argument;
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -75,6 +77,9 @@ pub(super) struct Evaluator<'a, 's> {
     ends: FxHashMap<FnId, u32>,
     prototypes: FxHashMap<FnId, FxHashMap<Rc<[u8]>, Value>>,
     properties_of_globals: FxHashMap<(Global, Rc<[u8]>), Value>,
+    imports: FxHashMap<Atom, ImportedName>,
+    imported_constants: FxHashMap<ImportedName, Value>,
+    unknown_imports: RefCell<FxHashSet<ImportedName>>,
     evaluating: FxHashSet<FnId>,
     evaluating_methods: Vec<(FnId, FnId)>,
     receiver: Value,
@@ -131,6 +136,9 @@ impl<'a, 's> Evaluator<'a, 's> {
             ends: FxHashMap::default(),
             prototypes: FxHashMap::default(),
             properties_of_globals: FxHashMap::default(),
+            imports: FxHashMap::default(),
+            imported_constants: FxHashMap::default(),
+            unknown_imports: RefCell::default(),
             evaluating: calls
                 .iter()
                 .flat_map(|it| it.functions.iter().copied())
@@ -157,7 +165,7 @@ impl<'a, 's> Evaluator<'a, 's> {
         let mut module = Object::unseen();
         module.set(b"exports", exports.clone());
         let module = self.create(module);
-        let folder = Value::Path(dirname::<Posix>(self.beside.path).into());
+        let folder = Value::Path(parent_directory(self.beside.path).into());
         let names = [
             (known::require, Value::Global(Global::Require)),
             (known::exports, exports),
@@ -172,8 +180,26 @@ impl<'a, 's> Evaluator<'a, 's> {
             self.declare(EnvironmentId(0), name, value);
         }
         let hir = self.hir;
-        for import in hir.imports.iter().filter(|it| !it.type_only) {
+        let imports = (0..).map(ImportId).zip(hir.imports.iter());
+        for (id, import) in imports.filter(|(_, it)| !it.type_only) {
             let Some(module) = Global::of_module(self.atoms.bytes(import.spec)) else {
+                let whole = [
+                    (import.default, known::default),
+                    (import.namespace, Atom::NONE),
+                ];
+                let named = import.named.iter().map(|spec| hir[spec]);
+                let named = named.map(|spec| (spec.local, spec.imported));
+                for (local, export) in whole.into_iter().chain(named) {
+                    if local.is_some() {
+                        self.declare(EnvironmentId(0), local, Value::Unknown);
+                        let name = ImportedName {
+                            import: id,
+                            export,
+                            member: Atom::NONE,
+                        };
+                        self.imports.insert(local, name);
+                    }
+                }
                 continue;
             };
             for whole in [import.default, import.namespace] {
@@ -190,11 +216,37 @@ impl<'a, 's> Evaluator<'a, 's> {
         }
     }
 
+    fn declare_imported_constants(&mut self) {
+        let hir = self.hir;
+        for constant in hir.imported_constants.iter() {
+            let value = match constant.value {
+                Constant::String(text) => self.string(self.atoms.bytes(text).to_vec()),
+                Constant::Number(number) => Value::Number(number),
+                Constant::Boolean(value) => Value::Boolean(value),
+                Constant::Null => Value::Null,
+                Constant::Undefined => Value::Undefined,
+                Constant::BigInt(_) => Value::Unknown,
+            };
+            self.imported_constants.insert(constant.name, value);
+        }
+        let known: Vec<(Atom, Value)> = (self.imports.iter())
+            .filter_map(|(&local, name)| Some((local, self.imported_constants.get(name)?.clone())))
+            .collect();
+        for (local, value) in known {
+            self.declare(EnvironmentId(0), local, value);
+        }
+    }
+
+    pub(super) fn into_unknown_imports(self) -> FxHashSet<ImportedName> {
+        self.unknown_imports.into_inner()
+    }
+
     pub(super) fn find_texts(
-        mut self,
+        &mut self,
         calls: &[EvaluatingCall],
     ) -> (Vec<(CallId, Vec<Rc<[u8]>>)>, usize) {
         self.declare_module_names();
+        self.declare_imported_constants();
         self.hoist(self.hir.body);
         self.statements(self.hir.body);
         self.call_methods_of_globals();
@@ -210,7 +262,7 @@ impl<'a, 's> Evaluator<'a, 's> {
             }
         }
         self.construct_with_constants();
-        (self.texts, self.text_allowance)
+        (std::mem::take(&mut self.texts), self.text_allowance)
     }
 
     fn call_methods_of_globals(&mut self) {
@@ -513,6 +565,11 @@ impl<'a, 's> Evaluator<'a, 's> {
 
     fn read(&self, name: Atom) -> Value {
         if let Some(environment) = self.environment_of(name) {
+            if environment == EnvironmentId(0)
+                && let Some(&import) = self.imports.get(&name)
+            {
+                self.note_import(import);
+            }
             let value = self.environments[environment.0].variables.get(&name);
             return value.cloned().unwrap_or(Value::Unknown);
         }
@@ -529,6 +586,29 @@ impl<'a, 's> Evaluator<'a, 's> {
             b"URL" => Value::Global(Global::Url),
             _ => Value::Unknown,
         }
+    }
+
+    fn note_import(&self, name: ImportedName) {
+        let is_value = name.export.is_some() || name.member.is_some();
+        if is_value && !self.imported_constants.contains_key(&name) {
+            self.unknown_imports.borrow_mut().insert(name);
+        }
+    }
+
+    fn imported_member(&self, holder: ExprId, member: Atom) -> Option<Value> {
+        let hir = self.hir;
+        let ExprKind::Ident(local) = hir[hir.skip_type_assertions(holder)].kind else {
+            return None;
+        };
+        let holder = *self.imports.get(&local)?;
+        if self.environment_of(local) != Some(EnvironmentId(0))
+            || self.imported_constants.contains_key(&holder)
+        {
+            return None;
+        }
+        let name = ImportedName { member, ..holder };
+        self.note_import(name);
+        self.imported_constants.get(&name).cloned()
     }
 
     fn assign(&mut self, name: Atom, value: Value) {
@@ -734,13 +814,13 @@ impl<'a, 's> Evaluator<'a, 's> {
             }
             Value::Global(Global::RequireResolve) => match args {
                 [Value::String(specifier)] if is_relative(specifier) => {
-                    self.join_path(&dirname::<Posix>(self.beside.path).into(), specifier)
+                    self.join_path(&parent_directory(self.beside.path).into(), specifier)
                 }
                 _ => Value::Unknown,
             },
             Value::Global(Global::ReadFileSync) => self.read_file(args),
             Value::Global(Global::PathDirname) => match args {
-                [Value::Path(path)] => Value::Path(dirname::<Posix>(path).into()),
+                [Value::Path(path)] => Value::Path(parent_directory(path).into()),
                 _ => Value::Unknown,
             },
             Value::Global(Global::PathJoin) => {
@@ -1383,13 +1463,17 @@ impl<'a, 's> Evaluator<'a, 's> {
             }
             ExprKind::Dot { obj, name, .. } => {
                 let object = self.expression(obj);
-                self.property(&object, self.atoms.bytes(name))
+                let imported = self.imported_member(obj, name);
+                imported.unwrap_or_else(|| self.property(&object, self.atoms.bytes(name)))
             }
             ExprKind::Index { obj, index, .. } => {
                 let object = self.expression(obj);
                 let index = self.expression(index);
                 match self.text_of(&index) {
-                    Some(key) => self.property(&object, &key),
+                    Some(key) => {
+                        let imported = self.imported_member(obj, self.atoms.intern(&key));
+                        imported.unwrap_or_else(|| self.property(&object, &key))
+                    }
                     None => Value::Unknown,
                 }
             }
@@ -1405,7 +1489,7 @@ impl<'a, 's> Evaluator<'a, 's> {
                     (Value::Global(Global::Array), Some(args)) => self.create_array_of(args),
                     (Value::Global(Global::Url), Some(args)) => match &args[..] {
                         [Value::String(relative), Value::Path(path)] if is_relative(relative) => {
-                            self.join_path(&dirname::<Posix>(path).into(), relative)
+                            self.join_path(&parent_directory(path).into(), relative)
                         }
                         _ => Value::Unknown,
                     },
@@ -1502,7 +1586,7 @@ impl<'a, 's> Evaluator<'a, 's> {
             }
             Value::Global(Global::ImportMeta) => match key {
                 b"url" | b"filename" | b"path" => Value::Path(self.beside.path.into()),
-                b"dirname" | b"dir" => Value::Path(dirname::<Posix>(self.beside.path).into()),
+                b"dirname" | b"dir" => Value::Path(parent_directory(self.beside.path).into()),
                 _ => Value::Unknown,
             },
             Value::Global(global) => {

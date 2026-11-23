@@ -27,7 +27,7 @@ use bun_sema::bind::{MemberStores, SymbolId};
 use bun_sema::components::strongly_connected_components;
 use bun_sema::hir::{ExprId, FnId};
 use bun_sema::import_sites::{ImportSiteKind, JsxImport};
-use bun_sema::program::FileId;
+use bun_sema::program::{FileId, Sym};
 use bun_sema::resolve::ExternalKind;
 use bun_sema::util::{FxHashMap, FxHashSet, SharedSort};
 use core::ops::Range;
@@ -71,6 +71,7 @@ pub struct ModuleGraph {
     pub(super) folders_of_databases: Vec<FileId>,
     pub(super) star_names_left_out: StarNamesLeftOut,
     pub(super) names_laid_on_object_prototype: Vec<Box<[u8]>>,
+    pub(super) enums_stored_into: OnceLock<FxHashSet<Sym>>,
 }
 
 #[derive(Default)]
@@ -787,6 +788,24 @@ impl ModuleGraph {
 
     pub fn is_module_form(&self, file: FileId) -> bool {
         self.module_forms.binary_search(&file).is_ok()
+    }
+
+    /// Whether import() of the code may answer with what require() has loaded under a type.
+    pub fn may_typed_form_answer_import(&self, module: ModuleRef) -> bool {
+        let ModuleRef::File(imported) = module else {
+            return false;
+        };
+        let is_data = |file: FileId| {
+            self.find_row(file)
+                .is_some_and(|row| row.interop.kind == ModuleKind::Data)
+        };
+        let all = &self.forms_require_checks_first;
+        let file = match self.is_module_form(imported) {
+            true => (all.iter().find(|it| it.1 == imported)).map_or(imported, |it| it.0),
+            false => imported,
+        };
+        let forms = self.forms_require_checks_first(ModuleRef::File(file));
+        !is_data(file) && forms.iter().any(|it| is_data(it.1))
     }
 
     pub fn is_every_export_asked_for(&self, module: ModuleRef) -> bool {

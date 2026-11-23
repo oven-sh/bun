@@ -7,6 +7,7 @@ fixtures/wpt/*
 fixtures/tools
 fixtures/v8-coverage
 fixtures/test-runner/*
+!fixtures/test-runner/diagnostics-channel-*.js
 !fixtures/test-runner/index.js
 !fixtures/test-runner/tagged.js
 fixtures/source-map

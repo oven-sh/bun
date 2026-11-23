@@ -25,8 +25,11 @@ use crate::ir::classify_name;
 use crate::ir::generated::NameClass;
 use crate::load::fold_inputs::MAX_FOLDED_STRING_BYTES;
 
+mod stored_enums;
 #[cfg(test)]
 mod tests;
+
+use self::stored_enums::find_enums_stored_into;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(crate) enum Validity {
@@ -452,6 +455,12 @@ impl<'a, 's> KnownObjects<'a, 's> {
         }
     }
 
+    fn is_stored_into(&self, enumeration: Sym) -> bool {
+        let find = || find_enums_stored_into(self.files, self.graph);
+        let stored_into = self.graph.enums_stored_into.get_or_init(find);
+        stored_into.contains(&enumeration)
+    }
+
     fn may_be_replaced(&self, variable: Sym) -> bool {
         self.graph.may_be_mocked(ModuleRef::File(variable.file))
             || self.graph.is_replaceable(variable)
@@ -685,7 +694,10 @@ impl<'a, 's> KnownObjects<'a, 's> {
             return None;
         }
         let is_in_place = match known_to {
-            KnownTo::EveryTranspiler => true,
+            KnownTo::EveryTranspiler => {
+                enumeration.file == file
+                    || !(self.graph.runs_tests() || self.is_stored_into(enumeration))
+            }
             KnownTo::BunRun => enumeration.file == file,
             KnownTo::BuildAlone => false,
         };

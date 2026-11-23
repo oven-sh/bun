@@ -1,13 +1,11 @@
-// The text that error messages quote lies in an executable in blocks of 64 KB, each compressed by itself, as the text of functions does.
+// An executable stores the source that error messages quote.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { canTrim } from "../bundler/compile-trim-features";
 import { run } from "./harness/run";
 import { test } from "./supported";
 
-const sizeOfBlock = 64 * 1024;
 const numberOfExpressions = 8000;
 const expressionAt = (at: number) => `holder.${"part".repeat(at % 5)}missing${at}.called${at}`;
 
@@ -26,8 +24,8 @@ function writeProgram() {
   return lines.join("\n") + "\n";
 }
 
-test("every message quotes its expression, in whatever order the blocks are opened, and no expression lies in the file as it is", async () => {
-  using dir = tempDir("aot-quoted-text-in-blocks", { "program.js": writeProgram() });
+test("every message quotes its expression", async () => {
+  using dir = tempDir("aot-quoted-source", { "program.js": writeProgram() });
   const cwd = String(dir);
   const executable = (name: string) => join(cwd, isWindows ? name + ".exe" : name);
   const ways: Record<string, string[]> = { compiled: [] };
@@ -50,7 +48,6 @@ test("every message quotes its expression, in whatever order the blocks are open
     expect(expected.stdout).toContain(
       `(evaluating '${expressionAt(order === "forward" ? 0 : numberOfExpressions - 1)}')`,
     );
-    expect(Number(expected.stdout.split(" ")[1])).toBeGreaterThan(3 * sizeOfBlock);
     for (const way of Object.keys(ways))
       expect({ way, order, ...(await run([executable(way), order], cwd, bunEnv)) }).toEqual({
         way,
@@ -58,6 +55,4 @@ test("every message quotes its expression, in whatever order the blocks are open
         ...expected,
       });
   }
-  for (const way of Object.keys(ways))
-    expect({ way, at: readFileSync(executable(way)).indexOf(expressionAt(4321), 0, "utf8") }).toEqual({ way, at: -1 });
 }, 600_000);

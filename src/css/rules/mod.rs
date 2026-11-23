@@ -178,8 +178,6 @@ impl<R> Default for CssRuleList<'_, R> {
 mod dc {
     use bun_alloc::Arena;
 
-    /// `DeclarationBlock::deep_clone` — field-walk over both
-    /// `DeclarationList`s, routing each `Property` through `dc::property`.
     #[inline]
     pub(crate) fn decl_block<'bump>(
         this: &crate::DeclarationBlock<'bump>,
@@ -189,11 +187,11 @@ mod dc {
             important_declarations: bun_alloc::vec_from_iter_in(
                 this.important_declarations
                     .iter()
-                    .map(|p| property(p, bump)),
+                    .map(|p| p.deep_clone(bump)),
                 bump,
             ),
             declarations: bun_alloc::vec_from_iter_in(
-                this.declarations.iter().map(|p| property(p, bump)),
+                this.declarations.iter().map(|p| p.deep_clone(bump)),
                 bump,
             ),
         }
@@ -229,16 +227,6 @@ mod dc {
     where
         F: crate::media_query::FeatureIdTrait,
     {
-        this.deep_clone(bump)
-    }
-
-    /// `Property::deep_clone` — routes to the real inherent
-    /// `Property::deep_clone` in properties_generated.rs.
-    #[inline]
-    pub(crate) fn property<'bump>(
-        this: &crate::properties::Property<'bump>,
-        bump: &'bump Arena,
-    ) -> crate::properties::Property<'bump> {
         this.deep_clone(bump)
     }
 }
@@ -345,16 +333,31 @@ impl<R> CssRule<'_, R> {
 
 // ─── CssRuleList::{to_css,minify,deep_clone} ──────────────────────────────
 
+/// The rule that a list printed last.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum PreviousRule {
+    None,
+    Block,
+    Statement,
+}
+
 impl<'bump, R> CssRuleList<'bump, R> {
     pub fn to_css(
         &self,
         dest: &mut Printer,
         ctx: Option<&StyleContext<'_, 'bump>>,
     ) -> Result<(), PrintErr> {
-        let mut first = true;
-        let mut last_without_block = false;
+        Self::rules_to_css(&self.v, PreviousRule::None, dest, ctx).map(drop)
+    }
 
-        for rule in self.v.iter() {
+    /// Prints `rules` as the part of a list that comes after `previous`.
+    pub fn rules_to_css(
+        rules: &[CssRule<'bump, R>],
+        mut previous: PreviousRule,
+        dest: &mut Printer,
+        ctx: Option<&StyleContext<'_, 'bump>>,
+    ) -> Result<PreviousRule, PrintErr> {
+        for rule in rules {
             if matches!(rule, CssRule::Ignored) {
                 continue;
             }
@@ -368,16 +371,12 @@ impl<'bump, R> CssRuleList<'bump, R> {
                 continue;
             }
 
-            if first {
-                first = false;
-            } else {
-                if !dest.minify
-                    && !(last_without_block
-                        && matches!(
-                            rule,
-                            CssRule::Import(_) | CssRule::Namespace(_) | CssRule::LayerStatement(_)
-                        ))
-                {
+            let is_statement = matches!(
+                rule,
+                CssRule::Import(_) | CssRule::Namespace(_) | CssRule::LayerStatement(_)
+            );
+            if previous != PreviousRule::None {
+                if !dest.minify && !(previous == PreviousRule::Statement && is_statement) {
                     dest.write_char(b'\n')?;
                 }
                 dest.newline()?;
@@ -387,12 +386,13 @@ impl<'bump, R> CssRuleList<'bump, R> {
                 dest.write_char(b';')?;
             }
             rule.to_css(dest, ctx)?;
-            last_without_block = matches!(
-                rule,
-                CssRule::Import(_) | CssRule::Namespace(_) | CssRule::LayerStatement(_)
-            );
+            previous = if is_statement {
+                PreviousRule::Statement
+            } else {
+                PreviousRule::Block
+            };
         }
-        Ok(())
+        Ok(previous)
     }
 
     pub(crate) fn minify(

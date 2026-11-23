@@ -1,19 +1,14 @@
-use bun_paths::strings;
 use core::ffi::c_int;
 
 use crate::jsc::{self, JSGlobalObject, JSValue, JsResult};
-#[cfg(windows)]
-use bun_core::WStr;
 use bun_core::ZStr;
-use bun_core::{self, Utf8Bytes, Utf8WithString, fmt as bun_fmt};
+use bun_core::{self, Utf8Bytes, Utf8WithString, fmt as bun_fmt, strings};
 use bun_jsc::bindgen::{JsLocal, JsScope, StringOrJsBytes};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{StringJsc as _, Utf8WithStringJsc as _};
 pub(crate) use bun_jsc::{ThreadIsolated, ThreadIsolatedArg};
-#[cfg(windows)]
-use bun_paths::WPathBuffer;
-use bun_paths::{MAX_PATH_BYTES, OSPathBuffer, OSPathSliceZ, PathBuffer};
-use bun_sys::{self, Fd, Mode, O};
+use bun_paths::{MAX_PATH_BYTES, NameTooLong, OSPath, Path};
+use bun_sys::{self, Fd, IoVec, IoVecMut, Mode, O};
 
 use crate::node::util::validators;
 use crate::webcore::{Blob, Request, Response};
@@ -60,8 +55,6 @@ impl FdArgExt for Fd {}
 // `system_error.to_error_instance(ctx)` resolves via the canonical impl.
 pub(crate) use bun_sys_jsc::SystemErrorJsc;
 
-pub(crate) use bun_sys::PlatformIoVec;
-
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Whether a call is serviced on the JS thread before it returns (`Sync`) or
@@ -105,16 +98,9 @@ pub(crate) enum BlobOrStringOrBuffer {
     StringOrBuffer(StringOrBuffer<'static>),
 }
 
-impl Drop for BlobOrStringOrBuffer {
-    fn drop(&mut self) {
-        match self {
-            Self::Blob(blob) => {
-                let _ = blob.store.with_mut(|s| s.take());
-            }
-            Self::StringOrBuffer(_) => {
-                // StringOrBuffer's own Drop handles cleanup.
-            }
-        }
+impl AsRef<[u8]> for BlobOrStringOrBuffer {
+    fn as_ref(&self) -> &[u8] {
+        self.slice()
     }
 }
 
@@ -124,10 +110,6 @@ impl BlobOrStringOrBuffer {
             Self::Blob(blob) => blob.shared_view(),
             Self::StringOrBuffer(str) => str.slice(),
         }
-    }
-
-    pub(crate) fn byte_length(&self) -> usize {
-        self.slice().len()
     }
 
     pub(crate) fn from_js_maybe_file(
@@ -165,9 +147,6 @@ impl BlobOrStringOrBuffer {
     ) -> JsResult<Option<BlobOrStringOrBuffer>> {
         match value.js_type() {
             jsc::JSType::DOMWrapper => {
-                // `as_class_ref` is the safe shared-borrow downcast (centralised
-                // deref proof in `JSValue`); the JS wrapper roots the payload
-                // while `value` is on the stack.
                 if let Some(blob) = value.as_class_ref::<Blob>() {
                     return Ok(Some(Self::Blob(Box::new(blob.dupe()))));
                 }
@@ -177,9 +156,7 @@ impl BlobOrStringOrBuffer {
                         body_value.to_blob_if_possible();
 
                         if let Some(mut any_blob) = body_value.try_use_as_any_blob() {
-                            let blob = any_blob.to_blob(global);
-                            any_blob.detach();
-                            return Ok(Some(Self::Blob(Box::new(blob))));
+                            return Ok(Some(Self::Blob(Box::new(any_blob.to_blob(global)))));
                         }
 
                         return Err(global.throw_invalid_arguments(format_args!(
@@ -192,9 +169,7 @@ impl BlobOrStringOrBuffer {
                         body_value.to_blob_if_possible();
 
                         if let Some(mut any_blob) = body_value.try_use_as_any_blob() {
-                            let blob = any_blob.to_blob(global);
-                            any_blob.detach();
-                            return Ok(Some(Self::Blob(Box::new(blob))));
+                            return Ok(Some(Self::Blob(Box::new(any_blob.to_blob(global)))));
                         }
 
                         return Err(global.throw_invalid_arguments(format_args!(
@@ -753,15 +728,6 @@ unsafe extern "C" {
 // `PathLikeExt` / `PathOrFdExt` extension traits.
 pub(crate) use bun_jsc::node_path::{PathLike, PathOrFileDescriptor};
 
-/// Returned by [`PathLikeExt::slice_w`] / [`PathLikeExt::os_path`] /
-/// [`PathLikeExt::os_path_kernel32`] when the path's UTF-16 form would not
-/// fit a `WPathBuffer` (`strings::fits_in_wide_path_buffer`). NT caps paths
-/// at `PATH_MAX_WIDE` units, so such a path cannot exist on disk — callers
-/// map this to `false`/`ENAMETOOLONG` as appropriate instead of letting the
-/// conversion overflow (oven-sh/bun#27775).
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct NameTooLong;
-
 /// `bun_runtime`-tier behaviour layered on `bun_jsc::node_path::PathLike`.
 ///
 /// `thread_isolated_copy` / `slice` / `estimated_size` are
@@ -769,26 +735,15 @@ pub(crate) struct NameTooLong;
 /// adds only the path-buffer slicers and JS-argument parsing that depend on
 /// `bun_runtime` types (`Valid`, `ArgumentsSlice` cursor flow).
 pub(crate) trait PathLikeExt {
-    fn slice_z_with_force_copy<'a, const FORCE: bool>(
-        &'a self,
-        buf: &'a mut PathBuffer,
-    ) -> &'a ZStr
+    /// Replaces `buf` with the path.
+    fn slice_z<'a>(&self, buf: &'a mut Path) -> &'a ZStr
     where
         Self: Sized;
-    fn slice_z<'a>(&'a self, buf: &'a mut PathBuffer) -> &'a ZStr
+    fn os_path(&self) -> Result<OSPath, NameTooLong>
     where
         Self: Sized;
-    #[cfg(windows)]
-    fn slice_w<'a>(&'a self, buf: &'a mut WPathBuffer) -> Result<&'a WStr, NameTooLong>
-    where
-        Self: Sized;
-    fn os_path<'a>(&'a self, buf: &'a mut OSPathBuffer) -> Result<&'a OSPathSliceZ, NameTooLong>
-    where
-        Self: Sized;
-    fn os_path_kernel32<'a>(
-        &'a self,
-        buf: &'a mut PathBuffer,
-    ) -> Result<&'a OSPathSliceZ, NameTooLong>
+    /// On Windows it is normalized unless it names a device, and `C:\a` can be longer than `MAX_PATH`.
+    fn os_path_kernel32(&self, syscall: bun_sys::Tag) -> bun_sys::Maybe<OSPath>
     where
         Self: Sized;
     fn from_js(
@@ -860,208 +815,55 @@ pub(crate) trait PathOrFdExt {
 }
 
 impl PathLikeExt for PathLike<'_> {
-    // Const-generics can't change return mutability, so this always returns
-    // `&ZStr`. A future force=true caller that needs `&mut ZStr` will need a
-    // separate method.
-    fn slice_z_with_force_copy<'a, const FORCE: bool>(
-        &'a self,
-        buf: &'a mut PathBuffer,
-    ) -> &'a ZStr {
+    fn slice_z<'a>(&self, buf: &'a mut Path) -> &'a ZStr {
         let sliced = self.slice();
+        buf.set(sliced);
+        if cfg!(windows) && bun_paths::is_absolute(sliced) {
+            if bun_paths::has_leading_sep(sliced) {
+                buf.add_current_drive();
+            } else {
+                buf.make_long_path();
+                if sliced.ends_with(b"\\") {
+                    buf.push_trailing_sep();
+                }
+            }
+        }
+        buf
+    }
 
+    #[inline]
+    fn os_path(&self) -> Result<OSPath, NameTooLong> {
+        let mut path = OSPath::from(self.slice());
+        bun_paths::to_native_in_place(path.as_mut_slice());
+        path.check_len()
+    }
+
+    #[inline]
+    fn os_path_kernel32(&self, syscall: bun_sys::Tag) -> bun_sys::Maybe<OSPath> {
+        let sliced = self.slice();
+        #[cfg(not(windows))]
+        {
+            let _ = syscall;
+            Ok(OSPath::from(sliced))
+        }
         #[cfg(windows)]
         {
-            // Only take the fast path for paths that can exist on NT at
-            // all (≤ ~32757 UTF-16 units). That bounds the `\\?\`-prefixed
-            // copy below in bytes too (≤ 3×32757 + 5 < MAX_PATH_BYTES);
-            // the cwd-join branch of `resolve_cwd_with_external_buf_z`
-            // prepends the cwd's filesystem root — arbitrarily long for UNC
-            // cwds — and bounds-checks internally, surfacing NameTooLong.
-            // Anything over-long falls through to the plain copy at the
-            // bottom, which fits without the prefix (or takes the too-long
-            // fallback) and fails at the syscall.
-            if bun_paths::is_absolute(sliced) && strings::fits_in_wide_path_buffer(sliced) {
-                if sliced.len() > 2
-                    && bun_paths::is_drive_letter(sliced[0])
-                    && sliced[1] == b':'
-                    && bun_paths::is_sep_any(sliced[2])
-                {
-                    // Add the long path syntax. This affects most of node:fs
-                    // Normalize the path directly into buf without an intermediate
-                    // buffer. The input (sliced) already has a drive letter, so
-                    // resolveCWDWithExternalBufZ would just memcpy it, making the
-                    // temporary allocation unnecessary.
-                    buf[0..4].copy_from_slice(&bun_sys::windows::LONG_PATH_PREFIX_U8);
-                    let n = bun_paths::resolve_path::normalize_buf::<bun_paths::platform::Windows>(
-                        sliced,
-                        &mut buf[4..],
-                    )
-                    .len();
-                    buf[4 + n] = 0;
-                    // SAFETY: buf[4+n] == 0 written above.
-                    return ZStr::from_buf(&buf[..], 4 + n);
-                }
-                // reshaped for borrowck — capture the length so
-                // the `Ok` borrow ends at the match, then re-derive.
-                let resolved_len = match bun_paths::resolve_path::PosixToWinNormalizer::resolve_cwd_with_external_buf_z(buf, sliced) {
-                    Ok(res) => Some(res.len()),
-                    // The cwd root + path don't fit `buf` (UNC cwds can push
-                    // a near-MAX_PATH_BYTES path over); fall through to the
-                    // plain copy / too-long handling below.
-                    Err(bun_paths::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG)) => None,
-                    Err(e) => panic!("Error while resolving path: {e:?}"),
-                };
-                if let Some(len) = resolved_len {
-                    // SAFETY: `resolve_cwd_with_external_buf_z` wrote the NUL
-                    // at `buf[len]`.
-                    return ZStr::from_buf(&buf[..], len);
-                }
-            }
-        }
-
-        if sliced.is_empty() {
-            if !FORCE {
-                return ZStr::EMPTY;
-            }
-
-            buf[0] = 0;
-            // SAFETY: buf[0] == 0 written above.
-            return ZStr::from_buf(&buf[..], 0);
-        }
-
-        if !FORCE {
-            if sliced[sliced.len() - 1] == 0 {
-                // SAFETY: last byte is NUL.
-                return ZStr::from_slice_with_nul(sliced);
-            }
-        }
-
-        if sliced.len() >= buf.len() {
-            bun_core::debug_warn!(
-                "path too long: {} bytes exceeds PathBuffer capacity of {}\n",
-                sliced.len(),
-                buf.len()
+            let is_device = matches!(
+                *sliced,
+                [b'/' | b'\\', b'/' | b'\\', b'.' | b'?', b'/' | b'\\', ..]
             );
-            if !FORCE {
-                return ZStr::EMPTY;
+            let mut path = match is_device || sliced.is_empty() {
+                true => Path::from(sliced),
+                false => Path::join(&[sliced]),
+            };
+            let keeps_sep = is_device
+                || bun_paths::root(&path).len() == path.len()
+                || bun_paths::has_leading_sep(sliced) && sliced.ends_with(b"\\");
+            if !keeps_sep {
+                path.truncate(bun_paths::without_trailing_sep(&path).len());
             }
-
-            buf[0] = 0;
-            // SAFETY: buf[0] == 0 written above.
-            return ZStr::from_buf(&buf[..], 0);
-        }
-
-        buf[..sliced.len()].copy_from_slice(sliced);
-        buf[sliced.len()] = 0;
-        // SAFETY: buf[sliced.len()] == 0 written above.
-        ZStr::from_buf(&buf[..], sliced.len())
-    }
-
-    #[inline]
-    fn slice_z<'a>(&'a self, buf: &'a mut PathBuffer) -> &'a ZStr {
-        self.slice_z_with_force_copy::<false>(buf)
-    }
-
-    #[cfg(windows)]
-    #[inline]
-    fn slice_w<'a>(&'a self, buf: &'a mut WPathBuffer) -> Result<&'a WStr, NameTooLong> {
-        let sliced = self.slice();
-        if !strings::fits_in_wide_path_buffer(sliced) {
-            return Err(NameTooLong);
-        }
-        Ok(strings::paths::to_w_path(buf, sliced))
-    }
-
-    #[inline]
-    fn os_path<'a>(&'a self, buf: &'a mut OSPathBuffer) -> Result<&'a OSPathSliceZ, NameTooLong> {
-        #[cfg(windows)]
-        {
-            return self.slice_w(buf);
-        }
-        #[cfg(not(windows))]
-        {
-            Ok(self.slice_z_with_force_copy::<false>(buf))
-        }
-    }
-
-    #[inline]
-    fn os_path_kernel32<'a>(
-        &'a self,
-        buf: &'a mut PathBuffer,
-    ) -> Result<&'a OSPathSliceZ, NameTooLong> {
-        #[cfg(windows)]
-        {
-            let s = self.slice();
-            let mut b = bun_paths::path_buffer_pool::get();
-            // RAII guard puts back on Drop.
-
-            // Device paths (\\.\, \\?\) and NT object paths (\??\) should not be normalized
-            // because the "." in \\.\pipe\name would be incorrectly stripped as a "current directory" component.
-            if s.len() >= 4
-                && bun_paths::is_sep_any(s[0])
-                && bun_paths::is_sep_any(s[1])
-                && (s[2] == b'.' || s[2] == b'?')
-                && bun_paths::is_sep_any(s[3])
-            {
-                if !strings::fits_in_wide_path_buffer(s) {
-                    return Err(NameTooLong);
-                }
-                // The PathBuffer doc comment says why the buffer is aligned in practice.
-                let buf_u16 = bun_core::cast_slice_mut::<u8, u16>(&mut buf[..]);
-                return Ok(strings::to_kernel32_path(buf_u16, s));
-            }
-            if !s.is_empty() && bun_paths::is_sep_any(s[0]) {
-                // Bail before the cwd resolution + normalization below write
-                // into fixed u8 buffers: UNC-shaped inputs pass through the
-                // resolver untouched and can reach `normalize_buf` at full
-                // MAX_PATH_BYTES length, whose root handling writes one past
-                // the input length.
-                if !strings::fits_in_wide_path_buffer(s) {
-                    return Err(NameTooLong);
-                }
-                // `buf` is the scratch for cwd-resolution; `b` is the pooled
-                // scratch for normalisation; final wide path lands back in `buf`.
-                let resolve = match bun_paths::resolve_path::PosixToWinNormalizer::resolve_cwd_with_external_buf(
-                    buf, s,
-                ) {
-                    Ok(r) => r,
-                    // The cwd root + path don't fit the resolution buffer
-                    // (UNC cwds can push a near-MAX_PATH_BYTES path over) —
-                    // such a path can't exist on NT.
-                    Err(bun_paths::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG)) => return Err(NameTooLong),
-                    Err(e) => panic!("Error while resolving path: {e:?}"),
-                };
-                let normal = bun_paths::resolve_path::normalize_buf::<bun_paths::platform::Windows>(
-                    resolve,
-                    &mut b[..],
-                );
-                if !strings::fits_in_wide_path_buffer(normal) {
-                    return Err(NameTooLong);
-                }
-                // `resolve`'s borrow of `buf` ended at the line above (NLL).
-                let buf_u16 = bun_core::cast_slice_mut::<u8, u16>(&mut buf[..]);
-                return Ok(strings::to_kernel32_path(buf_u16, normal));
-            }
-            // Handle "." specially since normalizeStringBuf strips it to an empty string
-            if s.len() == 1 && s[0] == b'.' {
-                let buf_u16 = bun_core::cast_slice_mut::<u8, u16>(&mut buf[..]);
-                return Ok(strings::to_kernel32_path(buf_u16, b"."));
-            }
-            let normal = bun_paths::resolve_path::normalize_string_buf::<
-                true,
-                bun_paths::platform::Windows,
-                false,
-            >(s, &mut b[..]);
-            if !strings::fits_in_wide_path_buffer(normal) {
-                return Err(NameTooLong);
-            }
-            let buf_u16 = bun_core::cast_slice_mut::<u8, u16>(&mut buf[..]);
-            return Ok(strings::to_kernel32_path(buf_u16, normal));
-        }
-
-        #[cfg(not(windows))]
-        {
-            Ok(self.slice_z_with_force_copy::<false>(buf))
+            path.add_current_drive();
+            bun_sys::long_path(&path, syscall).map_err(|err| err.with_path(sliced))
         }
     }
 
@@ -1142,7 +944,7 @@ impl PathLikeExt for PathLike<'_> {
                 from_string(str)?
             }
             _ => {
-                if let Some(domurl) = jsc::DOMURL::cast(arg) {
+                if let Some(domurl) = jsc::DOMURL::cast(&arg) {
                     use jsc::dom_url::ToFileSystemPathError;
                     let str = match domurl.file_system_path() {
                         Ok(s) => s,
@@ -1212,12 +1014,13 @@ pub(crate) enum RelativePaths {
 
 /// The system resolves a relative path against its own working directory, which is never a folder of the executable.
 fn join_onto_working_directory_in_executable(path: &[u8]) -> Option<Vec<u8>> {
-    use bun_paths::resolve_path::{self, platform};
     let directory = bun_core::working_directory_in_executable()?;
     if path.is_empty() || bun_paths::is_absolute(path) || strings::contains_char(path, 0) {
         return None;
     }
-    Some(resolve_path::join_abs_string::<platform::Auto>(directory, &[path]).to_vec())
+    let mut joined = Path::resolve(&[directory, path]);
+    joined.copy_trailing_sep_from(path);
+    Some(joined.to_vec())
 }
 
 /// Whether `find_path_meant` may find another path than the one that is written.
@@ -1370,7 +1173,8 @@ impl Valid {
 
 pub(crate) struct VectorArrayBuffer {
     pub value: JSValue,
-    pub(crate) buffers: Vec<PlatformIoVec>,
+    /// Initialized bytes, which live as long as `self`.
+    buffers: Vec<IoVecMut<'static>>,
     /// The collected elements, in order. Rooted (and their backing stores
     /// pinned), along with `value`, from `from_js(.., pin: true)` until drop.
     pub(crate) views: Vec<JSValue>,
@@ -1429,12 +1233,10 @@ unsafe extern "C" fn append_buffer_span(
     // `Bun__JSArray__collectBufferSpans` by `from_js` below, alive for the
     // duration of the call.
     let out = unsafe { &mut *ctx.cast::<VectorArrayBuffer>() };
-    let slice: &mut [u8] = if data.is_null() || byte_len == 0 {
-        &mut []
+    let (data, byte_len) = if data.is_null() || byte_len == 0 {
+        (core::ptr::dangling_mut(), 0)
     } else {
-        // SAFETY: `data..data + byte_len` is the byte range of `element`'s
-        // backing store, valid and unaliased for the duration of the callback.
-        unsafe { std::slice::from_raw_parts_mut(data, byte_len) }
+        (data, byte_len)
     };
     if is_wasm_memory {
         out.wasm.push(WasmElement {
@@ -1443,7 +1245,9 @@ unsafe extern "C" fn append_buffer_span(
             native: None,
         });
     }
-    out.buffers.push(bun_sys::platform_iovec_create(slice));
+    // SAFETY: the backing store of `element`. It is pinned, or no JS runs before the I/O. See `from_js`.
+    out.buffers
+        .push(unsafe { IoVecMut::from_raw(data, byte_len) });
     out.views.push(element);
 }
 
@@ -1510,8 +1314,10 @@ impl VectorArrayBuffer {
                         return Err(global_object.throw_out_of_memory());
                     };
                     let mut bytes: jsc::ArrayBuffer = *pinned;
+                    let bytes = bytes.byte_slice_mut();
+                    // SAFETY: `pinned` keeps the bytes until `write_back`, which clears `buffers`.
                     out.buffers[element.index] =
-                        bun_sys::platform_iovec_create(bytes.byte_slice_mut());
+                        unsafe { IoVecMut::from_raw(bytes.as_mut_ptr(), bytes.len()) };
                     element.native = Some(pinned);
                 }
                 Ok(out)
@@ -1525,20 +1331,30 @@ impl VectorArrayBuffer {
         }
     }
 
+    pub(crate) fn writable(&self) -> &[IoVecMut<'_>] {
+        &self.buffers
+    }
+
+    pub(crate) fn readable(&self) -> &[IoVec<'_>] {
+        // SAFETY: see `buffers`.
+        unsafe { IoVecMut::assume_init(&self.buffers) }
+    }
+
     /// Runs on the JS thread after a read of `bytes_read` bytes, which filled the spans in order.
     /// See [`PinnedArrayBuffer::write_back`].
     pub(crate) fn write_back(&mut self, bytes_read: usize) {
         let (mut start, mut counted) = (0, 0);
-        for element in &mut self.wasm {
+        for mut element in self.wasm.drain(..) {
             start += self.buffers[counted..element.index]
                 .iter()
-                .map(bun_sys::platform_iovec_len)
+                .map(IoVecMut::size)
                 .sum::<usize>();
             counted = element.index;
             if let Some(pinned) = &mut element.native {
                 pinned.write_back(bytes_read.saturating_sub(start));
             }
         }
+        self.buffers.clear();
     }
 }
 

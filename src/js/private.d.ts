@@ -843,7 +843,7 @@ declare namespace $Node {
     onResolve: Map<string, [RegExp, BundlerPlugin.OnResolveCallback][]> | undefined;
     promises: Promise<unknown>[] | undefined;
     $onEndCallbacks: BundlerPlugin.OnEndCallback[] | undefined;
-    /** `internalID`: the address of the native request, as a double. */
+    /** `internalID`: the request's `BundlerPlugin::RequestID`. */
     onLoadAsync(
       internalID: number,
       sourceCode: string | ArrayBufferView | ArrayBuffer | null,
@@ -1563,6 +1563,7 @@ interface $BunModules {
   "internal/trace_event_recorder": $ModuleValue<typeof import("./internal/trace_event_recorder")>;
   "internal/trace_events": $ModuleValue<typeof import("./internal/trace_events")>;
   "internal/tty": $ModuleValue<typeof import("./internal/tty")>;
+  "internal/undici_channels": $ModuleValue<typeof import("./internal/undici_channels")>;
   "internal/url": $ModuleValue<typeof import("./internal/url")>;
   "internal/util/colors": $ModuleValue<typeof import("./internal/util/colors")>;
   "internal/util/comparisons": $ModuleValue<typeof import("./internal/util/comparisons")>;

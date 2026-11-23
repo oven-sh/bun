@@ -67,6 +67,10 @@ pub(crate) fn format_with_marks<'a>(
 }
 
 impl Scratch {
+    pub(crate) fn outcome(&self) -> super::printer::Outcome {
+        self.printer.outcome
+    }
+
     /// Returns the offsets of the cursor marks in the last printed text.
     pub(crate) fn marks(&self) -> [Option<u32>; 2] {
         self.printer.marks
@@ -119,7 +123,8 @@ pub(crate) fn write_with<'a>(
     scratch: &mut Scratch,
     write: impl FnOnce(&mut Formatter<'a>),
 ) -> Result<Interned, FormatError> {
-    let buffers = std::mem::take(&mut scratch.formatter);
+    let mut buffers = std::mem::take(&mut scratch.formatter);
+    buffers.make_room_for_document_of(source);
     let mut formatter = Formatter::new(context, source, buffers);
     write(&mut formatter);
     finish(formatter, scratch)

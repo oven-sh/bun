@@ -701,7 +701,14 @@ export function createOnWarning(
     // Runtime.consoleAPICalled, and a throwing listener there is surfaced via emitWarning,
     // so console.error would re-enter and loop. Read process.stderr per call (like Node) so
     // a reassigned process.stderr is honored and stderr is not materialized when redirected.
-    processObject.stderr.write(message + "\n");
+    const { stderr } = processObject;
+    const onConsoleError = require("internal/shared").builtinChannel("console.error");
+    if (onConsoleError.hasSubscribers) {
+      const args = [message];
+      onConsoleError.publish(args);
+      message = require("internal/util/inspect").format.$apply(undefined, args);
+    }
+    stderr.write(message + "\n");
   }
 
   interface ProcessWarning extends Error {
@@ -730,7 +737,6 @@ export function createOnWarning(
     }
     const detail = warning.detail;
     if (typeof detail === "string") msg += `\n${detail}`;
-    writeOut(msg);
     if (!trace && !traceWarningHelperShown) {
       traceWarningHelperShown = true;
       const argv0 = processObject.argv0 || "node";
@@ -742,8 +748,9 @@ export function createOnWarning(
           : (process.platform === "win32"
               ? $bindgen("node_path.bind.ts", "basenameWin32")
               : $bindgen("node_path.bind.ts", "basenamePosix"))(argv0);
-      writeOut(`(Use \`${program} --trace-warnings ...\` to show where the warning was created)`);
+      msg += `\n(Use \`${program} --trace-warnings ...\` to show where the warning was created)`;
     }
+    writeOut(msg);
   };
 }
 

@@ -1,11 +1,9 @@
 #include "config.h"
 #include "JSWasmStreamingCompiler.h"
 
-#include "DOMClientIsoSubspaces.h"
-#include "DOMIsoSubspaces.h"
 #include "JSDOMBinding.h"
 #include "JSDOMOperation.h"
-#include <JavaScriptCore/HeapAnalyzer.h>
+#include "JSDOMPrototype.h"
 
 #include "ErrorCode.h"
 
@@ -15,55 +13,12 @@ namespace WebCore {
 
 using namespace JSC;
 
-// Define the toWrapped template function for WasmStreamingCompiler
-template<typename ExceptionThrower>
-Wasm::StreamingCompiler* toWrapped(JSGlobalObject& lexicalGlobalObject, ExceptionThrower&& exceptionThrower, JSValue value)
-{
-    auto& vm = getVM(&lexicalGlobalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* impl = JSWasmStreamingCompiler::toWrapped(vm, value);
-    if (!impl) [[unlikely]]
-        exceptionThrower(lexicalGlobalObject, scope);
-    return impl;
-}
-
 static JSC_DECLARE_HOST_FUNCTION(jsWasmStreamingCompilerPrototypeFunction_addBytes);
 static JSC_DECLARE_HOST_FUNCTION(jsWasmStreamingCompilerPrototypeFunction_finalize);
 static JSC_DECLARE_HOST_FUNCTION(jsWasmStreamingCompilerPrototypeFunction_fail);
 static JSC_DECLARE_HOST_FUNCTION(jsWasmStreamingCompilerPrototypeFunction_cancel);
 
-class JSWasmStreamingCompilerPrototype final : public JSC::JSNonFinalObject {
-public:
-    using Base = JSC::JSNonFinalObject;
-    static JSWasmStreamingCompilerPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
-    {
-        JSWasmStreamingCompilerPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSWasmStreamingCompilerPrototype))) JSWasmStreamingCompilerPrototype(vm, globalObject, structure);
-        ptr->finishCreation(vm);
-        return ptr;
-    }
-
-    DECLARE_INFO;
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSWasmStreamingCompilerPrototype, Base);
-        return &vm.plainObjectSpace();
-    }
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
-    }
-
-private:
-    JSWasmStreamingCompilerPrototype(JSC::VM& vm, JSC::JSGlobalObject*, JSC::Structure* structure)
-        : JSC::JSNonFinalObject(vm, structure)
-    {
-    }
-
-    void finishCreation(JSC::VM&);
-};
-
-STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSWasmStreamingCompilerPrototype, JSWasmStreamingCompilerPrototype::Base);
+using JSWasmStreamingCompilerPrototype = JSDOMPrototype<JSWasmStreamingCompiler>;
 
 static const HashTableValue JSWasmStreamingCompilerPrototypeTableValues[] = {
     { "addBytes"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWasmStreamingCompilerPrototypeFunction_addBytes, 1 } },
@@ -72,9 +27,9 @@ static const HashTableValue JSWasmStreamingCompilerPrototypeTableValues[] = {
     { "cancel"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWasmStreamingCompilerPrototypeFunction_cancel, 0 } }
 };
 
-const ClassInfo JSWasmStreamingCompilerPrototype::s_info = { "WasmStreamingCompiler"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSWasmStreamingCompilerPrototype) };
+template<> const ClassInfo JSWasmStreamingCompilerPrototype::s_info = { "WasmStreamingCompiler"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSWasmStreamingCompilerPrototype) };
 
-void JSWasmStreamingCompilerPrototype::finishCreation(VM& vm)
+template<> void JSWasmStreamingCompilerPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     Bun::reifyStaticPropertyTable(vm, JSWasmStreamingCompiler::info(), JSWasmStreamingCompilerPrototypeTableValues, *this);
@@ -83,33 +38,9 @@ void JSWasmStreamingCompilerPrototype::finishCreation(VM& vm)
 
 const ClassInfo JSWasmStreamingCompiler::s_info = { "WasmStreamingCompiler"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSWasmStreamingCompiler) };
 
-JSWasmStreamingCompiler::JSWasmStreamingCompiler(Structure* structure, JSDOMGlobalObject& globalObject, Ref<Wasm::StreamingCompiler>&& impl)
-    : JSDOMWrapper<Wasm::StreamingCompiler>(structure, globalObject, WTF::move(impl))
-{
-}
-
-void JSWasmStreamingCompiler::finishCreation(VM& vm)
-{
-    Base::finishCreation(vm);
-    ASSERT(inherits(info()));
-}
-
 JSObject* JSWasmStreamingCompiler::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    auto* structure = JSWasmStreamingCompilerPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype());
-    structure->setMayBePrototype(true);
-    return JSWasmStreamingCompilerPrototype::create(vm, &globalObject, structure);
-}
-
-JSObject* JSWasmStreamingCompiler::prototype(VM& vm, JSDOMGlobalObject& globalObject)
-{
-    return getDOMPrototype<JSWasmStreamingCompiler>(vm, globalObject);
-}
-
-void JSWasmStreamingCompiler::destroy(JSCell* cell)
-{
-    auto* thisObject = static_cast<JSWasmStreamingCompiler*>(cell);
-    thisObject->JSWasmStreamingCompiler::~JSWasmStreamingCompiler();
+    return JSWasmStreamingCompilerPrototype::create(vm, globalObject, globalObject.objectPrototype());
 }
 
 static inline EncodedJSValue jsWasmStreamingCompilerPrototypeFunction_addBytesBody(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame, typename IDLOperation<JSWasmStreamingCompiler>::ClassParameter castedThis)
@@ -189,35 +120,6 @@ static inline EncodedJSValue jsWasmStreamingCompilerPrototypeFunction_cancelBody
 JSC_DEFINE_HOST_FUNCTION(jsWasmStreamingCompilerPrototypeFunction_cancel, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     return IDLOperation<JSWasmStreamingCompiler>::call<jsWasmStreamingCompilerPrototypeFunction_cancelBody>(*lexicalGlobalObject, *callFrame, "cancel"_s);
-}
-
-GCClient::IsoSubspace* JSWasmStreamingCompiler::subspaceForImpl(VM& vm)
-{
-    return WebCore::subspaceForImpl<JSWasmStreamingCompiler, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForWasmStreamingCompiler, m_subspaceForWasmStreamingCompiler));
-}
-
-void JSWasmStreamingCompiler::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
-{
-    auto* thisObject = uncheckedDowncast<JSWasmStreamingCompiler>(cell);
-    analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
-    Base::analyzeHeap(cell, analyzer);
-}
-
-JSValue toJSNewlyCreated(JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<Wasm::StreamingCompiler>&& impl)
-{
-    return createWrapper<Wasm::StreamingCompiler>(globalObject, WTF::move(impl));
-}
-
-JSValue toJS(JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, Wasm::StreamingCompiler& impl)
-{
-    return wrap(lexicalGlobalObject, globalObject, impl);
-}
-
-Wasm::StreamingCompiler* JSWasmStreamingCompiler::toWrapped(VM& vm, JSValue value)
-{
-    if (auto* wrapper = dynamicDowncast<JSWasmStreamingCompiler>(value))
-        return &wrapper->wrapped();
-    return nullptr;
 }
 
 }

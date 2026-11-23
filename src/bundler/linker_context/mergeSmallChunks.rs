@@ -29,7 +29,7 @@ pub(crate) fn part_has_no_side_effects(part: &bun_ast::Part) -> bool {
         })
 }
 
-impl LinkerContext<'_> {
+impl LinkerContext<'_, '_> {
     /// None of the file's live parts run anything at the top level:
     /// declarations only, `"sideEffects": false`, or a lazily initialized
     /// `__esm` / `__commonJS` wrapper. An entry point never qualifies (its
@@ -764,7 +764,7 @@ pub(crate) fn merge_small_chunks(
     {
         return Ok(());
     }
-    let css_asts = this.graph.ast.items_css();
+    let css_asts = &this.parse_graph().css_asts;
     let ast_targets = this.graph.ast.items_target();
     let import_records = this.graph.ast.items_import_records();
     let parts = this.graph.ast.items_parts();

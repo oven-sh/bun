@@ -30,7 +30,7 @@ import {
   tempDir,
 } from "harness";
 import { constants as osConstants, type as osType, tmpdir } from "os";
-import { join, sep } from "path";
+import { delimiter, join, parse, sep } from "path";
 import { TestRegistry } from "registry";
 import { pathToFileURL } from "url";
 
@@ -561,6 +561,26 @@ snapshots:
 
     await expectMigrationKeepsTrust(env, packageDir, "pnpm-lock.yaml");
   });
+});
+
+test.concurrent("a bundler option in bunfig.toml is not validated before a lifecycle script", async () => {
+  using dir = tempDir("lifecycle-bundler-option", {
+    "bunfig.toml": `external = ["a*b*"]`,
+    "package.json": JSON.stringify({ dependencies: { dep: "file:./dep" }, trustedDependencies: ["dep"] }),
+    "dep/package.json": JSON.stringify({ name: "dep", scripts: { postinstall: "echo ran > ran.txt" } }),
+  });
+  await using proc = spawn({
+    cmd: [bunExe(), "install", "--linker=hoisted"],
+    cwd: String(dir),
+    env: baseEnv,
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+  expect(stderr).not.toContain("error:");
+  expect(existsSync(join(String(dir), "node_modules", "dep", "ran.txt"))).toBe(true);
+  expect(exitCode).toBe(0);
 });
 
 test.concurrent("node-gyp shim directory added to lifecycle script PATH gets a randomized name", async () => {
@@ -2360,14 +2380,17 @@ describe("the trusted set", () => {
       expect(exitCode).toBe(0);
     });
 
-    test.concurrent.skipIf(isWindows)("keeps commands in PATH", async () => {
+    test.concurrent.skipIf(isWindows).each([
+      ["keeps commands in PATH", "system"],
+      ["keeps commands in a PATH directory whose name ends with a backslash", "system\\"],
+    ])("%s", async (_, system) => {
       using ctx = await project("hoisted", {
         ...projectFiles(true),
-        "system/what-bin": "#!/bin/sh\nprintf system > what-bin.txt\n",
+        [`${system}/what-bin`]: "#!/bin/sh\nprintf system > what-bin.txt\n",
       });
-      await chmod(join(ctx.packageDir, "system", "what-bin"), 0o755);
+      await chmod(join(ctx.packageDir, system, "what-bin"), 0o755);
       const { err, exitCode } = await bun(ctx, ["install"], {
-        PATH: `${join(ctx.packageDir, "system")}:${ctx.env.PATH}`,
+        PATH: `${join(ctx.packageDir, system)}:${ctx.env.PATH}`,
       });
       expect(err).not.toContain("error:");
       expect(await readOutput(ctx, "hoisted")).toBe("system");
@@ -2422,6 +2445,29 @@ describe("the trusted set", () => {
     expect(await file(env.RUNS).text()).toBe(".");
     expect(exitCode).toBe(0);
   });
+
+  // `C:` is the current directory of that drive, not `C:\`.
+  test.concurrent(
+    "a dependency's script gets the entries of PATH without a trailing separator, but for a root",
+    async () => {
+      const printPath = `${bunExe()} -e 'await Bun.write("path.txt", String(process.env.PATH))'`;
+      using ctx = await project("hoisted", {
+        "package.json": { name: "foo", dependencies: { native: "file:./native" }, trustedDependencies: ["native"] },
+        "native/package.json": { name: "native", version: "1.0.0", scripts: { postinstall: printPath } },
+      });
+      const { root } = parse(ctx.packageDir);
+      const extra = join(ctx.packageDir, "extra");
+
+      const { err, exitCode } = await bun(ctx, ["install"], {
+        PATH: [ctx.env.PATH, root, extra + sep].join(delimiter),
+      });
+
+      expect(err).not.toContain("error:");
+      const path = await textOf(ctx.packageDir, "node_modules", "native", "path.txt");
+      expect(path!.split(delimiter)).toEqual(expect.arrayContaining([root, extra]));
+      expect(exitCode).toBe(0);
+    },
+  );
 
   // A working directory keeps the case it was typed in, and `bun run` writes PATH from it.
   test.concurrent.skipIf(!isWindows)(

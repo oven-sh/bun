@@ -1,12 +1,12 @@
-# The generator that unmatchedOf passes is only stepped by the loop in firstOf, which walks its body. What its function's generators inherit is asked of the function, so the generator is made where the copy leaves for its call alone.
+# The generator that descentOf passes is only stepped by the loop in totalOf, which walks its body. What its function's generators inherit is asked of the function, so the generator is made where the copy leaves for its call alone.
 # -- source: main.ts
 # declare const sink: any;
-# function firstOf(iter: any): any { if (iter !== undefined) { for (const value of iter) return value; } return undefined; }
-# function* unmatched(source: number[], target: number[]): any { for (const wanted of target) if (!source.includes(wanted)) yield wanted; }
-# function unmatchedOf(source: number[], target: number[]): any { return firstOf(unmatched(source, target)); }
-# sink({ unmatched, unmatchedOf });
+# function totalOf(drops: any): any { let total = 0; for (const drop of drops) total += drop; return total; }
+# function* downhill(heights: number[]): any { let above = heights[0]!; for (const height of heights) { if (height < above) yield above - height; above = height; } }
+# function descentOf(heights: number[]): any { return totalOf(downhill(heights)); }
+# sink({ downhill, descentOf });
 # -- end of source
-# f1 = firstOf, f2 = unmatched, f3 = unmatchedOf
+# f1 = totalOf, f2 = downhill, f3 = descentOf
 # RUN: walk f3:Body mechanisms=all
 # CHECK-LABEL: code f3:Body
 # CHECK-NOT: coroutine(f2)

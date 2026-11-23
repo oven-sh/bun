@@ -84,6 +84,11 @@ pub trait Host {
         None
     }
 
+    /// Whether `ref_` is `__rawTemplate` of the runtime, which the parser calls where a tagged template has text outside ASCII.
+    fn is_raw_template(&self, _ref: Ref) -> bool {
+        false
+    }
+
     /// Whether `ref_` is bound outside the function being compiled.
     fn is_module_level(&self, ref_: Ref) -> bool {
         self.symbols()
@@ -175,6 +180,8 @@ fn collect_body_directives(stmts: &[Stmt]) -> Vec<&[u8]> {
     for s in stmts {
         match &s.data {
             StmtData::SDirective(d) => out.push(d.value.slice()),
+            // A legal comment that the parser keeps does not end the prologue.
+            StmtData::SComment(_) => {}
             _ => break,
         }
     }

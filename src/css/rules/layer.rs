@@ -13,16 +13,6 @@ pub struct LayerName<'bump> {
     pub v: SmallList<&'bump [u8], 1>,
 }
 
-// Trait `Clone` (not just inherent `deep_clone`) so the bundler's
-// `Chunk::Layers::to_owned` can `deep_clone_with(|l| l.clone())`. Segments are
-// arena-borrowed `&[u8]` (Copy), so this is the same shallow
-// `SmallList` copy as `deep_clone`.
-impl Clone for LayerName<'_> {
-    fn clone(&self) -> Self {
-        LayerName { v: self.v.clone() }
-    }
-}
-
 impl<'bump> LayerName<'bump> {
     pub fn eql(&self, rhs: &LayerName) -> bool {
         if self.v.len() != rhs.v.len() {
@@ -108,11 +98,11 @@ impl fmt::Display for LayerName<'_> {
 pub struct LayerBlockRule<'bump, R> {
     /// PERF: null pointer optimizaiton, nullable
     /// The name of the layer to declare, or `None` to declare an anonymous layer.
-    pub name: Option<LayerName<'bump>>,
+    pub(crate) name: Option<LayerName<'bump>>,
     /// The rules within the `@layer` rule.
-    pub rules: CssRuleList<'bump, R>,
+    pub(crate) rules: CssRuleList<'bump, R>,
     /// The location of the rule in the source file.
-    pub loc: Location,
+    pub(crate) loc: Location,
 }
 
 impl<'bump, R> LayerBlockRule<'bump, R> {
@@ -136,17 +126,25 @@ impl<'bump, R> LayerBlockRule<'bump, R> {
         // #[cfg(feature = "sourcemap")]
         // dest.add_mapping(self.loc);
 
-        dest.write_str("@layer")?;
-        if let Some(name) = &self.name {
-            dest.write_char(b' ')?;
-            name.to_css(dest)?;
-        }
-
-        dest.block(|d| {
-            d.newline()?;
-            self.rules.to_css(d, ctx)
-        })
+        block_to_css(self.name.as_ref(), dest, |d| self.rules.to_css(d, ctx))
     }
+}
+
+pub(crate) fn block_to_css<'p>(
+    name: Option<&LayerName>,
+    dest: &mut Printer<'p>,
+    body: impl FnOnce(&mut Printer<'p>) -> Result<(), PrintErr>,
+) -> Result<(), PrintErr> {
+    dest.write_str("@layer")?;
+    if let Some(name) = name {
+        dest.write_char(b' ')?;
+        name.to_css(dest)?;
+    }
+
+    dest.block(|d| {
+        d.newline()?;
+        body(d)
+    })
 }
 
 /// A [@layer statement](https://drafts.csswg.org/css-cascade-5/#layer-empty) rule.
@@ -154,9 +152,9 @@ impl<'bump, R> LayerBlockRule<'bump, R> {
 /// See also [LayerBlockRule](LayerBlockRule).
 pub struct LayerStatementRule<'bump> {
     /// The layer names to declare.
-    pub names: SmallList<LayerName<'bump>, 1>,
+    pub(crate) names: SmallList<LayerName<'bump>, 1>,
     /// The location of the rule in the source file.
-    pub loc: Location,
+    pub(crate) loc: Location,
 }
 
 impl LayerStatementRule<'_> {
@@ -175,12 +173,16 @@ impl LayerStatementRule<'_> {
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         // #[cfg(feature = "sourcemap")]
         // dest.add_mapping(self.loc);
-        if self.names.len() > 0 {
-            dest.write_str("@layer ")?;
-            css::to_css::from_list(self.names.slice(), dest)?;
-            dest.write_char(b';')
-        } else {
-            dest.write_str("@layer;")
-        }
+        statement_to_css(self.names.slice(), dest)
+    }
+}
+
+pub fn statement_to_css(names: &[LayerName], dest: &mut Printer) -> Result<(), PrintErr> {
+    if !names.is_empty() {
+        dest.write_str("@layer ")?;
+        css::to_css::from_list(names, dest)?;
+        dest.write_char(b';')
+    } else {
+        dest.write_str("@layer;")
     }
 }

@@ -1,5 +1,4 @@
-use core::cell::{Cell, UnsafeCell};
-use core::ops::{Deref, DerefMut};
+use core::cell::Cell;
 
 pub const PIPE_READ_BUFFER_SIZE: usize = 256 * 1024;
 type PipeReadBuffer = [u8; PIPE_READ_BUFFER_SIZE];
@@ -7,14 +6,14 @@ type PipeReadBuffer = [u8; PIPE_READ_BUFFER_SIZE];
 /// Per-loop scratch for blocking pipe/file reads. Chunks are delivered straight out of it, and a consumer may run user code that starts a nested read while still parsing the chunk, so only one borrower on the thread may hold it at a time.
 pub struct PipeReadScratch {
     in_use: Cell<bool>,
-    buffer: UnsafeCell<Option<Box<PipeReadBuffer>>>,
+    buffer: Cell<Option<Box<PipeReadBuffer>>>,
 }
 
 impl PipeReadScratch {
     pub const fn new() -> Self {
         Self {
             in_use: Cell::new(false),
-            buffer: UnsafeCell::new(None),
+            buffer: Cell::new(None),
         }
     }
 
@@ -23,32 +22,28 @@ impl PipeReadScratch {
         if self.in_use.replace(true) {
             return None;
         }
-        Some(PipeReadScratchGuard(self))
+        Some(PipeReadScratchGuard {
+            scratch: self,
+            buffer: self.buffer.take(),
+        })
     }
 }
 
 /// Exclusive claim on the scratch; released on drop.
-pub struct PipeReadScratchGuard<'a>(&'a PipeReadScratch);
-
-impl Deref for PipeReadScratchGuard<'_> {
-    type Target = [u8];
-    #[inline]
-    fn deref(&self) -> &[u8] {
-        // SAFETY: `in_use` is set, so this guard is the only accessor of `buffer` until it drops.
-        unsafe { &(*self.0.buffer.get()).get_or_insert_with(bun_core::boxed_zeroed)[..] }
-    }
+pub struct PipeReadScratchGuard<'a> {
+    scratch: &'a PipeReadScratch,
+    buffer: Option<Box<PipeReadBuffer>>,
 }
 
-impl DerefMut for PipeReadScratchGuard<'_> {
-    #[inline]
-    fn deref_mut(&mut self) -> &mut [u8] {
-        // SAFETY: as in `deref`.
-        unsafe { &mut (*self.0.buffer.get()).get_or_insert_with(bun_core::boxed_zeroed)[..] }
+impl PipeReadScratchGuard<'_> {
+    pub fn as_mut_slice(&mut self) -> &mut [u8] {
+        &mut self.buffer.get_or_insert_with(bun_core::boxed_zeroed)[..]
     }
 }
 
 impl Drop for PipeReadScratchGuard<'_> {
     fn drop(&mut self) {
-        self.0.in_use.set(false);
+        self.scratch.buffer.set(self.buffer.take());
+        self.scratch.in_use.set(false);
     }
 }

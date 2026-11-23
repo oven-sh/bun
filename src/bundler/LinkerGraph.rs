@@ -6,7 +6,7 @@ use bun_ast::base::RefTag;
 use bun_ast::server_component_boundary;
 use bun_ast::symbol;
 use bun_ast::{DeclaredSymbol, DeclaredSymbolList, Dependency, Symbol};
-use bun_collections::{AutoBitSet, DynamicBitSetUnmanaged as BitSet, MultiArrayList, VecExt};
+use bun_collections::{AutoBitSet, DynamicBitSet as BitSet, MultiArrayList, VecExt};
 use bun_core::RawSlice;
 
 use crate::IndexStringMap::IndexStringMap;
@@ -253,13 +253,29 @@ pub struct LinkerGraph<'a> {
     /// This is for cross-module inlining of TypeScript enum constants
     pub(crate) ts_enums: bun_ast::ast_result::TsEnumsMap,
     pub(crate) import_member_bindings: bun_ast::ast_result::ImportMemberBindings,
+
+    /// The files to copy to the output directory, which `AdditionalFile::OutputFile` refers to.
+    pub(crate) additional_output_files: Vec<crate::options::OutputFile>,
+    /// Source index of the HTML file that each of `Graph::html_imports` stands for.
+    pub(crate) html_source_indices: Vec<u32>,
+}
+
+impl Drop for LinkerGraph<'_> {
+    fn drop(&mut self) {
+        // The slab-only `MultiArrayList::drop` does not drop these.
+        for bits in self.files.items_entry_bits_mut() {
+            if let AutoBitSet::Dynamic(bits) = bits {
+                drop(core::mem::take(bits));
+            }
+        }
+    }
 }
 
 // SAFETY: workers share `&LinkerGraph`. What is not `Sync` on its own:
 // - The `MultiArrayList`s. Workers write their columns through `split_raw()` and
-//   `items_raw()`, and each task writes only the rows of its own file or chunk.
+//   `ast.get()`, and each task writes only the rows of its own file or chunk. The gap:
+//   a file in two `internal_bake_dev` chunks has its import records written by both.
 //   Nothing writes `Part.scopes` or the `symbols` column of `ast` while workers run.
-// - The `BitSet`s, which workers only read.
 // - `Symbol.link`, a `Cell` that `follow()` writes only to shorten a chain.
 //   `LinkerContext::link()` shortens them all with `follow_all()` before workers
 //   follow any. The dev server skips `link()`: its links come from the parser and
@@ -289,6 +305,8 @@ impl<'a> LinkerGraph<'a> {
             is_scb_bitset: BitSet::default(),
             ts_enums: bun_ast::ast_result::TsEnumsMap::default(),
             import_member_bindings: bun_ast::ast_result::ImportMemberBindings::default(),
+            additional_output_files: Vec::new(),
+            html_source_indices: Vec::new(),
         }
     }
 }
@@ -297,7 +315,7 @@ impl<'a> LinkerGraph<'a> {
 // Symbol/part graph mutation surface needed by
 // `linker_context/scanImportsAndExports.rs` and `LinkerContext::do_step5`.
 //
-// Expressed as free fns over individual SoA column slices so callers that
+// Expressed over individual SoA column slices so callers that
 // already hold a `BundledAstColumnsMut` / `JSMetaColumnsMut` split-borrow
 // can hand in just the columns these touch without re-borrowing
 // `&mut LinkerGraph` (RUST_IDIOMS_AUDIT.md §3). The `&mut self` methods are
@@ -340,7 +358,7 @@ pub(crate) fn generate_new_symbol(
     ref_
 }
 
-fn top_level_symbol_to_parts<'a>(
+pub(crate) fn top_level_symbol_to_parts<'a>(
     top_level_symbol_to_parts_overlay: &'a [TopLevelSymbolToParts],
     top_level_symbols_to_parts: &'a [bundled_ast::TopLevelSymbolToParts],
     id: u32,
@@ -355,7 +373,7 @@ fn top_level_symbol_to_parts<'a>(
     &[]
 }
 
-fn add_part_to_file(
+pub(crate) fn add_part_to_file(
     parts: &mut [part::List<'_>],
     top_level_symbol_to_parts_overlay: &mut [TopLevelSymbolToParts],
     top_level_symbols_to_parts: &[bundled_ast::TopLevelSymbolToParts],
@@ -399,136 +417,21 @@ fn add_part_to_file(
     Ok(part_id)
 }
 
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn generate_symbol_import_and_use(
-    parts: &mut [part::List<'_>],
-    ast_flags: &mut [bundled_ast::Flags],
-    exports_ref: &[Ref],
-    module_ref: &[Ref],
-    top_level_symbols_to_parts: &[bundled_ast::TopLevelSymbolToParts],
-    imports_to_bind: &mut [js_meta::RefImportData],
-    top_level_symbol_to_parts_overlay: &[TopLevelSymbolToParts],
-    source_index: u32,
-    part_index: u32,
-    ref_: Ref,
-    use_count: u32,
-    source_index_to_import_from: Index,
-) -> Result<(), bun_alloc::AllocError> {
-    if use_count == 0 {
-        return Ok(());
-    }
-
-    let exports_ref_v = exports_ref[source_index as usize];
-    let module_ref_v = module_ref[source_index as usize];
-
-    // Mark this symbol as used by this part
-    {
-        let part: &mut Part = &mut parts[source_index as usize].as_mut_slice()[part_index as usize];
-        let uses_entry = part.symbol_uses.get_or_put(ref_)?;
-        if !uses_entry.found_existing {
-            *uses_entry.value_ptr = symbol::Use::unscoped(use_count);
-        } else {
-            uses_entry.value_ptr.merge(symbol::Use::unscoped(use_count));
-        }
-    }
-
-    if !exports_ref_v.is_empty() && ref_.eql(exports_ref_v) {
-        ast_flags[source_index as usize].insert(bundled_ast::Flags::USES_EXPORTS_REF);
-    }
-
-    if !module_ref_v.is_empty() && ref_.eql(module_ref_v) {
-        ast_flags[source_index as usize].insert(bundled_ast::Flags::USES_MODULE_REF);
-    }
-
-    // null ref shouldn't be there.
-    debug_assert!(!ref_.is_empty());
-
-    // Track that this specific symbol was imported
-    if source_index_to_import_from.get() != source_index {
-        imports_to_bind[source_index as usize].put(
-            ref_,
-            js_meta::ImportToBind {
-                data: ImportTracker {
-                    source_index: source_index_to_import_from,
-                    import_ref: ref_,
-                    ..Default::default()
-                },
-                ..Default::default()
-            },
-        )?;
-    }
-
-    // Pull in all parts that declare this symbol
-    let part_ids = top_level_symbol_to_parts(
-        top_level_symbol_to_parts_overlay,
-        top_level_symbols_to_parts,
-        source_index_to_import_from.get(),
-        ref_,
-    );
-    let dependencies =
-        &mut parts[source_index as usize].as_mut_slice()[part_index as usize].dependencies;
-    dependencies.extend(part_ids.iter().map(move |&part_id| Dependency {
-        source_index: source_index_to_import_from,
-        part_index: part_id,
-    }));
-    Ok(())
+/// The columns that say which part declares and which part uses a symbol.
+pub(crate) struct SymbolUseColumns<'s, 'a> {
+    pub(crate) parts: &'s mut [part::List<'a>],
+    pub(crate) ast_flags: &'s mut [bundled_ast::Flags],
+    pub(crate) exports_ref: &'s [Ref],
+    pub(crate) module_ref: &'s [Ref],
+    pub(crate) named_exports: &'s [bundled_ast::NamedExports],
+    pub(crate) top_level_symbols_to_parts: &'s [bundled_ast::TopLevelSymbolToParts],
+    pub(crate) top_level_symbol_to_parts_overlay: &'s mut [TopLevelSymbolToParts],
+    pub(crate) imports_to_bind: &'s mut [RefImportData],
 }
 
-impl<'a> LinkerGraph<'a> {
+impl SymbolUseColumns<'_, '_> {
     pub(crate) fn runtime_function(&self, name: &[u8]) -> Ref {
-        runtime_function(self.ast.items_named_exports(), name)
-    }
-
-    /// Shared-ref view of a symbol that is known to exist (the `Ref` was
-    /// produced by the symbol table itself). Thin wrapper over
-    /// [`symbol::Map::get_const`]; callers previously open-coded
-    /// `unsafe { &*graph.symbols.get(r).expect(..) }`.
-    #[inline]
-    pub(crate) fn symbol(&self, ref_: Ref) -> &Symbol {
-        self.symbols
-            .get_const(ref_)
-            .expect("infallible: ref in symbol table")
-    }
-
-    /// Mutable view of a symbol that is known to exist. Takes `&self` (not
-    /// `&mut self`): the linker mutates per-symbol fields (`link`,
-    /// `namespace_alias`, `import_item_status`, ...) through shared
-    /// `&LinkerContext`/`&LinkerGraph` paths while iterating disjoint graph
-    /// columns, mirroring the prior open-coded `unsafe { &mut *get(r) }`.
-    ///
-    /// # Safety
-    /// Caller must ensure no other live `&`/`&mut` borrow aliases the same
-    /// symbol slot for the returned reference's lifetime (the `&self` signature
-    /// alone cannot enforce this — two calls with the same `Ref` while both
-    /// results are live is UB). Mirrors the prior open-coded
-    /// `unsafe { &mut *get(r) }` call-site obligation.
-    #[inline]
-    #[allow(clippy::mut_from_ref)]
-    pub(crate) unsafe fn symbol_mut(&self, ref_: Ref) -> &mut Symbol {
-        // SAFETY: `ref_` was produced by this symbol table, so `get` is
-        // infallible and points at a live slot; caller guarantees the mutated
-        // slot is disjoint from any other borrow held at the call site.
-        unsafe {
-            &mut *self
-                .symbols
-                .get(ref_)
-                .expect("infallible: ref in symbol table")
-        }
-    }
-
-    pub(crate) fn generate_new_symbol(
-        &mut self,
-        source_index: u32,
-        kind: symbol::Kind,
-        original_name: &[u8],
-    ) -> Ref {
-        generate_new_symbol(
-            &mut self.symbols,
-            self.ast.items_module_scope_mut(),
-            source_index,
-            kind,
-            original_name,
-        )
+        runtime_function(self.named_exports, name)
     }
 
     pub(crate) fn generate_runtime_symbol_import_and_use(
@@ -558,6 +461,156 @@ impl<'a> LinkerGraph<'a> {
         )
     }
 
+    pub(crate) fn generate_symbol_import_and_use(
+        &mut self,
+        source_index: u32,
+        part_index: u32,
+        ref_: Ref,
+        use_count: u32,
+        source_index_to_import_from: Index,
+    ) -> Result<(), bun_alloc::AllocError> {
+        if use_count == 0 {
+            return Ok(());
+        }
+
+        let exports_ref_v = self.exports_ref[source_index as usize];
+        let module_ref_v = self.module_ref[source_index as usize];
+
+        // Mark this symbol as used by this part
+        {
+            let part: &mut Part =
+                &mut self.parts[source_index as usize].as_mut_slice()[part_index as usize];
+            let uses_entry = part.symbol_uses.get_or_put(ref_)?;
+            if !uses_entry.found_existing {
+                *uses_entry.value_ptr = symbol::Use::unscoped(use_count);
+            } else {
+                uses_entry.value_ptr.merge(symbol::Use::unscoped(use_count));
+            }
+        }
+
+        if !exports_ref_v.is_empty() && ref_.eql(exports_ref_v) {
+            self.ast_flags[source_index as usize].insert(bundled_ast::Flags::USES_EXPORTS_REF);
+        }
+
+        if !module_ref_v.is_empty() && ref_.eql(module_ref_v) {
+            self.ast_flags[source_index as usize].insert(bundled_ast::Flags::USES_MODULE_REF);
+        }
+
+        // null ref shouldn't be there.
+        debug_assert!(!ref_.is_empty());
+
+        // Track that this specific symbol was imported
+        if source_index_to_import_from.get() != source_index {
+            self.imports_to_bind[source_index as usize].put(
+                ref_,
+                js_meta::ImportToBind {
+                    data: ImportTracker {
+                        source_index: source_index_to_import_from,
+                        import_ref: ref_,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+            )?;
+        }
+
+        // Pull in all parts that declare this symbol
+        let part_ids = top_level_symbol_to_parts(
+            self.top_level_symbol_to_parts_overlay,
+            self.top_level_symbols_to_parts,
+            source_index_to_import_from.get(),
+            ref_,
+        );
+        let dependencies =
+            &mut self.parts[source_index as usize].as_mut_slice()[part_index as usize].dependencies;
+        dependencies.extend(part_ids.iter().map(move |&part_id| Dependency {
+            source_index: source_index_to_import_from,
+            part_index: part_id,
+        }));
+        Ok(())
+    }
+}
+
+/// See [`crate::LinkerContext::is_external_dynamic_import`].
+pub(crate) fn is_external_dynamic_import(
+    code_splitting: bool,
+    entry_point_kinds: &[entry_point::Kind],
+    record: &bun_ast::ImportRecord,
+    source_index: u32,
+) -> bool {
+    if !code_splitting || record.source_index.get() == source_index {
+        return false;
+    }
+    let crosses_chunk = match record.kind {
+        ImportKind::Dynamic => true,
+        ImportKind::Require => record
+            .flags
+            .contains(bun_ast::ImportRecordFlags::CROSS_CHUNK_REQUIRE),
+        _ => false,
+    };
+    crosses_chunk && entry_point_kinds[record.source_index.get() as usize].is_entry_point()
+}
+
+impl<'a> LinkerGraph<'a> {
+    pub(crate) fn runtime_function(&self, name: &[u8]) -> Ref {
+        runtime_function(self.ast.items_named_exports(), name)
+    }
+
+    /// Shared-ref view of a symbol that is known to exist (the `Ref` was
+    /// produced by the symbol table itself).
+    #[inline]
+    pub(crate) fn symbol(&self, ref_: Ref) -> &Symbol {
+        self.symbols
+            .get_const(ref_)
+            .expect("infallible: ref in symbol table")
+    }
+
+    pub(crate) fn generate_new_symbol(
+        &mut self,
+        source_index: u32,
+        kind: symbol::Kind,
+        original_name: &[u8],
+    ) -> Ref {
+        generate_new_symbol(
+            &mut self.symbols,
+            self.ast.items_module_scope_mut(),
+            source_index,
+            kind,
+            original_name,
+        )
+    }
+
+    fn symbol_use_columns(&mut self) -> SymbolUseColumns<'_, 'a> {
+        let ast = self.ast.split_mut();
+        let meta = self.meta.split_mut();
+        SymbolUseColumns {
+            parts: ast.parts,
+            ast_flags: ast.flags,
+            exports_ref: ast.exports_ref,
+            module_ref: ast.module_ref,
+            named_exports: ast.named_exports,
+            top_level_symbols_to_parts: ast.top_level_symbols_to_parts,
+            top_level_symbol_to_parts_overlay: meta.top_level_symbol_to_parts_overlay,
+            imports_to_bind: meta.imports_to_bind,
+        }
+    }
+
+    pub(crate) fn generate_runtime_symbol_import_and_use(
+        &mut self,
+        source_index: index::Int,
+        entry_point_part_index: Index,
+        name: &[u8],
+        count: u32,
+    ) -> Result<(), bun_alloc::AllocError> {
+        self.symbol_use_columns()
+            .generate_runtime_symbol_import_and_use(
+                source_index,
+                entry_point_part_index,
+                name,
+                count,
+            )
+    }
+
     pub(crate) fn add_part_to_file(
         &mut self,
         id: u32,
@@ -581,16 +634,7 @@ impl<'a> LinkerGraph<'a> {
         use_count: u32,
         source_index_to_import_from: Index,
     ) -> Result<(), bun_alloc::AllocError> {
-        let ast = self.ast.split_mut();
-        let meta = self.meta.split_mut();
-        generate_symbol_import_and_use(
-            ast.parts,
-            ast.flags,
-            ast.exports_ref,
-            ast.module_ref,
-            ast.top_level_symbols_to_parts,
-            meta.imports_to_bind,
-            meta.top_level_symbol_to_parts_overlay,
+        self.symbol_use_columns().generate_symbol_import_and_use(
             source_index,
             part_index,
             ref_,
@@ -614,32 +658,21 @@ impl<'a> LinkerGraph<'a> {
         &mut self,
         entry_points: &[Index],
         sources: &[bun_ast::Source],
-        server_component_boundaries: &server_component_boundary::List,
+        scb: &server_component_boundary::List,
         dynamic_import_entry_points: &[index::Int],
         entry_point_original_names: &IndexStringMap,
     ) -> Result<(), crate::Error> {
-        let scb = server_component_boundaries.slice();
         self.files.set_capacity(sources.len())?;
-        self.files.zero();
+        for _ in sources {
+            self.files.append_assume_capacity(File::default());
+        }
         self.files_live = BitSet::init_empty(sources.len())?;
-        // SAFETY: capacity reserved above; columns zeroed by `zero()`.
-        unsafe { self.files.set_len(sources.len()) };
-
-        // Note: `Slice<T>` caches raw column pointers and does not borrow
-        // `self.files`, so the `split_mut()` borrows (tied to the local
-        // `files_slice`) can stay live across other `&mut self.*` accesses
-        // below. The columns are not reallocated during `load`.
-        let mut files_slice = self.files.slice();
-        let files_cols = files_slice.split_mut();
-        let entry_point_kinds: &mut [entry_point::Kind] = files_cols.entry_point_kind;
-        entry_point_kinds.fill(entry_point::Kind::None);
+        let entry_point_kinds = self.files.items_entry_point_kind_mut();
 
         // Setup entry points
         {
             self.entry_points.set_capacity(
-                entry_points.len()
-                    + server_component_boundaries.list.len()
-                    + dynamic_import_entry_points.len(),
+                entry_points.len() + scb.list.len() + dynamic_import_entry_points.len(),
             )?;
             for i in entry_points {
                 let source = &sources[i.get() as usize];
@@ -840,7 +873,7 @@ impl<'a> LinkerGraph<'a> {
         Ok(())
     }
 
-    /// `clone_ast` left each
+    /// `create_linker_graph` left each
     /// `PartList`/import-record list with its allocator handle pointing at
     /// the per-worker `mi_heap` that built it; re-tag to `heap` (the
     /// bundle-thread arena) so linker-side `add_part_to_file` pushes call
@@ -952,13 +985,11 @@ impl<'a> LinkerGraph<'a> {
 pub struct File {
     pub entry_bits: AutoBitSet,
 
-    pub(crate) input_file: Index,
-
     /// This file is an entry point if and only if this is not ".none".
     /// Note that dynamically-imported files are allowed to also be specified by
     /// the user as top-level entry points, so some dynamically-imported files
     /// may be ".user_specified" instead of ".dynamic_import".
-    pub entry_point_kind: EntryPoint::Kind,
+    pub entry_point_kind: entry_point::Kind,
 
     /// If "entry_point_kind" is not ".none", this is the index of the
     /// corresponding entry point chunk.
@@ -975,11 +1006,9 @@ pub struct File {
 impl Default for File {
     fn default() -> Self {
         Self {
-            // Note: empty static-arm bitset; load() overwrites before any read.
             entry_bits: AutoBitSet::init_empty(0).expect("static AutoBitSet"),
-            input_file: Index::source(0u32),
             entry_point_kind: EntryPoint::Kind::None,
-            entry_point_chunk_index: u32::MAX,
+            entry_point_chunk_index: 0,
             line_offset_table: bun_sourcemap::line_offset_table::List::new_in(bun_alloc::AstAlloc),
             quoted_source_contents: None,
         }
@@ -991,7 +1020,6 @@ pub(crate) type FileList = MultiArrayList<File>;
 bun_collections::multi_array_columns! {
     pub trait FileColumns for File {
         entry_bits: AutoBitSet,
-        input_file: Index,
         entry_point_kind: EntryPoint::Kind,
         entry_point_chunk_index: u32,
         line_offset_table: bun_sourcemap::line_offset_table::List<bun_alloc::AstAlloc>,

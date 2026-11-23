@@ -1733,6 +1733,37 @@ describe.concurrent("gzip trailer", () => {
     },
   );
 
+  // The header may end with the low half of its own CRC32.
+  const withHeaderCrc = (tgz: Buffer, xor: number) => {
+    const header = changed(tgz.subarray(0, 10), 3, (b, i) => (b[i] |= 2));
+    const crc = Buffer.alloc(2);
+    crc.writeUInt16LE((Bun.hash.crc32(header) & 0xffff) ^ xor);
+    return Buffer.concat([header, crc, tgz.subarray(10)]);
+  };
+  test.each(paths)("a header CRC is checked (%s)", async path => {
+    const results = await Promise.all([
+      install(path, withHeaderCrc(good, 0)),
+      install(path, withHeaderCrc(good, 1)),
+      install(path, Buffer.concat([member1, withHeaderCrc(member2, 1)])),
+    ]);
+    const refused = {
+      error:
+        path === "streaming"
+          ? expect.stringMatching(/^error: Fail extracting tarball for "stream-pkg": gzip header mismatch/)
+          : "error: Fail extracting tarball from stream-pkg",
+      streamed: false,
+      installed: false,
+      cached: 0,
+      tmp: [".keep"],
+      exitCode: 1,
+    };
+    expect(results).toEqual([
+      { error: undefined, streamed: path === "streaming", installed: true, cached: 1, tmp: [".keep"], exitCode: 0 },
+      refused,
+      refused,
+    ]);
+  });
+
   // A gzip file is one or more members. Every path reads them all, and ignores other bytes after the last.
   const continued: [string, Buffer][] = [
     ["a second member", Buffer.concat([member1, member2])],
@@ -1981,7 +2012,6 @@ describe.concurrent("entries that npm skips or names differently", () => {
       tarball(...pax("linkpath", "日本"), ...entry("package/link", Buffer.alloc(0), type), ...other),
       { "other.js": "second" },
     ]),
-    ["a NUL in the path of a pax header", tarball(...pax("path", `${index}\0.js`), ...other), {}],
     [
       "the name of a sparse file in a pax header",
       tarball(...pax("GNU.sparse.name", index), ...other),
@@ -2030,6 +2060,13 @@ describe.concurrent("entries that npm skips or names differently", () => {
       ]);
     },
   );
+
+  // Versions of npm differ.
+  test.each(paths)("a NUL in the path of a pax header (%s)", async path => {
+    const [result] = await installStreamPkg(path, tarball(...pax("path", `${index}\0.js`), ...other));
+    const error = expect.stringContaining(path === "streaming" ? "Ambiguous tar header" : "Fail extracting tarball");
+    expect(result).toMatchObject({ error, installed: false, cached: 0, exitCode: 1 });
+  });
 
   // Two cases that do not follow npm, which loses files of archives that real tar writers make.
   // Old writers repeat the size of the file in the header of a hard link. npm takes what follows for its body.

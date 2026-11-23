@@ -21,7 +21,7 @@ use super::convert_stmts_for_chunk::convert_stmts_for_chunk;
 use super::convert_stmts_for_chunk_for_dev_server::convert_stmts_for_chunk_for_dev_server;
 
 #[allow(clippy::too_many_arguments)]
-pub fn generate_code_for_file_in_chunk_js(
+pub(crate) fn generate_code_for_file_in_chunk_js(
     c: &LinkerContext,
     writer: &mut js_printer::BufferWriter,
     r: renamer::Renamer,
@@ -66,6 +66,11 @@ pub fn generate_code_for_file_in_chunk_js(
             }
 
             let hmr_api_ref = ast.wrapper_ref;
+
+            // The prologue of the module is the prologue of its closure.
+            for directive in ast.directives.slice() {
+                stmts.inside_wrapper_prefix.append_directive(*directive);
+            }
 
             for part in parts {
                 let part_stmts: &[Stmt] = part.stmts.slice();
@@ -132,17 +137,7 @@ pub fn generate_code_for_file_in_chunk_js(
                 });
             }
 
-            // `G::Arg` is not `Copy`; duplicate the args element-wise.
-            let dup_args: &mut [G::Arg] = {
-                let mut v = bun_alloc::ArenaVec::with_capacity_in(
-                    clousure_args.const_slice().len(),
-                    temp_arena,
-                );
-                for a in clousure_args.slice().iter_mut() {
-                    v.push(core::mem::take(a));
-                }
-                v.into_bump_slice_mut()
-            };
+            let dup_args = temp_arena.alloc_slice_copy(clousure_args.const_slice());
 
             stmts.all_stmts.push(Stmt::allocate_expr(
                 temp_arena,
@@ -186,7 +181,6 @@ pub fn generate_code_for_file_in_chunk_js(
                 source_storage = bun_ast::Source {
                     path: new_path,
                     contents: std::borrow::Cow::Borrowed(&source_ref.contents),
-                    contents_is_recycled: source_ref.contents_is_recycled,
                     identifier_name: std::borrow::Cow::Borrowed(&source_ref.identifier_name),
                     index: source_ref.index,
                 };
@@ -233,29 +227,26 @@ pub fn generate_code_for_file_in_chunk_js(
 
     let output_format = c.options.output_format;
 
-    // The top-level directive must come first (the non-wrapped case is handled
-    // by the chunk generation code, although only for the entry point)
+    // The top-level directives must come first (the non-wrapped case is handled
+    // by the chunk generation code, although only for the entry point of this
+    // chunk). An ES module without a wrapper symbol prints no closure to hold them.
     if flags.wrap != WrapKind::None
-        && ast
-            .flags
-            .contains(AstFlags::HAS_EXPLICIT_USE_STRICT_DIRECTIVE)
-        && !chunk.is_entry_point()
-        && !output_format.is_always_strict_mode()
+        && !chunk.is_entry_point_file(source_index as u32)
+        && !ast.wrapper_ref.is_empty()
     {
-        stmts
-            .inside_wrapper_prefix
-            .append_non_dependency(Stmt::alloc(
-                S::Directive {
-                    value: bun_ast::StoreStr::new(b"use strict"),
-                },
-                bun_ast::Loc::EMPTY,
-            ))
-            .expect("unreachable");
+        for directive in ast.directives.slice() {
+            // Every ES module is already in strict mode
+            if output_format.is_always_strict_mode()
+                && matches!(directive.data, StmtData::SDirective(d) if d.value.slice() == b"use strict")
+            {
+                continue;
+            }
+            stmts.inside_wrapper_prefix.append_directive(*directive);
+        }
     }
 
     let parts_live = &c.graph.parts_live[source_index];
 
-    // TODO: handle directive
     if namespace_export_part_index >= part_range.part_index_begin
         && namespace_export_part_index < part_range.part_index_end
         && parts_live.is_set(namespace_export_part_index as usize)
@@ -371,22 +362,7 @@ pub fn generate_code_for_file_in_chunk_js(
 
             // Be careful: the top-level value in a JSON file is not necessarily an object
             if let ExprData::EObject(e_object) = default_expr.data {
-                // `G::Property` is not `Clone` (it embeds a `Vec`), so
-                // copy the properties bitwise. JSON object properties carry no
-                // owned heap data (`ts_decorators` is always empty, `class_static_block`
-                // is `None`), so the duplicated bits do not alias any allocation.
-                let src_len = e_object.properties.len();
-                let mut new_properties = Vec::<G::Property>::init_capacity(src_len);
-                // SAFETY: `new_properties` has capacity `src_len`; source slice is live
-                // arena memory of length `src_len`; see note above re: no owned heap data.
-                unsafe {
-                    core::ptr::copy_nonoverlapping(
-                        e_object.properties.as_ptr(),
-                        new_properties.as_mut_ptr(),
-                        src_len,
-                    );
-                    new_properties.set_len((src_len as u32) as usize);
-                }
+                let mut new_properties = G::PropertyList::from_arena_slice(&e_object.properties);
 
                 let resolved_exports = &c.graph.meta.items_resolved_exports()[source_index];
 
@@ -420,30 +396,13 @@ pub fn generate_code_for_file_in_chunk_js(
                             .top_level_symbol_to_parts(source_index as u32, export_ref)[0]
                             as usize;
                         if parts_live.is_set(part_idx) {
-                            // PTR_AUDIT(#1): `*prop` is a bitwise copy of
-                            // `e_object.properties[i]` (see `copy_nonoverlapping`
-                            // above). A plain `*prop = …` would run `Drop` on the
-                            // aliased old value — specifically `prop.ts_decorators:
-                            // Vec<Expr>`, which (if non-empty) would free the
-                            // *original AST's* allocation. The "JSON ⇒ ts_decorators
-                            // empty" invariant makes that drop a no-op today, but
-                            // `ptr::write` enforces it structurally.
-                            let key = prop.key;
                             let value_loc =
                                 prop.value.as_ref().expect("infallible: prop has value").loc;
-                            // SAFETY: `prop` is a valid `&mut G::Property` slot;
-                            // the overwritten old value aliases AST-owned data and
-                            // MUST NOT be dropped (PTR_AUDIT.md class #1).
-                            unsafe {
-                                core::ptr::write(
-                                    prop,
-                                    G::Property {
-                                        key,
-                                        value: Some(Expr::init_identifier(export_ref, value_loc)),
-                                        ..Default::default()
-                                    },
-                                );
-                            }
+                            *prop = G::Property {
+                                key: prop.key,
+                                value: Some(Expr::init_identifier(export_ref, value_loc)),
+                                ..Default::default()
+                            };
                         }
                     }
                 }
@@ -451,7 +410,7 @@ pub fn generate_code_for_file_in_chunk_js(
                 default_expr = Expr::allocate(
                     temp_arena,
                     E::Object {
-                        properties: Vec::move_from_list(new_properties),
+                        properties: new_properties,
                         ..Default::default()
                     },
                     default_expr.loc,
@@ -559,7 +518,7 @@ pub fn generate_code_for_file_in_chunk_js(
                 // The wrapper must be a regular function, not an arrow, so that a
                 // top-level `arguments` reference in the CommonJS body binds to the
                 // wrapper's own `arguments` object (Node and esbuild both allow it).
-                let cjs_args = Vec::<Expr>::from_slice(&[Expr::init(
+                let cjs_args = bun_ast::ExprNodeList::from_slice(&[Expr::init(
                     E::Function {
                         func: G::Fn {
                             args: bun_ast::StoreSlice::new(args.into_bump_slice()),
@@ -582,7 +541,7 @@ pub fn generate_code_for_file_in_chunk_js(
                             },
                             bun_ast::Loc::EMPTY,
                         ),
-                        args: Vec::move_from_list(cjs_args),
+                        args: cjs_args,
                         ..Default::default()
                     },
                     bun_ast::Loc::EMPTY,
@@ -790,7 +749,7 @@ pub fn generate_code_for_file_in_chunk_js(
                         StmtListWhich::OutsideWrapperPrefix,
                         Stmt::alloc(
                             S::Local {
-                                decls: G::DeclList::move_from_list(core::mem::take(
+                                decls: bun_alloc::AstAlloc::vec_from_iter(core::mem::take(
                                     &mut hoist.decls,
                                 )),
                                 ..Default::default()
@@ -808,7 +767,7 @@ pub fn generate_code_for_file_in_chunk_js(
                     debug_assert!(!ast.wrapper_ref.is_empty()); // js_parser's needsWrapperRef thought wrapper was not needed
 
                     // "__esm(() => { ... })"
-                    let esm_args = Vec::<Expr>::from_slice(&[Expr::init(
+                    let esm_args = bun_ast::ExprNodeList::from_slice(&[Expr::init(
                         E::Arrow {
                             is_async,
                             body: G::FnBody {
@@ -824,7 +783,7 @@ pub fn generate_code_for_file_in_chunk_js(
                     let value = Expr::init(
                         E::Call {
                             target: Expr::init_identifier(c.esm_runtime_ref, bun_ast::Loc::EMPTY),
-                            args: Vec::move_from_list(esm_args),
+                            args: esm_args,
                             ..Default::default()
                         },
                         bun_ast::Loc::EMPTY,
@@ -963,7 +922,7 @@ fn merge_adjacent_local_stmts(stmts: &mut Vec<Stmt>, _arena: &Bump) {
                         did_merge_with_previous_local = true;
 
                         let mut clone =
-                            Vec::<G::Decl>::init_capacity(before.decls.len() + after.decls.len());
+                            G::DeclList::init_capacity(before.decls.len() + after.decls.len());
                         clone.append_slice_assume_capacity(before.decls.slice());
                         clone.append_slice_assume_capacity(after.decls.slice());
                         // we must clone instead of overwrite in-place incase the same S.Local is used across threads
@@ -972,7 +931,7 @@ fn merge_adjacent_local_stmts(stmts: &mut Vec<Stmt>, _arena: &Bump) {
                         stmts[end - 1] = Stmt::allocate(
                             _arena,
                             S::Local {
-                                decls: Vec::move_from_list(clone),
+                                decls: clone,
                                 is_export: before.is_export,
                                 origin: before.origin,
                                 kind: before.kind,

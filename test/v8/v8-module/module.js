@@ -300,15 +300,11 @@ module.exports = debugMode => {
     },
 
     test_v8_object_set_index_on_global() {
-      // Made by the Function constructor: Bun's transpiler drops the "use strict" of a function in a CommonJS file
-      // (https://github.com/oven-sh/bun/issues/14251).
-      const makeSetter = new Function(
-        "label",
-        `return function (value) {
+      const makeSetter = label =>
+        function (value) {
           "use strict";
           console.log(label + ": this is " + (this === globalThis ? "globalThis" : typeof this));
-        };`,
-      );
+        };
       for (const [holderName, holder] of [
         ["inherited", Object.prototype],
         ["own", globalThis],

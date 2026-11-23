@@ -3,8 +3,7 @@
 // Each line is one way to store to an index key of globalThis, with an accessor or a Proxy in the way of the store. It
 // says what was called, with which `this` or receiver, and what globalThis has under the key afterwards.
 //
-// The program is a string so that a realm can evaluate it, and so that Bun's transpiler does not drop the "use strict"
-// of its functions (https://github.com/oven-sh/bun/issues/14251).
+// The program is a string so that a realm can evaluate it: the main realm, or the one of a context.
 const vm = require("node:vm");
 
 const program = `

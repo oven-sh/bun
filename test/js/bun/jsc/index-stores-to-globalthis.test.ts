@@ -4,8 +4,7 @@ import { bunEnv, bunExe } from "harness";
 // A store to an index key of globalThis ends in JavaScriptCore's putByIndex(), which has no parameter for the receiver.
 // A setter and a Proxy's set trap get globalThis as the receiver all the same, as they do for a name.
 //
-// Each realm evaluates this string itself: Bun's transpiler would drop the "use strict" of the setters
-// (https://github.com/oven-sh/bun/issues/14251).
+// Each realm evaluates this string itself.
 const source = `
 (function () {
   const results = {};

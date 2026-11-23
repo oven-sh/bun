@@ -37,7 +37,8 @@ We update this page regularly. It reflects the latest version of Bun's compatibi
 - A subscriber of `undici:request:create` can change the headers of `request`, `request.host` and `request.reset`. Changes to its other properties have no effect.
 - `trailers` is always empty. Bun does not publish informational (1xx) responses.
 - Bun does not publish the chunks of a redirect that it follows, or of a `Bun.file()` that it sends with `sendfile`.
-- Bun publishes nothing for a request that starts while no `undici:*` channel has a subscriber.
+- Bun publishes nothing for a request that starts while no `undici:client:*` or `undici:request:*` channel has a subscriber.
+- Bun checks `undici:request:bodyChunkSent` and `undici:request:bodyChunkReceived` once, when you call `fetch()`. If a channel has no subscriber then, it gets no chunks of that request or of its redirects.
 - `undici:websocket:socket_error` reports a failed write only if the connection to the server, or to the proxy if there is one, uses TLS. The `code` can be `ECONNRESET` where Node has `EPIPE`.
 
 ### [`node:dns`](https://nodejs.org/api/dns.html)

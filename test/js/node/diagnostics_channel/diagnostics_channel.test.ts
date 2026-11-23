@@ -2130,7 +2130,7 @@ describe("undici:* of fetch()", () => {
     expect(published.log).toStrictEqual([headers, headers]);
   });
 
-  test("a subscriber that comes in the turn of the call misses nothing but create", async () => {
+  test("a subscriber that comes in the turn of the call misses create and the chunks", async () => {
     using server = serve();
     using _ = listen("undici:request:error", () => {});
     const response = fetch(server.url);

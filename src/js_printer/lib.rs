@@ -6700,11 +6700,11 @@ pub(crate) mod __gated_printer {
             target: Expr,
             name: &[u8],
         ) -> Option<js_ast::InlinedEnumValueDecoded> {
+            let base = self.import_ref(target)?;
             js_ast::late_fold::imported_enum_value(
                 self.symbols(),
                 self.options.ts_enums,
-                self.options.has_dynamic_import_items,
-                target,
+                base,
                 name,
             )
         }
@@ -6723,9 +6723,13 @@ pub(crate) mod __gated_printer {
         /// when values of other files let operators in it be evaluated.
         #[inline]
         fn print_late_folded(&mut self, expr: Expr, level: Level, flags: ExprFlagSet) -> bool {
-            if !self.options.late_fold || flags.contains(ExprFlag::SkipLateFold) {
-                return false;
-            }
+            self.options.late_fold
+                && !flags.contains(ExprFlag::SkipLateFold)
+                && self.print_late_folded_slow(expr, level, flags)
+        }
+
+        #[inline(never)]
+        fn print_late_folded_slow(&mut self, expr: Expr, level: Level, flags: ExprFlagSet) -> bool {
             let mut spine = core::mem::take(&mut self.late_fold_spine);
             let folded = self.late_fold().fold(expr, &mut spine);
             self.late_fold_spine = spine;
@@ -6748,26 +6752,34 @@ pub(crate) mod __gated_printer {
         /// The `else` branch that `print_if` prints for `s`. An `else if`
         /// whose test a value of another file decides is replaced by the
         /// branch that runs.
+        #[inline]
         fn else_branch(&mut self, s: &S::If) -> Option<Stmt> {
-            let mut no = s.no;
-            if self.options.late_fold {
-                while let Some(StmtData::SIf(inner)) = no.as_ref().map(|stmt| &stmt.data) {
-                    let Some(value) = self.late_folded_test(inner.test) else {
-                        break;
-                    };
-                    let (live, dead) = if value {
-                        (Some(inner.yes), inner.no)
-                    } else {
-                        (inner.no, Some(inner.yes))
-                    };
-                    if dead
-                        .as_ref()
-                        .is_some_and(js_ast::late_fold::dead_branch_declares)
-                    {
-                        break;
-                    }
-                    no = live.filter(|stmt| !Self::is_empty_stmt(stmt));
+            if self.options.late_fold
+                && matches!(s.no.map(|stmt| stmt.data), Some(StmtData::SIf(_)))
+            {
+                return self.late_folded_else_branch(s.no);
+            }
+            s.no
+        }
+
+        #[inline(never)]
+        fn late_folded_else_branch(&mut self, mut no: Option<Stmt>) -> Option<Stmt> {
+            while let Some(StmtData::SIf(inner)) = no.as_ref().map(|stmt| &stmt.data) {
+                let Some(value) = self.late_folded_test(inner.test) else {
+                    break;
+                };
+                let (live, dead) = if value {
+                    (Some(inner.yes), inner.no)
+                } else {
+                    (inner.no, Some(inner.yes))
+                };
+                if dead
+                    .as_ref()
+                    .is_some_and(js_ast::late_fold::dead_branch_declares)
+                {
+                    break;
                 }
+                no = live.filter(|stmt| !Self::is_empty_stmt(stmt));
             }
             no
         }
@@ -6784,30 +6796,28 @@ pub(crate) mod __gated_printer {
         /// left out or replaced by several, so this is where the late fold
         /// removes an `if` or an expression that a value of another file
         /// decides. The body of a loop or of an `if` is printed as it is.
+        #[inline]
         pub(crate) fn print_stmt_in_list(&mut self, stmt: Stmt) -> crate::Result<()> {
-            if self.options.late_fold {
-                match &stmt.data {
-                    StmtData::SIf(s) => {
-                        if self.print_late_folded_if(s)? {
-                            return Ok(());
-                        }
-                    }
-                    // `E.Off && debug()` folds to a literal that nothing reads.
-                    StmtData::SExpr(s) => {
-                        if matches!(&s.value.data, ExprData::EBinary(e) if matches!(
-                            e.op,
-                            Op::Code::BinLogicalAnd
-                                | Op::Code::BinLogicalOr
-                                | Op::Code::BinNullishCoalescing
-                        )) && self.late_folded_test(s.value).is_some()
-                        {
-                            return Ok(());
-                        }
-                    }
-                    _ => {}
-                }
+            if self.options.late_fold && self.late_folded_stmt(&stmt)? {
+                return Ok(());
             }
             self.print_stmt(stmt)
+        }
+
+        /// Returns true when it printed what is left of `stmt`.
+        #[inline(never)]
+        fn late_folded_stmt(&mut self, stmt: &Stmt) -> crate::Result<bool> {
+            match &stmt.data {
+                StmtData::SIf(s) => self.print_late_folded_if(s),
+                // `E.Off && debug()` folds to a literal that nothing reads.
+                StmtData::SExpr(s) => Ok(matches!(&s.value.data, ExprData::EBinary(e) if matches!(
+                    e.op,
+                    Op::Code::BinLogicalAnd
+                        | Op::Code::BinLogicalOr
+                        | Op::Code::BinNullishCoalescing
+                )) && self.late_folded_test(s.value).is_some()),
+                _ => Ok(false),
+            }
         }
 
         fn print_late_folded_if(&mut self, s: &S::If) -> crate::Result<bool> {
@@ -6882,6 +6892,7 @@ pub(crate) mod __gated_printer {
                 })
         }
 
+        #[inline]
         fn print_expr_stmt(&mut self, value: Expr) {
             if !self.options.minify_whitespace && self.options.indent.count > 0 {
                 self.print_indent();

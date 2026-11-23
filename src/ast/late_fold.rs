@@ -71,17 +71,15 @@ pub fn import_ref(
     }
 }
 
-/// The value of `target.name` when `target` is an enum that another file
-/// declares.
+/// The value of the member `name` when the import `base` (see `import_ref`) is
+/// an enum that another file declares.
 pub fn imported_enum_value(
     symbols: &symbol::Map,
     ts_enums: Option<&TsEnumsMap>,
-    has_dynamic_import_items: bool,
-    target: Expr,
+    base: Ref,
     name: &[u8],
 ) -> Option<InlinedEnumValueDecoded> {
     let ts_enums = ts_enums?;
-    let base = import_ref(symbols, has_dynamic_import_items, target)?;
     let ref_ = symbols.follow(base);
     if symbols.get_const(ref_)?.kind != symbol::Kind::TsEnum {
         return None;
@@ -229,16 +227,15 @@ impl<'a> LateFold<'a> {
         literal_to_boolean(&self.visit(expr, spine)?.expr.data)
     }
 
+    fn enum_value(&self, target: Expr, name: &[u8]) -> Option<InlinedEnumValueDecoded> {
+        let base = import_ref(self.symbols, self.has_dynamic_import_items, target)?;
+        imported_enum_value(self.symbols, self.ts_enums, base, name)
+    }
+
     /// The literal that a reference to a value of another file stands for.
     fn inlined(&self, expr: Expr) -> Option<Folded> {
         let value = match &expr.data {
-            Data::EDot(e) if e.optional_chain.is_none() => imported_enum_value(
-                self.symbols,
-                self.ts_enums,
-                self.has_dynamic_import_items,
-                e.target,
-                &e.name,
-            )?,
+            Data::EDot(e) if e.optional_chain.is_none() => self.enum_value(e.target, &e.name)?,
             Data::EIndex(e) if e.optional_chain.is_none() => {
                 let Data::EString(name) = &e.index.data else {
                     return None;
@@ -246,13 +243,7 @@ impl<'a> LateFold<'a> {
                 if name.next.is_some() || !name.is_utf8() {
                     return None;
                 }
-                imported_enum_value(
-                    self.symbols,
-                    self.ts_enums,
-                    self.has_dynamic_import_items,
-                    e.target,
-                    name.slice8(),
-                )?
+                self.enum_value(e.target, name.slice8())?
             }
             _ => return None,
         };

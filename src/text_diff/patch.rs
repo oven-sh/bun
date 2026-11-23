@@ -552,11 +552,10 @@ impl<'a, T: Unit> Parser<'a, T> {
             ..*self
         };
         ahead.advance();
-        // The stars start a hunk of `diff -c`.
-        let is_continued = ahead.peek().is_some_and(|it| {
-            after_marker(it, b"+++").is_some() || strip(it, &[b'*'; 15]).is_some()
-        });
-        if is(line.first(), b'-') && (is_continued || self.is_after_index()) {
+        let next = ahead.peek().unwrap_or_default();
+        if is(line.first(), b'-')
+            && (after_marker(next, b"+++").is_some() || self.is_in_header(next))
+        {
             return true;
         }
         if self.number >= self.next_header.number {
@@ -576,16 +575,19 @@ impl<'a, T: Unit> Parser<'a, T> {
         !self.next_header.is_git
     }
 
-    /// After `Index:` or its rule.
-    fn is_after_index(&self) -> bool {
-        let end = self
-            .line
-            .as_ref()
-            .and_then(|line| line.start.checked_sub(1));
-        end.is_some_and(|end| {
-            let line = without_cr(&self.text[line_start(self.text, end)..end]);
-            index_name(line).is_some() || is_rule(line)
-        })
+    /// After `Index:` or its rule, or between `*** name` and the stars that start a hunk of `diff -c`.
+    fn is_in_header(&self, next: &[T]) -> bool {
+        let before = |start: usize| {
+            let end = start.checked_sub(1)?;
+            let start = line_start(self.text, end);
+            Some((start, without_cr(&self.text[start..end])))
+        };
+        let Some((start, last)) = self.line.as_ref().and_then(|line| before(line.start)) else {
+            return false;
+        };
+        index_name(last).is_some()
+            || is_rule(last) && before(start).is_some_and(|(_, it)| index_name(it).is_some())
+            || after_marker(last, b"***").is_some() && strip(next, &[b'*'; 15]).is_some()
     }
 
     fn file(&mut self) -> Result<FilePatch, ParseError> {

@@ -2,9 +2,10 @@
 // is enough to tell the build, the function and the line, and every compiled caller is there. The faults are planted: a copy of
 // the executable gets a load from a low address written over its code.
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isASAN, isLinux, isMacOS, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isLinux, isMacOS, isWindows, libcPathForDlopen, tempDir } from "harness";
 import { chmodSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { findImage, imageHeader } from "./cli/compiled-image";
 import { locksEnvironment } from "./hardened";
 import { without } from "./harness/capabilities";
 import { withoutCoreDump } from "./harness/commands";
@@ -535,6 +536,75 @@ console.log(below());
       "theirs lib.ts:3:10",
       "below app.ts:7:10",
     ]);
+  },
+);
+
+// The report reads no compiled code: where the process can no longer read its code, the frames are all there, as the tables of
+// the build have them.
+test.skipIf(!isLinux || isASAN)(
+  "in an executable that can no longer read its code: the function that faults and all its callers",
+  async () => {
+    using dir = tempDir("aot-crash-in-unreadable-code", {
+      "app.ts": `import { dlopen } from "bun:ffi";
+import { readFileSync } from "node:fs";
+const libc = dlopen(${JSON.stringify(libcPathForDlopen())}, {
+  mprotect: { args: ["ptr", "usize", "i32"], returns: "i32" },
+});
+// The mapping that runs the part of this file that starts at the offset: the compiled code.
+function compiledCode(offsetInFile: number): [number, number] {
+  const mapping = readFileSync("/proc/self/maps", "latin1")
+    .split("\\n")
+    .map(line => line.split(/ +/))
+    .find(([, access, offset, , , path]) => access === "r-xp" && parseInt(offset, 16) === offsetInFile && path?.endsWith("/app"))!;
+  const [start, end] = mapping[0].split("-").map(text => parseInt(text, 16));
+  return [start, end - start];
+}
+function takesItsCodeAway(start: number, size: number): number {
+  const answer = libc.symbols.mprotect(start as never, size, 0);
+  return process.argv.length > 99 ? takesItsCodeAway(start, size) + 1 : answer + 1;
+}
+function middle(start: number, size: number): number {
+  const answer = takesItsCodeAway(start, size);
+  return process.argv.length > 99 ? middle(start, size) + 1 : answer + 1;
+}
+function outer(): number {
+  const [start, size] = compiledCode(Number(process.argv[2]));
+  const answer = middle(start, size);
+  return process.argv.length > 99 ? outer() + 1 : answer + 1;
+}
+console.log("started");
+console.log(outer());
+`,
+    });
+    const cwd = String(dir);
+    const built = await run([bunExe(), "build", "--compile", "--aot", "app.ts", "--outfile", "app"], cwd);
+    expect(built.stderr).not.toMatch(/^error\b/m);
+    expect(built.exitCode).toBe(0);
+    const file = readFileSync(join(cwd, "app"));
+    const image = findImage(file);
+    const codeOffset = image + Number(file.readBigUInt64LE(image + imageHeader.codeOffset));
+
+    const { stdout, stderr, exitCode } = await run([join(cwd, "app"), String(codeOffset)], cwd);
+    expect(stdout).toBe("started\n");
+    expect(stderr).toMatch(/Segmentation fault at address 0x[0-9A-F]+\n/);
+    expect(stderr).toMatch(/^Code at \w+: not readable$/m);
+    const printed = framesOf(stderr.slice(stderr.indexOf("Compiled JavaScript on the stack:\n")));
+    expect(printed).toEqual([
+      "takesItsCodeAway app.ts:16:31",
+      "middle app.ts:20:18",
+      "outer app.ts:25:18",
+      " app.ts:29:13",
+    ]);
+    const link = stderr.match(/^ (\S*\/\d+\.\d+\.\d+\/\S+)$/m)?.[1];
+    expect(link).toBeString();
+    // The link alone says as much to the build that crashed.
+    const decoded = await run([join(cwd, "app")], cwd, { BUN_OPTIONS: "--aot-decode-crash-report=" + link });
+    expect({ frames: framesOf(decoded.stdout), stderr: decoded.stderr, exitCode: decoded.exitCode }).toEqual({
+      frames: printed,
+      stderr: "",
+      exitCode: 0,
+    });
+    expect(exitCode).not.toBe(0);
   },
 );
 

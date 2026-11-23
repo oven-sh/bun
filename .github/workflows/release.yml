@@ -353,22 +353,3 @@ jobs:
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY}}
           AWS_ENDPOINT: ${{ secrets.AWS_ENDPOINT }}
           AWS_BUCKET: bun
-
-  notify-sentry:
-    name: Notify Sentry
-    runs-on: ubuntu-latest
-    environment: release
-    needs: s3
-    steps:
-      - name: Notify Sentry
-        uses: getsentry/action-release@ff07929a6537bac57790c3451cf4d364aca38528 # v3.7.0
-        env:
-          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
-          SENTRY_ORG: ${{ secrets.SENTRY_ORG }}
-          SENTRY_PROJECT: ${{ secrets.SENTRY_PROJECT }}
-        with:
-          ignore_missing: true
-          ignore_empty: true
-          version: ${{ env.BUN_VERSION }}
-          environment: production
-

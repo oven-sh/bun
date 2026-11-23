@@ -22,8 +22,7 @@ static bool hasBuiltinToString(JSC::VM& vm, JSC::JSObject* callee)
 }
 
 // JSC's source for a function starts at its parameter list, not at `function` or its name.
-// A callee whose `toString` is not the built-in sets `hasCustomToString` instead: its text is what that returns.
-// So does one whose lookup of `toString` threw, with the exception pending.
+// `hasCustomToString`: the callee's `toString` is not the built-in, or its lookup threw and the exception is pending.
 extern "C" BunString Bun__JSFunction__sourceFromParameters(JSC::EncodedJSValue encodedValue, bool* isArrowFunction, bool* hasCustomToString)
 {
     JSC::JSValue value = JSC::JSValue::decode(encodedValue);

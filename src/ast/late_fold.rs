@@ -1,13 +1,4 @@
-//! Constant folding when a bundle is printed.
-//!
-//! The parser folds constants one file at a time. The value of a TypeScript
-//! enum member that another file declares is known only after the linker has
-//! bound the import, so an expression on it reaches the printer unfolded. This
-//! is esbuild's `lateConstantFoldUnaryOrBinaryOrIfExpr`. It runs after tree
-//! shaking: it makes the output smaller, it does not remove a module.
-//!
-//! The AST is shared between the threads that print, so nothing here writes to
-//! it. A changed node is a new node in `bump`.
+//! Port of esbuild's late constant fold for cross-module values. It never writes to the AST.
 
 use core::cmp::Ordering;
 use core::ptr::NonNull;
@@ -33,9 +24,7 @@ pub struct LateFold<'a> {
 #[derive(Clone, Copy)]
 struct Folded {
     expr: Expr,
-    /// An operator below was evaluated, so `expr` must be printed in place of
-    /// the subtree. When false, `expr` is the literal of a reference that the
-    /// printer inlines on its own.
+    /// False when `expr` is only the literal of a reference, which the printer inlines itself.
     reduced: bool,
 }
 
@@ -49,8 +38,7 @@ impl Folded {
     }
 }
 
-/// The import `target` names: an import identifier, or a local a pattern binds
-/// that the linker bound like one (`const { X } = await import(…)`).
+/// The import that `target` names. A pattern local that the linker bound counts as one.
 #[inline]
 pub fn import_ref(
     symbols: &symbol::Map,
@@ -71,8 +59,7 @@ pub fn import_ref(
     }
 }
 
-/// The value of the member `name` when the import `base` (see `import_ref`) is
-/// an enum that another file declares.
+/// The value of member `name` of the cross-module enum that the import `base` names.
 pub fn imported_enum_value(
     symbols: &symbol::Map,
     ts_enums: Option<&TsEnumsMap>,
@@ -146,9 +133,7 @@ fn fold_unary(op: OpCode, value: &Data) -> Option<Data> {
     }
 }
 
-/// esbuild's `ShouldFoldBinaryOperatorWhenMinifying` and `FoldBinaryOperator`
-/// for two numbers. An operator is folded only when the result is not longer
-/// than the operation.
+/// esbuild's `ShouldFoldBinaryOperatorWhenMinifying` and `FoldBinaryOperator`, for numbers.
 fn fold_numbers(op: OpCode, left: f64, right: f64) -> Option<Data> {
     match op {
         OpCode::BinAdd | OpCode::BinSub
@@ -208,9 +193,7 @@ fn fold_numbers(op: OpCode, left: f64, right: f64) -> Option<Data> {
 }
 
 impl<'a> LateFold<'a> {
-    /// `expr` with the operators on cross-module values evaluated, or `None`
-    /// when no operator in it can be. `expr` is a unary, binary or conditional
-    /// expression. `spine` is scratch space.
+    /// `expr` with its operators on cross-module values evaluated, or `None` when none can be.
     pub fn fold(&self, expr: Expr, spine: &mut Vec<Expr>) -> Option<Expr> {
         match self.visit(expr, spine) {
             Some(Folded {
@@ -221,8 +204,7 @@ impl<'a> LateFold<'a> {
         }
     }
 
-    /// `ToBoolean(expr)` when cross-module values decide it and evaluating
-    /// `expr` has no side effect.
+    /// `ToBoolean(expr)` when cross-module values decide it without a side effect.
     pub fn to_boolean(&self, expr: Expr, spine: &mut Vec<Expr>) -> Option<bool> {
         literal_to_boolean(&self.visit(expr, spine)?.expr.data)
     }
@@ -317,8 +299,7 @@ impl<'a> LateFold<'a> {
         }
     }
 
-    /// The parser and the printer iterate over a chain of left-nested binary
-    /// expressions, because a long chain overflows the stack. So does this.
+    /// Iterates over a left-nested chain, as the parser and the printer do: a long one is deep.
     fn visit_binary(&self, root: Expr, spine: &mut Vec<Expr>) -> Option<Folded> {
         if !self.stack_check.is_safe_to_recurse() {
             return None;
@@ -365,8 +346,7 @@ impl<'a> LateFold<'a> {
         if !left.reduced && !right.reduced {
             return None;
         }
-        // An operand that was not reduced stays the reference. It prints as the
-        // same literal, with the name of the enum member in a comment.
+        // An operand that was not reduced stays the reference, so it prints with its comment.
         Folded::reduced(Expr {
             data: Data::EBinary(StoreRef::from_bump(self.bump.alloc(E::Binary {
                 op: e.op,
@@ -429,8 +409,7 @@ impl<'a> LateFold<'a> {
             }
             _ => {}
         }
-        // JavaScript orders strings by UTF-16 code unit. That is the byte order
-        // only for ASCII.
+        // JavaScript orders strings by UTF-16 code unit: the byte order only for ASCII.
         if !left.is_utf8()
             || !bun_core::is_all_ascii(left.slice8())
             || !bun_core::is_all_ascii(right.slice8())
@@ -458,10 +437,7 @@ impl<'a> LateFold<'a> {
     }
 }
 
-/// A statement that never runs still declares what it hoists out of itself: a
-/// `var`, or a function in sloppy mode. The parser keeps those declarations
-/// when it removes dead code (`should_keep_stmt_in_dead_control_flow`). The
-/// printer does not rewrite statements, so it keeps such a branch whole.
+/// True when dead code still declares a hoisted `var` or function, so the branch must stay.
 pub fn dead_branch_declares(stmt: &Stmt) -> bool {
     fn any(stmts: crate::StoreSlice<Stmt>) -> bool {
         stmts.slice().iter().any(dead_branch_declares)

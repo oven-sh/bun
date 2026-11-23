@@ -22,6 +22,7 @@ pub mod patch;
 pub mod tokens;
 
 use core::ops::Range;
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 
 use bun_core::strings::{
@@ -1130,27 +1131,8 @@ fn diff_shared_tokens(
     }
     let mut changed = vec![false; na + nb];
     let (changed_a, changed_b) = changed.split_at_mut(na);
-    // Surviving tokens and their original indices.
-    let mut ra: Vec<u32> = Vec::with_capacity(na);
-    let mut map_a: Vec<u32> = Vec::with_capacity(na);
-    for (i, &t) in ta.iter().enumerate() {
-        if occurs[t as usize][1] {
-            ra.push(t);
-            map_a.push(i as u32);
-        } else {
-            changed_a[i] = true;
-        }
-    }
-    let mut rb: Vec<u32> = Vec::with_capacity(nb);
-    let mut map_b: Vec<u32> = Vec::with_capacity(nb);
-    for (j, &t) in tb.iter().enumerate() {
-        if occurs[t as usize][0] {
-            rb.push(t);
-            map_b.push(j as u32);
-        } else {
-            changed_b[j] = true;
-        }
-    }
+    let ra = without_unshared(ta, changed_a, &occurs, 1);
+    let rb = without_unshared(tb, changed_b, &occurs, 0);
     drop(occurs);
 
     // A token that survives does so on both sides.
@@ -1158,14 +1140,13 @@ fn diff_shared_tokens(
         let mut rchanged = vec![false; ra.len() + rb.len()];
         let (rchanged_a, rchanged_b) = rchanged.split_at_mut(ra.len());
         search(&ra, &rb, rchanged_a, rchanged_b);
-        for (ri, &c) in rchanged_a.iter().enumerate() {
-            if c {
-                changed_a[map_a[ri] as usize] = true;
-            }
-        }
-        for (rj, &c) in rchanged_b.iter().enumerate() {
-            if c {
-                changed_b[map_b[rj] as usize] = true;
+        // The tokens that are not marked yet are the ones that were searched, in order.
+        for (changed, rchanged) in [(&mut *changed_a, rchanged_a), (&mut *changed_b, rchanged_b)] {
+            let mut at = 0;
+            for c in changed {
+                let survived = !*c;
+                *c |= rchanged.get(at) == Some(&true);
+                at += usize::from(survived);
             }
         }
     }
@@ -1173,6 +1154,30 @@ fn diff_shared_tokens(
     let mut hunks = Vec::with_capacity(16);
     hunks_from_changed(ta, tb, changed_a, changed_b, &mut hunks);
     hunks
+}
+
+/// `tokens` without those that do not occur on side `other`, which are marked in `changed`.
+fn without_unshared<'a>(
+    tokens: &'a [u32],
+    changed: &mut [bool],
+    occurs: &[[bool; 2]],
+    other: usize,
+) -> Cow<'a, [u32]> {
+    let mut kept = 0;
+    for (&t, changed) in tokens.iter().zip(&mut *changed) {
+        *changed = !occurs[t as usize][other];
+        kept += usize::from(!*changed);
+    }
+    if kept == tokens.len() {
+        return Cow::Borrowed(tokens);
+    }
+    let (mut rest, mut len) = (vec![0; kept], 0);
+    for (&t, &changed) in tokens.iter().zip(&*changed) {
+        let Some(slot) = rest.get_mut(len) else { break };
+        *slot = t;
+        len += usize::from(!changed);
+    }
+    Cow::Owned(rest)
 }
 
 fn search_bounded(a: &[u32], b: &[u32], changed_a: &mut [bool], changed_b: &mut [bool]) {

@@ -44,6 +44,7 @@ pub(crate) fn optimize_props_method_calls(func: &mut HirFunction, env: &Environm
                         instr.value = InstructionValue::CallExpression {
                             callee: property,
                             args,
+                            bun_kind: bun_ast::E::CallKind::AsPrinted,
                             loc,
                         };
                     }

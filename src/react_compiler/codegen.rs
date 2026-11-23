@@ -1918,7 +1918,12 @@ fn codegen_base_instruction_value(
                 None => Ok(cx.cg.ident_expr(StoreStr::new(binding.name()), loc)),
             }
         }
-        InstructionValue::CallExpression { callee, args, .. } => {
+        InstructionValue::CallExpression {
+            callee,
+            args,
+            bun_kind,
+            ..
+        } => {
             let callee_expr = codegen_place_to_expression(cx, callee)?;
             let arguments = codegen_arguments(cx, args)?;
             if let ExprData::EImport(orig) = callee_expr.data {
@@ -1935,6 +1940,7 @@ fn codegen_base_instruction_value(
             }
             let call_expr = Expr::init(
                 E::Call {
+                    kind: *bun_kind,
                     target: callee_expr,
                     args: arguments,
                     ..Default::default()
@@ -2215,11 +2221,19 @@ fn codegen_base_instruction_value(
             expr_type,
             ..
         } => codegen_function_expression(cx, name, name_hint, lowered_func, *expr_type, loc),
-        InstructionValue::TaggedTemplateExpression { tag, value, .. } => {
+        InstructionValue::TaggedTemplateExpression {
+            tag,
+            value,
+            bun_kind,
+            ..
+        } => {
             let tag_expr = codegen_place_to_expression(cx, tag)?;
             Ok(Expr::init(
                 E::Template {
-                    tag: Some(tag_expr),
+                    tag: Some(E::TemplateTag {
+                        kind: *bun_kind,
+                        expr: tag_expr,
+                    }),
                     head: E::TemplateContents::Raw(value.raw),
                     parts: StoreSlice::EMPTY,
                 },

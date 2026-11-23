@@ -686,13 +686,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let _ = in_;
         let mut e_ = expr.data.e_template().expect("infallible: variant checked");
         if let Some(tag) = e_.tag.as_mut() {
-            p.template_tag = tag.data;
-            p.visit_expr(tag);
-            if p.options.features.inject_jest_globals
-                && drop_namespace_of_lowered_callee(&p.symbols, tag)
-            {
-                p.did_apply_test_feature = true;
-            }
+            p.template_tag = tag.expr.data;
+            p.visit_callee(&mut tag.expr, ExprIn::default());
         }
 
         // Visit the interpolation values before the macro dispatch below: its
@@ -707,9 +702,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.visit_expr(&mut part.value);
         }
 
-        if let Some(tag) = e_.tag {
+        if let Some(E::TemplateTag { expr: tag, .. }) = &e_.tag {
             if Self::ALLOW_MACROS {
-                let ref_ = match &e_.tag.unwrap().data {
+                let ref_ = match &tag.data {
                     Data::EImportIdentifier(ident) => Some(ident.ref_),
                     Data::EDot(dot) => match &dot.target.data {
                         Data::EIdentifier(id) => Some(id.ref_),
@@ -727,7 +722,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     {
                         p.ignore_usage(ref_);
                         if p.is_control_flow_dead {
-                            *e = p.new_expr(E::Undefined {}, e_.tag.unwrap().loc);
+                            *e = p.new_expr(E::Undefined {}, tag.loc);
                             return;
                         }
 
@@ -735,7 +730,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         if p.options.features.no_macros {
                             p.log()
                                 .add_error(Some(p.source), tag.loc, b"Macros are disabled");
-                            *e = p.new_expr(E::Undefined {}, e_.tag.unwrap().loc);
+                            *e = p.new_expr(E::Undefined {}, tag.loc);
                             return;
                         }
 
@@ -747,9 +742,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                         p.macro_call_count += 1;
                         let name: &[u8] = macro_ref_data.name.unwrap_or_else(|| {
-                            e_.tag
-                                .unwrap()
-                                .data
+                            tag.data
                                 .e_dot()
                                 .expect("infallible: variant checked")
                                 .name
@@ -859,17 +852,33 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             },
             expr.loc,
         );
-        template.tag =
-            Some(self.call_runtime(expr.loc, b"__rawTemplate", ExprNodeList::init_one(raw)));
+        template.tag = Some(E::TemplateTag::new(self.call_runtime(
+            expr.loc,
+            b"__rawTemplate",
+            ExprNodeList::init_one(raw),
+        )));
         Some(self.new_expr(
             E::Call {
-                target: tag,
+                target: tag.expr,
+                kind: tag.kind,
                 args: ExprNodeList::from_bump_vec(args),
                 ..Default::default()
             },
             expr.loc,
         ))
     }
+
+    /// Visits the target of a call, or the tag of a template.
+    #[inline(always)] // Not one more stack frame for each link of "a()()()"
+    fn visit_callee(&mut self, callee: &mut Expr, in_: ExprIn) {
+        self.visit_expr_in_out(callee, in_);
+        if self.options.features.inject_jest_globals
+            && drop_namespace_of_lowered_callee(&self.symbols, callee)
+        {
+            self.did_apply_test_feature = true;
+        }
+    }
+
     fn e_binary(p: &mut Self, e: &mut Expr) {
         let expr = *e;
         use crate::visit::visit_binary::BinaryExpressionVisitor;
@@ -2001,7 +2010,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         let target_was_identifier_before_visit = matches!(e_.target.data, Data::EIdentifier(..));
-        p.visit_expr_in_out(
+        p.visit_callee(
             &mut e_.target,
             ExprIn {
                 property_access_for_method_call_maybe_should_replace_with_undefined: true,
@@ -2035,7 +2044,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         .slice()
                         == b"eval"
                 {
-                    e_.is_direct_eval = true;
+                    e_.kind = E::CallKind::DirectEval;
 
                     // Pessimistically assume that if this looks like a CommonJS module
                     // (e.g. no "export" keywords), a direct call to "eval" means that
@@ -2065,12 +2074,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
             _ => {}
-        }
-
-        if p.options.features.inject_jest_globals
-            && drop_namespace_of_lowered_callee(&p.symbols, &mut e_.target)
-        {
-            p.did_apply_test_feature = true;
         }
 
         // `Promise.all([import("a"), …]).then(([{x}, ns]) => …)`

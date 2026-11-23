@@ -318,7 +318,9 @@ fn expr(arena: C, e: &mut Expr) {
         }
         E::ESpread(x) => expr(arena, &mut x.value),
         E::ETemplate(x) => {
-            opt_expr(arena, &mut x.tag);
+            if let Some(tag) = &mut x.tag {
+                expr(arena, &mut tag.expr);
+            }
             for part in x.parts.slice_mut() {
                 expr(arena, &mut part.value);
             }

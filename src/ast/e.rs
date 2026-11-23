@@ -258,7 +258,7 @@ pub struct Call {
     pub target: ExprNodeIndex,
     pub args: ExprNodeList,
     pub optional_chain: Option<OptionalChain>,
-    pub is_direct_eval: bool,
+    pub kind: CallKind,
     pub close_paren_loc: crate::Loc,
 
     /// True if there is a comment containing "@__PURE__" or "#__PURE__" preceding
@@ -280,13 +280,37 @@ impl Default for Call {
             target: ExprNodeIndex::EMPTY,
             args: bun_alloc::AstAlloc::vec(),
             optional_chain: None,
-            is_direct_eval: false,
+            kind: CallKind::AsPrinted,
             close_paren_loc: crate::Loc::EMPTY,
             can_be_unwrapped_if_unused: CallUnwrap::Never,
             was_jsx_element: false,
         }
     }
 }
+
+/// How the target of a call, or the tag of a template, was written.
+#[repr(u8)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum CallKind {
+    /// "a.b()", or generated code: the callee means what it looks like.
+    AsPrinted,
+    /// "a()", "(0, a.b)()"
+    Plain,
+    /// "eval()"
+    DirectEval,
+}
+
+impl CallKind {
+    #[inline]
+    pub fn of(callee: &ExprNodeIndex) -> Self {
+        if callee.has_value_for_this_in_call() {
+            Self::AsPrinted
+        } else {
+            Self::Plain
+        }
+    }
+}
+
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub enum CallUnwrap {
@@ -2004,8 +2028,24 @@ pub struct TemplatePart {
     pub tail: TemplateContents,
 }
 
+#[derive(Clone, Copy)]
+pub struct TemplateTag {
+    pub expr: ExprNodeIndex,
+    pub kind: CallKind,
+}
+
+impl TemplateTag {
+    #[inline]
+    pub fn new(expr: ExprNodeIndex) -> Self {
+        Self {
+            kind: CallKind::of(&expr),
+            expr,
+        }
+    }
+}
+
 pub struct Template {
-    pub tag: Option<ExprNodeIndex>,
+    pub tag: Option<TemplateTag>,
     /// Arena-owned mutable slice. Stored as a
     /// `StoreSlice` so writers (`substitute_single_use_symbol_in_expr`, the
     /// visit pass, `foldStringAddition`) retain mutable provenance. Use

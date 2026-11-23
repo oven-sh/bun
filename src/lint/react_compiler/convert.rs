@@ -946,6 +946,7 @@ impl<'a> Converter<'a, '_> {
                         JsExpr::init(
                             E::Call {
                                 target: tag,
+                                kind: E::CallKind::of(&tag),
                                 args: self.exprs(template.exprs())?,
                                 ..E::Call::default()
                             },
@@ -1002,15 +1003,19 @@ impl<'a> Converter<'a, '_> {
                     loc,
                 )
             }
-            ExprKind::Call(call) => JsExpr::init(
-                E::Call {
-                    target: self.expr(call.callee())?,
-                    args: self.exprs(call.args())?,
-                    optional_chain: Self::chain(call.chain()),
-                    ..E::Call::default()
-                },
-                loc,
-            ),
+            ExprKind::Call(call) => {
+                let target = self.expr(call.callee())?;
+                JsExpr::init(
+                    E::Call {
+                        target,
+                        kind: E::CallKind::of(&target),
+                        args: self.exprs(call.args())?,
+                        optional_chain: Self::chain(call.chain()),
+                        ..E::Call::default()
+                    },
+                    loc,
+                )
+            }
             ExprKind::New(call) => JsExpr::init(
                 E::New {
                     target: self.expr(call.callee())?,
@@ -1162,7 +1167,7 @@ impl<'a> Converter<'a, '_> {
             });
         }
         Ok(E::Template {
-            tag,
+            tag: tag.map(E::TemplateTag::new),
             parts: leak(parts),
             head: contents(0),
         })

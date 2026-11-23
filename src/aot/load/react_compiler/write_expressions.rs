@@ -348,10 +348,10 @@ impl TreeWriter<'_, '_> {
 
     fn write_template(&mut self, template: &E::Template, loc: Loc) -> Written<ExprId> {
         let tag = match &template.tag {
-            Some(tag) => Some(self.write_chain_base(tag, None)?.0),
+            Some(tag) => Some(self.write_chain_base(&tag.expr, None)?.0),
             None => None,
         };
-        let is_raw = matches!(&template.tag, Some(tag) if self.is_call_of_raw_template(tag));
+        let is_raw = matches!(&template.tag, Some(tag) if self.is_call_of_raw_template(&tag.expr));
         let range = match tag {
             Some(_) if !is_raw => self.range_of_shape(loc, NodeShape::Call),
             Some(_) | None => self.range_of(loc),

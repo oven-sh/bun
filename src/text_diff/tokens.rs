@@ -147,7 +147,11 @@ impl Split {
 
     /// The length of the tokens that both texts start with.
     fn common_head<T: Unit>(self, a: &[T], b: &[T]) -> usize {
-        let mut head = u8::common_prefix(slice_as_bytes(a), slice_as_bytes(b)) / size_of::<T>();
+        // `memcmp` is the fastest way through a long head.
+        let blocks = a.as_chunks::<512>().0.iter().zip(b.as_chunks().0);
+        let mut head = 512 * blocks.take_while(|(a, b)| a == b).count();
+        head += u8::common_prefix(slice_as_bytes(&a[head..]), slice_as_bytes(&b[head..]))
+            / size_of::<T>();
         if let Split::Lines = self
             && head < a.len().max(b.len())
         {

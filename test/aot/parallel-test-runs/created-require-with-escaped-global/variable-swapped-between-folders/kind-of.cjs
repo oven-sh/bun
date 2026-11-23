@@ -1,2 +1,3 @@
-var freeGlobal = typeof global == "object" && global && global.Object === Object && global;
-module.exports = value => typeof value + " " + typeof freeGlobal;
+var ground;
+if (typeof global === "object" && global.Object === Object) ground = global;
+module.exports = value => typeof value + " " + typeof ground;

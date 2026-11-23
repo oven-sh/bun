@@ -26,7 +26,7 @@ use bun_sys::{self as sys, SignalCode};
 use crate::api::bun_process::ExtraPipe;
 #[cfg(not(windows))]
 use crate::api::bun_process::SpawnResultExt as _;
-use crate::api::bun_process::{self as spawn, Process, Rusage, SpawnOptions};
+use crate::api::bun_process::{self as spawn, Rusage, SpawnOptions};
 // User-facing JS `Stdio` enum (extract/as_spawn_option/is_piped).
 use crate::api::bun_spawn::stdio::{self, Stdio};
 use crate::api::bun_subprocess::subprocess_pipe_reader::PipeReader;
@@ -110,7 +110,6 @@ fn get_argv0(
             )
             .throw());
     }
-    let mut path_buf = bun_paths::path_buffer_pool::get();
 
     let argv0_to_use: &[u8] = arg0.slice();
 
@@ -136,12 +135,10 @@ fn get_argv0(
     let actual_argv0: ZBox = if path_to_use.is_empty() {
         ZBox::from_bytes(argv0_to_use)
     } else {
-        let Some(resolved) =
-            bun_which::which_for_spawn(&mut path_buf, path_to_use, cwd, argv0_to_use)
-        else {
+        let Some(resolved) = bun_which::which_for_spawn(path_to_use, cwd, argv0_to_use) else {
             return Err(throw_command_not_found(global_this, argv0_to_use));
         };
-        ZBox::from_bytes(resolved.as_bytes())
+        resolved.to_zbox()
     };
 
     Ok(Argv0Result {
@@ -298,12 +295,12 @@ pub(crate) fn spawn_sync(
 /// The terminal a spawn made for its child, closed unless the spawn gets far enough to `take` it: the user never
 /// received it then.
 #[derive(Default)]
-struct SpawnedTerminal(Option<terminal_body::CreateResult>);
+struct SpawnedTerminal<'a>(Option<jsc::WrapperGuard<'a, Terminal>>);
 
-impl Drop for SpawnedTerminal {
+impl Drop for SpawnedTerminal<'_> {
     fn drop(&mut self) {
-        if let Some(info) = self.0.take() {
-            info.terminal.abandon_from_spawn();
+        if let Some(terminal) = &self.0 {
+            terminal.abandon_from_spawn();
         }
     }
 }
@@ -314,23 +311,26 @@ struct ReportUnwatchedExit(bun_ptr::BackRef<SubprocessT<'static>>);
 
 impl Drop for ReportUnwatchedExit {
     fn drop(&mut self) {
-        let process = self.0.process.this_ptr();
+        let process = &self.0.process;
+        let mut rusage = bun_core::ffi::zeroed::<Rusage>();
         if let Some(status) = process.status() {
             // process has already exited, we called wait4(), but we did not call onProcessExit()
-            Process::on_exit(process, status.clone(), &bun_core::ffi::zeroed::<Rusage>());
+            process.on_exit(status.clone()).dispatch(&rusage);
         } else {
             // It has exited and only wait4() is left to call, or it is running: then it is tried once more to watch
             // it, and failing that it is ended and reaped.
             // https://cs.github.com/libuv/libuv/blob/b00d1bd225b602570baee82a6152eaa823a84fa6/src/unix/process.c#L1007
-            Process::wait(process, false);
+            if let Some(exit) = process.wait(false, &mut rusage) {
+                exit.dispatch(&rusage);
+            }
         }
     }
 }
 
 /// Stands in for the JS wrapper, which a sync `Subprocess` does not get.
-struct SyncWrapper<'a>(bun_ptr::RefPtr<SubprocessT<'a>>);
+struct SyncWrapper(bun_ptr::RefPtr<SubprocessT<'static>>);
 
-impl Drop for SyncWrapper<'_> {
+impl Drop for SyncWrapper {
     fn drop(&mut self) {
         self.0.finalize();
     }
@@ -397,7 +397,8 @@ fn spawn_maybe_sync(
     let mut windows_verbatim_arguments: bool = false;
     let mut abort_signal: Option<bun_jsc::AbortSignalRef> = None;
     let mut terminal_info = SpawnedTerminal::default();
-    let mut existing_terminal: Option<bun_ptr::BackRef<Terminal, bun_ptr::Mut>> = None; // Existing terminal passed by user
+    let terminal_slot;
+    let mut existing_terminal = None; // Existing terminal passed by user
     let mut terminal_js_value: JSValue = JSValue::ZERO;
 
     // Owned ZBox for `cwd` held here so the `&[u8]` borrow stays valid until
@@ -516,11 +517,7 @@ fn spawn_maybe_sync(
             }
 
             if let Some(signal_val) = args.get_truthy(cx.global(), "signal")? {
-                if let Some(signal) = WebCore::AbortSignal::from_js(signal_val) {
-                    // `from_js` returns a live FFI handle owned by JS.
-                    // `AbortSignal` is an `opaque_ffi!` ZST handle; `opaque_ref`
-                    // is the centralised non-null deref proof.
-                    let sig = WebCore::AbortSignal::opaque_ref(signal);
+                if let Some(sig) = WebCore::AbortSignal::from_js(&signal_val) {
                     if let Some(abort_error) = sig.node_abort_error_if_aborted(cx.global()) {
                         return Err(cx.global().throw_value(abort_error));
                     }
@@ -774,15 +771,8 @@ fn spawn_maybe_sync(
             if !is_sync {
                 if let Some(terminal_val) = args.get_truthy(cx.global(), "terminal")? {
                     // Check if it's an existing Terminal object
-                    if let Some(terminal) = terminal_body::js::from_js(terminal_val) {
-                        // `from_js` returns the live `Terminal` pointer borrowed
-                        // from the JS wrapper; it stays valid for as long as
-                        // `terminal_val` is reachable (kept alive below via
-                        // `terminal_js_value`), so the `BackRef` invariant
-                        // (pointee outlives holder) holds for this scope.
-                        // SAFETY: `terminal` is the wrapper's live heap pointer
-                        // (write provenance from its original allocation).
-                        let term = unsafe { bun_ptr::BackRef::from_raw_mut(terminal.as_ptr()) };
+                    terminal_slot = terminal_val;
+                    if let Some(term) = terminal_body::js::from_js(&terminal_slot) {
                         if term.is_closed() {
                             return Err(cx
                                 .global()
@@ -841,12 +831,10 @@ fn spawn_maybe_sync(
 
                     #[cfg(unix)]
                     {
-                        let slave_fd =
-                            existing_terminal
-                                .map(|t| t.get_slave_fd())
-                                .unwrap_or_else(|| {
-                                    terminal_info.0.as_ref().unwrap().terminal.get_slave_fd()
-                                });
+                        let slave_fd = existing_terminal
+                            .as_ref()
+                            .map(|t| t.get_slave_fd())
+                            .unwrap_or_else(|| terminal_info.0.as_ref().unwrap().get_slave_fd());
                         stdio[0] = Stdio::Fd(slave_fd);
                         stdio[1] = Stdio::Fd(slave_fd);
                         stdio[2] = Stdio::Fd(slave_fd);
@@ -929,16 +917,11 @@ fn spawn_maybe_sync(
                 }
             };
 
-            let pipe_env = {
-                let mut cursor = &mut ipc_env_buf[..];
-                match write!(cursor, "NODE_CHANNEL_FD={}\0", ipc_fd) {
-                    Ok(()) => {
-                        let written = 32 - cursor.len();
-                        // SAFETY: NUL written above at buf[written-1]
-                        ZStr::from_buf(&ipc_env_buf[..], written - 1)
-                    }
-                    Err(_) => return Err(cx.global().throw_out_of_memory()),
-                }
+            let Ok(pipe_env) = bun_core::fmt::buf_print_z(
+                &mut ipc_env_buf,
+                format_args!("NODE_CHANNEL_FD={ipc_fd}"),
+            ) else {
+                return Err(cx.global().throw_out_of_memory());
             };
             env_array.push(Some(pipe_env.into()));
 
@@ -1052,13 +1035,13 @@ fn spawn_maybe_sync(
         // For existing terminals, the session is already set up - child just uses the fd as stdio.
         #[cfg(unix)]
         pty_slave_fd: match terminal_info.0.as_ref() {
-            Some(ti) => ti.terminal.get_slave_fd().native(),
+            Some(terminal) => terminal.get_slave_fd().native(),
             None => -1,
         },
         #[cfg(windows)]
         pseudoconsole: existing_terminal
             .as_deref()
-            .or_else(|| terminal_info.0.as_ref().map(|info| info.terminal.get()))
+            .or(terminal_info.0.as_deref())
             .and_then(Terminal::get_pseudoconsole),
 
         #[cfg(windows)]
@@ -1145,12 +1128,12 @@ fn spawn_maybe_sync(
 
     // Use the isolated loop for spawnSync operations
     //
-    // `to_process` closes what is left in the result.
+    // `to_process_handle` closes what is left in the result.
     let spawned_stdin = spawned.stdin.take();
     let spawned_stdout = spawned.stdout.take();
     let spawned_stderr = spawned.stderr.take();
     let mut spawned_extra_pipes = core::mem::take(&mut spawned.extra_pipes);
-    let process = spawned.to_process(loop_handle);
+    let process = spawned.to_process_handle(loop_handle);
 
     #[cfg(unix)]
     let posix_ipc_fd = if !is_sync && maybe_ipc_mode.is_some() {
@@ -1179,7 +1162,7 @@ fn spawn_maybe_sync(
         // tear down unstarted `PipeReader`s (whose `deinit()` asserts
         // `isDone()`).
         stdin: JsCell::new(Writable::Ignore),
-        stdin_sink_ref: JsCell::new(None),
+        stdin_sink_ref: Cell::new(None),
         stdout: JsCell::new(Readable::Ignore),
         stderr: JsCell::new(Readable::Ignore),
         ref_count: bun_ptr::RefCount::init(),
@@ -1195,9 +1178,9 @@ fn spawn_maybe_sync(
         stdout_maxbuf: JsCell::new(None),
         terminal: Cell::new(
             existing_terminal
-                .map(|t| t.as_ptr())
-                .or_else(|| terminal_info.0.as_ref().map(|info| info.terminal.as_ptr()))
-                .and_then(NonNull::new),
+                .as_ref()
+                .or(terminal_info.0.as_ref())
+                .and_then(|t| NonNull::new(t.as_ptr())),
         ),
         observable_getters: Default::default(),
         closed: Default::default(),
@@ -1212,13 +1195,11 @@ fn spawn_maybe_sync(
         exited_due_to_maxbuf: Cell::new(None),
     });
     let subprocess_ptr = subprocess_ref.as_ptr();
-    // SAFETY: subprocess_ptr is a freshly-boxed Subprocess; we hold the only reference.
-    let subprocess = unsafe { &mut *subprocess_ptr };
+    // SAFETY: `subprocess_ref`, and then the wrapper that takes it, outlive this borrow.
+    let subprocess = unsafe { &*subprocess_ptr };
     #[cfg(windows)]
     SubprocessT::record_stdio_pipe_ownership(subprocess_ptr);
-    // Erase the borrow lifetime to 'static for the intrusive back-pointer
-    // (PipeReader stores it as raw NonNull).
-    let subprocess_nn: NonNull<SubprocessT<'static>> = subprocess_ref.as_non_null().cast();
+    let subprocess_nn = subprocess_ref.as_non_null();
 
     // Address-dependent fields, filled now that `subprocess` has a stable address.
     if let Some(max_buffer) = max_buffer {
@@ -1250,13 +1231,16 @@ fn spawn_maybe_sync(
         _ => None,
     };
 
-    match Writable::init(
-        stdin,
-        event_loop,
-        subprocess,
-        spawned_stdin,
-        &mut promise_for_stream,
-    ) {
+    // SAFETY: the `Ok` arm stores it in `subprocess.stdin`.
+    match unsafe {
+        Writable::init(
+            stdin,
+            event_loop,
+            &subprocess_ref,
+            spawned_stdin,
+            &mut promise_for_stream,
+        )
+    } {
         Ok(v) => subprocess.stdin.set(v),
         Err(err) => {
             // stdout/stderr are still `.ignore` — close the raw
@@ -1267,17 +1251,11 @@ fn spawn_maybe_sync(
             drop((spawned_stdout, spawned_stderr));
             subprocess.finalize_streams();
             #[cfg(unix)]
-            let _ = Process::kill_and_reap(
-                subprocess.process.this_ptr(),
-                &mut bun_core::ffi::zeroed::<Rusage>(),
-            );
+            let _ = subprocess
+                .process
+                .kill_and_reap(&mut bun_core::ffi::zeroed::<Rusage>());
             #[cfg(windows)]
             let _ = subprocess.try_kill(SignalCode::SIGKILL);
-            subprocess.process().detach();
-            if let Some(ipc_data) = subprocess.ipc_data.take() {
-                // Nothing else holds it yet (no socket wired, no task scheduled).
-                ipc_data.detach();
-            }
             return Err(err);
         }
     }
@@ -1302,28 +1280,25 @@ fn spawn_maybe_sync(
     // Inline terminals keep slave_fd until on_process_exit (BSD kernels flush
     // pty output on last slave close; see Terminal::drain_and_close_slave_fd).
     // Existing terminals keep slave_fd for reuse.
-    if let Some(info) = terminal_info.0.take() {
-        terminal_js_value = info.js_value;
+    if let Some(terminal) = terminal_info.0.take() {
+        terminal_js_value = terminal.to_js();
         #[cfg(unix)]
-        info.terminal.mark_inline_spawned();
+        terminal.mark_inline_spawned();
         #[cfg(windows)]
         {
             // ConPTY has no slave fd; this just marks inline_spawned.
-            info.terminal.close_slave_fd();
+            terminal.close_slave_fd();
             // Release the ConDrv \Reference handle now that the child holds a
             // copy: conhost then exits on its own once the child disconnects
             // and the reader observes EOF without us having to tear ConPTY
             // down from on_process_exit.
-            info.terminal.release_pseudoconsole_reference();
+            terminal.release_pseudoconsole_reference();
         }
         subprocess.update_flags(|f| f.insert(Subprocess::Flags::OWNS_TERMINAL));
     }
     // existing_terminal: don't close slave_fd - user manages lifecycle and can reuse
 
-    // SAFETY: `subprocess_ptr` is live, and `finalize()` detaches the handler before it is freed.
-    subprocess.process().set_exit_handler(unsafe {
-        bun_spawn::ProcessExit::new(bun_spawn::ProcessExitKind::Subprocess, subprocess_ptr)
-    });
+    subprocess.process.set_exit_owner(&subprocess_ref);
 
     promise_for_stream.ensure_still_alive();
     subprocess.update_flags(|f| {
@@ -1365,8 +1340,9 @@ fn spawn_maybe_sync(
     let (out, _sync_wrapper) = if is_sync {
         (JSValue::ZERO, Some(SyncWrapper(subprocess_ref)))
     } else {
-        let out = SubprocessT::to_js_nonnull(subprocess_ref.into_non_null().cast(), cx.global());
-        subprocess.this_value.with_mut(|v| v.set_weak(out));
+        let wrapper = Subprocess::js::wrap(subprocess_ref, cx.global());
+        wrapper.set_js_ref_weak();
+        let out = wrapper.to_js();
         // Immediately upgrade to strong if there's pending activity to prevent premature GC
         subprocess.update_has_pending_activity();
         (out, None)
@@ -1467,7 +1443,7 @@ fn spawn_maybe_sync(
             Subprocess::js::terminal_set_cached(out, cx.global(), terminal_js_value);
         }
 
-        match Process::watch(subprocess.process.this_ptr()) {
+        match subprocess.process.watch() {
             sys::Result::Ok(()) => {}
             sys::Result::Err(_) => {
                 send_exit_notification = true;
@@ -1481,40 +1457,25 @@ fn spawn_maybe_sync(
 
     // Start the readers before the Writable::Buffer stdin writer so that if
     // the writer's start() throws below, on_process_exit drains started readers.
-    if let Readable::Pipe(pipe) = subprocess.stdout.get() {
-        // Note: pass `subprocess_nn` (the `NonNull<Subprocess<'static>>`
-        // captured above) instead of the live `&mut subprocess`, which would
-        // alias with the `&mut subprocess.stdout` borrow held by `pipe`.
-        PipeReader::start(&pipe.clone(), subprocess_nn, event_loop, !is_sync && lazy);
-        if (is_sync || !lazy) && matches!(subprocess.stdout.get(), Readable::Pipe(_)) {
-            if let Readable::Pipe(pipe) = subprocess.stdout.get() {
-                Readable::pipe_reader_mut(pipe).read_all();
-            }
-        }
-    }
-
-    if let Readable::Pipe(pipe) = subprocess.stderr.get() {
-        // Note: see stdout arm above — avoid aliased &mut.
-        PipeReader::start(&pipe.clone(), subprocess_nn, event_loop, !is_sync && lazy);
-
-        if (is_sync || !lazy) && matches!(subprocess.stderr.get(), Readable::Pipe(_)) {
-            if let Readable::Pipe(pipe) = subprocess.stderr.get() {
-                Readable::pipe_reader_mut(pipe).read_all();
-            }
+    let pipes = [&subprocess.stdout, &subprocess.stderr].map(|out| out.get().pipe());
+    for pipe in pipes.iter().flatten() {
+        pipe.start(!is_sync && lazy);
+        if is_sync || !lazy {
+            pipe.read_all();
         }
     }
 
     let mut setup_err = match subprocess.stdin.get() {
         Writable::Buffer(buffer) => {
-            let start_ref = buffer.clone();
-            Writable::buffer_writer_mut(buffer).start(start_ref).err()
+            let started = buffer.start(loop_handle);
+            started.map(|state| subprocess.on_stdin_state(state)).err()
         }
         _ => None,
     };
     if let Some(err) = &setup_err {
-        // An unstarted writer never reports on_close; a Buffer left here pins the wrapper.
+        // A Buffer left here pins the wrapper.
         #[cfg(not(windows))] // Windows adopts the pipe at create and start() cannot fail there.
-        subprocess.on_close_io(Subprocess::StdioKind::Stdin);
+        subprocess.close_stdin_buffer();
         // Only this call can reap a sync child: it is killed once watched, and the error thrown after the wait.
         if !is_sync {
             // Not `kill_signal`, which the child may ignore: nobody is handed it to end it another way.
@@ -1547,9 +1508,6 @@ fn spawn_maybe_sync(
     // Adding the abort listener may call the onAbortSignal callback immediately if it was already aborted
     // Therefore, we must do this at the very end.
     if let Some(signal) = abort_signal.take() {
-        // An already-aborted signal runs the abort callback before this
-        // returns, which re-enters via `subprocess_ptr`: hold no
-        // `&mut Subprocess` across the call.
         // SAFETY: `subprocess_ptr` is live and heap-pinned.
         unsafe { bun_jsc::AbortHandle::follow_owner(subprocess_ptr, signal) };
     }
@@ -1565,36 +1523,37 @@ fn spawn_maybe_sync(
         return Ok(out);
     };
 
-    let process = subprocess.process.this_ptr();
+    let process = &subprocess.process;
+    let mut rusage = bun_core::ffi::zeroed::<Rusage>();
     if can_block_entire_thread_to_reduce_cpu_usage_in_fast_path {
         jsc_vm
             .counters
             .mark(jsc::counters::Field::SpawnSyncBlocking);
         let debug_timer = Output::DebugTimer::start();
-        Process::wait(process, true);
+        if let Some(exit) = process.wait(true, &mut rusage) {
+            exit.dispatch(&rusage);
+        }
         bun_output::scoped_log!(Subprocess, "spawnSync fast path took {}", debug_timer);
 
         // watchOrReap will handle the already exited case for us.
     }
 
-    if let Err(err) = Process::watch_or_reap(process) {
-        Process::on_exit(
-            process,
-            bun_spawn::Status::Err(err.clone()),
-            &bun_core::ffi::zeroed::<Rusage>(),
-        );
-        setup_err.get_or_insert(err);
+    match process.watch_or_reap(&mut rusage) {
+        Ok(None) => {}
+        Ok(Some(exit)) => exit.dispatch(&rusage),
+        Err(err) => {
+            let status = bun_spawn::Status::Err(err.clone());
+            process.on_exit(status).dispatch(&bun_core::ffi::zeroed());
+            setup_err.get_or_insert(err);
+        }
     }
 
     if let Some(err) = &setup_err {
         // Not `kill_signal`, which the child may ignore: nothing else bounds the wait.
         if subprocess.try_kill(SignalCode::SIGKILL).is_err() {
             // Nor can anything end it: give it up, as `Process::kill_and_reap` does.
-            Process::on_exit(
-                process,
-                bun_spawn::Status::Err(err.clone()),
-                &bun_core::ffi::zeroed::<Rusage>(),
-            );
+            let status = bun_spawn::Status::Err(err.clone());
+            process.on_exit(status).dispatch(&bun_core::ffi::zeroed());
         }
         subprocess.close_readable_pipes();
     }
@@ -1626,8 +1585,8 @@ fn spawn_maybe_sync(
                 // comparable with `now`.
                 if abort_signal_timeout.event_loop_timer.state.get()
                     == crate::timer::EventLoopTimerState::ACTIVE
-                    && abort_signal_timeout.event_loop_timer.in_heap.get()
-                        == crate::timer::InHeap::Regular
+                    && abort_signal_timeout.event_loop_timer.clock.get()
+                        == crate::timer::Clock::Real
                 {
                     let next_ts = abort_signal_timeout.event_loop_timer.next.get();
                     if user_timespec.eql(&Timespec::EPOCH)
@@ -1667,16 +1626,10 @@ fn spawn_maybe_sync(
             let has_timespec = !absolute_timespec.eql(&Timespec::EPOCH);
 
             if let Writable::Buffer(buffer) = subprocess.stdin.get() {
-                Writable::buffer_writer_mut(buffer).watch();
+                subprocess.on_stdin_state(buffer.watch());
             }
 
-            if let Readable::Pipe(pipe) = subprocess.stderr.get() {
-                Readable::pipe_reader_mut(pipe).watch();
-            }
-
-            if let Readable::Pipe(pipe) = subprocess.stdout.get() {
-                Readable::pipe_reader_mut(pipe).watch();
-            }
+            pipes.iter().rev().flatten().for_each(PipeReader::watch);
 
             // Tick the isolated event loop without passing timeout to avoid blocking
             // The timeout check is done at the top of the loop

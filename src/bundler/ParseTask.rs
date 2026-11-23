@@ -15,8 +15,7 @@ use bun_collections::VecExt;
 use bun_core::strings;
 use bun_core::{self, FeatureFlags, declare_scope, scoped_log};
 use bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext;
-use bun_event_loop::ConcurrentTask::ConcurrentTask;
-use bun_event_loop::{BoxedTask, Posted};
+use bun_event_loop::BoxedTask;
 use bun_sys::Fd;
 use bun_threading::thread_pool as ThreadPoolLib;
 
@@ -39,7 +38,6 @@ use crate::html_scanner::scan_import_records;
 use crate::options::{self, Loader};
 use crate::transpiler::{MacroJSCtx, Transpiler};
 use crate::{ContentHasher, UseDirective, perf, target_from_hashbang};
-use bun_resolver::cache::SourceFd;
 use bun_resolver::fs::{ByteOrderMark, PathResolverExt as _};
 use bun_resolver::{self as _resolver, Resolver};
 
@@ -103,6 +101,8 @@ pub struct ParseTask<'a> {
     pub(crate) package_version: ast::StoreStr,
     pub(crate) package_name: ast::StoreStr,
     pub(crate) is_entry_point: bool,
+    /// The import of this HTML file waits for the onLoad plugins: see `BundleV2::html_import_after_on_load`.
+    pub(crate) on_load_decides_html_import: bool,
 }
 
 pub enum ParseTaskStage<'a> {
@@ -119,7 +119,7 @@ pub struct Result<'a> {
     pub(crate) task: AnyTaskWithExtraContext,
     pub(crate) ctx: bun_ptr::ParentRef<BundleV2<'static>, bun_ptr::Mut>,
     pub(crate) value: ResultValue<'a>,
-    pub(crate) file_to_watch: Option<SourceFd>,
+    pub(crate) file_to_watch: Option<bun_sys::MaybeOwnedFile>,
     /// This is used for native onBeforeParsePlugins to store
     /// a function pointer and context pointer to free the
     /// returned source code by the plugin. After `value`, which may borrow it.
@@ -168,6 +168,28 @@ pub(crate) struct Success<'a> {
 
     /// The package name from package.json, used for barrel optimization.
     pub(crate) package_name: ast::StoreStr,
+
+    /// Set for a "use client" file, which is parsed once more for another graph.
+    pub(crate) client_copy_options: Option<Box<TsconfigOptions>>,
+}
+
+/// The options of one file that its tsconfig.json decides.
+pub(crate) struct TsconfigOptions {
+    pub(crate) jsx: options::jsx::Pragma,
+    pub(crate) emit_decorator_metadata: bool,
+    pub(crate) experimental_decorators: bool,
+    pub(crate) use_define_for_class_fields: bool,
+}
+
+impl Default for TsconfigOptions {
+    fn default() -> Self {
+        Self {
+            jsx: Default::default(),
+            emit_decorator_metadata: false,
+            experimental_decorators: false,
+            use_define_for_class_fields: true,
+        }
+    }
 }
 
 pub(crate) struct ResultError {
@@ -263,6 +285,7 @@ impl<'a> ParseTask<'a> {
             },
             stage: ParseTaskStage::NeedsSourceCode,
             is_entry_point: false,
+            on_load_decides_html_import: false,
         }
     }
 
@@ -303,6 +326,7 @@ impl Default for ParseTask<'_> {
             package_version: ast::StoreStr::EMPTY,
             package_name: ast::StoreStr::EMPTY,
             is_entry_point: false,
+            on_load_decides_html_import: false,
         }
     }
 }
@@ -575,6 +599,7 @@ pub mod parse_worker {
             package_version: ast::StoreStr::EMPTY,
             package_name: ast::StoreStr::EMPTY,
             is_entry_point: false,
+            on_load_decides_html_import: false,
         };
         let source = Source {
             path: bun_paths::fs::Path {
@@ -786,9 +811,14 @@ pub mod parse_worker {
                 let module_type = opts.module_type;
                 // Borrowed here: `topts` is a `&mut` that ends earlier borrows of the options.
                 opts.macro_remap = Some(&topts.macro_remap);
-                return if let Some(res) =
-                    (crate::cache::JavaScript {}).parse(bump, opts, &topts.define, log, source)?
-                {
+                return if let Some(res) = (crate::cache::JavaScript {}).parse(
+                    bump,
+                    opts,
+                    &topts.define,
+                    log,
+                    source,
+                    None,
+                )? {
                     // `Cached`/`AlreadyBundled` are runtime-loader
                     // states that never reach the bundler's `getAST`, so unwrap.
                     match res {
@@ -1572,7 +1602,7 @@ pub mod parse_worker {
         // the parent via offset_of; a `&mut` here would (a) shrink provenance to
         // the inner field and (b) alias with any `&`/`&mut` to the wrapper.
         result: *mut OnBeforeParseResult,
-        original_file: Option<SourceFd>,
+        original_file: Option<bun_sys::MaybeOwnedFile>,
     }
 
     #[repr(C)]
@@ -2502,6 +2532,14 @@ pub mod parse_worker {
             side_effects: task.side_effects,
             loader,
             package_name: task.package_name,
+            client_copy_options: (use_directive == UseDirective::Client).then(|| {
+                Box::new(TsconfigOptions {
+                    jsx: task.jsx.clone(),
+                    emit_decorator_metadata: task.emit_decorator_metadata,
+                    experimental_decorators: task.experimental_decorators,
+                    use_define_for_class_fields: task.use_define_for_class_fields,
+                })
+            }),
 
             // Hash the files in here so that we do it in parallel.
             content_hash_for_additional_file: unique_key_for_additional_file.content_hash,
@@ -2527,7 +2565,9 @@ pub mod parse_worker {
         debug_assert!(this.source_index.is_valid()); // forgot to set source_index
 
         let mut file_to_watch = match this.contents_or_fd {
-            ContentsOrFd::Fd { file, .. } => file.unwrap_valid().map(SourceFd::Borrowed),
+            ContentsOrFd::Fd { file, .. } => {
+                file.unwrap_valid().map(bun_sys::MaybeOwnedFile::Borrowed)
+            }
             ContentsOrFd::Contents(_) => None,
         };
 
@@ -2621,15 +2661,11 @@ pub mod parse_worker {
         let ctx = result.ctx;
         match ctx.any_loop() {
             bun_event_loop::AnyEventLoop::Js { .. } => {
-                let ct = ConcurrentTask::create_boxed(result);
                 let poster = ctx
                     .js_poster
                     .as_ref()
                     .expect("JS-owned bundle has a poster");
-                if let Posted::Refused(ct) = poster.post(ct) {
-                    // SAFETY: the task made above.
-                    unsafe { ct.task.into_boxed::<Result>() }.release_unrun();
-                }
+                poster.post_boxed(result);
             }
             bun_event_loop::AnyEventLoop::Mini(mini) => {
                 // SAFETY: `task` is the field at that offset; `on_complete_mini` takes the box back.

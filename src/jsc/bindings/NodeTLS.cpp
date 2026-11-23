@@ -10,7 +10,7 @@
 #include "JavaScriptCore/ObjectConstructor.h"
 #include "JavaScriptCore/ArrayConstructor.h"
 #include "libusockets.h"
-#include "bun-usockets/src/internal/internal.h"
+#include "bun-usockets/src/crypto/sni_tree.h"
 
 #include "ZigGlobalObject.h"
 #include "ErrorCode.h"
@@ -302,13 +302,6 @@ JSC_DEFINE_HOST_FUNCTION(parseCACertificates, (JSC::JSGlobalObject * globalObjec
     RELEASE_AND_RETURN(scope, JSValue::encode(array));
 }
 
-struct ServerNameTreeDeleter {
-    void operator()(void* tree) const
-    {
-        sni_free(tree, [](void*) {});
-    }
-};
-
 // (names: Map<string, T>, servername: string) => T | undefined, matched by the tree a listener keeps its names in.
 JSC_DEFINE_HOST_FUNCTION(selectServerName, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
@@ -321,7 +314,7 @@ JSC_DEFINE_HOST_FUNCTION(selectServerName, (JSC::JSGlobalObject * globalObject, 
     Latin1CString servername = servernameValue.toWTFString(globalObject).latin1();
     RETURN_IF_EXCEPTION(scope, {});
 
-    std::unique_ptr<void, ServerNameTreeDeleter> tree { sni_new() };
+    sni_node<size_t> tree;
     JSC::MarkedArgumentBuffer values;
     auto* iterator = JSC::JSMapIterator::create(vm, globalObject->mapIteratorStructure(), names, JSC::IterationKind::Entries);
     JSValue name, value;
@@ -337,10 +330,10 @@ JSC_DEFINE_HOST_FUNCTION(selectServerName, (JSC::JSGlobalObject * globalObject, 
             throwOutOfMemoryError(globalObject, scope);
             return {};
         }
-        sni_add(tree.get(), view->utf8().legacyCStringPointer(), reinterpret_cast<void*>(static_cast<uintptr_t>(values.size())));
+        tree.add(view->utf8().legacyCStringPointer(), values.size());
     }
-    auto selected = reinterpret_cast<uintptr_t>(sni_find(tree.get(), byteCast<char>(servername.spanIncludingNullTerminator()).data()));
-    return JSValue::encode(selected ? values.at(selected - 1) : jsUndefined());
+    auto* selected = tree.find(byteCast<char>(servername.spanIncludingNullTerminator()).data());
+    return JSValue::encode(selected ? values.at(*selected - 1) : jsUndefined());
 }
 
 // (hash: ArrayBufferView) => void, where hash is the SHA-256 of a DER SubjectPublicKeyInfo.

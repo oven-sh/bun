@@ -164,6 +164,16 @@ impl Condition {
         self.signal()
     }
 
+    /// `count` calls of [`signal`](Self::signal) in one. The first thread that wakes may take the core from the caller,
+    /// which then gets to the other calls late.
+    #[inline]
+    pub fn notify_many(&self, count: usize) {
+        if count > 0 {
+            self.impl_
+                .wake(Notify::Many(u32::try_from(count).unwrap_or(u32::MAX)));
+        }
+    }
+
     /// Alias for [`broadcast`](Self::broadcast) — `parking_lot::Condvar` spelling.
     #[inline]
     pub fn notify_all(&self) {
@@ -182,6 +192,7 @@ type Impl = FutexImpl;
 #[derive(PartialEq, Eq, Clone, Copy)]
 enum Notify {
     One, // wake up only one thread
+    Many(u32),
     All, // wake up all threads
 }
 
@@ -292,6 +303,9 @@ mod windows_impl {
         pub(super) fn wake(&self, notify: Notify) {
             match notify {
                 Notify::One => WakeConditionVariable(&self.condition),
+                Notify::Many(count) => {
+                    (0..count).for_each(|_| WakeConditionVariable(&self.condition));
+                }
                 Notify::All => WakeAllConditionVariable(&self.condition),
             }
         }
@@ -323,83 +337,31 @@ impl FutexImpl {
     const SIGNAL_MASK: u32 = 0xffff << 16;
 
     fn wait(&self, mutex: &Mutex, timeout: Option<u64>) -> Result<(), TimeoutError> {
-        // Observe the epoch, then check the state again to see if we should wake up.
-        // The epoch must be observed before we check the state or we could potentially miss a wake() and deadlock:
-        //
-        // - T1: s = LOAD(&state)
-        // - T2: UPDATE(&s, signal)
-        // - T2: UPDATE(&epoch, 1) + FUTEX_WAKE(&epoch)
-        // - T1: e = LOAD(&epoch) (was reordered after the state load)
-        // - T1: s & signals == 0 -> FUTEX_WAIT(&epoch, e) (missed the state update + the epoch change)
-        //
-        // Acquire barrier to ensure the epoch load happens before the state load.
-        let mut epoch = self.epoch.load(Ordering::Acquire);
-        let mut state = self.state.fetch_add(Self::ONE_WAITER, Ordering::Relaxed);
+        // Acquire barrier ensures that a wake() which counts the waiter added below changes the epoch after this load.
+        let epoch = self.epoch.load(Ordering::Acquire);
+        let state = self.state.fetch_add(Self::ONE_WAITER, Ordering::Relaxed);
         debug_assert!(state & Self::WAITER_MASK != Self::WAITER_MASK);
-        state += Self::ONE_WAITER;
 
         mutex.unlock();
-        // Re-acquire on every exit path (Ok and Err).
-        // Condvar wait semantics (unlock, block, re-lock) are the inverse of MutexGuard,
-        // so the re-lock is expressed as a one-off defer rather than an RAII guard type.
-        scopeguard::defer! { mutex.lock(); }
 
-        let mut futex_deadline = Futex::Deadline::init(timeout);
-
-        loop {
-            match futex_deadline.wait(&self.epoch, epoch) {
-                Ok(()) => {}
-                // On timeout, we must decrement the waiter we added above.
-                Err(crate::futex::TimeoutError::Timeout) => {
-                    loop {
-                        // If there's a signal when we're timing out, consume it and report being woken up instead.
-                        // Acquire barrier ensures code before the wake() which added the signal happens before we decrement it and return.
-                        while state & Self::SIGNAL_MASK != 0 {
-                            let new_state = state - Self::ONE_WAITER - Self::ONE_SIGNAL;
-                            state = match self.state.compare_exchange_weak(
-                                state,
-                                new_state,
-                                Ordering::Acquire,
-                                Ordering::Relaxed,
-                            ) {
-                                Ok(_) => return Ok(()),
-                                Err(s) => s,
-                            };
-                        }
-
-                        // Remove the waiter we added and officially return timed out.
-                        let new_state = state - Self::ONE_WAITER;
-                        state = match self.state.compare_exchange_weak(
-                            state,
-                            new_state,
-                            Ordering::Relaxed,
-                            Ordering::Relaxed,
-                        ) {
-                            Ok(_) => return Err(TimeoutError::Timeout),
-                            Err(s) => s,
-                        };
-                    }
-                }
+        let result = match timeout {
+            Some(_) => Futex::wait(&self.epoch, epoch, timeout).map_err(|_| TimeoutError::Timeout),
+            None => {
+                Futex::wait_forever(&self.epoch, epoch);
+                Ok(())
             }
+        };
 
-            epoch = self.epoch.load(Ordering::Acquire);
-            state = self.state.load(Ordering::Relaxed);
+        // Never sleep again for lack of a signal: a thread that began to wait after the wake() may have consumed ours.
+        let leave = |state: u32| {
+            state - Self::ONE_WAITER - (state & Self::SIGNAL_MASK).min(Self::ONE_SIGNAL)
+        };
+        // Acquire barrier ensures code before the wake() which added the signal happens before we decrement it and return.
+        self.state
+            .update(Ordering::Acquire, Ordering::Relaxed, leave);
 
-            // Try to wake up by consuming a signal and decremented the waiter we added previously.
-            // Acquire barrier ensures code before the wake() which added the signal happens before we decrement it and return.
-            while state & Self::SIGNAL_MASK != 0 {
-                let new_state = state - Self::ONE_WAITER - Self::ONE_SIGNAL;
-                state = match self.state.compare_exchange_weak(
-                    state,
-                    new_state,
-                    Ordering::Acquire,
-                    Ordering::Relaxed,
-                ) {
-                    Ok(_) => return Ok(()),
-                    Err(s) => s,
-                };
-            }
-        }
+        mutex.lock();
+        result
     }
 
     fn wake(&self, notify: Notify) {
@@ -418,6 +380,7 @@ impl FutexImpl {
 
             let to_wake = match notify {
                 Notify::One => 1,
+                Notify::Many(count) => count.min(wakeable),
                 Notify::All => wakeable,
             };
 
@@ -436,19 +399,161 @@ impl FutexImpl {
                     // This is very unlikely due to how many precise amount of Futex.wake() calls that would be between the waiting thread's potential preemption.
                     //
                     // Release barrier ensures the signal being added to the state happens before the epoch is changed.
-                    // If not, the waiting thread could potentially deadlock from missing both the state and epoch change:
+                    // If not, the waiting thread could potentially deadlock from missing the epoch change:
                     //
                     // - T2: UPDATE(&epoch, 1) (reordered before the state change)
                     // - T1: e = LOAD(&epoch)
-                    // - T1: s = LOAD(&state)
+                    // - T1: UPDATE(&state, waiter)
                     // - T2: UPDATE(&state, signal) + FUTEX_WAKE(&epoch)
-                    // - T1: s & signals == 0 -> FUTEX_WAIT(&epoch, e) (missed both epoch change and state change)
+                    // - T1: FUTEX_WAIT(&epoch, e) (is reserved, so the next wake() skips it)
                     let _ = self.epoch.fetch_add(1, Ordering::Release);
-                    Futex::wake(&self.epoch, to_wake);
+                    // Once all are reserved wake() returns early, so a thread that began to wait since must not be woken in place of one of them.
+                    let reserved_all = to_wake == wakeable;
+                    Futex::wake(&self.epoch, if reserved_all { u32::MAX } else { to_wake });
                     return;
                 }
                 Err(s) => s,
             };
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Guarded;
+
+    #[test]
+    fn notify_many_wakes_that_many() {
+        // How many wait, and how many may go on
+        let (state, condition) = (Guarded::new((0, 0)), Condition::default());
+        std::thread::scope(|scope| {
+            for _ in 0..5 {
+                scope.spawn(|| {
+                    let mut state = state.lock();
+                    state.0 += 1;
+                    while state.1 == 0 {
+                        condition.wait_guarded(&mut state);
+                    }
+                    *state = (state.0 - 1, state.1 - 1);
+                });
+            }
+            for (waiting, count) in [(5, 3), (2, 7)] {
+                while state.lock().0 != waiting {
+                    std::thread::yield_now();
+                }
+                state.lock().1 = count;
+                condition.notify_many(count);
+            }
+        });
+    }
+
+    /// Fails where `wait_guarded` would hang.
+    fn wait_for_wake_up<T>(condition: &Condition, guard: &mut GuardedLock<'_, T, Mutex>) {
+        if cfg!(miri) {
+            // It reports the deadlock.
+            return condition.wait_guarded(guard);
+        }
+        let began = std::time::Instant::now();
+        let _ = condition.timed_wait_guarded(guard, 30 * bun_core::time::NS_PER_S);
+        assert!(began.elapsed().as_secs() < 30, "lost a wake-up");
+    }
+
+    #[test]
+    fn notify_all_after_the_unlock_wakes_the_thread_whose_turn_it_is() {
+        const THREADS: usize = 8;
+        const TURNS: usize = if cfg!(miri) { 200 } else { 20_000 };
+
+        let (turn, condition) = (&Guarded::new(0), &Condition::default());
+        std::thread::scope(|scope| {
+            for first in 0..THREADS {
+                scope.spawn(move || {
+                    for mine in (first..TURNS).step_by(THREADS) {
+                        let mut turn = turn.lock();
+                        while *turn != mine {
+                            wait_for_wake_up(condition, &mut turn);
+                        }
+                        *turn += 1;
+                        drop(turn);
+                        condition.notify_all();
+                    }
+                });
+            }
+        });
+    }
+
+    const NOTIFY: [fn(&Condition); 3] = [
+        Condition::notify_one,
+        |condition| condition.notify_many(2),
+        Condition::notify_all,
+    ];
+
+    /// `wake` runs with the lock held, and has to wake all three.
+    fn with_three_waiters(wake: impl Fn(&Condition, &mut GuardedLock<'_, (u32, bool), Mutex>)) {
+        for _ in 0..if cfg!(miri) { 5 } else { 50 } {
+            // How many wait, and whether they may go on
+            let (state, condition) = (Guarded::new((0, false)), Condition::default());
+            std::thread::scope(|scope| {
+                for _ in 0..3 {
+                    scope.spawn(|| {
+                        let mut state = state.lock();
+                        state.0 += 1;
+                        while !state.1 {
+                            wait_for_wake_up(&condition, &mut state);
+                        }
+                    });
+                }
+                while state.lock().0 != 3 {
+                    std::thread::yield_now();
+                }
+                let mut state = state.lock();
+                state.1 = true;
+                wake(&condition, &mut state);
+            });
+            #[cfg(not(windows))]
+            assert_eq!(condition.impl_.state.load(Ordering::Relaxed), 0);
+        }
+    }
+
+    #[test]
+    fn a_later_wait_that_times_out_does_not_take_the_wake_up() {
+        for (notify, calls) in NOTIFY.into_iter().zip([3, 2, 1]) {
+            with_three_waiters(|condition, state| {
+                for _ in 0..calls {
+                    notify(condition);
+                    let _ = condition.timed_wait_guarded(state, 0);
+                }
+            });
+        }
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn reserving_the_last_waiter_wakes_those_reserved_before() {
+        for notify in NOTIFY {
+            with_three_waiters(|condition, _| {
+                // As if by wake()s whose `Futex::wake` goes to threads that begin to wait later
+                let waiters = 3 * FutexImpl::ONE_WAITER;
+                let reserved = condition.impl_.state.compare_exchange(
+                    waiters,
+                    waiters + 2 * FutexImpl::ONE_SIGNAL,
+                    Ordering::Relaxed,
+                    Ordering::Relaxed,
+                );
+                assert_eq!(reserved, Ok(waiters));
+                notify(condition);
+            });
+        }
+    }
+
+    #[test]
+    fn a_wait_that_nothing_notifies_times_out() {
+        let (nothing, condition) = (Guarded::new(()), Condition::default());
+        for timeout_ns in [0, 1_000_000] {
+            // It may wake up spuriously.
+            let times_out =
+                |_| (condition.timed_wait_guarded(&mut nothing.lock(), timeout_ns)).is_err();
+            assert!((0..10).any(times_out));
         }
     }
 }

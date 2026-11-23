@@ -10,7 +10,7 @@ use bun_core::scoped_log;
 use bun_http::Method as HttpMethod;
 use bun_jsc::JsCell;
 use bun_jsc::bindgen::{Callable, JsLocal, JsScope, JsWrapper, StringOrJsBytes};
-use bun_ptr::{AsCtxPtr, RefPtr};
+use bun_ptr::{AsCtxPtr, OptionCellExt as _, RefPtr};
 use bun_uws as uws;
 use bun_uws_sys as uws_sys;
 
@@ -88,9 +88,9 @@ pub(crate) struct NodeHTTPResponse {
     pub(crate) body_read_state: Cell<BodyReadState>,
     pub(crate) body_read_ref: jsc::Ref,
     /// Held until `mark_request_as_done`.
-    pending_ref: JsCell<Option<PendingRequest<RefPtr<Self>>>>,
+    pending_ref: Cell<Option<PendingRequest<RefPtr<Self>>>>,
     /// What the handler returned, with the ref of the dispatch that waits for it.
-    pub(crate) promise: JsCell<Option<(StrongOptional, RefPtr<Self>)>>,
+    pub(crate) promise: Cell<Option<(StrongOptional, RefPtr<Self>)>>,
     pub(crate) server: AnyServer,
 
     /// node:http: the raw trailer section that followed THIS request's chunked
@@ -118,7 +118,7 @@ pub(crate) struct NodeHTTPResponse {
     pending_pinned_write_owner: JsCell<crate::node::StringOrBuffer<'static>>,
 
     /// Held while the deferred flush is registered.
-    auto_flush_ref: JsCell<Option<RefPtr<Self>>>,
+    auto_flush_ref: Cell<Option<RefPtr<Self>>>,
 }
 
 bitflags! {
@@ -618,7 +618,6 @@ impl NodeHTTPResponse {
 
         // Last step: a reader that waits for the body gets its 'end', like Node 25 and older.
         if ended_unfinished_body && !armed_reader.is_empty() {
-            let _guard = self.ref_guard();
             self.on_data_or_aborted(b"", true, AbortEvent::None, armed_reader);
         }
 
@@ -731,7 +730,7 @@ impl NodeHTTPResponse {
     }
 
     pub(crate) fn is_request_pending(&self) -> bool {
-        self.pending_ref.get().is_some()
+        self.pending_ref.is_some()
     }
 
     pub(crate) fn mark_request_as_done_if_necessary(&self) {
@@ -1002,13 +1001,7 @@ impl NodeHTTPResponse {
             );
         }
 
-        // BACKREF: same keep-alive pattern as cork() — either phase can reach
-        // JS (string coercions, drain callbacks), which could drop the last
-        // reference to this response mid-call.
-        let this = bun_ptr::BackRef::from(ptr::NonNull::from(self));
-        let _guard = self.ref_guard();
-
-        if let Some(written) = this.write_whole_response(
+        if let Some(written) = self.write_whole_response(
             this_value.to_js(),
             cx.global(),
             status_code,
@@ -1023,11 +1016,11 @@ impl NodeHTTPResponse {
             return Ok(written);
         }
 
-        let raw_response = this.writer();
+        let raw_response = self.writer();
         let mut result: JsResult<JSValue> = Ok(JSValue::UNDEFINED);
         {
             let run = || -> JsResult<JSValue> {
-                this.write_head(
+                self.write_head(
                     cx,
                     status_code,
                     status_message,
@@ -1035,8 +1028,8 @@ impl NodeHTTPResponse {
                     auto_header_bits,
                     keep_alive_timeout_secs,
                 )?;
-                this.resume_socket();
-                this.write_or_end::<true>(
+                self.resume_socket();
+                self.write_or_end::<true>(
                     this_value.to_js(),
                     cx.global(),
                     chunk,
@@ -1046,12 +1039,7 @@ impl NodeHTTPResponse {
                 )
             };
             if let Some(raw_response) = raw_response {
-                raw_response.corked(|| {
-                    // Capture `this` so a `self`-derived pointer reaches the
-                    // FFI closure-data slot (see cork()'s R-2 note).
-                    let _escape = this;
-                    result = run();
-                });
+                raw_response.corked(|| result = run());
             } else {
                 result = run();
             }
@@ -1137,9 +1125,7 @@ impl NodeHTTPResponse {
             return Ok(JSValue::UNDEFINED);
         }
 
-        let this = bun_ptr::BackRef::from(ptr::NonNull::from(self));
-        let _guard = self.ref_guard();
-        Ok(this
+        Ok(self
             .write_whole_response(
                 this_value.to_js(),
                 cx.global(),
@@ -1624,7 +1610,7 @@ impl NodeHTTPResponse {
 pub(crate) fn on_resolve(
     cx: &mut JsScope<'_>,
     _: JsLocal<'_>,
-    (this, wrapper): (&NodeHTTPResponse, JsLocal<'_>),
+    (this, wrapper): (&RefPtr<NodeHTTPResponse>, JsLocal<'_>),
 ) {
     scoped_log!(NodeHTTPResponse, "onResolve");
     let global_object = cx.global();
@@ -1655,7 +1641,7 @@ pub(crate) fn on_resolve(
 pub(crate) fn on_reject(
     cx: &mut JsScope<'_>,
     err: JsLocal<'_>,
-    (this, wrapper): (&NodeHTTPResponse, JsLocal<'_>),
+    (this, wrapper): (&RefPtr<NodeHTTPResponse>, JsLocal<'_>),
 ) {
     let global_object = cx.global();
     let _dispatch_ref = this.take_dispatch_ref();
@@ -2416,7 +2402,7 @@ impl NodeHTTPResponse {
     }
 
     fn register_auto_flush(&self) {
-        if self.auto_flush_ref.get().is_some() {
+        if self.auto_flush_ref.is_some() {
             return;
         }
         self.auto_flush_ref.set(Some(self.ref_guard()));
@@ -2584,8 +2570,6 @@ impl NodeHTTPResponse {
         // that forced `self` to memory and blocked inlining/regalloc of the
         // cork prologue.
         let this = bun_ptr::BackRef::from(ptr::NonNull::from(self));
-        // Keeps `self` alive across re-entry.
-        let _guard = self.ref_guard();
 
         // Snapshot before re-entry; the handle is `Copy`.
         let raw_response = this.writer();
@@ -2715,15 +2699,15 @@ pub(crate) unsafe extern "C" fn NodeHTTPResponse__createForJS(
         }),
         poll_ref: jsc::Ref::default(),
         body_read_ref: jsc::Ref::default(),
-        pending_ref: JsCell::new(None),
-        promise: JsCell::new(None),
+        pending_ref: Cell::new(None),
+        promise: Cell::new(None),
         request_trailers: JsCell::new(Vec::new()),
         armed_this_value: Cell::new(JSValue::ZERO),
         raw_request_headers: JsCell::new(Vec::new()),
         bytes_written: Cell::new(0),
         pending_pinned_write: Cell::new(PendingPinnedWrite::default()),
         pending_pinned_write_owner: JsCell::new(crate::node::StringOrBuffer::EMPTY),
-        auto_flush_ref: JsCell::new(None),
+        auto_flush_ref: Cell::new(None),
     });
     response
         .pending_ref
@@ -2734,6 +2718,5 @@ pub(crate) unsafe extern "C" fn NodeHTTPResponse__createForJS(
         response.body_read_ref.r#ref(vm);
     }
     response.poll_ref.r#ref(vm);
-    // SAFETY: the wrapper adopts the first ref.
-    unsafe { NodeHTTPResponse::to_js_ptr(response.into_raw(), global_object) }
+    js::to_js(response, global_object)
 }

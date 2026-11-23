@@ -47,7 +47,7 @@ pub(crate) fn get_bun_server_open_count(server: BunServer<'_>) -> f64 {
 /// longer be upgraded.
 pub(crate) fn upgrade_node_http_response_to_web_socket<'a>(
     cx: &mut JsScope<'a>,
-    response: Option<&NodeHTTPResponse>,
+    response: Option<&bun_ptr::RefPtr<NodeHTTPResponse>>,
     websocket: JsLocal<'a>,
     handlers: JsLocal<'a>,
     handshake: &[u8],
@@ -98,5 +98,5 @@ pub(crate) fn send_web_socket_frame<'a>(
     fin: bool,
     compress: bool,
 ) -> JsResult<JSValue> {
-    handle.send_frame(cx.global(), data.to_js(), Opcode(opcode), fin, compress)
+    handle.send_frame(cx.global(), data, Opcode(opcode), fin, compress)
 }

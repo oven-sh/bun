@@ -7,7 +7,7 @@ use std::time::Instant;
 
 #[cfg(unix)]
 use crate::api::bun::process::SpawnResultExt as _;
-use crate::api::bun::process::{self as spawn, Rusage, SpawnOptions, Status};
+use crate::api::bun::process::{self as spawn, SpawnOptions, Status};
 use crate::cli::Command;
 use crate::cli::filter_arg as FilterArg;
 use crate::cli::run_command::{ConfigureEnvOptions, RunCommand};
@@ -17,7 +17,9 @@ use bun_core::{ZStr, strings};
 use bun_event_loop::EventLoopHandle;
 use bun_event_loop::MiniEventLoop::{self as MiniEventLoopMod, MiniEventLoop};
 use bun_install::lifecycle_script_runner::ScriptArgv;
-use bun_io::BufferedReader;
+use bun_io::max_buf::Kind;
+use bun_io::{BufferedReader, IoEvent, Owner, PollTag};
+use bun_paths::{dirname_or_root, without_trailing_sep};
 
 // The string fields below are owned boxes, except `combined` which is interned
 // in the process-lifetime CLI arena.
@@ -74,8 +76,8 @@ fn write_to_stdout(bytes: &[u8]) {
     let _ = bun_sys::File::borrow(&bun_sys::Fd::stdout()).write_all(bytes);
 }
 
-/// Parent of both readers of a script.
-pub(crate) struct ScriptOutput<'a> {
+/// Where both readers of a script deliver.
+struct ScriptOutput<'a> {
     shared: &'a Shared,
     config: &'a ScriptConfig,
     buffer: Vec<u8>,
@@ -110,17 +112,6 @@ impl ScriptOutput<'_> {
         self.shared.print(buf);
         Ok(())
     }
-}
-
-bun_io::impl_buffered_reader_parent! {
-    FilterRunHandle for ScriptOutput<'a>;
-    feature = Tools;
-    has_on_read_chunk = true;
-    on_read_chunk   = |this, chunk, _has_more| { let _ = (*this).read_chunk(&chunk); true };
-    on_reader_done  = |_this| {};
-    on_reader_error = |_this, _err| {};
-    loop_           = |this| bun_io::uws_to_native((*this).shared.event_loop.loop_);
-    event_loop      = |this| (*this).shared.event_loop.as_event_loop_ctx();
 }
 
 pub(crate) struct ProcessHandle<'a> {
@@ -178,9 +169,7 @@ impl<'a> ProcessHandle<'a> {
             let envp = crate::cli::script_or_command::with_package_script(
                 &mut env,
                 &handle.output.config.script_name,
-                bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
-                    &handle.output.config.package_json_path,
-                ),
+                without_trailing_sep(dirname_or_root(&handle.output.config.package_json_path)),
                 |env| env.map.to_envp(),
             );
             break 'brk spawn::spawn_process(
@@ -194,9 +183,12 @@ impl<'a> ProcessHandle<'a> {
         let process =
             spawned.to_process_handle(EventLoopHandle::init_mini(handle.output.shared.event_loop));
 
-        let output = (&raw mut handle.output).cast();
-        handle.stdout.set_parent(output);
-        handle.stderr.set_parent(output);
+        let ptr = std::ptr::from_mut(handle).cast();
+        for kind in [Kind::Stdout, Kind::Stderr] {
+            let owner = Owner::with_kind(PollTag::FilterRunHandle, kind, ptr);
+            // SAFETY: `owner` points to the slot in `State.handles` that holds this reader, which does not move.
+            unsafe { handle.reader(kind).set_owner(owner) };
+        }
 
         #[cfg(windows)]
         {
@@ -209,14 +201,11 @@ impl<'a> ProcessHandle<'a> {
         }
 
         #[cfg(unix)]
-        {
-            if let Some(stdout) = stdout_pipe.map(bun_sys::File::into_raw) {
-                let _ = bun_sys::set_nonblocking(stdout);
-                handle.stdout.start(stdout, true)?;
-            }
-            if let Some(stderr) = stderr_pipe.map(bun_sys::File::into_raw) {
-                let _ = bun_sys::set_nonblocking(stderr);
-                handle.stderr.start(stderr, true)?;
+        for (reader, pipe) in [(&handle.stdout, stdout_pipe), (&handle.stderr, stderr_pipe)] {
+            if let Some(pipe) = pipe {
+                let _ = bun_sys::set_nonblocking(pipe.fd());
+                let event_loop = handle.output.shared.event_loop.as_event_loop_ctx();
+                let _ = reader.start(event_loop, pipe.into(), true)?;
             }
         }
         #[cfg(not(unix))]
@@ -232,39 +221,50 @@ impl<'a> ProcessHandle<'a> {
             end_time: None,
         });
         let handle_ptr = std::ptr::from_mut::<ProcessHandle<'a>>(handle);
-        // Not a borrow of the slot, which the exit handler borrows again.
-        let process = handle.process.as_ref().unwrap().process.this_ptr();
+        let process = &handle.process.as_ref().unwrap().process;
         // SAFETY: `handle` is the live `ProcessHandle` slot in `State.handles`;
         // it owns `process` and outlives it.
         process.set_exit_handler(unsafe {
             bun_spawn::ProcessExit::new(bun_spawn::ProcessExitKind::FilterRunHandle, handle_ptr)
         });
 
-        match spawn::Process::watch_or_reap(process) {
-            Ok(_) => {}
-            Err(err) => {
-                if !process.has_exited() {
-                    // SAFETY: all-zero is a valid Rusage (POD C struct)
-                    let rusage = bun_core::ffi::zeroed::<Rusage>();
-                    spawn::Process::on_exit(process, Status::Err(err), &rusage);
-                }
-            }
+        let mut rusage = bun_core::ffi::zeroed();
+        if let Some(exit) = process.watch_or_exit(&mut rusage) {
+            exit.dispatch(&rusage);
         }
         Ok(())
     }
 
+    fn reader(&self, kind: Kind) -> &BufferedReader {
+        match kind {
+            Kind::Stdout => &self.stdout,
+            Kind::Stderr => &self.stderr,
+        }
+    }
+
+    pub(crate) fn read(&mut self, kind: Kind, event: Option<IoEvent>) {
+        let reader = match kind {
+            Kind::Stdout => &self.stdout,
+            Kind::Stderr => &self.stderr,
+        };
+        let event_loop = self.output.shared.event_loop.as_event_loop_ctx();
+        // Ignored: `on_process_exit` ends the script.
+        let _ = reader.read_chunks(event_loop, event, |chunk, _| {
+            let _ = self.output.read_chunk(&chunk);
+            true
+        });
+    }
+
     /// After the exit: a leftover child may hold the pipes open, so their EOF may never come.
     fn drain_and_close_pipes(&mut self) {
-        for reader in [&mut self.stdout, &mut self.stderr] {
+        for kind in [Kind::Stdout, Kind::Stderr] {
             // Windows has no synchronous drain.
             #[cfg(unix)]
-            if !reader.is_done() && reader.get_fd() != bun_sys::Fd::INVALID {
-                reader.set_parent((&raw mut self.output).cast());
-                // SAFETY: the callbacks reach only `self.output`, which `&mut self` covers.
-                unsafe { BufferedReader::read(reader) };
+            if !self.reader(kind).is_done() && self.reader(kind).get_fd() != bun_sys::Fd::INVALID {
+                self.read(kind, None);
             }
-            if !reader.is_done() {
-                reader.deinit();
+            if !self.reader(kind).is_done() {
+                self.reader(kind).deinit();
             }
         }
     }
@@ -831,9 +831,7 @@ pub(crate) fn run_scripts_with_filter(
             // Route through the process-lifetime CLI arena
             // and derive the `ZStr` from the arena slice.
             let interned: &'static [u8] = crate::cli::cli_dupe(&copy_script);
-            let combined_len = interned.len() - 1;
-            // SAFETY: interned[combined_len] == 0 (copied from `copy_script`).
-            let combined = ZStr::from_buf(interned, combined_len);
+            let combined = ZStr::from_slice_with_nul(interned);
 
             let dep_source_buf: &[u8] = &package.json.dependencies.source_buf;
             let deps: Vec<Box<[u8]>> = package
@@ -912,8 +910,8 @@ pub(crate) fn run_scripts_with_filter(
     let mut map: StringHashMap<Vec<usize>> = StringHashMap::default();
     for script in scripts.iter() {
         handles.push(ProcessHandle {
-            stdout: BufferedReader::init::<ScriptOutput>(),
-            stderr: BufferedReader::init::<ScriptOutput>(),
+            stdout: BufferedReader::init(),
+            stderr: BufferedReader::init(),
             output: ScriptOutput {
                 shared: &shared,
                 config: script,
@@ -925,10 +923,7 @@ pub(crate) fn run_scripts_with_filter(
                 stdin: spawn::Stdio::Ignore,
                 stdout: spawn::Stdio::Buffer,
                 stderr: spawn::Stdio::Buffer,
-                cwd: bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
-                    &script.package_json_path,
-                )
-                .into(),
+                cwd: without_trailing_sep(dirname_or_root(&script.package_json_path)).into(),
                 #[cfg(windows)]
                 windows: spawn::WindowsOptions {
                     loop_: EventLoopHandle::init_mini(event_loop),

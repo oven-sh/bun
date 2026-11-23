@@ -128,8 +128,10 @@ pub struct Options<'a> {
     pub ts: bool,
     pub keep_names: bool,
     pub ignore_dce_annotations: bool,
-    /// Keeps every directive in the AST, in its original position and with its original text.
-    /// Otherwise `"use strict"` is only recorded on its scope, and `minify_syntax` drops the rest.
+    /// Keeps every directive in its original position and with its original text, and keeps
+    /// `"use asm"`. The string that starts a block is kept the same way. Otherwise a directive
+    /// has its string value, an escaped spelling of `"use strict"` is dropped, and the prologue
+    /// of the file moves to `Ast.directives`.
     pub keep_directives: bool,
     pub preserve_unused_imports_ts: bool,
     pub use_define_for_class_fields: bool,
@@ -198,7 +200,6 @@ impl<'a> Options<'a> {
     ///   user statements to rewrite.
     /// - `features.bundler_feature_flags` — `import { feature } from
     ///   "bun:bundle"` cannot appear in a synthetic single-expr AST.
-    /// - `features.runtime_transpiler_cache` — full-parse cache hook only.
     pub fn clone_for_lazy_export(&self) -> Options<'a> {
         let f = &self.features;
         Options {
@@ -239,13 +240,14 @@ impl<'a> Options<'a> {
                 replace_exports: Default::default(),
                 dont_bundle_twice: f.dont_bundle_twice,
                 code_coverage: f.code_coverage,
+                lists_loads: f.lists_loads,
+                defers_requires: f.defers_requires,
                 unwrap_commonjs_packages: f.unwrap_commonjs_packages,
                 commonjs_at_runtime: f.commonjs_at_runtime,
                 unwrap_commonjs_to_esm: f.unwrap_commonjs_to_esm,
                 emit_decorator_metadata: f.emit_decorator_metadata,
                 standard_decorators: f.standard_decorators,
                 remove_cjs_module_wrapper: f.remove_cjs_module_wrapper,
-                runtime_transpiler_cache: None,
                 lower_using: f.lower_using,
                 ascii_only: f.ascii_only,
                 bundler_feature_flags: None,
@@ -358,6 +360,30 @@ impl<'a> Options<'a> {
     }
 }
 
+/// The runtime's on-disk cache of transpiled files.
+pub trait TranspilerCache {
+    fn get(
+        &mut self,
+        source: &bun_ast::Source<'_>,
+        options: &Options<'_>,
+        used_jsx: bool,
+    ) -> CacheLookup<'_>;
+}
+
+pub enum CacheLookup<'a> {
+    Hit,
+    /// The parser stores `None` if the output must not be saved.
+    Miss(&'a mut Option<ParsedForCache>),
+    /// The cache is off, or the source is too small or not a file.
+    Skipped,
+}
+
+pub struct ParsedForCache {
+    pub exports_kind: js_ast::ExportsKind,
+    pub uses_test_api: bool,
+    pub imports_vitest: bool,
+}
+
 // ── live `Parser::init` ───────────────────────────────────────────────────
 // The two aliasing `Log` handles (parser + lexer) are modeled as
 // `NonNull<Log>` on both sides — neither stores a long-lived `&mut`, so no
@@ -401,13 +427,20 @@ impl<'a> Parser<'a> {
 // per-method-gated in the impl block below and replaces this stub once that
 // surface lands.
 impl<'a> Parser<'a> {
+    pub fn parse(self) -> Result<crate::Result<'a>, Error> {
+        self.parse_with_cache(None)
+    }
+
     #[cfg_attr(not(target_arch = "wasm32"), allow(unused_mut))]
-    pub fn parse(mut self) -> Result<crate::Result<'a>, Error> {
+    pub fn parse_with_cache(
+        mut self,
+        cache: Option<&mut dyn TranspilerCache>,
+    ) -> Result<crate::Result<'a>, Error> {
         #[cfg(target_arch = "wasm32")]
         {
             self.options.ts = true;
             self.options.jsx.parse = true;
-            return self._parse::<true>();
+            return self._parse::<true>(cache);
         }
 
         // JSX is no longer part of the parser's monomorphization (it only
@@ -417,9 +450,9 @@ impl<'a> Parser<'a> {
         #[cfg(not(target_arch = "wasm32"))]
         {
             if self.options.ts {
-                self._parse::<true>()
+                self._parse::<true>(cache)
             } else {
-                self._parse::<false>()
+                self._parse::<false>(cache)
             }
         }
     }
@@ -445,6 +478,7 @@ impl<'a> Parser<'a> {
         }
         let mut opts = ParseStatementOptions {
             scope: StatementScope::Module,
+            allow_directive_prologue: true,
             ..Default::default()
         };
         let stmts = p.parse_stmts_up_to(js_lexer::T::TEndOfFile, &mut opts)?;
@@ -520,6 +554,7 @@ impl<'a> Parser<'a> {
         // Parse the file in the first pass, but do not bind symbols
         let mut opts = ParseStatementOptions {
             scope: StatementScope::Module,
+            allow_directive_prologue: true,
             ..Default::default()
         };
 
@@ -691,8 +726,47 @@ impl<'a> Parser<'a> {
             exports_kind,
             WrapMode::None,
             b"",
+            &[],
         )?))
     }
+}
+
+/// Takes the directive prologue off the front of a module's statements. The prologue is data on
+/// the AST (`Ast.directives`), and what prints it prints it ahead of the statements it adds.
+/// A legal comment inside the prologue stays with the statements.
+fn split_directive_prologue<'a>(
+    arena: &'a Arena,
+    stmts: &'a mut [Stmt],
+) -> (&'a [Stmt], &'a mut [Stmt]) {
+    let mut prologue_len = 0;
+    let mut directive_count = 0;
+    for (i, stmt) in stmts.iter().enumerate() {
+        match stmt.data {
+            js_ast::StmtData::SDirective(_) => {
+                directive_count += 1;
+                prologue_len = i + 1;
+            }
+            js_ast::StmtData::SComment(_) => {}
+            _ => break,
+        }
+    }
+    if prologue_len == directive_count {
+        let (directives, stmts) = stmts.split_at_mut(prologue_len);
+        return (directives, stmts);
+    }
+
+    let mut directives = BumpVec::<Stmt>::with_capacity_in(directive_count, arena);
+    let mut kept_from = prologue_len;
+    for i in (0..prologue_len).rev() {
+        if matches!(stmts[i].data, js_ast::StmtData::SComment(_)) {
+            kept_from -= 1;
+            stmts[kept_from] = stmts[i];
+        } else {
+            directives.push(stmts[i]);
+        }
+    }
+    directives.reverse();
+    (directives.into_bump_slice(), &mut stmts[kept_from..])
 }
 
 /// A container queued by `lower_date_time_literals`' worklist.
@@ -797,7 +871,10 @@ fn lower_one_date_time_literal<'a>(
 }
 
 impl<'a> Parser<'a> {
-    fn _parse<const TS: bool>(self) -> Result<crate::Result<'a>, Error> {
+    fn _parse<const TS: bool>(
+        self,
+        cache: Option<&mut dyn TranspilerCache>,
+    ) -> Result<crate::Result<'a>, Error> {
         bun_crash_handler::scoped_action!(bun_crash_handler::Action::Parse(self.source.path.text));
 
         let Parser {
@@ -848,11 +925,12 @@ impl<'a> Parser<'a> {
             }
         }
 
+        let mut parsed_for_cache: Option<&mut Option<ParsedForCache>> = None;
         // We must check the cache only after we've consumed the hashbang and leading // @bun pragma
         // We don't want to ever put files with `// @bun` into this cache, as that would be wasteful.
         #[cfg(not(target_arch = "wasm32"))]
         if bun_core::feature_flags::RUNTIME_TRANSPILER_CACHE {
-            if let Some(cache) = p.options.features.runtime_transpiler_cache_mut() {
+            if let Some(cache) = cache {
                 // `Path::is_node_module`/`is_jsx_file` live on the resolver
                 // `fs::Path` (not the logger stub) — their bodies are inlined here.
                 let path = &p.source.path;
@@ -864,12 +942,14 @@ impl<'a> Parser<'a> {
                 let is_node_module = strings::last_index_of(name.dir, NM).is_some();
                 let is_jsx_file = strings::has_suffix_comptime(name.filename, b".jsx")
                     || strings::has_suffix_comptime(name.filename, b".tsx");
-                if cache.get(
+                match cache.get(
                     p.source,
-                    core::ptr::NonNull::from(&p.options).cast::<()>(),
+                    &p.options,
                     p.options.jsx.parse && (!is_node_module || is_jsx_file),
                 ) {
-                    return Ok(crate::Result::Cached);
+                    CacheLookup::Hit => return Ok(crate::Result::Cached),
+                    CacheLookup::Miss(parsed) => parsed_for_cache = Some(parsed),
+                    CacheLookup::Skipped => {}
                 }
             }
         }
@@ -877,6 +957,7 @@ impl<'a> Parser<'a> {
         // Parse the file in the first pass, but do not bind symbols
         let mut opts = ParseStatementOptions {
             scope: StatementScope::Module,
+            allow_directive_prologue: true,
             ..Default::default()
         };
         let mut parse_tracer = bun_core::perf::trace("JSParser::parse");
@@ -916,6 +997,13 @@ impl<'a> Parser<'a> {
             return Err(crate::Error::SyntaxError);
         }
 
+        // `keep_directives` leaves each directive where it is written.
+        let (directives, stmts): (&'a [Stmt], &'a mut [Stmt]) = if p.options.keep_directives {
+            (&[], stmts)
+        } else {
+            split_directive_prologue(p.arena, stmts)
+        };
+
         // A second guard dropped at end of `_parse` restores the previous action.
         bun_crash_handler::scoped_action!(bun_crash_handler::Action::Visit(source.path.text));
 
@@ -935,7 +1023,7 @@ impl<'a> Parser<'a> {
                     .then(|| "ssr".to_owned()),
                 ..Default::default()
             };
-            let opt_out = bun_react_compiler::has_module_scope_opt_out(stmts);
+            let opt_out = bun_react_compiler::has_module_scope_opt_out(directives);
             let import_bindings = bun_react_compiler::collect_import_bindings(
                 stmts,
                 p.import_records.items(),
@@ -1019,11 +1107,7 @@ impl<'a> Parser<'a> {
         // because we only do tree-shaking on top-level statements and lowering
         // a top-level "using" declaration moves all top-level statements into a
         // nested scope.
-        let asks_uses_test_api = cfg!(debug_assertions)
-            || p.options
-                .features
-                .runtime_transpiler_cache_mut()
-                .is_some_and(|cache| cache.input_hash.is_some());
+        let asks_uses_test_api = cfg!(debug_assertions) || parsed_for_cache.is_some();
         if !p.options.tree_shaking || p.will_wrap_module_in_try_catch_for_using {
             // When tree shaking is disabled, everything comes in a single part
             p.append_part(&mut parts, stmts)?;
@@ -2474,15 +2558,12 @@ impl<'a> Parser<'a> {
 
         #[cfg(not(target_arch = "wasm32"))]
         if bun_core::feature_flags::RUNTIME_TRANSPILER_CACHE {
-            let depends_on_more_than_source = p.depends_on_more_than_source();
-            if let Some(cache) = p.options.features.runtime_transpiler_cache_mut() {
-                if depends_on_more_than_source {
-                    cache.input_hash = None;
-                } else {
-                    cache.exports_kind = exports_kind;
-                    cache.uses_test_api = uses_test_api;
-                    cache.imports_vitest = imports_vitest;
-                }
+            if let Some(parsed) = parsed_for_cache {
+                *parsed = (!p.depends_on_more_than_source()).then_some(ParsedForCache {
+                    exports_kind,
+                    uses_test_api,
+                    imports_vitest,
+                });
             }
         }
         // A test entry point gets its own cache key.
@@ -2490,7 +2571,7 @@ impl<'a> Parser<'a> {
             uses_test_api || p.options.features.is_test_entry_point || !p.did_apply_test_feature
         );
 
-        let ast = p.to_ast(&mut parts, exports_kind, wrap_mode, hashbang)?;
+        let ast = p.to_ast(&mut parts, exports_kind, wrap_mode, hashbang, directives)?;
 
         if reject_import_statements {
             // An empty range marks a parser-generated record, like the JSX runtime import.

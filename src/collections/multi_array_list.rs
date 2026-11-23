@@ -298,38 +298,14 @@ const ZERO_META: FieldMeta = FieldMeta {
 struct Reflected<T>(PhantomData<T>);
 
 impl<T> Reflected<T> {
-    /// Number of fields in `T`; const-panics unless `T` is laid out as a struct.
-    ///
-    /// The check is on what the scatter/gather needs: one variant (not a
-    /// multi-variant enum), fields unless `T` is zero-sized (not a primitive,
-    /// pointer or array), and fields that do not overlap (not a union; disjoint
-    /// fields cannot sum past `size_of::<T>()`). A single-variant enum with an
-    /// explicit `#[repr(int)]` still passes; its tag would never be written.
+    /// Number of fields in `T`; const-panics unless `T` is a struct. A tuple
+    /// crashes rustc in `Type::of` instead (rust-lang/rust#165150).
     const COUNT: usize = {
-        let id = type_info::of::<T>();
         assert!(
-            id.variants() == 1,
+            matches!(type_info::Type::of::<T>().kind, type_info::TypeKind::Struct),
             "MultiArrayList<T>: T must be a struct with named fields",
         );
-        let n = id.fields(0);
-        assert!(
-            n > 0 || core::mem::size_of::<T>() == 0,
-            "MultiArrayList<T>: T must be a struct with named fields",
-        );
-        let mut sum = 0usize;
-        let mut i = 0;
-        while i < n {
-            sum += match id.field(0, i).type_id().size() {
-                Some(s) => s,
-                None => panic!("MultiArrayList: field type must be Sized"),
-            };
-            i += 1;
-        }
-        assert!(
-            sum <= core::mem::size_of::<T>(),
-            "MultiArrayList<T>: T must be a struct with named fields",
-        );
-        n
+        type_info::of::<T>().fields(0)
     };
     const ALIGN: usize = core::mem::align_of::<T>();
 
@@ -539,6 +515,27 @@ impl<'a, F> ColMut<'a, F> {
 }
 
 /// Struct-of-arrays list. See module docs.
+///
+/// `T` must be a struct. The tag of an enum is not a field, so it would never
+/// be stored, and only one field of a union holds a value.
+///
+/// ```compile_fail,E0080
+/// #[repr(u8)]
+/// enum Tagged {
+///     Only { x: u32 },
+/// }
+/// let mut list = bun_collections::MultiArrayList::<Tagged>::default();
+/// list.append(Tagged::Only { x: 1 }).unwrap();
+/// ```
+///
+/// ```compile_fail,E0080
+/// union Either {
+///     x: u32,
+///     nothing: (),
+/// }
+/// let mut list = bun_collections::MultiArrayList::<Either>::default();
+/// list.append(Either { nothing: () }).unwrap();
+/// ```
 pub struct MultiArrayList<T, A: Allocator = Global> {
     bytes: NonNull<u8>,
     len: usize,

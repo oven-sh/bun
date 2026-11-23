@@ -95,17 +95,8 @@ pub(crate) mod js_bundler {
             let bytes: Box<[u8]> = blob_or_string.slice().into();
             drop(blob_or_string);
 
-            // Clone the key since we need to own it.
-            let mut key = prop.to_owned_slice();
-
-            // Normalize backslashes to forward slashes for cross-platform consistency.
-            // Use dangerouslyConvertPathToPosixInPlace which always converts \ to /
-            // (uses sep_windows constant, not sep which varies by target).
-            bun_paths::resolve_path::dangerously_convert_path_to_posix_in_place::<u8>(
-                key.as_mut_slice(),
-            );
-
-            this.map.put_assume_capacity(&key, bytes);
+            let path = prop.to_owned_slice();
+            this.map.put_assume_capacity(&FileMap::key(&path), bytes);
         }
 
         Ok(this)
@@ -388,6 +379,12 @@ pub(crate) mod js_bundler {
         Ok(())
     }
 
+    /// `/`, and on Windows `a/`. `bun build` takes the directory above.
+    fn is_own_root_dir(entry_point: &[u8]) -> bool {
+        let has_name = !bun_paths::without_leading_sep(entry_point).is_empty();
+        bun_paths::has_trailing_sep(entry_point) && has_name == cfg!(windows)
+    }
+
     fn asks_for_aot(global_this: &JSGlobalObject, config: JSValue) -> JsResult<bool> {
         let Some(compile) = config.get_truthy(global_this, "compile")? else {
             return Ok(false);
@@ -444,10 +441,14 @@ pub(crate) mod js_bundler {
         compile: JSValue,
         key: &str,
     ) -> JsResult<Vec<Vec<u8>>> {
+        match compile.get(global_this, key)? {
+            Some(value) => names_in(global_this, key, value),
+            None => Ok(Vec::new()),
+        }
+    }
+
+    fn names_in(global_this: &JSGlobalObject, key: &str, value: JSValue) -> JsResult<Vec<Vec<u8>>> {
         let mut list = Vec::new();
-        let Some(value) = compile.get(global_this, key)? else {
-            return Ok(list);
-        };
         if value.is_undefined_or_null() {
             return Ok(list);
         }
@@ -551,7 +552,10 @@ pub(crate) mod js_bundler {
             self.harden = read_names(global_this, compile, "aotHarden")?;
             self.testing = read_names(global_this, compile, "aotTesting")?;
             self.out = read_names(global_this, compile, "aotOut")?;
-            self.order = read_names(global_this, compile, "aotOrder")?;
+            let order = compile.get(global_this, "aotOrder")?;
+            if let Some(order) = order.filter(|order| *order != JSValue::FALSE) {
+                self.order = names_in(global_this, "aotOrder", order)?;
+            }
             if compile.get_boolean_loose(global_this, "aotRecordOrder")? == Some(true) {
                 self.record_order.push(Vec::new());
             }
@@ -1090,7 +1094,9 @@ pub(crate) mod js_bundler {
             }
 
             if let Some(slice) = config.get_optional_slice(global_this, b"tsconfig")? {
-                this.tsconfig_override.append_slice_exact(slice.slice())?;
+                let cwd = bun_core::top_level_dir();
+                let path = bun_sys::typed_spelling(cwd, slice.slice(), bun_paths::from_portable);
+                this.tsconfig_override.append_slice_exact(&path)?;
                 drop(slice);
             }
 
@@ -1380,21 +1386,10 @@ pub(crate) mod js_bundler {
                         }
                     }
 
-                    if entry_points.len() == 1 {
-                        let d = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
-                            &entry_points[0],
-                        );
-                        break 'brk Utf8Bytes::Borrowed(if d.is_empty() { b"." } else { d });
-                    }
-
-                    // NOTE: `get_if_exists_longest_common_path` wants `&[&[u8]]`
-                    // but `StringSet::keys()` yields `&[Box<[u8]>]`; build a borrow
-                    // adapter on the stack.
-                    let borrowed: Vec<&[u8]> = entry_points.iter().map(|b| b.as_ref()).collect();
-                    break 'brk Utf8Bytes::Borrowed(
-                        bun_paths::resolve_path::get_if_exists_longest_common_path(&borrowed)
-                            .unwrap_or(b"."),
-                    );
+                    break 'brk Utf8Bytes::Borrowed(match entry_points {
+                        [dir] if is_own_root_dir(dir) => bun_paths::without_trailing_sep(dir),
+                        _ => options::default_root_dir(entry_points),
+                    });
                 };
 
                 let dir = match bun_sys::open_dir_at(bun_sys::Fd::cwd(), path.slice()) {
@@ -1706,8 +1701,10 @@ pub(crate) mod js_bundler {
                 if !is_standalone_html {
                     this.target = Target::Bun;
                     if compile.aot.is_some() {
+                        if this.bytecode {
+                            return Err(throw_option_error(global_this, OptionError::Bytecode));
+                        }
                         ensure_compiler(global_this)?;
-                        this.bytecode = false;
                         this.format = options::Format::Esm;
                         compile.compile_target = CompileTarget::default();
                     } else if compile.executable_path.list.is_empty()
@@ -1757,25 +1754,18 @@ pub(crate) mod js_bundler {
                             Some([first, ..]) => first,
                             Some([]) | None => entry_point,
                         };
-                        let mut outfile = bun_paths::basename(entry_point);
-                        let ext = bun_paths::extension(outfile);
-                        if !ext.is_empty() {
-                            outfile = &outfile[0..outfile.len() - ext.len()];
-                        }
-
-                        if outfile == b"index" {
-                            let d = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
-                                entry_point,
-                            );
-                            outfile = bun_paths::basename(if d.is_empty() { b"index" } else { d });
-                        }
-
-                        if outfile == b"bun" {
-                            let d = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
-                                entry_point,
-                            );
-                            outfile = bun_paths::basename(if d.is_empty() { b"bun" } else { d });
-                        }
+                        let outfile = match bun_paths::stem(entry_point) {
+                            _ if bun_paths::basename(entry_point) == b".." => b".",
+                            name @ (b"index" | b"bun") => match bun_paths::dirname(entry_point) {
+                                _ if is_own_root_dir(entry_point) => {
+                                    bun_paths::basename(entry_point)
+                                }
+                                // No drive: a key of `files`.
+                                Some([b'/' | b'\\']) if cfg!(windows) => name,
+                                dir => dir.map_or(name, bun_paths::basename),
+                            },
+                            name => name,
+                        };
 
                         // If argv[0] is "bun" or "bunx", we don't check if the binary is standalone
                         if outfile == b"bun" || outfile == b"bunx" {
@@ -1953,7 +1943,7 @@ pub(crate) mod js_bundler {
     /// (`JSBundlerPlugin__onResolveAsync`, `on_defer`,
     /// `JSBundlerPlugin__onLoadAsync`) stay safe at the call site. `plugins`
     /// is `Some` whenever the plugin chain is dispatched (asserted by
-    /// `enqueue_on_js_loop_for_plugins`). The `Plugin` storage is heap-
+    /// `js_loop_for_plugins`). The `Plugin` storage is heap-
     /// disjoint from `Resolve`/`Load`, so the returned `&mut` does not alias
     /// the caller's request.
     #[inline]
@@ -2039,7 +2029,7 @@ pub(crate) mod js_bundler {
             // decrement the pending item counter and increment the deferred
             // counter. Must land on the bundle's `any_loop()` (the loop
             // running BundleV2), which is distinct from the
-            // `enqueue_on_js_loop_for_plugins` target (the plugin host's JS loop)
+            // `js_loop_for_plugins` (the plugin host's JS loop)
             // when `Bun.build` runs the bundler on its own Mini event loop.
             let ctx = bv2_ref(self.bv2);
             // SAFETY: the answer, which frees `self`, goes into the same queue later.
@@ -2447,12 +2437,13 @@ pub(crate) use bun_bundler::options::OutputKind;
 /// `JSValue::as(Blob)` BuildArtifact fallback — declared
 /// `extern "Rust"` in `bun_jsc::webcore_types`; link-time resolved.
 #[unsafe(no_mangle)]
-fn __bun_blob_from_build_artifact(value: JSValue) -> Option<*mut Blob> {
-    <BuildArtifact as bun_jsc::JsClass>::from_js(value).map(|b| {
-        // SAFETY: `from_js` returns the non-null `*mut BuildArtifact` kept alive by
-        // the JS wrapper; `addr_of_mut!` only computes the field address (no deref).
-        unsafe { core::ptr::addr_of_mut!((*b).blob) }
-    })
+fn __bun_blob_from_build_artifact(value: JSValue) -> *mut Blob {
+    // The caller makes the guard.
+    core::mem::ManuallyDrop::new(<BuildArtifact as bun_jsc::JsClass>::from_js(&value))
+        .as_deref()
+        .map_or(core::ptr::null_mut(), |artifact| {
+            (&raw const artifact.blob).cast_mut()
+        })
 }
 
 impl BuildArtifact {
@@ -2557,10 +2548,8 @@ impl BuildArtifact {
         )?;
 
         {
-            formatter.indent_inc();
-            // NOTE: reshaped for borrowck — scopeguard cannot reborrow
-            // `formatter` while it is also borrowed for the body; decrement
-            // after the block instead.
+            let mut indented = formatter.indented();
+            let formatter = &mut *indented;
 
             formatter.write_indent(writer)?;
             bun_core::write_pretty!(
@@ -2634,8 +2623,8 @@ impl BuildArtifact {
                 )?;
 
                 let sourcemap_value = js::sourcemap_get_cached(this_value);
-                if let Some((sm_value, sm)) =
-                    sourcemap_value.and_then(|v| v.as_class_ref::<BuildArtifact>().map(|p| (v, p)))
+                if let Some(sm_value) = sourcemap_value
+                    && let Some(sm) = sm_value.as_class_ref::<BuildArtifact>()
                 {
                     sm.write_format::<F, W, ENABLE_ANSI_COLORS>(sm_value, formatter, writer)?;
                 } else {
@@ -2646,8 +2635,6 @@ impl BuildArtifact {
                     )?;
                 }
             }
-
-            formatter.indent_dec();
         }
         writer.write_str("\n")?;
         formatter.write_indent(writer)?;

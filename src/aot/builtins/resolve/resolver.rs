@@ -1183,7 +1183,6 @@ impl<'a, 's> Resolver<'a, 's> {
             mentioned,
             source_evaluator_escapes,
             may_call_unnamed_evaluator,
-            #[cfg(test)]
             exposed,
             uses,
             loads_unknown_modules,

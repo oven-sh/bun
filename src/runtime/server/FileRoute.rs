@@ -6,7 +6,7 @@ use bun_http::{Headers, Method};
 use bun_http_types::ETag;
 use bun_http_types::ETag::StringPointer;
 use bun_io::FileType;
-use bun_ptr::{RefPtr, ThisPtr};
+use bun_ptr::RefPtr;
 use bun_resolver::fs::StatHash;
 use bun_sys::{self, Fd};
 use bun_uws::{AnyRequest, AnyResponse};
@@ -148,9 +148,6 @@ impl FileRoute {
         global: &JSGlobalObject,
         argument: JSValue,
     ) -> JsResult<Option<RefPtr<FileRoute>>> {
-        // `as_class_ref` is the safe shared-borrow downcast (one audited
-        // unsafe in `JSValue`); `get_body_value`/`get_init_headers`/
-        // `status_code` all take `&self`.
         if let Some(response) = argument.as_class_ref::<Response>() {
             let body_value = response.get_body_value();
             body_value.to_blob_if_possible();
@@ -240,27 +237,22 @@ impl FileRoute {
         }
     }
 
-    pub(crate) fn on_head_request(this: ThisPtr<FileRoute>, req: AnyRequest, resp: AnyResponse) {
-        Self::on(this, req, resp, Method::HEAD);
+    pub(crate) fn on_head_request(self: RefPtr<Self>, req: AnyRequest, resp: AnyResponse) {
+        self.on(req, resp, Method::HEAD);
     }
 
-    pub(crate) fn on_request(this: ThisPtr<FileRoute>, req: AnyRequest, resp: AnyResponse) {
+    pub(crate) fn on_request(self: RefPtr<Self>, req: AnyRequest, resp: AnyResponse) {
         let method = Method::find(req.method()).unwrap_or(Method::GET);
-        Self::on(this, req, resp, method);
+        self.on(req, resp, method);
     }
 
-    pub(crate) fn on(
-        this: ThisPtr<FileRoute>,
-        mut req: AnyRequest,
-        resp: AnyResponse,
-        method: Method,
-    ) {
-        debug_assert!(this.server.get().is_some());
-        let route = PendingRequest::new(RefPtr::from_this(this));
-        if let Some(server) = this.server.get() {
+    pub(crate) fn on(self: RefPtr<Self>, mut req: AnyRequest, resp: AnyResponse, method: Method) {
+        debug_assert!(self.server.get().is_some());
+        let route = PendingRequest::new(self);
+        if let Some(server) = route.server.get() {
             resp.timeout(server.config().idle_timeout);
         }
-        let store = this.blob.store().unwrap().clone();
+        let store = route.blob.store().unwrap().clone();
         let Some(path) = store.get_path() else {
             req.set_yield(true);
             return;
@@ -268,31 +260,15 @@ impl FileRoute {
 
         let open_flags = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC | bun_sys::O::NONBLOCK;
 
-        let fd_result: bun_sys::Result<Fd> = {
-            #[cfg(windows)]
-            {
-                let mut path_buffer = bun_paths::path_buffer_pool::get();
-                path_buffer[..path.len()].copy_from_slice(path);
-                path_buffer[path.len()] = 0;
-                bun_sys::open(
-                    bun_core::ZStr::from_buf(&path_buffer[..], path.len()),
-                    open_flags,
-                    0,
-                )
-            }
-            #[cfg(not(windows))]
-            {
-                bun_sys::open_a(path, open_flags, 0)
-            }
-        };
+        let fd_result = bun_sys::open(&bun_paths::Path::from(path), open_flags, 0);
 
         let Ok(fd) = fd_result else {
             req.set_yield(true);
             return;
         };
-        let fd = StreamFd::Owned(fd);
+        let fd = StreamFd::from(bun_sys::File::from_fd(fd));
 
-        match this.serve(fd.get(), path, &mut req, resp, method) {
+        match route.serve(fd.get(), path, &mut req, resp, method) {
             Serve::Done => {}
             Serve::Stream {
                 file_type,
@@ -300,7 +276,7 @@ impl FileRoute {
                 offset,
                 length,
             } => {
-                let server = this.server.get().unwrap();
+                let server = route.server.get().unwrap();
                 FileResponseStream::start(FileResponseStreamOptions {
                     fd,
                     resp,

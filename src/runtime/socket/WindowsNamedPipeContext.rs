@@ -3,7 +3,6 @@ use core::ffi::c_void;
 use core::ptr;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-use crate::socket::NewSocket;
 use crate::socket::SSLConfig;
 use crate::socket::windows_named_pipe::{Handlers as NamedPipeHandlers, WindowsNamedPipe};
 use crate::socket::{TCPSocket, TLSSocket};
@@ -12,7 +11,7 @@ use bun_core::ZStr;
 use bun_event_loop::Task;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{GlobalRef, SysErrorJsc};
-use bun_ptr::{RefPtr, ThisPtr};
+use bun_ptr::RefPtr;
 use bun_sys::{self, Error as SysError, Fd, SystemErrno};
 use bun_uws::{self as uws, us_bun_verify_error_t};
 
@@ -74,27 +73,10 @@ pub(crate) enum EventState {
 }
 
 /// The ref a pipe holds on the socket it carries.
+#[derive(Clone)]
 pub(crate) enum OwnedSocket {
     Tls(RefPtr<TLSSocket>),
     Tcp(RefPtr<TCPSocket>),
-}
-
-/// `Copy` view of [`OwnedSocket`]: a handler can close the pipe, which empties that field.
-#[derive(Copy, Clone)]
-enum SocketType {
-    Tls(bun_ptr::ThisPtr<TLSSocket>),
-    Tcp(bun_ptr::ThisPtr<TCPSocket>),
-    None,
-}
-
-impl SocketType {
-    fn of(socket: &Option<OwnedSocket>) -> Self {
-        match socket {
-            Some(OwnedSocket::Tls(s)) => Self::Tls(s.this_ptr()),
-            Some(OwnedSocket::Tcp(s)) => Self::Tcp(s.this_ptr()),
-            None => Self::None,
-        }
-    }
 }
 
 /// Build a `uws::NewSocketHandler` from the wrapped named pipe.
@@ -114,29 +96,29 @@ fn socket_from_named_pipe<const SSL: bool>(
     }
 }
 
-/// Dispatch a `SocketType` value to a single body written generically over
-/// `NewSocket<SSL>`. Binds the inner `ThisPtr<NewSocket<{true|false}>>` as `$s`
+/// Dispatch an `Option<OwnedSocket>` to a single body written generically over
+/// `NewSocket<SSL>`. Binds the inner `RefPtr<NewSocket<{true|false}>>` as `$s`
 /// and a per-arm `const $ssl: bool` so the body can call
-/// `NewSocket::on_x($s, socket_from_named_pipe::<$ssl>(..), ..)` once instead
-/// of hand-duplicating the `Tls`/`Tcp` arms. `SocketType::None` is a no-op.
+/// `$s.on_x(socket_from_named_pipe::<$ssl>(..), ..)` once instead
+/// of hand-duplicating the `Tls`/`Tcp` arms. `None` is a no-op.
 ///
-/// Takes the `SocketType` by *value*: see the Stacked-Borrows note on the `on_*` block below.
+/// Takes a clone by *value*: see the Stacked-Borrows note on the `on_*` block below.
 macro_rules! match_socket {
     ($scrutinee:expr, |$s:ident: NewSocket<$ssl:ident>| $body:expr) => {
         // This context is the named-pipe sockets' trampoline: what a handler
         // left pending is folded here.
         match $scrutinee {
-            SocketType::Tls($s) => {
+            Some(OwnedSocket::Tls($s)) => {
                 const $ssl: bool = true;
                 let _ = $ssl;
                 crate::dispatch::fold($body)
             }
-            SocketType::Tcp($s) => {
+            Some(OwnedSocket::Tcp($s)) => {
                 const $ssl: bool = false;
                 let _ = $ssl;
                 crate::dispatch::fold($body)
             }
-            SocketType::None => {}
+            None => {}
         }
     };
 }
@@ -163,30 +145,24 @@ impl WindowsNamedPipeContext {
         // forming a reference that overlaps the caller's `&mut named_pipe`.
         let (socket, pipe) = unsafe {
             (*this).is_open = true;
-            (SocketType::of(&(*this).socket), &raw mut (*this).named_pipe)
+            ((*this).socket.clone(), &raw mut (*this).named_pipe)
         };
-        match_socket!(socket, |s: NewSocket<SSL>| NewSocket::on_open(
-            s,
-            socket_from_named_pipe::<SSL>(pipe)
-        ));
+        match_socket!(socket, |s: NewSocket<SSL>| s
+            .on_open(socket_from_named_pipe::<SSL>(pipe)));
     }
 
     fn on_data(this: *mut Self, decoded_data: &[u8]) {
         // SAFETY: see `on_open`.
-        let (socket, pipe) =
-            unsafe { (SocketType::of(&(*this).socket), &raw mut (*this).named_pipe) };
-        match_socket!(socket, |s: NewSocket<SSL>| NewSocket::on_data(
-            s,
-            socket_from_named_pipe::<SSL>(pipe),
-            decoded_data
-        ));
+        let (socket, pipe) = unsafe { ((*this).socket.clone(), &raw mut (*this).named_pipe) };
+        match_socket!(socket, |s: NewSocket<SSL>| s
+            .on_data(socket_from_named_pipe::<SSL>(pipe), decoded_data));
     }
 
     fn on_session(this: *mut Self, session: &[u8]) {
         // Only the TLS wrapper parks sessions; the TCP arm can never get here.
         // SAFETY: see `on_open`.
-        if let SocketType::Tls(s) = SocketType::of(unsafe { &(*this).socket }) {
-            crate::dispatch::fold(TLSSocket::on_session(s, session));
+        if let Some(OwnedSocket::Tls(s)) = unsafe { (*this).socket.clone() } {
+            crate::dispatch::fold(s.on_session(session));
         }
     }
 
@@ -195,25 +171,23 @@ impl WindowsNamedPipeContext {
         ssl: &mut bun_boringssl_sys::SSL,
     ) -> bun_boringssl::ServerIdentity {
         // SAFETY: see `on_open`.
-        match SocketType::of(unsafe { &(*this).socket }) {
-            SocketType::Tls(s) => s.server_identity(ssl),
+        match unsafe { &(*this).socket } {
+            Some(OwnedSocket::Tls(s)) => s.server_identity(ssl),
             _ => bun_boringssl::ServerIdentity::Unchecked,
         }
     }
 
     fn on_keylog(this: *mut Self, line: &[u8]) {
         // SAFETY: see `on_open`.
-        if let SocketType::Tls(s) = SocketType::of(unsafe { &(*this).socket }) {
-            crate::dispatch::fold(TLSSocket::on_keylog(s, line));
+        if let Some(OwnedSocket::Tls(s)) = unsafe { (*this).socket.clone() } {
+            crate::dispatch::fold(s.on_keylog(line));
         }
     }
 
     fn on_handshake(this: *mut Self, success: bool, ssl_error: us_bun_verify_error_t) {
         // SAFETY: see `on_open`.
-        let (socket, pipe) =
-            unsafe { (SocketType::of(&(*this).socket), &raw mut (*this).named_pipe) };
-        match_socket!(socket, |s: NewSocket<SSL>| NewSocket::on_handshake(
-            s,
+        let (socket, pipe) = unsafe { ((*this).socket.clone(), &raw mut (*this).named_pipe) };
+        match_socket!(socket, |s: NewSocket<SSL>| s.on_handshake(
             socket_from_named_pipe::<SSL>(pipe),
             success as i32,
             ssl_error
@@ -222,27 +196,21 @@ impl WindowsNamedPipeContext {
 
     fn on_end(this: *mut Self) {
         // SAFETY: see `on_open`.
-        let (socket, pipe) =
-            unsafe { (SocketType::of(&(*this).socket), &raw mut (*this).named_pipe) };
-        match_socket!(socket, |s: NewSocket<SSL>| NewSocket::on_end(
-            s,
-            socket_from_named_pipe::<SSL>(pipe)
-        ));
+        let (socket, pipe) = unsafe { ((*this).socket.clone(), &raw mut (*this).named_pipe) };
+        match_socket!(socket, |s: NewSocket<SSL>| s
+            .on_end(socket_from_named_pipe::<SSL>(pipe)));
     }
 
     fn on_writable(this: *mut Self) {
         // SAFETY: see `on_open`.
-        let (socket, pipe) =
-            unsafe { (SocketType::of(&(*this).socket), &raw mut (*this).named_pipe) };
-        match_socket!(socket, |s: NewSocket<SSL>| NewSocket::on_writable(
-            s,
-            socket_from_named_pipe::<SSL>(pipe)
-        ));
+        let (socket, pipe) = unsafe { ((*this).socket.clone(), &raw mut (*this).named_pipe) };
+        match_socket!(socket, |s: NewSocket<SSL>| s
+            .on_writable(socket_from_named_pipe::<SSL>(pipe)));
     }
 
     fn on_error(this: *mut Self, err: &SysError) {
         // SAFETY: see `on_open`.
-        let (is_open, socket) = unsafe { ((*this).is_open, SocketType::of(&(*this).socket)) };
+        let (is_open, socket) = unsafe { ((*this).is_open, (*this).socket.clone()) };
         if is_open {
             match_socket!(socket, |s: NewSocket<SSL>| {
                 // SAFETY: `this` is live; `global_this` is disjoint from the caller's
@@ -260,20 +228,17 @@ impl WindowsNamedPipeContext {
         // SAFETY: see `on_open`. Taken before `connectError` runs JS, which may
         // connect the same socket again through a new context.
         crate::dispatch::fold(match unsafe { (*this).socket.take() } {
-            Some(OwnedSocket::Tls(s)) => NewSocket::handle_connect_error(s, errno, 0),
-            Some(OwnedSocket::Tcp(s)) => NewSocket::handle_connect_error(s, errno, 0),
+            Some(OwnedSocket::Tls(s)) => s.handle_connect_error(errno, 0),
+            Some(OwnedSocket::Tcp(s)) => s.handle_connect_error(errno, 0),
             None => Ok(()),
         });
     }
 
     fn on_timeout(this: *mut Self) {
         // SAFETY: see `on_open`.
-        let (socket, pipe) =
-            unsafe { (SocketType::of(&(*this).socket), &raw mut (*this).named_pipe) };
-        match_socket!(socket, |s: NewSocket<SSL>| NewSocket::on_timeout(
-            s,
-            socket_from_named_pipe::<SSL>(pipe)
-        ));
+        let (socket, pipe) = unsafe { ((*this).socket.clone(), &raw mut (*this).named_pipe) };
+        match_socket!(socket, |s: NewSocket<SSL>| s
+            .on_timeout(socket_from_named_pipe::<SSL>(pipe)));
     }
 
     fn on_close(this: *mut Self) {
@@ -283,12 +248,8 @@ impl WindowsNamedPipeContext {
             ((*this).self_ref.take(), (*this).socket.take(), pipe)
         };
         crate::dispatch::fold(match socket {
-            Some(OwnedSocket::Tls(s)) => {
-                NewSocket::on_close(s, socket_from_named_pipe(pipe), 0, None)
-            }
-            Some(OwnedSocket::Tcp(s)) => {
-                NewSocket::on_close(s, socket_from_named_pipe(pipe), 0, None)
-            }
+            Some(OwnedSocket::Tls(s)) => s.on_close(socket_from_named_pipe(pipe), 0, None),
+            Some(OwnedSocket::Tcp(s)) => s.on_close(socket_from_named_pipe(pipe), 0, None),
             None => Ok(()),
         });
     }
@@ -308,12 +269,12 @@ impl WindowsNamedPipeContext {
         }
     }
 
-    fn fail_open(this: ThisPtr<Self>) {
-        let _self_ref = this.self_ref.take();
-        Self::fail_connect(this.as_ptr(), SystemErrno::ENOENT as i32);
+    fn fail_open(self: &RefPtr<Self>) {
+        let _self_ref = self.self_ref.take();
+        Self::fail_connect(self.as_ptr(), SystemErrno::ENOENT as i32);
     }
 
-    pub(crate) fn create(cx: &bun_jsc::JsThread<'_>, socket: OwnedSocket) -> ThisPtr<Self> {
+    pub(crate) fn create(cx: &bun_jsc::JsThread<'_>, socket: OwnedSocket) -> RefPtr<Self> {
         let global_this = GlobalRef::from(cx.global());
         let vm: &'static VirtualMachine = global_this.bun_vm();
         let this: *mut WindowsNamedPipeContext = bun_core::heap::into_raw(Box::<
@@ -366,12 +327,11 @@ impl WindowsNamedPipeContext {
         LIVE_COUNT.fetch_add(1, Ordering::Relaxed);
 
         // SAFETY: initialised above with a count of 1, heap-pinned; disarmed when freed.
-        let self_ref = unsafe {
+        let this = unsafe {
             bun_jsc::AbortHandle::arm_owner(this, cx.context());
             RefPtr::from_raw(this)
         };
-        let this = self_ref.this_ptr();
-        this.self_ref.set(Some(self_ref));
+        this.self_ref.set(Some(this.clone()));
         this
     }
 
@@ -391,7 +351,7 @@ impl WindowsNamedPipeContext {
         let this = WindowsNamedPipeContext::create(cx, socket);
         // On `Ok`, `socket` has had its `on_open`, which hands it the pipe, or its connect error.
         if this.named_pipe.open(fd, ssl_config, owned_ctx).is_err() {
-            Self::fail_open(this);
+            this.fail_open();
         }
     }
 
@@ -410,21 +370,12 @@ impl WindowsNamedPipeContext {
 
         if path[path.len() - 1] == 0 {
             // is already null terminated
-            // SAFETY: path[path.len()-1] == 0 checked above
             let slice_z = ZStr::from_slice_with_nul(path);
             named_pipe.connect(slice_z, ssl_config, owned_ctx)
         } else {
-            let mut path_buf = bun_paths::path_buffer_pool::get();
-            // we need to null terminate the path
-            let len = path.len().min(path_buf.len() - 1);
-
-            path_buf[..len].copy_from_slice(&path[..len]);
-            path_buf[len] = 0;
-            // SAFETY: path_buf[len] == 0 written above
-            let slice_z = ZStr::from_buf(&path_buf[..], len);
-            named_pipe.connect(slice_z, ssl_config, owned_ctx)
+            named_pipe.connect(&bun_paths::Path::from(path), ssl_config, owned_ctx)
         }
-        .inspect_err(|_| Self::fail_open(this))?;
+        .inspect_err(|_| this.fail_open())?;
 
         Ok(this.named_pipe.root.get())
     }

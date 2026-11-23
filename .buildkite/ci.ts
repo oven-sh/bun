@@ -232,8 +232,7 @@ const buildPlatforms: Platform[] = [
   // as macOS above. There is no native Windows build lane: the Windows fleet
   // only runs tests, signing, and baseline verification, against these
   // artifacts (see testPlatforms), and these are the Windows artifacts the
-  // release ships. x64 uses ThinLTO + cross-language LTO by default; arm64
-  // stays non-LTO (no windows-arm64-lto WebKit prebuilt, see config.ts).
+  // release ships.
   { os: "windows", arch: "x64", crossCompile: true, distro: "debian", release: "13" },
   { os: "windows", arch: "aarch64", crossCompile: true, distro: "debian", release: "13" },
 ];
@@ -472,12 +471,8 @@ function getBuildAgent(platform: Platform): Ec2Agent {
   // Every build lane runs on the single debian-13 aarch64 host image
   // (buildHostPlatform) and cross-compiles to its target; the target's
   // os/arch only affect build args, not agent tags or image-name.
-  const { os, arch, abi, profile } = platform;
-  // Lanes without C/C++ LTO (see ltoDefault in scripts/build/config.ts) get 32 vCPUs. That was sized when rustc ran a
-  // fat LTO inside cargo beside the C++ compile (~20s lost to the overlap on 16); not re-measured since the link runs
-  // the Rust LTO.
-  const nonLto =
-    profile === "asan" || abi === "android" || os === "freebsd" || (os === "windows" && arch === "aarch64");
+  // Lanes without LTO (see ltoDefault in scripts/build/config.ts) get 32 vCPUs.
+  const nonLto = platform.profile === "asan";
   return getEc2Agent(buildHostPlatform, {
     // Replaces the c8g.4xlarge (C++) + r8g.2xlarge (cargo + ThinLTO link; r8g.4xlarge for asan) pair.
     instanceType: nonLto ? "r8g.8xlarge" : "r8g.4xlarge",
@@ -583,10 +578,10 @@ function getBuildCommand(target: Target, options: PipelineOptions): string {
  * deps + C++ + Rust + link on one agent.
  */
 function getBuildBunStep(platform: Platform, options: PipelineOptions): CommandStep {
-  const { arch } = platform;
-  // Best-effort nasm for x64 (BoringSSL win-x64, libjpeg-turbo SIMD); images bake it, and the build's own error is clearer.
+  const { os, arch } = platform;
+  // Best-effort nasm for BoringSSL's win-x64 assembly; images bake it, and the build's own error is clearer.
   const nasmSetup =
-    arch === "x64"
+    os === "windows" && arch === "x64"
       ? [
           "which nasm || (apt-get update -qq && apt-get install -y -qq nasm) || dnf install -y -q nasm || yum install -y -q nasm || brew install nasm || true",
         ]

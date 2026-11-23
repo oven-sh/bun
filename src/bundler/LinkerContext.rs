@@ -410,19 +410,29 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
         self.graph
     }
 
-    fn process_html_import_files(&mut self) {
+    fn process_html_import_files(&mut self, log: &mut Log) -> Result<(), LinkError> {
         let parse_graph = self.parse_graph();
         let server_source_indices = &parse_graph.html_imports;
+        let mut is_page_missing = false;
         if !server_source_indices.is_empty() {
             let actual_ref = self.graph.runtime_function(b"__jsonParse");
             let sources = parse_graph.input_files.items_source();
             let browser_paths = &parse_graph.build_graphs[Target::Browser];
 
             for &html_import in server_source_indices.iter() {
-                let path_text = sources[html_import as usize].path.text;
-                let source_index: u32 = browser_paths.get(path_text).unwrap_or_else(|| {
-                    panic!("Assertion failed: HTML import file not found in pathToSourceIndexMap");
-                });
+                let path = &sources[html_import as usize].path;
+                let Some(source_index) = browser_paths.get_path(path) else {
+                    log.add_error_fmt(
+                        Some(&sources[html_import as usize]),
+                        bun_ast::Loc::EMPTY,
+                        format_args!(
+                            "{} is imported as an HTML page, but the build has no page of it",
+                            bun_core::fmt::quote(path.pretty)
+                        ),
+                    );
+                    is_page_missing = true;
+                    continue;
+                };
 
                 self.graph.html_source_indices.push(source_index);
 
@@ -455,6 +465,10 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
                     )
                     .expect("OOM");
             }
+        }
+        match is_page_missing {
+            true => Err(LinkError::BuildFailed),
+            false => Ok(()),
         }
     }
 
@@ -505,7 +519,7 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
             self.compute_data_for_source_map();
         }
 
-        self.process_html_import_files();
+        self.process_html_import_files(log)?;
 
         if FeatureFlags::HELP_CATCH_MEMORY_ISSUES {
             self.check_for_memory_corruption();
@@ -664,6 +678,7 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
             }
 
             let mut queue = std::collections::VecDeque::new();
+            let mut loaded_files = vec![LoadedFiles::Unasked; self.graph.files.len()];
 
             // Code splitting: Determine which entry points can reach which files. This
             // has to happen after tree shaking because there is an implicit dependency
@@ -671,7 +686,12 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
             // first before determining which entry points can reach which files.
             for i in 0..entry_points_len {
                 let entry_point = self.graph.entry_points.items_source_index()[i];
-                self.mark_file_reachable_for_code_splitting(&mut queue, entry_point, i);
+                self.mark_file_reachable_for_code_splitting(
+                    &mut queue,
+                    &mut loaded_files,
+                    entry_point,
+                    i,
+                );
             }
         }
 
@@ -728,13 +748,8 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
     /// The relative path from the chunk directory to a file source, as written
     /// into the source map's `sources` array. `sources` entries are URLs, so the
     /// host separator is normalized to `/` (the invariant `Path::pretty` holds).
-    fn source_map_relative_path(
-        chunk_abs_dir: &[u8],
-        source_abs_path: &[u8],
-    ) -> Result<Box<[u8]>, AllocError> {
-        let mut rel = bun_paths::resolve_path::relative_alloc(chunk_abs_dir, source_abs_path)?;
-        bun_paths::resolve_path::platform_to_posix_in_place::<u8>(&mut rel);
-        Ok(rel)
+    fn source_map_relative_path(chunk_abs_dir: &[u8], source_abs_path: &[u8]) -> Path {
+        Path::relative(chunk_abs_dir, source_abs_path).into_portable()
     }
 
     pub(crate) fn generate_source_map_for_chunk(
@@ -776,7 +791,7 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
                 // (drops at scope exit).
                 let rel_path_storage;
                 let pretty: &[u8] = if path.is_file() {
-                    rel_path_storage = Self::source_map_relative_path(chunk_abs_dir, path.text)?;
+                    rel_path_storage = Self::source_map_relative_path(chunk_abs_dir, path.text);
                     &rel_path_storage
                 } else {
                     path.pretty
@@ -803,7 +818,7 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
 
                 let rel_path_storage;
                 let pretty: &[u8] = if path.is_file() {
-                    rel_path_storage = Self::source_map_relative_path(chunk_abs_dir, path.text)?;
+                    rel_path_storage = Self::source_map_relative_path(chunk_abs_dir, path.text);
                     &rel_path_storage
                 } else {
                     path.pretty
@@ -1895,13 +1910,7 @@ impl<'a> LinkerContext<'_, 'a> {
                 for piece in pieces.slice() {
                     match piece.query.kind() {
                         crate::chunk::QueryKind::Asset => {
-                            let mut from_chunk_dir =
-                                bun_paths::resolve_path::dirname::<
-                                    bun_paths::resolve_path::platform::Posix,
-                                >(&chunk.final_rel_path);
-                            if from_chunk_dir == b"." {
-                                from_chunk_dir = b"";
-                            }
+                            let from_chunk_dir = bun_paths::dirname_or_root(&chunk.final_rel_path);
                             let parse_graph = self.parse_graph();
                             let additional_files: &[AdditionalFile] =
                                 parse_graph.input_files.items_additional_files()
@@ -1913,10 +1922,7 @@ impl<'a> LinkerContext<'_, 'a> {
                                 let path = &self.graph.additional_output_files
                                     [*output_file_id as usize]
                                     .dest_path;
-                                hash.write(bun_paths::resolve_path::relative_platform::<
-                                    bun_paths::resolve_path::platform::Posix,
-                                    false,
-                                >(from_chunk_dir, path));
+                                hash.write(&Path::relative(from_chunk_dir, path).into_portable());
                             }
                         }
                         crate::chunk::QueryKind::Chunk | crate::chunk::QueryKind::ChunkId => {
@@ -2117,10 +2123,18 @@ pub enum TreeShakeWork {
     },
 }
 
+#[derive(Clone)]
+pub(crate) enum LoadedFiles {
+    Unasked,
+    AskedOnce,
+    Listed(Box<[crate::IndexInt]>),
+}
+
 impl LinkerContext<'_, '_> {
     pub(crate) fn mark_file_reachable_for_code_splitting(
         &mut self,
         queue: &mut std::collections::VecDeque<crate::IndexInt>,
+        loaded_files: &mut [LoadedFiles],
         source_index: crate::IndexInt,
         entry_points_count: usize,
     ) {
@@ -2142,11 +2156,26 @@ impl LinkerContext<'_, '_> {
             bits.set(entry_points_count);
 
             let file_entry_bits = self.graph.files.items_entry_bits();
-            self.for_each_file_loaded_by(source_index, |other| {
+            let mut load = |other: crate::IndexInt| {
                 if !file_entry_bits[other as usize].is_set(entry_points_count) {
                     queue.push_back(other);
                 }
-            });
+            };
+            match &mut loaded_files[source_index as usize] {
+                LoadedFiles::Listed(files) => files.iter().copied().for_each(load),
+                asked @ LoadedFiles::Unasked => {
+                    self.for_each_file_loaded_by(source_index, load);
+                    *asked = LoadedFiles::AskedOnce;
+                }
+                asked @ LoadedFiles::AskedOnce => {
+                    let mut files = Vec::new();
+                    self.for_each_file_loaded_by(source_index, |other| files.push(other));
+                    files.sort_unstable();
+                    files.dedup();
+                    files.iter().copied().for_each(&mut load);
+                    *asked = LoadedFiles::Listed(files.into_boxed_slice());
+                }
+            }
         }
     }
 
@@ -2520,6 +2549,7 @@ impl LinkerContext<'_, '_> {
 // already imported at the top of the file.
 use bun_ast::symbol::Use as SymbolUse;
 use bun_ast::{DependencyList, ImportItemStatus, PartSymbolUseMap};
+use bun_paths::Path;
 
 // `ImportTracker::{Status,Iterator}`'s canonical definition lives
 // in `bundle_v2.rs`. Re-exported here so the 30+
@@ -4452,6 +4482,13 @@ impl InsideWrapperPrefix {
 }
 
 impl InsideWrapperPrefix {
+    /// A directive stays ahead of the dependency calls inserted at `sync_dependencies_end`.
+    pub(crate) fn append_directive(&mut self, stmt: Stmt) {
+        debug_assert!(self.stmts.len() == self.sync_dependencies_end && !self.has_async_dependency);
+        self.stmts.push(stmt);
+        self.sync_dependencies_end += 1;
+    }
+
     pub(crate) fn append_non_dependency(&mut self, stmt: Stmt) -> Result<(), AllocError> {
         self.stmts.push(stmt);
         Ok(())

@@ -12,32 +12,31 @@
 use core::cell::Cell;
 #[cfg(not(windows))]
 use core::ffi::c_int;
-use core::ffi::c_void;
 #[cfg(windows)]
 use core::sync::atomic::{AtomicU32, Ordering};
 
 use crate::node::StringOrBuffer;
 use bun_core::EncodedSlice;
 use bun_core::SignalCode;
-use bun_io::LoopRef;
-use bun_io::pipe_reader::BufferedReaderParent;
 #[cfg(unix)]
 use bun_io::pipe_reader::PosixFlags;
-use bun_io::{BufferedReader, ReadState, StreamingWriter, WriteStatus};
+use bun_io::{
+    BufferedReader, IoEvent, Owner, PollTag, ReadResult, StreamingWriter, WriteHandler, WriteStatus,
+};
 use bun_jsc::EncodedSliceJsc as _;
+use bun_jsc::HasJsRef as _;
 use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsScope, JsStructure, JsWrapper};
 use bun_jsc::{
     self as jsc, EventLoopHandle, JSGlobalObject, JSValue, JsCell, JsRef, JsResult,
     MarkedArrayBuffer, SysErrorJsc,
 };
+use bun_ptr::OptionCellExt as _;
 use bun_sys::{self as sys, Fd, File};
 
 #[cfg(windows)]
-use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
-#[cfg(windows)]
 use bun_sys::windows;
 #[cfg(windows)]
-use std::os::windows::io::{AsRawHandle as _, HandleOrInvalid, IntoRawHandle as _, OwnedHandle};
+use std::os::windows::io::{IntoRawHandle as _, OwnedHandle};
 
 bun_output::declare_scope!(Terminal, hidden);
 
@@ -46,13 +45,9 @@ pub(crate) use crate::generated_bindgen::terminal::js_Terminal as js;
 /// Reference counting for Terminal.
 /// Refs are held by:
 /// 1. The JS wrapper (released when it is collected)
-/// 2. Reader (released in onReaderDone/onReaderError)
-/// 3. Writer (released in onWriterClose)
-///
-// Every JS-exposed method takes `&self`; per-field
-// interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). The
-// BufferedReader/StreamingWriter parent-vtable thunks deref `*mut Self` as
-// `&*this` (shared); all field mutation routes through the cells.
+/// 2. Reader (released in `on_read_result`)
+/// 3. Writer (released in `on_close`)
+/// 4. A write in flight, on Windows
 #[derive(bun_ptr::RefCounted)]
 pub(crate) struct Terminal {
     ref_count: bun_ptr::RefCount<Terminal>,
@@ -68,7 +63,7 @@ pub(crate) struct Terminal {
     /// Windows ConPTY handle. Used for resize and passed to uv_spawn via
     /// uv_process_options_t.pseudoconsole.
     #[cfg(windows)]
-    hpcon: Cell<Option<windows::HPCON>>,
+    hpcon: JsCell<Option<windows::PseudoConsole>>,
 
     /// Current terminal size
     cols: Cell<u16>,
@@ -81,20 +76,23 @@ pub(crate) struct Terminal {
     global_this: bun_ptr::BackRef<JSGlobalObject>,
 
     /// Writer for sending data to the terminal
-    writer: JsCell<IOWriter>,
+    writer: StreamingWriter,
 
     /// Reader for receiving data from the terminal
-    reader: JsCell<IOReader>,
+    reader: BufferedReader,
 
     /// Held until the writer closes.
-    writer_ref: JsCell<Option<bun_ptr::RefPtr<Terminal>>>,
+    writer_ref: Cell<Option<bun_ptr::RefPtr<Terminal>>>,
+    /// Held while a write is in flight.
+    #[cfg(windows)]
+    inflight_write_ref: Cell<Option<bun_ptr::RefPtr<Terminal>>>,
 
     /// Held until the reader is done.
-    reader_ref: JsCell<Option<bun_ptr::RefPtr<Terminal>>>,
+    reader_ref: Cell<Option<bun_ptr::RefPtr<Terminal>>>,
 
     /// The JS wrapper, which roots the callbacks in its cached slots. Strong
     /// until no callback can fire, then weak (`maybe_downgrade_after_eof`).
-    this_value: JsCell<JsRef>,
+    pub(crate) this_value: JsCell<JsRef>,
 
     /// State flags
     flags: Cell<Flags>,
@@ -134,17 +132,6 @@ bitflags::bitflags! {
         const EXIT_DISPATCHED = 1 << 7;
     }
 }
-
-/// `bun.io.StreamingWriter(@This(), struct { onClose, onWritable, onError, onWrite })`
-/// — the anon-struct of callback decls is the `PosixStreamingWriterParent` /
-/// `WindowsStreamingWriterParent` trait impls at the bottom of this file.
-pub(crate) type IOWriter = StreamingWriter<Terminal>;
-
-/// Poll type alias for FilePoll Owner registration
-#[cfg(not(windows))]
-pub(crate) type Poll = IOWriter;
-
-pub(crate) type IOReader = BufferedReader;
 
 /// Options for creating a Terminal
 pub(crate) struct Options {
@@ -248,14 +235,6 @@ impl Options {
     }
 }
 
-/// Result from creating a Terminal
-pub(crate) struct CreateResult {
-    /// The new terminal; its initial ref belongs to the JS wrapper (`js_value`),
-    /// which holds itself strong until the terminal closes.
-    pub terminal: bun_ptr::BackRef<Terminal, bun_ptr::Mut>,
-    pub js_value: JSValue,
-}
-
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
 pub enum InitError {
     #[error("OpenPtyFailed")]
@@ -298,54 +277,26 @@ impl Terminal {
         self.flags.set(v);
     }
 
-    /// `self`'s address as `*mut Self` for intrusive backref / refcount slots.
-    /// Callers deref it as `&*const` (shared) — see the `BufferedReaderParent`
-    /// / `*StreamingWriterParent` thunks below — so no write provenance is
-    /// required; the `*mut` spelling is purely to match the C-shaped vtable
-    /// signatures. All field mutation routes through `Cell`/`JsCell`.
+    /// `self`'s address for `AbortHandle::arm_owner`, whose callback borrows it shared.
     #[inline]
     fn as_ctx_ptr(&self) -> *mut Self {
         std::ptr::from_ref::<Self>(self).cast_mut()
     }
 
-    /// Recover `&Terminal` from the parent back-pointer stashed via
-    /// [`as_ctx_ptr`](Self::as_ctx_ptr) in `open` (handed to
-    /// `reader.set_parent` / `writer.parent`). Centralises the set-once
-    /// `*mut Self → &Self` deref so the I/O-vtable trampolines below stay
-    /// safe at the call site (one `unsafe` here, N safe callers).
-    ///
-    /// Only valid for the `BufferedReaderParent` /
-    /// `{Posix,Windows}StreamingWriterParent` thunks where `this` is the
-    /// registered BACKREF — do NOT call from `WriterParent::ref_` /
-    /// `deref` (those run while a `&mut self.writer` borrow is live and must
-    /// avoid forming `&Terminal`; see Stacked-Borrows note there).
-    #[inline]
-    fn from_parent_ptr<'a>(this: *mut Self) -> &'a Self {
-        // SAFETY: `this` is the BACKREF set via `reader.set_parent` /
-        // `writer.parent = …` in `open`. The Terminal is heap-stable
-        // (`RefPtr::new`) and outlives every reader/writer callback (the
-        // intrusive +1 ref held by the I/O machinery is dropped only after the
-        // last callback fires). R-2: shared borrow only — bodies take `&self`;
-        // field writes go through `Cell`/`JsCell`, so re-entrant JS forming a
-        // fresh `&Self` from the wrapper aliases soundly.
-        unsafe { &*this }
-    }
-
     // ─────────────────────────────────────────────────────────────────────────
 
     fn is_reader_done(&self) -> bool {
-        self.reader_ref.get().is_none()
+        self.reader_ref.is_none()
     }
 
     fn is_writer_done(&self) -> bool {
-        self.writer_ref.get().is_none()
+        self.writer_ref.is_none()
     }
 
     /// Hold a ref on `self` for the guard's lifetime (across re-entrant JS).
-    #[cfg(unix)]
     fn ref_guard(&self) -> bun_ptr::RefPtr<Self> {
-        // SAFETY: `self` is the live heap allocation.
-        unsafe { bun_ptr::RefPtr::init_ref(self.as_ctx_ptr()) }
+        // SAFETY: the writer's owner is the allocation that holds `self`.
+        unsafe { bun_ptr::RefPtr::init_ref(self.writer.owner().ptr().cast()) }
     }
 
     /// Opens the PTY and starts reading. The caller gives the returned ref to the JS wrapper, then calls [`attach`](Self::attach).
@@ -364,7 +315,7 @@ impl Terminal {
             #[cfg(unix)]
             slave: JsCell::new(Some(pty_result.slave)),
             #[cfg(windows)]
-            hpcon: Cell::new(Some(pty_result.hpcon)),
+            hpcon: JsCell::new(Some(pty_result.hpcon)),
             cols: Cell::new(if cfg!(windows) {
                 u16::try_from(clamp_to_coord(options.cols)).expect("int cast")
             } else {
@@ -377,10 +328,12 @@ impl Terminal {
             }),
             event_loop_handle: EventLoopHandle::init(global_object.bun_vm().event_loop_ptr()),
             global_this: bun_ptr::BackRef::new(global_object),
-            writer: JsCell::new(IOWriter::default()),
-            reader: JsCell::new(IOReader::init::<Terminal>()),
-            writer_ref: JsCell::new(None),
-            reader_ref: JsCell::new(None),
+            writer: StreamingWriter::default(),
+            reader: BufferedReader::init(),
+            writer_ref: Cell::new(None),
+            #[cfg(windows)]
+            inflight_write_ref: Cell::new(None),
+            reader_ref: Cell::new(None),
             this_value: JsCell::new(JsRef::empty()),
             flags: Cell::new(Flags::empty()),
             writer_has_buffered: Cell::new(false),
@@ -388,68 +341,49 @@ impl Terminal {
             tty_state: Cell::new(bun_core::tty::State::new()),
             abort_handle: jsc::AbortHandle::for_owner::<Terminal>(),
         });
-        let parent_ptr = terminal.as_ptr();
+        let owner = |tag| Owner::new(tag, terminal.as_ptr().cast());
+        // SAFETY: `owner` points to the heap allocation that holds the reader and the writer.
+        unsafe {
+            terminal.reader.set_owner(owner(PollTag::TerminalReader));
+            terminal.writer.set_owner(owner(PollTag::TerminalWriter));
+        }
+        let event_loop = terminal.event_loop_handle.as_event_loop_ctx();
 
-        // Set reader parent
-        terminal
-            .reader
-            .with_mut(|r| r.set_parent(parent_ptr.cast::<c_void>()));
-
-        // Set writer parent
-        terminal.writer.with_mut(|w| w.parent = parent_ptr);
-
-        // Start writer with the write fd - adds a ref. On `Err` the unused closure drops the file.
+        // Start writer with the write fd - adds a ref.
         match terminal
             .writer
-            .with_mut(|w| w.start(pty_result.write.fd(), true))
-            .map(|()| pty_result.write.into_raw())
+            .start(&*terminal, event_loop, pty_result.write, true)
         {
-            sys::Result::Ok(_) => terminal.writer_ref.set(Some(terminal.clone())),
+            sys::Result::Ok(()) => terminal.writer_ref.set(Some(terminal.clone())),
             sys::Result::Err(_) => {
-                // The writer took neither its ref nor the fd, and the reader never started.
+                // The writer did not take its ref, and the reader never started.
                 drop(pty_result.read);
                 terminal.close_internal();
                 return Err(InitError::WriterStartFailed);
             }
         }
 
-        // Start reader with the read fd. The reader's ref is taken first: when
-        // the poll registration fails, POSIX `start()` calls `on_reader_error`,
-        // which releases that ref, and still returns Ok.
-        terminal.reader_ref.set(Some(terminal.clone()));
-        match terminal
+        // Start reader with the read fd - adds a ref.
+        let Ok(result) = terminal
             .reader
-            .with_mut(|r| r.start(pty_result.read.fd(), true))
-            .map(|()| pty_result.read.into_raw())
-        {
-            sys::Result::Err(_) => {
-                // No callback ran: the reader took neither the fd nor its ref.
-                terminal.reader_ref.set(None);
-                return Err(terminal.fail_reader_start());
-            }
-            sys::Result::Ok(_) if terminal.is_reader_done() => {
-                return Err(terminal.fail_reader_start());
-            }
-            sys::Result::Ok(_) => {
-                #[cfg(unix)]
-                {
-                    terminal.reader.with_mut(|r| {
-                        if let Some(poll) = r.handle.get_poll() {
-                            // PTY behaves like a pipe, not a socket
-                            r.flags
-                                .insert(PosixFlags::NONBLOCKING | PosixFlags::POLLABLE);
-                            poll.set_flag(bun_io::FilePollFlag::Nonblocking);
-                        }
-                    });
-                }
-                terminal.update_flags(|f| f.insert(Flags::READER_STARTED));
-            }
+            .start(event_loop, pty_result.read.into(), true)
+        else {
+            return Err(terminal.fail_reader_start());
+        };
+        terminal.reader_ref.set(Some(terminal.clone()));
+        terminal.on_read_result(result);
+        if terminal.is_reader_done() {
+            return Err(terminal.fail_reader_start());
         }
+        // PTY behaves like a pipe, not a socket
+        #[cfg(unix)]
+        terminal
+            .reader
+            .update_flags(|f| f.insert(PosixFlags::NONBLOCKING));
+        terminal.update_flags(|f| f.insert(Flags::READER_STARTED));
 
         // Start reading data
-        // SAFETY: the reader cell is live for the terminal's lifetime; `read`
-        // is the raw re-entrancy-safe entry (its dispatch runs user JS).
-        unsafe { IOReader::read(terminal.reader.as_ptr()) };
+        terminal.read(None);
         // The first read can end the reader too: EOF, a read error, or a failed re-arm.
         if terminal.is_reader_done() {
             return Err(terminal.fail_reader_start());
@@ -466,10 +400,6 @@ impl Terminal {
         options: &Options,
         this_value: JSValue,
     ) {
-        // Start with strong ref since we're actively reading.
-        self.this_value
-            .set(JsRef::init_strong(this_value, global_object));
-
         // Store callbacks via generated gc setters (prevents GC of callbacks while terminal is alive)
         // Note: callbacks were already validated in parseFromJS() and may be wrapped in AsyncContextFrame
         // by withAsyncContextIfNeeded(), so we don't re-check isCallable() here
@@ -492,7 +422,7 @@ impl Terminal {
     /// `open` error path for a reader that finished before the
     /// terminal reached JS, with the reader's ref already released.
     /// `close_internal` closes what is still open (a writer that is still
-    /// open releases its ref through `on_writer_close`); `open` then drops
+    /// open releases its ref through `on_close`); `open` then drops
     /// the initial ref.
     fn fail_reader_start(&self) -> InitError {
         self.close_internal();
@@ -531,27 +461,24 @@ impl Terminal {
                 global_object.throw(format_args!("Failed to start terminal reader"))
             }
         })?;
-        let this = terminal.this_ptr();
         let this_value = structure.create(&cx.heap, terminal);
         let global_object = cx.global();
         let context = global_object.bun_vm().context_of_caller();
-        this.attach(global_object, context, &options, this_value.to_js());
+        this_value.set_js_ref_strong(global_object);
+        Self::wrapped_by(this_value).attach(global_object, context, &options, this_value.to_js());
         Ok(this_value)
     }
 
     /// Create a Terminal from Bun.spawn options (not from JS constructor)
-    /// Returns the Terminal and its JS wrapper value
     /// The slave_fd should be used for the subprocess's stdin/stdout/stderr
-    pub(crate) fn create_from_spawn(
-        cx: &jsc::JsThread<'_>,
+    pub(crate) fn create_from_spawn<'a>(
+        cx: &'a jsc::JsThread<'_>,
         options: &Options,
-    ) -> Result<CreateResult, InitError> {
-        let terminal = Self::open(cx.global(), options)?.into_raw();
-        let js_value = js::to_js(terminal, cx.global());
-        // SAFETY: `js_value` owns the ref.
-        let terminal = unsafe { bun_ptr::BackRef::from_raw_mut(terminal) };
-        terminal.attach(cx.global(), cx.context(), options, js_value);
-        Ok(CreateResult { terminal, js_value })
+    ) -> Result<jsc::WrapperGuard<'a, Self>, InitError> {
+        let terminal = js::wrap(Self::open(cx.global(), options)?, cx.global());
+        terminal.set_js_ref_strong(cx.global());
+        terminal.attach(cx.global(), cx.context(), options, terminal.to_js());
+        Ok(terminal)
     }
 
     /// Get the slave fd for subprocess to use
@@ -595,7 +522,10 @@ impl Terminal {
     /// uv_process_options_t.pseudoconsole.
     #[cfg(windows)]
     pub(crate) fn get_pseudoconsole(&self) -> Option<windows::HPCON> {
-        self.hpcon.get()
+        self.hpcon
+            .get()
+            .as_ref()
+            .map(windows::PseudoConsole::as_raw)
     }
 
     /// Mark a terminal created inline by `Bun.spawn` so it cannot be reused
@@ -627,9 +557,7 @@ impl Terminal {
         // +1 so `self` stays live for the trailing field accesses.
         let guard = self.ref_guard();
         if flags.contains(Flags::READER_STARTED) && !self.is_reader_done() {
-            // SAFETY: single JS thread; re-entrant user JS (data callback may
-            // call `terminal.close()`) is handled by `read`'s raw dispatch.
-            unsafe { IOReader::read(self.reader.as_ptr()) };
+            self.read(None);
             if self.flags.get().contains(Flags::CLOSED) {
                 return;
             }
@@ -640,8 +568,7 @@ impl Terminal {
         // A grandchild holding the slave keeps this at EAGAIN and re-arms.
         let flags = self.flags.get();
         if flags.contains(Flags::READER_STARTED) && !self.is_reader_done() {
-            // SAFETY: same as the `read()` call above.
-            unsafe { IOReader::read(self.reader.as_ptr()) };
+            self.read(None);
         }
         // An inline terminal whose child has exited no longer keeps the event
         // loop alive; the polls stay registered so grandchild output still
@@ -661,8 +588,7 @@ impl Terminal {
     #[cfg(windows)]
     pub(crate) fn unref_after_inline_child_exit(&self) {
         if !self.flags.get().contains(Flags::CLOSED) {
-            let ctx = self.event_loop_handle.as_event_loop_ctx();
-            self.writer.with_mut(|w| w.update_ref(ctx, false));
+            self.writer.update_ref(false);
         }
     }
 
@@ -670,26 +596,11 @@ impl Terminal {
     /// once the last attached client disconnects: the output pipe then breaks
     /// and our reader observes EOF without `on_process_exit` having to tear
     /// ConPTY down (which races conhost's render thread on older builds and can
-    /// drop the child's last write). Equivalent to kernel32's
-    /// `ReleasePseudoConsole` (Windows 11 24H2+) / conpty.dll's
-    /// `ConptyReleasePseudoConsole`; neither is exported from the inbox
-    /// kernel32 on older builds so we reach into the struct directly. Further
-    /// spawns against this pseudoconsole are impossible afterwards.
+    /// drop the child's last write). No further spawn against it is possible afterwards.
     #[cfg(windows)]
     pub(crate) fn release_pseudoconsole_reference(&self) {
-        let Some(hpcon) = self.hpcon.get() else {
-            return;
-        };
-        // SAFETY: `hpcon` was returned from inbox `CreatePseudoConsole`, which
-        // heap-allocates a `PseudoConsole` and returns it as HPCON.
-        // `ClosePseudoConsole` later skips the field when it reads null.
-        let pc = hpcon.cast::<PseudoConsole>();
-        unsafe {
-            let r#ref = (*pc).h_pty_reference;
-            if !r#ref.is_null() && r#ref != windows::INVALID_HANDLE_VALUE {
-                let _ = windows::CloseHandle(r#ref);
-                (*pc).h_pty_reference = core::ptr::null_mut();
-            }
+        if let Some(hpcon) = self.hpcon.get() {
+            hpcon.release();
         }
     }
 
@@ -700,28 +611,23 @@ impl Terminal {
     /// hpcon is passed to the thread by value so the Terminal struct may be freed
     /// before the thread completes.
     #[cfg(windows)]
-    fn close_pseudoconsole_off_thread(&self, hpcon: windows::HPCON) {
+    fn close_pseudoconsole_off_thread(&self, hpcon: windows::PseudoConsole) {
         // PORTING.md bans std::process but not std::thread; a raw detached OS
         // thread is intentional here (no event-loop integration needed).
-        let hpcon_addr = hpcon as usize;
-        match std::thread::Builder::new().spawn(move || {
-            // SAFETY: hpcon was a valid HPCON when taken; ClosePseudoConsole is
-            // safe to call from any thread per Win32 docs.
-            unsafe { windows::ClosePseudoConsole(hpcon_addr as windows::HPCON) };
-        }) {
+        match std::thread::Builder::new().spawn(move || hpcon.close()) {
             Ok(_t) => {
                 // detached: JoinHandle dropped without join → thread runs to completion.
             }
             Err(_) => {
                 // CreateThread failed — the process is in a bad state. Close the
-                // reader so onReaderDone fires next loop tick (releasing the reader
+                // reader so `on_read_result` runs (releasing the reader
                 // ref) instead of hanging on an EOF that will never come. Leak hpcon;
                 // calling ClosePseudoConsole here would deadlock since reader.close()
                 // is async (uv_close) and the pipe HANDLE is still open. Conhost sees
                 // broken-pipe once libuv's deferred close runs.
                 let flags = self.flags.get();
                 if flags.contains(Flags::READER_STARTED) && !self.is_reader_done() {
-                    self.reader.with_mut(|r| r.close());
+                    self.on_read_result(self.reader.close());
                 }
             }
         }
@@ -738,7 +644,7 @@ pub(crate) struct PtyResult {
     #[cfg(unix)]
     pub(crate) slave: File,
     #[cfg(windows)]
-    pub(crate) hpcon: windows::HPCON,
+    pub(crate) hpcon: windows::PseudoConsole,
 }
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
@@ -794,40 +700,28 @@ pub(crate) type OpenPtyFn = unsafe extern "C" fn(
 #[cfg(any(target_os = "linux", target_os = "android"))]
 mod lib_util {
     use super::*;
-    use bun_core::ZStr;
-
-    // Per PORTING.md §Global mutable state: the flag is an AtomicBool and the
-    // handle slot an AtomicPtr (null ⇔ None — dlopen never yields a null Some).
-    // JS-thread-only.
-    static HANDLE: core::sync::atomic::AtomicPtr<c_void> =
-        core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
-    static LOADED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
-
-    fn get_handle() -> Option<*mut c_void> {
-        use core::sync::atomic::Ordering::Relaxed;
-        if LOADED.load(Relaxed) {
-            let h = HANDLE.load(Relaxed);
-            return if h.is_null() { None } else { Some(h) };
-        }
-        LOADED.store(true, Relaxed);
-
-        // Try libutil.so first (most common), then libutil.so.1
-        const LIB_NAMES: [&ZStr; 3] = [
-            bun_core::zstr!("libutil.so"),
-            bun_core::zstr!("libutil.so.1"),
-            bun_core::zstr!("libc.so.6"),
-        ];
-        for lib_name in LIB_NAMES {
-            if let Some(h) = sys::dlopen(lib_name, sys::RTLD::LAZY) {
-                HANDLE.store(h, Relaxed);
-                return Some(h);
-            }
-        }
-        None
-    }
+    use bun_core::{ZStr, zstr};
+    use sys::{DynLib, RTLD};
 
     pub(super) fn get_open_pty() -> Option<OpenPtyFn> {
-        sys::dlsym_with_handle!(OpenPtyFn, "openpty", get_handle())
+        // Try libutil.so first (most common), then libutil.so.1
+        const LIB_NAMES: [&ZStr; 3] = [
+            zstr!("libutil.so"),
+            zstr!("libutil.so.1"),
+            zstr!("libc.so.6"),
+        ];
+        static OPEN_PTY: std::sync::OnceLock<Option<OpenPtyFn>> = std::sync::OnceLock::new();
+        *OPEN_PTY.get_or_init(|| {
+            // SAFETY: parts of the C library, which stay loaded, and the type of its `openpty`.
+            unsafe {
+                let library = (LIB_NAMES.into_iter())
+                    .find_map(|name| DynLib::open_with_flags(name, RTLD::LAZY))
+                    .map(DynLib::leak);
+                // Android has none of them.
+                let library = library.as_deref().unwrap_or(DynLib::GLOBAL);
+                library.lookup_as(zstr!("openpty"))
+            }
+        })
     }
 }
 
@@ -960,13 +854,7 @@ fn create_pty_posix(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError> {
             t.c_cc[libc::VTIME] = 0; // Timeout for non-canonical read
 
             // Set baud rate to 38400 (standard for PTYs)
-            // libc termios on Linux encodes speed in c_cflag; use
-            // cfsetispeed/cfsetospeed (the portable way to set both).
-            // SAFETY: `t` is a fully-initialized termios from tcgetattr.
-            unsafe {
-                libc::cfsetispeed(&raw mut t, libc::B38400);
-                libc::cfsetospeed(&raw mut t, libc::B38400);
-            }
+            sys::posix::cfsetspeed(&mut t, libc::B38400);
 
             let _ = sys::posix::tcsetattr(slave_fd, sys::posix::TCSA::Now, &t);
         }
@@ -1013,17 +901,6 @@ struct PipePair {
     pub client: OwnedHandle,
 }
 
-/// Inbox kernel32's HPCON layout. Stable ABI since build 17763: documented as
-/// "part of an ABI shared with the rest of the operating system" in
-/// microsoft/terminal `src/winconpty/winconpty.h`.
-#[cfg(windows)]
-#[repr(C)]
-struct PseudoConsole {
-    h_signal: windows::HANDLE,
-    h_pty_reference: windows::HANDLE,
-    h_conpty_process: windows::HANDLE,
-}
-
 /// Create one end of a pipe pair as an overlapped named pipe (server) and the
 /// other as a synchronous client. The "server" end is suitable for libuv (uv_pipe_open) and
 /// the "client" end is suitable for ConPTY (which uses synchronous I/O).
@@ -1033,50 +910,23 @@ fn create_overlapped_pipe_pair(
     // PIPE_ACCESS_OUTBOUND: server writes, client reads.
     server_access: u32,
 ) -> Result<PipePair, CreatePtyError> {
-    use sys::FdExt as _;
-    use windows::kernel32 as k32;
-    const FILE_FLAG_FIRST_PIPE_INSTANCE: u32 = 0x00080000;
-
     let pid: u32 = windows::GetCurrentProcessId();
     let counter = PIPE_SERIAL.fetch_add(1, Ordering::Relaxed);
-    let mut name_utf8_buf = [0u8; 96];
-    let name = {
-        use std::io::Write;
-        let mut cursor = &mut name_utf8_buf[..];
-        // An AppContainer may only create server pipes under `\\.\pipe\LOCAL\`;
-        // insert the segment only then so the name is unchanged outside one
-        // (matches libuv's uv__unique_pipe_name).
-        let local = if windows::is_app_container() {
-            r"LOCAL\"
-        } else {
-            ""
-        };
-        if write!(cursor, r"\\.\pipe\{local}bun-conpty-{pid}-{counter}").is_err() {
-            return Err(CreatePtyError::OpenPtyFailed);
-        }
-        let written = 96 - cursor.len();
-        &name_utf8_buf[..written]
+    // An AppContainer may only create server pipes under `\\.\pipe\LOCAL\` (libuv's uv__unique_pipe_name).
+    let local = if windows::is_app_container() {
+        r"LOCAL\"
+    } else {
+        ""
     };
-    let mut name_w_buf = [0u16; 97]; // [96:0]u16
-    let name_w_len = bun_core::convert_utf8_to_utf16_in_buffer(&mut name_w_buf, name).len();
-    name_w_buf[name_w_len] = 0;
-    // SAFETY: name_w_buf[name_w_len] == 0 written above.
-    let name_w = bun_core::WStr::from_buf(&name_w_buf[..], name_w_len);
+    let mut name_w = bun_paths::OSPath::new();
+    write!(name_w, r"\\.\pipe\{local}bun-conpty-{pid}-{counter}");
 
-    // SAFETY: name_w is NUL-terminated; all other params are valid per Win32.
-    let server = unsafe {
-        HandleOrInvalid::from_raw_handle(k32::CreateNamedPipeW(
-            name_w.as_ptr(),
-            server_access | windows::FILE_FLAG_OVERLAPPED | FILE_FLAG_FIRST_PIPE_INSTANCE,
-            windows::PIPE_TYPE_BYTE | windows::PIPE_READMODE_BYTE | windows::PIPE_WAIT,
-            1,
-            65536,
-            65536,
-            0,
-            core::ptr::null_mut(),
-        ))
-    };
-    let server = OwnedHandle::try_from(server).map_err(|_| CreatePtyError::OpenPtyFailed)?;
+    let server = windows::CreateNamedPipeW(
+        &name_w,
+        server_access | windows::FILE_FLAG_OVERLAPPED,
+        65536,
+    )
+    .map_err(|_| CreatePtyError::OpenPtyFailed)?;
 
     let client_access: u32 = if server_access == windows::PIPE_ACCESS_INBOUND {
         windows::GENERIC_WRITE
@@ -1084,23 +934,11 @@ fn create_overlapped_pipe_pair(
         windows::GENERIC_READ
     };
 
-    // SAFETY: name_w is NUL-terminated; all other params are valid per Win32.
-    let client = unsafe {
-        HandleOrInvalid::from_raw_handle(k32::CreateFileW(
-            name_w.as_ptr(),
-            client_access,
-            0,
-            core::ptr::null_mut(),
-            windows::OPEN_EXISTING,
-            0,
-            core::ptr::null_mut(),
-        ))
-    };
-    let client = OwnedHandle::try_from(client).map_err(|_| CreatePtyError::OpenPtyFailed)?;
+    let client = windows::CreateFileW(&name_w, client_access, 0, windows::OPEN_EXISTING, 0)
+        .map_err(|_| CreatePtyError::OpenPtyFailed)?;
 
-    let server = Fd::from_system(server.into_raw_handle())
-        .make_lib_uv_owned_for_syscall(sys::Tag::open, sys::ErrorCase::CloseOnFail)
-        .map(File::from_fd)
+    let server = File::from_fd(Fd::from_system(server.into_raw_handle()))
+        .make_lib_uv_owned()
         .map_err(|_| CreatePtyError::DupFailed)?;
     Ok(PipePair { server, client })
 }
@@ -1119,12 +957,8 @@ fn create_pty_windows(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError>
         X: clamp_to_coord(cols),
         Y: clamp_to_coord(rows),
     };
-    let (read_from, write_to) = (input.client.as_raw_handle(), output.client.as_raw_handle());
-    let mut hpcon: windows::HPCON = core::ptr::null_mut();
-    // SAFETY: both are open HANDLEs, which ConPTY duplicates; `hpcon` is a valid out-ptr.
-    if unsafe { windows::CreatePseudoConsole(size, read_from, write_to, 0, &raw mut hpcon) } < 0 {
-        return Err(CreatePtyError::OpenPtyFailed);
-    }
+    let hpcon = windows::PseudoConsole::new(size, &input.client, &output.client)
+        .ok_or(CreatePtyError::OpenPtyFailed)?;
 
     Ok(PtyResult {
         read: output.server,
@@ -1292,17 +1126,12 @@ impl Terminal {
             return Ok(input_len);
         }
 
-        // Suppress drain firing from the synchronous on_write calls that
-        // StreamingWriter::write() makes while we still hold the `with_mut`
-        // borrow; it is restored from `has_pending_data()` immediately after.
+        // No drain fires from inside `write()`: the flag is restored below.
         let had_buffered = self.writer_has_buffered.replace(false);
-        let (write_result, has_pending) = self.writer.with_mut(|w| {
-            let r = w.write(bytes);
-            (r, w.has_pending_data())
-        });
+        let write_result = self.writer.write(self, bytes);
         // The writer can close inside `write()` and keep the bytes; no drain follows them.
         let writer_done = self.is_writer_done();
-        let has_pending = has_pending && !writer_done;
+        let has_pending = self.writer.has_pending_data() && !writer_done;
         self.writer_has_buffered.set(has_pending);
         if has_pending {
             // Keep the wrapper rooted for the pending drain dispatch; a write
@@ -1310,7 +1139,7 @@ impl Terminal {
             self.this_value.with_mut(|v| v.upgrade(global_object));
         }
         // A second write() can drain what an earlier one buffered; on_write saw
-        // the cleared flag, so fire drain here (outside `with_mut`).
+        // the cleared flag, so fire drain here.
         #[cfg(unix)]
         if had_buffered && !has_pending && !writer_done {
             self.on_writer_ready();
@@ -1371,16 +1200,7 @@ impl Terminal {
                 ypixel: 0,
             };
 
-            // SAFETY: master_fd is open (closed flag checked above), TIOCSWINSZ
-            // takes a *const winsize.
-            let ioctl_result = unsafe {
-                libc::ioctl(
-                    self.master_fd().native(),
-                    libc::TIOCSWINSZ as _,
-                    &raw const winsize,
-                )
-            };
-            if ioctl_result != 0 {
+            if sys::posix::set_winsize(self.master_fd(), winsize).is_err() {
                 return Err(heap.error(format_args!("Failed to resize terminal")));
             }
         }
@@ -1400,8 +1220,7 @@ impl Terminal {
                     X: clamp_to_coord(new_cols),
                     Y: clamp_to_coord(new_rows),
                 };
-                // SAFETY: hpcon is a valid open HPCON.
-                let hr = unsafe { windows::ResizePseudoConsole(hpcon, size) };
+                let hr = hpcon.resize(size);
                 if hr < 0 && hr != HR_NO_DATA && hr != HR_BROKEN_PIPE {
                     return Err(heap.error(format_args!("Failed to resize terminal")));
                 }
@@ -1488,11 +1307,8 @@ impl Terminal {
     }
 
     fn update_ref(&self, add: bool) {
-        // POSIX `update_ref` takes `&self`; Windows takes `&mut self` — route
-        // both through `with_mut` so the body is target-agnostic.
-        self.reader.with_mut(|r| r.update_ref(add));
-        let ctx = self.event_loop_handle.as_event_loop_ctx();
-        self.writer.with_mut(|w| w.update_ref(ctx, add));
+        self.reader.update_ref(add);
+        self.writer.update_ref(add);
     }
 
     /// Close the terminal
@@ -1513,21 +1329,19 @@ impl Terminal {
         self.update_flags(|f| f.insert(Flags::CLOSED));
         self.abort_handle.leave();
 
-        // Close writer (closes its fd). R-2: `with_mut` borrow is held across
-        // the synchronous `on_writer_close` parent callback, but that callback
-        // touches only sibling `Cell`/`JsCell` fields, never `writer`.
-        self.writer.with_mut(|w| w.close());
+        // Close writer (closes its fd)
+        self.writer.close(self);
 
         #[cfg(windows)]
         {
             // Dispatch ClosePseudoConsole off-thread (it blocks until the output
             // pipe is drained on Windows < 11 24H2) and leave the reader open so
             // the event loop can keep draining; conhost flushes the final frame,
-            // closes its pipe end, and the reader observes EOF → onReaderDone.
+            // closes its pipe end, and the reader observes EOF → `on_read_result`.
             if let Some(hpcon) = self.hpcon.take() {
                 self.close_pseudoconsole_off_thread(hpcon);
             }
-            // Leave the reader open; onReaderDone closes it on EOF.
+            // Leave the reader open; `on_read_result` closes it on EOF.
             let flags = self.flags.get();
             if flags.contains(Flags::READER_STARTED) && !self.is_reader_done() {
                 return;
@@ -1536,7 +1350,7 @@ impl Terminal {
 
         // Close reader (closes its fd)
         if self.flags.get().contains(Flags::READER_STARTED) {
-            self.reader.with_mut(|r| r.close());
+            self.on_read_result(self.reader.close());
         }
 
         #[cfg(unix)]
@@ -1546,12 +1360,8 @@ impl Terminal {
         }
     }
 
-    // IOWriter callbacks
-    fn on_writer_close(&self) {
-        bun_output::scoped_log!(Terminal, "onWriterClose");
-        if let Some(_writer_ref) = self.writer_ref.replace(None) {
-            self.maybe_downgrade_after_eof();
-        }
+    pub(crate) fn on_writer_io(&self, event: IoEvent) {
+        self.writer.on_io(self, event);
     }
 
     fn on_writer_ready(&self) {
@@ -1572,56 +1382,27 @@ impl Terminal {
         self.maybe_downgrade_after_eof();
     }
 
-    fn on_writer_error(&self, err: &sys::Error) {
-        bun_output::scoped_log!(Terminal, "onWriterError: {:?}", err);
-        // On write error, close the terminal to prevent further operations
-        // This handles cases like broken pipe when the child process exits
-        if !self.flags.get().contains(Flags::CLOSED) {
-            self.close_internal();
-        }
+    pub(crate) fn read(&self, event: Option<IoEvent>) {
+        let event_loop = self.event_loop_handle.as_event_loop_ctx();
+        let result = self.reader.read_chunks(event_loop, event, |chunk, _| {
+            self.on_read_chunk(&chunk);
+            true
+        });
+        self.on_read_result(result);
     }
 
-    fn on_write(&self, amount: usize, status: WriteStatus) {
-        bun_output::scoped_log!(Terminal, "onWrite: {} bytes", amount);
-        match status {
-            WriteStatus::Pending => {}
-            // `PosixStreamingWriter` has no `on_writable`, so POSIX
-            // fires `drain` off this transition. Windows fires it from
-            // `on_writable` and only records the state here.
-            WriteStatus::Drained => {
-                let had_buffered = self.writer_has_buffered.replace(false);
-                #[cfg(unix)]
-                if had_buffered {
-                    self.on_writer_ready();
-                }
-                #[cfg(not(unix))]
-                let _ = had_buffered;
-            }
-            // The writer closed its fd, so no drain can follow.
-            WriteStatus::EndOfFile => {
-                self.writer_has_buffered.set(false);
-                self.maybe_downgrade_after_eof();
-            }
-        }
-    }
-
-    // IOReader callbacks
-    fn on_reader_done(&self) {
-        bun_output::scoped_log!(Terminal, "onReaderDone");
-        // exit_code 0 = clean EOF on PTY stream (not subprocess exit code)
-        self.on_reader_finished(0);
-    }
-
-    fn on_reader_error(&self, err: &sys::Error) {
-        bun_output::scoped_log!(Terminal, "onReaderError: {:?}", err);
-        // exit_code 1 = I/O error on PTY stream (not subprocess exit code)
-        self.on_reader_finished(1);
-    }
-
-    /// Shared tail of `on_reader_done`/`on_reader_error`: take `reader_ref`
-    /// before the exit callback so re-entry (`terminal.close()` from the
+    /// Takes `reader_ref` before the exit callback so re-entry (`terminal.close()` from the
     /// callback) finds it gone and no-ops.
-    fn on_reader_finished(&self, exit_code: i32) {
+    fn on_read_result(&self, result: ReadResult) {
+        // 0 = EOF, 1 = PTY read error; not the subprocess's exit code.
+        let exit_code = match result {
+            ReadResult::Pending => return,
+            ReadResult::Done => 0,
+            ReadResult::Err(err) => {
+                bun_output::scoped_log!(Terminal, "onReaderError: {:?}", err);
+                1
+            }
+        };
         let Some(_reader_ref) = self.reader_ref.replace(None) else {
             return;
         };
@@ -1645,12 +1426,12 @@ impl Terminal {
     #[cfg(unix)]
     fn finish_io_after_eof(&self) {
         // EOF closes the reader itself, a read error does not.
-        if !self.reader.get().is_done() {
-            self.reader.with_mut(|r| r.close());
+        if !self.reader.is_done() {
+            self.on_read_result(self.reader.close());
         }
-        // `end()` dispatches `on_writer_close`.
+        // `end()` dispatches `on_close`.
         if !self.is_writer_done() {
-            self.writer.with_mut(|w| w.end());
+            self.writer.end(self);
         }
     }
 
@@ -1658,9 +1439,6 @@ impl Terminal {
     /// been dispatched and no `drain` is owed. Downgrading earlier would let
     /// GC collect the wrapper, and with it the callbacks it roots, before the
     /// last dispatch goes through it.
-    ///
-    /// Reads only `Cell` fields, never `self.writer`: callers include
-    /// writer-parent callbacks that run while a writer borrow is live.
     fn maybe_downgrade_after_eof(&self) {
         let flags = self.flags.get();
         if !flags.contains(Flags::EXIT_DISPATCHED) || flags.contains(Flags::FINALIZED) {
@@ -1706,25 +1484,23 @@ impl Terminal {
     }
 
     // Called when data is available from the reader
-    // Returns true to continue reading, false to pause
-    fn on_read_chunk(&self, chunk: &[u8], has_more: ReadState) -> bool {
-        let _ = has_more;
+    fn on_read_chunk(&self, chunk: &[u8]) {
         bun_output::scoped_log!(Terminal, "onReadChunk: {} bytes", chunk.len());
 
         if self.flags.get().contains(Flags::FINALIZED) {
-            return true;
+            return;
         }
 
         let Some(this_jsvalue) = self.this_value.get().try_get() else {
-            return true;
+            return;
         };
         let Some(callback) = js::data_get_cached(this_jsvalue) else {
-            return true;
+            return;
         };
 
         let global_this = self.global();
         // Use try_reserve so a transient OOM on a large chunk doesn't abort
-        // the process — log and `return true` to keep reading instead.
+        // the process — log and keep reading instead.
         let mut v: Vec<u8> = Vec::new();
         if v.try_reserve_exact(chunk.len()).is_err() {
             bun_output::scoped_log!(
@@ -1732,7 +1508,7 @@ impl Terminal {
                 "onReadChunk: dupe failed (OOM), dropping {} bytes",
                 chunk.len()
             );
-            return true;
+            return;
         }
         v.extend_from_slice(chunk);
         let bytes = v.into_boxed_slice();
@@ -1745,7 +1521,7 @@ impl Terminal {
             Ok(data) => data,
             Err(err) => {
                 crate::dispatch::fold(Err(err));
-                return true;
+                return;
             }
         };
 
@@ -1758,18 +1534,11 @@ impl Terminal {
             this_jsvalue,
             &[this_jsvalue, data],
         );
-
-        true // Continue reading
-    }
-
-    fn loop_(&self) -> LoopRef {
-        self.event_loop_handle.native_loop()
     }
 
     pub(crate) fn finalize(&self) {
         bun_output::scoped_log!(Terminal, "finalize");
         jsc::mark_binding();
-        self.this_value.with_mut(|v| v.finalize());
         self.update_flags(|f| f.insert(Flags::FINALIZED));
         self.close_internal();
     }
@@ -1785,103 +1554,51 @@ impl Drop for Terminal {
     }
 }
 
-// BufferedReader vtable parent: Terminal declares
-// `onReadChunk`/`onReaderDone`/`onReaderError`/`loop`/`eventLoop`.
-bun_io::buffered_reader_parent_link!(Terminal for Terminal);
-impl BufferedReaderParent for Terminal {
-    const KIND: bun_io::BufferedReaderParentLinkKind =
-        bun_io::BufferedReaderParentLinkKind::Terminal;
-    const HAS_ON_READ_CHUNK: bool = true;
+impl WriteHandler for Terminal {
+    fn on_close(&self) {
+        bun_output::scoped_log!(Terminal, "onWriterClose");
+        if let Some(_writer_ref) = self.writer_ref.replace(None) {
+            self.maybe_downgrade_after_eof();
+        }
+    }
 
-    unsafe fn on_read_chunk(
-        this: *mut Self,
-        chunk: bun_io::Chunk<'_>,
-        has_more: ReadState,
-    ) -> bool {
-        bun_removable_features::removable_body!(Terminal, Abort, {
-            Self::from_parent_ptr(this).on_read_chunk(&chunk, has_more)
-        })
+    fn on_error(&self, err: sys::Error) {
+        bun_output::scoped_log!(Terminal, "onWriterError: {:?}", err);
+        // e.g. a broken pipe when the child process exits
+        if !self.flags.get().contains(Flags::CLOSED) {
+            self.close_internal();
+        }
     }
-    unsafe fn on_reader_done(this: *mut Self) {
-        bun_removable_features::removable_body!(Terminal, Abort, {
-            Self::from_parent_ptr(this).on_reader_done();
-        })
-    }
-    unsafe fn on_reader_error(this: *mut Self, err: sys::Error) {
-        bun_removable_features::removable_body!(Terminal, Abort, {
-            Self::from_parent_ptr(this).on_reader_error(&err);
-        })
-    }
-    unsafe fn loop_(this: *mut Self) -> LoopRef {
-        Self::from_parent_ptr(this).loop_()
-    }
-    unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
-        Self::from_parent_ptr(this)
-            .event_loop_handle
-            .as_event_loop_ctx()
-    }
-}
 
-// `bun.io.StreamingWriter(@This(), struct { onClose, onWritable, onError, onWrite })`
-// → trait impl on `Terminal`. All methods take `*mut Self` because the writer
-// is an intrusive *field of* the parent — see PipeWriter.rs PosixStreamingWriterParent.
-#[cfg(unix)]
-impl bun_io::pipe_writer::PosixStreamingWriterParent for Terminal {
-    const POLL_OWNER_TAG: bun_io::PollTag = bun_io::posix_event_loop::poll_tag::TERMINAL_POLL;
-    unsafe fn on_write(this: *mut Self, amount: usize, status: WriteStatus) {
-        Self::from_parent_ptr(this).on_write(amount, status);
+    fn on_write(&self, amount: usize, status: WriteStatus) {
+        bun_output::scoped_log!(Terminal, "onWrite: {} bytes", amount);
+        match status {
+            WriteStatus::Pending => {}
+            // Windows fires `drain` from `on_writable`.
+            WriteStatus::Drained => {
+                let had_buffered = self.writer_has_buffered.replace(false);
+                #[cfg(unix)]
+                if had_buffered {
+                    self.on_writer_ready();
+                }
+                #[cfg(not(unix))]
+                let _ = had_buffered;
+            }
+            // The writer closed its fd, so no drain can follow.
+            WriteStatus::EndOfFile => {
+                self.writer_has_buffered.set(false);
+                self.maybe_downgrade_after_eof();
+            }
+        }
     }
-    unsafe fn on_error(this: *mut Self, err: sys::Error) {
-        Self::from_parent_ptr(this).on_writer_error(&err);
-    }
-    unsafe fn on_close(this: *mut Self) {
-        Self::from_parent_ptr(this).on_writer_close();
-    }
-    unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
-        Self::from_parent_ptr(this)
-            .event_loop_handle
-            .as_event_loop_ctx()
-    }
-    unsafe fn loop_(this: *mut Self) -> LoopRef {
-        Self::from_parent_ptr(this).event_loop_handle.r#loop()
-    }
-}
 
-impl bun_io::pipe_writer::WriterParent for Terminal {
-    unsafe fn ref_(this: *mut Self) {
-        // SAFETY: BACKREF set via writer.parent. Intrusive refcount bump via raw
-        // pointer — do NOT form &Terminal here: this is called from inside writer
-        // methods while a &mut self.writer borrow is live (Stacked-Borrows aliasing).
-        unsafe { bun_ptr::RefCount::<Terminal>::ref_(this) };
+    #[cfg(windows)]
+    fn on_writable(&self) {
+        self.on_writer_ready();
     }
-    unsafe fn deref(this: *mut Self) {
-        // SAFETY: see ref_. Intrusive refcount drop via raw pointer; may free
-        // `this`. See ref_ for aliasing rationale.
-        unsafe { bun_ptr::RefCount::<Terminal>::deref(this) };
-    }
-}
 
-#[cfg(windows)]
-impl bun_io::pipe_writer::WindowsWriterParent for Terminal {
-    unsafe fn loop_(this: *mut Self) -> *mut bun_libuv_sys::Loop {
-        // SAFETY: BACKREF set via writer.parent; shared-only read.
-        unsafe { (*this).event_loop_handle.uv_loop() }
-    }
-}
-
-#[cfg(windows)]
-impl bun_io::pipe_writer::WindowsStreamingWriterParent for Terminal {
-    const HAS_ON_WRITABLE: bool = true;
-    unsafe fn on_write(this: *mut Self, amount: usize, status: WriteStatus) {
-        Self::from_parent_ptr(this).on_write(amount, status);
-    }
-    unsafe fn on_error(this: *mut Self, err: sys::Error) {
-        Self::from_parent_ptr(this).on_writer_error(&err);
-    }
-    unsafe fn on_writable(this: *mut Self) {
-        Self::from_parent_ptr(this).on_writer_ready();
-    }
-    unsafe fn on_close(this: *mut Self) {
-        Self::from_parent_ptr(this).on_writer_close();
+    #[cfg(windows)]
+    fn set_has_inflight_write(&self, value: bool) {
+        self.inflight_write_ref.set(value.then(|| self.ref_guard()));
     }
 }

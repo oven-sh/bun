@@ -19,7 +19,7 @@ extern "C" BunString Bun__JSFunction__sourceFromParameters(JSC::EncodedJSValue e
     if (!source || function->jsExecutable()->isClass())
         return { BunStringTag::Dead };
     *isArrowFunction = JSC::isArrowFunctionParseMode(function->jsExecutable()->parseMode());
-    return Bun::toStringRef(source->view().toString());
+    return Bun::toStringRef(source->view().toString()).leak();
 }
 
 // A function that `bun test --aot` compiled has no executable. Its text is the whole function, as toString() gives it.
@@ -54,7 +54,7 @@ extern "C" BunString Bun__JSFunction__compiledSource(JSC::EncodedJSValue encoded
         (void)scope.tryClearException();
         return { BunStringTag::Dead };
     }
-    return Bun::toStringRef(string);
+    return Bun::toStringRef(string).leak();
 #else
     UNUSED_PARAM(encodedValue);
     UNUSED_PARAM(isTextLeftOut);

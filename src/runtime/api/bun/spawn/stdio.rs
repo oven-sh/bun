@@ -120,7 +120,8 @@ impl Stdio {
             _ => c"spawn_stdio_memory_file",
         };
 
-        let Ok(fd) = spawn_sys::memfd_create(label, spawn_sys::MemfdFlag::CrossProcess) else {
+        let Ok(fd) = spawn_sys::memfd_create(label.into(), spawn_sys::MemfdFlag::CrossProcess)
+        else {
             return false;
         };
         let memfd = sys::File::from_fd(fd);
@@ -436,9 +437,6 @@ impl Stdio {
             *out_stdio = Stdio::Fd(fd);
             return Ok(());
         } else if let Some(blob) = value.as_class_ref::<webcore::Blob>() {
-            // `as_class_ref` is the safe shared-borrow downcast (centralised
-            // deref proof in `JSValue`); the JS wrapper roots the payload while
-            // `value` is on the stack. `dupe()` only bumps the store refcount.
             return out_stdio.extract_blob(cx.global(), webcore::blob::Any::Blob(blob.dupe()), i);
         } else if let Some(req) = value.as_class_ref::<webcore::Request>() {
             return Self::extract_body_value(out_stdio, cx, i, req.get_body_value(), is_sync);

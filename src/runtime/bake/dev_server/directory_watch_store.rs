@@ -1,6 +1,7 @@
 //! `DirectoryWatchStore`: directory watches that retry failed import resolutions.
 
 use super::*;
+use bun_paths::{Path, dirname_or_root};
 
 /// `DevServer.DirectoryWatchStore` — sparse map of directories under watch
 /// for resolution-failure recovery.
@@ -45,12 +46,7 @@ impl DevServer {
 
         bun_core::scoped_log!(DevServer, "DirectoryWatchStore.freeEntry({})", entry_index);
 
-        self.bun_watcher.remove_at_index::<true>(
-            bun_watcher::WatchItemKind::File,
-            entry.watch_index,
-            0,
-            &[],
-        );
+        self.bun_watcher.remove_at_index(entry.watch_index);
 
         // The Box key drops on swap_remove_at.
         let _ = store.watches.swap_remove_at(entry_index);
@@ -68,7 +64,7 @@ impl DevServer {
 pub(crate) struct Entry {
     /// `Dep.Index` — head of the singly-linked dep chain for this dir.
     pub(crate) first_dep: u32,
-    /// To pass to `Watcher.remove`.
+    /// To pass to `Watcher::remove_at_index`.
     pub(crate) watch_index: bun_watcher::WatchItemIndex,
 }
 /// `DirectoryWatchStore.Dep` — one resolution-failure to retry on dir change.
@@ -94,7 +90,7 @@ impl Default for Dep {
 
 impl DevServer {
     /// Registers a directory watch so that a failed import resolution is
-    /// retried when the containing directory changes.
+    /// retried when the containing directory changes. Takes a `bun_resolver::path_of_specifier`.
     pub(crate) fn track_resolution_failure(
         &mut self,
         import_source: &[u8],
@@ -126,18 +122,8 @@ impl DevServer {
             _ => debug_assert!(false),
         }
 
-        let mut buf = bun_paths::path_buffer_pool::get();
-        let Some(joined) =
-            bun_paths::resolve_path::join_abs_string_buf_checked::<bun_paths::platform::Auto>(
-                bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(import_source),
-                &mut buf.0,
-                &[specifier],
-            )
-        else {
-            // There's nothing to watch: the name is too long.
-            return Ok(());
-        };
-        let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(joined);
+        let joined = Path::resolve(&[dirname_or_root(import_source), specifier]);
+        let dir = bun_paths::without_trailing_sep(dirname_or_root(&joined));
 
         // The `import_source` parameter is not a stable string. Since the
         // import source will be added to IncrementalGraph anyways, this is a
@@ -187,9 +173,7 @@ impl DevServer {
 
         // Note: reshaped for borrowck — capture gop scalars before
         // calling methods that need &mut store.
-        let gop = store.watches.get_or_put(
-            bun_paths::string_paths::without_trailing_slash_windows_path(dir_name_to_watch),
-        )?;
+        let gop = store.watches.get_or_put(dir_name_to_watch)?;
         let gop_index = gop.index;
         let found_existing = gop.found_existing;
 
@@ -226,10 +210,9 @@ impl DevServer {
             return Ok(());
         }
 
-        // `dir_name_to_watch` is in a pooled buffer, so the watcher copies it.
         let Ok(watch_index) = self
             .bun_watcher
-            .add_directory::<true>(dir_name_to_watch, Watcher::get_hash(dir_name_to_watch))
+            .add_directory(dir_name_to_watch, Watcher::get_hash(dir_name_to_watch))
         else {
             // TODO: watch the parent of a directory that does not exist yet (BUN-10968).
             let _ = store.watches.swap_remove_at(gop_index);

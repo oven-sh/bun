@@ -20,6 +20,17 @@ const test_skipIf = (/** @type {boolean} */ cond) => (cond ? test.skip : test);
 /** Helper function which just type-casts to any */
 const ANY = (/** @type {any} */ arg) => arg;
 
+/** `"passes"` or `"fails"`. An error that is not the failure of a matcher is thrown on. */
+const outcomeOf = async (/** @type {() => unknown} */ assertion) => {
+  try {
+    await assertion();
+    return "passes";
+  } catch (error) {
+    if (isBun && !stripVTControlCharacters(String(ANY(error)?.message)).startsWith("expect(received).")) throw error;
+    return "fails";
+  }
+};
+
 describe("expect()", () => {
   if (typeof Bun !== "undefined") {
     test("()", () => {
@@ -215,6 +226,85 @@ describe("expect()", () => {
       kept.not.toRecordIsNot();
       kept.not.toRecordIsNot();
       expect(seen).toEqual([true, true]);
+    });
+
+    // Vitest reads .not after the matcher has run.
+    test_skipIf(isVitest)(".not that is read while a matcher runs leaves that matcher alone", async () => {
+      /** @type {any} */
+      let kept;
+      expect.extend({
+        toAnswer(_received, /** @type {boolean} */ pass) {
+          kept.not;
+          return { pass, message: () => "expect(received).toAnswer()" };
+        },
+        async toAnswerLater(_received, /** @type {boolean} */ pass) {
+          kept.not;
+          await null;
+          return { pass, message: () => "expect(received).toAnswerLater()" };
+        },
+      });
+      const answer = (/** @type {boolean} */ pass) => ANY(expect).toAnswer(pass);
+      const text = (/** @type {string} */ value) =>
+        Object.assign(new String(value), { toString: () => (kept.not, value) });
+      const called = jest.fn(() => 1);
+      called(1);
+      const resolved = jest.fn(async () => 1);
+      await resolved();
+
+      /** @type {Record<string, (pass: boolean) => unknown>} Each reads `kept.not`, and should pass if `pass` is true. */
+      const rows = {
+        toEqual: pass => (kept = expect(1)).toEqual(answer(pass)),
+        toHaveBeenCalledWith: pass => (kept = expect(called)).toHaveBeenCalledWith(answer(pass)),
+        toHaveBeenLastCalledWith: pass => (kept = expect(called)).toHaveBeenLastCalledWith(answer(pass)),
+        toHaveBeenNthCalledWith: pass => (kept = expect(called)).toHaveBeenNthCalledWith(1, answer(pass)),
+        toHaveReturnedWith: pass => (kept = expect(called)).toHaveReturnedWith(answer(pass)),
+        toHaveLastReturnedWith: pass => (kept = expect(called)).toHaveLastReturnedWith(answer(pass)),
+        toHaveNthReturnedWith: pass => (kept = expect(called)).toHaveNthReturnedWith(1, answer(pass)),
+        "a then getter": pass =>
+          (kept = expect({
+            get then() {
+              kept.not;
+              return (/** @type {(value: boolean) => void} */ resolve) => resolve(pass);
+            },
+          })).resolves.toBe(true),
+        "a received function": pass => (kept = expect(async () => (kept.not, pass))).resolves.toBe(true),
+        "a received function that is pending": pass =>
+          (kept = expect(async () => (kept.not, await null, pass))).resolves.toBe(true),
+        ...(isBun && {
+          toSatisfy: pass => (kept = expect(1)).toSatisfy(() => (kept.not, pass)),
+          toStartWith: pass => (kept = expect("a")).toStartWith(text(pass ? "a" : "b")),
+          toHaveBeenCalledExactlyOnceWith: pass =>
+            (kept = expect(called)).toHaveBeenCalledExactlyOnceWith(answer(pass)),
+          toHaveResolvedWith: pass => (kept = expect(resolved)).toHaveResolvedWith(answer(pass)),
+          toHaveLastResolvedWith: pass => (kept = expect(resolved)).toHaveLastResolvedWith(answer(pass)),
+          "pass and fail": pass => (kept = expect(1))[pass ? "pass" : "fail"](text("message")),
+          "a matcher that waits": pass => (kept = expect(1)).toEqual(ANY(expect).toAnswerLater(pass)),
+          "a custom matcher that waits": pass => (kept = expect(1)).toAnswerLater(pass),
+        }),
+      };
+
+      for (const [name, run] of Object.entries(rows)) {
+        expect({ name, true: await outcomeOf(() => run(true)), false: await outcomeOf(() => run(false)) }).toEqual({
+          name,
+          true: "passes",
+          false: "fails",
+        });
+      }
+    });
+
+    test_skipIf(!isBun)(".not that is read while a matcher runs negates the next one", async () => {
+      const kept = expect(1);
+      kept.toSatisfy(() => (kept.not, true));
+      kept.toBe(2);
+
+      const resolves = expect(async () => (resolves.not, 1)).resolves;
+      await resolves.toBe(1);
+      await resolves.toBe(2);
+    });
+
+    test_skipIf(!isBun)(".resolves that is read while a matcher runs leaves that matcher alone", () => {
+      const kept = expect("a");
+      kept.toMatchInlineSnapshot(ANY(Object.assign(new String(), { toString: () => (kept.resolves, '"a"') })));
     });
   });
 
@@ -1174,6 +1264,56 @@ describe("expect()", () => {
       expect([array]).toEqual(expect.arrayContaining([[1, expect.stringContaining("x")]]));
     });
 
+    // Vitest counts the own keys first, so the matcher is never asked.
+    test_skipIf(isVitest)("gives a matcher in arrayContaining() the value of an inherited getter", () => {
+      class Named {
+        get name() {
+          return "x";
+        }
+      }
+      const received = (/** @type {object} */ own) => [new Proxy(Object.assign(new Named(), own), {})];
+      const isX = { asymmetricMatch: (/** @type {unknown} */ value) => value === "x" };
+      for (const name of [expect.stringContaining("x"), isX]) {
+        expect(received({})).toEqual(expect.arrayContaining([{ name }]));
+        expect(received({ id: 1 })).toEqual(expect.arrayContaining([{ name, id: 1 }]));
+        expect(received({ id: 1 })).not.toEqual(expect.arrayContaining([{ name }]));
+        expect(received({})).not.toEqual(expect.arrayContaining([{ other: name }]));
+        const hides = Object.defineProperty({}, "name", { value: "x" });
+        for (const object of [hides, new Proxy(hides, {})]) {
+          expect(object).not.toEqual({ name });
+          expect([object]).not.toEqual(expect.arrayContaining([{ name }]));
+        }
+      }
+      for (const name of [expect.stringContaining("y"), { asymmetricMatch: () => false }, "x"]) {
+        expect(received({})).not.toEqual(expect.arrayContaining([{ name }]));
+      }
+      expect([{}]).toEqual(expect.arrayContaining([{ ["__proto__"]: expect.any(Object) }]));
+
+      class HoldsMatcher {
+        get name() {
+          return isX;
+        }
+      }
+      expect([new Proxy(new HoldsMatcher(), {})]).toEqual(expect.arrayContaining([{ name: isX }]));
+
+      class Throws {
+        get name() {
+          throw new RangeError("from the getter");
+        }
+      }
+      expect(() =>
+        expect([new Proxy(new Throws(), {})]).toEqual(expect.arrayContaining([{ name: expect.anything() }])),
+      ).toThrow(new RangeError("from the getter"));
+      const trap = {
+        getOwnPropertyDescriptor() {
+          throw new RangeError("from the trap");
+        },
+      };
+      expect(() =>
+        expect([new Proxy(new Named(), trap)]).toEqual(expect.arrayContaining([{ name: expect.anything() }])),
+      ).toThrow(new RangeError("from the trap"));
+    });
+
     if (isBun) {
       it("does not crash on an element that the other array does not have", async () => {
         const { bunEnv, bunExe } = require("harness");
@@ -1203,6 +1343,22 @@ describe("expect()", () => {
       });
     }
   });
+
+  test.each([[undefined], [0], [400], [NaN], [Infinity], [-Infinity]])(
+    "toBeCloseTo() compares the signs of infinities, precision %p",
+    precision => {
+      for (const infinity of [Infinity, -Infinity]) {
+        expect(infinity).toBeCloseTo(infinity, precision);
+        expect(() => expect(infinity).not.toBeCloseTo(infinity, precision)).toThrow(
+          isBun ? /Received difference: (\x1b\[31m)?0\b/ : undefined,
+        );
+        expect(infinity).not.toBeCloseTo(-infinity, precision);
+        expect(() => expect(infinity).toBeCloseTo(-infinity, precision)).toThrow(
+          isBun ? /Received difference: (\x1b\[31m)?inf\b/ : undefined,
+        );
+      }
+    },
+  );
 
   test("toThrow() leaves a promise that was rejected before the call to whoever handles it", async () => {
     const handledInTheCall = Promise.reject(new Error("handled in the call"));
@@ -1238,6 +1394,25 @@ describe("expect()", () => {
       err.code = "ERR_BAZ";
       throw err;
     }).toThrow(expect.objectContaining({ code: "ERR_BAZ", name: "TypeError" }));
+  });
+
+  test_skipIf(!isBun)("toThrow(expected) and .not.toThrow(expected) can both fail", async () => {
+    const outcomes = async (/** @type {unknown} */ thrown, /** @type {RegExp} */ expected) => {
+      const thrower = () => {
+        throw thrown;
+      };
+      return {
+        toThrow: await outcomeOf(() => expect(thrower).toThrow(expected)),
+        notToThrow: await outcomeOf(() => expect(thrower).not.toThrow(expected)),
+      };
+    };
+    expect({
+      thrownWithoutMessage: await outcomes({ code: 1 }, /undefined/),
+      regExpWithoutTest: await outcomes(new Error("foo"), Object.assign(/foo/, { test: undefined })),
+    }).toEqual({
+      thrownWithoutMessage: { toThrow: "fails", notToThrow: "fails" },
+      regExpWithoutTest: { toThrow: "fails", notToThrow: "fails" },
+    });
   });
 
   test("toThrow", () => {
@@ -3845,6 +4020,39 @@ describe("expect()", () => {
       expect({ a: { v: 1 }, b: { v: 2 } }).not.toMatchObject({ a: shared, b: shared });
       expect({ a: shared, b: shared }).toMatchObject({ a: { v: 1 }, b: { v: 1 } });
       expect({ a: shared, b: [shared, { c: shared }] }).not.toMatchObject({ a: {}, b: [{}, { c: { v: 2 } }] });
+    });
+    test("does not take the prototype for a __proto__ property", () => {
+      const pattern = JSON.parse('{"__proto__":{"x":1}}');
+      expect({ __proto__: { x: 1 } }).not.toMatchObject(pattern);
+      expect({ nested: { __proto__: { x: 1 } } }).not.toMatchObject({ nested: pattern });
+      expect(new Proxy({ __proto__: { x: 1 } }, {})).not.toMatchObject(pattern);
+      expect({ a: 1 }).not.toMatchObject(JSON.parse('{"a":1,"__proto__":{}}'));
+      expect(JSON.parse('{"__proto__":{"x":2}}')).not.toMatchObject(pattern);
+      expect(JSON.parse('{"a":1,"__proto__":{"x":1,"y":2}}')).toMatchObject(pattern);
+      expect({ a: 1 }).toEqual(expect.objectContaining(JSON.parse('{"a":1,"__proto__":{}}')));
+      expect(Object.create(null)).not.toMatchObject(pattern);
+      const invented = { has: () => true, get: () => ({ x: 1 }) };
+      expect(new Proxy(Object.create(null), invented)).not.toMatchObject(pattern);
+      expect(Object.prototype).not.toMatchObject({ ["__proto__"]: null });
+    });
+    test("finds an inherited __proto__ property", () => {
+      const pattern = JSON.parse('{"__proto__":{"x":1}}');
+      const parent = JSON.parse('{"__proto__":{"x":1,"y":2}}');
+      expect(Object.create(parent)).toMatchObject(pattern);
+      expect(Object.create(Object.create(parent))).toMatchObject(pattern);
+      expect(new Proxy(Object.create(parent), {})).toMatchObject(pattern);
+      expect(Object.create(new Proxy(parent, {}))).toMatchObject(pattern);
+      expect(Object.create(JSON.parse('{"__proto__":{"x":2}}'))).not.toMatchObject(pattern);
+      expect({}).toMatchObject(Object.create(JSON.parse('{"__proto__":{}}')));
+
+      const endless = { getPrototypeOf: () => new Proxy({}, endless) };
+      expect(() => expect(new Proxy({}, endless)).toMatchObject(pattern)).toThrow(RangeError);
+      for (const trap of ["getOwnPropertyDescriptor", "getPrototypeOf"]) {
+        const throws = () => {
+          throw new RangeError(trap);
+        };
+        expect(() => expect(new Proxy({}, { [trap]: throws })).toMatchObject(pattern)).toThrow(new RangeError(trap));
+      }
     });
     test("ends on cycles", () => {
       const received = { v: 1, other: { v: 2 } };

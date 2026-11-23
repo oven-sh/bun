@@ -26,6 +26,7 @@ use bun_http_types::FetchRequestMode::FetchRequestMode;
 use bun_http_types::Method::Method;
 use bun_jsc::AbortSignalRef;
 use bun_jsc::EncodedSliceJsc as _;
+use bun_jsc::HasJsRef as _;
 use bun_jsc::StringJsc as _;
 use bun_jsc::bindgen::{JsLocal, JsScope, JsStructure, JsWrapper};
 use bun_ptr::RefPtr;
@@ -33,22 +34,22 @@ use bun_ptr::weak_ptr::WeakPtrData;
 
 // SAFETY: see its `#[ref_count(destroy = …)]`. No field reaches a `WeakRef`.
 unsafe impl bun_ptr::weak_ptr::HasWeakPtrData for Request {
-    unsafe fn weak_ptr_data(this: *mut Self) -> *mut WeakPtrData {
+    unsafe fn weak_ptr_data(this: *mut Self) -> *const WeakPtrData {
         // SAFETY: caller guarantees `this` points to a live (possibly-finalized) allocation.
-        unsafe { core::ptr::addr_of_mut!((*this).weak_ptr_data) }
+        unsafe { core::ptr::addr_of!((*this).weak_ptr_data) }
     }
 }
 pub(crate) type WeakRef = bun_ptr::WeakPtr<Request>;
 
 impl bun_jsc::JsClass for Request {
-    fn from_js(value: JSValue) -> Option<*mut Self> {
-        js::from_js(value).map(|p| p.as_ptr())
+    fn from_js(value: &JSValue) -> Option<bun_jsc::WrapperGuard<'_, Self>> {
+        js::from_js(value)
     }
-    fn from_js_direct(value: JSValue) -> Option<*mut Self> {
-        js::from_js_direct(value).map(|p| p.as_ptr())
+    fn from_js_direct(value: &JSValue) -> Option<bun_jsc::WrapperGuard<'_, Self>> {
+        js::from_js_direct(value)
     }
     fn to_js(self, global: &JSGlobalObject) -> JSValue {
-        Request::to_js(RefPtr::new(self), global)
+        RefPtr::new(self).to_js(global)
     }
 }
 
@@ -56,8 +57,7 @@ impl bun_jsc::JsClass for Request {
 /// `&mut Request`) so re-entrant JS calls cannot stack two `&mut` to the same
 /// instance. Fields the members mutate are wrapped in `Cell` (Copy scalars)
 /// or `JsCell` (Drop types). Both are `#[repr(transparent)]`, so `#[repr(C)]`
-/// field layout is unchanged. `method`/`flags`/`body`/
-/// `weak_ptr_data` are only written during construction or via raw-ptr
+/// field layout is unchanged. `method`/`flags`/`body` are only written during construction or via raw-ptr
 /// `destroy`, so stay plain.
 #[repr(C)]
 #[derive(bun_ptr::CellRefCounted)]
@@ -75,7 +75,7 @@ pub(crate) struct Request {
     /// `Request` and (when served by `Bun.serve`) the `RequestContext` each
     /// hold their own `+1` on the same slot.
     body: BodyHiveHandle,
-    js_ref: JsCell<JsRef>,
+    pub(crate) js_ref: JsCell<JsRef>,
     pub method: Method,
     pub(crate) flags: Flags,
     pub(crate) request_context: Cell<AnyRequestContext>,
@@ -367,16 +367,12 @@ impl Request {
         global_this: &JSGlobalObject,
         this_value: JSValue,
         cloned: &Request,
-        js_wrapper: JSValue,
+        js_wrapper: JsWrapper<'_, Request>,
     ) {
-        // `JSBunRequest::create` bypasses `to_js`, so seed the still-empty
-        // `js_ref` for `check_body_stream_ref`; guarded so a pre-populated
-        // Strong is never downgraded.
-        if cloned.js_ref.get().is_empty() {
-            cloned.js_ref.set(JsRef::init_weak(js_wrapper));
-        }
+        // `JSBunRequest::create` bypasses `to_js`.
+        js_wrapper.set_js_ref_weak();
         cloned.check_body_stream_ref(global_this);
-        self.sync_cloned_body_stream_caches(this_value, js_wrapper, global_this);
+        self.sync_cloned_body_stream_caches(this_value, js_wrapper.to_js(), global_this);
     }
 }
 
@@ -435,15 +431,22 @@ impl Request {
         <Self as BodyMixin>::get_body_readable_stream(self)
     }
 
-    /// The wrapper takes over `this`.
-    pub(crate) fn to_js(this: RefPtr<Self>, global_object: &JSGlobalObject) -> JSValue {
-        let request = this.this_ptr();
-        request.calculate_estimated_byte_size();
-        let js_value = js::to_js(this.into_raw(), global_object);
-        request.js_ref.set(JsRef::init_weak(js_value));
+    /// The wrapper takes over `self`.
+    pub(crate) fn to_js(self: RefPtr<Self>, global_object: &JSGlobalObject) -> JSValue {
+        self.wrap(global_object).to_js()
+    }
 
-        request.check_body_stream_ref(global_object);
-        js_value
+    /// As `to_js`, for code that goes on to use the struct.
+    pub(crate) fn wrap(
+        self: RefPtr<Self>,
+        global_object: &JSGlobalObject,
+    ) -> bun_jsc::WrapperGuard<'_, Self> {
+        self.calculate_estimated_byte_size();
+        let this = js::wrap(self, global_object);
+        this.set_js_ref_weak();
+
+        this.check_body_stream_ref(global_object);
+        this
     }
 }
 
@@ -451,23 +454,22 @@ impl Request {
 bun_jsc::jsc_abi_extern! {
     #[allow(improper_ctypes)]
     #[link_name = "Bun__JSRequest__createForBake"]
-    // `&JSGlobalObject` discharges the only deref'd-param precondition;
-    // `request_ptr` is stored opaquely as `void*`.
     safe fn Bun__JSRequest__createForBake(
         global_object: &JSGlobalObject,
-        request_ptr: *mut Request,
+        request: RefPtr<Request>,
     ) -> JSValue;
 }
 
 impl Request {
-    /// The wrapper takes over `this`.
-    pub(crate) fn to_js_for_bake(
-        this: RefPtr<Self>,
+    /// The wrapper takes over `self`.
+    pub(crate) fn wrap_for_bake(
+        self: RefPtr<Self>,
         global_object: &JSGlobalObject,
-    ) -> JsResult<JSValue> {
-        bun_jsc::from_js_host_call(global_object, || {
-            Bun__JSRequest__createForBake(global_object, this.into_raw())
-        })
+    ) -> bun_jsc::WrapperGuard<'_, Self> {
+        let native = self.as_non_null();
+        let wrapper = Bun__JSRequest__createForBake(global_object, self);
+        // SAFETY: `wrapper` holds the ref.
+        unsafe { bun_jsc::WrapperGuard::from_parts(wrapper, native) }
     }
 }
 
@@ -936,7 +938,7 @@ impl Request {
             // fastest path:
             url_or_object_type.is_string_like() ||
             // slower path:
-            bun_jsc::DOMURL::cast_(url_or_object, cx.global().vm()).is_some();
+            bun_jsc::DOMURL::cast_(&url_or_object, cx.global().vm()).is_some();
 
         if is_first_argument_a_url {
             let str = BunString::from_js(url_or_object, cx.global())?;
@@ -978,8 +980,6 @@ impl Request {
                 && values_to_try[1].js_type() == bun_jsc::JSType::DOMWrapper;
             if value_type == bun_jsc::JSType::DOMWrapper {
                 if let Some(request) = value.as_direct::<Request>() {
-                    // SAFETY: as_direct returns the wrapper's live *mut Request
-                    let request = unsafe { &*request };
                     if values_to_try.len() == 1 {
                         let url = fields.contains(Fields::Url).then(|| req.url.take());
                         return request.clone_with_url(cx, url);
@@ -1025,8 +1025,6 @@ impl Request {
                 }
 
                 if let Some(response) = value.as_direct::<Response>() {
-                    // SAFETY: `as_direct` returned a live `*mut Response` owned by the JS wrapper.
-                    let response = unsafe { &*response };
                     if !fields.contains(Fields::Method) {
                         req.method = response.get_method();
                         fields.insert(Fields::Method);
@@ -1257,10 +1255,9 @@ impl Request {
     ) -> JsResult<JsWrapper<'a, Self>> {
         let request = Self::construct_into(&cx.js_thread(), input.to_js(), init.to_js())?;
         let request = RefPtr::new(request);
-        let this = request.this_ptr();
         let this_value = structure.create(&cx.heap, request);
-        this.js_ref.set(JsRef::init_weak(this_value.to_js()));
-        this.check_body_stream_ref(cx.global());
+        this_value.set_js_ref_weak();
+        Self::wrapped_by(this_value).check_body_stream_ref(cx.global());
         Ok(this_value)
     }
 
@@ -1272,7 +1269,7 @@ impl Request {
         let cx = cx.js_thread();
         let global_this = cx.global();
         self.throw_if_body_unusable(global_this)?;
-        let js_wrapper = Request::to_js(RefPtr::new(self.clone(&cx)?), global_this);
+        let js_wrapper = RefPtr::new(self.clone(&cx)?).to_js(global_this);
         self.sync_cloned_body_stream_caches(this_value.to_js(), js_wrapper, global_this);
         Ok(js_wrapper)
     }

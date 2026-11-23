@@ -90,7 +90,7 @@ public:
         {
         }
 
-        VirtualModuleMap* _Nullable virtualModules = nullptr;
+        std::unique_ptr<VirtualModuleMap> virtualModules;
         bool mustDoExpensiveRelativeLookup = false;
         // Set right before requestImportModule(), to tell moduleLoaderResolve() it's a script's import(), which can't use NUL-prefixed keys.
         bool isResolvingImportCall = false;
@@ -190,7 +190,6 @@ public:
         void clear()
         {
             Base::clear();
-            delete virtualModules;
             virtualModules = nullptr;
             mustDoExpensiveRelativeLookup = false;
             displacedPreloadModuleMocks.clear();
@@ -208,6 +207,7 @@ public:
 #if ENABLE(AOT)
             pendingCompiledMocks.clear();
             compiledMockFactories.clear();
+            patchesOfRequiredMocks.clear();
             latestCompiledFactoryCalls.clear();
             stashedFactoryCount = 0;
             waitingMockFetches.clear();
@@ -248,6 +248,12 @@ public:
             WTF::Vector<JSC::Strong<JSC::JSObject>, 1> waitingFactories;
         };
         WTF::Vector<CompiledMockFactory> compiledMockFactories;
+        struct PatchOfRequiredMock {
+            uint32_t module;
+            JSC::Strong<JSC::JSObject> mock;
+            JSC::Strong<JSC::JSPromise> patched;
+        };
+        WTF::Vector<PatchOfRequiredMock> patchesOfRequiredMocks;
         size_t stashedFactoryCount { 0 };
         // The fetches of compiled files (by key) that wait for the turn of a mock below them. rankWaitingModuleMocks() treats their loader entries as the mock.
         WTF::Vector<std::pair<String, JSC::Strong<JSC::JSObject>>> waitingMockFetches;
@@ -299,13 +305,6 @@ public:
             return replayFrame == frame ? replayingFile : WTF::nullString();
         }
 #endif
-
-        ~OnLoad()
-        {
-            if (virtualModules) {
-                delete virtualModules;
-            }
-        }
     };
 
     class OnResolve final : public Base {
@@ -355,8 +354,10 @@ bool hasModuleMockUnsettledAsyncFactory(JSC::JSObject* moduleMock);
 bool canRequireOriginalOfModuleMock(Zig::GlobalObject*, JSC::JSObject* moduleMock);
 bool hasSynchronousMockFactory(Zig::GlobalObject*, const String& path, bool isOriginalSynchronous);
 bool isSpyMock(Zig::GlobalObject*, const String& path);
+bool isRequiringModuleMock(Zig::GlobalObject*, const String& path);
 #if ENABLE(AOT)
 bool hasRegisteredModuleMock(Zig::GlobalObject*, const String& path);
+bool hasMockOverFileOfPreload(Zig::GlobalObject*, const String& path);
 bool canRequireMockOriginalAt(Zig::GlobalObject*, const String& path);
 // In `bun test` the require map holds a restored preload mock, which is dropped with the key.
 void didDeleteModuleMockKey(Zig::GlobalObject*, const String& key);

@@ -129,13 +129,7 @@ export class HMRModule {
   constructor(id: Id, isCommonJS: boolean) {
     this.id = id;
     this.esm = !isCommonJS;
-    this.cjs = isCommonJS
-      ? {
-          id,
-          exports: {},
-          require: this.require.bind(this),
-        }
-      : null;
+    this.cjs = isCommonJS ? createCJSModule(this) : null;
   }
 
   // Module Ids are pre-resolved by the bundler
@@ -295,6 +289,43 @@ HMRModule.prototype.indirectHot = new Proxy({}, {
   },
 });
 
+function createCJSModule(mod: HMRModule): CJSModule {
+  return {
+    id: mod.id,
+    exports: {},
+    require: mod.require.bind(mod),
+  };
+}
+
+/** Makes the record of a module that is about to load, or gives the one it has the new format, and adds the importer. */
+function prepareModule(mod: HMRModule | undefined, id: Id, isCommonJS: boolean, importer: HMRModule | null): HMRModule {
+  if (!mod) {
+    mod = new HMRModule(id, isCommonJS);
+    registry.set(id, mod);
+  } else if (mod.esm === isCommonJS) {
+    mod.esm = !isCommonJS;
+    mod.cjs = isCommonJS ? createCJSModule(mod) : null;
+    mod.exports = null;
+  }
+  if (importer) {
+    mod.importers.add(importer);
+  }
+  return mod;
+}
+
+function assertUnloadedESM(unloaded: UnloadedESM) {
+  DEBUG.ASSERT(Array.isArray(unloaded[ESMProps.imports]));
+  DEBUG.ASSERT(Array.isArray(unloaded[ESMProps.exports]));
+  DEBUG.ASSERT(Array.isArray(unloaded[ESMProps.stars]));
+  DEBUG.ASSERT(typeof unloaded[ESMProps.load] === "function");
+  DEBUG.ASSERT(typeof unloaded[ESMProps.isAsync] === "boolean");
+}
+
+function finishESMExports(mod: HMRModule, exportsBefore: any) {
+  if (mod.exports === exportsBefore) mod.exports = {};
+  mod.cjs = null;
+}
+
 // TODO: This function is currently recursive.
 export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModule | null): HMRModule {
   // First, try and re-use an existing module.
@@ -316,21 +347,7 @@ export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModu
 
   if (typeof loadOrEsmModule === "function") {
     // CommonJS
-    if (!mod) {
-      mod = new HMRModule(id, true);
-      registry.set(id, mod);
-    } else if (mod.esm) {
-      mod.esm = false;
-      mod.cjs = {
-        id,
-        exports: {},
-        require: mod.require.bind(mod),
-      };
-      mod.exports = null;
-    }
-    if (importer) {
-      mod.importers.add(importer);
-    }
+    mod = prepareModule(mod, id, true, importer);
     try {
       const cjs = mod.cjs;
       loadOrEsmModule(mod, cjs, cjs.exports);
@@ -339,36 +356,16 @@ export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModu
       mod.cjs.exports = {};
       throw e;
     }
+    mod.exports = null; // the ES view of the `module.exports` of an earlier run
     mod.state = State.Loaded;
   } else {
     // ESM
-    if (IS_BUN_DEVELOPMENT) {
-      try {
-        DEBUG.ASSERT(Array.isArray(loadOrEsmModule[ESMProps.imports]));
-        DEBUG.ASSERT(Array.isArray(loadOrEsmModule[ESMProps.exports]));
-        DEBUG.ASSERT(Array.isArray(loadOrEsmModule[ESMProps.stars]));
-        DEBUG.ASSERT(typeof loadOrEsmModule[ESMProps.load] === "function");
-        DEBUG.ASSERT(typeof loadOrEsmModule[ESMProps.isAsync] === "boolean");
-      } catch (e) {
-        console.warn(id, loadOrEsmModule);
-        throw e;
-      }
-    }
+    if (IS_BUN_DEVELOPMENT) assertUnloadedESM(loadOrEsmModule);
     const { [ESMProps.imports]: deps, [ESMProps.load]: load, [ESMProps.isAsync]: isAsync } = loadOrEsmModule;
     if (isAsync) {
       throw new AsyncImportError(id);
     }
-    if (!mod) {
-      mod = new HMRModule(id, false);
-      registry.set(id, mod);
-    } else if (!mod.esm) {
-      mod.esm = true;
-      mod.cjs = null;
-      mod.exports = null;
-    }
-    if (importer) {
-      mod.importers.add(importer);
-    }
+    mod = prepareModule(mod, id, false, importer);
 
     let depsList: HMRModule[];
     try {
@@ -388,8 +385,7 @@ export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModu
       throw e;
     }
     mod.imports = depsList;
-    if (mod.exports === exportsBefore) mod.exports = {};
-    mod.cjs = null;
+    finishESMExports(mod, exportsBefore);
     mod.state = State.Loaded;
   }
 
@@ -429,21 +425,7 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
 
   if (typeof loadOrEsmModule === "function") {
     // CommonJS
-    if (!mod) {
-      mod = new HMRModule(id, true);
-      registry.set(id, mod);
-    } else if (mod.esm) {
-      mod.esm = false;
-      mod.cjs = {
-        id,
-        exports: {},
-        require: mod.require.bind(mod),
-      };
-      mod.exports = null;
-    }
-    if (importer) {
-      mod.importers.add(importer);
-    }
+    mod = prepareModule(mod, id, true, importer);
     try {
       const cjs = mod.cjs;
       loadOrEsmModule(mod, cjs, cjs.exports);
@@ -452,35 +434,15 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
       mod.cjs.exports = {};
       throw e;
     }
+    mod.exports = null; // the ES view of the `module.exports` of an earlier run
     mod.state = State.Loaded;
     return mod;
   } else {
     // ESM
-    if (IS_BUN_DEVELOPMENT) {
-      try {
-        DEBUG.ASSERT(Array.isArray(loadOrEsmModule[0]));
-        DEBUG.ASSERT(Array.isArray(loadOrEsmModule[1]));
-        DEBUG.ASSERT(Array.isArray(loadOrEsmModule[2]));
-        DEBUG.ASSERT(typeof loadOrEsmModule[3] === "function");
-        DEBUG.ASSERT(typeof loadOrEsmModule[4] === "boolean");
-      } catch (e) {
-        console.warn(id, loadOrEsmModule);
-        throw e;
-      }
-    }
-    const [deps /* exports */ /* stars */, , , load /* isAsync */] = loadOrEsmModule;
+    if (IS_BUN_DEVELOPMENT) assertUnloadedESM(loadOrEsmModule);
+    const { [ESMProps.imports]: deps, [ESMProps.load]: load } = loadOrEsmModule;
 
-    if (!mod) {
-      mod = new HMRModule(id, false);
-      registry.set(id, mod);
-    } else if (!mod.esm) {
-      mod.esm = true;
-      mod.exports = null;
-      mod.cjs = null;
-    }
-    if (importer) {
-      mod.importers.add(importer);
-    }
+    mod = prepareModule(mod, id, false, importer);
 
     let list: (HMRModule | Promise<HMRModule>)[], isAsync: boolean;
     try {
@@ -525,8 +487,7 @@ function finishLoadModuleAsync(mod: HMRModule, load: UnloadedESM[3], modules: HM
       return p.then(
         () => {
           mod.state = State.Loaded;
-          if (mod.exports === exportsBefore) mod.exports = {};
-          mod.cjs = null;
+          finishESMExports(mod, exportsBefore);
           if (shouldPatchImporters) patchImporters(mod);
           return mod;
         },
@@ -537,8 +498,7 @@ function finishLoadModuleAsync(mod: HMRModule, load: UnloadedESM[3], modules: HM
         },
       );
     }
-    if (mod.exports === exportsBefore) mod.exports = {};
-    mod.cjs = null;
+    finishESMExports(mod, exportsBefore);
     if (shouldPatchImporters) patchImporters(mod);
     mod.state = State.Loaded;
     return mod;
@@ -614,20 +574,20 @@ type HMREvent =
   | "bun:ws:disconnect"
   | "bun:ws:connect";
 
-/** Called when modules are replaced. */
-export async function replaceModules(modules: Record<Id, UnloadedModule>, sourceMapId?: SourceMapURL) {
-  Object.assign(unloadedModuleRegistry, modules);
+interface HotUpdate {
+  toReload: Set<HMRModule>;
+  toAccept: { cb: HotAccept; key: Id }[];
+  toDispose: Set<HMRModule>;
+  /** Updated modules with a path to a root that nothing on it accepts. */
+  failures: Set<Id> | null;
+}
 
-  emitEvent("bun:beforeUpdate", null);
-
-  type ToAccept = {
-    cb: HotAccept;
-    key: Id;
-  };
+/** Also moves the source map of each updated module to `sourceMapId`, and lets modules that have `data` accept. */
+function findBoundaries(modules: Record<Id, UnloadedModule>, sourceMapId: SourceMapURL | undefined): HotUpdate {
   const toReload = new Set<HMRModule>();
-  const toAccept: ToAccept[] = [];
+  const toAccept: HotUpdate["toAccept"] = [];
   let failures: Set<Id> | null = null;
-  const toDispose: HMRModule[] = [];
+  const toDispose = new Set<HMRModule>();
 
   // Discover all HMR boundaries
   outer: for (const key of Object.keys(modules)) {
@@ -659,7 +619,7 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
         visited.add(mod);
         hadSelfAccept = false;
         if (mod.onDispose) {
-          toDispose.push(mod);
+          toDispose.add(mod);
         }
       }
       // Modules that mutate data are implied to handle updates via reusing their `data` property
@@ -669,7 +629,7 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
         visited.add(mod);
         hadSelfAccept = false;
         if (mod.onDispose) {
-          toDispose.push(mod);
+          toDispose.add(mod);
         }
       }
 
@@ -693,75 +653,89 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
     }
   }
 
-  // If roots were hit, print a nice message before reloading.
-  if (failures) {
-    let message =
-      "[Bun] Hot update was not accepted because it or its importers do not call `import.meta.hot.accept`. To prevent full page reloads, call `import.meta.hot.accept` in one of the following files to handle the update:\n\n";
+  return { toReload, toAccept, toDispose, failures };
+}
 
-    // For each failed boundary, re-compute the path to the root.
-    for (const boundary of failures) {
-      const path: Id[] = [];
-      let current = registry.get(boundary)!;
-      DEBUG.ASSERT(!boundary.endsWith(".html")); // caller should have already reloaded
-      DEBUG.ASSERT(current);
-      DEBUG.ASSERT(current.selfAccept === null);
-      if (current.importers.size === 0) {
-        message += `Module "${boundary}" is a root module that does not self-accept.\n`;
-        continue;
-      }
-      outer: while (current.importers.size > 0) {
-        path.push(current.id);
-        inner: for (const importer of current.importers) {
-          if (importer.selfAccept) continue inner;
-          if (importer.depAccepts?.[boundary]) continue inner;
-          current = importer;
-          continue outer;
-        }
-        DEBUG.ASSERT(false);
-        break;
-      }
-      path.push(current.id);
-      DEBUG.ASSERT(path.length > 0);
-      message += `Module "${boundary}" is not accepted by ${path[1]}${path.length > 1 ? "," : "."}\n`;
-      for (let i = 2, len = path.length; i < len; i++) {
-        const isLast = i === len - 1;
-        message += `${isLast ? "└" : "├"} imported by "${path[i]}"${isLast ? "." : ","}\n`;
-      }
-    }
-    message = message.trim();
-    if (side === "client") {
-      sessionStorage?.setItem?.(
-        "bun:hmr:message",
-        JSON.stringify?.({
-          message,
-          kind: "warn",
-        }),
-      );
-      fullReload();
-    } else {
-      console.warn(message);
+/** `module` and the importers above it, up to one that nothing imports. Importers can form a circle. */
+function pathToRoot(module: HMRModule): Id[] {
+  const visited = new Set([module]);
+  const path = [module];
+  const toVisit = [module.importers.values()];
+  while (path.length > 0) {
+    if (path[path.length - 1].importers.size === 0) return path.map(mod => mod.id);
+    const { done, value: importer } = toVisit[toVisit.length - 1].next();
+    if (done) {
+      path.pop();
+      toVisit.pop();
+    } else if (!visited.has(importer) && !importer.selfAccept && !importer.depAccepts?.[module.id]) {
+      visited.add(importer);
+      path.push(importer);
+      toVisit.push(importer.importers.values());
     }
   }
+  return [module.id];
+}
 
-  // Dispose all modules
-  if (toDispose.length > 0) {
-    const disposePromises: Promise<void>[] = [];
-    for (const mod of toDispose) {
-      mod.state = State.Stale;
-      for (const fn of mod.onDispose!) {
+/** Says why an update was not accepted. In the browser it reloads the page, which then prints the message. */
+function reportFailures(failures: Set<Id>) {
+  let message =
+    "[Bun] Hot update was not accepted because it or its importers do not call `import.meta.hot.accept`. To prevent full page reloads, call `import.meta.hot.accept` in one of the following files to handle the update:\n\n";
+
+  // For each failed boundary, re-compute the path to the root.
+  for (const boundary of failures) {
+    DEBUG.ASSERT(!boundary.endsWith(".html")); // caller should have already reloaded
+    const module = registry.get(boundary)!;
+    DEBUG.ASSERT(module);
+    DEBUG.ASSERT(module.selfAccept === null);
+    if (module.importers.size === 0) {
+      message += `Module "${boundary}" is a root module that does not self-accept.\n`;
+      continue;
+    }
+    const path = pathToRoot(module);
+    message += `Module "${boundary}" is not accepted by ${path[1]}${path.length > 1 ? "," : "."}\n`;
+    for (let i = 2, len = path.length; i < len; i++) {
+      const isLast = i === len - 1;
+      message += `${isLast ? "└" : "├"} imported by "${path[i]}"${isLast ? "." : ","}\n`;
+    }
+  }
+  message = message.trim();
+  if (side === "client") {
+    sessionStorage?.setItem?.(
+      "bun:hmr:message",
+      JSON.stringify?.({
+        message,
+        kind: "warn",
+      }),
+    );
+    fullReload();
+  } else {
+    console.warn(message);
+  }
+}
+
+/** Returns the promises that the dispose callbacks returned. */
+function disposeModules(toDispose: Set<HMRModule>): Promise<void>[] {
+  const disposePromises: Promise<void>[] = [];
+  for (const mod of toDispose) {
+    mod.state = State.Stale;
+    for (const fn of mod.onDispose!) {
+      try {
         const p = fn(mod.data);
         if (p && p instanceof Promise) {
           disposePromises.push(p);
         }
+      } catch (e) {
+        if (side === "client") throw e;
+        disposePromises.push(Promise.reject(e));
       }
-      mod.onDispose = null;
     }
-    if (disposePromises.length > 0) {
-      await Promise.all(disposePromises);
-    }
+    mod.onDispose = null;
   }
+  return disposePromises;
+}
 
-  // Reload all modules
+/** Returns a promise for each module that still loads, or that threw. */
+function reloadModules(toReload: Set<HMRModule>): Promise<HMRModule>[] {
   const promises: Promise<HMRModule>[] = [];
   for (const mod of toReload) {
     mod.state = State.Stale;
@@ -793,6 +767,32 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
       );
     }
   }
+  return promises;
+}
+
+/** Called when modules are replaced. */
+export async function replaceModules(modules: Record<Id, UnloadedModule>, sourceMapId?: SourceMapURL) {
+  Object.assign(unloadedModuleRegistry, modules);
+
+  emitEvent("bun:beforeUpdate", null);
+
+  const { toReload, toAccept, toDispose, failures } = findBoundaries(modules, sourceMapId);
+
+  // If roots were hit, print a nice message before reloading.
+  if (failures) reportFailures(failures);
+
+  const disposePromises = disposeModules(toDispose);
+  if (disposePromises.length > 0) {
+    if (side === "client") {
+      await Promise.all(disposePromises); // the page reloads if one rejects
+    } else {
+      for (const result of await Promise.allSettled(disposePromises)) {
+        if (result.status === "rejected") console.error(result.reason);
+      }
+    }
+  }
+
+  const promises = reloadModules(toReload);
   if (promises.length > 0) {
     await Promise.all(promises);
   }

@@ -32,9 +32,9 @@ const refused = new Set([
   "37049-an-exported-constant--another-file-imports-it-at-run-time--plus-true--an-arrow--at.ts",
 ]);
 
-// One for each set of flags, and every program of a short sweep. The stride has no factor in common with 75 or 158.
+// One for each set of flags, and every program of a short sweep. The stride has no factor in common with 73 or 158.
 const more = new Map([
-  ["write-build-flag-sweep.ts", 75],
+  ["write-build-flag-sweep.ts", 73],
   ["write-package-namespace-sweep.ts", 158],
 ]);
 

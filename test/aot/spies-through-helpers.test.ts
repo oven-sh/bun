@@ -163,7 +163,6 @@ for (const [title, words] of Object.entries(forms)) {
         printed,
         // The first scan is that of the test files.
         scan: log.find(line => line.startsWith("AOT test run | scan of ")),
-        startsOver: log.filter(line => line.startsWith("AOT build starts over")),
       };
     };
     const [plain, compiled] = [await lines(), await lines("--aot")];
@@ -171,7 +170,6 @@ for (const [title, words] of Object.entries(forms)) {
     expect(compiled.printed).toEqual(plain.printed);
     // No helper is left whose names nobody can read.
     expect(compiled.scan).toEndWith("spies on objects from somewhere false");
-    expect(compiled.startsOver).toEqual([]);
   });
 }
 

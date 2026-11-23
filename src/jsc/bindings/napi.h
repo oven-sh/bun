@@ -22,6 +22,7 @@
 #include <wtf/HashSet.h>
 #include <wtf/ListHashSet.h>
 #include <wtf/Lock.h>
+#include <wtf/SetForScope.h>
 
 #include <optional>
 #include <unordered_set>
@@ -179,7 +180,7 @@ public:
         : m_globalObject(globalObject)
         , m_napiModule(napiModule)
         , m_vm(JSC::getVM(globalObject))
-        , m_vmHandle(Bun__VmHandle__retainRef(WebCore::clientData(JSC::getVM(globalObject))->vmHandle))
+        , m_vmHandle(*WebCore::clientData(JSC::getVM(globalObject))->vmHandle)
     {
         Bun__napi_register_cleanup_zig(this);
     }
@@ -189,16 +190,10 @@ public:
         return adoptRef(*new NapiEnv(globalObject, napiModule));
     }
 
-    ~NapiEnv()
-    {
-        delete[] filename;
-        Bun__VmHandle__release(m_vmHandle);
-    }
-
     // This env's own clone of its VM's handle: how a thread holding an env ref
     // (a finalizer fired off the JS thread) posts work to the VM. Lives as long
     // as the env, which can outlive the JSC VM's client data.
-    const ::BunVmHandleRef* vmHandle() const { return m_vmHandle; }
+    const ::BunVmHandleRef* vmHandle() const { return m_vmHandle.ptr(); }
 
     void cleanup()
     {
@@ -246,9 +241,9 @@ public:
         runFinalizers();
     }
 
-    void runFinalizers()
+    void runBoundFinalizers()
     {
-        m_isFinishingFinalizers = true;
+        SetForScope finishing(m_isFinishingFinalizers, true);
         // A cleanup hook may itself have leaked an exception; the first
         // finalizer starts clean too.
         clearExceptionsBetweenFinalizers();
@@ -261,12 +256,11 @@ public:
         // iterator is held across a call, so inserts and removals during one are plain.
         while (!m_finalizers.isEmpty()) {
             const BoundFinalizer* current = &m_finalizers.last();
-            m_currentFinalizer = current;
             {
+                SetForScope running(m_currentFinalizer, current);
                 Bun::NapiHandleScope handle_scope(m_globalObject);
                 current->call(this);
             }
-            m_currentFinalizer = nullptr;
             // Whatever the call appended sits after `current`; remove `current` itself by value
             // (still a live node: deactivate() only marks the running entry).
             m_finalizers.remove(*current);
@@ -279,8 +273,11 @@ public:
             // the next napi call with a throw scope sees it. See #30286.
             clearExceptionsBetweenFinalizers();
         }
-        m_isFinishingFinalizers = false;
+    }
 
+    void runFinalizers()
+    {
+        runBoundFinalizers();
         instanceDataFinalizer.call(this, instanceData, true);
         instanceDataFinalizer.clear();
         // napi_get_instance_data is ungated: never hand out the finalized pointer.
@@ -581,7 +578,7 @@ public:
 
     void* instanceData = nullptr;
     Bun::NapiFinalizer instanceDataFinalizer;
-    char* filename = nullptr;
+    std::unique_ptr<char[]> filename;
     // Running total reported via napi_adjust_external_memory. JSC's
     // deprecatedReportExtraMemory has no decrement path, so we keep a signed
     // accumulator and only forward positive growth to the JSC heap. Tracked
@@ -665,7 +662,7 @@ public:
 
 private:
     JSC::VM& m_vm;
-    const ::BunVmHandleRef* m_vmHandle;
+    const Ref<const ::BunVmHandleRef> m_vmHandle;
     Napi::HookSet m_cleanupHooks;
     JSC::Strong<JSC::Unknown> m_pendingException;
     size_t m_cleanupHookCounter = 0;
@@ -779,70 +776,12 @@ static inline napi_value toNapi(JSC::JSValue val, Zig::GlobalObject* globalObjec
     return reinterpret_cast<napi_value>(JSC::JSValue::encode(val));
 }
 
-// This is essentially JSC::JSWeakValue, except with a JSCell* instead of a
-// JSObject*. Sometimes, a napi embedder might want to store a JSC::Exception, a
-// JSC::HeapBigInt, JSC::Symbol, etc inside of a NapiRef. So we can't limit it
-// to just JSObject*. It has to be JSCell*. It's not clear that we benefit from
-// not simply making this JSC::Unknown.
-class NapiWeakValue {
-public:
-    NapiWeakValue() = default;
-    ~NapiWeakValue();
-
-    void clear();
-    bool isClear() const;
-
-    void setPrimitive(JSValue);
-    void setCell(JSCell*, WeakHandleOwner&, void* context);
-    void setString(JSString*, WeakHandleOwner&, void* context);
-    void set(JSValue, WeakHandleOwner&, void* context);
-
-    JSValue get() const
-    {
-        switch (m_tag) {
-        case WeakTypeTag::Primitive:
-            return m_value.primitive;
-        case WeakTypeTag::Cell:
-            return m_value.cell.get();
-        case WeakTypeTag::String:
-            return m_value.string.get();
-        default:
-            return {};
-        }
-    }
-
-private:
-    enum class WeakTypeTag { NotSet,
-        Primitive,
-        Cell,
-        String };
-
-    WeakTypeTag m_tag { WeakTypeTag::NotSet };
-
-    union WeakValueUnion {
-        WeakValueUnion()
-            : primitive(JSValue())
-        {
-        }
-
-        ~WeakValueUnion()
-        {
-            ASSERT(!primitive);
-        }
-
-        JSValue primitive;
-        JSC::Weak<JSCell> cell;
-        JSC::Weak<JSString> string;
-    } m_value;
-};
-
 class NapiRef {
     WTF_MAKE_TZONE_ALLOCATED(NapiRef);
 
 public:
     void ref();
     void unref();
-    void clear();
 
     NapiRef(Ref<NapiEnv>&& env, uint32_t count, Bun::NapiFinalizer finalizer)
         : env(env)
@@ -869,7 +808,7 @@ public:
 
         // Like Node's Reference::SetWeak(), a value that cannot be held weakly is released once the count reaches zero.
         if (can_be_weak) {
-            weakValueRef.set(value, Napi::NapiRefWeakHandleOwner::weakValueHandleOwner(), this);
+            weakValueRef = JSC::Weak<JSCell>(value.asCell(), &Napi::NapiRefWeakHandleOwner::weakValueHandleOwner(), this);
         }
 
         if (value.isSymbol()) {
@@ -905,21 +844,12 @@ public:
         env->dequeueRefFinalizer(this);
         if (boundCleanup) {
             boundCleanup->deactivate(env);
-            boundCleanup = nullptr;
         }
-
-        if (!m_isEternal) {
-            strongRef.clear();
-        }
-
-        // The weak ref can lead to calling the destructor
-        // so we must first clear the weak ref before we call the finalizer
-        weakValueRef.clear();
     }
 
     WTF::Ref<NapiEnv> env;
     JSC::Weak<JSC::JSGlobalObject> globalObject;
-    NapiWeakValue weakValueRef;
+    JSC::Weak<JSCell> weakValueRef;
     JSC::Strong<JSC::Unknown> strongRef;
     Bun::NapiFinalizer finalizer;
     const NapiEnv::BoundFinalizer* boundCleanup = nullptr;

@@ -2,7 +2,7 @@
 //!
 //! `tick`/`enter`/`exit`/`drain_microtasks`/`run_callback`/concurrent-queue
 //! plumbing are real. The two hot dispatch loops (`tickQueueWithCount`'s
-//! per-`Task` switch and `ImmediateObject::runImmediateTask`) name
+//! per-`Task` switch and `ImmediateObject::run`) name
 //! `bun_runtime` types and are hoisted to that tier via link-time
 //! `extern "Rust"` (`__bun_tick_queue_with_count` / `__bun_run_immediate_task`);
 //! `auto_tick`/`auto_tick_active` likewise
@@ -13,6 +13,7 @@ use core::cell::{Cell, OnceCell, UnsafeCell};
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicI32, AtomicPtr, AtomicU64, Ordering};
 
+use bun_core::scoped::{ScopedCell as _, ScopedFlag as _};
 use bun_io as Async;
 use bun_uws as uws;
 
@@ -32,7 +33,7 @@ pub use bun_event_loop::ConcurrentTask::{
 pub use bun_event_loop::DeferredTaskQueue::{self, DeferredRepeatingTask};
 pub use bun_event_loop::MiniEventLoop;
 pub use bun_event_loop::Task;
-pub use bun_event_loop::any_event_loop::{AnyEventLoop, EventLoopHandle, EventLoopTask};
+pub use bun_event_loop::any_event_loop::{EventLoopHandle, EventLoopTask};
 pub use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
 
 pub use crate::cpp_task::{ConcurrentCppTask, CppTask};
@@ -258,13 +259,13 @@ unsafe extern "Rust" {
         vm: &VirtualMachine,
         counter: &mut u32,
     ) -> Result<(), Stopped>;
-    /// `ImmediateObject::runImmediateTask` — `task` is an erased
-    /// `*mut bun_runtime::timer::ImmediateObject`; returns whether the callback
-    /// threw. Defined in `bun_runtime::dispatch`. Link-time resolved.
+    /// `ImmediateObject::run` — `task` is an erased
+    /// `*mut bun_runtime::timer::ImmediateObject`; returns whether the microtask
+    /// checkpoint is still owed. Defined in `bun_runtime::dispatch`. Link-time resolved.
     fn __bun_run_immediate_task(task: *mut (), vm: &VirtualMachine) -> bool;
     /// Release the event loop's `+1` ref on a still-queued `ImmediateObject`
     /// without running it. Defined in `bun_runtime::dispatch`.
-    fn __bun_cancel_pending_immediate(task: *mut (), vm: &VirtualMachine);
+    fn __bun_cancel_pending_immediate(task: *mut ());
     /// `WTFTimer::run` — `timer` is an erased `*mut bun_runtime::timer::WTFTimer`.
     /// Defined in `bun_runtime::dispatch`. Link-time resolved.
     fn __bun_run_wtf_timer(timer: *mut (), vm: &VirtualMachine);
@@ -299,6 +300,22 @@ impl Drop for EventLoopEnterNoCheckpointGuard<'_> {
     #[inline]
     fn drop(&mut self) {
         self.loop_.exit_without_checkpoint();
+    }
+}
+
+/// RAII pairing for [`EventLoop::ref_keep_alive`] / [`EventLoop::unref_keep_alive`].
+struct KeptAlive<'a>(&'a EventLoop);
+
+impl<'a> KeptAlive<'a> {
+    fn new(loop_: &'a EventLoop) -> Self {
+        loop_.ref_keep_alive();
+        Self(loop_)
+    }
+}
+
+impl Drop for KeptAlive<'_> {
+    fn drop(&mut self) {
+        self.0.unref_keep_alive();
     }
 }
 
@@ -444,9 +461,10 @@ impl EventLoop {
             _ => unreachable!(),
         }
 
-        vm.is_inside_deferred_task_queue.set(true);
-        self.deferred_tasks.run();
-        vm.is_inside_deferred_task_queue.set(false);
+        {
+            let _inside = vm.is_inside_deferred_task_queue.raise_for_scope();
+            self.deferred_tasks.run();
+        }
 
         // Guard on `event_loop_handle` being set, but drain via `uws_loop()`:
         // on Windows the uSockets loop (`uws::Loop::get()`) is NOT
@@ -477,9 +495,10 @@ impl EventLoop {
                 return Ok(());
             };
             // `exit()` drains before it decrements the count. Reset it so each test callback still drains its microtasks.
-            let entered = self.entered_event_loop_count.replace(0);
-            (hooks.run_pending_test_step)(vm.global());
-            self.entered_event_loop_count.set(entered);
+            {
+                let _entered = self.entered_event_loop_count.set_for_scope(0);
+                (hooks.run_pending_test_step)(vm.global());
+            }
             if !self.drain_microtasks_once(vm, global_object, jsc_vm)? {
                 return Ok(());
             }
@@ -717,17 +736,10 @@ impl EventLoop {
             .expect("usockets_loop: uws_loop not initialized (call ensure_waker first)")
     }
 
-    /// [`usockets_loop`](Self::usockets_loop) as the platform-native loop
-    /// (`us_loop_t*` on POSIX, its `uv_loop_t*` on Windows).
-    #[inline]
-    pub fn native_loop(&self) -> Async::LoopRef {
-        Async::uws_to_native(self.usockets_loop())
-    }
-
     #[cfg(windows)]
     #[inline]
     pub fn uv_loop(&self) -> *mut crate::PlatformEventLoop {
-        self.native_loop()
+        self.usockets_loop().uv_loop()
     }
 
     #[inline]
@@ -797,10 +809,9 @@ impl EventLoop {
     pub fn tick(&self) {
         jsc::mark_binding();
         crate::top_scope!(scope, self.global_ref());
-        self.entered_event_loop_count.update(|count| count + 1);
+        let _entered = self.enter_scope_without_checkpoint();
         // `Err(Stopped)`: a fold or checkpoint met the VM's termination; the turn is over.
         let _ = self.tick_turn(&mut scope);
-        self.entered_event_loop_count.update(|count| count - 1);
     }
 
     fn tick_turn(&self, scope: &mut crate::TopExceptionScope) -> Result<(), Stopped> {
@@ -985,7 +996,7 @@ impl EventLoop {
         drop(self.next_immediate_tasks.take());
         for task in self.immediate_tasks.take() {
             // SAFETY: `task` came from `enqueue_immediate_task`.
-            unsafe { __bun_cancel_pending_immediate(task, self.vm_ref()) };
+            unsafe { __bun_cancel_pending_immediate(task) };
         }
     }
 
@@ -1145,9 +1156,8 @@ impl EventLoop {
         if self.vm_ref().is_event_loop_alive_despite_errors() {
             return self.auto_tick();
         }
-        self.ref_keep_alive();
+        let _kept_alive = KeptAlive::new(self);
         self.auto_tick();
-        self.unref_keep_alive();
     }
 
     /// Ticks until `is_done`, and gives up once nothing is left that could run JS again.
@@ -1209,7 +1219,7 @@ impl EventLoop {
         }
     }
 
-    /// JS thread: count one more thing keeping this loop alive (the same
+    /// JS thread (or with it stopped): count one more thing keeping this loop alive (the same
     /// counter a `VmHandle::ref_keep_alive` from another thread adjusts).
     pub fn ref_keep_alive(&self) {
         let _ = self.concurrent_ref.fetch_add(1, Ordering::SeqCst);

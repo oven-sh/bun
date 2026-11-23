@@ -3,6 +3,7 @@
 //! value types the [`crate::Resolver`] state machine produces and threads
 //! through `resolve_without_remapping` / `load_as_file_or_directory`.
 
+use core::ops::{Deref, DerefMut};
 use std::io::Write as _;
 
 use ::bun_ast::import_record as ast;
@@ -267,12 +268,12 @@ impl DebugLogs {
     // deinit → Drop (only frees `notes`)
 
     #[cold]
-    pub(crate) fn increase_indent(&mut self) {
+    fn increase_indent(&mut self) {
         self.indent.append(b" ").expect("unreachable");
     }
 
     #[cold]
-    pub(crate) fn decrease_indent(&mut self) {
+    fn decrease_indent(&mut self) {
         let new_len = self.indent.list.len() - 1;
         self.indent.list.truncate(new_len);
     }
@@ -299,6 +300,44 @@ impl DebugLogs {
         let mut buf = Vec::new();
         write!(&mut buf, "{}", args).expect("unreachable");
         self.add_note(buf);
+    }
+}
+
+pub(crate) trait HasDebugLogs {
+    fn debug_logs(&mut self) -> Option<&mut DebugLogs>;
+}
+
+/// `&mut T`, whose debug logs are indented until this drops.
+#[must_use]
+pub(crate) struct Indented<'a, T: HasDebugLogs>(&'a mut T);
+
+impl<'a, T: HasDebugLogs> Indented<'a, T> {
+    pub(crate) fn new(target: &'a mut T) -> Self {
+        if let Some(debug) = target.debug_logs() {
+            debug.increase_indent();
+        }
+        Self(target)
+    }
+}
+
+impl<T: HasDebugLogs> Deref for Indented<'_, T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        self.0
+    }
+}
+
+impl<T: HasDebugLogs> DerefMut for Indented<'_, T> {
+    fn deref_mut(&mut self) -> &mut T {
+        self.0
+    }
+}
+
+impl<T: HasDebugLogs> Drop for Indented<'_, T> {
+    fn drop(&mut self) {
+        if let Some(debug) = self.0.debug_logs() {
+            debug.decrease_indent();
+        }
     }
 }
 

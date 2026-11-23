@@ -71,6 +71,16 @@ pub struct RSA_PSS_PARAMS {
     pub maskHash: *mut X509_ALGOR,
 }
 
+#[repr(transparent)]
+struct OwnedRsaPssParams(core::ptr::NonNull<RSA_PSS_PARAMS>);
+
+impl Drop for OwnedRsaPssParams {
+    fn drop(&mut self) {
+        // SAFETY: only `d2i_RSA_PSS_PARAMS` makes one.
+        unsafe { RSA_PSS_PARAMS_free(self.0.as_ptr()) }
+    }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Opaque handles
 // ═══════════════════════════════════════════════════════════════════════════
@@ -663,12 +673,13 @@ impl X509 {
                 return NID_undef;
             };
             let mut input = der.data.cast_const();
-            let params =
-                d2i_RSA_PSS_PARAMS(core::ptr::null_mut(), &raw mut input, der.length as c_long);
-            let Some(hash) = params.as_ref().map(|params| params.hashAlgorithm) else {
+            let Some(params) =
+                d2i_RSA_PSS_PARAMS(core::ptr::null_mut(), &raw mut input, der.length as c_long)
+            else {
                 ERR_clear_error();
                 return NID_undef;
             };
+            let hash = params.0.as_ref().hashAlgorithm;
             // RFC 4055 §3.1: `hashAlgorithm [0] HashAlgorithm DEFAULT sha1Identifier`
             digest_nid = NID_sha1;
             if !hash.is_null() {
@@ -681,7 +692,6 @@ impl X509 {
                 );
                 digest_nid = OBJ_obj2nid(object);
             }
-            RSA_PSS_PARAMS_free(params);
         }
         digest_nid
     }
@@ -794,7 +804,7 @@ impl SSL {
     }
 
     /// Client side: the SNI host name to send, set before the handshake. `false` if BoringSSL rejects it.
-    pub fn set_servername(&mut self, hostname: &core::ffi::CStr) -> bool {
+    pub fn set_servername(&mut self, hostname: &bun_core::ZStr) -> bool {
         // SAFETY: `self` is a live SSL; BoringSSL copies `hostname`.
         unsafe { SSL_set_tlsext_host_name(self, hostname.as_ptr()) == 1 }
     }
@@ -927,13 +937,11 @@ unsafe extern "C" {
     pub fn SHA1_Init(sha: *mut SHA_CTX) -> c_int;
     pub fn SHA1_Update(sha: *mut SHA_CTX, data: *const c_void, len: usize) -> c_int;
     pub fn SHA1_Final(out: *mut u8, sha: *mut SHA_CTX) -> c_int;
-    pub fn SHA1(data: *const u8, len: usize, out: *mut u8) -> *mut u8;
 
     // ── SHA-256 ──────────────────────────────────────────────────────────
     pub fn SHA256_Init(sha: *mut SHA256_CTX) -> c_int;
     pub fn SHA256_Update(sha: *mut SHA256_CTX, data: *const c_void, len: usize) -> c_int;
     pub fn SHA256_Final(out: *mut u8, sha: *mut SHA256_CTX) -> c_int;
-    pub fn SHA256(data: *const u8, len: usize, out: *mut u8) -> *mut u8;
 
     // ── SSL ──────────────────────────────────────────────────────────────
     pub safe fn SSL_library_init() -> c_int;
@@ -962,7 +970,7 @@ unsafe extern "C" {
         out: *mut *mut RSA_PSS_PARAMS,
         inp: *mut *const u8,
         len: c_long,
-    ) -> *mut RSA_PSS_PARAMS;
+    ) -> Option<OwnedRsaPssParams>;
     fn RSA_PSS_PARAMS_free(params: *mut RSA_PSS_PARAMS);
     fn OBJ_obj2nid(obj: *const ASN1_OBJECT) -> c_int;
     fn X509_digest(

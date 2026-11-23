@@ -28,6 +28,7 @@ To do that:
 - cd back to bun and update WEBKIT_VERSION in scripts/build/deps/webkit.ts:
   - Direct: the new vendor/WebKit commit sha
   - Preview: the full preview tag (`autobuild-preview-pr-...`)
+- bun run pin-webkit — writes the sha256 of the release's tarballs to scripts/build/deps/webkit.sha256. Commit it with WEBKIT_VERSION, every time that changes
 - git checkout -b claude/webkit-upgrade-<sha> (branch must start with `claude/` for CI)
 - commit + push (without adding the webkit-changes.md file)
 - create a PR titled "Upgrade WebKit to <upstream-short-sha>", paste webkit-changes.md into the description
@@ -37,5 +38,6 @@ To do that:
 Things to check for a successful upgrade:
 
 - Did Source/JavaScriptCore/runtime/JSType.h change? The enum values must align with Bun's mirror in src/jsc/JSType.rs.
+- Do JavaScriptCore or WTF call ICU in another way (functions, arguments, number skeletons, pattern letters), or did icu/source.json change? src/icu has only what is called: see src/icu/README.md.
 - Were there any changes to the WebCore code generator? If there are C++ compilation errors, check for differences in the generated reference code in vendor/WebKit/Source/WebCore/bindings/scripts/test/JS/
 - If the merge touched the fork's .github/workflows, the release tarball names must still match prebuiltSuffix() in scripts/build/deps/webkit.ts

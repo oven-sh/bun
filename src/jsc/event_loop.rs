@@ -81,7 +81,7 @@ pub struct EventLoop {
     yield_tasks: Cell<Vec<Task>>,
     /// Like `yield_tasks`, for an iteration that no handler of the uws loop has on its stack.
     outermost_tasks: Cell<Vec<Task>>,
-    /// The last checkpoint ended with new `deferred_tasks`. Counts as a yielded task, as `tick()` always runs a checkpoint.
+    /// The last checkpoint may have left `deferred_tasks` unrun. Counts as a yielded task, as `tick()` always runs a checkpoint.
     owes_checkpoint: Cell<bool>,
 
     pub(crate) concurrent_tasks: ConcurrentQueue,

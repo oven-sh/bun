@@ -4,10 +4,13 @@
 // Prints its port as JSON on stdout once it listens, and what the body did as JSON on stdout
 // when it exits.
 //
-//   bun serve-http2-idle-loop-fixture.ts --body <bytes|default|direct|rewriter|rejects|publish> --chunks <n> [--probe] [--cross] [--reject-at <n>] [--start <immediate|task>]
-import { serve } from "bun";
+//   bun serve-http2-idle-loop-fixture.ts --body <bytes|default|direct|rewriter|rejects|publish> --chunks <n> [--probe] [--cross] [--reject-at <n>] [--start <immediate|task>] [--rounds <n>] [--redis <port>]
+import { RedisClient, serve } from "bun";
+import { once } from "node:events";
 import { writeSync } from "node:fs";
 import { stat } from "node:fs/promises";
+import http2 from "node:http2";
+import { Duplex } from "node:stream";
 import { parseArgs } from "node:util";
 
 const { values: args } = parseArgs({
@@ -22,6 +25,10 @@ const { values: args } = parseArgs({
     "reject-at": { type: "string", default: "0" },
     // What the handler awaits before the body: "immediate", or "task" for a job of the thread pool.
     start: { type: "string", default: "immediate" },
+    // For `--body publish`: the server keeps the loop alive for this many requests, and logs each timer that fires before the next one.
+    rounds: { type: "string" },
+    // A server that answers HELLO and nothing else. `--body publish` closes its client while the deferred queue runs.
+    redis: { type: "string" },
   },
 });
 const chunks = Number(args.chunks);
@@ -90,6 +97,36 @@ function body(): BodyInit {
   throw new Error("unknown --body " + args.body);
 }
 
+let beforePublish = () => {};
+if (args.redis) {
+  const redis = new RedisClient("redis://127.0.0.1:" + args.redis);
+  await redis.connect();
+  let onWrite = () => {};
+  const transport = new Duplex({
+    read() {},
+    write(_chunk, _encoding, callback) {
+      onWrite();
+      callback();
+    },
+  });
+  const session = http2.connect("http://localhost", { createConnection: () => transport });
+  await once(session, "connect");
+  beforePublish = () => {
+    // WATCH waits for the reply to GET, so the client keeps its place in the queue.
+    redis.get("a").catch(() => {});
+    redis.send("WATCH", ["a"]).catch(() => {});
+    // The session flushes second, through script.
+    onWrite = () => {
+      order.push("close");
+      redis.close();
+    };
+    session.ping(() => {});
+    order.push("ping");
+  };
+}
+let timer: Timer | undefined;
+let requests = 0;
+
 const server = serve({
   port: 0,
   hostname: "127.0.0.1",
@@ -119,19 +156,23 @@ const server = serve({
         }),
       );
     }
+    clearTimeout(timer);
     // The body starts in a later turn of the loop, so no write of it is inside the socket event of the request.
     if (args.start === "task") await stat(".");
     else await new Promise(resolve => setImmediate(resolve));
     if (args.body === "publish") {
+      if (requests++ === Number(args.rounds)) process.exit(0);
       // One write to each open response of GET /events, and no response whose flush would take them along.
       clearInterval(untilTheBodyStarts);
+      beforePublish();
       for (const subscriber of subscribers) subscriber.enqueue("event");
+      if (args.rounds) timer = setTimeout(() => order.push("timer"), 100);
       return new Promise<Response>(() => {});
     }
     return new Response(body());
   },
 });
-server.unref();
+if (!args.rounds) server.unref();
 
 const report = () => writeSync(1, JSON.stringify({ pulls, order }) + "\n");
 process.on("exit", report);

@@ -2,6 +2,7 @@ import { runEventLoopUntil, setSocketOptions, sweepSocketTimers } from "bun:inte
 import { afterAll, beforeAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { randomBytes } from "crypto";
 import { bunEnv, bunExe, isLinux, tempDir, tls as tlsCert } from "harness";
+import { once } from "node:events";
 import http2 from "node:http2";
 import net from "node:net";
 import { join } from "node:path";
@@ -1270,7 +1271,8 @@ describe.skipIf(!isLinux)("Bun.serve http2 with nothing else on the event loop",
   async function serveOnce<T>(args: string[], client: (port: number) => Promise<T>) {
     await using proc = Bun.spawn({
       cmd: [bunExe(), join(import.meta.dir, "serve-http2-idle-loop-fixture.ts"), ...args],
-      env: bunEnv,
+      // bun test does not kill the child of a concurrent test that times out.
+      env: { ...bunEnv, BUN_FEATURE_FLAG_NO_ORPHANS: "1" },
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -1400,5 +1402,58 @@ describe.skipIf(!isLinux)("Bun.serve http2 with nothing else on the event loop",
       return ids.map(id => Buffer.concat(data.filter(f => f.streamId === id).map(f => f.payload)).toString());
     });
     expect({ response, stderr, exitCode }).toEqual({ response: ids.map(() => "openevent"), stderr: "", exitCode: 137 });
+  });
+
+  const text = (raw: RawH2) =>
+    Buffer.concat(raw.frames.filter(f => f.type === T.DATA && f.streamId === 1).map(f => f.payload)).toString();
+
+  // The queue holds the Redis client, a session and the flush. The removal of the first moves the last into its place.
+  test.concurrent("a write leaves when script removes a deferred task that ran before it", async () => {
+    const redis = net.createServer(socket => {
+      socket.on("error", () => {});
+      socket.once("data", () => socket.write("%1\r\n+proto\r\n:3\r\n"));
+    });
+    await once(redis.listen(0, "127.0.0.1"), "listening");
+    try {
+      const args = ["--body", "publish", "--redis", String((redis.address() as net.AddressInfo).port)];
+      const { response, order, stderr, exitCode } = await serveOnce(args, async port => {
+        const events = await connect(port, "/events");
+        await events.waitFor(f => f.type === T.DATA);
+        await connect(port, "/");
+        await events.waitForClose();
+        return text(events);
+      });
+      expect({ response, order, stderr, exitCode }).toEqual({
+        response: "openevent",
+        order: ["ping", "close"],
+        stderr: "",
+        exitCode: 137,
+      });
+    } finally {
+      redis.close();
+    }
+  });
+
+  // This loop blocks in its poll, so a write that a pass left is late and not lost: each round then waits for the timer.
+  // Not concurrent: the client has to answer before that timer.
+  test("a write does not wait for a timer when the server keeps the loop alive", async () => {
+    const rounds = 16;
+    const args = ["--body", "publish", "--rounds", String(rounds)];
+    const { response, order, stderr, exitCode } = await serveOnce(args, async port => {
+      const events = await connect(port, "/events");
+      await events.waitFor(f => f.type === T.DATA);
+      const publisher = await connect(port, "/");
+      for (let round = 1; round <= rounds; round++) {
+        await events.waitFor(() => text(events).length === "open".length + round * "event".length);
+        publisher.headers(2 * round + 1, baseHeaders("/"));
+      }
+      return text(events);
+    });
+    expect({ response, stderr, exitCode }).toEqual({
+      response: "open" + Buffer.alloc(rounds * "event".length, "event").toString(),
+      stderr: "",
+      exitCode: 0,
+    });
+    expect(order.length).toBeLessThan(rounds / 2);
   });
 });

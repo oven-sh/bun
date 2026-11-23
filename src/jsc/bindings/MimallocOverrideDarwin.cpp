@@ -92,19 +92,15 @@ template class std::basic_string<char>;
 
 // clang refuses to hide a replaceable operator, so the link does: it exports none of them.
 #define BUN_LINKED_ONLY_OPERATOR __attribute__((used))
-// Not inlined: each caller would get a copy of mi_new.
-#define BUN_OPERATOR_NEW BUN_LINKED_ONLY_OPERATOR NEVER_INLINE void*
 
-BUN_OPERATOR_NEW operator new(size_t size) { return mi_new(size); }
-BUN_OPERATOR_NEW operator new[](size_t size) { return mi_new(size); }
-BUN_OPERATOR_NEW operator new(size_t size, const std::nothrow_t&) noexcept { return mi_new_nothrow(size); }
-BUN_OPERATOR_NEW operator new[](size_t size, const std::nothrow_t&) noexcept { return mi_new_nothrow(size); }
-BUN_OPERATOR_NEW operator new(size_t size, std::align_val_t alignment) { return mi_new_aligned(size, static_cast<size_t>(alignment)); }
-BUN_OPERATOR_NEW operator new[](size_t size, std::align_val_t alignment) { return mi_new_aligned(size, static_cast<size_t>(alignment)); }
-BUN_OPERATOR_NEW operator new(size_t size, std::align_val_t alignment, const std::nothrow_t&) noexcept { return mi_new_aligned_nothrow(size, static_cast<size_t>(alignment)); }
-BUN_OPERATOR_NEW operator new[](size_t size, std::align_val_t alignment, const std::nothrow_t&) noexcept { return mi_new_aligned_nothrow(size, static_cast<size_t>(alignment)); }
-
-#undef BUN_OPERATOR_NEW
+BUN_LINKED_ONLY_OPERATOR void* operator new(size_t size) { return mi_new(size); }
+BUN_LINKED_ONLY_OPERATOR void* operator new[](size_t size) { return mi_new(size); }
+BUN_LINKED_ONLY_OPERATOR void* operator new(size_t size, const std::nothrow_t&) noexcept { return mi_new_nothrow(size); }
+BUN_LINKED_ONLY_OPERATOR void* operator new[](size_t size, const std::nothrow_t&) noexcept { return mi_new_nothrow(size); }
+BUN_LINKED_ONLY_OPERATOR void* operator new(size_t size, std::align_val_t alignment) { return mi_new_aligned(size, static_cast<size_t>(alignment)); }
+BUN_LINKED_ONLY_OPERATOR void* operator new[](size_t size, std::align_val_t alignment) { return mi_new_aligned(size, static_cast<size_t>(alignment)); }
+BUN_LINKED_ONLY_OPERATOR void* operator new(size_t size, std::align_val_t alignment, const std::nothrow_t&) noexcept { return mi_new_aligned_nothrow(size, static_cast<size_t>(alignment)); }
+BUN_LINKED_ONLY_OPERATOR void* operator new[](size_t size, std::align_val_t alignment, const std::nothrow_t&) noexcept { return mi_new_aligned_nothrow(size, static_cast<size_t>(alignment)); }
 
 BUN_LINKED_ONLY_OPERATOR void operator delete(void* block) noexcept { freeBlock(block); }
 BUN_LINKED_ONLY_OPERATOR void operator delete[](void* block) noexcept { freeBlock(block); }

@@ -1651,6 +1651,12 @@ console.log("survived", require("./late.js"));`,
       `Object.create = () => undefined; console.log(typeof require("events"));`,
       "function",
     ],
+    [
+      "default options of a builtin after Object.create was replaced",
+      `Object.create = () => undefined; require("cluster").Worker(); const stream = require("stream");` +
+        `stream.finished(new stream.PassThrough().end().resume(), () => console.log("ok"));`,
+      "ok",
+    ],
   ])("%s", async (_, source, stdout) => {
     expect(await bunRun(["-e", source])).toEqual({ stdout, stderr: "", exitCode: 0, signalCode: null });
   });

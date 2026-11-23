@@ -515,6 +515,67 @@ describe("Decimal", () => {
       expect(exitCode).toBe(0);
     });
 
+    test("tables", async () => {
+      const { stdout, exitCode } = await run(`
+        const d = text => new Decimal(text);
+        class Money extends Decimal {
+          currency = "EUR";
+          rate = { to: 2 };
+          note = [1];
+          method() {}
+          [Bun.inspect.custom]() { throw new Error("is not called"); }
+        }
+        const stream = new (require("node:stream").Writable)({
+          write(chunk, _, done) { console.write(chunk); done(); },
+        });
+        const inspected = (...args) => console.write(Bun.inspect.table(...args));
+        for (const table of [console.table, inspected, new console.Console(stream).table]) {
+          table({ total: d("19.90"), count: 2 });
+          table(new Set([d("3")]));
+          table([{ price: d("4") }, new Money("5")]);
+          table([new Money("6"), d("7")], ["currency"]);
+        }
+        console.write(JSON.stringify(Bun.inspect.table([d("8"), 9], { colors: true }).split("\\n").slice(3, 5)));
+      `);
+      expect(stdout.replace(/^[┌├└].*\n/gm, "")).toMatchInlineSnapshot(`
+        "│       │ Values          │
+        │ total │ [Decimal: 19.9] │
+        │ count │ 2               │
+        │   │ Values       │
+        │ 0 │ [Decimal: 3] │
+        │   │ price        │ currency │ rate      │ note  │ Values               │
+        │ 0 │ [Decimal: 4] │          │           │       │                      │
+        │ 1 │              │ EUR      │ { to: 2 } │ [ 1 ] │ [Decimal (Money): 5] │
+        │   │ currency │
+        │ 0 │ EUR      │
+        │ 1 │          │
+        │       │ Values          │
+        │ total │ [Decimal: 19.9] │
+        │ count │ 2               │
+        │   │ Values       │
+        │ 0 │ [Decimal: 3] │
+        │   │ price        │ currency │ rate      │ note  │ Values               │
+        │ 0 │ [Decimal: 4] │          │           │       │                      │
+        │ 1 │              │ EUR      │ { to: 2 } │ [ 1 ] │ [Decimal (Money): 5] │
+        │   │ currency │
+        │ 0 │ EUR      │
+        │ 1 │          │
+        │ (index) │     Values      │
+        │  total  │ [Decimal: 19.9] │
+        │  count  │        2        │
+        │ (iteration index) │    Values    │
+        │         0         │ [Decimal: 3] │
+        │ (index) │    price     │ currency │   rate    │ note  │        Values        │
+        │    0    │ [Decimal: 4] │          │           │       │                      │
+        │    1    │              │  'EUR'   │ { to: 2 } │ [ 1 ] │ [Decimal (Money): 5] │
+        │ (index) │ currency │
+        │    0    │  'EUR'   │
+        │    1    │          │
+        ["│ 0 │ \\u001b[0m\\u001b[33m[Decimal: 8]\\u001b[0m │","│ 1 │ \\u001b[0m\\u001b[33m9\\u001b[0m            │"]"
+      `);
+      expect(exitCode).toBe(0);
+    });
+
     test("node:util inspect", async () => {
       expect(
         await evaluate(`const { inspect } = require("node:util");`, [
@@ -522,6 +583,7 @@ describe("Decimal", () => {
           `inspect({ a: [d("-0")] })`,
           `inspect(new (class Money extends Decimal {})("2"))`,
           `inspect(Object.assign(d("1"), { a: 1 }))`,
+          `inspect({ a: Object.assign(d("1"), { a: 1 }) }, { depth: 0 })`,
           `inspect(Object.setPrototypeOf(d("1"), null))`,
           `inspect(Object.setPrototypeOf(d("1.5"), Object.prototype))`,
           `inspect({}) + inspect(new (class A {})())`,
@@ -536,6 +598,7 @@ describe("Decimal", () => {
           "{ a: [ [Decimal: -0] ] }",
           "[Decimal (Money): 2]",
           "[Decimal: 1] { a: 1 }",
+          "{ a: [Decimal: 1] }",
           "[Decimal (null prototype): 1]",
           "[Decimal (Object): 1.5]",
           "{}A {}",

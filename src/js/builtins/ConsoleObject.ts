@@ -177,6 +177,11 @@ export function createConsoleConstructor(console: Console) {
     "jsFunctionBunStringWidth",
     1,
   );
+  const textOfDecimal: (value: unknown) => string | undefined = $newCppFunction(
+    "NodeUtilTypesModule.cpp",
+    "jsFunctionTextOfDecimal",
+    1,
+  );
 
   /**
    * Returns the number of columns required to display the given string.
@@ -818,6 +823,12 @@ export function createConsoleConstructor(console: Console) {
           hasPrimitives = true;
           valuesKeyArray[i] = _inspect(item);
         } else {
+          if (properties === undefined && textOfDecimal(item) !== undefined) {
+            hasPrimitives = true;
+            // Without its properties, which have their columns.
+            const opt = { ...this[kGetInspectOptions](this._stdout), depth: -1, customInspect: false };
+            valuesKeyArray[i] = inspect(item, opt);
+          }
           const keys = properties || Object.keys(item);
           for (const key of keys) {
             map[key] ??= [];

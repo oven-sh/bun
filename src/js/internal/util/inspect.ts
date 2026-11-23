@@ -1548,7 +1548,7 @@ function formatRaw(ctx: Context, value, recurseTimes: number, typedArray?: boole
         return base;
       }
     } else if ((base = getDecimalBase(value, constructor, tag)) !== "") {
-      if (keys.length === 0 && protoProps === undefined) {
+      if ((keys.length === 0 && protoProps === undefined) || (recurseTimes > ctx.depth! && ctx.depth !== null)) {
         return ctx.stylize(base, "number");
       }
     } else {

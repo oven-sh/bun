@@ -766,6 +766,27 @@ impl<'a> TablePrinter<'a> {
         })
     }
 
+    /// The number of a row that is a `Decimal`. Its properties have their columns.
+    fn format_decimal(
+        &self,
+        cell_text: &mut Vec<u8>,
+        value: JSValue,
+        colors: bool,
+    ) -> JsResult<Option<CellRef>> {
+        let Some(text) = value.printed_decimal(self.global_object)? else {
+            return Ok(None);
+        };
+        let offset = cell_text.len();
+        cell_text.extend_from_slice(pfmt!("<r><yellow>", colors).as_bytes());
+        cell_text.extend_from_slice(&text);
+        cell_text.extend_from_slice(pfmt!("<r>", colors).as_bytes());
+        Ok(Some(CellRef {
+            offset,
+            len: cell_text.len() - offset,
+            width: strings::visible::width::exclude_ansi_colors::utf8(&text) as u32,
+        }))
+    }
+
     /// Read and format the row's cell values exactly once, size the columns
     /// (creating them on demand), and return the collected row for the
     /// render pass.
@@ -851,6 +872,12 @@ impl<'a> TablePrinter<'a> {
                         row.cells.resize(slot + 1, None);
                     }
                     row.cells[slot] = Some(cell);
+                }
+
+                if let Some(cell) = self.format_decimal(cell_text, row_value, ENABLE_ANSI_COLORS)? {
+                    self.values_col_width =
+                        Some(self.values_col_width.unwrap_or(1).max(cell.width));
+                    row.values_cell = Some(cell);
                 }
             }
         } else if self.properties.is_undefined() {

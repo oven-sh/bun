@@ -161,6 +161,15 @@ impl Connection {
         }
     }
 
+    pub(super) fn reject_unsent_requests(&mut self) {
+        self.reject(|_, stream| {
+            matches!(stream.role, Role::Message(_))
+                && stream.send.sent() == 0
+                && !stream.has_received()
+                && !stream.flags.contains(Flags::READ_DONE)
+        });
+    }
+
     pub fn peer_go_away(&self) -> Option<StreamId> {
         self.http3.as_ref()?.peer_go_away
     }

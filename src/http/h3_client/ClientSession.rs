@@ -38,6 +38,10 @@ pub struct ClientSession {
     pub(crate) pool_id: u64,
     pub(crate) handshake_done: bool,
     pub(crate) closed: bool,
+    /// It is connecting in place of one that is stale and may come back, so a failure is not the last word.
+    pub(crate) is_spare: bool,
+    /// The last attempt has failed, and there is none under way.
+    pub(crate) awaits_attempt: bool,
     pub(crate) registry_index: u32,
     idle_seconds: u32,
 
@@ -70,6 +74,8 @@ impl ClientSession {
             pool_id,
             handshake_done: false,
             closed: false,
+            is_spare: false,
+            awaits_attempt: false,
             registry_index: u32::MAX,
             idle_seconds: 0,
             pending: Vec::new(),
@@ -128,6 +134,22 @@ impl ClientSession {
 
         if self.handshake_done {
             self.open_streams();
+        }
+    }
+
+    pub(crate) fn take_unopened(&mut self) -> Option<InFlightRequest> {
+        let stream = self.first_unopened()?;
+        let client = stream_mut(stream).client.take();
+        self.detach(stream);
+        client
+    }
+
+    /// As many of the requests that wait as there are streams for.
+    pub(crate) fn take_over_from(&mut self, other: &mut ClientSession) {
+        while self.has_headroom()
+            && let Some(client) = other.take_unopened()
+        {
+            self.enqueue(client);
         }
     }
 
@@ -221,6 +243,10 @@ impl ClientSession {
     /// For when the rest of the response is of no interest.
     fn cancel(&mut self, stream: *mut Stream) {
         if let Some(qs) = stream_ref(stream).qstream {
+            // A server that has responded may be about to read what is left of the request.
+            if stream_ref(stream).status_code == 0 {
+                qs.reset(http3_code::REQUEST_CANCELLED);
+            }
             qs.stop(http3_code::REQUEST_CANCELLED);
         }
         self.detach(stream);
@@ -247,7 +273,8 @@ impl ClientSession {
         };
         // RFC 9110 §9.2.2: the origin may have acted on a request that was written.
         let replay_safe = !st.headers_sent || st.peer_rejected || client.method.is_idempotent();
-        if client.flags.h3_retried || st.is_streaming_body || st.headers_delivered || !replay_safe {
+        let was_retried = client.flags.h3_retried || st.has_waited_in_vain && !self.handshake_done;
+        if was_retried || st.is_streaming_body || st.headers_delivered || !replay_safe {
             self.cancel(stream);
             return client.fail(err);
         }
@@ -279,9 +306,9 @@ impl ClientSession {
     pub(crate) fn sweep(&mut self, elapsed_seconds: u32) {
         if self.pending.is_empty() {
             self.idle_seconds = self.idle_seconds.saturating_add(elapsed_seconds);
-            let max_seconds = match self.has_headroom() {
-                true => MAX_IDLE_SECONDS,
-                false => MAX_SPENT_SECONDS,
+            let max_seconds = match self.connection.map(|it| it.available_streams()) {
+                Some(0) => MAX_SPENT_SECONDS,
+                _ => MAX_IDLE_SECONDS,
             };
             if self.idle_seconds >= max_seconds {
                 self.close_if_idle();

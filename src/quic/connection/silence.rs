@@ -3,6 +3,7 @@
 use super::Connection;
 use super::streams::Asked;
 use super::timers::Timer;
+use crate::event::Event;
 use crate::time::{Duration, Instant};
 
 /// How many it takes to know the pace of the server.
@@ -32,6 +33,8 @@ pub(super) struct Silence {
     pub(super) owes_ping: bool,
     /// Since the server was last heard from.
     pub(super) pings: u32,
+    /// See [`Connection::ask_for_answer`].
+    pub(super) is_watched: bool,
 }
 
 impl Silence {
@@ -68,6 +71,10 @@ impl Connection {
     /// After a client has read what there is.
     #[inline]
     pub(super) fn listen(&mut self, now: Instant) {
+        if self.silence.is_watched && !self.has_sent_since_receiving && !self.is_stale(now) {
+            self.silence.is_watched = false;
+            self.emit(Event::Answered);
+        }
         let state = &mut self.streams.state;
         let asked = core::mem::take(&mut state.asked);
         let has_asked = asked > Asked::InPart;

@@ -3,7 +3,9 @@
 
 use bstr::BStr;
 use bun_quic::http3::{Fields, Section};
-use bun_quic::{Context, Direction, Event, StreamEvent, http3_code};
+use bun_quic::{
+    CloseReason, Context, Direction, Event, Layer, StreamEvent, http3_code, transport_code,
+};
 use bun_uws::quic;
 
 use super::client_context::ClientContext;
@@ -22,18 +24,18 @@ pub(super) fn on_event(connection: quic::Connection, session: Context, event: Ev
             on_stream_event(connection, connection.stream(id), stream.cast(), event);
         }
         Event::Ready => {
-            let session = session_mut(session.cast());
-            bun_core::scoped_log!(h3_client, "ready pending={}", session.pending.len());
-            session.handshake_done = true;
-            session.open_streams();
+            let s = session_mut(session.cast());
+            bun_core::scoped_log!(h3_client, "ready pending={}", s.pending.len());
+            (s.handshake_done, s.is_spare) = (true, false);
+            on_streams_available(session.cast());
         }
-        Event::StreamsAvailable(Direction::Bidirectional) => {
-            session_mut(session.cast()).open_streams();
+        Event::Answered | Event::StreamsAvailable(Direction::Bidirectional) => {
+            on_streams_available(session.cast());
         }
         Event::GoAway { .. } => on_goaway(session_mut(session.cast())),
         Event::Closed(closed) => {
             bun_core::scoped_log!(h3_client, "closed {:?}", closed.close_reason());
-            on_close(session_mut(session.cast()));
+            on_close(session.cast(), closed.close_reason());
         }
         _ => {}
     }
@@ -52,11 +54,60 @@ fn on_goaway(session: &mut ClientSession) {
         session.retry_or_fail(stream, crate::Error::ConnectionClosed);
     }
     session.close_if_idle();
+    stop_waiting_for(session);
 }
 
-fn on_close(session: &mut ClientSession) {
-    session.closed = true;
+fn stop_waiting_for(s: &ClientSession) {
+    if let Some(ctx) = ClientContext::get() {
+        (ClientContext::as_mut(ctx))
+            .attempt_again(|it| it.matches(&s.hostname, s.port, s.reject_unauthorized, s.pool_id));
+    }
+}
+
+fn on_streams_available(session: *mut ClientSession) {
+    session_mut(session).open_streams();
+    let Some(ctx) = ClientContext::get() else {
+        return;
+    };
+    let others = ClientContext::as_mut(ctx).alternatives_to(session);
+    for spare in others.into_iter().map(session_mut).filter(|it| it.is_spare) {
+        session_mut(session).take_over_from(spare);
+    }
+}
+
+fn on_close(session_ptr: *mut ClientSession, reason: &CloseReason) {
+    let session = session_mut(session_ptr);
     session.connection = None;
+    if session.is_spare
+        && let Some(ctx) = ClientContext::get().map(ClientContext::as_mut)
+    {
+        let others = ctx
+            .alternatives_to(session_ptr)
+            .into_iter()
+            .map(session_mut);
+        for ready in others.filter(|it| it.handshake_done) {
+            ready.take_over_from(session_mut(session_ptr));
+        }
+        match *reason {
+            CloseReason::HandshakeTimeout => {
+                let pending = session_mut(session_ptr).pending.iter_mut();
+                pending.for_each(|it| it.has_waited_in_vain = it.idle_seconds > 0);
+                return ctx.connect_again(session_ptr);
+            }
+            // The server may have no room for a second connection.
+            CloseReason::Peer {
+                layer: Layer::Transport,
+                code: transport_code::CONNECTION_REFUSED,
+                ..
+            } if ctx.ask_for_answers(session_ptr) => {
+                session_mut(session_ptr).awaits_attempt = true;
+                return;
+            }
+            _ => {}
+        }
+    }
+    let session = session_mut(session_ptr);
+    session.closed = true;
     let _registry_ref =
         ClientContext::get().and_then(|ctx| ClientContext::as_mut(ctx).unregister(session));
     // The streams that were opened are closed before their connection.
@@ -69,6 +120,9 @@ fn on_close(session: &mut ClientSession) {
                 crate::Error::HTTP3HandshakeFailed
             },
         );
+    }
+    if session.handshake_done {
+        stop_waiting_for(session);
     }
 }
 

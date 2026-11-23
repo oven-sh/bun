@@ -215,6 +215,7 @@ impl Peer {
             Event::Token(token) => format!("token {}", show(&token)),
             Event::KeyLog(line) => format!("key {}", show(&line)),
             Event::StreamsAvailable(direction) => format!("available {direction:?}"),
+            Event::Answered => "answered".into(),
             Event::Datagram { data, is_early } => {
                 let early = if is_early { "early " } else { "" };
                 format!("{early}datagram {}", show(&data))

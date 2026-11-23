@@ -210,6 +210,9 @@ impl Connection {
     pub(super) fn end(&mut self) {
         self.ending = Ending::Over;
         self.timers = Timers::default();
+        if self.config.gives_up_early {
+            self.reject_unsent_requests();
+        }
     }
 
     pub(super) fn time_out(&mut self, now: Instant, reason: CloseReason) {
@@ -329,5 +332,11 @@ impl Connection {
         oldest.is_some_and(|it| now >= it.flight.at + self.min_idle_timeout())
             || self.silence.pings > MAX_UNANSWERED_PINGS
             || now + margin >= self.timers.get(Timer::Idle)
+    }
+
+    /// For a client. [`Event::Answered`](crate::Event::Answered) follows when that has put an end to [`Self::is_stale`].
+    pub fn ask_for_answer(&mut self) {
+        self.silence.is_watched = true;
+        self.streams.state.owed |= Control::PING;
     }
 }

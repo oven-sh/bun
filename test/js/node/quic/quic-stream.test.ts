@@ -6,7 +6,7 @@ import { bunEnv, bunExe, isLinux, tempDir, withoutAsanQuarantine } from "harness
 import { createPrivateKey } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { connect, listen, QuicEndpoint, type QuicSession, type SessionOptions } from "node:quic";
+import { connect, listen, QuicEndpoint, type QuicSession, type QuicStream, type SessionOptions } from "node:quic";
 
 const keysDir = join(import.meta.dir, "..", "test", "fixtures", "keys");
 const key = createPrivateKey(readFileSync(join(keysDir, "agent1-key.pem")));
@@ -990,14 +990,12 @@ test("stream.closed waits until the end has been sent", async () => {
 
 test("streams can be read one after the other, in any order", async () => {
   const sizes = [2, 3, 4].map(megabytes => megabytes << 20);
-  const streams: AsyncIterable<Uint8Array[]>[] = [];
+  const streams: QuicStream[] = [];
   const all = Promise.withResolvers<void>();
   await using server = await listen(
     session => {
       session.onstream = stream => {
-        stream[Symbol.asyncIterator]();
-        stream.setBody(null);
-        if (streams.push(stream as any) === sizes.length) all.resolve();
+        if (streams.push(stream) === sizes.length) all.resolve();
       };
     },
     { alpn: ["quic-test"], sni: { "*": { keys: [key], certs: [cert] } } },
@@ -1010,6 +1008,7 @@ test("streams can be read one after the other, in any order", async () => {
     let length = 0;
     for await (const chunks of stream) for (const chunk of chunks) length += chunk.length;
     lengths.push(length);
+    stream.setBody(null);
   }
   expect(lengths).toEqual(sizes.toReversed());
   await client.close();

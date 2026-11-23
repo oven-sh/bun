@@ -338,6 +338,19 @@ impl Connection {
             == Some(true)
     }
 
+    pub fn available_streams(&self) -> u64 {
+        (self.get(|it| it.available_streams(Direction::Bidirectional))).unwrap_or(0)
+    }
+
+    /// If it is stale. Returns how many streams are worth opening once it has come.
+    pub fn ask_for_answer(&self) -> u64 {
+        if self.get(|it| it.is_stale(now())) != Some(true) {
+            return 0;
+        }
+        self.update(bun_quic::Connection::ask_for_answer);
+        self.available_streams()
+    }
+
     /// Neither side is closing or going away.
     pub fn is_usable(&self) -> bool {
         self.get(|it| !it.is_closing() && it.peer_go_away().is_none()) == Some(true)
@@ -406,6 +419,10 @@ impl Stream {
     #[inline]
     pub fn stop(&self, code: u64) {
         self.connection.update(|it| it.stop(self.id, code));
+    }
+
+    pub fn reset(&self, code: u64) {
+        self.connection.update(|it| it.reset(self.id, code));
     }
 
     pub fn reset_unfinished(&self, code: u64) {

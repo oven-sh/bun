@@ -22,6 +22,8 @@ pub struct Stream {
     // BACKREF: borrows the request body owned by `client`; not freed here.
     // `RawSlice` carries the outlives-holder invariant.
     pub(crate) pending_body: bun_ptr::RawSlice<u8>,
+    /// For a handshake that timed out, and not just at the end.
+    pub(crate) has_waited_in_vain: bool,
     pub(crate) headers_sent: bool,
     pub(crate) request_body_done: bool,
     pub(crate) is_streaming_body: bool,
@@ -43,6 +45,7 @@ impl Stream {
             body_buffer: Vec::new(),
             status_code: 0,
             pending_body: bun_ptr::RawSlice::EMPTY,
+            has_waited_in_vain: false,
             headers_sent: false,
             request_body_done: false,
             is_streaming_body: false,

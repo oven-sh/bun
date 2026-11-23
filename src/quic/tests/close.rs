@@ -430,6 +430,7 @@ fn only_the_events_of_such_streams_are_dropped() {
     raw.waits = false;
     raw.send("stream 4 0 b, reset_stream 0 7 1, max_streams_uni 1");
     raw.close_gracefully();
+    raw.send("stop_sending 4 7");
     assert_eq!(
         raw.events(),
         "0 reset 0x7, available Unidirectional, 0 closed, closed: Local"

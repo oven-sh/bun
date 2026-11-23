@@ -356,6 +356,26 @@ fn a_client_gives_up_on_requests_that_are_not_going_to_be_processed() {
 }
 
 #[test]
+fn requests_that_have_not_been_sent_can_count_as_rejected() {
+    for (gives_up_early, events) in [
+        (false, "0 closed, 4 closed, closed by close 0x0 -"),
+        (
+            true,
+            "4 reset 0x10b, 4 closed, 0 closed, closed by close 0x0 -",
+        ),
+    ] {
+        let raw = Raw::http3(Server).config(|it| it.gives_up_early = gives_up_early);
+        let mut raw = raw.connected_with("");
+        raw.request(GET);
+        raw.forget();
+        let id = raw.peer.open(Bidirectional);
+        assert!(raw.peer.send_headers(id, GET));
+        raw.send("close 0 0 -");
+        assert_eq!(raw.events(), events);
+    }
+}
+
+#[test]
 fn a_server_goes_away_after_the_last_response() {
     let mut raw = Raw::http3(Client).connected_with("");
     raw.read_control();

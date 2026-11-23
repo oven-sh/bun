@@ -1039,6 +1039,36 @@ fn connection_that_the_peer_may_have_given_up() {
 }
 
 #[test]
+fn tells_when_the_peer_answers_again() {
+    let mut raw = Raw::server().connected();
+    raw.request_packets("a");
+    raw.advance(450);
+    raw.forget();
+    raw.connection().ask_for_answer();
+    raw.process();
+    assert_eq!(raw.frames(), "ping");
+    raw.send("ping");
+    assert_eq!(raw.events(), "");
+    raw.send("ack");
+    assert_eq!(raw.events(), "answered");
+    raw.send("ping");
+    assert_eq!(raw.events(), "");
+
+    let raw = Raw::server().config(|it| {
+        (it.parameters.max_idle_timeout_millis, it.gives_up_early) = (1600, true);
+    });
+    let mut raw = raw.connected();
+    raw.send("ack");
+    raw.advance(1500);
+    raw.connection().ask_for_answer();
+    raw.process();
+    raw.wait();
+    assert_eq!(raw.events(), "");
+    raw.send("ack");
+    assert_eq!(raw.events(), "answered");
+}
+
+#[test]
 fn is_not_silent_when_blocked_again_at_the_same_limit() {
     let mut raw = Raw::client().with("max_data=0").connected();
     raw.request_packets("a");

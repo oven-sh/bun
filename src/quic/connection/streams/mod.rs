@@ -606,7 +606,7 @@ impl State {
     /// The context is looked up when the event is delivered.
     #[inline]
     pub(super) fn notify(&mut self, id: StreamId, stream: &Stream, event: StreamEvent) {
-        if !stream.flags.contains(Flags::RELEASED) {
+        if !(stream.flags).intersects(Flags::RELEASED | Flags::TURNED_AWAY) {
             (self.events).push_back(Event::Stream(id, stream.context, event));
         }
     }

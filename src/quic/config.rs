@@ -19,8 +19,9 @@ pub struct Config {
     pub keep_alive: KeepAlive,
     /// Whether a timeout goes without CONNECTION_CLOSE.
     pub closes_silently: bool,
-    /// Whether the idle timeout counts from the last packet that was received, even if one has been sent since. It is for
-    /// an application that can start over on another connection.
+    /// Whether the idle timeout counts from the last packet that was received, even if one has been sent since, and
+    /// requests that have not been sent count as rejected in the end. It is for an application that can start over on
+    /// another connection.
     pub gives_up_early: bool,
     /// Whether acknowledgments can be made less frequent (draft-iyengar-quic-delayed-ack-02).
     pub adapts_ack_frequency: bool,

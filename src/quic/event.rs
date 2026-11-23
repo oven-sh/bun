@@ -20,6 +20,8 @@ pub enum Event {
     KeyLog(Vec<u8>),
     /// [`Connection::open`] may succeed again.
     StreamsAvailable(Direction),
+    /// See [`Connection::ask_for_answer`].
+    Answered,
     Stream(StreamId, Context, StreamEvent),
     Datagram {
         data: Vec<u8>,

@@ -3700,8 +3700,8 @@ pub(crate) mod __gated_printer {
                     }
                 }
                 ExprData::EIf(e) => {
-                    if self.print_late_folded(expr, level, flags) {
-                        return;
+                    if self.options.late_fold && !flags.contains(ExprFlag::SkipLateFold) {
+                        return self.print_late_folded(expr, level, flags);
                     }
                     flags.remove(ExprFlag::SkipLateFold);
                     let wrap = level.gte(Level::Conditional);
@@ -4372,8 +4372,8 @@ pub(crate) mod __gated_printer {
                     }
                 }
                 ExprData::EUnary(e) => {
-                    if self.print_late_folded(expr, level, flags) {
-                        return;
+                    if self.options.late_fold && !flags.contains(ExprFlag::SkipLateFold) {
+                        return self.print_late_folded(expr, level, flags);
                     }
                     let entry: &'static OpInfo = Op::TABLE.get_ptr_const(e.op);
                     let wrap = level.gte(entry.level);
@@ -4420,10 +4420,9 @@ pub(crate) mod __gated_printer {
                     }
                 }
                 ExprData::EBinary(e) => {
-                    if self.print_late_folded(expr, level, flags) {
-                        return;
+                    if self.options.late_fold && !flags.contains(ExprFlag::SkipLateFold) {
+                        return self.print_late_folded(expr, level, flags);
                     }
-                    flags.remove(ExprFlag::SkipLateFold);
                     // The handling of binary expressions is convoluted because we're using
                     // iteration on the heap instead of recursion on the call stack to avoid
                     // stack overflow for deeply-nested ASTs.
@@ -5357,7 +5356,6 @@ pub(crate) mod __gated_printer {
                 self.stack_overflowed = true;
                 return Ok(());
             }
-            let stmt = self.late_folded_stmt(stmt);
 
             let prev_stmt_tag = self.prev_stmt_tag;
             // Borrowck: scopeguard would hold `&mut self.prev_stmt_tag`
@@ -5815,6 +5813,11 @@ pub(crate) mod __gated_printer {
                     }
                 }
                 StmtData::SIf(s) => {
+                    if self.options.late_fold
+                        && let Some(folded) = self.late_folded_if(stmt)
+                    {
+                        return self.print_stmt(folded);
+                    }
                     self.print_indent();
                     self.print_if(s, stmt.loc);
                 }
@@ -6514,8 +6517,11 @@ pub(crate) mod __gated_printer {
                 return;
             }
 
-            let yes = self.late_folded_stmt(s.yes);
-            let no = self.late_folded_else(s);
+            let (yes, no) = if self.options.late_fold {
+                (self.late_folded_stmt(s.yes), self.late_folded_else(s))
+            } else {
+                (s.yes, s.no)
+            };
 
             self.print_space_before_identifier();
             self.add_source_mapping(loc);
@@ -6536,7 +6542,12 @@ pub(crate) mod __gated_printer {
                     }
                 }
                 _ => {
-                    if self.wrap_to_avoid_ambiguous_else(&yes.data) {
+                    let wrap = if self.options.late_fold {
+                        self.late_folded_wrap_to_avoid_ambiguous_else(yes.data)
+                    } else {
+                        Self::wrap_to_avoid_ambiguous_else(&yes.data)
+                    };
+                    if wrap {
                         self.print_space();
                         self.print(b"{");
                         self.print_newline();
@@ -6592,25 +6603,45 @@ pub(crate) mod __gated_printer {
             }
         }
 
-        pub(crate) fn wrap_to_avoid_ambiguous_else(&mut self, s_: &StmtData) -> bool {
-            let mut s = *s_;
+        pub(crate) fn wrap_to_avoid_ambiguous_else(s_: &StmtData) -> bool {
+            let mut s = s_;
             loop {
                 match s {
                     StmtData::SIf(index) => {
-                        if let Some(no) = self.late_folded_else(&index) {
-                            s = no.data;
+                        if let Some(no) = &index.no {
+                            s = &no.data;
                         } else {
                             return true;
                         }
                     }
-                    StmtData::SFor(current) => s = self.late_folded_stmt(current.body).data,
-                    StmtData::SForIn(current) => s = self.late_folded_stmt(current.body).data,
-                    StmtData::SForOf(current) => s = self.late_folded_stmt(current.body).data,
-                    StmtData::SWhile(current) => s = self.late_folded_stmt(current.body).data,
-                    StmtData::SWith(current) => s = self.late_folded_stmt(current.body).data,
-                    StmtData::SLabel(current) => s = self.late_folded_stmt(current.stmt).data,
+                    StmtData::SFor(current) => s = &current.body.data,
+                    StmtData::SForIn(current) => s = &current.body.data,
+                    StmtData::SForOf(current) => s = &current.body.data,
+                    StmtData::SWhile(current) => s = &current.body.data,
+                    StmtData::SWith(current) => s = &current.body.data,
+                    StmtData::SLabel(current) => s = &current.stmt.data,
                     _ => return false,
                 }
+            }
+        }
+
+        /// `wrap_to_avoid_ambiguous_else` for the statements that the late fold leaves.
+        #[inline(never)]
+        fn late_folded_wrap_to_avoid_ambiguous_else(&mut self, mut s: StmtData) -> bool {
+            loop {
+                s = match s {
+                    StmtData::SIf(index) => match self.late_folded_else(&index) {
+                        Some(no) => no.data,
+                        None => return true,
+                    },
+                    StmtData::SFor(current) => self.late_folded_stmt(current.body).data,
+                    StmtData::SForIn(current) => self.late_folded_stmt(current.body).data,
+                    StmtData::SForOf(current) => self.late_folded_stmt(current.body).data,
+                    StmtData::SWhile(current) => self.late_folded_stmt(current.body).data,
+                    StmtData::SWith(current) => self.late_folded_stmt(current.body).data,
+                    StmtData::SLabel(current) => self.late_folded_stmt(current.stmt).data,
+                    _ => return false,
+                };
             }
         }
 
@@ -6728,47 +6759,42 @@ pub(crate) mod __gated_printer {
             }
         }
 
-        /// Prints the unary, binary or conditional `expr` folded, if cross-module values fold it.
-        #[inline]
-        fn print_late_folded(&mut self, expr: Expr, level: Level, flags: ExprFlagSet) -> bool {
-            self.options.late_fold
-                && !flags.contains(ExprFlag::SkipLateFold)
-                && self.print_late_folded_slow(expr, level, flags)
-        }
-
+        /// Prints the unary, binary or conditional `expr`, folded if cross-module values fold it.
         #[inline(never)]
-        fn print_late_folded_slow(&mut self, expr: Expr, level: Level, flags: ExprFlagSet) -> bool {
+        fn print_late_folded(&mut self, expr: Expr, level: Level, flags: ExprFlagSet) {
             let mut spine = core::mem::take(&mut self.late_fold_spine);
             let folded = self.late_fold().fold(expr, &mut spine);
             self.late_fold_spine = spine;
-            let Some(folded) = folded else {
-                return false;
-            };
-            self.print_expr(folded, level, flags | ExprFlag::SkipLateFold);
-            true
+            self.print_expr(
+                folded.unwrap_or(expr),
+                level,
+                flags | ExprFlag::SkipLateFold,
+            );
         }
 
         /// The statement to print for `stmt`: `LateFold::fold_if` replaces a decided `if`.
         #[inline]
         fn late_folded_stmt(&mut self, stmt: Stmt) -> Stmt {
             if self.options.late_fold && matches!(stmt.data, StmtData::SIf(_)) {
-                return self.late_folded_if(stmt);
+                return self.late_folded_if(stmt).unwrap_or(stmt);
             }
             stmt
         }
 
+        /// `None` when the `if` statement `stmt` stays as it is.
         #[inline(never)]
-        fn late_folded_if(&mut self, mut stmt: Stmt) -> Stmt {
+        fn late_folded_if(&mut self, stmt: Stmt) -> Option<Stmt> {
             let mut spine = core::mem::take(&mut self.late_fold_spine);
             let late_fold = self.late_fold();
-            while let StmtData::SIf(s) = &stmt.data {
-                let Some(folded) = late_fold.fold_if(s, stmt.loc, &mut spine) else {
+            let mut folded = None;
+            while let StmtData::SIf(s) = &folded.unwrap_or(stmt).data {
+                let Some(next) = late_fold.fold_if(s, stmt.loc, &mut spine) else {
                     break;
                 };
-                stmt = folded;
+                folded = Some(next);
             }
             self.late_fold_spine = spine;
-            stmt
+            folded
         }
 
         /// Prints a statement of a statement list. There, what the late fold left of a statement
@@ -6818,8 +6844,10 @@ pub(crate) mod __gated_printer {
         #[inline]
         fn late_folded_else(&mut self, s: &S::If) -> Option<Stmt> {
             let no = s.no?;
-            if self.options.late_fold && matches!(no.data, StmtData::SIf(_)) {
-                let folded = self.late_folded_if(no);
+            if self.options.late_fold
+                && matches!(no.data, StmtData::SIf(_))
+                && let Some(folded) = self.late_folded_if(no)
+            {
                 return match &folded.data {
                     StmtData::SEmpty(_) => None,
                     StmtData::SBlock(block) if slice_of(block.stmts).is_empty() => None,
@@ -6829,6 +6857,7 @@ pub(crate) mod __gated_printer {
             Some(no)
         }
 
+        #[inline]
         fn print_expr_stmt(&mut self, value: Expr) {
             if !self.options.minify_whitespace && self.options.indent.count > 0 {
                 self.print_indent();

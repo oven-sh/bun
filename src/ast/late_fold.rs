@@ -302,8 +302,7 @@ impl<'a> LateFold<'a> {
         ) && self.to_boolean(expr, spine).is_some()
     }
 
-    /// True when the statements of a block can stand in the statement list around it: none is
-    /// scoped to the block, and the first cannot become a directive.
+    /// True when nothing is scoped to the block and its first statement cannot become a directive.
     pub fn can_open_block(&self, stmts: &[Stmt], spine: &mut Vec<Expr>) -> bool {
         if let Some(StmtData::SExpr(first)) = stmts.first().map(|stmt| &stmt.data)
             && self.is_string(first.value, spine)
@@ -317,8 +316,7 @@ impl<'a> LateFold<'a> {
         })
     }
 
-    /// The statement that replaces the `if` statement `s`, when cross-module values decide
-    /// its test: the branch that runs, after what the test runs for effect.
+    /// The statement that replaces `s` when cross-module values decide its test.
     pub fn fold_if(&self, s: &S::If, loc: crate::Loc, spine: &mut Vec<Expr>) -> Option<Stmt> {
         // `if (effect(), E.A)`: the parser merges a preceding expression statement in.
         let (effects, test) = match &s.test.data {

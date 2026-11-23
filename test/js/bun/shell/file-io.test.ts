@@ -1,6 +1,6 @@
 import { $ } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isPosix, tempDir } from "harness";
+import { bunEnv, bunExe, isPosix, isWindows, substDrive, tempDir } from "harness";
 import * as fs from "node:fs";
 import { join } from "node:path";
 import { createTestBuilder } from "./test_builder";
@@ -287,4 +287,42 @@ test.concurrent("write completion survives dropping the redirect writer's last r
     stderr: expect.any(String),
     exitCode: 0,
   });
+});
+
+test.concurrent.skipIf(!isWindows)("an operand that starts with a backslash is on the current drive", async () => {
+  using dir = tempDir("shell-subst-drive", {
+    "cfg/a.txt": "read\n",
+    "cfg/sub/c.txt": "",
+    "w/script.sh": String.raw`
+      cat '\cfg\a.txt' && echo written > '\cfg\b.txt' && [[ -f '\cfg\b.txt' ]] && ls '\cfg\sub' && cd '\cfg' && cd sub && ls
+    `,
+  });
+  using drive = substDrive(String(dir));
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "script.sh"],
+    cwd: join(drive.root, "w"),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr }).toEqual({ stdout: "read\nc.txt\nc.txt\n", stderr: "" });
+  expect(fs.readFileSync(join(String(dir), "cfg", "b.txt"), "utf8")).toBe("written\n");
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent.skipIf(!isWindows)("cd with a relative operand stays on the drive of cd /", async () => {
+  using dir = tempDir("shell-cd-root", { "a.txt": "read\n" });
+  using drive = substDrive(String(dir));
+  const fromRoot = String(dir).slice(3).replaceAll("\\", "/");
+  await using proc = Bun.spawn({
+    // The process is on the new drive, and the shell is not.
+    cmd: [bunExe(), "exec", `cd '${dir}' && cd / && cd '${fromRoot}' && pwd && cat a.txt`],
+    cwd: drive.root,
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: `/${fromRoot}\nread\n`, stderr: "", exitCode: 0 });
 });

@@ -3,6 +3,7 @@
 #include "JavaScriptCore/ArgList.h"
 #include "headers.h"
 #include "ConsoleObject.h"
+#include "NodeDiagnosticsChannel.h"
 #include "ZigGlobalObject.h"
 
 #include <JavaScriptCore/ConsoleClient.h>
@@ -55,6 +56,15 @@ void ConsoleObject::messageWithTypeAndLevel(MessageType type, MessageLevel level
     if (type == MessageType::Table && count >= 2 && !args->argumentAt(1).isUndefined() && (!args->argumentAt(1).isCell() || args->argumentAt(1).asCell()->type() != JSC::JSType::ArrayType)) [[unlikely]] {
         JSC::throwTypeError(globalObject, scope, "The \"properties\" argument must be an instance of Array."_s);
         return;
+    }
+
+    MarkedArgumentBuffer printed;
+    bool isReplaced = publishConsoleCall(defaultGlobalObject(globalObject), type, level, *args, printed, std::size(jsArgs));
+    RETURN_IF_EXCEPTION(scope, );
+    if (isReplaced) [[unlikely]] {
+        count = printed.size();
+        for (size_t i = 0; i < count; i++)
+            jsArgs[i] = JSC::JSValue::encode(printed.at(i));
     }
 
     RELEASE_AND_RETURN(scope, Bun__ConsoleObject__messageWithTypeAndLevel(static_cast<uint32_t>(type), static_cast<uint32_t>(level), globalObject, jsArgs, count));
@@ -124,10 +134,10 @@ void ConsoleObject::timeLog(JSGlobalObject* globalObject, const String& label,
 
     Bun__ConsoleObject__timeLog(globalObject, &input, jsArgs, count);
 }
-void ConsoleObject::timeEnd(JSGlobalObject*, const String& label)
+void ConsoleObject::timeEnd(JSGlobalObject* globalObject, const String& label)
 {
     auto input = Bun::toString(label);
-    Bun__ConsoleObject__timeEnd(&input);
+    Bun__ConsoleObject__timeEnd(globalObject, &input);
 }
 void ConsoleObject::timeStamp(JSGlobalObject*, Ref<ScriptArguments>&&) {}
 void ConsoleObject::record(JSGlobalObject*, Ref<ScriptArguments>&&) {}

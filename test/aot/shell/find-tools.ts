@@ -13,6 +13,10 @@ export const findTool = (bun: string, name: string) =>
     .map(folder => join(folder, name + suffix))
     .find(existsSync);
 
+/** The environment for `testaot` and `jsc`, which exit without destroying their VM: LeakSanitizer would report that. The rule of shell_environment in toolchain.py. */
+export const withoutLeakReports = <Env extends Record<string, string | undefined>>(env: Env): Env =>
+  env.ASAN_OPTIONS ? { ...env, ASAN_OPTIONS: `${env.ASAN_OPTIONS}:detect_leaks=0` } : env;
+
 /** Whether that Bun is a front end: `bun compile --aot-out=<file>` writes the program. */
 export function canWriteProgram(bun: string, env: Record<string, string | undefined>) {
   const folder = mkdtempSync(join(tmpdir(), "aot-front-end-"));

@@ -15,7 +15,7 @@ import { declare } from "../harness/capabilities";
 import { slot, slots } from "../harness/commands";
 import { unsupported } from "../harness/compiler";
 import { sharedSlot } from "../harness/shared-slots";
-import { findTool } from "../shell/find-tools";
+import { findTool, withoutLeakReports } from "../shell/find-tools";
 
 const repository = join(import.meta.dir, "..", "..", "..");
 const besideBun = dirname(bunExe());
@@ -33,10 +33,7 @@ export const engineTests =
   ].find(existsSync);
 const engineTestsOfBun = join(import.meta.dir, "..", "engine-tests");
 
-// Neither tool destroys its VM before it exits.
-export const toolEnv = bunEnv.ASAN_OPTIONS
-  ? { ...bunEnv, ASAN_OPTIONS: `${bunEnv.ASAN_OPTIONS}:detect_leaks=0` }
-  : bunEnv;
+export const toolEnv = withoutLeakReports(bunEnv);
 
 // abort() prints nothing, and on Linux WTF's CRASH() is std::abort(). With handle_abort=1 a sanitizer prints the caller's stack.
 export const commandEnv = toolEnv.ASAN_OPTIONS

@@ -13,7 +13,7 @@ import { bunEnv, bunExe, isCI, isWindows } from "harness";
 import { dirname, join } from "path";
 import { declare } from "../harness/capabilities";
 import { unsupported } from "../harness/commands";
-import { canWriteProgram, findTool, whyNoScriptStarts } from "./find-tools";
+import { canWriteProgram, findTool, whyNoScriptStarts, withoutLeakReports } from "./find-tools";
 
 const repository = join(import.meta.dir, "..", "..", "..");
 const bunDirectory = dirname(bunExe());
@@ -38,10 +38,7 @@ export const engineTests =
       .map(path => join(path, "Source", "JavaScriptCore", "aot", "tests")),
   ].find(existsSync);
 
-/** For testaot and jsc, which exit without destroying their VM: LeakSanitizer would report that. The rule of shell_environment in toolchain.py. */
-export const toolEnv = bunEnv.ASAN_OPTIONS
-  ? { ...bunEnv, ASAN_OPTIONS: `${bunEnv.ASAN_OPTIONS}:detect_leaks=0` }
-  : bunEnv;
+export const toolEnv = withoutLeakReports(bunEnv);
 
 /** Why no script of this folder can be started here, in words for whoever reads the log. */
 export const scriptSkipReason = whyNoScriptStarts(bunExe(), unsupported, { jsc, testaot, python, frontEnd });

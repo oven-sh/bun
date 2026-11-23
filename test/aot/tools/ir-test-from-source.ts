@@ -12,14 +12,12 @@
 import { bunEnv, bunExe, tempDir } from "harness";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
-import { findTool } from "../shell/find-tools";
+import { findTool, withoutLeakReports } from "../shell/find-tools";
 
 // As ../shell/tools has them. That file also asks the Bun under test, in a process of its own, whether it has the compiler, and this tool is
 // started for every file of two folders.
 export const testaot = process.env.TESTAOT ?? findTool(bunExe(), "testaot");
-export const toolEnv = bunEnv.ASAN_OPTIONS
-  ? { ...bunEnv, ASAN_OPTIONS: `${bunEnv.ASAN_OPTIONS}:detect_leaks=0` }
-  : bunEnv;
+export const toolEnv = withoutLeakReports(bunEnv);
 
 /** `written`: a file that counts as success where it is there, whatever the exit code. What a signal has ended has not succeeded. */
 function run(cmd: string[], cwd: string, env: typeof bunEnv, written?: string) {

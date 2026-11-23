@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "fs";
-import { tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
 const project = {
@@ -171,6 +171,35 @@ export { join };
     expect(filesIn(join(root, "a/out"))).toEqual(WRITTEN);
     expect(filesIn(join(root, "b/out"))).toEqual(WRITTEN.filter(path => path !== "join.d.ts"));
     expect(readFileSync(join(root, "b/out/index.d.ts"), "utf8")).toBe("export declare const other: number;\n");
+  });
+
+  // https://github.com/oven-sh/bun/issues/49457
+  test("a declaration file that is emitted for another file's declarations", async () => {
+    using dir = tempDir("build-api-dts-emitted", {
+      "a.ts": `export const X = [1];\nexport type T = typeof X;\n`,
+      "b.ts": `import type { T } from "./a.ts";\nexport type D = T;\n`,
+      "build.ts": `const built = await Bun.build({ entrypoints: ["./b.ts"], outdir: "./out", dts: true, throw: false });
+console.log(JSON.stringify({ success: built.success, logs: built.logs.map(String) }));
+`,
+    });
+    const root = String(dir);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build.ts"],
+      cwd: root,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: `{"success":true,"logs":[]}\n`, stderr: "" });
+    expect(filesIn(join(root, "out"))).toEqual(["a.d.ts", "b.aot.ts", "b.d.ts", "b.js"]);
+    expect(readFileSync(join(root, "out/a.d.ts"), "utf8")).toBe(
+      `export declare const X: number[];\nexport type T = typeof X;\n`,
+    );
+    expect(readFileSync(join(root, "out/b.d.ts"), "utf8")).toBe(
+      `import type { T } from "./a.js";\nexport type D = T;\n`,
+    );
+    expect(exitCode).toBe(0);
   });
 
   test("cannot be used with compile", () => {

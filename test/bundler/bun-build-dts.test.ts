@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync, symlinkSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
 import { join } from "path";
 
 async function bun(cwd: string, ...args: string[]) {
@@ -149,6 +149,31 @@ describe.concurrent("bun build --dts", () => {
     );
     expect(readdirSync(join(String(dir), "out"))).toContain("index.aot.ts");
   });
+
+  // The stack of the thread that `Bun.build` runs on is this small.
+  test.skipIf(!isLinux)(
+    "a declaration file that is emitted for another file's declarations, on a 2 MB stack",
+    async () => {
+      using dir = tempDir("build-dts-emitted", {
+        "a.ts": `export const X = [1];\nexport type T = typeof X;\n`,
+        "b.ts": `import type { T } from "./a.ts";\nexport type D = T;\n`,
+      });
+      await using proc = Bun.spawn({
+        cmd: ["sh", "-c", 'ulimit -s 2048 && exec "$@"', "sh", bunExe(), "build", "./b.ts", "--outdir", "out", "--dts"],
+        cwd: String(dir),
+        env: { ...bunEnv, NO_COLOR: "1" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(readdirSync(join(String(dir), "out")).sort()).toEqual(["a.d.ts", "b.aot.ts", "b.d.ts", "b.js"]);
+      expect(readFileSync(join(String(dir), "out/a.d.ts"), "utf8")).toBe(
+        `export declare const X: number[];\nexport type T = typeof X;\n`,
+      );
+      expect(exitCode).toBe(0);
+    },
+  );
 
   test("a type error fails the build", async () => {
     using dir = tempDir("build-dts-error", {

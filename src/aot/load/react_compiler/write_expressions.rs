@@ -86,7 +86,7 @@ impl TreeWriter<'_, '_> {
                 return Ok(self.write_member_of_global(known::globalThis, b"Object", range));
             }
             ExprData::ECall(call) => {
-                let base = self.write_chain_base(&call.target, call.optional_chain)?;
+                let base = self.write_callee(&call.target, call.kind, call.optional_chain)?;
                 let close = (call.close_paren_loc, call.can_be_unwrapped_if_unused);
                 let shape = match call.was_jsx_element {
                     true => NodeShape::Other,
@@ -348,10 +348,10 @@ impl TreeWriter<'_, '_> {
 
     fn write_template(&mut self, template: &E::Template, loc: Loc) -> Written<ExprId> {
         let tag = match &template.tag {
-            Some(tag) => Some(self.write_chain_base(tag, None)?.0),
+            Some(tag) => Some(self.write_callee(&tag.expr, tag.kind, None)?.0),
             None => None,
         };
-        let is_raw = matches!(&template.tag, Some(tag) if self.is_call_of_raw_template(tag));
+        let is_raw = matches!(&template.tag, Some(tag) if self.is_call_of_raw_template(&tag.expr));
         let range = match tag {
             Some(_) if !is_raw => self.range_of_shape(loc, NodeShape::Call),
             Some(_) | None => self.range_of(loc),
@@ -570,6 +570,31 @@ impl TreeWriter<'_, '_> {
             }
         };
         Ok((written, chain))
+    }
+
+    fn write_callee(
+        &mut self,
+        callee: &Expr,
+        kind: E::CallKind,
+        link: Option<OptionalChain>,
+    ) -> Written<(ExprId, Chain)> {
+        let (right, chain) = self.write_chain_base(callee, link)?;
+        let written = self.file[right];
+        let is_member = match written.kind {
+            ExprKind::Dot { .. } | ExprKind::Index { .. } => true,
+            // The value of "--define a=b.c" is one name
+            ExprKind::Ident(name) => contains_char(self.atoms.bytes(name), b'.'),
+            _ => false,
+        };
+        if kind != E::CallKind::Plain || !is_member {
+            return Ok((right, chain));
+        }
+        let left = self.write_number_literal(0.0, (written.pos, written.pos));
+        let op = BinOp::Comma;
+        let range = (written.pos, written.end);
+        let value = self.add_expression_at(ExprKind::Binary { op, left, right }, range);
+        self.parenthesize(value);
+        Ok((value, chain))
     }
 
     fn write_dot(&mut self, dot: &E::Dot, loc: Loc) -> Written<ExprId> {

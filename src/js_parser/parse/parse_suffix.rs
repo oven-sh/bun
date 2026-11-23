@@ -178,6 +178,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let target = *left;
                 *left = p.new_expr(
                     E::Call {
+                        kind: E::CallKind::of(&target),
                         target,
                         args: list_loc.list,
                         close_paren_loc: list_loc.loc,
@@ -208,6 +209,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let target = *left;
                 *left = p.new_expr(
                     E::Call {
+                        kind: E::CallKind::of(&target),
                         target,
                         args: list_loc.list,
                         close_paren_loc: list_loc.loc,
@@ -291,7 +293,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let tag = *left;
         *left = p.new_expr(
             E::Template {
-                tag: Some(tag),
+                tag: Some(E::TemplateTag::new(tag)),
                 head: E::TemplateContents::Raw(head),
                 parts: E::Template::empty_parts(),
             },
@@ -321,7 +323,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let loc = left.loc;
         *left = p.new_expr(
             E::Template {
-                tag: Some(tag),
+                tag: Some(E::TemplateTag::new(tag)),
                 head: E::TemplateContents::Raw(head),
                 parts,
             },
@@ -392,6 +394,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let target = *left;
         *left = p.new_expr(
             E::Call {
+                kind: E::CallKind::of(&target),
                 target,
                 args: list_loc.list,
                 close_paren_loc: list_loc.loc,

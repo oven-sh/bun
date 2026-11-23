@@ -2542,23 +2542,6 @@ pub(crate) mod __gated_printer {
             );
         }
 
-        pub(crate) fn is_unbound_eval_identifier(&self, value: Expr) -> bool {
-            match &value.data {
-                ExprData::EIdentifier(ident) => {
-                    if ident.ref_.is_source_contents_slice() {
-                        return false;
-                    }
-                    let Some(symbol) = self.symbols().get_const(self.symbols().follow(ident.ref_))
-                    else {
-                        return false;
-                    };
-                    symbol.kind == js_ast::symbol::Kind::Unbound
-                        && symbol.original_name.slice() == b"eval"
-                }
-                _ => false,
-            }
-        }
-
         #[inline]
         fn symbols(&self) -> &'a js_ast::symbol::Map {
             self.renamer.symbols
@@ -3416,19 +3399,7 @@ pub(crate) mod __gated_printer {
                             self.stmt_start = self.writer.written();
                         }
                     }
-                    // We only want to generate an unbound eval() in CommonJS
-                    let is_unbound_eval = !e.is_direct_eval
-                        && self.is_unbound_eval_identifier(e.target)
-                        && e.optional_chain.is_none();
-
-                    if is_unbound_eval {
-                        self.print(b"(0,");
-                        self.print_space();
-                        self.print_expr(e.target, Level::Postfix, ExprFlag::none());
-                        self.print(b")");
-                    } else {
-                        self.print_callee(e.target, target_flags);
-                    }
+                    self.print_callee(e.target, e.kind, e.optional_chain.is_none(), target_flags);
 
                     if e.optional_chain == Some(js_ast::OptionalChain::Start) {
                         self.print(b"?.");
@@ -4126,7 +4097,14 @@ pub(crate) mod __gated_printer {
 
                     if let Some(tag) = &e.tag {
                         self.add_source_mapping(expr.loc);
-                        self.print_callee(*tag, ExprFlag::none());
+                        // An optional chain cannot be a tag unless it is in parentheses
+                        self.print_callee(
+                            tag.expr,
+                            tag.kind,
+                            false,
+                            ExprFlag::has_non_optional_chain_parent()
+                                | (flags & ExprFlag::ForbidCall),
+                        );
                     } else {
                         self.add_source_mapping(expr.loc);
                     }
@@ -4203,12 +4181,10 @@ pub(crate) mod __gated_printer {
                     // Potentially use a property access instead of an identifier
                     let mut did_print = false;
 
-                    let ref_ = if self.options.module_type != bundle_opts::Format::InternalBakeDev {
-                        self.symbols().follow(e.ref_)
-                    } else {
-                        e.ref_
-                    };
-                    let symbol = self.symbols().get_const(ref_).unwrap();
+                    let symbol = self
+                        .symbols()
+                        .get_const(self.import_symbol_ref(*e))
+                        .unwrap();
 
                     if symbol.import_item_status == js_ast::ImportItemStatus::Missing {
                         self.print_undefined(expr.loc, level);
@@ -4512,12 +4488,84 @@ pub(crate) mod __gated_printer {
         }
 
         /// The target of a call, or the tag of a template.
-        fn print_callee(&mut self, callee: Expr, flags: ExprFlagSet) {
-            if let ExprData::ECommonjsExportIdentifier(id) = callee.data {
+        #[inline(always)] // Not one more stack frame for each link of "a()()()"
+        fn print_callee(
+            &mut self,
+            callee: Expr,
+            kind: E::CallKind,
+            can_be_direct_eval: bool,
+            flags: ExprFlagSet,
+        ) {
+            if self.would_print_as_another_kind(callee, kind, can_be_direct_eval) {
+                self.print(b"(0,");
+                self.print_space();
+                self.print_expr(callee, Level::Comma, ExprFlag::none());
+                self.print(b")");
+            } else if let (E::CallKind::AsPrinted, ExprData::ECommonjsExportIdentifier(id)) =
+                (kind, callee.data)
+            {
                 self.print_commonjs_export_identifier(id, callee.loc, true);
             } else {
                 self.print_expr(callee, Level::Postfix, flags);
             }
+        }
+
+        fn would_print_as_another_kind(
+            &self,
+            callee: Expr,
+            kind: E::CallKind,
+            can_be_direct_eval: bool,
+        ) -> bool {
+            use E::CallKind::{AsPrinted, DirectEval, Plain};
+            match (kind, callee.data) {
+                (AsPrinted | Plain, ExprData::EIdentifier(id)) => {
+                    !id.ref_.is_source_contents_slice()
+                        && self
+                            .symbols()
+                            .get_const(self.symbols().follow(id.ref_))
+                            .is_some_and(|symbol| {
+                                (can_be_direct_eval && symbol.original_name.slice() == b"eval")
+                                    || (kind == Plain && symbol.is_dotted_define())
+                            })
+                }
+                (AsPrinted | DirectEval, _) => false,
+                (Plain, ExprData::EDot(_) | ExprData::EIndex(_)) => true,
+                (Plain, ExprData::ECommonjsExportIdentifier(id)) => {
+                    self.options.commonjs_named_exports_deoptimized
+                        || self.commonjs_export(id).is_some_and(|it| it.1.needs_decl)
+                }
+                (Plain, ExprData::ESpecial(E::Special::ModuleExports)) => {
+                    self.options.commonjs_module_exports_assigned_deoptimized
+                }
+                (Plain, ExprData::EImportIdentifier(id)) => self
+                    .symbols()
+                    .get_const(self.import_symbol_ref(id))
+                    .is_some_and(|symbol| {
+                        symbol.namespace_alias.is_some()
+                            && symbol.import_item_status != js_ast::ImportItemStatus::Missing
+                    }),
+                (Plain, _) => false,
+            }
+        }
+
+        fn import_symbol_ref(&self, id: E::ImportIdentifier) -> Ref {
+            if self.options.module_type != bundle_opts::Format::InternalBakeDev {
+                self.symbols().follow(id.ref_)
+            } else {
+                id.ref_
+            }
+        }
+
+        fn commonjs_export(
+            &self,
+            id: E::CommonJSExportIdentifier,
+        ) -> Option<(&'a [u8], &'a js_ast::ast_result::CommonJSNamedExport)> {
+            let exports = self.options.commonjs_named_exports?;
+            let idx = exports
+                .values()
+                .iter()
+                .position(|value| value.loc_ref.ref_.eql(id.ref_))?;
+            Some((&exports.keys()[idx], &exports.values()[idx]))
         }
 
         /// `exports.name`: the binding `$name`, or a property for a call that reads `this`.
@@ -4530,18 +4578,9 @@ pub(crate) mod __gated_printer {
             self.print_space_before_identifier();
             self.add_source_mapping(loc);
 
-            let Some(exports) = self.options.commonjs_named_exports else {
+            let Some((key, value)) = self.commonjs_export(id) else {
                 return;
             };
-            let Some(idx) = exports
-                .values()
-                .iter()
-                .position(|value| value.loc_ref.ref_.eql(id.ref_))
-            else {
-                return;
-            };
-            let key: &[u8] = &exports.keys()[idx];
-            let value = &exports.values()[idx];
             let (binding, needs_decl) = (value.loc_ref.ref_, value.needs_decl);
             let call_needs_this = is_call_target
                 && self
@@ -6630,10 +6669,7 @@ pub(crate) mod __gated_printer {
                 .import_member_bindings?
                 .get(&import_ref)?
                 .get(name)?;
-            Some(Expr::init(
-                E::ImportIdentifier::new(binding, false),
-                target.loc,
-            ))
+            Some(Expr::init(E::ImportIdentifier::new(binding), target.loc))
         }
 
         pub(crate) fn try_to_get_imported_enum_value(

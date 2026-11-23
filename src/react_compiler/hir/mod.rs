@@ -689,6 +689,7 @@ pub enum InstructionValue {
     CallExpression {
         callee: Place,
         args: HirVec<PlaceOrSpread>,
+        bun_kind: bun_ast::E::CallKind,
         loc: Option<SourceLocation>,
     },
     MethodCall {
@@ -802,6 +803,7 @@ pub enum InstructionValue {
     TaggedTemplateExpression {
         tag: Place,
         value: TemplateQuasi,
+        bun_kind: bun_ast::E::CallKind,
         loc: Option<SourceLocation>,
     },
     TemplateLiteral {

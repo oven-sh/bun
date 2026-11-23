@@ -36,29 +36,6 @@ pub(crate) enum MockHoistOrder {
     InPlace,
 }
 
-/// Rewrites a lowered import's callee to `(0, ns.fn)`, so the call doesn't pass `ns` as `this`.
-pub(crate) fn drop_namespace_of_lowered_callee(
-    symbols: &[js_ast::Symbol],
-    callee: &mut Expr,
-) -> bool {
-    let ExprData::EImportIdentifier(import) = callee.data else {
-        return false;
-    };
-    let symbol = &symbols[import.ref_.inner_index() as usize];
-    // A TypeScript namespace member from another block also has a `namespace_alias`, but keeps its `this`.
-    let is_lowered = import.was_originally_identifier()
-        && symbol.kind == js_ast::symbol::Kind::Import
-        && symbol.namespace_alias.is_some();
-    if is_lowered {
-        *callee = Expr {
-            data: crate::prefill::data::ZERO,
-            loc: callee.loc,
-        }
-        .join_with_comma(*callee);
-    }
-    is_lowered
-}
-
 impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
     /// Picks the transpiler cache key, so `bun test` and `bun run` have to compute the same answer.
     pub(crate) fn uses_test_api(&self) -> bool {

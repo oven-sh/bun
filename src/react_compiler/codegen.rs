@@ -169,7 +169,7 @@ impl<'h> Codegen<'h> {
             r
         };
         self.host.record_usage(r);
-        Expr::init(E::ImportIdentifier::new(r, false), loc)
+        Expr::init(E::ImportIdentifier::new(r), loc)
     }
 
     fn well_known_global(&mut self, w: WellKnown, name: &[u8]) -> Ref {
@@ -198,7 +198,7 @@ impl<'h> Codegen<'h> {
         if ref_.is_symbol() {
             if let Some(sym) = self.host.symbols().get(ref_.inner_index() as usize) {
                 if sym.kind == bun_ast::symbol::Kind::Import {
-                    return Expr::init(E::ImportIdentifier::new(ref_, true), loc);
+                    return Expr::init(E::ImportIdentifier::new(ref_), loc);
                 }
             }
         }
@@ -260,7 +260,7 @@ pub(crate) fn codegen_function(
         cx.cg.host.record_usage(use_memo_cache_ref);
         // Synthesized AST is never re-visited by the parser's `EIdentifier→EImportIdentifier`
         // promotion, so emit `EImportIdentifier` directly.
-        let use_memo_cache = Expr::init(E::ImportIdentifier::new(use_memo_cache_ref, true), loc);
+        let use_memo_cache = Expr::init(E::ImportIdentifier::new(use_memo_cache_ref), loc);
         let call = Expr::init(
             E::Call {
                 target: use_memo_cache,
@@ -1918,7 +1918,12 @@ fn codegen_base_instruction_value(
                 None => Ok(cx.cg.ident_expr(StoreStr::new(binding.name()), loc)),
             }
         }
-        InstructionValue::CallExpression { callee, args, .. } => {
+        InstructionValue::CallExpression {
+            callee,
+            args,
+            bun_kind,
+            ..
+        } => {
             let callee_expr = codegen_place_to_expression(cx, callee)?;
             let arguments = codegen_arguments(cx, args)?;
             if let ExprData::EImport(orig) = callee_expr.data {
@@ -1935,6 +1940,7 @@ fn codegen_base_instruction_value(
             }
             let call_expr = Expr::init(
                 E::Call {
+                    kind: *bun_kind,
                     target: callee_expr,
                     args: arguments,
                     ..Default::default()
@@ -2215,11 +2221,19 @@ fn codegen_base_instruction_value(
             expr_type,
             ..
         } => codegen_function_expression(cx, name, name_hint, lowered_func, *expr_type, loc),
-        InstructionValue::TaggedTemplateExpression { tag, value, .. } => {
+        InstructionValue::TaggedTemplateExpression {
+            tag,
+            value,
+            bun_kind,
+            ..
+        } => {
             let tag_expr = codegen_place_to_expression(cx, tag)?;
             Ok(Expr::init(
                 E::Template {
-                    tag: Some(tag_expr),
+                    tag: Some(E::TemplateTag {
+                        kind: *bun_kind,
+                        expr: tag_expr,
+                    }),
                     head: E::TemplateContents::Raw(value.raw),
                     parts: StoreSlice::EMPTY,
                 },
@@ -2277,7 +2291,7 @@ fn codegen_base_instruction_value(
             }
             let fragment_ref = cx.cg.host.jsx_import(JsxImportKind::Fragment);
             cx.cg.host.record_usage(fragment_ref);
-            let tag_value = Expr::init(E::ImportIdentifier::new(fragment_ref, true), loc);
+            let tag_value = Expr::init(E::ImportIdentifier::new(fragment_ref), loc);
             Ok(codegen_jsx_call(
                 cx,
                 tag_value,
@@ -2677,7 +2691,7 @@ fn codegen_create_element_call(
     } else {
         let target_ref = cx.cg.host.jsx_import(JsxImportKind::CreateElement);
         cx.cg.host.record_usage(target_ref);
-        Expr::init(E::ImportIdentifier::new(target_ref, true), loc)
+        Expr::init(E::ImportIdentifier::new(target_ref), loc)
     };
 
     let mut args: ExprNodeList = AstAlloc::vec_with_capacity(2 + children.len());
@@ -2793,7 +2807,7 @@ fn codegen_jsx_call(
 
     Expr::init(
         E::Call {
-            target: Expr::init(E::ImportIdentifier::new(target_ref, true), loc),
+            target: Expr::init(E::ImportIdentifier::new(target_ref), loc),
             args,
             can_be_unwrapped_if_unused: E::CallUnwrap::IfUnused,
             was_jsx_element: true,

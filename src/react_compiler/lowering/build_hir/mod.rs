@@ -780,7 +780,7 @@ impl<'h> CaptureWalker<'h> {
             }
             ExprData::ETemplate(t) => {
                 if let Some(tag) = &t.tag {
-                    self.walk_expr(tag);
+                    self.walk_expr(&tag.expr);
                 }
                 for part in t.parts() {
                     self.walk_expr(&part.value);

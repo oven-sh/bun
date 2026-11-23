@@ -7,7 +7,6 @@ use bun_core::strings;
 
 use crate::lexer as js_lexer;
 use crate::lower::defer_requires::function_called_in_place;
-use crate::lower::hoist_test_mocks::drop_namespace_of_lowered_callee;
 use crate::lower::import_meta_glob::is_object_keys_call;
 use crate::p::P;
 use crate::parser::{
@@ -362,7 +361,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 .ref_,
                         ),
                 )
-                .with_was_originally_identifier(true)
                 .with_is_property_access_target(in_.is_property_access_target),
         );
     }
@@ -686,13 +684,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let _ = in_;
         let mut e_ = expr.data.e_template().expect("infallible: variant checked");
         if let Some(tag) = e_.tag.as_mut() {
-            p.template_tag = tag.data;
-            p.visit_expr(tag);
-            if p.options.features.inject_jest_globals
-                && drop_namespace_of_lowered_callee(&p.symbols, tag)
-            {
-                p.did_apply_test_feature = true;
-            }
+            p.template_tag = tag.expr.data;
+            p.visit_callee(&mut tag.expr, &mut tag.kind, ExprIn::default());
         }
 
         // Visit the interpolation values before the macro dispatch below: its
@@ -707,9 +700,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.visit_expr(&mut part.value);
         }
 
-        if let Some(tag) = e_.tag {
+        if let Some(E::TemplateTag { expr: tag, .. }) = e_.tag {
             if Self::ALLOW_MACROS {
-                let ref_ = match &e_.tag.unwrap().data {
+                let ref_ = match &tag.data {
                     Data::EImportIdentifier(ident) => Some(ident.ref_),
                     Data::EDot(dot) => match &dot.target.data {
                         Data::EIdentifier(id) => Some(id.ref_),
@@ -727,7 +720,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     {
                         p.ignore_usage(ref_);
                         if p.is_control_flow_dead {
-                            *e = p.new_expr(E::Undefined {}, e_.tag.unwrap().loc);
+                            *e = p.new_expr(E::Undefined {}, tag.loc);
                             return;
                         }
 
@@ -735,7 +728,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         if p.options.features.no_macros {
                             p.log()
                                 .add_error(Some(p.source), tag.loc, b"Macros are disabled");
-                            *e = p.new_expr(E::Undefined {}, e_.tag.unwrap().loc);
+                            *e = p.new_expr(E::Undefined {}, tag.loc);
                             return;
                         }
 
@@ -747,9 +740,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                         p.macro_call_count += 1;
                         let name: &[u8] = macro_ref_data.name.unwrap_or_else(|| {
-                            e_.tag
-                                .unwrap()
-                                .data
+                            tag.data
                                 .e_dot()
                                 .expect("infallible: variant checked")
                                 .name
@@ -859,17 +850,72 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             },
             expr.loc,
         );
-        template.tag =
-            Some(self.call_runtime(expr.loc, b"__rawTemplate", ExprNodeList::init_one(raw)));
+        template.tag = Some(E::TemplateTag::new(self.call_runtime(
+            expr.loc,
+            b"__rawTemplate",
+            ExprNodeList::init_one(raw),
+        )));
         Some(self.new_expr(
             E::Call {
-                target: tag,
+                target: tag.expr,
+                kind: tag.kind,
                 args: ExprNodeList::from_bump_vec(args),
                 ..Default::default()
             },
             expr.loc,
         ))
     }
+
+    /// Inside "with", inside a TypeScript namespace and after "--define a=b.c"
+    fn name_was_short_for_property_access(&self, visited: &Expr) -> bool {
+        use js_ast::symbol::Kind;
+        let symbol = |ref_: Ref| self.symbols.get(ref_.inner_index() as usize);
+        visited.has_value_for_this_in_call()
+            || match visited.data {
+                Data::EImportIdentifier(id) => {
+                    symbol(id.ref_).is_some_and(|it| it.kind != Kind::Import)
+                }
+                Data::EIdentifier(id) => symbol(id.ref_).is_some_and(Symbol::is_dotted_define),
+                _ => false,
+            }
+    }
+
+    /// Visits the target of a call, or the tag of a template.
+    #[inline(always)] // Not one more stack frame for each link of "a()()()"
+    fn visit_callee(&mut self, callee: &mut Expr, kind: &mut E::CallKind, in_: ExprIn) {
+        let before = *callee;
+        self.visit_expr_in_out(callee, in_);
+        if *kind == E::CallKind::Plain {
+            self.keep_call_plain(before, callee, kind);
+        }
+    }
+
+    fn keep_call_plain(&self, before: Expr, callee: &mut Expr, kind: &mut E::CallKind) {
+        if matches!(before.data, Data::EIdentifier(..))
+            && !self.is_revisit_for_substitution
+            && self.name_was_short_for_property_access(callee)
+        {
+            *kind = E::CallKind::AsPrinted;
+            return;
+        }
+
+        // Later passes take a callee that is a property access for a method call
+        //
+        // "(1 && a.b)()" => "(0, a.b)()"
+        if callee.has_value_for_this_in_call() {
+            let zero = prefill::data::ZERO;
+            if let Data::EBinary(mut dropped) = before.data {
+                dropped.op = Op::BinComma;
+                dropped.left.data = zero;
+                dropped.right = *callee;
+                *callee = before;
+            } else {
+                let loc = before.loc;
+                *callee = Expr { data: zero, loc }.join_with_comma(*callee);
+            }
+        }
+    }
+
     fn e_binary(p: &mut Self, e: &mut Expr) {
         let expr = *e;
         use crate::visit::visit_binary::BinaryExpressionVisitor;
@@ -1143,8 +1189,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let target = e_.target.unwrap_inlined();
         let index = e_.index.unwrap_inlined();
 
-        // `[x][0] = v` writes into the temporary, not `x`.
-        if p.options.features.minify_syntax && in_.assign_target == js_ast::AssignTarget::None {
+        // `[x][0] = v`, `delete [x][0]` and `[x][0]()` use the temporary.
+        if p.options.features.minify_syntax
+            && in_.assign_target == js_ast::AssignTarget::None
+            && !is_delete_target
+            && !is_call_target
+            && !is_template_tag
+        {
             if let Some(number) = index.data.as_e_number() {
                 if number.value() >= 0.0
                     && number.value() < (usize::MAX as f64)
@@ -1191,13 +1242,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 return;
                             }
                             if inlined.can_be_inlined_from_property_access() {
-                                // "[obj.m][0]()" => "(0, obj.m)()"
-                                *e = if is_call_target && inlined.has_value_for_this_in_call() {
-                                    p.new_expr(E::Number::new(0.0), expr.loc)
-                                        .join_with_comma(inlined)
-                                } else {
-                                    inlined
-                                };
+                                *e = inlined;
                                 return;
                             }
                         }
@@ -1592,8 +1637,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     fn e_if(p: &mut Self, e: &mut Expr, _: ExprIn) {
         let mut e_ = e.data.e_if().expect("infallible: variant checked");
-        let is_call_target =
-            matches!(p.call_target, Data::EIf(ct) if core::ptr::eq(&raw const *e_, &raw const *ct));
 
         let prev_in_branch = p.in_branch_condition;
         p.in_branch_condition = true;
@@ -1625,16 +1668,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 return;
             }
 
-            // "(1 ? fn : 2)()" => "fn()"
-            // "(1 ? this.fn : 2)" => "this.fn"
-            // "(1 ? this.fn : 2)()" => "(0, this.fn)()"
-            if is_call_target && e_.yes.has_value_for_this_in_call() {
-                *e = p
-                    .new_expr(E::Number::new(0.0), e_.test.loc)
-                    .join_with_comma(e_.yes);
-                return;
-            }
-
             *e = e_.yes;
         } else {
             // "false ? dead : live"
@@ -1652,15 +1685,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 return;
             }
 
-            // "(1 ? fn : 2)()" => "fn()"
-            // "(1 ? this.fn : 2)" => "this.fn"
-            // "(1 ? this.fn : 2)()" => "(0, this.fn)()"
-            if is_call_target && e_.no.has_value_for_this_in_call() {
-                *e = p
-                    .new_expr(E::Number::new(0.0), e_.test.loc)
-                    .join_with_comma(e_.no);
-                return;
-            }
             *e = e_.no;
         }
     }
@@ -2000,9 +2024,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.while_loading.called = function_called_in_place(&e_).map(|it| it.0);
         }
 
-        let target_was_identifier_before_visit = matches!(e_.target.data, Data::EIdentifier(..));
-        p.visit_expr_in_out(
-            &mut e_.target,
+        let target_was_written_as_identifier =
+            matches!(e_.target.data, Data::EIdentifier(..)) && !p.is_revisit_for_substitution;
+        let call = &mut *e_;
+        p.visit_callee(
+            &mut call.target,
+            &mut call.kind,
             ExprIn {
                 property_access_for_method_call_maybe_should_replace_with_undefined: true,
                 ..Default::default()
@@ -2029,13 +2056,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // language committee said it was indirect and everyone had to change it:
                 // https://github.com/tc39/ecma262/issues/2062.
                 if e_.optional_chain.is_none()
-                    && target_was_identifier_before_visit
+                    && target_was_written_as_identifier
                     && p.symbols[ident.ref_.inner_index() as usize]
                         .original_name
                         .slice()
                         == b"eval"
                 {
-                    e_.is_direct_eval = true;
+                    e_.kind = E::CallKind::DirectEval;
 
                     // Pessimistically assume that if this looks like a CommonJS module
                     // (e.g. no "export" keywords), a direct call to "eval" means that
@@ -2065,12 +2092,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
             _ => {}
-        }
-
-        if p.options.features.inject_jest_globals
-            && drop_namespace_of_lowered_callee(&p.symbols, &mut e_.target)
-        {
-            p.did_apply_test_feature = true;
         }
 
         // `Promise.all([import("a"), …]).then(([{x}, ns]) => …)`

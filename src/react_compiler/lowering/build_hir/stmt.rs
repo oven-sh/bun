@@ -518,7 +518,7 @@ fn refs_in_expr(builder: &HirBuilder, e: &Expr, in_function: bool, on_ref: OnRef
         }
         ExprData::ETemplate(t) => {
             if let Some(tag) = &t.tag {
-                refs_in_expr(builder, tag, in_function, on_ref);
+                refs_in_expr(builder, &tag.expr, in_function, on_ref);
             }
             for p in t.parts().iter() {
                 refs_in_expr(builder, &p.value, in_function, on_ref);

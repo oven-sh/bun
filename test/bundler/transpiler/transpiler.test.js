@@ -192,15 +192,15 @@ describe("Bun.Transpiler", () => {
       ts.expectPrintedMin_("x = ({f: y}).f", "x = y");
       ts.expectPrintedMin_("x = new ({f: C}).f()", "x = new C");
     });
-    it("bails out or strips `this` when the index is a call/assignment target", () => {
-      // `[obj.m][0]()` calls through a Reference into the temporary array,
-      // so `this` is the array; inlining to `obj.m()` would bind `this` to
-      // `obj`. Match the sibling folds and emit `(0, obj.m)()`.
-      ts.expectPrintedMin_("x = [obj.m][0]()", "x = (0, obj.m)()");
-      ts.expectPrintedMin_("x = [obj[m]][0]()", "x = (0, obj[m])()");
+    it("bails out when the index is a call/delete/assignment target", () => {
+      // `this` is the array.
+      ts.expectPrintedMin_("x = [obj.m][0]()", "x = [obj.m][0]()");
+      ts.expectPrintedMin_("x = [obj[m]][0]()", "x = [obj[m]][0]()");
       ts.expectPrintedMin_("x = [obj.m][0]", "x = obj.m");
-      ts.expectPrintedMin_("x = [y][0]()", "x = y()");
-      ts.expectPrintedMin_("x = [() => y][0]()", "x = (() => y)()");
+      ts.expectPrintedMin_("x = [y][0]()", "x = [y][0]()");
+      ts.expectPrintedMin_("x = [y][0]``", "x = [y][0]``");
+      ts.expectPrintedMin_("x = [() => y][0]()", "x = [() => y][0]()");
+      ts.expectPrintedMin_("x = delete [obj.p][0]", "x = delete [obj.p][0]");
 
       // `[x][0] = v` writes into the temporary, not `x`. Same for `"s"[n]`.
       ts.expectPrintedMin_("[obj.p][0] = 5", "[obj.p][0] = 5");

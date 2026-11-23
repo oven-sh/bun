@@ -925,7 +925,7 @@ fn calls_hooks_or_creates_jsx_in_expr(host: &dyn Host, expr: &Expr) -> bool {
         ExprData::ETemplate(t) => {
             t.tag
                 .as_ref()
-                .is_some_and(|tag| calls_hooks_or_creates_jsx_in_expr(host, tag))
+                .is_some_and(|tag| calls_hooks_or_creates_jsx_in_expr(host, &tag.expr))
                 || t.parts()
                     .iter()
                     .any(|p| calls_hooks_or_creates_jsx_in_expr(host, &p.value))

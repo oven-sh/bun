@@ -2251,17 +2251,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
 
                 self.note_import_use(ref_, opts);
-                return self.new_expr(E::ImportIdentifier::new(ident.ref_, true), loc);
+                return self.new_expr(E::ImportIdentifier::new(ident.ref_), loc);
             }
         }
 
         // Substitute an EImportIdentifier now if this is an import item
         if self.is_import_item.contains_key(&ref_) {
             self.note_import_use(ref_, opts);
-            return self.new_expr(
-                E::ImportIdentifier::new(ref_, opts.was_originally_identifier()),
-                loc,
-            );
+            return self.new_expr(E::ImportIdentifier::new(ref_), loc);
         }
 
         if TYPESCRIPT {
@@ -2836,6 +2833,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.report_stack_overflow(expr.loc);
             return Substitution::Failure(expr);
         }
+        let would_become_method_call = |callee: Expr| {
+            replacement.has_value_for_this_in_call()
+                && matches!(callee.data, js_ast::ExprData::EIdentifier(id) if id.ref_.eql(r#ref))
+        };
         // `ExprData` is `Copy`; matching by value yields owned
         // `StoreRef<E::*>` copies whose `DerefMut` writes to the same arena slot,
         // so `e.target = result` mutates the AST in place.
@@ -2954,6 +2955,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 replacement,
                                 replacement_can_be_removed,
                             ) {
+                                // "let a = b; typeof a" throws if "b" is not defined
+                                if !replacement_can_be_removed
+                                    && matches!(done, Substitution::Success(_))
+                                {
+                                    e.flags
+                                        .remove(E::UnaryFlags::WAS_ORIGINALLY_TYPEOF_IDENTIFIER);
+                                }
                                 return done;
                             }
                         }
@@ -3094,15 +3102,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
                 js_ast::ExprData::ECall(mut e) => {
-                    // Don't substitute something into a call target that could change "this"
-                    match replacement.data {
-                        js_ast::ExprData::EDot(_) | js_ast::ExprData::EIndex(_) => {
-                            if matches!(e.target.data, js_ast::ExprData::EIdentifier(id) if id.ref_.eql(r#ref))
-                            {
-                                break 'outer;
-                            }
-                        }
-                        _ => {}
+                    if would_become_method_call(e.target) {
+                        break 'outer;
                     }
 
                     if let Some(done) = self.substitute_single_use_symbol_in_child(
@@ -3182,8 +3183,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 js_ast::ExprData::ETemplate(mut e) => {
                     if let Some(tag) = e.tag.as_mut() {
+                        if would_become_method_call(tag.expr) {
+                            break 'outer;
+                        }
+
                         if let Some(done) = self.substitute_single_use_symbol_in_child(
-                            tag,
+                            &mut tag.expr,
                             expr,
                             r#ref,
                             replacement,
@@ -5398,9 +5403,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .with_must_keep_due_to_with_stmt(result.is_inside_with_scope)
                 .with_can_be_removed_if_unused(true),
             Some(parts[0]),
-            IdentifierOpts::new()
-                .with_was_originally_identifier(true)
-                .with_is_property_access_target(parts.len() > 1),
+            IdentifierOpts::new().with_is_property_access_target(parts.len() > 1),
         );
         if parts.len() > 1 {
             return Ok(self.member_expression(loc, value, &parts[1..]));
@@ -5857,7 +5860,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         {
             export.assign_count = export.assign_count.saturating_add(1);
         }
-        if opts.is_call_target() || opts.is_template_tag() {
+        if opts.is_callee() {
             self.symbols[ref_.inner_index() as usize].set_called_as_method(true);
             if !self.is_revisit_for_substitution {
                 let call = self
@@ -6534,7 +6537,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .with_can_be_removed_if_unused(true)
                 .with_call_can_be_unwrapped_if_unused(true),
             None,
-            IdentifierOpts::new().with_was_originally_identifier(true),
+            IdentifierOpts::new(),
         )
     }
 
@@ -6623,7 +6626,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             .get_or_put_value(name, Default::default())
             .expect("unreachable");
         inner_use.count_estimate += 1;
-        inner_use.is_call_target |= opts.is_call_target() || opts.is_template_tag();
+        inner_use.is_call_target |= opts.is_callee();
         true
     }
 
@@ -7079,7 +7082,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub(crate) fn runtime_identifier(&mut self, loc: bun_ast::Loc, name: &'static [u8]) -> Expr {
         let ref_ = self.runtime_identifier_ref(name);
         self.record_usage(ref_);
-        self.new_expr(E::ImportIdentifier::new(ref_, false), loc)
+        self.new_expr(E::ImportIdentifier::new(ref_), loc)
     }
 
     pub(crate) fn call_runtime(
@@ -7124,8 +7127,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     Some(original_name),
                     IdentifierOpts::new()
                         .with_assign_target(assign_target)
-                        .with_is_delete_target(is_delete_target)
-                        .with_was_originally_identifier(true),
+                        .with_is_delete_target(is_delete_target),
                 );
             }
             js_ast::ExprData::EString(str_) => {

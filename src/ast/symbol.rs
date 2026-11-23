@@ -719,6 +719,13 @@ impl Map {
 }
 
 impl Symbol {
+    /// The value of "--define a=b.c" is one symbol.
+    #[inline]
+    pub fn is_dotted_define(&self) -> bool {
+        self.kind == Kind::Unbound
+            && bun_core::strings::contains_char(self.original_name.slice(), b'.')
+    }
+
     #[inline]
     pub fn is_hoisted(&self) -> bool {
         Symbol::is_kind_hoisted(self.kind)

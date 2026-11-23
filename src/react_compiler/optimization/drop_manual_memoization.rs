@@ -495,6 +495,7 @@ fn get_manual_memoization_replacement(
         InstructionValue::CallExpression {
             callee: fn_place.clone(),
             args: hir_vec![],
+            bun_kind: bun_ast::E::CallKind::Plain,
             loc,
         }
     } else {

@@ -3,7 +3,7 @@ use bun_collections::VecExt;
 use core::cmp::Ordering;
 
 use crate::p::P;
-use crate::parser::{ExprIn, float_to_int32, prefill};
+use crate::parser::{ExprIn, float_to_int32};
 use crate::scan::scan_side_effects::SideEffects;
 use bun_ast::fold_string_addition::{FoldStringAdditionKind, fold_string_addition};
 use bun_ast::{
@@ -116,11 +116,8 @@ impl BinaryExpressionVisitor {
         // invariant is encapsulated there. The borrow is on the `v.e` field
         // only, so `v.loc` reads below split-borrow cleanly.
         let e_handle: StoreRef<E::Binary> = v.e;
-        let e_ptr: *mut E::Binary = e_handle.as_ptr();
         let e_ = &mut *v.e;
 
-        let is_call_target =
-            matches!(p.call_target, ExprData::EBinary(ptr) if core::ptr::eq(ptr.as_ptr(), e_ptr));
         let was_anonymous_named_expr = e_.right.is_anonymous_named();
         let prev_decorator_class_name = p.decorator_class_name;
 
@@ -218,7 +215,6 @@ impl BinaryExpressionVisitor {
                 // "(1, 2)" => "2"
                 // "(sideEffects(), 2)" => "(sideEffects(), 2)"
                 // "(0, this.fn)" => "this.fn"
-                // "(0, this.fn)()" => "(0, this.fn)()"
                 if p.options.features.minify_syntax {
                     // If e_.left is itself a comma, its .left was already simplified
                     // by the previous unwind step; only simplify its .right to avoid
@@ -241,17 +237,7 @@ impl BinaryExpressionVisitor {
                         }
                         e_.left = simplified_left;
                     } else {
-                        // The left operand has no side effects, but we need to preserve
-                        // the comma operator semantics when used as a call target
-                        if is_call_target && e_.right.has_value_for_this_in_call() {
-                            // Keep the comma expression to strip "this" binding
-                            e_.left = Expr {
-                                data: prefill::data::ZERO,
-                                loc: e_.left.loc,
-                            };
-                        } else {
-                            return e_.right;
-                        }
+                        return e_.right;
                     }
                 }
             }
@@ -360,19 +346,6 @@ impl BinaryExpressionVisitor {
                     if !null_or_undefined.value {
                         return e_.left;
                     } else if null_or_undefined.side_effects == SideEffects::NoSideEffects {
-                        // "(null ?? fn)()" => "fn()"
-                        // "(null ?? this.fn)" => "this.fn"
-                        // "(null ?? this.fn)()" => "(0, this.fn)()"
-                        if is_call_target && e_.right.has_value_for_this_in_call() {
-                            return Expr::join_with_comma(
-                                Expr {
-                                    data: ExprData::ENumber(E::Number::new(0.0)),
-                                    loc: e_.left.loc,
-                                },
-                                e_.right,
-                            );
-                        }
-
                         return e_.right;
                     }
                 }
@@ -382,19 +355,6 @@ impl BinaryExpressionVisitor {
                     if side_effects.value {
                         return e_.left;
                     } else if side_effects.side_effects == SideEffects::NoSideEffects {
-                        // "(0 || fn)()" => "fn()"
-                        // "(0 || this.fn)" => "this.fn"
-                        // "(0 || this.fn)()" => "(0, this.fn)()"
-                        if is_call_target && e_.right.has_value_for_this_in_call() {
-                            return Expr::join_with_comma(
-                                Expr {
-                                    data: prefill::data::ZERO,
-                                    loc: e_.left.loc,
-                                },
-                                e_.right,
-                            );
-                        }
-
                         return e_.right;
                     }
                 }
@@ -404,19 +364,6 @@ impl BinaryExpressionVisitor {
                     if !side_effects.value {
                         return e_.left;
                     } else if side_effects.side_effects == SideEffects::NoSideEffects {
-                        // "(1 && fn)()" => "fn()"
-                        // "(1 && this.fn)" => "this.fn"
-                        // "(1 && this.fn)()" => "(0, this.fn)()"
-                        if is_call_target && e_.right.has_value_for_this_in_call() {
-                            return Expr::join_with_comma(
-                                Expr {
-                                    data: prefill::data::ZERO,
-                                    loc: e_.left.loc,
-                                },
-                                e_.right,
-                            );
-                        }
-
                         return e_.right;
                     }
                 }

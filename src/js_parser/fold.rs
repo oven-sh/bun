@@ -275,8 +275,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                             // Track how many times we've referenced this symbol
                             p.record_usage(ref_);
-                            if identifier_opts.is_call_target() || identifier_opts.is_template_tag()
-                            {
+                            if identifier_opts.is_callee() {
                                 p.symbols[ref_.inner_index() as usize].set_called_as_method(true);
                             }
 
@@ -294,10 +293,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         .with_is_delete_target(identifier_opts.is_delete_target())
                                         .with_is_property_access_target(
                                             identifier_opts.is_property_access_target(),
-                                        )
-                                        // If this expression is used as the target of a call expression, make
-                                        // sure the value of "this" is preserved.
-                                        .with_was_originally_identifier(false),
+                                        ),
                                 ),
                             );
                         }
@@ -429,7 +425,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             // Deoptimizations:
                             //      delete module.exports
                             //      module.exports();
-                            if identifier_opts.is_call_target()
+                            if identifier_opts.is_callee()
                                 || identifier_opts.is_delete_target()
                                 || identifier_opts.assign_target() != js_ast::AssignTarget::None
                             {
@@ -569,7 +565,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             if obj.properties.len_u32() == 1
                                 && !identifier_opts.is_delete_target()
                                 && identifier_opts.assign_target() == js_ast::AssignTarget::None
-                                && !identifier_opts.is_call_target()
+                                && !identifier_opts.is_callee()
                             {
                                 let prop: &G::Property = &obj.properties.slice()[0];
                                 if let (Some(value), Some(key)) = (prop.value, prop.key) {

@@ -232,7 +232,6 @@ export function getJS2NativeCPP(guards: Guards) {
     ...nativeCalls
       .filter(x => x.type === "bind")
       .map(x => `extern "C" SYSV_ABI JSC::EncodedJSValue ${bindgenSymbol(x)}(Zig::GlobalObject*);`),
-    `typedef JSC::JSValue (*JS2NativeFunction)(Zig::GlobalObject*);`,
     `static ALWAYS_INLINE JSC::JSValue callJS2Native(int32_t index, Zig::GlobalObject* global) {`,
     ` switch(index) {`,
     ...nativeCalls.map(x => `    case ${x.id}: return ${nativeCallExpression(x, guardOf(x))};`),

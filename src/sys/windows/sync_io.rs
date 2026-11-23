@@ -47,7 +47,7 @@ impl Event {
     /// A synchronous handle needs none, and the system would reset and set it every time.
     fn take_for(file: HANDLE) -> Result<Option<Event>, Win32Error> {
         let is_overlapped = overlapped_note(file).load(Ordering::Relaxed) == file;
-        (is_overlapped || !INTERRUPT.get().is_null())
+        (is_overlapped || is_interruptible())
             .then(Event::take)
             .transpose()
     }
@@ -91,6 +91,14 @@ pub fn interruptible<T>(interrupt: BorrowedHandle<'_>, io: impl FnOnce() -> T) -
     let result = io();
     INTERRUPT.set(outer);
     result
+}
+
+pub(super) fn is_interruptible() -> bool {
+    !INTERRUPT.get().is_null()
+}
+
+fn is_interrupted() -> bool {
+    is_interruptible() && WaitForSingleObject(INTERRUPT.get(), 0) == 0
 }
 
 /// The `IO_STATUS_BLOCK` of a request that outlasts the call that starts it.
@@ -221,7 +229,12 @@ fn each_part(
     for (base, len) in parts {
         let offset = offset.map(|offset| offset.saturating_add_unsigned(total as u64));
         let offset = offset.as_ref().map_or(ptr::null(), ptr::from_ref);
-        match request(base, len as DWORD, offset) {
+        // `CancelSynchronousIo` that has hit a request as it ended would wait for this one.
+        let result = match is_interrupted() {
+            true => Err(Win32Error::OPERATION_ABORTED),
+            false => request(base, len as DWORD, offset),
+        };
+        match result {
             Ok(bytes) if bytes < len => return Ok(total + bytes),
             Ok(_) => total += len,
             Err(_) if total > 0 => break,

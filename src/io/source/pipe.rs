@@ -696,7 +696,7 @@ fn read_synchronous<T: Send + 'static>(
             }
             read_blocking(&mut buffer, 0)?;
             // A script that is running may have left the input to a child, or be about to pause.
-            if !remote.is_port_idle() {
+            if cancel.is_cancelled() || !remote.is_port_idle() {
                 return Ok(false);
             }
             take = Some(Take::Now);

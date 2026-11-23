@@ -401,6 +401,25 @@ fn a_blocked_thread_can_be_interrupted() {
 }
 
 #[test]
+fn an_interrupted_thread_starts_no_request() {
+    let (mode, direction) = (PipeMode::Synchronous, PipeDirection::OursReads);
+    let pair = w::pipe_pair(mode, mode, direction).unwrap();
+    let (ours, theirs) = (
+        bun_sys::File::from(pair.ours),
+        bun_sys::File::from(pair.theirs),
+    );
+    bun_sys::write(theirs.fd(), b"ab").unwrap();
+    let cancel = Cancel::default();
+    let read = || bun_sys::read(ours.fd(), &mut [0; 1]).map_err(|err| err.get_errno());
+    let reads = cancel.run(|| {
+        let (first, other) = (read(), cancel.clone());
+        std::thread::spawn(move || other.cancel()).join().unwrap();
+        (first, read())
+    });
+    assert_eq!(reads, Some((Ok(1), Err(bun_sys::E::ECANCELED))));
+}
+
+#[test]
 fn a_turnstile_opens_once_the_other_thread_waits() {
     if !has_wait_packets() {
         return;

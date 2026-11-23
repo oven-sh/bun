@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/builtins/ProcessObjectInternals.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 34b28730976f3729b1f08385ac19a7f622a31d5c76459e81ae77e00f2e40eba8.
+// Written against that file with the SHA-256 cafb95414af99fdb168abad8de39c9804a6354f34149cf895b8e2bd2ad9e5ec5.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 /*
@@ -724,6 +724,7 @@ export function createOnWarning(
     // process.stderr.write, not console.error: under an inspector Session console.* emits
     // Runtime.consoleAPICalled, and a throwing listener there is surfaced via emitWarning,
     // so console.error would re-enter and loop. writeWarning reads process.stderr per call, as Node does.
+    // The global console of a compiled program publishes nothing to node:diagnostics_channel, so this does not either.
     // A compiled program may write without making the stream, whose modules put the operators of node:stream on Readable.prototype.
     if (IS_COMPILED_AHEAD_OF_TIME && !redirectPath) require("internal/streams/load_all").rest?.();
     const wroteInPlaceOfStream = writeWarning(message + "\n", redirectPath);
@@ -758,7 +759,6 @@ export function createOnWarning(
     }
     const detail = warning.detail;
     if (typeof detail === "string") msg += `\n${detail}`;
-    writeOut(msg);
     if (!trace && !traceWarningHelperShown) {
       traceWarningHelperShown = true;
       const argv0: unknown = processObject.argv0 || "node";
@@ -779,8 +779,9 @@ export function createOnWarning(
             : $bindgen("node_path.bind.ts", "basenamePosix")
         )(argv0 as string);
       }
-      writeOut(`(Use \`${program} --trace-warnings ...\` to show where the warning was created)`);
+      msg += `\n(Use \`${program} --trace-warnings ...\` to show where the warning was created)`;
     }
+    writeOut(msg);
   };
 }
 

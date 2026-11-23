@@ -7,6 +7,7 @@ import {
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir, tls } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
+import { subscribe, unsubscribe } from "node:diagnostics_channel";
 import { once } from "node:events";
 import fs from "node:fs";
 import http from "node:http";
@@ -1864,22 +1865,73 @@ test("a response body that fails half way fails the span of the server", async (
   expect([span.status, span.attributes["error.type"]]).toEqual([{ code: 2, message: "half way" }, "RangeError"]);
 });
 
-test("fetch: letting go of the body is no error, and running out of time is one", async () => {
-  using server = Bun.serve({
-    port: 0,
-    fetch: req =>
-      req.url.endsWith("/never")
-        ? new Promise<Response>(() => {})
-        : new Response(new ReadableStream({ pull: c => (c.enqueue("a"), new Promise(() => {})) })),
+function subscription(name: string, onMessage: (message: any) => void) {
+  subscribe(name, onMessage);
+  return { [Symbol.dispose]: () => void unsubscribe(name, onMessage) };
+}
+
+test.each(["a channel of no interest", "undici:request:error"])(
+  "fetch: letting go of the body is no error, and running out of time is one (subscribed to %s)",
+  async channel => {
+    using _ = subscription(channel, () => {});
+    using server = Bun.serve({
+      port: 0,
+      fetch: req =>
+        req.url.endsWith("/never")
+          ? new Promise<Response>(() => {})
+          : new Response(new ReadableStream({ pull: c => (c.enqueue("a"), new Promise(() => {})) })),
+    });
+    await (await fetch(server.url)).body!.cancel();
+    await expect(fetch(server.url + "never", { signal: AbortSignal.timeout(1) })).rejects.toThrow("timed out");
+    server.stop(true);
+    const got = byName(await collect(3), "bun.http.client");
+    expect(got.map(s => [s.status.code, s.attributes["error.type"]])).toEqual([
+      [0, undefined],
+      [2, "TimeoutError"],
+    ]);
+  },
+);
+
+test.each([undefined, "own=1"])(
+  "fetch: a traceparent that a subscriber adds is not sent beside the one of the span (tracestate %p)",
+  async tracestate => {
+    const seen: unknown[] = [];
+    using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        seen.push(["traceparent", "tracestate", "x-other"].map(name => req.headers.get(name)));
+        return req.url.endsWith("/next") ? new Response() : Response.redirect("/next");
+      },
+    });
+    using _ = subscription("undici:request:create", ({ request }) => {
+      request.addHeader("TraceParent", "00-33333333333333333333333333333333-4444444444444444-01");
+      request.addHeader("tracestate", "other=1");
+      request.addHeader("x-other", "1");
+    });
+    const headers = tracestate && {
+      traceparent: "00-11111111111111111111111111111111-2222222222222222-01",
+      tracestate,
+    };
+    await (await fetch(server.url, { headers })).text();
+    const [client] = byName(await collect(3), "bun.http.client");
+    const [sent] = seen as string[][];
+    expect(sent[0]).toStartWith(`00-${client.traceId}-${client.spanId}-`);
+    expect(seen).toEqual(Array(2).fill([sent[0], tracestate ?? null, "1"]));
+  },
+);
+
+test("fetch: a subscriber can replace the traceparent, and adds its own where nothing is propagated", async () => {
+  const other = "00-33333333333333333333333333333333-4444444444444444-01";
+  using server = Bun.serve({ port: 0, fetch: req => new Response(req.headers.get("traceparent")) });
+  using _ = subscription("undici:request:create", ({ request }) => {
+    const at = request.headers.indexOf("traceparent");
+    if (at === -1) request.addHeader("traceparent", other);
+    else request.headers[at + 1] = other;
   });
-  await (await fetch(server.url)).body!.cancel();
-  await expect(fetch(server.url + "never", { signal: AbortSignal.timeout(1) })).rejects.toThrow("timed out");
-  server.stop(true);
-  const got = byName(await collect(3), "bun.http.client");
-  expect(got.map(s => [s.status.code, s.attributes["error.type"]])).toEqual([
-    [0, undefined],
-    [2, "TimeoutError"],
-  ]);
+  expect(await (await fetch(server.url)).text()).toBe(other);
+  Bun.otel.start({ exporters: [{ export: (b: any[]) => spans.push(...b) }], propagators: [] });
+  expect(await (await fetch(server.url)).text()).toBe(other);
+  await collect(4);
 });
 
 test("the baggage that a request brought stays when the span changes", async () => {

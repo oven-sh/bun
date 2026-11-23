@@ -98,6 +98,28 @@ pub fn begin(
     begin_enabled(global, instrument, headers)
 }
 
+/// Another tracer has changed `begun`, the headers as [`begin`] left them. Of two `traceparent`s neither is valid.
+pub fn drop_second_context(begun: &Headers, changed: &mut Headers) {
+    if !bun_telemetry::enabled(Instrument::HttpClient) {
+        return;
+    }
+    removable_body_behind_value!(Telemetry, {
+        let count = (changed.iter())
+            .filter(|header| header.name().eq_ignore_ascii_case(b"traceparent"))
+            .count();
+        if count > 1
+            && bun_telemetry::state().propagate_trace_context
+            && let Some(traceparent) = begun.get(b"traceparent")
+        {
+            changed.set(b"traceparent", traceparent);
+            match begun.get(b"tracestate") {
+                Some(trace_state) => changed.set(b"tracestate", trace_state),
+                None => changed.remove(b"tracestate"),
+            }
+        }
+    })
+}
+
 pub struct Exchange<'a> {
     pub method: &'a [u8],
     /// As it was given, before any redirect.

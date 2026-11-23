@@ -777,8 +777,7 @@ impl<'a> PartsToWalk<'a> {
     }
 }
 
-/// The edge along `record`, if a load follows it: an `import` statement always (also out of a
-/// file that does not run), a `require()` or an `import()` only when its part runs.
+/// The edge along `record`, if a load follows it: a `require()` or an `import()` only from a part that runs.
 pub(super) fn edge_of_record(
     c: &LinkerContext,
     source_index: IndexInt,

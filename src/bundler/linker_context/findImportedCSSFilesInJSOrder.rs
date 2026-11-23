@@ -6,18 +6,11 @@ use super::find_all_imported_parts_in_js_order::{Edge, edge_of_record};
 use crate::{Index, IndexInt, LinkerContext};
 use bun_collections::DynamicBitSet as BitSet;
 
-/// What the CSS walks of one link share.
-///
-/// With code splitting, a load site is a file with a split `import()` or `require()` in a part
-/// that runs. An entry point loads on demand the targets of the load sites that it loads. The
-/// plan and the walks read `entry_bits` before `merge_small_chunks` changes them: they ask
-/// which files a load evaluates, not which chunk holds a file.
+/// What the CSS walks of one link share. It reads `entry_bits` before `merge_small_chunks` changes them.
 pub(crate) struct CssWalkPlan {
-    /// Per entry point id: its index in `loaders`. `u32::MAX`: the entry point loads nothing
-    /// on demand. Empty if no entry point does.
+    /// Per entry point id: its index in `loaders`, or `u32::MAX` if it loads nothing on demand.
     loaders_of_entry: Vec<u32>,
-    /// An entry point and every entry point that its load can load on demand, also through
-    /// another one. Entry points that load each other share one set.
+    /// An entry point and every entry point that its load can load on demand, also through another one.
     loaders: Vec<AutoBitSet>,
 }
 
@@ -45,9 +38,7 @@ impl CssWalkPlan {
             }
         }
 
-        // A graph of the entry points (node: the entry point id) and the load sites (node:
-        // `entries_len` + the index of the site). An entry point has an edge to each site that
-        // it loads, and a site has an edge to each of its targets.
+        // Nodes: the entry point ids, then the files with a split `import()` or `require()` that runs (sites).
         let entry_bits = c.graph.files.items_entry_bits();
         let all_import_records = c.graph.ast.items_import_records();
         let all_parts = c.graph.ast.items_parts();
@@ -156,8 +147,7 @@ impl CssWalkPlan {
         Some(plan)
     }
 
-    /// With code splitting: the entry point and every entry point that its load can load on
-    /// demand, also through another one. `None`: the entry point alone.
+    /// `None`: the entry point loads nothing on demand.
     fn loaders_of(&self, entry_id: u32) -> Option<&AutoBitSet> {
         let index = *self.loaders_of_entry.get(entry_id as usize)?;
         self.loaders.get(index as usize)
@@ -183,16 +173,7 @@ impl CssWalkPlan {
 /// "require()" and "import()"). This is because the import order is impossible
 /// to determine since the imports happen at run-time instead of compile-time.
 /// In this case we just pick an arbitrary but consistent order.
-///
-/// The walk is the one that gives the order without tree shaking: every
-/// import record of every file, also of a file that does not run. A CSS file
-/// has the place of its first import there. It stays in the result only if a
-/// JS file that runs imports it, with an `import` statement, or with a
-/// `require()` or an `import()` in a part that runs (`edge_of_record`, the rule
-/// of the walk that orders the JS). A file runs if it is live and the entry
-/// point loads it. With code splitting, the entry points that this one loads
-/// on demand count too: nothing else puts the CSS of their chunks on the page.
-/// The CSS file's own `sideEffects` flag and liveness are not read.
+/// A CSS file stays in the result only if a JS file that runs for the entry point imports it (see README.md).
 pub(crate) fn find_imported_css_files_in_js_order(
     this: &LinkerContext,
     plan: &CssWalkPlan,
@@ -221,9 +202,7 @@ pub(crate) fn find_imported_css_files_in_js_order(
     let mut kept = bun_core::handle_oom(BitSet::init_empty(this.graph.files.len()));
     let mut order: Vec<Index> = Vec::new();
 
-    // Explicit-stack DFS. `Enter` pushes successors in discovery order then
-    // reverses the tail, so a CSS file gets the place of its first import, in
-    // depth-first order.
+    // Explicit-stack DFS. The tail is reversed, so a CSS file gets the place of its first import, depth first.
     #[derive(Copy, Clone)]
     enum Frame {
         Enter(IndexInt),

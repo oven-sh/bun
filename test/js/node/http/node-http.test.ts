@@ -4008,6 +4008,42 @@ it("clientError after a kept-alive request reuses the connection's socket and un
   }
 });
 
+it("maxConnections counts a connection that has sent nothing", async () => {
+  const server = createServer((req, res) => res.end("ok"));
+  server.maxConnections = 1;
+  const dropped = once(server, "drop");
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const { port } = server.address() as AddressInfo;
+
+  const clients: ReturnType<typeof connect>[] = [];
+  function open() {
+    const socket = connect(port, "127.0.0.1");
+    socket.on("error", () => {});
+    clients.push(socket);
+    return socket;
+  }
+  try {
+    await once(open(), "connect");
+    // Opened after the silent client has connected, so the server accepts it second.
+    const extra = open();
+    await once(extra, "connect");
+    const extraPort = extra.localPort;
+    let response = "";
+    extra.on("data", chunk => (response += chunk));
+    // Not once(): the server can reset the dropped socket, and once() rejects on 'error'.
+    const extraClosed = new Promise(resolve => extra.on("close", resolve));
+    extra.write("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+    await extraClosed;
+    expect(response).toBe("");
+    const [data] = await dropped;
+    expect(data.remotePort).toBe(extraPort);
+  } finally {
+    for (const socket of clients) socket.destroy();
+    server.close();
+  }
+});
+
 describe("malformed request line reaches 'connection' and 'clientError' with a writable socket", () => {
   it.each([
     ["method token followed by CRLF", "BOGUS\r\n\r\n"],

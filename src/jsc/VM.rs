@@ -30,6 +30,7 @@ unsafe extern "C" {
     safe fn JSC__VM__runGC(vm: &VM, sync: bool) -> usize;
     safe fn JSC__VM__heapSize(vm: &VM) -> usize;
     safe fn JSC__VM__collectAsync(vm: &VM, full: bool);
+    safe fn JSC__VM__collectAsyncIfNecessary(vm: &VM);
     safe fn JSC__VM__collectAsyncIdle(vm: &VM);
     safe fn JSC__VM__shrinkFootprintNow(vm: &VM) -> bool;
     safe fn JSC__VM__setStartupJITDeferralScale(vm: &VM, scale: f64);
@@ -107,6 +108,11 @@ impl VM {
     /// Request a concurrent collection; JSC picks the scope unless `full`.
     pub(crate) fn collect_async(&self, full: bool) {
         JSC__VM__collectAsync(self, full)
+    }
+
+    /// `collect_async(false)` as a hint: JSC turns it down if the collection would be an eden one with nothing to sweep.
+    pub(crate) fn collect_async_if_necessary(&self) {
+        JSC__VM__collectAsyncIfNecessary(self)
     }
 
     /// A full collection tagged as the embedder's idle collection, in which JSC may also let idle optimized code go.

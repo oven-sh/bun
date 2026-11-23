@@ -17,6 +17,7 @@ use bun_core::scoped::{ScopedCell as _, ScopedFlag as _};
 use bun_io as Async;
 use bun_uws as uws;
 
+use crate::garbage_collection_controller::Collection;
 use crate::js_promise::Status as PromiseStatus;
 use crate::spawn_sync_event_loop::SuppressMicrotaskDrain;
 use crate::virtual_machine::VirtualMachine;
@@ -1102,7 +1103,9 @@ impl EventLoop {
 
     /// Asynchronously run the garbage collector and track how much memory is now allocated
     pub fn perform_gc(&self) {
-        self.vm_ref().gc_controller.perform_gc(false);
+        self.vm_ref()
+            .gc_controller
+            .perform_gc(Collection::Unconditional);
     }
 
     /// `eventLoop().autoTick()` — bounces through `VirtualMachine::auto_tick`,

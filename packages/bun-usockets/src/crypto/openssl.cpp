@@ -24,6 +24,8 @@
 #include <limits.h>
 #include <time.h>
 #include <atomic>
+#include <string_view>
+#include <unordered_set>
 #include <utility>
 #ifndef _WIN32
 #include <pthread.h>
@@ -876,22 +878,19 @@ static void us_crypto_buffer_stack_free(STACK_OF(CRYPTO_BUFFER) *buffers) {
 }
 using us_crypto_buffer_stack_ptr = us_unique_ptr<STACK_OF(CRYPTO_BUFFER), us_crypto_buffer_stack_free>;
 
-static int us_crypto_buffer_cmp(const CRYPTO_BUFFER *const *a, const CRYPTO_BUFFER *const *b) {
-  size_t al = CRYPTO_BUFFER_len(*a), bl = CRYPTO_BUFFER_len(*b);
-  if (al != bl) return al < bl ? -1 : 1;
-  return memcmp(CRYPTO_BUFFER_data(*a), CRYPTO_BUFFER_data(*b), al);
-}
-
 /* Trusts the DER certificates in `certs` (duplicates dropped) through one lazily-parsed set on `store`, and makes their
  * subjects the context's client-CA list, as X509_STORE_add_cert + SSL_CTX_add_client_CA per parsed certificate did. */
 static int us_install_ca_buffers(SSL_CTX *ctx, X509_STORE *store, STACK_OF(CRYPTO_BUFFER) *certs) {
-  sk_CRYPTO_BUFFER_set_cmp_func(certs, us_crypto_buffer_cmp);
-  sk_CRYPTO_BUFFER_sort_and_dedup(certs, CRYPTO_BUFFER_free);
-  size_t n = sk_CRYPTO_BUFFER_num(certs);
-  if (n == 0) return 1;
-  us_unique_ptr<CRYPTO_BUFFER *[], free> bufs{(CRYPTO_BUFFER **)malloc(n * sizeof(CRYPTO_BUFFER *))};
+  size_t total = sk_CRYPTO_BUFFER_num(certs), n = 0;
+  if (total == 0) return 1;
+  us_unique_ptr<CRYPTO_BUFFER *[], free> bufs{(CRYPTO_BUFFER **)malloc(total * sizeof(CRYPTO_BUFFER *))};
   if (bufs == NULL) return 0;
-  for (size_t i = 0; i < n; i++) bufs[i] = sk_CRYPTO_BUFFER_value(certs, i);
+  /* Not by sorting: of several certificates with one subject, BoringSSL tries only the first it comes to. */
+  std::unordered_set<std::string_view> seen, subjects;
+  for (size_t i = 0; i < total; i++) {
+    CRYPTO_BUFFER *cert = sk_CRYPTO_BUFFER_value(certs, i);
+    if (seen.emplace((const char *)CRYPTO_BUFFER_data(cert), CRYPTO_BUFFER_len(cert)).second) bufs[n++] = cert;
+  }
   us_unique_ptr<X509_LAZY_CERT_SET, X509_LAZY_CERT_SET_free> set{X509_LAZY_CERT_SET_new(bufs.get(), n)};
   us_crypto_buffer_stack_ptr names{sk_CRYPTO_BUFFER_new_null()};
   if (set == NULL || names == NULL || !X509_STORE_add_lazy_cert_set(store, set.get())) return 0;
@@ -899,6 +898,10 @@ static int us_install_ca_buffers(SSL_CTX *ctx, X509_STORE *store, STACK_OF(CRYPT
     const uint8_t *subject;
     size_t subject_len;
     if (!X509_LAZY_CERT_SET_get0_subject(set.get(), i, &subject, &subject_len)) return 0;
+    /* For auto-chain, which only sees the flags of the store. With nothing to choose from, it sends what is out of date. */
+    if (!subjects.emplace((const char *)subject, subject_len).second) {
+      X509_STORE_set_flags(store, X509_V_FLAG_IGNORE_EXPIRED_TRUST_ANCHORS);
+    }
     us_crypto_buffer_ptr name{CRYPTO_BUFFER_new(subject, subject_len, NULL)};
     if (name == NULL || !sk_CRYPTO_BUFFER_push(names.get(), name.get())) return 0;
     name.release();

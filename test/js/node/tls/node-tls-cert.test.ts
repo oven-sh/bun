@@ -2,7 +2,9 @@ import { describe, expect, it } from "bun:test";
 import { once } from "events";
 import { readFileSync } from "fs";
 import { bunEnv, bunExe, tls as harnessCert, invalidTls, tmpdirSync } from "harness";
-import type { AddressInfo } from "node:net";
+import https from "node:https";
+import net, { type AddressInfo } from "node:net";
+import { Duplex } from "node:stream";
 import type { Server, TLSSocket } from "node:tls";
 import { join } from "path";
 import tls from "tls";
@@ -883,8 +885,8 @@ describe("expired or not-yet-valid CA in the trust set", () => {
   );
   const leafKey = readFileSync(join(dir, "leaf.key"), "utf8");
 
-  async function connect(serverCert: string, ca: string[], extra: object = {}) {
-    const server = tls.createServer({ key: leafKey, cert: serverCert });
+  async function connect(serverCert: string, ca: string[], extra: object = {}, serverCa?: string[]) {
+    const server = tls.createServer({ key: leafKey, cert: serverCert, ca: serverCa });
     await once(server.listen(0, "127.0.0.1"), "listening");
     try {
       return await new Promise<string>(resolve => {
@@ -998,6 +1000,63 @@ describe("expired or not-yet-valid CA in the trust set", () => {
     });
   }
 
+  it.each([
+    [["int-valid", "int-expired"], "authorized"],
+    [["int-expired", "int-valid"], "authorized"],
+    [["int-valid", "int-future"], "authorized"],
+    [["int-future", "int-valid"], "authorized"],
+    [["int-expired"], "CERT_HAS_EXPIRED"],
+    [["int-future"], "CERT_NOT_YET_VALID"],
+  ])("a server completes its chain from ca: %p", async (serverCa, expected) => {
+    const ca = serverCa.map(n => F[n]);
+    expect(await connect(F.leaf, [F.root], {}, ca)).toBe(expected);
+  });
+
+  it.each([
+    [["root", "int-valid", "int-constrained-valid"], null],
+    [["root", "int-constrained-valid", "int-valid"], "UNSPECIFIED"],
+  ])("the first copy counts for the certificate of a client, ca: %p", async (names, expected) => {
+    const ca = names.map(n => F[n]);
+    await using server = tls.createServer({ ...harnessCert, ca, requestCert: true, rejectUnauthorized: false });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const port = (server.address() as AddressInfo).port;
+    const client = tls.connect({ host: "127.0.0.1", port, key: leafKey, cert: F.leaf, rejectUnauthorized: false });
+    try {
+      const [[peer]] = await Promise.all([once(server, "secureConnection"), once(client, "secureConnect")]);
+      expect(peer.authorizationError).toBe(expected);
+    } finally {
+      client.destroy();
+    }
+  });
+
+  it("a server names each certificate of `ca` once, in their order", async () => {
+    const ca = [F.root, F["oldroot-expired"], F.root];
+    await using server = tls.createServer({ ...harnessCert, ca, requestCert: true, rejectUnauthorized: false });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const received: Buffer[] = [];
+    const transport = net.connect((server.address() as AddressInfo).port, "127.0.0.1");
+    const socket = new Duplex({
+      read() {},
+      write: (chunk, encoding, callback) => void transport.write(chunk, encoding, callback),
+    });
+    transport
+      .on("data", (chunk: Buffer) => (received.push(chunk), socket.push(chunk)))
+      .on("error", error => socket.destroy(error))
+      .on("close", () => socket.push(null));
+    // TLS 1.2 sends the names in the clear.
+    const client = tls.connect({ socket, maxVersion: "TLSv1.2", rejectUnauthorized: false });
+    try {
+      await once(client, "secureConnect");
+    } finally {
+      client.destroy();
+      transport.destroy();
+    }
+    const names = Buffer.concat(received)
+      .toString("latin1")
+      .match(/Bun Test [\w -]+ Root/g);
+    expect(names).toEqual(["Bun Test Expired-Intermediate Root", "Bun Test Old Root"]);
+  });
+
   it("a CA with a malformed validity field is rejected when the context is created, not ignored", () => {
     const der = Buffer.from(F["int-valid"].replace(/-----[^\n]+-----|\s/g, ""), "base64");
     // notBefore is a 13-byte UTCTime (tag 0x17, length 0x0d); corrupt one of its digits.
@@ -1039,6 +1098,39 @@ describe("trust anchors", () => {
     [["self-signed-client-eku"], "self-signed-client-eku", "INVALID_PURPOSE"],
   ])("extensions are enforced: %p under %s", async (chain, ca, expected) => {
     expect(await connect(chain, { ca: pem([ca]) })).toBe(expected);
+  });
+
+  // Only the first of these is shorter than the root. BoringSSL keeps no order among more than 16 certificates.
+  describe.each([
+    ["root-not-a-ca", "INVALID_PURPOSE"],
+    ["root-pathlen-0", "PATH_LENGTH_EXCEEDED"],
+    ["root-client-eku", "INVALID_PURPOSE"],
+    ["root-unknown-critical", "UNSPECIFIED", "UNHANDLED_CRITICAL_EXTENSION"],
+  ])("the first of the root and %s in `ca` counts", (copy, code, fetchCode = code) => {
+    const orders = [pem(["root", copy]), pem([copy, "root"])];
+
+    it.each([
+      ["an array", (ca: string[]) => ca],
+      ["one string", (ca: string[]) => ca.join("")],
+      ["with duplicates", (ca: string[]) => [ca[0], ca[1], ca[0], ca[1]]],
+    ])("%s", async (_, shape) => {
+      const outcomes = orders.map(ca => connect(["leaf", "intermediate"], { ca: shape(ca) }));
+      expect(await Promise.all(outcomes)).toEqual(["authorized", code]);
+    });
+
+    it("fetch", async () => {
+      const identity = { key: read("leaf.key"), cert: pem(["leaf", "intermediate"]).join("") };
+      await using server = https.createServer(identity, (_, response) => response.end("authorized"));
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const url = `https://127.0.0.1:${(server.address() as AddressInfo).port}`;
+      const outcomes = orders.map(ca =>
+        fetch(url, { tls: { ca, serverName: "localhost" }, keepalive: false }).then(
+          response => response.text(),
+          error => error.code,
+        ),
+      );
+      expect(await Promise.all(outcomes)).toEqual(["authorized", fetchCode]);
+    });
   });
 
   it.each([

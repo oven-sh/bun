@@ -14,7 +14,7 @@ it("successfully traverses pnpm-generated install directory", async () => {
   //
 
   ({ exited } = Bun.spawn({
-    cmd: [bunExe(), "x", "pnpm@9.15.6", "install"],
+    cmd: [bunExe(), "x", "pnpm@10.34.9", "install"],
     cwd: path.join(package_dir),
     stdio: ["ignore", "inherit", "inherit"],
     env: bunEnv,

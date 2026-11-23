@@ -98,6 +98,8 @@ function normalizeOutput(stdout: string) {
       .replace(/Compiled successfully in (\d|\.)+(ms|s)/gi, "Compiled successfully in 1000ms")
       // remove "in Xms" timing at end of lines (e.g., "in 36.8ms")
       .replace(/\bin \d+(?:\.\d+)?m?s\b/gi, data => " ".repeat(data.length))
+      // remove "took Xms" timing (e.g., "Running next.config.js took 14ms")
+      .replace(/\btook \d+(?:\.\d+)?m?s\b/gi, data => " ".repeat(data.length))
       // displayed file sizes are in post-gzip compression, however
       // the gzip / node:zlib implementation is different in bun and node
       .replace(/\d+(\.\d+)? [km]?b/gi, data => " ".repeat(data.length))
@@ -194,6 +196,7 @@ test(
       "required-server-files.js",
       // these have "signing keys", not sure what they are tbh
       "prerender-manifest.json",
+      "server/preview-props.json",
       // these are similar but i feel like there might be something we can fix to make them the same
       "next-minimal-server.js.nft.json",
       "next-server.js.nft.json",
@@ -229,6 +232,7 @@ test(
       "next-font-manifest.json",
       "next-font-manifest.js",
       "[turbopack]_runtime.js",
+      "[turbopack]_runtime.js.map",
     ];
     for (const name of nonDeterministicNames) {
       delete bunBuildHash[name];

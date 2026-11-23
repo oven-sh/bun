@@ -9,20 +9,20 @@
     "lint": "next lint"
   },
   "dependencies": {
-    "next": "^15.3.6",
-    "next-auth": "5.0.0-beta.30",
-    "react": "^19.2.3",
-    "react-dom": "^19.2.3"
+    "next": "^15.5.29",
+    "next-auth": "5.0.0-beta.32",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
   },
   "devDependencies": {
-    "@eslint/eslintrc": "^3",
-    "@tailwindcss/postcss": "^4",
+    "@eslint/eslintrc": "^3.3.7",
+    "@tailwindcss/postcss": "^4.3.5",
     "@types/node": "26.2.0",
-    "@types/react": "^19",
-    "@types/react-dom": "^19",
-    "eslint": "^9",
-    "eslint-config-next": "^15.3.6",
-    "tailwindcss": "^4",
-    "typescript": "^5"
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "eslint": "^9.39.5",
+    "eslint-config-next": "^15.5.29",
+    "tailwindcss": "^4.3.5",
+    "typescript": "^5.9.3"
   }
 }

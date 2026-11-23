@@ -17,7 +17,7 @@ const cases: Record<string, { text: string; warns: boolean }> = {
   },
   "options with a spread": { text: `require("./part.cjs", { ...process.env });`, warns: true },
   "a type that is written out": { text: `require("./part.cjs", { type: "text" });`, warns: false },
-  "a type in a constant": { text: `const kind = "text";\nrequire("./part.cjs", { type: kind });`, warns: false },
+  "a type in a constant": { text: `const kind = "text";\nrequire("./part.cjs", { type: kind });`, warns: true },
   "options without a type": { text: `require("./part.cjs", {});`, warns: false },
   "a name behind the receiver of call()": { text: `require.call(null, "./part.cjs");`, warns: false },
   "no options": { text: `require("./part.cjs");`, warns: false },

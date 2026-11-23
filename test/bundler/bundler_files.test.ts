@@ -1,7 +1,7 @@
 import type { BunPlugin, OnResolveCallback } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, bunRun, isWindows, substDrive, tempDir } from "harness";
-import { readdirSync, readFileSync } from "node:fs";
+import { readdirSync, readFileSync, symlinkSync } from "node:fs";
 import { basename, join, relative, sep } from "node:path";
 
 describe("bundler files option", () => {
@@ -1030,17 +1030,18 @@ describe("bundler files option", () => {
     expect(readdirSync(String(dir))).toEqual(["out"]);
   });
 
-  test.skipIf(!isWindows)(
-    "a key is relative to a working directory on a drive that stands for a directory",
-    async () => {
-      using dir = tempDir("files-subst-cwd", {
+  test.concurrent.skipIf(!isWindows).each(["drive", "junction"])(
+    "a key is relative to a working directory that is reached through a %s",
+    async through => {
+      using dir = tempDir("files-cwd", {
         "w/build.js": `await Bun.build({ entrypoints: ["/src/a.js"], files: { "/src/a.js": "" }, outdir: "out" });`,
         "w/src/a.js": "// source",
       });
       using drive = substDrive(String(dir));
+      symlinkSync(join(String(dir), "w"), join(String(dir), "link"), "junction");
       await using proc = Bun.spawn({
         cmd: [bunExe(), "build.js"],
-        cwd: join(drive.root, "w"),
+        cwd: through === "drive" ? join(drive.root, "w") : join(String(dir), "link"),
         env: bunEnv,
         stderr: "pipe",
       });

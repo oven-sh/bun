@@ -2526,15 +2526,13 @@ impl PathTemplate {
         path_template_needs(&self.data, field)
     }
 
-    /// `root_dir` is a real path. On Windows the working directory is not: it keeps junctions and `subst` drives.
-    pub(crate) fn set_dir(&mut self, root_dir: &[u8], relative: &[u8]) {
+    /// Makes `[dir]` lead to a real path, as `root_dir` is. On Windows the working directory keeps junctions and `subst` drives.
+    pub(crate) fn resolve_dir(&mut self, root_dir: &[u8]) {
         use bun_paths::Path;
-        self.placeholder.dir = relative.into();
-        if !cfg!(windows) || !bun_paths::climbs_out(relative) || !self.needs(PlaceholderField::Dir)
-        {
+        if !cfg!(windows) || !self.needs(PlaceholderField::Dir) {
             return;
         }
-        let dir = Path::resolve(&[root_dir, relative]);
+        let dir = Path::resolve(&[root_dir, &self.placeholder.dir]);
         if !matches!(bun_paths::volume(&dir), [_, b':']) {
             return;
         }

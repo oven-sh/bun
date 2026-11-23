@@ -639,6 +639,7 @@ pub(crate) fn compute_chunks<'a>(
             };
             let mut real_path_buf = bun_paths::path_buffer_pool::get();
             let in_memory;
+            let mut is_real = true;
             let dir: &[u8] = 'dir: {
                 let Ok(dir_file) = bun_sys::File::openat(
                     bun_sys::Fd::cwd(),
@@ -659,6 +660,7 @@ pub(crate) fn compute_chunks<'a>(
                         return Err(crate::Error::BuildFailed);
                     };
                     in_memory = normalized;
+                    is_real = false;
                     let has_volume = !bun_paths::volume(&in_memory).is_empty();
                     break 'dir &in_memory[usize::from(!has_volume)..];
                 };
@@ -681,7 +683,10 @@ pub(crate) fn compute_chunks<'a>(
             };
 
             let root_dir = &this.resolver.opts.root_dir;
-            (chunk.template).set_dir(root_dir, &Path::relative(root_dir, dir));
+            chunk.template.placeholder.dir = Path::relative(root_dir, dir).as_bytes().into();
+            if !is_real && bun_paths::climbs_out(&chunk.template.placeholder.dir) {
+                chunk.template.resolve_dir(root_dir);
+            }
         }
 
         if !mirrors_source {

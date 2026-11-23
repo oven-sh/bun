@@ -3981,7 +3981,10 @@ pub mod bv2_impl {
                             let pathname = Fs::PathName::init(&relative);
 
                             template.placeholder.name = pathname.base.to_vec().into_boxed_slice();
-                            template.set_dir(&self.transpiler.options.root_dir, pathname.dir);
+                            template.placeholder.dir = pathname.dir.to_vec().into_boxed_slice();
+                            if bun_paths::is_absolute(&relative) {
+                                template.resolve_dir(&self.transpiler.options.root_dir);
+                            }
                             let mut ext: &[u8] = pathname.ext;
                             if !ext.is_empty() && ext[0] == b'.' {
                                 ext = &ext[1..];

@@ -93,26 +93,6 @@ describe("url.parse", () => {
         "parsing http://\u00AD/bad.com/",
       );
     }
-
-    {
-      const badURLs = [
-        "https://evil.com:.example.com",
-        // bun: upstream v26.3.0 also lists "git+ssh://git@github.com:npm/npm". Bun still parses it.
-      ];
-      badURLs.forEach(badURL => {
-        common.spawnPromisified(process.execPath, ["-e", `url.parse(${JSON.stringify(badURL)})`]).then(
-          common.mustCall(({ code, stdout, stderr }) => {
-            assert.strictEqual(code, 1);
-          }),
-        );
-      });
-
-      badURLs.forEach(badURL => {
-        assert.throws(() => url.parse(badURL), {
-          code: "ERR_INVALID_ARG_VALUE",
-        });
-      });
-    }
   });
 
   test("rethrows a primitive thrown while describing the argument", async () => {

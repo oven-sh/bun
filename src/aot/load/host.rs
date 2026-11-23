@@ -10,8 +10,6 @@ use bun_core::CodeGenerationFromStrings;
 use bun_core::strings::{contains_char, is_all_whitespace};
 use bun_paths::fs::PathName;
 use bun_paths::path_buffer_pool;
-use bun_paths::platform::Posix;
-use bun_paths::resolve_path::dirname;
 use bun_resolve_builtins::Alias;
 use bun_sema::atom::Interner;
 use bun_sema::bind::Bound;
@@ -24,8 +22,8 @@ use bun_sema::resolve::{
     CodeHost, CodeImportForm, CodeImportKind, CodeParseRequest, CodeRead, CodeRequest,
     ComputedCodeRequest, EarlyTransformRequest, ExternalKind, FileSearch, FileStamp, FinishedFile,
     FoundCode, Host, HostPayload, HostResolution, LoaderRequest, MacroRequest, ModuleDetection,
-    ParsedCode, ScriptKind, TransformRequest, TreeChange, is_declaration_file_name, join, to_path,
-    to_path_in,
+    ParsedCode, ScriptKind, TransformRequest, TreeChange, is_declaration_file_name, join,
+    parent_directory, to_path, to_path_in,
 };
 use bun_sema::session::{Arena, Session};
 use bun_sema::util::{FxHashMap, FxHashSet, SharedSort};
@@ -494,7 +492,7 @@ impl<'a> LoadHost<'a> {
         let working_directory = &self.input.options.code.working_directory;
         match (self.plugins).directory_of_virtual_module(path, working_directory) {
             Some(directory) => Cow::Owned(directory),
-            None => Cow::Borrowed(dirname::<Posix>(path)),
+            None => Cow::Borrowed(parent_directory(path)),
         }
     }
 
@@ -995,7 +993,7 @@ impl Host for LoadHost<'_> {
         let (mut files, directories) = self.disk.entries(path);
         let folder = path.strip_suffix(b"/").unwrap_or(path);
         for product in self.outfile.iter().chain(&self.other_products) {
-            if self.is_same_path(dirname::<Posix>(product), folder) {
+            if self.is_same_path(parent_directory(product), folder) {
                 let name_of_product = &product[folder.len() + 1..];
                 files.retain(|name| !self.is_same_path(name, name_of_product));
             }
@@ -1236,7 +1234,7 @@ impl CodeHost for LoadHost<'_> {
         let directory = to_native(request.directory);
         let is_left_to_run_time = is_import
             && ((load.runs_tests && contains_char(request.specifier, b'?'))
-                || is_external(&load.externals, request.specifier, directory));
+                || is_external(&load.externals, request.specifier, request.kind, directory));
         match is_left_to_run_time {
             true => HostResolution::External {
                 specifier: request.specifier.to_vec(),
@@ -1287,7 +1285,7 @@ impl CodeHost for LoadHost<'_> {
         };
         let path = self.disk.realpath(&path);
         let next_to_vitest = FileSearch {
-            directory: dirname::<Posix>(&path),
+            directory: parent_directory(&path),
             ..*search
         };
         self.input.provider.find_file(self, &next_to_vitest)
@@ -1455,7 +1453,7 @@ impl CodeHost for LoadHost<'_> {
     fn directory_of_dynamic_imports<'p>(&self, path: &'p [u8]) -> Cow<'p, [u8]> {
         match self.plugins.name_of_entry_text(path) {
             Some(name) if is_url_with_text(name) => {
-                Cow::Owned(dirname::<Posix>(&[b"/", name].concat()).to_vec())
+                Cow::Owned(parent_directory(&[b"/", name].concat()).to_vec())
             }
             Some(_) | None => LoadHost::directory_of(self, path),
         }

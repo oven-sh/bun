@@ -38,7 +38,7 @@ import { existsSync } from "node:fs";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import type { Abi, Arch, Config, OS } from "./config.ts";
 import { assert } from "./error.ts";
-import { computeCpuTargetFlags, rustLtoInLink } from "./flags.ts";
+import { computeCpuTargetFlags, rustLtoInLink, usesIcuOfLinuxSystem } from "./flags.ts";
 import type { Ninja } from "./ninja.ts";
 import { envify } from "./rust/cargo-env.ts";
 import { emitGeneratedInputsCheck, emitRustPlan, emitRustUnits, registerRustUnitRules } from "./rust/emit.ts";
@@ -157,6 +157,8 @@ function rustCpuTargetFlags(cfg: Config): string[] {
       if (extensions.length > 0) rustflags.push(`-Ctarget-feature=${extensions.map(ext => `+${ext}`).join(",")}`);
     }
   }
+  // clang turns this on by itself for the target and rustc does not, so LTO would inline no C++ into Rust.
+  if (cfg.abi === "android" && cfg.arm64) rustflags.push("-Zllvm-target-feature=+fix-cortex-a53-835769");
   return rustflags;
 }
 
@@ -475,6 +477,11 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
   if (!cfg.codeGenerationFromStrings) {
     rustflags.push("--cfg=bun_disallow_code_generation_from_strings");
   }
+  // `bun_system_icu`: `bun_icu` is empty.
+  rustflags.push("--check-cfg=cfg(bun_system_icu)");
+  if (usesIcuOfLinuxSystem(cfg)) {
+    rustflags.push("--cfg=bun_system_icu");
+  }
   // Drop `#[track_caller]` source-location capture in release. Every
   // `Option::unwrap`/`slice[i]`/`RefCell::borrow` etc. otherwise emits a
   // `&'static core::panic::Location` (file/line/col) plus the file-path string
@@ -557,7 +564,7 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
   if (rustLtoInLink(cfg)) {
     // Every release build but ASan's: the crates carry ThinLTO bitcode, not machine code, and bun's link optimises
     // it. Where cross-language LTO is on that is one ThinLTO graph with the C/C++ and JSC, and importing works across
-    // the languages; elsewhere (FreeBSD, Android, Windows arm64, `--lto=off`) it is ThinLTO over the crates alone.
+    // the languages; with `--lto=off` it is ThinLTO over the crates alone.
     // Thin, not fat: a pre-merged fat module cannot take part in a thin link's importing, and the backends run in
     // parallel. The release profile's `lto = "off"` is what leaves each crate's bitcode with its summary.
     //

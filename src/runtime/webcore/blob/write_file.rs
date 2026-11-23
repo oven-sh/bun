@@ -171,7 +171,7 @@ mod windows_impl {
     impl crate::node::fs::async_::AsyncMkdirpTarget for WriteFileWindows {
         fn directory(&self) -> &[u8] {
             let path = self.path();
-            bun_core::dirname(path).unwrap_or(path)
+            bun_paths::dirname(path).unwrap_or(path)
         }
         fn set_error(&mut self, err: sys::Error) {
             self.err = Some(err);
@@ -429,7 +429,7 @@ mod windows_impl {
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Reports a finished write to its promise.
-fn settle(
+pub(super) fn settle(
     promise: &mut JSPromise,
     global_this: &JSGlobalObject,
     count: Result<SizeType, Box<SystemError>>,
@@ -450,7 +450,7 @@ fn settle(
 
 // ──────────────────────────────────────────────────────────────────────────
 
-fn note_written(destination: &blob::Store) {
+pub(super) fn note_written(destination: &blob::Store) {
     if let blob::store::Data::File(file) = &destination.data
         && let PathOrFileDescriptor::Path(path) = &file.pathlike
     {

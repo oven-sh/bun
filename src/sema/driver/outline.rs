@@ -7,13 +7,12 @@
 
 use crate::host::{UncachedDisk, from_native};
 use crate::{has_no_installed_dependencies, installed_typescript, major_of_typescript_at};
-use bun_paths::platform::Posix;
-use bun_paths::resolve_path::dirname;
 use bun_sema::config::{self, Roots, SplitFilePath};
 use bun_sema::json::Json;
 use bun_sema::program::libs_referenced_by;
 use bun_sema::resolve::{
     CachedConfig, Host, Options, ancestors, contains_path, inside, is_same_path, join,
+    parent_directory,
 };
 use bun_sema::session::Session;
 use bun_sema::util::{FxHashMap, FxHashSet};
@@ -104,7 +103,7 @@ impl Outlines {
         let host = self.uncached_host(false);
         let file = SplitFilePath::new(&path);
         let includes_file = |it: &Arc<Project>| it.roots.has(&file, &|path| host.is_file(path));
-        for (config, project_slot) in self.above(dirname::<Posix>(&path)).iter() {
+        for (config, project_slot) in self.above(parent_directory(&path)).iter() {
             let Some(project) = self.read_into(project_slot, config) else {
                 continue;
             };
@@ -134,7 +133,7 @@ impl Outlines {
         let nearest = self.nearest_to(directory);
         let mut next = nearest.or_else(|| self.nearest_to(&self.cwd));
         while let Some(config) = next {
-            let parent = ancestors(dirname::<Posix>(&config)).nth(1);
+            let parent = ancestors(parent_directory(&config)).nth(1);
             next = parent.and_then(|it| self.nearest_to(it));
             let project_slot = self.project_slot_of(&config);
             all.push((config, project_slot));

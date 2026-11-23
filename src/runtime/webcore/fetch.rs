@@ -25,6 +25,9 @@ pub(crate) fn fetch_type_error_string(value: bun_jsc::JSValue) -> &'static str {
 #[path = "fetch/FetchTasklet.rs"]
 pub(crate) mod fetch_tasklet;
 
+#[path = "fetch/FetchTrace.rs"]
+pub(crate) mod fetch_trace;
+
 #[path = "fetch/FetchRequestBodySink.rs"]
 pub(crate) mod fetch_request_body_sink;
 pub(crate) use self::fetch_request_body_sink::FetchRequestBodySink;
@@ -70,8 +73,7 @@ use crate::webcore::{blob, readable_stream, response};
 use bun_http_jsc as _;
 use bun_http_jsc::headers_jsc::from_fetch_headers;
 use bun_jsc::AbortSignalRef;
-#[cfg(windows)]
-use bun_paths::resolve_path::PosixToWinNormalizer;
+use bun_paths::Path;
 use bun_ptr::RefPtr;
 use bun_resolver::data_url::DataURL;
 use bun_s3_signing::SignOptions;
@@ -80,7 +82,7 @@ use bun_url::URL as ZigURL;
 
 use self::fetch_tasklet::{FetchOptions, HTTPRequestBody};
 pub(crate) use self::fetch_tasklet::{
-    FetchTasklet, FetchTaskletDeinitHop, FetchTaskletRequestDrain,
+    FetchTasklet, FetchTaskletDeinitHop, FetchTaskletRequestDrain, FetchTaskletTrace,
 };
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -109,7 +111,10 @@ fn absolute_unix_socket_path(cwd: &[u8], path: Vec<u8>) -> Box<[u8]> {
     if cfg!(windows) || path.first() == Some(&0) || bun_paths::is_absolute(&path) {
         return path.into_boxed_slice();
     }
-    bun_paths::join_sep_maybe_z::<false>(&[cwd, &path])
+    let mut absolute = bun_paths::Path::from(cwd);
+    absolute.push_trailing_sep();
+    absolute.extend_from_slice(&path);
+    absolute.as_bytes().into()
 }
 
 /// Build the refcounted `bun_s3_signing::S3Credentials` from the lower-tier
@@ -204,7 +209,7 @@ fn data_url_response(url: BunString, global_this: &JSGlobalObject) -> JSValue {
         false,
     ));
 
-    JSPromise::resolved_promise_value(global_this, Response::to_js(response, global_this))
+    JSPromise::resolved_promise_value(global_this, response.to_js(global_this))
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1207,7 +1212,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 return Ok(JSPromise::rejected_promise(global_this, err).to_js());
             }
         }
-        let mut path_buf = bun_paths::path_buffer_pool::get();
         let mut path_buf2 = bun_paths::path_buffer_pool::get();
         let decoded_len = match PercentEncoding::decode_into(
             &mut path_buf2[..],
@@ -1257,74 +1261,21 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 }
             }
 
-            let temp_file_path: &[u8] = 'brk: {
-                if bun_paths::is_absolute(url_path_decoded) {
-                    #[cfg(windows)]
-                    {
-                        // pathname will start with / if is a absolute path on windows, so we remove before normalizing it
-                        let url_path_decoded = if url_path_decoded[0] == b'/' {
-                            &url_path_decoded[1..]
-                        } else {
-                            url_path_decoded
-                        };
-                        break 'brk match PosixToWinNormalizer::resolve_cwd_with_external_buf_z(
-                            &mut path_buf,
-                            url_path_decoded,
-                        ) {
-                            Ok(p) => p,
-                            Err(err) => {
-                                return Err(
-                                    global_this.throw_error(err, "Failed to resolve file url")
-                                );
-                            }
-                        };
-                    }
-                    #[cfg(not(windows))]
-                    {
-                        break 'brk url_path_decoded;
-                    }
-                }
-
-                #[cfg(windows)]
-                let mut cwd_buf = bun_paths::path_buffer_pool::get();
-                #[cfg(windows)]
-                // `bun_sys::getcwd` returns the byte length written into
-                // `cwd_buf`; slice it here.
-                let cwd: &[u8] = match bun_sys::getcwd(&mut cwd_buf) {
-                    Ok(len) => &cwd_buf[..len],
-                    Err(err) => {
-                        return Err(global_this.throw_error(err, "Failed to resolve file url"));
-                    }
-                };
-                #[cfg(not(windows))]
-                let cwd = bun_resolver::fs::FileSystem::get().top_level_dir();
-
+            let mut file_path = if bun_paths::is_absolute(url_path_decoded) {
+                // On Windows the pathname is `/C:/a`.
+                let has_extra_slash = cfg!(windows) && url_path_decoded[0] == b'/';
+                Path::from(&url_path_decoded[usize::from(has_extra_slash)..])
+            } else {
                 // Relative to the folder of the entry module, or to the working directory when there
                 // is none (`bun bake`).
-                let parts: &[&[u8]] = match vm.main() {
-                    Some(main) => &[main, b"../", url_path_decoded],
-                    None => &[url_path_decoded],
-                };
-                let fullpath = bun_paths::resolve_path::join_abs_string_buf::<
-                    bun_paths::platform::Auto,
-                >(cwd, &mut path_buf, parts);
-                #[cfg(windows)]
-                {
-                    break 'brk match PosixToWinNormalizer::resolve_cwd_with_external_buf_z(
-                        &mut path_buf2,
-                        fullpath,
-                    ) {
-                        Ok(p) => p,
-                        Err(err) => {
-                            return Err(global_this.throw_error(err, "Failed to resolve file url"));
-                        }
-                    };
-                }
-                #[cfg(not(windows))]
-                {
-                    break 'brk fullpath;
-                }
+                let cwd = bun_resolver::fs::FileSystem::get().top_level_dir();
+                let main_dir = vm.main().map_or(&b""[..], bun_paths::dirname_or_root);
+                let mut path = Path::resolve(&[cwd, main_dir, url_path_decoded]);
+                path.copy_trailing_sep_from(url_path_decoded);
+                path
             };
+            file_path.add_current_drive();
+            let temp_file_path: &[u8] = &file_path;
 
             url_string = bun_url::file_url_from_string(&StringView::borrow_utf8(temp_file_path));
 
@@ -1350,7 +1301,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
         return Ok(JSPromise::resolved_promise_value(
             global_this,
-            Response::to_js(response, global_this),
+            response.to_js(global_this),
         ));
     }
 
@@ -1439,9 +1390,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     }
     if body.needs_to_read_file() {
         'prepare_body: {
-            // A local `PathBuffer` serves as NUL-termination scratch for
-            // `path.slice_z()`.
-            let mut open_path_buf = bun_paths::path_buffer_pool::get();
+            let mut open_path_buf = bun_paths::Path::new();
             let opened_fd_res: bun_sys::Result<bun_sys::Fd> = {
                 let store = body.store().expect("needs_to_read_file implies store");
                 match &store.data.as_file().pathlike {
@@ -1825,15 +1774,14 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         session_check_server_identity,
     };
 
-    let _ = FetchTasklet::queue(
+    FetchTasklet::queue(
         &global_this.js_thread(context),
         fetch_options,
         // Pass the Strong value instead of creating a new one, or else we
         // will leak it
         // see https://github.com/oven-sh/bun/issues/2985
         promise,
-    );
-    // `catch |err| bun.handleOom(err)` — FetchTasklet::queue aborts on OOM.
+    )?;
 
     // `body` has been *moved* into `FetchOptions`; the FetchTasklet now owns
     // the single live reference.
@@ -1866,7 +1814,7 @@ impl S3StreamWrapper {
                     self.url,
                     false,
                 ));
-                let response_js = Response::to_js(response, global);
+                let response_js = response.to_js(global);
                 response_js.ensure_still_alive();
                 self.promise.resolve(global, response_js)?;
             }
@@ -1886,7 +1834,7 @@ impl S3StreamWrapper {
                     false,
                 ));
 
-                let response_js = Response::to_js(response, global);
+                let response_js = response.to_js(global);
                 response_js.ensure_still_alive();
                 self.promise.resolve(global, response_js)?;
             }

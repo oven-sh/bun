@@ -1,7 +1,7 @@
 use bstr::BStr;
 
 use bun_core::Global;
-use bun_paths::{platform, resolve_path};
+use bun_paths::Path;
 use bun_sys::{self as sys, Dir};
 
 use bun_install::package_manager_real::{Subcommand, global_link_dir_path, options::LogLevel};
@@ -23,11 +23,8 @@ impl UnlinkCommand {
         let (lockfile, package) = link_command::load_package_for_link(manager, "unlinking")?;
         let name = lockfile.str(&package.name);
 
-        let link_path = resolve_path::join_abs_string_z::<platform::Auto>(
-            global_link_dir_path(manager),
-            &[name],
-        );
-        if !sys::lstat(link_path).is_ok_and(|stat| sys::S::ISLNK(stat.st_mode as _)) {
+        let link_path = Path::resolve(&[global_link_dir_path(manager), name]);
+        if !sys::lstat(&link_path).is_ok_and(|stat| sys::S::ISLNK(stat.st_mode as _)) {
             bun_core::pretty_errorln!(
                 "<r><green>success:<r> package \"{}\" is not globally linked, so there's nothing to do.",
                 BStr::new(name),

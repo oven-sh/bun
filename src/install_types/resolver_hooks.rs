@@ -1300,22 +1300,20 @@ pub trait AutoInstaller {
     // ── PackageManager ops ────────────────────────────────────────────────
     /// Returns the folder that `bun install` would link `name` to: a workspace, or the target of
     /// `file:` or `link:`. `package_json_dir` is `None` unless the package.json is the project's.
-    fn project_folder<'b>(
+    fn project_folder(
         &mut self,
         name: &[u8],
         version: &DependencyVersion,
         version_buf: &[u8],
         package_json_dir: Option<&[u8]>,
-        buf: &'b mut [u8],
-    ) -> Option<&'b [u8]>;
+    ) -> Option<bun_paths::Path>;
     /// Returns the package's folder in the cache. An npm package that is not cached yet is
     /// downloaded first, and the call blocks until that finishes.
-    fn path_for_resolution<'b>(
+    fn path_for_resolution(
         &mut self,
         package_id: PackageID,
         resolution: &Resolution,
-        buf: &'b mut bun_core::PathBuffer,
-    ) -> core::result::Result<&'b [u8], bun_core::Error>;
+    ) -> core::result::Result<bun_paths::Path, bun_core::Error>;
     fn get_preinstall_state(&self, package_id: PackageID) -> PreinstallState;
     /// `package_json_dir` means the same as in `project_folder`. The path of a `file:` tarball is
     /// relative to it.

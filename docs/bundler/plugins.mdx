@@ -72,6 +72,42 @@ await Bun.build({
 });
 ```
 
+### The two builder objects
+
+`Bun.build` and `Bun.plugin` pass different objects to `setup`.
+
+| Caller       | Type of `build`        | Members                                                                |
+| ------------ | ---------------------- | ---------------------------------------------------------------------- |
+| `Bun.build`  | `PluginBuilder`        | `config`, `onStart`, `onResolve`, `onLoad`, `onBeforeParse`, `onEnd`   |
+| `Bun.plugin` | `RuntimePluginBuilder` | `onResolve`, `onLoad`, `module`, and `target`, which is always `"bun"` |
+
+In `Bun.plugin`, `build.config` is `undefined`, and an `onLoad` callback receives only `path`.
+
+The type `BunPlugin` describes the builder of `Bun.build`. If `Bun.plugin` also runs your plugin, check `build.config` before you use `config`, `onStart`, `onEnd` or `onBeforeParse`:
+
+```ts title="myPlugin.ts" icon="/icons/typescript.svg"
+import type { BunPlugin } from "bun";
+
+const myPlugin: BunPlugin = {
+  name: "Custom loader",
+  setup(build) {
+    build.onLoad({ filter: /\.txt$/ }, async ({ path }) => {
+      return { contents: await Bun.file(path).text(), loader: "text" };
+    });
+
+    if (build.config) {
+      // Bun.build called setup()
+      build.onEnd(result => console.log(`${result.outputs.length} outputs`));
+    }
+  },
+};
+
+Bun.plugin(myPlugin);
+await Bun.build({ entrypoints: ["./app.ts"], outdir: "./out", plugins: [myPlugin] });
+```
+
+For a plugin that only `Bun.plugin` runs, use the type `RuntimePlugin`. TypeScript then reports `build.config.target` in `setup` as an error.
+
 ## Plugin lifecycle
 
 ### Namespaces

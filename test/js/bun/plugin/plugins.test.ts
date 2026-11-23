@@ -820,6 +820,82 @@ it("builder methods return the builder only when called as methods", () => {
   });
 });
 
+it("the builders and the onLoad arguments have the members that the types declare", async () => {
+  using dir = tempDir("plugin-builder-types", {
+    "entry.ts": `export {};`,
+    "tsconfig.json": JSON.stringify({
+      compilerOptions: {
+        strict: true,
+        noEmit: true,
+        target: "esnext",
+        module: "esnext",
+        moduleResolution: "bundler",
+        lib: ["esnext"],
+        typeRoots: [resolve(import.meta.dir, "..", "..", "..", "..", "packages")],
+        types: ["bun-types"],
+        skipLibCheck: true,
+      },
+      files: ["members.ts", "runtime.ts"],
+    }),
+    "runtime.ts": `Bun.plugin({
+  name: "runtime",
+  setup(build) {
+    console.log(build.config.target);
+  },
+});
+`,
+  });
+
+  const seen = { runtime: [] as string[], onLoadArgs: [] as string[], bundler: [] as string[] };
+  plugin({
+    name: "members of the builder of Bun.plugin()",
+    setup(builder) {
+      seen.runtime = Object.keys(builder).sort();
+      builder.onLoad({ filter: /.*/, namespace: "members-of-onload-args" }, args => {
+        seen.onLoadArgs = Object.keys(args).sort();
+        return { exports: {}, loader: "object" };
+      });
+    },
+  });
+  require("members-of-onload-args:module");
+  await Bun.build({
+    entrypoints: [resolve(String(dir), "entry.ts")],
+    plugins: [
+      { name: "members of the builder of Bun.build()", setup: builder => void (seen.bundler = Object.keys(builder)) },
+    ],
+  });
+  expect({ runtime: seen.runtime, onLoadArgs: seen.onLoadArgs }).toEqual({
+    runtime: ["module", "onLoad", "onResolve", "target"],
+    onLoadArgs: ["path"],
+  });
+
+  const literal = (names: string[]) => JSON.stringify(Object.fromEntries(names.map(name => [name, true])));
+  // An object literal for `Record<Set<T>, true>` must have each member that T says is set, and no other.
+  // The builder of Bun.build() also has members that the types leave out, so it only must have each declared one.
+  await Bun.write(
+    resolve(String(dir), "members.ts"),
+    `import type { PluginBuilder, RuntimeOnLoadArgs, RuntimePluginBuilder } from "bun";
+type Set<T> = { [K in keyof T]-?: undefined extends T[K] ? never : K }[keyof T];
+export const runtime: Record<Set<RuntimePluginBuilder>, true> = ${literal(seen.runtime)};
+export const onLoadArgs: Record<Set<RuntimeOnLoadArgs>, true> = ${literal(seen.onLoadArgs)};
+const has = ${literal(seen.bundler)} as const;
+export const bundler: Record<keyof PluginBuilder, true> = has;
+`,
+  );
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "check"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect({ stdout: stdout.trim().split("\n"), exitCode }).toEqual({
+    stdout: ["runtime.ts(4,17): error TS18048: 'build.config' is possibly 'undefined'."],
+    exitCode: 1,
+  });
+});
+
 it("recursion throws stack overflow", () => {
   expect(() => {
     require("recursion:recursion");

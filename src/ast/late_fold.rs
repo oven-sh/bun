@@ -3,9 +3,11 @@
 use core::cmp::Ordering;
 use core::ptr::NonNull;
 
-use bun_alloc::Arena as Bump;
+use bun_alloc::ArenaVecExt as _;
+use bun_alloc::{Arena as Bump, ArenaVec};
 
 use crate::ast_result::TsEnumsMap;
+use crate::const_fold::{numeric_binary, to_int32};
 use crate::expr::Data;
 use crate::nodes::InlinedEnumValueDecoded;
 use crate::stmt::Data as StmtData;
@@ -86,110 +88,73 @@ fn literal_to_boolean(data: &Data) -> Option<bool> {
     }
 }
 
-/// esbuild's `ToInt32`.
-pub fn to_int32(f: f64) -> i32 {
-    if !f.is_finite() {
-        return 0;
-    }
-    // The `%` keeps the value in [0, u32::MAX], so the `as u32` cast is exact.
-    let uint = (f.abs() % (u32::MAX as f64 + 1.0)) as u32;
-    let int = uint as i32;
-    if f < 0.0 { 0i32.wrapping_sub(int) } else { int }
+#[inline]
+fn number(value: f64) -> Data {
+    Data::ENumber(E::Number::new(value))
 }
 
 #[inline]
-fn to_uint32(f: f64) -> u32 {
-    to_int32(f) as u32
-}
-
-/// esbuild's `approximatePrintedIntCharCount`.
-fn approximate_printed_int_char_count(value: f64) -> u32 {
-    let digits = 1 + value.abs().log10().floor().max(0.0) as u32;
-    digits + u32::from(value < 0.0)
-}
-
-#[inline]
-fn number(value: f64) -> Option<Data> {
-    Some(Data::ENumber(E::Number::new(value)))
-}
-
-#[inline]
-fn boolean(value: bool) -> Option<Data> {
-    Some(Data::EBoolean(E::Boolean { value }))
-}
-
-#[inline]
-fn is_small_int(value: f64, max: f64) -> bool {
-    value == value.trunc() && value.abs() <= max
+fn boolean(value: bool) -> Data {
+    Data::EBoolean(E::Boolean { value })
 }
 
 fn fold_unary(op: OpCode, value: &Data) -> Option<Data> {
-    match op {
+    Some(match op {
         OpCode::UnPos => number(value.to_number()?),
         OpCode::UnNeg => number(-value.to_number()?),
         OpCode::UnCpl => number(f64::from(!to_int32(value.to_number()?))),
         OpCode::UnNot => boolean(!literal_to_boolean(value)?),
-        _ => None,
-    }
+        _ => return None,
+    })
 }
 
-/// esbuild's `ShouldFoldBinaryOperatorWhenMinifying` and `FoldBinaryOperator`, for numbers.
-fn fold_numbers(op: OpCode, left: f64, right: f64) -> Option<Data> {
-    match op {
-        OpCode::BinAdd | OpCode::BinSub
-            if is_small_int(left, 4294967295.0) && is_small_int(right, 4294967295.0) =>
-        {
-            number(if op == OpCode::BinAdd {
-                left + right
-            } else {
-                left - right
+/// The parser's rule for two numbers: it folds every operator, whatever the length of the result.
+fn fold_numbers(op: OpCode, left: &Data, right: &Data) -> Option<Data> {
+    let [l, r] = Expr::extract_numeric_values(left, right)?;
+    Some(match op {
+        OpCode::BinLooseEq | OpCode::BinStrictEq => boolean(l == r),
+        OpCode::BinLooseNe | OpCode::BinStrictNe => boolean(l != r),
+        OpCode::BinLt | OpCode::BinGt | OpCode::BinLe | OpCode::BinGe => {
+            let [l, r] = Expr::extract_numeric_values_in_safe_range(left, right)?;
+            boolean(match op {
+                OpCode::BinLt => l < r,
+                OpCode::BinGt => l > r,
+                OpCode::BinLe => l <= r,
+                _ => l >= r,
             })
         }
-        OpCode::BinMul if is_small_int(left, 255.0) && is_small_int(right, 255.0) => {
-            number(left * right)
-        }
-        // "0/0" => "NaN", "1/0" => "Infinity", "1/-0" => "-Infinity"
-        OpCode::BinDiv if right == 0.0 => number(left / right),
-        OpCode::BinShl => {
-            // "1 << 3" => "8", but "1 << 24" stays: it is shorter than "16777216"
-            let result = f64::from(to_int32(left).wrapping_shl(to_uint32(right) & 31));
-            if approximate_printed_int_char_count(result)
-                <= approximate_printed_int_char_count(left)
-                    + 2
-                    + approximate_printed_int_char_count(right)
-            {
-                number(result)
-            } else {
-                None
-            }
-        }
-        OpCode::BinShr => number(f64::from(
-            to_int32(left).wrapping_shr(to_uint32(right) & 31),
-        )),
-        OpCode::BinUShr => {
-            // "10 >>> 1" => "5", but "-1 >>> 0" stays: it is shorter than "4294967295"
-            let result = f64::from(to_uint32(left).wrapping_shr(to_uint32(right) & 31));
-            if approximate_printed_int_char_count(result)
-                <= approximate_printed_int_char_count(left)
-                    + 3
-                    + approximate_printed_int_char_count(right)
-            {
-                number(result)
-            } else {
-                None
-            }
-        }
-        OpCode::BinBitwiseAnd => number(f64::from(to_int32(left) & to_int32(right))),
-        OpCode::BinBitwiseOr => number(f64::from(to_int32(left) | to_int32(right))),
-        OpCode::BinBitwiseXor => number(f64::from(to_int32(left) ^ to_int32(right))),
-        OpCode::BinLt => boolean(left < right),
-        OpCode::BinGt => boolean(left > right),
-        OpCode::BinLe => boolean(left <= right),
-        OpCode::BinGe => boolean(left >= right),
-        OpCode::BinLooseEq | OpCode::BinStrictEq => boolean(left == right),
-        OpCode::BinLooseNe | OpCode::BinStrictNe => boolean(left != right),
-        _ => None,
+        _ => number(numeric_binary(op, l, r)?),
+    })
+}
+
+fn compare_strings(op: OpCode, left: &E::EString, right: &E::EString) -> Option<Data> {
+    if left.next.is_some() || right.next.is_some() || left.is_utf8() != right.is_utf8() {
+        return None;
     }
+    match op {
+        OpCode::BinLooseEq | OpCode::BinStrictEq => {
+            return Some(boolean(left.order(right) == Ordering::Equal));
+        }
+        OpCode::BinLooseNe | OpCode::BinStrictNe => {
+            return Some(boolean(left.order(right) != Ordering::Equal));
+        }
+        _ => {}
+    }
+    // JavaScript orders strings by UTF-16 code unit: the byte order only for ASCII.
+    if !left.is_utf8()
+        || !bun_core::is_all_ascii(left.slice8())
+        || !bun_core::is_all_ascii(right.slice8())
+    {
+        return None;
+    }
+    let order = left.slice8().cmp(right.slice8());
+    Some(boolean(match op {
+        OpCode::BinLt => order == Ordering::Less,
+        OpCode::BinGt => order == Ordering::Greater,
+        OpCode::BinLe => order != Ordering::Greater,
+        OpCode::BinGe => order != Ordering::Less,
+        _ => return None,
+    }))
 }
 
 impl<'a> LateFold<'a> {
@@ -207,6 +172,32 @@ impl<'a> LateFold<'a> {
     /// `ToBoolean(expr)` when cross-module values decide it without a side effect.
     pub fn to_boolean(&self, expr: Expr, spine: &mut Vec<Expr>) -> Option<bool> {
         literal_to_boolean(&self.visit(expr, spine)?.expr.data)
+    }
+
+    /// True when `expr` prints as a string literal. As a statement, that can be a directive.
+    pub fn is_string(&self, expr: Expr, spine: &mut Vec<Expr>) -> bool {
+        let expr = self.visit(expr, spine).map_or(expr, |folded| folded.expr);
+        matches!(expr.unwrap_inlined().data, Data::EString(_))
+    }
+
+    /// The branch of `s` that runs, when cross-module values decide the test and nothing
+    /// needs the other branch.
+    pub fn live_branch(&self, s: &S::If, spine: &mut Vec<Expr>) -> Option<Option<Stmt>> {
+        let value = self.to_boolean(s.test, spine)?;
+        let (live, dead) = if value {
+            (Some(s.yes), s.no)
+        } else {
+            (s.no, Some(s.yes))
+        };
+        if dead.as_ref().is_some_and(dead_branch_declares) {
+            return None;
+        }
+        if let Some(StmtData::SExpr(live)) = live.map(|stmt| stmt.data)
+            && self.is_string(live.value, spine)
+        {
+            return None;
+        }
+        Some(live)
     }
 
     fn enum_value(&self, target: Expr, name: &[u8]) -> Option<InlinedEnumValueDecoded> {
@@ -230,7 +221,7 @@ impl<'a> LateFold<'a> {
             _ => return None,
         };
         let data = match value {
-            InlinedEnumValueDecoded::Number(value) => Data::ENumber(E::Number::new(value)),
+            InlinedEnumValueDecoded::Number(value) => number(value),
             InlinedEnumValueDecoded::String(string) => {
                 Data::EString(StoreRef::from(NonNull::new(string.cast_mut())?))
             }
@@ -311,15 +302,67 @@ impl<'a> LateFold<'a> {
             bottom = e.left;
         }
         let mut left = self.visit(bottom, spine);
+        // A chain of string `+` appends to one buffer: a new string at each step is quadratic.
+        let mut joined: Option<(ArenaVec<'a, u8>, crate::Loc)> = None;
         while spine.len() > base {
             let node = spine.pop().expect("the spine is not empty");
             let Data::EBinary(e) = &node.data else {
                 unreachable!()
             };
             let right = self.visit(e.right, spine);
+            if e.op == OpCode::BinAdd {
+                let right_expr = right.map_or(e.right, |folded| folded.expr);
+                if let Some((bytes, _)) = &mut joined {
+                    if let Some(string) = self.to_string(right_expr) {
+                        bytes.extend_from_slice(string.slice8());
+                        continue;
+                    }
+                } else if (left.is_some() || right.is_some())
+                    && let Some((l, r)) =
+                        self.string_operands(left.map_or(e.left, |folded| folded.expr), right_expr)
+                {
+                    let mut bytes = ArenaVec::with_capacity_in(l.len() + r.len(), self.bump);
+                    bytes.extend_from_slice(l.slice8());
+                    bytes.extend_from_slice(r.slice8());
+                    joined = Some((bytes, node.loc));
+                    continue;
+                }
+            }
+            if let Some(string) = self.finish_string(&mut joined) {
+                left = Some(string);
+            }
             left = self.join(node, e, left, right);
         }
-        left
+        self.finish_string(&mut joined).or(left)
+    }
+
+    fn finish_string(&self, joined: &mut Option<(ArenaVec<'a, u8>, crate::Loc)>) -> Option<Folded> {
+        let (bytes, loc) = joined.take()?;
+        let string = E::EString::init(bytes.into_bump_slice());
+        Folded::reduced(Expr {
+            data: Data::EString(StoreRef::from_bump(self.bump.alloc(string))),
+            loc,
+        })
+    }
+
+    /// `expr` as a flat UTF-8 string: a string, or a primitive literal that `+` converts to one.
+    fn to_string(&self, expr: Expr) -> Option<StoreRef<E::EString>> {
+        let string = expr.to_string_expr_without_side_effects(self.bump)?;
+        let string = Data::extract_string_value(string.data)?;
+        (string.next.is_none() && string.is_utf8()).then_some(string)
+    }
+
+    /// The operands of a `+` that concatenates: one of them is a string.
+    fn string_operands(
+        &self,
+        left: Expr,
+        right: Expr,
+    ) -> Option<(StoreRef<E::EString>, StoreRef<E::EString>)> {
+        let is_string = |expr: Expr| matches!(expr.unwrap_inlined().data, Data::EString(_));
+        if !is_string(left) && !is_string(right) {
+            return None;
+        }
+        Some((self.to_string(left)?, self.to_string(right)?))
     }
 
     fn join(
@@ -384,56 +427,15 @@ impl<'a> LateFold<'a> {
             _ => {}
         }
 
-        let data =
-            if let Some([left, right]) = Expr::extract_numeric_values(&left.data, &right.data) {
-                fold_numbers(op, left, right)?
-            } else {
-                let left = Data::extract_string_value(left.data)?;
-                let right = Data::extract_string_value(right.data)?;
-                self.fold_strings(op, &left, &right)?
-            };
+        let data = match fold_numbers(op, &left.data, &right.data) {
+            Some(data) => data,
+            None => compare_strings(
+                op,
+                &*Data::extract_string_value(left.data)?,
+                &*Data::extract_string_value(right.data)?,
+            )?,
+        };
         Some(Expr { data, loc })
-    }
-
-    fn fold_strings(&self, op: OpCode, left: &E::EString, right: &E::EString) -> Option<Data> {
-        // A rope is flattened in place, and this must not write to the AST.
-        if left.next.is_some() || right.next.is_some() || left.is_utf8() != right.is_utf8() {
-            return None;
-        }
-        match op {
-            OpCode::BinLooseEq | OpCode::BinStrictEq => {
-                return boolean(left.order(right) == Ordering::Equal);
-            }
-            OpCode::BinLooseNe | OpCode::BinStrictNe => {
-                return boolean(left.order(right) != Ordering::Equal);
-            }
-            _ => {}
-        }
-        // JavaScript orders strings by UTF-16 code unit: the byte order only for ASCII.
-        if !left.is_utf8()
-            || !bun_core::is_all_ascii(left.slice8())
-            || !bun_core::is_all_ascii(right.slice8())
-        {
-            return None;
-        }
-        let order = left.slice8().cmp(right.slice8());
-        match op {
-            OpCode::BinAdd => {
-                let joined = self
-                    .bump
-                    .alloc_slice_fill_copy(left.slice8().len() + right.slice8().len(), 0u8);
-                joined[..left.slice8().len()].copy_from_slice(left.slice8());
-                joined[left.slice8().len()..].copy_from_slice(right.slice8());
-                let mut string = E::EString::init(joined);
-                string.prefer_template = left.prefer_template || right.prefer_template;
-                Some(Data::EString(StoreRef::from_bump(self.bump.alloc(string))))
-            }
-            OpCode::BinLt => boolean(order == Ordering::Less),
-            OpCode::BinGt => boolean(order == Ordering::Greater),
-            OpCode::BinLe => boolean(order != Ordering::Greater),
-            OpCode::BinGe => boolean(order != Ordering::Less),
-            _ => None,
-        }
     }
 }
 
@@ -476,6 +478,8 @@ pub fn dead_branch_declares(stmt: &Stmt) -> bool {
             dead_branch_declares(&for_.init) || dead_branch_declares(&for_.body)
         }
         StmtData::SLabel(label) => dead_branch_declares(&label.stmt),
+        StmtData::SWith(with) => dead_branch_declares(&with.body),
+        StmtData::SSwitch(switch) => switch.cases.slice().iter().any(|case| any(case.body)),
         _ => true,
     }
 }

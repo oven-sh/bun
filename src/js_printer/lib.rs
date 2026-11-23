@@ -2036,6 +2036,7 @@ pub(crate) mod __gated_printer {
         }
 
         pub(crate) fn print_body(&mut self, stmt: Stmt) {
+            let stmt = self.late_folded_stmt(stmt);
             match &stmt.data {
                 StmtData::SBlock(block) => {
                     self.print_space();
@@ -2054,7 +2055,7 @@ pub(crate) mod __gated_printer {
         pub(crate) fn print_block_body(&mut self, stmts: &[Stmt]) {
             for stmt in stmts {
                 self.print_semicolon_if_needed();
-                self.print_stmt_in_list(*stmt).expect("unreachable");
+                self.print_stmt(*stmt).expect("unreachable");
             }
         }
 
@@ -5332,6 +5333,7 @@ pub(crate) mod __gated_printer {
                 self.stack_overflowed = true;
                 return Ok(());
             }
+            let stmt = self.late_folded_stmt(stmt);
 
             let prev_stmt_tag = self.prev_stmt_tag;
             // Borrowck: scopeguard would hold `&mut self.prev_stmt_tag`
@@ -5797,11 +5799,12 @@ pub(crate) mod __gated_printer {
                     self.print_space_before_identifier();
                     self.add_source_mapping(stmt.loc);
                     self.print(b"do");
-                    match s.body.data {
+                    let body = self.late_folded_stmt(s.body);
+                    match body.data {
                         StmtData::SBlock(block) => {
                             self.print_space();
                             self.print_block(
-                                s.body.loc,
+                                body.loc,
                                 slice_of(block.stmts),
                                 Some(block.close_brace_loc),
                             );
@@ -5810,7 +5813,7 @@ pub(crate) mod __gated_printer {
                         _ => {
                             self.print_newline();
                             self.indent();
-                            self.print_stmt(s.body).expect("unreachable");
+                            self.print_stmt(body).expect("unreachable");
                             self.print_semicolon_if_needed();
                             self.unindent();
                             self.print_indent();
@@ -5998,7 +6001,7 @@ pub(crate) mod __gated_printer {
                         self.indent();
                         for st in c_body.iter() {
                             self.print_semicolon_if_needed();
-                            self.print_stmt_in_list(*st).expect("unreachable");
+                            self.print_stmt(*st).expect("unreachable");
                         }
                         self.unindent();
                     }
@@ -6487,7 +6490,8 @@ pub(crate) mod __gated_printer {
                 return;
             }
 
-            let no = self.else_branch(s);
+            let yes = self.late_folded_stmt(s.yes);
+            let no = self.late_folded_else(s);
 
             self.print_space_before_identifier();
             self.add_source_mapping(loc);
@@ -6497,14 +6501,10 @@ pub(crate) mod __gated_printer {
             self.print_expr(s.test, Level::Lowest, ExprFlag::none());
             self.print(b")");
 
-            match &s.yes.data {
+            match &yes.data {
                 StmtData::SBlock(block) => {
                     self.print_space();
-                    self.print_block(
-                        s.yes.loc,
-                        slice_of(block.stmts),
-                        Some(block.close_brace_loc),
-                    );
+                    self.print_block(yes.loc, slice_of(block.stmts), Some(block.close_brace_loc));
                     if no.is_some() {
                         self.print_space();
                     } else {
@@ -6512,13 +6512,13 @@ pub(crate) mod __gated_printer {
                     }
                 }
                 _ => {
-                    if self.wrap_to_avoid_ambiguous_else(&s.yes.data) {
+                    if self.wrap_to_avoid_ambiguous_else(&yes.data) {
                         self.print_space();
                         self.print(b"{");
                         self.print_newline();
 
                         self.indent();
-                        self.print_stmt(s.yes).expect("unreachable");
+                        self.print_stmt(yes).expect("unreachable");
                         self.unindent();
                         self.needs_semicolon = false;
 
@@ -6533,7 +6533,7 @@ pub(crate) mod __gated_printer {
                     } else {
                         self.print_newline();
                         self.indent();
-                        self.print_stmt(s.yes).expect("unreachable");
+                        self.print_stmt(yes).expect("unreachable");
                         self.unindent();
 
                         if no.is_some() {
@@ -6573,18 +6573,18 @@ pub(crate) mod __gated_printer {
             loop {
                 match s {
                     StmtData::SIf(index) => {
-                        if let Some(no) = self.else_branch(&index) {
+                        if let Some(no) = self.late_folded_else(&index) {
                             s = no.data;
                         } else {
                             return true;
                         }
                     }
-                    StmtData::SFor(current) => s = current.body.data,
-                    StmtData::SForIn(current) => s = current.body.data,
-                    StmtData::SForOf(current) => s = current.body.data,
-                    StmtData::SWhile(current) => s = current.body.data,
-                    StmtData::SWith(current) => s = current.body.data,
-                    StmtData::SLabel(current) => s = current.stmt.data,
+                    StmtData::SFor(current) => s = self.late_folded_stmt(current.body).data,
+                    StmtData::SForIn(current) => s = self.late_folded_stmt(current.body).data,
+                    StmtData::SForOf(current) => s = self.late_folded_stmt(current.body).data,
+                    StmtData::SWhile(current) => s = self.late_folded_stmt(current.body).data,
+                    StmtData::SWith(current) => s = self.late_folded_stmt(current.body).data,
+                    StmtData::SLabel(current) => s = self.late_folded_stmt(current.stmt).data,
                     _ => return false,
                 }
             }
@@ -6717,155 +6717,68 @@ pub(crate) mod __gated_printer {
             true
         }
 
-        /// `ToBoolean(test)` when cross-module values decide it without a side effect.
-        fn late_folded_test(&mut self, test: Expr) -> Option<bool> {
+        /// The statement to print for `stmt`: an `if` that cross-module values decide is its
+        /// live branch, or an empty statement.
+        #[inline]
+        fn late_folded_stmt(&mut self, stmt: Stmt) -> Stmt {
+            if self.options.late_fold && matches!(stmt.data, StmtData::SIf(_)) {
+                return self.late_folded_if(stmt);
+            }
+            stmt
+        }
+
+        #[inline(never)]
+        fn late_folded_if(&mut self, mut stmt: Stmt) -> Stmt {
             let mut spine = core::mem::take(&mut self.late_fold_spine);
-            let value = self.late_fold().to_boolean(test, &mut spine);
+            let late_fold = self.late_fold();
+            while let StmtData::SIf(s) = &stmt.data {
+                let Some(live) = late_fold.live_branch(s, &mut spine) else {
+                    break;
+                };
+                stmt = live.unwrap_or(stmt.to_empty());
+            }
             self.late_fold_spine = spine;
-            value
+            stmt
         }
 
-        /// The `else` branch to print for `s`: the arm that runs replaces a decided `else if`.
+        /// The `else` branch to print for `s`. An `else` that the late fold emptied is left out.
         #[inline]
-        fn else_branch(&mut self, s: &S::If) -> Option<Stmt> {
-            if self.options.late_fold
-                && matches!(s.no.map(|stmt| stmt.data), Some(StmtData::SIf(_)))
-            {
-                return self.late_folded_else_branch(s.no);
-            }
-            s.no
-        }
-
-        #[inline(never)]
-        fn late_folded_else_branch(&mut self, mut no: Option<Stmt>) -> Option<Stmt> {
-            while let Some(StmtData::SIf(inner)) = no.as_ref().map(|stmt| &stmt.data) {
-                let Some(value) = self.late_folded_test(inner.test) else {
-                    break;
+        fn late_folded_else(&mut self, s: &S::If) -> Option<Stmt> {
+            let no = s.no?;
+            if self.options.late_fold && matches!(no.data, StmtData::SIf(_)) {
+                let folded = self.late_folded_if(no);
+                return match &folded.data {
+                    StmtData::SEmpty(_) => None,
+                    StmtData::SBlock(block) if slice_of(block.stmts).is_empty() => None,
+                    _ => Some(folded),
                 };
-                let (live, dead) = if value {
-                    (Some(inner.yes), inner.no)
-                } else {
-                    (inner.no, Some(inner.yes))
-                };
-                if dead
-                    .as_ref()
-                    .is_some_and(js_ast::late_fold::dead_branch_declares)
-                {
-                    break;
-                }
-                no = live.filter(|stmt| !Self::is_empty_stmt(stmt));
             }
-            no
+            Some(no)
         }
 
-        fn is_empty_stmt(stmt: &Stmt) -> bool {
-            match &stmt.data {
-                StmtData::SEmpty(_) => true,
-                StmtData::SBlock(block) => slice_of(block.stmts).is_empty(),
-                _ => false,
-            }
-        }
-
-        /// Prints a statement of a statement list, where the late fold can drop or unwrap it.
-        #[inline]
-        pub(crate) fn print_stmt_in_list(&mut self, stmt: Stmt) -> crate::Result<()> {
-            if self.options.late_fold && self.late_folded_stmt(&stmt)? {
-                return Ok(());
-            }
-            self.print_stmt(stmt)
-        }
-
-        /// Returns true when it printed what is left of `stmt`.
-        #[inline(never)]
-        fn late_folded_stmt(&mut self, stmt: &Stmt) -> crate::Result<bool> {
-            match &stmt.data {
-                StmtData::SIf(s) => self.print_late_folded_if(s),
-                // `E.Off && debug()` folds to a literal that nothing reads.
-                StmtData::SExpr(s) => Ok(matches!(&s.value.data, ExprData::EBinary(e) if matches!(
-                    e.op,
-                    Op::Code::BinLogicalAnd
-                        | Op::Code::BinLogicalOr
-                        | Op::Code::BinNullishCoalescing
-                )) && self.late_folded_test(s.value).is_some()),
-                _ => Ok(false),
-            }
-        }
-
-        fn print_late_folded_if(&mut self, s: &S::If) -> crate::Result<bool> {
-            // `if (effect(), E.A)`: the parser merges a preceding expression statement in.
-            let (effects, test) = match &s.test.data {
-                ExprData::EBinary(e) if e.op == Op::Code::BinComma => (Some(e.left), e.right),
-                _ => (None, s.test),
-            };
-            let Some(value) = self.late_folded_test(test) else {
-                return Ok(false);
-            };
-            let (live, dead) = if value {
-                (Some(s.yes), s.no)
-            } else {
-                (s.no, Some(s.yes))
-            };
-            if dead
-                .as_ref()
-                .is_some_and(js_ast::late_fold::dead_branch_declares)
-            {
-                return Ok(false);
-            }
-            // As the body of an `if`, a function hoists differently and a string is not a directive.
-            if live.as_ref().is_some_and(|stmt| {
-                matches!(stmt.data, StmtData::SFunction(_)) || Self::can_be_directive(stmt)
-            }) {
-                return Ok(false);
-            }
-
-            if let Some(effects) = effects {
-                self.print_semicolon_if_needed();
-                self.print_expr_stmt(effects);
-            }
-            let Some(live) = live.filter(|stmt| !Self::is_empty_stmt(stmt)) else {
-                return Ok(true);
-            };
-            match &live.data {
-                StmtData::SBlock(block) if Self::can_unwrap_block(slice_of(block.stmts)) => {
-                    for stmt in slice_of(block.stmts) {
-                        self.print_semicolon_if_needed();
-                        self.print_stmt_in_list(*stmt)?;
-                    }
-                }
-                _ => {
-                    self.print_semicolon_if_needed();
-                    self.print_stmt_in_list(live)?;
-                }
-            }
-            Ok(true)
-        }
-
-        fn can_be_directive(stmt: &Stmt) -> bool {
-            match &stmt.data {
-                StmtData::SExpr(s) => matches!(s.value.data, ExprData::EString(_)),
-                StmtData::SDirective(_) => true,
-                _ => false,
-            }
-        }
-
-        /// No statement is scoped to the block, and the first cannot become a directive.
-        fn can_unwrap_block(stmts: &[Stmt]) -> bool {
-            !stmts.first().is_some_and(Self::can_be_directive)
-                && stmts.iter().all(|stmt| match &stmt.data {
-                    StmtData::SLocal(local) => local.kind == S::Kind::KVar,
-                    StmtData::SFunction(_) | StmtData::SClass(_) => false,
-                    _ => true,
-                })
-        }
-
-        #[inline]
         fn print_expr_stmt(&mut self, value: Expr) {
             if !self.options.minify_whitespace && self.options.indent.count > 0 {
                 self.print_indent();
             }
             self.stmt_start = self.writer.written();
-            self.print_expr(value, Level::Lowest, ExprFlag::expr_result_is_unused());
+            let mut flags = ExprFlag::expr_result_is_unused();
+            // A statement that folds to a string would become a directive.
+            if self.options.late_fold && self.late_folds_to_string(value) {
+                flags.insert(ExprFlag::SkipLateFold);
+            }
+            self.print_expr(value, Level::Lowest, flags);
             self.print_semicolon_after_statement();
+        }
+
+        #[inline(never)]
+        fn late_folds_to_string(&mut self, value: Expr) -> bool {
+            if !matches!(value.data, ExprData::EBinary(_) | ExprData::EIf(_)) {
+                return false;
+            }
+            let mut spine = core::mem::take(&mut self.late_fold_spine);
+            let is_string = self.late_fold().is_string(value, &mut spine);
+            self.late_fold_spine = spine;
+            is_string
         }
 
         pub(crate) fn print_inlined_enum(
@@ -8138,7 +8051,7 @@ pub(crate) fn print_with_writer_and_platform<
 
         for part in parts {
             for stmt in slice_of(part.stmts).iter() {
-                if let Err(err) = printer.print_stmt_in_list(*stmt) {
+                if let Err(err) = printer.print_stmt(*stmt) {
                     return PrintResult::Err(err);
                 }
                 printer.print_semicolon_if_needed();

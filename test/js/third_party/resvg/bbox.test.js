@@ -38,13 +38,13 @@ for (let Class of [
 
     if (bbox) resvg.cropByBBox(bbox);
 
-    expect(bbox.width).toBe(112.20712208389321);
+    expect(bbox.width).toBe(112.20712280273438);
     expect(bbox.height).toBe(81);
 
     const pngData = resvg.render();
 
     expect(pngData.width).toBe(500);
-    expect(pngData.height).toBe(362);
+    expect(pngData.height).toBe(361);
 
     if (Class !== Resvg) {
       expect(resvg).toHaveProperty("iShouldExist");

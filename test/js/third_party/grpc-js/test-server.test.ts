@@ -683,7 +683,7 @@ describe("Echo service", () => {
     class ToggleableSecureServerCredentials extends ServerCredentials {
       private contextOptions: SecureContextOptions;
       constructor(key: Buffer, cert: Buffer) {
-        super();
+        super({});
         this.contextOptions = { key, cert };
         this.enable();
       }

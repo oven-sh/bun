@@ -68,7 +68,7 @@ describe("issue at", function () {
   describe("when signing a token", function () {
     let fakeClock;
     beforeEach(function () {
-      fakeClock = sinon.useFakeTimers({ now: 60000 });
+      fakeClock = sinon.useFakeTimers({ now: 60000, toNotFake: ["nextTick", "queueMicrotask"] });
     });
 
     afterEach(function () {
@@ -137,7 +137,7 @@ describe("issue at", function () {
     let fakeClock;
 
     beforeEach(function () {
-      fakeClock = sinon.useFakeTimers({ now: 60000 });
+      fakeClock = sinon.useFakeTimers({ now: 60000, toNotFake: ["nextTick", "queueMicrotask"] });
     });
 
     afterEach(function () {

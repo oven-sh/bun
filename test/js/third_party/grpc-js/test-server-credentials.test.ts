@@ -33,7 +33,7 @@ describe("Server Credentials", () => {
       const creds = ServerCredentials.createInsecure();
 
       assert.strictEqual(creds._isSecure(), false);
-      assert.strictEqual(creds._getSettings(), null);
+      assert.strictEqual(creds._getSecureContextOptions(), null);
     });
   });
 
@@ -42,16 +42,17 @@ describe("Server Credentials", () => {
       const creds = ServerCredentials.createSsl(ca, []);
 
       assert.strictEqual(creds._isSecure(), true);
-      assert.strictEqual(creds._getSettings()?.ca, ca);
+      assert.strictEqual(creds._getSecureContextOptions()?.ca, ca);
     });
 
     it("accepts a boolean as the third argument", () => {
       const creds = ServerCredentials.createSsl(ca, [], true);
 
       assert.strictEqual(creds._isSecure(), true);
-      const settings = creds._getSettings();
-      assert.strictEqual(settings?.ca, ca);
-      assert.strictEqual(settings?.requestCert, true);
+      const constructorOptions = creds._getConstructorOptions();
+      const contextOptions = creds._getSecureContextOptions();
+      assert.strictEqual(contextOptions?.ca, ca);
+      assert.strictEqual(constructorOptions?.requestCert, true);
     });
 
     it("accepts an object with two buffers in the second argument", () => {
@@ -59,9 +60,9 @@ describe("Server Credentials", () => {
       const creds = ServerCredentials.createSsl(null, keyCertPairs);
 
       assert.strictEqual(creds._isSecure(), true);
-      const settings = creds._getSettings();
-      assert.deepStrictEqual(settings?.cert, [cert]);
-      assert.deepStrictEqual(settings?.key, [key]);
+      const contextOptions = creds._getSecureContextOptions();
+      assert.deepStrictEqual(contextOptions?.cert, [cert]);
+      assert.deepStrictEqual(contextOptions?.key, [key]);
     });
 
     it("accepts multiple objects in the second argument", () => {
@@ -72,9 +73,9 @@ describe("Server Credentials", () => {
       const creds = ServerCredentials.createSsl(null, keyCertPairs, false);
 
       assert.strictEqual(creds._isSecure(), true);
-      const settings = creds._getSettings();
-      assert.deepStrictEqual(settings?.cert, [cert, cert]);
-      assert.deepStrictEqual(settings?.key, [key, key]);
+      const contextOptions = creds._getSecureContextOptions();
+      assert.deepStrictEqual(contextOptions?.cert, [cert, cert]);
+      assert.deepStrictEqual(contextOptions?.key, [key, key]);
     });
 
     it("fails if the second argument is not an Array", () => {

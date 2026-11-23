@@ -20163,11 +20163,20 @@ export async function wrong() {
       const { stdout, exitCode } = await check(dir);
       expect(stdout).toMatchInlineSnapshot(`
         "a.ts(50,13): error TS2339: Property 'nope' does not exist on type '{ get: ((options?: { fetch?: RequestInit | undefined; throwHttpError?: ThrowHttpError | undefined; headers?: Record<string, unknown> | undefined; query?: Record<...> | undefined; } | undefined) => Promise<...>) & { ...; }; login: { ...; } & { ...; }; search: { ...; } & { ...; }; users: ((params: { ...; }) => { ...; ...'.
+        a.ts(51,26): error TS2561: Object literal may only specify known properties, but 'nam' does not exist in type '{ name: string; age?: number | undefined; }'. Did you mean to write 'name'?
+        a.ts(52,26): error TS2322: Type 'number' is not assignable to type 'string'.
         a.ts(53,21): error TS2353: Object literal may only specify known properties, and 'ident' does not exist in type '{ id: string | number; }'.
+        a.ts(54,46): error TS2741: Property 'bio' is missing in type '{}' but required in type '{ bio: string; }'.
+        a.ts(55,20): error TS2554: Expected 1 arguments, but got 0.
+        a.ts(56,26): error TS2741: Property 'q' is missing in type '{ page: number; }' but required in type '{ q: string; page?: number | undefined; }'.
+        a.ts(57,24): error TS2741: Property 'password' is missing in type '{ user: string; }' but required in type '{ user: string; password: string; }'.
         a.ts(58,28): error TS2339: Property 'get' does not exist on type '((params: { kind: string | number; }) => { get: ((options?: { fetch?: RequestInit | undefined; throwHttpError?: ThrowHttpError | undefined; headers?: Record<...> | undefined; query?: Record<...> | undefined; } | undefined) => Promise<...>) & { ...; }; '~path': string; } & { ...; }) & {} & { ...; }'.
         a.ts(60,9): error TS2322: Type 'string | null' is not assignable to type 'number'.
           Type 'null' is not assignable to type 'number'.
         a.ts(62,9): error TS2322: Type 'string' is not assignable to type 'boolean'.
+        a.ts(64,9): error TS2322: Type 'string' is not assignable to type 'number'.
+        a.ts(65,9): error TS2322: Type '401 | 422' is not assignable to type '500'.
+          Type '401' is not assignable to type '500'.
         a.ts(66,19): error TS2339: Property 'put' does not exist on type '((params: { id: string | number; }) => { get: ((options?: { fetch?: RequestInit | undefined; throwHttpError?: ThrowHttpError | undefined; headers?: Record<string, unknown> | undefined; query?: Record<...> | undefined; } | undefined) => Promise<...>) & { ...; }; delete: ((body?: unknown, options?: { ...; } | undefine...'."
       `);
       expect(exitCode).toBe(1);

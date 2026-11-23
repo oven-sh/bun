@@ -586,7 +586,7 @@ describe.skip("namespaces", () => {
     });
 
     socket2.on("connect", () => {
-      io.except(socket2.id).emit("a");
+      io.except(socket2.id!).emit("a");
     });
   });
 
@@ -611,7 +611,7 @@ describe.skip("namespaces", () => {
     });
 
     socket2.on("connect", () => {
-      nsp.except(socket2.id).emit("a");
+      nsp.except(socket2.id!).emit("a");
     });
   });
 

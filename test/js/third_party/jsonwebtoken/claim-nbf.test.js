@@ -120,7 +120,7 @@ describe("not before", function () {
   describe('when signing and verifying a token with "notBefore" option', function () {
     let fakeClock;
     beforeEach(function () {
-      fakeClock = sinon.useFakeTimers({ now: 60000 });
+      fakeClock = sinon.useFakeTimers({ now: 60000, toNotFake: ["nextTick", "queueMicrotask"] });
     });
 
     afterEach(function () {

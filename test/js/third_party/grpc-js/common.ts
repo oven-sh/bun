@@ -25,7 +25,7 @@ import * as os from "os";
 import { GrpcObject, ServiceClientConstructor, loadPackageDefinition } from "@grpc/grpc-js";
 import type { ServiceClient } from "@grpc/grpc-js/build/src/make-client";
 import { readFileSync } from "fs";
-import { HealthListener, SubchannelInterface } from "@grpc/grpc-js/build/src/subchannel-interface";
+import { DataWatcher, HealthListener, SubchannelInterface } from "@grpc/grpc-js/build/src/subchannel-interface";
 import type { EntityTypes, SubchannelRef } from "@grpc/grpc-js/build/src/channelz";
 import { Subchannel } from "@grpc/grpc-js/build/src/subchannel";
 import { ConnectivityState } from "@grpc/grpc-js/build/src/connectivity-state";
@@ -140,12 +140,15 @@ export class TestClient {
     this.client.waitForReady(deadline, callback);
   }
 
-  sendRequest(callback: (error?: grpc.ServiceError) => void) {
-    this.client.echo({}, callback);
+  sendRequest(callback: (error?: grpc.ServiceError) => void): grpc.ClientUnaryCall {
+    return this.client.echo({}, callback);
   }
 
-  sendRequestWithMetadata(metadata: grpc.Metadata, callback: (error?: grpc.ServiceError) => void) {
-    this.client.echo({}, metadata, callback);
+  sendRequestWithMetadata(
+    metadata: grpc.Metadata,
+    callback: (error?: grpc.ServiceError) => void,
+  ): grpc.ClientUnaryCall {
+    return this.client.echo({}, metadata, callback);
   }
 
   getChannelState() {
@@ -184,6 +187,9 @@ export class MockSubchannel implements SubchannelInterface {
     initialState: grpc.connectivityState = grpc.connectivityState.IDLE,
   ) {
     this.state = initialState;
+  }
+  addDataWatcher(dataWatcher: DataWatcher): void {
+    throw new Error('Method not implemented.');
   }
   getConnectivityState(): grpc.connectivityState {
     return this.state;
@@ -230,6 +236,12 @@ export class MockSubchannel implements SubchannelInterface {
   }
   addHealthStateWatcher(listener: HealthListener): void {}
   removeHealthStateWatcher(listener: HealthListener): void {}
+  getCallCredentials(): grpc.CallCredentials {
+    return grpc.CallCredentials.createEmpty();
+  }
+  getChannel(): grpc.Channel {
+    throw new Error('Method not implemented');
+  }
 }
 
 export { assert2 };

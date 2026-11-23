@@ -173,7 +173,6 @@ pub use update_request::UpdateRequest;
 pub mod package_manager {
     pub use crate::package_manager_real::package_manager_options::LogLevel;
     pub use crate::package_manager_real::*;
-    pub use crate::update_request;
 
     /// `PackageManager.Options` namespace alias — `LogLevel` plus the
     /// free-function helpers callers spell as `Options::open_global_dir`.
@@ -192,13 +191,6 @@ pub mod package_manager {
         GetJSONOptions as GetJsonOptions, GetResult as GetJsonResult,
         MapEntry as WorkspacePackageJsonCacheEntry, WorkspacePackageJSONCache,
     };
-
-    /// `CommandLineArguments.AuditLevel` (subset surfaced for
-    /// `bun_runtime::cli::audit_command`). Re-exported alongside the full
-    /// `command_line_arguments` module from `package_manager_real`.
-    pub mod audit {
-        pub use crate::package_manager_real::command_line_arguments::AuditLevel;
-    }
 
     /// Re-export the file-backed security-scanner module so callers naming
     /// `bun_install::package_manager::security_scanner` reach the real

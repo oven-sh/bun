@@ -131,7 +131,6 @@ const INTEGERS = [
   ["i64", -(2 ** 63), 2 ** 63],
 ];
 const quoted = text => `"${text.replace(/["\\]/g, "\\$&")}"`;
-const partsOf = t => [t.t, ...(t.items ?? []), ...(t.alts ?? []), ...(t.fields ?? []).map(it => it.t)].filter(Boolean);
 
 function write(t) {
   switch (t.k) {

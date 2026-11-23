@@ -38,7 +38,6 @@ public:
     explicit Exception(ExceptionCode, String = {}, String = {});
 
     ExceptionCode code() const { return m_code; }
-    const String& message() const { return m_message; }
     String&& releaseMessage() { return WTF::move(m_message); }
     // Optional secondary payload for codes that need more than one string to
     // shape the JS error (currently InvalidURLError's `error.base`).
@@ -56,18 +55,11 @@ private:
     String m_extra;
 };
 
-Exception isolatedCopy(Exception&&);
-
 inline Exception::Exception(ExceptionCode code, String message, String extra)
     : m_code { code }
     , m_message { WTF::move(message) }
     , m_extra { WTF::move(extra) }
 {
-}
-
-inline Exception isolatedCopy(Exception&& value)
-{
-    return Exception { value.code(), value.releaseMessage().isolatedCopy(), value.releaseExtra().isolatedCopy() };
 }
 
 // Returns an OutOfMemoryError exception if the message exceeds the max string length.

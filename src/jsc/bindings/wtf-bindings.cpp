@@ -22,7 +22,6 @@ static_assert(WTF::maxECMAScriptTime == 8.64e15, "bun_jsc::wtf::MAX_ECMASCRIPT_T
 #if !OS(WINDOWS)
 #include <stdatomic.h>
 
-#include <cassert>
 #include <signal.h>
 #include <termios.h>
 static int orig_termios_fd = -1;

@@ -32,12 +32,6 @@ Handle::Handle(const Handle& that)
     *this = that;
 }
 
-Handle::Handle(const ObjectLayout* that)
-    : m_toV8Object(&this->m_object)
-{
-    m_object = *that;
-}
-
 Handle& Handle::operator=(const Handle& that)
 {
     m_object = that.m_object;

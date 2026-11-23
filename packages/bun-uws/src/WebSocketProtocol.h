@@ -81,17 +81,10 @@ enum OpCode : unsigned char {
     PONG = 10
 };
 
-enum {
-    CLIENT,
-    SERVER
-};
-
 // 24 bytes perfectly
 template <bool isServer>
 struct WebSocketState {
 public:
-    static constexpr unsigned int SHORT_MESSAGE_HEADER = isServer ? 6 : 2;
-    static constexpr unsigned int MEDIUM_MESSAGE_HEADER = isServer ? 8 : 4;
     static constexpr unsigned int LONG_MESSAGE_HEADER = isServer ? 14 : 10;
 
     // 16 bytes
@@ -207,8 +200,6 @@ static inline size_t messageFrameSize(size_t messageSize) {
 }
 
 enum {
-    SND_CONTINUATION = 1,
-    SND_NO_FIN = 2,
     SND_COMPRESSED = 64
 };
 
@@ -232,8 +223,6 @@ static inline size_t formatMessage(char *dst, const char *src, size_t length, Op
     }
 
     dst[0] = (char) ((fin ? 128 : 0) | ((compressed && opCode) ? SND_COMPRESSED : 0) | (char) opCode);
-
-    //printf("%d\n", (int)dst[0]);
 
     char mask[4];
     if (!isServer) {
@@ -437,10 +426,6 @@ protected:
     }
 
 public:
-    WebSocketProtocol() {
-
-    }
-
     static inline void consume(char *src, unsigned int length, WebSocketState<isServer> *wState, void *user) {
         if (wState->state.spillLength) {
             src -= wState->state.spillLength;

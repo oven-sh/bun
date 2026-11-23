@@ -742,7 +742,6 @@ static JSValue constructBunPeekObject(VM& vm, JSObject* bunObject)
 }
 
 extern "C" uint64_t Bun__readOriginTimer(void*);
-extern "C" double Bun__readOriginTimerStart(void*);
 
 JSC_DEFINE_HOST_FUNCTION(functionBunSleep,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))

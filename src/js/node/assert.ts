@@ -458,7 +458,6 @@ Assert.prototype.notStrictEqual = function notStrictEqual(actual, expected, mess
  * @returns {void}
  */
 Assert.prototype.partialDeepStrictEqual = function partialDeepStrictEqual(actual, expected, message) {
-  // emitExperimentalWarning("assert.partialDeepStrictEqual");
   if (arguments.length < 2) {
     throw $ERR_MISSING_ARGS("actual", "expected");
   }
@@ -899,7 +898,6 @@ function internalMatch(string, regexp, message, fn) {
     const generatedMessage = !message;
     const inspect = lazyInspect();
 
-    // 'The input was expected to not match the regular expression ' +
     message ||=
       typeof string !== "string"
         ? 'The "string" argument must be of type string. Received type ' + `${typeof string} (${inspect(string)})`

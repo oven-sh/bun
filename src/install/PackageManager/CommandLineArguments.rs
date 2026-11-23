@@ -808,7 +808,6 @@ const PRUNE_HELP_PARAMS: &[ParamType] = &[
 #[derive(Default)]
 pub struct CommandLineArguments {
     pub cache_dir: Option<&'static [u8]>,
-    pub lockfile: &'static [u8],
     pub(crate) global: bool,
     pub(crate) config: Option<&'static [u8]>,
     pub(crate) network_concurrency: Option<u16>,

@@ -777,12 +777,6 @@ async function processFile(parser: CppParser, file: string, allFunctions: CppFn[
       if (nodeRef.name !== "FunctionDefinition") {
         return true; // Continue traversal
       }
-      // console.log(
-      //   `\n--- Found ZIG_EXPORT on function in ${file} at line ${lineInfo.get(nodeRef.node.from).line} ---\n`,
-      // );
-      // // Use the new pretty-printer to log the tree structure of the matched function
-      // console.log(prettyPrintLezerNode(nodeRef.node, ctx.sourceCode));
-      // console.log(`-------------------------------------------------------------------\n`);
 
       const fnNode = nodeRef.node;
       let zigExportAttr: SyntaxNode | null = null;
@@ -805,17 +799,6 @@ async function processFile(parser: CppParser, file: string, allFunctions: CppFn[
       }
 
       queryFoundLines.add(lineInfo.get(zigExportAttr.from).line);
-
-      // disabled because lezer parses (extern "C") separately to the function definition / block
-      /* const linkage = closest(fnNode, "LinkageSpecification");
-      const linkageString = linkage?.getChild("String");
-      if (!linkage || !linkageString || text(linkageString, ctx) !== '"C"') {
-        appendError(
-          nodePosition(fnNode, ctx),
-          'exported function must be extern "C":\n' +
-            (linkage ? prettyPrintLezerNode(linkage, ctx.sourceCode) : "no linkage"),
-        );
-      } */
 
       const tagStr = text(tagIdentifier, ctx);
       let tag: ExportTag | undefined;

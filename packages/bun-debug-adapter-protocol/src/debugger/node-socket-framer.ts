@@ -1,15 +1,7 @@
 import type { Socket } from "node:net";
-const enum FramerState {
-  WaitingForLength,
-  WaitingForMessage,
-}
 
 let socketFramerMessageLengthBuffer: Buffer;
 export class SocketFramer {
-  state: FramerState = FramerState.WaitingForLength;
-  pendingLength: number = 0;
-  sizeBuffer: Buffer = Buffer.alloc(4);
-  sizeBufferIndex: number = 0;
   bufferedData: Buffer = Buffer.alloc(0);
   socket: Socket;
   private onMessage: (message: string | string[]) => void;
@@ -26,10 +18,7 @@ export class SocketFramer {
   }
 
   reset(): void {
-    this.state = FramerState.WaitingForLength;
     this.bufferedData = Buffer.alloc(0);
-    this.sizeBufferIndex = 0;
-    this.sizeBuffer = Buffer.alloc(4);
   }
 
   send(data: string): void {

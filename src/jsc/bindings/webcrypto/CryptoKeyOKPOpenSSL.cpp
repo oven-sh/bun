@@ -29,7 +29,6 @@
 #if ENABLE(WEB_CRYPTO)
 
 #include "JsonWebKey.h"
-// #include "Logging.h"
 #include <wtf/text/Base64.h>
 #include <openssl/curve25519.h>
 #include "CommonCryptoDERUtilities.h"

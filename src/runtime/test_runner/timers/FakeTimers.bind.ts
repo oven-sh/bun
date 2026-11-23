@@ -12,7 +12,7 @@ const milliseconds = { args: { milliseconds: b.any } } as const;
 const steps = { args: { steps: b.any } } as const;
 
 /** `jest` and `vi` each get a function of their own, since they differ when the timers are real. */
-const perFlavor = (name: string, fn: b.FunctionOptions) => [
+const perFlavor = (name: string, fn: Parameters<typeof b.fn>[0]) => [
   b.fn({ ...fn, export: `Bun__FakeTimers__vi${name}` }),
   b.fn({ ...fn, export: `Bun__FakeTimers__jest${name}` }),
 ];

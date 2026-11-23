@@ -4314,7 +4314,7 @@ test("never runs", () => {});
       cmd: [bunExe(), "test", "./a.test.js", "./b.test.js"],
       env: bunEnv,
       cwd: String(dir),
-      stdout: "pipe",
+      stdout: "ignore",
       stderr: "pipe",
     });
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);

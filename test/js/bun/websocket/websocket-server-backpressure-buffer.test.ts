@@ -1,10 +1,10 @@
-import { setSocketOptions } from "bun:internal-for-testing";
+import { socketFaultInjection as fault, setSocketOptions } from "bun:internal-for-testing";
 import { describe, expect, it } from "bun:test";
 import { tls as cert, isWindows } from "harness";
 import crypto from "node:crypto";
 import net from "node:net";
 import tls from "node:tls";
-import { closePayload, encodeFrame, OP } from "../../web/websocket/raw-peer";
+import { closePayload, encodeFrame, OP, RawClient } from "../../web/websocket/raw-peer";
 
 // Drives the uws BackPressure buffer through its append / erase / resize paths
 // and verifies the bytes that reach the client exactly match what was sent.
@@ -535,5 +535,55 @@ describe.concurrent.each(["ws", "wss"] as const)("%s: drain()", scheme => {
       client.onclose = null;
       client.terminate();
     }
+  });
+});
+
+describe.skipIf(!fault.available())("after the kernel refused a write", () => {
+  async function connect(websocket: Partial<Bun.WebSocketHandler<undefined>>) {
+    const opened = Promise.withResolvers<Bun.ServerWebSocket>();
+    const server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch: (req, server) => void server.upgrade(req),
+      websocket: { open: opened.resolve, message() {}, ...websocket },
+    });
+    const client = await RawClient.upgrade(server.port!);
+    const ws = await opened.promise;
+    fault.set({ syscall: "send", action: "zero", repeat: -1 });
+    return {
+      server,
+      client,
+      ws,
+      [Symbol.dispose]() {
+        fault.clear();
+        client.destroy();
+        server.stop(true);
+      },
+    };
+  }
+
+  it("a subscriber does not get what is published above backpressureLimit", async () => {
+    using pair = await connect({ backpressureLimit: 6 });
+    pair.ws.subscribe("topic");
+    const sent = [pair.ws.send("full"), pair.ws.send("over"), pair.ws.send("send")];
+    sent.push(pair.server.publish("topic", "publish"));
+    pair.ws.unsubscribe("topic");
+    fault.clear();
+    expect(sent).toEqual([-1, -1, 0, 0]);
+    expect(await pair.client.nextFrames(2)).toEqual(['text "full"', 'text "over"']);
+    expect(await pair.client.roundTrip()).toEqual([]);
+  });
+
+  it("drain() fires once if a send() emptied the buffer", async () => {
+    const drained: number[] = [];
+    using pair = await connect({ drain: ws => void drained.push(ws.getBufferedAmount()) });
+    const first = pair.ws.send("a");
+    fault.clear();
+    expect([first, pair.ws.send("b")]).toEqual([-1, 1]);
+    expect(await pair.client.roundTrip()).toEqual(['text "a"', 'text "b"']);
+    pair.ws.pause();
+    pair.ws.resume();
+    expect(await pair.client.roundTrip()).toEqual([]);
+    expect(drained).toEqual([0]);
   });
 });

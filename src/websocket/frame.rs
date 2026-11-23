@@ -1,7 +1,7 @@
 // This code is based on https://github.com/frmdstryr/zhp/blob/a4b5700c289c3619647206144e10fb414113a888/src/websocket.zig
 // Thank you @frmdstryr.
 
-use core::mem::size_of;
+use core::mem::{MaybeUninit, size_of};
 
 // Logically a u4; values are 0x0..=0xF so u8 is layout-safe.
 #[repr(u8)]
@@ -61,6 +61,11 @@ impl Opcode {
         }
     }
 }
+
+/// RFC 6455 §5.5: a control frame's payload is at most 125 bytes.
+pub const MAX_CONTROL_PAYLOAD: usize = 125;
+/// With more bytes unsent a Ping gets no answer, or a peer could exhaust our memory (RFC 6455 §5.5.3).
+pub const AUTO_PONG_BACKPRESSURE_LIMIT: usize = 16 * 1024 * 1024;
 
 /// Status codes allowed in a Close frame (RFC 6455 §7.4).
 pub fn is_valid_close_code(code: u16) -> bool {
@@ -187,5 +192,42 @@ impl WebsocketHeader {
     pub const fn from_slice(bytes: [u8; 2]) -> WebsocketHeader {
         // @bitCast(@byteSwap(@bitCast(bytes)))
         WebsocketHeader(u16::from_be_bytes(bytes))
+    }
+}
+
+/// The FIN and RSV1 bits of a frame that a server sends.
+#[repr(u8)]
+#[derive(Clone, Copy)]
+pub enum Flags {
+    None = 0,
+    Final = 0x80,
+    FinalCompressed = 0xc0,
+}
+
+/// Writes what precedes `len` bytes that a server sends. Returns it, and the rest of `out`.
+#[inline]
+pub fn write_unmasked_head(
+    out: &mut [MaybeUninit<u8>],
+    opcode: Opcode,
+    len: usize,
+    flags: Flags,
+) -> (&[u8], &mut [MaybeUninit<u8>]) {
+    fn write<const N: usize>(
+        out: &mut [MaybeUninit<u8>],
+        bytes: [u8; N],
+    ) -> (&[u8], &mut [MaybeUninit<u8>]) {
+        let (head, rest) = out.split_at_mut(N);
+        (head.write_copy_of_slice(&bytes), rest)
+    }
+
+    let [a, b] = [
+        flags as u8 | opcode as u8,
+        WebsocketHeader::pack_length(len),
+    ];
+    let [c, d, e, f, g, h, i, j] = (len as u64).to_be_bytes();
+    match WebsocketHeader::length_byte_count(len) {
+        0 => write(out, [a, b]),
+        2 => write(out, [a, b, i, j]),
+        _ => write(out, [a, b, c, d, e, f, g, h, i, j]),
     }
 }

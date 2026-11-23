@@ -18,8 +18,8 @@ use bun_core::ZStr;
 // bearing variants of the same names that are not yet reconciled.
 
 pub use bun_uws_sys::{
-    AnyWebSocket, BodyReaderMixin, ConnectingSocket, NewApp, RawWebSocket, Request,
-    WebSocketBehavior, us_socket_stream_buffer_t, us_socket_t, uws_res,
+    AnyWebSocket, BodyReaderMixin, ConnectingSocket, NewApp, Request, WebSocketBehavior,
+    WebSocketUpgradeContext, us_socket_stream_buffer_t, us_socket_t, uws_res,
 };
 
 /// `#[uws_callback]` — wraps a `&self`/`&mut self` method in an `extern "C"`
@@ -37,13 +37,6 @@ pub type Socket = us_socket_t;
 /// `us_ssl_ctx_from_options`, so there's no wrapper struct. `Option<*mut SslCtx>`
 /// is what listen/connect/adopt take.
 pub type SslCtx = bun_boringssl::c::SSL_CTX;
-
-/// uWS C++ `WebSocketContext<SSL,true,UserData>*`. Only ever produced by the
-/// upgrade-handler thunk and round-tripped to `uws_res_upgrade`; Rust never
-/// dereferences it. Re-exported from `bun_uws_sys` so the trait
-/// `bun_uws_sys::web_socket::WebSocketUpgradeServer` and higher-tier callers
-/// (`bun_runtime::server`, `bake::dev_server`) all name the *same* opaque.
-pub use bun_uws_sys::WebSocketUpgradeContext;
 
 /// Recovers the concrete uWS response type from `*mut c_void` across the
 /// Rust→C++ boundary. Mirrors `UWSResponseKind` in headers-handwritten.h.
@@ -68,14 +61,15 @@ impl ResponseKind {
     }
 }
 
-pub use bun_uws_sys::web_socket::c::{SHARED_COMPRESSOR, SHARED_DECOMPRESSOR};
+pub use bun_uws_sys::web_socket::{
+    DEDICATED_COMPRESSOR_3KB, SHARED_COMPRESSOR, SHARED_DECOMPRESSOR,
+};
 pub const DEDICATED_DECOMPRESSOR_2KB: i32 = 11 << 8;
 pub const DEDICATED_DECOMPRESSOR_4KB: i32 = 12 << 8;
 pub const DEDICATED_DECOMPRESSOR_8KB: i32 = 13 << 8;
 pub const DEDICATED_DECOMPRESSOR_16KB: i32 = 14 << 8;
 pub const DEDICATED_DECOMPRESSOR_32KB: i32 = 15 << 8;
 pub const DEDICATED_DECOMPRESSOR: i32 = DEDICATED_DECOMPRESSOR_32KB;
-pub const DEDICATED_COMPRESSOR_3KB: i32 = 145;
 pub const DEDICATED_COMPRESSOR_4KB: i32 = 146;
 pub const DEDICATED_COMPRESSOR_8KB: i32 = 163;
 pub const DEDICATED_COMPRESSOR_16KB: i32 = 180;

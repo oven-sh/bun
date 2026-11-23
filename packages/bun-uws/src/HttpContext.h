@@ -24,7 +24,6 @@
 #include "HttpContextData.h"
 #include "HttpResponseData.h"
 #include "AsyncSocket.h"
-#include "WebSocketData.h"
 #include "SocketKinds.h"
 
 #include <string>
@@ -388,12 +387,10 @@ private:
                 }
                 if (matched) {
                     /* Not HTTP/2 after all: give the HTTP/1 parser the bytes we held back. */
-                    replay.reserve(LIBUS_RECV_BUFFER_PADDING * 2 + matched + (size_t) length);
-                    replay.assign(LIBUS_RECV_BUFFER_PADDING, '\0');
+                    replay.reserve(matched + (size_t) length);
                     replay.append(preface, matched);
                     replay.append(data, (size_t) length);
-                    replay.append(LIBUS_RECV_BUFFER_PADDING, '\0');
-                    data = replay.data() + LIBUS_RECV_BUFFER_PADDING;
+                    data = replay.data();
                     length += matched;
                 }
             }
@@ -1208,7 +1205,7 @@ public:
      * vtable is the mode: enableNodeHttpCompat() swaps in the IsNodeHttp=true handler
      * set, so the choice of template instantiation is the single source of truth
      * and there is no separate flag to keep in sync with it. The few paths that
-     * are not templated on IsNodeHttp (socketExtSize, HttpResponse::upgrade - the
+     * are not templated on IsNodeHttp (socketExtSize, HttpResponse::destroyForUpgrade - the
      * type the C API casts to from a runtime `int ssl`) read it back from here. */
     bool isNodeHttp() const {
         return group.vtable == &httpVTable<true>;

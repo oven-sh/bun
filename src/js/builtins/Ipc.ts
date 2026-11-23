@@ -52,9 +52,7 @@ export function serialize(message: unknown, handle: unknown, options: unknown) {
 }
 /**
  * @param {Serialized} serialized
- * @param {unknown} handle
- * @param {(handle: Handle) => void} emit
- * @returns {void}
+ * @returns {(() => void) | undefined} what delivers the message now, once the caller has let go of `fd`
  */
 export function parseHandle(target: $Bindgen.Subprocess | null, serialized: $Node.SerializedIPCHandle, fd: number) {
   const emit: (target: $Bindgen.Subprocess | null, message: unknown, handle: object) => void = $bindgen(
@@ -74,8 +72,7 @@ export function parseHandle(target: $Bindgen.Subprocess | null, serialized: $Nod
     case "net.Socket": {
       const socket = new net.Socket({ readable: true, writable: true });
       socket.connect({ fd, fdIsRawSocket: true });
-      emit(target, serialized.msg, socket);
-      return;
+      return () => emit(target, serialized.msg, socket);
     }
     case "dgram.Native": {
       // A non-reading UDP handle (cluster-shared dgram socket): wrap the
@@ -83,13 +80,8 @@ export function parseHandle(target: $Bindgen.Subprocess | null, serialized: $Nod
       const { UDP } = require("internal/dgram");
       const wrap = new UDP();
       const err = wrap.open(fd);
-      if (err) {
-        // The wrap only owns the descriptor on success; don't leak it.
-        require("node:fs").closeSync(fd);
-        throw new Error(`failed to open received dgram handle: ${err}`);
-      }
-      emit(target, serialized.msg, wrap);
-      return;
+      if (err) throw new Error(`failed to open received dgram handle: ${err}`);
+      return () => emit(target, serialized.msg, wrap);
     }
     case "dgram.Socket": {
       // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js handleConversion['dgram.Socket'].got

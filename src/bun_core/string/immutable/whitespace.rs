@@ -34,7 +34,7 @@ pub const fn is_js_line_terminator(cp: u32) -> bool {
 /// What `\s` matches: ECMAScript's `WhiteSpace` and `LineTerminator`, 25 code points.
 /// Rust's `char::is_whitespace` has U+0085 and lacks U+FEFF.
 #[inline]
-pub fn is_js_whitespace(cp: u32) -> bool {
+pub const fn is_js_whitespace(cp: u32) -> bool {
     match cp {
         0x09..=0x0D | 0x20 => true,
         0..0x80 => false,

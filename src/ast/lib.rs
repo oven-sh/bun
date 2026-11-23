@@ -607,7 +607,7 @@ impl Location {
     }
 
     pub fn init_or_null(_source: Option<&Source>, r: Range) -> Option<Location> {
-        Self::init_or_null_impl(_source, r, None)
+        Self::init_or_null_impl(_source, r, None, false)
     }
 
     /// `init_or_null`, but computing the line/column through a
@@ -617,14 +617,16 @@ impl Location {
         _source: Option<&Source>,
         r: Range,
         tracker: &mut LineColumnTracker,
+        redact_sensitive_information: bool,
     ) -> Option<Location> {
-        Self::init_or_null_impl(_source, r, Some(tracker))
+        Self::init_or_null_impl(_source, r, Some(tracker), redact_sensitive_information)
     }
 
     fn init_or_null_impl(
         _source: Option<&Source>,
         r: Range,
         tracker: Option<&mut LineColumnTracker>,
+        redact_sensitive_information: bool,
     ) -> Option<Location> {
         if let Some(source) = _source {
             let file = Box::from(source.path.text);
@@ -651,7 +653,11 @@ impl Location {
                 .saturating_sub(data.line_start)
                 .min(full_line.len());
             let mut line_text_start_column = 0;
-            if full_line.len() > MAX_WHOLE_LINE_LEN && full_line.len() > 80 + offset_in_line {
+            // The key that marks a secret can be far from the error, so a redacted line is never cut.
+            if !redact_sensitive_information
+                && full_line.len() > MAX_WHOLE_LINE_LEN
+                && full_line.len() > 80 + offset_in_line
+            {
                 let mut lo = offset_in_line.saturating_sub(40);
                 let mut hi = (offset_in_line + 80).min(full_line.len());
                 while lo > 0 && !bun_core::strings::is_utf8_char_boundary(full_line[lo]) {
@@ -1233,11 +1239,22 @@ impl Log {
         r: Range,
         text: impl IntoText,
     ) -> Data {
+        self.tracked_range_data_with(source, r, text, false)
+    }
+
+    fn tracked_range_data_with(
+        &mut self,
+        source: Option<&Source>,
+        r: Range,
+        text: impl IntoText,
+        redact_sensitive_information: bool,
+    ) -> Data {
         let location = if source.is_some() {
             Location::init_or_null_tracked(
                 source,
                 r,
                 self.line_column_tracker.get_or_insert_default(),
+                redact_sensitive_information,
             )
         } else {
             Location::init_or_null(source, r)
@@ -1356,7 +1373,7 @@ impl Log {
             Kind::Warn => self.warnings += 1,
             _ => {}
         }
-        let data = self.tracked_range_data(source, r, text);
+        let data = self.tracked_range_data_with(source, r, text, redact_sensitive_information);
         self.add_msg(Msg {
             kind,
             data,
@@ -1821,13 +1838,14 @@ impl Log {
     #[cold]
     pub fn add_error_opts(&mut self, text: &'static [u8], opts: AddErrorOptions<'_>) {
         self.errors += 1;
-        let data = self.tracked_range_data(
+        let data = self.tracked_range_data_with(
             opts.source,
             Range {
                 loc: opts.loc,
                 len: opts.len,
             },
             text,
+            opts.redact_sensitive_information,
         );
         self.add_msg(Msg {
             kind: Kind::Err,

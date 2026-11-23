@@ -142,25 +142,32 @@ test("bunfig password value is masked in config error output", async () => {
 });
 
 // The redaction knows that a string is a secret from the `token` key in front
-// of it. A line of at most 1,000 bytes is kept whole, so the key reaches the
-// redaction when the error is in the middle of the line, more than 40 bytes
-// after the key and more than 80 bytes before the end. The two errors reach
-// the log through different functions.
-const moreThan80Bytes = " # " + Buffer.alloc(120, "x").toString();
-test.each([
-  {
-    title: "a syntax error",
-    bunfig: (secret: string) => `[install]\ntoken = "${secret}" ]${moreThan80Bytes}\n`,
-    printed: (masked: string) => `2 | token = "${masked}" ]${moreThan80Bytes}`,
-    error: "error: Expected a newline or end of file after a key/value pair",
-  },
-  {
-    title: "an invalid value",
-    bunfig: (secret: string) => `install = { registry = { token = "${secret}" }, cafile = 1 }${moreThan80Bytes}\n`,
-    printed: (masked: string) => `1 | install = { registry = { token = "${masked}" }, cafile = 1 }${moreThan80Bytes}`,
-    error: "error: Invalid cafile. Expected a string.",
-  },
-])("bunfig token is masked when $title is in the middle of a long line", async ({ bunfig, printed, error }) => {
+// of it. The line of a redacted message is kept whole at every length, so the
+// key reaches the redaction when the error is in the middle of the line, more
+// than 40 bytes after the key and more than 80 bytes before the end. A line of
+// another file is cut there when it has more than 1,000 bytes. The two errors
+// reach the log through different functions.
+test.each(
+  [
+    { size: "at most 1,000 bytes", tail: " # " + Buffer.alloc(120, "x").toString() },
+    { size: "more than 1,000 bytes", tail: " # " + Buffer.alloc(1200, "x").toString() },
+  ].flatMap(({ size, tail }) => [
+    {
+      title: "a syntax error",
+      size,
+      bunfig: (secret: string) => `[install]\ntoken = "${secret}" ]${tail}\n`,
+      printed: (masked: string) => `2 | token = "${masked}" ]${tail}`,
+      error: "error: Expected a newline or end of file after a key/value pair",
+    },
+    {
+      title: "an invalid value",
+      size,
+      bunfig: (secret: string) => `install = { registry = { token = "${secret}" }, cafile = 1 }${tail}\n`,
+      printed: (masked: string) => `1 | install = { registry = { token = "${masked}" }, cafile = 1 }${tail}`,
+      error: "error: Invalid cafile. Expected a string.",
+    },
+  ]),
+)("bunfig token is masked when $title is in the middle of a line of $size", async ({ bunfig, printed, error }) => {
   const secret = Buffer.alloc(100, "secretvalue").toString();
   const masked = Buffer.alloc(100, "*").toString();
   using dir = tempDir("redacted-bunfig-long-line", {

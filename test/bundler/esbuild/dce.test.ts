@@ -3222,7 +3222,7 @@ describe("bundler", () => {
 
         // entry.js
         console.log(!0, !1, null, void 0, 42, -1, 0.5, "abc", S4_keep, BIG_keep, LONG_keep);
-        console.log({ T: !0, INT: 42, S4_keep }, (-1) ** 2, (void 0) ** 2, (!0) ** 2, 43, !0, typeof !0);
+        console.log({ T: !0, INT: 42, S4_keep }, 1, (void 0) ** 2, (!0) ** 2, 43, !0, typeof !0);
         console.log("n", 42 .toString(), "a", "abc!", !0, !0);
         "
       `);
@@ -3496,7 +3496,26 @@ describe("bundler", () => {
     dce: true,
     run: { stdout: "one\ntwo\nthree\nbefore\nbetween\nfour\nfive\nsix" },
     onAfterBundle(api) {
-      api.expectFile("/out.js").toMatchInlineSnapshot();
+      api.expectFile("/out.js").toMatchInlineSnapshot(`
+        "// entry.js
+        var log = (...args) => console.log(...args);
+        log("one");
+        for (let v of ["two"])
+          log(v);
+        log("three");
+        function inFunction() {
+          log("before");
+          log("between");
+          for (let v of ["four"])
+            log(v);
+          switch (1) {
+            case 1:
+              log("five"), log("six");
+          }
+        }
+        inFunction();
+        "
+      `);
     },
   });
   // Each row must print and run the same for a constant of another file as for one of the same file.
@@ -3534,7 +3553,34 @@ describe("bundler", () => {
         { file: "/out/cross.js", stdout: grid.stdout },
       ],
       onAfterBundle(api) {
-        expect(grid.differences(api.readFile("/out/same.js"), api.readFile("/out/cross.js"))).toMatchInlineSnapshot();
+        expect(grid.differences(api.readFile("/out/same.js"), api.readFile("/out/cross.js"))).toMatchInlineSnapshot(`
+          {
+            "\`<\${x}>\`": {
+              "example": "t(\`<\${0}>\`); where the same file prints t("<0>");",
+              "rows": 16,
+            },
+            "typeof x": {
+              "example": "t(typeof 0); where the same file prints t("number");",
+              "rows": 16,
+            },
+            "x != x": {
+              "example": "t(0 != !0); where the same file prints t(!0);",
+              "rows": 102,
+            },
+            "x !== x": {
+              "example": "t(0 !== !0); where the same file prints t(!0);",
+              "rows": 127,
+            },
+            "x == x": {
+              "example": "t(0 == !0); where the same file prints t(!1);",
+              "rows": 102,
+            },
+            "x === x": {
+              "example": "t(0 === !0); where the same file prints t(!1);",
+              "rows": 127,
+            },
+          }
+        `);
       },
     });
   }
@@ -3838,9 +3884,9 @@ describe("bundler", () => {
           9,
           -3,
           18,
-          3 / 6,
-          3 % 6,
-          3 ** 6
+          0.5,
+          3,
+          729
         ], [
           !0,
           !1,
@@ -4032,14 +4078,12 @@ describe("bundler", () => {
         api.expectFile("/out.js").toMatchInlineSnapshot(`
           "// entry.ts
           var log = (...args) => console.log(...args), yes = Number("1") === 1, count = 0;
-          ;
           for (let v of ["list on"])
             log(v);
           for (let v of ["list else"])
             log(v);
           for (let v of ["empty string"])
             log(v);
-          ;
           for (let v of ["compare"])
             log(v);
           if (yes)
@@ -4095,7 +4139,6 @@ describe("bundler", () => {
           function inSwitch(x) {
             switch (x) {
               case 1:
-                ;
                 for (let v of ["case"])
                   log(v);
             }
@@ -4103,15 +4146,11 @@ describe("bundler", () => {
           inSwitch(1);
           function merged() {
             log("before");
-            {
-              log("between");
-              for (let v of ["merged on"])
-                log(v);
-            }
-            {
-              log("after");
-              log("merged call");
-            }
+            log("between");
+            for (let v of ["merged on"])
+              log(v);
+            log("after");
+            log("merged call");
             for (let v of ["merged body"])
               log(v);
           }
@@ -4284,7 +4323,6 @@ describe("bundler", () => {
               case 1:
                 var inCase = 1;
             }
-          ;
           return inCase = "assigned in case", inCase;
         }
         log(inSwitch(1), typeof globalThis.inCase);
@@ -4434,7 +4472,6 @@ describe("bundler", () => {
       api.expectFile("/out.js").toMatchInlineSnapshot(`
         "// entry.ts
         function concat() {
-          "use " /* Use */ + "strict";
           try {
             return this === void 0;
           } finally {}

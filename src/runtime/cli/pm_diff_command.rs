@@ -1282,20 +1282,21 @@ fn strip_cr(bytes: &[u8]) -> Vec<u8> {
     out
 }
 
-/// Every run of ASCII whitespace becomes one byte and leading/trailing runs go, for `-w`. A line break stays one: it
-/// ends a comment or a command. What follows a backslash decides if the command goes on, and `#!` only counts at the start.
+/// Every run of spaces, tabs and line endings becomes one byte and leading/trailing runs go, for `-w`. A line break
+/// stays one: it ends a comment or a command. What follows a backslash decides if the command goes on, `#!` only
+/// counts at the start, and to a shell a form feed or a `\r` on its own is part of a word.
 fn collapse_whitespace(bytes: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(bytes.len());
-    let text = bytes.trim_ascii_start();
-    let mut pending = (text.starts_with(b"#!") && text.len() < bytes.len()).then_some(b' ');
-    for &b in text {
+    let mut pending = None;
+    for (at, &b) in bytes.iter().enumerate() {
         match b {
             _ if pending.is_none() && out.last() == Some(&b'\\') => out.push(b),
             b'\n' => pending = Some(b),
-            b'\r' if pending != Some(b'\n') => pending = Some(b),
-            _ if b.is_ascii_whitespace() => pending = pending.or(Some(b' ')),
+            b'\r' if bytes.get(at + 1) == Some(&b'\n') => {}
+            b' ' | b'\t' => pending = pending.or(Some(b' ')),
             _ => {
-                out.extend(pending.take());
+                let is_kept = !out.is_empty() || bytes[at..].starts_with(b"#!");
+                out.extend(pending.take().filter(|_| is_kept));
                 out.push(b);
             }
         }

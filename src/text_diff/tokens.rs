@@ -531,42 +531,62 @@ fn diff_keys<T: Unit>(
     if let Some(lower) = &lower {
         keys = lower.each_ref().map(|(text, offsets)| (&text[..], offsets));
     }
-    let tokens = offsets[0].len() + offsets[1].len();
+    let [keys_a, keys_b] = keys.map(|(text, offsets)| {
+        let key = |&[from, to]: &[u32; 2]| ignore.trim(&text[from as usize..to as usize]);
+        offsets.array_windows().map(key)
+    });
+    // Of what is spelled differently, these many match at the start and at the end.
+    let is_same = |(a, b): &(&[T], &[T])| a == b;
+    let pairs = keys_a.clone().zip(keys_b.clone());
+    let same_head = pairs.take_while(is_same).count();
+    let (keys_a, keys_b) = (keys_a.skip(same_head), keys_b.skip(same_head));
+    let pairs = keys_a.clone().rev().zip(keys_b.clone().rev());
+    let same_tail = pairs.take_while(is_same).count();
+    let mut same_keys = keys_a.clone().skip(keys_a.len() - same_tail);
+
+    let tokens = keys_a.len() + keys_b.len() - 2 * same_tail + 2;
     let mut interner = Ids::new(split, tokens, end_a + end_b - 2 * head);
-    let [mut ids_a, mut ids_b] = keys.map(|(text, offsets)| {
-        let id = |&[from, to]: &[u32; 2]| {
-            let key = &text[from as usize..to as usize];
-            interner.intern(ignore.trim(key))
-        };
-        offsets.array_windows().map(id).collect::<Vec<_>>()
+    let [mut ids_a, mut ids_b] = [keys_a, keys_b].map(|keys| {
+        let count = keys.len() - same_tail;
+        (keys.take(count).map(|key| interner.intern(key))).collect::<Vec<_>>()
     });
     let (mut at, mut part) = (end_a, part_of_tail(&ids_a, &ids_b, tokens));
-    let mut lower = Vec::new();
+    let (mut ends, mut lower) = (Vec::new(), Vec::new());
     let hunks = loop {
-        while at < a.len() && part > 0 {
-            let end = split.end(a, at);
-            let mut key = &a[at..end];
-            if ignore.case {
-                lower.clear();
-                T::push_lowercase(key, &mut lower);
-                key = &lower;
-            }
-            let Some(id) = interner.find(ignore.trim(key)) else {
+        while part > 0 {
+            let key = match same_keys.next() {
+                Some(key) => key,
+                None if at == a.len() => break,
+                None => {
+                    let token = &a[at..split.end(a, at)];
+                    at += token.len();
+                    ends.push(at);
+                    lower.clear();
+                    if ignore.case {
+                        T::push_lowercase(token, &mut lower);
+                    }
+                    ignore.trim(if ignore.case { &lower } else { token })
+                }
+            };
+            let Some(id) = interner.find(key) else {
                 break;
             };
             ids_a.push(id);
             ids_b.push(id);
-            offsets[0].push(end as u32);
-            offsets[1].push((end - end_a + end_b) as u32);
-            (at, part) = (end, part - 1);
+            part -= 1;
         }
         let hunks = diff_ids(&ids_a, &ids_b, interner.hashed.lines.len(), max_edits)?;
-        if part > 0 || at == a.len() || hunks.last().is_none_or(|last| last.a_hi < ids_a.len()) {
+        if part > 0 || hunks.last().is_none_or(|last| last.a_hi < ids_a.len()) {
             break hunks;
         }
         part = usize::MAX;
     };
-    Some(edits(hunks, head, split.count(&a[..head]), Some(&offsets)))
+    for (offsets, own_end) in offsets.iter_mut().zip([end_a, end_b]) {
+        offsets.drain(..same_head);
+        offsets.extend(ends.iter().map(|end| (end - end_a + own_end) as u32));
+    }
+    let before = split.count(&a[..head]) + same_head;
+    Some(edits(hunks, head, before, Some(&offsets)))
 }
 
 /// Each token between `offsets` on its own, and where they are then. At most twice as long, so that fits too.

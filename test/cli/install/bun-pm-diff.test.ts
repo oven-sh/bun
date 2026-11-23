@@ -2344,6 +2344,10 @@ describe.concurrent("bun pm diff (engine invariants)", () => {
         "b/after-backslash.sh": "echo \\ \nrun\n",
         "a/blank-after-backslash.sh": "echo \\\nrun\n",
         "b/blank-after-backslash.sh": "echo \\\n\nrun\n",
+        "a/cr-first.sh": "x\nrun\n",
+        "b/cr-first.sh": "x\n\rrun\n",
+        "a/form-feed.sh": "x run\n",
+        "b/form-feed.sh": "x\frun\n",
         "a/bin": "#!/bin/sh\n",
         "b/bin": "\n#!/bin/sh\n",
         "a/cr.js": "// note run()\n",
@@ -2361,9 +2365,11 @@ describe.concurrent("bun pm diff (engine invariants)", () => {
       " after-backslash.sh │ 2 +-",
       " bin │ 1 +",
       " blank-after-backslash.sh │ 1 +",
+      " cr-first.sh │ 2 +-",
       " cr.js │ 2 +-",
       " cr.sh │ 3 ++-",
       " crlf.txt │ whitespace only",
+      " form-feed.sh │ 2 +-",
       " lf.js │ 3 ++-",
     ]);
     expect(exitCode).toBe(0);

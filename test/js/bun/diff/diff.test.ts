@@ -533,12 +533,17 @@ describe("options that ignore a difference", () => {
     expect(diff.hunks(a, b, options)).toEqual(diff.parsePatch(expected)[0].hunks);
   });
 
-  test.skipIf(isDebug)("a long common end of lines that are also before it", () => {
+  test.skipIf(isDebug).each([
+    ["end", "", (middle: string, common: string) => middle + common],
+    ["end, indented", " ", (middle: string, common: string) => middle + common],
+    ["start, indented", " ", (middle: string, common: string) => common + middle],
+  ])("a long common %s does not count for the limit of the search", (_, indent, join) => {
     const next = random(7);
     const text = (length: number) => numbered(length, () => next(10_000) % 26);
-    const [a, b, end] = [text(20_000), text(20_000), repeat(text(1000), 200)];
-    const maxEditLength = edits(diff.lines(a + end, b + end));
-    expect(edits(diff.lines(a + end, b + end, { ignoreWhitespace: true, maxEditLength }))).toBe(maxEditLength);
+    const [a, b, common] = [text(20_000), text(20_000), repeat(text(1000), 200)];
+    const maxEditLength = edits(diff.lines(join(a, common), join(b, common)));
+    const indented = join(b, common).replace(/^(?!$)/gm, indent);
+    expect(edits(diff.lines(join(a, common), indented, { ignoreWhitespace: true, maxEditLength }))).toBe(maxEditLength);
   });
 
   test.each(["", "世"])("long texts have the edits of the same texts in one spelling: %j", wide => {

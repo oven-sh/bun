@@ -1,0 +1,417 @@
+[package]
+name = "bun_simd"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[features]
+default = ["alloc"]
+# What fills a Vec.
+alloc = []
+# The tests that take minutes to compile, each.
+slow-tests = []
+
+# It depends on nothing of Bun.
+[dependencies]
+bun_simd_macros.workspace = true
+
+[[test]]
+name = "access"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "access_listed"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "algo_16_middle"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "algo_32_middle"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "algo_narrow"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "algo_wide"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "any_count"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "arithmetic"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "array"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "bitmaps"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "bits"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "by_number"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "bytes_as_lanes"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "cast"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "clamped"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "clamped_listed"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "columns"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "compare"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "constants"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "conversions"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "convert"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "counts"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "each_address"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "elements"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "exact_forms"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "expand"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "f16_number"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "fields_listed"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "fields_middle"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "fields_narrow"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "fixed_point"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "form_edges"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "generic"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "guards_16"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "guards_32"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "guards_64"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "guards_8"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "guards_slices_16_middle"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "guards_slices_32_middle"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "guards_slices_narrow"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "guards_slices_wide"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "guards_two_registers"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "half_of_ints"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "handed"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "in_order"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "load"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "long_loops"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "lookups"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "masks"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "math"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "members_middle"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "members_places"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "members_wide"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "memory"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "minifloat"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "misfits_arrays"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "misfits_edges"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "misfits_loops"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "misfits_targets"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "more"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "moves"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "multiply"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "numeric"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "over"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "over_ints"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "pieces"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "pieces_exact"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "planes"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "products"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "records"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "relaxed_math"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "reverse_tuned"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "rounding"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "scales"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "searches"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "select"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "sets"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "several"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "shared"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "short"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "shuffles"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "sinks"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "slices"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "sort_16"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "sort_32"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "sort_64"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "sort_tuned"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "special"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "std_floats"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "std_loops_narrow"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "std_masks"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "std_names"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "std_numbers"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "streaming"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "sum_wide"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "swizzle"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "tables"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "unroll"
+required-features = ["slow-tests"]
+
+[[test]]
+name = "widths_narrow"
+required-features = ["slow-tests"]

@@ -1,0 +1,6 @@
+max_width = 120
+use_small_heuristics = "Max"
+short_array_element_width_threshold = 24
+reorder_modules = false
+# Written by tools.
+ignore = ["math/*tables.rs"]

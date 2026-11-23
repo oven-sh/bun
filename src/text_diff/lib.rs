@@ -22,6 +22,7 @@ pub mod patch;
 pub mod tokens;
 
 use core::ops::Range;
+use std::collections::BTreeMap;
 
 use bun_core::strings::{
     count_char, index_of, index_of_char_usize as index_of_char, last_index_of_char,
@@ -885,9 +886,13 @@ struct Interner<'a> {
     slots: Vec<(u32, u32)>,
     mask: usize,
     lines: Vec<&'a [u8]>,
+    /// The lines, with their hashes, whose first `PROBES` slots were taken by others. Slots are never freed, so a
+    /// later search for such a line ends up here too.
+    overflow: BTreeMap<(u64, &'a [u8]), u32>,
 }
 
 const EMPTY: u32 = u32::MAX;
+const PROBES: usize = 64;
 
 impl<'a> Interner<'a> {
     fn with_capacity(lines: usize) -> Self {
@@ -896,6 +901,7 @@ impl<'a> Interner<'a> {
             slots: vec![(0, EMPTY); cap],
             mask: cap - 1,
             lines: Vec::with_capacity(lines),
+            overflow: BTreeMap::new(),
         }
     }
 
@@ -904,7 +910,7 @@ impl<'a> Interner<'a> {
         let h = hash_bytes(line);
         let tag = (h >> 32) as u32;
         let mut i = h as usize & self.mask;
-        loop {
+        for _ in 0..PROBES {
             let slot = &mut self.slots[i];
             if slot.1 == EMPTY {
                 let id = self.lines.len() as u32;
@@ -920,6 +926,15 @@ impl<'a> Interner<'a> {
             }
             i = (i + 1) & self.mask;
         }
+        self.intern_in_overflow(h, line)
+    }
+
+    #[cold]
+    fn intern_in_overflow(&mut self, hash: u64, line: &'a [u8]) -> u32 {
+        *self.overflow.entry((hash, line)).or_insert_with(|| {
+            self.lines.push(line);
+            self.lines.len() as u32 - 1
+        })
     }
 
     #[cold]
@@ -935,7 +950,7 @@ impl<'a> Interner<'a> {
         let h = hash_bytes(line);
         let tag = (h >> 32) as u32;
         let mut i = h as usize & self.mask;
-        loop {
+        for _ in 0..PROBES {
             let slot = self.slots[i];
             if slot.1 == EMPTY {
                 return None;
@@ -945,6 +960,7 @@ impl<'a> Interner<'a> {
             }
             i = (i + 1) & self.mask;
         }
+        self.overflow.get(&(h, line)).copied()
     }
 }
 
@@ -2173,6 +2189,30 @@ mod tests {
             slide_edits(&mut hunks, &a, &b, unit);
             check_script(&a, &b, &hunks);
             assert_eq!(hunks, expected, "iter {iter}");
+        }
+    }
+
+    #[test]
+    fn interner_finds_lines_that_got_no_slot() {
+        let count = 2 * PROBES;
+        let mask = Interner::with_capacity(count).mask;
+        let lines: Vec<String> = (0..)
+            .map(|i| format!("{i}\n"))
+            .filter(|line| hash_bytes(line.as_bytes()) as usize & mask == 0)
+            .take(count + 1)
+            .collect();
+        let (known, unknown) = (&lines[..count], &lines[count]);
+        // With no capacity it grows, up to the same size.
+        for capacity in [count, 0] {
+            let mut interner = Interner::with_capacity(capacity);
+            for _ in 0..2 {
+                let ids = known.iter().map(|line| interner.intern(line.as_bytes()));
+                assert!(ids.eq(0..count as u32));
+            }
+            assert_eq!((interner.mask, interner.overflow.len()), (mask, PROBES));
+            let found = known.iter().map(|line| interner.find(line.as_bytes()));
+            assert!(found.eq((0..count as u32).map(Some)));
+            assert_eq!(interner.find(unknown.as_bytes()), None);
         }
     }
 

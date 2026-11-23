@@ -27,17 +27,23 @@ pub(crate) struct Matches {
 
 struct Row {
     bits: Vec<u64>,
+    /// Matches in the words before this one are not looked at.
+    from: usize,
     /// Each has a 1 for each word of the one before it, or of `bits`, that may not be 0. The last is at most one word.
     summaries: Vec<Vec<u64>>,
 }
 
 impl Row {
-    fn new(bits: Vec<u64>) -> Self {
+    fn new(bits: Vec<u64>, from: usize) -> Self {
         let lengths = core::iter::successors(Some(bits.len()), |&words| {
             (words > 1).then(|| words.div_ceil(64))
         });
         let summaries = lengths.skip(1).map(|words| vec![u64::MAX; words]).collect();
-        Self { bits, summaries }
+        Self {
+            bits,
+            from,
+            summaries,
+        }
     }
 
     fn goes_up(&self, at: usize) -> bool {
@@ -65,8 +71,8 @@ impl Row {
         let mut carry = false;
         let mut next = |bits, mask| next_word(bits, mask, &mut carry);
         // Within a pair, the carry stays in the flag of the processor.
-        let (mask_pairs, last_mask) = mask[..self.bits.len()].as_chunks::<2>();
-        let (pairs, last) = self.bits.as_chunks_mut::<2>();
+        let (mask_pairs, last_mask) = mask[self.from..self.bits.len()].as_chunks::<2>();
+        let (pairs, last) = self.bits[self.from..].as_chunks_mut::<2>();
         for (bits, mask) in pairs.iter_mut().zip(mask_pairs) {
             *bits = [next(bits[0], mask[0]), next(bits[1], mask[1])];
         }
@@ -205,13 +211,13 @@ impl Matches {
         let frequent = self.frequent[token as usize];
         if frequent != NOT_FREQUENT {
             if LOG {
-                log.extend_from_slice(&row.bits);
+                log.extend_from_slice(&row.bits[row.from..]);
             }
             row.advance(&self.masks[usize::from(frequent) * self.words..]);
             return;
         }
         // The first match in a run of 0s takes the 1 that ends the run.
-        let mut from = 0;
+        let mut from = row.from * 64;
         for &at in self.places(token) {
             let at = at as usize;
             if at >= row.bits.len() * 64 {
@@ -236,7 +242,7 @@ impl Matches {
         if self.frequent[token as usize] == NOT_FREQUENT {
             logged.iter().for_each(|&at| row.flip(at as usize));
         } else {
-            row.bits.copy_from_slice(logged);
+            row.bits[row.from..].copy_from_slice(logged);
         }
     }
 
@@ -274,7 +280,7 @@ impl Matches {
         }
 
         let mut log = Vec::new();
-        let mut row = Row::new(vec![0; self.words]);
+        let mut row = Row::new(vec![0; self.words], 0);
         let mut first_rows = vec![row.bits.clone()];
         for part in parts.iter().take(parts.len().saturating_sub(1)) {
             for &token in &a[part.clone()] {
@@ -288,7 +294,14 @@ impl Matches {
         for (part, mut bits) in parts.into_iter().zip(first_rows).rev() {
             // No bit depends on a later one.
             bits.truncate(y.div_ceil(64));
-            let mut row = Row::new(bits);
+            // A script has at most one match for each token of the part, so a shortest one enters the part at most that
+            // many 1s before `y`. Ignoring earlier matches changes no value along the script and raises none.
+            let (mut from, mut ones) = (y / 64, 0);
+            while from > 0 && ones <= part.len() {
+                from -= 1;
+                ones += bits[from].count_ones() as usize;
+            }
+            let mut row = Row::new(bits, from);
             log_starts.clear();
             for &token in &a[part.clone()] {
                 log_starts.push(log.len());

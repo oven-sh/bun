@@ -485,6 +485,19 @@ describe("large inputs, on which diff is quadratic", () => {
     expect(diff.lines(a, b, { maxEditLength: expectedEdits - 1 })).toBeUndefined();
   });
 
+  test("of two copies, the second matches by one token more", () => {
+    const next = random(8);
+    const text = (letters: string, length: number) => Array.from({ length }, () => letters[next(1000) % 5]).join("");
+    const [a, b, twice] = [text("abcde", 3000), text("abcde", 3000), text("fghij", 6000)];
+    const changes = diff.chars(`${a}.${twice}z${twice}<`, `${b}.z${twice}>`);
+    expect(short(changes)!.slice(-4)).toEqual([
+      ["-", twice, 6000],
+      ["=", `z${twice}`, 6001],
+      ["-", "<", 1],
+      ["+", ">", 1],
+    ]);
+  });
+
   // Each edit is alone, and the inputs drift apart by as much as the edits allow: nothing is left over for an estimate
   // of the number of edits to be too high by.
   test.each(["removed first", "added first"])("maxEditLength is exact with lines %s", order => {

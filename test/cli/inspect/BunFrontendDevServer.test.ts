@@ -381,7 +381,7 @@ describe.if(isPosix)("BunFrontendDevServer inspector protocol", () => {
     // Create a file with a syntax error to trigger a bundle failure
     const invalidContent = `
       // Syntax error - missing closing parenthesis
-      export function brokenFunction(name: string {
+      export function brokenFunction(name: string { // more than 80 bytes follow the error on this line, and more than 40 bytes precede it
         return \`Broken, \${name}!\`;
       }
     `;
@@ -442,7 +442,7 @@ describe.if(isPosix)("BunFrontendDevServer inspector protocol", () => {
                 "column": 51,
                 "length": 1,
                 "line": 3,
-                "lineText": "      export function brokenFunction(name: string {",
+                "lineText": "      export function brokenFunction(name: string { // more than 80 bytes follow the error on this line, and more than 40 bytes precede it",
               },
               "message": "Expected ")" but found "{"",
               "notes": [],

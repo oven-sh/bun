@@ -230,7 +230,9 @@ impl Peer {
                 let preferred = if is_preferred { "preferred " } else { "" };
                 format!("{preferred}path {} to {}", from.peer, to.peer)
             }
-            Event::GoAway => "go away".into(),
+            Event::GoAway { overtakes_data } => {
+                ["go away", "go away, ahead of data"][usize::from(overtakes_data)].into()
+            }
             Event::Origin(payload) => format!("origin {}", show(&payload)),
             Event::Closed(connection) => {
                 let kind = |layer: &Layer| ["close", "application_close"][*layer as usize];

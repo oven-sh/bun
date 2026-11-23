@@ -1045,6 +1045,10 @@ setCallbacks({
           resetCode,
           `stream reset with code ${resetCode}`,
         );
+        // H3_REQUEST_REJECTED: any request can cross the end of a session.
+        if (resetCode === 0x10bn && getQuicSessionState(this[kOwner].session).headersSupported === 1) {
+          markPromiseAsHandled(this[kOwner].closed);
+        }
       }
     }
     debug(`stream ${this[kOwner]!.id} closed callback with error: ${error}`);

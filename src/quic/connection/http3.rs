@@ -251,7 +251,9 @@ impl Connection {
         match http3.peer_go_away.replace(first) {
             Some(previous) if previous == first => return Ok(()),
             Some(_) => self.streams.state.add_load(Load::Heavy),
-            None => self.emit(Event::GoAway),
+            None => self.emit(Event::GoAway {
+                overtakes_data: self.streams.state.first_readable().is_some(),
+            }),
         }
         // Some servers name the last request that they process.
         self.reject(|id, stream| id > first && is_request(id) && !stream.has_received());

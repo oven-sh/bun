@@ -259,6 +259,10 @@ impl QuicStream {
         });
     }
 
+    pub(super) fn turn_away(&self) {
+        self.update(Connection::turn_away);
+    }
+
     fn write_pending_headers(&self) {
         let has_body = !self.outbound.get().data.is_empty();
         while let Some(headers) =

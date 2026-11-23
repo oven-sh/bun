@@ -518,6 +518,18 @@ impl Connection {
         self.timers.set(Timer::Loss, now + timeout);
     }
 
+    /// For a probe that has nothing left to carry.
+    #[cold]
+    pub(super) fn repeat_last_packet(&mut self) {
+        if let Some(packet) = self.spaces.data.sent.packets.back_mut()
+            && packet.fate == Fate::Unknown
+        {
+            let before = *packet;
+            packet.fate = Fate::Probed;
+            self.requeue(SpaceId::Data, &before, Fate::Probed);
+        }
+    }
+
     /// Sends the frames of the oldest packets again (RFC 9002 §6.2.4).
     fn probe(&mut self, id: SpaceId, mut max_packets: usize) {
         let mut at = 0;

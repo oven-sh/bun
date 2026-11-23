@@ -5,7 +5,7 @@ use crate::http3::{Message, Priority, StreamType};
 
 bitflags::bitflags! {
     #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-    pub(crate) struct Flags: u32 {
+    pub(crate) struct Flags: u64 {
         const READ_DONE = 1 << 0;
         const WRITE_DONE = 1 << 1;
         const PAUSED = 1 << 2;
@@ -49,6 +49,8 @@ bitflags::bitflags! {
         /// It is long, and there is no telling how long.
         const KEEPS_COMING = 1 << 30;
         const HAS_LONG_PIECES = 1 << 31;
+        /// See [`State::turn_away`](super::State::turn_away).
+        const TURNED_AWAY = 1 << 32;
     }
 }
 
@@ -182,7 +184,7 @@ impl Stream {
     }
 
     pub(crate) fn has_unacked_data(&self) -> bool {
-        !self.flags.intersects(Flags::SEND_DONE | Flags::RESET)
+        !(self.flags).intersects(Flags::SEND_DONE | Flags::RESET | Flags::TURNED_AWAY)
             && (!self.send.is_acked() || self.flags.contains(Flags::FIN))
     }
 

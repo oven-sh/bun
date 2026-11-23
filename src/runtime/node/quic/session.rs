@@ -248,7 +248,9 @@ pub(super) enum SessionEvent {
         stream: super::stream::Key,
     },
     HandshakeConfirmed,
-    GoawayReceived,
+    GoawayReceived {
+        overtakes_data: bool,
+    },
     Datagram {
         payload: Vec<u8>,
         early: bool,
@@ -762,13 +764,31 @@ impl QuicSession {
             let Some(event) = self.events.with_mut(VecDeque::pop_front) else {
                 break;
             };
+            if let SessionEvent::GoawayReceived {
+                overtakes_data: true,
+            } = event
+            {
+                self.events.with_mut(|e| {
+                    let at = e.iter().position(|it| {
+                        matches!(
+                            it,
+                            SessionEvent::Closed(_) | SessionEvent::StreamReset { .. }
+                        )
+                    });
+                    let event = SessionEvent::GoawayReceived {
+                        overtakes_data: false,
+                    };
+                    e.insert(at.unwrap_or(e.len()), event);
+                });
+                continue;
+            }
             let endpoint = self.endpoint.get();
             // SAFETY: teardown clears `endpoint` before the endpoint can die.
             let defer_closes = !endpoint.is_null() && unsafe { (*endpoint).defer_closes.get() };
             if (dispatched_js || defer_closes)
                 && matches!(
                     event,
-                    SessionEvent::Closed(_) | SessionEvent::GoawayReceived
+                    SessionEvent::Closed(_) | SessionEvent::GoawayReceived { .. }
                 )
             {
                 self.events.with_mut(|e| e.push_front(event));
@@ -858,10 +878,14 @@ impl QuicSession {
                     stream.suppress_announce();
                     return Ok(());
                 }
-                // It ends like those that `Connection::close` finds open. HTTP/3 has GOAWAY.
+                // HTTP/3 has GOAWAY.
                 if self.with_state(|st| st.graceful_close == 1) && !self.is_http3() {
                     stream.suppress_announce();
-                    stream.abort(Some(http3_code::NO_ERROR), Some(0));
+                    // It ends like those that come after `Connection::close`, unless that is put off.
+                    match self.any_stream_undelivered() {
+                        true => stream.abort(Some(http3_code::NO_ERROR), Some(0)),
+                        false => stream.turn_away(),
+                    }
                     self.schedule_process();
                     return Ok(());
                 }
@@ -913,7 +937,7 @@ impl QuicSession {
                 let err = make_application_error(global, code)?;
                 callbacks::run(global, "onStreamReset", handle, &[err]);
             }
-            SessionEvent::GoawayReceived => {
+            SessionEvent::GoawayReceived { .. } => {
                 // What Node reports for the notice of a graceful shutdown.
                 let last_stream_id = JSValue::from_int64_no_truncate(global, -1)?;
                 callbacks::run(global, "onSessionGoaway", self.handle(), &[last_stream_id]);
@@ -1522,7 +1546,8 @@ impl QuicSession {
         options: JsLocal<'_>,
     ) -> JsResult<()> {
         let global = cx.global();
-        if !self.destroyed.get() {
+        // After GOAWAY, it is up to the peer.
+        if !self.destroyed.get() && self.get(Connection::peer_go_away).flatten().is_none() {
             // Parse before the latch: a throw here must leave the session
             // untouched, not marked gracefully-closing with no close sent.
             let close = self.parse_close_options(global, options.to_js())?;
@@ -1594,7 +1619,7 @@ impl QuicSession {
         body: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
-        if self.destroyed.get() || self.conn.get().is_none() {
+        if self.destroyed.get() || self.get(Connection::peer_go_away) != Some(None) {
             return Ok(JSValue::UNDEFINED);
         }
         let direction = direction.to_js();
@@ -1930,7 +1955,7 @@ impl QuicSession {
                     paths: Box::new((from, to)),
                 }
             }
-            Event::GoAway => SessionEvent::GoawayReceived,
+            Event::GoAway { overtakes_data } => SessionEvent::GoawayReceived { overtakes_data },
             Event::Origin(payload) => SessionEvent::Origin(payload),
             Event::Closed(conn) => {
                 self.conn.set(None);

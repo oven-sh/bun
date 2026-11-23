@@ -419,7 +419,7 @@ fn integers_are_as_short_as_possible() {
         let mut raw = Raw::client().connected();
         let now = raw.now;
         raw.connection().abort(now, Application, value, &[0; 20]);
-        assert_eq!(raw.sizes(), [1 + 8 + 2 + 1 + len + 1 + 20 + 16]);
+        assert_eq!(raw.sizes(), [1 + 8 + 2 + 1 + len + 1 + 20 + 16; 2]);
         assert_eq!(raw.close, Some((Application, value)));
     }
 }

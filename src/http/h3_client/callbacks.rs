@@ -30,7 +30,7 @@ pub(super) fn on_event(connection: quic::Connection, session: Context, event: Ev
         Event::StreamsAvailable(Direction::Bidirectional) => {
             session_mut(session.cast()).open_streams();
         }
-        Event::GoAway => on_goaway(session_mut(session.cast())),
+        Event::GoAway { .. } => on_goaway(session_mut(session.cast())),
         Event::Closed(closed) => {
             bun_core::scoped_log!(h3_client, "closed {:?}", closed.close_reason());
             on_close(session_mut(session.cast()));

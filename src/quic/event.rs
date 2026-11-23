@@ -34,7 +34,10 @@ pub enum Event {
         to: Addresses,
         is_preferred: bool,
     },
-    GoAway,
+    GoAway {
+        /// Something that has arrived before it has yet to be read.
+        overtakes_data: bool,
+    },
     /// The payload of an ORIGIN frame.
     Origin(Vec<u8>),
     /// The last one. The streams are closed before.

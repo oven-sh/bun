@@ -3,6 +3,7 @@
 use bun_quic::Direction::Unidirectional;
 use bun_quic::{Side, StreamId};
 
+use crate::harness::messages::GET;
 use crate::harness::raw::{RTT, Raw};
 use crate::harness::wire::filler;
 
@@ -178,7 +179,9 @@ fn wait_for_the_settings_of_http3() {
 fn control_frames_of_http3_go_first() {
     let raw = Raw::http3(Side::Client).with("max_datagram_frame_size=100");
     let mut raw = raw.connected_with("0x33=1");
-    raw.send("stream 0 0 -, ack");
+    raw.write_http3(0, &format!("headers {GET}"), false);
+    raw.send("ack");
+    raw.forget();
     raw.connection().send_datagram(1, b"a".to_vec());
     raw.connection().set_paused(StreamId(0), true);
     raw.connection().go_away();

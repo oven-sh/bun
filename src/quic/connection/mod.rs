@@ -170,6 +170,8 @@ pub struct Connection {
 
     /// See [`Self::close_after_peer`].
     yields: bool,
+    /// [`Self::close`] does not wait for the control streams of HTTP/3 to be acknowledged.
+    is_abrupt: bool,
     close_reason: CloseReason,
     close_frame: CloseFrame,
     /// The datagram with the CONNECTION_CLOSE frame.
@@ -296,6 +298,7 @@ impl Connection {
             datagrams: Datagrams::default(),
             http3: None,
             yields: false,
+            is_abrupt: false,
             close_reason: CloseReason::Local,
             close_frame: CloseFrame::no_error(config.http3.is_some()),
             farewell: Vec::new(),

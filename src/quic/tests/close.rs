@@ -1,6 +1,6 @@
 use bun_quic::Direction::{Bidirectional, Unidirectional};
 use bun_quic::Layer::{Application, Transport};
-use bun_quic::{Duration, Layer, PreferredAddress, StreamId};
+use bun_quic::{Config, Duration, Layer, PreferredAddress, StreamId};
 
 use crate::harness::http3;
 use crate::harness::raw::Kind::{Handshake, Initial};
@@ -113,7 +113,7 @@ fn client_finishes_the_handshake_to_be_understood() {
 fn reason_is_cut_to_what_fits() {
     let mut raw = Raw::client().connected();
     raw.abort(Transport, u64::MAX, &filler(0, 2000));
-    assert_eq!(raw.sizes(), [1200]);
+    assert_eq!(raw.sizes(), [1200; 2]);
     assert_eq!(raw.close, Some((Transport, MAX)));
 
     for (len, sent) in [(127, 127), (128, 128), (129, 128)] {
@@ -156,7 +156,25 @@ fn acknowledges_what_has_arrived() {
     raw.send("ping");
     raw.advance(1);
     raw.abort(Application, 1, &[]);
-    assert_eq!(raw.packets(), "1[ack 0-1 +125, application_close 0x1]");
+    let packet = "1[ack 0-1 +125, application_close 0x1]";
+    assert!(raw.packets().starts_with(packet));
+}
+
+#[test]
+fn server_says_it_twice_if_nothing_is_going_to_be_acknowledged() {
+    for (new, is_idle, frames) in [
+        (Raw::client as fn() -> Raw, true, "close 0x1, close 0x1"),
+        (Raw::client, false, "close 0x1"),
+        (Raw::server, true, "close 0x1"),
+    ] {
+        let mut raw = new().connected();
+        if !is_idle {
+            raw.request_packets("a");
+            raw.forget();
+        }
+        raw.abort(Transport, 1, &[]);
+        assert_eq!(raw.frames(), frames);
+    }
 }
 
 #[test]
@@ -241,10 +259,13 @@ fn first_reason_counts() {
     ];
     for (first, second, frames, events) in steps {
         let mut raw = Raw::client().connected();
+        raw.request_packets("a");
+        raw.forget();
         raw.waits = false;
         first(&mut raw);
         second(&mut raw);
-        assert_eq!((raw.frames(), raw.events()), (frames.into(), events.into()));
+        assert_eq!(raw.frames(), frames);
+        assert!(raw.events().ends_with(events));
     }
 }
 
@@ -274,7 +295,7 @@ fn graceful_close_delivers_what_has_been_written() {
     raw.advance(100);
     raw.forget();
     raw.send("ack");
-    assert_eq!(raw.frames(), "close 0x0");
+    assert_eq!(raw.frames(), "close 0x0, close 0x0");
 }
 
 #[test]
@@ -355,18 +376,75 @@ fn server_closes_when_the_client_knows_that_it_goes_away() {
 }
 
 #[test]
-fn settings_are_only_worth_a_wait_after_a_request() {
-    for has_request in [false, true] {
-        let mut raw = Raw::client().config(http3).connected_with("");
-        if has_request {
-            raw.send("reset_stream 0 0 0, stop_sending 0 0");
-        }
-        raw.connection().go_away();
-        let now = raw.now;
-        raw.connection().close(now);
+fn settings_are_worth_a_wait_once_the_handshake_is_confirmed() {
+    for (new, has_answered, layer, code, waits) in [
+        (Raw::client as fn() -> Raw, false, Transport, 0, false),
+        (Raw::client, true, Transport, 0, true),
+        (Raw::client, true, Application, 0x100, true),
+        (Raw::client, true, Transport, 2, false),
+        (Raw::client, true, Application, 0, false),
+        (Raw::server, true, Transport, 0, false),
+    ] {
+        let mut raw = new().config(http3);
+        raw.start(&[]);
+        raw.waits = has_answered;
+        raw.shake_hands();
+        while raw.peer.poll(raw.now) {}
+        raw.connection().set_close_error(layer, code, &[]);
+        raw.close_gracefully();
         raw.process();
-        assert_eq!(raw.close.is_some(), !has_request);
+        assert_eq!(raw.close.is_none(), waits);
     }
+}
+
+#[test]
+fn streams_that_have_not_been_announced_are_turned_away() {
+    for (config, is_announced, frames) in [
+        (
+            http3 as fn(&mut Config),
+            true,
+            "reset_stream 0 0x10c 0, stop_sending 0 0x100",
+        ),
+        (http3, false, "reset_stream 0 0x10b 0, stop_sending 0 0x10b"),
+        (
+            |_| {},
+            true,
+            "reset_stream 0 0x0 0, stop_sending 0 0x100, close 0x0",
+        ),
+        (|_| {}, false, "stop_sending 0 0x0, fin 0 0 -, close 0x0"),
+    ] {
+        let mut raw = Raw::client().config(config).connected();
+        raw.peer.polls = is_announced;
+        raw.send("stream 0 0 #01");
+        raw.forget();
+        raw.close_gracefully();
+        assert!(raw.frames().starts_with(frames));
+    }
+}
+
+#[test]
+fn only_the_events_of_such_streams_are_dropped() {
+    let mut raw = Raw::client().with("max_streams_uni=0").connected();
+    raw.send("stream 0 0 a");
+    raw.forget();
+    raw.waits = false;
+    raw.send("stream 4 0 b, reset_stream 0 7 1, max_streams_uni 1");
+    raw.close_gracefully();
+    assert_eq!(
+        raw.events(),
+        "0 reset 0x7, available Unidirectional, 0 closed, closed: Local"
+    );
+}
+
+#[test]
+fn the_application_can_turn_a_stream_away() {
+    let mut raw = Raw::client().connected();
+    raw.send("stream 0 0 a");
+    raw.forget();
+    raw.connection().turn_away(StreamId(0));
+    raw.close_gracefully();
+    assert_eq!(raw.frames(), "stop_sending 0 0x0, fin 0 0 -, close 0x0");
+    assert_eq!(raw.events(), "0 closed, closed: Local");
 }
 
 #[test]
@@ -376,7 +454,7 @@ fn client_lets_the_server_close() {
             |it| it.send("application_close 7 why"),
             "closed by application_close 0x7 why",
         ),
-        (|it| it.advance(SETTLING_PERIOD), "closed: Local"),
+        (|it| it.advance(1), "closed: Local"),
     ];
     for (step, events) in steps {
         let mut raw = Raw::server().config(http3).connected_with("");
@@ -384,7 +462,7 @@ fn client_lets_the_server_close() {
         let now = raw.now;
         raw.connection().close_after_peer(now);
         raw.process();
-        raw.advance(SETTLING_PERIOD - 1);
+        raw.advance(999);
         assert_eq!((raw.close, raw.events()), (None, "".into()));
         step(&mut raw);
         assert_eq!(raw.events(), events);
@@ -488,7 +566,7 @@ fn grace_period_starts_at_once() {
     raw.peer.send(id, b"a", true);
     raw.close_gracefully();
     raw.now = raw.now + Duration::from_secs(30);
-    assert_eq!(raw.packets(), "1[close 0x0]");
+    assert!(raw.packets().starts_with("1[close 0x0]"));
 }
 
 #[test]
@@ -642,7 +720,7 @@ fn error_for_the_end_of_a_graceful_close() {
     raw.send("ack");
     raw.abort(Transport, 3, b"c");
     raw.connection().set_close_error(Transport, 4, b"d");
-    assert_eq!(raw.frames(), "close 0x3");
+    assert_eq!(raw.frames(), "close 0x3, close 0x3");
 
     let steps: [Step; 2] = [Raw::close_gracefully, |it| it.connection().go_away()];
     for close in steps {

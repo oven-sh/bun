@@ -551,13 +551,7 @@ impl Table {
         let stream = self.insert(id, stream, state);
         stream.first_turn = first_turn;
         match stream.role {
-            Role::Message(_) if is_unwanted => {
-                state.abort(id, stream, http3_code::REQUEST_REJECTED);
-            }
-            Role::Raw if is_unwanted => {
-                state.finish(id, stream);
-                state.stop(id, stream, 0);
-            }
+            Role::Message(_) | Role::Raw if is_unwanted => state.turn_away(id, stream),
             _ => state.notify(id, stream, StreamEvent::Opened),
         }
         Ok(())
@@ -641,5 +635,17 @@ impl State {
         self.notify(id, stream, StreamEvent::Reset(code));
         self.reset(id, stream, code);
         self.stop(id, stream, code);
+    }
+
+    /// For a stream of the peer that comes too late. Nothing waits for the answer to be acknowledged.
+    pub(super) fn turn_away(&mut self, id: StreamId, stream: &mut Stream) {
+        stream.flags.insert(Flags::TURNED_AWAY);
+        if let Role::Message(_) = stream.role {
+            self.reset(id, stream, http3_code::REQUEST_REJECTED);
+            self.stop(id, stream, http3_code::REQUEST_REJECTED);
+        } else {
+            self.finish(id, stream);
+            self.stop(id, stream, 0);
+        }
     }
 }

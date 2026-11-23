@@ -696,6 +696,7 @@ let gap = false;
 front.on("message", (m, from) => {
   up ??= createSocket("udp4").on("message", back => front.send(back, from.port, "127.0.0.1"));
   if (gap && m.length > 400) {
+    gap = false;
     dropped.resolve();
     return;
   }
@@ -846,6 +847,127 @@ test.each(["has been written", "is being written"])(
     expect(events).toEqual(["goaway"]);
   },
 );
+
+test("ongoaway comes after a response that has arrived with GOAWAY", async () => {
+  let accepted: QuicSession;
+  let held: Buffer[] | undefined;
+  let sentBeforeClose = Infinity;
+  await using server = await listen(
+    session => {
+      accepted = session;
+      session.onstream = () => {};
+    },
+    {
+      sni: { "*": { keys: [key], certs: [cert] } },
+      onheaders() {
+        held = [];
+        this.sendHeaders({ ":status": "200" });
+        this.writer.writeSync("done");
+        this.writer.endSync();
+        // Outside of a callback, close() takes effect at once.
+        this.closed.then(() =>
+          setImmediate(() => {
+            sentBeforeClose = Number(server.stats.packetsSent);
+            accepted.close({ code: 42, type: "application", reason: "why" });
+          }),
+        );
+      },
+    },
+  );
+  const serverPort = server.address!.port;
+  let clientPort = 0;
+  let relayed = 0;
+  using relay = await Bun.udpSocket({
+    hostname: "127.0.0.1",
+    socket: {
+      data(socket, datagram, port) {
+        if (port !== serverPort) {
+          clientPort = port;
+          socket.send(datagram, serverPort, "127.0.0.1");
+          return;
+        }
+        if (++relayed <= sentBeforeClose && held) return void held.push(Buffer.from(datagram));
+        for (const it of [...(held?.splice(0) ?? []), datagram]) socket.send(it, clientPort, "127.0.0.1");
+      },
+    },
+  });
+  const events: string[] = [];
+  const client = await connect(`127.0.0.1:${relay.port}`, {
+    servername: "localhost",
+    verifyPeer: "manual",
+    ongoaway: () => void events.push("goaway"),
+  } as SessionOptions);
+  const stream = await client.createBidirectionalStream({
+    headers: { ":method": "GET", ":path": "/", ":scheme": "https", ":authority": "localhost" },
+    onheaders: () => void events.push("headers"),
+  });
+  events.push(Buffer.concat((await Array.fromAsync(stream)).flat()).toString());
+  events.push(await client.createBidirectionalStream().then(String, error => error.code));
+  events.push(await client.close().then(String, error => error.reason));
+  expect(events).toEqual(["headers", "done", "ERR_QUIC_OPEN_STREAM_FAILED", "goaway", "why"]);
+});
+
+test.each(["onsession", "opened"])(
+  "session.close() in %s: a request that crosses it fails, and stream.closed can be left alone",
+  async when => {
+    const events: string[] = [];
+    await using server = await listen(
+      async session => {
+        session.onstream = () => void events.push("onstream");
+        if (when === "opened") await session.opened;
+        session.close();
+      },
+      { sni: { "*": { keys: [key], certs: [cert] } } },
+    );
+    const client = await connect(server.address!, { servername: "localhost", verifyPeer: "manual" } as SessionOptions);
+    if (when === "opened") await client.opened;
+    const response = client
+      .createBidirectionalStream({
+        headers: { ":method": "GET", ":path": "/", ":scheme": "https", ":authority": "localhost" },
+        onheaders() {},
+      })
+      .then(stream => Array.fromAsync(stream));
+    events.push(await response.then(String, error => error.code));
+    await client.closed;
+    expect(events).toEqual([expect.stringMatching(/^ERR_QUIC_(STREAM_RESET|STREAM_ABORTED|OPEN_STREAM_FAILED)$/)]);
+  },
+);
+
+test("streams that cross session.close() end empty, unless it is put off", async () => {
+  const ends: Record<string, unknown[]> = {};
+  for (const when of ["onsession", "opened", "onstream"]) {
+    await using server = await listen(
+      async session => {
+        session.onstream = stream => {
+          stream.setBody(Buffer.alloc(100_000));
+          session.close();
+        };
+        if (when === "opened") await session.opened;
+        if (when !== "onstream") session.close();
+      },
+      { sni: { "*": { keys: [key], certs: [cert] } }, alpn: ["x"] },
+    );
+    const client = await connect(server.address!, {
+      servername: "localhost",
+      verifyPeer: "manual",
+      alpn: "x",
+    } as SessionOptions);
+    const streams = [
+      await client.createBidirectionalStream({ body: "1" }),
+      await client.createBidirectionalStream({ body: "2" }),
+    ];
+    ends[when] = await Promise.all(
+      streams.map(it =>
+        Array.fromAsync(it).then(
+          chunks => Buffer.concat(chunks.flat()).length,
+          error => error.code,
+        ),
+      ),
+    );
+    await client.closed;
+  }
+  expect(ends).toEqual({ onsession: [0, 0], opened: [0, 0], onstream: [100_000, "ERR_QUIC_STREAM_RESET"] });
+});
 
 test("stream.closed waits until the end has been sent", async () => {
   await using server = await listen(

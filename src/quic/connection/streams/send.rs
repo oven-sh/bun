@@ -31,6 +31,7 @@ const MAX_TRUST: u32 = 2;
 const MAX_SHARE_AHEAD: u64 = 7;
 /// A type and three integers.
 const MAX_OWED_FRAME_LEN: usize = 25;
+const MAX_REPEATED_LEN: u64 = 256;
 
 /// Streams by rank.
 pub(super) type Line = VecDeque<(u64, StreamId)>;
@@ -651,6 +652,22 @@ impl Streams {
         if fin && !stream.flags.contains(Flags::FIN_ACKED) {
             stream.flags.remove(Flags::FIN_SENT);
             state.mark_sendable(id, stream);
+        }
+    }
+
+    /// Only if frames are owed, and there is room for them. Returns whether there is something to send.
+    #[cold]
+    pub(crate) fn repeat_unacked_data(&mut self, id: StreamId) -> bool {
+        match self.table.get(id) {
+            Some(it)
+                if (1..=MAX_REPEATED_LEN).contains(&it.send.len())
+                    && !it.is_blocked()
+                    && !self.state.owing.is_empty() =>
+            {
+                self.on_data_lost(id, 0..it.send.sent(), false);
+                true
+            }
+            _ => false,
         }
     }
 

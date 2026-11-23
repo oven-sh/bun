@@ -136,6 +136,13 @@ impl Connection {
         }
     }
 
+    /// Like the streams that the peer opens after [`Self::close`].
+    pub fn turn_away(&mut self, id: StreamId) {
+        if let Some((stream, state)) = self.streams.get_mut(id) {
+            state.turn_away(id, stream);
+        }
+    }
+
     /// Gives up on reading.
     pub fn stop(&mut self, id: StreamId, code: u64) {
         if let Some((stream, state)) = self.streams.get_mut(id)

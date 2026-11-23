@@ -395,7 +395,7 @@ fn the_end_of_the_handshake_is_repeated() {
     raw.wait();
     assert_eq!(
         raw.frames(),
-        "crypto 0 #14000000, new_connection_id 1 0, stream 2 0 a, crypto 0 #14000000, ping"
+        ["crypto 0 #14000000, new_connection_id 1 0, stream 2 0 a"; 2].join(", ")
     );
 
     let mut raw = Raw::client();

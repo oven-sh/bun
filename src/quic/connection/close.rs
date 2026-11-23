@@ -8,7 +8,7 @@ use super::{Connection, Ending};
 use crate::coding::{MAX_VARINT, Write};
 use crate::config::KeepAlive;
 use crate::error::{Error, Layer, http3_code, transport_code};
-use crate::event::CloseReason;
+use crate::event::{CloseReason, Event};
 use crate::frame::kind;
 use crate::stream_id::Direction;
 use crate::time::{Duration, Instant};
@@ -23,6 +23,7 @@ const MIN_IDLE_PROBE_TIMEOUT: Duration = Duration::from_millis(150);
 const INITIAL_IDLE_PROBE_TIMEOUT: Duration = Duration::from_secs(1);
 const MAX_UNANSWERED_PROBES: u32 = 3;
 const MAX_SETTLING_PERIOD: Duration = Duration::from_secs(15);
+const MIN_YIELDING_PERIOD: Duration = Duration::from_secs(1);
 
 pub(super) struct CloseFrame {
     layer: Layer,
@@ -45,6 +46,14 @@ impl CloseFrame {
             code: code.min(MAX_VARINT),
             reason: reason.to_vec(),
         }
+    }
+
+    fn is_error(&self) -> bool {
+        self.code
+            != match self.layer {
+                Layer::Transport => transport_code::NO_ERROR,
+                Layer::Application => http3_code::NO_ERROR,
+            }
     }
 
     /// Whether it says more in a 1-RTT packet than in the others.
@@ -97,9 +106,15 @@ impl Connection {
         self.ending = Ending::Graceful;
         self.timers.set(Timer::Close, now + GRACE_PERIOD);
         self.streams.table.is_going_away = true;
+        let is_open =
+            self.is_confirmed() && !(self.streams.state.owed).contains(Control::HANDSHAKE_DONE);
         let (table, state) = (&mut self.streams.table, &mut self.streams.state);
+        self.is_abrupt = (!is_open || self.close_frame.is_error()) && table.has_had_no_request();
         for (id, stream) in table.sorted(|id, _| id.direction() == Direction::Bidirectional) {
             stream.abandon_message(id, self.http3.as_deref_mut());
+            if !stream.flags.contains(Flags::ANNOUNCED) {
+                state.turn_away(id, stream);
+            }
             if !stream.flags.contains(Flags::WRITE_DONE) {
                 let code = match stream.role {
                     Role::Message(_) => http3_code::REQUEST_CANCELLED,
@@ -109,6 +124,12 @@ impl Connection {
             }
             state.stop(id, stream, http3_code::NO_ERROR);
         }
+        state.events.retain(|event| match event {
+            Event::Stream(id, ..) => {
+                !(table.get(*id)).is_some_and(|it| it.flags.contains(Flags::TURNED_AWAY))
+            }
+            _ => true,
+        });
     }
 
     /// Likewise, but the peer has time to be the first and to give its reason.
@@ -212,13 +233,14 @@ impl Connection {
         let is_busy = self.yields
             || state.has_frames()
             || self.has_datagrams()
-            || table.has_unacked_data() && !(is_graceful && table.has_had_no_request())
+            || table.has_unacked_data() && !self.is_abrupt
             || !is_graceful && table.has_unsettled_requests();
         if !self.is_ready || !is_busy {
             self.send_close(now);
         } else {
             let patience = match table.has_undelivered_application_data() {
                 true => GRACE_PERIOD,
+                false if self.yields => self.settling_period().max(MIN_YIELDING_PERIOD),
                 false => self.settling_period(),
             };
             let deadline = self.timers.get(Timer::Close).min(now + patience);
@@ -303,8 +325,11 @@ impl Connection {
     /// Whether the peer may have dropped the connection by the time something new arrives.
     pub fn is_stale(&self, now: Instant) -> bool {
         let margin = (self.settling_period()).clamp(self.idle_timeout / 16, self.idle_timeout / 2);
-        self.pto_count >= MAX_UNANSWERED_PROBES
+        let idle_at = self.timers.get(Timer::Idle);
+        // A peer that is close by may just be busy.
+        let is_overdue = now + self.idle_timeout >= idle_at + self.min_idle_timeout();
+        self.pto_count >= MAX_UNANSWERED_PROBES && is_overdue
             || self.silence.pings > MAX_UNANSWERED_PROBES
-            || now + margin >= self.timers.get(Timer::Idle)
+            || now + margin >= idle_at
     }
 }

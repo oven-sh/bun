@@ -109,6 +109,13 @@ impl Connection {
             }
             self.owes_farewell = farewell.len() > sent.len();
             self.farewell = farewell;
+            // A client that has nothing to acknowledge would not notice the loss.
+            if self.side.is_server()
+                && self.is_confirmed()
+                && !self.spaces.data.sent.has_in_flight()
+            {
+                self.write_datagram(now, Content::Close, batch, shared);
+            }
             self.end();
         }
         false
@@ -417,6 +424,10 @@ impl Connection {
                 // The peer may have to be told what is in the way.
                 self.write_frames(now, &mut draft, out, end, shared);
             }
+            if is_probe && out.len() == after_ack && self.phase != Phase::Confirmed {
+                self.repeat_last_packet();
+                self.write_frames(now, &mut draft, out, end, shared);
+            }
         }
         draft.is_eliciting = out.len() > after_ack;
         if may_elicit && !draft.is_eliciting {
@@ -454,6 +465,14 @@ impl Connection {
             (self.local_ids).write_frames(self.slot, shared, out, end, sent);
         }
         self.remote_ids.write_frames(out, end, sent);
+        // GOAWAY tells the client what to make of a reset (RFC 9114 §5.2).
+        if self.streams.table.is_going_away
+            && self.side.is_server()
+            && let Some(http3) = &self.http3
+            && self.streams.repeat_unacked_data(http3.control_stream)
+        {
+            self.streams.write_stream_frames(out, end, sent);
+        }
         self.streams.write_owed_frames(out, end, sent);
         if has_datagrams {
             if self.streams.state.has_urgent_frames() {

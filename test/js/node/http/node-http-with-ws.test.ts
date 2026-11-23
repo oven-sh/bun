@@ -1105,7 +1105,12 @@ describe.concurrent("the request stream when ws upgrades before the declared bod
 
 // A handshake response over 16 KB is written immediately instead of being batched with the first frames.
 // Over TLS, a write that the kernel rejects closes the socket, so it can no longer be upgraded to a WebSocket.
-test.concurrent("keeps serving after a client resets its TLS connection while a long 101 is written", async () => {
+test.concurrent.each([
+  ["upgrade", ""],
+  ["upgrade", "x"],
+  ["request", ""],
+  ["request", "x"],
+])("keeps serving after a client resets its TLS connection while a long 101 is written, %s %j", async (event, body) => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -1118,7 +1123,8 @@ test.concurrent("keeps serving after a client resets its TLS connection while a 
 
         let socketToReset;
         const server = https.createServer({ cert: process.env.TLS_CERT, key: process.env.TLS_KEY });
-        const wss = new WebSocketServer({ server });
+        const wss = new WebSocketServer({ noServer: true });
+        server.on("${event}", req => wss.handleUpgrade(req, req.socket, Buffer.alloc(0), ws => wss.emit("connection", ws)));
         wss.on("headers", headers => {
           if (!socketToReset) return;
           socketToReset.resetAndDestroy();
@@ -1146,7 +1152,8 @@ test.concurrent("keeps serving after a client resets its TLS connection while a 
           });
           client.write(
             "GET / HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: Upgrade\\r\\nUpgrade: websocket\\r\\n" +
-              "Sec-WebSocket-Version: 13\\r\\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\\r\\n\\r\\n",
+              "Sec-WebSocket-Version: 13\\r\\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\\r\\n" +
+              "Content-Length: ${body.length}\\r\\n\\r\\n${body}",
           );
         });
       `,

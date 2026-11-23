@@ -439,40 +439,35 @@ impl<const SSL: bool> Response<SSL> {
         }
         self.write_mark();
         c::uws_socket_write(self.socket(), &UsIoVec::new(b"\r\n"));
-        self.become_web_socket(data, deflate_params, ctx)
+        // TLS refused the 101. The next writable event closes the connection.
+        if !self.can_upgrade() {
+            return false;
+        }
+        self.become_web_socket(data, deflate_params, ctx);
+        true
     }
 
-    /// Like `upgrade`, but the caller already negotiated. `handshake` is the complete response head
-    /// and is written verbatim. `deflate_params` is `None` if permessage-deflate wasn't negotiated.
-    pub(crate) fn upgrade_raw(
-        &mut self,
-        data: *mut c_void,
-        handshake: &[u8],
-        deflate_params: Option<Params>,
-        ctx: &WebSocketUpgradeContext,
-    ) -> bool {
+    /// The complete response head, for a caller that negotiates by itself. False if TLS refused it.
+    pub(crate) fn write_handshake(&mut self, handshake: &[u8]) -> bool {
         if !self.can_upgrade() {
             return false;
         }
         c::uws_socket_cork(self.socket());
         c::uws_socket_write(self.socket(), &UsIoVec::new(handshake));
-        self.become_web_socket(data, deflate_params, ctx)
+        self.can_upgrade()
     }
 
     fn socket(&mut self) -> &mut us_socket_t {
         us_socket_t::opaque_mut(ptr::from_mut(self).cast())
     }
 
-    fn become_web_socket(
+    pub(crate) fn become_web_socket(
         &mut self,
         user_data: *mut c_void,
         deflate_params: Option<Params>,
         ctx: &WebSocketUpgradeContext,
-    ) -> bool {
-        // TLS refused the 101. The next writable event closes the connection.
-        if !self.can_upgrade() {
-            return false;
-        }
+    ) {
+        assert!(self.can_upgrade());
         let state = State::new(user_data, deflate_params, ctx.behavior.get().compression);
         let ws = AnyWebSocket(self.socket());
         let kind = if SSL {
@@ -489,7 +484,6 @@ impl<const SSL: bool> Response<SSL> {
         ws.set_timeout(ctx.timeouts.get().idle);
         (ctx.loop_data).keeping_closed_sockets(|| ws.emit(Event::Open));
         c::uws_socket_uncork(ws.socket());
-        true
     }
 }
 

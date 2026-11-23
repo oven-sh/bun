@@ -1095,21 +1095,29 @@ impl AnyResponse {
         }
     }
 
-    /// See `Response::upgrade_raw`. Returns false in the same cases as `upgrade`.
-    pub fn upgrade_raw<D>(
-        self,
-        data: *mut D,
-        handshake: &[u8],
-        deflate_params: Option<Params>,
-        ctx: &WebSocketUpgradeContext,
-    ) -> bool {
+    /// See `Response::write_handshake`.
+    pub fn write_handshake(self, handshake: &[u8]) -> bool {
         match self {
             AnyResponse::H3(_) | AnyResponse::H2(_) => false,
+            AnyResponse::SSL(ptr) => TLSResponse::as_handle(ptr).write_handshake(handshake),
+            AnyResponse::TCP(ptr) => TCPResponse::as_handle(ptr).write_handshake(handshake),
+        }
+    }
+
+    /// After `write_handshake` succeeded.
+    pub fn become_web_socket<D>(
+        self,
+        data: *mut D,
+        deflate_params: Option<Params>,
+        ctx: &WebSocketUpgradeContext,
+    ) {
+        match self {
+            AnyResponse::H3(_) | AnyResponse::H2(_) => unreachable!(),
             AnyResponse::SSL(ptr) => {
-                TLSResponse::as_handle(ptr).upgrade_raw(data.cast(), handshake, deflate_params, ctx)
+                TLSResponse::as_handle(ptr).become_web_socket(data.cast(), deflate_params, ctx)
             }
             AnyResponse::TCP(ptr) => {
-                TCPResponse::as_handle(ptr).upgrade_raw(data.cast(), handshake, deflate_params, ctx)
+                TCPResponse::as_handle(ptr).become_web_socket(data.cast(), deflate_params, ctx)
             }
         }
     }

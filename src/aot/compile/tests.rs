@@ -366,7 +366,7 @@ fn nothing_names_what_a_placeholder_declares() {
 }
 
 #[test]
-fn an_executable_shares_a_file_of_data_among_statements_and_keeps_the_type_of_each_call() {
+fn an_executable_has_a_file_of_data_as_the_type_that_the_scan_of_the_bundler_comes_to_first() {
     let call = "console.log(await import(\"./conf.txt\", { with: { type: \"text\" } }));";
     let statement = "import conf from \"./conf.txt\" with { type: \"jsonc\" };\nconsole.log(conf);";
     let forms_of = |main: &str, below: &str, builds_executable: bool| {
@@ -381,8 +381,8 @@ fn an_executable_shares_a_file_of_data_among_statements_and_keeps_the_type_of_ea
     };
     assert_eq!(forms_of(call, statement, false), [true, true]);
     assert_eq!(forms_of(statement, call, false), [true, true]);
-    assert_eq!(forms_of(call, statement, true), [true, true]);
-    assert_eq!(forms_of(statement, call, true), [true, true]);
+    assert_eq!(forms_of(call, statement, true), [false, false]);
+    assert_eq!(forms_of(statement, call, true), [true, false]);
     let files = [
         ("a.js", "import \"./caller.js\";\nimport \"./holder.js\";"),
         ("caller.js", call),
@@ -393,7 +393,7 @@ fn an_executable_shares_a_file_of_data_among_statements_and_keeps_the_type_of_ea
     project.builds_executable = true;
     let (result, log) = link_project(&project, &WithoutServices);
     let text = print_program(&expect_success(result, &log).program);
-    assert!(text.contains("conf.txt?jsonc") && text.contains("conf.txt?text"));
+    assert!(text.contains("conf.txt?jsonc") && !text.contains("conf.txt?text"));
 }
 
 #[test]

@@ -2,7 +2,7 @@ use crate::mal_prelude::*;
 use bun_ast::ImportRecord;
 use bun_collections::{AutoBitSet, VecExt};
 
-use super::find_all_imported_parts_in_js_order::{Edge, PartsToWalk, edge_of_record};
+use super::find_all_imported_parts_in_js_order::{Edge, edge_of_record};
 use crate::{Index, IndexInt, LinkerContext};
 use bun_collections::DynamicBitSet as BitSet;
 
@@ -41,6 +41,7 @@ impl CssWalkPlan {
 
         let entry_bits = c.graph.files.items_entry_bits();
         let all_import_records = c.graph.ast.items_import_records();
+        let all_parts = c.graph.ast.items_parts();
         // (entry point, an entry point that one of its files loads on demand)
         let mut loads: Vec<(u32, u32)> = Vec::new();
         for source_index in c.graph.reachable_files.iter() {
@@ -49,13 +50,19 @@ impl CssWalkPlan {
                 continue;
             }
             let records: &[ImportRecord] = all_import_records[source_index as usize].as_slice();
-            let walk = PartsToWalk::new(c, source_index, true);
-            for place in walk.order() {
-                let (part, part_runs) = walk.part_at(place);
+            let parts_live = &c.graph.parts_live[source_index as usize];
+            for (part_index, part) in all_parts[source_index as usize]
+                .as_slice()
+                .iter()
+                .enumerate()
+            {
+                if !parts_live.is_set(part_index) {
+                    continue;
+                }
                 for &record_id in part.import_record_indices.slice() {
                     let record = &records[record_id as usize];
                     let Some(Edge::LoadNow(other) | Edge::LoadLater(other)) =
-                        edge_of_record(c, source_index, part, part_runs, record)
+                        edge_of_record(c, source_index, part, true, record)
                     else {
                         continue;
                     };
@@ -149,6 +156,8 @@ pub(crate) fn find_imported_css_files_in_js_order(
     let entry_bits = this.graph.files.items_entry_bits();
     let all_import_records = this.graph.ast.items_import_records();
     let all_loaders = this.parse_graph().input_files.items_loader();
+    let all_parts = this.graph.ast.items_parts();
+    let all_parts_live = &this.graph.parts_live;
 
     let loaders = plan.loaders_of(this, entry_id);
     let runs = |source_index: IndexInt| {
@@ -192,11 +201,18 @@ pub(crate) fn find_imported_css_files_in_js_order(
 
         let file_runs = runs(source_index);
         let records: &[ImportRecord] = all_import_records[source_index as usize].as_slice();
-        let walk = PartsToWalk::new(this, source_index, file_runs);
+        let parts_live = &all_parts_live[source_index as usize];
 
         let mark = stack.len();
-        for place in walk.order() {
-            let (part, part_runs) = walk.part_at(place);
+        for (part_index, part) in all_parts[source_index as usize]
+            .as_slice()
+            .iter()
+            .enumerate()
+        {
+            if part.import_record_indices.is_empty() {
+                continue;
+            }
+            let part_runs = file_runs && parts_live.is_set(part_index);
             // Traverse any files imported by this part. Note that CommonJS calls
             // to "require()" count as imports too, sort of as if the part has an
             // ESM "import" statement in it. This may seem weird because ESM imports

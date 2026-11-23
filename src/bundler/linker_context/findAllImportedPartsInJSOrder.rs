@@ -748,14 +748,14 @@ fn for_each_edge(
     }
 }
 
-pub(super) struct PartsToWalk<'a> {
+struct PartsToWalk<'a> {
     parts: &'a [bun_ast::Part],
     parts_live: &'a AutoBitSet,
     runs: bool,
 }
 
 impl<'a> PartsToWalk<'a> {
-    pub(super) fn new(c: &'a LinkerContext, source_index: IndexInt, runs: bool) -> PartsToWalk<'a> {
+    fn new(c: &'a LinkerContext, source_index: IndexInt, runs: bool) -> PartsToWalk<'a> {
         let file = source_index as usize;
         PartsToWalk {
             parts: c.graph.ast.items_parts()[file].as_slice(),
@@ -764,11 +764,11 @@ impl<'a> PartsToWalk<'a> {
         }
     }
 
-    pub(super) fn order(&self) -> core::ops::RangeInclusive<usize> {
+    fn order(&self) -> core::ops::RangeInclusive<usize> {
         1..=self.parts.len()
     }
 
-    pub(super) fn part_at(&self, place: usize) -> (&'a bun_ast::Part, bool) {
+    fn part_at(&self, place: usize) -> (&'a bun_ast::Part, bool) {
         let index = place % self.parts.len();
         (
             &self.parts[index],

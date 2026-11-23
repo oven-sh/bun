@@ -8353,6 +8353,85 @@ describe.if(isPosix)("fs.read into a view over a WebAssembly.Memory that grows d
   });
 });
 
+// A job that reads a FIFO keeps its thread, so the pool has one thread for each such job, and the spare ones.
+it.skipIf(!isLinux)("a job that is alone starts no spare thread of the thread pool", async () => {
+  using dir = tempDir("fs-pool-threads", {});
+  const fifos = [0, 1, 2].map(i => join(String(dir), "fifo" + i));
+  for (const fifo of fifos) mkfifo(fifo);
+  const script = `
+    import fs, { closeSync, constants, openSync, readdirSync, readFileSync } from "node:fs";
+    import { readFile } from "node:fs/promises";
+
+    // The state of each thread of the pool: "S" when it sleeps.
+    function poolThreads() {
+      const states = [];
+      for (const tid of readdirSync("/proc/self/task")) {
+        try {
+          if (readFileSync("/proc/self/task/" + tid + "/comm", "utf8").startsWith("Bun Pool")) {
+            states.push(readFileSync("/proc/self/task/" + tid + "/stat", "utf8").split(") ").pop()[0]);
+          }
+        } catch {
+          // The thread has ended.
+        }
+      }
+      return states;
+    }
+
+    function until(condition, what) {
+      const deadline = Date.now() + 30_000;
+      for (;;) {
+        const result = condition();
+        if (result !== undefined && result !== false) return result;
+        if (Date.now() > deadline) throw new Error("never happened: " + what);
+        Bun.sleepSync(1);
+      }
+    }
+
+    const counts = [poolThreads().length];
+    const writers = [];
+    // Once the FIFO has a reader, the job has its thread, and that thread has started the spare one.
+    function park(fifo) {
+      const read = readFile(fifo);
+      const open = () => {
+        try {
+          return openSync(fifo, constants.O_WRONLY | constants.O_NONBLOCK);
+        } catch (error) {
+          if (error.code !== "ENXIO") throw error;
+        }
+      };
+      writers.push(until(open, "a thread for the job"));
+      counts.push(poolThreads().length);
+      return read;
+    }
+
+    const fifos = JSON.parse(process.env.FIFOS);
+    const reads = [];
+    // The job that the callback of a lone job starts is alone too.
+    await new Promise(resolve =>
+      fs.stat(".", () => {
+        until(() => poolThreads().every(state => state === "S"), "the pool at rest");
+        reads.push(park(fifos[0]));
+        resolve();
+      }),
+    );
+    reads.push(park(fifos[1]), park(fifos[2]));
+    for (const writer of writers) closeSync(writer);
+    await Promise.all(reads);
+    console.log(JSON.stringify(counts));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: { ...bunEnv, UV_THREADPOOL_SIZE: "8", FIFOS: JSON.stringify(fifos) },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  // None at first, one for the two lone jobs, then one for each job that has company and a spare one.
+  expect(JSON.parse(stdout)).toEqual([0, 1, 3, 4]);
+  expect(exitCode).toBe(0);
+});
+
 describe("module init", () => {
   it("fs.promises is a lazy getter that resolves to node:fs/promises", () => {
     const desc = Object.getOwnPropertyDescriptor(fs, "promises")!;

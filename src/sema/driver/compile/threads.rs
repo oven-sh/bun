@@ -314,20 +314,34 @@ mod tests {
         assert_eq!(result, Ok((0, true)));
     }
 
-    fn pool_without_spare_threads() -> &'static bun_threading::ThreadPool {
+    fn pool_of_eight_threads() -> bun_threading::ThreadPool {
         let config = bun_threading::thread_pool::Config {
             max_threads: 8,
             ..Default::default()
         };
-        let pool = bun_threading::ThreadPool::init(config).named("Test");
-        Box::leak(Box::new(pool.without_spare_threads()))
+        bun_threading::ThreadPool::init(config).named("Test")
+    }
+
+    fn pool_with_spare_threads() -> &'static bun_threading::ThreadPool {
+        Box::leak(Box::new(pool_of_eight_threads()))
+    }
+
+    fn pool_without_spare_threads() -> &'static bun_threading::ThreadPool {
+        Box::leak(Box::new(pool_of_eight_threads().without_spare_threads()))
     }
 
     fn schedule_on(pool: &'static bun_threading::ThreadPool, run: impl FnOnce() + Send + 'static) {
-        pool.schedule(task_that_calls(run));
+        pool.schedule(Batch::from(task_that_calls(run)));
     }
 
-    fn task_that_calls(run: impl FnOnce() + Send + 'static) -> Batch {
+    fn schedule_lone_on(
+        pool: &'static bun_threading::ThreadPool,
+        run: impl FnOnce() + Send + 'static,
+    ) {
+        pool.schedule_lone(task_that_calls(run));
+    }
+
+    fn task_that_calls(run: impl FnOnce() + Send + 'static) -> *mut Task {
         #[repr(C)]
         struct Call {
             task: Task,
@@ -343,8 +357,7 @@ mod tests {
             callback: call,
         };
         let run: Box<dyn FnOnce() + Send> = Box::new(run);
-        let call = bun_core::heap::into_raw(Box::new(Call { task, run }));
-        Batch::from(call.cast::<Task>())
+        bun_core::heap::into_raw(Box::new(Call { task, run })).cast::<Task>()
     }
 
     fn wait_until(is_done: impl Fn() -> bool, what: &str) {
@@ -397,7 +410,7 @@ mod tests {
         );
         schedule_on(pool, move || {
             for _ in 0..3 {
-                pool.schedule_inside_thread_pool(task_that_calls(move || meet(8)));
+                pool.schedule_inside_thread_pool(Batch::from(task_that_calls(move || meet(8))));
             }
             meet(8);
         });
@@ -421,6 +434,147 @@ mod tests {
                         schedule_on(pool, || {
                             DONE.fetch_add(1, Ordering::SeqCst);
                         });
+                    }
+                });
+            }
+        });
+        wait_until(
+            || DONE.load(Ordering::SeqCst) == SCHEDULERS * TASKS,
+            "a task never ran",
+        );
+    }
+
+    #[test]
+    fn pool_starts_one_thread_for_a_lone_task() {
+        set_up_output();
+        let pool = pool_with_spare_threads();
+        static DONE: AtomicUsize = AtomicUsize::new(0);
+        for round in 1..=20 {
+            schedule_lone_on(pool, || {
+                DONE.fetch_add(1, Ordering::SeqCst);
+            });
+            wait_until(
+                || DONE.load(Ordering::SeqCst) == round,
+                "the task never ran",
+            );
+            wait_until(
+                || pool.available_threads() == 8,
+                "the thread never came to rest",
+            );
+        }
+        assert_eq!(pool.started_threads(), 1);
+    }
+
+    #[test]
+    fn pool_starts_a_spare_thread_unless_the_task_is_lone() {
+        set_up_output();
+        let pool = pool_with_spare_threads();
+        static ARRIVED: AtomicUsize = AtomicUsize::new(0);
+        static MAY_LEAVE: AtomicBool = AtomicBool::new(false);
+        // A thread starts its spare thread before it runs its task, and the task keeps it: each count below is final.
+        let stay = || {
+            ARRIVED.fetch_add(1, Ordering::SeqCst);
+            wait_until(|| MAY_LEAVE.load(Ordering::SeqCst), "the test never ended");
+        };
+        let wait_for = |tasks: usize| {
+            wait_until(
+                || ARRIVED.load(Ordering::SeqCst) == tasks,
+                "a task has no thread",
+            );
+        };
+
+        schedule_lone_on(pool, stay);
+        wait_for(1);
+        assert_eq!(pool.started_threads(), 1);
+
+        schedule_on(pool, stay);
+        wait_for(2);
+        assert_eq!(pool.started_threads(), 3);
+        wait_until(
+            || pool.available_threads() == 8 - 2,
+            "the spare thread never came to rest",
+        );
+
+        // The spare thread takes it, and starts none.
+        schedule_lone_on(pool, stay);
+        wait_for(3);
+        assert_eq!(pool.started_threads(), 3);
+
+        schedule_on(pool, stay);
+        wait_for(4);
+        assert_eq!(pool.started_threads(), 5);
+
+        MAY_LEAVE.store(true, Ordering::SeqCst);
+    }
+
+    #[test]
+    fn pool_starts_a_spare_thread_for_a_task_that_follows_a_lone_one_at_once() {
+        set_up_output();
+        static ARRIVED: AtomicUsize = AtomicUsize::new(0);
+        static MAY_LEAVE: AtomicBool = AtomicBool::new(false);
+        let stay = || {
+            ARRIVED.fetch_add(1, Ordering::SeqCst);
+            wait_until(|| MAY_LEAVE.load(Ordering::SeqCst), "the test never ended");
+        };
+        // The second task comes before or after the thread of the first one has decided: many pools, for both orders.
+        for round in 1..=20 {
+            let pool = pool_with_spare_threads();
+            schedule_lone_on(pool, stay);
+            schedule_on(pool, stay);
+            wait_until(
+                || ARRIVED.load(Ordering::SeqCst) == 2 * round,
+                "a task has no thread",
+            );
+            assert_eq!(pool.started_threads(), 3);
+        }
+        MAY_LEAVE.store(true, Ordering::SeqCst);
+    }
+
+    #[test]
+    fn pool_starts_a_thread_for_each_lone_task_that_waits() {
+        set_up_output();
+        let pool = pool_with_spare_threads();
+        static ARRIVED: AtomicUsize = AtomicUsize::new(0);
+        for _ in 0..4 {
+            schedule_lone_on(pool, || {
+                ARRIVED.fetch_add(1, Ordering::SeqCst);
+                wait_until(
+                    || ARRIVED.load(Ordering::SeqCst) >= 4,
+                    "a task has no thread",
+                );
+            });
+        }
+        wait_until(
+            || ARRIVED.load(Ordering::SeqCst) == 4,
+            "a task has no thread",
+        );
+        assert_eq!(pool.started_threads(), 4);
+    }
+
+    #[test]
+    fn pool_runs_every_task_of_schedulers_that_mix_lone_tasks_and_others() {
+        set_up_output();
+        let pool = pool_with_spare_threads();
+        static DONE: AtomicUsize = AtomicUsize::new(0);
+        const SCHEDULERS: usize = 4;
+        const TASKS: usize = 20_000;
+        std::thread::scope(|scope| {
+            for scheduler in 0..SCHEDULERS {
+                scope.spawn(move || {
+                    for task in 0..TASKS {
+                        let run = || {
+                            DONE.fetch_add(1, Ordering::SeqCst);
+                        };
+                        let is_lone = match scheduler {
+                            0 => true,
+                            1 => false,
+                            _ => task % 2 == 0,
+                        };
+                        if is_lone {
+                            schedule_lone_on(pool, run);
+                        } else {
+                            schedule_on(pool, run);
+                        }
                     }
                 });
             }

@@ -239,9 +239,19 @@ pub struct JobHeader {
 #[derive(Default)]
 pub struct JobList {
     head: *mut JobHeader,
+    /// Every job of the VM between [`Job::schedule`] and [`Job::take`], linked or not.
+    live: bun_threading::work_pool::UnderWay,
 }
 
 impl JobList {
+    /// JS thread: count a new job of `vm` as live and hand its task to the pool.
+    fn schedule(vm: &VirtualMachine, task: *mut WorkPoolTask) {
+        if vm.jobs.with_mut(|jobs| jobs.live.begin()) {
+            WorkPool::schedule_lone(task);
+        } else {
+            WorkPool::schedule(task);
+        }
+    }
     fn push(&mut self, job: *mut JobHeader) {
         // SAFETY: `job` is a live, unlinked header; JS thread.
         unsafe {
@@ -367,7 +377,7 @@ impl<C: JobContext> Job<C> {
             if C::CANCELLABLE {
                 cx.vm().jobs.with_mut(|j| j.push(&raw mut (*job).header));
             }
-            WorkPool::schedule(&raw mut (*job).task);
+            JobList::schedule(cx.vm(), &raw mut (*job).task);
         }
     }
 
@@ -398,9 +408,12 @@ impl<C: JobContext> Job<C> {
     unsafe fn take(this: *mut Self, vm: &VirtualMachine) -> (C::OffThread, C::Js) {
         // SAFETY: fn contract.
         let mut job = unsafe { Box::from_raw(this) };
-        if C::CANCELLABLE {
-            vm.jobs.with_mut(|j| j.unlink(&raw mut job.header));
-        }
+        vm.jobs.with_mut(|j| {
+            if C::CANCELLABLE {
+                j.unlink(&raw mut job.header);
+            }
+            j.live.end();
+        });
         (job.off, job.js)
     }
 

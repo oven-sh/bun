@@ -129,6 +129,29 @@ impl Batch {
     }
 }
 
+/// The tasks that one scheduler has under way, which tells it when to use `WorkPool::schedule_lone`.
+#[derive(Default)]
+pub struct UnderWay {
+    tasks: u32,
+    /// One bit for each of the last 8 tasks, the newest in bit 0: it began beside another.
+    company: u8,
+}
+
+impl UnderWay {
+    /// Counts a task in. Whether it is alone: it and the 7 before it each began with no other under way.
+    pub fn begin(&mut self) -> bool {
+        // The first task of a batch begins with no other under way too, and so does a single task before the batch.
+        self.company = (self.company << 1) | u8::from(self.tasks != 0);
+        self.tasks += 1;
+        self.company == 0
+    }
+
+    /// Counts out a task that `begin` counted in.
+    pub fn end(&mut self) {
+        self.tasks -= 1;
+    }
+}
+
 static POOL: OnceLock<ThreadPool> = OnceLock::new();
 
 #[cold]
@@ -147,6 +170,11 @@ impl WorkPool {
 
     pub fn schedule(task: *mut Task) {
         Self::get().schedule(Batch::from(task));
+    }
+
+    /// See `ThreadPool::schedule_lone`. `UnderWay::begin` says when to call it.
+    pub fn schedule_lone(task: *mut Task) {
+        Self::get().schedule_lone(task);
     }
 
     /// Schedule a heap-allocated task by value. The pool takes ownership of
@@ -195,5 +223,60 @@ impl WorkPool {
         // SAFETY: task_ is a valid Box-allocated TaskType<C>; .task is its first field.
         Self::schedule(unsafe { &raw mut (*task_).task });
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::UnderWay;
+
+    /// Whether each of `count` tasks is alone, when each ends before the next begins.
+    fn one_by_one(under_way: &mut UnderWay, count: usize) -> Vec<bool> {
+        let each = |_| {
+            let alone = under_way.begin();
+            under_way.end();
+            alone
+        };
+        (0..count).map(each).collect()
+    }
+
+    /// Whether each of `count` tasks is alone, when all begin before the first ends.
+    fn at_once(under_way: &mut UnderWay, count: usize) -> Vec<bool> {
+        let alone = (0..count).map(|_| under_way.begin()).collect();
+        (0..count).for_each(|_| under_way.end());
+        alone
+    }
+
+    #[test]
+    fn tasks_that_begin_one_after_the_other_are_alone() {
+        let mut under_way = UnderWay::default();
+        assert_eq!(one_by_one(&mut under_way, 20), [true; 20]);
+    }
+
+    #[test]
+    fn the_seven_tasks_after_one_that_began_beside_another_are_not_alone() {
+        let mut under_way = UnderWay::default();
+        assert_eq!(at_once(&mut under_way, 3), [true, false, false]);
+        assert_eq!(
+            one_by_one(&mut under_way, 9),
+            [false, false, false, false, false, false, false, true, true]
+        );
+    }
+
+    #[test]
+    fn the_first_task_of_a_batch_is_alone_only_after_seven_that_came_one_by_one() {
+        let mut under_way = UnderWay::default();
+        at_once(&mut under_way, 2);
+        for single_tasks in [0, 1, 2, 6] {
+            for _ in 0..3 {
+                assert_eq!(
+                    one_by_one(&mut under_way, single_tasks),
+                    vec![false; single_tasks]
+                );
+                assert_eq!(at_once(&mut under_way, 2), [false, false]);
+            }
+        }
+        assert_eq!(one_by_one(&mut under_way, 7), [false; 7]);
+        assert_eq!(at_once(&mut under_way, 2), [true, false]);
     }
 }

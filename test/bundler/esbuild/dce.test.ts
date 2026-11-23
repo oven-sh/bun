@@ -557,7 +557,6 @@ describe("bundler", () => {
     },
   });
   itBundled("dce/PackageJsonSideEffectsArrayKeepModuleImplicitMain", {
-    todo: true,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "demo-pkg"
@@ -823,7 +822,6 @@ describe("bundler", () => {
     },
   });
   itBundled("dce/PackageJsonSideEffectsGlobNoMatches", {
-    todo: true,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import "./components/comp.js";
@@ -852,7 +850,6 @@ describe("bundler", () => {
     },
   });
   itBundled("dce/PackageJsonSideEffectsNestedDirectoryRemove", {
-    todo: true,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {foo} from "demo-pkg/a/b/c"
@@ -872,6 +869,154 @@ describe("bundler", () => {
     run: {
       stdout: "unused import",
     },
+  });
+  // The package.json files above a file decide its "sideEffects" answer, not the import that found the file.
+  // Each layout has /package.json (`root`) and /lib/package.json (`lib`). /lib/f.js logs when it runs, and
+  // nothing uses it. It is imported as a folder (`lib` names it in "main") and by its path: both get `kept`.
+  const fileRuns = `console.log("f.js runs");`;
+  for (const [name, root, lib, kept] of [
+    // A "sideEffects" field decides with or without a "name".
+    ["WithoutName", undefined, { sideEffects: false }, false],
+    ["WithoutNameBelowName", { name: "root" }, { sideEffects: false }, false],
+    ["WithoutNameArray", { name: "root" }, { sideEffects: ["./other.js"] }, false],
+    ["WithoutNameArrayLists", { name: "root" }, { sideEffects: ["./f.js"] }, true],
+    ["WithoutNameGlob", { name: "root" }, { sideEffects: ["*.css"] }, false],
+    // The nearest package.json that has a "name" or the field decides.
+    ["NearestKeeps", { name: "root", sideEffects: false }, { sideEffects: ["./f.js"] }, true],
+    ["NearestRemoves", { name: "root", sideEffects: ["./lib/f.js"] }, { sideEffects: false }, false],
+    ["NearestWithNameKeeps", { name: "root", sideEffects: false }, { name: "lib" }, true],
+    ["NearestWithNameRemoves", { name: "root" }, { name: "lib", sideEffects: false }, false],
+    ["NearestWithoutNameKeeps", { sideEffects: false }, { sideEffects: ["./f.js"] }, true],
+    // A package.json with neither does not hide the one above it that has a "name".
+    ["NeitherBelowName", { name: "root", sideEffects: false }, { type: "module" }, false],
+    ["NeitherBelowNameWithoutField", { name: "root" }, { type: "module" }, true],
+    // A field with no "name" does not reach below another package.json.
+    ["NeitherBelowWithoutName", { sideEffects: false }, { type: "module" }, true],
+    ["TrueBelowWithoutName", { sideEffects: false }, { sideEffects: true }, true],
+    ["NoPackageJsonBelowWithoutName", { sideEffects: false }, undefined, false],
+  ] as const) {
+    for (const [route, entry] of [
+      ["Folder", `import "./lib";`],
+      ["Path", `import "./lib/f.js";`],
+      ["FolderThenPath", `import "./lib"; import "./lib/f.js";`],
+      ["PathThenFolder", `import "./lib/f.js"; import "./lib";`],
+    ] as const) {
+      // The imports of one file in two ways are for the layouts where the two ways gave two answers.
+      if (route.includes("Then") && !["WithoutName", "NearestKeeps", "NearestRemoves"].includes(name)) continue;
+      // With no package.json, the folder does not name the file.
+      if (!lib && route !== "Path") continue;
+      itBundled(`dce/PackageJsonSideEffectsOfFile${name}${route}`, {
+        files: {
+          "/entry.js": entry + ` console.log("entry.js runs");`,
+          "/lib/f.js": fileRuns,
+          ...(root && { "/package.json": JSON.stringify(root) }),
+          ...(lib && { "/lib/package.json": JSON.stringify({ main: "./f.js", ...lib }) }),
+        },
+        entryPoints: ["/entry.js"],
+        outdir: "/out",
+        run: { file: "/out/entry.js", stdout: (kept ? "f.js runs\n" : "") + "entry.js runs" },
+      });
+    }
+  }
+  // `lib` has "module" and "main". The field of `lib` decides for the file that is used, with a "name" and without.
+  for (const [name, lib, kept] of [
+    ["ListsModule", { name: "lib", sideEffects: ["./module.js"] }, true],
+    ["ListsMain", { name: "lib", sideEffects: ["./main.js"] }, false],
+    ["WithoutNameListsModule", { sideEffects: ["./module.js"] }, true],
+    ["WithoutNameFalse", { sideEffects: false }, false],
+  ] as const) {
+    for (const [route, entry] of [
+      ["Folder", `import "./lib";`],
+      ["Path", `import "./lib/module.js";`],
+    ] as const) {
+      itBundled(`dce/PackageJsonSideEffectsOfFileModuleAndMain${name}${route}`, {
+        files: {
+          "/entry.js": entry + ` console.log("entry.js runs");`,
+          "/package.json": JSON.stringify({ name: "root" }),
+          "/lib/module.js": `console.log("module.js runs");`,
+          "/lib/main.js": `console.log("main.js runs");`,
+          "/lib/package.json": JSON.stringify({ main: "./main.js", module: "./module.js", ...lib }),
+        },
+        entryPoints: ["/entry.js"],
+        outdir: "/out",
+        run: { file: "/out/entry.js", stdout: (kept ? "module.js runs\n" : "") + "entry.js runs" },
+      });
+    }
+  }
+  // node_modules/pkg/sub/package.json names a file of `pkg` outside its folder. The package.json of `pkg` is above that file.
+  for (const [name, pkg, sub, kept] of [
+    ["PackageFalse", { sideEffects: false }, { name: "pkg-sub" }, false],
+    ["FolderFalse", {}, { name: "pkg-sub", sideEffects: false }, true],
+    ["FolderFalseWithoutName", {}, { sideEffects: false }, true],
+  ] as const) {
+    itBundled("dce/PackageJsonSideEffectsOfFileOutsideFolder" + name, {
+      files: {
+        "/entry.js": `import "pkg/sub"; console.log("entry.js runs");`,
+        "/node_modules/pkg/package.json": JSON.stringify({ name: "pkg", version: "1.0.0", ...pkg }),
+        "/node_modules/pkg/sub/package.json": JSON.stringify({ main: "../esm/sub.js", ...sub }),
+        "/node_modules/pkg/esm/sub.js": fileRuns,
+      },
+      entryPoints: ["/entry.js"],
+      outdir: "/out",
+      run: { file: "/out/entry.js", stdout: (kept ? "f.js runs\n" : "") + "entry.js runs" },
+    });
+  }
+  // /lib/index.js re-exports A and B by name, and nothing uses B.
+  const barrelOfFile = (packageJsons: Record<string, object>, barrel: string, b: string) => ({
+    "/entry.js": `import { A } from "./lib/index.js"; console.log(typeof A);`,
+    "/lib/index.js": barrel,
+    "/lib/a.js": `export const A = () => "A";`,
+    "/lib/b.js": b,
+    ...Object.fromEntries(Object.entries(packageJsons).map(([path, json]) => [path, JSON.stringify(json)])),
+  });
+  // `false` with no "name" removes b.js, and does not turn on barrel optimization: the statement of the barrel reads B.
+  itBundled("dce/PackageJsonSideEffectsOfFileWithoutNameBarrelStatementReadsReExport", {
+    files: {
+      ...barrelOfFile(
+        { "/lib/package.json": { sideEffects: false, main: "./index.js" } },
+        `import { A } from "./a.js"; import { B } from "./b.js"; A.B = B; export { A, B };`,
+        `export const B = () => "B";`,
+      ),
+      "/entry.js": `import { A } from "./lib"; console.log(typeof A, typeof A.B);`,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    run: { file: "/out/entry.js", stdout: "function function" },
+  });
+  // Below a package that says `false` too, barrel optimization stays on: b.js is not parsed.
+  itBundled("dce/PackageJsonSideEffectsOfFileWithoutNameBelowFalseKeepsBarrelOptimization", {
+    files: barrelOfFile(
+      { "/package.json": { name: "root", sideEffects: false }, "/lib/package.json": { sideEffects: false } },
+      `export { A } from "./a.js"; export { B } from "./b.js";`,
+      `export const B = <<<SYNTAX_ERROR>>>;`,
+    ),
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    run: { file: "/out/entry.js", stdout: "function" },
+  });
+  itBundled("dce/PackageJsonSideEffectsOfFileWithoutNameIgnoreDCEAnnotations", {
+    files: barrelOfFile(
+      { "/lib/package.json": { sideEffects: false } },
+      `export { A } from "./a.js"; export { B } from "./b.js";`,
+      `export const B = "B"; console.log("b.js runs");`,
+    ),
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    ignoreDCEAnnotations: true,
+    run: { file: "/out/entry.js", stdout: "b.js runs\nfunction" },
+  });
+  // https://github.com/oven-sh/bun/issues/18008: a name that is read through `export *` of a CommonJS file does not keep the barrel.
+  itBundled("dce/PackageJsonSideEffectsOfFileWithoutNameExportStarOfCommonJS", {
+    todo: true,
+    files: {
+      "/entry.js": `import { A } from "./lib/index.js"; console.log(A);`,
+      "/lib/package.json": JSON.stringify({ sideEffects: false }),
+      "/lib/index.js": `export * from "./a.js";`,
+      "/lib/a.js": `module.exports = { A: "A" };`,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    run: { file: "/out/entry.js", stdout: "A" },
   });
   itBundled("dce/PackageJsonSideEffectsKeepExportDefaultExpr", {
     files: {

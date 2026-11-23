@@ -50,7 +50,12 @@ impl Row {
 
     fn set(&mut self, mut at: usize) {
         for level in core::iter::once(&mut self.bits).chain(&mut self.summaries) {
+            let before = level[at / 64];
             level[at / 64] |= 1 << (at % 64);
+            // The levels above already say so.
+            if before != 0 {
+                break;
+            }
             at /= 64;
         }
     }
@@ -131,7 +136,14 @@ fn next_one(bits: &[u64], summaries: &mut [Vec<u64>], from: usize) -> Option<usi
         word = next_one(summary, above, word + 1)?;
         ones = *bits.get(word)?;
         if ones == 0 {
-            summary[word / 64] &= !(1 << (word % 64));
+            // After a frequent token the summaries are all 1s, and many consecutive words can be 0.
+            let (unknown, shift) = (&mut summary[word / 64], word % 64);
+            let run = bits[word..]
+                .iter()
+                .take((*unknown >> shift).trailing_ones() as usize);
+            let zeros = run.take_while(|&&it| it == 0).count();
+            *unknown &= !(u64::MAX >> (64 - zeros) << shift);
+            word += zeros - 1;
         }
     }
     Some(word * 64 + ones.trailing_zeros() as usize)

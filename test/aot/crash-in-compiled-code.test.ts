@@ -68,6 +68,20 @@ export function priceOf(name: string): number {
 `,
 };
 
+// priceOf between two functions that fill more than a page each: the functions that a file imports lie in the order of their
+// names. So the page of its first instructions holds code of these three alone, and none that a report of a fault there reads.
+const filler = (name: string) =>
+  `export function ${name}(n: number): number { let x = n | 0; ${"x = ((x ^ (x >>> 3)) + 7) | 0; ".repeat(600)}return process.argv.length > 99 ? ${name}(x) + 1 : x; }\n`;
+const filesWithPriceOfBetweenFillers = {
+  "app.ts": files["app.ts"]
+    .replace("import { priceOf,", "import { before, priceOf, trailing,")
+    .replace(
+      "  const price = priceOf(",
+      "  if (process.argv.length > 99) return before(item.count) + trailing(item.count);\n  const price = priceOf(",
+    ),
+  "prices.ts": files["prices.ts"] + filler("before") + filler("trailing"),
+};
+
 const quiet = {
   ...(!locksEnvironment && { BUN_CRASH_REPORT_URL: "" }),
   BUN_ENABLE_CRASH_REPORTING: "0",
@@ -87,6 +101,13 @@ const callOfZero = Buffer.from([0x90, 0x31, 0xc0, 0xff, 0xd0]);
 const callOfEight = Buffer.from([0x6a, 0x08, 0x58, 0xff, 0xd0]);
 // `mov [rip - 6], eax`: a store to the instruction itself. No code may be written, so the fault has the address of its instruction.
 const storeToItself = Buffer.from([0x89, 0x05, 0xfa, 0xff, 0xff, 0xff]);
+// `lea rdi, [rip - 7]; and rdi, -4096; mov esi, 4096; xor edx, edx; mov eax, 10; syscall; ret`: mprotect() takes every
+// permission from the page of this code, and the processor cannot fetch the `ret` behind the call.
+// prettier-ignore
+const losesItsPage = Buffer.from([
+  0x48, 0x8d, 0x3d, 0xf9, 0xff, 0xff, 0xff, 0x48, 0x81, 0xe7, 0x00, 0xf0, 0xff, 0xff, 0xbe, 0x00, 0x10, 0x00, 0x00,
+  0x31, 0xd2, 0xb8, 0x0a, 0x00, 0x00, 0x00, 0x0f, 0x05, 0xc3,
+]);
 
 class Executable {
   bytes: Buffer;
@@ -327,8 +348,49 @@ console.log("total " + (outer(process.argv.length) + 20));
     ]);
   });
 
-  // A fault at the address of its own instruction is also what a page of code gives that cannot be fetched. The function
-  // there may have run, so it stays on the list. Here it is the first instruction of priceOf, which has no frame record yet.
+  // A fault at the address of its own instruction is also what a page of code gives that cannot be fetched. Its line is then
+  // found without a read of the code in front of it. Here it is where priceOf returns to, as in the first test of a function.
+  test("a fault at its own address behind a call: the function by the line of the call, and all its callers", async () => {
+    using dir = tempDir("aot-crash-in-compiled-code", files);
+    const { id, executable } = await build(String(dir));
+    const behindCalls = executable.returnAddressesOfCallsOf("priceOf");
+    executable.writeWithFaultAt(behindCalls, join(String(dir), "planted"), storeToItself);
+    expect(await crash(String(dir), id, { address: "0x[0-9A-F]+" })).toEqual([
+      "lineTotal app.ts:17:17",
+      "total app.ts:11:43",
+      "checkout app.ts:23:23",
+    ]);
+  });
+
+  // Here the code at the address cannot be read either, as where a page of the executable is lost. The report reads none
+  // of it: the line of the function is from the tables, and its callers are on other pages.
+  test("a fault at an instruction on a page that can no longer be read: the function and all its callers", async () => {
+    using dir = tempDir("aot-crash-in-compiled-code", filesWithPriceOfBetweenFillers);
+    const { id, executable } = await build(String(dir));
+    const entry = executable.addressOf("priceOf");
+    const page = entry - (entry % 4096);
+    // What a symbol names ends where the next symbol starts.
+    const sorted = [...executable.addresses].sort((a, b) => a - b);
+    const startsOnPage = new Set(sorted.filter((start, index) => start < page + 4096 && sorted[index + 1] > page));
+    const namesOnPage = new Set<string>();
+    for (const [symbol, start] of executable.symbols)
+      if (startsOnPage.has(start)) namesOnPage.add(symbol.split(" ")[0]);
+    expect({ names: [...namesOnPage].sort(), endsOnPage: entry + losesItsPage.length <= page + 4096 }).toEqual({
+      names: ["before", "priceOf", "trailing"],
+      endsOnPage: true,
+    });
+    executable.writeWithFaultAt(entry, join(String(dir), "planted"), losesItsPage);
+    const placeInPage = ((entry + losesItsPage.length - 1) % 4096).toString(16).padStart(3, "0").toUpperCase();
+    expect(await crash(String(dir), id, { address: `0x[0-9A-F]*${placeInPage}` })).toEqual([
+      "priceOf prices.ts:13:17",
+      "lineTotal app.ts:18:17",
+      "total app.ts:11:43",
+      "checkout app.ts:24:23",
+    ]);
+  });
+
+  // The function at such an address may have run, so it stays on the list. Here it is the first instruction of priceOf,
+  // which has no frame record yet.
   test("a fault at the address of the first instruction of a function: the function and all its callers", async () => {
     using dir = tempDir("aot-crash-in-compiled-code", files);
     const { id, executable } = await build(String(dir));

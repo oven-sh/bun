@@ -1038,6 +1038,7 @@ mod draft {
                             #[cfg(windows)]
                             TraceSeed::Fault { pc, context } => (
                                 bun_core::debug::capture_from_context(pc, context, &mut addr_buf),
+                                // The walk pops a return address where `pc` has no function entry, and does not say that it did.
                                 false,
                             ),
                             #[cfg(unix)]

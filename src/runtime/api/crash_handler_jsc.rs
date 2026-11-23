@@ -252,13 +252,16 @@ pub(crate) fn fault_walk_starts_at_caller(state: FaultState) -> Option<bool> {
         use bun_sys::Mmap;
         use core::ptr::NonNull;
 
+        const READ_WRITE: i32 = libc::PROT_READ | libc::PROT_WRITE;
+        fn pages(count: usize, access: i32) -> Option<Mmap> {
+            let length = count * bun_sys::page_size();
+            let flags = libc::MAP_PRIVATE | libc::MAP_ANON;
+            Mmap::new(length, access, flags, bun_sys::Fd::from_native(-1), 0).ok()
+        }
         /// One page of memory whose next page is not mapped.
         fn page_in_front_of_none() -> Option<Mmap> {
             let page = bun_sys::page_size();
-            let access = libc::PROT_READ | libc::PROT_WRITE;
-            let flags = libc::MAP_PRIVATE | libc::MAP_ANON;
-            let both = Mmap::new(2 * page, access, flags, bun_sys::Fd::from_native(-1), 0).ok()?;
-            let first = both.into_raw().cast::<u8>();
+            let first = pages(2, READ_WRITE)?.into_raw().cast::<u8>();
             let page_at = |start| NonNull::slice_from_raw_parts(start, page);
             // SAFETY: the two pages are from one `mmap`, and each becomes the value's that is made of it.
             unsafe {
@@ -272,21 +275,31 @@ pub(crate) fn fault_walk_starts_at_caller(state: FaultState) -> Option<bool> {
             0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90,
             0xff, 0xd0,
         ];
-        const LENGTH_OF_CALL: usize = 2;
+        const CALL: [u8; 2] = [0xff, 0xd0];
         const NOT_MAPPED: usize = 8;
-        let behind_call = CODE.as_ptr_range().end.addr();
+        let page = bun_sys::page_size();
         let fp = frame_address();
         // SAFETY: `fp` is the frame record of this function.
         let caller = unsafe { return_address_of_frame(fp) };
-        let last_page = match state {
-            FaultState::WordBehindEndOfMemory | FaultState::FrameRecordThatIsNotAligned => {
-                Some(page_in_front_of_none()?)
+        // The memory that a state points into. It lasts until the trace is taken.
+        let memory = match state {
+            FaultState::WordBehindEndOfMemory => Some(page_in_front_of_none()?),
+            FaultState::WordInMemoryThatCannotBeRead | FaultState::FrameRecordThatCannotBeRead => {
+                Some(pages(1, libc::PROT_NONE)?)
+            }
+            FaultState::CallAcrossTwoPages => {
+                let mut both = pages(2, READ_WRITE)?;
+                // SAFETY: the pages are anonymous, and they can be read and written.
+                unsafe { both.as_mut_slice()[page - 1..=page].copy_from_slice(&CALL) };
+                Some(both)
             }
             _ => None,
         };
-        let end_of_memory = last_page
-            .as_ref()
-            .map_or(0, |page| page.as_ptr().addr() + page.size());
+        let memory = memory.as_ref().map_or(0, |memory| memory.as_ptr().addr());
+        let behind_call = match state {
+            FaultState::CallAcrossTwoPages => memory + page + 1,
+            _ => CODE.as_ptr_range().end.addr(),
+        };
 
         // Which word is what a call pushed, and what `pc`, the fault address and x30 are.
         let (pushed, pc, fault_address, link_register) = match state {
@@ -305,23 +318,41 @@ pub(crate) fn fault_walk_starts_at_caller(state: FaultState) -> Option<bool> {
             FaultState::LinkRegisterOfFrameRecord if cfg!(target_arch = "aarch64") => {
                 (behind_call, NOT_MAPPED, Some(NOT_MAPPED), caller)
             }
+            FaultState::FrameRecordThatCannotBeRead
+            | FaultState::UnalignedFrameRecordThatHoldsLinkRegister
+                if cfg!(target_arch = "aarch64") =>
+            {
+                (behind_call, NOT_MAPPED, Some(NOT_MAPPED), behind_call)
+            }
             FaultState::WordThatNoCallPushed if cfg!(target_arch = "x86_64") => {
-                (behind_call - LENGTH_OF_CALL, 0, Some(0), 0)
+                (behind_call - CALL.len(), 0, Some(0), 0)
             }
             FaultState::WordBelowEveryCall if cfg!(target_arch = "x86_64") => (1, 0, Some(0), 0),
             FaultState::StackThatCannotBeRead if cfg!(target_arch = "x86_64") => (0, 0, Some(0), 0),
             // Of the 8 bytes in front of the word, where a call would be, the last one is not mapped.
             FaultState::WordBehindEndOfMemory if cfg!(target_arch = "x86_64") => {
-                (end_of_memory + 1, 0, Some(0), 0)
+                (memory + page + 1, 0, Some(0), 0)
             }
-            FaultState::FrameRecordThatIsNotAligned if cfg!(target_arch = "aarch64") => {
-                (behind_call, NOT_MAPPED, Some(NOT_MAPPED), behind_call)
+            FaultState::WordInMemoryThatCannotBeRead if cfg!(target_arch = "x86_64") => {
+                (memory + core::mem::size_of::<usize>(), 0, Some(0), 0)
+            }
+            FaultState::CallAcrossTwoPages if cfg!(target_arch = "x86_64") => {
+                (behind_call, 0, Some(0), 0)
             }
             _ => return None,
         };
-        // The return address of a frame record at this address would end on the page that is not mapped. It has no callers.
+
+        #[repr(align(8))]
+        struct Aligned([u8; 24]);
+        let mut holds_link_register = Aligned([0; 24]);
+        holds_link_register.0[9..17].copy_from_slice(&behind_call.to_ne_bytes());
+        let [_, not_aligned, ..] = &core::hint::black_box(&holds_link_register).0;
+        // AArch64: what x29 is where it is the address of no frame record. No callers are found from it.
         let (fp, caller) = match state {
-            FaultState::FrameRecordThatIsNotAligned => (end_of_memory - 15, 0),
+            FaultState::FrameRecordThatCannotBeRead => (memory, 0),
+            FaultState::UnalignedFrameRecordThatHoldsLinkRegister => {
+                (core::ptr::from_ref(not_aligned).expose_provenance(), 0)
+            }
             _ => (fp, caller),
         };
 

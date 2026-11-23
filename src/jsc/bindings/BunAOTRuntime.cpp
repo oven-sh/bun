@@ -418,8 +418,8 @@ extern "C" size_t Bun__AOT__describeAddresses(const size_t* addresses, size_t co
         JSC::AOT::CodeLocation location = image->locate(address);
         if (location.kind != JSC::AOT::CodeKind::Function)
             continue;
-        // Where the function has no site for the address, the frame is reported at the start of the function.
-        JSC::AOT::CallSiteRecord site = image->returnSiteInfoAt(location.function, location.offset).site.value_or(JSC::AOT::CallSiteRecord { JSC::CallSiteIndex(0), 0 });
+        // Where the function has no site for the address, the frame is reported at the start of the function. callSiteAt() reads the tables alone: the code at the address of a fault may be what cannot be read.
+        JSC::AOT::CallSiteRecord site = image->callSiteAt(location.function, location.offset).value_or(JSC::AOT::CallSiteRecord { JSC::CallSiteIndex(0), 0 });
         // Every address but the first is a return address, so its callee has started. A tail call that was compiled as a plain call hides its caller, as in Error.stack.
         // forEachShownFrame() assumes that the callee was not entered, and reads nothing from the kind except whether the caller has left.
         bool calleeWasEntered = &address != codeAddresses.data();

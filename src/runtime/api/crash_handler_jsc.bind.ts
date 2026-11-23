@@ -22,7 +22,10 @@ export const FaultState = b.enumeration([
   "wordBelowEveryCall",
   "stackThatCannotBeRead",
   "wordBehindEndOfMemory",
-  "frameRecordThatIsNotAligned",
+  "wordInMemoryThatCannotBeRead",
+  "callAcrossTwoPages",
+  "frameRecordThatCannotBeRead",
+  "unalignedFrameRecordThatHoldsLinkRegister",
 ]);
 
 export const crashHandler = b.namespace({

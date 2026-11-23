@@ -10,6 +10,7 @@ import {
   isLinux,
   isPosix,
   isWindows,
+  libcPathForDlopen,
   mergeWindowEnvs,
   tempDir,
 } from "harness";
@@ -68,40 +69,145 @@ test.if(hasPointerAuthentication)("a stack trace takes the signature off a retur
 
 // The instruction at an address where nothing can run is not fetched, and no frame record names the function that called
 // it or jumped to it. On AArch64 x30 does, and on x86-64 the word that the call pushed. A return leaves neither.
-// Each state is the registers of such a fault, and the answer is whether the stack trace starts at that function.
 describe.if(isPosix)("the stack trace of a fault at an address that cannot be run", () => {
-  test.each([
+  const isX64 = process.arch === "x64";
+  const onArm64 = (startsAtCaller: boolean) => (isArm64 ? startsAtCaller : null);
+  const onX64 = (startsAtCaller: boolean) => (isX64 ? startsAtCaller : null);
+  // Each state is the registers of such a fault, and the answer is whether the stack trace starts at that function.
+  // `null`: the processor has no such state.
+  const states = [
     ["a call of 0", "callOfZero", true],
     ["a call of another address that cannot be run", "callOfAddressThatCannotRun", true],
     ["a fault on data", "faultOnData", false],
     ["a signal without a fault address", "signalWithoutFaultAddress", false],
     ["a return to an address that cannot be run", "returnToAddressThatCannotRun", false],
-  ])("%s", (_, state, startsAtCaller) => {
-    expect(crash_handler.faultWalkStartsAtCaller(state)).toBe(startsAtCaller);
+    // What x30 holds where no call has set it.
+    ["a link register of 0", "linkRegisterOfZero", onArm64(false)],
+    [
+      "a link register that the frame record holds, in a function that has run",
+      "linkRegisterOfFrameRecord",
+      onArm64(false),
+    ],
+    // What x29 holds where it is the address of no frame record. Nothing says that the function has run, and x30 is taken.
+    ["a frame pointer into memory that cannot be read", "frameRecordThatCannotBeRead", onArm64(true)],
+    [
+      "a frame pointer that is not aligned, in front of what x30 holds",
+      "unalignedFrameRecordThatHoldsLinkRegister",
+      onArm64(true),
+    ],
+    // What the stack pointer is at where no call has pushed it.
+    ["a word on the stack that no call instruction ends at", "wordThatNoCallPushed", onX64(false)],
+    ["a word on the stack below 8", "wordBelowEveryCall", onX64(false)],
+    ["a stack pointer that cannot be read", "stackThatCannotBeRead", onX64(false)],
+    ["a word on the stack one byte behind the end of memory", "wordBehindEndOfMemory", onX64(false)],
+    ["a word on the stack in memory that cannot be read", "wordInMemoryThatCannotBeRead", onX64(false)],
+    ["a word on the stack behind a call instruction that lies on two pages", "callAcrossTwoPages", onX64(true)],
+  ] as const;
+
+  // A wrong walk reads what cannot be read and ends its process, so a child takes the states. It says one at a time,
+  // and the states that it did not come to are missing. `before` runs first in the child.
+  async function answersOfChild(of: readonly (typeof states)[number][], before = "", env = noReportEnv) {
+    const program = `${before}
+const { crash_handler } = require("bun:internal-for-testing");
+for (const state of ${JSON.stringify(of.map(([, state]) => state))})
+  console.log(JSON.stringify([state, crash_handler.faultWalkStartsAtCaller(state)]));`;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", program],
+      env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const answered = new Map<string, boolean | null>(
+      stdout
+        .trim()
+        .split("\n")
+        .filter(Boolean)
+        .map(line => JSON.parse(line)),
+    );
+    const answers = Object.fromEntries(
+      of.filter(([, state]) => answered.has(state)).map(([name, state]) => [name, answered.get(state)]),
+    );
+    const refused = answered.has("the filter was refused") || undefined;
+    return { answers, exitCode, signalCode: proc.signalCode, stderr: exitCode === 0 ? "" : stderr, refused };
+  }
+
+  test.concurrent("each state of the registers", async () => {
+    expect(await answersOfChild(states)).toEqual({
+      answers: Object.fromEntries(states.map(([name, , startsAtCaller]) => [name, startsAtCaller])),
+      exitCode: 0,
+      signalCode: null,
+      stderr: "",
+    });
   });
 
-  // What x30 holds where no call has set it.
-  test.if(isArm64).each([
-    ["a link register of 0", "linkRegisterOfZero"],
-    ["a link register that the frame record holds, in a function that has run", "linkRegisterOfFrameRecord"],
-  ])("%s", (_, state) => {
-    expect(crash_handler.faultWalkStartsAtCaller(state)).toBe(false);
-  });
-
-  // A frame record there would end on a page that is not mapped. None is read, and x30 is the caller.
-  test.if(isArm64)("a frame pointer that is not aligned", () => {
-    expect(crash_handler.faultWalkStartsAtCaller("frameRecordThatIsNotAligned")).toBe(true);
-  });
-
-  // What the stack pointer is at where no call has pushed it. The last one asks for bytes that end on a page that is
-  // not mapped: where the walk reads memory itself, as on macOS, it must not read those.
-  test.if(process.arch === "x64").each([
-    ["a word on the stack that no call instruction ends at", "wordThatNoCallPushed"],
-    ["a word on the stack below 8", "wordBelowEveryCall"],
-    ["a stack pointer that cannot be read", "stackThatCannotBeRead"],
-    ["a word on the stack that is one byte behind the end of memory", "wordBehindEndOfMemory"],
-  ])("%s", (_, state) => {
-    expect(crash_handler.faultWalkStartsAtCaller(state)).toBe(false);
+  // Where the kernel offers no read of the process's own memory, the walk copies memory itself after it has asked whether
+  // the page is mapped. That is no answer for an address that nothing has checked, so the rule is off there: each trace
+  // is as without it. The filter closes process_vm_readv and /proc/<pid>/mem, and the child shows that both are closed.
+  test.concurrent.if(isLinux && !!without("a hardened build"))("each state without a read by the kernel", async () => {
+    const closesKernelReads = `
+const { dlopen, ptr } = require("bun:ffi");
+const libc = dlopen(${JSON.stringify(libcPathForDlopen())}, {
+  prctl: { args: ["i32", "u64", "u64", "u64", "u64"], returns: "i32" },
+  process_vm_readv: { args: ["i32", "ptr", "u64", "ptr", "u64", "u64"], returns: "i64" },
+}).symbols;
+const load = 0x20, jumpIfEqual = 0x15, answer = 0x06, allow = 0x7fff0000, notPermitted = 0x00050000 | 1;
+const architecture = 4, systemCall = 0, setNoNewPrivileges = 38, setFilter = 22, filterMode = 2;
+const [thisArchitecture, processVmReadv, openat, open] =
+  process.arch === "arm64" ? [0xc00000b7, 270, 56, 56] : [0xc000003e, 310, 257, 2];
+const instructions = [
+  [load, 0, 0, architecture], [jumpIfEqual, 1, 0, thisArchitecture], [answer, 0, 0, allow],
+  [load, 0, 0, systemCall],
+  [jumpIfEqual, 2, 0, processVmReadv], [jumpIfEqual, 1, 0, openat], [jumpIfEqual, 0, 1, open],
+  [answer, 0, 0, notPermitted],
+  [answer, 0, 0, allow],
+];
+const filter = new Uint8Array(instructions.length * 8);
+const view = new DataView(filter.buffer);
+instructions.forEach(([code, ifTrue, ifFalse, operand], i) => {
+  view.setUint16(i * 8, code, true);
+  view.setUint8(i * 8 + 2, ifTrue);
+  view.setUint8(i * 8 + 3, ifFalse);
+  view.setUint32(i * 8 + 4, operand, true);
+});
+const filterProgram = new BigUint64Array([BigInt(instructions.length), BigInt(ptr(filter))]);
+// What the hook and the end of the process need is loaded while files can be opened.
+require("bun:internal-for-testing").crash_handler.faultWalkStartsAtCaller("callOfZero");
+if (libc.prctl(setNoNewPrivileges, 1, 0, 0, 0) || libc.prctl(setFilter, filterMode, ptr(filterProgram), 0, 0)) {
+  console.log(JSON.stringify(["the filter was refused", null]));
+  process.exit(0);
+}
+const from = new BigUint64Array([42n]), to = new BigUint64Array(1);
+const vector = words => new BigUint64Array([BigInt(ptr(words)), 8n]);
+const [local, remote] = [vector(to), vector(from)];
+const read = Number(libc.process_vm_readv(process.pid, ptr(local), 1, ptr(remote), 1, 0));
+let opened = "opened";
+try {
+  require("fs").openSync("/proc/self/mem", "r");
+} catch (error) {
+  opened = error.code;
+}
+if (read !== -1 || opened !== "EPERM") throw new Error("the kernel still reads: " + JSON.stringify({ read, opened }));
+`;
+    // The walk of main reads a frame record in memory that cannot be read itself, with or without the rule.
+    const read = states.filter(([, state]) => state !== "frameRecordThatCannotBeRead");
+    // From a frame pointer that is not aligned the walk finds no caller, which the hook takes for neither answer.
+    const isNeither = (state: string) => state === "unalignedFrameRecordThatHoldsLinkRegister";
+    // LeakSanitizer lists the threads from /proc where the process ends, which the filter refuses too.
+    const withoutLeakCheck = [noReportEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":");
+    const answered = await answersOfChild(read, closesKernelReads, { ...noReportEnv, ASAN_OPTIONS: withoutLeakCheck });
+    if (answered.refused) {
+      // bun:test cannot skip a test that runs, so the log says that nothing was tested here.
+      console.warn("SKIP each state without a read by the kernel: this kernel refuses a seccomp filter");
+      return;
+    }
+    expect(answered).toEqual({
+      answers: Object.fromEntries(
+        read.map(([name, state, startsAtCaller]) => [name, startsAtCaller === null || isNeither(state) ? null : false]),
+      ),
+      exitCode: 0,
+      signalCode: null,
+      stderr: "",
+    });
   });
 
   // The same through the signal handler, with the registers that the kernel saved. C code that bun:ffi compiles calls

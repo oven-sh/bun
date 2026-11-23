@@ -71,7 +71,37 @@ impl MemoryAccessor {
         mem: -1,
     };
 
-    fn read(&mut self, address: usize, buf: &mut [u8]) -> bool {
+    /// `by_kernel_alone`: for an address that nothing has checked. The read fails where only `is_valid_memory` would stand in front of the copy.
+    fn read(
+        &mut self,
+        address: usize,
+        buf: &mut [u8],
+        #[cfg(not(target_os = "macos"))] by_kernel_alone: bool,
+    ) -> bool {
+        #[cfg(target_os = "macos")]
+        {
+            unsafe extern "C" {
+                fn mach_vm_read_overwrite(
+                    target_task: libc::mach_port_t,
+                    address: u64,
+                    size: u64,
+                    data: u64,
+                    out_size: *mut u64,
+                ) -> libc::kern_return_t;
+            }
+            let mut copied = 0u64;
+            // SAFETY: the kernel writes at most `buf.len()` bytes to `buf`, and answers with an error for what this task cannot read.
+            let result = unsafe {
+                mach_vm_read_overwrite(
+                    crate::ffi::mach_task_self(),
+                    address as u64,
+                    buf.len() as u64,
+                    buf.as_mut_ptr() as u64,
+                    &raw mut copied,
+                )
+            };
+            return result == libc::KERN_SUCCESS && copied == buf.len() as u64;
+        }
         #[cfg(any(target_os = "linux", target_os = "android"))]
         loop {
             match self.mem {
@@ -131,35 +161,43 @@ impl MemoryAccessor {
                 }
             }
         }
-        let Some(last) = address.checked_add(buf.len().saturating_sub(1)) else {
-            return false;
-        };
-        let page_size = bun_alloc::page_size();
-        let (mut page, last_page) = (address & !(page_size - 1), last & !(page_size - 1));
-        // `is_valid_memory` answers for one page, and a read that is not aligned can end on the next one.
-        loop {
-            if !is_valid_memory(page) {
+        #[cfg(not(target_os = "macos"))]
+        {
+            if by_kernel_alone || !is_valid_memory(address) {
                 return false;
             }
-            if page == last_page {
-                break;
+            // SAFETY: is_valid_memory just confirmed the page at `address` is mapped.
+            unsafe {
+                core::ptr::copy_nonoverlapping(address as *const u8, buf.as_mut_ptr(), buf.len());
             }
-            page = page.wrapping_add(page_size);
+            true
         }
-        // SAFETY: every page that the read spans is mapped.
-        unsafe {
-            core::ptr::copy_nonoverlapping(address as *const u8, buf.as_mut_ptr(), buf.len());
-        }
-        true
     }
 
     fn load_usize(&mut self, address: usize) -> Option<usize> {
         let mut result = [0u8; core::mem::size_of::<usize>()];
-        if self.read(address, &mut result) {
+        if self.read(
+            address,
+            &mut result,
+            #[cfg(not(target_os = "macos"))]
+            false,
+        ) {
             Some(usize::from_ne_bytes(result))
         } else {
             None
         }
+    }
+
+    #[cfg(not(windows))]
+    fn load_usize_by_kernel(&mut self, address: usize) -> Option<usize> {
+        let mut result = [0u8; core::mem::size_of::<usize>()];
+        self.read(
+            address,
+            &mut result,
+            #[cfg(not(target_os = "macos"))]
+            true,
+        )
+        .then(|| usize::from_ne_bytes(result))
     }
 }
 
@@ -173,6 +211,7 @@ impl Drop for MemoryAccessor {
     }
 }
 
+#[cfg(not(target_os = "macos"))]
 fn is_valid_memory(address: usize) -> bool {
     let page_size = bun_alloc::page_size();
     let aligned_address = address & !(page_size - 1);
@@ -416,10 +455,12 @@ fn caller_at_function_entry(
             return None;
         }
         let return_address = load(sp)?;
+        // The tables are asked after this read, because they read the code in front of the word themselves.
+        if !is_behind_call(return_address, &mut load) {
+            return None;
+        }
         // No table says what code that compiled functions share has on the stack, so the walk does not start in it.
-        let is_in_stub =
-            compiled_frame_at_return_address(return_address).is_some_and(|frame| frame.is_in_stub);
-        if is_in_stub || !is_behind_call(return_address, &mut load) {
+        if compiled_frame_at_return_address(return_address).is_some_and(|frame| frame.is_in_stub) {
             return None;
         }
         Some((return_address, sp.checked_add(WORD)?, fp))
@@ -895,8 +936,13 @@ pub fn capture_from_fault(
     out[0] = strip_return_address_signature(pc);
     if fault_address == Some(pc) {
         let mut ma = MemoryAccessor::INIT;
-        let load = |address| ma.load_usize(address);
-        if let Some((pc, sp, fp)) = caller_at_function_entry(pc, sp, fp, link_register, load) {
+        let mut load = |address| ma.load_usize_by_kernel(address);
+        let own = 0usize;
+        // What the rule reads, nothing has checked. So it reads by the kernel alone, and applies only where a word of this frame can be read that way.
+        let reads = load(core::ptr::from_ref(&own).expose_provenance()).is_some();
+        if reads
+            && let Some((pc, sp, fp)) = caller_at_function_entry(pc, sp, fp, link_register, load)
+        {
             // A return address lies behind its call.
             let callers = capture_from_fault(pc, pc, fp, sp, None, None, &mut out[1..]);
             return FaultTrace {

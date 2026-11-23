@@ -4375,21 +4375,17 @@ describe("bundler", () => {
         log("outer", scoped);
         var shadowed = "outer";
         function mergedEffect() {
+          log("effect sees", shadowed);
           {
-            log("effect sees", shadowed);
-            {
-              let shadowed = Math.random() < 2 ? "inner" : "";
-              log("branch sees", shadowed);
-            }
+            let shadowed = Math.random() < 2 ? "inner" : "";
+            log("branch sees", shadowed);
           }
+          log("effect sees", typeof shadowed);
           {
-            log("effect sees", typeof shadowed);
-            {
 
-              class shadowed {
-              }
-              log("branch sees", typeof shadowed);
+            class shadowed {
             }
+            log("branch sees", typeof shadowed);
           }
         }
         mergedEffect();

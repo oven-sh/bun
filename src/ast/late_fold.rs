@@ -309,11 +309,10 @@ impl<'a> LateFold<'a> {
         {
             return false;
         }
-        stmts.iter().all(|stmt| match &stmt.data {
-            StmtData::SLocal(local) => local.kind == S::Kind::KVar,
-            StmtData::SFunction(_) | StmtData::SClass(_) | StmtData::SDirective(_) => false,
-            _ => true,
-        })
+        !matches!(
+            stmts.first().map(|stmt| &stmt.data),
+            Some(StmtData::SDirective(_))
+        ) && declares_no_scoped_name(stmts)
     }
 
     /// The statement that replaces `s` when cross-module values decide its test.

@@ -1411,7 +1411,8 @@ impl Run<'_> {
                     if let Some(wrapper) = js::from_js(&redis)
                         && let Some(client) = js::ref_from_js(redis)
                     {
-                        client.do_connect(global, (&wrapper).into());
+                        // Not `connect()`: nobody could catch its promise.
+                        client.preconnect((&wrapper).into());
                     }
                     Ok(())
                 })

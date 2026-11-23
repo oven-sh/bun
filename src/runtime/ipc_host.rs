@@ -564,6 +564,6 @@ pub(crate) fn deliver_held_ipc_message(global: &JSGlobalObject, message: JSValue
     crate::dispatch::fold(if fd.is_undefined() {
         IPCInstance::handle_ipc_message(&DecodedIPCMessage::Data(message), fd)
     } else {
-        IPC::parse_held_handle(global, message, fd)
+        IPC::deliver_held_handle(global, message, fd)
     });
 }

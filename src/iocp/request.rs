@@ -10,6 +10,7 @@ use std::sync::Arc;
 
 use bun_ptr::OptionCellExt as _;
 use bun_sys::windows::StatusBlock;
+use bun_sys::windows::system::physical_memory;
 use bun_sys::{Fd, FdExt as _};
 use bun_windows_sys::{HANDLE, NT_ERROR, NTSTATUS, ULONG, ntdll};
 
@@ -429,8 +430,9 @@ enum Delivery {
     Event,
 }
 
-/// Of one request. The system copies what a pipe has no room for into memory of its own.
-pub const MAX_LEN: usize = 8 * 1024 * 1024;
+/// Of one request.
+const MAX_LEN: usize = i32::MAX as usize;
+const PIECE_LEN: usize = 8 * 1024 * 1024;
 
 /// The bytes that a request uses.
 enum Bytes {
@@ -505,14 +507,18 @@ impl AsyncFile {
         self.submit(Call::Read, bytes, AtOnce::Defer, Box::new(done))
     }
 
-    /// For `len` bytes that are there already, and take long to deal with: timers run before `done`.
+    /// For some of `len` bytes that are there already, and take long to deal with: timers run before the last `done`.
     pub fn read_much(
         &self,
         len: usize,
         done: impl FnOnce(Completion) + 'static,
     ) -> Result<Request, Completion> {
-        let bytes = Bytes::Fill(Vec::with_capacity(len.min(MAX_LEN)), len);
-        self.submit(Call::Read, bytes, AtOnce::NextTurn, Box::new(done))
+        let at_once = match len > PIECE_LEN {
+            true => AtOnce::Defer,
+            false => AtOnce::NextTurn,
+        };
+        let bytes = Bytes::Fill(Vec::with_capacity(len.min(PIECE_LEN)), len);
+        self.submit(Call::Read, bytes, at_once, Box::new(done))
     }
 
     /// Writes some of `buffer[from..]`.
@@ -549,6 +555,16 @@ impl AsyncFile {
 
     pub fn limit_writes(&self, max_len: usize) {
         self.max_write.set(max_len.min(MAX_LEN));
+    }
+
+    /// The system copies what a pipe has no room for into memory that it cannot page out.
+    fn write_len(&self, len: usize) -> usize {
+        let len = len.min(self.max_write.get());
+        if len <= PIECE_LEN {
+            return len;
+        }
+        let available = physical_memory().map_or(0, |memory| memory.available as usize);
+        len.min((available / 4).max(PIECE_LEN))
     }
 
     /// `ConnectNamedPipe`
@@ -623,13 +639,13 @@ impl AsyncFile {
             Bytes::Drain(buffer, from) => {
                 let (bytes, len) = (buffer[from..].as_ptr(), buffer.len() - from);
                 slot.buffer.set(buffer);
-                (bytes.cast_mut(), len.min(self.max_write.get()))
+                (bytes.cast_mut(), self.write_len(len))
             }
             Bytes::DrainShared(shared, from) => {
                 let rest = &(*shared).as_ref()[from..];
                 let (bytes, len) = (rest.as_ptr(), rest.len());
                 slot.shared.set(Some(shared));
-                (bytes.cast_mut(), len.min(self.max_write.get()))
+                (bytes.cast_mut(), self.write_len(len))
             }
         };
         let give_back = || {

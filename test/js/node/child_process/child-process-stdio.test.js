@@ -330,6 +330,42 @@ describe.concurrent.skipIf(!isWindows)("what a child writes last, while the pare
   });
 });
 
+describe.concurrent.skipIf(!isWindows)("a long write gets through while the writer stays out of its event loop", () => {
+  const length = 12 * 1024 * 1024;
+  const reads = `for (let n = 0, chunk = Buffer.alloc(65536); n < ${length}; ) n += fs.readSync(0, chunk);`;
+  it.each([
+    ["stdin.write()", `(child = child_process.spawn(cmd[0], cmd.slice(1))).stdin.write(bytes)`, reads],
+    ["a buffer as stdin", `child = Bun.spawn(cmd, { stdin: bytes })`, reads],
+    [
+      "send()",
+      `(child = Bun.spawn(cmd, { ipc() {}, serialization: "json" })).send(bytes.toString())`,
+      `process.on("message", () => process.exit())`,
+    ],
+  ])("%s", async (_, write, read) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { OpenProcess, WaitForSingleObject } = require("bun:ffi").dlopen("kernel32.dll", {
+           OpenProcess: { args: ["u32", "i32", "u32"], returns: "ptr" },
+           WaitForSingleObject: { args: ["ptr", "u32"], returns: "u32" },
+         }).symbols;
+         const cmd = [process.execPath, "-e", process.argv[1]], bytes = Buffer.alloc(${length}, "x");
+         let child;
+         ${write};
+         console.log(WaitForSingleObject(OpenProcess(0x100000, 0, child.pid), 30_000));
+         child.kill();`,
+        read,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "0\n", stderr: "", exitCode: 0 });
+  });
+});
+
 describe.concurrent("writes to a child's stdin that have to wait", () => {
   const megabyte = 1024 * 1024;
   // Reads nothing until it is told to, over IPC.

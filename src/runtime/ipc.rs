@@ -953,11 +953,7 @@ enum ContinueSendReason {
 }
 
 /// The transport returns the number of bytes written as an `i32`.
-#[cfg(not(windows))]
 const MAX_WRITE_LEN: usize = i32::MAX as usize;
-/// A frame goes out in one piece.
-#[cfg(windows)]
-const MAX_WRITE_LEN: usize = bun_iocp::MAX_LEN - ipc_frame::MAX_HEAD_LEN;
 
 #[derive(bun_ptr::CellRefCounted)]
 pub(crate) struct SendQueue {

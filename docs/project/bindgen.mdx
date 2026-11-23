@@ -310,7 +310,8 @@ is `IntoIterator`, and `b.array(b.string)` anything that is `AsRef<[bun_core::St
 `heap.create_uninitialized_uint8_array(length)`, `heap.create_uint8_array(bytes)`,
 `heap.create_buffer(bytes)`, `heap.create_uint8_array_from_box(bytes)` or
 `heap.create_buffer_from_box(bytes)` made. The last two take over the allocation, and the two
-before them copy. `b.jsArray` as a result is what `heap.create_array(items, to_js::u8)` made.
+before them copy. `b.jsArray` as a result is what `heap.create_array(items, to_js::u8)` or
+`heap.create_array_of(marked_argument_buffer, range)` made.
 
 These are results only:
 

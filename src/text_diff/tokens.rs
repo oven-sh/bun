@@ -403,7 +403,7 @@ pub fn diff_ids(a: &[u32], b: &[u32], distinct: usize, max_edits: usize) -> Opti
 const WORK: usize = 80_000_000;
 const WORK_PER_TOKEN: usize = 32;
 /// About what it takes to find out what else there is to try.
-const FIRST_WORK_PER_TOKEN: usize = 8;
+const FIRST_WORK_PER_TOKEN: usize = 6;
 
 /// Myers' search is fast if the sequences are close, which only running it tells. What rows of bits cost is known before.
 fn mark(
@@ -474,7 +474,7 @@ impl Work<'_> {
     }
 }
 
-/// [`search`] finds no longer script in `work` steps: it visits each count of insertions and deletions below its own.
+/// [`search`] finds no longer script in `work` steps: `pairs` rounds take `pairs` × (`difference` + `pairs`).
 fn edits_within(difference: usize, work: usize) -> usize {
     let pairs = ((difference * difference + 4 * work).isqrt() - difference) / 2;
     difference + 2 * pairs
@@ -580,106 +580,120 @@ impl Script {
     }
 }
 
-/// A script has as many edits as the lengths differ by, and some pairs of an insertion and a deletion. Looking for one
-/// with at most `pairs` of those takes (`pairs` + 1) × (`pairs` + difference + 1) steps.
+/// A script has as many edits as the lengths differ by, and some pairs of an insertion and a deletion. Each round
+/// allows one more pair (Wu, Manber, Myers and Miller, "An O(NP) sequence comparison algorithm", 1990) and moves from
+/// both sides to the goal, the diagonal k = x - y that has the end. A path that reaches the end of `a` or `b` gets to
+/// the end of both in the same round, so no step leaves the grid.
 fn search(a: &[u32], b: &[u32], max_edits: usize, mut work: Work<'_>) -> Search {
-    let Some(spare) = max_edits.checked_sub(a.len().abs_diff(b.len())) else {
+    let difference = a.len().abs_diff(b.len());
+    let Some(spare) = max_edits.checked_sub(difference) else {
         return Search::TooFar;
     };
+    let head = u32::common_prefix(a, b);
+    let (a, b) = (&a[head..], &b[head..]);
     let max_pairs = (spare / 2).min(a.len()).min(b.len());
-    let mut pairs = 2;
-    loop {
-        match search_within(a, b, pairs.min(max_pairs), &mut work) {
-            Search::TooFar if pairs < max_pairs => pairs *= 4,
-            done => return done,
-        }
-    }
-}
+    let goal = a.len() as isize - b.len() as isize;
 
-// Inlined, its inner loop runs out of registers.
-#[inline(never)]
-fn search_within(a: &[u32], b: &[u32], pairs: usize, work: &mut Work<'_>) -> Search {
-    let (n, m) = (a.len() as isize, b.len() as isize);
-    let goal = n - m;
-    let max_edits = goal.abs() + 2 * pairs as isize;
-    let origin = (max_edits - goal) / 2 + 1;
-    // By diagonal k = x - y: one more than the furthest x, so that 0 loses to every path.
-    let mut furthest = vec![0u32; max_edits as usize + 3];
+    // By diagonal, from the outermost one of the round before to the goal: one more than the furthest x, so that 0
+    // loses to every path.
+    let [mut from_below, mut from_above] = [(a, b), (b, a)].map(|(one, other)| {
+        let diagonals = one.len().saturating_sub(other.len());
+        // Each round adds a diagonal. A long list has work for few rounds, so with room for 64 it seldom has to move.
+        let mut furthest = vec![0u32; diagonals + 64];
+        furthest.truncate(diagonals);
+        furthest
+    });
     let mut trace = Trace::default();
-
-    let start = u32::common_prefix(a, b) as isize;
-    if start == n && start == m {
-        return Search::Found(Script(Vec::new()));
-    }
-    furthest[origin as usize] = start as u32 + 1;
-    // A step past a path that has reached the end of `b` (of `a`) would leave the grid.
-    let mut lowest = if start == m { 1 } else { isize::MIN };
-    let mut highest = if start == n { -1 } else { isize::MAX };
-
-    for d in 1..=max_edits {
-        let lo = (-d).max(goal - (max_edits - d)).max(lowest);
-        let hi = d.min(goal + (max_edits - d)).min(highest);
-        let bits_before = trace.bits;
-        let steps = (hi - lo) as usize / 2 + 1;
-        let (before, from_lo) = furthest.split_at_mut((origin + lo) as usize);
-        let mut below = before[before.len() - 1];
-        let mut k = lo;
-        'round: for diagonals in from_lo.as_chunks_mut::<2>().0[..steps].chunks_mut(64) {
-            let mut word = 0u64;
-            for [here, above] in diagonals.iter_mut() {
-                let is_insertion = below < *above;
-                word = word << 1 | u64::from(is_insertion);
-                let mut x = if is_insertion { *above - 1 } else { below } as usize;
-                let mut y = (x as isize - k) as usize;
-                below = *above;
-                if let (Some(in_a), Some(in_b)) = (a.get(x), b.get(y)) {
-                    if in_a != in_b {
-                        *here = x as u32 + 1;
-                        k += 2;
-                        continue;
-                    }
-                    let from = x;
-                    (x, y) = (x + 1, y + 1);
-                    while x < a.len() && y < b.len() && a[x] == b[y] {
-                        (x, y) = (x + 1, y + 1);
-                    }
-                    if !work.spend((x - from) as isize) {
-                        return Search::OutOfWork;
-                    }
-                }
-                *here = x as u32 + 1;
-                if x == a.len() {
-                    trace.push(word, (k - lo) as usize / 2 % 64 + 1);
-                    if y == b.len() {
-                        trace.end_round(lo, bits_before);
-                        return Search::Found(trace.backtrack(k));
-                    }
-                    highest = k - 1;
-                    break 'round;
-                }
-                if y == b.len() {
-                    lowest = k + 1;
-                }
-                k += 2;
-            }
-            trace.push(word, diagonals.len());
-        }
-        trace.end_round(lo, bits_before);
-        if !work.spend((k - lo) / 2 + 1) {
+    for _ in 0..=max_pairs {
+        let (deleted, inserted) = (from_below.len(), from_above.len());
+        if !work.spend((deleted + inserted + 1) as isize) {
             return Search::OutOfWork;
         }
+        let mut sweep = Sweep {
+            a,
+            b,
+            work: &mut work,
+            trace: &mut trace,
+        };
+        let end = sweep
+            .run::<1>(&mut from_below, 0, -(inserted as isize))
+            .and_then(|below| {
+                let above = sweep.run::<-1>(&mut from_above, 0, deleted as isize)?;
+                sweep.run::<1>(&mut [above], below, goal)
+            });
+        let Some(end) = end else {
+            return Search::OutOfWork;
+        };
+        if end as usize > a.len() {
+            return Search::Found(trace.backtrack(deleted, inserted));
+        }
+        from_below.push(end);
+        from_above.push(end);
     }
     Search::TooFar
 }
 
-/// For each step of [`search_within`], whether it is an insertion. There can be a round for each token.
+struct Sweep<'a, 'w> {
+    a: &'a [u32],
+    b: &'a [u32],
+    work: &'a mut Work<'w>,
+    trace: &'a mut Trace,
+}
+
+impl Sweep<'_, '_> {
+    /// The matches from `x` and `y` on. Not rare, but cold and out of line, or the loop of [`Self::run`] runs out of
+    /// registers.
+    #[cold]
+    #[inline(never)]
+    fn slide(&mut self, x: usize, y: usize) -> Option<u32> {
+        let matches = u32::common_prefix(&self.a[x..], &self.b[y..]);
+        self.work.spend(matches as isize).then_some(matches as u32)
+    }
+
+    /// Steps the diagonals from `k` on in `DIRECTION`. Each reads from `furthest` what the round before found for the
+    /// diagonal after it, and writes its own result there. `last` is the result of the diagonal before `k`. Returns that
+    /// of the last one, or `None` if out of work.
+    #[inline(never)]
+    fn run<const DIRECTION: isize>(
+        &mut self,
+        furthest: &mut [u32],
+        mut last: u32,
+        mut k: isize,
+    ) -> Option<u32> {
+        let (a, b) = (self.a, self.b);
+        for diagonals in furthest.chunks_mut(64) {
+            let mut word = 0u64;
+            for next in diagonals.iter_mut() {
+                let (below, above) = if DIRECTION > 0 {
+                    (last, *next)
+                } else {
+                    (*next, last)
+                };
+                last = above.max(below + 1);
+                // Appends `last == above`. This form compiles to a subtraction with borrow.
+                word = (word << 1 | 1) - u64::from(last != above);
+                let x = last as usize - 1;
+                let y = (x as isize - k) as usize;
+                if let (Some(in_a), Some(in_b)) = (a.get(x), b.get(y))
+                    && in_a == in_b
+                {
+                    last += self.slide(x, y)?;
+                }
+                *next = last;
+                k += DIRECTION;
+            }
+            self.trace.push(word, diagonals.len());
+        }
+        Some(last)
+    }
+}
+
+/// For each step of [`search`], whether it is an insertion.
 #[derive(Default)]
 struct Trace {
     /// From the highest bit of each.
     words: Vec<u64>,
     bits: usize,
-    /// The first diagonal, and the number of bits.
-    rounds: Vec<(i32, u32)>,
 }
 
 impl Trace {
@@ -698,20 +712,21 @@ impl Trace {
         }
     }
 
-    fn end_round(&mut self, lo: isize, bits_before: usize) {
-        let count = self.bits - bits_before;
-        self.rounds.push((lo as i32, count as u32));
-    }
-
-    fn backtrack(&self, mut k: isize) -> Script {
-        let mut start = self.bits;
-        let step = |&(lo, count): &(i32, u32)| {
-            start -= count as usize;
-            let at = start + (k - lo as isize) as usize / 2;
+    /// From the end, which is the last step.
+    fn backtrack(&self, deleted: usize, inserted: usize) -> Script {
+        // How many diagonals the round has below and above the goal, and how far the path is from the goal.
+        let (mut below, mut above, mut k) = (deleted as isize, inserted as isize, 0);
+        let mut start = self.bits as isize - (below + above + 1);
+        let step = |_| {
+            let at = (start + below + if k < 0 { k } else { above - k }) as usize;
             let is_insertion = self.words[at / 64] << (at % 64) >> 63 == 1;
+            if k != 0 && is_insertion == (k < 0) {
+                (below, above) = (below - 1, above - 1);
+                start -= below + above + 1;
+            }
             k += if is_insertion { 1 } else { -1 };
             is_insertion
         };
-        Script(self.rounds.iter().rev().map(step).collect())
+        Script((0..deleted + inserted).map(step).collect())
     }
 }

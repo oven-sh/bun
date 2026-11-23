@@ -397,6 +397,24 @@ describe("large inputs, on which diff is quadratic", () => {
     expect(edits(diff.chars(b, a))).toBe(a.length - b.length);
   });
 
+  test("most of one side is missing from the other, and the rest is out of order", () => {
+    const long = "c" + Buffer.alloc(10_000, "ab").toString();
+    expect(short(diff.chars(long, "bacba"))).toEqual([
+      ["-", "ca", 2],
+      ["=", "ba", 2],
+      ["+", "c", 1],
+      ["=", "ba", 2],
+      ["-", long.slice(6), long.length - 6],
+    ]);
+    expect(short(diff.chars("bacba", long))).toEqual([
+      ["+", "ca", 2],
+      ["=", "ba", 2],
+      ["-", "c", 1],
+      ["=", "ba", 2],
+      ["+", long.slice(6), long.length - 6],
+    ]);
+  });
+
   test("reversed", () => {
     const [a, b] = [numbered(10_000, i => i), numbered(10_000, i => 9999 - i)];
     expect(short(diff.lines(a, b))).toEqual([

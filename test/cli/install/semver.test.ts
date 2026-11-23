@@ -683,7 +683,8 @@ describe("Bun.semver.satisfies()", () => {
     }
     expect(satisfied).toEqual([]);
 
-    // A number after a wildcard has no effect on a range, as in node-semver: "1.x.<big>" is "1.x".
+    // A number after a wildcard has no effect on a range: "1.x.<big>" is "1.x". node-semver up to 7.8.3 agrees.
+    // 7.8.4 and later refuse such a range, except after `^` and `~` and in a hyphen range.
     for (const big of numbersAboveU64Max) {
       testSatisfies(`1.x.${big}`, "1.5.0", true);
       testSatisfies(`1.x.${big}`, "2.0.0", false);
@@ -1690,10 +1691,13 @@ test("a range with a number above u64::MAX gives the same answers as node-semver
 
   // One to three parts, exactly one of them above u64::MAX. Every shape here gives the same
   // answer in Bun and node-semver when the number is small. That leaves out a wildcard as the
-  // first part (">x.1"), where they differ for any number.
-  const partial = () => {
+  // first part (">x.1"), where they differ for any number. It also leaves out a number after a
+  // wildcard ("1.x.5") unless `numberAfterWildcard` is set: Bun ignores that number in every
+  // comparator, and node-semver 7.8.4 and later refuse the range, except after `^`, `~` and `~>`
+  // and in a hyphen range.
+  const partial = (numberAfterWildcard: boolean) => {
     // The number after a wildcard has no effect, and the text after it stays in the same comparator.
-    if (next() < 0.3) {
+    if (numberAfterWildcard && next() < 0.3) {
       return `${pick(small)}.${pick(wildcard)}.${pick(numbersAboveU64Max)}${pick(suffix)}`;
     }
     const length = 1 + Math.floor(next() * 3);
@@ -1701,28 +1705,32 @@ test("a range with a number above u64::MAX gives the same answers as node-semver
     const parts: string[] = [];
     for (let i = 0; i < length; i++) {
       if (i === bigAt) parts.push(pick(numbersAboveU64Max));
-      else if (i > 0 && next() < 0.3) parts.push(pick(wildcard));
+      else if (i > 0 && (numberAfterWildcard || i > bigAt) && next() < 0.3) parts.push(pick(wildcard));
       else parts.push(pick(small));
     }
     return parts.join(".") + (length === 3 ? pick(suffix) : "");
+  };
+  const comparator = (operators: string[]) => {
+    const op = pick(operators);
+    return op + partial(op === "^" || op.startsWith("~"));
   };
   const plain = () => `${pick(small)}.${pick(small)}.${pick(small)}`;
   const range = () => {
     switch (Math.floor(next() * 8)) {
       case 0:
-        return `${pick(operator)}${partial()} || ${pick(operator)}${plain()}`;
+        return `${comparator(operator)} || ${pick(operator)}${plain()}`;
       case 1:
-        return `${pick(operator)}${plain()} || ${pick(operator)}${partial()}`;
+        return `${pick(operator)}${plain()} || ${comparator(operator)}`;
       case 2:
-        return `>=${plain()} ${pick(comparing)}${partial()}`;
+        return `>=${plain()} ${comparator(comparing)}`;
       case 3:
-        return `${pick(comparing)}${partial()} <${plain()}`;
+        return `${comparator(comparing)} <${plain()}`;
       case 4:
-        return `${plain()} - ${partial()}`;
+        return `${plain()} - ${partial(true)}`;
       case 5:
-        return `${partial()} - ${plain()}`;
+        return `${partial(true)} - ${plain()}`;
       default:
-        return pick(operator) + partial();
+        return comparator(operator);
     }
   };
 

@@ -149,8 +149,10 @@ fn normalize_dns_name<'a>(name: &'a [u8], backend: &mut GetAddrInfoBackend) -> &
 
 mod lib_c {
     use super::*;
+    use bun_jsc::job::{OwnedJob, Running};
     #[cfg(windows)]
     use bun_threading::Guarded;
+    use core::convert::Infallible;
     #[cfg(windows)]
     use std::sync::Arc;
 
@@ -160,27 +162,19 @@ mod lib_c {
         pending: PendingQuery,
         global: &JSGlobalObject,
     ) {
-        let job = bun_jsc::Job::<LibcLookup>::create(
-            &global.js_thread(this.vm().root_context()),
-            LibcLookup {
-                #[cfg(windows)]
-                state: LookupState::start(query),
-                #[cfg(not(windows))]
-                backend: LibcBackend::Query(query),
-            },
-            LibcRequest(Some(pending)),
-        );
+        let cx = global.js_thread(this.vm().root_context());
+        let lookup = LibcLookup {
+            backend: LibcBackend::Query(query),
+        };
+        let request = LibcRequest(Some(pending));
         #[cfg(windows)]
-        job.run_inline();
+        bun_jsc::Job::<LibcLookup>::create(&cx, lookup, request, Arc::default()).run_inline();
         #[cfg(not(windows))]
-        job.schedule();
+        bun_jsc::Job::<LibcLookup>::schedule(&cx, lookup, request);
     }
 
-    /// The blocking `getaddrinfo` of one libc-backend lookup. On Windows the job only delivers the result from `resolver_pool`.
+    /// The blocking `getaddrinfo` of one libc-backend lookup, run on the pool (Windows: `resolver_pool`).
     struct LibcLookup {
-        #[cfg(windows)]
-        state: Arc<Guarded<LookupState>>,
-        #[cfg(not(windows))]
         backend: LibcBackend,
     }
 
@@ -194,30 +188,47 @@ mod lib_c {
         }
     }
 
-    impl bun_jsc::JobContext for LibcLookup {
+    impl OwnedJob for LibcLookup {
         type OffThread = Self;
         type Js = LibcRequest;
-        const CANCELLABLE: bool = cfg!(windows);
+        #[cfg(windows)]
+        type Shared = Arc<Guarded<Option<Running<Self>>>>;
+        #[cfg(not(windows))]
+        type Shared = ();
+        type Resume = Infallible;
         /// Lookups of the same name from any context wait on the one in flight.
         const OUTLIVES_SCRIPT: bool = true;
-        fn run(
-            this: &mut Self,
-            done: bun_jsc::Completion<Self>,
-        ) -> Option<bun_jsc::Completion<Self>> {
-            #[cfg(windows)]
-            {
-                // The guard must not borrow the job, which can be freed once `done` is handed over.
-                let state = Arc::clone(&this.state);
-                match &mut *state.lock() {
-                    LookupState::Pending(completion) => completion.replace(done),
-                    LookupState::Completed(_) => Some(done),
+        #[cfg(windows)]
+        fn run(mut job: Running<Self>) {
+            let cancelled = LibcBackend::Err(bun_sys::windows::ws2_32::WSA_E_CANCELLED);
+            let mut backend = core::mem::replace(&mut job.off().backend, cancelled);
+            let can_block = backend.can_block();
+            let slot = Arc::clone(job.shared());
+            *slot.lock() = Some(job);
+            let resolve = move || {
+                if slot.lock().is_none() {
+                    return;
                 }
+                backend.run();
+                let job = slot.lock().take();
+                if let Some(mut job) = job {
+                    job.off().backend = backend;
+                    job.finish();
+                }
+            };
+            if can_block {
+                resolver_pool::SCRIPT_POOL.go(resolve);
+            } else {
+                resolve();
             }
-            #[cfg(not(windows))]
-            {
-                this.backend.run();
-                Some(done)
-            }
+        }
+        #[cfg(not(windows))]
+        fn run(mut job: Running<Self>) {
+            job.off().backend.run();
+            job.finish();
+        }
+        fn resume(_: Running<Self>, with: Infallible) {
+            match with {}
         }
         fn then(
             this: Self,
@@ -226,90 +237,50 @@ mod lib_c {
         ) -> bun_jsc::JsResult<()> {
             bun_output::scoped_log!(DNSLookup, "then");
             let query = request.0.take().expect("query");
-            #[cfg(windows)]
-            let result = match &mut *this.state.lock() {
-                LookupState::Completed(result) => core::mem::replace(result, Err(0)),
-                LookupState::Pending(_) => unreachable!(),
-            };
-            #[cfg(not(windows))]
-            let result = match this.backend {
+            query.complete_native(match this.backend {
                 LibcBackend::Success(list) => Ok(list),
                 LibcBackend::Err(status) => Err(status),
                 LibcBackend::Query(_) => unreachable!(),
-            };
-            query.complete_native(result);
+            });
             Ok(())
         }
-        /// Completes the job without waiting for `getaddrinfo` to return.
-        #[cfg(windows)]
-        unsafe fn cancel(this: *mut Self) {
-            // SAFETY: fn contract; the field is not written after the job is created.
-            let state = unsafe { &(*this).state };
-            LookupState::complete(state, Err(bun_sys::windows::ws2_32::WSA_E_CANCELLED));
-        }
     }
 
-    /// Shared by the job and the `resolver_pool` thread.
-    #[cfg(windows)]
-    enum LookupState {
-        /// `None` until the job has run.
-        Pending(Option<bun_jsc::Completion<LibcLookup>>),
-        Completed(Result<GetAddrInfoResultList, i32>),
+    enum LibcBackend {
+        Success(GetAddrInfoResultList),
+        Err(i32),
+        Query(GetAddrInfo),
     }
 
     #[cfg(windows)]
-    impl LookupState {
-        fn start(query: GetAddrInfo) -> Arc<Guarded<Self>> {
-            let state = Arc::new(Guarded::new(Self::Pending(None)));
-            let this = Arc::clone(&state);
-            let ip_literal = bun_core::ip_address::parse_strict(&query.name);
-            let can_resolve_inline = ip_literal.is_some_and(|ip| {
+    impl LibcBackend {
+        /// An address of the requested family needs no lookup.
+        fn can_block(&self) -> bool {
+            let LibcBackend::Query(query) = self else {
+                unreachable!()
+            };
+            bun_core::ip_address::parse_strict(&query.name).is_none_or(|ip| {
                 let other_family = if ip.is_ipv4() {
                     bun_dns::Family::Inet6
                 } else {
                     bun_dns::Family::Inet
                 };
-                query.options.family != other_family
-            });
-            let resolve = move || {
-                if matches!(*this.lock(), Self::Completed(_)) {
-                    return;
-                }
-                let mut port_buf = [0u8; 5];
-                let port = bun_fmt::int_as_bytes(&mut port_buf, query.port);
-                let hints = query.options.to_libc();
-                let result = AddrInfoList::lookup(Some(&query.name), Some(port), hints.as_ref());
-                Self::complete(&this, result.map(|list| bun_dns::to_result_list(&list)));
-            };
-            if can_resolve_inline {
-                resolve();
-            } else {
-                resolver_pool::SCRIPT_POOL.go(resolve);
-            }
-            state
+                query.options.family == other_family
+            })
         }
 
-        /// Only the first call has an effect.
-        fn complete(this: &Guarded<Self>, result: Result<GetAddrInfoResultList, i32>) {
-            let mut state = this.lock();
-            let Self::Pending(completion) = &mut *state else {
-                return;
+        fn run(&mut self) {
+            let LibcBackend::Query(query) = self else {
+                unreachable!()
             };
-            let completion = completion.take();
-            *state = Self::Completed(result);
-            drop(state);
-            if let Some(completion) = completion {
-                completion.finish();
-            }
+            let mut port_buf = [0u8; 5];
+            let port = bun_fmt::int_as_bytes(&mut port_buf, query.port);
+            let hints = query.options.to_libc();
+            *self = match AddrInfoList::lookup(Some(&query.name), Some(port), hints.as_ref()) {
+                Ok(list) => LibcBackend::Success(bun_dns::to_result_list(&list)),
+                Err(err) => LibcBackend::Err(err),
+            };
         }
-    }
-
-    /// Non-Windows libc backend (worker-thread blocking getaddrinfo).
-    #[cfg(not(windows))]
-    enum LibcBackend {
-        Success(GetAddrInfoResultList),
-        Err(i32),
-        Query(GetAddrInfo),
     }
 
     #[cfg(not(windows))]

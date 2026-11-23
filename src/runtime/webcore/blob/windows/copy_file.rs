@@ -1,15 +1,16 @@
+use core::convert::Infallible;
+
 use bun_core::env_var::feature_flag;
 use bun_core::vec::append_with;
 use bun_core::{ZStr, strings};
-use bun_jsc::{
-    Completion, JSPromiseStrong, JSValue, Job, JobContext, JsResult, JsThread, SystemError,
-};
+use bun_jsc::job::{CancelTokens, OwnedJob, Running};
+use bun_jsc::{JSPromiseStrong, JSValue, Job, JsResult, JsThread, SystemError};
 use bun_ptr::RefPtr;
 use bun_sys::windows::{Win32Error, named_pipe};
 use bun_sys::windows_format::wtf16;
 use bun_sys::{self as sys, E, Mode, O, Tag, Win32ErrorExt as _};
 
-use super::blocking::{BlockingIo, BlockingTask};
+use super::blocking::{BlockingIo, run_and_finish};
 use super::job_file::{JobFile, Target, create_parent_dirs, is_device, strip_error_context};
 use crate::io_order;
 use crate::webcore::blob::{MAX_SIZE, SizeType, Store};
@@ -22,47 +23,50 @@ pub(crate) struct CopyFile {
     mkdirp_if_not_exists: bool,
     destination_mode: Option<Mode>,
     result: sys::Result<SizeType>,
-    blocking_task: BlockingTask<SizeType>,
+    blocking_io: BlockingIo,
 }
 
-impl JobContext for CopyFile {
-    const CANCELLABLE: bool = true;
+impl OwnedJob for CopyFile {
+    type OffThread = Self;
+    type Js = JSPromiseStrong;
+    type Shared = CancelTokens;
+    type Resume = Infallible;
+    const OUTLIVES_SCRIPT: bool = false;
     /// See `WriteFile`.
     const SHOULD_RUN_DURING_TEARDOWN: bool = true;
     const IS_FILE_IO: bool = true;
-    type OffThread = Self;
-    type Js = JSPromiseStrong;
 
-    fn run(this: &mut Self, done: Completion<Self>) -> Option<Completion<Self>> {
+    fn run(mut job: Running<Self>) {
+        let this = job.off();
         let mut order_guard = this.order_guard.take();
         if let Some(result) = this.try_copy_file() {
             this.result = result;
-            return Some(done);
+            drop(order_guard);
+            return job.finish();
         }
-        match this.open() {
-            Ok(transfer) if transfer.source_can_block || transfer.destination_can_block => {
-                // Other writes must not wait for a source that may never reach EOF.
-                if transfer.source_can_block
-                    && let Some(order_guard) = order_guard.take()
-                {
-                    order_guard.release_early();
-                }
-                this.blocking_task.run(done, move |io| {
-                    let _order_guard = order_guard;
-                    transfer.run(Some(io))
-                })
-            }
-            transfer => {
-                this.result = transfer.and_then(|transfer| transfer.run(None));
-                Some(done)
-            }
+        let transfer = this.open();
+        let (source_can_block, destination_can_block) =
+            transfer.as_ref().map_or((false, false), |transfer| {
+                (transfer.source_can_block, transfer.destination_can_block)
+            });
+        // Other writes must not wait for a source that may never reach EOF.
+        if let Some(order_guard) = order_guard.take_if(|_| source_can_block) {
+            order_guard.release_early();
         }
+        run_and_finish(job, source_can_block || destination_can_block, |this| {
+            let _order_guard = order_guard;
+            this.result = transfer.and_then(|transfer| transfer.run(&this.blocking_io));
+        });
+    }
+
+    fn resume(_: Running<Self>, with: Infallible) {
+        match with {}
     }
 
     fn then(this: Self, mut promise: Self::Js, cx: &JsThread<'_>) -> JsResult<()> {
         let promise = promise.swap();
         let global = cx.global();
-        match this.blocking_task.take_result().unwrap_or(this.result) {
+        match this.result {
             Ok(copied) => {
                 if let Target::Path { original_path, .. } = &this.destination {
                     crate::node::fs::note_opened_for_write(original_path, true);
@@ -75,11 +79,6 @@ impl JobContext for CopyFile {
                 promise.reject(global, Ok(err))
             }
         }
-    }
-
-    unsafe fn cancel(this: *mut Self) {
-        // SAFETY: fn contract; the field is not written after the job is created.
-        unsafe { &(*this).blocking_task }.cancel();
     }
 }
 
@@ -111,9 +110,10 @@ impl CopyFile {
                 mkdirp_if_not_exists,
                 destination_mode,
                 result: Ok(0),
-                blocking_task: BlockingTask::default(),
+                blocking_io: BlockingIo::default(),
             };
-            Job::<Self>::create(cx, copy, promise).use_device_pool(can_block)
+            let cancel_tokens = copy.blocking_io.cancel_tokens();
+            Job::<Self>::create(cx, copy, promise, cancel_tokens).use_device_pool(can_block)
         });
         value
     }
@@ -271,12 +271,12 @@ struct Transfer {
 }
 
 impl Transfer {
-    fn run(self, blocking_io: Option<&BlockingIo>) -> sys::Result<SizeType> {
+    fn run(self, blocking_io: &BlockingIo) -> sys::Result<SizeType> {
         self.run_inner(blocking_io)
             .map_err(|err| strip_error_context(&err))
     }
 
-    fn run_inner(&self, blocking_io: Option<&BlockingIo>) -> sys::Result<SizeType> {
+    fn run_inner(&self, blocking_io: &BlockingIo) -> sys::Result<SizeType> {
         let copied = if self.is_same_file {
             self.source_size.min(self.max_length)
         } else {
@@ -294,7 +294,7 @@ impl Transfer {
         Ok(copied)
     }
 
-    fn copy(&self, blocking_io: Option<&BlockingIo>) -> sys::Result<SizeType> {
+    fn copy(&self, blocking_io: &BlockingIo) -> sys::Result<SizeType> {
         const CHUNK_SIZE: SizeType = 256 * 1024;
         let limit = match self.source_size {
             0 => self.max_length,
@@ -308,8 +308,8 @@ impl Transfer {
             return Err(sys::Error::oom());
         }
         let source = self.source.fd();
-        let source_io = blocking_io.filter(|_| self.source_can_block);
-        let destination_io = blocking_io.filter(|_| self.destination_can_block);
+        let source_io = self.source_can_block.then_some(blocking_io);
+        let destination_io = self.destination_can_block.then_some(blocking_io);
         let max_read_len = source_io.map_or(usize::MAX, |_| {
             named_pipe::max_transfer_len(source.native())
         });

@@ -1,10 +1,13 @@
+use core::convert::Infallible;
+
 use bun_core::vec::append_with;
-use bun_jsc::{Completion, JSTimeType, Job, JobContext, JsResult, JsThread};
+use bun_jsc::job::{CancelTokens, OwnedJob, Running};
+use bun_jsc::{JSTimeType, Job, JsResult, JsThread};
 use bun_ptr::RefPtr;
 use bun_sys::windows::named_pipe;
 use bun_sys::{self as sys, E, Stat, Tag};
 
-use super::blocking::{BlockingIo, BlockingTask};
+use super::blocking::{BlockingIo, run_and_finish};
 use super::job_file::{JobFile, Target, is_device, strip_error_context};
 use crate::io_order::{self, Key};
 use crate::node::fs::error_for_caller;
@@ -28,36 +31,41 @@ pub(crate) struct ReadFile {
     is_directory: bool,
     /// Copied to the store in `then`.
     last_modified: Option<JSTimeType>,
-    blocking_task: BlockingTask<Vec<u8>>,
+    blocking_io: BlockingIo,
 }
 
-impl JobContext for ReadFile {
-    const CANCELLABLE: bool = true;
-    const IS_FILE_IO: bool = true;
+impl OwnedJob for ReadFile {
     type OffThread = Self;
     type Js = PendingReadFileCompletion;
+    type Shared = CancelTokens;
+    type Resume = Infallible;
+    const OUTLIVES_SCRIPT: bool = false;
+    const IS_FILE_IO: bool = true;
 
-    fn run(this: &mut Self, done: Completion<Self>) -> Option<Completion<Self>> {
-        let order_guard = this.order_guard.take();
-        let (file, stat) = match this.open() {
-            Ok(opened) => opened,
-            Err(err) => {
-                this.result = Err(err);
-                return Some(done);
-            }
-        };
-        if !sys::S::ISREG(stat.st_mode as _) {
-            let offset = this.offset;
-            let max_length = this.max_length as usize;
-            return this.blocking_task.run(done, move |io| {
-                let _order_guard = order_guard;
-                read_stream(&file, offset, max_length, io).map_err(|err| strip_error_context(&err))
+    fn run(mut job: Running<Self>) {
+        let order_guard = job.off().order_guard.take();
+        let opened = job.off().open();
+        let can_block = matches!(&opened, Ok((_, stat)) if !sys::S::ISREG(stat.st_mode as _));
+        run_and_finish(job, can_block, move |this| {
+            let _order_guard = order_guard;
+            this.result = opened.and_then(|(file, stat)| {
+                let result = if can_block {
+                    read_stream(
+                        &file,
+                        this.offset,
+                        this.max_length as usize,
+                        &this.blocking_io,
+                    )
+                } else {
+                    this.read_regular_file(&file, stat.st_size)
+                };
+                result.map_err(|err| strip_error_context(&err))
             });
-        }
-        this.result = this
-            .read_regular_file(&file, stat.st_size)
-            .map_err(|err| strip_error_context(&err));
-        Some(done)
+        });
+    }
+
+    fn resume(_: Running<Self>, with: Infallible) {
+        match with {}
     }
 
     fn then(this: Self, completion: Self::Js, _: &JsThread<'_>) -> JsResult<()> {
@@ -66,7 +74,7 @@ impl JobContext for ReadFile {
         {
             file.last_modified = last_modified;
         }
-        let result = match this.blocking_task.take_result().unwrap_or(this.result) {
+        let result = match this.result {
             Ok(bytes) => Ok(bytes.into()),
             Err(_) if this.is_directory => Err(directory_error(pathlike(&this.store))),
             Err(err) => Err(match pathlike(&this.store) {
@@ -76,11 +84,6 @@ impl JobContext for ReadFile {
             .into()),
         };
         completion.complete(result)
-    }
-
-    unsafe fn cancel(this: *mut Self) {
-        // SAFETY: fn contract; the field is not written after the job is created.
-        unsafe { &(*this).blocking_task }.cancel();
     }
 }
 
@@ -100,11 +103,12 @@ impl ReadFile {
             result: Ok(Vec::new()),
             is_directory: false,
             last_modified: None,
-            blocking_task: BlockingTask::default(),
+            blocking_io: BlockingIo::default(),
         };
         let completion = PendingReadFileCompletion::new(completion);
+        let cancel_tokens = read.blocking_io.cancel_tokens();
         let &PathOrFileDescriptor::Fd(fd) = pathlike(&read.store) else {
-            return Job::<Self>::schedule(cx, read, completion);
+            return Job::<Self>::create(cx, read, completion, cancel_tokens).schedule();
         };
         let can_block = is_device(pathlike(&read.store));
         let key = if can_block {
@@ -114,7 +118,7 @@ impl ReadFile {
         };
         io_order::OrderGuard::enqueue_job(cx, key, false, |order_guard| {
             read.order_guard = Some(order_guard);
-            Job::<Self>::create(cx, read, completion).use_device_pool(can_block)
+            Job::<Self>::create(cx, read, completion, cancel_tokens).use_device_pool(can_block)
         });
     }
 

@@ -1,13 +1,13 @@
+use core::convert::Infallible;
 use core::ops::Range;
 
-use bun_jsc::{
-    Completion, JSGlobalObject, JSPromiseStrong, JSValue, Job, JobContext, JsResult, JsThread,
-};
+use bun_jsc::job::{CancelTokens, OwnedJob, Running};
+use bun_jsc::{JSGlobalObject, JSPromiseStrong, JSValue, Job, JsResult, JsThread};
 use bun_ptr::{BackRef, RefPtr};
 use bun_sys::windows_format::open_flags::SEQUENTIAL;
 use bun_sys::{self as sys, O};
 
-use super::blocking::BlockingTask;
+use super::blocking::{BlockingIo, run_and_finish};
 use super::job_file::{JobFile, Target, is_device};
 use crate::io_order;
 use crate::webcore::blob::write_file::{note_written, settle};
@@ -24,41 +24,39 @@ pub(crate) struct WriteFile {
     target: Target,
     order_guard: Option<io_order::OrderGuard>,
     result: sys::Result<()>,
-    blocking_task: BlockingTask<()>,
+    blocking_io: BlockingIo,
 }
 
-impl JobContext for WriteFile {
-    const CANCELLABLE: bool = true;
+impl OwnedJob for WriteFile {
+    type OffThread = Self;
+    type Js = (JSPromiseStrong, BackRef<JSGlobalObject>);
+    type Shared = CancelTokens;
+    type Resume = Infallible;
+    const OUTLIVES_SCRIPT: bool = false;
     /// Small writes have no synchronous fast path on Windows, so an exiting Worker would lose them.
     const SHOULD_RUN_DURING_TEARDOWN: bool = true;
     const IS_FILE_IO: bool = true;
-    type OffThread = Self;
-    type Js = (JSPromiseStrong, BackRef<JSGlobalObject>);
 
-    fn run(this: &mut Self, done: Completion<Self>) -> Option<Completion<Self>> {
+    fn run(mut job: Running<Self>) {
+        let this = job.off();
         let order_guard = this.order_guard.take();
-        match JobFile::open_destination(&mut this.target, O::TRUNC | SEQUENTIAL, this.mkdirp) {
-            // A bad descriptor is reported by the write.
-            Ok(file) if file.can_block().unwrap_or_default() => {
-                let source = this.source.clone();
-                let range = this.range.clone();
-                this.blocking_task.run(done, move |io| {
-                    let bytes = &source.shared_view()[range];
-                    let result = file.write_all(bytes, Some(io));
-                    drop((file, order_guard));
-                    result
-                })
-            }
-            file => {
-                let bytes = &this.source.shared_view()[this.range.clone()];
-                this.result = file.and_then(|file| file.write_all(bytes, None));
-                Some(done)
-            }
-        }
+        let file = JobFile::open_destination(&mut this.target, O::TRUNC | SEQUENTIAL, this.mkdirp);
+        // A bad descriptor is reported by the write.
+        let can_block = matches!(file.as_ref().map(JobFile::can_block), Ok(Ok(true)));
+        run_and_finish(job, can_block, move |this| {
+            let _order_guard = order_guard;
+            let bytes = &this.source.shared_view()[this.range.clone()];
+            let io = can_block.then_some(&this.blocking_io);
+            this.result = file.and_then(|file| file.write_all(bytes, io));
+        });
+    }
+
+    fn resume(_: Running<Self>, with: Infallible) {
+        match with {}
     }
 
     fn then(this: Self, (mut promise, global): Self::Js, _: &JsThread<'_>) -> JsResult<()> {
-        let result = match this.blocking_task.take_result().unwrap_or(this.result) {
+        let result = match this.result {
             Ok(()) => {
                 note_written(&this.destination);
                 Ok(this.range.len() as SizeType)
@@ -70,11 +68,6 @@ impl JobContext for WriteFile {
         };
         drop((this.target, this.source, this.destination));
         settle(promise.swap(), global.get(), result)
-    }
-
-    unsafe fn cancel(this: *mut Self) {
-        // SAFETY: fn contract; the field is not written after the job is created.
-        unsafe { &(*this).blocking_task }.cancel();
     }
 }
 
@@ -100,14 +93,15 @@ impl WriteFile {
             target,
             order_guard: None,
             result: Ok(()),
-            blocking_task: BlockingTask::default(),
+            blocking_io: BlockingIo::default(),
         };
         let promise = JSPromiseStrong::init(cx.global());
         let value = promise.value();
         io_order::OrderGuard::enqueue_job(cx, key, true, |order_guard| {
             write.order_guard = Some(order_guard);
             let js = (promise, BackRef::new(cx.global()));
-            Job::<Self>::create(cx, write, js).use_device_pool(can_block)
+            let cancel_tokens = write.blocking_io.cancel_tokens();
+            Job::<Self>::create(cx, write, js, cancel_tokens).use_device_pool(can_block)
         });
         value
     }

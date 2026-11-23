@@ -1,6 +1,8 @@
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
+#[cfg(not(windows))]
+use bun_io::fd_wait::{Interest, JobFd};
 use bun_jsc::node_path::PathOrFileDescriptor;
 use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue, SystemError};
 #[cfg(not(windows))]
@@ -11,7 +13,7 @@ use bun_sys::{self as sys, Fd};
 #[cfg(not(windows))]
 use crate::webcore::blob::Store;
 #[cfg(not(windows))]
-use crate::webcore::blob::fd_job::{self, FdJob, FdOp, Interest, JobFd, Step};
+use crate::webcore::blob::fd_job::{self, FdJob, FdOp, Step};
 use crate::webcore::blob::{self, Blob, SizeType};
 use crate::webcore::body;
 
@@ -58,7 +60,6 @@ impl WriteFile {
 #[cfg(not(windows))]
 impl FdOp for WriteFile {
     const INTEREST: Interest = Interest::Writable;
-    const IO_TAG: bun_io::Tag = bun_io::Tag::WriteFile;
     /// With the global that the promise was made in.
     type Js = (jsc::JSPromiseStrong, bun_ptr::BackRef<JSGlobalObject>);
 

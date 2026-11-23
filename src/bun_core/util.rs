@@ -1840,7 +1840,7 @@ impl StackCheck {
     /// Stack reserved for the work a frame does before the next check. One
     /// `WTF::StringBuilder` growth reallocates through libpas, a ~35 frame
     /// path that measures ~160 KB under a sanitizer and a few KB without one.
-    const THRESHOLD: usize = if cfg!(windows) {
+    pub const THRESHOLD: usize = if cfg!(windows) {
         256 * 1024
     } else {
         128 * 1024

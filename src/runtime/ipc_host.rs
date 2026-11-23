@@ -240,10 +240,11 @@ pub(crate) fn do_send(
     }
 
     if status == SerializeAndSendResult::Failure {
-        close_detached(global_object, pause_target)?;
         // The serializer rejected the message (cyclic JSON, uncloneable value): that is the error.
-        if global_object.has_exception() {
-            return Err(bun_jsc::JsError::Thrown);
+        let rejected = global_object.try_take_exception();
+        close_detached(global_object, pause_target)?;
+        if let Some(rejected) = rejected {
+            return Err(global_object.throw_value(rejected));
         }
         let ex = global_object.create_type_error_instance(format_args!("process.send() failed"));
         ex.put(

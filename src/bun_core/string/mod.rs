@@ -1772,7 +1772,7 @@ pub mod lexer {
     }
 
     #[inline]
-    pub fn is_whitespace(codepoint: CodePoint) -> bool {
+    pub const fn is_whitespace(codepoint: CodePoint) -> bool {
         // ECMAScript `WhiteSpace`: TAB VT FF SP ZWNBSP + Unicode Zs.
         matches!(codepoint, 0x0009 | 0x000B | 0x000C | 0x0020 | 0xFEFF)
             || strings::is_unicode_space_separator(codepoint as u32)

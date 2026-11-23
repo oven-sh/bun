@@ -10,6 +10,9 @@ const short = (changes: Changes | undefined) =>
 const edits = (changes: Changes) => changes.reduce((n, c) => n + (c.added || c.removed ? c.count : 0), 0);
 const numbered = (count: number, line: (i: number) => unknown) =>
   Array.from({ length: count }, (_, i) => `${line(i)}\n`).join("");
+const repeat = (text: string, count: number) => Buffer.alloc(Buffer.byteLength(text) * count, text).toString();
+// With 8 more bytes. wyhash multiplies those by the 8 before them xor this constant.
+const colliding = "x\xdb\x28\xb4\xa0\xd1\x7e\x03\xe7";
 
 function random(seed: number) {
   return (below: number) => ((seed = (Math.imul(seed, 1103515245) + 12345) >>> 0) >>> 8) % below;
@@ -88,6 +91,11 @@ describe("lines", () => {
     expect(short(diff.lines(a, b))).toEqual(expected);
   });
 
+  test("more than 65,535 UTF-16 lines are kept", () => {
+    const kept = "世" + Buffer.alloc(200_000, "\n").toString();
+    expect(diff.lines(kept + "a", kept + "b").map(change => change.count)).toEqual([200_000, 1, 1]);
+  });
+
   test("ropes and substrings", () => {
     const base = numbered(50, i => `line ${i}`);
     const rope = base.slice(7) + "tail\n";
@@ -136,6 +144,57 @@ describe("words", () => {
   });
 });
 
+test("words and chars count the tokens of long texts", () => {
+  const text = repeat("one  two,\r\n😀é\u00a0\u3000世", 5000);
+  for (const [fn, count] of [
+    [diff.words, 9 * 5000],
+    [diff.chars, 16 * 5000],
+  ] as const) {
+    expect(short(fn(text + "(" + text, text + ")" + text))).toEqual([
+      ["=", text, count],
+      ["-", "(", 1],
+      ["+", ")", 1],
+      ["=", text, count],
+    ]);
+    expect(short(fn(text, ""))).toEqual([["-", text, count]]);
+  }
+});
+
+test("words splits code units as the regular expression of diff does", () => {
+  const word = String.raw`a-zA-Z0-9_\u{AD}\u{C0}-\u{D6}\u{D8}-\u{F6}\u{F8}-\u{2C6}\u{2C8}-\u{2D7}\u{2DE}-\u{2FF}\u{1E00}-\u{1EFF}`;
+  const token = new RegExp(String.raw`(\r?\n)|[${word}]+|[^\S\n\r]+|[^${word}]`, "ug");
+  const wrong: number[] = [];
+  const step = (unit: number) => (unit > 0x3100 && unit < 0xd700 ? 0x100 : isDebug && unit > 0x300 ? 0x61 : 1);
+  for (let unit = 0; unit <= 0xffff; unit += step(unit)) {
+    const c = String.fromCharCode(unit);
+    // Each neighbor comes a different number of times, so the count tells which one it is joined to.
+    const text = ["a" + c, " " + c, c + "\n", "\ud83d" + c, c + "\ude00"].map((it, i) => (it + ".").repeat(i + 1));
+    for (const part of [text.slice(0, 3).join(""), text.join("")]) {
+      if (diff.words(part, "")[0].count !== part.match(token)!.length) wrong.push(unit);
+    }
+  }
+  expect(wrong).toEqual([]);
+});
+
+test("chars counts surrogate pairs at odd and even offsets of a long text", () => {
+  for (const first of ["", "世"]) {
+    const text = first + repeat("😀", 40_000);
+    expect(diff.chars(text + "a", text + "b")[0].count).toBe(40_000 + first.length);
+  }
+});
+
+// The single unit is the low 16 bits of `(first << 10) + second`.
+test.each([
+  ["words, CRLF", diff.words, "\r\n", "\u340a"],
+  ["words, surrogate pair", diff.words, "😀", "\ud200"],
+  ["chars, surrogate pair", diff.chars, "😀", "\ud200"],
+])("%s: a token of two code units differs from a single unit", (_, fn, a, b) => {
+  expect(short(fn(a, b))).toEqual([
+    ["-", a, 1],
+    ["+", b, 1],
+  ]);
+});
+
 describe("chars", () => {
   // prettier-ignore
   test.each([
@@ -144,6 +203,8 @@ describe("chars", () => {
     ["same low surrogate", "\u{1F600}", "\u{1FA00}", [["-", "\u{1F600}", 1], ["+", "\u{1FA00}", 1]]],
     ["a pair and its first half", "😀", "\ud83d", [["-", "😀", 1], ["+", "\ud83d", 1]]],
     ["a pair and its second half", "😀", "\ude00", [["-", "😀", 1], ["+", "\ude00", 1]]],
+    ["lone surrogates count once each", "\ude00\ud83d\ud83d😀\ude00a", "\ude00\ud83d\ud83d😀\ude00b", [["=", "\ude00\ud83d\ud83d😀\ude00", 5], ["-", "a", 1], ["+", "b", 1]]],
+    ["a pair only in the common end", "ab😀", "ba😀", [["-", "a", 1], ["=", "b", 1], ["+", "a", 1], ["=", "😀", 1]]],
     ["a pair counts once", "😀😀a", "😀😀b", [["=", "😀😀", 2], ["-", "a", 1], ["+", "b", 1]]],
   ])("%s", (_, a, b, expected) => {
     expect(short(diff.chars(a, b))).toEqual(expected);
@@ -206,6 +267,28 @@ describe("arrays", () => {
     expect(reads).toBe(1);
   });
 
+  test("elements that only the call holds survive a collection", () => {
+    const fresh = (from: number) => {
+      const array: unknown[] = [];
+      for (let i = 0; i < 20; i++) {
+        Object.defineProperty(array, i, { get: () => (Bun.gc(true), { id: from + i }) });
+      }
+      return array;
+    };
+    const ids = (from: number) => Array.from({ length: 20 }, (_, i) => ({ id: from + i }));
+    expect(short(diff.arrays(fresh(0), fresh(20)))).toEqual([
+      ["-", ids(0), 20],
+      ["+", ids(20), 20],
+    ]);
+
+    const old: unknown[] = ids(0);
+    const overwrites = Object.defineProperty([], 0, { get: () => (old.fill(0), Bun.gc(true), "new") });
+    expect(short(diff.arrays(old, overwrites))).toEqual([
+      ["-", ids(0), 20],
+      ["+", ["new"], 1],
+    ]);
+  });
+
   test("what a getter throws is thrown", () => {
     const error = new Error("from the getter");
     const throwing = Object.defineProperty(Array(20).fill(0), 15, {
@@ -232,15 +315,38 @@ describe("of several shortest diffs, the one that diff picks", () => {
     ["words", diff.words, [".", ",", "\n", "(", "\r\n", "世"]],
     ["chars", diff.chars, ["a", "b", "c", "é", "\n"]],
     ["chars, UTF-16", diff.chars, ["a", "😀", "😁", "\u{1FA00}", "世"]],
+    ["chars, same low bits", diff.chars, ["a", "\u0161", "\u6161", "\ud861", "\u{1F461}", "\u{1F861}"]],
+    ["words, same low bits", diff.words, [".", "\u4e2e", "\u4f2e", "\u{1F42E}", "\u{1F82E}"]],
   ])("%s", (_, fn, alphabet) => {
     const next = random(1);
     for (let i = 0; i < 150; i++) {
-      // The longer ones take several attempts of the search, and rounds of more than 64 steps.
-      const [a, b] = similarPair(next, alphabet, i % 50 ? 16 : 200);
+      // The longer ones take rows of several words, or a search with rounds of more than 64 steps.
+      const [a, b] = similarPair(next, alphabet, i % 25 ? 16 : i % 50 ? 200 : 600);
       const expected = reference(a, b);
       expect({ a, b, changes: short(fn(a.join(""), b.join(""))) }).toEqual({ a, b, changes: expected });
     }
   });
+});
+
+test.each([64, 65, 128, 129, 256, 257])("of several shortest diffs, the one that diff picks: %d new tokens", length => {
+  const next = random(length);
+  const letters = (count: number) => Array.from({ length: count }, () => "abc"[next(1000) % 3]);
+  const [a, b] = [
+    ["<", ...letters(100), ">"],
+    ["(", ...letters(length - 2), ")"],
+  ];
+  expect(short(diff.chars(a.join(""), b.join("")))).toEqual(reference(a, b));
+});
+
+test("of several shortest diffs of long inputs with few edits, the one that diff picks", () => {
+  const next = random(7);
+  const alphabet = ["a\n", "b\n", "\n", "}\n"];
+  const between = Array.from({ length: 300 }, (_, i) => `${i}\n`);
+  for (let i = 0; i < 40; i++) {
+    const [first, last] = [similarPair(next, alphabet, 16), similarPair(next, alphabet, 16)];
+    const [a, b] = [0, 1].map(side => [`${side}:\n`, ...first[side], ...between, ...last[side], `${side}:\n`]);
+    expect(short(diff.lines(a.join(""), b.join("")))).toEqual(reference(a, b));
+  }
 });
 
 test("of several shortest diffs of unrelated inputs, the one that diff picks", () => {
@@ -248,6 +354,69 @@ test("of several shortest diffs of unrelated inputs, the one that diff picks", (
   for (const distinct of [3, 30, 300]) {
     const [a, b] = [0, 1].map(() => Array.from({ length: 300 + next(40) }, () => `${next(1000) % distinct}\n`));
     expect(short(diff.lines(a.join(""), b.join("")))).toEqual(reference(a, b));
+  }
+});
+
+describe("a long common end", () => {
+  const splits = [
+    ["lines", diff.lines, "x\n", "a\n", "y\n"],
+    ["words", diff.words, ",", ".", ";"],
+    ["chars", diff.chars, "x", "a", "y"],
+    ["chars, UTF-16", diff.chars, "世", "😀", "😁"],
+  ] as const;
+
+  test.each(splits)("%s: an edit moves into it as far as it can", (_, fn, removed, repeated, last) => {
+    // About 1,024 tokens of the end are tried first.
+    for (const count of [10, ...Array.from({ length: 8 }, (_, i) => 1024 + i), 5000]) {
+      const end = repeat(repeated, count);
+      expect(short(fn(removed + end + last, repeated + end + last))).toEqual([
+        ["-", removed, 1],
+        ["=", end, count],
+        ["+", repeated, 1],
+        ["=", last, 1],
+      ]);
+    }
+  });
+
+  test.each(splits)("%s: the part that no edit reaches is kept", (_, fn, ...alphabet) => {
+    const next = random(3);
+    const some = (length: number) => Array.from({ length }, () => alphabet[next(3)]);
+    const [a, b, near, far] = [some(20), some(20), some(200), some(5000)];
+    const expected = reference([...a, ...near], [...b, ...near]);
+    const [operation, value, count] = expected.pop()!;
+    expect(operation).toBe("=");
+    expect(short(fn([...a, ...near, ...far].join(""), [...b, ...near, ...far].join("")))).toEqual([
+      ...expected,
+      ["=", value + far.join(""), count + far.length],
+    ]);
+  });
+});
+
+test.each(["x", "\u0a00\u4e0a\u0a0a"])("all lines differ, and the last has no newline: %j", unit => {
+  const a = numbered(200, i => `a${i}${unit}`) + unit;
+  const b = numbered(300, i => `b${i}${unit}`) + unit + unit;
+  expect(short(diff.lines(a, b))).toEqual([
+    ["-", a, 201],
+    ["+", b, 301],
+  ]);
+  expect(short(diff.lines("", b))).toEqual([["+", b, 301]]);
+});
+
+test.each([
+  ["Latin-1", (i: number) => `${i}\n`],
+  ["UTF-16 with the byte of a newline in other characters", (i: number) => `\u0a00${i}\u4e0a\u0a0a\n`],
+  ["long lines", (i: number) => `${Buffer.alloc(300, "x")}${i}\n`],
+])("few edits between runs of equal lines, %s", (_, line) => {
+  const next = random(7);
+  for (let i = 0; i < 30; i++) {
+    const a = Array.from({ length: 150 }, (_, at) => line(at > 100 ? at % 2 : next(4) ? at : next(3)));
+    const b = a.slice();
+    for (let edit = next(6); edit >= 0; edit--) b.splice(next(110), next(3), ...a.slice(0, next(3)), line(next(2)));
+    if (i % 3 === 0) b.push("end");
+    const expected = reference(a, b);
+    const count = expected.reduce((n, [operation, , count]) => n + (operation === "=" ? 0 : count), 0);
+    expect(short(diff.lines(a.join(""), b.join(""), { maxEditLength: count }))).toEqual(expected);
+    if (count > 0) expect(diff.lines(a.join(""), b.join(""), { maxEditLength: count - 1 })).toBeUndefined();
   }
 });
 
@@ -288,6 +457,22 @@ describe("maxEditLength", () => {
       ["+", "aaa", 3],
     ]);
   });
+
+  // Too long for the table that short inputs use.
+  const shared = Array.from({ length: 1100 }, (_, i) => i % 7);
+  test.each([
+    ["equal", shared, shared, 0],
+    ["one starts with the other", shared, [...shared, 3, 3, 3], 3],
+    ["one is inside the other", shared, [3, ...shared, 3, 3], 3],
+    ["a pair of edits", [3, ...shared], [...shared, 3], 2],
+    ["a pair of edits, and lengths that differ", [3, ...shared], [...shared, 3, 3, 3, 3], 5],
+  ])("long inputs: %s", (_, a, b, expected) => {
+    const limits = [0, 1, 2, 3, 4, 5, 6];
+    const found = (from: number[], to: number[]) =>
+      limits.map(maxEditLength => diff.arrays(from, to, { maxEditLength })).map(it => it && edits(it));
+    const within = limits.map(limit => (limit < expected ? undefined : expected));
+    expect([found(a, b), found(b, a)]).toEqual([within, within]);
+  });
 });
 
 describe("large inputs, on which diff is quadratic", () => {
@@ -304,6 +489,24 @@ describe("large inputs, on which diff is quadratic", () => {
     const b = Buffer.alloc(300, "ba").toString();
     expect(edits(diff.chars(a, b))).toBe(a.length - b.length);
     expect(edits(diff.chars(b, a))).toBe(a.length - b.length);
+  });
+
+  test("most of one side is missing from the other, and the rest is out of order", () => {
+    const long = "c" + Buffer.alloc(10_000, "ab").toString();
+    expect(short(diff.chars(long, "bacba"))).toEqual([
+      ["-", "ca", 2],
+      ["=", "ba", 2],
+      ["+", "c", 1],
+      ["=", "ba", 2],
+      ["-", long.slice(6), long.length - 6],
+    ]);
+    expect(short(diff.chars("bacba", long))).toEqual([
+      ["+", "ca", 2],
+      ["=", "ba", 2],
+      ["-", "c", 1],
+      ["=", "ba", 2],
+      ["+", long.slice(6), long.length - 6],
+    ]);
   });
 
   test("reversed", () => {
@@ -339,6 +542,19 @@ describe("large inputs, on which diff is quadratic", () => {
     expect(diff.lines(a, b, { maxEditLength: expectedEdits - 1 })).toBeUndefined();
   });
 
+  test("of two copies, the second matches by one token more", () => {
+    const next = random(8);
+    const text = (letters: string, length: number) => Array.from({ length }, () => letters[next(1000) % 5]).join("");
+    const [a, b, twice] = [text("abcde", 3000), text("abcde", 3000), text("fghij", 6000)];
+    const changes = diff.chars(`${a}.${twice}z${twice}<`, `${b}.z${twice}>`);
+    expect(short(changes)!.slice(-4)).toEqual([
+      ["-", twice, 6000],
+      ["=", `z${twice}`, 6001],
+      ["-", "<", 1],
+      ["+", ">", 1],
+    ]);
+  });
+
   // Each edit is alone, and the inputs drift apart by as much as the edits allow: nothing is left over for an estimate
   // of the number of edits to be too high by.
   test.each(["removed first", "added first"])("maxEditLength is exact with lines %s", order => {
@@ -353,9 +569,8 @@ describe("large inputs, on which diff is quadratic", () => {
   });
 
   test("lines that are made to collide", () => {
-    // wyhash multiplies the last 8 bytes by the 8 before them xor this constant.
     const part = isDebug ? 3000 : 50_000;
-    const lines = Array.from({ length: 4 * part }, (_, i) => `x\xdb\x28\xb4\xa0\xd1\x7e\x03\xe7${1_000_000 + i}\n`);
+    const lines = Array.from({ length: 4 * part }, (_, i) => `${colliding}${1_000_000 + i}\n`);
     expect(new Set(lines.slice(0, 50).map(line => Bun.hash.wyhash(Buffer.from(line, "latin1")))).size).toBe(1);
     const [a, b] = [lines.slice(0, -part).join(""), lines.slice(part).join("")];
     expect(diff.lines(a, b).map(change => change.count)).toEqual([part, 2 * part, part]);
@@ -375,10 +590,18 @@ describe("large inputs, on which diff is quadratic", () => {
   });
 
   test.skipIf(isDebug)("past the limit of the search, a long run of equal characters stays unchanged", () => {
-    const times = (letter: string, n: number) => Buffer.alloc(n, letter).toString();
-    const a = "x" + times("c", 20_000) + times("x", 100_000) + "d";
-    const b = "xd" + times("x", 100_000) + times("c", 20_000);
+    const a = "x" + repeat("c", 20_000) + repeat("x", 100_000) + "d";
+    const b = "xd" + repeat("x", 100_000) + repeat("c", 20_000);
     expect(edits(diff.chars(a, b))).toBeLessThan(41_000);
+  });
+
+  test.skipIf(isDebug)("a long common end counts for the limit of the search", () => {
+    const next = random(5);
+    const text = (length: number) => String.fromCharCode(...Array.from({ length }, () => 97 + (next(10_000) % 26)));
+    const [shared, inserted] = [4000, 450].map(length => Array.from({ length: 40 }, () => text(length)));
+    const [a, b] = [0, 1].map(side => shared.map((part, i) => (i % 2 === side ? inserted[i] + part : part)).join(""));
+    const end = repeat(text(1000), 3000);
+    expect(edits(diff.chars(a + "." + end, b + "," + end))).toBeLessThanOrEqual(40 * 450 + 2);
   });
 });
 
@@ -415,12 +638,20 @@ describe("hunks", () => {
     ["new", "a\n", "a", ["-a", "+a", marker]],
     ["both", "a", "b", ["-a", marker, "+b", marker]],
     ["a kept line", "a\nb", "x\nb", ["-a", "+x", " b", marker]],
+    ["many lines", "", text + "x", [...text.split("\n", 20).map(line => "+" + line), "+x", marker]],
   ])("no newline at the end of %s", (_, a, b, lines) => {
     expect(diff.hunks(a, b).map(hunk => hunk.lines)).toEqual([lines]);
   });
 
   test("CR, empty lines and UTF-16", () => {
     expect(diff.hunks("\né\r\n", "\n世\r\n")[0].lines).toEqual([" ", "-é\r", "+世\r"]);
+    const long = Buffer.alloc(70, "a").toString();
+    expect(diff.hunks(`${long}\n${long}ÿ\n\x80\n`, `${long}\n${long}ÿ\n${long}Ā\n`)[0].lines).toEqual([
+      ` ${long}`,
+      ` ${long}ÿ`,
+      "-\x80",
+      `+${long}Ā`,
+    ]);
   });
 
   test.each([-1, 0.5, NaN])("context: %p is refused", context => {
@@ -622,6 +853,7 @@ describe("applyPatch", () => {
     ["no match", "x\n", [replace(1)], undefined],
     ["a kept line does not match", "x\na\n", [{ oldStart: 1, lines: [" y", "-a"] }], undefined],
     ["longer than the source", "a", [{ oldStart: 1, lines: ["-a", "-a"] }], undefined],
+    ["a line with a newline in it", "a\nb\n", [{ oldStart: 1, lines: ["-a\nb"] }], undefined],
     ["an insertion without context", "a\nc\n", [{ oldStart: 2, lines: ["+b"] }], "a\nb\nc\n"],
     ["an insertion at the end", "a\n", [{ oldStart: 2, lines: ["+b"] }], "a\nb\n"],
     ["an empty last line", "a\n\n", [{ oldStart: 2, lines: ["-", "+b"] }], "a\nb\n"],
@@ -632,6 +864,7 @@ describe("applyPatch", () => {
     ["a kept line without its space", "\na\n", [{ oldStart: 1, lines: ["", "-a", "+b"] }], "\nb\n"],
     ["adds the last newline", "a", [{ oldStart: 1, lines: ["-a", marker, "+a"] }], "a\n"],
     ["adds a last newline that is there", "a\n", [{ oldStart: 1, lines: ["-a", marker, "+a"] }], undefined],
+    ["adds the last newline, no match", "x\ny", [{ oldStart: 1, lines: ["-a", marker, "+a"] }], undefined],
     ["removes the last newline", "a\n", [{ oldStart: 1, lines: ["-a", "+a", marker] }], "a"],
     ["removes a last newline that is not there", "a", [{ oldStart: 1, lines: ["-a", "+a", marker] }], undefined],
     ["no last newline on either side", "a", [{ oldStart: 1, lines: ["-a", marker, "+b", marker] }], "b"],
@@ -640,6 +873,7 @@ describe("applyPatch", () => {
     ["LF patch, CRLF source, no last newline", "c\r\na", [{ oldStart: 1, lines: [" c", "-a", marker, "+b", marker] }], "c\r\nb"],
     ["CRLF patch, LF source", "a\nc\n", [{ oldStart: 1, lines: ["-a\r", "+b\r"] }], "b\nc\n"],
     ["LF patch, mixed source", "a\r\nc\n", [replace(1)], undefined],
+    ["CRLF patch, mixed source", "a\nc\r\n", [{ oldStart: 2, lines: ["-c\r", "+b\r"] }], "a\nb\r\n"],
     ["mixed patch, CRLF source", "a\r\n", [{ oldStart: 1, lines: ["-a\r", "+b"] }], "b\n"],
     ["mixed patch, LF source", "a\n", [{ oldStart: 1, lines: ["-a", "+b\r"] }], "b\r\n"],
     ["CRLF, not at oldStart", "x\r\na\r\r\n", [{ oldStart: 1, lines: ["-a\r\r", "+b\r"] }], "x\r\nb\r\n"],
@@ -716,9 +950,18 @@ describe("applyPatch", () => {
   });
 
   test("a hunk with the hash of every place", () => {
-    const count = isDebug ? 10_000 : 100_000;
-    const patch = `@@ -1,${count + 1} +1,${count + 1} @@\n${Buffer.alloc(3 * count, " a\n")} a\r\n`;
-    expect(diff.applyPatch(Buffer.alloc(4 * count, "a\n").toString(), patch)).toBeUndefined();
+    const [a, b] = ["a", "b"].map(last => `${colliding}0000000${last}`);
+    expect(Bun.hash.wyhash(Buffer.from(a, "latin1"))).toBe(Bun.hash.wyhash(Buffer.from(b, "latin1")));
+    const count = isDebug ? 5000 : 60_000;
+    const lines = [...Array(count).fill(` ${a}`), `-${b}`];
+    expect(
+      diff.applyPatch(
+        Array(2 * count)
+          .fill(a)
+          .join("\n"),
+        [{ oldStart: 1, lines }],
+      ),
+    ).toBeUndefined();
   });
 
   test("hunks that are longer than a string", () => {
@@ -763,6 +1006,26 @@ describe("applyPatch", () => {
     const lines = [...Array(50_000).fill(" a"), "-b"];
     expect(diff.applyPatch(kept, [{ oldStart: 1, lines }])).toBeUndefined();
     expect(diff.applyPatch(kept + "b\n", [{ oldStart: 1, lines }]) === kept).toBeTrue();
+  });
+
+  test("a long hunk that differs everywhere in only a CR", () => {
+    const kept = "x\r\n" + Buffer.alloc(400_000, "a\n").toString();
+    const lines = [...Array(100_000).fill(" a"), "-a\r"];
+    expect(diff.applyPatch(kept, [{ oldStart: 1, lines }])).toBeUndefined();
+    expect(diff.applyPatch(kept + "a\r\n", [{ oldStart: 1, lines }]) === kept).toBeTrue();
+  });
+
+  test.each(["é", "世"])("hunks that are far apart, %s", unit => {
+    const lines = Array.from({ length: 3000 }, (_, i) => (i % 700 ? unit + i : Buffer.alloc(2000, "x").toString()));
+    const hunks = [0, 1, 699, 701, 1500, 2999].map(i => ({ oldStart: i + 1, lines: ["-" + lines[i], "+new"] }));
+    const patched = lines.map((line, i) => (hunks.some(hunk => hunk.oldStart === i + 1) ? "new" : line));
+    for (const [before, end] of [
+      ["", ""],
+      ["", "\n"],
+      ["a\nb\n", "\n"],
+    ]) {
+      expect(diff.applyPatch(before + lines.join("\n") + end, hunks)).toBe(before + patched.join("\n") + end);
+    }
   });
 
   test("undoes createPatch and hunks", () => {

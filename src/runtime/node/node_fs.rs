@@ -1004,6 +1004,10 @@ fn cp_name_too_long(path: &[u8]) -> sys::Error {
 // `cp` builtin).
 mod _async_tasks {
     use super::*;
+    #[cfg(windows)]
+    use bun_jsc::job::CancelTokens;
+    use bun_jsc::job::{OwnedJob, Running};
+    use core::convert::Infallible;
 
     pub(crate) mod async_ {
         use super::*;
@@ -1543,15 +1547,19 @@ mod _async_tasks {
         pub(crate) tracker: AsyncTaskTracker,
     }
 
-    impl<R: FsReturn + 'static, A: FsArgument + 'static, const F: NodeFSFunctionEnum>
-        bun_jsc::JobContext for AsyncFSTask<R, A, F>
+    impl<R: FsReturn + 'static, A: FsArgument + 'static, const F: NodeFSFunctionEnum> OwnedJob
+        for AsyncFSTask<R, A, F>
     where
         Op<{ F }>: NodeFSDispatch<R, A>,
     {
-        const CANCELLABLE: bool = {
-            use NodeFSFunctionEnum::{Read, ReadFile, Readv};
-            cfg!(windows) && (Self::IS_WRITE || matches!(F, Read | ReadFile | Readv))
-        };
+        type OffThread = Self;
+        type Js = AsyncFSJs;
+        #[cfg(windows)]
+        type Shared = CancelTokens;
+        #[cfg(not(windows))]
+        type Shared = ();
+        type Resume = Infallible;
+        const OUTLIVES_SCRIPT: bool = false;
         const SHOULD_RUN_DURING_TEARDOWN: bool =
             cfg!(windows) && (Self::IS_WRITE || matches!(F, NodeFSFunctionEnum::Close));
         const IS_FILE_IO: bool = {
@@ -1559,29 +1567,17 @@ mod _async_tasks {
             matches!(F, Close | Open | Read | Readv | Write | Writev)
                 || matches!(F, Fchmod | Fchown | Fstat | Ftruncate | Futimes)
         };
-        type OffThread = Self;
-        type Js = AsyncFSJs;
 
-        fn run(
-            this: &mut Self,
-            done: bun_jsc::Completion<Self>,
-        ) -> Option<bun_jsc::Completion<Self>> {
+        fn run(mut job: Running<Self>) {
+            let this = job.off();
             this.result = this.run_operation();
             #[cfg(windows)]
             this.release_guards();
-            Some(done)
+            job.finish();
         }
 
-        #[cfg(windows)]
-        unsafe fn cancel(this: *mut Self) {
-            // Only main-thread shutdown cancels a write: a Worker waits for its writes, as in Node.js.
-            let vm = VirtualMachine::get();
-            // SAFETY: fn contract; the field is not written after the job is created.
-            if let Some(cancel_token) = unsafe { &(*this).cancel_token }
-                && (!Self::IS_WRITE || vm.is_shutting_down() && vm.is_main_thread.get())
-            {
-                cancel_token.cancel();
-            }
+        fn resume(_: Running<Self>, with: Infallible) {
+            match with {}
         }
 
         fn then(this: Self, js: AsyncFSJs, cx: &bun_jsc::JsThread<'_>) -> bun_jsc::JsResult<()> {
@@ -1635,6 +1631,12 @@ mod _async_tasks {
         const IS_WRITE: bool = {
             use NodeFSFunctionEnum::{AppendFile, Write, WriteFile, Writev};
             matches!(F, AppendFile | Write | WriteFile | Writev)
+        };
+
+        #[cfg(windows)]
+        const IS_READ: bool = {
+            use NodeFSFunctionEnum::{Read, ReadFile, Readv};
+            matches!(F, Read | ReadFile | Readv)
         };
 
         fn run_operation(&self) -> Maybe<R> {
@@ -1696,24 +1698,29 @@ mod _async_tasks {
                 return bun_jsc::Job::<Self>::schedule(cx, self, js);
             };
             let mut key = Key::from_fd(*fd);
+            let mut cancel_tokens = CancelTokens::default();
             if let Some(pinned_fd) = windows::pin_fd_generation(*fd) {
                 *fd = pinned_fd;
-            } else if !<Self as bun_jsc::JobContext>::CANCELLABLE {
+            } else if !Self::IS_READ && !Self::IS_WRITE {
                 // Not ordered: in-flight device reads and writes retain the file themselves.
                 return bun_jsc::Job::<Self>::schedule(cx, self, js);
             } else {
-                if !Self::IS_WRITE {
+                let cancel_token = self.cancel_token.insert(CancelToken::default());
+                if Self::IS_READ {
                     key = Key::from_device_input(*fd);
+                    cancel_tokens.on_stop = Some(cancel_token.clone());
+                } else if cx.vm().is_main_thread.get() {
+                    // A Worker waits for its writes, as in Node.js.
+                    cancel_tokens.on_teardown = Some(cancel_token.clone());
                 }
                 let file = RetainedFile::new(*fd);
                 let original_fd = core::mem::replace(fd, file.fd());
                 self.guards.device = Some(Device { file, original_fd });
-                self.cancel_token = Some(CancelToken::default());
             }
             io_order::OrderGuard::enqueue_job(cx, key, Self::IS_WRITE, |order_guard| {
                 let can_block = self.guards.device.is_some();
                 self.guards._order_guard = Some(order_guard);
-                bun_jsc::Job::<Self>::create(cx, self, js).use_device_pool(can_block)
+                bun_jsc::Job::<Self>::create(cx, self, js, cancel_tokens).use_device_pool(can_block)
             });
         }
 

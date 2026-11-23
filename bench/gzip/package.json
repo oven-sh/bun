@@ -9,6 +9,6 @@
     "bench": "bun run bench:bun && bun run bench:node && bun run bench:deno"
   },
   "dependencies": {
-    "@babel/standalone": "7.24.10"
+    "@babel/standalone": "8.1.2"
   }
 }

@@ -1,6 +1,15 @@
+import { spyOn } from "bun:test";
 import { expectType } from "./utilities";
 
 expectType(Bun.redis.publish("hello", "world")).is<Promise<number>>();
+
+// The constructor takes the URL as a string or as a `URL` object.
+expectType(new Bun.RedisClient("redis://localhost:6379")).is<Bun.RedisClient>();
+expectType(new Bun.RedisClient(new URL("redis://localhost:6379"))).is<Bun.RedisClient>();
+expectType(new Bun.RedisClient(new URL("rediss://localhost:6380/2"), { maxRetries: 5 })).is<Bun.RedisClient>();
+expectType(new Bun.RedisClient(undefined, { autoReconnect: false })).is<Bun.RedisClient>();
+// @ts-expect-error - a number is not a URL
+new Bun.RedisClient(6379);
 
 const copy = await Bun.redis.duplicate();
 expectType(copy.connected).is<boolean>();
@@ -34,6 +43,7 @@ const redis = Bun.redis;
 const buf = Buffer.from("key");
 
 // Bitmap
+expectType(redis.spublish("channel", 1)).is<Promise<number>>();
 expectType(redis.bitop("NOT", "dest", "k1")).is<Promise<number>>();
 expectType(redis.bitop("not", "dest", buf)).is<Promise<number>>();
 expectType(redis.bitop("AND", "dest", "k1")).is<Promise<number>>();
@@ -105,6 +115,71 @@ expectType(redis.config("GET", "maxmemory")).is<Promise<any>>();
 expectType(redis.debug("OBJECT", "k")).is<Promise<any>>();
 expectType(redis.command("COUNT")).is<Promise<any>>();
 
+// Raw commands: `send` takes each kind of argument that the client sends, in an array that it only reads.
+expectType(redis.send("PING", [])).is<Promise<any>>();
+redis.send("SET", ["k", "v"]);
+redis.send("SET", ["k", 0, "EX", 60]);
+redis.send("SET", [buf, new Uint8Array(1)]);
+redis.send("VSIM", ["docs", "FP32", new Float32Array(3), "COUNT", 5]);
+redis.send("SET", ["k", new DataView(new ArrayBuffer(1))]);
+redis.send("SET", ["k", new ArrayBuffer(1)]);
+redis.send("SET", ["k", new SharedArrayBuffer(1)]);
+redis.send("SET", ["k", new Blob(["v"])]);
+// A value that the other methods take as `RedisClient.KeyLike` is also an element of `args`.
+declare const keyLike: Bun.RedisClient.KeyLike;
+redis.send("DEL", [keyLike]);
+const readonlyArgs: readonly string[] = ["k", "v"];
+redis.send("SET", readonlyArgs);
+const tupleArgs = ["k", 0, "EX", 60] as const;
+redis.send("SET", tupleArgs);
+redis.send("SET", Object.freeze(["k", "v"]));
+// `send` has one signature, so code typed from its parameter sees each kind that the client sends.
+expectType<Parameters<Bun.RedisClient["send"]>[1]>().is<
+  readonly (string | number | NodeJS.TypedArray | DataView<ArrayBufferLike> | ArrayBufferLike | Blob)[]
+>();
+// A fake, an override and a bun:test mock of `send` can keep `string[]` for the arguments that they read.
+const fakeSend: Pick<Bun.RedisClient, "send"> = { send: async (command, args: string[]) => args.join(" ") };
+class StringSender extends Bun.RedisClient {
+  override send(command: string, args: string[]): Promise<any> {
+    return super.send(command, args);
+  }
+}
+spyOn(redis, "send").mockImplementation(async (command, args: string[]) => args.join(" "));
+// @ts-expect-error - a bigint throws ERR_INVALID_ARG_TYPE
+redis.send("SET", ["k", 10n]);
+// @ts-expect-error - a boolean throws ERR_INVALID_ARG_TYPE
+redis.send("SET", ["k", true]);
+// @ts-expect-error - null throws ERR_INVALID_ARG_TYPE
+redis.send("SET", ["k", null]);
+// @ts-expect-error - undefined throws ERR_INVALID_ARG_TYPE
+redis.send("SET", ["k", undefined]);
+// @ts-expect-error - a nested array throws ERR_INVALID_ARG_TYPE
+redis.send("SET", ["k", ["v"]]);
+// @ts-expect-error - a plain object throws ERR_INVALID_ARG_TYPE
+redis.send("SET", ["k", {}]);
+// @ts-expect-error - an object with the members of the lib `ArrayBufferView` throws ERR_INVALID_ARG_TYPE
+redis.send("SET", ["k", { buffer: new ArrayBuffer(1), byteLength: 1, byteOffset: 0 }]);
+// @ts-expect-error - a Set throws "Arguments must be an array"
+redis.send("SET", new Set(["k", "v"]));
+// @ts-expect-error - a string throws "Arguments must be an array"
+redis.send("SET", "k");
+// @ts-expect-error - a call with no `args` throws "Arguments must be an array"
+redis.send("PING");
+
+expectType(redis.publish("ch", 1)).is<Promise<number>>();
+expectType(redis.publish("ch", buf)).is<Promise<number>>();
+expectType(redis.publish("ch", new ArrayBuffer(1))).is<Promise<number>>();
+// @ts-expect-error - the channel is a string
+redis.publish(buf, "m");
+expectType(redis.hincrby("k", buf, 1)).is<Promise<number>>();
+expectType(redis.hincrbyfloat("k", buf, 1.5)).is<Promise<string>>();
+expectType(redis.increx("k")).is<Promise<[number, number]>>();
+expectType(redis.increx("k", "BYINT", 5, "EX", 60)).is<Promise<[number, number]>>();
+expectType(redis.zrange("z", 0, -1, "REV")).is<Promise<string[]>>();
+expectType(redis.zrange("z", 0, -1, "REV", "WITHSCORES")).is<Promise<[string, number][]>>();
+expectType(redis.zrangebyscore("z", 0, 9, "LIMIT", 0, 5, "WITHSCORES")).is<Promise<[string, number][]>>();
+expectType(redis.zrevrangebyscore("z", 9, 0, "LIMIT", 0, 5, "WITHSCORES")).is<Promise<[string, number][]>>();
+
 // Generic
 expectType(redis.object("ENCODING", "k")).is<Promise<any>>();
 expectType(redis.sort("list")).is<Promise<(string | null)[] | number>>();
@@ -152,3 +227,104 @@ expectType(redis.xinfo("STREAM", "stream")).is<Promise<any>>();
 expectType(redis.xgroup("CREATE", "stream", "g", "$", "MKSTREAM")).is<Promise<any>>();
 expectType(redis.xsetid("stream", "0-0")).is<Promise<"OK">>();
 expectType(redis.xsetid("stream", "5-0", "ENTRIESADDED", 5)).is<Promise<"OK">>();
+
+// A number as a value, a list element, a member or an option value. The first line is the first sample of
+// docs/runtime/redis.mdx.
+expectType(redis.set("counter", 0)).is<Promise<"OK">>();
+expectType(redis.set("k", 1, "EX", 60)).is<Promise<"OK">>();
+expectType(redis.set("k", 1, "PX", 60_000)).is<Promise<"OK">>();
+expectType(redis.set("k", 1, "EXAT", 1_900_000_000)).is<Promise<"OK">>();
+expectType(redis.set("k", 1, "PXAT", 1_900_000_000_000)).is<Promise<"OK">>();
+expectType(redis.set("k", 1, "NX")).is<Promise<"OK" | null>>();
+expectType(redis.set("k", 1, "XX")).is<Promise<"OK" | null>>();
+expectType(redis.set("k", 1, "GET")).is<Promise<string | null>>();
+expectType(redis.set("k", 1, "KEEPTTL")).is<Promise<"OK">>();
+expectType(redis.set("k", 1, "EX", 60, "NX")).is<Promise<"OK" | string | null>>();
+expectType(redis.set("lock", "token", "NX", "PX", 30_000)).is<Promise<"OK" | string | null>>();
+expectType(redis.set("k", 1, ...(["NX", "GET"] as string[]))).is<Promise<"OK" | string | null>>();
+expectType(redis.append("k", 1)).is<Promise<number>>();
+expectType(redis.getset("k", 1)).is<Promise<string | null>>();
+expectType(redis.setnx("k", 1)).is<Promise<number>>();
+expectType(redis.setex("k", 60, 1)).is<Promise<"OK">>();
+expectType(redis.psetex("k", 60_000, 1)).is<Promise<"OK">>();
+expectType(redis.setrange("k", 0, 1)).is<Promise<number>>();
+expectType(redis.mset("a", 1, "b", 2)).is<Promise<"OK">>();
+expectType(redis.msetnx("a", 1, "b", 2)).is<Promise<number>>();
+expectType(redis.lpush("list", 1)).is<Promise<number>>();
+expectType(redis.lpush("list", "a", 2)).is<Promise<number>>();
+expectType(redis.rpush("list", 1)).is<Promise<number>>();
+expectType(redis.rpush("list", "a", 2)).is<Promise<number>>();
+expectType(redis.lpushx("list", 1)).is<Promise<number>>();
+expectType(redis.rpushx("list", 1)).is<Promise<number>>();
+expectType(redis.lset("list", 0, 1)).is<Promise<string>>();
+expectType(redis.lrem("list", 0, 1)).is<Promise<number>>();
+expectType(redis.linsert("list", "BEFORE", 1, "a")).is<Promise<number>>();
+expectType(redis.linsert("list", "AFTER", "a", 1)).is<Promise<number>>();
+expectType(redis.lpos("list", 1)).is<Promise<number | number[] | null>>();
+expectType(redis.sadd("set", 1, 2)).is<Promise<number>>();
+expectType(redis.srem("set", 1)).is<Promise<number>>();
+expectType(redis.sismember("set", 1)).is<Promise<boolean>>();
+expectType(redis.smove("set", "set2", 1)).is<Promise<boolean>>();
+expectType(redis.smismember("set", 1)).is<Promise<number[]>>();
+expectType(redis.smismember("set", "a", 2)).is<Promise<number[]>>();
+expectType(redis.zscore("zset", 1)).is<Promise<number | null>>();
+expectType(redis.zincrby("zset", 1.5, 2)).is<Promise<number>>();
+expectType(redis.zmscore("zset", 1)).is<Promise<(number | null)[]>>();
+expectType(redis.zmscore("zset", "a", 2)).is<Promise<(number | null)[]>>();
+expectType(redis.zrem("zset", 1)).is<Promise<number>>();
+expectType(redis.zrem("zset", "a", 2)).is<Promise<number>>();
+expectType(redis.zrank("zset", 1)).is<Promise<number | null>>();
+expectType(redis.zrank("zset", 1, "WITHSCORE")).is<Promise<[number, number] | null>>();
+expectType(redis.zrevrank("zset", 1)).is<Promise<number | null>>();
+expectType(redis.zrevrank("zset", 1, "WITHSCORE")).is<Promise<[number, number] | null>>();
+expectType(redis.zrange("zset", 0, 10, "BYSCORE", "LIMIT", 0, 2)).is<Promise<string[]>>();
+expectType(redis.zrangestore("dest", "zset", 1, 3, "BYSCORE", "LIMIT", 0, 2)).is<Promise<number>>();
+expectType(redis.zrevrangebylex("zset", "+", "-", "LIMIT", 0, 2)).is<Promise<string[]>>();
+expectType(redis.zscan("zset", 0, "COUNT", 10)).is<Promise<[string, string[]]>>();
+expectType(redis.pfadd("hll", 1)).is<Promise<number>>();
+expectType(redis.geodist("geo", 1, "b")).is<Promise<string | null>>();
+expectType(redis.geodist("geo", "a", 2)).is<Promise<string | null>>();
+expectType(redis.geodist("geo", 1, "b", "km")).is<Promise<string | null>>();
+expectType(redis.geodist("geo", "a", 2, "km")).is<Promise<string | null>>();
+expectType(redis.geohash("geo", 1)).is<Promise<(string | null)[]>>();
+expectType(redis.geopos("geo", 1)).is<Promise<([number, number] | null)[]>>();
+expectType(redis.hset("hash", "f", 1)).is<Promise<number>>();
+expectType(redis.hset("hash", "f", "v", "g", 2)).is<Promise<number>>();
+expectType(redis.hsetnx("hash", "f", 1)).is<Promise<boolean>>();
+expectType(redis.hmset("hash", "f", 1)).is<Promise<"OK">>();
+expectType(redis.hmset("hash", "f", "v", "g", 2)).is<Promise<"OK">>();
+expectType(redis.hmset("hash", ["f", 1])).is<Promise<"OK">>();
+expectType(redis.hsetex("hash", "FIELDS", 1, "f", 1)).is<Promise<number>>();
+expectType(redis.hsetex("hash", "FNX", "FIELDS", 1, "f", 1)).is<Promise<number>>();
+expectType(redis.hsetex("hash", "FXX", "FIELDS", 1, "f", 1)).is<Promise<number>>();
+expectType(redis.hsetex("hash", "EX", 60, "FIELDS", 1, "f", 1)).is<Promise<number>>();
+expectType(redis.hsetex("hash", "PX", 60_000, "FIELDS", 1, "f", 1)).is<Promise<number>>();
+expectType(redis.hsetex("hash", "EXAT", 1_900_000_000, "FIELDS", 1, "f", 1)).is<Promise<number>>();
+expectType(redis.hsetex("hash", "PXAT", 1_900_000_000_000, "FIELDS", 1, "f", 1)).is<Promise<number>>();
+expectType(redis.hsetex("hash", "KEEPTTL", "FIELDS", 1, "f", 1)).is<Promise<number>>();
+expectType(redis.hsetex("hash", "FNX", "EX", 60, "FIELDS", 1, "f", 1)).is<Promise<number>>();
+expectType(redis.hsetex("hash", "FNX", "PX", 60_000, "FIELDS", 1, "f", 1)).is<Promise<number>>();
+expectType(redis.hsetex("hash", "FNX", "EXAT", 1_900_000_000, "FIELDS", 1, "f", 1)).is<Promise<number>>();
+expectType(redis.hsetex("hash", "FNX", "PXAT", 1_900_000_000_000, "FIELDS", 1, "f", 1)).is<Promise<number>>();
+expectType(redis.hsetex("hash", "FNX", "KEEPTTL", "FIELDS", 1, "f", 1)).is<Promise<number>>();
+expectType(redis.hsetex("hash", "FXX", "EX", 60, "FIELDS", 1, "f", 1)).is<Promise<number>>();
+expectType(redis.hsetex("hash", "FXX", "PX", 60_000, "FIELDS", 1, "f", 1)).is<Promise<number>>();
+expectType(redis.hsetex("hash", "FXX", "EXAT", 1_900_000_000, "FIELDS", 1, "f", 1)).is<Promise<number>>();
+expectType(redis.hsetex("hash", "FXX", "PXAT", 1_900_000_000_000, "FIELDS", 1, "f", 1)).is<Promise<number>>();
+expectType(redis.hsetex("hash", "FXX", "KEEPTTL", "FIELDS", 1, "f", 1)).is<Promise<number>>();
+// @ts-expect-error - the first option of set is a token: Redis answers a number there with a syntax error
+redis.set("k", "v", 60);
+// @ts-expect-error - a bigint value throws at runtime
+redis.set("k", 10n);
+// @ts-expect-error - a boolean value throws at runtime
+redis.set("k", true);
+// @ts-expect-error - a plain object value throws at runtime
+redis.set("k", {});
+// @ts-expect-error - a Number object value throws at runtime
+redis.set("k", new Number(5));
+// @ts-expect-error - a bigint value throws at runtime
+redis.append("k", 10n);
+// @ts-expect-error - a boolean element throws at runtime
+redis.lpush("list", true);
+// @ts-expect-error - a bigint member throws at runtime
+redis.sadd("set", 10n);

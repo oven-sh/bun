@@ -1442,6 +1442,7 @@ pub mod package_manifest {
             temp_dir: &'static TemporaryDirectory,
         ) {
             use bun_threading::thread_pool::{Batch as PoolBatch, Task as PoolTask};
+            use bun_threading::wait_group::{Pending, WaitGroup};
             use bun_threading::work_pool::OwnedTask;
 
             struct SaveTask {
@@ -1450,6 +1451,7 @@ pub mod package_manifest {
                 temp_dir: &'static TemporaryDirectory,
 
                 task: PoolTask,
+                _pending: Pending<&'static WaitGroup>,
             }
 
             bun_threading::intrusive_work_task!(SaveTask, task);
@@ -1469,17 +1471,15 @@ pub mod package_manifest {
                             Output::flush();
                         }
                     }
-                    drop(self);
-                    SAVES.finish();
                 }
             }
 
-            SAVES.add_one();
             let batch = PoolBatch::from_owned(Box::new(SaveTask {
                 manifest: this.clone(),
                 registry,
                 temp_dir,
                 task: PoolTask::default(),
+                _pending: Pending::new(&SAVES),
             }));
             THREAD_POOL.schedule(batch);
         }

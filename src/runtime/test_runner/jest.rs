@@ -4,6 +4,7 @@ use std::io::Write as _;
 use crate::cli::test_command::ReportersConfig;
 use bun_collections::ArrayHashMap;
 use bun_core::Output;
+use bun_core::scoped::ScopedCell as _;
 use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::bun_string_jsc;
 use bun_lint::utils::eslint_utils::js_number::{parse_float, parse_int};
@@ -619,14 +620,15 @@ pub(crate) mod on_unhandled_rejection {
                     }
                 }
             }
-            let was_reporting_uncaught = buntest.is_reporting_uncaught.replace(true);
-            buntest.on_uncaught_exception(
-                global_object,
-                Some(rejection),
-                true,
-                &current_state_data,
-            );
-            buntest.is_reporting_uncaught.set(was_reporting_uncaught);
+            {
+                let _reporting = buntest.is_reporting_uncaught.set_for_scope(true);
+                buntest.on_uncaught_exception(
+                    global_object,
+                    Some(rejection),
+                    true,
+                    &current_state_data,
+                );
+            }
             buntest.add_result(current_state_data);
             // The JS that reported the error may still be on the stack, so don't start the next test under it.
             bun_test::BunTest::run_next_tick(

@@ -28,6 +28,7 @@
 #include "headers-handwritten.h"
 
 #include <wtf/Scope.h>
+#include <wtf/SetForScope.h>
 #include <wtf/Threading.h>
 
 using namespace JSC;
@@ -616,10 +617,8 @@ static JSValue computeErrorInfoToJSValueWithoutSkipping(JSC::VM& vm, Vector<Stac
             RETURN_IF_EXCEPTION(scope, {});
             if (prepareStackTrace) {
                 if (prepareStackTrace.isCell() && prepareStackTrace.isObject() && prepareStackTrace.isCallable()) {
-                    globalObject->isInsideErrorPrepareStackTraceCallback = true;
-                    auto result = computeErrorInfoWithPrepareStackTrace(vm, globalObject, lexicalGlobalObject, stackTrace, line, column, sourceURL, errorInstance, prepareStackTrace.getObject());
-                    globalObject->isInsideErrorPrepareStackTraceCallback = false;
-                    RELEASE_AND_RETURN(scope, result);
+                    SetForScope insideCallback(globalObject->isInsideErrorPrepareStackTraceCallback, true);
+                    RELEASE_AND_RETURN(scope, computeErrorInfoWithPrepareStackTrace(vm, globalObject, lexicalGlobalObject, stackTrace, line, column, sourceURL, errorInstance, prepareStackTrace.getObject()));
                 }
             }
         }
@@ -627,10 +626,8 @@ static JSValue computeErrorInfoToJSValueWithoutSkipping(JSC::VM& vm, Vector<Stac
         if (JSValue prepareStackTrace = globalObject->m_errorConstructorPrepareStackTraceValue.get()) {
             if (prepareStackTrace) {
                 if (prepareStackTrace.isCallable()) {
-                    globalObject->isInsideErrorPrepareStackTraceCallback = true;
-                    auto result = computeErrorInfoWithPrepareStackTrace(vm, globalObject, lexicalGlobalObject, stackTrace, line, column, sourceURL, errorInstance, prepareStackTrace.getObject());
-                    globalObject->isInsideErrorPrepareStackTraceCallback = false;
-                    RELEASE_AND_RETURN(scope, result);
+                    SetForScope insideCallback(globalObject->isInsideErrorPrepareStackTraceCallback, true);
+                    RELEASE_AND_RETURN(scope, computeErrorInfoWithPrepareStackTrace(vm, globalObject, lexicalGlobalObject, stackTrace, line, column, sourceURL, errorInstance, prepareStackTrace.getObject()));
                 }
             }
         }

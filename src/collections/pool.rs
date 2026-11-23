@@ -341,27 +341,21 @@ impl ObjectPoolType for bun_core::MutableString {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core::cell::Cell;
     use core::ptr;
-    use core::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::{Mutex, MutexGuard, PoisonError};
 
-    static DROPS: AtomicUsize = AtomicUsize::new(0);
-    static RESETS: AtomicUsize = AtomicUsize::new(0);
-
-    /// `DROPS`/`RESETS` are process-wide but libtest runs `#[test]`s on parallel
-    /// threads, so every test asserting on them holds this for its duration.
-    static SERIAL: Mutex<()> = Mutex::new(());
-
-    fn serial() -> MutexGuard<'static, ()> {
-        SERIAL.lock().unwrap_or_else(PoisonError::into_inner)
+    // By thread: a pool drops what is left in it when its thread ends, while other tests run.
+    std::thread_local! {
+        static DROPS: Cell<usize> = const { Cell::new(0) };
+        static RESETS: Cell<usize> = const { Cell::new(0) };
     }
 
     fn drops() -> usize {
-        DROPS.load(Ordering::SeqCst)
+        DROPS.get()
     }
 
     fn resets() -> usize {
-        RESETS.load(Ordering::SeqCst)
+        RESETS.get()
     }
 
     /// Owns a heap allocation so a missed drop leaks (Miri's leak check catches it).
@@ -370,7 +364,7 @@ mod tests {
 
     impl Drop for Tracked {
         fn drop(&mut self) {
-            DROPS.fetch_add(1, Ordering::SeqCst);
+            DROPS.set(drops() + 1);
         }
     }
 
@@ -379,7 +373,7 @@ mod tests {
             Tracked(Box::new(0))
         }
         fn reset(&mut self) {
-            RESETS.fetch_add(1, Ordering::SeqCst);
+            RESETS.set(resets() + 1);
             *self.0 = 0;
         }
     }
@@ -405,7 +399,6 @@ mod tests {
 
     #[test]
     fn data_struct_drop_frees_nodes() {
-        let _serial = serial();
         let before = drops();
         let mut data: DataStruct<Tracked> = DataStruct::default();
         for i in 0..3 {
@@ -426,7 +419,6 @@ mod tests {
 
         #[test]
         fn pool_recycles_the_same_node() {
-            let _serial = serial();
             let before = drops();
             let resets_before = resets();
 
@@ -461,7 +453,6 @@ mod tests {
 
         #[test]
         fn pool_over_max_count_destroys_the_node() {
-            let _serial = serial();
             let before = drops();
 
             let a = Pool::get();
@@ -489,7 +480,6 @@ mod tests {
 
         #[test]
         fn push_then_get_if_exists() {
-            let _serial = serial();
             let before = drops();
             // Nothing cached yet: `get_if_exists` must not allocate.
             assert!(Pool::get_if_exists().is_none());

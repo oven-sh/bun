@@ -2906,6 +2906,73 @@ describe.concurrent("Valkey: Handshake", () => {
     expect(await run(program, {})).toEqual({ stdout: "Connection closed\n", stderr: "", exitCode: 0 });
   });
 
+  // Why the first attempts of a reconnect hold the process: the report needs another turn of the loop.
+  const log = "e => console.log(e.message ?? e)";
+  test.each([
+    {
+      name: "unhandledRejection",
+      program: `process.on("unhandledRejection", e => setImmediate(${log}, e)); drop()`,
+      stdout: "Connection closed\n",
+    },
+    {
+      name: "stderr",
+      program: `process.on("beforeExit", () => process.exit(0)); drop()`,
+      stderr: expect.stringContaining("Connection closed"),
+      exitCode: 1,
+    },
+    {
+      name: "the parent of a Worker",
+      program: "new Worker(URL.createObjectURL(new Blob([`(${drop})()`]))).onerror = () => console.log('error')",
+      stdout: "error\n",
+    },
+  ])("such a rejection reaches $name if nobody catches it", async ({ name, program, ...expected }) => {
+    using fake = await commandServer((_, connection) => (connection === 1 ? undefined : "-LOADING "));
+    const drop = `const drop = () => new Bun.RedisClient("redis://${fake.host}", { maxRetries: 1e9 }).send("DROP", []);`;
+    expect(await run(drop + program, {})).toEqual({ stdout: "", stderr: "", exitCode: 0, ...expected });
+  });
+
+  // The first attempt is turned away, and the second gets no reply. `end` drops it, and answers the third.
+  test.each([
+    { waiter: "nobody" },
+    { waiter: "half a reply", half: "%7\r\n$6\r\nser" },
+    { waiter: "a removed onclose", before: `client.onclose = ${log}`, after: "client.onclose = null" },
+    { waiter: "onclose", before: `client.onclose = ${log}`, end: "-WRONGPASS" },
+    { waiter: "a late onclose", after: `client.onclose = ${log}`, end: "-WRONGPASS" },
+    { waiter: "onconnect", before: "client.onconnect = () => {}", end: "+OK" },
+    { waiter: "a command", after: "client.ping()", end: "+OK" },
+    { waiter: "connect()", after: "client.connect()", end: "+OK" },
+    { waiter: "a subscription", before: `await client.subscribe("c", () => {})`, end: "-WRONGPASS" },
+  ])("a reconnect that was turned away holds the process for whoever waits: $waiter", async row => {
+    let waiting: net.Socket, silent: net.Socket;
+    using fake = await commandServer(([name], connection, socket) => {
+      if (name === "SUBSCRIBE") return ">3\r\n$9\r\nsubscribe\r\n$1\r\nc\r\n:1";
+      if (name === "WAIT") return ((waiting = socket), null);
+      if (name === "END") silent.destroy();
+      if (connection <= 2) return;
+      if (connection === 3) return "-LOADING ";
+      if (connection === 5) return row.end;
+      (silent = socket).write(row.half ?? "");
+      waiting.write("+OK\r\n");
+      return null;
+    });
+    const program = `
+      const [client, other] = [0, 1].map(() => new Bun.RedisClient("redis://${fake.host}", { connectionTimeout: 0 }));
+      await Promise.all([client.connect(), other.connect()]);
+      ${row.before};
+      const isSilent = other.send("WAIT", []);
+      await client.send("DROP", []).catch(() => {});
+      await isSilent;
+      ${row.after};
+      await other.send("${row.end ? "END" : "PING"}", []);
+    `;
+    expect({ ...(await run(program, {})), connections: fake.seen.length }).toEqual({
+      stdout: row.waiter.endsWith("onclose") && row.end ? "WRONGPASS\n" : "",
+      stderr: "",
+      exitCode: 0,
+      connections: row.end ? 5 : 4,
+    });
+  });
+
   test("the error for an unknown scheme names every scheme", () => {
     expect(() => new RedisClient("http://localhost")).toThrow(
       "Expected url protocol to be one of redis, valkey, rediss, valkeys, redis+tls, valkey+tls, redis+unix, valkey+unix, redis+tls+unix, valkey+tls+unix",

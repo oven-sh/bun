@@ -1,6 +1,8 @@
 use std::collections::BTreeMap;
 
-use bun_valkey::client::{Acked, Attempt, Client, Close, Config, Event, Lost, Reason, Sent};
+use bun_valkey::client::{
+    Acked, Attempt, Awaited, Client, Close, Config, Event, Lost, Reason, Sent,
+};
 use bun_valkey::command::Reply;
 use bun_valkey::listeners::{Name, Undo};
 use bun_valkey::valkey_protocol::RESPValue;
@@ -343,7 +345,7 @@ mod lifecycle {
             Backoff
         } else if it.client.is_connected() {
             Ready
-        } else if !it.client.is_active() {
+        } else if it.client.awaited() == Awaited::No {
             Closed
         } else if it.client.is_ending() && it.client.rejection().is_some() {
             EndingFailed
@@ -745,7 +747,8 @@ mod lifecycle {
             let mut it = Driver::new(Config::default());
             it.attempt = it.client.preconnect();
             it.fail();
-            assert!(it.client.is_preconnect() && it.client.rejection().is_some());
+            assert!(it.client.awaited() == Awaited::No && it.client.is_ending());
+            assert!(it.client.rejection().is_some());
             apply(&mut it);
             it.lost();
             assert_eq!(state_of(it), Closed, "{touch}");
@@ -753,9 +756,38 @@ mod lifecycle {
     }
 
     #[test]
+    fn a_reconnect_is_awaited_until_it_is_turned_away() {
+        use Awaited::{ByWorkOrBytes, ByWorkOrHandlers, Yes};
+        let abandon = |it: &mut Driver| assert!(it.client.abandon_handshake());
+        let steps: [(fn(&mut Driver), Awaited); 10] = [
+            (Driver::lost, Yes),
+            (Driver::dial, Yes),
+            (Driver::lost, Yes),
+            (Driver::dial, Yes),
+            (abandon, ByWorkOrHandlers),
+            (Driver::lost, ByWorkOrHandlers),
+            (Driver::dial, ByWorkOrHandlers),
+            (Driver::lost, ByWorkOrHandlers),
+            (Driver::handshake, ByWorkOrBytes),
+            (Driver::lost, Yes),
+        ];
+        for (last, (_, awaited)) in steps.iter().enumerate() {
+            let mut it = Driver::connected(Config::default());
+            steps[..=last].iter().for_each(|(step, _)| step(&mut it));
+            assert_eq!(it.client.awaited(), *awaited, "{last}");
+            it.client.connect();
+            assert!(it.client.is_connected() || it.client.awaited() == Yes);
+        }
+    }
+
+    #[test]
     fn the_selected_database_outlasts_failed_attempts() {
-        let touches: [fn(&mut Driver); 3] =
-            [|_| {}, |it| it.client.claim(), |it| it.client.connect()];
+        let touches: [fn(&mut Driver); 4] = [
+            |_| {},
+            |it| it.client.claim(),
+            |it| it.client.connect(),
+            |it| assert!(it.client.abandon_handshake()),
+        ];
         for (touch, apply) in touches.into_iter().enumerate() {
             let mut it = Driver::connected(Config::default());
             it.send("SELECT 1");
@@ -1212,7 +1244,7 @@ mod pipeline {
                 it.take(),
                 ["resolve #1 abc", "ignored", "resolve #2 ?", "resolve #3 OK"]
             );
-            assert!(!it.client.has_pending_commands());
+            assert!(!it.client.has_commands() && it.client.buffered_amount() == 0);
         }
     }
 

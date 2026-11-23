@@ -79,7 +79,7 @@ pub struct EventLoop {
     /// until the queue is empty (a task that re-posts itself there never lets
     /// the loop poll). Promoted into `tasks` by `auto_tick`, like immediates.
     yield_tasks: Cell<Vec<Task>>,
-    /// The last checkpoint ended with new `deferred_tasks`. Counts as a yielded task, as `tick()` always runs a checkpoint.
+    /// The last checkpoint may have left `deferred_tasks` unrun. Counts as a yielded task, as `tick()` always runs a checkpoint.
     owes_checkpoint: Cell<bool>,
 
     pub(crate) concurrent_tasks: ConcurrentQueue,

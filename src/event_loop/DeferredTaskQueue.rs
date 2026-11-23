@@ -53,6 +53,8 @@ pub struct DeferredTaskQueue {
     /// No borrow spans a callback, which reaches this queue again.
     map: UnsafeCell<ArrayHashMap<Option<NonNull<c_void>>, DeferredRepeatingTask>>,
     posted_since_run: Cell<bool>,
+    /// The slot whose callback is running. 0 outside of `run`.
+    cursor: Cell<usize>,
 }
 
 impl DeferredTaskQueue {
@@ -75,7 +77,16 @@ impl DeferredTaskQueue {
         // Order is irrelevant for this map's contract (see file doc), so
         // swap-remove is fine and O(1).
         // SAFETY: no callback runs in this borrow, and `run` holds none while it calls one.
-        unsafe { &mut *self.map.get() }.swap_remove(&ctx)
+        let map = unsafe { &mut *self.map.get() };
+        let Some(index) = map.get_index(&ctx) else {
+            return false;
+        };
+        if index < self.cursor.get() {
+            // The swap moves the last task to a slot that `run` has passed.
+            self.posted_since_run.set(true);
+        }
+        map.swap_remove_at(index);
+        true
     }
 
     /// Whether the last pass may have left a task unrun. A task that only kept its entry did run.
@@ -86,6 +97,7 @@ impl DeferredTaskQueue {
 
     pub fn run(&self) {
         self.posted_since_run.set(false);
+        let outer_cursor = self.cursor.get();
         // Callbacks may re-entrantly mutate `self.map` (see the re-entrancy
         // note in the file doc), so re-read `len()` every iteration and
         // re-check slot `i` after each callback. `remaining` is a livelock bound.
@@ -102,6 +114,7 @@ impl DeferredTaskQueue {
             };
 
             let task = map.values()[i];
+            self.cursor.set(i);
             // SAFETY: `nn` is the live `*mut T` registered by the caller; the
             // callback contract (`HasAutoFlusher::on_auto_flush`) is that
             // `task` may be invoked with exactly that pointer until it returns
@@ -117,6 +130,7 @@ impl DeferredTaskQueue {
                 i += 1;
             }
         }
+        self.cursor.set(outer_cursor);
     }
 }
 
@@ -170,6 +184,52 @@ mod tests {
         // The second pass runs the 32, and `grow` finds them posted.
         queue.run();
         assert_eq!(fixture.grow_calls.get(), 2);
+        assert!(!queue.may_have_unrun_tasks());
+    }
+
+    unsafe extern "C" fn keep(_: *mut c_void) -> bool {
+        true
+    }
+
+    unsafe extern "C" fn unregister_first(ctx: *mut c_void) -> bool {
+        // SAFETY: posted with the `Fixture`, which outlives `run`.
+        let fixture = unsafe { &*ctx.cast::<Fixture>() };
+        let first = NonNull::from(&fixture.calls[0]).cast();
+        fixture.queue.unregister_task(Some(first));
+        false
+    }
+
+    unsafe extern "C" fn unregister_itself(ctx: *mut c_void) -> bool {
+        // SAFETY: posted with the `Fixture`, which outlives `run`.
+        let fixture = unsafe { &*ctx.cast::<Fixture>() };
+        fixture.queue.unregister_task(NonNull::new(ctx));
+        true
+    }
+
+    #[test]
+    fn a_task_that_a_removal_moves_behind_the_cursor_is_owed_a_pass() {
+        let fixture = Fixture::default();
+        let queue = &fixture.queue;
+        queue.post_task(Some(NonNull::from(&fixture.calls[0]).cast()), keep);
+        queue.post_task(Some(NonNull::from(&fixture).cast()), unregister_first);
+        queue.post_task(Some(NonNull::from(&fixture.calls[1]).cast()), count);
+        queue.run();
+        while queue.may_have_unrun_tasks() {
+            queue.run();
+        }
+        assert_eq!(fixture.calls[1].get(), 1);
+    }
+
+    #[test]
+    fn a_removal_that_skips_nothing_owes_no_pass() {
+        let fixture = Fixture::default();
+        let queue = &fixture.queue;
+        queue.post_task(Some(NonNull::from(&fixture.calls[0]).cast()), keep);
+        queue.post_task(Some(NonNull::from(&fixture.calls[1]).cast()), keep);
+        queue.post_task(Some(NonNull::from(&fixture).cast()), unregister_itself);
+        queue.run();
+        assert!(!queue.may_have_unrun_tasks());
+        assert!(queue.unregister_task(Some(NonNull::from(&fixture.calls[0]).cast())));
         assert!(!queue.may_have_unrun_tasks());
     }
 }

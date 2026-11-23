@@ -46,7 +46,7 @@ use super::cpp_websocket::{CppWebSocket, HandshakeVerdict, TlsHandshake, TlsPeer
 use super::websocket_deflate as WebSocketDeflate;
 use super::websocket_proxy::WebSocketProxy;
 use super::websocket_proxy_tunnel::WebSocketProxyTunnel;
-use crate::websocket_client::ErrorCode;
+use crate::websocket_client::{ErrorCode, WebSocketClient};
 
 // LAYERING: SSLConfig was MOVE_DOWN'd from bun_runtime::api::server_config →
 // bun_http::ssl_config (data + as_usockets/for_client_verification). The
@@ -578,6 +578,10 @@ where
         self.proxy.get().as_ref()?.get_tunnel().cloned()
     }
 
+    fn tunneled_websocket(&self) -> Option<RefPtr<WebSocketClient>> {
+        self.tunnel()?.connected_websocket()
+    }
+
     pub(crate) fn cancel(self: RefPtr<Self>) {
         self.clear_data();
 
@@ -621,6 +625,9 @@ where
     pub fn handle_close(self: RefPtr<Self>, code: c_int) {
         log!("onClose");
         bun_jsc::mark_binding!();
+        if let Some(ws) = self.tunneled_websocket() {
+            ws.report_close_error(self.tcp.get(), code);
+        }
         self.clear_data();
         self.tcp.set(Socket::<SSL>::detached());
         // Values above the `CloseCode` range are the errno of a failed read. A FIN goes through
@@ -696,8 +703,13 @@ where
                     self.secure.get().is_some()
                 );
                 self.fail_tls(ssl_error, true);
+            } else if self.proxy.get().is_none() {
+                self.report_request();
             }
         } else {
+            if let Some(ws) = self.tunneled_websocket() {
+                ws.report_tls_error(&ssl_error);
+            }
             // if we are here is because server rejected us, and the error_no is the cause of this
             // if we set reject_unauthorized == false this means the server requires custom CA aka NODE_EXTRA_CA_CERTS
             self.fail_tls(ssl_error, false);
@@ -786,10 +798,19 @@ where
         // If using proxy, set state to proxy_handshake
         if self.proxy.get().is_some() {
             self.state.set(State::ProxyHandshake);
+        } else if !SSL {
+            self.report_request();
         }
 
         self.to_send_len.set(self.input_body_buf.get().len());
         self.write_pending(|buf| Self::socket_write(socket, buf));
+    }
+
+    /// `input_body_buf` is the upgrade request, and the way to the server is open.
+    fn report_request(&self) {
+        if let Some(ws) = self.cpp_websocket() {
+            ws.will_send_request(self.input_body_buf.get(), self.tcp.get().socket.get());
+        }
     }
 
     pub(crate) fn is_same_socket(&self, socket: Socket<SSL>) -> bool {
@@ -1026,6 +1047,7 @@ where
         self.state.set(State::Reading);
         self.to_send_len.set(request_buf.len());
         self.input_body_buf.set(request_buf);
+        self.report_request();
 
         // Send the WebSocket upgrade request
         if !self.write_pending(|buf| Self::socket_write(socket, buf)) {
@@ -1140,6 +1162,7 @@ where
             self.terminate(ErrorCode::ProxyTunnelFailed);
             return;
         };
+        self.report_request();
         self.write_pending(|buf| tunnel.write(buf).ok());
     }
 

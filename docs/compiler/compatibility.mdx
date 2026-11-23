@@ -375,6 +375,6 @@ Check `error.name` or use `instanceof`, not `error.message`.
 | Over 256 open `JSCallback`s, if the executable can't read its own file | Make the file readable, or `close()` some                                                |
 | Over 32 GB of objects in a thread                                      | `--aot-huge-heap`                                                                        |
 | A stack under 512 KB (`ulimit -s`)                                     | Give it more. `bun run` needs less                                                       |
-| `import()` or `require()` with a `type` that isn't written out         | Write it out: `require("./a.json", { type: "file" })`. `require()` warns (`TS100177`)      |
+| `import()` or `require()` with a `type` that isn't written out         | Write it out: `require("./a.json", { type: "file" })`. `require()` warns (`TS100177`)    |
 | `with { type: "macro" }` on an import (`TS100053`)                     | Pass `--no-aot`                                                                          |
 | The `console.*` diagnostics channels, for the global `console`         | Replace the methods of `console`, or log through a `new console.Console()`               |

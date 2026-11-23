@@ -296,13 +296,13 @@ describe.concurrent("bun lint with JavaScript plugins", () => {
   // From ESLint 8.57.1, 9.39.5 and 10.12.0, and oxlint 1.87.0. `unicorn/prefer-string-slice` of eslint-plugin-unicorn 56 passes a
   // number.
   test.each([
-    ["8.57.1", "1 + 2;\n", "", 0],
-    ["9.39.5", "1 + 2;\n", "", 0],
-    ["10.12.0", "f;\n", "'text' must be a string", 2],
-    ["oxlint", "1 + 2;\n", "", 0],
+    ["8.57.1", "1 + 2;\n", 0],
+    ["9.39.5", "1 + 2;\n", 0],
+    ["10.12.0", "f;\n", 2],
+    ["oxlint", "1 + 2;\n", 0],
   ])(
     "only ESLint 10 refuses a fix whose text isn't a string: %s",
-    async (version, fixed, error, code) => {
+    async (version, fixed, code) => {
       const number = `{
         meta: { fixable: "code" },
         create: context => ({
@@ -330,7 +330,7 @@ describe.concurrent("bun lint with JavaScript plugins", () => {
             };
       const { files, stderr, exitCode } = await lint({ ...config, "a.js": "f;\n" }, ["--fix", "a.js"], ["a.js"]);
       expect(files).toEqual({ "a.js": fixed });
-      expect(stderr).toContain(error);
+      expect(stderr.includes("'text' must be a string")).toBe(code === 2);
       expect(exitCode).toBe(code);
     },
     timeout,
@@ -3056,6 +3056,7 @@ describe.concurrent("context.report() in JavaScript plugins", () => {
       const fixed = await lint(files, ["--fix", "a.js"], ["a.js"]);
       expect(fixed.files).toEqual({ "a.js": "a; /y/.b1; /x/;\n" });
       expect(fixed.exitCode).toBe(0);
+      // With an oxlint config, `-f json` has neither the fixes nor the suggestions.
       if (name === ".oxlintrc.json") return;
 
       const { raw, exitCode } = await lint(files, ["-f", "json", "a.js"]);

@@ -37,6 +37,8 @@ pub mod init_error;
 pub mod internal_state;
 #[path = "ProxyTunnel.rs"]
 pub mod proxy_tunnel;
+#[path = "RequestTrace.rs"]
+pub mod request_trace;
 #[path = "SendFile.rs"]
 pub mod send_file;
 #[path = "session_cache.rs"]
@@ -520,7 +522,7 @@ impl<'a> HTTPClientResult<'a> {
         matches!(self.fail, Some(crate::Error::Timeout))
     }
 
-    pub(crate) fn is_abort(&self) -> bool {
+    pub fn is_abort(&self) -> bool {
         matches!(
             self.fail,
             Some(crate::Error::Aborted | crate::Error::AbortedBeforeConnecting)
@@ -795,6 +797,7 @@ pub struct HTTPClient<'a> {
     /// the body hasn't been compressed yet.
     pub(crate) compressed_body_len: usize,
     pub(crate) pool: PoolOptions,
+    pub(crate) tracing: Option<Box<request_trace::Tracing>>,
 }
 
 /// What the owner does with a request that has left its socket.
@@ -803,8 +806,9 @@ pub(crate) enum NextStep {
     Finish,
     /// The response is complete: pool or close the socket, then finish.
     ReleaseSocket,
-    /// For a redirect or a retry.
+    /// For a retry.
     Connect,
+    FollowRedirect,
     /// The socket now belongs to an HTTP/2 session.
     AttachH2,
 }
@@ -1876,6 +1880,7 @@ impl<'a> HTTPClient<'a> {
             let _ = socket.set_keep_alive(true, 60);
         }
 
+        self.trace_socket::<IS_SSL>(socket, &mut None);
         self.on_open::<IS_SSL>(socket)?;
         if IS_SSL {
             self.configure_tls::<IS_SSL>(socket);
@@ -2439,11 +2444,23 @@ impl<'a> HTTPClient<'a> {
             headers.append_assume_capacity(Header::new(CONTENT_LENGTH_HEADER_NAME, content_length));
         }
 
-        Request {
+        let request = Request {
             method: self.method.as_str().as_bytes(),
             path: self.url.pathname,
             headers,
-        }
+        };
+        self.trace_head(&request);
+        request
+    }
+
+    /// What [`Self::build_request`] adds that says nothing about the connection or the framing.
+    pub(crate) fn default_request_headers<'h>(
+        &self,
+    ) -> impl Iterator<Item = Header<'h>> + Clone + use<'h> {
+        let accept_encoding = (!self.flags.disable_decompression).then(accept_encoding_header);
+        [get_user_agent_header(), ACCEPT_HEADER]
+            .into_iter()
+            .chain(accept_encoding)
     }
 
     pub(crate) fn do_redirect<const IS_SSL: bool>(
@@ -2504,6 +2521,7 @@ impl<'a> HTTPClient<'a> {
                 None,
                 self.unix_socket_path,
                 self.pool,
+                self.traced_endpoints(),
             );
         } else {
             GenHttpContext::<IS_SSL>::close_socket(socket);
@@ -2526,7 +2544,7 @@ impl<'a> HTTPClient<'a> {
         self.reevaluate_proxy_for_redirect();
 
         self.begin_attempt(HTTPRequestBody::Bytes(request_body));
-        Break(NextStep::Connect)
+        Break(NextStep::FollowRedirect)
     }
 
     /// Re-resolve `http_proxy` against the post-redirect `self.url`. The
@@ -2589,6 +2607,7 @@ impl InFlightRequest {
 
     fn start_<const IS_SSL: bool>(mut self) {
         self.unregister_abort_tracker();
+        self.trace_no_socket();
 
         // Aborted before connecting
         if self.signals.get(signals::Field::Aborted) {
@@ -3878,6 +3897,7 @@ impl<'a> HTTPClient<'a> {
                 None,
                 self.unix_socket_path,
                 self.pool,
+                self.traced_endpoints(),
             );
         } else {
             GenHttpContext::<IS_SSL>::close_socket(socket);
@@ -3888,6 +3908,7 @@ impl<'a> HTTPClient<'a> {
 
     /// Reports what has arrived so far, as a result that is not the last one.
     fn send_partial_result(&mut self) {
+        self.trace_request_stage();
         let mut result = self.to_result();
         let mut decoded_body = core::mem::take(&mut self.state.decoded_body);
         result.body = decoded_body.list.as_slice();
@@ -3933,7 +3954,7 @@ impl InFlightRequest {
         self.flags.protocol = Protocol::Http1_1;
         self.reevaluate_proxy_for_redirect();
         self.begin_attempt(HTTPRequestBody::Bytes(request_body));
-        self.connect();
+        self.follow_redirect();
     }
 
     pub(crate) fn retry_from_h2(mut self) {
@@ -3983,6 +4004,7 @@ impl<'a> HTTPClient<'a> {
             None,
             b"",
             self.pool,
+            None,
         );
         Break(NextStep::Finish)
     }
@@ -4109,6 +4131,7 @@ impl<'a> HTTPClient<'a> {
         );
         // we can ignore the body data in redirects
         if !self.state.flags.is_redirect_pending {
+            Self::trace_received_chunk(self.tracing.as_deref(), incoming_data);
             if self.state.encoding.is_compressed() {
                 self.state
                     .decompress_bytes(incoming_data, true, usize::MAX)?;
@@ -4143,6 +4166,7 @@ impl<'a> HTTPClient<'a> {
 
         // we can ignore the body data in redirects
         if !self.state.flags.is_redirect_pending {
+            Self::trace_received_chunk(self.tracing.as_deref(), remainder);
             let buffer = self.state.get_body_buffer();
             if buffer.list.is_empty() && incoming_data.len() < PREALLOCATE_MAX {
                 let _ = buffer.list.try_reserve_exact(incoming_data.len());
@@ -4197,6 +4221,7 @@ impl<'a> HTTPClient<'a> {
         let is_small =
             !is_compressed && body.capacity() == 0 && incoming_data.len() <= MAX_SMALL_LEN;
         let decoded = decoder.decode(incoming_data, body);
+        Self::trace_received_chunk(self.tracing.as_deref(), &body[len_before..]);
         if is_small {
             // The consumer may keep the allocation, which has room for the framing too.
             body.shrink_to_fit();
@@ -4432,11 +4457,14 @@ impl<'a> HTTPClient<'a> {
         // if is no redirect or if is redirect == "manual" just proceed
         // https://fetch.spec.whatwg.org/#redirect-status
         let is_redirect = matches!(status_code, 301 | 302 | 303 | 307 | 308);
+        self.trace_response_head(response);
         if is_redirect {
             if self.redirect_type == FetchRedirect::Follow
                 && !location.is_empty()
                 && self.remaining_redirect_count > 0
             {
+                self.trace(|_| request_trace::Event::ResponseEnd);
+                self.restore_own_headers();
                 // https://fetch.spec.whatwg.org/#http-redirect-fetch step 11:
                 // "If internalResponse's status is not 303, request's body
                 // is non-null, and request's body's source is null, then
@@ -4652,6 +4680,7 @@ impl<'a> HTTPClient<'a> {
                     self.state.flags.resend_request_body_on_redirect = true;
                 }
             } else if self.redirect_type == FetchRedirect::Error {
+                self.trace(|_| request_trace::Event::ResponseEnd);
                 // error out if redirect is not allowed
                 return Err(crate::Error::UnexpectedRedirect);
             }
@@ -4678,6 +4707,7 @@ impl<'a> HTTPClient<'a> {
             );
         }
         if self.flags.upgrade_state == HTTPUpgradeState::Upgraded {
+            self.trace(|_| request_trace::Event::ResponseEnd);
             self.state.content_length = None;
             self.state.flags.allow_keepalive = false;
             return Ok(ShouldContinue::ContinueStreaming);

@@ -120,6 +120,7 @@ pub(crate) fn write_request(stream: &mut Stream, qs: quic::Stream) -> crate::Res
         HTTPStage::Body
     };
     client.state.response_stage = HTTPStage::Headers;
+    client.trace_request_stage();
 
     // For streaming bodies the JS sink waits for can_stream to start
     // pumping; report progress now so it begins.
@@ -170,6 +171,7 @@ pub(crate) fn drain_send_body(stream: &mut Stream, qs: quic::Stream) {
         drop(locked);
         if stream.request_body_done {
             body.buffer = None;
+            client.trace_request_stage();
         }
         return;
     }
@@ -181,5 +183,6 @@ pub(crate) fn drain_send_body(stream: &mut Stream, qs: quic::Stream) {
         stream.request_body_done = true;
         qs.finish();
         client.state.request_stage = HTTPStage::Done;
+        client.trace_request_stage();
     }
 }

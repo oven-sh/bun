@@ -92,6 +92,8 @@ impl ClientContext {
             }
         }
 
+        client.trace(|_| crate::request_trace::Event::Connecting);
+
         let registry_ref = ClientSession::new(hostname.to_vec(), port, reject, client.pool.id);
         let session = registry_ref.as_ptr();
         // `session` was just allocated by ClientSession::new — `session_mut`

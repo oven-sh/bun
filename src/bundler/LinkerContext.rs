@@ -316,6 +316,8 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
             &parse_graph.server_component_boundaries,
             bundle.dynamic_import_entry_points.keys(),
             &parse_graph.entry_point_original_names,
+            bundle.transpiler.options.minify_syntax
+                && bundle.transpiler.options.output_format != Format::InternalBakeDev,
         )?;
 
         let runtime_named_exports = &graph.ast.items_named_exports()[Index::RUNTIME.get() as usize];
@@ -1689,6 +1691,19 @@ impl<'a> LinkerContext<'_, 'a> {
         Ok(true)
     }
 
+    /// The constants whose reads in the file `source_index` are printed as
+    /// their value. Step 5 drops the uses of exactly these, and the printer
+    /// is lent the same map. With a direct `eval` the file has none: the code
+    /// that `eval` runs can read the import by its name.
+    pub(crate) fn inlined_const_values(
+        &self,
+        source_index: crate::IndexInt,
+    ) -> Option<&bun_ast::ast_result::ConstValuesMap> {
+        (self.graph.const_values.count() > 0
+            && !self.graph.ast.items_module_scope()[source_index as usize].contains_direct_eval)
+            .then_some(&self.graph.const_values)
+    }
+
     pub(crate) fn print_code_for_file_in_chunk_js(
         &self,
         r: renamer::Renamer,
@@ -1724,11 +1739,11 @@ impl<'a> LinkerContext<'_, 'a> {
             commonjs_module_exports_assigned_deoptimized: ast
                 .flags
                 .contains(AstFlags::COMMONJS_MODULE_EXPORTS_ASSIGNED_DEOPTIMIZED),
-            // .const_values = c.graph.const_values,
+            const_values: self.inlined_const_values(source_index.get()),
             ts_enums: Some(&self.graph.ts_enums),
             late_fold: self.options.minify_syntax
                 && self.options.output_format != Format::InternalBakeDev
-                && self.graph.ts_enums.count() > 0,
+                && (self.graph.ts_enums.count() > 0 || self.graph.const_values.count() > 0),
             import_member_bindings: Some(&self.graph.import_member_bindings),
             has_dynamic_import_items: ast
                 .dynamic_import_aliases

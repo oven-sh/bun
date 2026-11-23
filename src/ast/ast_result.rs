@@ -96,7 +96,6 @@ pub struct Ast<'a> {
 
     /// Only populated when bundling
     pub target: Target,
-    // const_values: ConstValuesMap,
     pub ts_enums: TsEnumsMap,
 
     /// Not to be confused with `commonjs_named_exports`

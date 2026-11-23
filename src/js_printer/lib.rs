@@ -1314,8 +1314,9 @@ pub struct Options<'a> {
     pub input_module_type: bundle_opts::ModuleType,
     pub module_type: bundle_opts::Format,
 
-    // /// Used for cross-module inlining of import items when bundling
-    // const_values: Ast.ConstValuesMap = .{},
+    /// Borrowed from `LinkerGraph.const_values`: the constants of other files
+    /// whose reads are printed as their value.
+    pub const_values: Option<&'a js_ast::ast_result::ConstValuesMap>,
     /// Borrowed from `LinkerGraph.ts_enums` (one shared map for the whole
     /// bundle); the printer only reads from it.
     pub ts_enums: Option<&'a TsEnumsMap>,
@@ -1386,6 +1387,7 @@ impl<'a> Default for Options<'a> {
             require_or_import_meta_source: None,
             input_module_type: bundle_opts::ModuleType::Unknown,
             module_type: bundle_opts::Format::Esm,
+            const_values: None,
             ts_enums: None,
             late_fold: false,
             import_member_bindings: None,
@@ -1717,13 +1719,14 @@ pub(crate) mod __gated_printer {
                                 v.left_level = Level::Call;
                             }
                         }
-                        // A property access can print as the number of an
-                        // enum member of another file, and that can be negative.
+                        // A property access or an import can print as a value
+                        // of another file: a negative number, `!0` or `void 0`.
                         ExprData::EAwait(_)
                         | ExprData::EUndefined(_)
                         | ExprData::ENumber(_)
                         | ExprData::EDot(_)
-                        | ExprData::EIndex(_) => {
+                        | ExprData::EIndex(_)
+                        | ExprData::EImportIdentifier(_) => {
                             v.left_level = Level::Call;
                         }
                         ExprData::EBoolean(_) | ExprData::EBranchBoolean(_) => {
@@ -4335,9 +4338,20 @@ pub(crate) mod __gated_printer {
                     }
 
                     if !did_print {
-                        self.print_space_before_identifier();
-                        self.add_source_mapping(expr.loc);
-                        self.print_symbol(e.ref_);
+                        if let Some(value) = self.inlined_const(e.ref_) {
+                            self.print_expr(
+                                Expr {
+                                    data: value.data,
+                                    loc: expr.loc,
+                                },
+                                level,
+                                flags,
+                            );
+                        } else {
+                            self.print_space_before_identifier();
+                            self.add_source_mapping(expr.loc);
+                            self.print_symbol(e.ref_);
+                        }
                     }
                 }
                 ExprData::EAwait(e) => {
@@ -4992,6 +5006,7 @@ pub(crate) mod __gated_printer {
                                     if let Some(symbol) = self.symbols().get_const(ref_) {
                                         if symbol.namespace_alias.is_none()
                                             && key_str.slice8() == self.name_for_symbol(e.ref_)
+                                            && self.inlined_const(e.ref_).is_none()
                                         {
                                             if let Some(initial) = &item.initializer {
                                                 self.print_initializer(*initial);
@@ -5035,6 +5050,7 @@ pub(crate) mod __gated_printer {
                                                 key_str.slice16(),
                                                 self.name_for_symbol(e.ref_),
                                             )
+                                            && self.inlined_const(e.ref_).is_none()
                                         {
                                             if let Some(initial) = &item.initializer {
                                                 self.print_initializer(*initial);
@@ -6709,10 +6725,17 @@ pub(crate) mod __gated_printer {
             )
         }
 
+        /// The value that a read of the import `ref_` prints as.
+        #[inline]
+        fn inlined_const(&self, ref_: Ref) -> Option<Expr> {
+            js_ast::late_fold::inlined_const(self.symbols(), self.options.const_values, ref_)
+        }
+
         fn late_fold(&self) -> js_ast::late_fold::LateFold<'a> {
             js_ast::late_fold::LateFold {
                 symbols: self.symbols(),
                 ts_enums: self.options.ts_enums,
+                const_values: self.options.const_values,
                 has_dynamic_import_items: self.options.has_dynamic_import_items,
                 bump: self.bump,
                 stack_check: self.stack_check,

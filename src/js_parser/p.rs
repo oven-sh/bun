@@ -9370,8 +9370,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             hashbang: hashbang.into(),
             export_default_alias_of_import: self.export_default_alias_of_import,
-            // TODO: cross-module constant inlining
-            // const_values: self.const_values,
             ts_enums,
             import_meta_ref: self.import_meta_ref,
             depends_on_more_than_source: self.depends_on_more_than_source(),

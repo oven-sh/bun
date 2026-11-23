@@ -76,7 +76,6 @@ pub struct BundledAst<'arena> {
     /// on the server.
     pub(crate) target: bun_ast::Target,
 
-    // const_values: ConstValuesMap,
     pub(crate) ts_enums: bun_ast::ast_result::TsEnumsMap,
 
     pub(crate) flags: Flags,
@@ -240,7 +239,6 @@ impl<'arena> BundledAst<'arena> {
 
             target: ast.target,
 
-            // const_values: ast.const_values,
             ts_enums: ast.ts_enums,
 
             flags,

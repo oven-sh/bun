@@ -1088,6 +1088,26 @@ console.log(Flag.Read | Flag.Write);
 console.log(3);
 ```
 
+### Cross-module constant inlining
+
+**Mode:** `--minify-syntax` (bundle mode)
+
+Inlines a `const` that another module exports, and folds what the value decides. The value must be `null`, `undefined`, a boolean, a short number, or a string of at most 3 characters. The module that declares it must import nothing, and the declaration must come before any statement that can run code: a module in an import cycle can be read before it runs, so its constants are not inlined.
+
+```js Input
+// env.js
+export const DEV = false;
+
+// Input (main.js)
+import { DEV } from './env.js';
+if (DEV) console.log("dev only");
+console.log("always");
+```
+
+```js Output
+console.log("always");
+```
+
 ### Computed property enum inlining
 
 **Mode:** `--minify-syntax`

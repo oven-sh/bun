@@ -2927,7 +2927,6 @@ describe("bundler", () => {
     },
   });
   itBundled("dce/ConstValueInliningBundle", {
-    todo: true,
     files: {
       "/exported-entry.js": /* js */ `
         const x_REMOVE = 1
@@ -3047,10 +3046,307 @@ describe("bundler", () => {
     minifySyntax: true,
     dce: true,
     dceKeepMarkerCount: {
+      "/out/exported-entry.js": 2,
       "/out/re-exported-entry.js": 2,
       "/out/re-exported-2-entry.js": 2,
       "/out/re-exported-star-entry.js": 4,
-      "/out/re-exported-star-entry.js.": 4,
+      // "y_keep" comes after a call, so it is not in the const prefix.
+      "/out/cross-module-entry.js": 3,
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out/print-shorthand-entry.js").toContain("console.log({ foo: 123, _bar: -321 });");
+      api.expectFile("/out/non-circular-export-entry.js").toContain("console.log(123, bar());");
+      // A file that has an import can be in a cycle: its constants stay reads.
+      api.expectFile("/out/circular-re-export-entry.js").toContain("console.log(baz);");
+    },
+  });
+  // https://github.com/oven-sh/bun/issues/49454
+  itBundled("dce/CrossModuleConstInliningIf", {
+    files: {
+      "/main.js": /* js */ `
+        import { DEV } from "./env.js";
+        if (DEV) {
+          console.log("dev-only branch");
+        }
+        console.log("always");
+      `,
+      "/env.js": /* js */ `
+        export const DEV = false;
+      `,
+    },
+    minifySyntax: true,
+    run: { stdout: "always" },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toMatchInlineSnapshot(`
+        "// main.js
+        console.log("always");
+        "
+      `);
+    },
+  });
+  // A constant from "define" is a literal when the linker reads it.
+  itBundled("dce/CrossModuleConstInliningDefine", {
+    files: {
+      "/main.js": /* js */ `
+        import { DEV } from "./env.js";
+        if (DEV) {
+          console.log("dev-only branch");
+        } else {
+          console.log("production branch");
+        }
+        DEV && console.log("dev-only call");
+        console.log(DEV ? "dev value" : "production value");
+      `,
+      "/env.js": /* js */ `
+        export const DEV = process.env.NODE_ENV !== "production";
+      `,
+    },
+    define: { "process.env.NODE_ENV": '"production"' },
+    minifySyntax: true,
+    run: { stdout: "production branch\nproduction value" },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toMatchInlineSnapshot(`
+        "// main.js
+        console.log("production branch");
+        console.log("production value");
+        "
+      `);
+    },
+  });
+  // Which values are copied: esbuild's ExprToConstValue.
+  itBundled("dce/CrossModuleConstInliningValues", {
+    files: {
+      "/entry.js": /* js */ `
+        import { T, F, N, U, INT, NEG, FRAC, S3, S4_keep, BIG_keep, LONG_keep } from "./values.js";
+        console.log(T, F, N, U, INT, NEG, FRAC, S3, S4_keep, BIG_keep, LONG_keep);
+        console.log({ T, INT, S4_keep }, NEG ** 2, U ** 2, T ** 2, INT | 1, !F, typeof T);
+        console.log(N ?? "n", INT.toString(), T ? "a" : "b", S3 + "!", INT === 42, S3 === "abc");
+      `,
+      "/values.js": /* js */ `
+        export const T = true, F = false, N = null, U = undefined, INT = 42, NEG = -1, FRAC = 0.5;
+        export const S3 = "abc", S4_keep = "abcd", BIG_keep = 10n;
+        export const LONG_keep = 3.14159265358979;
+      `,
+    },
+    minifySyntax: true,
+    dce: true,
+    dceKeepMarkerCount: 7,
+    run: {
+      stdout: [
+        "true false null undefined 42 -1 0.5 abc abcd 10n 3.14159265358979",
+        '{\n  T: true,\n  INT: 42,\n  S4_keep: "abcd",\n} 1 NaN 1 43 true boolean',
+        "n 42 a abc! true true",
+      ].join("\n"),
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toMatchInlineSnapshot(`
+        "// values.js
+        var S4_keep = "abcd", BIG_keep = 10n, LONG_keep = 3.14159265358979;
+
+        // entry.js
+        console.log(!0, !1, null, void 0, 42, -1, 0.5, "abc", S4_keep, BIG_keep, LONG_keep);
+        console.log({ T: !0, INT: 42, S4_keep }, (-1) ** 2, (void 0) ** 2, (!0) ** 2, 43, !0, typeof !0);
+        console.log("n", 42 .toString(), "a", "abc!", !0, !0);
+        "
+      `);
+    },
+  });
+  // Where a constant must be declared: in the const prefix of a file that
+  // imports nothing.
+  itBundled("dce/CrossModuleConstInliningPrefix", {
+    files: {
+      "/entry.js": /* js */ `
+        import { before, after_keep } from "./after-statement.js";
+        import { afterInit_keep } from "./after-initializer.js";
+        import { imports_keep } from "./has-import.js";
+        import { let_keep, reassigned } from "./not-const.js";
+        console.log(before, after_keep, afterInit_keep, imports_keep, let_keep, reassigned());
+      `,
+      "/after-statement.js": /* js */ `
+        export const before = 1;
+        sideEffect();
+        export const after_keep = 2;
+        export function sideEffect() {}
+      `,
+      "/after-initializer.js": /* js */ `
+        const computed = Math.random();
+        export const afterInit_keep = 3;
+        export { computed };
+      `,
+      "/has-import.js": /* js */ `
+        import "./empty.js";
+        export const imports_keep = 4;
+      `,
+      "/empty.js": "",
+      "/not-const.js": /* js */ `
+        export let let_keep = 5;
+        export function reassigned() { return ++let_keep; }
+      `,
+    },
+    minifySyntax: true,
+    dce: true,
+    dceKeepMarkerCount: 9,
+    run: { stdout: "1 2 3 4 5 6" },
+  });
+  // Which reads are replaced: the ones of an import binding.
+  itBundled("dce/CrossModuleConstInliningBindingForms", {
+    files: {
+      "/entry.js": /* js */ `
+        import { X as named } from "./leaf.js";
+        import { X as viaBarrel } from "./barrel.js";
+        import { X as viaStar } from "./barrel-star.js";
+        import * as ns from "./leaf.js";
+        import { space } from "./namespace.js";
+        const { Y: dynamic } = await import("./dynamic-leaf.js");
+        console.log(named, viaBarrel, viaStar, ns.X, space.Z_keep, dynamic);
+        export { X } from "./leaf.js";
+      `,
+      "/leaf.js": /* js */ `
+        export const X = 1;
+      `,
+      "/barrel.js": /* js */ `
+        export { X } from "./leaf.js";
+      `,
+      "/barrel-star.js": /* js */ `
+        export * from "./leaf.js";
+      `,
+      "/namespace.js": /* js */ `
+        export * as space from "./namespace-leaf.js";
+      `,
+      "/namespace-leaf.js": /* js */ `
+        export const Z_keep = 2;
+      `,
+      "/dynamic-leaf.js": /* js */ `
+        export const Y = 3;
+      `,
+    },
+    format: "esm",
+    minifySyntax: true,
+    run: { stdout: "1 1 1 1 2 3" },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toMatchInlineSnapshot(`
+        "// dynamic-leaf.js
+        var Y = 3;
+
+        // leaf.js
+        var X = 1;
+        // namespace-leaf.js
+        var Z_keep = 2;
+        // entry.js
+        await Promise.resolve();
+        console.log(1, 1, 1, 1, Z_keep, Y);
+        export {
+          X
+        };
+        "
+      `);
+    },
+  });
+  // The code that a direct eval runs reads an import by its name. So a file
+  // that has a direct eval keeps its reads. A direct eval in the file that
+  // declares the constant changes nothing.
+  itBundled("dce/CrossModuleConstInliningDirectEval", {
+    files: {
+      "/eval-in-importer.js": /* js */ `
+        import { X } from "./leaf.js";
+        console.log(X, eval("X"));
+      `,
+      "/eval-in-leaf.js": /* js */ `
+        import { Y } from "./eval-leaf.js";
+        console.log(Y);
+      `,
+      "/leaf.js": /* js */ `
+        export const X = 1;
+      `,
+      "/eval-leaf.js": /* js */ `
+        export const Y = 2;
+        eval("0");
+      `,
+    },
+    entryPoints: ["/eval-in-importer.js", "/eval-in-leaf.js"],
+    minifySyntax: true,
+    run: [
+      { file: "/out/eval-in-importer.js", stdout: "1 1" },
+      { file: "/out/eval-in-leaf.js", stdout: "2" },
+    ],
+    onAfterBundle(api) {
+      const importer = api.readFile("/out/eval-in-importer.js");
+      expect(importer).toContain("var X = 1");
+      expect(importer).toContain('console.log(X, eval("X"))');
+      api.expectFile("/out/eval-in-leaf.js").toContain("console.log(2)");
+    },
+  });
+  // A file in an import cycle can be read before it runs. Its constants are
+  // not copied: the reader must see what the bundle gives it today.
+  itBundled("dce/CrossModuleConstInliningCycle", {
+    files: {
+      "/entry.js": /* js */ `
+        import { X } from "./b.js";
+        console.log("entry sees", X);
+      `,
+      "/b.js": /* js */ `
+        import "./c.js";
+        export const X = 1;
+      `,
+      "/c.js": /* js */ `
+        import { X } from "./b.js";
+        console.log("c sees", X);
+      `,
+    },
+    minifySyntax: true,
+    run: { stdout: "c sees undefined\nentry sees 1" },
+  });
+  itBundled("dce/CrossModuleConstInliningSplitting", {
+    files: {
+      "/a.js": /* js */ `
+        import { DEV, shared } from "./env.js";
+        if (DEV) console.log("dev a");
+        console.log("a", shared.length);
+      `,
+      "/b.js": /* js */ `
+        import { DEV } from "./env.js";
+        if (DEV) console.log("dev b");
+        console.log("b");
+      `,
+      "/env.js": /* js */ `
+        export const DEV = false;
+        export const shared = [DEV];
+      `,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    splitting: true,
+    format: "esm",
+    minifySyntax: true,
+    run: [
+      { file: "/out/a.js", stdout: "a 1" },
+      { file: "/out/b.js", stdout: "b" },
+    ],
+    onAfterBundle(api) {
+      // "b.js" reads only the constant, so it imports no chunk.
+      api.expectFile("/out/b.js").toMatchInlineSnapshot(`
+        "// b.js
+        console.log("b");
+        "
+      `);
+    },
+  });
+  itBundled("dce/CrossModuleConstInliningNoMinifySyntax", {
+    files: {
+      "/main.js": /* js */ `
+        import { DEV } from "./env.js";
+        if (DEV) {
+          console.log("dev-only branch");
+        }
+        console.log("always");
+      `,
+      "/env.js": /* js */ `
+        export const DEV = false;
+      `,
+    },
+    minifySyntax: false,
+    run: { stdout: "always" },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("if (DEV)");
     },
   });
   itBundled("dce/ConstValueInliningAssign", {
@@ -3274,6 +3570,46 @@ describe("bundler", () => {
         ]);
         "
       `);
+      expect(api.readFile("/out/const-entry.js")).toMatchInlineSnapshot(`
+        "// const-entry.js
+        console.log([
+          6,
+          -6,
+          -7,
+          !1,
+          typeof 6
+        ], [
+          9,
+          -3,
+          18,
+          3 / 6,
+          3 % 6,
+          3 ** 6
+        ], [
+          !0,
+          !1,
+          !0,
+          !1,
+          !1,
+          !0,
+          !1,
+          !0
+        ], [
+          12,
+          3,
+          3
+        ], [
+          2,
+          7,
+          5
+        ], [
+          6,
+          3,
+          3
+        ]);
+        "
+      `);
+      expect(api.readFile("/out/nested-entry.js")).toContain('"should be 4": 4');
       expect(api.readFile("/out/nested-entry.js")).toContain('"should be 32": 32');
     },
   });

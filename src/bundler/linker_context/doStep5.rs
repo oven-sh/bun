@@ -197,6 +197,9 @@ impl LinkerContext<'_, '_> {
         let tlsp_ast = &c.graph.ast.items_top_level_symbols_to_parts()[id as usize];
 
         let our_imports_to_bind: &RefImportData = &imports_to_bind[id as usize];
+        let inlined_const_values = c
+            .inlined_const_values(id)
+            .filter(|_| our_imports_to_bind.count() > 0);
         for (part_index, part) in parts.as_mut_slice().iter_mut().enumerate() {
             // Now that all files have been parsed, determine which property
             // accesses off of imported symbols are inlined enum values and
@@ -264,7 +267,21 @@ impl LinkerContext<'_, '_> {
 
             // TODO: inline function calls here
 
-            // TODO: Inline cross-module constants
+            // The printer prints the value of a constant of another file in
+            // place of a read of its import (`late_fold::inlined_const`, which
+            // has the same two tests). Such a read does not use the
+            // declaration, so the declaration can be tree-shaken.
+            if let Some(const_values) = inlined_const_values {
+                part.symbol_uses.retain(|ref_, _| {
+                    !(c.graph
+                        .symbols
+                        .get_const(*ref_)
+                        .is_some_and(|symbol| symbol.kind == bun_ast::symbol::Kind::Import)
+                        && our_imports_to_bind
+                            .get(ref_)
+                            .is_some_and(|import| const_values.contains(&import.data.import_ref)))
+                });
+            }
 
             // Now that we know this, we can determine cross-part dependencies
             // PERF: iterate the keys slice directly (the index-based

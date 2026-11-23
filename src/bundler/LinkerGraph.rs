@@ -248,8 +248,11 @@ pub struct LinkerGraph<'a> {
 
     pub(crate) is_scb_bitset: BitSet,
 
-    /// This is for cross-module inlining of detected inlinable constants
-    // const_values: bun_ast::Ast::ConstValuesMap,
+    /// This is for cross-module inlining of constants: the declaring symbol of
+    /// each `const` whose reads in other files are printed as its value. See
+    /// `collect_leaf_const_values` for what is in it. An import of one is not a
+    /// use of the declaration (`LinkerContext::do_step5`).
+    pub(crate) const_values: bun_ast::ast_result::ConstValuesMap,
     /// This is for cross-module inlining of TypeScript enum constants
     pub(crate) ts_enums: bun_ast::ast_result::TsEnumsMap,
     pub(crate) import_member_bindings: bun_ast::ast_result::ImportMemberBindings,
@@ -303,6 +306,7 @@ impl<'a> LinkerGraph<'a> {
             reachable_files: Vec::new(),
             stable_source_indices: Vec::new(),
             is_scb_bitset: BitSet::default(),
+            const_values: bun_ast::ast_result::ConstValuesMap::default(),
             ts_enums: bun_ast::ast_result::TsEnumsMap::default(),
             import_member_bindings: bun_ast::ast_result::ImportMemberBindings::default(),
             additional_output_files: Vec::new(),
@@ -653,6 +657,56 @@ impl<'a> LinkerGraph<'a> {
     }
 }
 
+/// Records the constants at the start of a file that imports nothing. This is
+/// the "const local prefix" of esbuild's parser: it ends at the first
+/// statement, or the first initializer, that can run code. The parser keeps a
+/// looser list for reads in the same file (`P::const_values`). That list is
+/// not safe to share: it also holds constants of a file that is in an import
+/// cycle.
+fn collect_leaf_const_values(
+    parts: &[bun_ast::Part],
+    symbols: &symbol::Map,
+    const_values: &mut bun_ast::ast_result::ConstValuesMap,
+) -> Result<(), crate::Error> {
+    use bun_ast::binding::Data as BindingData;
+    use bun_ast::{StmtData, late_fold};
+    for part in parts {
+        for stmt in part.stmts.slice() {
+            let local = match &stmt.data {
+                StmtData::SEmpty(_)
+                | StmtData::SComment(_)
+                | StmtData::SDebugger(_)
+                | StmtData::STypeScript(_)
+                | StmtData::SDirective(_) => continue,
+                StmtData::SLocal(local) => local,
+                _ => return Ok(()),
+            };
+            for decl in local.decls.slice() {
+                let BindingData::BIdentifier(id) = &decl.binding.data else {
+                    return Ok(());
+                };
+                let Some(value) = &decl.value else {
+                    continue;
+                };
+                // The parser prints a top-level `const` of a bundle as `var`,
+                // so the kind of the symbol says what the source declared.
+                // `using` declares a constant too.
+                if !local.kind.is_using()
+                    && symbols
+                        .get_const(id.r#ref)
+                        .is_some_and(|symbol| symbol.kind == symbol::Kind::Constant)
+                    && late_fold::is_const_value(value)
+                {
+                    const_values.put(id.r#ref, *value)?;
+                } else if !late_fold::is_safe_for_const_prefix(value) {
+                    return Ok(());
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 impl<'a> LinkerGraph<'a> {
     pub(crate) fn load(
         &mut self,
@@ -661,6 +715,7 @@ impl<'a> LinkerGraph<'a> {
         scb: &server_component_boundary::List,
         dynamic_import_entry_points: &[index::Int],
         entry_point_original_names: &IndexStringMap,
+        inline_const_values: bool,
     ) -> Result<(), crate::Error> {
         self.files.set_capacity(sources.len())?;
         for _ in sources {
@@ -822,7 +877,24 @@ impl<'a> LinkerGraph<'a> {
             self.symbols = symbol::Map::init_list(symbols);
         }
 
-        // TODO: const_values
+        if inline_const_values {
+            let import_records = self.ast.items_import_records();
+            let parts = self.ast.items_parts();
+            for source_index in &self.reachable_files {
+                let id = source_index.get() as usize;
+                // esbuild: "Import statements anywhere in the file disable
+                // top-level const local prefix because import cycles can be
+                // used to trigger TDZ". A file that imports nothing is in no
+                // import cycle.
+                if import_records[id].len() == 0 {
+                    collect_leaf_const_values(
+                        parts[id].as_slice(),
+                        &self.symbols,
+                        &mut self.const_values,
+                    )?;
+                }
+            }
+        }
 
         {
             let mut count: usize = 0;

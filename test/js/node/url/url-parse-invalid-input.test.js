@@ -95,22 +95,14 @@ describe("url.parse", () => {
     }
 
     {
-      // Bun deviates from node here: only the web schemes throw (DEP0170).
-      const badURLs = ["https://evil.com:.example.com"];
-      const lenientURLs = ["git+ssh://git@github.com:npm/npm"];
+      const badURLs = [
+        "https://evil.com:.example.com",
+        // bun: upstream v26.3.0 also lists "git+ssh://git@github.com:npm/npm". Bun still parses it.
+      ];
       badURLs.forEach(badURL => {
         common.spawnPromisified(process.execPath, ["-e", `url.parse(${JSON.stringify(badURL)})`]).then(
           common.mustCall(({ code, stdout, stderr }) => {
             assert.strictEqual(code, 1);
-          }),
-        );
-      });
-      lenientURLs.forEach(lenientURL => {
-        common.spawnPromisified(process.execPath, ["-e", `url.parse(${JSON.stringify(lenientURL)})`]).then(
-          common.mustCall(({ code, stdout, stderr }) => {
-            assert.strictEqual(code, 0);
-            assert.strictEqual(stdout, "");
-            assert.doesNotMatch(stderr, /DEP0170/);
           }),
         );
       });
@@ -119,9 +111,6 @@ describe("url.parse", () => {
         assert.throws(() => url.parse(badURL), {
           code: "ERR_INVALID_ARG_VALUE",
         });
-      });
-      lenientURLs.forEach(lenientURL => {
-        assert.strictEqual(url.parse(lenientURL).pathname, "/:npm/npm");
       });
     }
   });
@@ -298,6 +287,20 @@ describe("url.parse invalid port", () => {
     expect(url.parse("javascript:alert(1):2").pathname).toBe("alert(1):2");
     expect(url.parse("//h:abc/p").pathname).toBe("//h:abc/p");
     expect(url.resolve("http://a/b", "./c:d")).toBe("http://a/c:d");
+  });
+
+  test("an uncaught invalid port error ends the process", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `require("node:url").parse("https://evil.com:.example.com")`],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("");
+    expect(stderr).toContain("ERR_INVALID_ARG_VALUE");
+    expect(stderr).toContain("The argument 'url' https://evil.com:.example.com. Received 'Invalid port in url'");
+    expect(exitCode).toBe(1);
   });
 
   test("the lenient path emits no DEP0170 warning", async () => {

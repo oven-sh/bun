@@ -257,7 +257,10 @@ mod tests {
     fn the_seven_tasks_after_one_that_began_beside_another_are_not_alone() {
         let mut under_way = UnderWay::default();
         assert_eq!(at_once(&mut under_way, 3), [true, false, false]);
-        assert_eq!(one_by_one(&mut under_way, 9), [false, false, false, false, false, false, false, true, true]);
+        assert_eq!(
+            one_by_one(&mut under_way, 9),
+            [false, false, false, false, false, false, false, true, true]
+        );
     }
 
     #[test]
@@ -266,7 +269,10 @@ mod tests {
         at_once(&mut under_way, 2);
         for single_tasks in [0, 1, 2, 6] {
             for _ in 0..3 {
-                assert_eq!(one_by_one(&mut under_way, single_tasks), vec![false; single_tasks]);
+                assert_eq!(
+                    one_by_one(&mut under_way, single_tasks),
+                    vec![false; single_tasks]
+                );
                 assert_eq!(at_once(&mut under_way, 2), [false, false]);
             }
         }

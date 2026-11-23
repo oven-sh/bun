@@ -1403,8 +1403,7 @@ fn not_active_error(global: &JSGlobalObject) -> JsError {
     ))
 }
 
-/// Whether the fake clock is on. When it is off, `vi` throws as Vitest does, and `jest` warns as Jest does, so the caller returns.
-/// The first thing a control does: `console.warn` is the script's, and can turn the clock on or off.
+/// `false`: `jest` warned, and the control returns without reading its arguments.
 #[inline]
 fn faked(global: &JSGlobalObject, flavor: Flavor) -> JsResult<bool> {
     if is_active() {

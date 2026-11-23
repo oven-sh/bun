@@ -103,6 +103,10 @@ pub struct InternalStateFlags {
     pub(crate) is_consumer_known: bool,
     /// `decoded_body` has chunks that were decoded before a malformed one. Report them before the failure.
     pub(crate) has_body_ahead_of_failure: bool,
+    /// See [`crate::request_trace::Event::Redirect`].
+    pub(crate) is_waiting_for_headers: bool,
+    pub(crate) traced_head: bool,
+    pub(crate) traced_body: bool,
 }
 
 impl InternalStateFlags {
@@ -119,6 +123,9 @@ impl InternalStateFlags {
             decompress_output_pending: false,
             is_consumer_known: false,
             has_body_ahead_of_failure: false,
+            is_waiting_for_headers: false,
+            traced_head: false,
+            traced_body: false,
         }
     }
 }

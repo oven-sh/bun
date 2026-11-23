@@ -163,8 +163,8 @@ impl<const SSL: bool> SocketEvents<SSL> for websocket_client::WebSocket<SSL> {
     fn on_writable(self: RefPtr<Self>, s: NewSocketHandler<SSL>) {
         self.handle_writable(s);
     }
-    fn on_close(self: RefPtr<Self>, _: i32) {
-        self.handle_close();
+    fn on_close(self: RefPtr<Self>, code: i32) {
+        self.handle_close(code);
     }
     fn on_timeout(self: RefPtr<Self>, s: NewSocketHandler<SSL>) {
         self.handle_timeout(s);

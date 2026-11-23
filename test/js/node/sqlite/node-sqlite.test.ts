@@ -2906,8 +2906,10 @@ describe("module exports", () => {
     expect(() => new Session()).toThrow(expect.objectContaining({ code: "ERR_ILLEGAL_CONSTRUCTOR" }));
     // SQLTagStore is Bun-internal (createTagStore()) — not a Node export.
     expect(Object.keys(require("node:sqlite")).sort()).toEqual([
+      "Database",
       "DatabaseSync",
       "Session",
+      "Statement",
       "StatementSync",
       "backup",
       "constants",

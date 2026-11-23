@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/_http_client.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 9724af366dc7a482ea6242cf63650b397af74552f4962baa6ac24b564886e19a.
+// Written against that file with the SHA-256 46f9db3b8cdb8ba82d5d9fc1ce323afec6ffa6472b75a3ec8cff44fe13e98d3a.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:_http_client"
@@ -7,7 +7,15 @@
 // node:tls sockets and the HTTPParser binding, matching the upstream
 // implementation as closely as possible.
 // https://github.com/nodejs/node/blob/v26.3.0/lib/_http_client.js
-const { kEmptyObject, once, ConnResetException, hasObserver, startPerf, stopPerf } = require("internal/shared");
+const {
+  kEmptyObject,
+  once,
+  ConnResetException,
+  hasObserver,
+  startPerf,
+  stopPerf,
+  builtinChannel,
+} = require("internal/shared");
 const kClientRequestStatistics = Symbol("ClientRequestStatistics");
 const {
   _checkIsHttpToken: checkIsHttpToken,
@@ -33,7 +41,6 @@ const { validateInteger, validateBoolean, validateString, validateOneOf } = requ
 const { getTimerDuration } = require("internal/timers");
 const { addAbortSignal } = require("internal/streams/add-abort-signal");
 const finished = require("internal/streams/end-of-stream");
-const dc = require("node:diagnostics_channel");
 
 const ObjectAssign = Object.assign;
 const ObjectDefineProperty = Object.defineProperty;
@@ -41,10 +48,10 @@ const ObjectKeys = Object.keys;
 const NumberIsFinite = Number.isFinite;
 const ArrayIsArray = Array.isArray;
 
-const onClientRequestCreatedChannel = dc.channel("http.client.request.created");
-const onClientRequestStartChannel = dc.channel("http.client.request.start");
-const onClientRequestErrorChannel = dc.channel("http.client.request.error");
-const onClientResponseFinishChannel = dc.channel("http.client.response.finish");
+const onClientRequestCreatedChannel = builtinChannel("http.client.request.created");
+const onClientRequestStartChannel = builtinChannel("http.client.request.start");
+const onClientRequestErrorChannel = builtinChannel("http.client.request.error");
+const onClientResponseFinishChannel = builtinChannel("http.client.response.finish");
 
 function emitErrorEvent(request: $Node.ClientRequest, error: Error) {
   if (onClientRequestErrorChannel.hasSubscribers) {

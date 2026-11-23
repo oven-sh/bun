@@ -2,8 +2,10 @@ use core::cell::Cell;
 use core::ffi::{c_int, c_void};
 use core::ops::ControlFlow::{self, Break, Continue};
 use core::ptr::NonNull;
+use std::sync::Arc;
 
 use crate::http_thread::InitOpts as HTTPThreadInitOpts;
+use crate::request_trace::Endpoints;
 use crate::ssl_config::{self, SSLConfig};
 use crate::{
     self as http, AlpnOffer, AsyncHTTP, HTTPCertError, HTTPClient, InFlightRequest, InitError,
@@ -226,6 +228,8 @@ pub struct PooledSocket<const SSL: bool> {
     pub(crate) idle_timeout_seconds: u32,
     /// `find_in` closes the socket instead of reusing it once `Timespec::now_coarse()` passes this many nanoseconds. `u64::MAX` is the default timeout, which only the timer enforces.
     pub(crate) reuse_deadline_ns: u64,
+    /// If the request that parked it was traced.
+    pub(crate) endpoints: Option<Arc<Endpoints>>,
 }
 
 /// `&mut` access to a pooled / found-slot HTTP/2 session, for the field
@@ -285,6 +289,7 @@ struct ExistingSocket<const SSL: bool> {
     /// Present if the socket negotiated "h2"; ownership transferred.
     h2_session: Option<RefPtr<h2::ClientSession>>,
     verification: PeerVerification,
+    endpoints: Option<Arc<Endpoints>>,
 }
 
 #[inline(never)]
@@ -418,6 +423,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
         match body(&mut request) {
             Continue(()) => {
                 debug_assert!(!socket.is_closed());
+                request.trace_request_stage();
                 Self::put_request(slot, request);
             }
             Break(step) => Self::run_next_step(request, socket, slot, step),
@@ -438,6 +444,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
             NextStep::Finish => request.finish(),
             NextStep::Deliver => request.deliver(),
             NextStep::Connect => request.connect(),
+            NextStep::FollowRedirect => request.follow_redirect(),
             NextStep::AttachH2 => {
                 let session = Self::get_tagged(slot.get()).session();
                 session
@@ -623,6 +630,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
         h2_session: Option<RefPtr<h2::ClientSession>>,
         unix_path: &[u8],
         pool: crate::PoolOptions,
+        endpoints: Option<Arc<Endpoints>>,
     ) {
         // log("releaseSocket(0x{f})", .{bun.fmt.hexIntUpper(@intFromPtr(socket.socket))});
 
@@ -676,6 +684,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
                         .ns()
                         .saturating_add(u64::from(ms) * 1_000_000),
                 },
+                endpoints,
             };
             let parked = match transport {
                 Transport::Tcp => Self::park(self.pending_sockets.get_or_init(), pooled, pool),
@@ -926,6 +935,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 let tunnel = socket.proxy_tunnel.take();
                 let h2_session = socket.h2_session.take();
                 let verification = socket.verification;
+                let endpoints = socket.endpoints.take();
                 // SAFETY: `socket_ptr` is a fully-initialized hive slot.
                 let ok = unsafe { pool.put(socket_ptr) };
                 debug_assert!(ok);
@@ -946,6 +956,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
                     tunnel,
                     h2_session,
                     verification,
+                    endpoints,
                 });
             }
         }
@@ -1000,6 +1011,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
         mut client: InFlightRequest,
         connected: Result<HTTPSocket<SSL>, uws::ConnectError>,
     ) {
+        client.trace(|_| crate::request_trace::Event::Connecting);
         let socket = match connected {
             Ok(socket) => socket,
             Err(err) => {
@@ -1106,6 +1118,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
                     client.flags.reused_socket_verification = PeerVerification::None;
                     continue;
                 }
+                client.trace_socket(sock, &mut found.endpoints);
                 let slot = Self::ext_slot(&sock).expect("connected");
                 if let Some(tunnel) = found.tunnel {
                     // Reattach the pooled tunnel BEFORE onOpen so the

@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/_http_server.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 0a6e5110e45157e318343b842c1ba28ca07231606e93ef0b0c95322d472c5191.
+// Written against that file with the SHA-256 ef51feb733cf55a4871a84efee84ff89df0e9d713f1d573d026a821082d0d800.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:_http_server"
@@ -74,6 +74,7 @@ const {
   stopPerf,
   kInternalSendOptions,
   isStoppedModuleGraphRunning,
+  builtinChannel,
 } = require("internal/shared");
 const shared = require("internal/shared");
 const kServerResponseStatistics = Symbol("ServerResponseStatistics");
@@ -490,6 +491,26 @@ function emitListeningNextTick(self: $Node.HttpServer, hostname: string | undefi
   self.emit("listening", null, hostname, port);
 }
 
+const onRequestStartChannel = builtinChannel("http.server.request.start");
+const onResponseCreatedChannel = builtinChannel("http.server.response.created");
+const onResponseFinishChannel = builtinChannel("http.server.response.finish");
+// In Node, http.Server is a net.Server, which publishes these.
+const listenStartChannel = builtinChannel("tracing:net.server.listen:asyncStart");
+const listenEndChannel = builtinChannel("tracing:net.server.listen:asyncEnd");
+const listenErrorChannel = builtinChannel("tracing:net.server.listen:error");
+
+// Last, because a subscriber can close the server.
+function announceListening(server: $Node.HttpServer, isWildcard: boolean) {
+  const { hostname, port } = server[serverSymbol]!;
+  if (listenEndChannel.hasSubscribers) listenEndChannel.publish({ server });
+  // A tick, not a timer, as in node: a timer never fires on its own under jest.useFakeTimers().
+  process.nextTick(emitListeningNextTick, server, isWildcard ? "localhost" : hostname, port);
+}
+
+function publishListenError(server: $Node.HttpServer, error: unknown) {
+  if (listenErrorChannel.hasSubscribers) listenErrorChannel.publish({ server, error });
+}
+
 function emitListenErrorNextTick(self: $Node.HttpServer, err: unknown) {
   self.emit("error", err);
 }
@@ -506,6 +527,7 @@ function emitListenError(
   if (fd !== undefined) err = listenException(err, null);
   else if (socketPath) err = listenException(err, socketPath, -1);
   else err = listenException(err, host || (err as any)?.address, port as number);
+  publishListenError(server, err);
   process.nextTick(emitListenErrorNextTick, server, err);
 }
 
@@ -1260,59 +1282,70 @@ Server.prototype.listen = function (this: $Node.HttpServer) {
   // This logic must align with:
   // - https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/net.js#L274-L307
   const argc = arguments.length;
-  if (argc > 0) {
-    const arg0 = arguments[0];
-    if ($isObject(arg0)) {
-      // (options[...][, cb])
-      addServerAbortSignalOption(this, arg0);
-      // `fd` wins over the rest: https://github.com/nodejs/node/blob/v26.5.0/lib/net.js#L2314-L2317
-      const { fd: fdOption } = arg0;
-      if (typeof fdOption === "number" && fdOption >= 0) {
-        fd = fdOption;
-      } else {
-        if ("fd" in arg0 && !("port" in arg0 || "path" in arg0)) {
-          throw $ERR_INVALID_ARG_VALUE("options", arg0, 'must have the property "port" or "path"');
-        }
-        port = arg0.port;
-        host = arg0.host;
-        socketPath = arg0.path;
-        reusePort = arg0.reusePort === true;
-        ipv6Only = arg0.ipv6Only === true;
-        exclusive = reusePort || !!arg0.exclusive;
-        // Like net.Server.listen(), an explicit `port: undefined` or `port: null` binds any free port.
-        if ((port === undefined && "port" in arg0) || port === null) port = 0;
-      }
+  const arg0 = arguments[0];
+  let options;
+  if (argc === 0 || $isCallable(arg0)) {
+    // ([cb]). Node publishes the callback as the port.
+    options = {};
+  } else if ($isObject(arg0)) {
+    // (options[...][, cb])
+    options = arg0;
+  } else if (typeof arg0 === "string" && !(Number(arg0) >= 0)) {
+    // (path[...][, cb])
+    options = { path: arg0 };
+  } else {
+    // ([port][, host][...][, cb])
+    const arg1 = arguments[1];
+    options = typeof arg1 === "string" ? { port: arg0, host: arg1 } : { port: arg0 };
+  }
 
-      const otherTLS = arg0.tls;
-      if ($isObject(otherTLS)) {
-        tls = normalizeServerTls({ __proto__: null, ...otherTLS, secureContext: undefined });
-      }
-    } else if (typeof arg0 === "string" && !(Number(arg0) >= 0)) {
-      // (path[...][, cb])
-      socketPath = arg0;
+  // A subscriber can change the options.
+  if (listenStartChannel.hasSubscribers) listenStartChannel.publish({ server, options });
+  if (options !== arg0) options = { __proto__: null, ...options };
+
+  try {
+    addServerAbortSignalOption(this, options);
+    // `fd` wins over the rest: https://github.com/nodejs/node/blob/v26.5.0/lib/net.js#L2314-L2317
+    const { fd: fdOption } = options;
+    if (typeof fdOption === "number" && fdOption >= 0) {
+      fd = fdOption;
     } else {
-      // ([port][, host][...][, cb])
-      port = arg0;
-      if (argc > 1 && typeof arguments[1] === "string") {
-        host = arguments[1];
+      if ("fd" in options && !("port" in options || "path" in options)) {
+        throw $ERR_INVALID_ARG_VALUE("options", options, 'must have the property "port" or "path"');
       }
+      port = options.port;
+      host = options.host;
+      socketPath = options.path;
+      reusePort = options.reusePort === true;
+      ipv6Only = options.ipv6Only === true;
+      exclusive = reusePort || !!options.exclusive;
+      // Like net.Server.listen(), an explicit `port: undefined` or `port: null` binds any free port.
+      if ((port === undefined && "port" in options) || port === null) port = 0;
     }
-  }
 
-  // Bun defaults to port 3000.
-  // Node defaults to port 0.
-  if (port == null && !socketPath) {
-    port = 0;
-  }
+    const otherTLS = options.tls;
+    if ($isObject(otherTLS)) {
+      tls = normalizeServerTls({ __proto__: null, ...otherTLS, secureContext: undefined });
+    }
 
-  // A bad port throws and a valid one overrides `path`: https://github.com/nodejs/node/blob/v26.5.0/lib/net.js#L2332-L2334
-  if (typeof port === "number" || typeof port === "string") {
-    validatePort(port, "options.port");
-    port = +port | 0;
-    socketPath = undefined;
-  } else if (socketPath) {
-    // Like net.Server.listen(), listening on a `path` ignores `host`.
-    host = undefined;
+    // Bun defaults to port 3000.
+    // Node defaults to port 0.
+    if (port == null && !socketPath) {
+      port = 0;
+    }
+
+    // A bad port throws and a valid one overrides `path`: https://github.com/nodejs/node/blob/v26.5.0/lib/net.js#L2332-L2334
+    if (typeof port === "number" || typeof port === "string") {
+      validatePort(port, "options.port");
+      port = +port | 0;
+      socketPath = undefined;
+    } else if (socketPath) {
+      // Like net.Server.listen(), listening on a `path` ignores `host`.
+      host = undefined;
+    }
+  } catch (error) {
+    publishListenError(server, error);
+    throw error;
   }
 
   const lastArg = arguments[argc - 1];
@@ -1330,7 +1363,10 @@ Server.prototype.listen = function (this: $Node.HttpServer) {
     // listenInCluster
 
     if (isPrimary) {
-      listenHere(server, tls, port as number | undefined, host, socketPath, reusePort, ipv6Only, fd);
+      announceListening(
+        server,
+        listenHere(server, tls, port as number | undefined, host, socketPath, reusePort, ipv6Only, fd),
+      );
       return this;
     }
 
@@ -1370,7 +1406,10 @@ Server.prototype.listen = function (this: $Node.HttpServer) {
       });
 
       if (exclusive) {
-        listenHere(server, tls, port as number | undefined, host, socketPath, true, ipv6Only, fd);
+        announceListening(
+          server,
+          listenHere(server, tls, port as number | undefined, host, socketPath, true, ipv6Only, fd),
+        );
         return this;
       }
       server[kClusterPendingBind] = listeningId;
@@ -1379,8 +1418,9 @@ Server.prototype.listen = function (this: $Node.HttpServer) {
         server[kClusterPendingBind] = undefined;
         if (cluster!.worker?.exitedAfterDisconnect) return;
         try {
-          listenHere(server, tls, port as number | undefined, host, socketPath, true, ipv6Only, fd);
+          const isWildcard = listenHere(server, tls, port as number | undefined, host, socketPath, true, ipv6Only, fd);
           server[kClusterHandle] = track();
+          announceListening(server, isWildcard);
         } catch (err) {
           emitListenError(server, err, port as number | undefined, host, socketPath, fd);
         }
@@ -1394,6 +1434,7 @@ Server.prototype.listen = function (this: $Node.HttpServer) {
 };
 
 // https://github.com/nodejs/node/blob/v26.5.0/lib/net.js#L2127-L2139. libuv reports EADDRINUSE later, from listen().
+// Returns whether it listens on a wildcard address.
 function listenHere(
   server: $Node.HttpServer,
   tls: $Node.HttpServerTLSOptions | null,
@@ -1406,7 +1447,7 @@ function listenHere(
 ) {
   if (host || socketPath || fd !== undefined) {
     server[kRealListen](tls, port, host, socketPath, reusePort, ipv6Only, fd);
-    return;
+    return false;
   }
   try {
     server[kRealListen](tls, port, host, socketPath, reusePort, ipv6Only, fd, "::");
@@ -1414,6 +1455,7 @@ function listenHere(
     if (err?.syscall !== "listen" || err.code === "EADDRINUSE") throw err;
     server[kRealListen](tls, port, host, socketPath, reusePort, ipv6Only, fd, "0.0.0.0");
   }
+  return true;
 }
 
 // net.Server's listenInCluster, always `sharedOnly` like its TLS servers: Bun.serve can't take connections the primary accepted.
@@ -1439,6 +1481,7 @@ function listenInCluster(
       if (errno) {
         const ex = new ExceptionWithHostPort(errno, "bind", address as string, queryPort as number);
         if (typeof reply?.bunHint === "string") ex.message += `\n  note: ${reply.bunHint}`;
+        publishListenError(server, ex);
         server.emit("error", ex);
         return;
       }
@@ -1447,6 +1490,7 @@ function listenInCluster(
       try {
         server[kRealListen](tls, port, host, socketPath, false, false, handle.sharedFd);
         handle.adopted = true;
+        announceListening(server, false);
       } catch (err) {
         // Once Bun.serve() returned, the listener owns the descriptor and handle.close() must not close it again.
         handle.adopted = !!server[serverSymbol];
@@ -1469,6 +1513,7 @@ function listenInCluster(
     if (listeningId !== server[kClusterListeningId]) return;
     if (!err) return query(ip as string, port, family === 6 ? 6 : 4);
     server[kClusterPendingBind] = undefined;
+    publishListenError(server, err);
     server.emit("error", err);
   });
 }
@@ -1622,10 +1667,71 @@ Server.prototype[kRealListen] = function (
         return;
       }
 
+      handle.onabort = socket[kBoundOnAbort] ??= onServerRequestEvent.bind(socket);
+      // Like Node's connectionListener -> parserOnBody: body bytes flow into
+      // the IncomingMessage as they arrive, and the push callback readStop()s
+      // the socket (which emits 'pause' on it) once the buffer fills.
+      if (hasBody) {
+        handle.ondata = onBodyData.bind(http_req);
+      }
+      // The response ahead lets go of the socket at its 'finish'. In front of what is published: it ends the async context that a subscriber enters.
+      if (pipeline === undefined) drainMicrotasks();
+
+      // Node.js (llhttp) only flags a request as an upgrade when it carries
+      // both an Upgrade header and a Connection header with the "upgrade"
+      // token; the server then consults shouldUpgradeCallback (default: an
+      // 'upgrade' listener is installed) and otherwise dispatches the
+      // request normally.
+      let is_upgrade = false;
+      if (
+        (dispatchBits & DispatchBits.has_upgrade) !== 0 &&
+        (dispatchBits & DispatchBits.conn_upgrade) !== 0 &&
+        // The connection would have to leave HTTP behind the body, with responses still owed. A server may ignore Upgrade (RFC 9110 7.8).
+        !(hasBody && pipeline !== undefined)
+      ) {
+        // Like Node.js, shouldUpgradeCallback sees req.upgrade === true.
+        http_req.upgrade = true;
+        is_upgrade = !!server.shouldUpgradeCallback(http_req);
+      }
+      // Like Node.js's parserOnIncoming: req.upgrade is true inside the
+      // 'upgrade' listener and false for a declined upgrade that falls
+      // through to 'request'.
+      http_req.upgrade = is_upgrade;
+      if (is_upgrade) {
+        // Like Node 26, a body is parsed and delivered through req. The connection leaves HTTP behind it, so the head is empty.
+        if (hasBody) {
+          socketHandle.leaveHttpAfterBody();
+          handle.ondata = onUpgradeBodyData.bind(http_req);
+          handle.notifyWhenReadParsed();
+          return;
+        }
+        http_req.complete = true;
+        handOffSocket(socket, http_req, pipeline);
+        const upgradeHead = !hasBody && connectHead ? connectHead : kEmptyBuffer;
+        let upgradeHandled: boolean;
+        try {
+          upgradeHandled = server.emit("upgrade", http_req, socket, upgradeHead);
+        } catch (err) {
+          // A throwing 'upgrade' listener surfaces as an uncaught
+          // exception, like Node.js (the emit happens outside any JS try
+          // frame there).
+          process.nextTick(rethrowUncaught, err);
+          upgradeHandled = true;
+        }
+        if (!upgradeHandled) {
+          // shouldUpgradeCallback accepted the upgrade but no 'upgrade'
+          // listener is installed: Node.js destroys the socket.
+          socket.destroy();
+        }
+        return;
+      }
+
       let http_res: $Node.ServerResponse;
       const makesResponseWithoutOptions =
         ResponseClass === ServerResponse &&
         RequestClass === IncomingMessageOfLibrary &&
+        !onResponseCreatedChannel.hasSubscribers &&
+        !onRequestStartChannel.hasSubscribers &&
         IS_COMPILED_AHEAD_OF_TIME &&
         $isObjectPrototypeWithoutAddedNames() &&
         // As the short dispatcher asks. On a no the response is made as the other text makes it, line for line.
@@ -1671,55 +1777,27 @@ Server.prototype[kRealListen] = function (
       // ended inside user 'finish' listeners. (Not done for the
       // maxRequestsPerSocket limit - pipelined requests past the limit
       // still need to be answered with 503.)
+      if (!makesResponseWithoutOptions && !http_req[kReqShouldKeepAlive]) http_res._last = true;
+      if (pipeline !== undefined) waitForSocket(http_res, socket, pipeline);
+
+      if (onRequestStartChannel.hasSubscribers) {
+        onRequestStartChannel.publish({ request: http_req, response: http_res, socket, server });
+      }
+
       // One plain on() listener (once() allocates a wrapper, a second listener
       // deoptimizes every 'finish' emit), registered before the 'request' event
       // like Node's resOnFinish so res.on-replacing middleware cannot swallow it.
-      if (!makesResponseWithoutOptions) {
-        if (!http_req[kReqShouldKeepAlive]) http_res._last = true;
-        http_res.on("finish", emitResponseFinish);
-      }
+      if (!makesResponseWithoutOptions) http_res.on("finish", emitResponseFinish);
 
-      handle.onabort = socket[kBoundOnAbort] ??= onServerRequestEvent.bind(socket);
-      // Like Node's connectionListener -> parserOnBody: body bytes flow into
-      // the IncomingMessage as they arrive, and the push callback readStop()s
-      // the socket (which emits 'pause' on it) once the buffer fills.
-      if (hasBody) {
-        handle.ondata = onBodyData.bind(http_req);
+      // Node.js's connectionListener registers socketOnClose, which frees
+      // the parser - even a manually emitted 'close' stops parsing of any
+      // pipelined requests still in the buffer.
+      if (!socket[kStopParsingOnCloseListener]) {
+        socket[kStopParsingOnCloseListener] = true;
+        socket.on("close", onSocketCloseStopParsing);
       }
-      // The response ahead lets go of the socket at its 'finish'.
-      if (pipeline === undefined) drainMicrotasks();
-
-      // Node.js (llhttp) only flags a request as an upgrade when it carries
-      // both an Upgrade header and a Connection header with the "upgrade"
-      // token; the server then consults shouldUpgradeCallback (default: an
-      // 'upgrade' listener is installed) and otherwise dispatches the
-      // request normally.
-      let is_upgrade = false;
-      if (
-        (dispatchBits & DispatchBits.has_upgrade) !== 0 &&
-        (dispatchBits & DispatchBits.conn_upgrade) !== 0 &&
-        // The connection would have to leave HTTP behind the body, with responses still owed. A server may ignore Upgrade (RFC 9110 7.8).
-        !(hasBody && pipeline !== undefined)
-      ) {
-        // Like Node.js, shouldUpgradeCallback sees req.upgrade === true.
-        http_req.upgrade = true;
-        is_upgrade = !!server.shouldUpgradeCallback(http_req);
-      }
-      // Like Node.js's parserOnIncoming: req.upgrade is true inside the
-      // 'upgrade' listener and false for a declined upgrade that falls
-      // through to 'request'.
-      http_req.upgrade = is_upgrade;
-      if (!is_upgrade) {
-        // Node.js's connectionListener registers socketOnClose, which frees
-        // the parser - even a manually emitted 'close' stops parsing of any
-        // pipelined requests still in the buffer.
-        if (!socket[kStopParsingOnCloseListener]) {
-          socket[kStopParsingOnCloseListener] = true;
-          socket.on("close", onSocketCloseStopParsing);
-        }
-        if (pipeline !== undefined) {
-          waitForSocket(http_res, socket, pipeline);
-        } else if (canUseInternalAssignSocket) {
+      if (pipeline === undefined) {
+        if (canUseInternalAssignSocket) {
           // ~10% performance improvement in JavaScriptCore due to avoiding .once("close", ...) and removing a listener
           assignSocketInternal(http_res, socket);
         } else {
@@ -1728,57 +1806,23 @@ Server.prototype[kRealListen] = function (
       }
       http_res.$exchange.awaitsClose = true;
       http_res[kCloseCallback] = onClose;
-      if (!is_upgrade) observeRequest(http_req, http_res);
+      observeRequest(http_req, http_res);
 
       // Like Node.js: with the optimizeEmptyRequests server option,
       // requests without body headers skip the Readable life cycle (no
       // 'data'/'end'/'close' events) and arrive pre-dumped.
       if (
         server[kOptimizeEmptyRequests] &&
-        !is_upgrade &&
         (dispatchBits & (DispatchBits.has_content_length | DispatchBits.has_transfer_encoding)) === 0
       ) {
         http_req._dumpAndCloseReadable();
       }
 
       // Node's parserOnIncoming never counts an accepted upgrade or a missing-Host 400 against maxRequestsPerSocket, and routes HTTP/1.1 only.
-      const expectation =
-        is_upgrade || isAncientHTTP ? kNoExpectation : expectationFromBits(server, http_res, socket, dispatchBits);
+      const expectation = isAncientHTTP ? kNoExpectation : expectationFromBits(server, http_res, socket, dispatchBits);
 
-      if (expectation === kOverRequestsLimit) {
-        http_res._last = true;
-        emitRequest(server, socket, http_req, http_res, expectation);
-      } else if (is_upgrade) {
-        // Like Node 26, a body is parsed and delivered through req. The connection leaves HTTP behind it, so the head is empty.
-        if (hasBody) {
-          socketHandle.leaveHttpAfterBody();
-          handle.ondata = onUpgradeBodyData.bind(http_req);
-          handle.notifyWhenReadParsed();
-          return;
-        }
-        http_req.complete = true;
-        handOffSocket(socket, http_req, pipeline);
-        const upgradeHead = !hasBody && connectHead ? connectHead : kEmptyBuffer;
-        let upgradeHandled: boolean;
-        try {
-          upgradeHandled = server.emit("upgrade", http_req, socket, upgradeHead);
-        } catch (err) {
-          // A throwing 'upgrade' listener surfaces as an uncaught
-          // exception, like Node.js (the emit happens outside any JS try
-          // frame there).
-          process.nextTick(rethrowUncaught, err);
-          upgradeHandled = true;
-        }
-        if (!upgradeHandled) {
-          // shouldUpgradeCallback accepted the upgrade but no 'upgrade'
-          // listener is installed: Node.js destroys the socket.
-          socket.destroy();
-          return;
-        }
-        return;
-      } else {
-        emitRequest(server, socket, http_req, http_res, expectation);
-      }
+      if (expectation === kOverRequestsLimit) http_res._last = true;
+      emitRequest(server, socket, http_req, http_res, expectation);
 
       if (!hasBody) completeWithoutBody(http_req, socket);
 
@@ -1846,6 +1890,8 @@ Server.prototype[kRealListen] = function (
           countsNoRequests(server) &&
           method !== "CONNECT" &&
           !hasObserver("http") &&
+          !onResponseCreatedChannel.hasSubscribers &&
+          !onRequestStartChannel.hasSubscribers &&
           !traceEvents.isCategoryGroupEnabled(kHttpTraceCat) &&
           (socket.$isPrepared || prepareSocket(socket))
         ) {
@@ -1899,9 +1945,6 @@ Server.prototype[kRealListen] = function (
     }
 
     if (this._unref) handle.unref();
-
-    // A tick, not a timer, as in node: a timer never fires on its own under jest.useFakeTimers().
-    process.nextTick(emitListeningNextTick, this, wildcard ? "localhost" : handle.hostname, handle.port);
   }
 };
 
@@ -2843,6 +2886,10 @@ function resOnFinish(
   state: ConnectionState,
   server: $Node.HttpServer,
 ) {
+  if (onResponseFinishChannel.hasSubscribers) {
+    onResponseFinishChannel.publish({ request: req, response: res, socket, server });
+  }
+
   // abortIncoming() may have emptied the array.
   $assert(state.incoming.length === 0 || state.incoming[0] === req);
 
@@ -2901,6 +2948,8 @@ function connectionState(socket: $Node.HttpServerSocket) {
 }
 
 function waitForSocket(res: $Node.ServerResponse, socket: $Node.HttpServerSocket, state: Pipeline) {
+  // What its constructor, or a subscriber, has written.
+  state.outgoingData += res.outputSize;
   pauseIfBackedUp(socket, state);
   res._onPendingData = state.onPendingData!;
   res[fakeSocketSymbol] = null;
@@ -2960,7 +3009,23 @@ function hasBodyHeaders(headers: $Node.IncomingHttpHeaders) {
   return "content-length" in headers || "transfer-encoding" in headers;
 }
 
+// The async context that one request enters ends before the next request of the chunk.
 function parserOnIncoming(
+  server: $Node.HttpServer,
+  socket: $Node.HttpSocket,
+  state: ConnectionState,
+  req: $Node.IncomingMessage,
+  keepAlive: boolean,
+) {
+  const frame = AsyncContextFrame.current();
+  try {
+    return dispatchIncoming(server, socket, state, req, keepAlive);
+  } finally {
+    AsyncContextFrame.exchange(frame);
+  }
+}
+
+function dispatchIncoming(
   server: $Node.HttpServer,
   socket: $Node.HttpSocket,
   state: ConnectionState,
@@ -2988,10 +3053,16 @@ function parserOnIncoming(
   res._keepAliveTimeout = server.keepAliveTimeout;
   res._maxRequestsPerSocket = server.maxRequestsPerSocket;
   res._onPendingData = state.onPendingData ??= updateOutgoingData.bind(undefined, socket, state);
+  state.outgoingData += res.outputSize;
 
   res.shouldKeepAlive = keepAlive;
   res[kUniqueHeaders] = server[kUniqueHeaders];
+  res[fakeSocketSymbol] = null;
   observeRequest(req, res);
+
+  if (onRequestStartChannel.hasSubscribers) {
+    onRequestStartChannel.publish({ request: req, response: res, socket, server });
+  }
 
   if (server[kOptimizeEmptyRequests] === true && !hasBodyHeaders(req.headers)) {
     req._dumpAndCloseReadable();
@@ -3001,7 +3072,6 @@ function parserOnIncoming(
   if (socket._httpMessage) {
     // There are already pending outgoing res, append.
     state.outgoing.push(res);
-    res[fakeSocketSymbol] = null;
   } else {
     res.assignSocket(socket);
   }
@@ -3847,6 +3917,7 @@ function ServerResponse(
       exchange.flags = ExchangeFlags.has_pending_callbacks;
       this.$exchange = exchange;
     }
+    if (onResponseCreatedChannel.hasSubscribers) publishResponseCreated(req, this);
     return;
   }
   const exchange = makeExchange(this, null, noResponseEvents, null);
@@ -3909,8 +3980,16 @@ function ServerResponse(
   this[kHandle] = handleFor(req, options);
   this.statusCode = 200;
   this.statusMessage = undefined;
+  if (onResponseCreatedChannel.hasSubscribers) publishResponseCreated(req, this);
 }
 $toClass(ServerResponse, "ServerResponse", OutgoingMessage);
+
+function publishResponseCreated(request: $Node.IncomingMessage, response: $Node.ServerResponse): void {
+  if (request === requestOfNobody) return;
+  const handle = response[kHandle];
+  if (handle === null || (handle && holdsOutput(handle))) response[fakeSocketSymbol] = null;
+  onResponseCreatedChannel.publish({ request, response });
+}
 
 function isPlainUnfinishedResponse(stream: $Node.AnyStream): boolean {
   return (
@@ -4052,8 +4131,9 @@ const ServerResponsePrototype: object = ServerResponse.prototype;
 // A response that another constructor made has no exchange. The server gives it one whose response nobody holds, so it takes the
 // functions of an object that stands in the place of a response, which keep the state on their receiver.
 let responseOfNobody: $Node.ServerResponse | undefined;
+let requestOfNobody: $Node.IncomingMessage | undefined;
 function adoptResponse(res: $Node.ServerResponse): void {
-  const nobody = (responseOfNobody ??= new ServerResponse(new IncomingMessage(null)));
+  const nobody = (responseOfNobody ??= new ServerResponse((requestOfNobody = new IncomingMessage(null))));
   const exchange = makeExchange(nobody, null, noResponseEvents, null);
   exchange.flags = ExchangeFlags.has_pending_callbacks | ExchangeFlags.has_stand_in;
   res.$exchange = exchange;
@@ -4369,6 +4449,20 @@ function stopServerResponsePerf(this: $Node.ServerResponse) {
   }
 }
 
+function publishResponseFinish(
+  response: $Node.ServerResponse,
+  socket: $Node.HttpServerSocket | null | undefined,
+  isDetached: boolean,
+) {
+  // Node detaches the socket after it publishes.
+  if (isDetached) response.socket = socket!;
+  try {
+    onResponseFinishChannel.publish({ request: response.req, response, socket, server: socket?.server });
+  } finally {
+    if (isDetached) response.socket = null;
+  }
+}
+
 // Node.js's resOnFinish as one shared listener: connection handling (close or
 // arm keep-alive) runs first because onResponseFinishHandleSocket's guards
 // read pre-detach state, then detach the socket and advance the pipeline.
@@ -4384,15 +4478,16 @@ const emitResponseFinish = function emitResponseFinish(this: $Node.ServerRespons
     finishConnection(exchange, this, req, exchange.connection!, false);
     return;
   }
-  // Node's resOnFinish: dump a body that nobody consumed or resumed.
-  if (req && !req._consuming && !isResumeScheduled(req._readableState)) {
-    req._dump();
-  }
   // The stream destroyer nulls req.socket (pipeline, compose). The response's own socket still is the connection then.
   const detachedFrom = this[kDetachedFrom] ?? null;
   let socket: $Node.HttpServerSocket | null | undefined = (detachedFrom ?? this.req?.socket ?? this.socket) as any;
   // So it is when middleware put a stand-in in req.socket.
   if (socket != null && !Object.hasOwn(socket, kHandedOff)) socket = this[kSocket] as any;
+  if (onResponseFinishChannel.hasSubscribers) publishResponseFinish(this, socket, detachedFrom !== null);
+  // Node's resOnFinish: dump a body that nobody consumed or resumed.
+  if (req && !req._consuming && !isResumeScheduled(req._readableState)) {
+    req._dump();
+  }
   // Node's clearIncoming: a request that ended before its response did, or that gets no EOF. Any other one is cleared at its EOF.
   const parser = socket?.parser;
   if (parser != null && parser.incoming === req && (req.readableEnded || req.destroyed)) parser.incoming = null;
@@ -4823,6 +4918,7 @@ const finishExchange = function emitResponseFinished(exchange: Exchange): void {
   const requestState = exchange.requestState;
   if (
     res._last ||
+    onResponseFinishChannel.hasSubscribers ||
     socket === null ||
     req == null ||
     requestState == null ||

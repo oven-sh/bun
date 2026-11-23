@@ -443,6 +443,7 @@ declare global {
       keepAliveTimeout?: number;
       keepAliveTimeoutBuffer?: number;
       joinDuplicateHeaders?: boolean;
+      requireHostHeader?: boolean;
       httpAllowHalfOpen?: boolean;
       shouldUpgradeCallback?: (request: IncomingMessage) => boolean;
       [kIncomingMessage]?: IncomingMessageConstructor;

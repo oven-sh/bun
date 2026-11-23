@@ -28,7 +28,7 @@ use bun_ptr::{CellExt, RefPtr, RefPtrCellExt as _};
 use bun_uws::ssl_wrapper::{self, SSLWrapper as SslWrapper};
 use bun_uws::{NewSocketHandler, us_bun_verify_error_t};
 
-use crate::websocket_client::{CloseMode, ErrorCode, remote_address_of};
+use crate::websocket_client::{CloseMode, ErrorCode};
 
 use bun_boringssl::c::OwnedSslCtx;
 
@@ -268,6 +268,9 @@ impl ssl_wrapper::Handler for &WebSocketProxyTunnel {
 
         let Some(upgrade_client) = self.upgrade_client() else {
             self.renegotiation_ended.set(success);
+            if !success && let Some(ws) = self.connected_websocket() {
+                ws.report_tls_error(&ssl_error);
+            }
             return;
         };
 
@@ -348,6 +351,10 @@ impl WebSocketProxyTunnel {
         self.upgrade_client.with_taken(|client| client.clone())
     }
 
+    pub(crate) fn connected_websocket(&self) -> Option<RefPtr<WebSocketClient>> {
+        self.connected_websocket.cloned()
+    }
+
     /// Clear the upgrade client reference. Called before tunnel shutdown during
     /// cleanup so that the SSLWrapper's synchronous onHandshake/onClose callbacks
     /// do not re-enter the upgrade client's terminate/clearData path.
@@ -420,10 +427,10 @@ impl WebSocketProxyTunnel {
         !matches!(self.socket.get(), SocketUnion::None)
     }
 
-    pub(crate) fn remote_address(&self) -> Option<(core::net::IpAddr, u16)> {
+    pub(crate) fn remote_address(&self) -> Option<core::net::SocketAddr> {
         match self.socket.get() {
-            SocketUnion::Tcp(s) => remote_address_of(s),
-            SocketUnion::Ssl(s) => remote_address_of(s),
+            SocketUnion::Tcp(s) => s.remote_endpoint(),
+            SocketUnion::Ssl(s) => s.remote_endpoint(),
             SocketUnion::None => None,
         }
     }

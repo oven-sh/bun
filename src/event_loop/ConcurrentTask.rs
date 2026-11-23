@@ -83,6 +83,7 @@ pub mod task_tag {
         FetchTaskletDelivered,
         FetchTaskletPromiseSettle,
         FetchTaskletRequestDrain,
+        FetchTaskletTrace,
         FSWatchTask,
         GetAddrInfoLibuvComplete,
         GraphContextStopAgain,

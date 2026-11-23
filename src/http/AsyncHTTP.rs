@@ -179,6 +179,7 @@ fn make_client<'a>(
         compressed_request_body: Vec::new(),
         compressed_body_len: 0,
         pool: crate::PoolOptions::default(),
+        tracing: None,
     }
 }
 
@@ -630,6 +631,7 @@ impl InFlightRequest {
 
     /// Moves the request to its callback with the last result.
     pub(crate) fn finish(mut self) {
+        self.trace_request_stage();
         if self.state.flags.has_body_ahead_of_failure {
             self.send_partial_result();
         }

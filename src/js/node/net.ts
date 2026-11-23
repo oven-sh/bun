@@ -38,6 +38,7 @@ const {
   startPerf,
   stopPerf,
   isStoppedModuleGraphRunning,
+  builtinChannel,
 } = require("internal/shared");
 import type { Socket, SocketHandler, SocketListener } from "bun";
 import type { Server as NetServer, Socket as NetSocket, ServerOpts } from "node:net";
@@ -311,6 +312,13 @@ const kNativeSecureContextCtor = Symbol.for("::buntlsnativesecurecontextctor::")
 const kReinitializeHandle = Symbol("kReinitializeHandle");
 
 const kRealListen = Symbol("kRealListen");
+
+const clientSocketChannel = builtinChannel("net.client.socket");
+const serverSocketChannel = builtinChannel("net.server.socket");
+const listenStartChannel = builtinChannel("tracing:net.server.listen:asyncStart");
+const listenEndChannel = builtinChannel("tracing:net.server.listen:asyncEnd");
+const listenErrorChannel = builtinChannel("tracing:net.server.listen:error");
+
 const kSetNoDelay = Symbol("kSetNoDelay");
 const kSetTOS = Symbol("kSetTOS");
 const kSetKeepAlive = Symbol("kSetKeepAlive");
@@ -1453,6 +1461,7 @@ function onconnection(err, clientHandle) {
   } catch (e) {
     reportError(e);
   }
+  if (serverSocketChannel.hasSubscribers) serverSocketChannel.publish({ socket: _socket });
 }
 
 // Native code asks JS from inside every handshake for each of these members a table has, so a listener gets only what its server uses.
@@ -1966,6 +1975,10 @@ Socket.prototype.connect = function connect(...args) {
     let connection = this[ksocket];
     let upgradeDuplex = false;
     const { port, host, path, socket, rejectUnauthorized, checkServerIdentity, session, fd, pauseOnConnect } = options;
+    // Node takes over a descriptor or another socket without connect().
+    if (clientSocketChannel.hasSubscribers && fd == null && !socket && !connection) {
+      clientSocketChannel.publish({ socket: this });
+    }
     // A session over a transport the caller handed in has no connection of its own to dial again.
     if (!socket && this[kupgraded] && !this.destroyed) {
       const ex = new ExceptionWithHostPort(uv().UV_EISCONN, "connect", path || host || "localhost", port);
@@ -3424,158 +3437,153 @@ Server.prototype.getConnections = function getConnections(callback) {
 };
 
 Server.prototype.listen = function listen(port, hostname, backlogArg) {
-  const argsLength = arguments.length;
-  // The callback is always the last argument: https://github.com/nodejs/node/blob/v26.5.0/lib/net.js#L315-L319
-  const lastArg = argsLength > 0 ? arguments[argsLength - 1] : undefined;
-  let onListen = typeof lastArg === "function" ? lastArg : undefined;
-  // (path, backlog), (port, backlog) or (port, host, backlog)
-  let backlog = toNumber(argsLength > 1 && hostname) || toNumber(argsLength > 2 && backlogArg);
-  let path;
-  let exclusive = false;
-  let reusePort = false;
-  let ipv6Only = false;
-  let readableAll = false;
-  let writableAll = false;
-  let fd;
-  let hostDefaulted = false;
-  if (isPipeName(port)) {
-    path = port;
-    hostname = undefined;
-    port = undefined;
-  } else {
-    if (typeof hostname !== "string") hostname = undefined;
-
-    if (typeof port === "function") {
-      port = 0;
-    } else if (port !== null && typeof port === "object") {
-      const options = port;
-      addServerAbortSignalOption(this, options);
-
-      hostname = options.host;
-      exclusive = options.exclusive;
-      path = options.path;
-      port = options.port;
-      ipv6Only = options.ipv6Only;
-      // NOTE: options.allowHalfOpen for a server is consumed by the Server
-      // constructor (it shapes accepted sockets' Duplex behavior); the native
-      // listen always uses allowHalfOpen: true.
-      reusePort = options.reusePort;
-      backlog = options.backlog || backlog;
-      // For a unix-socket listen, readableAll/writableAll chmod the socket file
-      // in kRealListen; threaded through as locals (not stashed on the instance).
-      readableAll = options.readableAll;
-      writableAll = options.writableAll;
-
-      const optionsFd = options.fd;
-      if (typeof optionsFd === "number" && optionsFd >= 0) {
-        fd = optionsFd;
-        port = 0;
-      }
-
-      const isLinux = process.platform === "linux" || process.platform === "android";
-
-      // Match Node's listen() option normalization + validation.
-      // https://github.com/nodejs/node/blob/614050b657e9757c1097aa85f92f2cb51149dc0d/lib/net.js#L2145
-      if ((port === undefined && "port" in options) || port === null) {
-        port = 0;
-      }
-
-      if (typeof port === "number" || typeof port === "string") {
-        // validatePort coerces "0" -> 0 and throws ERR_SOCKET_BAD_PORT for
-        // out-of-range/non-numeric values; a valid port takes precedence over path.
-        validatePort(port, "options.port");
-        port = +port | 0;
-        // A valid port takes precedence over `path` (Node listens on TCP when both are given).
-        path = undefined;
-      } else if (isPipeName(path)) {
-        const isAbstractPath = path.startsWith("\0");
-        if (isLinux && isAbstractPath && (options.writableAll || options.readableAll)) {
-          const message = `The argument 'options' can not set readableAll or writableAll to true when path is abstract unix socket. Received ${JSON.stringify(options)}`;
-
-          const error = new TypeError(message);
-          error.code = "ERR_INVALID_ARG_VALUE";
-          throw error;
-        }
-
-        hostname = path;
-        port = undefined;
-      } else if (!("port" in options) && !("path" in options)) {
-        let message = 'The argument \'options\' must have the property "port" or "path"';
-        try {
-          message = `${message}. Received ${JSON.stringify(options)}`;
-        } catch {}
-
-        const error = new TypeError(message);
-        error.code = "ERR_INVALID_ARG_VALUE";
-        throw error;
-      } else {
-        let message = "The argument 'options' is invalid";
-        try {
-          message = `${message}. Received ${JSON.stringify(options)}`;
-        } catch {}
-
-        const error = new TypeError(message);
-        error.code = "ERR_INVALID_ARG_VALUE";
-        throw error;
-      }
-
-      // port <number>
-      // host <string>
-      // path <string> Will be ignored if port is specified. See Identifying paths for IPC connections.
-      // backlog <number> Common parameter of server.listen() functions.
-      // exclusive <boolean> Default: false
-      // readableAll <boolean> For IPC servers makes the pipe readable for all users. Default: false.
-      // writableAll <boolean> For IPC servers makes the pipe writable for all users. Default: false.
-      // ipv6Only <boolean> For TCP servers, setting ipv6Only to true will disable dual-stack support, i.e., binding to host :: won't make 0.0.0.0 be bound. Default: false.
-      // signal <AbortSignal> An AbortSignal that may be used to close a listening server.
-
-      const { callback } = options;
-      if (typeof callback === "function") onListen = callback;
-    } else if (port === undefined || port === null) {
-      port = 0;
-    } else if (typeof port === "number" || typeof port === "string") {
-      // Positional port: validatePort coerces and throws ERR_SOCKET_BAD_PORT for
-      // out-of-range/non-numeric values, matching Node's normalizeArgs + validatePort.
-      validatePort(port, "options.port");
-      port = +port | 0;
-    } else {
-      let message = "The argument 'options' is invalid";
-      try {
-        message = `${message}. Received ${JSON.stringify(port)}`;
-      } catch {}
-      const error = new TypeError(message);
-      error.code = "ERR_INVALID_ARG_VALUE";
-      throw error;
-    }
-    if (reusePort === true) {
-      exclusive = true;
-    }
-    var clusterHost: string | null | undefined = typeof hostname === "string" && hostname.length > 0 ? hostname : null;
-    hostDefaulted = !hostname && fd === undefined;
-    hostname = hostname || "::";
-  }
-
   if (this._handle) {
     throw $ERR_SERVER_ALREADY_LISTEN();
   }
 
+  const argsLength = arguments.length;
+  // The callback is always the last argument: https://github.com/nodejs/node/blob/v26.5.0/lib/net.js#L315-L319
+  const lastArg = argsLength > 0 ? arguments[argsLength - 1] : undefined;
+  const onListen = typeof lastArg === "function" ? lastArg : undefined;
+  // (path, backlog), (port, backlog) or (port, host, backlog)
+  const backlog = toNumber(argsLength > 1 && hostname) || toNumber(argsLength > 2 && backlogArg);
+
+  let options;
+  const hasNoAddress = argsLength === 0 || typeof port === "function";
+  if (hasNoAddress) {
+    // Node publishes the callback as the port.
+    options = {};
+  } else if (port !== null && typeof port === "object") {
+    options = port;
+  } else if (isPipeName(port)) {
+    options = { path: port };
+  } else {
+    options = typeof hostname === "string" ? { port, host: hostname } : { port };
+  }
+
+  // A subscriber can change the options.
+  if (listenStartChannel.hasSubscribers) listenStartChannel.publish({ server: this, options });
+  if (options !== port) options = { __proto__: null, ...options };
+  if (hasNoAddress) options.port ??= 0;
+
+  try {
+    listenWithOptions(this, options, backlog, onListen);
+  } catch (error) {
+    // Node publishes nothing for what listen() throws.
+    publishListenError(this, error);
+    throw error;
+  }
+  return this;
+};
+
+function listenWithOptions(server, options, backlog, onListen) {
+  addServerAbortSignalOption(server, options);
+
+  let hostname = options.host;
+  let exclusive = options.exclusive;
+  let path = options.path;
+  let port = options.port;
+  const ipv6Only = options.ipv6Only;
+  // NOTE: options.allowHalfOpen for a server is consumed by the Server
+  // constructor (it shapes accepted sockets' Duplex behavior); the native
+  // listen always uses allowHalfOpen: true.
+  const reusePort = options.reusePort;
+  backlog = options.backlog || backlog;
+  // For a unix-socket listen, readableAll/writableAll chmod the socket file
+  // in kRealListen; threaded through as locals (not stashed on the instance).
+  const readableAll = options.readableAll;
+  const writableAll = options.writableAll;
+
+  let fd;
+  const optionsFd = options.fd;
+  if (typeof optionsFd === "number" && optionsFd >= 0) {
+    fd = optionsFd;
+    port = 0;
+  }
+
+  const isLinux = process.platform === "linux" || process.platform === "android";
+
+  // Match Node's listen() option normalization + validation.
+  // https://github.com/nodejs/node/blob/614050b657e9757c1097aa85f92f2cb51149dc0d/lib/net.js#L2145
+  if ((port === undefined && "port" in options) || port === null) {
+    port = 0;
+  }
+
+  if (typeof port === "number" || typeof port === "string") {
+    // validatePort coerces "0" -> 0 and throws ERR_SOCKET_BAD_PORT for
+    // out-of-range/non-numeric values; a valid port takes precedence over path.
+    validatePort(port, "options.port");
+    port = +port | 0;
+    // A valid port takes precedence over `path` (Node listens on TCP when both are given).
+    path = undefined;
+  } else if (isPipeName(path)) {
+    const isAbstractPath = path.startsWith("\0");
+    if (isLinux && isAbstractPath && (options.writableAll || options.readableAll)) {
+      const message = `The argument 'options' can not set readableAll or writableAll to true when path is abstract unix socket. Received ${JSON.stringify(options)}`;
+
+      const error = new TypeError(message);
+      error.code = "ERR_INVALID_ARG_VALUE";
+      throw error;
+    }
+
+    hostname = path;
+    port = undefined;
+  } else if (!("port" in options) && !("path" in options)) {
+    let message = 'The argument \'options\' must have the property "port" or "path"';
+    try {
+      message = `${message}. Received ${JSON.stringify(options)}`;
+    } catch {}
+
+    const error = new TypeError(message);
+    error.code = "ERR_INVALID_ARG_VALUE";
+    throw error;
+  } else {
+    let message = "The argument 'options' is invalid";
+    try {
+      message = `${message}. Received ${JSON.stringify(options)}`;
+    } catch {}
+
+    const error = new TypeError(message);
+    error.code = "ERR_INVALID_ARG_VALUE";
+    throw error;
+  }
+
+  // port <number>
+  // host <string>
+  // path <string> Will be ignored if port is specified. See Identifying paths for IPC connections.
+  // backlog <number> Common parameter of server.listen() functions.
+  // exclusive <boolean> Default: false
+  // readableAll <boolean> For IPC servers makes the pipe readable for all users. Default: false.
+  // writableAll <boolean> For IPC servers makes the pipe writable for all users. Default: false.
+  // ipv6Only <boolean> For TCP servers, setting ipv6Only to true will disable dual-stack support, i.e., binding to host :: won't make 0.0.0.0 be bound. Default: false.
+  // signal <AbortSignal> An AbortSignal that may be used to close a listening server.
+
+  const { callback } = options;
+  if (typeof callback === "function") onListen = callback;
+  if (reusePort === true) {
+    exclusive = true;
+  }
+  const clusterHost: string | null = typeof hostname === "string" && hostname.length > 0 ? hostname : null;
+  let hostDefaulted = !hostname && fd === undefined;
+  hostname = hostname || "::";
+
   if (onListen != null) {
-    this.once("listening", onListen);
+    server.once("listening", onListen);
   }
 
   try {
     var tls: any = undefined;
     var TLSSocketClass = undefined;
-    const bunTLS = this[bunTlsSymbol];
-    const options = this[bunSocketServerOptions];
+    const bunTLS = server[bunTlsSymbol];
+    const serverOptions = server[bunSocketServerOptions];
     let contexts: Map<string, any> | null = null;
     if (typeof bunTLS === "function") {
-      [tls, TLSSocketClass] = bunTLS.$call(this, hostname);
-      options.servername = tls.serverName;
-      options[kSocketClass] = TLSSocketClass;
+      [tls, TLSSocketClass] = bunTLS.$call(server, hostname);
+      serverOptions.servername = tls.serverName;
+      serverOptions[kSocketClass] = TLSSocketClass;
       contexts = tls.contexts;
     } else {
-      options[kSocketClass] = Socket;
+      serverOptions[kSocketClass] = Socket;
     }
 
     const flags = (ipv6Only === true ? 1 : 0) | (reusePort === true ? 2 : 0);
@@ -3597,7 +3605,7 @@ Server.prototype.listen = function listen(port, hostname, backlogArg) {
     for (;;) {
       try {
         listenInCluster(
-          this,
+          server,
           queryAddress,
           queryPort,
           queryAddressType,
@@ -3625,10 +3633,24 @@ Server.prototype.listen = function listen(port, hostname, backlogArg) {
   } catch (err) {
     const address = path ?? (fd === undefined ? hostname : null);
     const { listenException } = require("internal/net/errors");
-    process.nextTick(emitErrorNextTick, this, listenException(err, address, path != null ? -1 : port));
+    failToListen(server, listenException(err, address, path != null ? -1 : port));
   }
-  return this;
-};
+}
+
+function publishListenError(server, error) {
+  if (listenErrorChannel.hasSubscribers) listenErrorChannel.publish({ server, error });
+}
+
+function failToListen(server, error) {
+  publishListenError(server, error);
+  process.nextTick(emitErrorNextTick, server, error);
+}
+
+function announceListening(server) {
+  if (listenEndChannel.hasSubscribers) listenEndChannel.publish({ server });
+  // A tick, not a timer, so a close() from 'listening' runs before the loop accepts anything (as in Node).
+  process.nextTick(emitListeningNextTick, server);
+}
 
 Server.prototype[kRealListen] = function (
   path,
@@ -3705,9 +3727,6 @@ Server.prototype[kRealListen] = function (
 
   // Unref the handle if the server was unref'ed prior to listening
   if (this._unref) this.unref();
-
-  // A tick, not a timer, so a close() from 'listening' runs before the loop accepts anything (as in Node).
-  process.nextTick(emitListeningNextTick, this);
 };
 
 Server.prototype[EventEmitter.captureRejectionSymbol] = function (err, event, sock) {
@@ -3776,7 +3795,8 @@ function listenInCluster(
     require("node:dns").lookup(address, (err, ip, family) => {
       if (lookupListeningId !== server[kClusterListeningId]) return;
       if (err) {
-        // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2268-L2269
+        // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2268-L2269, which publishes nothing.
+        publishListenError(server, err);
         server.emit("error", err);
         return;
       }
@@ -3816,6 +3836,7 @@ function listenInCluster(
       contexts,
       fd,
     );
+    announceListening(server);
     return;
   }
 
@@ -3841,6 +3862,8 @@ function listenInCluster(
     if (err) {
       const ex = new ExceptionWithHostPort(err, "bind", address, port);
       if (typeof _reply?.bunHint === "string") ex.message += `\n  note: ${_reply.bunHint}`;
+      // Node publishes nothing.
+      publishListenError(server, ex);
       server.emit("error", ex);
       return;
     }
@@ -3875,8 +3898,10 @@ function listenInCluster(
         server[kClusterUnixPath] = undefined;
         handle[kClusterOwner] = null;
         handle.close();
-        process.nextTick(emitErrorNextTick, server, err);
+        failToListen(server, err);
+        return;
       }
+      announceListening(server);
       return;
     }
     server[kClusterFauxListen](handle, backlog, path);
@@ -3899,7 +3924,7 @@ Server.prototype[kClusterFauxListen] = function (handle, backlog, path) {
   handle[kClusterOwner] = this;
   handle.listen(backlog || 511);
   if (this._unref) this.unref();
-  process.nextTick(emitListeningNextTick, this);
+  announceListening(this);
 };
 
 function onClusterConnection(err, clientHandle) {
@@ -3947,7 +3972,11 @@ function onClusterConnection(err, clientHandle) {
   socket.server = self;
   socket._server = self;
   self._connections++;
-  self.emit("connection", socket);
+  try {
+    self.emit("connection", socket);
+  } finally {
+    if (serverSocketChannel.hasSubscribers) serverSocketChannel.publish({ socket });
+  }
 }
 
 function createServer(options, connectionListener) {

@@ -10,7 +10,6 @@ path = "lib.rs"
 workspace = true
 
 [dependencies]
-strum.workspace = true
 bstr.workspace = true
 thiserror.workspace = true
 bun_base64.workspace = true

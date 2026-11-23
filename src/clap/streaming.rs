@@ -27,7 +27,7 @@ pub enum State<'a> {
     RestArePositional,
 }
 
-#[derive(thiserror::Error, strum::IntoStaticStr, Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(thiserror::Error, Debug, Copy, Clone, PartialEq, Eq)]
 pub enum ArgError {
     #[error("DoesntTakeValue")]
     DoesntTakeValue,

@@ -64,7 +64,7 @@ pub struct Condition {
 /// migrated call sites can keep `Condvar::new()` / `notify_one()` / `notify_all()`.
 pub type Condvar = Condition;
 
-#[derive(thiserror::Error, strum::IntoStaticStr, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(thiserror::Error, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TimeoutError {
     #[error("Timeout")]
     Timeout,

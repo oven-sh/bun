@@ -15,6 +15,8 @@ pub(crate) enum Step {
     Done,
     /// Call again when the descriptor is ready.
     Wait,
+    /// Call again now, unless the job was cancelled.
+    Again,
 }
 
 pub(crate) trait FdOp: Send + Sized + 'static {
@@ -87,14 +89,20 @@ impl<Op: FdOp> FdJob<Op> {
         Job::<Self>::schedule(cx, Self { op, result: Ok(()) }, js);
     }
 
-    fn advance(job: Running<Self>, wait: FdWait, step: Result<Step, Box<SystemError>>) {
-        let result = match step {
-            Ok(Step::Done) => Ok(()),
-            Ok(Step::Wait) => match POLLER.admit(job.shared(), &wait) {
-                Ok(poller) => return poller.park(Parked(job.suspend((wait, Ok(()))))),
-                Err(err) => Err(err.into()),
-            },
-            Err(err) => Err(err),
+    fn advance(mut job: Running<Self>, wait: FdWait, mut step: Result<Step, Box<SystemError>>) {
+        let result = loop {
+            step = match step {
+                Ok(Step::Done) => break Ok(()),
+                Ok(Step::Wait) => match POLLER.admit(job.shared(), &wait) {
+                    Ok(poller) => return poller.park(Parked(job.suspend((wait, Ok(()))))),
+                    Err(err) => break Err(err.into()),
+                },
+                Ok(Step::Again) => match job.shared().check_cancelled(&wait) {
+                    Ok(()) => job.off().op.step(wait.fd(), false),
+                    Err(err) => break Err(err.into()),
+                },
+                Err(err) => break Err(err),
+            };
         };
         drop(wait);
         Self::finish(job, result);

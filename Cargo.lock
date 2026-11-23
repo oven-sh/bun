@@ -2212,6 +2212,7 @@ dependencies = [
  "bun_core",
  "bun_errno",
  "bun_hpack",
+ "bun_http1",
  "bun_http_types",
  "bun_libuv_sys",
  "bun_opaque",

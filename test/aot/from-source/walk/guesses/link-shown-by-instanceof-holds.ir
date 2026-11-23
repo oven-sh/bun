@@ -1,18 +1,19 @@
 # -- source: link-shown-by-instanceof-holds.cjs
-# function Pair(car, cdr) { this.car = car; this.cdr = cdr; }
-# var isSame = function (one, other) {
-#   if (!(one instanceof Pair)) return one === other;
-#   if (!(other instanceof Pair)) return false;
-#   return isSame(one.car, other.car) && isSame(one.cdr, other.cdr);
+# function Bead(hue, below) { this.hue = hue; this.below = below; }
+# var together = function (one, other) {
+#   if (!(one instanceof Bead)) return 0;
+#   if (!(other instanceof Bead)) return 1;
+#   var rest = together(one.below, other.below) * 2;
+#   return one.hue === other.hue ? rest + 3 : rest;
 # };
-# function read(text) { var list = null; for (var word of text.split(" ")) list = new Pair(word, list); return list; }
-# var texts = ["a b c", "a b", "a b c"], count = 0;
-# for (var one of texts) for (var other of texts) if (isSame(read(one), read(other))) count++;
-# globalThis.handed = [Pair, isSame, read("a b")];
-# console.log(count);
+# function strung(text) { var string = "hook"; for (var hue of text.split(" ")) string = new Bead(hue, string); return string; }
+# var texts = ["red blue tan", "red blue", "tan blue tan"], sum = 0;
+# for (var one of texts) for (var other of texts) sum = sum * 5 % 1009 + together(strung(one), strung(other));
+# globalThis.handed = [Bead, together, strung("red blue")];
+# console.log(sum);
 # -- end of source
 # The second instanceof asks the guards of the class no more: the first has shown them, the prototype's link among them.
 # RUN: walk f3:Body mechanisms=all
 # CHECK: = AreMembersUnchanged conditions=[{layout=L0 side=Static key=@@hasInstance}, {layout=L0 side=Static key="prototype"}, {kind=PrototypeLinkUnchanged layout=L0}]
 # CHECK-NOT: kind=PrototypeLinkUnchanged
-# CHECK: = GetSlot {{*}}key="car" receivers=[L0] level=Proven
+# CHECK: = GetSlot {{*}}key="below" receivers=[L0] level=Proven

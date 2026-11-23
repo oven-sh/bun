@@ -510,6 +510,13 @@ impl Loop {
         // SAFETY: self is a live loop.
         unsafe { uv_loop_alive(self) != 0 }
     }
+    pub fn is_active_besides(&self, refs: u32) -> bool {
+        let all = self.active_handles.get();
+        self.active_handles.set(all.saturating_sub(refs));
+        let is_active = self.is_active();
+        self.active_handles.set(all);
+        is_active
+    }
     /// Unlike `uv_loop_alive`, also finds unref'd handles. Only looks at I/O, process and fs-watch handles.
     pub fn has_active_io_handles(&self) -> bool {
         let mut found = false;

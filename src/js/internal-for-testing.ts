@@ -56,6 +56,7 @@ export const xxHash3ForTesting: (view: ArrayBufferView, seed?: number | bigint) 
 // fills `arg` with uint32 offsets and returns how many. oddBlocks fills `arg`
 // with uint64 words and returns 0, and so does byteBits, for `byte`.
 // byteSetPrefixLength takes a set of 32 bytes.
+// Those for zstd are only there on x64, and return 1 or 0.
 export const highwayStringsForTesting: (
   op:
     | "indexOfChar"
@@ -78,7 +79,10 @@ export const highwayStringsForTesting: (
     | "lineStarts"
     | "oddBlocks"
     | "byteBits"
-    | "byteSetPrefixLength",
+    | "byteSetPrefixLength"
+    | "zstdIsQuicker"
+    | "zstdCountBytes"
+    | "zstdWriteCodes",
   haystack: Uint8Array,
   arg: number | Uint8Array,
   byte?: number,
@@ -1011,6 +1015,9 @@ export const getEventLoopStats: () => {
   /** When the next sweep is due, in ns of the monotonic clock, or -1 while the timer is off. Not on Windows, where libuv has the timer. */
   sweepDeadline?: number;
 } = $bindgen("event_loop.bind.ts", "getActiveTasks");
+
+/** Runs the event loop under the caller until `promise` settles. Throws what it rejects with. */
+export const runEventLoopUntil: (promise: Promise<unknown>) => void = $bindgen("event_loop.bind.ts", "runUntilSettled");
 
 export const hostedGitInfo = {
   parseUrl: $bindgen("hosted_git_info_jsc.bind.ts", "parseUrl"),

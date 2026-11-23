@@ -1855,7 +1855,6 @@
     "aot/files-run-early-by-star-exports.test.ts",
     "aot/originals-ask-load-plugins.test.ts",
     "aot/originals-come-from-disk.test.ts",
-    "aot/joined-package-files.test.ts",
     "aot/commonjs-originals-stay-under-their-key.test.ts",
     "aot/strings-of-builtin-methods.test.ts",
     "aot/mocks-of-deferred-imports.test.ts",
@@ -1903,6 +1902,15 @@
     "aot/order-file.test.ts",
     "aot/type-errors-that-several-projects-are-asked-about.test.ts",
     "aot/a-file-that-only-asks-about-evaluators-is-built-where-code-from-disk-is-allowed.test.ts",
-    "aot/an-import-in-a-text-calls-the-replaced-eval.test.ts"
+    "aot/an-import-in-a-text-calls-the-replaced-eval.test.ts",
+    "aot/what-a-build-says-is-written-at-once.test.ts",
+    "aot/files-that-load-again-by-module.test.ts",
+    "aot/the-global-object-that-goes-somewhere-opens-no-test-run.test.ts",
+    "aot/a-todo-for-one-platform-counts-there-alone.test.ts",
+    "aot/a-path-leads-to-its-file-where-the-sources-are-gone.test.ts",
+    "aot/library-class-fields.test.ts",
+    "aot/library-comparisons.test.ts",
+    "aot/library-loads.test.ts",
+    "aot/a-folder-lists-an-imported-file-at-the-name-of-an-entry-point.test.ts"
   ]
 }

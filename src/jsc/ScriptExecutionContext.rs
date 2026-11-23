@@ -345,7 +345,7 @@ pub struct AbortHandle {
     signal: JsCell<Option<AbortSignalRef>>,
     /// Its context stopped it, or had already stopped when it was armed.
     context_stopped: core::cell::Cell<bool>,
-    /// The owner never runs script by itself, like the sink of an idle `process.stdout`.
+    /// The owner never runs script by itself, like the sink of an idle `process.stdout`, or has a keep-alive to say so.
     only_waits_to_be_closed: core::cell::Cell<bool>,
 }
 

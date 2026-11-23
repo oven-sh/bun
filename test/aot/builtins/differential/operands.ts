@@ -46,7 +46,7 @@ export const neverCalled: ReadonlyMap<RegExp, string> = new Map([
   [/^process\.(umask|setuid|setgid|seteuid|setegid|setgroups|initgroups|_startProfilerIdleNotifier|_stopProfilerIdleNotifier|setUncaughtExceptionCaptureCallback)$/, "it changes the state of the process"],
   [/^process\.(stdin|openStdin)\b/, "it takes over a standard stream"],
   [/^Bun\.(sleepSync|spawn|spawnSync|openInEditor|serve|listen|connect|udpSocket|build|\$|plugin|generateHeapSnapshot|shrink)$/, "it blocks, starts a process or opens a socket"],
-  [/^Atomics\.wait$/, "it blocks the thread"],
+  [/^Atomics\.wait$|^native:Bindgen:event_loop\.bind\.ts:runUntilSettled$/, "it blocks the thread"],
   [/^%AsyncFromSyncIterator%\.prototype\.(next|return|throw)$/, "no program can hold it or the object that it works on: the engine alone calls it, behind `for await` and `yield*` over an iterator that is not async, and native code takes `this` on trust"],
   [/^%NodeJSFS%\.prototype\.(close|ftruncate)(Sync|Cb)?$|^native:Bindgen:(udp_socket\.bind\.ts:dgram(Close|Adopt|Bind|Listen)Fd|node_cluster_binding\.bind\.ts:clusterCloseHandle|node_fs_binding\.bind\.ts:closeSync)$|^%NativeFunctions%\.(Udp_socketBindTsDgram(Close|Adopt|Bind|Listen)Fd|Node_cluster_bindingBindTsClusterCloseHandle|Node_fs_bindingBindTsCloseSync)$/, "it closes, cuts or takes over whichever descriptor its operand numbers, those of the test too"],
   [/^native:Bindgen:node_fs_binding\.bind\.ts:(appendFileSync|chmodSync)$|^%NativeFunctions%\.Node_fs_bindingBindTs(AppendFileSync|ChmodSync)$/, "it writes to, or changes the rights of, whichever file its operand names, those of the test too"],

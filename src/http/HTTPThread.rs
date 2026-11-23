@@ -582,16 +582,14 @@ impl HttpThread {
         }
     }
 
+    /// One resume per request. A resume can queue the next one, which waits for the next turn.
     fn drain_queued_receive_resumes(&mut self) {
-        loop {
-            let queued = core::mem::take(&mut *INBOX.receive_resumes.lock());
-            if queued.is_empty() {
-                return;
-            }
-            for id in queued {
-                if let Some(carrier) = self.carrier_of(id) {
-                    carrier.receive_resumed(id);
-                }
+        let mut queued = core::mem::take(&mut *INBOX.receive_resumes.lock());
+        queued.sort_unstable();
+        queued.dedup();
+        for id in queued {
+            if let Some(carrier) = self.carrier_of(id) {
+                carrier.receive_resumed(id);
             }
         }
     }

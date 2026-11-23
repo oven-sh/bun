@@ -443,6 +443,7 @@ declare global {
       keepAliveTimeout?: number;
       keepAliveTimeoutBuffer?: number;
       joinDuplicateHeaders?: boolean;
+      requireHostHeader?: boolean;
       httpAllowHalfOpen?: boolean;
       shouldUpgradeCallback?: (request: IncomingMessage) => boolean;
       [kIncomingMessage]?: IncomingMessageConstructor;
@@ -500,6 +501,7 @@ declare global {
         reusePort: boolean,
         ipv6Only: boolean,
         fd?: number,
+        wildcard?: string,
       ): void;
       [kLeaveHttp](socket: HttpServerSocket, request: IncomingMessage): void;
     }

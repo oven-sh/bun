@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/_http_agent.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 efe09ed4fb7c04a574a48ce35006764a571e87d6f280b8a46dd84839872665d4.
+// Written against that file with the SHA-256 27ba3e10b153bf5e63b90a610587e9ac7540813b2a96f0491ae2edebbe522302.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // This is a port of Node.js's lib/_http_agent.js
@@ -12,7 +12,7 @@ const kProxyConfig: typeof http.kProxyConfig = http.kProxyConfig;
 const kWaitForProxyTunnel: typeof http.kWaitForProxyTunnel = http.kWaitForProxyTunnel;
 const kPerRequestCheckServerIdentity: typeof http.kPerRequestCheckServerIdentity = http.kPerRequestCheckServerIdentity;
 const shared = require("internal/shared");
-const { kEmptyObject, once } = shared;
+const { kEmptyObject, once, builtinChannel } = shared;
 const { validateNumber, validateOneOf, validateString } = require("internal/validators");
 const { isIP } = require("internal/net/isIP");
 const netSymbols = require("internal/net/symbols");
@@ -329,10 +329,16 @@ Agent.prototype.getName = function getName(this: $Node.Agent, options: $Node.Cli
   return name;
 };
 
+const onClientRequestErrorChannel = builtinChannel("http.client.request.error");
+
 function handleSocketAfterProxy(err: Error & { proxyTunnelTimeout?: boolean }, req: $Node.ClientRequest) {
   if (err.code === "ERR_PROXY_TUNNEL") {
     if (err.proxyTunnelTimeout) {
       req.emit("timeout"); // Propagate the timeout from the tunnel to the request.
+    }
+    // Node does not publish this one.
+    if (onClientRequestErrorChannel.hasSubscribers) {
+      onClientRequestErrorChannel.publish({ request: req, error: err });
     }
     req.emit("error", err);
   }

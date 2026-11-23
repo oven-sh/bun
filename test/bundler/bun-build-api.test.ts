@@ -1,5 +1,5 @@
 import assert from "assert";
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from "fs";
 import {
   bunEnv,
@@ -8,8 +8,10 @@ import {
   expectRssDeltaBelow,
   isASAN,
   isDebug,
+  isLinux,
   isWindows,
   MAX_PATH_BYTES,
+  substDrive,
   tempDir,
   tempDirWithFiles,
   tempDirWithFilesAnon,
@@ -44,6 +46,80 @@ describe("Bun.build", () => {
     expect(build.outputs).toHaveLength(1);
     expect(build.outputs[0].kind).toBe("asset");
     expect(await build.outputs[0].text()).toEqualIgnoringWhitespace(".hello{color:#00f}.hi{color:red}\n");
+  });
+
+  test.skipIf(isWindows)("outputs[].path keeps a backslash in outdir and naming", async () => {
+    using dir = tempDir("bun-build-api-backslash", { "entry.js": `console.log(1);` });
+
+    const { outputs } = await Bun.build({
+      entrypoints: [join(String(dir), "entry.js")],
+      outdir: join(String(dir), "a\\b"),
+      naming: "c\\..\\[name].[ext]",
+    });
+
+    expect(outputs.map(output => output.path)).toEqual([join(String(dir), "a\\b", "c\\..\\entry.js")]);
+    expect(await outputs[0].text()).toContain("console.log(1);");
+  });
+
+  test.skipIf(isWindows)("a backslash in the name of a source does not lead a browser to another host", async () => {
+    using dir = tempDir("bun-build-api-backslash-source", {
+      "entry.js": `
+        import image from "./image.png";
+        console.log(image, import("./lazy.js"), import("./dir/a.js"), import("./root/host.js"), import("./second.js"));`,
+      "\\host\\image.png": "image",
+      "\\host\\lazy.js": "export default 1;",
+      "\\host/a.js": "export default 2;",
+      "\\/host.js": "export default 3;",
+      "\\host\\second.js": "export default 4;",
+    });
+    symlinkSync("\\host\\image.png", join(String(dir), "image.png"));
+    symlinkSync("\\host\\lazy.js", join(String(dir), "lazy.js"));
+    symlinkSync("\\host", join(String(dir), "dir"));
+    symlinkSync("\\", join(String(dir), "root"));
+    symlinkSync("\\host\\second.js", join(String(dir), "second.js"));
+
+    const { outputs } = await Bun.build({
+      entrypoints: [join(String(dir), "entry.js"), join(String(dir), "second.js")],
+      splitting: true,
+      publicPath: "/",
+      naming: { chunk: "[dir]/[name].[ext]", asset: "[name].[ext]" },
+    });
+
+    const text = await outputs.find(output => output.path.endsWith("entry.js"))!.text();
+    expect([...text.matchAll(/(?:=|import\()\s*"(\/.*?)"/g)].map(match => match[1]).sort()).toEqual([
+      "/%5Chost%5Csecond.js",
+      "/_/host.js",
+      "/_host/a.js",
+      "/_host_image.png",
+      "/_host_lazy.js",
+    ]);
+  });
+
+  test("process.chdir() during a build does not change the paths between outputs", async () => {
+    const files: Record<string, string> = { "a/.keep": "", "b/c/d/.keep": "" };
+    for (let i = 0; i < 100; i++) files[`src/lazy${i}.js`] = `export default ${i};`;
+    for (let page = 0; page < 20; page++) {
+      files[`src/pages/p${page}.js`] = Array.from({ length: 100 }, (_, i) => `import("../lazy${i}.js");`).join("\n");
+    }
+    files["build.js"] = `
+      const root = import.meta.dir;
+      const entrypoints = Array.from({ length: 20 }, (_, page) => root + "/src/pages/p" + page + ".js");
+      const specifiers = new Set();
+      for (let round = 0; round < ${isDebug ? 2 : 20}; round++) {
+        let done = false;
+        const build = Bun.build({ entrypoints, root: root + "/src", splitting: true, naming: { chunk: "chunks/[name].js" } });
+        build.finally(() => (done = true));
+        while (!done) {
+          for (let i = 0; i < 50; i++) process.chdir(root + (i % 2 ? "/a" : "/b/c/d"));
+          await new Promise(setImmediate);
+        }
+        for (const output of (await build).outputs)
+          for (const [, directory] of (await output.text()).matchAll(/import\\("(.*\\/)/g)) specifiers.add(directory);
+      }
+      console.log(...specifiers);
+    `;
+    using dir = tempDir("bun-build-api-chdir", files);
+    expect(await bunRun(join(String(dir), "build.js"))).toSpawn("../chunks/");
   });
 
   test("a file imported by its default type and with { type: 'file' } is one output", async () => {
@@ -465,6 +541,16 @@ describe("Bun.build", () => {
       expect(result.stderr).not.toContain("[Disk Cache] Cache hit");
       expect(result.exitCode).toBe(0);
     }
+  });
+
+  test.skipIf(isWindows)("`sources` of a source map counts an outdir with a backslash as one directory", async () => {
+    using dir = tempDir("build-backslash-sources", { "entry.js": "console.log(1);" });
+    await Bun.build({
+      entrypoints: [join(String(dir), "entry.js")],
+      outdir: join(String(dir), "o\\p"),
+      sourcemap: "external",
+    });
+    expect((await Bun.file(join(String(dir), "o\\p", "entry.js.map")).json()).sources).toEqual(["../entry.js"]);
   });
 
   test("passing undefined doesnt segfault", () => {
@@ -1878,6 +1964,19 @@ export { greeting };`,
     }
   });
 
+  test("a backslash separates, as in --tsconfig-override", async () => {
+    using dir = tempDir("tsconfig-api-backslash", {
+      "cfg/ts.json": JSON.stringify({ compilerOptions: { strict: false, paths: { which: ["../real.ts"] } } }),
+      "real.ts": `export default "real";`,
+      "index.ts": `export { default } from "which"; export let loose: number = null;`,
+    });
+    process.chdir(String(dir));
+    const { outputs } = await Bun.build({ entrypoints: ["./index.ts"], tsconfig: "./cfg\\ts.json", dts: true });
+    process.chdir(originalCwd);
+    expect(outputs.map(output => path.basename(output.path))).toContain("index.aot.ts");
+    expect(await outputs[0].text()).toContain(`"real"`);
+  });
+
   test("should work from nested directories", async () => {
     const dir = tempDirWithFiles("tsconfig-api-nested", {
       "tsconfig.json": `{
@@ -2706,19 +2805,11 @@ describe.concurrent("Bun.build with a path longer than the path buffer", () => {
   }
 
   test("fails the build when an in-memory entry point's directory is too long", async () => {
-    // Windows can't look up a key this long in `files`, so it looks for the directory on disk and Bun.build() throws.
-    const message = isWindows
-      ? "ENOSYS: failed to open root directory"
-      : "ENAMETOOLONG: Failed to get full path for directory";
+    const message = "ENAMETOOLONG: Failed to get full path for directory";
     expect(
       await run(`
         const entry = "/" + long + "/entry.js";
-        let build;
-        try {
-          build = await Bun.build({ entrypoints: [entry], files: { [entry]: "console.log(123)" }, throw: false });
-        } catch (error) {
-          build = { success: false, logs: [error] };
-        }
+        const build = await Bun.build({ entrypoints: [entry], files: { [entry]: "console.log(123)" }, throw: false });
         console.log(build.success, build.logs.map(log => log.message.slice(0, ${message.length})));
       `),
     ).toEqual({
@@ -2756,6 +2847,17 @@ describe.concurrent("Bun.build with a path longer than the path buffer", () => {
         console.log(build.success, build.logs.map(log => /^Output path for .* is too long/.test(log.message)));
       `),
     ).toEqual({ stdout: "false [ true ]\n", stderr: "", exitCode: 0 });
+  });
+
+  // A build with assertions stops at the NUL.
+  test.skipIf(isWindows || isDebug || isASAN)("an outdir that is too long is refused behind a NUL too", async () => {
+    using dir = tempDir("bun-build-api-outdir-nul", { "entry.js": "" });
+    const outdir = join(String(dir), "x/y") + "\0" + Buffer.alloc(MAX_PATH_BYTES, "/a").toString();
+
+    const { success } = await Bun.build({ entrypoints: [join(String(dir), "entry.js")], outdir, throw: false });
+
+    expect(success).toBe(false);
+    expect(readdirSync(String(dir))).toEqual(["entry.js"]);
   });
 
   test("fails the build when compile.outfile is too long", async () => {
@@ -2798,3 +2900,482 @@ test("the hash in a chunk's name follows everything that the chunk reaches, thro
   expect(first.filter(name => !changed.includes(name))).toHaveLength(count);
   expect(changed).toContain(first.find(name => name.startsWith("apart-"))!);
 });
+
+// In subprocesses: a build that is stuck for good holds up the other tests of this file.
+describe.concurrent("Bun.build while another build waits for its plugins", () => {
+  const running = new Set<Bun.Subprocess>();
+  afterAll(() => running.forEach(proc => proc.kill("SIGKILL")));
+  async function spawn(cmd: string[], cwd?: string) {
+    await using proc = Bun.spawn({
+      cmd,
+      // As on macOS and Windows.
+      env: { ...bunEnv, BUN_FEATURE_FLAG_FORCE_IO_POOL: "1" },
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 60_000,
+      killSignal: "SIGKILL",
+    });
+    running.add(proc);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    running.delete(proc);
+    return { stdout, stderr, exitCode };
+  }
+  async function run(script: string, files: Record<string, string> = {}) {
+    using dir = tempDir("bun-build-while-waiting", {
+      "entry.ts": `import text from "./embedded.ts"; console.log(text);`,
+      "embedded.ts": `export default "on disk";`,
+      "inner.ts": `console.log("inner code");`,
+      ...files,
+      "run.ts": /* ts */ `
+        import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+        const build = (entry, setup?, more?) =>
+          Bun.build({ entrypoints: ["./" + entry], plugins: setup ? [{ name: "p", setup }] : [], ...more });
+        const text = async result => (await result).outputs[0].text();
+        const embed = async result => ({ contents: "export default " + JSON.stringify(await text(result)), loader: "js" });
+        const hasInner = async result => console.log((await text(result)).includes("inner code"));
+        ${script}
+      `,
+    });
+    return await spawn([bunExe(), "run.ts"], String(dir));
+  }
+  const printed = (stdout: string) => ({ stdout, stderr: "", exitCode: 0 });
+
+  test.each([
+    ["onResolve of an entry point", `b.onResolve({ filter: /entry/ }, async () => void (await inner()))`],
+    ["onResolve of an import", `b.onResolve({ filter: /embedded/ }, async () => void (await inner()))`],
+    ["onLoad of an entry point", `b.onLoad({ filter: /entry/ }, async () => void (await inner()))`],
+    ["onLoad of an import", `b.onLoad({ filter: /embedded/ }, async () => void (await inner()))`],
+    [
+      "onLoad after onResolve passed",
+      `b.onResolve({ filter: /embedded/ }, () => {}), b.onLoad({ filter: /embedded/ }, async () => void (await inner()))`,
+    ],
+    [
+      "onLoad in a namespace",
+      `b.onResolve({ filter: /embedded/ }, () => ({ path: "x", namespace: "n" })),
+       b.onLoad({ filter: /x/, namespace: "n" }, () => embed(inner()))`,
+    ],
+    ["onLoad before defer()", `b.onLoad({ filter: /embedded/ }, async a => void (await inner(), await a.defer()))`],
+    ["onLoad after defer()", `b.onLoad({ filter: /embedded/ }, async a => void (await a.defer(), await inner()))`],
+    ["onLoad beside defer()", `b.onLoad({ filter: /embedded/ }, async a => void (a.defer(), await inner()))`],
+    ["setup()", `inner()`],
+    ["onStart()", `b.onStart(async () => void (await null, await inner()))`],
+    ["onEnd()", `b.onEnd(async () => void (await inner()))`],
+  ])("%s can wait for a build that it starts", async (_, hook) => {
+    const script = `
+      let builds = 0;
+      const inner = () => (builds++, build("inner.ts"));
+      console.log((await build("entry.ts", b => (${hook}))).success, builds);`;
+    expect(await run(script)).toEqual(printed("true 1\n"));
+  });
+
+  const waitsForInner = (order: string) => `
+    const asked = Promise.withResolvers();
+    const onLoad = b => b.onLoad({ filter: /embedded/ }, () => (asked.resolve(), embed(inner)));
+    const start = () => build("entry.ts", onLoad);
+    ${order}
+    await hasInner(outer);
+    process.exit(0);`;
+  test("a plugin can wait for a build that was asked for after its own", async () => {
+    expect(await run(waitsForInner(`const outer = start(), inner = build("inner.ts");`))).toEqual(printed("true\n"));
+  });
+
+  describe.each([
+    ["nothing else", ""],
+    ["a timer", "setInterval(() => {}, 1000);"],
+  ])(
+    "while %s keeps the process alive, a plugin can wait for a build that was asked for before its own",
+    (_, alive) => {
+      test.each([
+        ["without plugins", `const inner = build("inner.ts"), outer = start();`],
+        ["whose setup() is still to end", `const inner = build("inner.ts", () => asked.promise), outer = start();`],
+        [
+          "whose setup() is still to start a build",
+          `const inner = build("inner.ts", () => asked.promise.then(() => build("embedded.ts"))), outer = start();`,
+        ],
+        [
+          "by its setup()",
+          `let inner;
+         const outer = build("entry.ts", b => ((inner = build("inner.ts", () => asked.promise)), onLoad(b)));`,
+        ],
+        [
+          "by its setup(), after an await",
+          `let inner;
+         const outer = build("entry.ts", async b => {
+           await null;
+           inner = build("inner.ts", () => asked.promise);
+           onLoad(b);
+         });`,
+        ],
+        [
+          "although it started first on a wrong guess",
+          `const never = new Promise(() => {});
+         const graph = new Bun.ModuleGraph({ globals: { never } });
+         await graph.import(import.meta.dir + "/parks.js");
+         build("embedded.ts", b => b.onLoad({ filter: /embedded/ }, () => asked.promise));
+         graph.dispose();
+         const inner = build("inner.ts"), outer = start();`,
+        ],
+        [
+          "ahead of later ones",
+          `const inner = build("inner.ts", () => asked.promise), outer = start();
+         build("embedded.ts", () => asked.promise).then(() => console.log("later"));`,
+        ],
+      ])("%s", async (_, order) => {
+        const files = {
+          "parks.js": `Bun.build({ entrypoints: ["./inner.ts"], plugins: [{ name: "p", setup: () => never }] });`,
+        };
+        expect(await run(alive + waitsForInner(order), files)).toEqual(printed("true\n"));
+      });
+    },
+  );
+
+  test("a plugin can wait for a build that it starts while a setup() waits for its own", async () => {
+    const script = `
+      const outer = build("entry.ts", b => b.onLoad({ filter: /embedded/ }, () => embed(build("inner.ts"))));
+      await build("embedded.ts", () => outer);
+      await hasInner(outer);`;
+    expect(await run(script)).toEqual(printed("true\n"));
+  });
+
+  test("a plugin can wait for the build that made way for it", async () => {
+    const script = `
+      const asked = Promise.withResolvers();
+      const inner = build("inner.ts", b => b.onLoad({ filter: /inner/ }, () => asked.promise));
+      await hasInner(build("entry.ts", b => b.onLoad({ filter: /embedded/ }, () => (asked.resolve(), embed(inner)))));`;
+    expect(await run(script)).toEqual(printed("true\n"));
+  });
+
+  test("builds nest, ahead of the ones that only queue", async () => {
+    const script = `
+      let open = 0, most = 0;
+      const nest = depth => depth === 0 ? build("inner.ts") : build("entry.ts", b =>
+        b.onLoad({ filter: /embedded/ }, async () => {
+          most = Math.max(most, ++open);
+          const answer = await embed(nest(depth - 1));
+          open--;
+          return answer;
+        }));
+      const outputs = await Promise.all(Array.from({ length: 6 }, () => text(nest(3))));
+      console.log(outputs.every(output => output.includes("inner code")), most);`;
+    expect(await run(script)).toEqual(printed("true 3\n"));
+  });
+
+  test("a plugin that never answers does not hold up later builds", async () => {
+    const script = `
+      build("entry.ts", b => b.onLoad({ filter: /embedded/ }, () => new Promise(() => {})));
+      for (let i = 0; i < 3; i++) await hasInner(build("inner.ts"));
+      process.exit(0);`;
+    expect(await run(script)).toEqual(printed("true\ntrue\ntrue\n"));
+  });
+
+  test("a nested build finds the file that the plugin has just written", async () => {
+    const script = `
+      await hasInner(build("entry.ts", b => b.onLoad({ filter: /embedded/ }, () => {
+        writeFileSync("lib/written.ts", "console.log('inner code')");
+        return embed(build("imports.ts"));
+      })));`;
+    const files = {
+      "entry.ts": `import "./lib/listed"; export { default } from "./embedded.ts";`,
+      "imports.ts": `import "./lib/written";`,
+      "lib/listed.ts": ``,
+    };
+    expect(await run(script, files)).toEqual(printed("true\n"));
+  });
+
+  test("a macro still answers after a nested build has called it", async () => {
+    const script = `
+      const outer = build("entry.ts", b => b.onLoad({ filter: /embedded/ }, async () => void (await hasInner(build("inner.ts")))));
+      console.log((await text(outer)).split("inner code").length - 1);`;
+    const calls = `import { code } from "./macro.ts" with { type: "macro" }; console.log(code());`;
+    const files = {
+      "entry.ts": `${calls} import "./embedded.ts";`,
+      "embedded.ts": calls,
+      "inner.ts": calls,
+      "macro.ts": `export const code = () => "inner code";`,
+    };
+    expect(await run(script, files)).toEqual(printed("true\n2\n"));
+  });
+
+  test.each([
+    ["keep the thread busy", ``, `Bun.sleepSync(30)`],
+    ["wait for a timer", ``, `Bun.sleep(150)`],
+    ["wait for an unref'd timer", ``, `new Promise(resolve => setTimeout(resolve, 30).unref())`],
+    ["wait for a process", ``, `Bun.spawn([process.execPath, "--version"]).exited`],
+    ["wait for a timer, after a setup() that did", `await Bun.sleep(1);`, `Bun.sleep(150)`],
+    [
+      "keep the thread busy, ahead of a setup() that never ends",
+      ``,
+      `Bun.sleepSync(150)`,
+      `build("inner.ts", () => never);`,
+    ],
+  ])("builds take turns in order while plugins %s", async (_, setup, wait, before = "") => {
+    const script = `
+      let order = "";
+      const never = new Promise(() => {});
+      ${before}
+      await Promise.all(["a", "b", "c"].map(name => build("entry.ts", ${setup && "async"} b => {
+        ${setup}
+        b.onLoad({ filter: /entry/ }, async () => void (await ${wait}, (order += name)));
+        b.onLoad({ filter: /embedded/ }, () => void (order += name));
+      })));
+      console.log(order);
+      process.exit(0);`;
+    expect(await run(script)).toEqual(printed("aabbcc\n"));
+  });
+
+  test("a plugin in a worker can wait for a build that the main thread asked for before", async () => {
+    const script = `
+      import { once } from "node:events";
+      import { isMainThread, parentPort, Worker } from "node:worker_threads";
+      if (isMainThread) {
+        const worker = new Worker(import.meta.path);
+        const asked = once(worker, "message");
+        const inner = build("inner.ts", () => asked);
+        worker.postMessage("go");
+        worker.postMessage(await text(inner));
+        console.log((await once(worker, "message"))[0]);
+        process.exit(0);
+      }
+      await once(parentPort, "message");
+      const outer = build("entry.ts", b => b.onLoad({ filter: /embedded/ }, async () => {
+        parentPort.postMessage("asked");
+        return { contents: "export default " + JSON.stringify(await once(parentPort, "message")), loader: "js" };
+      }));
+      parentPort.postMessage((await text(outer)).includes("inner code"));`;
+    expect(await run(script)).toEqual(printed("true\n"));
+  });
+
+  test("the plugin of a page can wait for a build that was asked for before", async () => {
+    const script = `
+      import page from "./page.html";
+      const server = Bun.serve({ port: 0, development: false, routes: { "/": page } });
+      console.log((await fetch(server.url)).status);
+      process.exit(0);`;
+    const files = {
+      "page.html": `<script type="module" src="./entry.ts"></script>`,
+      "bunfig.toml": `[serve.static]\nplugins = ["./plugin.ts"]`,
+      "plugin.ts": `const asked = Promise.withResolvers();
+        const inner = Bun.build({ entrypoints: ["./inner.ts"], plugins: [{ name: "q", setup: () => asked.promise }] });
+        export default { name: "p", setup(b) {
+          b.onLoad({ filter: /embedded/ }, async () => void (asked.resolve(), await inner));
+        } };`,
+    };
+    const { stdout, exitCode } = await run(script, files);
+    expect({ stdout, exitCode }).toEqual({ stdout: "200\n", exitCode: 0 });
+  });
+
+  test("a setup() can end while a macro runs", async () => {
+    const script = `
+      const built = build("entry.ts", async b => (await null, b.onLoad({ filter: /embedded/ }, () => {})));
+      require("./calls.ts");
+      console.log((await built).success);`;
+    const files = {
+      "calls.ts": `import { one } from "./macro.ts" with { type: "macro" }; one();`,
+      "macro.ts": `export const one = () => 1;`,
+    };
+    expect(await run(script, files)).toEqual(printed("true\n"));
+  });
+
+  test.skipIf(!isLinux)("builds without plugins share one thread", async () => {
+    const script = `
+      await Promise.all(Array.from({ length: 12 }, () => build("entry.ts")));
+      const names = readdirSync("/proc/self/task").map(id => readFileSync("/proc/self/task/" + id + "/comm", "utf8"));
+      console.log(names.filter(name => name === "Bundler\\n").length);`;
+    expect(await run(script)).toEqual(printed("1\n"));
+  });
+
+  test("one build works at a time", async () => {
+    const script = `
+      const asked = Promise.withResolvers();
+      let waiting = 0;
+      await Promise.all(["a.ts", "b.ts", "c.ts"].map(entry => build(entry, b =>
+        b.onLoad({ filter: /[abc][.]ts$/ }, () => (++waiting === 3 && asked.resolve(), asked.promise)))));
+      console.log(readFileSync("log", "utf8"));`;
+    const uses = `import { work } from "./macro.ts" with { type: "macro" }; work();`;
+    const files = {
+      "a.ts": uses,
+      "b.ts": uses,
+      "c.ts": uses,
+      "macro.ts": `import { appendFileSync } from "node:fs";
+        export function work() {
+          appendFileSync(import.meta.dir + "/log", "(");
+          Bun.sleepSync(30);
+          appendFileSync(import.meta.dir + "/log", ")");
+        }`,
+    };
+    expect(await run(script, files)).toEqual(printed("()()()\n"));
+  });
+
+  test("a worker whose build waits terminates while another build works", async () => {
+    const script = `
+      import { once } from "node:events";
+      import { Worker } from "node:worker_threads";
+      const worker = new Worker("./worker.ts");
+      await once(worker, "message");
+      const working = build("works.ts");
+      while (!existsSync("began")) await new Promise(setImmediate);
+      await worker.terminate();
+      writeFileSync("go", "");
+      console.log((await working).success);`;
+    const files = {
+      "worker.ts": `import { parentPort } from "node:worker_threads";
+        const setup = b => b.onLoad({ filter: /embedded/ }, () => (parentPort.postMessage(0), new Promise(() => {})));
+        Bun.build({ entrypoints: ["./inner.ts"], plugins: [{ name: "q", setup: () => new Promise(() => {}) }] });
+        Bun.build({ entrypoints: ["./entry.ts"], plugins: [{ name: "p", setup }] });`,
+      "works.ts": `import { work } from "./macro.ts" with { type: "macro" }; work();`,
+      "macro.ts": `import { existsSync, writeFileSync } from "node:fs";
+        export function work() {
+          writeFileSync(import.meta.dir + "/began", "");
+          while (!existsSync(import.meta.dir + "/go")) Bun.sleepSync(1);
+        }`,
+    };
+    expect(await run(script, files)).toEqual(printed("true\n"));
+  });
+
+  test("each build gets its own declarations", async () => {
+    const script = `
+      const declared = ({ outputs }) => outputs.map(it => it.path.replaceAll("\\\\", "/")).filter(it => it.endsWith(".d.ts")).sort();
+      let inner;
+      const outer = await build("entry.ts", b => b.onLoad({ filter: /embedded/ }, async () =>
+        void (inner = await build("typed.ts", undefined, { dts: true, outdir: "inner" }))), { dts: true, outdir: "outer" });
+      console.log(declared(inner).map(it => it.split("/").slice(-2).join("/")).join());
+      console.log(declared(outer).map(it => it.split("/").slice(-2).join("/")).join());`;
+    const files = {
+      "entry.ts": `export { default } from "./embedded.ts";`,
+      "typed.ts": `export const typed: number = 1;`,
+      "tsconfig.json": `{ "compilerOptions": { "module": "preserve", "allowImportingTsExtensions": true, "types": [] } }`,
+    };
+    expect(await run(script, files)).toEqual(printed("inner/typed.d.ts\nouter/embedded.d.ts,outer/entry.d.ts\n"));
+  });
+
+  test.skipIf(isWindows).each([
+    ["fails if it is waited for", ``, `await inner`, "Failed to start the bundler thread: EMFILE"],
+    [
+      "stays in the queue if it may not be",
+      `Bun.build({ entrypoints: ["/b.js"], files, plugins: [{ name: "q", setup: () => new Promise(() => {}) }] });`,
+      `await Bun.sleep(250)`,
+      "built",
+    ],
+  ])("a build that finds no descriptor for another thread %s", async (_, before, wait, outcome) => {
+    const script = `
+      import { closeSync, openSync } from "node:fs";
+      const files = { "/a.js": "import '/b.js'", "/b.js": "" };
+      let inner;
+      const setup = b => b.onLoad({ filter: /b.js/ }, async () => {
+        const fds = [];
+        inner = Bun.build({
+          entrypoints: ["/b.js"],
+          files,
+          get throw() {
+            try { while (true) fds.push(openSync("/dev/null", "r")); } catch {}
+            return false;
+          },
+        });
+        ${wait};
+        for (const fd of fds) closeSync(fd);
+      });
+      ${before}
+      await Bun.build({ entrypoints: ["/a.js"], files, plugins: [{ name: "p", setup }] });
+      console.log((await inner).logs[0]?.message ?? "built");
+      process.exit(0);`;
+    const result = await spawn(["sh", "-c", 'ulimit -n 256 && exec "$0" -e "$1"', bunExe(), script]);
+    expect(result).toEqual(printed(outcome + "\n"));
+  });
+
+  test("the pages of a server, which share its plugins, are built one after the other", async () => {
+    const script = `
+      import a from "./a.html";
+      import b from "./b.html";
+      const never = new Promise(() => {});
+      build("inner.ts", () => never);
+      build("entry.ts", b => b.onLoad({ filter: /embedded/ }, () => never));
+      const server = Bun.serve({ port: 0, development: false, routes: { "/a": a, "/b": b } });
+      await Promise.all([fetch(server.url + "a"), fetch(server.url + "b")]);
+      console.log(globalThis.log);
+      process.exit(0);`;
+    const files = {
+      "a.html": `<script type="module" src="./inner.ts"></script>`,
+      "b.html": `<script type="module" src="./inner.ts"></script>`,
+      "bunfig.toml": `[serve.static]\nplugins = ["./plugin.ts"]`,
+      // Long enough for another build to start.
+      "plugin.ts": `globalThis.log = "";
+        export default { name: "p", setup(b) {
+          b.onLoad({ filter: /inner/ }, async () => {
+            globalThis.log += "(";
+            await Bun.sleep(300);
+            globalThis.log += ")";
+          });
+        } };`,
+    };
+    const { stdout, exitCode } = await run(script, files);
+    expect({ stdout, exitCode }).toEqual({ stdout: "()()\n", exitCode: 0 });
+  });
+
+  test.skipIf(unsupported).each([
+    ["onLoad", `b.onLoad({ filter: /embedded/ }, () => (asked.resolve(), embed(inner)))`],
+    ["onResolve", `b.onResolve({ filter: /embedded/ }, async () => void (asked.resolve(), await inner))`],
+    [
+      "onLoad after defer()",
+      `b.onLoad({ filter: /embedded/ }, async a => (await a.defer(), asked.resolve(), embed(inner)))`,
+    ],
+  ])("compile.aot: %s can wait for another build", async (_, hook) => {
+    const script = `
+      const asked = Promise.withResolvers();
+      const inner = build("inner.ts", () => asked.promise);
+      console.log((await build("entry.ts", b => ${hook}, { compile: { aot: true, outfile: "out" } })).success);`;
+    expect(await run(script)).toEqual(printed("true\n"));
+  });
+
+  test.skipIf(unsupported)("compile.aot: no other build uses the checker meanwhile", async () => {
+    const script = `
+      let order = "";
+      const checked = Promise.withResolvers();
+      await build("entry.ts", b => b.onLoad({ filter: /embedded/ }, async () => {
+        const inner = build("inner.ts");
+        checked.resolve(build("embedded.ts", undefined, { check: true }).then(() => (order += "checked ")));
+        await inner;
+        order += "answered ";
+      }), { compile: { aot: true, outfile: "out" } });
+      await checked.promise;
+      console.log(order);`;
+    expect(await run(script)).toEqual(printed("answered checked \n"));
+  });
+});
+
+test.concurrent.skipIf(!isWindows).each(["api", "cli", "--no-bundle"])(
+  "does not overwrite an entry point in the root of a drive that stands for a directory (%s)",
+  async how => {
+    const source = "console.log(1); // source\n";
+    using dir = tempDir("build-subst-drive", {
+      "top.js": source,
+      "build.js": `await Bun.build({ entrypoints: [process.argv[2]], outdir: "out" });`,
+    });
+    using drive = substDrive(String(dir));
+    const entry = join(drive.root, "top.js");
+    const args =
+      how === "api" ? ["build.js", entry] : ["build", entry, "--outdir=out", ...(how === "cli" ? [] : [how])];
+    await using proc = Bun.spawn({ cmd: [bunExe(), ...args], cwd: drive.root, env: bunEnv, stderr: "pipe" });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(readFileSync(join(String(dir), "top.js"), "utf8")).toBe(source);
+    expect(readdirSync(join(String(dir), "out"))).toEqual(["top.js"]);
+    expect(exitCode).toBe(0);
+  },
+);
+
+test.skipIf(!isWindows)(
+  "[dir] of an asset on a drive that stands for a directory is relative to the root",
+  async () => {
+    using dir = tempDir("build-subst-drive-asset", {
+      "src/index.js": `import logo from "./img/logo.png"; console.log(logo);`,
+      "src/img/logo.png": "png",
+    });
+    using drive = substDrive(String(dir));
+    const { outputs } = await Bun.build({
+      entrypoints: [join(drive.root, "src", "index.js")],
+      naming: { asset: "[dir]/[name].[ext]" },
+    });
+    expect(outputs.map(output => path.normalize(output.path)).sort()).toEqual(["img\\logo.png", "index.js"]);
+  },
+);

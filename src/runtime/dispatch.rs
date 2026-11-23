@@ -153,7 +153,7 @@ use crate::api::bun_subprocess::subprocess_pipe_reader::PipeReader as Subprocess
 use crate::api::bun_terminal_body::Terminal;
 use crate::api::cron::CronJob;
 use crate::api::cron_os::OsJob;
-use crate::api::js_bundle_completion_task::JSBundleCompletionTask;
+use crate::api::js_bundle_completion_task::{JSBundleCompletionTask, StuckBuildsProbe};
 use crate::api::native_promise_context::DeferredDerefTask as NativePromiseContextDeferredDerefTask;
 
 use crate::napi::{NapiFinalizerTask, ThreadSafeFunction, TsfnRefRequest, napi_async_work};
@@ -308,6 +308,11 @@ pub(crate) fn run_task(
             [Bundler],
             |build: JSBundleCompletionTask| -> JsResult<()> { build.on_complete() }
         )?,
+        task_tag::StuckBuildsProbe => {
+            boxed_arm!(task, [Bundler], |probe: StuckBuildsProbe| -> () {
+                probe.run(VirtualMachine::get())
+            })
+        }
         task_tag::FetchTaskletPromiseSettle => boxed_arm!(
             task,
             [Fetch],
@@ -320,7 +325,7 @@ pub(crate) fn run_task(
             feature_arm!([Sockets], |engine: UpgradedDuplex| {
                 // SAFETY: tag identifies pointee; the queue owns the live engine
                 // until `run_event` (which may free it).
-                UpgradedDuplex::run_event(unsafe { bun_ptr::ThisPtr::new(engine) });
+                unsafe { UpgradedDuplex::run_event(engine) };
             })
         }
         task_tag::FdPipe => feature_arm!([Sockets], |pipe: crate::socket::fd_pipe::FdPipe| {
@@ -370,7 +375,7 @@ pub(crate) fn run_task(
             task,
             [NodeFs],
             |watcher: crate::node::node_fs_stat_watcher::StatWatcher| -> JsResult<()> {
-                crate::node::node_fs_stat_watcher::StatWatcher::run_hop(watcher)?;
+                watcher.run_hop()?;
                 Ok(())
             }
         )?,
@@ -412,6 +417,14 @@ pub(crate) fn run_task(
                 }
             )
         }
+        task_tag::FetchTaskletTrace => feature_arm!(
+            [Fetch],
+            |trace: crate::webcore::fetch::FetchTaskletTrace| -> JsResult<()> {
+                // SAFETY: §Dispatch — tag identifies pointee; the task owns a ref.
+                let tasklet = unsafe { bun_ptr::RefPtr::from_raw(trace.cast()) };
+                FetchTasklet::on_trace_events(&tasklet)
+            }
+        )?,
         task_tag::HTMLRewriterBackgroundPull => counted_arm!(
             task,
             [HtmlRewriter],
@@ -850,7 +863,7 @@ fn run_task_cold(task: &Task) {
 /// `release_task_unrun` track `bun_event_loop::task_tag::COUNT`. Bump when
 /// adding a variant — and give it an arm in both.
 const _: () = assert!(
-    task_tag::COUNT == 85,
+    task_tag::COUNT == 87,
     "dispatch::run_task / release_task_unrun arm count out of sync with bun_event_loop::task_tag",
 );
 
@@ -936,8 +949,15 @@ unsafe fn __bun_run_io(owner: Owner, event: IoEvent) {
         #[cfg(not(windows))]
         PollTag::Process => {
             in_features!([ChildProcess], (proc: *mut Process = owner.ptr().cast::<Process>()) {
-                // SAFETY: a process frees its poll before it is freed, and `wait` ends with the exit handler.
-                Process::wait(unsafe { bun_ptr::ThisPtr::new(proc) }, false);
+                let mut rusage = bun_spawn::process::rusage_zeroed();
+                // SAFETY: a process frees its poll before it is freed, and `wait_posix` releases no ref.
+                unsafe {
+                    if let Some(exit) = (*proc).wait_posix(false, &mut rusage) {
+                        exit.dispatch(&rusage);
+                    } else if let Some(exit) = RefPtr::init_ref(proc).rewatch_or_reap(&mut rusage) {
+                        exit.dispatch(&rusage);
+                    }
+                }
             })
         }
         #[cfg(not(windows))]
@@ -951,13 +971,13 @@ unsafe fn __bun_run_io(owner: Owner, event: IoEvent) {
         PollTag::DnsResolver => in_features!(
             [Dns],
             (
-                resolver: *const DNSResolver = owner.ptr().cast_const().cast::<DNSResolver>(),
+                resolver: *mut DNSResolver = owner.ptr().cast::<DNSResolver>(),
                 fd: i32 = event.fd.native(),
                 readable: bool = event.flags.contains(PollFlag::Readable),
                 writable: bool = event.flags.contains(PollFlag::Writable),
             ) {
                 // SAFETY: tag set with this pointee type at `OwnedFilePoll::new`.
-                let resolver = unsafe { &*resolver };
+                let resolver = unsafe { RefPtr::init_ref(resolver) };
                 resolver.on_dns_poll(fd, readable, writable);
             }
         ),
@@ -1093,9 +1113,9 @@ unsafe fn __bun_run_io(owner: Owner, event: IoEvent) {
         // These free themselves once they have read to the end.
         PollTag::InstallGit => io_arm!(
             [Install],
-            bun_ptr::ThisPtr::new,
+            RefPtr::init_ref,
             GitSubprocess,
-            |this, kind, event| GitSubprocess::on_io(this, kind, event)
+            |this, kind, event| this.on_io(kind, event)
         ),
         PollTag::SubprocessPipeReader => {
             in_features!([Spawn], (owner: Owner = owner, event: IoEvent = event) {
@@ -1109,8 +1129,8 @@ unsafe fn __bun_run_io(owner: Owner, event: IoEvent) {
                 unsafe { LifecycleScriptSubprocess::on_io(owner.ptr().cast(), owner.kind(), event) };
             })
         }
-        PollTag::Cron => io_arm!([Cron], bun_ptr::ThisPtr::new, OsJob, |this, _, event| {
-            OsJob::on_io(this, event)
+        PollTag::Cron => io_arm!([Cron], RefPtr::init_ref, OsJob, |this, _, event| {
+            this.on_io(event)
         }),
 
         PollTag::Null => debug_assert!(false, "a poll with no owner fired"),
@@ -1132,9 +1152,11 @@ unsafe fn clone_rc<T>(ptr: *mut T) -> Rc<T> {
 // ════════════════════════════════════════════════════════════════════════════
 
 #[cfg(not(windows))]
-use crate::webcore::blob::read_file::ReadFile;
+use crate::webcore::blob::{fd_job::FdJob, read_file, write_file};
 #[cfg(not(windows))]
-use crate::webcore::blob::write_file::WriteFile;
+type ReadFile = FdJob<read_file::ReadFile>;
+#[cfg(not(windows))]
+type WriteFile = FdJob<write_file::WriteFile>;
 
 /// `bun_io::__bun_io_pollable_on_ready` body — declared `extern "Rust"` in
 /// `bun_io`. The owner is recovered from the embedded `io_poll` field.
@@ -1187,9 +1209,8 @@ unsafe fn __bun_io_pollable_on_io_error(
             [Bodies],
             (poll: *mut bun_io::Poll = poll, err: &bun_sys::Error = err) {
                 // SAFETY: per fn contract.
-                let this = unsafe { bun_core::from_field_ptr!(WriteFile, io_poll, poll) };
-                // WriteFile::on_io_error already takes `*mut ()` (it self-recovers via the io_request path elsewhere); reuse that shape rather than reborrowing `&mut`.
-                WriteFile::on_io_error(this.cast(), err);
+                let this = unsafe { &mut *bun_core::from_field_ptr!(WriteFile, io_poll, poll) };
+                this.on_io_error(err);
             }
         ),
         bun_io::PollableTag::Empty => {
@@ -1368,7 +1389,7 @@ pub(crate) unsafe fn fire_timer(
                 [NodeFs],
                 StatWatcherScheduler,
                 event_loop_timer,
-                |c, _now, _vm| StatWatcherScheduler::timer_callback(bun_ptr::ThisPtr::new(c))
+                |c, _now, _vm| RefPtr::init_ref(c).timer_callback()
             )
         }
         EventLoopTimerTag::DnsSdConnection => {
@@ -1386,10 +1407,11 @@ pub(crate) unsafe fn fire_timer(
                 Ok(())
             }
         }
-        // R-2: shared deref — `check_timeouts` runs script, which re-enters the resolver.
         EventLoopTimerTag::DNSResolver => {
             feature_timer_arm!([Dns], DNSResolver, event_loop_timer, |c, now, vm| {
-                (&*c.cast_const()).check_timeouts(now, vm)
+                if let Some(resolver) = (*c).timer_ref.take() {
+                    resolver.check_timeouts(now, vm)
+                }
             })
         }
         EventLoopTimerTag::WindowsNamedPipe => {
@@ -1414,7 +1436,7 @@ pub(crate) unsafe fn fire_timer(
                 // construction; `t` is the connection's `timer` field.
                 let container = unsafe { PostgresSQLConnection::from_timer_ptr(t) };
                 // SAFETY: per fn contract.
-                unsafe { (*container).on_connection_timeout() };
+                unsafe { RefPtr::init_ref(container) }.on_connection_timeout();
                 Ok(())
             })
         }
@@ -1423,7 +1445,7 @@ pub(crate) unsafe fn fire_timer(
                 // SAFETY: §Dispatch — `t` is the connection's `max_lifetime_timer`.
                 let container = unsafe { PostgresSQLConnection::from_max_lifetime_timer_ptr(t) };
                 // SAFETY: per fn contract.
-                unsafe { (*container).on_max_lifetime_timeout() };
+                unsafe { RefPtr::init_ref(container) }.on_max_lifetime_timeout();
                 Ok(())
             })
         }
@@ -1432,7 +1454,7 @@ pub(crate) unsafe fn fire_timer(
                 // SAFETY: §Dispatch — `t` is the connection's `timer` field.
                 let container = unsafe { MySQLConnection::from_timer_ptr(t) };
                 // SAFETY: per fn contract.
-                unsafe { (*container).on_connection_timeout() };
+                unsafe { RefPtr::init_ref(container) }.on_connection_timeout();
                 Ok(())
             })
         }
@@ -1441,7 +1463,7 @@ pub(crate) unsafe fn fire_timer(
                 // SAFETY: §Dispatch — `t` is the connection's `max_lifetime_timer`.
                 let container = unsafe { MySQLConnection::from_max_lifetime_timer_ptr(t) };
                 // SAFETY: per fn contract.
-                unsafe { (*container).on_max_lifetime_timeout() };
+                unsafe { RefPtr::init_ref(container) }.on_max_lifetime_timeout();
                 Ok(())
             })
         }
@@ -1449,14 +1471,17 @@ pub(crate) unsafe fn fire_timer(
             [Valkey],
             (container: *mut Valkey = owner!(Valkey, timer)) -> JsResult<()> {
                 // SAFETY: per fn contract.
-                unsafe { (*container).on_connection_timeout() }
+                unsafe { (*container).timer.take_fire_ref() }
+                    .map_or(Ok(()), Valkey::on_connection_timeout)
             }
         ),
         EventLoopTimerTag::ValkeyConnectionReconnect => in_features!(
             [Valkey],
             (container: *mut Valkey = owner!(Valkey, reconnect_timer)) -> JsResult<()> {
                 // SAFETY: per fn contract.
-                unsafe { (*container).on_reconnect_timer() };
+                if let Some(hold) = unsafe { (*container).reconnect_timer.take_fire_ref() } {
+                    hold.client.reconnect(hold.object());
+                }
                 Ok(())
             }
         ),
@@ -1660,6 +1685,7 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         task_tag::FSWatchTask => release_boxed_in!([NodeFs], FSWatchTask),
         task_tag::HotReloadTask => release_boxed_in!([HotReload], hot_reloader::HotReloadTask),
         task_tag::JSBundleCompletionTask => release_boxed_in!([Bundler], JSBundleCompletionTask),
+        task_tag::StuckBuildsProbe => release_boxed_in!([Bundler], StuckBuildsProbe),
         task_tag::JSCDeferredWorkTask => release!(JSCDeferredWorkTask),
         task_tag::BundleV2PluginResolveAnswered => {
             release_boxed_in!(
@@ -1687,6 +1713,9 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         }
         task_tag::FetchTaskletRequestDrain => {
             release_in!([Fetch], crate::webcore::fetch::FetchTaskletRequestDrain)
+        }
+        task_tag::FetchTaskletTrace => {
+            release_in!([Fetch], crate::webcore::fetch::FetchTaskletTrace)
         }
         task_tag::HTMLRewriterBackgroundPull => {
             release_counted_in!(

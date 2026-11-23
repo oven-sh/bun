@@ -1306,6 +1306,12 @@ size_t uws_req_get_header(uws_req_t *res, const char *lower_case_header,
   {
     return (struct us_loop_t *)uWS::Loop::get();
   }
+#ifndef _WIN32
+  struct us_loop_t *uws_try_get_loop()
+  {
+    return (struct us_loop_t *)uWS::Loop::tryGet();
+  }
+#endif
   struct us_loop_t *uws_get_loop_with_native(void *existing_native_loop)
   {
       return (struct us_loop_t *)uWS::Loop::get(existing_native_loop);

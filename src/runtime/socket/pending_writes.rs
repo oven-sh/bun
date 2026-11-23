@@ -48,7 +48,6 @@ impl PendingWrites {
     /// Drops the first `n` bytes, which the socket took. An emptied queue frees its allocation.
     #[inline]
     pub(crate) fn consume(&mut self, n: usize) {
-        // One writev sends the queue and part of the chunk behind it, so `n` can exceed `len()`.
         if n >= self.len() {
             self.bytes = StreamBuffer::default();
         } else {

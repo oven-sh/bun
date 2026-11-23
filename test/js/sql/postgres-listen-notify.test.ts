@@ -243,8 +243,8 @@ describe.concurrent("in a subprocess", () => {
     expect(result).toEqual(clean("subscribed\ngot wake\nunlistened\n"));
   });
 
-  // Bun.build() runs the event loop until an async setup() settles.
-  const listenAndBuildOnce = (setup: string) => `
+  const listenAndWaitOnce = (start: string) => `
+    import { runEventLoopUntil } from "bun:internal-for-testing";
     const write = bytes => { for (const socket of sockets) socket.write(bytes); return loopbackFence(); };
     const [a, b, c, d] = ["a", "b", "c".repeat(200), "d"].map(payload => pgNotificationResponse(1, "ch", payload));
     let waited = false;
@@ -258,7 +258,7 @@ describe.concurrent("in a subprocess", () => {
       console.log(payload[0]);
       if (waited) return;
       waited = true;
-      Bun.build({ entrypoints: [import.meta.path], target: "bun", plugins: [{ name: "wait", setup: ${setup} }] });
+      runEventLoopUntil((${start})());
       listenerReturned.resolve();
     });
   `;
@@ -267,7 +267,7 @@ describe.concurrent("in a subprocess", () => {
     "a listener runs the event loop while more comes in: %j",
     async ({ split, extra }) => {
       const result = await run(`
-      ${listenAndBuildOnce(`() => write(stream.subarray(a.length + ${extra}, -d.length + 7))`)}
+      ${listenAndWaitOnce(`() => write(stream.subarray(a.length + ${extra}, -d.length + 7))`)}
       const stream = Buffer.concat([a, b, c, d]);
       if (${split}) await write(stream.subarray(0, ${split}));
       await writeAndAwaitListener(stream.subarray(${split}, a.length + ${extra}));
@@ -280,7 +280,7 @@ describe.concurrent("in a subprocess", () => {
 
   test("a listener runs the event loop until its own connection answers", async () => {
     const result = await run(`
-      ${listenAndBuildOnce(`async () => { await sql.listen("other", () => {}); console.log("listening"); }`)}
+      ${listenAndWaitOnce(`async () => { await sql.listen("other", () => {}); console.log("listening"); }`)}
       await writeAndAwaitListener(Buffer.concat([a, b]));
       await sql.close();
     `);

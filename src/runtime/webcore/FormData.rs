@@ -50,7 +50,8 @@ impl FormData {
     ) -> JsResult<JSValue> {
         match encoding {
             Encoding::URLEncoded => {
-                DOMFormData::create_from_url_query(global, &EncodedSlice::utf8(input))
+                let query = EncodedSlice::utf8(strings::without_utf8_bom(input));
+                DOMFormData::create_from_url_query(global, &query)
             }
             Encoding::Multipart(boundary) => to_js_from_multipart_data(global, input, boundary)
                 .map_err(|err| match err {

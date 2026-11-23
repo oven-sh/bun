@@ -36,15 +36,14 @@ bun_jsc::impl_abort_handle_owner!(FdPipe, abort_handle, |this, _cause| {
 impl FdPipe {
     /// Makes `fd` the transport of `socket` and reports it open.
     pub(crate) fn open(
-        owned: RefPtr<TCPSocket>,
+        socket: RefPtr<TCPSocket>,
         fd: Fd,
         context: &bun_jsc::ScriptExecutionContext,
     ) -> JsResult<()> {
-        let socket = owned.this_ptr();
         let this = bun_core::heap::into_raw(Box::new(Self {
             handle: Default::default(),
             fd,
-            socket: JsCell::new(Some(owned)),
+            socket: JsCell::new(Some(socket.clone())),
             is_shutdown: Cell::new(false),
             rejected_send_error: Cell::new(0),
             is_queued: Cell::new(false),
@@ -59,7 +58,7 @@ impl FdPipe {
         pipe.handle.set(this);
         let handle = SocketTCP::from_transport(&raw const pipe.handle);
         socket.socket.set(handle);
-        TCPSocket::on_open(socket, handle)
+        socket.on_open(handle)
     }
 
     /// Returns true if `on_poll` will report that the descriptor takes bytes again.
@@ -89,11 +88,8 @@ impl FdPipe {
 
     #[cfg(not(windows))]
     pub(crate) fn on_poll(&self) {
-        if let Some(socket) = self.socket.get().as_ref().map(RefPtr::this_ptr) {
-            fold(TCPSocket::on_writable(
-                socket,
-                SocketTCP::from_transport(&raw const self.handle),
-            ));
+        if let Some(socket) = self.socket.get().clone() {
+            fold(socket.on_writable(SocketTCP::from_transport(&raw const self.handle)));
         }
     }
 

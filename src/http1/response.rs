@@ -5,7 +5,7 @@ use crate::byte_sets::{CONTENT, TOKEN};
 use crate::{Error, Result};
 
 /// The status and header fields of a response.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct Response {
     pub minor_version: u8,
     pub status_code: u32,

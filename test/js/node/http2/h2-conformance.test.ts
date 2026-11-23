@@ -971,14 +971,14 @@ describe("stream-id rules (checklist §3)", () => {
 
 describe("streams opened from code that request() and pushStream() run (RFC 9113 §5.1.1)", () => {
   type Open = (headers: any) => unknown;
-  /** Calls `nested` from the first stream published on `channel` while `outer` runs. */
+  /** Calls `nested` from the first stream published on `channel` by `outer` or by the ticks that it queues. */
   function fromSubscriber(channel: string, outer: () => void, nested: () => void) {
     const onMessage = () => (dc.unsubscribe(channel, onMessage), nested());
     dc.subscribe(channel, onMessage);
     try {
       outer();
     } finally {
-      dc.unsubscribe(channel, onMessage);
+      process.nextTick(dc.unsubscribe, channel, onMessage);
     }
   }
   const value = (nested: () => void) => ({ toString: () => (nested(), "x") }) as any;
@@ -1553,20 +1553,28 @@ describe.each(["GET", "POST"] as const)("a response to %s whose headers are not 
 
   test("pushStream() releases the streams that it has reserved", async () => {
     const refs: WeakRef<object>[] = [];
-    const onCreated = ({ stream }: any) => void (stream.id % 2 === 0 && refs.push(new WeakRef(stream)));
     const transport = new Transport();
     const server = http2.createServer({ maxSendHeaderBlockLength: 1000 });
     server.emit("connection", transport);
-    dc.subscribe("http2.server.stream.created", onCreated);
     try {
       transport.push(Buffer.concat([PREFACE, encodeFrame(FrameType.SETTINGS, 0, 0), request(1)]));
       const [stream] = await once(server, "stream");
       stream.on("error", () => {}).respond(tooLong);
-      for (let i = 0; i < 32; i++) stream.pushStream({}, () => {});
+      // Nobody is handed such a stream. pushStream() ends its readable side.
+      const prototype = Object.getPrototypeOf(stream);
+      const { push } = prototype;
+      prototype.push = function (chunk: unknown) {
+        if (!this.destroyed) refs.push(new WeakRef(this));
+        return push.call(this, chunk);
+      };
+      try {
+        for (let i = 0; i < 32; i++) stream.pushStream({}, () => {});
+      } finally {
+        delete prototype.push;
+      }
       expect(refs.length).toBe(32);
       expect(await liveCount(refs)).toBeLessThanOrEqual(GC_STRAGGLERS);
     } finally {
-      dc.unsubscribe("http2.server.stream.created", onCreated);
       transport.destroy();
     }
   });

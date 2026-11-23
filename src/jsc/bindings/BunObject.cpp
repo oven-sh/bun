@@ -47,6 +47,7 @@
 #include "GeneratedCrypto.h"
 #include "GeneratedCryptoHasher.h"
 #include "GeneratedCsrfJsc.h"
+#include "GeneratedDiffObject.h"
 #include "GeneratedDns.h"
 #include "GeneratedDnsInternals.h"
 #include "GeneratedFetch.h"
@@ -1063,6 +1064,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     deepEquals                                     functionBunDeepEquals                                               DontDelete|Function 2
     deepMatch                                      functionBunDeepMatch                                                DontDelete|Function 2
     deflateSync                                    Bun::Bindgen::Generated::BunObject::jsDeflateSync                   DontDelete|Function 1
+    diff                                           Bun::Bindgen::Generated::DiffObject::createDiff                     DontDelete|PropertyCallback
     dns                                            constructDNSObject                                                  ReadOnly|DontDelete|PropertyCallback
     enableANSIColors                               BunObject_lazyPropCb_wrap_enableANSIColors                          DontDelete|PropertyCallback
     env                                            constructEnvObject                                                  ReadOnly|DontDelete|PropertyCallback

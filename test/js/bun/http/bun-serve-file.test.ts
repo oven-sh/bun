@@ -1689,6 +1689,48 @@ test("omits the automatic Content-Disposition for a file name that a quoted-stri
   expect(seen).toEqual(expected);
 });
 
+// HEAD only stats the FIFO, so it cannot say how long the GET body is. RFC
+// 9110 8.6 forbids a Content-Length that differs from GET's, and GET frames
+// the pipe as chunked or by its length depending on when the writer closes.
+test.skipIf(isWindows)("HEAD of Response(Bun.file(FIFO)) sends no Content-Length", async () => {
+  using dir = tempDir("serve-fifo-head", {});
+  const fifoPath = join(String(dir), "body.fifo");
+  mkfifo(fifoPath);
+  await using server = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    fetch: () => new Response(Bun.file(fifoPath)),
+  });
+
+  const { promise: closed, resolve } = Promise.withResolvers<void>();
+  let wire = "";
+  await using client = await Bun.connect({
+    hostname: "127.0.0.1",
+    port: server.port!,
+    socket: {
+      data: (_socket, data) => void (wire += data.toString("latin1")),
+      close: () => resolve(),
+      error: () => resolve(),
+    },
+  });
+  client.write("HEAD /fifo HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+  await closed;
+
+  const headEnd = wire.indexOf("\r\n\r\n");
+  const head = wire.slice(0, headEnd);
+  expect({
+    status: head.split("\r\n")[0],
+    hasContentLength: /^content-length:/im.test(head),
+    hasTransferEncoding: /^transfer-encoding:/im.test(head),
+    body: wire.slice(headEnd + 4),
+  }).toEqual({
+    status: "HTTP/1.1 200 OK",
+    hasContentLength: false,
+    hasTransferEncoding: false,
+    body: "",
+  });
+});
+
 // A file route serves the window of the Bun.file() slice it was built from,
 // given either the slice or its unread stream (which is turned back into the
 // slice). FileRoute used to clamp the window to the file size without taking
@@ -2123,9 +2165,9 @@ process.exit(0);
 
 // On Windows, FileResponseStream closes its fd via Closer::close in Drop AND
 // WindowsBufferedReader::Drop closed the same CRT fd via File::finish
-// (CLOSE_HANDLE was cleared on the reader but never honored). Between the two
+// (the reader closed an fd that it had only borrowed). Between the two
 // async uv_fs_close calls, an unrelated open could be handed the recycled
-// slot and have it closed under it. On POSIX the reader honors CLOSE_HANDLE,
+// slot and have it closed under it. On POSIX the reader never did,
 // so this is effectively a Windows regression test.
 test.skipIf(!isWindows)(
   "Response(Bun.file) does not double-close the fd on Windows",

@@ -4,7 +4,7 @@ use bun_core::ZBox;
 
 use bun_collections::StringHashMap;
 use bun_core::strings;
-use bun_ptr::ThisPtr;
+use bun_ptr::{AnyRefCounted, RefPtr};
 use bun_uws_sys as uws;
 use bun_wyhash::Wyhash;
 
@@ -322,7 +322,7 @@ impl ServerConfig {
 pub(crate) fn apply_static_route<T: StaticRouteLike, A: StaticRouteApp>(
     server: AnyServer,
     app: &mut A,
-    entry: ThisPtr<T>,
+    entry: &RefPtr<T>,
     path: &[u8],
     method: http_method::Optional,
     path_has_user_head_route: bool,
@@ -333,16 +333,16 @@ pub(crate) fn apply_static_route<T: StaticRouteLike, A: StaticRouteApp>(
     // RFC 9110 section 9.3.2) or HEAD itself, and never displace an explicit HEAD
     // handler route: uWS keeps the last registration for the same method and path.
     if !path_has_user_head_route && serves_head(&method) {
-        app.method_this(Method::HEAD, path, T::on_head_request, entry);
+        app.method_ref(Method::HEAD, path, T::on_head_request, entry);
     }
     match method {
         http_method::Optional::Any => {
-            app.any_this(path, T::on_request, entry);
+            app.any_ref(path, T::on_request, entry);
         }
         http_method::Optional::Method(m) => {
             let mut iter = m.iter();
             while let Some(method_) = iter.next() {
-                app.method_this(method_, path, T::on_request, entry);
+                app.method_ref(method_, path, T::on_request, entry);
             }
         }
     }
@@ -360,30 +360,34 @@ fn serves_head(method: &http_method::Optional) -> bool {
 
 /// The route registration the HTTP/1, HTTP/2 and HTTP/3 apps share. Each hands the handler an `AnyRequest` and an `AnyResponse`.
 pub(crate) trait StaticRouteApp {
-    fn method_this<U: 'static, H>(&mut self, m: Method, p: &[u8], h: H, this: ThisPtr<U>)
+    fn method_ref<U, H>(&mut self, m: Method, p: &[u8], h: H, owner: &RefPtr<U>)
     where
-        H: Fn(ThisPtr<U>, uws::AnyRequest, uws::AnyResponse) + Copy + 'static;
-    fn any_this<U: 'static, H>(&mut self, p: &[u8], h: H, this: ThisPtr<U>)
+        U: AnyRefCounted + 'static,
+        H: Fn(RefPtr<U>, uws::AnyRequest, uws::AnyResponse) + Copy + 'static;
+    fn any_ref<U, H>(&mut self, p: &[u8], h: H, owner: &RefPtr<U>)
     where
-        H: Fn(ThisPtr<U>, uws::AnyRequest, uws::AnyResponse) + Copy + 'static;
+        U: AnyRefCounted + 'static,
+        H: Fn(RefPtr<U>, uws::AnyRequest, uws::AnyResponse) + Copy + 'static;
 }
 
 macro_rules! impl_static_route_app {
     ([$($generics:tt)*] $app:ty) => {
         impl<$($generics)*> StaticRouteApp for $app {
             #[inline]
-            fn method_this<U: 'static, H>(&mut self, m: Method, p: &[u8], h: H, this: ThisPtr<U>)
+            fn method_ref<U, H>(&mut self, m: Method, p: &[u8], h: H, owner: &RefPtr<U>)
             where
-                H: Fn(ThisPtr<U>, uws::AnyRequest, uws::AnyResponse) + Copy + 'static,
+                U: AnyRefCounted + 'static,
+                H: Fn(RefPtr<U>, uws::AnyRequest, uws::AnyResponse) + Copy + 'static,
             {
-                <$app>::method_this(self, m, p, h, this)
+                <$app>::method_ref(self, m, p, h, owner)
             }
             #[inline]
-            fn any_this<U: 'static, H>(&mut self, p: &[u8], h: H, this: ThisPtr<U>)
+            fn any_ref<U, H>(&mut self, p: &[u8], h: H, owner: &RefPtr<U>)
             where
-                H: Fn(ThisPtr<U>, uws::AnyRequest, uws::AnyResponse) + Copy + 'static,
+                U: AnyRefCounted + 'static,
+                H: Fn(RefPtr<U>, uws::AnyRequest, uws::AnyResponse) + Copy + 'static,
             {
-                <$app>::any_this(self, p, h, this)
+                <$app>::any_ref(self, p, h, owner)
             }
         }
     };
@@ -396,21 +400,21 @@ impl_static_route_app!([] uws::h3::App);
 /// (`StaticRoute`/`FileRoute`/`DirectoryRoute`/`HTMLBundle.Route`). The route
 /// is the uWS route userdata; the route table holds a ref on it for as long as
 /// it is registered.
-pub(crate) trait StaticRouteLike: Sized + 'static {
+pub(crate) trait StaticRouteLike: AnyRefCounted + 'static {
     fn set_server(&self, server: AnyServer);
-    fn on_request(this: ThisPtr<Self>, req: uws::AnyRequest, resp: uws::AnyResponse);
-    fn on_head_request(this: ThisPtr<Self>, req: uws::AnyRequest, resp: uws::AnyResponse);
+    fn on_request(self: RefPtr<Self>, req: uws::AnyRequest, resp: uws::AnyResponse);
+    fn on_head_request(self: RefPtr<Self>, req: uws::AnyRequest, resp: uws::AnyResponse);
 }
 
 impl StaticRouteLike for super::StaticRoute {
     fn set_server(&self, server: AnyServer) {
         self.server.set(Some(server));
     }
-    fn on_request(this: ThisPtr<Self>, req: uws::AnyRequest, resp: uws::AnyResponse) {
-        Self::on_request(this, req, resp)
+    fn on_request(self: RefPtr<Self>, req: uws::AnyRequest, resp: uws::AnyResponse) {
+        Self::on_request(self, req, resp)
     }
-    fn on_head_request(this: ThisPtr<Self>, req: uws::AnyRequest, resp: uws::AnyResponse) {
-        Self::on_head_request(this, req, resp)
+    fn on_head_request(self: RefPtr<Self>, req: uws::AnyRequest, resp: uws::AnyResponse) {
+        Self::on_head_request(self, req, resp)
     }
 }
 
@@ -418,11 +422,11 @@ impl StaticRouteLike for super::FileRoute {
     fn set_server(&self, server: AnyServer) {
         self.set_server(Some(server));
     }
-    fn on_request(this: ThisPtr<Self>, req: uws::AnyRequest, resp: uws::AnyResponse) {
-        Self::on_request(this, req, resp)
+    fn on_request(self: RefPtr<Self>, req: uws::AnyRequest, resp: uws::AnyResponse) {
+        Self::on_request(self, req, resp)
     }
-    fn on_head_request(this: ThisPtr<Self>, req: uws::AnyRequest, resp: uws::AnyResponse) {
-        Self::on_head_request(this, req, resp)
+    fn on_head_request(self: RefPtr<Self>, req: uws::AnyRequest, resp: uws::AnyResponse) {
+        Self::on_head_request(self, req, resp)
     }
 }
 
@@ -430,11 +434,11 @@ impl StaticRouteLike for super::DirectoryRoute {
     fn set_server(&self, server: AnyServer) {
         self.set_server(Some(server));
     }
-    fn on_request(this: ThisPtr<Self>, req: uws::AnyRequest, resp: uws::AnyResponse) {
-        Self::on_request(this, req, resp)
+    fn on_request(self: RefPtr<Self>, req: uws::AnyRequest, resp: uws::AnyResponse) {
+        Self::on_request(self, req, resp)
     }
-    fn on_head_request(this: ThisPtr<Self>, req: uws::AnyRequest, resp: uws::AnyResponse) {
-        Self::on_head_request(this, req, resp)
+    fn on_head_request(self: RefPtr<Self>, req: uws::AnyRequest, resp: uws::AnyResponse) {
+        Self::on_head_request(self, req, resp)
     }
 }
 
@@ -442,11 +446,11 @@ impl StaticRouteLike for super::html_bundle::Route {
     fn set_server(&self, server: AnyServer) {
         self.server.set(Some(server));
     }
-    fn on_request(this: ThisPtr<Self>, req: uws::AnyRequest, resp: uws::AnyResponse) {
-        Self::on_request(this, req, resp)
+    fn on_request(self: RefPtr<Self>, req: uws::AnyRequest, resp: uws::AnyResponse) {
+        Self::on_request(self, req, resp)
     }
-    fn on_head_request(this: ThisPtr<Self>, req: uws::AnyRequest, resp: uws::AnyResponse) {
-        Self::on_head_request(this, req, resp)
+    fn on_head_request(self: RefPtr<Self>, req: uws::AnyRequest, resp: uws::AnyResponse) {
+        Self::on_head_request(self, req, resp)
     }
 }
 

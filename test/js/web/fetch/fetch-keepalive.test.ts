@@ -1210,6 +1210,8 @@ test.concurrent.each<[string, string, string]>([
   // https://github.com/oven-sh/bun/issues/36940
   ["GET", "200 OK\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nok\r\n0\r\n\r\n0\r\n\r\n", "ok"],
   ["HEAD", "304 Not Modified\r\nTransfer-Encoding: chunked\r\n\r\n", ""],
+  // RFC 9112 6.3 rule 1: a response to HEAD ends at its header section, so it needs no Content-Length to be complete.
+  ["HEAD", "200 OK\r\nConnection: keep-alive\r\n\r\n", ""],
 ])("a connection is reused after a %s answered with %j", async (method, reply, body) => {
   await using origin = await originWithBrokenReuse(session => session.write(`HTTP/1.1 ${reply}`));
   const bodies = [
@@ -1241,6 +1243,39 @@ test.concurrent.each(["204 No Content", "304 Not Modified"])(
     });
   },
 );
+
+test.concurrent.each([
+  // They belong to no response.
+  ["that bytes follow", "Connection: keep-alive\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nstray"],
+  // The origin may end its bodies with a close, and still send this one.
+  ["that doesn't say keep-alive", "\r\n"],
+])("a connection is not reused after a HEAD response with no Content-Length %s", async (_, rest) => {
+  await using origin = await originWithBrokenReuse(session => session.write(`HTTP/1.1 200 OK\r\n${rest}`));
+  const bodies = [
+    await bodyOrCode(origin.url, {}),
+    await bodyOrCode(origin.url, { method: "HEAD" }),
+    await bodyOrCode(origin.url, {}),
+  ];
+  expect({ bodies, requests: origin.requests }).toEqual({
+    bodies: ["ok", "", "ok"],
+    requests: ["connection 1 request 1", "connection 1 request 2", "connection 2 request 1"],
+  });
+});
+
+test.concurrent("a connection to Bun.serve is reused after a HEAD response with no Content-Length", async () => {
+  const ports = new Set<number>();
+  const inits: ResponseInit[] = [{}, { headers: { Connection: "keep-alive" } }, { status: 404 }];
+  await using server = Bun.serve({
+    port: 0,
+    fetch: (request, server) => (ports.add(server.requestIP(request)!.port), new Response(null, inits.shift())),
+  });
+  const heads = [];
+  while (inits.length) {
+    const { headers } = await fetch(server.url, { method: "HEAD" });
+    heads.push([headers.get("content-length"), headers.get("connection")]);
+  }
+  expect({ heads, connections: ports.size }).toEqual({ heads: Array(3).fill([null, "keep-alive"]), connections: 1 });
+});
 
 // The session with an https proxy is the one that breaks, under a CONNECT tunnel that fetch reuses.
 test.concurrent(

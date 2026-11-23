@@ -20,9 +20,9 @@ use bun_jsc::bun_string_jsc;
 use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue, JsPtr, LogJsc as _};
 use bun_options_types::WindowsOptions;
 use bun_options_types::schema::api;
-use bun_paths::resolve_path::{join_abs_string, platform};
-use bun_paths::{self as paths, SEP};
+use bun_paths::{self as paths};
 use bun_ptr::BackRef;
+use bun_resolver::resolve_keeping_sep;
 use bun_standalone_graph::StandaloneModuleGraph::{
     CompileErrorReason, CompileResult, Flags as StandaloneFlags, RuntimeOptions,
     target_base_public_path, to_executable,
@@ -43,6 +43,7 @@ use crate::server::html_bundle;
 
 #[path = "bundle_thread.rs"]
 mod bundle_thread;
+pub(crate) use bundle_thread::{StuckBuildsProbe, park, unpark};
 #[path = "compile_ahead_of_time.rs"]
 mod compile_ahead_of_time;
 
@@ -143,12 +144,13 @@ impl BundleJs {
 }
 
 impl JSBundleCompletionTask {
-    /// Takes a process-keepalive ref and hands the build to the bundle thread.
+    /// Takes a process-keepalive ref and hands the build to the bundle thread. `call` is what `park` returned.
     pub(crate) fn schedule(
         config: JSBundlerConfig,
         global_this: &JSGlobalObject,
         context: jsc::ContextId,
         owner: BuildOwner,
+        call: Option<u64>,
     ) {
         let vm = global_this.bun_vm();
         let plugins = match &owner {
@@ -174,6 +176,8 @@ impl JSBundleCompletionTask {
         // SAFETY: `js` stays where it is until `finish` takes the task and frees it. Until then it
         // keeps the plugins, or the route in it keeps the server that does.
         let (js, plugins) = unsafe {
+            js.as_ref().abort_handle.set_only_waits_to_be_closed();
+            js.as_ref().caller.handle.set_only_waits_to_be_closed();
             jsc::AbortHandle::arm_owner(js.as_ptr(), vm.root_context());
             if let Some(caller) = vm.as_graph_context(vm.context_of(context)) {
                 jsc::AbortHandle::arm_owner(&raw mut (*js.as_ptr()).caller, caller);
@@ -192,10 +196,10 @@ impl JSBundleCompletionTask {
             declarations: None,
             js,
         });
-        bundle_thread::enqueue(task, vm.ticket());
+        bundle_thread::enqueue(task, vm, call);
     }
 
-    fn fail_to_start(mut self: Box<Self>, err: &std::io::Error, ticket: &jsc::Ticket) {
+    fn fail_to_start(mut self: Box<Self>, err: &dyn core::fmt::Display, ticket: &jsc::Ticket) {
         self.log.add_error_fmt(
             None,
             bun_ast::Loc::EMPTY,
@@ -220,22 +224,14 @@ fn executable_path(config: &JSBundlerConfig, compile: &CompileOptions) -> Box<[u
     let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir();
     let outdir_slice = &config.outdir.list;
     let outfile_slice = &compile.outfile.list;
-    let joined: &[u8] = if !outdir_slice.is_empty() {
-        join_abs_string::<platform::Auto>(top_level_dir, &[outdir_slice, outfile_slice])
-    } else if paths::is_absolute(outfile_slice) {
-        outfile_slice
-    } else {
-        // For relative paths, ensure we make them absolute relative to the current working directory
-        join_abs_string::<platform::Auto>(top_level_dir, &[outfile_slice])
+    let mut joined = match outdir_slice.is_empty() && paths::is_absolute(outfile_slice) {
+        true => paths::Path::from(outfile_slice),
+        false => resolve_keeping_sep(&[top_level_dir, outdir_slice, outfile_slice]),
     };
     if compile.compile_target.os == OperatingSystem::Windows && !joined.ends_with(b".exe") {
-        let mut v = Vec::with_capacity(joined.len() + 4);
-        v.extend_from_slice(joined);
-        v.extend_from_slice(b".exe");
-        v.into_boxed_slice()
-    } else {
-        Box::from(joined)
+        joined.extend_from_slice(b".exe");
     }
+    joined.as_bytes().into()
 }
 
 /// Without `.exe`, as in the CLI.
@@ -303,11 +299,8 @@ impl JSBundleCompletionTask {
                 check_command::warn_about_skipped_typed_files(option, &mut self.log);
             }
             let working_directory = bun_resolver::fs::FileSystem::get().top_level_dir();
-            let outdir = join_abs_string::<platform::Auto>(
-                working_directory,
-                &[&config.dir.list, &config.outdir.list],
-            )
-            .to_vec();
+            let outdir =
+                paths::Path::resolve(&[working_directory, &config.dir.list, &config.outdir.list]);
             if declarations.writes_typed_files {
                 let tsconfig = &config.tsconfig_override.list;
                 let request = compile_command::TypedOutputs {
@@ -333,7 +326,7 @@ impl JSBundleCompletionTask {
                     format_args!(
                         "{} writing declaration files to {}",
                         bstr::BStr::new(error.name()),
-                        bstr::BStr::new(&outdir)
+                        bstr::BStr::new(outdir.as_bytes())
                     ),
                 );
                 self.result = Err(bun_bundler::Error::BuildFailed);
@@ -605,22 +598,19 @@ impl JSBundleCompletionTask {
                     let sourcemap_full_path: Box<[u8]> = if dirname.is_empty() || dirname == b"." {
                         Box::from(map_basename)
                     } else {
-                        let mut v = Vec::with_capacity(dirname.len() + 1 + map_basename.len());
-                        v.extend_from_slice(dirname);
-                        v.push(SEP);
-                        v.extend_from_slice(map_basename);
-                        v.into_boxed_slice()
+                        let mut path = paths::Path::from(dirname);
+                        path.push(map_basename);
+                        path.as_bytes().into()
                     };
 
                     // Write the sourcemap file to disk next to the executable
-                    let mut pathbuf = bun_paths::path_buffer_pool::get();
                     let write_path: &[u8] = if cfg!(windows) {
                         &sourcemap_full_path
                     } else {
                         map_basename
                     };
                     let write_result = NodeFS::write_file_with_path_buffer(
-                        &mut pathbuf,
+                        &mut bun_paths::Path::new(),
                         &fs_args::WriteFile {
                             flag: FileSystemFlags::W,
                             mode: node_fs::DEFAULT_PERMISSION,
@@ -746,8 +736,6 @@ impl JSBundleCompletionTask {
                 // computation reads `self.config`. Snapshot the config slices
                 // once outside the loop so the per-file `&mut` doesn't overlap
                 // `&self.config`.
-                let outdir_is_abs = !self.config.outdir.is_empty()
-                    && bun_paths::is_absolute(&self.config.outdir.list);
                 let outdir = self.config.outdir.list.clone();
                 let dir = self.config.dir.list.clone();
                 let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir();
@@ -755,17 +743,8 @@ impl JSBundleCompletionTask {
                 let mut to_assign_on_sourcemap = JSValue::ZERO;
                 for (i, output_file) in output_files.iter_mut().enumerate() {
                     let path: Box<[u8]> = if !outdir.is_empty() {
-                        if outdir_is_abs {
-                            Box::from(join_abs_string::<platform::Auto>(
-                                &outdir,
-                                &[&output_file.dest_path],
-                            ))
-                        } else {
-                            Box::from(join_abs_string::<platform::Auto>(
-                                top_level_dir,
-                                &[&dir, &outdir, &output_file.dest_path],
-                            ))
-                        }
+                        let parts = [top_level_dir, &dir, &outdir, &output_file.dest_path];
+                        paths::Path::resolve(&parts).as_bytes().into()
                     } else {
                         output_file.dest_path.clone()
                     };
@@ -1129,18 +1108,28 @@ impl JSBundleCompletionTask {
         Ok(config)
     }
 
-    fn run(mut self: Box<Self>, ticket: jsc::Ticket, generation: bun_core::Generation) {
+    fn run(
+        mut self: Box<Self>,
+        ticket: jsc::Ticket,
+        seat: &bundle_thread::Seat,
+        generation: bun_core::Generation,
+    ) {
         let heap = Arena::new();
         let mut ast_memory_store = bun_ast::ASTMemoryAllocator::default();
         // Declared here so that it drops after `ticket.post`.
         let mut transpiler = None;
         let _ast_scope = ast_memory_store.enter();
 
-        self.result = self.build(&mut transpiler, &heap, &ticket, generation);
+        if seat.has_turn() {
+            self.result = self.build(&mut transpiler, &heap, &ticket, seat, generation);
+        }
 
         // It knows a source by its address, and the log outlives the sources.
         self.log.line_column_tracker = None;
-        if let Some(declarations) = self.declarations.take() {
+        // Without the turn, what the checker has emitted is another build's.
+        if let Some(declarations) = self.declarations.take()
+            && seat.has_turn()
+        {
             self.add_declarations(&declarations);
         }
         ticket.post(ConcurrentTask::create_boxed(self));
@@ -1185,10 +1174,7 @@ impl JSBundleCompletionTask {
                     false => config.dir.list.as_slice(),
                 };
                 let path = config.tsconfig_override.list.as_slice();
-                let mut spill = Vec::new();
-                Box::from(bun_paths::resolve_path::join_abs_string_spill::<
-                    bun_paths::platform::Auto,
-                >(cwd, &mut spill, &[path]))
+                resolve_keeping_sep(&[cwd, path]).as_bytes().into()
             }),
             ..Default::default()
         }
@@ -1199,6 +1185,7 @@ impl JSBundleCompletionTask {
         transpiler: &'a mut Option<Transpiler<'a>>,
         heap: &'a Arena,
         ticket: &'a jsc::Ticket,
+        seat: &'a bundle_thread::Seat,
         generation: bun_core::Generation,
     ) -> bun_bundler::Result<BuildResult> {
         let log = &mut self.log;
@@ -1215,8 +1202,9 @@ impl JSBundleCompletionTask {
         let worker_pool = Some(NonNull::from(WorkPool::get()));
         let plugins = self.plugins.map(JsPtr::as_non_null);
         let completion = dispatch::CompletionHandle {
-            cancelled: &bundle_thread::CANCELLED,
+            cancelled: &seat.cancelled,
             poster: ticket,
+            turn: seat,
         };
         let file_map = (!config.files.map.is_empty()).then_some(&config.files);
         let entry_points: Vec<&[u8]> = config.entry_points.keys().iter().map(|b| &**b).collect();

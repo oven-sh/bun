@@ -171,18 +171,10 @@ impl WorkspacePackageJSONCache {
     ) -> GetResult<'_> {
         debug_assert!(is_absolute(abs_package_json_path));
 
-        #[cfg(windows)]
-        let mut buf = bun_paths::path_buffer_pool::get();
         #[cfg(not(windows))]
         let path: &[u8] = abs_package_json_path;
         #[cfg(windows)]
-        let path: &[u8] = {
-            buf[..abs_package_json_path.len()].copy_from_slice(abs_package_json_path);
-            bun_paths::dangerously_convert_path_to_posix_in_place::<u8>(
-                &mut buf[..abs_package_json_path.len()],
-            );
-            &buf[..abs_package_json_path.len()]
-        };
+        let path: &[u8] = &bun_paths::Path::join(&[abs_package_json_path]).into_portable();
 
         // reshaped for borrowck — we cannot hold an entry borrow across
         // `self.map.remove`, so check

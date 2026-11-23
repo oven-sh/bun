@@ -228,6 +228,8 @@ Runs after microtasks to batch operations:
 
 The queue maintains a map of `(pointer, task_fn)` pairs and runs each task. If a task returns `true`, it remains in the queue for the next drain; if `false`, it's removed.
 
+A task that can call JavaScript sets `vm.deferred_task_called_js` (the HTTP/2 drain of `Bun.serve` resumes a stream's `pull()`). The checkpoint then runs the nextTick callbacks and microtasks once more, so that they do not wait for the next timer or I/O event. A deferred task that is posted during the pass or by those jobs, or that the removal of another task moves, may wait for the next checkpoint. The loop does not block before it.
+
 ## I/O Polling Integration
 
 ### uSockets Event Loop (`epoll_kqueue.c:251-320`)

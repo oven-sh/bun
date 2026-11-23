@@ -11,6 +11,7 @@
 use core::cell::Cell;
 use core::ffi::{c_int, c_uint, c_void};
 use core::mem::size_of;
+use core::net::SocketAddr;
 use core::ptr::NonNull;
 
 use bun_core::{Fd, ZBox, ZStr};
@@ -778,6 +779,20 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
             InternalSocket::Connected(s) | InternalSocket::UwsHttp(s) => {
                 sock(s).remote_address(buf).ok()
             }
+            _ => None,
+        }
+    }
+
+    pub fn local_endpoint(&self) -> Option<SocketAddr> {
+        match self.socket {
+            InternalSocket::Connected(s) | InternalSocket::UwsHttp(s) => sock(s).local_endpoint(),
+            _ => None,
+        }
+    }
+
+    pub fn remote_endpoint(&self) -> Option<SocketAddr> {
+        match self.socket {
+            InternalSocket::Connected(s) | InternalSocket::UwsHttp(s) => sock(s).remote_endpoint(),
             _ => None,
         }
     }

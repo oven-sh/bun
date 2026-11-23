@@ -224,7 +224,7 @@ export default b.declarations(
   extendAll(["FileSystemRouter", ...runtimeTranspilerFeatures], "Bun.FileSystemRouter"),
   extendAll(["FileSystemRouter"], "%MatchedRoute%"),
 
-  extendAll(["Cron", "ChildProcess"], "Bun.cron"),
+  extendAll(["Cron", "ChildProcess", "Url"], "Bun.cron"),
   extendAll(["Cron"], "%CronJob%", "%CronTick%"),
 
   extendAll(["Secrets"], ...withMembers("Bun.secrets", "delete", "get", "set")),
@@ -245,6 +245,7 @@ export default b.declarations(
   extendAll(["Archive"], ...nativeBindings("Bindgen", "pack_command.bind.ts", "readTarball")),
 
   extendAll(["Semver"], "Bun.semver"),
+  extendAll(["Diff"], "Bun.diff"),
   extendAll(["Ansi", "StringWidth"], "Bun.sliceAnsi", "Bun.wrapAnsi"),
   extendAll(["EscapeHtml"], "Bun.escapeHTML"),
   extendAll(["Hash"], "Bun.hash"),

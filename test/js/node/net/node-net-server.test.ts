@@ -1,8 +1,9 @@
 import { closeSync, existsSync, openSync, realpathSync } from "fs";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, compileFixture, isASAN, isDebug, isLinux, isWindows, tempDir } from "harness";
 import { AddressInfo, BlockList, connect, createServer, Server, Socket } from "net";
 import { createTest } from "node-harness";
 import { once } from "node:events";
+import http from "node:http";
 import { getSystemErrorName } from "node:util";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -101,6 +102,7 @@ describe("net.createServer listen", () => {
         "fixture.ts": `
           import { cc } from "bun:ffi";
           import { once } from "node:events";
+          import http from "node:http";
           import { createServer, type AddressInfo } from "node:net";
           import { join } from "node:path";
 
@@ -108,7 +110,7 @@ describe("net.createServer listen", () => {
             source: join(import.meta.dir, "deny-socket.c"),
             symbols: { deny_socket_family: { args: ["i32", "i32"], returns: "i32" } },
           });
-          const AF_UNIX = 1, AF_INET6 = 10, EMFILE = 24, EAFNOSUPPORT = 97;
+          const AF_UNIX = 1, AF_INET = 2, AF_INET6 = 10, EMFILE = 24, EPROTONOSUPPORT = 93, EAFNOSUPPORT = 97;
           const result: Record<string, unknown> = { seccomp: symbols.deny_socket_family(AF_INET6, EAFNOSUPPORT) };
           if (result.seccomp !== 0) {
             console.log(JSON.stringify(result));
@@ -132,6 +134,7 @@ describe("net.createServer listen", () => {
           result.noHost = { address, family };
           const busy = await listenError(port);
           result.noHostPortBusy = { ...busy, message: busy.message.replace(String(port), "PORT") };
+          result.noHostPortBusyHttp = (await once(http.createServer().listen(port), "error"))[0].address;
           noHost.close();
 
           result.explicitIPv6 = await listenError(0, "::");
@@ -145,6 +148,13 @@ describe("net.createServer listen", () => {
           result.seccompUnix = symbols.deny_socket_family(AF_UNIX, EMFILE);
           const { code, syscall } = await listenError(join(import.meta.dir, "listen.sock"));
           result.unix = { code, syscall };
+
+          // The newest filter for a family decides the error.
+          symbols.deny_socket_family(AF_INET6, EPROTONOSUPPORT);
+          result.anotherErrno = ((await listenError(0)).listening as AddressInfo)?.address;
+          symbols.deny_socket_family(AF_INET, EMFILE);
+          result.neither = (await listenError(0)).message;
+          result.neitherHttp = (await once(http.createServer().listen(0), "error"))[0].message;
           console.log(JSON.stringify(result));
         `,
       });
@@ -171,6 +181,7 @@ describe("net.createServer listen", () => {
           address: "0.0.0.0",
           message: "listen EADDRINUSE: address already in use 0.0.0.0:PORT",
         },
+        noHostPortBusyHttp: "0.0.0.0",
         explicitIPv6: {
           code: "EAFNOSUPPORT",
           syscall: "listen",
@@ -180,6 +191,9 @@ describe("net.createServer listen", () => {
         bunListen: { code: "EAFNOSUPPORT", syscall: "listen", errno: "number" },
         seccompUnix: 0,
         unix: { code: "EMFILE", syscall: "listen" },
+        anotherErrno: "0.0.0.0",
+        neither: "listen EMFILE: too many open files 0.0.0.0",
+        neitherHttp: "listen EMFILE: too many open files 0.0.0.0",
       });
       expect(exitCode).toBe(0);
     },
@@ -1206,4 +1220,169 @@ it.skipIf(isWindows)("a collection while listen() reads its options leaves the c
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout, stderr, exitCode }).toEqual({ stdout: "done\n", stderr: "", exitCode: 0 });
+});
+
+// A child that reports, for each form of listen(), the address of the server or its 'error'. It runs under Node too.
+const listenReporter = /* js */ `
+  const net = require("net");
+  const report = (server, ...args) =>
+    new Promise(resolve => {
+      server.on("error", e => resolve({ code: e.code, syscall: e.syscall, address: e.address, message: e.message }));
+      server.listen(...args, () => {
+        const { address, family } = server.address();
+        server.close(() => resolve({ address, family }));
+      });
+    });
+`;
+
+describe("net.Server.listen() with no host", () => {
+  // A kernel without IPv6 (ipv6.disable=1) refuses the socket, not the bind.
+  it.skipIf(!isLinux || !Bun.which("cc"))("listens on 0.0.0.0 when the kernel has no IPv6", async () => {
+    using dir = tempDir("net-listen-no-ipv6", {
+      "shim.c": /* c */ `
+        #define _GNU_SOURCE
+        #include <errno.h>
+        #include <sys/socket.h>
+        #include <sys/syscall.h>
+        #include <unistd.h>
+
+        int socket(int domain, int type, int protocol) {
+          if (domain == AF_INET6) {
+            errno = EAFNOSUPPORT;
+            return -1;
+          }
+          return syscall(SYS_socket, domain, type, protocol);
+        }
+      `,
+      "listen.js": /* js */ `
+        ${listenReporter}
+        (async () => {
+          const out = {};
+          out["listen(0)"] = await report(net.createServer(), 0);
+          out["listen({ port: 0 })"] = await report(net.createServer(), { port: 0 });
+          out['listen({ port: 0, host: "" })'] = await report(net.createServer(), { port: 0, host: "" });
+          out["listen({ port: 0, ipv6Only: true })"] = await report(net.createServer(), { port: 0, ipv6Only: true });
+          out["tls listen(0)"] = await report(require("tls").createServer({}), 0);
+          out['listen(0, "::")'] = await report(net.createServer(), 0, "::");
+          out['listen(0, "0.0.0.0")'] = await report(net.createServer(), 0, "0.0.0.0");
+          const server = net.createServer().listen(0);
+          out["before listen() returns"] = { listening: server.listening, address: server.address()?.address };
+          server.close();
+          console.log(JSON.stringify(out));
+        })();
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "listen.js"],
+      env: { ...bunEnv, LD_PRELOAD: compileFixture(join(String(dir), "shim.c")) },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const ipv4 = { address: "0.0.0.0", family: "IPv4" };
+    expect({ stdout: stdout && JSON.parse(stdout), stderr, exitCode }).toEqual({
+      stdout: {
+        "listen(0)": ipv4,
+        "listen({ port: 0 })": ipv4,
+        'listen({ port: 0, host: "" })': ipv4,
+        "listen({ port: 0, ipv6Only: true })": ipv4,
+        "tls listen(0)": ipv4,
+        // A host that the caller gave has no fallback.
+        'listen(0, "::")': {
+          code: "EAFNOSUPPORT",
+          syscall: "listen",
+          address: "::",
+          message: "listen EAFNOSUPPORT: address family not supported ::",
+        },
+        'listen(0, "0.0.0.0")': ipv4,
+        "before listen() returns": { listening: true, address: "0.0.0.0" },
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // Node does not fall back on EADDRINUSE: a port that another server holds on "::" alone stays taken.
+  // Not on Windows: there the bind of "::" succeeds beside an IPv6-only holder, so no listen() fails.
+  it.skipIf(isWindows).each([
+    ["net", () => createServer(), undefined],
+    ["http", () => http.createServer(), undefined],
+    ["http", () => http.createServer(), ""],
+  ])("%s does not listen on 0.0.0.0 when the port is in use on :: (%#)", async (_, create, host) => {
+    const holder = createServer().listen({ host: "::", port: 0, ipv6Only: true });
+    await once(holder, "listening");
+    try {
+      const { port } = holder.address() as AddressInfo;
+      const server = create();
+      const { promise, resolve } = Promise.withResolvers<unknown>();
+      server.on("error", (e: NodeJS.ErrnoException & { address?: string; port?: number }) =>
+        resolve({ code: e.code, syscall: e.syscall, address: e.address, port: e.port, message: e.message }),
+      );
+      server.listen({ port, host }, () => {
+        resolve(server.address());
+        server.close();
+      });
+      expect(await promise).toEqual({
+        code: "EADDRINUSE",
+        syscall: "listen",
+        address: "::",
+        port,
+        message: `listen EADDRINUSE: address already in use :::${port}`,
+      });
+    } finally {
+      holder.close();
+    }
+  });
+
+  it.skipIf(isWindows)("names 0.0.0.0 in the error when no socket can be made", async () => {
+    using dir = tempDir("net-listen-emfile", {
+      "listen.js": /* js */ `
+        ${listenReporter}
+        (async () => {
+          // A debug build reads its internal modules from files, so load the ones that listen() needs first.
+          await report(net.createServer(), 0, "127.0.0.1");
+          await report(net.createServer(), "missing/listen.sock");
+          // Hold every descriptor, so that each socket() fails with EMFILE.
+          const fs = require("fs");
+          const held = [];
+          try {
+            for (;;) held.push(fs.openSync(process.execPath, "r"));
+          } catch (e) {
+            if (e.code !== "EMFILE") throw e;
+          }
+          const out = {};
+          out["listen(0)"] = await report(net.createServer(), 0);
+          out['listen(0, "::")'] = await report(net.createServer(), 0, "::");
+          out["listen(path)"] = await report(net.createServer(), "listen.sock");
+          for (const fd of held) fs.closeSync(fd);
+          console.log(JSON.stringify(out));
+        })();
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: ["/bin/sh", "-c", 'ulimit -n 128 && exec "$@"', "sh", bunExe(), "listen.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const emfile = (address: string) => ({
+      code: "EMFILE",
+      syscall: "listen",
+      address,
+      message: `listen EMFILE: too many open files ${address}`,
+    });
+    expect({ stdout: stdout && JSON.parse(stdout), stderr, exitCode }).toEqual({
+      stdout: {
+        // "::" failed, then "0.0.0.0" failed: the error is that of the last address, as in Node.
+        "listen(0)": emfile("0.0.0.0"),
+        'listen(0, "::")': emfile("::"),
+        "listen(path)": emfile("listen.sock"),
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
 });

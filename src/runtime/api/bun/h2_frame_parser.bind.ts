@@ -51,6 +51,7 @@ export const H2FrameParser = b.class({
   refCounted: true,
   finalize: true,
   memoryCost: true,
+  thisValue: "strong_this",
   types: [table.exactType("$Node.H2FrameParser"), table.exactType("$Bindgen.H2FrameParser")],
   construct: {
     passStructure: true,

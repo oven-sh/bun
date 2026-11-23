@@ -273,6 +273,7 @@ const nativeFiles = [
   "JSWebSocket.cpp",
   "NoOpForTesting.cpp",
   "NodeAsyncHooks.cpp",
+  "NodeDiagnosticsChannel.cpp",
   "NodeFetch.cpp",
   "NodeHTTP.cpp",
   "NodeTLS.cpp",

@@ -83,6 +83,7 @@ pub mod task_tag {
         FetchTaskletDelivered,
         FetchTaskletPromiseSettle,
         FetchTaskletRequestDrain,
+        FetchTaskletTrace,
         FSWatchTask,
         GetAddrInfoLibuvComplete,
         GraphContextStopAgain,
@@ -93,6 +94,7 @@ pub mod task_tag {
         HotReloadTask,
         HTMLRewriterBackgroundPull,
         JSBundleCompletionTask,
+        StuckBuildsProbe,
         JSCDeferredWorkTask,
         NapiAsyncWork,            // napi_async_work
         NapiFinalizerTask,

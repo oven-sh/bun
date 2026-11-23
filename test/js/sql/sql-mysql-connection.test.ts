@@ -1073,15 +1073,12 @@ describe("scripted server", () => {
     const write = (socket: net.Socket, bytes: Buffer) => (socket.write(bytes), loopbackFence());
     try {
       let socket: net.Socket;
-      let built: Promise<unknown> | undefined;
       await using sql = new SQL({
         url: `mysql://root@127.0.0.1:${port}/db`,
         max: 1,
         transform: {
           column: name => {
-            // Bun.build() runs the event loop until an async setup() settles.
-            const setup = () => write(socket, reply.subarray(firstRow + behind));
-            built = Bun.build({ entrypoints: ["/a.js"], files: { "/a.js": "" }, plugins: [{ name: "wait", setup }] });
+            runEventLoopUntil(() => write(socket, reply.subarray(firstRow + behind)));
             return name.toUpperCase();
           },
         },
@@ -1092,7 +1089,6 @@ describe("scripted server", () => {
       // No fence: with kqueue, its connect event is lost if it comes in the batch that reaches the transform.
       socket.write(reply.subarray(7, firstRow + behind));
       expect(await rows).toEqual([{ OWNER: "A" }, { OWNER: "B" }]);
-      await built;
     } finally {
       server.close();
     }
@@ -1150,16 +1146,14 @@ describe("scripted server", () => {
     try {
       await using sql = new SQL({ url: `mysql://root@127.0.0.1:${port}/db`, max: 1 });
       await sql.connect();
-      let built: Promise<unknown> | undefined;
       const parameter = {
         toJSON() {
           socket.write(mysqlErrPacket(0, 1927, "70100", "Connection was killed"));
-          built = runEventLoopUntil(loopbackFence);
+          runEventLoopUntil(loopbackFence);
           return 1;
         },
       };
       const err: any = await sql`SELECT ${parameter}`.catch(err => err);
-      await built;
       expect([err.code, err.errno]).toEqual(["ERR_MYSQL_SERVER_ERROR", 1927]);
     } finally {
       server.close();

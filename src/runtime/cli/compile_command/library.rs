@@ -8,8 +8,7 @@ use bun_alloc::Arena;
 use bun_ast::Expr;
 use bun_core::{Global, Output};
 use bun_options_types::context::ContextData;
-use bun_paths::platform::Auto;
-use bun_paths::resolve_path::join_abs_string;
+use bun_paths::{Path, without_trailing_sep};
 
 pub(crate) use self::declarations::{add_declaration_files, is_declaration_file};
 pub(crate) use self::package_files::add_package_files;
@@ -27,6 +26,7 @@ const EXTERNAL_PACKAGE_FIELDS: [&[u8]; 3] = [
 pub(super) enum LibraryError {
     OutdirHoldsProject { outdir: Vec<u8> },
     EntryPointInsideOutdir { entry_point: Vec<u8> },
+    BackslashInEntryPoint { entry_point: Vec<u8> },
     UnparsablePackageJson { path: Vec<u8> },
     NoEntryPoint { directory: Vec<u8> },
 }
@@ -44,6 +44,11 @@ impl LibraryError {
                 b"the entry point ",
                 entry_point,
                 b" is inside --outdir, where it would be overwritten. Choose another --outdir",
+            ]),
+            Self::BackslashInEntryPoint { entry_point } => write(&[
+                b"the entry point ",
+                entry_point,
+                b" has a backslash in its name, which is a separator in package.json",
             ]),
             Self::UnparsablePackageJson { path } => write(&[path, b" could not be parsed"]),
             Self::NoEntryPoint { directory } => write(&[
@@ -84,7 +89,7 @@ impl Project {
                 package_json: Some(PackageJsonFile { path, contents }),
             },
             None => Project {
-                directory: bun_core::strings::without_trailing_slash(working_directory).to_vec(),
+                directory: without_trailing_sep(working_directory).to_vec(),
                 package_json: None,
             },
         }
@@ -108,20 +113,15 @@ impl Project {
 }
 
 fn absolute_path(working_directory: &[u8], path: &[u8]) -> Vec<u8> {
-    join_abs_string::<Auto>(working_directory, &[path]).to_vec()
+    Path::resolve(&[working_directory, path]).to_vec()
 }
 
 fn is_inside(ancestor: &[u8], path: &[u8]) -> bool {
-    let below = path.strip_prefix(ancestor);
-    below.is_some_and(|below| {
-        below
-            .first()
-            .is_some_and(|&byte| bun_paths::is_sep_any(byte))
-    })
+    bun_paths::strip_prefix(path, ancestor).is_some_and(|below| !below.is_empty())
 }
 
 fn check_outdir(project: &Project, outdir: &[u8]) -> Result<(), LibraryError> {
-    if project.directory == outdir || is_inside(outdir, &project.directory) {
+    if bun_paths::strip_prefix(&project.directory, outdir).is_some() {
         return Err(LibraryError::OutdirHoldsProject {
             outdir: outdir.to_vec(),
         });
@@ -159,6 +159,14 @@ fn find_external_packages(
         |entry_point: &[u8]| is_inside(&outdir, &absolute_path(working_directory, entry_point));
     if let Some(entry_point) = entry_points.iter().find(|it| is_overwritten(it)) {
         return Err(LibraryError::EntryPointInsideOutdir {
+            entry_point: entry_point.to_vec(),
+        });
+    }
+    let has_backslash = |entry_point: &[u8]| {
+        bun_core::strings::contains_char(bun_paths::basename(entry_point), b'\\')
+    };
+    if let Some(entry_point) = entry_points.iter().find(|it| has_backslash(it)) {
+        return Err(LibraryError::BackslashInEntryPoint {
             entry_point: entry_point.to_vec(),
         });
     }

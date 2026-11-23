@@ -98,6 +98,9 @@ function serveFixture(dir: string, { http1 = true } = {}) {
           },
         });
       }
+      if (url.pathname === "/null-body") {
+        return new Response(null, { headers: { "x-null": "1" } });
+      }
       if (url.pathname === "/hello") {
         return new Response("hello over h3", {
           headers: { "x-proto": "h3", "content-type": "text/plain" },
@@ -806,6 +809,19 @@ describe("Bun.serve HTTP/3 adversarial", () => {
       expect(res.headers.get("content-length")).toBe("524288");
       expect(res.headers.get("content-type")).toBe("application/octet-stream");
       expect((await res.bytes()).length).toBe(0);
+    });
+  });
+
+  // RFC 9110 8.6: a null body does not say what GET would send, so HEAD sends no content-length.
+  test("HEAD of a null-body Response has no content-length", async () => {
+    await withServer(async port => {
+      const res = await fetchH3(port, "/null-body", { method: "HEAD" });
+      expect({
+        status: res.status,
+        marker: res.headers.get("x-null"),
+        contentLength: res.headers.get("content-length"),
+        body: (await res.bytes()).length,
+      }).toEqual({ status: 200, marker: "1", contentLength: null, body: 0 });
     });
   });
 
@@ -3742,12 +3758,12 @@ describe("Bun.serve HTTP/3 writes to another connection's stream from a handler"
   });
 });
 
-// Bun.build() runs the event loop while it waits for an async plugin setup(),
-// so a handler that calls it can have a packet for its own connection read in
-// the middle of lsquic's pass. The server gets its own process because it hangs
-// or aborts when this breaks.
+// A handler that runs the event loop can have a packet for its own connection
+// read in the middle of lsquic's pass. The server gets its own process because
+// it hangs or aborts when this breaks.
 test("Bun.serve HTTP/3 accepts a packet for a connection whose handler is running the event loop", async () => {
   const script = /* js */ `
+    import { runEventLoopUntil } from "bun:internal-for-testing";
     import { connect, QuicEndpoint } from "node:quic";
 
     let session;
@@ -3768,24 +3784,16 @@ test("Bun.serve HTTP/3 accepts a packet for a connection whose handler is runnin
       http3: true,
       http1: false,
       routes: {
-        "/build": () => {
-          Bun.build({
-            entrypoints: ["./entry.js"],
-            plugins: [
-              {
-                name: "second request",
-                async setup() {
-                  const sent = session.stats.pktSent;
-                  second = request("/second");
-                  // Wait until the request is in the server's socket, then
-                  // one more turn of the event loop so the server reads it.
-                  while (session.stats.pktSent === sent) await new Promise(setImmediate);
-                  await new Promise(setImmediate);
-                },
-              },
-            ],
-          }).catch(() => {});
-          return new Response("built");
+        "/nested": () => {
+          runEventLoopUntil((async () => {
+            const sent = session.stats.pktSent;
+            second = request("/second");
+            // Wait until the request is in the server's socket, then
+            // one more turn of the event loop so the server reads it.
+            while (session.stats.pktSent === sent) await new Promise(setImmediate);
+            await new Promise(setImmediate);
+          })());
+          return new Response("nested");
         },
         "/second": () => new Response("second"),
       },
@@ -3801,10 +3809,10 @@ test("Bun.serve HTTP/3 accepts a packet for a connection whose handler is runnin
     session.closed.catch(() => {});
     await session.opened;
     await request("/second");
-    console.log(JSON.stringify([await request("/build"), await second]));
+    console.log(JSON.stringify([await request("/nested"), await second]));
     process.exit(0);
   `;
-  using dir = tempDir("serve-http3-nested-loop", { "entry.js": "export default 1;\n", "server.mjs": script });
+  using dir = tempDir("serve-http3-nested-loop", { "server.mjs": script });
   await using proc = Bun.spawn({
     cmd: [bunExe(), "server.mjs"],
     env: bunEnv,
@@ -3816,7 +3824,7 @@ test("Bun.serve HTTP/3 accepts a packet for a connection whose handler is runnin
   });
   const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout: stdout.trim(), exitCode, signalCode: proc.signalCode }).toEqual({
-    stdout: JSON.stringify(["built", "second"]),
+    stdout: JSON.stringify(["nested", "second"]),
     exitCode: 0,
     signalCode: null,
   });
@@ -3824,25 +3832,20 @@ test("Bun.serve HTTP/3 accepts a packet for a connection whose handler is runnin
 
 test("Bun.serve HTTP/3 sleeps while a handler that runs the event loop has packets waiting", async () => {
   const script = `
+    import { runEventLoopUntil } from "bun:internal-for-testing";
     const server = Bun.serve({
       port: 0, tls: ${JSON.stringify(tls)}, http3: true, http1: false,
       routes: {
-        "/build": () => {
+        "/nested": () => {
           let share;
-          Bun.build({
-            entrypoints: [import.meta.path],
-            plugins: [{
-              name: "wait",
-              async setup() {
-                console.error("WAITING");
-                await sent.promise;
-                const [cpu, start] = [process.cpuUsage(), performance.now()];
-                await Bun.sleep(200);
-                const { user, system } = process.cpuUsage(cpu);
-                share = (user + system) / 1000 / (performance.now() - start);
-              },
-            }],
-          }).catch(() => {});
+          runEventLoopUntil((async () => {
+            console.error("WAITING");
+            await sent.promise;
+            const [cpu, start] = [process.cpuUsage(), performance.now()];
+            await Bun.sleep(200);
+            const { user, system } = process.cpuUsage(cpu);
+            share = (user + system) / 1000 / (performance.now() - start);
+          })());
           return new Response(share < 0.5 ? "slept" : "spun");
         },
         "/second": () => new Response("second"),
@@ -3866,14 +3869,14 @@ test("Bun.serve HTTP/3 sleeps while a handler that runs the event loop has packe
       stream.closed.catch(() => {});
       return Array.fromAsync(stream as AsyncIterable<Uint8Array[]>);
     }
-    const build = request("/build");
+    const nested = request("/nested");
     await waitForStderr(/WAITING/);
     const stats = session.stats as unknown as { pktSent: bigint };
     const before = stats.pktSent;
     const second = request("/second");
     while (stats.pktSent === before) await new Promise(resolve => setImmediate(resolve));
     send("sent");
-    const bodies = (await Promise.all([build, second])).map(batches => Buffer.concat(batches.flat()).toString());
+    const bodies = (await Promise.all([nested, second])).map(batches => Buffer.concat(batches.flat()).toString());
     session.destroy();
     expect(bodies).toEqual(["slept", "second"]);
   });

@@ -4,87 +4,87 @@ const out = [];
 const suffix = process.argv[2] ?? "";
 // What the compiler cannot read: it only knows that the objects go there.
 globalThis.hide = new Function("value", "return value" + suffix);
-const define = new Function("object", "key", "descriptor", "return Object.defineProperty(object, key, descriptor)" + suffix);
-const remove = new Function("object", "key", "return delete object[key]" + suffix);
+const define = new Function("object", "label", "descriptor", "return Object.defineProperty(object, label, descriptor)" + suffix);
+const remove = new Function("object", "label", "return delete object[label]" + suffix);
 const construct = new Function("target", "list", "newTarget", "return Reflect.construct(target, list, newTarget)" + suffix);
 
-function Fiber(tag, key, child) {
-  this.tag = tag;
-  this.key = key;
-  this.child = child;
-  this.sibling = null;
-  this.memo = undefined;
+function Bench(mark, label, seat) {
+  this.beside = null;
+  this.cloth = undefined;
+  this.seat = seat;
+  this.label = label;
+  this.mark = mark;
 }
-class Hook {
-  constructor(state, queue) {
-    this.state = state;
-    this.queue = queue;
+class Peg {
+  constructor(hung, coats) {
     this.next = null;
+    this.coats = coats;
+    this.hung = hung;
   }
 }
 
-function readFiber(fiber) {
-  return [fiber.key, typeof fiber.key, `${fiber.key}`, fiber.child === null ? "no child" : typeof fiber.child, fiber.sibling, typeof fiber.sibling, fiber.memo, typeof fiber.memo, "key" in fiber, Object.keys(fiber).join()];
+function readBench(bench) {
+  return [bench.label, typeof bench.label, `${bench.label}`, bench.seat === null ? "no seat" : typeof bench.seat, bench.beside, typeof bench.beside, bench.cloth, typeof bench.cloth, "label" in bench, Object.keys(bench).join()];
 }
-function readAcrossACall(fiber, between) {
-  const before = fiber.key;
-  between(fiber);
-  return [before, fiber.key, fiber.sibling];
+function readAcrossACall(bench, between) {
+  const before = bench.label;
+  between(bench);
+  return [before, bench.label, bench.beside];
 }
-function storeIntoFiber(fiber, value) {
-  fiber.key = value;
-  fiber.sibling = value;
-  return [fiber.key, fiber.sibling, Object.keys(fiber).join()];
+function storeIntoBench(bench, value) {
+  bench.label = value;
+  bench.beside = value;
+  return [bench.label, bench.beside, Object.keys(bench).join()];
 }
-function readHook(hook) {
-  return [hook.state, hook.queue, hook.next];
+function readPeg(peg) {
+  return [peg.hung, peg.coats, peg.next];
 }
 function show(name, value) {
   out.push(name + ": " + JSON.stringify(value, (_, v) => (v === undefined ? "undefined" : v)));
 }
 
-const first = hide(new Fiber(0, "first", null));
-show("the first object", readFiber(first));
-for (let i = 0; i < 40; i++) readFiber(hide(new Fiber(i, "k" + i, first)));
-show("a later object", readFiber(hide(new Fiber(1, "later", first))));
+const first = hide(new Bench(0, "first", null));
+show("the first object", readBench(first));
+for (let i = 0; i < 40; i++) readBench(hide(new Bench(i, "k" + i, first)));
+show("a later object", readBench(hide(new Bench(1, "later", first))));
 
-const deleted = hide(new Fiber(2, "deleted", null));
-delete deleted.key;
-show("a field deleted", readFiber(deleted));
-show("a store creates it again, last", storeIntoFiber(deleted, "again"));
-show("and it reads", readFiber(deleted));
+const deleted = hide(new Bench(2, "deleted", null));
+delete deleted.label;
+show("a field deleted", readBench(deleted));
+show("a store creates it again, last", storeIntoBench(deleted, "again"));
+show("and it reads", readBench(deleted));
 
-Fiber.prototype.sibling = "inherited";
-const uncovered = hide(new Fiber(3, "uncovered", null));
-delete uncovered.sibling;
-show("a deleted field uncovers the prototype's", readFiber(uncovered));
-delete Fiber.prototype.sibling;
+Bench.prototype.beside = "inherited";
+const uncovered = hide(new Bench(3, "uncovered", null));
+delete uncovered.beside;
+show("a deleted field uncovers the prototype's", readBench(uncovered));
+delete Bench.prototype.beside;
 
-const accessor = hide(new Fiber(4, "accessor", null));
+const accessor = hide(new Bench(4, "accessor", null));
 let reads = 0;
-Object.defineProperty(accessor, "key", { get() { return "got " + ++reads; }, set(v) { reads = 100; }, configurable: true, enumerable: true });
-show("a field redefined as an accessor", readFiber(accessor));
-show("a store calls its setter", storeIntoFiber(accessor, "stored"));
+Object.defineProperty(accessor, "label", { get() { return "got " + ++reads; }, set(v) { reads = 100; }, configurable: true, enumerable: true });
+show("a field redefined as an accessor", readBench(accessor));
+show("a store calls its setter", storeIntoBench(accessor, "stored"));
 
-const removed = hide(new Fiber(13, "removed", null));
-remove(removed, "child");
-show("a field deleted by code that nobody sees", readFiber(removed));
-const redefined = hide(new Fiber(14, "redefined", null));
-define(redefined, "memo", { get() { return "computed"; }, configurable: true, enumerable: false });
-show("a field redefined by code that nobody sees", readFiber(redefined));
-show("deleted in the middle of a reader by such code", readAcrossACall(hide(new Fiber(15, "there", null)), fiber => { remove(fiber, "key"); remove(fiber, "sibling"); }));
-show("deleted in the middle of a reader", readAcrossACall(hide(new Fiber(5, "there", null)), fiber => { delete fiber.key; delete fiber.sibling; }));
-show("left alone in the middle of a reader", readAcrossACall(hide(new Fiber(6, "there", null)), () => {}));
+const removed = hide(new Bench(13, "removed", null));
+remove(removed, "seat");
+show("a field deleted by code that nobody sees", readBench(removed));
+const redefined = hide(new Bench(14, "redefined", null));
+define(redefined, "cloth", { get() { return "computed"; }, configurable: true, enumerable: false });
+show("a field redefined by code that nobody sees", readBench(redefined));
+show("deleted in the middle of a reader by such code", readAcrossACall(hide(new Bench(15, "there", null)), bench => { remove(bench, "label"); remove(bench, "beside"); }));
+show("deleted in the middle of a reader", readAcrossACall(hide(new Bench(5, "there", null)), bench => { delete bench.label; delete bench.beside; }));
+show("left alone in the middle of a reader", readAcrossACall(hide(new Bench(6, "there", null)), () => {}));
 
 let seen;
-function Early(key) {
-  this.tag = 1;
+function Early(label) {
+  this.mark = 1;
   seen = readEarly(this);
-  this.key = key;
+  this.label = label;
   this.next = null;
 }
 function readEarly(early) {
-  return [early.tag, early.key, early.next, Object.keys(early).join()];
+  return [early.mark, early.label, early.next, Object.keys(early).join()];
 }
 const early = hide(new Early("early"));
 show("seen before it was finished", seen);
@@ -118,35 +118,35 @@ show("the constructor threw", sink.map(readThrows));
 
 function Other() {}
 Other.prototype.marker = "other";
-const forOther = hide(construct(Fiber, [7, "for another new.target", null], Other));
-show("made for another new.target", [readFiber(forOther), forOther.marker, forOther instanceof Fiber]);
-class Setter { set key(v) { this.hidden = v; } }
-const underSetter = hide(construct(Fiber, [8, "under a setter", null], Setter));
-show("a setter above takes the store", [readFiber(underSetter), underSetter.hidden]);
+const forOther = hide(construct(Bench, [7, "for another new.target", null], Other));
+show("made for another new.target", [readBench(forOther), forOther.marker, forOther instanceof Bench]);
+class Setter { set label(v) { this.hidden = v; } }
+const underSetter = hide(construct(Bench, [8, "under a setter", null], Setter));
+show("a setter above takes the store", [readBench(underSetter), underSetter.hidden]);
 
-define(Fiber.prototype, "key", { set(v) { this.hidden = v; }, configurable: true });
-const lateSetter = hide(new Fiber(10, "a setter has arrived", null));
-show("a setter that arrived above takes the store", [readFiber(lateSetter), lateSetter.hidden]);
-remove(Fiber.prototype, "key");
-define(Fiber.prototype, "sibling", { value: "read-only above", writable: false, configurable: true });
-const underReadOnly = hide((() => { try { return new Fiber(11, "read-only above", null); } catch (error) { return error.constructor.name; } })());
-show("a read-only property that arrived above refuses the store", typeof underReadOnly === "string" ? underReadOnly : readFiber(underReadOnly));
-remove(Fiber.prototype, "sibling");
-show("and all is as before", readFiber(hide(new Fiber(12, "as before", null))));
+define(Bench.prototype, "label", { set(v) { this.hidden = v; }, configurable: true });
+const lateSetter = hide(new Bench(10, "a setter has arrived", null));
+show("a setter that arrived above takes the store", [readBench(lateSetter), lateSetter.hidden]);
+remove(Bench.prototype, "label");
+define(Bench.prototype, "beside", { value: "read-only above", writable: false, configurable: true });
+const underReadOnly = hide((() => { try { return new Bench(11, "read-only above", null); } catch (error) { return error.constructor.name; } })());
+show("a read-only property that arrived above refuses the store", typeof underReadOnly === "string" ? underReadOnly : readBench(underReadOnly));
+remove(Bench.prototype, "beside");
+show("and all is as before", readBench(hide(new Bench(12, "as before", null))));
 
 const calledOn = hide({ own: true });
-Fiber.call(calledOn, 9, "called on", null);
-show("the constructor was called on another object", readFiber(calledOn));
+Bench.call(calledOn, 9, "called on", null);
+show("the constructor was called on another object", readBench(calledOn));
 
-const hook = hide(new Hook(1, "queue"));
-show("an instance of a class", readHook(hook));
-Object.defineProperty(hook, "queue", { value: "fixed", writable: false });
-show("a field made read-only", readHook(hook));
-const frozen = hide(Object.freeze(new Hook(2, "frozen")));
-show("a frozen instance", readHook(frozen));
-const copy = hide({ ...new Hook(3, "copied") });
-show("a copy", readHook(copy));
-const heir = hide(Object.create(new Hook(4, "inherited")));
-show("an heir", [readHook(heir), Object.keys(heir).join()]);
+const peg = hide(new Peg(1, "coats"));
+show("an instance of a class", readPeg(peg));
+Object.defineProperty(peg, "coats", { value: "fixed", writable: false });
+show("a field made read-only", readPeg(peg));
+const frozen = hide(Object.freeze(new Peg(2, "frozen")));
+show("a frozen instance", readPeg(frozen));
+const copy = hide({ ...new Peg(3, "copied") });
+show("a copy", readPeg(copy));
+const heir = hide(Object.create(new Peg(4, "inherited")));
+show("an heir", [readPeg(heir), Object.keys(heir).join()]);
 
 console.log(out.join("\n"));

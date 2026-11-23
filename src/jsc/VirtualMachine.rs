@@ -8,6 +8,7 @@ use core::ffi::{c_int, c_void};
 use core::ptr::NonNull;
 
 use bun_bundler::Transpiler;
+use bun_core::scoped::{ScopedCell as _, ScopedFlag as _, SetForScope};
 use bun_io as Async;
 use bun_uws as uws;
 
@@ -577,9 +578,9 @@ pub unsafe extern "C" fn Bun__standaloneModuleKey(
     if !bun_options_types::standalone_path::is_bun_standalone_file_path(name) {
         return core::ptr::null();
     }
-    match standalone_module_graph().and_then(|graph| graph.find_assume_standalone_path(name)) {
+    let file = standalone_module_graph().and_then(|graph| graph.find_assume_standalone_path(name));
+    match file.and_then(crate::compiled_program::key_of_named_file) {
         Some(canonical) => {
-            let canonical = crate::compiled_program::entry_module_key(canonical);
             *out_len = canonical.len();
             canonical.as_ptr()
         }
@@ -1633,6 +1634,11 @@ impl VirtualMachine {
 
     /// Unlike `is_event_loop_alive`, also counts unref'd handles and timers, since they can still run JS.
     pub fn has_work_left(&self) -> bool {
+        self.has_work_left_besides(0)
+    }
+
+    /// Whether it would have without `refs` of its keep-alives.
+    pub fn has_work_left_besides(&self, refs: u32) -> bool {
         // Must be read before the queues: the waiter thread posts a child's exit, then stops counting the child.
         #[cfg(unix)]
         if bun_spawn::process::WaiterThread::is_watching() {
@@ -1644,7 +1650,7 @@ impl VirtualMachine {
         let timers =
             runtime_hooks().map_or_else(TimersLeft::default, |hooks| (hooks.timers_left)());
         timers.armed
-            || self.has_handles(timers.holds_loop_ref)
+            || self.has_handles(timers.holds_loop_ref, refs)
             || self.has_handles_off_the_loop()
             || crate::cpp::Bun__hasDeferredWorkNotKeepingEventLoopAlive(self.global())
     }
@@ -1659,7 +1665,7 @@ impl VirtualMachine {
 
     /// `num_polls` also counts plain loop refs, so subtract the entries that can't settle anything a test waits on.
     #[cfg(not(windows))]
-    fn has_handles(&self, timers_hold_loop_ref: bool) -> bool {
+    fn has_handles(&self, timers_hold_loop_ref: bool, refs: u32) -> bool {
         let rare = self.rare_data.get();
         // A `--parallel` worker's IPC group only ever holds the socket to its coordinator.
         let has_coordinator =
@@ -1670,14 +1676,14 @@ impl VirtualMachine {
             .map_or(0, |polls| polls.disarmed_count());
         let fires_nothing = i32::from(timers_hold_loop_ref) + i32::from(has_coordinator) + disarmed;
         self.platform_loop_opt()
-            .is_some_and(|h| h.num_polls.get() > fires_nothing)
+            .is_some_and(|h| h.num_polls.get() > fires_nothing + refs as i32)
     }
 
     /// Over-reports: `uv_loop_alive` can't exclude the timers' ref or a `--parallel` worker's pipe to its coordinator.
     #[cfg(windows)]
-    fn has_handles(&self, _timers_hold_loop_ref: bool) -> bool {
+    fn has_handles(&self, _timers_hold_loop_ref: bool, refs: u32) -> bool {
         self.platform_loop_opt()
-            .is_some_and(|h| h.is_active() || h.has_active_io_handles())
+            .is_some_and(|h| h.is_active_besides(refs) || h.has_active_io_handles())
     }
 
     pub fn wakeup(&self) {
@@ -1846,8 +1852,7 @@ impl VirtualMachine {
         // the print, then route the value through `printException` /
         // `printErrorlikeObject` (ConsoleObject formatter). The save/restore
         // has no higher-tier dep, so it lives here unconditionally.
-        let prev_had_errors = self.had_errors.get();
-        self.had_errors.set(false);
+        let _had_errors = self.had_errors.set_for_scope(false);
 
         // The actual print path needs `ConsoleObject::Formatter` +
         // `ZigException` (high tier). Dispatch through `RuntimeHooks` —
@@ -1883,10 +1888,6 @@ impl VirtualMachine {
             }
             let _ = writer.flush();
         }
-
-        // The hook does not unwind across the dispatch boundary, so restore
-        // linearly.
-        self.had_errors.set(prev_had_errors);
     }
 
     /// Looks up (or
@@ -1973,13 +1974,12 @@ impl VirtualMachine {
         if isBunTest.load(core::sync::atomic::Ordering::Relaxed) {
             // What a listener throws comes back here, and is the runner's.
             if self.is_running_vitest_entry.get() && !self.is_handling_uncaught_exception.get() {
-                self.is_handling_uncaught_exception.set(true);
+                let _handling = self.is_handling_uncaught_exception.raise_for_scope();
                 let handled = Bun__handleUncaughtException(
                     global_object,
                     err.to_error().unwrap_or(err),
                     if is_rejection { 1 } else { 0 },
                 ) > 0;
-                self.is_handling_uncaught_exception.set(false);
                 if handled {
                     return true;
                 }
@@ -2005,7 +2005,8 @@ impl VirtualMachine {
             (hooks.process_exit)(global_object, 7);
             panic!("Uncaught exception while handling uncaught exception");
         }
-        self.is_handling_uncaught_exception.set(true);
+        // Held across `on_unhandled_rejection`: a handler that throws there exits with code 7.
+        let handling = self.is_handling_uncaught_exception.raise_for_scope();
         let handled = Bun__handleUncaughtException(
             global_object,
             err.to_error().unwrap_or(err),
@@ -2026,7 +2027,7 @@ impl VirtualMachine {
                 // `process_exit` emits `exit`, re-entering here if a listener
                 // throws. No handler is running, so drop the recursion guard or
                 // that re-entry exits 7 ("handler threw") instead of 1.
-                self.is_handling_uncaught_exception.set(false);
+                drop(handling);
                 (hooks.process_exit)(global_object, 1);
                 panic!("made it past process.exit()");
             }
@@ -2035,14 +2036,6 @@ impl VirtualMachine {
             self.exit_handler.exit_code.set(1);
             (self.on_unhandled_rejection.get())(self, global_object, err);
         }
-        // Note: this reset must cover BOTH the FFI call and the
-        // `onUnhandledRejection` callback above. The flag must stay raised
-        // while that callback runs so a re-entrant `uncaught_exception` from
-        // a user handler trips the recursion guard and hard-exits with code 7
-        // instead of recursing. Neither the FFI call nor the fn-pointer
-        // callback unwind past this frame (re-entry hits `process_exit` →
-        // `panic!`, which never returns), so a linear reset here suffices.
-        self.is_handling_uncaught_exception.set(false);
         handled
     }
 
@@ -2156,9 +2149,8 @@ impl VirtualMachine {
 
         // process.exit() never reaches drain_microtasks; flush AutoFlusher sinks here.
         if !self.is_inside_deferred_task_queue.get() {
-            self.is_inside_deferred_task_queue.set(true);
+            let _inside = self.is_inside_deferred_task_queue.raise_for_scope();
             self.event_loop().deferred_tasks.run();
-            self.is_inside_deferred_task_queue.set(false);
         }
 
         // The loop won't tick again, so flush now.
@@ -4916,40 +4908,17 @@ impl VirtualMachine {
                     }
                     retry_on_not_found = false;
 
-                    let mut buf = bun_paths::path_buffer_pool::get();
-                    let buf = buf.as_mut_slice();
-                    let mut busted_as_spelled = false;
-                    let mut busted_working_directory = false;
-                    let buster_name: &[u8] = if bun_paths::is_absolute(normalized_specifier) {
-                        if let Some(dir) = bun_paths::dirname(normalized_specifier) {
-                            if dir.len() > buf.len() {
-                                return Err(crate::CrateError::ModuleNotFound);
-                            }
-                            // `load_as_file` caches the listing under the specifier's own slashes, so bust that key too.
-                            busted_as_spelled = bust_dir_cache(
-                                bun_paths::string_paths::without_trailing_slash_windows_path(dir),
-                            );
-                            // Normalized without trailing slash.
-                            bun_paths::string_paths::normalize_slashes_only(
-                                buf,
-                                dir,
-                                bun_paths::SEP,
-                            )
-                        } else {
-                            // Absolute but root — fall through to join.
-                            &b""[..]
-                        }
-                    } else {
-                        &b""[..]
+                    let path = bun_resolver::path_of_specifier(normalized_specifier, import_kind);
+                    let bust_parent_from = |base: &[u8]| {
+                        let parts = [top_level_dir, base, &path, b".."];
+                        bust_dir_cache(&bun_paths::Path::resolve(&parts))
                     };
-                    let buster_name: &[u8] = if !buster_name.is_empty() {
-                        buster_name
+                    let busted = if bun_paths::is_absolute(normalized_specifier) {
+                        // `load_as_file` caches the listing under the specifier's own slashes, so bust that key too.
+                        let as_spelled = bun_paths::dirname_or_root(normalized_specifier);
+                        bust_dir_cache(as_spelled) | bust_parent_from(source_to_use)
                     } else {
-                        // If the specifier is too long to join, it can't name
-                        // a real directory — skip the cache bust and fail.
-                        if source_to_use.len() + normalized_specifier.len() + 4 >= buf.len() {
-                            return Err(crate::CrateError::ModuleNotFound);
-                        }
+                        let mut busted_working_directory = false;
                         // The folder of a module of an executable stands for a folder on disk, and that is where the resolver has looked.
                         let is_in_executable =
                             bun_options_types::standalone_path::is_bun_standalone_file_path(
@@ -4969,39 +4938,18 @@ impl VirtualMachine {
                                 });
                                 // From there the resolver has gone on to the working directory.
                                 if found.is_some() {
-                                    use bun_paths::resolve_path::{
-                                        join_abs_string_buf_checked, platform,
-                                    };
-                                    let mut buffer = bun_paths::path_buffer_pool::get();
-                                    let parts = [normalized_specifier, &b".."[..]];
-                                    let folder = join_abs_string_buf_checked::<platform::Auto>(
-                                        top_level_dir,
-                                        &mut buffer[..],
-                                        &parts,
-                                    );
-                                    busted_working_directory = folder.is_some_and(bust_dir_cache);
+                                    busted_working_directory = bust_parent_from(top_level_dir);
                                 }
                                 Some(found.unwrap_or_else(|| top_level_dir.to_vec()))
                             }
                             _ => None,
                         };
-                        let parts: [&[u8]; 3] = [
-                            folder_on_disk.as_deref().unwrap_or(source_to_use),
-                            normalized_specifier,
-                            bun_paths::path_literal!("..").as_bytes(),
-                        ];
-                        bun_paths::resolve_path::join_abs_string_buf_z::<
-                            bun_paths::resolve_path::platform::Auto,
-                        >(top_level_dir, buf, &parts)
-                        .as_bytes()
+                        bust_parent_from(folder_on_disk.as_deref().unwrap_or(source_to_use))
+                            || busted_working_directory
                     };
 
                     // Only re-query if we previously had something cached.
-                    if bust_dir_cache(
-                        bun_paths::string_paths::without_trailing_slash_windows_path(buster_name),
-                    ) || busted_as_spelled
-                        || busted_working_directory
-                    {
+                    if busted {
                         continue;
                     }
                     return Err(crate::CrateError::ModuleNotFound);
@@ -5585,22 +5533,15 @@ impl VirtualMachine {
         let fs = self.fs();
         bun_sys::chdir(to)?;
         let mut buf = bun_paths::path_buffer_pool::get();
-        let mut len = match bun_sys::getcwd(&mut buf[..]) {
-            bun_sys::Result::Ok(r) => r,
+        let mut cwd = match bun_sys::getcwd_z(&mut buf) {
+            bun_sys::Result::Ok(cwd) => bun_paths::Path::from(cwd),
             bun_sys::Result::Err(err) => {
-                let mut rollback = bun_paths::path_buffer_pool::get();
-                let _ = bun_sys::chdir(bun_paths::resolve_path::z(
-                    fs.top_level_dir(),
-                    &mut rollback,
-                ));
+                let _ = bun_sys::chdir(&bun_paths::Path::from(fs.top_level_dir()));
                 return bun_sys::Result::Err(err);
             }
         };
-        if len > 0 && buf[len - 1] != bun_paths::SEP && len < buf.len() {
-            buf[len] = bun_paths::SEP;
-            len += 1;
-        }
-        fs.set_top_level_dir(Self::intern_cwd(fs, &buf[..len]));
+        cwd.push_trailing_sep();
+        fs.set_top_level_dir(Self::intern_cwd(fs, &cwd));
         Ok(())
     }
 
@@ -5687,9 +5628,7 @@ impl VirtualMachine {
         }
 
         if let Some(cwd) = self.test_isolation_state.saved_cwd.take() {
-            let mut buf = bun_paths::path_buffer_pool::get();
-            let z = bun_paths::resolve_path::z(&cwd, &mut buf);
-            let _ = self.set_process_cwd(z);
+            let _ = self.set_process_cwd(&bun_paths::Path::from(&cwd));
         }
 
         let _ = self.event_loop().drain_microtasks();
@@ -5928,10 +5867,11 @@ impl VirtualMachine {
                 // SAFETY: `ctx` is `&mut AggCtx` for the duration of `for_each`.
                 let ctx = unsafe { bun_ptr::callback_ctx::<AggCtx<'_, '_>>(ctx) };
                 let vm = VirtualMachine::get();
-                let formatter = &mut *ctx.formatter;
+                let depth = ctx.formatter.depth.saturating_add(1);
+                let mut deeper = SetForScope::new(&mut *ctx.formatter, |f| &mut f.depth, depth);
+                let formatter = &mut *deeper;
                 let writer = &mut *ctx.writer;
                 ctx.printed_member = true;
-                formatter.depth = formatter.depth.saturating_add(1);
                 if next_value.is_cell()
                     && next_value.js_type() == crate::JSType::ErrorInstance
                     && formatter.visited_contains(next_value)
@@ -5968,7 +5908,6 @@ impl VirtualMachine {
                         ctx.allow_side_effects,
                     );
                 }
-                formatter.depth = formatter.depth.saturating_sub(1);
             }
             let mut ctx = AggCtx {
                 formatter: &mut *formatter,
@@ -6685,8 +6624,8 @@ impl VirtualMachine {
         use crate::console_object::formatter::TagOptions;
         use crate::console_object::{Tag, TagPayload};
 
-        let prev_had_errors = self.had_errors.replace(true);
-        scopeguard::defer! { self.had_errors.set(prev_had_errors) }
+        let prev_had_errors = self.had_errors.get();
+        let _had_errors = self.had_errors.set_for_scope(true);
 
         if allow_side_effects {
             if let Some(debugger) = self.debugger.get() {
@@ -7135,23 +7074,20 @@ impl VirtualMachine {
         let mut exception_list = exception_list;
         for err in &errors_to_append {
             writer.write_all(b"\n")?;
-            let prev_depth = formatter.depth;
-            formatter.depth = formatter.depth.saturating_add(1);
-            let over_cap = formatter.depth > formatter.error_chain_max_depth();
-            let result: crate::CrateResult<()> = if over_cap {
-                pretty_write!(writer, "<r><cyan>[Error ...]<r>").map_err(Into::into)
+            let depth = formatter.depth.saturating_add(1);
+            let mut formatter = SetForScope::new(&mut *formatter, |f| &mut f.depth, depth);
+            if depth > formatter.error_chain_max_depth() {
+                pretty_write!(writer, "<r><cyan>[Error ...]<r>")?;
             } else {
                 self.print_error_instance_js(
                     err.value(),
                     exception_list.as_deref_mut(),
-                    formatter,
+                    &mut formatter,
                     writer,
                     allow_ansi_color,
                     allow_side_effects,
-                )
-            };
-            formatter.depth = prev_depth;
-            result?;
+                )?;
+            }
         }
 
         Ok(())
@@ -7276,7 +7212,7 @@ impl VirtualMachine {
                 let _ = write!(
                     writer,
                     "\n::error file={},line={},col={},title=",
-                    bun_core::fmt::github_action_property(file),
+                    bun_core::fmt::github_action_property(&file),
                     frame.position.line.one_based(),
                     frame.position.column.one_based(),
                 );
@@ -7337,7 +7273,8 @@ impl VirtualMachine {
             };
             for frame in frames {
                 let source_url = frame.source_url.to_utf8();
-                let file = crate::ZigStackFrame::relative_source_url(dir, source_url.slice());
+                let file: &[u8] =
+                    &crate::ZigStackFrame::relative_source_url(dir, source_url.slice());
                 let func = frame.function_name.to_utf8();
                 if file.is_empty() && func.slice().is_empty() {
                     continue;

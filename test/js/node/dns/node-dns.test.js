@@ -548,31 +548,17 @@ test("dns.Resolver: a query's promise reaction can re-enter the event loop", asy
     const resolver = new dns.promises.Resolver({ timeout: 5000, tries: 1 });
     resolver.setServers(["127.0.0.1:" + server.port]);
 
-    // Bun.build() spins the event loop until the promise returned by a plugin's setup() settles.
+    const { runEventLoopUntil } = require("bun:internal-for-testing");
     let reentries = 0;
-    const builds = [];
-    function reenterEventLoop() {
-      const before = reentries;
-      builds.push(Bun.build({
-        entrypoints: ["/entry.js"],
-        files: { "/entry.js": "" },
-        plugins: [{
-          name: "spin",
-          setup: () => new Promise(resolve => setImmediate(() => { reentries++; resolve(); })),
-        }],
-      }));
-      if (reentries !== before + 1) throw new Error("Bun.build() returned without spinning the event loop");
-    }
 
     // Each round uses a new name, because c-ares answers a repeated name from its cache without opening a socket.
     for (let i = 0; i < ${rounds}; i++) {
       const addresses = await resolver.resolve4("round" + i + ".example.test").then(addresses => {
-        reenterEventLoop();
+        runEventLoopUntil(new Promise(setImmediate).then(() => reentries++));
         return addresses;
       });
       if (addresses[0] !== "127.0.0.1") throw new Error("unexpected answer: " + addresses);
     }
-    await Promise.all(builds);
     server.close();
     console.log("reentries=" + reentries);
   `;
@@ -1429,6 +1415,18 @@ describe('errors inherit the name "Error", like Node', () => {
       dns.lookup("a.test", e => console.log(String(e)));
     `;
     expect(await bunRun(["-e", script])).toSpawn("Error: No records found\nError: getaddrinfo ENODATA a.test");
+  });
+
+  test("a sealed error keeps its name and still gets Node's code", async () => {
+    const script = `
+      const sealed = () => Object.seal(Object.assign(new Error("mocked"), { name: "DNSException", code: "DNS_ENOTFOUND" }));
+      Bun.dns.lookup = async () => { throw sealed(); };
+      const dns = require("node:dns");
+      const show = e => console.log(String(e), e.code);
+      show(await dns.promises.lookup("a.test").catch(e => e));
+      dns.lookup("a.test", show);
+    `;
+    expect(await bunRun(["-e", script])).toSpawn("DNSException: mocked ENOTFOUND\nDNSException: mocked ENOTFOUND");
   });
 });
 

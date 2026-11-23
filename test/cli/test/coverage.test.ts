@@ -57,6 +57,25 @@ export class Y {
   );
 });
 
+test("a backslash separates in --coverage-dir", async () => {
+  using dir = tempDir("cov-dir-backslash", {
+    "lib.ts": `export const one = () => 1;`,
+    "a.test.ts": `import { test } from "bun:test"; import { one } from "./lib"; test("t", () => { one(); });`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=lcov", "--coverage-dir=cv\\r", "./a.test.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("1 pass");
+  expect(readdirSync(String(dir)).sort()).toEqual(["a.test.ts", "cv", "lib.ts"]);
+  expect(readdirSync(path.join(String(dir), "cv", "r"))).toEqual(["lcov.info"]);
+  expect(exitCode).toBe(0);
+});
+
 // https://github.com/oven-sh/bun/issues/17502
 describe("--coverage-reporter without --coverage turns coverage on", () => {
   const files = {

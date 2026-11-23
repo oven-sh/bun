@@ -593,14 +593,11 @@ function getHostname(
       code !== Char.COLON;
 
     if (!isValid) {
-      // A leftover `:` is an invalid port. Node 25+ throws for every input (DEP0170). Bun throws for the
-      // web schemes, and for scheme-less input when slashesDenoteHost is set (url.resolve). Other input
-      // keeps its old result, because published packages still parse it: scp-style git URLs
-      // (hosted-git-info 2.x), `sqlite::memory:` (sequelize 6), multi-host `mongodb://` (mongodb 3.x).
       if (code === Char.COLON && (lowerProto ? slashedProtocol[lowerProto] : slashesDenoteHost)) {
         // Node passes the text as the value and the url as the reason. Keep that order.
         throw $ERR_INVALID_ARG_VALUE("url", "Invalid port in url", url);
       }
+      // Node 25+ throws for every scheme (DEP0170), but packages still parse scp-style git URLs. Keep it working.
       self.hostname = hostname.slice(0, i);
       return `/${hostname.slice(i)}${rest}`;
     }

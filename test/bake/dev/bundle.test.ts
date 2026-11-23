@@ -1276,6 +1276,40 @@ devTest("top-level function keeps its name when another module declares the same
   },
 });
 
+// An export that becomes a getter reserves no second name, so a nested
+// `<export>2` is not printed as `<export>22`.
+devTest("nested function keeps its name next to a getter export of the same stem", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import { nested as local } from "./local/index.js";
+      import { nested as dep } from "dep";
+      import { nested as assigned } from "./assigned.js";
+      console.log([local(), dep(), assigned()].join(" "));
+    `,
+    "assigned.js": `
+      export let count = 0;
+      export function inc() { count++; }
+      export function nested() { function count2() {} return count2.name; }
+    `,
+    "local/button.js": `export function Button() {}`,
+    "local/index.js": `
+      export { Button } from "./button.js";
+      export function nested() { function Button2() {} return Button2.name; }
+    `,
+    "node_modules/dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0", type: "module" }),
+    "node_modules/dep/button.js": `export function Button() {}`,
+    "node_modules/dep/index.js": `
+      export { Button } from "./button.js";
+      export function nested() { function Button2() {} return Button2.name; }
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("Button2 Button2 count2");
+  },
+});
+
 devTest("barrel optimization: adding a new import triggers reload", {
   files: {
     "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),

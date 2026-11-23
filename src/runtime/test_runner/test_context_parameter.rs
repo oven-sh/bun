@@ -78,8 +78,7 @@ impl ContextParameter {
         )
     }
 
-    /// Vitest reads the parameters from what `toString()` returns.
-    /// A wrapper around a callback overrides it to return the text of that callback.
+    /// Vitest reads the parameters from what `toString()` returns, which a wrapper sets to the text of the function it wraps.
     #[cold]
     pub(crate) fn of_to_string(global: &JSGlobalObject, function: JSValue, index: usize) -> JsResult<ContextParameter> {
         let function = function.without_async_context();
@@ -95,13 +94,12 @@ impl ContextParameter {
         if let Some(parameter) = Self::of_whole(text.slice(), index, || None) {
             return Ok(parameter);
         }
-        let mut is_text_left_out = false;
-        let _ = Bun__JSFunction__compiledSource(function, &mut is_text_left_out);
-        if is_text_left_out {
+        if text.slice().ends_with(b"{ [native code] }")
+            && bun_jsc::compiled_program::compiled_program().is_some_and(bun_jsc::compiled_program::omits_function_source)
+        {
             return Ok(ContextParameter::TextLeftOut);
         }
-        // Not the text of a function: a spy puts a line in front of it, another wrapper leaves the body out.
-        // Vitest reads any text. What follows the first parenthesis is the parameters.
+        // Not one function: chai-spies puts a line in front. Vitest takes what follows the first parenthesis as the parameters.
         let Some(parameters) = Self::first_parenthesized(text.slice()) else {
             return Ok(ContextParameter::Absent);
         };

@@ -88,6 +88,27 @@ describe.concurrent("test.extend()", () => {
     });
   });
 
+  test("without the text of functions a toString() is refused only if it returns native code", async () => {
+    const file = `
+      import { test } from "bun:test";
+      const local = test.extend({ state: 5 });
+      // A wrapper from new Function, as one from a package, is not in the files of the tests.
+      const wrap = new Function("inner", "return Object.defineProperty((...args) => inner(...args), 'toString', { value: () => inner.toString() })");
+      local("the text of a function", wrap(({ state }) => console.log("SAID not reached", state)));
+      const written = Object.defineProperty((...args) => console.log("SAID", args[0].state), "toString", { value: () => "{ Spy }\\n({ state }) => {}" });
+      local("a text that the wrapper wrote", written);`;
+    expect(
+      await runTests({ "texts.test.js": file }, ["--aot", "--no-compile-function-source"], "TestRunLayers:0"),
+    ).toEqual({
+      said: ["SAID 5"],
+      results: ["(fail) the text of a function", "(pass) a text that the wrapper wrote"],
+      errors: [
+        "error: test(): fixtures are chosen by the properties that a callback destructures, and this build holds no function source to read them from (--no-compile-function-source)",
+      ],
+      exitCode: 1,
+    });
+  });
+
   test("without the text of functions a test with fixtures fails and says why", async () => {
     const file = `
       import { test } from "bun:test";

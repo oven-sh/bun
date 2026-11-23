@@ -211,12 +211,15 @@ pub(crate) mod js_fns {
             };
             // An extended `test` binds its `beforeAll` / `afterAll` / `aroundAll` with its `TestFixtures` as `this`.
             let mut fixtures = None;
+            let mut parameter = None;
             if let (Flavor::Vitest, GenericHookTag::BeforeAll | GenericHookTag::AfterAll, Some(callback))
             | (_, GenericHookTag::AroundAll, Some(callback)) = (flavor, tag, args.callback)
             {
                 fixtures = Some(this_value.to_js()).filter(|this| this.is::<TestFixtures>());
                 let context_index = usize::from(tag.around().is_some());
-                args.callback = Some(test_context::suite_hook(global_this, tag_name, callback, context_index, fixtures.is_some())?);
+                let (callback, read) = test_context::suite_hook(global_this, tag_name, callback, context_index, fixtures.is_some())?;
+                args.callback = Some(callback);
+                parameter = Some(Rc::new(core::cell::OnceCell::from(read)));
             }
 
             let bun_test_root = get_test_root(global_this, Signature::Str(sig_bytes))?;
@@ -244,6 +247,7 @@ pub(crate) mod js_fns {
                     tag.as_hook_tag().unwrap(),
                     args.callback,
                     cfg,
+                    parameter,
                     BaseScopeCfg::default(),
                     AddedInPhase::Preload,
                 );
@@ -266,6 +270,7 @@ pub(crate) mod js_fns {
                         tag.as_hook_tag().unwrap(),
                         args.callback,
                         cfg,
+                        parameter,
                         BaseScopeCfg::default(),
                         AddedInPhase::Collection,
                     );
@@ -1211,8 +1216,7 @@ impl BunTest {
         }
     }
 
-    /// Every call into the user's code for the entry of `data` goes through here: the callback, and a `toString()` read for it.
-    /// On `Err`, call `report_thrown`.
+    /// The way into the user's code for the entry of `data`. `report_thrown` reports an `Err`.
     pub(crate) fn enter_callback<R>(
         this: &BunTestPtr,
         global_this: &JSGlobalObject,
@@ -1969,10 +1973,11 @@ impl DescribeScope {
         tag: HookTag,
         callback: Option<JSValue>,
         cfg: ExecutionEntryCfg,
+        parameter: Option<SharedContextParameter>,
         base: BaseScopeCfg,
         phase: AddedInPhase,
     ) {
-        let mut entry = ExecutionEntry::create(None, callback, cfg, None, Some(self), base, phase);
+        let mut entry = ExecutionEntry::create(None, callback, cfg, parameter, Some(self), base, phase);
         // `create` drops the callback in a skipped scope, and a hook entry without one would be reported as a test.
         if !entry.callback.is_some() {
             return;

@@ -5206,6 +5206,10 @@ describe.concurrent("a callback with its own toString()", () => {
         aroundAll(wrap(async runSuite => { console.log("aroundAll"); await runSuite(); }));
         test.beforeAll(wrap(({ file }) => console.log("test.beforeAll", file)));
         test.afterAll(wrap(({ file }) => console.log("test.afterAll", file)));
+        let calls = 0;
+        const counted = ({ file }) => console.log("counted", file);
+        test.beforeAll(Object.defineProperty((...args) => counted(...args), "toString", { value() { calls++; return counted.toString(); } }));
+        test.afterAll(() => console.log("toString() calls:", calls));
         beforeEach(wrap(({ a }) => console.log("beforeEach", a)));
         test.beforeEach(wrap(({ b }) => console.log("test.beforeEach", b)));
         test.afterEach(wrap(({ a }) => console.log("test.afterEach", a)));
@@ -5228,9 +5232,11 @@ describe.concurrent("a callback with its own toString()", () => {
         "aroundAll",
         "beforeAll",
         "test.beforeAll FILE",
+        "counted FILE",
         ...each("test A AB"),
         ...each("for 1 AB"),
         ...each("no parameters A"),
+        "toString() calls: 1",
         "test.afterAll FILE",
         "afterAll",
       ],
@@ -5250,9 +5256,21 @@ describe.concurrent("a callback with its own toString()", () => {
         test("test", wrap(({ a, b }) => console.log("test", a, b)));
         test.for([1])("for %i", wrap((n, { b }) => console.log("for", n, b)));
       `,
+      // A default value is read as in a function without a wrapper. Vitest's regular expression stops at its parenthesis.
+      "defaults.test.js": `
+        import { test as base } from "bun:test";
+        const test = base.extend({ a: "A" });
+        const withText = text => Object.defineProperty((...args) => console.log(args[0].a), "toString", { value: () => text });
+        test("a parenthesis in a string", withText("{ Spy }\\n({ a = ')' }) => {}"));
+        test("a call", withText("{ Spy }\\n({ a = f() }) => {}"));
+      `,
     });
     expect({ log, exitCode }).toEqual({
-      log: ["aroundEach A", "test.beforeEach AB", "test A AB", "aroundEach A", "test.beforeEach AB", "for 1 AB"],
+      log: [
+        ...["aroundEach A", "test.beforeEach AB", "test A AB", "aroundEach A", "test.beforeEach AB", "for 1 AB"],
+        "A",
+        "A",
+      ],
       exitCode: 0,
     });
   });
@@ -5267,6 +5285,8 @@ describe.concurrent("a callback with its own toString()", () => {
       ["({ a }) => {\n  f(); // [native code]\n}", "A"],
       // chai-spies puts a line in front.
       ["{ Spy }\n({ a }) => {}", "A"],
+      ["{ Spy } // f(x)\n({ a }) => {}", "A"],
+      ["{ Spy /* (x) */ }\n({ a }) => {}", "A"],
       ["({ a }) => { ... }", "A"],
       ["wrapper of ({ a }) => {}", "A"],
       ["wrapped({ a })", "A"],

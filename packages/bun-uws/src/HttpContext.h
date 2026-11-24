@@ -588,10 +588,9 @@ private:
             /* Route the method and URL */
             httpContextData->router.getUserData() = {(HttpResponse<SSL> *) s, httpRequest};
             if (!httpContextData->router.route(httpRequest->getCaseSensitiveMethod(), httpRequest->getUrlForRouting())) {
-                /* We have to force close this socket as we have no handler for it.
-                 * close() first sends the responses to earlier requests of this read. */
-                ((AsyncSocket<SSL> *) s)->close();
-                return nullptr;
+                /* No route took the request: 404, as over HTTP/2 and HTTP/3. No handler reads its content, so the
+                 * connection closes after the answer. */
+                ((HttpResponse<SSL> *) s)->writeStatus("404 Not Found")->end({}, true);
             }
 
             /* We differ between closed and upgraded below */

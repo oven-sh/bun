@@ -29,7 +29,6 @@
 #include <utility>
 
 extern "C" size_t BUN_DEFAULT_MAX_HTTP_HEADER_SIZE;
-extern "C" int16_t Bun__HTTPMethod__from(const char *str, size_t len);
 
 namespace uWS {
 

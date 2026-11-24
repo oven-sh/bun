@@ -26,6 +26,8 @@
 #include <cstdint>
 #include <limits>
 
+extern "C" int16_t Bun__HTTPMethod__from(const char *str, size_t len);
+
 namespace uWS {
 
 /* RFC 9113 §8.2.2 / RFC 9114 §4.2: connection-specific fields are not
@@ -43,6 +45,12 @@ static inline bool isTokenByte(unsigned char c) {
         return true;
     }
     return false;
+}
+
+/* The methods Bun.serve can represent, in their case-sensitive wire form (RFC 9110 9.1). The lookup also knows
+ * each name in lowercase. */
+static inline bool isKnownMethod(std::string_view method) {
+    return !method.empty() && (unsigned char) (method[0] - 'A') < 26 && Bun__HTTPMethod__from(method.data(), method.size()) != -1;
 }
 
 /* RFC 9113 §8.3.1 / RFC 9114 §4.3.1 request-target rules shared by the h2

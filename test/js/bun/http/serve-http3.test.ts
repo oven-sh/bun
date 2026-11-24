@@ -1922,6 +1922,46 @@ const requestHeaders = (path: string, extra: Record<string, string> = {}) => ({
 });
 
 describe("Bun.serve HTTP/3 request validation", () => {
+  // RFC 9110 15.6.2. No handler can represent such a method, so none runs,
+  // as over HTTP/1.1 and HTTP/2. A handler used to see it as a GET.
+  test("answers 501 to a method that is not one of Bun's methods, and runs no handler", async () => {
+    const calls: string[] = [];
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      routes: { "/route": req => new Response("route " + req.method) },
+      fetch(req) {
+        calls.push(req.method);
+        return new Response("fetch " + req.method);
+      },
+    });
+
+    const results: Record<string, string> = {};
+    for (const [method, path] of [
+      ["BREW", "/"],
+      ["BREW", "/route"],
+      ["GETS", "/"],
+      ["get", "/"],
+      ["Post", "/"],
+      ["PROPFIND", "/"],
+    ]) {
+      results[`${method} ${path}`] = await h3Exchange(server.port!, { ...requestHeaders(path), ":method": method });
+    }
+
+    expect({ results, calls }).toEqual({
+      results: {
+        "BREW /": "501 ",
+        "BREW /route": "501 ",
+        "GETS /": "501 ",
+        "get /": "501 ",
+        "Post /": "501 ",
+        "PROPFIND /": "200 fetch PROPFIND",
+      },
+      calls: ["PROPFIND"],
+    });
+  });
+
   test("rejects a request whose field value contains CR or LF before the fetch handler runs", async () => {
     let reachedWithProbe = 0;
     await using server = Bun.serve({

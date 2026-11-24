@@ -19,6 +19,8 @@ pub enum RequestError {
     ChunkTerminatorExpected = 16,
     ContentLengthInTrailers = 17,
     InvalidTarget = 18,
+    /// Not for `node:http`, which has `InvalidMethod` for it.
+    UnknownMethod = 19,
 }
 
 impl RequestError {
@@ -33,6 +35,7 @@ impl RequestError {
             Self::ChunkExtensionsTooLarge => {
                 b"HTTP/1.1 413 Payload Too Large\r\nConnection: close\r\n\r\n"
             }
+            Self::UnknownMethod => b"HTTP/1.1 501 Not Implemented\r\nConnection: close\r\n\r\n",
             _ => b"HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n",
         }
     }

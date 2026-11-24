@@ -5735,11 +5735,11 @@ it("Proxy-Connection: close does not end a Bun.serve connection", async () => {
 });
 
 it.each([
-  ["in mixed case that reaches a handler has its name", "Post", /^HTTP\/1\.1 200 .*\r\n\r\nPOST$/s],
+  ["in mixed case is not implemented", "Post", /^HTTP\/1\.1 501 Not Implemented\r\n/],
   ["with a byte above 0x7f is a bad request", "P\u00d6ST", /^HTTP\/1\.1 400 Bad Request\r\n/],
 ])("a method %s", async (_, method, expected) => {
   const handler = (req: Request) => new Response(req.method);
-  // With two names for one parameter, the router has a route left for a method it does not know.
+  // With two names for one parameter, the router had a route left for a method it does not know.
   using server = serve({ port: 0, fetch: handler, routes: { "/u/:id": handler, "/u/:name": handler } });
   const socket = connect(server.port!, "127.0.0.1");
   try {

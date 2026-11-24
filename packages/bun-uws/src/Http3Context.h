@@ -50,6 +50,11 @@ struct Http3Context {
             }
 
             Http3Request req(s);
+            if (!isKnownMethod(req.getCaseSensitiveMethod())) {
+                /* RFC 9110 15.6.2, as over HTTP/1.1 and HTTP/2: no handler can represent the method. */
+                res->writeStatus("501 Not Implemented")->end();
+                return;
+            }
             if (req.getHeader("expect") == "100-continue") res->writeContinue();
             cd->router.getUserData() = {res, &req};
             if (!cd->router.route(req.getMethod(), req.getUrl())) {

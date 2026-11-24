@@ -56,6 +56,9 @@ struct Http3Request {
         return getDecodedQueryValue(key, query);
     }
 
+    /* As the client sent it. */
+    std::string_view getCaseSensitiveMethod() { return method; }
+
     /* We own no writable buffer, so lowercase into a per-request scratch. */
     std::string_view getMethod() {
         size_t n = method.size() < sizeof(methodLower) ? method.size() : sizeof(methodLower);

@@ -327,17 +327,22 @@ fn request_line() {
     check_each(&[
         (
             b"get / HTTP/1.1\r\n\r\n",
-            "(get / 1.1 [])",
+            "!UnknownMethod",
             "!InvalidMethod",
         ),
         (
             b"GeT / HTTP/1.1\r\n\r\n",
-            "(GeT / 1.1 [])",
+            "!UnknownMethod",
+            "!InvalidMethod",
+        ),
+        (
+            b"BREW / HTTP/1.1\r\n\r\n",
+            "!UnknownMethod",
             "!InvalidMethod",
         ),
         (
             b"PRI / HTTP/1.1\r\n\r\n",
-            "(PRI / 1.1 [])",
+            "!UnknownMethod",
             "!InvalidMethod",
         ),
         (
@@ -371,7 +376,11 @@ fn every_byte() {
 
         let method = with(b"a", b"a / HTTP/1.1\r\n\r\n");
         let is_method = byte.is_ascii_alphabetic() || byte == b'-';
-        assert_eq!(is_ok(SERVE, &method), is_method, "{byte}");
+        assert_eq!(
+            SERVE.feed(&[&method]) == "!UnknownMethod",
+            is_method,
+            "{byte}"
+        );
 
         let target = with(b"GET /", b"a HTTP/1.1\r\n\r\n");
         assert_eq!(is_ok(SERVE, &target), byte > b' ', "{byte}");
@@ -464,11 +473,9 @@ fn lookups() {
     });
 
     for (method, lowercase) in [
-        ("GeT", "get"),
+        ("GET", "get"),
         ("M-SEARCH", "m-search"),
-        ("A", "a"),
-        ("ABCDEFGHIJKLMNOP", "abcdefghijklmnop"),
-        ("ABCDEFGHIJKLMNOPQ", "ABCDEFGHIJKLMNOPQ"),
+        ("MKADDRESSBOOK", "mkaddressbook"),
     ] {
         let head = format!("{method} / HTTP/1.1\r\n\r\n");
         SERVE.with_request(head.as_bytes(), |request| {

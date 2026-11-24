@@ -275,8 +275,13 @@ impl<'a> RequestLine<'a> {
             }
             _ => return Err(RequestError::InvalidRequest.into()),
         };
-        if options.has_strict_methods && Method::find(method).is_none() {
-            return Err(RequestError::InvalidMethod.into());
+        // A method is case-sensitive (RFC 9110 9.1), and `Method::find` also knows each name in lowercase.
+        if !method.first().is_some_and(u8::is_ascii_uppercase) || Method::find(method).is_none() {
+            return Err(match options.has_strict_methods {
+                true => RequestError::InvalidMethod,
+                false => RequestError::UnknownMethod,
+            }
+            .into());
         }
 
         let (target, rest) = split_run(rest, if IS_NODE { &VISIBLE } else { &ABOVE_SPACE });

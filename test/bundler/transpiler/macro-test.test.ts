@@ -1078,6 +1078,37 @@ describe("a macro VM that a pool thread keeps", () => {
     expect(exitCode).toBe(0);
   });
 
+  // Each evaluation of `macro.ts` starts a timer. A call of the macro waits until the timer of its
+  // own module has fired five times, and returns how many other modules had a timer fire meanwhile.
+  test.concurrent("cancels the timers of the modules it loaded for the caller before", async () => {
+    const tags = Array.from({ length: 6 }, (_, i) => `tag-${i}`);
+    const { lines, stderr, exitCode } = await run(
+      {
+        ...callers("others"),
+        "macro.ts": [
+          `declare const BUILD_TAG: string;`,
+          `const generation = (globalThis.generation = (globalThis.generation ?? 0) + 1);`,
+          `const fired: number[] = (globalThis.fired ??= []);`,
+          `setInterval(() => fired.push(generation), 1);`,
+          `export async function others() {`,
+          `  fired.length = 0;`,
+          `  while (fired.filter(fired => fired === generation).length < 5) await Bun.sleep(1);`,
+          `  return BUILD_TAG + ":" + new Set(fired.filter(fired => fired !== generation)).size;`,
+          `}`,
+          ``,
+        ].join("\n"),
+        "index.ts": `${build}
+          const seen: string[] = [];
+          for (const tag of ${JSON.stringify(tags)}) seen.push(await build({ define: { BUILD_TAG: JSON.stringify(tag) } }));
+          console.log(JSON.stringify(seen));
+        `,
+      },
+      poolOfTwo,
+    );
+    expect({ seen: JSON.parse(lines.at(-1)!), stderr }).toEqual({ seen: tags.map(tag => `"${tag}:0"`), stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
   // Prints by how many MiB the process grew over the last builds. Each build has another define.
   const growth = (warmUp: number, measured: number, define: string) => `${build}
     let n = 0;
@@ -1091,36 +1122,53 @@ describe("a macro VM that a pool thread keeps", () => {
     console.log(Math.round((after - before) / 1024 / 1024));
   `;
 
-  // A VM loads the defines again for each caller it moves to. Kept, 32 builds on two threads with a
-  // define of 1 MiB are 64 MiB and more. A debug or ASAN build grows by 14 to 20 MiB while it warms
+  // A VM loads the defines again for each caller it moves to. Kept, 24 builds on two threads with a
+  // define of 1 MiB are 48 MiB and more. A debug or ASAN build grows by 14 to 20 MiB while it warms
   // up. Not for a release build: there the noise of the RSS is as large as the bound.
-  test.skipIf(!isDebug && !isASAN).concurrent(
-    "frees the defines of the caller before",
-    async () => {
-      const { lines, stderr, exitCode } = await run(
-        {
-          ...callers("one"),
-          "macro.ts": `export function one() {\n  return 1;\n}\n`,
-          "index.ts": `
-            const big = Buffer.alloc(1024 * 1024, "d").toString();
-            ${growth(8, 32, `{ BIG: JSON.stringify(n + big) }`)}
-          `,
-        },
-        { ...poolOfTwo, ...withoutAsanQuarantine({}) },
-      );
-      const grew = Number(lines.at(-1) || NaN) < 40 ? "below the limit" : lines.at(-1);
-      expect({ grew, stderr }).toEqual({ grew: "below the limit", stderr: "" });
-      expect(exitCode).toBe(0);
-    },
-    30_000,
-  );
+  test.skipIf(!isDebug && !isASAN).concurrent("frees the defines of the caller before", async () => {
+    const { lines, stderr, exitCode } = await run(
+      {
+        ...callers("one"),
+        "macro.ts": `export function one() {\n  return 1;\n}\n`,
+        "index.ts": `
+          const big = Buffer.alloc(1024 * 1024, "d").toString();
+          ${growth(8, 24, `{ BIG: JSON.stringify(n + big) }`)}
+        `,
+      },
+      { ...poolOfTwo, ASAN_OPTIONS: withoutAsanQuarantine(bunEnv).ASAN_OPTIONS },
+    );
+    const grew = Number(lines.at(-1) || NaN) < 36 ? "below the limit" : lines.at(-1);
+    expect({ grew, stderr }).toEqual({ grew: "below the limit", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  // The lists of an object define are a part of it. Each build keeps one copy of them for its own
+  // transpiler, about 1.6 MiB here. Kept by the VMs too, 48 builds on two threads are 230 MiB.
+  // Not for a debug or ASAN build: the define takes long to parse there.
+  test.skipIf(isDebug || isASAN).concurrent("frees the lists of an object define of the caller before", async () => {
+    const { lines, stderr, exitCode } = await run(
+      {
+        ...callers("one"),
+        "macro.ts": `export function one() {\n  return 1;\n}\n`,
+        "index.ts": `
+          const big: Record<string, number[]> = {};
+          for (let i = 0; i < 10000; i++) big["k" + i] = [i, i + 1, i + 2, i + 3];
+          ${growth(8, 48, `{ BIG: JSON.stringify({ ...big, n }) }`)}
+        `,
+      },
+      poolOfTwo,
+    );
+    const grew = Number(lines.at(-1) || NaN) < 150 ? "below the limit" : lines.at(-1);
+    expect({ grew, stderr }).toEqual({ grew: "below the limit", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
 
   // A VM transpiles what a macro imports again for each caller it moves to. Kept, the AST of
   // `big.ts` is about 3 MiB for each of the 72 builds. Not for a debug or ASAN build: the module
   // takes long to parse there, and what a smaller one leaves is within the noise of the RSS.
-  test.skipIf(isDebug || isASAN).concurrent(
-    "frees the AST of the modules it loaded for the caller before",
-    async () => {
+  test
+    .skipIf(isDebug || isASAN)
+    .concurrent("frees the AST of the modules it loaded for the caller before", async () => {
       const functions = Array.from(
         { length: 3000 },
         (_, i) =>
@@ -1143,9 +1191,7 @@ describe("a macro VM that a pool thread keeps", () => {
       const grew = Number(lines.at(-1) || NaN) < 100 ? "below the limit" : lines.at(-1);
       expect({ grew, stderr }).toEqual({ grew: "below the limit", stderr: "" });
       expect(exitCode).toBe(0);
-    },
-    30_000,
-  );
+    });
 });
 
 describe("--no-macros", () => {

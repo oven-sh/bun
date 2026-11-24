@@ -157,6 +157,7 @@ fn call_macro(
             };
             let (vm, configure_defines) = if VirtualMachine::is_loaded() {
                 let vm = VirtualMachine::get();
+                vm.set_macro_vm_log_level(log.level);
                 let rebuilt =
                     vm.serve_macro_caller(&options, || macro_vm_transform_options(&options));
                 vm.take_macro_vm_log(log);

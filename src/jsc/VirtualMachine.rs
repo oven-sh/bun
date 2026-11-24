@@ -281,8 +281,9 @@ pub struct VirtualMachine {
     pub(crate) macro_guard_depth: Cell<u32>,
     /// The options of the caller whose macros this VM runs. `Some` only in a VM that a macro call
     /// made, on a thread that had none. [`Self::serve_macro_caller`] rebuilds it for another caller.
-    /// The VM keeps the first caller's env, what scripts left on `globalThis`, and their timers and
-    /// handles. Callers with equal options share its modules, so an edit of a macro file is not seen.
+    /// The VM keeps the first caller's env, what scripts left on `globalThis`, and their sockets and
+    /// child processes. Callers with equal options share its modules, so an edit of a macro file is
+    /// not seen.
     macro_owner: JsCell<Option<std::sync::Arc<bun_options_types::schema::api::TransformOptions>>>,
     /// Counts those rebuilds. A `MacroLoadStates` from before one names macros the VM no longer has.
     macro_epoch: Cell<u32>,
@@ -1945,11 +1946,25 @@ impl VirtualMachine {
     /// Moves what the VM a macro call made has logged to `log`. That VM has a log of its own.
     #[inline]
     pub fn take_macro_vm_log(&self, log: &mut bun_ast::Log) {
-        if let Some(vm_log) = self.log_mut()
-            && !vm_log.msgs.is_empty()
-            && self.macro_owner.get().is_some()
-        {
+        let Some(vm_log) = self.log.get() else {
+            return;
+        };
+        if self.macro_owner.get().is_none() || core::ptr::eq(vm_log.as_ptr(), log) {
+            return;
+        }
+        // SAFETY: the log `init_macro_vm` made lives as long as the VM, and it is not `log`.
+        let vm_log = unsafe { &mut *vm_log.as_ptr() };
+        if !vm_log.msgs.is_empty() {
             vm_log.append_to(log);
+        }
+    }
+
+    /// The VM a macro call made logs at the level of the caller it loads a macro for.
+    pub fn set_macro_vm_log_level(&self, level: bun_ast::Level) {
+        if self.macro_owner.get().is_some()
+            && let Some(vm_log) = self.log_mut()
+        {
+            vm_log.level = level;
         }
     }
 
@@ -1981,11 +1996,18 @@ impl VirtualMachine {
         {
             // `reload` runs the microtasks that are left. Every script of this VM runs in macro mode.
             let _mode_guard = MacroModeGuard::new(self);
-            self.run_with_api_lock(|| {
+            // The cron jobs and the timers of the modules go with them, as for a `--hot` reload.
+            if let Some(hooks) = runtime_hooks() {
+                (hooks.cron_clear_all_reload)();
+            }
+            let reloaded = self.run_with_api_lock(|| {
                 self.macros.with_mut(MacroMap::clear_retaining_capacity);
                 self.global().reload()
-            })
-            .map_err(|_| crate::CrateError::JSError)?;
+            });
+            if let Some(hooks) = runtime_hooks() {
+                (hooks.end_hot_run_timers)(self, CancelHotRunTimers::All);
+            }
+            reloaded.map_err(|_| crate::CrateError::JSError)?;
         }
 
         let mut args = transform_options();

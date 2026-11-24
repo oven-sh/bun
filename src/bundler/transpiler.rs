@@ -58,7 +58,7 @@ pub struct Transpiler<'a> {
     // Raw ptr — the global `DotEnv::Loader` singleton.
     pub env: *mut dot_env::Loader,
     /// What `load_defines` allocates after a [`Self::reset_transform_options`], which frees the one
-    /// before. The lists of an object or array value are not in it: `Expr::deep_clone` keeps them.
+    /// before.
     define_arena: Option<Arena>,
 }
 
@@ -403,6 +403,9 @@ impl<'a> Transpiler<'a> {
         // Spec passed `&this.options.env` as a separate arg; `load_defines` now
         // reads `&self.env` internally so the disjoint borrow is resolved
         // inside the `&mut self` scope without `unsafe`.
+        // The lists of an object or array value go to the arena of its nodes, which a reset frees.
+        let _lists = (self.define_arena.as_ref())
+            .map(|arena| bun_alloc::ast_alloc::ScopedAstAlloc::all_in(arena.heap_ptr()));
         let define_arena = self.define_arena.as_ref().unwrap_or(self.arena);
         self.options.load_defines(define_arena, Some(env_loader))?;
 

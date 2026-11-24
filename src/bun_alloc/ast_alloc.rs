@@ -208,6 +208,12 @@ pub fn swap_state(state: Option<Box<AstAllocState>>) -> Option<Box<AstAllocState
     AST_ALLOC.replace(state)
 }
 
+/// Whether [`ScopedAstAlloc::all_in`] of `heap` is the active state.
+#[inline]
+pub fn allocates_all_in(heap: *mut mimalloc::Heap) -> bool {
+    active_state().is_some_and(|state| state.spill == heap && state.bump_cursor == BUMP_CHUNK)
+}
+
 /// Address of the active state (null when none is installed). Identity checks
 /// only; never dereferenced.
 #[inline]
@@ -274,6 +280,19 @@ impl ScopedAstAlloc {
     pub fn with_spill(spill_heap: *mut mimalloc::Heap) -> Self {
         let mut state = acquire_state();
         state.set_spill_heap(spill_heap);
+        Self {
+            prev: swap_state(Some(state)),
+        }
+    }
+}
+impl ScopedAstAlloc {
+    /// Install a state that puts every allocation in `heap`, none in its own chunk. What is
+    /// allocated under it lives as long as `heap`, not as long as the guard.
+    #[inline]
+    pub fn all_in(heap: *mut mimalloc::Heap) -> Self {
+        let mut state = acquire_state();
+        state.set_spill_heap(heap);
+        state.bump_cursor = BUMP_CHUNK;
         Self {
             prev: swap_state(Some(state)),
         }

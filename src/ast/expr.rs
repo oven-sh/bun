@@ -113,7 +113,9 @@ impl Expr {
 
 impl Expr {
     pub fn deep_clone(&self, bump: &Bump) -> Result<Expr, crate::Error> {
-        let _g = bun_alloc::ast_alloc::DetachAstHeap::new();
+        // Lists that the active state puts in `bump` live as long as the nodes do.
+        let _g = (!bun_alloc::ast_alloc::allocates_all_in(bump.heap_ptr()))
+            .then(bun_alloc::ast_alloc::DetachAstHeap::new);
         self.deep_clone_no_detach(bump, bun_core::StackCheck::init())
     }
     #[inline]

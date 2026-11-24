@@ -503,11 +503,8 @@ pub(crate) fn cluster_raw_bind<'a>(
                 return Ok(BindResult::Errno(-(libc::EINVAL)));
             };
 
-            let parsed = if family == libc::AF_INET6 {
-                bun_cares_sys::pton::<16>(host).map(Into::into)
-            } else {
-                bun_cares_sys::pton::<4>(host).map(Into::into)
-            };
+            let parsed = bun_core::ip_address::parse_strict(addr_bytes)
+                .filter(|ip| ip.is_ipv6() == (family == libc::AF_INET6));
             let address = if let Some(ip) = parsed {
                 Address::from_ip(ip, port as u16)
             } else {

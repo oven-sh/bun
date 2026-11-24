@@ -291,9 +291,7 @@ version = "0.0.0"
 dependencies = [
  "bun_alloc",
  "bun_boringssl_sys",
- "bun_cares_sys",
  "bun_core",
- "bun_sys",
 ]
 
 [[package]]
@@ -415,19 +413,6 @@ dependencies = [
  "bun_telemetry_cold",
  "enum-map",
  "thiserror",
-]
-
-[[package]]
-name = "bun_cares_sys"
-version = "0.0.0"
-dependencies = [
- "bun_alloc",
- "bun_core",
- "bun_libuv_sys",
- "bun_opaque",
- "enum-map",
- "libc",
- "strum",
 ]
 
 [[package]]
@@ -609,12 +594,27 @@ dependencies = [
 name = "bun_dns"
 version = "0.0.0"
 dependencies = [
- "bun_cares_sys",
+ "bun_collections",
  "bun_core",
+ "bun_dns_client",
+ "bun_paths",
  "bun_sys",
  "bun_windows_sys",
  "bun_wyhash",
  "libc",
+ "strum",
+]
+
+[[package]]
+name = "bun_dns_client"
+version = "0.0.0"
+dependencies = [
+ "bun_collections",
+ "bun_core",
+ "bun_wyhash",
+ "enum-map",
+ "hashbrown 0.15.5",
+ "smallvec",
  "strum",
 ]
 
@@ -1657,7 +1657,6 @@ dependencies = [
  "bun_bundler",
  "bun_bundler_jsc",
  "bun_bunfig",
- "bun_cares_sys",
  "bun_clap",
  "bun_collections",
  "bun_core",
@@ -1668,6 +1667,7 @@ dependencies = [
  "bun_css_jsc",
  "bun_deflate",
  "bun_dns",
+ "bun_dns_client",
  "bun_dotenv",
  "bun_errno",
  "bun_event_loop",

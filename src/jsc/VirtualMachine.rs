@@ -2478,7 +2478,7 @@ impl Drop for VirtualMachine {
 impl VirtualMachine {
     /// One stop-phase sweep: armed handles (servers, listeners, watchers,
     /// duplex/named-pipe sockets, resolvers), a worker's uv stream/process
-    /// handles, every socket group, the VM-global dns channel. Reports whether
+    /// handles, every socket group, the VM-global dns client. Reports whether
     /// it found anything.
     ///
     /// # Safety
@@ -2839,11 +2839,7 @@ pub struct RuntimeHooks {
     pub cancel_timers: fn(vm: &VirtualMachine, only: Option<crate::ContextId>),
     /// A `--hot` run ends, before `hot_reload_counter` moves on. The timers of the runs before it are kept.
     pub end_hot_run_timers: fn(vm: &VirtualMachine, cancel: CancelHotRunTimers),
-    /// Destroy the per-VM global DNS resolver's c-ares channel now, while JSC,
-    /// the event loop, `RareData.file_polls`, and `runtime_state` are all
-    /// live. `ares_destroy()` re-enters the resolver's socket-state and query
-    /// callbacks; deferring it to `deinit_runtime_state`'s `RuntimeState` drop
-    /// runs those callbacks against freed state. No-op when the resolver was
+    /// Close the per-VM global DNS resolver's client while all that its queries and polls touch is live. No-op when the resolver was
     /// never lazily created. Called from `WebWorker::shutdown` / `global_exit`
     /// right after `close_all_socket_groups`.
     pub stop_dns_for_vm_teardown: fn() -> SweepResult,

@@ -125,6 +125,14 @@ impl SocketGroup {
         self.loop_.set(ptr::null_mut());
     }
 
+    /// None may close under the iteration.
+    pub(crate) fn sockets(&self) -> impl Iterator<Item = *mut us_socket_t> {
+        let some = |socket: *mut us_socket_t| (!socket.is_null()).then_some(socket);
+        core::iter::successors(some(self.head_sockets.get()), move |&socket| {
+            some(uws_socket_next(us_socket_t::opaque_mut(socket)))
+        })
+    }
+
     pub fn close_all(&self) {
         // SAFETY: forwarding to C; `self` is a valid initialized group.
         unsafe { us_socket_group_close_all(self) }
@@ -311,6 +319,7 @@ unsafe extern "C" {
         ext: *mut c_void,
     );
     fn us_socket_group_deinit(group: *const SocketGroup);
+    safe fn uws_socket_next(socket: &mut us_socket_t) -> *mut us_socket_t;
     fn us_socket_group_close_all(group: *const SocketGroup);
     fn us_socket_group_listen(
         group: *const SocketGroup,

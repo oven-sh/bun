@@ -333,11 +333,10 @@ impl<const SSL: bool, const DEBUG: bool> Drop for NewServer<SSL, DEBUG> {
         self.listener.set(None);
         self.h3_app.set(None);
         if let Some(h2_app) = self.h2_app.take() {
-            // A drain may still be queued for it.
-            self.vm()
-                .event_loop()
-                .deferred_tasks
-                .unregister_task(core::ptr::NonNull::new(h2_app.as_ptr().cast::<c_void>()));
+            let task = core::ptr::NonNull::new(h2_app.as_ptr().cast::<c_void>());
+            // A drain may still be queued for it, and the drop can queue one.
+            drop(h2_app);
+            (self.vm().event_loop().deferred_http2_drains).unregister_task(task);
         }
         self.app.set(None);
 
@@ -2460,31 +2459,27 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             return true;
         }
         // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
-        let Some(h2) =
-            create_http2_app::<SSL>(bun_opaque::opaque_deref_mut(app), http1, idle_timeout)
-        else {
-            let global = self.global_this();
-            if !global.has_exception() {
-                let _ = global.throw(format_args!("Failed to create HTTP/2 server"));
-            }
-            return false;
-        };
+        let h2 = create_http2_app::<SSL>(bun_opaque::opaque_deref_mut(app), http1, idle_timeout);
         // Streams parked on socket backpressure by a JS-driven write get their
-        // next drain pass from the event loop's deferred task queue (after the
-        // current task and its microtasks), like the HTTP/1 sink's auto-flush.
-        extern "C" fn schedule_h2_drain(app: *mut c_void, _ctx: *mut c_void) {
+        // next drain pass after the current task, its microtasks and the deferred tasks.
+        fn schedule_h2_drain(app: *mut uws_sys::h2::App) {
             extern "C" fn drain(app: *mut c_void) -> bool {
+                let event_loop = jsc::VirtualMachine::get().event_loop();
+                event_loop.has_resumed_response_stream.set(false);
                 // S012: `h2::App` is an `opaque_ffi!` ZST — safe deref.
-                // Stay registered while streams are still queued.
-                bun_opaque::opaque_deref_mut(app.cast::<uws_sys::h2::App>()).drain()
+                let has_more = bun_opaque::opaque_deref_mut(app.cast::<uws_sys::h2::App>()).drain();
+                if has_more || event_loop.has_resumed_response_stream.get() {
+                    // No checkpoint may come before the loop waits.
+                    event_loop.wakeup();
+                }
+                has_more
             }
             jsc::VirtualMachine::get()
                 .event_loop()
-                .deferred_tasks
-                .post_task(core::ptr::NonNull::new(app), drain);
+                .deferred_http2_drains
+                .post_task(core::ptr::NonNull::new(app.cast()), drain);
         }
-        bun_opaque::opaque_deref_mut(h2.as_ptr())
-            .on_schedule_drain(schedule_h2_drain, h2.as_ptr().cast::<c_void>());
+        bun_opaque::opaque_deref_mut(h2.as_ptr()).on_schedule_drain(schedule_h2_drain);
         self.h2_app.set(Some(h2));
         self.init_mux_request_pool();
         true
@@ -2847,7 +2842,7 @@ fn create_http2_app<const SSL: bool>(
     parent: &mut uws_sys::app::App<SSL>,
     allow_http1: bool,
     idle_timeout_s: u32,
-) -> Option<uws_sys::h2::OwnedApp> {
+) -> uws_sys::h2::OwnedApp {
     bun_removable_features::removable_definition!(ServeHttp2, create_http2_app::<SSL>);
     uws_sys::h2::OwnedApp::new::<SSL>(parent, allow_http1, idle_timeout_s)
 }

@@ -634,7 +634,7 @@ unsafe impl<const SSL: bool> OpaqueHandle for Response<SSL> {}
 // SAFETY: `h3::Response` is a `#[repr(C)]` ZST (`UnsafeCell<[u8; 0]>`) with
 // align 1; C++ owns the real bytes.
 unsafe impl OpaqueHandle for H3Response {}
-// SAFETY: as above for `h2::Response`.
+// SAFETY: a ZST as above. It stands for the pointer of an `Rc`, and nothing is read through it as `Self`.
 unsafe impl OpaqueHandle for H2Response {}
 
 #[derive(Clone, Copy, PartialEq, Eq)]

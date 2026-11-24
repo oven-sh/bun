@@ -1,6 +1,6 @@
 import { drainMicrotasks } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir, tls as tlsCert } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir, tls as tlsCert } from "harness";
 import http2 from "node:http2";
 import tls from "node:tls";
 import {
@@ -427,6 +427,204 @@ describe("Bun.serve http2 lifecycle", () => {
     await fx.proc.exited;
     expect(fx.stderr()).toContain("ABORTED");
     expect(fx.proc.exitCode).toBe(0);
+  });
+
+  test("requestIP() is null once the connection has closed", async () => {
+    const options = { hostname: "127.0.0.1", socket: { data() {} } };
+    using other = Bun.listen({ ...options, port: 0 });
+    let address: unknown;
+    const sockets: Promise<Bun.Socket>[] = [];
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      http2: true,
+      fetch(req, server) {
+        server.stop(true);
+        // They get the descriptors that were just closed.
+        for (let i = 0; i < 4; i++) sockets.push(Bun.connect({ ...options, port: other.port }));
+        address = server.requestIP(req);
+        return new Response();
+      },
+    });
+    const raw = await RawH2.connect(server.port!, false);
+    raw.headers(1, baseHeaders("/"));
+    await raw.waitForClose();
+    for (const socket of await Promise.all(sockets)) socket.terminate();
+    expect(address).toBeNull();
+  });
+
+  function spawnServer(setup: string, fetch: string, secure = false) {
+    return Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `${setup}
+        const options = { port: 0, hostname: "127.0.0.1", http2: true, idleTimeout: 0 };
+        console.log(Bun.serve({ ...options, tls: ${secure ? JSON.stringify(tlsCert) : undefined}, fetch(req) { ${fetch} } }).port);`,
+      ],
+      // One timer less to wake the event loop by chance.
+      env: { ...bunEnv, BUN_GC_TIMER_DISABLE: "1", BUN_FEATURE_FLAG_NO_ORPHANS: "1" },
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+  }
+
+  async function portOf(proc: ReturnType<typeof spawnServer>) {
+    let line = "";
+    for await (const chunk of proc.stdout) {
+      line += new TextDecoder().decode(chunk);
+      if (line.includes("\n")) return Number(line);
+    }
+    throw new Error("server exited before printing its port");
+  }
+
+  /** `schedule` calls `send`. */
+  const spawnWithOpenStreams = (write: "enqueue" | "write", schedule: string) =>
+    spawnServer(
+      `const streams = [];
+      const begin = c => (streams.push(c), c.${write}("first"), new Promise(() => {}));
+      const source = { enqueue: { pull: begin }, write: { type: "direct", pull: begin } }.${write};
+      const send = () => streams.forEach(c => c.${write}("second"));`,
+      `if (req.method === "GET") return new Response(new ReadableStream(source));
+      ${schedule};
+      return new Response();`,
+    );
+
+  async function expectBothChunks(port: number, count: number) {
+    const raw = await RawH2.connect(port, false);
+    const ids = Array.from({ length: count }, (_, i) => 1 + 2 * i);
+    const everyStreamGot = (text: string) =>
+      Promise.all(
+        ids.map(id => raw.waitFor(f => f.type === T.DATA && f.streamId === id && String(f.payload) === text)),
+      );
+    for (const id of ids) raw.headers(id, baseHeaders("/"));
+    await everyStreamGot("first");
+    raw.headers(1 + 2 * count, baseHeaders("/", "POST"));
+    await everyStreamGot("second");
+    raw.close();
+    const chunksOf = (id: number) =>
+      raw.frames.filter(f => f.type === T.DATA && f.streamId === id).map(f => String(f.payload));
+    expect(ids.map(chunksOf)).toEqual(ids.map(() => ["first", "second"]));
+  }
+
+  test.concurrent.each([1, 2, 50])("chunks for %d open streams are sent before the next callback", async count => {
+    // The event loop does not get another turn.
+    await using proc = spawnWithOpenStreams(
+      "enqueue",
+      `setImmediate(send);
+      setImmediate(() => {
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 60_000);
+        process.kill(process.pid, "SIGKILL");
+      })`,
+    );
+    await expectBothChunks(await portOf(proc), count);
+  });
+
+  // On Windows the exit resets the connection, which can discard what the client has not read yet.
+  test.concurrent.skipIf(isWindows)("chunks for open streams are sent before process.exit()", async () => {
+    await using proc = spawnWithOpenStreams("write", "setImmediate(() => (send(), process.exit()))");
+    await expectBothChunks(await portOf(proc), 3);
+    expect(await proc.exited).toBe(0);
+  });
+
+  /** The largest windows and frames of 256 KiB, so that it has nothing to send while it reads. */
+  async function connectWithWideWindows(proc: ReturnType<typeof spawnServer>) {
+    const settings = Buffer.from([0, 4, 0x7f, 0xff, 0xff, 0xff, 0, 5, 0, 4, 0, 0]);
+    const raw = await RawH2.connect(await portOf(proc), false, { settings });
+    raw.write(frame(T.WINDOW_UPDATE, 0, 0, Buffer.from([0x7f, 0xff, 0, 0])));
+    return raw;
+  }
+
+  test.concurrent.each([
+    ["pull()", "new ReadableStream({ pull: c => (left ? c.enqueue(next()) : c.close()) })"],
+    [
+      "write()",
+      `new ReadableStream({ type: "direct", async pull(c) { while (left) await c.write(next()); c.close(); } })`,
+    ],
+    ["a generator", "(async function* () { while (left) yield next(); })()"],
+  ])(
+    "a body from %s goes on when the client has nothing to send",
+    async (_, body) => {
+      const [size, count, pattern] = [256 * 1024, 100, "abcdefghijklmnopqrstuvwxyz0123456789_"];
+      await using proc = spawnServer(
+        `let left = ${count};
+        // Views, because the collector wakes the event loop too.
+        const bytes = Buffer.alloc(${size + count}, "${pattern}");
+        const next = () => bytes.subarray(left, left-- + ${size});`,
+        `return new Response(${body});`,
+      );
+      const raw = await connectWithWideWindows(proc);
+      raw.headers(1, baseHeaders("/"));
+      const received = await raw.body(1);
+      raw.close();
+      const bytes = Buffer.alloc(size + count, pattern);
+      const chunks = Array.from({ length: count }, (_, i) => bytes.subarray(count - i, count - i + size));
+      expect(received.equals(Buffer.concat(chunks))).toBe(true);
+    },
+    // The timer of the Date header ends a stall within a second, and there were 40 of them.
+    20_000,
+  );
+
+  test.concurrent("a response that ends with its request unread does not hold back later ones", async () => {
+    await using proc = spawnServer(
+      `const both = Promise.withResolvers();
+      let count = 0;`,
+      `if (++count === 2) setImmediate(both.resolve);
+      if (count > 2) return Bun.sleep(1).then(() => new Response("later"));
+      const size = count === 1 ? 300 * 1024 : 900 * 1024;
+      return both.promise.then(() => new Response(new Uint8Array(size)));`,
+    );
+    const raw = await connectWithWideWindows(proc);
+    raw.headers(1, baseHeaders("/", "POST"), F.END_HEADERS);
+    raw.headers(3, baseHeaders("/"));
+    const lengths = [(await raw.body(1)).length, (await raw.body(3)).length];
+    raw.headers(5, baseHeaders("/"));
+    const later = String(await raw.body(5));
+    raw.close();
+    expect({ lengths, later }).toEqual({ lengths: [300 * 1024, 900 * 1024], later: "later" });
+  });
+
+  test.concurrent.each([false, true])(
+    "a response is sent when another one ends with its request unread (TLS: %p)",
+    async secure => {
+      await using proc = spawnServer(
+        `const waiting = Promise.withResolvers();`,
+        `if (req.method === "GET") return waiting.promise.then(() => new Response());
+      req.text().catch(waiting.resolve);
+      return new Response((async function* () { yield "bye"; })());`,
+        secure,
+      );
+      const raw = await RawH2.connect(await portOf(proc), secure, { settings: Buffer.from([0, 4, 0, 0, 0, 0]) });
+      raw.headers(1, baseHeaders("/"));
+      raw.headers(3, baseHeaders("/", "POST"), F.END_HEADERS);
+      await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 3);
+      raw.write(frame(T.WINDOW_UPDATE, 0, 3, Buffer.from([0, 0, 0, 3])));
+      const { flags } = await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 1);
+      const body = String(await raw.body(3));
+      raw.close();
+      expect({ flags, body }).toEqual({ flags: F.END_HEADERS | F.END_STREAM, body: "bye" });
+    },
+  );
+
+  test.concurrent("a body goes on when another response ends with its request unread", async () => {
+    await using proc = spawnServer(
+      `const both = Promise.withResolvers();
+      let count = 0;`,
+      `if (++count === 2) setImmediate(both.resolve);
+      const chunks = count === 1 ? [..."abcd"].map(fill => Buffer.alloc(256 * 1024, fill)) : ["e"];
+      async function pull(c) {
+        await both.promise;
+        for (const chunk of chunks) await c.write(chunk);
+        c.close();
+      }
+      return new Response(new ReadableStream({ type: "direct", pull }));`,
+    );
+    const raw = await connectWithWideWindows(proc);
+    raw.headers(1, baseHeaders("/"));
+    raw.headers(3, baseHeaders("/", "POST"), F.END_HEADERS);
+    const bodies = [sha256(await raw.body(1)), String(await raw.body(3))];
+    raw.close();
+    expect(bodies).toEqual([sha256(Buffer.concat([..."abcd"].map(fill => Buffer.alloc(256 * 1024, fill)))), "e"]);
   });
 
   test("client disconnect with many open streams", async () => {

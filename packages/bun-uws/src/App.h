@@ -163,14 +163,6 @@ public:
         return std::move(*this);
     }
 
-    ~TemplatedApp() {
-        if (httpContext) {
-            if (Http2Context *h2 = httpContext->getSocketContextData()->http2Context) {
-                h2->detach(httpContext->getSocketContextData());
-            }
-        }
-    }
-
     /* Disallow copying, only move */
     TemplatedApp(const TemplatedApp &other) = delete;
 
@@ -221,7 +213,7 @@ public:
         us_socket_group_close_all(httpContext->getSocketGroup());
         Bun__WebSockets__close(webSockets);
         if (Http2Context *h2 = httpContext->getSocketContextData()->http2Context) {
-            h2->closeAll();
+            h2->closeAll(h2);
         }
 
         return std::move(*this);
@@ -231,7 +223,22 @@ public:
      * allowHttp1 == false, ALPN offers only "h2" and cleartext connections
      * that don't open with the preface get a 505. */
     void attachHttp2(Http2Context *ctx, bool allowHttp1) {
-        ctx->attach(httpContext->getSocketContextData(), allowHttp1);
+        HttpContextData<SSL> *data = httpContext->getSocketContextData();
+        data->http2Context = ctx;
+        data->allowHttp1 = allowHttp1;
+        data->onHttp2 = [](Http2Context *ctx, us_socket_t *s, char *initialData, int initialLength, unsigned prefaceConsumed) {
+            if (us_socket_is_closed(s) || us_socket_is_shut_down(s)) return s;
+            auto *rd = (HttpResponseData<SSL> *) us_socket_ext(s);
+            Http2SocketData socketData{nullptr, HttpContext<SSL>::getSocketContextDataS(s), rd->filteredOpen, rd->filteredAccept};
+            ((AsyncSocket<SSL> *) s)->uncorkWithoutSending();
+            rd->~HttpResponseData<SSL>();
+            static_assert(sizeof(Http2SocketData) <= sizeof(*rd));
+            new (rd) Http2SocketData(socketData);
+            us_socket_adopt(s, &ctx->group, US_SOCKET_KIND_DYNAMIC, -1, -1);
+            s->flags.allow_half_open = 0;
+            ctx->onAdopt(ctx, s, initialData, initialLength, prefaceConsumed);
+            return s;
+        };
         if constexpr (SSL) {
             us_ssl_ctx_enable_http2_alpn(sslCtx.get(), allowHttp1);
             /* Bun attaches before addServerName(), which enables ALPN itself;
@@ -240,6 +247,13 @@ public:
                 us_ssl_ctx_enable_http2_alpn(p.ctx.get(), allowHttp1);
             }
         }
+    }
+
+    static void onHttp2Close(us_socket_t *s) {
+        auto *socketData = (Http2SocketData *) us_socket_ext(s);
+        auto &filters = ((HttpContextData<SSL> *) socketData->httpContextData)->filterHandlers;
+        if (socketData->filteredOpen) for (auto &f : filters) f((HttpResponse<SSL> *) s, -1);
+        if (socketData->filteredAccept) for (auto &f : filters) f((HttpResponse<SSL> *) s, -2);
     }
 
     /** Closes all connections connected to this server which are not sending a request or waiting for a response. Does not close the listen socket.
@@ -272,7 +286,7 @@ public:
             }
         }
         if (Http2Context *h2 = httpContext->getSocketContextData()->http2Context) {
-            closed += h2->closeIdle(closeWhenIdle);
+            closed += h2->closeIdle(h2, closeWhenIdle);
         }
         return closed;
     }

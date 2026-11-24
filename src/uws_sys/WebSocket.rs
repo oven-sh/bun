@@ -361,12 +361,7 @@ extern "C" fn Bun__WebSockets__close(this: &WebSockets) {
             break;
         };
         // A close handler can close the others.
-        let mut sockets = Vec::new();
-        let mut socket = context.group.head_sockets.get();
-        while !socket.is_null() {
-            sockets.push(AnyWebSocket(socket));
-            socket = c::uws_socket_next(us_socket_t::opaque_mut(socket));
-        }
+        let sockets: Vec<_> = context.group.sockets().map(AnyWebSocket).collect();
         context.loop_data.keeping_closed_sockets(|| {
             for ws in sockets {
                 if !ws.socket().is_closed() {
@@ -1198,7 +1193,6 @@ mod c {
             kind: u8,
         );
         pub(super) safe fn uws_socket_on_upgraded_close(socket: &mut us_socket_t);
-        pub(super) safe fn uws_socket_next(socket: &mut us_socket_t) -> *mut us_socket_t;
         pub(super) safe fn uws_socket_is_paused(socket: &mut us_socket_t) -> bool;
         pub(super) safe fn uws_socket_cork(socket: &mut us_socket_t);
         pub(super) safe fn uws_socket_uncork(socket: &mut us_socket_t) -> bool;

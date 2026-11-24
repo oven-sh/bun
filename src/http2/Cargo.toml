@@ -1,0 +1,21 @@
+[package]
+name = "bun_http2"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+bitflags.workspace = true
+bun_core.workspace = true
+bun_hpack.workspace = true
+bun_http1.workspace = true
+bun_http_types.workspace = true
+
+[[test]]
+name = "server"
+path = "tests/server.rs"

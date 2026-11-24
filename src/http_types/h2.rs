@@ -86,6 +86,7 @@ impl ErrorCode {
     pub const PROTOCOL_ERROR: Self = Self(0x1);
     pub const INTERNAL_ERROR: Self = Self(0x2);
     pub const FLOW_CONTROL_ERROR: Self = Self(0x3);
+    pub const STREAM_CLOSED: Self = Self(0x5);
     pub const FRAME_SIZE_ERROR: Self = Self(0x6);
     pub const REFUSED_STREAM: Self = Self(0x7);
     pub const CANCEL: Self = Self(0x8);

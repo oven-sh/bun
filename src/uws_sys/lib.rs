@@ -416,7 +416,6 @@ pub mod connecting_socket;
 pub mod h2;
 #[path = "h3.rs"]
 pub mod h3;
-mod hpack;
 mod http1;
 #[path = "InternalLoopData.rs"]
 pub mod internal_loop_data;

@@ -73,6 +73,7 @@ members = [
   "src/histogram",
   "src/hpack",
   "src/http1",
+  "src/http2",
   "src/http_jsc",
   "src/http_types",
   "src/icu",
@@ -457,6 +458,7 @@ bun_highway = { path = "src/highway" }
 bun_histogram = { path = "src/histogram" }
 bun_hpack = { path = "src/hpack" }
 bun_http1 = { path = "src/http1" }
+bun_http2 = { path = "src/http2" }
 bun_http_jsc = { path = "src/http_jsc" }
 bun_http_types = { path = "src/http_types" }
 bun_ini = { path = "src/ini" }

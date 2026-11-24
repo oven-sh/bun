@@ -11,7 +11,7 @@
 )]
 #![warn(unused_must_use)]
 
-mod byte_sets;
+pub mod byte_sets;
 mod chunked;
 mod error;
 pub mod message;

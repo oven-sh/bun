@@ -107,6 +107,7 @@ impl<const SSL: bool> OwnedApp<SSL> {
 }
 
 impl<const SSL: bool> Drop for OwnedApp<SSL> {
+    #[inline(never)]
     fn drop(&mut self) {
         // SAFETY: created in `new` with the same flag, destroyed once.
         unsafe { c::uws_app_destroy(App::<SSL>::SSL_FLAG, self.as_ptr().cast()) }

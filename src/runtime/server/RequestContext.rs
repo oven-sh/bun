@@ -1618,6 +1618,7 @@ where
         let pinned = RequestContextRef::pin(this);
         let this = pinned.ctx();
         if let Some(sink) = this.sink_mut() {
+            Self::note_resumed_stream();
             return sink.on_writable(write_offset, _resp);
         }
         true
@@ -3214,9 +3215,17 @@ where
             return false;
         }
         if let Some(bs) = this.byte_stream.get() {
+            Self::note_resumed_stream();
             bun_ptr::BackRef::from(bs).resume();
         }
         true
+    }
+
+    fn note_resumed_stream() {
+        if MUX {
+            let event_loop = jsc::VirtualMachine::get().event_loop();
+            event_loop.has_resumed_response_stream.set(true);
+        }
     }
 
     /// False: 416 has been sent.

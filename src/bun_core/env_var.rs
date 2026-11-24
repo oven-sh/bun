@@ -111,6 +111,8 @@ new!(pub BUN_DEBUG_TEST_AOT_WORDS: string, "BUN_DEBUG_TEST_AOT_WORDS", {});
 new!(pub BUN_DEBUG_TEST_AOT_PROGRAM_FILE: string, "BUN_DEBUG_TEST_AOT_PROGRAM_FILE", {});
 // How long `bun check` runs before it draws its progress line (default 300), so a test can see the line on a small project.
 new!(pub BUN_DEBUG_TEST_CHECK_PROGRESS_DELAY_MS: unsigned, "BUN_DEBUG_TEST_CHECK_PROGRESS_DELAY_MS", {});
+// How long a client waits for a busy Windows named pipe, so a test does not take half a minute.
+new!(pub BUN_DEBUG_TEST_PIPE_CONNECT_TIMEOUT_MS: unsigned, "BUN_DEBUG_TEST_PIPE_CONNECT_TIMEOUT_MS", { default: 30_000 });
 new!(pub BUN_DEV_SERVER_TEST_RUNNER: string, "BUN_DEV_SERVER_TEST_RUNNER", {});
 // Debug-only: when set, `NumberRenamer` dumps the symbol table before
 // renaming (`src/js_printer/renamer.rs`). Presence-checked, value ignored.

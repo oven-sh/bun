@@ -6,6 +6,7 @@ use std::rc::{Rc, Weak};
 use std::time::Instant;
 
 use bun_core::WStr;
+use bun_core::env_var::BUN_DEBUG_TEST_PIPE_CONNECT_TIMEOUT_MS;
 use bun_iocp::{Handle, OverlappedFile, Port, Request};
 use bun_ptr::OptionCellExt as _;
 use bun_sys::windows::{self as w, NT_ERROR, NTSTATUS, Win32Error, named_pipe};
@@ -147,6 +148,7 @@ pub struct PipeConnect {
 
 struct ConnectWaiter {
     on_connect: Cell<Option<Box<dyn FnOnce(Result<OwnedHandle, Win32Error>)>>>,
+    enqueue_time: Instant,
     _queue: Rc<ConnectQueue>,
 }
 
@@ -195,9 +197,11 @@ impl PipeConnect {
     }
 }
 
-impl ConnectQueue {
-    const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
+fn connect_timeout() -> Duration {
+    Duration::from_millis(BUN_DEBUG_TEST_PIPE_CONNECT_TIMEOUT_MS.get().unwrap())
+}
 
+impl ConnectQueue {
     fn find(port: &Rc<Port>, path: &[u16]) -> Option<Rc<ConnectQueue>> {
         CONNECT_QUEUES.with_borrow_mut(|queues| {
             queues.retain(|queue| queue.strong_count() > 0);
@@ -229,6 +233,7 @@ impl ConnectQueue {
     ) -> Rc<ConnectWaiter> {
         let waiter = Rc::new(ConnectWaiter {
             on_connect: Cell::new(Some(on_connect)),
+            enqueue_time: Instant::now(),
             _queue: Rc::clone(&self),
         });
         self.waiters.borrow_mut().push_back(Rc::downgrade(&waiter));
@@ -244,10 +249,18 @@ impl ConnectQueue {
         }
     }
 
+    /// Progress restarts the timeout of every waiter.
+    fn remaining_timeout(&self, waiter: &ConnectWaiter) -> Duration {
+        let start = waiter.enqueue_time.max(self.last_progress.get());
+        connect_timeout().saturating_sub(start.elapsed())
+    }
+
     fn wait_for_instance(self: &Rc<Self>) {
         let name = &self.path[PIPE_PREFIX.len()..self.path.len() - 1];
-        let wait_buffer =
-            named_pipe::build_wait_request(name, Self::CONNECT_TIMEOUT.as_millis() as u32);
+        let oldest_waiter = self.waiters.borrow().iter().find_map(Weak::upgrade);
+        let timeout =
+            oldest_waiter.map_or_else(connect_timeout, |waiter| self.remaining_timeout(&waiter));
+        let wait_buffer = named_pipe::build_wait_request(name, timeout);
         let callback = self.make_wait_callback();
         match self
             .npfs_root
@@ -258,7 +271,7 @@ impl ConnectQueue {
         }
     }
 
-    /// Polls for a name that only `CreateFileW` can resolve.
+    /// Paces the attempts after a failed wait: some names can only be resolved by `CreateFileW`.
     fn schedule_retry(self: &Rc<Self>) {
         const RETRY_INTERVAL: Duration = Duration::from_millis(10);
         let callback = self.make_wait_callback();
@@ -275,7 +288,7 @@ impl ConnectQueue {
         let waiter_count = self.waiters.borrow().len();
         for _ in 0..waiter_count {
             let waiter = self.waiters.borrow().front().and_then(Weak::upgrade);
-            let result = waiter.as_ref().map(|_| self.connect());
+            let result = waiter.as_deref().map(|waiter| self.connect(waiter));
             if let Some(Err(Win32Error::PIPE_BUSY)) = result {
                 break;
             }
@@ -288,18 +301,19 @@ impl ConnectQueue {
         }
         if self.waiters.borrow().is_empty() {
             self.inflight_wait.set(None);
-        } else if matches!(status, NTSTATUS::SUCCESS | NTSTATUS::IO_TIMEOUT) {
+        } else if matches!(
+            status,
+            NTSTATUS::SUCCESS | NTSTATUS::IO_TIMEOUT | NTSTATUS::PENDING
+        ) {
             self.wait_for_instance();
         } else {
             self.schedule_retry();
         }
     }
 
-    fn connect(&self) -> Result<OwnedHandle, Win32Error> {
+    fn connect(&self, waiter: &ConnectWaiter) -> Result<OwnedHandle, Win32Error> {
         match named_pipe::connect(WStr::from_slice_with_nul(&self.path)) {
-            Err(Win32Error::PIPE_BUSY)
-                if self.last_progress.get().elapsed() >= Self::CONNECT_TIMEOUT =>
-            {
+            Err(Win32Error::PIPE_BUSY) if self.remaining_timeout(waiter).is_zero() => {
                 Err(Win32Error::SEM_TIMEOUT)
             }
             Ok(handle) => {

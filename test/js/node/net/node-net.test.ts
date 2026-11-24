@@ -3673,16 +3673,17 @@ describe.concurrent.skipIf(!isWindows)("named pipes", () => {
       client.destroy();
     }
   }
-  async function run(script: string, ...args: string[]) {
+  async function runWithEnv(env: NodeJS.Dict<string>, script: string, ...args: string[]) {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", script, ...args],
-      env: bunEnv,
+      env,
       stdout: "pipe",
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     return { stdout, stderr, exitCode, signalCode: proc.signalCode };
   }
+  const run = (script: string, ...args: string[]) => runWithEnv(bunEnv, script, ...args);
   const successResult = (stdout: string) => ({ stdout, stderr: "", exitCode: 0, signalCode: null });
   const range = (n: number) => Array.from({ length: n }, (_, i) => String(i));
 
@@ -3926,6 +3927,7 @@ describe.concurrent.skipIf(!isWindows)("named pipes", () => {
         ReadFile: { args: ["i64", "ptr", "u32", "ptr", "ptr"], returns: "i32" },
         DisconnectNamedPipe: { args: ["i64"], returns: "i32" },
         CloseHandle: { args: ["i64"], returns: "i32" },
+        GetProcessIoCounters: { args: ["i64", "ptr"], returns: "i32" },
       }).symbols;
       const PIPE_ACCESS_INBOUND = 1;
       const PIPE_ACCESS_OUTBOUND = 2;
@@ -3934,8 +3936,8 @@ describe.concurrent.skipIf(!isWindows)("named pipes", () => {
       const PIPE_READMODE_MESSAGE = 2;
       const name = process.argv[1];
       const byteCount = new Uint32Array(1);
-      const createPipe = (openMode, pipeMode = 0) =>
-        k32.CreateNamedPipeW(Buffer.from(name + "\\0", "utf16le"), openMode, pipeMode, 1, 200000, 200000, 0, null);
+      const createPipe = (openMode, pipeMode = 0, path = name) =>
+        k32.CreateNamedPipeW(Buffer.from(path + "\\0", "utf16le"), openMode, pipeMode, 2, 200000, 200000, 0, null);
       const writePipe = (handle, data) => k32.WriteFile(handle, Buffer.concat([data, Buffer.alloc(1)]), data.length, byteCount, null);
       const readText = async socket => Buffer.concat(await Array.fromAsync(socket)).toString();
     `;
@@ -3990,6 +3992,58 @@ describe.concurrent.skipIf(!isWindows)("named pipes", () => {
       ],
     ])("%s", async (_, script, expected) => {
       expect(await run(prelude + script, pipeName())).toEqual(successResult(expected));
+    });
+
+    it("each connect() on a busy pipe has a timeout of its own", async () => {
+      const script = `
+        const timeout = Number(process.env.BUN_DEBUG_TEST_PIPE_CONNECT_TIMEOUT_MS);
+        const occupy = path => (createPipe(PIPE_ACCESS_DUPLEX, 0, path), require("fs").openSync(path, "r+"));
+        const report = async (label, failed, start = performance.now()) => {
+          await failed;
+          console.log(label, performance.now() - start >= timeout);
+        };
+        occupy(name);
+        occupy(name + "-other");
+        // The start times are the input, so each step has to let time pass.
+        const earlyFailed = once(net.connect(name), "error");
+        await Bun.sleep(timeout / 5);
+        const early = report("early, since an instance was free", earlyFailed);
+        occupy(name);
+        await Bun.sleep(timeout / 5);
+        const late = report("late", once(net.connect(name), "error"));
+        await Bun.sleep(timeout / 5);
+        await Promise.all([early, late, report("other pipe", once(net.connect(name + "-other"), "error"))]);
+      `;
+      const env = { ...bunEnv, BUN_DEBUG_TEST_PIPE_CONNECT_TIMEOUT_MS: "1000" };
+      expect(await runWithEnv(env, prelude + script, pipeName())).toEqual(
+        successResult("early, since an instance was free true\nlate true\nother pipe true\n"),
+      );
+    });
+
+    it("connect() stops retrying once a recreated pipe can be waited on", async () => {
+      const script = `
+        const countOtherOperations = () => {
+          const counters = new BigUint64Array(6);
+          k32.GetProcessIoCounters(-1, counters);
+          return Number(counters[2]);
+        };
+        const handle = createPipe(PIPE_ACCESS_DUPLEX);
+        const firstClientFd = require("fs").openSync(name, "r+");
+        const clients = [net.connect(name), net.connect(name)];
+        await new Promise(setImmediate);
+        require("fs").closeSync(firstClientFd);
+        k32.CloseHandle(handle);
+        createPipe(PIPE_ACCESS_DUPLEX);
+        await once(clients[0], "connect");
+        const before = countOtherOperations();
+        // Retries have no effect other than the system calls that accumulate over time.
+        await Bun.sleep(300);
+        console.log(countOtherOperations() - before < 10);
+        createPipe(PIPE_ACCESS_DUPLEX);
+        await once(clients[1], "connect");
+        for (const client of clients) client.destroy();
+      `;
+      expect(await run(prelude + script, pipeName())).toEqual(successResult("true\n"));
     });
 
     it("client writes to a PIPE_ACCESS_INBOUND pipe", async () => {

@@ -7,6 +7,7 @@
 
 use core::ptr;
 use core::sync::atomic::{AtomicBool, Ordering};
+use core::time::Duration;
 use std::os::windows::io::{AsRawHandle as _, HandleOrInvalid, OwnedHandle};
 
 use bun_core::WStr;
@@ -216,8 +217,9 @@ pub fn connect(name: &WStr) -> Result<OwnedHandle, Win32Error> {
 }
 
 /// Serializes a `FILE_PIPE_WAIT_FOR_BUFFER`. `name` excludes the `\\.\pipe\` prefix.
-pub fn build_wait_request(name: &[u16], timeout_ms: u32) -> Vec<u8> {
-    let timeout_ticks = i64::from(timeout_ms) * -10_000;
+pub fn build_wait_request(name: &[u16], timeout: Duration) -> Vec<u8> {
+    // Only a negative value is a relative time.
+    let timeout_ticks = -1 - (timeout.as_nanos() / 100) as i64;
     let timeout_specified = [1, 0];
     let name = bun_core::slice_as_bytes(name);
     let name_len = name.len() as u32;

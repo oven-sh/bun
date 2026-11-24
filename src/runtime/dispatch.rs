@@ -265,7 +265,7 @@ pub(crate) fn run_task(
         // ── erased-callback tasks (low-tier types — real) ────────────────
         task_tag::AnyTaskJob => {
             // SAFETY: §Dispatch — `task.ptr` is a live heap `Job<C>` posted by
-            // its `Completion`; the erased entry runs `then` and frees it.
+            // its `Running`; the erased entry runs `then` and frees it.
             unsafe { bun_jsc::job::complete_erased(task.ptr(), global) }?;
         }
         task_tag::SendQueueDeferred => counted_arm!(task, [Ipc], |queue: crate::ipc::SendQueue| {
@@ -396,6 +396,14 @@ pub(crate) fn run_task(
                 }
             )
         }
+        task_tag::FetchTaskletTrace => feature_arm!(
+            [Fetch],
+            |trace: crate::webcore::fetch::FetchTaskletTrace| -> JsResult<()> {
+                // SAFETY: §Dispatch — tag identifies pointee; the task owns a ref.
+                let tasklet = unsafe { bun_ptr::RefPtr::from_raw(trace.cast()) };
+                FetchTasklet::on_trace_events(&tasklet)
+            }
+        )?,
         task_tag::HTMLRewriterBackgroundPull => counted_arm!(
             task,
             [HtmlRewriter],
@@ -830,7 +838,7 @@ fn run_task_cold(task: &Task) {
 /// `release_task_unrun` track `bun_event_loop::task_tag::COUNT`. Bump when
 /// adding a variant — and give it an arm in both.
 const _: () = assert!(
-    task_tag::COUNT == 82,
+    task_tag::COUNT == 83,
     "dispatch::run_task / release_task_unrun arm count out of sync with bun_event_loop::task_tag",
 );
 
@@ -1104,78 +1112,6 @@ unsafe fn clone_rc<T>(ptr: *mut T) -> Rc<T> {
     unsafe {
         Rc::increment_strong_count(ptr);
         Rc::from_raw(ptr)
-    }
-}
-
-// ════════════════════════════════════════════════════════════════════════════
-// io::Poll dispatch
-// ════════════════════════════════════════════════════════════════════════════
-
-#[cfg(not(windows))]
-use crate::webcore::blob::{fd_job::FdJob, read_file, write_file};
-#[cfg(not(windows))]
-type ReadFile = FdJob<read_file::ReadFile>;
-#[cfg(not(windows))]
-type WriteFile = FdJob<write_file::WriteFile>;
-
-/// `bun_io::__bun_io_pollable_on_ready` body — declared `extern "Rust"` in
-/// `bun_io`. The owner is recovered from the embedded `io_poll` field.
-///
-/// # Safety
-/// `poll` is the `io_poll` field of a live owner of type `tag`.
-#[cfg(not(windows))]
-#[unsafe(no_mangle)]
-unsafe fn __bun_io_pollable_on_ready(tag: bun_io::PollableTag, poll: *mut bun_io::Poll) {
-    match tag {
-        bun_io::PollableTag::ReadFile => in_features!([Bodies], (poll: *mut bun_io::Poll = poll) {
-            // SAFETY: per fn contract.
-            let this = unsafe { &mut *bun_core::from_field_ptr!(ReadFile, io_poll, poll) };
-            this.on_ready();
-        }),
-        bun_io::PollableTag::WriteFile => in_features!([Bodies], (poll: *mut bun_io::Poll = poll) {
-            // SAFETY: per fn contract.
-            let this = unsafe { &mut *bun_core::from_field_ptr!(WriteFile, io_poll, poll) };
-            this.on_ready();
-        }),
-        bun_io::PollableTag::Empty => {
-            // Waker / unblock-only — caller already filtered this out.
-            debug_assert!(false, "io::Poll on_ready with Empty tag");
-        }
-    }
-}
-
-/// `bun_io::__bun_io_pollable_on_io_error` body — declared `extern "Rust"` in
-/// `bun_io`.
-///
-/// # Safety
-/// `poll` is the `io_poll` field of a live owner of type `tag`.
-#[cfg(not(windows))]
-#[unsafe(no_mangle)]
-unsafe fn __bun_io_pollable_on_io_error(
-    tag: bun_io::PollableTag,
-    poll: *mut bun_io::Poll,
-    err: &bun_sys::Error,
-) {
-    match tag {
-        bun_io::PollableTag::ReadFile => in_features!(
-            [Bodies],
-            (poll: *mut bun_io::Poll = poll, err: &bun_sys::Error = err) {
-                // SAFETY: per fn contract.
-                let this = unsafe { &mut *bun_core::from_field_ptr!(ReadFile, io_poll, poll) };
-                this.on_io_error(err);
-            }
-        ),
-        bun_io::PollableTag::WriteFile => in_features!(
-            [Bodies],
-            (poll: *mut bun_io::Poll = poll, err: &bun_sys::Error = err) {
-                // SAFETY: per fn contract.
-                let this = unsafe { &mut *bun_core::from_field_ptr!(WriteFile, io_poll, poll) };
-                this.on_io_error(err);
-            }
-        ),
-        bun_io::PollableTag::Empty => {
-            debug_assert!(false, "io::Poll on_io_error with Empty tag");
-        }
     }
 }
 
@@ -1686,6 +1622,9 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         }
         task_tag::FetchTaskletRequestDrain => {
             release_in!([Fetch], crate::webcore::fetch::FetchTaskletRequestDrain)
+        }
+        task_tag::FetchTaskletTrace => {
+            release_in!([Fetch], crate::webcore::fetch::FetchTaskletTrace)
         }
         task_tag::HTMLRewriterBackgroundPull => {
             release_counted_in!(

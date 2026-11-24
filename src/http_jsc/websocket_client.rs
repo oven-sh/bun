@@ -9,20 +9,22 @@
 
 use core::cell::{Cell, RefCell};
 use core::mem::size_of;
-use core::net::IpAddr;
+use core::net::SocketAddr;
 
 use bun_boringssl::c::OwnedSslCtx;
 use bun_collections::LinearFifo;
 use bun_collections::linear_fifo::DynamicBuffer;
 use bun_core::scoped::ScopedFlag as _;
 use bun_core::{EncodedSlice, String as BunString, strings};
-use bun_http::websocket::{Opcode, WebsocketHeader, is_valid_close_code};
 use bun_io::KeepAlive;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{self as jsc, GlobalRef, JSGlobalObject};
 use bun_ptr::{BackRef, JsCell, RefPtr};
 use bun_uws::{self as uws, NewSocketHandler, us_bun_verify_error_t};
 use bun_uws_sys::us_socket_t;
+use bun_websocket::frame::{
+    AUTO_PONG_BACKPRESSURE_LIMIT, MAX_CONTROL_PAYLOAD, Opcode, WebsocketHeader, is_valid_close_code,
+};
 
 use self::cpp_websocket::{CppWebSocket, TlsHandshake};
 use self::websocket_deflate::WebSocketDeflate;
@@ -51,15 +53,9 @@ pub type Socket<const SSL: bool> = NewSocketHandler<SSL>;
 const STACK_FRAME_SIZE: usize = 1024;
 /// Minimum message size to compress (RFC 7692 recommendation)
 const MIN_COMPRESS_SIZE: usize = 860;
-/// RFC 6455 §5.5: a control frame's payload is at most 125 bytes.
-const MAX_CONTROL_PAYLOAD: usize = 125;
 /// Largest frame length `ws` and undici accept: `Number.MAX_SAFE_INTEGER`.
 const MAX_PAYLOAD_LENGTH: u64 = (1 << 53) - 1;
 const MAX_CONTROL_FRAME_SIZE: usize = WebsocketHeader::frame_size(MAX_CONTROL_PAYLOAD, true);
-/// Skip auto-pongs while more than this many bytes are unsent. A peer can send unlimited Pings,
-/// so unbounded replies would let it exhaust our memory. App sends aren't capped.
-/// RFC 6455 §5.5.3 allows answering only the most recent Ping.
-const AUTO_PONG_BACKPRESSURE_LIMIT: usize = 16 * 1024 * 1024;
 
 /// Seconds to wait after sending our Close frame before dropping the connection (`closeTimeout` in `ws`).
 #[inline]
@@ -397,6 +393,9 @@ impl<const SSL: bool> WebSocket<SSL> {
         let Some(ws) = self.cpp_websocket() else {
             return;
         };
+        if success == 0 {
+            self.report_tls_error(&ssl_error);
+        }
         if !ws.accepts_tls_peer(
             TlsHandshake::Renegotiation,
             socket.ssl_mut(),
@@ -408,14 +407,36 @@ impl<const SSL: bool> WebSocket<SSL> {
         }
     }
 
+    /// `socket` closes with `code`. In tunnel mode it is the upgrade client's.
+    pub(crate) fn report_close_error<const TLS: bool>(&self, socket: Socket<TLS>, code: i32) {
+        let is_write = TLS && socket.ssl_send_rejected();
+        // A peer that has sent its Close frame does not have to wait for our close_notify.
+        let is_over = self.sent_fin.get() && self.close_received.borrow().is_some();
+        // Values above the `CloseCode` range are an errno.
+        if code > 2
+            && !(is_write && is_over)
+            && let Some(ws) = self.cpp_websocket()
+        {
+            ws.did_close_with_error(code, is_write);
+        }
+    }
+
+    /// A read failed in the TLS session with the target or with the proxy.
+    pub(crate) fn report_tls_error(&self, ssl_error: &us_bun_verify_error_t) {
+        if let Some(ws) = self.cpp_websocket() {
+            ws.did_fail_tls(ssl_error.reason_bytes());
+        }
+    }
+
     fn detach_tcp(&self) {
         let mut tcp = self.tcp.get();
         tcp.detach();
         self.tcp.set(tcp);
     }
 
-    pub fn handle_close(self: RefPtr<Self>) {
+    pub fn handle_close(self: RefPtr<Self>, code: i32) {
         log!("onClose");
+        self.report_close_error(self.tcp.get(), code);
         self.detach_tcp();
         self.parse_initial_data();
         self.finish(Outcome::Closed);
@@ -1363,10 +1384,10 @@ impl<const SSL: bool> WebSocket<SSL> {
     }
 
     /// In tunnel mode this is the proxy's address.
-    pub(crate) fn remote_address(&self) -> Option<(IpAddr, u16)> {
+    pub(crate) fn remote_address(&self) -> Option<SocketAddr> {
         match self.tunnel() {
             Some(tunnel) => tunnel.remote_address(),
-            None => remote_address_of(self.tcp.get()),
+            None => self.tcp.get().remote_endpoint(),
         }
     }
 
@@ -1758,31 +1779,36 @@ impl<const SSL: bool> Drop for WebSocket<SSL> {
     }
 }
 
-/// `None` for a unix socket or a closed socket.
-pub(crate) fn remote_address_of<const SSL: bool>(socket: Socket<SSL>) -> Option<(IpAddr, u16)> {
-    let mut buf = [0u8; 64];
-    let bytes = socket.remote_address(&mut buf)?;
-    let ip = <[u8; 4]>::try_from(bytes)
-        .map(IpAddr::from)
-        .or_else(|_| <[u8; 16]>::try_from(bytes).map(IpAddr::from))
-        .ok()?;
-    Some((ip, socket.remote_port()?))
+// HOST_EXPORT(Bun__WebSocket__addressOfSocket, c)
+pub fn bun__websocket__address_of_socket(
+    socket: *mut bun_uws_sys::us_socket_t,
+    is_local: bool,
+    address: &mut bun_core::String,
+    port: &mut u16,
+) -> bool {
+    let socket = Socket::<false>::from(socket);
+    let endpoint = if is_local {
+        socket.local_endpoint()
+    } else {
+        socket.remote_endpoint()
+    };
+    write_remote_address(endpoint, address, port, &mut false)
 }
 
 /// FFI form of [`WebSocket::remote_address`]. Returns false and leaves the out-params untouched
 /// when there's no address.
 fn write_remote_address(
-    remote: Option<(IpAddr, u16)>,
+    remote: Option<SocketAddr>,
     address: &mut BunString,
     port: &mut u16,
     is_ipv6: &mut bool,
 ) -> bool {
-    let Some((ip, remote_port)) = remote else {
+    let Some(remote) = remote else {
         return false;
     };
-    *address = BunString::create_format(format_args!("{ip}"));
-    *port = remote_port;
-    *is_ipv6 = ip.is_ipv6();
+    *address = BunString::create_format(format_args!("{}", remote.ip()));
+    *port = remote.port();
+    *is_ipv6 = remote.is_ipv6();
     true
 }
 

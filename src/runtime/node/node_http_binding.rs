@@ -5,7 +5,7 @@
 use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::{JSValue, JsResult};
 use bun_uws_sys::Opcode;
-use bun_uws_sys::response::PerMessageDeflateParams;
+use bun_websocket::deflate::Params;
 
 use crate::generated_bindgen::node_http_binding::{BunServer, DeflateParams};
 use crate::server::{NodeHTTPResponse, ServerWebSocket};
@@ -67,11 +67,11 @@ pub(crate) fn upgrade_node_http_response_to_web_socket<'a>(
         return Err(global
             .throw_invalid_arguments(format_args!("handshake must be a complete response head")));
     }
-    let deflate_params = deflate.map(|deflate| PerMessageDeflateParams {
-        server_max_window_bits: deflate.server_max_window_bits as i32,
-        client_max_window_bits: deflate.client_max_window_bits as i32,
-        server_no_context_takeover: deflate.server_no_context_takeover,
-        client_no_context_takeover: deflate.client_no_context_takeover,
+    let deflate_params = deflate.map(|deflate| Params {
+        server_max_window_bits: deflate.server_max_window_bits as u8,
+        client_max_window_bits: deflate.client_max_window_bits as u8,
+        server_no_context_takeover: deflate.server_no_context_takeover.into(),
+        client_no_context_takeover: deflate.client_no_context_takeover.into(),
     });
 
     Ok(response
@@ -83,7 +83,7 @@ pub(crate) fn upgrade_node_http_response_to_web_socket<'a>(
             max_payload,
             flags & AUTO_PONG != 0,
             flags & SKIP_UTF8_VALIDATION != 0,
-            deflate_params.as_ref(),
+            deflate_params,
         )?
         .unwrap_or(JSValue::UNDEFINED))
 }
@@ -98,5 +98,11 @@ pub(crate) fn send_web_socket_frame<'a>(
     fin: bool,
     compress: bool,
 ) -> JsResult<JSValue> {
-    handle.send_frame(cx.global(), data, Opcode(opcode), fin, compress)
+    handle.send_frame(
+        cx.global(),
+        data,
+        Opcode::from_raw(opcode as u8),
+        fin,
+        compress,
+    )
 }

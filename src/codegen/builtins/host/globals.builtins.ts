@@ -1445,6 +1445,7 @@ const plainObjects = [
   "Bun.TOML",
   "Bun.XML",
   "Bun.YAML",
+  "Bun.diff",
   "Bun.dns",
   "Bun.markdown",
   "Bun.password",

@@ -188,34 +188,22 @@ public:
     // stepping, and from an authorizer callback during prepare() close_v2
     // would free the handle under the parser's feet.
     bool isBusy() const { return m_busyDepth > 0; }
+    // A subscriber of the `sqlite.db.query` diagnostics channel is running.
+    bool isPublishing() const { return m_isPublishing; }
     struct BusyScope {
         JSDatabaseSync* db;
-        BusyScope(JSDatabaseSync* d)
-            : db(d)
-        {
-            if (db) {
-                // Every connection entry point takes a BusyScope, so this is
-                // where orphaned sessions get their deferred sweep — before
-                // the depth bump so re-entrant calls from UDF/authorizer
-                // callbacks are skipped by the m_busyDepth guard.
-                db->sweepOrphanedSessions();
-                // This can run a callback that closes the database, so callers check that it's open after this.
-                if (++db->m_busyDepth == 1 && !db->m_orphanedStatements.isEmpty()) [[unlikely]]
-                    db->finalizeOrphanedStatements();
-            }
-        }
-        ~BusyScope()
-        {
-            if (!db) return;
-            if (--db->m_busyDepth == 0 && db->m_deferredClose) [[unlikely]]
-                db->finishDeferredClose();
-        }
+        // The statement that the call is made on, if any: close() leaves it alone.
+        JSStatementSync* statement;
+        size_t queriesOfOuterScopes = 0;
+        BusyScope(JSDatabaseSync*, JSStatementSync* = nullptr);
+        ~BusyScope();
         BusyScope(const BusyScope&) = delete;
         BusyScope& operator=(const BusyScope&) = delete;
         BusyScope(BusyScope&&) = delete;
         BusyScope& operator=(BusyScope&&) = delete;
     };
     void finishDeferredClose(bool mayCallScript = true);
+    void finalizeStatement(JSStatementSync&);
 
 private:
     JSDatabaseSync(JSC::VM& vm, JSC::Structure* structure)
@@ -224,6 +212,10 @@ private:
     }
 
     void finishCreation(JSC::VM& vm);
+
+    void traceIfSubscribed();
+    static int didFinishQuery(unsigned, void* database, void* statement, void* nanoseconds);
+    void publishFinishedQueries(JSStatementSync*);
 
     WTF::String m_location;
     DatabaseSyncOpenConfiguration m_config {};
@@ -240,6 +232,16 @@ private:
     // records (not JS objects) so close() can sweep regardless of GC
     // ordering.
     WTF::Vector<Ref<NodeSqliteSessionRecord>> m_sessions;
+    struct FinishedQuery {
+        WTF::String sql;
+        int64_t nanoseconds;
+    };
+    // Node publishes from inside of sqlite3_step() and sqlite3_reset(). That drops an exception that is pending,
+    // and run() reports the changes of a subscriber. These wait for their BusyScope to unwind.
+    WTF::Vector<FinishedQuery> m_finishedQueries;
+    bool m_isTraced = false;
+    bool m_isFinalizingStatements = false;
+    bool m_isPublishing = false;
     bool m_enableLoadExtension = false;
 };
 
@@ -374,6 +376,9 @@ public:
         SteppingScope& operator=(SteppingScope&&) = delete;
     };
 
+    // The BusyScopes of calls on this statement.
+    unsigned m_busyDepth = 0;
+
     // Bind callFrame->argument(anon_start..) to the statement using Node.js
     // semantics. Returns false and throws on failure.
     bool bindParams(JSC::JSGlobalObject*, JSC::ThrowScope&, JSC::CallFrame*);
@@ -426,6 +431,37 @@ private:
     bool m_allowBareNamedParams : 1 = true;
     bool m_allowUnknownNamedParams : 1 = false;
 };
+
+inline JSDatabaseSync::BusyScope::BusyScope(JSDatabaseSync* db, JSStatementSync* statement)
+    : db(db)
+    , statement(statement)
+{
+    if (!db) return;
+    if (statement) ++statement->m_busyDepth;
+    queriesOfOuterScopes = db->m_finishedQueries.size();
+    // Every connection entry point takes a BusyScope, so this is
+    // where orphaned sessions get their deferred sweep — before
+    // the depth bump so re-entrant calls from UDF/authorizer
+    // callbacks are skipped by the m_busyDepth guard.
+    db->sweepOrphanedSessions();
+    // This can run a callback that closes the database, so callers check that it's open after this.
+    if (++db->m_busyDepth == 1 && !db->m_orphanedStatements.isEmpty()) [[unlikely]]
+        db->finalizeOrphanedStatements();
+    db->traceIfSubscribed();
+}
+
+inline JSDatabaseSync::BusyScope::~BusyScope()
+{
+    if (!db) return;
+    if (--db->m_busyDepth == 0) {
+        queriesOfOuterScopes = 0;
+        if (db->m_deferredClose) [[unlikely]]
+            db->finishDeferredClose();
+    }
+    if (db->m_finishedQueries.size() > queriesOfOuterScopes) [[unlikely]]
+        db->publishFinishedQueries(statement);
+    if (statement) --statement->m_busyDepth;
+}
 
 class JSStatementSyncPrototype final : public JSC::JSNonFinalObject {
 public:

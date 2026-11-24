@@ -3040,36 +3040,10 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromHeaders(FfiSlice<StringP
     }
     return &headers.leakRef();
 }
-WebCore::FetchHeaders* WebCore__FetchHeaders__createFromUWS(void* arg1)
+extern "C++" {
+template<typename Request>
+static WebCore::FetchHeaders* createFetchHeadersFromRequest(Request* req)
 {
-    uWS::HttpRequest& req = *reinterpret_cast<uWS::HttpRequest*>(arg1);
-
-    auto headers = WebCore::FetchHeaders::create();
-
-    HTTPHeaderMap map = HTTPHeaderMap();
-
-    for (const auto& header : req) {
-        StringView nameView = StringView(std::span { reinterpret_cast<const Latin1Character*>(header.first.data()), header.first.length() });
-        std::span<Latin1Character> data;
-        auto value = String::createUninitialized(header.second.length(), data);
-        if (header.second.length() > 0)
-            memcpy(data.data(), header.second.data(), header.second.length());
-
-        HTTPHeaderName name;
-
-        if (WebCore::findHTTPHeaderName(nameView, name)) {
-            map.add(name, WTF::move(value));
-        } else {
-            map.addUncommonHeader(nameView.toString().isolatedCopy(), WTF::move(value));
-        }
-    }
-    headers->setInternalHeaders(WTF::move(map));
-    return &headers.leakRef();
-}
-WebCore::FetchHeaders* WebCore__FetchHeaders__createFromH3(void* arg1)
-{
-    auto* req = reinterpret_cast<uWS::Http3Request*>(arg1);
-
     auto headers = WebCore::FetchHeaders::create();
 
     HTTPHeaderMap map = HTTPHeaderMap();
@@ -3089,6 +3063,15 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromH3(void* arg1)
     });
     headers->setInternalHeaders(WTF::move(map));
     return &headers.leakRef();
+}
+}
+WebCore::FetchHeaders* WebCore__FetchHeaders__createFromUWS(void* arg1)
+{
+    return createFetchHeadersFromRequest(reinterpret_cast<uWS::HttpRequest*>(arg1));
+}
+WebCore::FetchHeaders* WebCore__FetchHeaders__createFromH3(void* arg1)
+{
+    return createFetchHeadersFromRequest(reinterpret_cast<uWS::Http3Request*>(arg1));
 }
 void WebCore__FetchHeaders__deref(WebCore::FetchHeaders* arg0)
 {

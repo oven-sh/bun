@@ -88,7 +88,8 @@ bun_core::declare_scope!(cache, visible);
 /// Version 51: A `bun:` specifier that names no builtin is printed as it is written.
 /// Version 52: Every directive is printed: a `"use strict"` in a function body too, and the
 /// prologue of the file first.
-const EXPECTED_VERSION: u32 = 52;
+/// Version 53: The name of a Node.js builtin in `import()` is printed as it is written.
+const EXPECTED_VERSION: u32 = 53;
 
 /// Source files smaller than this are not written to / read from the on-disk
 /// transpiler cache. Originally 50 KiB, which excluded almost every file in a
@@ -661,9 +662,7 @@ impl RuntimeTranspilerCache {
         let cache_fd = sys::open(cache_file_path, open_flags, 0)?;
         let file = sys::File::from_fd(cache_fd);
         // On any error, delete the cache file.
-        let unlink_guard = scopeguard::guard(cache_file_path, |p| {
-            let _ = sys::unlink(p);
-        });
+        let cache_file = sys::UnlinkOnDrop::new(Fd::cwd(), cache_file_path);
 
         let stat = file.stat()?;
         if !sys::S::ISREG(stat.st_mode as _) {
@@ -694,7 +693,7 @@ impl RuntimeTranspilerCache {
 
         entry.load(&file, stat_size)?;
 
-        let _ = scopeguard::ScopeGuard::into_inner(unlink_guard);
+        cache_file.keep();
         Ok(entry)
     }
 

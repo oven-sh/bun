@@ -41,12 +41,13 @@ use bun_ptr::{BackRef, JsCell, RefPtr};
 
 use super::websocket_proxy_tunnel::IntoUpgradeClientRef;
 use bun_uws::{self as uws, SocketHandler, SocketKind};
+use bun_websocket::handshake::{compute_accept_value, parse_window_bits};
 
 use super::cpp_websocket::{CppWebSocket, HandshakeVerdict, TlsHandshake, TlsPeer};
 use super::websocket_deflate as WebSocketDeflate;
 use super::websocket_proxy::WebSocketProxy;
 use super::websocket_proxy_tunnel::WebSocketProxyTunnel;
-use crate::websocket_client::ErrorCode;
+use crate::websocket_client::{ErrorCode, WebSocketClient};
 
 // LAYERING: SSLConfig was MOVE_DOWN'd from bun_runtime::api::server_config →
 // bun_http::ssl_config (data + as_usockets/for_client_verification). The
@@ -578,6 +579,10 @@ where
         self.proxy.get().as_ref()?.get_tunnel().cloned()
     }
 
+    fn tunneled_websocket(&self) -> Option<RefPtr<WebSocketClient>> {
+        self.tunnel()?.connected_websocket()
+    }
+
     pub(crate) fn cancel(self: RefPtr<Self>) {
         self.clear_data();
 
@@ -621,6 +626,9 @@ where
     pub fn handle_close(self: RefPtr<Self>, code: c_int) {
         log!("onClose");
         bun_jsc::mark_binding!();
+        if let Some(ws) = self.tunneled_websocket() {
+            ws.report_close_error(self.tcp.get(), code);
+        }
         self.clear_data();
         self.tcp.set(Socket::<SSL>::detached());
         // Values above the `CloseCode` range are the errno of a failed read. A FIN goes through
@@ -696,8 +704,13 @@ where
                     self.secure.get().is_some()
                 );
                 self.fail_tls(ssl_error, true);
+            } else if self.proxy.get().is_none() {
+                self.report_request();
             }
         } else {
+            if let Some(ws) = self.tunneled_websocket() {
+                ws.report_tls_error(&ssl_error);
+            }
             // if we are here is because server rejected us, and the error_no is the cause of this
             // if we set reject_unauthorized == false this means the server requires custom CA aka NODE_EXTRA_CA_CERTS
             self.fail_tls(ssl_error, false);
@@ -786,10 +799,19 @@ where
         // If using proxy, set state to proxy_handshake
         if self.proxy.get().is_some() {
             self.state.set(State::ProxyHandshake);
+        } else if !SSL {
+            self.report_request();
         }
 
         self.to_send_len.set(self.input_body_buf.get().len());
         self.write_pending(|buf| Self::socket_write(socket, buf));
+    }
+
+    /// `input_body_buf` is the upgrade request, and the way to the server is open.
+    fn report_request(&self) {
+        if let Some(ws) = self.cpp_websocket() {
+            ws.will_send_request(self.input_body_buf.get(), self.tcp.get().socket.get());
+        }
     }
 
     pub(crate) fn is_same_socket(&self, socket: Socket<SSL>) -> bool {
@@ -1026,6 +1048,7 @@ where
         self.state.set(State::Reading);
         self.to_send_len.set(request_buf.len());
         self.input_body_buf.set(request_buf);
+        self.report_request();
 
         // Send the WebSocket upgrade request
         if !self.write_pending(|buf| Self::socket_write(socket, buf)) {
@@ -1140,6 +1163,7 @@ where
             self.terminate(ErrorCode::ProxyTunnelFailed);
             return;
         };
+        self.report_request();
         self.write_pending(|buf| tunnel.write(buf).ok());
     }
 
@@ -1673,23 +1697,6 @@ fn build_request_body(
     }
 }
 
-fn parse_window_bits(value: &[u8]) -> Option<u8> {
-    use WebSocketDeflate::Params;
-
-    let digits = value
-        .strip_prefix(b"\"")
-        .and_then(|v| v.strip_suffix(b"\""))
-        .unwrap_or(value);
-    let bits = match *digits {
-        [d @ b'0'..=b'9'] => d - b'0',
-        [b'1', d @ b'0'..=b'9'] => 10 + (d - b'0'),
-        _ => return None,
-    };
-    (Params::MIN_WINDOW_BITS..=Params::MAX_WINDOW_BITS)
-        .contains(&bits)
-        .then_some(bits)
-}
-
 /// Validates the server's response to the global `WebSocket`'s offer, which is always
 /// `permessage-deflate; client_max_window_bits` (`WebSocketOptions::extensions` in WebSocket.h), and
 /// returns the negotiated params (RFC 7692 §7.1). `None` for a different extension, an unknown or
@@ -1721,21 +1728,6 @@ fn parse_deflate_response(response: &[u8]) -> Option<WebSocketDeflate::Params> {
     params.server_max_window_bits = server_bits.unwrap_or(params.server_max_window_bits);
     params.client_max_window_bits = client_bits.unwrap_or(params.client_max_window_bits);
     Some(params)
-}
-
-/// Compute the expected Sec-WebSocket-Accept value per RFC 6455 §4.2.2:
-/// base64(SHA-1(key ++ "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"))
-fn compute_accept_value(key: &[u8]) -> [u8; 28] {
-    use bun_sha_hmac::sha::hashers::SHA1;
-    const WEBSOCKET_GUID: &[u8] = b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
-    let mut hasher = SHA1::init();
-    hasher.update(key);
-    hasher.update(WEBSOCKET_GUID);
-    let mut hash = [0u8; SHA1::DIGEST];
-    hasher.r#final(&mut hash);
-    let mut result = [0u8; 28];
-    let _ = bun_base64::encode(&mut result, &hash);
-    result
 }
 
 /// Returns the name the certificate must match: `hostname` (`tls.serverName` or the URL's host), falling back to the SNI.

@@ -109,6 +109,11 @@ unsafe extern "C" {
     // so `safe fn` discharges the link-time proof here.
     safe fn BunString__threadIsolatedCopy(this: &String) -> String;
     safe fn BunString__makeThreadShareable(this: &mut String);
+    safe fn BunString__createSubstringSharingImpl(
+        this: &String,
+        offset: usize,
+        length: usize,
+    ) -> String;
     fn BunString__createAtom(bytes: *const u8, len: usize) -> String;
     fn BunString__tryCreateAtom(bytes: *const u8, len: usize) -> String;
     fn BunString__createStaticExternal(bytes: *const u8, len: usize, isLatin1: bool) -> String;
@@ -249,9 +254,11 @@ impl String {
         if s.is_empty() {
             return Self::EMPTY;
         }
+        // A loop without an early exit is vectorized.
+        let is_ascii = |block: &[u16]| block.iter().fold(0, |all, &unit| all | unit) < 0x80;
         // SAFETY: s.as_ptr()/len describe a valid u16 slice.
         unsafe {
-            if strings::first_non_ascii16(s).is_none() {
+            if s.chunks(64).all(is_ascii) {
                 BunString__fromUTF16ToLatin1(s.as_ptr(), s.len())
             } else {
                 BunString__fromUTF16(s.as_ptr(), s.len())
@@ -738,6 +745,17 @@ impl String {
                 }
             }
             _ => StringView::new(self),
+        }
+    }
+
+    /// Owned slice of the code units `range`. It holds a ref on the storage of `self` unless a copy is smaller.
+    pub fn shared_substring(&self, range: core::ops::Range<usize>) -> String {
+        if range.len() == self.length() {
+            self.clone()
+        } else if self.tag == Tag::WTFStringImpl && !range.is_empty() {
+            BunString__createSubstringSharingImpl(self, range.start, range.len())
+        } else {
+            String::clone(&self.substring_with_len(range.start, range.end))
         }
     }
 
@@ -1756,7 +1774,7 @@ pub mod lexer {
     }
 
     #[inline]
-    pub fn is_whitespace(codepoint: CodePoint) -> bool {
+    pub const fn is_whitespace(codepoint: CodePoint) -> bool {
         // ECMAScript `WhiteSpace`: TAB VT FF SP ZWNBSP + Unicode Zs.
         matches!(codepoint, 0x0009 | 0x000B | 0x000C | 0x0020 | 0xFEFF)
             || strings::is_unicode_space_separator(codepoint as u32)

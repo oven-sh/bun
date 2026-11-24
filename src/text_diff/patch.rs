@@ -528,14 +528,12 @@ struct Parser<'a, T> {
     /// From 1.
     number: usize,
     next_header: NextHeader,
-    has_hunks: bool,
 }
 
 /// The line that starts a hunk or a section or ends a pair, seen from the last `---` or `+++` that looked for it.
 #[derive(Clone, Copy, Default)]
 struct NextHeader {
     number: usize,
-    /// Or there is none, and a hunk came before.
     is_section: bool,
 }
 
@@ -556,7 +554,7 @@ impl<'a, T: Unit> Parser<'a, T> {
         self.number += 1;
     }
 
-    /// A commit message can have a line like `--- Original Message ---`. It is alone, and no hunk follows it.
+    /// A commit message can have a line like `--- Original Message ---`. It is alone, and a section follows it.
     fn is_at_file_header(&mut self) -> bool {
         let Some(line) = self.peek().filter(|line| is_file_header(line)) else {
             return false;
@@ -582,10 +580,9 @@ impl<'a, T: Unit> Parser<'a, T> {
                 last = line;
                 ahead.advance();
             }
-            let is_section = |line| strip(line, b"@@").is_none();
             self.next_header = NextHeader {
                 number: ahead.number,
-                is_section: ahead.peek().map_or(self.has_hunks, is_section),
+                is_section: ahead.peek().is_some_and(|it| strip(it, b"@@").is_none()),
             };
         }
         !self.next_header.is_section
@@ -606,11 +603,10 @@ impl<'a, T: Unit> Parser<'a, T> {
         before.next().is_some_and(is_rule) && before.next().and_then(index_name).is_some()
     }
 
-    /// After `diff -u`, `Index:` or its rule, or between `*** name` and the stars that start a hunk of `diff -c`.
+    /// After `Index:` or its rule, or between `*** name` and the stars that start a hunk of `diff -c`.
     fn is_in_header(&self, next: &[T]) -> bool {
         let last = self.before().next().unwrap_or_default();
         index_name(last).is_some()
-            || strip(last, b"diff -").is_some_and(|_| strip(last, GIT_HEADER).is_none())
             || self.is_after_rule_of_index()
             || after_marker(last, b"***").is_some() && strip(next, &[b'*'; 15]).is_some()
     }
@@ -676,7 +672,6 @@ impl<'a, T: Unit> Parser<'a, T> {
         let at = self.number;
         let mut hunk = hunk_header(header).ok_or(ParseError::InvalidHunkHeader { at })?;
         self.advance();
-        self.has_hunks = true;
 
         let (mut added, mut removed) = (0, 0);
         while let Some(place) = self.line.clone() {
@@ -730,7 +725,6 @@ pub fn parse<T: Unit>(text: &[T]) -> Result<Vec<FilePatch>, ParseError> {
         line: Some(Parser::line_from(text, 0)),
         number: 1,
         next_header: NextHeader::default(),
-        has_hunks: false,
     };
     let mut files = Vec::new();
     while parser.line.is_some() {

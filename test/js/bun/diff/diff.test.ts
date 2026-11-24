@@ -893,9 +893,9 @@ describe("parsePatch", () => {
     ["--- before stars in a commit message", `Subject: x\n\n--- x\n***************\ndiff --git a/f b/f\n${body}`, [{ isGit: true, oldFileName: "a/f", newFileName: "b/f", hunks: [hunk] }]],
     ["--- before a pair", `--- x\n--- o\n+++ n\n${body}`, [{ oldFileName: "o", oldHeader: "", newFileName: "n", newHeader: "", hunks: [hunk] }]],
     ["+++ before Index:", `+++ x\nIndex: f\n${body}`, [{ index: "f", hunks: [hunk] }]],
-    ["--- in a footer", `${body}\n--- x\n`, [{ hunks: [hunk] }]],
+    ["cut after an empty line and ---", `${body}\n--- o\n`, 'Missing "+++ ..." file header for o'],
+    ["--- after diff in a commit message", `diff -u is fine\n--- x\ndiff --git a/f b/f\n${body}`, [{ isGit: true, oldFileName: "a/f", newFileName: "b/f", hunks: [hunk] }]],
     ["cut after diff -u and ---", `${body}diff -u o n\n--- o\n`, 'Missing "+++ ..." file header for o'],
-    ["--- right after the last hunk", `${body}--- x\n`, "Hunk at line 1 has more lines than expected (expected 1 old lines and 1 new lines)"],
     ["cut before the added line", "@@ -1 +1 @@\n-a", "Added line count did not match for hunk at line 1"],
     ["a removed line too many that starts with --", `${body}--- x\ndiff --git a/f b/f\n`, "Hunk at line 1 has more lines than expected (expected 1 old lines and 1 new lines)"],
     // diff makes two entries of each file.

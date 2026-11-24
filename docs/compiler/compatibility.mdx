@@ -62,8 +62,8 @@ These throw a `TypeError`:
 - Replacing, redefining or deleting a member that exists: `Array.prototype.push = f`, `Object.defineProperty(Array.prototype, "push", d)`, `delete Array.prototype.push`. The same goes for `Promise`, `Date`, `RegExp`, `Map`, `Set`, `Buffer`, the typed arrays, `Request`, `Response`, `Headers` and `URL`, for `createRequire` of `node:module`, and for what `process` inherits, as in `Object.getPrototypeOf(process).on = f`.
 - Changing what one of these inherits from: `Object.setPrototypeOf(Array.prototype, null)`.
 - Anything added to `Object.prototype`: `Object.prototype.extra = 1`.
-- Replacing a global that the language itself uses: `globalThis.Array = List`, `globalThis.Map = Other`.
-- What the language looks up by itself, added to a prototype that doesn't have it: `Array.prototype[Symbol.toPrimitive]`, `Array.prototype.then`, `Array.prototype.toJSON`, `RegExp.prototype.toJSON`, `Array.prototype[0]`.
+- Replacing, redefining or deleting one of these globals: `Object`, `Array`, `String`, `Number`, `Boolean`, `BigInt`, `Symbol`, `RegExp`, `Map`, `Set`, `WeakSet`, `Math`, `JSON`, `Reflect`, `Proxy`, `Atomics`, `ArrayBuffer`, the typed arrays, `globalThis` and `process`. So `Array = List`, `globalThis.Array = List`, `Object.defineProperty(globalThis, "Math", d)` and `delete globalThis.JSON` throw.
+- What the language looks up by itself, added to a prototype that doesn't have it: `Array.prototype[Symbol.toPrimitive]`, `Array.prototype.then`, `Array.prototype.toJSON`, `RegExp.prototype.toJSON`, `Array.prototype[0]`, `Function.prototype.prototype`.
 - `process.versions`, `process.release` and `process.isBun`, which tell a program what runtime it's on.
 
 `Reflect.set()`, `Reflect.defineProperty()`, `Reflect.deleteProperty()` and `Reflect.setPrototypeOf()` return `false` for these, as they do for any read-only property.

@@ -430,6 +430,70 @@ test("cp with missing callback throws", () => {
   }).toThrow(/"cb"/);
 });
 
+const arrayIterationCounters = fs.readFileSync(
+  join(import.meta.dir, "..", "array-iteration-counters-fixture.cjs"),
+  "utf8",
+);
+
+// Node v26.12.1 prints the same: its cp and cpSync never call these three exports, so a spy on one of them sees no call,
+// and a spy that is restored does not break a later copy.
+test("cpSync iterates no array, and cp and cpSync call no fs.readdirSync, fs.existsSync or fs.promises.readdir", async () => {
+  using dir = tempDir("cp-readdir-spy", {
+    "from/a.txt": "a",
+    "from/inner/b.txt": "b",
+    "hooks.cjs": arrayIterationCounters,
+    "spy.cjs": `
+      // Prints the same under Node v26.12.1.
+      const fs = require("node:fs"); const fsp = require("node:fs/promises");
+      const hooks = require("./hooks.cjs");
+      const dir = __dirname;
+      const calls = { readdirSync: 0, existsSync: 0, "promises.readdir": 0 };
+      let restored = false;
+      // A spy: it passes the call on while it is on, and answers undefined once it is restored.
+      function spy(object, name, label) {
+        const real = object[name];
+        object[name] = function () { calls[label]++; return restored ? undefined : Reflect.apply(real, this, arguments); };
+        return () => { object[name] = real; };
+      }
+      const restoreReaddirSync = spy(fs, "readdirSync", "readdirSync");
+      const restoreExistsSync = spy(fs, "existsSync", "existsSync");
+      const restoreReaddir = spy(fsp, "readdir", "promises.readdir");
+      const options = { recursive: true, filter: () => true };
+      const listed = name => fs.readdirSync(dir + "/" + name).sort().join(",") + " " + fs.readFileSync(dir + "/" + name + "/inner/b.txt", "utf8");
+      const out = {};
+      (async () => {
+        try { fs.cpSync(dir + "/from", dir + "/first", options); out.first = "copied"; } catch (e) { out.first = String(e); }
+        hooks.install();
+        try { fs.cpSync(dir + "/from", dir + "/second", options); fs.cpSync(dir + "/from", dir + "/plain", { recursive: true }); } catch (e) { out.second = String(e); }
+        out.iterations = hooks.remove();
+        // Without a filter and to a new place: on macOS this lists the tree before it copies.
+        try { await fsp.cp(dir + "/from", dir + "/async", { recursive: true }); } catch (e) { out.async = String(e); }
+        restoreReaddirSync(); restoreExistsSync(); restoreReaddir(); restored = true;
+        try { fs.cpSync(dir + "/from", dir + "/new/third", options); out.third = listed("new/third"); } catch (e) { out.third = String(e); }
+        try { await fsp.cp(dir + "/from", dir + "/fourth", { recursive: true }); out.fourth = listed("fourth"); } catch (e) { out.fourth = String(e); }
+        out.calls = calls;
+        console.log(JSON.stringify(out));
+      })();
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "spy.cjs"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const expected = {
+    first: "copied",
+    iterations: 0,
+    third: "a.txt,inner b",
+    fourth: "a.txt,inner b",
+    calls: { readdirSync: 0, existsSync: 0, "promises.readdir": 0 },
+  };
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: JSON.stringify(expected) + "\n", stderr: "", exitCode: 0 });
+});
+
 // On Windows, _copySingleFileSync's reparse-point branch opens a handle to the
 // source symlink to resolve its target via GetFinalPathNameByHandleW. Previously
 // that handle was never closed, leaking one OS handle per symlink copied. Over a

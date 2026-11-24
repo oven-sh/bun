@@ -14,19 +14,7 @@ const {
   isSrcSubdir,
 } = require("internal/fs/cp-sync");
 
-const {
-  chmod,
-  copyFile,
-  lstat,
-  mkdir,
-  opendir,
-  readdir,
-  readlink,
-  stat,
-  symlink,
-  unlink,
-  utimes,
-} = require("node:fs/promises");
+const { chmod, copyFile, lstat, mkdir, opendir, readlink, stat, symlink, unlink, utimes } = require("node:fs/promises");
 const { dirname, isAbsolute, join, parse, resolve } = require("node:path");
 
 const PromisePrototypeThen = $Promise.prototype.$then;
@@ -160,12 +148,14 @@ async function checkParentPaths(src: string, srcStat: BigIntStats, dest: string)
 // the filesystem does not report — bails to the ported walker. Scan errors
 // also bail so the walker surfaces them the way node would.
 async function treeContainsOnlyFilesAndDirs(root: string) {
+  // Only macOS runs this. Node's cp never calls the fs.promises.readdir export, so the listing comes from the binding.
+  const binding = require("internal/fs/binding");
   const stack = [root];
   while (stack.length) {
     const dir = stack.pop()!;
     let entries: $Node.Dirent[];
     try {
-      entries = await readdir(dir, { withFileTypes: true });
+      entries = await binding.readdir(dir, { withFileTypes: true });
     } catch {
       return false;
     }

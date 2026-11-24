@@ -1,4 +1,4 @@
-import { tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDir, tempDirWithFiles } from "harness";
 import { join } from "path";
 const assert = require("assert");
 const os = require("os");
@@ -551,4 +551,86 @@ describe("AbortSignal rejections use node's AbortError shape", () => {
     const writeErr = await new Promise(resolve => fs.writeFile(join(dir, "o.txt"), "x", { signal }, resolve));
     expectNodeAbortError(writeErr, signal.reason);
   });
+});
+
+const arrayIterationCounters = fs.readFileSync(
+  join(import.meta.dir, "..", "array-iteration-counters-fixture.cjs"),
+  "utf8",
+);
+
+// Node v26.12.1 prints the same. The counters are on the two things of the array iteration protocol that a script can
+// replace, and they stay on until the promise of each call has settled.
+it("readFile, writeFile, appendFile and readLines do not iterate an array, by path or by FileHandle", async () => {
+  using dir = tempDir("fs-promises-array-iterator", {
+    "read.txt": "read",
+    "lines.txt": "one\ntwo\nthree\n",
+    "hooks.cjs": arrayIterationCounters,
+    "forms.cjs": `
+      // Prints the same under Node v26.12.1.
+      const fs = require("node:fs"); const fsp = require("node:fs/promises");
+      const hooks = require("./hooks.cjs");
+      const dir = __dirname;
+      const file = name => dir + "/" + name;
+      function* chunks() { yield "two "; yield "chunks"; }
+      const out = {};
+      // The counters stay on until the promise of the call has settled.
+      async function counted(name, call) {
+        hooks.install();
+        let result;
+        try { result = await call(); } catch (error) { result = String(error); }
+        out[name] = { iterations: hooks.remove(), result: result === undefined ? "done" : result };
+      }
+      (async () => {
+        // Each form once before the counters: what a module does when it first loads is not what this is about.
+        await fsp.readFile(file("read.txt")); await fsp.writeFile(file("w0.txt"), "x"); await fsp.writeFile(file("w0.txt"), chunks()); await fsp.appendFile(file("w0.txt"), "x");
+        const warm = await fsp.open(file("w0.txt"), "r+"); await warm.readFile(); await warm.writeFile("x"); await warm.appendFile("x");
+        await fsp.readFile(warm); await fsp.writeFile(warm, "x"); await fsp.appendFile(warm, "x"); await warm.close();
+        for await (const line of (await fsp.open(file("lines.txt"))).readLines()) {}
+
+        await counted("readFile(path, encoding)", () => fsp.readFile(file("read.txt"), "utf8"));
+        await counted("writeFile(path, string)", () => fsp.writeFile(file("string.txt"), "written"));
+        await counted("writeFile(path, iterable)", () => fsp.writeFile(file("iterable.txt"), chunks()));
+        await counted("appendFile(path, string)", async () => { await fsp.appendFile(file("string.txt"), ", appended"); });
+        const first = await fsp.open(file("read.txt"));
+        await counted("readFile(handle, encoding)", () => fsp.readFile(first, "utf8"));
+        await first.close();
+        const second = await fsp.open(file("read.txt"));
+        await counted("FileHandle#readFile(encoding)", () => second.readFile("utf8"));
+        await second.close();
+        const writer = await fsp.open(file("handle.txt"), "w+");
+        await counted("writeFile(handle, string)", () => fsp.writeFile(writer, "by handle"));
+        await counted("FileHandle#writeFile(string)", () => writer.writeFile(", method"));
+        await counted("FileHandle#appendFile(string)", () => writer.appendFile(", appended"));
+        await counted("appendFile(handle, string)", async () => { await fsp.appendFile(writer, ", function"); });
+        await writer.close();
+        const reader = await fsp.open(file("lines.txt"));
+        await counted("FileHandle#readLines()", async () => { const lines = []; for await (const line of reader.readLines()) lines.push(line); return lines.join(); });
+        out.files = [fs.readFileSync(file("string.txt"), "utf8"), fs.readFileSync(file("iterable.txt"), "utf8"), fs.readFileSync(file("handle.txt"), "utf8")];
+        console.log(JSON.stringify(out));
+      })();
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "forms.cjs"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const expected = {
+    "readFile(path, encoding)": { iterations: 0, result: "read" },
+    "writeFile(path, string)": { iterations: 0, result: "done" },
+    "writeFile(path, iterable)": { iterations: 0, result: "done" },
+    "appendFile(path, string)": { iterations: 0, result: "done" },
+    "readFile(handle, encoding)": { iterations: 0, result: "read" },
+    "FileHandle#readFile(encoding)": { iterations: 0, result: "read" },
+    "writeFile(handle, string)": { iterations: 0, result: "done" },
+    "FileHandle#writeFile(string)": { iterations: 0, result: "done" },
+    "FileHandle#appendFile(string)": { iterations: 0, result: "done" },
+    "appendFile(handle, string)": { iterations: 0, result: "done" },
+    "FileHandle#readLines()": { iterations: 0, result: "one,two,three" },
+    files: ["written, appended", "two chunks", "by handle, method, appended, function"],
+  };
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: JSON.stringify(expected) + "\n", stderr: "", exitCode: 0 });
 });

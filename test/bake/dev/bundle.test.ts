@@ -1158,6 +1158,49 @@ for (const half of [100, 600]) {
     },
   });
 }
+// A line of more than 1,000 bytes is cut wherever the error is. The first error is in the last 80 bytes of its
+// line. The second is an error of the CSS parser, whose location has the whole line.
+const manyRules = Buffer.alloc(1200, "a{color:red}").toString();
+for (const [title, file, source, error, excerpt] of [
+  [
+    "an error at the end of a line",
+    "index.ts",
+    `let ok = 1;\n${Buffer.alloc(1100, "a")}]`,
+    'Expected ";" but found "]"',
+    `${Buffer.alloc(40, "a")}]`,
+  ],
+  [
+    "an error of the CSS parser",
+    "styles.css",
+    `body{}\n${manyRules}}${manyRules}`,
+    "Invalid selector. Empty selector is not allowed",
+    `${manyRules.slice(-40)}}${manyRules.slice(0, 79)}`,
+  ],
+] as const) {
+  devTest(`error overlay shows an excerpt of a line of more than 1,000 bytes for ${title}`, {
+    files: {
+      "index.html": emptyHtmlFile({
+        styles: file.endsWith(".css") ? [file] : [],
+        scripts: file.endsWith(".ts") ? [file] : [],
+      }),
+      [file]: source,
+    },
+    async test(dev) {
+      // The harness reads the column of an error from where its underline starts in what is shown: 41.
+      await using c = await dev.client("/", {
+        errors: [`${file}:2:41: error: ${error}`],
+      });
+      const shown = await c.js<{ excerpt: string; underlineStart: number }>`(() => {
+        const msg = document.querySelector("bun-hmr").shadowRoot.querySelector(".b-msg");
+        return {
+          excerpt: msg.querySelector(".view > pre").textContent,
+          underlineStart: msg.querySelector(".highlight-wrap > .space").textContent.length,
+        };
+      })()`;
+      expect(shown).toEqual({ excerpt, underlineStart: 40 });
+    },
+  });
+}
 devTest("error overlay lists the error that a plugin throws, which has no position, among other errors", {
   files: {
     "bunfig.toml": `

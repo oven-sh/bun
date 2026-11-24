@@ -10,6 +10,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <node_api.h>
+#include <string>
 
 #ifdef _WIN32
 #define BUN_PLUGIN_EXPORT __declspec(dllexport)
@@ -161,6 +162,33 @@ plugin_impl_with_needle(const OnBeforeParseArguments *args,
     result->source_ptr = nullptr;
     result->source_len = 0;
     result->loader = 0;
+  }
+}
+
+// Logs three errors on a source line of 5,001 bytes: at its last byte, at its
+// first byte, and at a column past its end.
+extern "C" BUN_PLUGIN_EXPORT void
+plugin_impl_long_line_errors(const OnBeforeParseArguments *args,
+                             OnBeforeParseResult *result) {
+  static const std::string line = std::string(5000, 'a') + "]";
+  static const char *const messages[] = {"at the last byte",
+                                         "at the first byte", "past the end"};
+  static const int columns[] = {5001, 1, 9000};
+  for (int i = 0; i < 3; i++) {
+    BunLogOptions options;
+    options.__struct_size = sizeof(BunLogOptions);
+    options.message_ptr = (const uint8_t *)messages[i];
+    options.message_len = strlen(messages[i]);
+    options.path_ptr = args->path_ptr;
+    options.path_len = args->path_len;
+    options.source_line_text_ptr = (const uint8_t *)line.data();
+    options.source_line_text_len = line.size();
+    options.level = (int8_t)BUN_LOG_LEVEL_ERROR;
+    options.line = 1;
+    options.lineEnd = 1;
+    options.column = columns[i];
+    options.columnEnd = columns[i] + 1;
+    (result->log)(args, &options);
   }
 }
 

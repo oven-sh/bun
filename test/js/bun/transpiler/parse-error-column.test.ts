@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 
@@ -209,7 +209,7 @@ async function printedExcerpts(args: string[], files: Record<string, string>) {
 }
 
 test.concurrent("CLI caret stays under the token for an error at the end of a long line", async () => {
-  // An error in the last 80 bytes of a line is never left-trimmed.
+  // An error in the last 80 bytes of a line of 1,000 bytes or less is not left-trimmed.
   const { excerpts } = await printedExcerpts(["build", "long.js"], { "long.js": fill(150, "a") + "]" });
   expect(excerpts).toEqual([{ excerpt: "1 | " + fill(150, "a") + "]", caret: 4 + 150 }]);
 });
@@ -229,12 +229,13 @@ test.concurrent.each([["build"], ["run"]])(
 );
 
 // The printed line is cut when more than 80 bytes start at the error, and the
-// cut drops a prefix when more than 40 bytes precede the error. A line is
-// stored whole up to 1,000 bytes, and that limit does not change what is printed.
+// cut drops a prefix when more than 40 bytes precede the error. A line of more
+// than 1,000 bytes is cut wherever the error is.
 test.concurrent.each([
   ["a 1,000-byte line", fill(100, "a") + "]" + fill(899, "b"), 60, 180],
   ["a 1,001-byte line", fill(100, "a") + "]" + fill(900, "b"), 60, 180],
-  ["80 bytes from the error to the end keep the whole line", fill(1000, "a") + "]" + fill(79, "b"), 0, 1080],
+  ["80 bytes from the error to the end keep a 1,000-byte line whole", fill(920, "a") + "]" + fill(79, "b"), 0, 1000],
+  ["80 bytes from the error to the end cut a 1,001-byte line", fill(921, "a") + "]" + fill(79, "b"), 881, 1001],
   ["81 bytes from the error to the end cut the line", fill(1000, "a") + "]" + fill(80, "b"), 960, 1080],
   ["40 bytes before the error drop no prefix", fill(40, "a") + "]" + fill(1000, "b"), 0, 120],
   ["41 bytes before the error drop one byte", "c" + fill(40, "a") + "]" + fill(1000, "b"), 1, 121],
@@ -245,6 +246,174 @@ test.concurrent.each([
 ])("CLI caret at an excerpt limit: %s", async (_, line, start, end) => {
   const { excerpts } = await printedExcerpts(["build", "long.js"], { "long.js": line });
   expect(excerpts).toEqual([{ excerpt: "1 | " + line.slice(start, end), caret: 4 + line.indexOf("]") - start }]);
+});
+
+// A line of more than 1,000 bytes is not printed whole for an error in its last
+// 80 bytes either: the excerpt is the 40 bytes before the error and the rest of
+// the line. `position.lineText` is still the whole line (see below).
+const longArray = "[" + fill(80_000, "1,") + "]";
+
+test.concurrent.each([["build"], ["run"]])(
+  "bun %s prints an excerpt for an error at the end of a line of more than 1,000 bytes",
+  async subcommand => {
+    const source = `var a = ${longArray}; var b = (;`;
+    const { stderr, excerpts } = await printedExcerpts([subcommand, "long.js"], { "long.js": source });
+    expect(excerpts).toEqual([{ excerpt: "1 | " + source.slice(-41), caret: 4 + 40 }]);
+    expect(stderr.length).toBeLessThan(1024);
+  },
+);
+
+test.concurrent("an error at the end of a second line of more than 1,000 bytes, after CR LF", async () => {
+  const line = `var a = ${longArray}; var b = (;`;
+  const { stderr, excerpts } = await printedExcerpts(["build", "long.js"], {
+    "long.js": "let ok = 1;\r\n" + line + "\r\n",
+  });
+  expect(excerpts).toEqual([{ excerpt: "2 | " + line.slice(-41), caret: 4 + 40 }]);
+  expect(stderr.length).toBeLessThan(1024);
+});
+
+test.concurrent("a note at the end of a line of more than 1,000 bytes gets an excerpt", async () => {
+  const first = `var a = ${longArray}; const x = 1;`;
+  const { stderr, excerpts } = await printedExcerpts(["build", "long.js"], {
+    "long.js": first + "\nconst x = 2;\n",
+  });
+  const at = first.length - "x = 1;".length;
+  expect(excerpts).toEqual([
+    { excerpt: "2 | const x = 2;", caret: 4 + 6 },
+    { excerpt: "1 | " + first.slice(at - 40), caret: 4 + 40 },
+  ]);
+  expect(stderr.length).toBeLessThan(1024);
+});
+
+// The byte 40 bytes before `]` starts a U+00E9, and it is inside a U+540D and a
+// U+10400. The caret counts terminal columns: a U+540D takes 2, and a U+10400
+// takes 1 though it is 2 UTF-16 units.
+test.concurrent.each([
+  ["2-byte", fill(1200, "\u00E9") + "]", fill(40, "\u00E9") + "]", 20],
+  ["3-byte wide", fill(1200, "\u540D") + "]", fill(42, "\u540D") + "]", 14 * 2],
+  ["4-byte", fill(1200, "\u{10400}") + "xy]", fill(40, "\u{10400}") + "xy]", 10 + 2],
+])("the excerpt at the end of a long line of %s characters starts on a character", async (_, source, shown, cells) => {
+  const { excerpts } = await printedExcerpts(["build", "long.js"], { "long.js": source });
+  expect(excerpts).toEqual([{ excerpt: "1 | " + shown, caret: 4 + cells }]);
+});
+
+test.concurrent("bun install prints an excerpt of a one-line package.json that is cut short", async () => {
+  const source = `{"name":"x","version":"1.0.0","files":[` + fill(80_000, '"a",') + `"a"]`;
+  const { stderr, excerpts } = await printedExcerpts(["install"], { "package.json": source });
+  expect(excerpts).toEqual([{ excerpt: "1 | " + source.slice(-41), caret: 4 + 40 }]);
+  expect(stderr.length).toBeLessThan(1024);
+});
+
+/**
+ * What `BuildMessage.position` holds for the first error of `source`: the
+ * column, the length of `lineText`, and the character that a reader finds when
+ * it indexes `lineText` by the column.
+ */
+async function positionOf(name: string, source: string) {
+  using dir = tempDir("parse-col-position", { [name]: source });
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const r = await Bun.build({ entrypoints: [${JSON.stringify(join(String(dir), name))}], throw: false });
+       const p = r.logs[0].position;
+       console.log(JSON.stringify({ column: p.column, length: p.lineText.length, atColumn: p.lineText[p.column - 1] }));`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { position: stdout && JSON.parse(stdout), stderr, exitCode };
+}
+
+// A CSS error makes its own location, with the whole line at any length. What
+// is printed of a line of more than 1,000 bytes is the excerpt around the
+// column: the 40 bytes before it and the 80 bytes from it.
+describe("bun build prints an excerpt of a CSS line of more than 1,000 bytes", () => {
+  // A stray `}` after a rule is an error at the `}`.
+  const rules = fill(60_000, "a{color:red}");
+
+  test.concurrent("for an error at its start", async () => {
+    const source = "a{color:red}}" + rules;
+    const { stderr, excerpts } = await printedExcerpts(["build", "long.css"], { "long.css": source });
+    expect(excerpts).toEqual([{ excerpt: "1 | " + source.slice(0, 12 + 80), caret: 4 + 12 }]);
+    expect(stderr.length).toBeLessThan(1024);
+  });
+
+  test.concurrent("for an error in its middle", async () => {
+    const source = rules + "}" + rules;
+    const { stderr, excerpts } = await printedExcerpts(["build", "long.css"], { "long.css": source });
+    expect(excerpts).toEqual([{ excerpt: "1 | " + source.slice(60_000 - 40, 60_000 + 80), caret: 4 + 40 }]);
+    expect(stderr.length).toBeLessThan(1024);
+  });
+
+  test.concurrent("for an error at its end", async () => {
+    // "Unexpected end of input": the column is one past the last `}`, so the caret follows the excerpt.
+    const source = rules + "}";
+    const { stderr, excerpts } = await printedExcerpts(["build", "long.css"], { "long.css": source });
+    expect(excerpts).toEqual([{ excerpt: "1 | " + source.slice(-40), caret: 4 + 40 }]);
+    expect(stderr.length).toBeLessThan(1024);
+  });
+
+  test.concurrent("and starts and ends the excerpt on a character", async () => {
+    // 40 bytes before the stray `}` is one byte into a U+20AC, and 80 bytes
+    // after it is two bytes into one.
+    const comment = "/*" + fill(60_000, "\u20AC") + "*/";
+    const source = comment + "a{color:red}}" + comment + "a{color:red}";
+    const { stderr, excerpts } = await printedExcerpts(["build", "long.css"], { "long.css": source });
+    expect(excerpts).toEqual([
+      {
+        excerpt: "1 | " + fill(27, "\u20AC") + "*/a{color:red}}/*" + fill(78, "\u20AC"),
+        caret: 4 + 9 + "*/a{color:red}".length,
+      },
+    ]);
+    expect(stderr.length).toBeLessThan(1024);
+  });
+
+  // The lines that follow count their columns from their own first byte, whatever ends the line before.
+  test.concurrent.each([
+    ["a line feed", "\n", "\n"],
+    ["CR LF", "\r\n", "\r\n"],
+    ["a line feed, as the last line of the file", "\n", ""],
+  ])("for an error on the line after %s", async (_, before, after) => {
+    const some = fill(1_200, "a{color:red}");
+    const line = some + "}" + some;
+    const { stderr, excerpts } = await printedExcerpts(["build", "long.css"], {
+      "long.css": "/*! banner */" + before + line + after,
+    });
+    expect(excerpts).toEqual([{ excerpt: "2 | " + line.slice(1_200 - 40, 1_200 + 80), caret: 4 + 40 }]);
+    expect(stderr.length).toBeLessThan(1024);
+  });
+
+  // 41 rules, a stray `}` at byte 492, 41 rules, and a last rule that brings the line to 1,000 or 1,001 bytes.
+  const some = fill(492, "a{color:red}");
+  const line1000 = some + "}" + some + "a{color:red}b{}";
+  const line1001 = some + "}" + some + "a{color:red}b{ }";
+
+  test.concurrent.each([
+    ["the first line", "", ""],
+    ["a line after a line feed", "/*! banner */\n", "\n"],
+    ["a line after CR LF", "/*! banner */\r\n", "\r\n"],
+  ])("and prints %s of 1,000 bytes whole, and an excerpt of one of 1,001", async (_, before, after) => {
+    const number = before ? 2 : 1;
+    const [whole, cut] = await Promise.all(
+      [line1000, line1001].map(line => printedExcerpts(["build", "long.css"], { "long.css": before + line + after })),
+    );
+    expect({ bytes: [line1000.length, line1001.length], whole: whole.excerpts, cut: cut.excerpts }).toEqual({
+      bytes: [1000, 1001],
+      whole: [{ excerpt: `${number} | ` + line1000, caret: 4 + 492 }],
+      cut: [{ excerpt: `${number} | ` + line1001.slice(492 - 40, 492 + 80), caret: 4 + 40 }],
+    });
+  });
+
+  test.concurrent("and `position.lineText` is the whole line at both lengths", async () => {
+    const [whole, cut] = await Promise.all([positionOf("long.css", line1000), positionOf("long.css", line1001)]);
+    expect({ whole, cut }).toEqual({
+      whole: { position: { column: 493, length: 1000, atColumn: "}" }, stderr: "", exitCode: 0 },
+      cut: { position: { column: 493, length: 1001, atColumn: "}" }, stderr: "", exitCode: 0 },
+    });
+  });
 });
 
 test.concurrent("CLI caret counts the left-trimmed prefix in columns, not bytes", async () => {

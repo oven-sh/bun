@@ -359,6 +359,48 @@ const many_foo = ["foo","foo","foo","foo","foo","foo","foo"]
     expect.unreachable("Should have caught an error");
   });
 
+  it("prints an excerpt of a logged source line of more than 1,000 bytes, and keeps the line in lineText", async () => {
+    await Bun.$`echo ${"export default 1;"} > index.ts`;
+
+    const napiModule = require(path.join(tempdir, "build/Release/xXx123_foo_counter_321xXx.node"));
+    const external = napiModule.createExternal();
+
+    const result = await Bun.build({
+      outdir,
+      entrypoints: [path.join(tempdir, "index.ts")],
+      throw: false,
+      plugins: [
+        {
+          name: "long-line",
+          setup(build) {
+            build.onBeforeParse({ filter: /\.ts/ }, { napiModule, symbol: "plugin_impl_long_line_errors", external });
+          },
+        },
+      ],
+    });
+
+    // The plugin logs a line of 5,000 `a` and a `]` three times. What is printed is the 40 bytes before the
+    // column and the 80 bytes from it.
+    const a = (count: number) => Buffer.alloc(count, "a").toString();
+    const caretAt = (cell: number) => Buffer.alloc(4 + cell, " ").toString() + "^";
+    expect({
+      success: result.success,
+      logs: result.logs.map(message => ({
+        text: message.message,
+        column: message.position?.column,
+        lineText: message.position?.lineText.length,
+        printed: Bun.inspect(message, { colors: false }).split("\n").slice(0, 2),
+      })),
+    }).toEqual({
+      success: false,
+      logs: [
+        { text: "at the last byte", column: 5001, lineText: 5001, printed: ["1 | " + a(40) + "]", caretAt(40)] },
+        { text: "at the first byte", column: 1, lineText: 5001, printed: ["1 | " + a(80), caretAt(0)] },
+        { text: "past the end", column: 9000, lineText: 5001, printed: ["1 | " + a(39) + "]", caretAt(40)] },
+      ],
+    });
+  });
+
   it("works with versioning", async () => {
     const filter = /\.ts/;
 

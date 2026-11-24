@@ -1,7 +1,8 @@
 // Ends node:http2 sessions on several paths and prints what each session and its open stream emit,
-// in order. Run under Node.js and under Bun.
-//   no argument      the paths on which Bun emits what Node.js emits: the output must be identical
-//   "unlike-node"    the paths on which Bun's order still differs from Node.js
+// in order.
+//   no argument      the paths on which Bun emits what Node.js emits. Run under both: the output must be identical.
+//   "unlike-node"    the paths on which Bun does not emit what Node.js emits, some of them on purpose.
+//                    Run under Bun. Node.js has no one text for them: v26.3.0 and v26.12.1 differ on one.
 // H2_ORDER_TLS holds { key, cert } as JSON for the paths over TLS. Without it they are left out.
 const http2 = require("node:http2");
 const net = require("node:net");
@@ -127,12 +128,113 @@ async function withIdleClient(act) {
   return events;
 }
 
+// A connected server session that only `act` listens to: performServerHandshake() adds no 'error' listener,
+// where createServer() adds one. `act` returns a promise for the end of the scenario.
+async function withBareServerSession(act) {
+  const events = [];
+  const server = net.createServer();
+  const accepted = new Promise(resolve => {
+    server.once("connection", socket => {
+      socket.on("error", () => {});
+      resolve({ socket, session: http2.performServerHandshake(socket) });
+    });
+  });
+  const client = http2.connect(`http://127.0.0.1:${await listen(server)}`);
+  client.on("error", () => {});
+  await new Promise(resolve => client.once("connect", resolve));
+  await act({ ...(await accepted), events });
+  client.destroy();
+  server.close();
+  return events;
+}
+
 // Resolves with the next uncaught exception, one turn later: a 'close' that follows it would be recorded.
 function uncaughtException(events) {
   return new Promise(resolve => process.once("uncaughtException", resolve)).then(error => {
     events.push(`uncaughtException ${error.message}`);
     return new Promise(resolve => setImmediate(resolve));
   });
+}
+
+// Resolves one turn after the socket's 'close': the session has nothing more to emit then.
+function socketClosed(socket) {
+  return new Promise(resolve => socket.once("close", () => setImmediate(resolve)));
+}
+
+// Resolves after `count` turns of the event loop.
+async function turns(count) {
+  for (let i = 0; i < count; i++) await new Promise(resolve => setImmediate(resolve));
+}
+
+// A client session that is destroyed while its socket is connecting: the lookup answers, with a failure,
+// only after the session closed or three turns passed.
+async function destroyedWhileConnecting(error) {
+  const events = [];
+  let answer;
+  const client = http2.connect("http://unreachable.invalid", {
+    lookup(hostname, options, callback) {
+      const fail = () => callback(Object.assign(new Error(`getaddrinfo ENOTFOUND ${hostname}`), { code: "ENOTFOUND" }));
+      if (answer === null) fail();
+      else answer = fail;
+    },
+  });
+  const sessionClosed = recordSession(events, client);
+  // A request that waits, next to an error alone: with none, its rstCode is 8 and node's is 2, which is not
+  // the subject here.
+  const streamClosed = error && recordStream(events, client.request({ ":method": "POST" }));
+  client.destroy(error);
+  events.push("destroy() returned");
+  await Promise.race([sessionClosed, turns(3)]);
+  events.push("the lookup answers");
+  answer?.();
+  answer = null;
+  await Promise.all([sessionClosed, streamClosed]);
+  return events;
+}
+
+// What the scenarios of a client session and of a server session share.
+function failSocketWithNoListener(session, socket, events) {
+  session.on("close", () => events.push("session close"));
+  const ended = Promise.race([uncaughtException(events), socketClosed(socket)]);
+  socket.destroy(new Error("boom"));
+  return ended;
+}
+
+function destroyWithNoListener(session, socket, events) {
+  session.on("close", () => events.push("session close"));
+  const ended = Promise.race([socketClosed(socket), uncaughtException(events)]);
+  try {
+    session.destroy(new Error("boom"));
+    events.push("destroy() returned");
+  } catch (error) {
+    events.push(`destroy() threw ${error.message}`);
+  }
+  return ended;
+}
+
+function destroyWithReplacedEmit(session, events) {
+  const emit = session.emit;
+  session.emit = function (name, ...args) {
+    if (name !== "error") return emit.call(this, name, ...args);
+    events.push(`emit("error", ${args[0].message})`);
+    return true;
+  };
+  const closed = new Promise(resolve => session.on("close", () => resolve(events.push("session close"))));
+  session.destroy(new Error("boom"));
+  events.push("destroy() returned");
+  // The error is reported. A listener that comes now must not get it again.
+  session.on("error", () => {});
+  return closed;
+}
+
+function failSocketThenRemoveListener(session, socket, events) {
+  const listener = error => events.push(`session error ${error.message}`);
+  session.on("error", listener);
+  const closed = new Promise(resolve => session.on("close", () => resolve(events.push("session close"))));
+  // Runs behind the session's own listener for the socket's 'error'.
+  socket.on("error", () => session.off("error", listener));
+  socket.destroy(new Error("boom"));
+  return Promise.race([closed, uncaughtException(events)]);
 }
 
 const likeNode = {
@@ -214,8 +316,10 @@ const likeNode = {
       return closed;
     }),
 
+  // The session had an 'error' listener when destroy() ran. The emit is for the listeners it has then.
   "listeners that are added after destroy(error) returned": () =>
     withIdleClient(({ client, events }) => {
+      client.on("error", () => {});
       client.destroy(new Error("boom"));
       return recordSession(events, client);
     }),
@@ -259,10 +363,10 @@ const likeNode = {
     return events;
   },
 
-  // The session reports the error once, to a listener that hears one event.
+  // The session reports the error once.
   "a request() that throws, and destroy(error) in the catch": () =>
     withIdleClient(({ client, events }) => {
-      client.once("error", error => events.push(`session error ${error.message}`));
+      client.on("error", error => events.push(`session error ${error.message}`));
       const closed = new Promise(resolve => client.on("close", () => resolve(events.push("session close"))));
       try {
         client.request({
@@ -317,31 +421,20 @@ const likeNode = {
     return events;
   },
 
+  // With no error to report, the socket is ended, and that waits for the connect.
+  "a client session whose connect does not complete is destroyed with no error": () => destroyedWhileConnecting(),
+
   ...(tlsOptions && {
     "a client receives GOAWAY(CANCEL), over TLS": () =>
       withOpenStream("client", ({ serverSession }) => serverSession.destroy(NGHTTP2_CANCEL), { secure: true }),
   }),
 
-  // The emit throws, so the error is uncaught and no 'close' follows it.
-  "destroy(error) with no 'error' listener": () =>
-    withIdleClient(({ client, events }) => {
-      client.on("close", () => events.push("session close"));
-      const uncaught = uncaughtException(events);
-      client.destroy(new Error("boom"));
-      events.push("destroy() returned");
-      return uncaught;
-    }),
+  // Nobody listens for the session's 'error', so it is an uncaught exception and no 'close' follows it.
+  "the socket of a client session with no 'error' listener is destroyed with an error": () =>
+    withIdleClient(({ client, socket, events }) => failSocketWithNoListener(client, socket, events)),
 
-  "an 'error' listener that is removed after destroy(error) returned": () =>
-    withIdleClient(({ client, events }) => {
-      const listener = error => events.push(`session error ${error.message}`);
-      client.on("error", listener);
-      client.on("close", () => events.push("session close"));
-      const uncaught = uncaughtException(events);
-      client.destroy(new Error("boom"));
-      client.off("error", listener);
-      return uncaught;
-    }),
+  "the socket of a server session with no 'error' listener is destroyed with an error": () =>
+    withBareServerSession(({ session, socket, events }) => failSocketWithNoListener(session, socket, events)),
 };
 
 const unlikeNode = {
@@ -371,52 +464,56 @@ const unlikeNode = {
       { transport: "duplex" },
     ),
 
-  // On purpose: a session whose socket fails while it has an 'error' listener does not throw later, when the
-  // listener is gone. node:net keeps the same promise for its sockets.
-  "the socket of a client session fails, and its 'error' listener is removed before the emit": () =>
-    withIdleClient(({ client, socket, events }) => {
-      const listener = error => events.push(`session error ${error.message}`);
-      client.on("error", listener);
-      const closed = new Promise(resolve => client.on("close", () => resolve(events.push("session close"))));
-      // Runs behind the session's own listener for the socket's 'error'.
-      socket.on("error", () => client.off("error", listener));
-      socket.destroy(new Error("boom"));
-      return Promise.race([closed, uncaughtException(events)]);
-    }),
-
-  "the socket of a server session fails, and its 'error' listener is removed before the emit": async () => {
-    const events = [];
-    let serverSocket;
-    const ended = new Promise(resolve => {
-      const server = net.createServer(socket => {
-        serverSocket = socket;
-        const session = http2.performServerHandshake(socket);
-        const listener = error => events.push(`session error ${error.message}`);
-        session.on("error", listener);
-        session.on("close", () => resolve(events.push("session close")));
-        socket.on("error", () => session.off("error", listener));
-      });
-      listen(server).then(port => {
-        const client = http2.connect(`http://127.0.0.1:${port}`);
-        client.on("error", () => {});
-        client.on("close", () => server.close());
-        client.on("connect", () => serverSocket.destroy(new Error("boom")));
-      });
-    });
-    await Promise.race([ended, uncaughtException(events)]);
-    return events;
-  },
-
   "the socket of a server session is destroyed with no error": () =>
     withOpenStream("server", ({ serverSocket, events }) => {
       serverSocket.destroy();
       events.push("socket.destroy() returned");
     }),
+
+  // The rest is on purpose. destroy(error) used to emit the 'error' before it returned, and a program that
+  // worked then must not end with an uncaught exception now:
+  // - With no 'error' listener, destroy(error) throws to its caller. Node.js returns, and throws when the
+  //   socket has closed, where no try/catch can see it.
+  // - With an 'error' listener that is gone at the emit, nothing is thrown. Node.js throws.
+  // - A connect that does not complete does not hold the 'error' back. Node.js waits for it.
+  "a client session with no 'error' listener is destroyed with an error": () =>
+    withIdleClient(({ client, socket, events }) => destroyWithNoListener(client, socket, events)),
+
+  "a server session with no 'error' listener is destroyed with an error": () =>
+    withBareServerSession(({ session, socket, events }) => destroyWithNoListener(session, socket, events)),
+
+  "a client session with no 'error' listener and an emit() of the program's is destroyed with an error": () =>
+    withIdleClient(({ client, events }) => destroyWithReplacedEmit(client, events)),
+
+  "a server session with no 'error' listener and an emit() of the program's is destroyed with an error": () =>
+    withBareServerSession(({ session, events }) => destroyWithReplacedEmit(session, events)),
+
+  "an 'error' listener that is removed after destroy(error) returned": () =>
+    withIdleClient(({ client, events }) => {
+      const listener = error => events.push(`session error ${error.message}`);
+      client.on("error", listener);
+      const closed = new Promise(resolve => client.on("close", () => resolve(events.push("session close"))));
+      client.destroy(new Error("boom"));
+      client.off("error", listener);
+      return Promise.race([closed, uncaughtException(events)]);
+    }),
+
+  "the socket of a client session fails, and its 'error' listener is removed before the emit": () =>
+    withIdleClient(({ client, socket, events }) => failSocketThenRemoveListener(client, socket, events)),
+
+  "the socket of a server session fails, and its 'error' listener is removed before the emit": () =>
+    withBareServerSession(({ session, socket, events }) => failSocketThenRemoveListener(session, socket, events)),
+
+  "a client session whose connect does not complete is destroyed with an error": () =>
+    destroyedWhileConnecting(new Error("boom")),
 };
 
 (async () => {
   const scenarios = process.argv[2] === "unlike-node" ? unlikeNode : likeNode;
   for (const [name, scenario] of Object.entries(scenarios)) {
-    console.log(`${name}:\n${(await scenario()).map(event => `  ${event}`).join("\n")}`);
+    const events = await scenario();
+    // A scenario that waits for an uncaught exception and sees none leaves its listener.
+    process.removeAllListeners("uncaughtException");
+    console.log(`${name}:\n${events.map(event => `  ${event}`).join("\n")}`);
   }
 })();

@@ -1,7 +1,7 @@
 import { AsyncLocalStorage, AsyncResource } from "async_hooks";
 import { heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug } from "harness";
+import { bunEnv, bunExe } from "harness";
 import http2 from "http2";
 
 describe("AsyncLocalStorage", () => {
@@ -271,8 +271,7 @@ test("run() restores its own binding after enterWith()/withScope()/exit() inside
   a.disable();
 });
 
-// A debug build takes 5 to 6 s: the two forced collections cost most of it. Every other build keeps the default.
-test("re-entering a storage inside run() does not grow the context", { timeout: isDebug ? 15_000 : undefined }, () => {
+test("re-entering a storage inside run() does not grow the context", () => {
   const als = new AsyncLocalStorage();
   const other = new AsyncLocalStorage();
   const objects = () => {
@@ -1181,10 +1180,9 @@ describe("async context passes through", () => {
     expect(stderr).not.toContain("AssertionError");
   });
 
-  // Like node, destroy(err) emits 'error' later (once the socket has closed), so
-  // with no 'error' listener it returns and the error is an uncaught exception.
-  // The frame is cleared before destroy() returns: the emit that throws cannot skip it.
-  test("http2 clears the session frame when destroy(err) has no 'error' listener", async () => {
+  // destroy(err) with no 'error' listener throws out of the emit, which must
+  // not skip the frame clear (the 'close' tick after it never runs).
+  test("http2 clears the session frame when destroy(err) throws past the emit", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -1198,18 +1196,13 @@ describe("async context passes through", () => {
            als.run({ marker: true }, () => {
              client = http2.connect("http://127.0.0.1:" + server.address().port);
            });
-           // The throw IS the condition: the unlistened 'error' can only come from
-           // the deferred emit, which runs strictly after the read-and-clear.
-           process.on("uncaughtException", err => {
-             console.log("UNCAUGHT " + err.message);
-             // Drain rather than process.exit(), like the siblings.
-             server.close();
-           });
            client.on("connect", () => {
-             client.destroy(new Error("boom"));
+             try { client.destroy(new Error("boom")); } catch {}
              const sym = Object.getOwnPropertySymbols(client)
                .find(x => x.description === "::bunhttp2asynccontextframe::");
              console.log(sym === undefined ? "SYMBOL-MISSING" : client[sym] === undefined ? "CLEARED" : "PINNED");
+             // Drain rather than process.exit(), like the siblings.
+             server.close();
            });
          });`,
       ],
@@ -1218,7 +1211,7 @@ describe("async context passes through", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "CLEARED\nUNCAUGHT boom", exitCode: 0 });
+    expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "CLEARED", exitCode: 0 });
     expect(stderr).not.toContain("AssertionError");
   });
 

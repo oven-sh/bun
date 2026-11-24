@@ -380,6 +380,7 @@ const aotTestsThatAskTheSystem = [
   "aot/engine/native-",
   "aot/backend/",
   "aot/parallel/node-http/",
+  "aot/parallel/node-http2/",
   "aot/parallel/native-callbacks/",
   "aot/parallel/webassembly/",
   "aot/parallel/node-vm/",

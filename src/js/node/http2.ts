@@ -446,19 +446,19 @@ function emitEventNT(self: any, event: string, ...args: any[]) {
   }
 }
 // Like node's emitClose, a destroyed session emits its 'error' immediately before its 'close'.
-// With no 'error' listener that emit throws, and no 'close' follows.
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L1162-L1166
+// destroy() passes the error only of a session that had an 'error' listener. If that listener left since,
+// nothing is thrown here (node throws): a program that listened gets no uncaught exception.
 // The frame is passed in: destroy() clears it off the session before it schedules this, so a
 // throwing listener on either event cannot leave a retained session pinning the store.
 function emitSessionCloseNT(self: Http2Session, frame, error: Error | null | undefined) {
-  if (error) {
+  if (error && self.listenerCount("error") > 0) {
     runInFrame(frame, self.emit, self, "error", error);
   }
   if (self.listenerCount("close") > 0) {
     runInFrame(frame, self.emit, self, "close");
   }
 }
-function noop() {}
 function emitErrorNT(self: any, error: any, destroy: boolean) {
   if (destroy) {
     if (self.listenerCount("error") > 0) {
@@ -4508,8 +4508,7 @@ class ServerHttp2Session extends Http2Session {
       this.destroy();
       return;
     }
-    const observed = this.listenerCount("error") > 0;
-    if (!observed && (error as NodeJS.ErrnoException)?.code === "ECONNRESET") {
+    if (this.listenerCount("error") === 0 && (error as NodeJS.ErrnoException)?.code === "ECONNRESET") {
       // An unobserved transport teardown (the peer dropped a connection
       // nobody is listening to anymore): destroy quietly - the destroy still
       // errors any remaining streams - instead of re-emitting on a session
@@ -4520,8 +4519,6 @@ class ServerHttp2Session extends Http2Session {
       this.destroy();
       return;
     }
-    // destroy() emits the error later: a listener seen here can be gone by then (see SocketEmitEndNT in net.ts).
-    if (observed) this.once("error", noop);
     this.destroy(error);
   }
   #onTimeout() {
@@ -4964,10 +4961,17 @@ class ServerHttp2Session extends Http2Session {
     }
     this[bunHTTP2Socket] = null;
 
-    // Read-and-clear the frame here: the emitter below throws when 'error' has no listener,
-    // and a frame left on a retained session would pin the store.
+    // Read-and-clear the frame first: emitting 'error' with no listener throws,
+    // which would skip the clear and leave a retained session pinning the store.
     const asyncFrame = this[bunHTTP2AsyncContextFrame];
     this[bunHTTP2AsyncContextFrame] = undefined;
+    if (error && this.listenerCount("error") === 0) {
+      // Nobody listens, so this emit throws to the caller of destroy(), as it always did. node throws later,
+      // from emitClose, where no try/catch around destroy() can see it.
+      runInFrame(asyncFrame, this.emit, this, "error", error);
+      // Only an emit() that a program replaced returns. It has the error.
+      error = undefined;
+    }
     // node emits the session's 'error' and 'close' asynchronously (a listener attached right after
     // close()/destroy() returns must still observe them), after the socket's 'close'. Only wait for that one
     // if this call also destroys the socket: after close(), it closes when the peer does, if ever.
@@ -5032,6 +5036,13 @@ function destroySessionSocketDelayedNT(socket, error) {
   }
 }
 function endThenDestroySessionSocket(socket, error) {
+  // end() waits for a connect that has not completed, up to the OS timeout, and the session's 'error' would
+  // wait with it (on node it does). Nothing is on the wire yet, so this socket is destroyed with no end(),
+  // one tick later: the session first listens for its 'close'. With no error, it is ended as before.
+  if (error && socket.connecting) {
+    process.nextTick(destroySessionSocketDelayedNT, socket, error);
+    return;
+  }
   socket.end(() => setImmediate(destroySessionSocketDelayedNT, socket, error));
 }
 // node callTimeout (lib/internal/http2/core.js): when the timer expires while writes are still in
@@ -5623,8 +5634,7 @@ class ClientHttp2Session extends Http2Session {
       this.destroy();
       return;
     }
-    const observed = this.listenerCount("error") > 0;
-    if (!observed && (error as NodeJS.ErrnoException)?.code === "ECONNRESET") {
+    if (this.listenerCount("error") === 0 && (error as NodeJS.ErrnoException)?.code === "ECONNRESET") {
       // A transport teardown on a session nobody observes (an idle pooled
       // connection dropped by the peer): shut down quietly - the destroy
       // still errors any remaining streams. Anything else (handshake
@@ -5633,8 +5643,6 @@ class ClientHttp2Session extends Http2Session {
       this.destroy();
       return;
     }
-    // destroy() emits the error later: a listener seen here can be gone by then (see SocketEmitEndNT in net.ts).
-    if (observed) this.once("error", noop);
     this.destroy(error);
   }
   #onTimeout() {
@@ -6099,10 +6107,17 @@ class ClientHttp2Session extends Http2Session {
     this.#parser = null;
     this[bunHTTP2Socket] = null;
 
-    // Read-and-clear the frame here: the emitter below throws when 'error' has no listener,
-    // and a frame left on a retained session would pin the store.
+    // Read-and-clear the frame first: emitting 'error' with no listener throws,
+    // which would skip the clear and leave a retained session pinning the store.
     const asyncFrame = this[bunHTTP2AsyncContextFrame];
     this[bunHTTP2AsyncContextFrame] = undefined;
+    if (error && this.listenerCount("error") === 0) {
+      // Nobody listens, so this emit throws to the caller of destroy(), as it always did. node throws later,
+      // from emitClose, where no try/catch around destroy() can see it.
+      runInFrame(asyncFrame, this.emit, this, "error", error);
+      // Only an emit() that a program replaced returns. It has the error.
+      error = undefined;
+    }
     // node emits the session's 'error' and 'close' asynchronously (a listener attached right after
     // close()/destroy() returns must still observe them), after the socket's 'close'. Only wait for that one
     // if this call also destroys the socket: after close(), it closes when the peer does, if ever.

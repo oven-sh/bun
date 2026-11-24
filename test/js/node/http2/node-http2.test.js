@@ -6305,7 +6305,7 @@ async function sessionErrorOrder(runtime, ...args) {
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout, stderr, exitCode };
 }
-// The paths on which Bun emits what Node.js emits.
+// The paths on which Bun emits what Node.js emits. Node.js 20.18.1, 22.12.0, 24.0.0, 26.3.0 and 26.12.1 print this text.
 const sessionErrorOrderLikeNode = `a client receives GOAWAY(CANCEL):
   session goaway 8
   stream aborted
@@ -6425,6 +6425,10 @@ a client session that is still connecting is destroyed with an error:
   a tick queued in the stream's 'close'
   session error boom, destroyed true, closed false
   session close, ran since 'error': nothing
+a client session whose connect does not complete is destroyed with no error:
+  destroy() returned
+  the lookup answers
+  session close
 a client receives GOAWAY(CANCEL), over TLS:
   session goaway 8
   stream aborted
@@ -6433,55 +6437,23 @@ a client receives GOAWAY(CANCEL), over TLS:
   a tick queued in the stream's 'close'
   session error ERR_HTTP2_SESSION_ERROR, destroyed true, closed false
   session close, ran since 'error': nothing
-destroy(error) with no 'error' listener:
-  destroy() returned
+the socket of a client session with no 'error' listener is destroyed with an error:
   uncaughtException boom
-an 'error' listener that is removed after destroy(error) returned:
+the socket of a server session with no 'error' listener is destroyed with an error:
   uncaughtException boom
 `;
-// The paths on which Bun does not emit what Node.js emits. Both texts are held, so a change of either is seen:
-// when a path turns into node's, its scenario moves to the list above.
+// The paths on which Bun does not emit what Node.js emits. When a path turns into node's, its scenario moves to
+// the list above. Node.js does not run this list: its own text for it is not the same in every version. v26.12.1
+// defers a destroy() that starts inside a read, v26.3.0 does not, and one line of the second path moves.
+// Not yet:
 // - A client destroys its open streams one tick after destroy(), so 'aborted' is late, and with no live socket
 //   to wait for (a socket that failed, a Duplex) the session's events come ahead of the streams' 'error' and 'close'.
-// - A session whose socket failed while it had an 'error' listener does not throw when that listener is gone.
 // - A server session whose socket closes with no error emits 'close' ahead of its streams.
-const sessionErrorOrderUnlikeNode = {
-  node: `a client session with an open stream is destroyed with an error:
-  stream aborted
-  destroy() returned
-  stream error boom
-  stream close 2
-  a tick queued in the stream's 'close'
-  session error boom, destroyed true, closed false
-  session close, ran since 'error': nothing
-the socket of a client session with an open stream is destroyed with an error:
-  socket.destroy() returned
-  stream aborted
-  stream error boom
-  stream close 2
-  session error boom, destroyed true, closed false
-  session close, ran since 'error': nothing
-  a tick queued in the stream's 'close'
-a client session over a Duplex is destroyed with an error:
-  stream aborted
-  destroy() returned
-  stream error boom
-  stream close 2
-  a tick queued in the stream's 'close'
-  session error boom, destroyed true, closed false
-  session close, ran since 'error': nothing
-the socket of a client session fails, and its 'error' listener is removed before the emit:
-  uncaughtException boom
-the socket of a server session fails, and its 'error' listener is removed before the emit:
-  uncaughtException boom
-the socket of a server session is destroyed with no error:
-  socket.destroy() returned
-  stream aborted
-  stream close 8
-  session close
-  a tick queued in the stream's 'close'
-`,
-  bun: `a client session with an open stream is destroyed with an error:
+// On purpose, so that a program still sees what it saw when destroy(error) emitted the 'error' itself:
+// - With no 'error' listener, destroy(error) throws to its caller. node returns, and the error is uncaught later.
+// - With an 'error' listener that is gone at the emit, nothing is thrown. node throws.
+// - A connect that does not complete does not hold the session's events back. node waits for it.
+const sessionErrorOrderUnlikeNode = `a client session with an open stream is destroyed with an error:
   destroy() returned
   stream aborted
   stream error boom
@@ -6505,24 +6477,44 @@ a client session over a Duplex is destroyed with an error:
   stream error boom
   stream close 2
   a tick queued in the stream's 'close'
-the socket of a client session fails, and its 'error' listener is removed before the emit:
-  session close
-the socket of a server session fails, and its 'error' listener is removed before the emit:
-  session close
 the socket of a server session is destroyed with no error:
   socket.destroy() returned
   stream aborted
   session close
   stream close 8
   a tick queued in the stream's 'close'
-`,
-};
-// Before v24 node emitted the 'close' of a server session a tick later on the last of these paths.
-const sessionErrorOrderNode = nodeExeAtLeast("24.0.0");
+a client session with no 'error' listener is destroyed with an error:
+  destroy() threw boom
+a server session with no 'error' listener is destroyed with an error:
+  destroy() threw boom
+a client session with no 'error' listener and an emit() of the program's is destroyed with an error:
+  emit("error", boom)
+  destroy() returned
+  session close
+a server session with no 'error' listener and an emit() of the program's is destroyed with an error:
+  emit("error", boom)
+  destroy() returned
+  session close
+an 'error' listener that is removed after destroy(error) returned:
+  session close
+the socket of a client session fails, and its 'error' listener is removed before the emit:
+  session close
+the socket of a server session fails, and its 'error' listener is removed before the emit:
+  session close
+a client session whose connect does not complete is destroyed with an error:
+  stream aborted
+  destroy() returned
+  stream error ERR_HTTP2_STREAM_CANCEL
+  stream close 2
+  a tick queued in the stream's 'close'
+  session error boom, destroyed true, closed false
+  session close, ran since 'error': nothing
+  the lookup answers
+`;
 
 for (const [name, runtime] of [
   ["bun", bunExe()],
-  ["node", sessionErrorOrderNode],
+  ["node", nodeExeAtLeast("20.18.1")],
 ]) {
   it.skipIf(!runtime)(
     `a session that is destroyed with an error emits 'error' immediately before 'close' (${name})`,
@@ -6532,19 +6524,19 @@ for (const [name, runtime] of [
     // A debug build needs 3 to 5 s to start and load node:http2. Every other build keeps the default.
     isDebug ? 15_000 : undefined,
   );
-
-  it.skipIf(!runtime)(
-    `the teardown paths on which a session's events are not in node's order yet (${name})`,
-    async () => {
-      expect(await sessionErrorOrder(runtime, "unlike-node")).toEqual({
-        stdout: sessionErrorOrderUnlikeNode[name],
-        stderr: "",
-        exitCode: 0,
-      });
-    },
-    isDebug ? 15_000 : undefined,
-  );
 }
+
+it(
+  "the teardown paths on which a session does not emit what node emits",
+  async () => {
+    expect(await sessionErrorOrder(bunExe(), "unlike-node")).toEqual({
+      stdout: sessionErrorOrderUnlikeNode,
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+  isDebug ? 15_000 : undefined,
+);
 
 it.skipIf(!isLinux)("a send that the kernel refuses, and takes in the same turn, hides no session error", async () => {
   const { symbols: libc } = dlopen(libcPathForDlopen(), {

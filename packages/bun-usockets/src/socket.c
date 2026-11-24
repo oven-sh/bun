@@ -740,7 +740,13 @@ int us_socket_ipc_write_fd(struct us_socket_t *s, const char *data, int length, 
     int sent = bsd_sendmsg(us_poll_fd(&s->p), &msg, 0);
 
     if (sent < 0) {
-        if (errno == EAGAIN || errno == EWOULDBLOCK || errno == ENOBUFS) {
+        int is_full = errno == EAGAIN || errno == EWOULDBLOCK || errno == ENOBUFS;
+#ifdef __APPLE__
+        /* The descriptor has to fit in the socket's buffer in one piece. If the reader is behind and it does not, macOS
+           says EMSGSIZE where Linux says EAGAIN. On Linux EMSGSIZE never passes, so a retry there would not end. */
+        is_full = is_full || errno == EMSGSIZE;
+#endif
+        if (is_full) {
             s->flags.last_write_failed = 1;
             us_poll_change(&s->p, s->group->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
             return 0;

@@ -37,7 +37,7 @@ import { connect, createServer, type AddressInfo } from "net";
 import { constants } from "os";
 import { join } from "path";
 import { pathToFileURL } from "url";
-import { brotliCompressSync, constants as zlib } from "zlib";
+import { brotliCompressSync, gzipSync, constants as zlib } from "zlib";
 import {
   dummyAfterAll,
   dummyAfterEach,
@@ -589,6 +589,19 @@ describe.concurrent("backoff", () => {
     expect(gaps[0]).toBeGreaterThanOrEqual(40);
     expect(gaps[1]).toBeGreaterThanOrEqual(80);
     expect(gaps[2]).toBeGreaterThanOrEqual(160);
+    expect(exitCode).toBe(0);
+  });
+
+  it.each(["manifest", "tarball"] as const)("retries a %s whose Content-Encoding is unfinished", async failing => {
+    const unfinished = gzipSync("{}", { finishFlush: zlib.Z_SYNC_FLUSH });
+    using registry = flakyRegistry((kind, hit) =>
+      kind === failing && hit === 1 ? new Response(unfinished, { headers: { "Content-Encoding": "gzip" } }) : undefined,
+    );
+    using dir = project(registry.url);
+    const { lines, out, exitCode } = await install(String(dir));
+    expect(lines).toContain("Decompression error: ZlibError");
+    expect(out).toContain("1 package installed");
+    expect(registry.at[failing]).toHaveLength(2);
     expect(exitCode).toBe(0);
   });
 

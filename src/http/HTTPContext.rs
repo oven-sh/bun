@@ -5,6 +5,7 @@ use core::ptr::NonNull;
 use std::sync::Arc;
 
 use crate::http_thread::InitOpts as HTTPThreadInitOpts;
+use crate::internal_state::TransportEnd;
 use crate::request_trace::Endpoints;
 use crate::ssl_config::{self, SSLConfig};
 use crate::{
@@ -1380,12 +1381,18 @@ impl<const SSL: bool> Handler<SSL> {
 
     pub fn on_close(socket: HTTPSocket<SSL>, code: c_int, _: Option<*mut c_void>) {
         use bun_errno::SystemErrno::{self, ENOBUFS, ENOMEM};
-        // A read that failed closes the socket with its errno.
+        // Past the `CloseCode`s, it is the error that the socket reported.
+        let end = if code > uws::CloseCode::FastShutdown as c_int {
+            TransportEnd::Failed
+        } else {
+            TransportEnd::Clean
+        };
         let err = match SystemErrno::init(i64::from(code)) {
             Some(errno @ (ENOMEM | ENOBUFS)) => errno.into(),
             _ => crate::Error::ConnectionClosed,
         };
-        let tagged = HTTPContext::<SSL>::enter_client(socket, |c| c.on_close::<SSL>(socket, err));
+        let tagged =
+            HTTPContext::<SSL>::enter_client(socket, |c| c.on_close::<SSL>(socket, end, err));
         let Some(tagged) = tagged else { return };
         HTTPContext::<SSL>::mark_socket_as_dead(socket);
 
@@ -1529,7 +1536,7 @@ impl<const SSL: bool> Handler<SSL> {
             } else {
                 socket.close(uws::CloseKind::Normal);
             }
-            client.on_close::<SSL>(socket, crate::Error::ConnectionClosed)
+            client.on_close::<SSL>(socket, TransportEnd::Clean, crate::Error::ConnectionClosed)
         });
         let Some(tagged) = tagged else { return };
         HTTPContext::<SSL>::mark_tagged_socket_as_dead(socket, tagged);

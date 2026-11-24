@@ -1007,9 +1007,7 @@ describe("Valkey: Recovering After fail()", () => {
         () => "resolved",
         (err: Error & { code: string }) => `${err.code}: ${err.message}`,
       );
-      // connect() settles on the accepted HELLO, before the SELECT reply is
-      // read, so it resolves; the failure that follows is reported by onclose.
-      await client.connect();
+      await expect(client.connect()).rejects.toMatchObject({ code: "ERR_REDIS_INVALID_COMMAND" });
       expect(await queued).toBe("ERR_REDIS_INVALID_COMMAND: ERR DB index is out of range");
       // The rejection is a failure the client detected, so there is no retry
       // even with autoReconnect on: onclose fires once and the only second
@@ -2245,6 +2243,39 @@ describe("Valkey: Recovering After fail()", () => {
     }
   });
 
+  // A command that is not batched is on the socket when the call returns.
+  test.concurrent.each([
+    { flag: "1", options: "undefined", sent: true },
+    { flag: "1", options: "{}", sent: true },
+    { flag: "1", options: "{ enableAutoPipelining: true }", sent: false },
+    { flag: undefined, options: "undefined", sent: false },
+  ])("DISABLE_REDIS_AUTO_PIPELINING=$flag with options $options", async ({ flag, options, sent }) => {
+    const PING = mock(() => null);
+    const fake = helloServer({ PING });
+    const port = await fake.listen();
+    try {
+      const closed = once(fake.server, "connection").then(([socket]) => closedOnServer(socket));
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const client = new Bun.RedisClient("redis://127.0.0.1:${port}", ${options});
+           await client.connect();
+           client.ping().catch(() => {});
+           client.close();`,
+        ],
+        env: { ...bunEnv, BUN_FEATURE_FLAG_DISABLE_REDIS_AUTO_PIPELINING: flag },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      expect(await exitOutcome(proc)).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+      await closed;
+      expect(PING).toHaveBeenCalledTimes(sent ? 1 : 0);
+    } finally {
+      fake.server.close();
+    }
+  });
+
   // A TLS stub run under Node in its own process, so it can read while this
   // loop is blocked, and so that what it reports about the peer's close does
   // not come from the socket code under test. It pauses connection 1 after
@@ -2683,6 +2714,59 @@ describe("Valkey: Recovering After fail()", () => {
         fake.server.close();
       }
     });
+  });
+});
+
+describe.concurrent("Valkey: Handshake", () => {
+  type Reply = (command: string[], connection: number, socket: net.Socket) => string | null | undefined;
+
+  // Answers each command with `reply`'s line, `+OK` for undefined and nothing for null.
+  async function commandServer(reply: Reply = () => undefined) {
+    const seen: string[][] = [];
+    const server = net.createServer(socket => {
+      const commands: string[] = [];
+      const connection = seen.push(commands);
+      const state = { buffer: Buffer.alloc(0) };
+      socket.on("error", () => {});
+      socket.on("data", chunk => {
+        state.buffer = Buffer.concat([state.buffer, chunk]);
+        for (const command of readCommands(state)) {
+          commands.push(command.join(" "));
+          const line = reply(command, connection, socket);
+          if (line !== null) socket.write(`${line ?? "+OK"}\r\n`);
+        }
+      });
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const host = `127.0.0.1:${(server.address() as net.AddressInfo).port}`;
+    return { server, seen, host, [Symbol.dispose]: () => void server.close() };
+  }
+  const outcome = (promise: Promise<unknown>) =>
+    promise.then(
+      value => value,
+      e => `${e.code}: ${e.message}`,
+    );
+
+  test("a refused database rejects connect(), and neither onconnect nor a write gets ahead of it", async () => {
+    using fake = await commandServer(([name]) => (name === "SELECT" ? "-ERR DB index is out of range" : undefined));
+    const closed = once(fake.server, "connection").then(([socket]) => new Promise(done => socket.once("close", done)));
+    const client = new RedisClient(`redis://${fake.host}/99`);
+    const onconnect = mock(() => void outcome(client.set("key", "value")));
+    client.onconnect = onconnect;
+    expect(await outcome(client.connect())).toBe("ERR_REDIS_INVALID_COMMAND: ERR DB index is out of range");
+    await closed;
+    expect(onconnect).not.toHaveBeenCalled();
+    expect(fake.seen).toEqual([["HELLO 3", "SELECT 99"]]);
+  });
+
+  test("connectionTimeout covers the reply to SELECT", async () => {
+    using fake = await commandServer(([name]) => (name === "SELECT" ? null : undefined));
+    const client = new RedisClient(`redis://${fake.host}/1`, { connectionTimeout: 1000 });
+    expect(await outcome(client.connect())).toBe(
+      "ERR_REDIS_CONNECTION_TIMEOUT: Connection timeout reached after 1000ms",
+    );
+    expect(fake.seen).toEqual([["HELLO 3", "SELECT 1"]]);
   });
 });
 

@@ -319,7 +319,8 @@ pub(crate) enum HeldAbout {
 // - `LookAhead` goes further. It guesses which versions the waiting rows will resolve to and
 //   requests the manifests that those versions will need. It never changes the lockfile.
 // - A request that fails is kept as a `ManifestFailure` until a row needs it, because a request
-//   made on a wrong guess must not fail the install.
+//   made on a wrong guess must not fail the install. Only a lack of memory does, whatever the
+//   memory was for.
 // - What a git, GitHub or tarball package depends on is only known after its download, so these
 //   packages are added one at a time once the queue is empty. See `RemotePackages`.
 

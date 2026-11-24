@@ -2067,7 +2067,7 @@ impl<'a> HTTPClient<'a> {
             return Break(NextStep::ReleaseSocket);
         }
 
-        if self.retries_on_close() {
+        if err == crate::Error::ConnectionClosed && self.retries_on_close() {
             self.allow_retry = false;
             let body = core::mem::replace(
                 &mut self.state.original_request_body,

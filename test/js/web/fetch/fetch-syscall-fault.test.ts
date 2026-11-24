@@ -15,11 +15,12 @@ afterEach(() => fault.clear());
 async function runClientFetch(
   url: string,
   rule: import("bun:internal-for-testing").SocketFaultRule | null,
-  opts: { ca?: string; readBytes?: number; abort?: boolean } = {},
+  opts: { ca?: string; readBytes?: number; abort?: boolean; reuse?: boolean } = {},
 ) {
   const fixture = /* js */ `
     const { socketFaultInjection: fault } = require("bun:internal-for-testing");
     const rule = ${JSON.stringify(rule)};
+    ${opts.reuse ? `await (await fetch(${JSON.stringify(url)})).text();` : ""}
     if (rule) fault.set(rule);
     try {
       const res = await fetch(${JSON.stringify(url)}, {
@@ -154,6 +155,15 @@ describe.skipIf(skip)("fetch() under injected syscall faults (http)", () => {
     });
     const rule = { syscall: "recv", action: "errno", errno: "ENOMEM", after: 1, repeat: -1 } as const;
     const r = await runClientFetch(`http://127.0.0.1:${server.port}/`, rule);
+    expect(r).toMatchObject({ ...expected, signal: null, exitCode: 0 });
+  });
+
+  test.each([
+    ["ECONNRESET", { ok: true, length: 1 }],
+    ["ENOBUFS", { ok: false, code: "ENOBUFS" }],
+  ] as const)("recv → %s once, on a reused connection", async (errno, expected) => {
+    using server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("x") });
+    const r = await runClientFetch(server.url.href, { syscall: "recv", action: "errno", errno }, { reuse: true });
     expect(r).toMatchObject({ ...expected, signal: null, exitCode: 0 });
   });
 

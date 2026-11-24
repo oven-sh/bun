@@ -232,12 +232,16 @@ pub enum Error {
 }
 
 impl Error {
-    /// For an error that nothing is going to make up for. See [`check_memory`].
-    pub(crate) fn note_if_out_of_memory(self) -> bool {
-        let is_out_of_memory = matches!(
+    pub(crate) fn is_out_of_memory(self) -> bool {
+        matches!(
             self.name(),
             "OutOfMemory" | "ENOMEM" | "ENOBUFS" | "OUT_OF_MEM"
-        );
+        )
+    }
+
+    /// For an error that nothing is going to make up for. See [`check_memory`].
+    pub(crate) fn note_if_out_of_memory(self) -> bool {
+        let is_out_of_memory = self.is_out_of_memory();
         if is_out_of_memory {
             bun_sys::note_out_of_memory(bun_sys::Tag::recv);
         }

@@ -46,6 +46,9 @@ pub struct NetworkTask {
     pub(crate) url_buf: Box<[u8]>,
     pub(crate) header_buf: Box<[u8]>,
     pub(crate) retried: u16,
+    /// The error of an attempt that ran out of memory. With memory it might have succeeded, so it
+    /// counts unless a later attempt does.
+    pub(crate) out_of_memory: Option<crate::Error>,
     pub(crate) response_buffer: MutableString,
     /// Owns this task. Install thread only.
     pub(crate) package_manager: bun_ptr::ParentRef<PackageManager>,
@@ -996,6 +999,7 @@ impl NetworkTask {
             addr_of_mut!((*slot).url_buf).write(Box::default());
             addr_of_mut!((*slot).header_buf).write(Box::default());
             addr_of_mut!((*slot).retried).write(0);
+            addr_of_mut!((*slot).out_of_memory).write(None);
             addr_of_mut!((*slot).next).write(bun_threading::Link::new());
             addr_of_mut!((*slot).tarball_stream).write(None);
             addr_of_mut!((*slot).streaming_extract_task).write(ptr::null_mut());

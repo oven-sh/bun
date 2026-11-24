@@ -1235,6 +1235,11 @@ describe.concurrent("a tarball that cannot be installed", () => {
 
 describe.concurrent("an optional dependency for which there is no memory", () => {
   const CAP = 8;
+  const withCap = {
+    ASAN_OPTIONS: [env.ASAN_OPTIONS, "allocator_may_return_null=1", `max_allocation_size_mb=${CAP}`]
+      .filter(Boolean)
+      .join(":"),
+  };
   const long = () => Buffer.alloc(1.5 * CAP * 1024 * 1024, "a").toString();
   const manifestOf = (name: string, more?: object) => JSON.stringify({ name, version: "1.0.0", ...more });
   const tarball = async (files: Record<string, string>, level: 0 | 1) =>
@@ -1267,9 +1272,16 @@ describe.concurrent("an optional dependency for which there is no memory", () =>
 
   function project(files: Record<string, string | Uint8Array> = {}, spec = "^1.0.0", linker = "hoisted") {
     const served = {
-      long: undefined as "manifest" | "manifest once" | "full manifest" | "old version" | "tarball" | undefined,
+      long: undefined as "manifest" | "full manifest" | "old version" | "tarball" | undefined,
       encoding: "identity" as keyof typeof encoders,
+      /** The answer to the second request for what is long. */
+      again: "the same" as number | "nothing" | "a page" | "the same",
+      status: 200,
+      refusesFullManifests: false,
+      /** The registry takes no connection once it is asked for a tarball. */
+      stops: false,
     };
+    const asked = new Set<string>();
     const registry = Bun.serve({
       port: 0,
       // One of the two addresses of localhost.
@@ -1277,7 +1289,22 @@ describe.concurrent("an optional dependency for which there is no memory", () =>
       async fetch({ url, headers }) {
         if (url.endsWith("/never")) return new Promise<Response>(() => {});
         if (url.endsWith("/scanner-1.0.0.tgz")) return new Response(await scannerTarball());
-        if (url.endsWith(".tgz")) return new Response(await (served.long === "tarball" ? longTarball : shortTarball)());
+        if (served.again !== "the same" && url.endsWith(".tgz") === (served.long === "tarball")) {
+          if (!asked.has(url)) asked.add(url);
+          else if (served.again === 200) Object.assign(served, { long: undefined, again: "the same" });
+          else if (served.again === "a page") return new Response("<p>");
+          else if (served.again !== "nothing") return new Response(null, { status: served.again });
+          else {
+            registry.stop(true);
+            return new Promise<Response>(() => {});
+          }
+        }
+        const { status } = served;
+        if (url.endsWith(".tgz")) {
+          if (served.stops) registry.stop();
+          if (served.long === "tarball") return new Response(await longTarball(), { status });
+          return new Response(await shortTarball());
+        }
         const name = decodeURIComponent(new URL(url).pathname.slice(1));
         const version = (version: string, tarball: string) => ({
           name,
@@ -1286,17 +1313,18 @@ describe.concurrent("an optional dependency for which there is no memory", () =>
           dist: { tarball },
         });
         const isFull = !headers.get("Accept")!.includes("install-v1");
+        if (isFull && served.refusesFullManifests) return new Response(null, { status: 503 });
         const manifest = JSON.stringify({
           name,
-          readme: served.long?.startsWith("manifest") || (served.long === "full manifest" && isFull) ? long() : "",
+          readme: served.long === "manifest" || (served.long === "full manifest" && isFull) ? long() : "",
           "dist-tags": { latest: "1.0.0" },
           versions: {
             "0.0.1": version("0.0.1", url + (served.long === "old version" ? long() : "")),
             "1.0.0": version("1.0.0", url + "-1.0.0.tgz"),
           },
         });
-        if (served.long === "manifest once") served.long = undefined;
         return new Response(encoders[served.encoding](Buffer.from(manifest)), {
+          status: served.long === "manifest" ? status : 200,
           headers: { "Content-Encoding": served.encoding },
         });
       },
@@ -1341,15 +1369,7 @@ describe.concurrent("an optional dependency for which there is no memory", () =>
       async prepare(...args: string[]) {
         expect(await run(args)).toEqual({ said: [], exitCode: 0 });
       },
-      async withoutMemory(
-        args = ["install"],
-        more: Record<string, string> = {
-          ASAN_OPTIONS: [env.ASAN_OPTIONS, "allocator_may_return_null=1", `max_allocation_size_mb=${CAP}`]
-            .filter(Boolean)
-            .join(":"),
-        },
-        launcher?: string[],
-      ) {
+      async withoutMemory(args = ["install"], more: Record<string, string> = withCap, launcher?: string[]) {
         const before = saved();
         const result = await run(args, more, launcher);
         return { ...result, saved: saved() === before ? "nothing" : "something" };
@@ -1421,12 +1441,34 @@ describe.concurrent("an optional dependency for which there is no memory", () =>
       expect(await app.withoutMemory(args)).toEqual(expected);
     });
 
-    it("manifest that says which libc it is for", async () => {
+    it.each(["the same", 503])("manifest that says which libc it is for, if the next attempt gets %s", async again => {
       using app = project({ "package.json": root({ optionalDependencies: { "bar-linux-musl": "1.0.0" } }) });
-      app.served.long = "full manifest";
+      Object.assign(app.served, { long: "full manifest", again });
       expect(await app.withoutMemory()).toEqual(
         fails("recv", "error: OutOfMemory downloading package manifest bar-linux-musl"),
       );
+    });
+
+    it.each([300, 404, 503, "nothing"])("manifest, if the next attempt gets %s", async again => {
+      using app = project();
+      Object.assign(app.served, { long: "manifest", again });
+      expect(await app.withoutMemory()).toEqual(withoutManifest);
+    });
+
+    it("manifest, if the next attempt gets a page", async () => {
+      using app = project();
+      Object.assign(app.served, { long: "manifest", again: "a page" });
+      const { said, ...result } = await app.withoutMemory();
+      expect({ ...result, said: said.slice(-2) }).toEqual(
+        fails("recv", "error: PackageFailedToParse parsing package manifest for bar"),
+      );
+    });
+
+    it("manifest, for `bun outdated`, if the next attempt gets 503", async () => {
+      using app = project();
+      await app.prepare("install");
+      Object.assign(app.served, { long: "manifest", again: 503 });
+      expect(await app.withoutMemory(["outdated", "--no-cache"])).toEqual(withoutManifest);
     });
 
     it("manifest in the cache, with --offline", async () => {
@@ -1449,15 +1491,28 @@ describe.concurrent("an optional dependency for which there is no memory", () =>
       expect(await app.withoutMemory()).toEqual(fails("recv", error));
     });
 
+    describe.each(["hoisted", "isolated"])("tarball of what is installed, %s", linker => {
+      it.each([404, 503, "nothing", "a page"])("if the next attempt gets %s", async again => {
+        using app = project({}, "^1.0.0", linker);
+        await app.prepare("install");
+        rmSync(app.path(".bun-cache"), { recursive: true });
+        Object.assign(app.served, { long: "tarball", again });
+        const { said, ...result } = await app.withoutMemory(["install", "--force"]);
+        expect({ ...result, said: said.slice(-1) }).toEqual(fails("recv"));
+        expect(existsSync(app.path("node_modules", "bar", "package.json"))).toBeTrue();
+      });
+    });
+
     it.each([
-      ["1.0.0", fails("recv", "error: OutOfMemory downloading tarball bar@1.0.0")],
-      ["file:./bar.tgz", fails("read", "error: ENOMEM extracting tarball from bar")],
-    ])("tarball, without waiting for the other downloads: %s", async (bar, expected) => {
+      ["1.0.0", "the same", fails("recv", "error: OutOfMemory downloading tarball bar@1.0.0")],
+      ["1.0.0", 503, fails("recv", "error: OutOfMemory downloading tarball bar@1.0.0")],
+      ["file:./bar.tgz", "the same", fails("read", "error: ENOMEM extracting tarball from bar")],
+    ])("tarball, without waiting for the other downloads: %s, then %s", async (bar, again, expected) => {
       using app = project({
         "package.json": root({ optionalDependencies: { bar, never: "1.0.0" } }),
         "bar.tgz": await longTarball(),
       });
-      app.served.long = "tarball";
+      Object.assign(app.served, { long: "tarball", again });
       expect(await app.withoutMemory()).toEqual(expected);
     });
 
@@ -1485,12 +1540,43 @@ describe.concurrent("an optional dependency for which there is no memory", () =>
     });
   });
 
-  it.skipIf(!isASAN)("is installed if there is at the next attempt", async () => {
-    using app = project();
-    app.served.long = "manifest once";
-    expect(await app.withoutMemory()).toEqual({ said: [], exitCode: 0, saved: "something" });
-    expect(existsSync(app.path("node_modules", "bar", "package.json"))).toBeTrue();
+  describe.skipIf(!isASAN).each([
+    ["manifest", "bar"],
+    ["tarball", "bar-1.0.0.tgz"],
+  ])("%s", (long, path) => {
+    it("is installed if there is at the next attempt", async () => {
+      using app = project();
+      Object.assign(app.served, { long, again: 200 });
+      expect(await app.withoutMemory()).toEqual({ said: [], exitCode: 0, saved: "something" });
+      expect(existsSync(app.path("node_modules", "bar", "package.json"))).toBeTrue();
+    });
+
+    it.each([404, 503])("is left out if it is a refusal with %d that is long", async status => {
+      using app = project();
+      Object.assign(app.served, { long, status });
+      expect(await app.withoutMemory()).toMatchObject({
+        said: [`warn: GET http://localhost:PORT/${path} - ${status}`],
+        exitCode: 0,
+      });
+    });
   });
+
+  it.skipIf(!isASAN)("is installed if the next attempt finds that the cache has the manifest", async () => {
+    using app = project();
+    await app.prepare("install", "--no-save");
+    Object.assign(app.served, { long: "manifest", again: 304 });
+    expect(await app.withoutMemory(["install", "--force"])).toEqual({ said: [], exitCode: 0, saved: "something" });
+  });
+
+  it.skipIf(!isASAN).each(["manifest", "tarball"])(
+    "tells bunx that the copy that it has is untouched if the next attempt gets a page for the %s",
+    async long => {
+      using app = project({ "package.json": "{}" });
+      Object.assign(app.served, { long, again: "a page" });
+      const env = { BUN_INTERNAL_BUNX_INSTALL: app.path(), ...withCap };
+      expect(await app.withoutMemory(["add", "scanner"], env)).toMatchObject({ exitCode: 75 });
+    },
+  );
 
   it.skipIf(!isASAN)("is installed if it is bun.lockb that asks for too much", async () => {
     const lockfile = readFileSync(join(import.meta.dir, "fixtures", "invalid-optional-peer.lockb"));
@@ -1734,6 +1820,20 @@ describe.concurrent("an optional dependency for which there is no memory", () =>
   const bundling = manifestOf("bar", { bundleDependencies: true });
   const from = {
     "a registry": () => project(),
+    "a registry that stops": () => {
+      const app = project();
+      app.served.stops = true;
+      return app;
+    },
+    "a registry that refuses full manifests": () => {
+      const app = project({ "package.json": root({ optionalDependencies: { "bar-linux-musl": "1.0.0" } }) });
+      app.served.refusesFullManifests = true;
+      return app;
+    },
+    "a registry that refuses full manifests, for `bun outdated`": async () => ({
+      ...(await after(from["a registry that refuses full manifests"](), ["install"])),
+      args: ["outdated"],
+    }),
     "a registry, for `bun info`": () => ({ ...project(), args: ["info", "bar"] }),
     "a registry, installed": async () => ({
       ...(await after(project(), ["install"])),
@@ -1941,6 +2041,9 @@ describe.concurrent("an optional dependency for which there is no memory", () =>
     ["a registry", "ENOBUFS recv *", "recv", ["error: ENOBUFS downloading package manifest bar"]],
     ["a registry", "ENOMEM write */lib/a", "pwrite"],
     ["a registry", "ENOMEM stat ROOT/node_modules/bar/cli.js", "stat"],
+    ["a registry that stops", "ENOBUFS recv * 2", "recv"],
+    ["a registry that refuses full manifests", "ENOBUFS recv * 4", "recv"],
+    ["a registry that refuses full manifests, for `bun outdated`", "ENOMEM open *.npm", "open"],
     ["a registry, for `bun info`", "ENOMEM open ROOT/.npmrc", "open"],
     ["a registry, installed", "ENOMEM open bar/package.json", "open"],
     ["a registry, installed, isolated", "ENOMEM stat node_modules/.bun 1", "fstatat"],
@@ -2035,6 +2138,33 @@ describe.concurrent("an optional dependency for which there is no memory", () =>
     expect(missing(app.next)).toEqual([]);
   });
 
+  it.skipIf(!failSyscall)("fails the install between two files of a tarball", async () => {
+    const tar = await new Bun.Archive({ "package/package.json": manifestOf("bar"), "package/b": "" }).bytes();
+    using server = Bun.listen({
+      port: 0,
+      hostname: "127.0.0.1",
+      socket: {
+        async data(socket) {
+          const head = `HTTP/1.1 200 OK\r\nContent-Length: ${tar.length}\r\n\r\n`;
+          socket.write(Buffer.concat([Buffer.from(head), tar.subarray(0, 1024)]));
+          const isRead = () => [...new Bun.Glob("*/package.json").scanSync({ cwd: app.path("tmp"), dot: true })].length;
+          while (socket.readyState > 0 && !isRead()) await Bun.sleep(1);
+          socket.end(tar.subarray(1024));
+        },
+      },
+    });
+    using app = project({ "tmp/a": "" }, `http://127.0.0.1:${server.port}/bar.tar`);
+    const env = {
+      BUN_TMPDIR: app.path("tmp"),
+      BUN_FEATURE_FLAG_DISABLE_STREAMING_INSTALL: "0",
+      BUN_INSTALL_STREAMING_MIN_SIZE: "1",
+      BUN_INSTALL_STREAMING_DRAIN_THRESHOLD: "1",
+      BUN_CONFIG_HTTP_RETRY_COUNT: "0",
+    };
+    const { said, ...result } = await withoutCall({ ...app, env }, "ENOBUFS recv * 1");
+    expect({ ...result, said: said.slice(-1) }).toEqual(fails("recv"));
+  });
+
   it.skipIf(!failSyscall)("fails `bun pm migrate`", async () => {
     using app = from.pnpm();
     expect(await withoutCall({ ...app, args: ["pm", "migrate"] }, "ENOMEM open pnpm-workspace.yaml")).toEqual({
@@ -2065,16 +2195,16 @@ describe.concurrent("an optional dependency for which there is no memory", () =>
     expect(existsSync(app.path("a\\b"))).toBeTrue();
   });
 
-  it.skipIf(!failSyscall).each(["bar", "bar@http://127.0.0.1:PORT/bar.tgz"])(
-    "tells bunx that the copy that it has is untouched: %s",
-    async request => {
-      using app = project({ "package.json": "{}" });
-      const env = { BUN_INTERNAL_BUNX_INSTALL: app.path(), BUN_INTERNAL_BUNX_HAS_COPY: "true" };
-      expect(await withoutCall({ ...app, args: ["add", request], env }, "ENOBUFS socket *")).toMatchObject({
-        exitCode: 75,
-      });
-    },
-  );
+  it.skipIf(!failSyscall).each([
+    ["bar", "ENOBUFS socket *"],
+    ["bar@http://127.0.0.1:PORT/bar.tgz", "ENOBUFS socket *"],
+    ["bar-linux-musl", "ENOMEM open *.npm"],
+  ])("tells bunx that the copy that it has is untouched: %s", async (request, failure) => {
+    using app = project({ "package.json": "{}" });
+    app.served.refusesFullManifests = true;
+    const env = { BUN_INTERNAL_BUNX_INSTALL: app.path(), BUN_INTERNAL_BUNX_HAS_COPY: "true" };
+    expect(await withoutCall({ ...app, args: ["add", request], env }, failure)).toMatchObject({ exitCode: 75 });
+  });
 
   it.skipIf(!failSyscall).each([{}, { postinstall: "exit 0" }])(
     "fails the install after the lockfile is saved, with the scripts %j",

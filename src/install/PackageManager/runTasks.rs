@@ -405,6 +405,9 @@ pub(crate) fn run_tasks(
                 }
 
                 let err = download_error(&task.response).unwrap_or(crate::Error::HTTPError);
+                if download_failed && err.is_out_of_memory() {
+                    task.out_of_memory = Some(err);
+                }
 
                 // Handle retry-able errors.
                 if retry {
@@ -433,19 +436,22 @@ pub(crate) fn run_tasks(
 
                         continue;
                     }
+                }
 
-                    // Try once more, because the full document was only requested for `libc`.
-                    err.note_if_out_of_memory();
-                    if is_extended_manifest
-                        && manager.options.minimum_release_age_ms.is_none()
-                        && crate::error::check_memory().is_ok()
-                    {
-                        let scope = manager.scope_for_package_name(name);
-                        let is_optional = !manager.is_network_task_required(task.task_id);
-                        task.retry_with_abbreviated_manifest(scope, is_optional)?;
-                        enqueue::enqueue_network_task(manager, task_ptr);
-                        continue;
-                    }
+                let err = blame_memory(task.out_of_memory, &mut task.response).unwrap_or(err);
+
+                // Try once more, because the full document was only requested for `libc`.
+                if retry
+                    && is_extended_manifest
+                    && manager.options.minimum_release_age_ms.is_none()
+                    && crate::error::check_memory().is_ok()
+                {
+                    let scope = manager.scope_for_package_name(name);
+                    let is_optional = !manager.is_network_task_required(task.task_id);
+                    task.retry_with_abbreviated_manifest(scope, is_optional)?;
+                    task.response = Default::default();
+                    enqueue::enqueue_network_task(manager, task_ptr);
+                    continue;
                 }
 
                 let Some(metadata) = task.response.metadata.as_ref().filter(|_| !download_failed)
@@ -536,6 +542,12 @@ pub(crate) fn run_tasks(
                             metadata.status_code(),
                         );
                     }
+                    let is_unanswered = is_required && retry;
+                    if crate::error::check_memory().is_err() {
+                        fail_update_requests(manager, task.task_id, name, None, is_unanswered);
+                        caller.exit_if_out_of_memory(manager);
+                    }
+
                     let failure = ManifestFailure {
                         is_missing: metadata.status_code() == 404,
                         is_unanswered: retry,
@@ -548,7 +560,6 @@ pub(crate) fn run_tasks(
                         log_mark,
                         failure,
                     )? {
-                        let is_unanswered = is_required && retry;
                         fail_update_requests(manager, task.task_id, name, None, is_unanswered);
                     }
 
@@ -646,6 +657,9 @@ pub(crate) fn run_tasks(
 
                 let err =
                     download_error(&task.response).unwrap_or(crate::Error::TarballFailedToDownload);
+                if download_failed && err.is_out_of_memory() {
+                    task.out_of_memory = Some(err);
+                }
 
                 if retry {
                     if task.retried < manager.options.max_retry_count {
@@ -677,6 +691,8 @@ pub(crate) fn run_tasks(
                         continue;
                     }
                 }
+
+                let err = blame_memory(task.out_of_memory, &mut task.response).unwrap_or(err);
 
                 // Past this point we will not retry. If streaming state was
                 // allocated but never scheduled, release it now so the
@@ -865,6 +881,11 @@ pub(crate) fn run_tasks(
                         err.name(),
                         bstr::BStr::new(name),
                     );
+                    (network.out_of_memory.unwrap_or(err)).note_if_out_of_memory();
+                    if crate::error::check_memory().is_err() {
+                        fail_update_requests(manager, task.id, name, None, true);
+                        caller.exit_if_out_of_memory(manager);
+                    }
                     let failure = ManifestFailure {
                         spares_optional: false,
                         ..Default::default()
@@ -929,9 +950,11 @@ pub(crate) fn run_tasks(
                 let Some(data) = data else {
                     let err = task.err.unwrap_or(crate::Error::TarballFailedToExtract);
 
-                    let fail_url: &[u8] = match source {
-                        Task::TarballSource::Network(network) => &network.url_buf,
-                        Task::TarballSource::Local { .. } => tarball.url.slice(),
+                    let (fail_url, out_of_memory): (&[u8], _) = match source {
+                        Task::TarballSource::Network(network) => {
+                            (&network.url_buf, network.out_of_memory)
+                        }
+                        Task::TarballSource::Local { .. } => (tarball.url.slice(), None),
                     };
                     // A linker's task for a local tarball is not in the map, so it gets no mark.
                     let Some(is_required) = caller.dispatch_tarball_error(
@@ -940,7 +963,7 @@ pub(crate) fn run_tasks(
                         dependency_id,
                         alias,
                         resolution,
-                        err,
+                        out_of_memory.unwrap_or(err),
                         fail_url,
                     ) else {
                         continue;
@@ -953,7 +976,14 @@ pub(crate) fn run_tasks(
                         err.name(),
                         bun_core::fmt::for_terminal(bstr::BStr::new(alias)),
                     );
-                    fail_update_requests(manager, task.id, alias, Some(dependency_id), false);
+                    let is_unanswered = out_of_memory.is_some();
+                    fail_update_requests(
+                        manager,
+                        task.id,
+                        alias,
+                        Some(dependency_id),
+                        is_unanswered,
+                    );
 
                     // Resolve phase: drain the
                     // `task_queue` entry too so a later install-phase
@@ -1286,6 +1316,19 @@ pub(crate) fn download_outcome(
         && !(blocking && (silence || status == Some(501)))
         && (failed || status.is_some_and(|status| status > 499 || status == 429 || status == 408));
     (failed, retry)
+}
+
+/// For the last attempt. If it has not made up for `out_of_memory`, it ends like that one.
+fn blame_memory(
+    out_of_memory: Option<crate::Error>,
+    response: &mut http::HTTPClientResult<'static>,
+) -> Option<crate::Error> {
+    let status = response.metadata.as_ref().map(|m| m.status_code());
+    let is_delivered = response.fail.is_none() && matches!(status, Some(200 | 304));
+    let err = out_of_memory.filter(|_| !is_delivered)?;
+    err.note_if_out_of_memory();
+    *response = Default::default();
+    Some(err)
 }
 
 fn download_error(response: &http::HTTPClientResult<'static>) -> Option<crate::Error> {

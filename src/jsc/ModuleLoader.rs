@@ -376,7 +376,7 @@ fn extract_namespace(specifier: &[u8]) -> &[u8] {
     if cfg!(windows)
         && colon == 1
         && specifier.len() > 3
-        && bun_paths::resolve_path::is_sep_any(specifier[2])
+        && bun_paths::is_sep(specifier[2])
         && ((specifier[0] > b'a' && specifier[0] < b'z')
             || (specifier[0] > b'A' && specifier[0] < b'Z'))
     {

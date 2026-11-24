@@ -29,11 +29,21 @@ We update this page regularly. It reflects the latest version of Bun's compatibi
 
 ### [`node:diagnostics_channel`](https://nodejs.org/api/diagnostics_channel.html)
 
-🟡 `channel()`, `subscribe()`, `tracingChannel()` and the `http` client, `http2` and `dgram` built-in channels are implemented. Missing `boundedChannel()` and the `http.server.*`, `net`, `module`, `console`, `child_process` and `worker_threads` built-in channels. Subscribers do not keep a `Channel` alive, so hold a reference to it.
+🟢 Fully implemented. Bun publishes the built-in channels, except `locks.*`, `node:permission-model:*`, `crypto.fips.indicator` and `quic.session.application`. `tracePromise()` returns the promise of the traced function, where Node returns a promise that is chained to it. In a file that an `import` loads, `module.require` publishes `require("fs")` with the `id` `"node:fs"`.
+
+`fetch()` and `WebSocket` publish the `undici:*` channels, except `undici:proxy:connected`. The messages differ from Node's in these ways:
+
+- `socket` is an object with the addresses of the connection, not a `net.Socket`. `connector` is `undefined`.
+- A subscriber of `undici:request:create` can change the headers of `request`, `request.host` and `request.reset`. Changes to its other properties have no effect.
+- `trailers` is always empty. Bun does not publish informational (1xx) responses.
+- Bun does not publish the chunks of a redirect that it follows, or of a `Bun.file()` that it sends with `sendfile`.
+- Bun publishes nothing for a request that starts while no `undici:client:*` or `undici:request:*` channel has a subscriber.
+- Bun checks `undici:request:bodyChunkSent` and `undici:request:bodyChunkReceived` once, when you call `fetch()`. If a channel has no subscriber then, it gets no chunks of that request or of its redirects.
+- `undici:websocket:socket_error` reports a failed write only if the connection to the server, or to the proxy if there is one, uses TLS. The `code` can be `ECONNRESET` where Node has `EPIPE`.
 
 ### [`node:dns`](https://nodejs.org/api/dns.html)
 
-🟢 Fully implemented. Missing `resolveTlsa`. Bun ignores the `Resolver` `maxTimeout` option.
+🟢 Fully implemented. Missing `resolveTlsa`.
 
 ### [`node:events`](https://nodejs.org/api/events.html)
 

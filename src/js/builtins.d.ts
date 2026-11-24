@@ -439,7 +439,9 @@ declare function $requireCommonJS(
 ): JSCommonJSModule | -1;
 declare function $requireESM(path: string, requirer?: JSCommonJSModule): any;
 declare function $requireNativeModule(id: string): any;
-declare const $requireMap: Map<string, JSCommonJSModule>;
+declare const $requireMap: Map<string, JSCommonJSModule> & {
+  $traceRequire: ((parent: JSCommonJSModule, id: string, options: unknown) => unknown) | undefined;
+};
 declare const $internalModuleRegistry: InternalFieldObject<any[]>;
 declare function $resolve(name: string, from: string): Promise<string>;
 declare function $resolveSync(
@@ -472,7 +474,7 @@ declare function $createCommonJSModule(
 ): JSCommonJSModule;
 declare function $evaluateCommonJSModule(
   moduleToEvaluate: JSCommonJSModule,
-  sourceModule: JSCommonJSModule,
+  sourceModule: JSCommonJSModule | undefined,
 ): JSCommonJSModule[];
 declare function $evictIsolationSourceProviderCache(key?: string): void;
 

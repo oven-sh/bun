@@ -237,6 +237,7 @@ export default b.declarations(
   extendAll(["Archive"], ...nativeBindings("Bindgen", "pack_command.bind.ts", "readTarball")),
 
   extendAll(["Semver"], "Bun.semver"),
+  extendAll(["Diff"], "Bun.diff"),
   extendAll(["Ansi", "StringWidth"], "Bun.sliceAnsi", "Bun.wrapAnsi"),
   extendAll(["EscapeHtml"], "Bun.escapeHTML"),
   extendAll(["Hash"], "Bun.hash"),

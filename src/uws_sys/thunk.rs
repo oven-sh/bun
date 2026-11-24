@@ -5,7 +5,7 @@
 //! owner from the user-data, (b) re-type the opaque handle, (c) lift any
 //! `(ptr,len)` pairs into slices, then (d) call the safe Rust handler. Before
 //! this module each of `Response::on_*`, `h3::Response::on_*`,
-//! `WebSocket::Wrap::on_*`, and `uws_handlers::*Handler` open-coded those
+//! and `uws_handlers::*Handler` open-coded those
 //! steps with three or four `unsafe {}` blocks apiece — ~300 in total.
 //!
 //! Centralising here means each invariant is documented and audited **once**:
@@ -84,7 +84,7 @@ pub(crate) fn zst<H>() -> H {
     bun_core::ffi::conjure_zst::<H>()
 }
 
-/// Re-type a raw uWS handle (`uws_res`, `H3Response`, `RawWebSocket`, …) as a
+/// Re-type a raw uWS handle (`uws_res`, `H3Response`, …) as a
 /// mutable Rust reference. These are zero-sized opaque markers, so the borrow
 /// covers no Rust-owned bytes — it exists purely to hang methods off.
 ///
@@ -124,7 +124,7 @@ pub(crate) unsafe fn c_slice<'a>(ptr: *const u8, len: usize) -> &'a [u8] {
 /// every `&mut ExtSlot<T>` reachable from safe code was materialised by the
 /// `vtable::Trampolines` layer from C-allocated socket ext memory (via
 /// `(*s).ext::<ExtSlot<T>>()`), and `calloc`-zero is `None`. That makes
-/// [`Self::owner_ref`] sound as a *safe* fn — the one `unsafe`
+/// its accessors sound as *safe* fns — the `unsafe`
 /// inside discharges the invariant for every call site.
 #[repr(transparent)]
 pub struct ExtSlot<T>(Option<NonNull<T>>);
@@ -141,5 +141,14 @@ impl<T> ExtSlot<T> {
             Some(p) => Some(unsafe { &*p.as_ptr() }),
             None => None,
         }
+    }
+
+    /// A ref of the caller's own, for an event that can release the one that the slot stands for.
+    pub fn owner(&self) -> Option<bun_ptr::RefPtr<T>>
+    where
+        T: bun_ptr::AnyRefCounted,
+    {
+        // SAFETY: as in `owner_ref`.
+        Some(unsafe { bun_ptr::RefPtr::init_ref(self.0?.as_ptr()) })
     }
 }

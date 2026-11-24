@@ -22,16 +22,15 @@ pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
 pub(crate) fn print(interp: &Interpreter, cmd: NodeId, first: usize, mut missing: bool) -> Yield {
     let shell = Builtin::shell(interp, cmd);
     let (path_env, cwd) = (shell.export_env.get(b"PATH"), shell.cwd());
-    let mut path_buf = bun_paths::path_buffer_pool::get();
     for (i, arg) in Builtin::of(interp, cmd)
         .args()
         .iter()
         .enumerate()
         .skip(first)
     {
-        let found = bun_which::which(&mut path_buf, path_env.unwrap_or_default(), cwd, arg);
+        let found = bun_which::which(path_env.unwrap_or_default(), cwd, arg);
         missing |= found.is_none();
-        let (prefix, name, suffix) = match found {
+        let (prefix, name, suffix) = match &found {
             Some(path) => ("", BStr::new(path.as_bytes()), ""),
             None => ("which: ", BStr::new(arg.get()), " not found"),
         };

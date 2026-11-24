@@ -50,7 +50,10 @@ pub use tsconfig_json::TSConfigJSON;
 // `result` / `standalone_module_graph` sibling modules.
 /// Re-export so dependents can spell `bun_resolver::install_types::AutoInstaller`.
 pub use ::bun_install_types::resolver_hooks as install_types;
-pub use resolver::{BrowserMapPathKind, Bufs, Dirname, Resolver, module_type_from_ext};
+pub use resolver::{
+    BrowserMapPathKind, Bufs, Resolver, module_type_from_ext, path_of_specifier,
+    resolve_keeping_sep,
+};
 pub use result::{
     DebugLogs, DirEntryResolveQueueItem, ExternalKind, FlushMode, LoadResult, MatchResult,
     MatchStatus, PathPair, Result, ResultFlags, ResultUnion,
@@ -276,8 +279,7 @@ pub mod fs {
                 }
             };
             // Seed the lower-tier `bun_paths::fs::FileSystem` singleton with the
-            // same cwd. `bun_paths::resolve_path::relative*` and
-            // `Path::init_top_level_dir` reach `bun_paths::fs::FileSystem::
+            // same cwd. In debug builds `Path::from_top_level_dir` needs `bun_paths::fs::FileSystem::
             // instance()` (a strict `OnceLock` — panics if unset), and the
             // doc-comment on that `init` names this as the intended seeding
             // point. This keeps both halves in lockstep.
@@ -290,7 +292,7 @@ pub mod fs {
             // `Transpiler::init` before any worker spawn.
             unsafe {
                 (*INSTANCE.get()).write(FileSystem {
-                    fs: Implementation::init(cwd),
+                    fs: Implementation::init(),
                     dirname_store: DirnameStore::instance(),
                     filename_store: FilenameStore::instance(),
                 });
@@ -327,71 +329,6 @@ pub mod fs {
             MAX_FD.load(Ordering::Relaxed)
         }
 
-        /// Joins `parts` against `top_level_dir` into `buf`, returning the
-        /// absolute path slice.
-        pub fn abs_buf<'b>(&self, parts: &[&[u8]], buf: &'b mut [u8]) -> &'b [u8] {
-            use bun_paths::resolve_path::{join_abs_string_buf, platform};
-            join_abs_string_buf::<platform::Loose>(self.top_level_dir(), buf, parts)
-        }
-
-        /// Returns `None` on overflow.
-        pub fn abs_buf_checked<'b>(&self, parts: &[&[u8]], buf: &'b mut [u8]) -> Option<&'b [u8]> {
-            use bun_paths::resolve_path::{join_abs_string_buf_checked, platform};
-            join_abs_string_buf_checked::<platform::Loose>(self.top_level_dir(), buf, parts)
-        }
-
-        /// Normalizes `str` (separators, `.`/`..` segments) into `buf`.
-        pub fn normalize_buf<'b>(&self, buf: &'b mut [u8], str: &[u8]) -> &'b [u8] {
-            use bun_paths::resolve_path::{normalize_string_buf, platform};
-            normalize_string_buf::<false, platform::Auto, false>(str, buf)
-        }
-
-        /// Joins against `top_level_dir`
-        /// into the resolver-shared threadlocal join buffer.
-        pub fn abs(&self, parts: &[&[u8]]) -> &[u8] {
-            use bun_paths::resolve_path::{join_abs_string, platform};
-            join_abs_string::<platform::Loose>(self.top_level_dir(), parts)
-        }
-
-        /// `ENAMETOOLONG` on overflow.
-        pub(crate) fn abs_checked(
-            &self,
-            parts: &[&[u8]],
-        ) -> core::result::Result<&[u8], bun_errno::SystemErrno> {
-            use bun_paths::resolve_path::{join_abs_string_checked, platform};
-            join_abs_string_checked::<platform::Loose>(self.top_level_dir(), parts)
-                .ok_or(bun_errno::SystemErrno::ENAMETOOLONG)
-        }
-
-        /// Like `abs`, but interns the joined path into `DirnameStore` and
-        /// returns the `'static` copy.
-        pub(crate) fn abs_alloc(
-            &self,
-            parts: &[&[u8]],
-        ) -> core::result::Result<&'static [u8], bun_alloc::AllocError> {
-            use bun_paths::resolve_path::{join_abs_string, platform};
-            let joined = join_abs_string::<platform::Loose>(self.top_level_dir(), parts);
-            // Route through DirnameStore so
-            // the resolver's `&'static [u8]` storage contract holds.
-            DirnameStore::instance()
-                .append_slice(joined)
-                .map_err(|_| bun_alloc::AllocError)
-        }
-
-        /// Relative path from `from` to `to`. Returns a slice into the
-        /// resolver-shared threadlocal relative buffer; caller must dup
-        /// before the next call.
-        pub fn relative(&self, from: &[u8], to: &[u8]) -> &'static [u8] {
-            bun_paths::resolve_path::relative(from, to)
-        }
-
-        /// Relative path from
-        /// `top_level_dir` to `to`. Returns a slice into the resolver-shared
-        /// threadlocal relative buffer; caller must dup before the next call.
-        pub fn relative_to(&self, to: &[u8]) -> &'static [u8] {
-            bun_paths::resolve_path::relative(self.top_level_dir(), to)
-        }
-
         /// Returns the process cwd. `process.chdir()` on any thread replaces it.
         #[inline]
         pub fn top_level_dir(&self) -> &'static [u8] {
@@ -408,12 +345,7 @@ pub mod fs {
         /// `top_level_dir` with any trailing separator stripped (root `/` is
         /// left intact).
         pub fn top_level_dir_without_trailing_slash(&self) -> &'static [u8] {
-            let d = self.top_level_dir();
-            if d.len() > 1 && d.last() == Some(&bun_paths::SEP) {
-                &d[..d.len() - 1]
-            } else {
-                d
-            }
+            bun_paths::without_trailing_sep(self.top_level_dir())
         }
 
         /// The process-global directory-name interning store.
@@ -638,7 +570,7 @@ pub mod fs {
                 // display path goes into the per-build arena, not the
                 // process-lifetime `FilenameStore` (it is recomputed each build).
                 let pretty: &'b mut [u8] = alloc.alloc_slice_copy(self.pretty);
-                bun_paths::resolve_path::platform_to_posix_in_place::<u8>(pretty);
+                bun_paths::to_portable_in_place(pretty);
                 new.pretty = pretty;
                 new.assert_pretty_is_valid();
                 Ok(new)
@@ -683,11 +615,10 @@ pub mod fs {
     // Re-exported here so the public path `bun_resolver::fs::*` is preserved.
     pub use crate::fs_full::{
         DirEntry, DirEntryIterator, Entry, EntryCache, EntryKind, EntryKindResolver, EntryLookup,
-        FilenameStoreAppender, dir_entry,
+        FilenameStoreAppender, dir_entry, join_dir_entry,
     };
 
     use bun_core::Generation;
-    use bun_paths::strings;
     use bun_ptr::Interned;
     use bun_sys::Fd;
     use bun_threading::Mutex;
@@ -872,7 +803,6 @@ pub mod fs {
         /// this directly (`rfs.entries.get_or_put(..)`); modeled as the wrapper
         /// `EntriesMap` (bun_alloc has no BSSMap equivalent).
         pub entries: EntriesMap,
-        pub(crate) cwd: &'static [u8],
         #[cfg(not(windows))]
         pub(crate) file_limit: usize,
     }
@@ -881,14 +811,13 @@ pub mod fs {
         /// Raise RLIMIT_NOFILE and
         /// record the resulting fd budget so `need_to_close_files` can decide
         /// whether to cache directory fds.
-        pub(crate) fn init(cwd: &'static [u8]) -> RealFS {
+        pub(crate) fn init() -> RealFS {
             let file_limit = Self::adjust_ulimit();
             #[cfg(windows)]
             let _ = file_limit;
             RealFS {
                 entries_mutex: Mutex::default(),
                 entries: EntriesMap::new(),
-                cwd,
                 #[cfg(not(windows))]
                 file_limit,
             }
@@ -1044,7 +973,7 @@ pub mod fs {
             store_fd: bool,
             iterator: &mut I,
         ) -> crate::CrateResult<&'static EntriesOption> {
-            let dir = strings::paths::without_trailing_slash_windows_path(dir_maybe_trail_slash);
+            let dir = bun_paths::without_trailing_sep(dir_maybe_trail_slash);
 
             crate::Resolver::assert_valid_cache_key(dir);
             let _unlock_guard = self.entries_mutex.lock_guard();
@@ -1173,7 +1102,6 @@ pub mod fs {
             existing_fd: Fd,
             store_fd: bool,
         ) -> crate::CrateResult<EntryCache> {
-            use bun_paths::resolve_path::{join_abs_string_buf_z_checked, platform};
             #[cfg(not(windows))]
             use bun_sys::{FileKind, kind_from_mode};
 
@@ -1183,16 +1111,10 @@ pub mod fs {
                 fd: Fd::INVALID,
             };
 
-            let combo: [&[u8]; 2] = [dir_, base];
-            let mut outpath = bun_paths::path_buffer_pool::get();
-            let join_capacity = outpath.len() - 1;
-            let Some(absolute_path_c) = join_abs_string_buf_z_checked::<platform::Auto>(
-                self.cwd,
-                &mut outpath[..join_capacity],
-                &combo,
-            ) else {
+            let Some(absolute_path) = join_dir_entry(dir_, base) else {
                 return Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
             };
+            let absolute_path_c: &ZStr = &absolute_path;
 
             #[cfg(windows)]
             {
@@ -1230,13 +1152,11 @@ pub mod fs {
                 // error was swallowed at `Entry.kind`, and a directory symlink
                 // was permanently misclassified as `.file` — surfacing as
                 // EISDIR at module load time.
-                let mut wbuf = bun_paths::w_path_buffer_pool::get();
-                let wpath = bun_paths::strings::paths::to_kernel32_path(
-                    &mut wbuf.0[..],
-                    absolute_path_c.as_bytes(),
-                );
+                let Ok(wpath) = bun_sys::long_path(absolute_path_c, bun_sys::Tag::open) else {
+                    return Ok(cache);
+                };
                 let owned = match w::CreateFileW(
-                    wpath,
+                    &wpath,
                     0,
                     w::FILE_SHARE_READ | w::FILE_SHARE_WRITE | w::FILE_SHARE_DELETE,
                     w::OPEN_EXISTING,
@@ -1279,6 +1199,7 @@ pub mod fs {
                     kind_from_mode(stat_.st_mode as bun_sys::Mode) == FileKind::SymLink;
                 let mut file_kind = kind_from_mode(stat_.st_mode as bun_sys::Mode);
 
+                let mut symlink_buf;
                 let mut symlink: &[u8] = b"";
 
                 if is_symlink {
@@ -1311,7 +1232,8 @@ pub mod fs {
                     FileSystem::set_max_fd(file.fd().native());
 
                     let file_stat = file.stat()?;
-                    symlink = bun_sys::get_fd_path(file.fd(), &mut outpath)?;
+                    symlink_buf = bun_paths::path_buffer_pool::get();
+                    symlink = bun_sys::get_fd_path(file.fd(), &mut symlink_buf)?;
                     cache.fd = opened
                         .filter(|_| store_fd && !self.need_to_close_files())
                         .map_or(existing_fd, bun_sys::CloseOnDrop::into_raw);
@@ -1446,10 +1368,7 @@ pub mod fs {
                 .or_else(|| env_var::TMP.get_not_empty())
                 .or_else(|| env_var::TEMP.get_not_empty())
             {
-                if dir.len() > 1 && dir[dir.len() - 1] == bun_paths::SEP {
-                    return &dir[0..dir.len() - 1];
-                }
-                return dir;
+                return bun_paths::without_trailing_sep(dir);
             }
 
             #[cfg(target_os = "windows")]
@@ -1460,34 +1379,24 @@ pub mod fs {
                 // `bun_core::Once` in `platform_temp_dir()`; the `OnceLock` here is
                 // the allowed process-lifetime singleton (PORTING.md §Forbidden
                 // exception), not a per-call leak.
+                use bun_paths::Path;
                 static OWNED: std::sync::OnceLock<Vec<u8>> = std::sync::OnceLock::new();
                 return OWNED
                     .get_or_init(|| {
-                        if let Some(windir) =
-                            env_var::SYSTEMROOT.get().or_else(|| env_var::WINDIR.get())
+                        if let Some(windir) = (env_var::SYSTEMROOT.get_not_empty())
+                            .or_else(|| env_var::WINDIR.get_not_empty())
                         {
-                            let mut out =
-                                bun_core::strings::without_trailing_slash(windir).to_vec();
-                            out.extend_from_slice(b"\\Temp");
-                            return out;
+                            return Path::from_parts(&[windir, b"Temp"]).to_vec();
                         }
-                        if let Some(profile) = env_var::HOME.get() {
-                            let mut buf = bun_paths::path_buffer_pool::get();
-                            let parts: [&[u8]; 1] = [b"AppData\\Local\\Temp"];
-                            let out = bun_paths::resolve_path::join_abs_string_buf::<
-                                bun_paths::resolve_path::platform::Loose,
-                            >(profile, &mut buf[..], &parts);
-                            return out.to_vec();
+                        if let Some(profile) = env_var::HOME.get_not_empty() {
+                            return Path::resolve(&[profile, b"AppData/Local/Temp"]).to_vec();
                         }
                         let mut tmp_buf = bun_paths::path_buffer_pool::get();
                         let cwd = match bun_sys::getcwd(&mut tmp_buf[..]) {
                             Ok(len) => &tmp_buf[..len],
                             Err(_) => panic!("Failed to get cwd for platformTempDir"),
                         };
-                        let root = bun_paths::resolve_path::windows_filesystem_root(cwd);
-                        let mut out = bun_core::strings::without_trailing_slash(root).to_vec();
-                        out.extend_from_slice(b"\\Windows\\Temp");
-                        out
+                        Path::resolve(&[cwd, b"/Windows/Temp"]).to_vec()
                     })
                     .as_slice();
             }
@@ -1605,7 +1514,7 @@ pub mod dir_entry_accessor {
     use crate::fs::{DirEntry, EntriesOption, Entry, EntryKind, FileSystem as FS};
     use bun_core::ZStr;
     use bun_glob::walk::{self, Accessor, AccessorDirIter};
-    use bun_paths::{Platform, resolve_path};
+    use bun_paths::Path;
     use bun_sys::{self as Syscall, Result as Maybe, Stat};
 
     pub struct DirEntryAccessor;
@@ -1676,22 +1585,11 @@ pub mod dir_entry_accessor {
     }
 
     impl DirEntryAccessor {
-        /// Joins `path` onto the handle's directory. The result can be longer than a path buffer.
-        fn full_path<'a>(
-            handle: &DirEntryHandle,
-            path: &'a ZStr,
-            buf: &'a mut [u8],
-            spill: &'a mut Vec<u8>,
-        ) -> &'a ZStr {
+        /// Joins `path` onto the handle's directory.
+        fn full_path(handle: &DirEntryHandle, path: &[u8]) -> Path {
             match handle.value {
-                Some(entry) if !Platform::AUTO.is_absolute(path.as_bytes()) => {
-                    resolve_path::join_z_buf_spill::<bun_paths::platform::Auto>(
-                        buf,
-                        spill,
-                        &[entry.dir, path.as_bytes()],
-                    )
-                }
-                _ => path,
+                Some(entry) if !bun_paths::is_absolute(path) => Path::join(&[entry.dir, path]),
+                _ => Path::from(path),
             }
         }
     }
@@ -1701,33 +1599,15 @@ pub mod dir_entry_accessor {
         type DirIter = DirEntryDirIter;
 
         fn statat(handle: &DirEntryHandle, path_: &ZStr) -> Maybe<Stat> {
-            let mut buf = bun_paths::path_buffer_pool::get();
-            let mut spill = Vec::new();
-            Syscall::stat(Self::full_path(handle, path_, &mut buf[..], &mut spill))
+            Syscall::stat(&Self::full_path(handle, path_))
         }
 
         /// Like statat but does not follow symlinks.
         fn lstatat(handle: &DirEntryHandle, path_: &ZStr) -> Maybe<Stat> {
-            let mut buf = bun_paths::path_buffer_pool::get();
-            if let Some(entry) = handle.value {
-                return Syscall::lstatat(entry.fd, path_);
+            match handle.value {
+                Some(entry) => Syscall::lstatat(entry.fd, path_),
+                None => Syscall::lstat(path_),
             }
-
-            let path: &ZStr = if !Platform::AUTO.is_absolute(path_.as_bytes()) {
-                if let Some(entry) = handle.value {
-                    let slice = resolve_path::join_string_buf::<bun_paths::platform::Auto>(
-                        &mut buf,
-                        &[entry.dir, path_.as_bytes()],
-                    );
-                    let len = slice.len();
-                    ZStr::nul_terminate(&mut buf, len)
-                } else {
-                    path_
-                }
-            } else {
-                path_
-            };
-            Syscall::lstat(path)
         }
 
         fn open(path: &ZStr) -> Result<Maybe<DirEntryHandle>, bun_core::Error> {
@@ -1738,9 +1618,7 @@ pub mod dir_entry_accessor {
             handle: &DirEntryHandle,
             path_: &ZStr,
         ) -> Result<Maybe<DirEntryHandle>, bun_core::Error> {
-            let mut buf = bun_paths::path_buffer_pool::get();
-            let mut spill = Vec::new();
-            let path = Self::full_path(handle, path_, &mut buf[..], &mut spill);
+            let path = Self::full_path(handle, path_);
             // TODO do we want to propagate ENOTDIR through the 'Maybe' to match the SyscallAccessor?
             // The glob implementation specifically checks for this error when dealing with symlinks
             // return Err(SysError::from_code(E::NOTDIR, Syscall::Tag::open));

@@ -519,12 +519,13 @@ describe.concurrent("bun compile --library", () => {
     });
   });
 
+  const outdirIsProject = (dir: string) =>
+    `error: --library writes a package.json into --outdir, so --outdir can't be the project folder (${dir}). Use a folder inside it, such as --outdir=dist\n`;
+
   test.each([
-    [
-      ["--outdir", "."],
-      (dir: string) =>
-        `error: --library writes a package.json into --outdir, so --outdir can't be the project folder (${dir}). Use a folder inside it, such as --outdir=dist\n`,
-    ],
+    [["--outdir", "."], outdirIsProject],
+    [["--outdir", "./"], outdirIsProject],
+    [["--outdir", isWindows ? "a/b/../.." : "a\\b/.."], outdirIsProject],
     [
       ["--outdir", "src"],
       () =>

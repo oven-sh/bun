@@ -19,7 +19,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
         .map(|sc| sc.separate_ssr_graph)
         .unwrap_or(false);
 
-    let root = paths::string_paths::without_trailing_slash_windows_path(options.root.as_bytes());
+    let root = paths::without_trailing_sep(options.root.as_bytes());
     let global = options.vm.global();
 
     let generic_action = "while initializing development server";
@@ -311,16 +311,11 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
             Vec::with_capacity(dev.framework.file_system_router_types.len());
 
         for fsr in dev.framework.file_system_router_types.iter() {
-            let mut buf = paths::path_buffer_pool::get();
-            let joined_root = paths::resolve_path::join_abs_string_buf::<paths::platform::Auto>(
-                &dev.graphs.root,
-                &mut buf[..],
-                &[&fsr.root],
-            );
+            let joined_root = paths::Path::resolve(&[&dev.graphs.root, &fsr.root]);
             let Some(entry) = dev
                 .server_transpiler
                 .resolver
-                .read_dir_info_ignore_error(joined_root)
+                .read_dir_info_ignore_error(&joined_root)
             else {
                 continue;
             };
@@ -334,7 +329,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
             // Types with a missing root were skipped above, so this can differ from the index in the config.
             let type_index = router::TypeIndex::init(u8::try_from(types.len()).expect("int cast"));
             types.push(router::Type {
-                abs_root: strings::without_trailing_slash(entry.abs_path).into(),
+                abs_root: paths::without_trailing_sep(entry.abs_path).into(),
                 ignore_underscores: fsr.ignore_underscores,
                 ignore_dirs: fsr
                     .ignore_dirs
@@ -625,11 +620,11 @@ impl DevServer {
         route!(any, INTERNAL_PREFIX.as_bytes(), DevHandlerId::NotFound);
 
         // SAFETY: see `route!` — statement-scoped reborrow of the live app.
-        unsafe { &mut *app }.ws(
+        unsafe { &mut *app }.ws::<Self, HmrSocket>(
             const_format::concatcp!(INTERNAL_PREFIX, "/hmr").as_bytes(),
             dev,
             0,
-            hmr_socket_behavior::<SSL>(),
+            Default::default(),
             dev,
         );
 

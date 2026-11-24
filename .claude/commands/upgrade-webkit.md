@@ -38,5 +38,6 @@ To do that:
 Things to check for a successful upgrade:
 
 - Did Source/JavaScriptCore/runtime/JSType.h change? The enum values must align with Bun's mirror in src/jsc/JSType.rs.
+- Do JavaScriptCore or WTF call ICU in another way (functions, arguments, number skeletons, pattern letters), or did icu/source.json change? src/icu has only what is called: see src/icu/README.md.
 - Were there any changes to the WebCore code generator? If there are C++ compilation errors, check for differences in the generated reference code in vendor/WebKit/Source/WebCore/bindings/scripts/test/JS/
 - If the merge touched the fork's .github/workflows, the release tarball names must still match prebuiltSuffix() in scripts/build/deps/webkit.ts

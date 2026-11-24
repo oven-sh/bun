@@ -1,7 +1,6 @@
 // Per-item zstd decompression hook for ICU common data.
 //
-// oven-sh/WebKit's ICU build (icu/udata-decompress-hook.patch) inserts a weak
-// call to bun_icu_maybe_decompress between TOC lookup and checkDataItem.
+// src/icu/sys/package.rs calls bun_icu_maybe_decompress for each item it finds.
 // Display-name items (curr/ lang/ region/ unit/ zone/, non-en) are stored as
 // raw zstd frames; everything else keeps its 0xda27 header and passes through
 // after one u32 compare. Decompressed buffers are cached for the process
@@ -9,8 +8,7 @@
 
 #include "root.h"
 
-// The repacked ICU data archive (and the patched udata.cpp that calls this
-// hook) are produced by oven-sh/WebKit's Dockerfile / Dockerfile.musl /
+// The repacked ICU data archive is produced by oven-sh/WebKit's Dockerfile / Dockerfile.musl /
 // Dockerfile.windows / Dockerfile.freebsd / Dockerfile.android. On macOS ICU is the unmodified system one, so there is
 // nothing to decompress and the weak externs below would have no definer —
 // gate the implementation to the platforms whose prebuilts carry compressed
@@ -26,11 +24,16 @@
 
 #include "MimallocWTFMalloc.h"
 
+#include <unicode/uvernum.h>
 #include <wtf/HashMap.h>
 #include <wtf/Lock.h>
 #include <wtf/NeverDestroyed.h>
 
 #include "../../icu_data/icu_data.h"
+
+#ifndef BUN_SYSTEM_ICU
+static_assert(U_ICU_VERSION_MAJOR_NUM == 79 && U_ICU_VERSION_MINOR_NUM == 1, "src/icu is for another version of ICU, see src/icu/README.md");
+#endif
 
 namespace Bun {
 

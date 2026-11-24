@@ -1,6 +1,7 @@
 //! HTTP client.
 
 #![warn(unused_must_use)]
+#![feature(arbitrary_self_types)]
 #![feature(core_io_borrowed_buf)]
 pub mod error;
 pub use error::{CertError, Error, Result};
@@ -36,6 +37,8 @@ pub mod init_error;
 pub mod internal_state;
 #[path = "ProxyTunnel.rs"]
 pub mod proxy_tunnel;
+#[path = "RequestTrace.rs"]
+pub mod request_trace;
 #[path = "SendFile.rs"]
 pub mod send_file;
 #[path = "session_cache.rs"]
@@ -45,14 +48,12 @@ pub mod signals;
 #[path = "ThreadSafeStreamBuffer.rs"]
 pub mod thread_safe_stream_buffer;
 mod verbose;
-#[path = "websocket.rs"]
-pub mod websocket;
 
 // ── crate-root re-exports ──
 pub use async_http::AsyncHTTP;
 pub(crate) use async_http::InFlightRequest;
 pub use certificate_info::CertificateInfo;
-pub use decompressor::Decompressor;
+pub use decompressor::{Decompressor, UnfinishedStream};
 pub use header_builder::HeaderBuilder;
 pub use headers::Headers;
 pub(crate) use http_cert_error::HTTPCertError;
@@ -203,6 +204,7 @@ pub struct Flags {
     /// Whether this request stays out of the keep-alive pool. See `PoolBypass`.
     pub(crate) pool_bypass: PoolBypass,
     pub(crate) disable_decompression: bool,
+    pub unfinished_stream: UnfinishedStream,
     pub(crate) did_have_handshaking_error: bool,
     /// `PooledSocket::verification` of the socket this request took from the
     /// pool, so a weaker request re-pooling it doesn't downgrade the record.
@@ -230,6 +232,7 @@ impl Default for Flags {
             disable_keepalive: false,
             pool_bypass: PoolBypass::Off,
             disable_decompression: false,
+            unfinished_stream: UnfinishedStream::Reject,
             did_have_handshaking_error: false,
             reused_socket_verification: PeerVerification::None,
             force_last_modified: false,
@@ -519,7 +522,7 @@ impl<'a> HTTPClientResult<'a> {
         matches!(self.fail, Some(crate::Error::Timeout))
     }
 
-    pub(crate) fn is_abort(&self) -> bool {
+    pub fn is_abort(&self) -> bool {
         matches!(
             self.fail,
             Some(crate::Error::Aborted | crate::Error::AbortedBeforeConnecting)
@@ -794,6 +797,7 @@ pub struct HTTPClient<'a> {
     /// the body hasn't been compressed yet.
     pub(crate) compressed_body_len: usize,
     pub(crate) pool: PoolOptions,
+    pub(crate) tracing: Option<Box<request_trace::Tracing>>,
 }
 
 /// What the owner does with a request that has left its socket.
@@ -802,8 +806,9 @@ pub(crate) enum NextStep {
     Finish,
     /// The response is complete: pool or close the socket, then finish.
     ReleaseSocket,
-    /// For a redirect or a retry.
+    /// For a retry.
     Connect,
+    FollowRedirect,
     /// The socket now belongs to an HTTP/2 session.
     AttachH2,
 }
@@ -868,7 +873,7 @@ use bun_uws as uws;
 use bun_wyhash::Wyhash;
 
 use crate::http_context::HTTPSocket as HttpSocket;
-use crate::internal_state::{RequestStage, ResponseStage};
+use crate::internal_state::{RequestStage, ResponseStage, TransportEnd};
 use crate::proxy_tunnel::TunnelClosed;
 use crate::ssl_wrapper::SSLWrapper;
 use crate::verbose::{CurlFormatter, HeaderFormatter, ResponseFormatter};
@@ -1168,9 +1173,9 @@ pub(crate) fn get_tls_hostname<'c>(client: &'c HTTPClient<'_>, allow_proxy_url: 
 
 // ── support types ───────────────────────────────────────────────────────
 #[derive(Clone, Copy)]
-enum PendingH2Resolution {
+enum PendingH2Resolution<'a> {
     /// ALPN selected h2; waiters attach onto this session.
-    H2(h2::SessionPtr),
+    H2(&'a RefPtr<h2::ClientSession>),
     /// Handshake completed and ALPN selected http/1.1. Waiters can be pinned
     /// to h1 (and h2-pinned waiters failed) since the server has spoken.
     H1,
@@ -1875,6 +1880,7 @@ impl<'a> HTTPClient<'a> {
             let _ = socket.set_keep_alive(true, 60);
         }
 
+        self.trace_socket::<IS_SSL>(socket, &mut None);
         self.on_open::<IS_SSL>(socket)?;
         if IS_SSL {
             self.configure_tls::<IS_SSL>(socket);
@@ -2005,10 +2011,10 @@ impl<'a> HTTPClient<'a> {
                 // unified here, so rebuild from the InternalSocket.
                 let tls_socket = uws::SocketTLS::from_any(socket.socket);
                 let ctx = self.get_ssl_ctx::<true>();
-                // The context's registry holds the session's ref from here on.
                 let session = h2::ClientSession::create(ctx, tls_socket, self);
                 GenHttpContext::<true>::tag_as_h2(tls_socket, session.as_ptr());
-                self.resolve_pending_h2(PendingH2Resolution::H2(session));
+                self.resolve_pending_h2(PendingH2Resolution::H2(&session));
+                Self::ssl_ctx_mut(ctx).register_h2(session);
                 return Break(NextStep::AttachH2);
             }
             self.flags.protocol = Protocol::Http1_1;
@@ -2043,6 +2049,7 @@ impl<'a> HTTPClient<'a> {
     pub(crate) fn on_close<const IS_SSL: bool>(
         &mut self,
         socket: HttpSocket<IS_SSL>,
+        end: TransportEnd,
     ) -> ControlFlow<NextStep> {
         bun_core::scoped_log!(fetch, "Closed  {}\n", BStr::new(self.url.href));
 
@@ -2056,7 +2063,7 @@ impl<'a> HTTPClient<'a> {
             return self.do_redirect::<IS_SSL>(socket);
         }
         if self.state.is_body_complete_on_close() {
-            if let Err(err) = self.finalize_body_on_eof() {
+            if let Err(err) = self.finalize_body_on_close(end) {
                 return self.fail(err);
             }
             return Break(NextStep::ReleaseSocket);
@@ -2438,11 +2445,23 @@ impl<'a> HTTPClient<'a> {
             headers.append_assume_capacity(Header::new(CONTENT_LENGTH_HEADER_NAME, content_length));
         }
 
-        Request {
+        let request = Request {
             method: self.method.as_str().as_bytes(),
             path: self.url.pathname,
             headers,
-        }
+        };
+        self.trace_head(&request);
+        request
+    }
+
+    /// What [`Self::build_request`] adds that says nothing about the connection or the framing.
+    pub(crate) fn default_request_headers<'h>(
+        &self,
+    ) -> impl Iterator<Item = Header<'h>> + Clone + use<'h> {
+        let accept_encoding = (!self.flags.disable_decompression).then(accept_encoding_header);
+        [get_user_agent_header(), ACCEPT_HEADER]
+            .into_iter()
+            .chain(accept_encoding)
     }
 
     pub(crate) fn do_redirect<const IS_SSL: bool>(
@@ -2503,6 +2522,7 @@ impl<'a> HTTPClient<'a> {
                 None,
                 self.unix_socket_path,
                 self.pool,
+                self.traced_endpoints(),
             );
         } else {
             GenHttpContext::<IS_SSL>::close_socket(socket);
@@ -2525,7 +2545,7 @@ impl<'a> HTTPClient<'a> {
         self.reevaluate_proxy_for_redirect();
 
         self.begin_attempt(HTTPRequestBody::Bytes(request_body));
-        Break(NextStep::Connect)
+        Break(NextStep::FollowRedirect)
     }
 
     /// Re-resolve `http_proxy` against the post-redirect `self.url`. The
@@ -2588,6 +2608,7 @@ impl InFlightRequest {
 
     fn start_<const IS_SSL: bool>(mut self) {
         self.unregister_abort_tracker();
+        self.trace_no_socket();
 
         // Aborted before connecting
         if self.signals.get(signals::Field::Aborted) {
@@ -2994,7 +3015,11 @@ impl<'a> HTTPClient<'a> {
                     Ok(has_backpressure) => Ok(has_backpressure),
                     Err(TunnelClosed) => {
                         drop(locked);
-                        return self.on_proxy_tunnel_close(Error::ConnectionClosed, socket);
+                        return self.on_proxy_tunnel_close(
+                            Error::ConnectionClosed,
+                            TransportEnd::Failed,
+                            socket,
+                        );
                     }
                 }
             }
@@ -3063,7 +3088,11 @@ impl<'a> HTTPClient<'a> {
         if let Some(proxy) = &mut self.proxy_tunnel
             && let Err(TunnelClosed) = proxy.on_writable(socket.into(), lent_wrapper)
         {
-            return self.on_proxy_tunnel_close(Error::ConnectionClosed, socket);
+            return self.on_proxy_tunnel_close(
+                Error::ConnectionClosed,
+                TransportEnd::Failed,
+                socket,
+            );
         }
 
         // Parked until the JS `checkServerIdentity` callback approves the peer
@@ -3572,7 +3601,7 @@ impl<'a> HTTPClient<'a> {
 
     /// The leader of a coalesced cold connect has learned the ALPN outcome (or
     /// failed). Dispatch every waiter accordingly.
-    fn resolve_pending_h2(&mut self, resolution: PendingH2Resolution) {
+    fn resolve_pending_h2(&mut self, resolution: PendingH2Resolution<'_>) {
         let Some(pc_ptr) = self.pending_h2.take() else {
             return;
         };
@@ -3592,7 +3621,7 @@ impl<'a> HTTPClient<'a> {
                 continue;
             }
             match resolution {
-                PendingH2Resolution::H2(session) => h2::ClientSession::enqueue(session, waiter),
+                PendingH2Resolution::H2(session) => session.clone().enqueue(waiter),
                 PendingH2Resolution::H1 => {
                     // ALPN selected http/1.1 on the leader's handshake; an
                     // h2-pinned waiter would just open a fresh TLS connection
@@ -3678,8 +3707,11 @@ impl<'a> HTTPClient<'a> {
         /// 4 MiB: a full read of ordinary text, so such bodies do not evict each other from the cache.
         const WHOLE_BODY_PASSES_PER_TURN: usize = 16;
 
+        let unfinished = self.flags.unfinished_stream;
         if !self.decodes_in_passes() {
-            return self.state.process_body_buffer(is_final_chunk, usize::MAX);
+            return self
+                .state
+                .process_body_buffer(is_final_chunk, usize::MAX, unfinished);
         }
         // The resume that is due takes these bytes too.
         if self.holds_off_receiving() {
@@ -3699,7 +3731,9 @@ impl<'a> HTTPClient<'a> {
         }
         for _ in 0..WHOLE_BODY_PASSES_PER_TURN {
             let max_output = self.state.decoded_body.list.len() + budget;
-            let has_bytes = self.state.process_body_buffer(is_final_chunk, max_output)?;
+            let has_bytes =
+                self.state
+                    .process_body_buffer(is_final_chunk, max_output, unfinished)?;
             if !self.state.has_pending_compressed() || !self.signals.wants_whole_body() {
                 return Ok(has_bytes);
             }
@@ -3721,10 +3755,19 @@ impl<'a> HTTPClient<'a> {
         }
     }
 
-    /// For an end of the body that comes without bytes, so that a compressed stream that stops short is rejected.
-    pub(crate) fn finalize_body_on_eof(&mut self) -> crate::Result<()> {
-        self.state.flags.received_last_chunk = true;
+    /// For an end of the body that comes without bytes, so that a compressed stream that stops short is noticed.
+    pub(crate) fn finalize_body_on_eof(&mut self, end: TransportEnd) -> crate::Result<()> {
+        self.state.end_body(end);
         self.process_received_body(true).map(drop)
+    }
+
+    /// For an HTTP/1 connection that closes.
+    pub(crate) fn finalize_body_on_close(&mut self, end: TransportEnd) -> crate::Result<()> {
+        // A reset that `send()` reported first reads as a FIN.
+        if !self.is_request_fully_sent() {
+            return self.finalize_body_on_eof(TransportEnd::Failed);
+        }
+        self.finalize_body_on_eof(end)
     }
 
     /// The consumer or the decoder is behind, so the transport should stop taking body bytes.
@@ -3738,7 +3781,9 @@ impl<'a> HTTPClient<'a> {
             || self.proxy_tunnel.is_some()
             || self.flags.upgrade_state == HTTPUpgradeState::Upgraded
             || !self.holds_off_receiving()
-            || socket.is_closed_or_has_error()
+            // Not `get_error()`: reading SO_ERROR clears it, and the reset would then look like a FIN.
+            || socket.is_closed()
+            || socket.is_shutdown()
         {
             return;
         }
@@ -3877,6 +3922,7 @@ impl<'a> HTTPClient<'a> {
                 None,
                 self.unix_socket_path,
                 self.pool,
+                self.traced_endpoints(),
             );
         } else {
             GenHttpContext::<IS_SSL>::close_socket(socket);
@@ -3887,6 +3933,7 @@ impl<'a> HTTPClient<'a> {
 
     /// Reports what has arrived so far, as a result that is not the last one.
     fn send_partial_result(&mut self) {
+        self.trace_request_stage();
         let mut result = self.to_result();
         let mut decoded_body = core::mem::take(&mut self.state.decoded_body);
         result.body = decoded_body.list.as_slice();
@@ -3932,7 +3979,7 @@ impl InFlightRequest {
         self.flags.protocol = Protocol::Http1_1;
         self.reevaluate_proxy_for_redirect();
         self.begin_attempt(HTTPRequestBody::Bytes(request_body));
-        self.connect();
+        self.follow_redirect();
     }
 
     pub(crate) fn retry_from_h2(mut self) {
@@ -3982,6 +4029,7 @@ impl<'a> HTTPClient<'a> {
             None,
             b"",
             self.pool,
+            None,
         );
         Break(NextStep::Finish)
     }
@@ -4108,9 +4156,14 @@ impl<'a> HTTPClient<'a> {
         );
         // we can ignore the body data in redirects
         if !self.state.flags.is_redirect_pending {
+            Self::trace_received_chunk(self.tracing.as_deref(), incoming_data);
             if self.state.encoding.is_compressed() {
-                self.state
-                    .decompress_bytes(incoming_data, true, usize::MAX)?;
+                self.state.decompress_bytes(
+                    incoming_data,
+                    true,
+                    usize::MAX,
+                    self.flags.unfinished_stream,
+                )?;
             } else {
                 self.state
                     .get_body_buffer()
@@ -4142,6 +4195,7 @@ impl<'a> HTTPClient<'a> {
 
         // we can ignore the body data in redirects
         if !self.state.flags.is_redirect_pending {
+            Self::trace_received_chunk(self.tracing.as_deref(), remainder);
             let buffer = self.state.get_body_buffer();
             if buffer.list.is_empty() && incoming_data.len() < PREALLOCATE_MAX {
                 let _ = buffer.list.try_reserve_exact(incoming_data.len());
@@ -4196,6 +4250,7 @@ impl<'a> HTTPClient<'a> {
         let is_small =
             !is_compressed && body.capacity() == 0 && incoming_data.len() <= MAX_SMALL_LEN;
         let decoded = decoder.decode(incoming_data, body);
+        Self::trace_received_chunk(self.tracing.as_deref(), &body[len_before..]);
         if is_small {
             // The consumer may keep the allocation, which has room for the framing too.
             body.shrink_to_fit();
@@ -4431,11 +4486,14 @@ impl<'a> HTTPClient<'a> {
         // if is no redirect or if is redirect == "manual" just proceed
         // https://fetch.spec.whatwg.org/#redirect-status
         let is_redirect = matches!(status_code, 301 | 302 | 303 | 307 | 308);
+        self.trace_response_head(response);
         if is_redirect {
             if self.redirect_type == FetchRedirect::Follow
                 && !location.is_empty()
                 && self.remaining_redirect_count > 0
             {
+                self.trace(|_| request_trace::Event::ResponseEnd);
+                self.restore_own_headers();
                 // https://fetch.spec.whatwg.org/#http-redirect-fetch step 11:
                 // "If internalResponse's status is not 303, request's body
                 // is non-null, and request's body's source is null, then
@@ -4651,6 +4709,7 @@ impl<'a> HTTPClient<'a> {
                     self.state.flags.resend_request_body_on_redirect = true;
                 }
             } else if self.redirect_type == FetchRedirect::Error {
+                self.trace(|_| request_trace::Event::ResponseEnd);
                 // error out if redirect is not allowed
                 return Err(crate::Error::UnexpectedRedirect);
             }
@@ -4677,6 +4736,7 @@ impl<'a> HTTPClient<'a> {
             );
         }
         if self.flags.upgrade_state == HTTPUpgradeState::Upgraded {
+            self.trace(|_| request_trace::Event::ResponseEnd);
             self.state.content_length = None;
             self.state.flags.allow_keepalive = false;
             return Ok(ShouldContinue::ContinueStreaming);

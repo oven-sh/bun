@@ -81,6 +81,7 @@ const commands: Record<string, readonly [args: readonly string[], length: number
   incr: [["key"], 1],
   incrby: [["key", "increment"], 2],
   incrbyfloat: [["key", "increment"], 2],
+  increx: [["...args"], 1],
   info: [["...args"], 0],
   keys: [["pattern"], 0],
   lastsave: [[], 0],

@@ -120,3 +120,24 @@ test("--files-from refuses a filter beside it, rather than running the listed fi
   expect(mixed.out).not.toContain("beta");
   expect(mixed.exitCode).toBe(1);
 });
+
+test("a path with a backslash is not passed over beside another path", async () => {
+  using dir = tempDir("test-paths-backslash", {
+    "tests/unit/a.test.js": passes("alpha"),
+    "e2e/b.test.js": passes("bravo"),
+  });
+  const { out, exitCode } = await run(String(dir), "./tests\\unit", "./e2e");
+  expect(out).toContain("Ran 2 tests across 2 files");
+  expect(exitCode).toBe(0);
+});
+
+test("--files-from reads a list that was written on Windows", async () => {
+  using dir = tempDir("files-from-backslash", {
+    "tests/a.test.js": passes("alpha"),
+    "tests/b.test.js": passes("bravo"),
+    "list.txt": "tests/a.test.js\r\ntests\\b.test.js\r\n",
+  });
+  const { out, exitCode } = await run(String(dir), "--files-from", "list.txt");
+  expect(out).toContain("Ran 2 tests across 2 files");
+  expect(exitCode).toBe(0);
+});

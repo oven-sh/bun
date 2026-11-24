@@ -70,7 +70,7 @@ pub(crate) struct Image {
     /// Strong→wrapper→sourceJS-slot chain is what keeps the borrowed ArrayBuffer
     /// alive across the WorkPool roundtrip; switching to weak when idle lets GC
     /// collect the wrapper.
-    this_ref: JsCell<JsRef>,
+    pub(crate) this_ref: JsCell<JsRef>,
     pending_tasks: Cell<u32>,
 }
 
@@ -867,7 +867,6 @@ impl Image {
     ) -> JsResult<JSValue> {
         let cx = cx.js_thread();
         let global = cx.global();
-        let this_value = this_value.to_js();
         // Header-only probe is a few dozen byte reads — when the bytes are already
         // in memory it's cheaper to do it inline than to bounce off the WorkPool
         // (~0.4 ms roundtrip). Path-backed sources still go async for the file I/O.
@@ -878,7 +877,7 @@ impl Image {
         let view;
         let bytes: Option<&[u8]> = match self.source.get() {
             Source::JsBuffer => {
-                view = js::source_js_get_cached(this_value)
+                view = js::source_js_get_cached(this_value.to_js())
                     .and_then(|v: JSValue| v.as_array_buffer(global));
                 view.as_ref().map(ArrayBuffer::byte_slice)
             }
@@ -926,7 +925,7 @@ impl Image {
     ) -> JsResult<JSValue> {
         self.schedule(
             &cx.js_thread(),
-            this_value.to_js(),
+            this_value,
             Kind::Encode(self.pipeline.get().output),
             Deliver::Uint8Array,
         )
@@ -939,7 +938,7 @@ impl Image {
     ) -> JsResult<JSValue> {
         self.schedule(
             &cx.js_thread(),
-            this_value.to_js(),
+            this_value,
             Kind::Encode(self.pipeline.get().output),
             Deliver::Buffer,
         )
@@ -952,7 +951,7 @@ impl Image {
     ) -> JsResult<JSValue> {
         self.schedule(
             &cx.js_thread(),
-            this_value.to_js(),
+            this_value,
             Kind::Encode(self.pipeline.get().output),
             Deliver::Blob,
         )
@@ -965,7 +964,7 @@ impl Image {
     ) -> JsResult<JSValue> {
         self.schedule(
             &cx.js_thread(),
-            this_value.to_js(),
+            this_value,
             Kind::Encode(self.pipeline.get().output),
             Deliver::Base64,
         )
@@ -980,7 +979,7 @@ impl Image {
     ) -> JsResult<JSValue> {
         self.schedule(
             &cx.js_thread(),
-            this_value.to_js(),
+            this_value,
             Kind::Encode(self.pipeline.get().output),
             Deliver::DataUrl,
         )
@@ -1011,7 +1010,7 @@ impl Image {
                 )));
             }
         }
-        self.schedule(&cx, this_value.to_js(), Kind::Placeholder, Deliver::DataUrl)
+        self.schedule(&cx, this_value, Kind::Placeholder, Deliver::DataUrl)
     }
 
     /// Terminal: encode and write to `path` on the work pool (no round-trip of
@@ -1062,7 +1061,7 @@ impl Image {
         }
         self.schedule(
             &cx,
-            this_value.to_js(),
+            this_value,
             Kind::Encode(output),
             Deliver::WriteDest(Strong::create(dest, global)),
         )
@@ -1073,14 +1072,25 @@ impl Image {
     fn schedule(
         &self,
         cx: &bun_jsc::JsThread<'_>,
-        this_value: JSValue,
+        this_value: JsWrapper<'_, Self>,
         kind: Kind,
         deliver: Deliver,
     ) -> JsResult<JSValue> {
+        let pending = PendingTask::new(self, this_value, cx.global());
         if matches!(self.source.get(), Source::Blob(_)) {
-            return BlobReadChain::start(self, cx, this_value, kind, deliver);
+            return BlobReadChain::start(self, cx, pending, kind, deliver);
         }
-        let (input, pin) = match self.pin_for_task(this_value, cx.global()) {
+        Self::schedule_pipeline(cx, pending, kind, deliver)
+    }
+
+    fn schedule_pipeline(
+        cx: &bun_jsc::JsThread<'_>,
+        pending: PendingTask,
+        kind: Kind,
+        deliver: Deliver,
+    ) -> JsResult<JSValue> {
+        let this = pending.image(cx);
+        let (input, pin) = match this.pin_for_task(this.this_ref.get().get(), cx.global()) {
             Ok(i) => i,
             Err(PinError::Detached) => {
                 drop(deliver);
@@ -1096,11 +1106,11 @@ impl Image {
             }
         };
         let work = PipelineTask {
-            pipeline: self.pipeline.get(),
+            pipeline: this.pipeline.get(),
             input,
             kind,
-            max_pixels: self.max_pixels,
-            auto_orient: self.auto_orient,
+            max_pixels: this.max_pixels,
+            auto_orient: this.auto_orient,
             result: TaskResult::Err(codecs::Error::DecodeFailed),
         };
         let promise = jsc::JSPromiseStrong::init(cx.global());
@@ -1112,7 +1122,7 @@ impl Image {
                 promise,
                 deliver,
                 _pin: pin,
-                image: PendingTask::new(self, this_value, cx.global()),
+                image: pending,
             },
         );
         Ok(promise_value)
@@ -1225,7 +1235,7 @@ impl BlobReadChain {
     fn start(
         image: &Image,
         cx: &bun_jsc::JsThread<'_>,
-        this_value: JSValue,
+        pending: PendingTask,
         kind: Kind,
         deliver: Deliver,
     ) -> JsResult<JSValue> {
@@ -1249,7 +1259,7 @@ impl BlobReadChain {
         }
 
         let chain = Box::new(BlobReadChain {
-            image: PendingTask::new(image, this_value, cx.global()),
+            image: pending,
             global: bun_ptr::BackRef::new(cx.global()),
             context: cx.context().id(),
             kind,
@@ -1287,17 +1297,14 @@ impl BlobReadChain {
                 // `.owned`; that buffer is then *borrowed* by `pin_for_task`
                 // into a worker-thread PipelineTask. A later resolver MUST NOT
                 // drop the source (it would free what the worker is reading)
-                // — drop the redundant read instead and re-enter `schedule()`
+                // — drop the redundant read instead and schedule the pipeline
                 // on the already-swapped source.
                 if matches!(image.source.get(), Source::Blob(_)) {
                     image.source.set(Source::Owned(bytes));
                 } else {
                     drop(bytes);
                 }
-                let this_value = image.this_ref.get().get();
-                // Source is now `.owned`; this re-entry takes the regular path. If `schedule()` threw,
-                // `deliver` was already dropped there and the pending exception is the rejection.
-                let inner = image.schedule(&cx, this_value, kind, deliver);
+                let inner = Image::schedule_pipeline(&cx, self.image, kind, deliver);
                 outer.settle(global, inner)
             }
             ReadBytesResult::Err(e) => {
@@ -1359,11 +1366,9 @@ pub(crate) struct PendingTask(jsc::JsPtr<Image>);
 // SAFETY: the Image is stored inline in its wrapper, which the Strong we hold keeps alive.
 unsafe impl bun_jsc::job::JsAffine for PendingTask {}
 impl PendingTask {
-    fn new(image: &Image, this_value: JSValue, global: &JSGlobalObject) -> Self {
+    fn new(image: &Image, this_value: JsWrapper<'_, Image>, global: &JSGlobalObject) -> Self {
         if image.pending_tasks.get() == 0 {
-            image
-                .this_ref
-                .with_mut(|r| r.set_strong(this_value, global));
+            this_value.set_js_ref_strong(global);
         }
         image.pending_tasks.set(image.pending_tasks.get() + 1);
         // SAFETY: see the JsAffine note.

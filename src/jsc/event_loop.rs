@@ -13,6 +13,7 @@ use core::cell::{Cell, OnceCell, UnsafeCell};
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicI32, AtomicPtr, AtomicU64, Ordering};
 
+use bun_core::scoped::{ScopedCell as _, ScopedFlag as _};
 use bun_io as Async;
 use bun_uws as uws;
 
@@ -302,6 +303,22 @@ impl Drop for EventLoopEnterNoCheckpointGuard<'_> {
     }
 }
 
+/// RAII pairing for [`EventLoop::ref_keep_alive`] / [`EventLoop::unref_keep_alive`].
+struct KeptAlive<'a>(&'a EventLoop);
+
+impl<'a> KeptAlive<'a> {
+    fn new(loop_: &'a EventLoop) -> Self {
+        loop_.ref_keep_alive();
+        Self(loop_)
+    }
+}
+
+impl Drop for KeptAlive<'_> {
+    fn drop(&mut self) {
+        self.0.unref_keep_alive();
+    }
+}
+
 /// What [`EventLoop::enter_js`] found.
 enum EnterJs<'a> {
     /// The callback may be called, inside this scope (none for [`ContextId::NONE`](crate::ContextId::NONE)).
@@ -444,9 +461,10 @@ impl EventLoop {
             _ => unreachable!(),
         }
 
-        vm.is_inside_deferred_task_queue.set(true);
-        self.deferred_tasks.run();
-        vm.is_inside_deferred_task_queue.set(false);
+        {
+            let _inside = vm.is_inside_deferred_task_queue.raise_for_scope();
+            self.deferred_tasks.run();
+        }
 
         // Guard on `event_loop_handle` being set, but drain via `uws_loop()`:
         // on Windows the uSockets loop (`uws::Loop::get()`) is NOT
@@ -477,9 +495,10 @@ impl EventLoop {
                 return Ok(());
             };
             // `exit()` drains before it decrements the count. Reset it so each test callback still drains its microtasks.
-            let entered = self.entered_event_loop_count.replace(0);
-            (hooks.run_pending_test_step)(vm.global());
-            self.entered_event_loop_count.set(entered);
+            {
+                let _entered = self.entered_event_loop_count.set_for_scope(0);
+                (hooks.run_pending_test_step)(vm.global());
+            }
             if !self.drain_microtasks_once(vm, global_object, jsc_vm)? {
                 return Ok(());
             }
@@ -790,10 +809,9 @@ impl EventLoop {
     pub fn tick(&self) {
         jsc::mark_binding();
         crate::top_scope!(scope, self.global_ref());
-        self.entered_event_loop_count.update(|count| count + 1);
+        let _entered = self.enter_scope_without_checkpoint();
         // `Err(Stopped)`: a fold or checkpoint met the VM's termination; the turn is over.
         let _ = self.tick_turn(&mut scope);
-        self.entered_event_loop_count.update(|count| count - 1);
     }
 
     fn tick_turn(&self, scope: &mut crate::TopExceptionScope) -> Result<(), Stopped> {
@@ -1138,9 +1156,8 @@ impl EventLoop {
         if self.vm_ref().is_event_loop_alive_despite_errors() {
             return self.auto_tick();
         }
-        self.ref_keep_alive();
+        let _kept_alive = KeptAlive::new(self);
         self.auto_tick();
-        self.unref_keep_alive();
     }
 
     /// Ticks until `is_done`, and gives up once nothing is left that could run JS again.

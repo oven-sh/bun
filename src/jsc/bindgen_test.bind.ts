@@ -268,6 +268,7 @@ export const TestRefCounted = b.class({
   rustPath: "crate::bindgen_test::TestRefCounted",
   refCounted: true,
   finalize: true,
+  thisValue: "this_value",
   construct: { args: { value: b.i32.default(0) } },
   internalFields: ["listener"],
   proto: {
@@ -278,7 +279,7 @@ export const TestRefCounted = b.class({
     /** Calls the listener, which may call back into this object, then returns the value. */
     notify: { returns: b.i32, capability: "js", throws: true, passThis: true },
     /** Makes Rust hold a ref until `TestRefCounted.release()`. */
-    keep: {},
+    keep: { passThis: true },
     "@@dispose": {},
     "@@toPrimitive": { returns: b.i32, name: "", rustName: "get_value" },
     valueOrUndefined: { returns: b.i32, invalidThis: "undefined", rustName: "get_value" },
@@ -290,6 +291,8 @@ export const TestRefCounted = b.class({
   static: {
     /** The instance kept by `keep()`, as `[value, finalized]`. */
     kept: { returns: b.array(b.i32) },
+    /** The object of that instance, or `undefined` if it was collected. */
+    keptObject: { returns: b.any, capability: "heap" },
     release: {},
     alive: { returns: b.usize },
     /** `object.value` read through `from_js`, or `null` if `object` is not an instance. */

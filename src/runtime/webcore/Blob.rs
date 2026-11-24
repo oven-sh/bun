@@ -39,10 +39,7 @@ use store::{FileExt as _, S3Ext as _, StoreExt as _};
 pub(crate) mod copy_file;
 #[cfg(not(windows))]
 #[path = "blob/fd_job.rs"]
-pub(crate) mod fd_job;
-#[cfg(not(windows))]
-#[path = "blob/io_parking.rs"]
-mod io_parking;
+mod fd_job;
 #[cfg(any(target_os = "linux", target_os = "android"))]
 #[path = "blob/memfd.rs"]
 mod memfd;
@@ -870,7 +867,7 @@ impl BlobExt for Blob {
         {
             writer.write_str(" {\n")?;
             {
-                formatter.indent_inc();
+                let mut formatter = formatter.indented();
 
                 if show_name {
                     formatter.write_indent(writer)?;
@@ -926,8 +923,6 @@ impl BlobExt for Blob {
                         self.last_modified.get(),
                     )?;
                 }
-
-                formatter.indent_dec();
             }
             formatter.write_indent(writer)?;
             writer.write_str("}")?;
@@ -1201,7 +1196,7 @@ impl BlobExt for Blob {
                 let file = if let PathOrFileDescriptor::Fd(fd) = pathlike {
                     bun_sys::MaybeOwnedFile::Borrowed(*fd)
                 } else {
-                    let mut file_path = bun_paths::path_buffer_pool::get();
+                    let mut file_path = bun_paths::Path::new();
                     let path = pathlike.path().slice_z(&mut file_path);
                     let flags = bun_sys::O::WRONLY
                         | bun_sys::O::CREAT
@@ -1297,7 +1292,7 @@ impl BlobExt for Blob {
 
         // `pipe_stream` takes its own refs; init's +1 drops with `file_sink` on return.
         let mut readable_stream = readable_stream;
-        match webcore::FileSink::pipe_stream(&file_sink, &mut readable_stream, cx.global()) {
+        match file_sink.pipe_stream(&mut readable_stream, cx.global()) {
             Ok(promise) => Ok(promise),
             Err(err) => {
                 Ok(JSPromise::rejected_promise_with_caught_exception(cx.global(), err)?.to_js())
@@ -1391,7 +1386,7 @@ impl BlobExt for Blob {
             let file = match pathlike {
                 PathOrFileDescriptor::Fd(fd) => bun_sys::MaybeOwnedFile::Borrowed(*fd),
                 PathOrFileDescriptor::Path(p) => {
-                    let mut file_path = bun_paths::path_buffer_pool::get();
+                    let mut file_path = bun_paths::Path::new();
                     let flags = bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::NONBLOCK;
                     if let Some(err) = node::fs::refuse_open_for_write(p.slice(), flags) {
                         return Err(global_this.throw_value(err.to_js(global_this)));
@@ -1433,7 +1428,7 @@ impl BlobExt for Blob {
                 sink.close_with_graph(context);
             }
 
-            return Ok(webcore::FileSink::to_js(sink, global_this));
+            return Ok(sink.to_js(global_this));
         }
 
         #[cfg(not(windows))]
@@ -1477,7 +1472,7 @@ impl BlobExt for Blob {
                 return Err(global_this.throw_value(err.to_js(global_this)));
             }
 
-            Ok(webcore::FileSink::to_js(sink, global_this))
+            Ok(sink.to_js(global_this))
         }
     }
     fn get_slice_from(
@@ -1989,15 +1984,20 @@ impl BlobExt for Blob {
             }
         }
 
+        let mut bytes = Vec::new();
+        bytes
+            .try_reserve_exact(bytes_.len())
+            .map_err(|_| bun_alloc::AllocError)?;
+        bytes.extend_from_slice(bytes_);
         Ok(Self::create_with_bytes_and_allocator(
-            bytes_.to_vec(),
+            bytes,
             global_this,
             was_string,
         ))
     }
 
     fn create(bytes_: &[u8], global_this: &JSGlobalObject, was_string: bool) -> Blob {
-        Self::try_create(bytes_, global_this, was_string).expect("oom")
+        bun_core::handle_oom(Self::try_create(bytes_, global_this, was_string))
     }
 
     // dupe / dupe_with_content_type / into_js: defined once below (top-level impl); duplicates removed (E0592).
@@ -2506,7 +2506,7 @@ impl BlobExt for Blob {
                     // Decide up front whether processing any part (or any entry
                     // still pending on `stack`) can re-enter user JS (toString /
                     // Symbol.toPrimitive / proxy traps / getters) and detach a
-                    // borrowed buffer before `joiner.done()` copies it out. If
+                    // borrowed buffer before `joiner.move_to()` copies it out. If
                     // nothing can, typed-array parts are borrowed (`push_static`)
                     // instead of cloned, which would double peak memory for
                     // `new Blob(largeChunks)`. Non-fast arrays are conservatively
@@ -2552,13 +2552,13 @@ impl BlobExt for Blob {
                                     let buf = item.as_array_buffer(global).unwrap();
                                     if parts_can_run_js {
                                         // A later part may run user JS that detaches
-                                        // or resizes this buffer before `done()`.
+                                        // or resizes this buffer before `move_to()`.
                                         joiner.push_cloned(buf.byte_slice());
                                     } else {
                                         // SAFETY: the prescan above proved no remaining
                                         // part can run user JS, so this buffer (rooted
                                         // via `_keep`/`arg`) stays attached and valid
-                                        // until `joiner.done()` below.
+                                        // until `joiner.move_to()` below.
                                         joiner.push(unsafe {
                                             bun_ptr::detach_lifetime(buf.byte_slice())
                                         });
@@ -2576,14 +2576,14 @@ impl BlobExt for Blob {
                                         could_have_non_ascii = could_have_non_ascii
                                             || blob.charset.get() != strings::AsciiStatus::AllAscii;
                                         // A later part may run user JS that drops the
-                                        // last ref to this Blob's Store before `done()`.
+                                        // last ref to this Blob's Store before `move_to()`.
                                         if parts_can_run_js {
                                             joiner.push_cloned(blob.shared_view());
                                         } else {
                                             // SAFETY: the prescan above proved no
                                             // remaining part can run user JS, so this
                                             // Blob (rooted via `_keep`/`arg`) keeps its
-                                            // Store alive until `joiner.done()` below.
+                                            // Store alive until `joiner.move_to()` below.
                                             joiner.push(unsafe {
                                                 bun_ptr::detach_lifetime(blob.shared_view())
                                             });
@@ -2613,7 +2613,7 @@ impl BlobExt for Blob {
                             || blob.charset.get() != strings::AsciiStatus::AllAscii;
                         // This arm only handles entries deferred onto the walk
                         // stack; other pending entries may still run user JS and
-                        // free this Blob's Store before `done()`, so always copy.
+                        // free this Blob's Store before `move_to()`, so always copy.
                         joiner.push_cloned(blob.shared_view());
                     } else {
                         let utf8 = current.to_utf8(global)?;
@@ -2626,7 +2626,7 @@ impl BlobExt for Blob {
                     let buf = current.as_array_buffer(global).unwrap();
                     // SAFETY: this arm is only reached when the typed array is the
                     // top-level value (the walk stack is empty), so no user JS runs
-                    // between this push and `joiner.done()` below; `_keep`/`arg` keeps
+                    // between this push and `joiner.move_to()` below; `_keep`/`arg` keeps
                     // the buffer alive for that span.
                     joiner.push(unsafe { bun_ptr::detach_lifetime(buf.slice()) });
                     could_have_non_ascii = true;
@@ -2644,7 +2644,11 @@ impl BlobExt for Blob {
             };
         }
 
-        let joined: Vec<u8> = joiner.done().expect("oom").into_vec();
+        let mut joined = Vec::new();
+        joined
+            .try_reserve_exact(joiner.len)
+            .map_err(|_| jsc::JsError::OutOfMemory)?;
+        joiner.move_to(&mut joined);
 
         if !could_have_non_ascii {
             return Ok(Blob::init_with_all_ascii(joined, global, true));
@@ -3292,22 +3296,10 @@ pub(crate) fn write_format_for_size<W: core::fmt::Write, const ENABLE_ANSI_COLOR
     )
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// mkdirIfNotExists / Retry
-// ──────────────────────────────────────────────────────────────────────────
-
-#[derive(Copy, Clone, PartialEq, Eq)]
-#[cfg(not(windows))]
-pub(crate) enum Retry {
-    Continue,
-    Fail,
-    No,
-}
-
 /// Create the parent directories of `path`.
 #[inline(never)]
 pub(crate) fn mkdirp_parent(path: &[u8]) -> bun_sys::Result<()> {
-    let Some(dirname) = bun_core::dirname(path) else {
+    let Some(dirname) = bun_paths::dirname(path) else {
         return Err(bun_sys::Error::from_code(
             bun_sys::E::ENOENT,
             bun_sys::Tag::mkdir,
@@ -3321,29 +3313,6 @@ pub(crate) fn mkdirp_parent(path: &[u8]) -> bun_sys::Result<()> {
             ..Default::default()
         })
         .map(|_| ())
-}
-
-// TODO: move this to bun_sys?
-#[inline(never)]
-#[cfg(not(windows))]
-pub(crate) fn mkdir_if_not_exists<T: MkdirpTarget>(
-    this: &mut T,
-    err: &bun_sys::Error,
-    path_string: &bun_core::ZStr,
-) -> Retry {
-    if err.get_errno() == bun_sys::E::ENOENT && this.mkdirp_if_not_exists() {
-        match mkdirp_parent(path_string.as_bytes()) {
-            bun_sys::Result::Ok(()) => {
-                this.set_mkdirp_if_not_exists(false);
-                return Retry::Continue;
-            }
-            bun_sys::Result::Err(_) => {
-                this.set_system_error(err.to_system_error());
-                return Retry::Fail;
-            }
-        }
-    }
-    Retry::No
 }
 
 /// Runs `create` again if the parents of `path` were missing and could be made, which clears `mkdirp`.
@@ -3379,14 +3348,6 @@ fn sys_error_with_path_like(
         }
         PathOrFileDescriptor::Fd(_) => err.clone(),
     }
-}
-
-/// Receiver trait for `mkdir_if_not_exists`.
-#[cfg(not(windows))]
-pub(crate) trait MkdirpTarget {
-    fn mkdirp_if_not_exists(&self) -> bool;
-    fn set_mkdirp_if_not_exists(&mut self, v: bool);
-    fn set_system_error(&mut self, e: bun_sys::SystemError);
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -3453,7 +3414,7 @@ fn write_file_with_empty_source_to_destination(
                                 }
                                 let dirpath: &[u8] = match &file.pathlike {
                                     PathOrFileDescriptor::Path(path) => {
-                                        match bun_core::dirname(path.slice()) {
+                                        match bun_paths::dirname(path.slice()) {
                                             Some(d) => d,
                                             None => break 'err,
                                         }
@@ -3480,7 +3441,7 @@ fn write_file_with_empty_source_to_destination(
                                 }
 
                                 // SAFETY: we check if `file.pathlike` is an fd above, returning if it is.
-                                let mut buf = bun_paths::path_buffer_pool::get();
+                                let mut buf = bun_paths::Path::new();
                                 let mode: bun_sys::Mode =
                                     options.mode.unwrap_or(node::fs::DEFAULT_PERMISSION);
                                 match bun_sys::File::open(
@@ -4200,7 +4161,14 @@ pub(crate) fn write_file_internal(
             return destination_blob.pipe_readable_stream_to_blob(cx, readable, &options);
         }
 
-        break 'brk Blob::get::<false, false>(cx.global(), data)?;
+        break 'brk match Blob::get::<false, false>(cx.global(), data) {
+            Err(err @ jsc::JsError::OutOfMemory) => {
+                return Ok(
+                    JSPromise::rejected_promise_with_caught_exception(cx.global(), err)?.to_js(),
+                );
+            }
+            blob => blob?,
+        };
     };
 
     write_file_with_source_destination(cx, &mut source_blob, &mut destination_blob, &options)
@@ -4320,7 +4288,7 @@ fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
         lent = pathlike.fd();
         bun_sys::File::borrow(&lent)
     } else {
-        let mut file_path = bun_paths::path_buffer_pool::get();
+        let mut file_path = bun_paths::Path::new();
         match bun_sys::open(
             pathlike.path().slice_z(&mut file_path),
             // we deliberately don't use O_TRUNC here
@@ -4405,7 +4373,7 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
         lent = pathlike.fd();
         bun_sys::File::borrow(&lent)
     } else {
-        let mut file_path = bun_paths::path_buffer_pool::get();
+        let mut file_path = bun_paths::Path::new();
         let flags = if cfg!(not(windows)) {
             bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::NONBLOCK
         } else {
@@ -4986,7 +4954,7 @@ fn resolve_file_stat(store: &RefPtr<Store>) {
     let file = Store::data_mut(store).as_file_mut();
     match &file.pathlike {
         PathOrFileDescriptor::Path(path) => {
-            let mut buffer = bun_paths::path_buffer_pool::get();
+            let mut buffer = bun_paths::Path::new();
             match bun_sys::stat(path.slice_z(&mut buffer)) {
                 bun_sys::Result::Ok(stat) => {
                     file.max_size = if bun_sys::S::ISREG(stat.st_mode as _) || stat.st_size > 0 {
@@ -5053,7 +5021,7 @@ pub(crate) fn store_yields_bytes_once(store: &RefPtr<Store>) -> bool {
     } else if let PathOrFileDescriptor::Path(path) = &file.pathlike {
         // Not `resolve_file_stat`: the `Bun.file()` sharing `store` answers from what that caches.
         if file.mode_seen_by_clone.is_none() {
-            let mut buffer = bun_paths::path_buffer_pool::get();
+            let mut buffer = bun_paths::Path::new();
             if let bun_sys::Result::Ok(stat) = bun_sys::stat(path.slice_z(&mut buffer)) {
                 file.mode_seen_by_clone = Some(stat.st_mode as bun_sys::Mode);
             }

@@ -9,7 +9,7 @@
     "bench:insecure": "ghz --insecure --proto ./benchmark.proto --call benchmark.BenchmarkService.Ping -d '{\"message\": \"Hello\"}' --total=100000 localhost:50051"
   },
   "dependencies": {
-    "@grpc/grpc-js": "1.12.0",
-    "@grpc/proto-loader": "0.7.10"
+    "@grpc/grpc-js": "1.14.7",
+    "@grpc/proto-loader": "0.8.1"
   }
 }

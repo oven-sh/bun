@@ -216,6 +216,7 @@ Every `import`, and every `require()` of a constant path, is resolved at build t
 | `Object.keys(require.cache)`                                     | Doesn't list compiled modules                                               |
 | `Bun.plugin()` at run time                                       | Asked about dynamic paths only. It can't replace a module that was compiled |
 | A tracer that patches modules as they load, like OpenTelemetry's | Sees none of them                                                           |
+| The `module.require` and `module.import` tracing channels        | Publish nothing. With `--no-aot`, they publish what isn't bundled           |
 
 For aliases, use `paths` in `tsconfig.json` or `imports` in `package.json`.
 
@@ -375,3 +376,4 @@ Check `error.name` or use `instanceof`, not `error.message`.
 | A stack under 512 KB (`ulimit -s`)                                     | Give it more. `bun run` needs less                                                       |
 | `import()` or `require()` with a `type` that isn't written out         | Write it out: `require("./a.json", { type: "file" })`                                    |
 | `with { type: "macro" }` on an import (`TS100053`)                     | Pass `--no-aot`                                                                          |
+| The `console.*` diagnostics channels, for the global `console`         | Replace the methods of `console`, or log through a `new console.Console()`               |

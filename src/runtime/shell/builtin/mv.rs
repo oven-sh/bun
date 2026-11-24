@@ -1,16 +1,16 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use bstr::BStr;
-use bun_core::{ZBox, ZStr, strings};
-use bun_paths::{PathBuffer, resolve_path};
+use bun_core::{ZBox, ZStr};
+use bun_paths::Path;
 use bun_ptr::BackRef;
 
 use crate::node::fs::{is_on_disk_at, note_moved_shell_operand, refuse_move};
 use crate::shell::ExitCode;
 use crate::shell::builtin::{BadFlag, Builtin, IoKind, Kind, State};
 use crate::shell::interpreter::{
-    Interpreter, NodeId, OwnedFd, PoolTask, ShellTask, ShellWork, shell_lstatat, shell_openat,
-    shell_statat,
+    Interpreter, NodeId, OwnedFd, PoolTask, ShellTask, ShellWork, names_two_files, shell_lstatat,
+    shell_openat, shell_statat,
 };
 use crate::shell::yield_::Yield;
 
@@ -152,14 +152,12 @@ impl ShellWork for ShellMvBatchedTask {
         }
         // Moving one entry into a directory.
         if let Some(dir) = self.target_fd {
-            let mut buf = bun_paths::path_buffer_pool::get();
             if let Err(e) = Self::move_in_dir(
                 self.cwd,
                 dir,
                 self.target.as_bytes(),
                 &self.sources[0],
                 self.no_clobber,
-                &mut buf,
             ) {
                 self.err = Some(e);
             }
@@ -212,9 +210,9 @@ impl ShellMvBatchedTask {
         let sources = self.sources.iter().zip(&self.was_on_disk);
         for (source, _) in sources.filter(|&(_, &was_on_disk)| was_on_disk) {
             let (source, target) = (source.as_bytes(), self.target.as_bytes());
-            let name = bun_paths::basename(strings::without_trailing_slash(source));
+            let name = bun_paths::basename(source);
             match self.target_fd {
-                Some(_) => note_moved_shell_operand(cwd, source, &[target, b"/", name].concat()),
+                Some(_) => note_moved_shell_operand(cwd, source, &Path::join(&[target, name])),
                 None => note_moved_shell_operand(cwd, source, target),
             }
         }
@@ -232,6 +230,9 @@ impl ShellMvBatchedTask {
 
         if let Some(error) = refuse_move((src_dir, src.as_bytes()), (dst_dir, dst.as_bytes())) {
             return Err(error);
+        }
+        if names_two_files(dst) {
+            return Err(bun_sys::Error::from_code(E::EINVAL, bun_sys::Tag::rename).with_path(dst));
         }
         if no_clobber {
             if shell_lstatat(dst_dir, dst).is_ok() {
@@ -387,25 +388,22 @@ impl ShellMvBatchedTask {
         let mode = st.st_mode as bun_core::Mode;
         // Unlink first so a symlink-at-dest isn't followed by `O_TRUNC`; also avoids ETXTBUSY.
         let _ = bun_sys::unlinkat(dst_dir, dst);
-        let out = File::openat(
+        let out = bun_sys::Tmpfile::open(
             dst_dir,
-            dst.as_bytes(),
+            dst,
             O::WRONLY | O::CREAT | O::TRUNC | O::CLOEXEC | O::NOFOLLOW,
             mode & 0o7777,
         )?;
-        let _ = bun_sys::preallocate_file(out.fd().native(), 0, st.st_size as _);
-        if let Err(e) = bun_sys::copy_file(in_.fd(), out.fd()) {
-            drop(out);
-            let _ = bun_sys::unlinkat(dst_dir, dst);
-            return Err(e);
-        }
+        let _ = bun_sys::preallocate_file(out.file.fd().native(), 0, st.st_size as _);
+        bun_sys::copy_file(in_.fd(), out.file.fd())?;
         #[cfg(unix)]
         {
             // `fchown` first: Linux clears S_ISUID/S_ISGID on chown.
-            let _ = bun_sys::fchown(out.fd(), st.st_uid as _, st.st_gid as _);
-            let _ = bun_sys::fchmod(out.fd(), mode & 0o7777);
+            let _ = bun_sys::fchown(out.file.fd(), st.st_uid as _, st.st_gid as _);
+            let _ = bun_sys::fchmod(out.file.fd(), mode & 0o7777);
         }
-        drop((in_, out));
+        out.keep();
+        drop(in_);
         bun_sys::unlinkat(src_dir, src)
     }
 
@@ -422,17 +420,12 @@ impl ShellMvBatchedTask {
             src.st_ino != 0 && dir.st_dev == src.st_dev && dir.st_ino == src.st_ino
         };
 
-        let mut path = bun_paths::path_buffer_pool::get();
-        let mut len = 0;
+        let mut path = bun_paths::Path::new();
         let made_in = match bun_paths::dirname(dst.as_bytes()) {
             None => bun_sys::fstat(dst_dir)?,
             Some(dir) => {
-                if dir.len() >= bun_paths::MAX_PATH_BYTES {
-                    return Err(bun_sys::Error::from_code(E::ENAMETOOLONG, Tag::rename));
-                }
-                path[..dir.len()].copy_from_slice(dir);
-                len = dir.len();
-                shell_statat(dst_dir, ZStr::nul_terminate(&mut path, len))?
+                path.set(dir);
+                shell_statat(dst_dir, &path)?
             }
         };
         if is_src(&made_in) {
@@ -441,15 +434,10 @@ impl ShellMvBatchedTask {
 
         // Check each parent by appending `..` until the root, where `..` resolves to itself.
         let mut below = (made_in.st_dev, made_in.st_ino);
-        loop {
-            let up: &[u8] = if len == 0 { b".." } else { b"/.." };
-            if len + up.len() >= bun_paths::MAX_PATH_BYTES {
-                break;
-            }
-            path[len..len + up.len()].copy_from_slice(up);
-            len += up.len();
+        while path.len() < bun_paths::MAX_PATH_BYTES {
+            path.push(b"..");
             // Stop at a parent we can't stat. `move_across_devices` still checks every directory it enters.
-            let Ok(parent) = shell_statat(dst_dir, ZStr::nul_terminate(&mut path, len)) else {
+            let Ok(parent) = shell_statat(dst_dir, &path) else {
                 break;
             };
             if (parent.st_dev, parent.st_ino) == below {
@@ -472,32 +460,17 @@ impl ShellMvBatchedTask {
         target: &[u8],
         src: &ZStr,
         no_clobber: bool,
-        buf: &mut PathBuffer,
     ) -> Result<(), bun_sys::Error> {
-        let base = resolve_path::basename(src.as_bytes());
-        // `normalize_buf_z` doesn't bounds-check `buf`. It can add one byte
-        // (`""` becomes `"."`), and the NUL needs one more.
-        let result = if base.len() + 1 >= bun_paths::MAX_PATH_BYTES {
-            Err(bun_sys::Error::from_code(
-                bun_sys::E::ENAMETOOLONG,
-                bun_sys::Tag::rename,
-            ))
-        } else {
-            let path_in_dir =
-                resolve_path::normalize_buf_z::<bun_paths::platform::Auto>(base, &mut buf[..]);
-            Self::do_rename(cwd, src, target_fd, path_in_dir, no_clobber)
+        let base = bun_paths::basename(src.as_bytes());
+        let path_in_dir = match base {
+            b"" | b"." | b".." => Path::new(),
+            name => Path::join(&[name]),
         };
-        result.map_err(|e| {
-            // Surface `target/basename(src)` as the failing path.
-            let mut spill = Vec::new();
-            let joined =
-                resolve_path::join_spill::<bun_paths::platform::Auto>(&mut spill, &[target, base]);
-            e.with_path(joined)
-        })
+        Self::do_rename(cwd, src, target_fd, &path_in_dir, no_clobber)
+            .map_err(|e| e.with_path(&Path::join(&[target, base])))
     }
 
     fn move_multiple_into_dir(&mut self) {
-        let mut buf = bun_paths::path_buffer_pool::get();
         // More than one source is only scheduled into a directory.
         let dir = self.target_fd.expect("target_fd set for multi-source mv");
         for i in 0..self.sources.len() {
@@ -511,7 +484,6 @@ impl ShellMvBatchedTask {
                 self.target.as_bytes(),
                 &self.sources[i],
                 self.no_clobber,
-                &mut buf,
             ) {
                 self.err = Some(e);
                 return;

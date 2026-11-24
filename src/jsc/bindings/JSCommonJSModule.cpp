@@ -1903,12 +1903,19 @@ static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sou
                 if (entry) {
                     if (auto* moduleObject = dynamicDowncast<JSCommonJSModule>(entry)) {
                         if (!moduleObject->hasEvaluated) {
-                            evaluateCommonJSModuleOnce(
-                                vm,
-                                globalObject,
-                                moduleObject,
-                                moduleObject->m_dirname.get(),
-                                moduleObject->m_filename.get());
+                            if (JSObject* hook = globalObject->diagnosticsHook(DiagnosticsHook::ModuleRequire); hook && !moduleObject->sourceCode.isNull()) [[unlikely]] {
+                                MarkedArgumentBuffer arguments;
+                                arguments.append(moduleObject);
+                                arguments.append(moduleObject->m_filename.get());
+                                JSC::call(globalObject, hook, JSC::getCallData(hook), jsUndefined(), arguments);
+                            } else {
+                                evaluateCommonJSModuleOnce(
+                                    vm,
+                                    globalObject,
+                                    moduleObject,
+                                    moduleObject->m_dirname.get(),
+                                    moduleObject->m_filename.get());
+                            }
                             if (auto exception = scope.exception()) {
                                 if (vm.hasPendingTerminationException()) [[unlikely]]
                                     return nullptr;

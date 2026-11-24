@@ -1,6 +1,8 @@
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
+#[cfg(not(windows))]
+use bun_io::fd_wait::{Interest, JobFd};
 use bun_jsc::node_path::PathOrFileDescriptor;
 use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue, SystemError};
 #[cfg(not(windows))]
@@ -10,7 +12,7 @@ use bun_sys::{self as sys, Fd};
 #[cfg(not(windows))]
 use crate::webcore::blob::Store;
 #[cfg(not(windows))]
-use crate::webcore::blob::fd_job::{self, FdJob, FdOp, Interest, JobFd, Step};
+use crate::webcore::blob::fd_job::{self, FdJob, FdOp, Step};
 use crate::webcore::blob::{self, Blob, SizeType};
 use crate::webcore::body;
 
@@ -57,7 +59,6 @@ impl WriteFile {
 #[cfg(not(windows))]
 impl FdOp for WriteFile {
     const INTEREST: Interest = Interest::Writable;
-    const IO_TAG: bun_io::Tag = bun_io::Tag::WriteFile;
     /// With the global that the promise was made in.
     type Js = (jsc::JSPromiseStrong, bun_ptr::BackRef<JSGlobalObject>);
 
@@ -76,7 +77,13 @@ impl FdOp for WriteFile {
 
         #[cfg(any(target_os = "linux", target_os = "android"))]
         if !self.could_block && self.range.len() > 1024 {
-            let _ = sys::preallocate_file(fd.get().native(), 0, self.range.len() as i64);
+            // Preallocating grows the file, and O_APPEND writes after its end.
+            let appends = pathlike.is_fd()
+                && sys::get_fcntl_flags(fd.get())
+                    .is_ok_and(|flags| flags as i32 & sys::O::APPEND != 0);
+            if !appends {
+                let _ = sys::preallocate_file(fd.get().native(), 0, self.range.len() as i64);
+            }
         }
         let step = self.step(fd.get(), false)?;
         Ok((fd, step))
@@ -171,7 +178,7 @@ mod windows_impl {
     impl crate::node::fs::async_::AsyncMkdirpTarget for WriteFileWindows {
         fn directory(&self) -> &[u8] {
             let path = self.path();
-            bun_core::dirname(path).unwrap_or(path)
+            bun_paths::dirname(path).unwrap_or(path)
         }
         fn set_error(&mut self, err: sys::Error) {
             self.err = Some(err);
@@ -429,7 +436,7 @@ mod windows_impl {
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Reports a finished write to its promise.
-fn settle(
+pub(super) fn settle(
     promise: &mut JSPromise,
     global_this: &JSGlobalObject,
     count: Result<SizeType, Box<SystemError>>,
@@ -450,7 +457,7 @@ fn settle(
 
 // ──────────────────────────────────────────────────────────────────────────
 
-fn note_written(destination: &blob::Store) {
+pub(super) fn note_written(destination: &blob::Store) {
     if let blob::store::Data::File(file) = &destination.data
         && let PathOrFileDescriptor::Path(path) = &file.pathlike
     {

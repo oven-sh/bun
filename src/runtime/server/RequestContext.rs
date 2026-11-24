@@ -61,9 +61,9 @@ pub(crate) type RequestContextStackAllocator<
 pub(crate) enum UpgradeState {
     /// Plain HTTP request, or a handshake that was answered with an HTTP response.
     None,
-    /// WebSocket handshake waiting for `server.upgrade()`. uWS owns the
-    /// context (one per `.ws()` route) and it outlives the request.
-    Pending(NonNull<WebSocketUpgradeContext>),
+    /// WebSocket handshake waiting for `server.upgrade()`. The app owns the
+    /// context and it outlives the request.
+    Pending(bun_ptr::BackRef<WebSocketUpgradeContext>),
     /// `server.upgrade()` handed the socket over to a `ServerWebSocket`.
     Upgraded,
 }
@@ -1728,7 +1728,7 @@ where
         let crate::webcore::blob::store::Data::File(file) = &blob_ref.store().unwrap().data else {
             unreachable!("do_sendfile called with non-file blob");
         };
-        let mut file_buf = bun_paths::path_buffer_pool::get();
+        let mut file_buf = bun_paths::Path::new();
         let opened = match &file.pathlike {
             crate::webcore::node_types::PathOrFileDescriptor::Fd(_) => None,
             crate::webcore::node_types::PathOrFileDescriptor::Path(path) => {

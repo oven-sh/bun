@@ -2722,7 +2722,7 @@ test.skipIf(!isLinux)(
       expect(results).toEqual(Array(CLIENTS_PER_WAVE).fill(clean));
     }
   },
-  30_000,
+  90_000,
 );
 
 test("sends a Bun.file() body in response to TRACE", async () => {

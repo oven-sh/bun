@@ -128,7 +128,6 @@ export function runOnEndCallbacks(
     }
 
     // Native code settles `promise` only if runOnEndCallbacks returns undefined.
-    // The state is passed as arguments so that the loop above allocates no closure scope.
     return (async (
       callbacks: $Node.BundlerPlugin.OnEndCallback[],
       i: number,

@@ -127,10 +127,8 @@ export function runOnEndCallbacks(
       firstError = e;
     }
 
-    // Callback `i` threw, or its promise is not fulfilled. The callbacks run one at a time, as in esbuild,
-    // so this async function runs the later callbacks and then settles `promise`. It captures nothing:
-    // a build whose callbacks all return synchronously allocates nothing here.
-    // Native code settles `promise` itself if and only if runOnEndCallbacks returns undefined.
+    // Native code settles `promise` only if runOnEndCallbacks returns undefined.
+    // The state is passed as arguments so that the loop above allocates no closure scope.
     return (async (
       callbacks: $Node.BundlerPlugin.OnEndCallback[],
       i: number,

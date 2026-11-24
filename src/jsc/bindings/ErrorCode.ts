@@ -359,5 +359,6 @@ const errors: ErrorCodeMapping = [
   ["ERR_FFI_CC_DISABLED", Error],
   ["HPE_INVALID_URL", Error],
   ["ERR_HTTP2_TOO_MANY_ORIGINS", Error],
+  ["ERR_CPU_PROFILE_TOO_MANY", Error],
 ];
 export default errors;

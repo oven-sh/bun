@@ -89,3 +89,66 @@ test("a compiled function in a CPU profile", async () => {
   expect(plain.exitCode).toBe(0);
   expect(definitionLines(readNodes(join(cwd, "profiles", "plain.cpuprofile")).filter(isHot))).toEqual([definitionLine]);
 }, 120_000);
+
+// Compiled code runs one job after another without returning to the code that entered it.
+test("a job that returns before its stack is read belongs to its own function", async () => {
+  using dir = tempDir("aot-cpu-profile-jobs", {
+    "main.ts": `
+      let calls = 0;
+      function busy(): void {
+        calls++;
+        for (const end = performance.now() + 60; performance.now() < end; );
+      }
+      async function firstAsync(): Promise<void> { await 0; busy(); }
+      async function secondAsync(): Promise<void> { await 0; busy(); }
+      function handler(): void { busy(); }
+      function firstOfChain(): void { busy(); }
+      function secondOfChain(): void { busy(); }
+      function microtask(): void { busy(); }
+      async function* generator(): AsyncGenerator<number> { await 0; busy(); yield 1; busy(); }
+      async function consumer(): Promise<void> { for await (const _ of generator()) busy(); }
+      function timer(): void {
+        busy();
+        firstAsync();
+        secondAsync();
+        Promise.resolve().then(handler);
+        Promise.resolve().then(firstOfChain).then(secondOfChain);
+        queueMicrotask(microtask);
+        consumer();
+      }
+      setTimeout(timer, 1);
+      process.on("exit", () => console.log(calls));`,
+  });
+  const cwd = String(dir);
+  const profilerFlags = "--compile-exec-argv=--cpu-prof --cpu-prof-name=own.cpuprofile";
+  built(
+    await spawned(
+      [bunExe(), "build", "--compile", "--aot", profilerFlags, "main.ts", "--outfile", "program"],
+      cwd,
+      bunEnv,
+    ),
+  );
+  const run = await spawned([join(cwd, "program")], cwd, {
+    ...bunEnv,
+    BUN_JSC_forceSamplingProfilerToMissStacks: "1",
+  });
+  expect({ stdout: run.stdout, exitCode: run.exitCode }).toEqual({ stdout: "10\n", exitCode: 0 });
+
+  const names = readNodes(join(cwd, "own.cpuprofile"))
+    .filter(node => node.callFrame.url.endsWith("/main.ts"))
+    .map(node => node.callFrame.functionName);
+  expect(names).toEqual(
+    expect.arrayContaining([
+      "timer",
+      "firstAsync",
+      "secondAsync",
+      "handler",
+      "firstOfChain",
+      "secondOfChain",
+      "microtask",
+      "generator",
+      "consumer",
+    ]),
+  );
+  expect(names).not.toContain("busy");
+}, 120_000);

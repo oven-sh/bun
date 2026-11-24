@@ -88,6 +88,7 @@ class GlobalObject;
 class VersionSqlite3;
 
 namespace Bun {
+class RunningCPUProfile;
 class StrongRootBlock;
 struct IsolatedInternalModule;
 
@@ -308,6 +309,10 @@ public:
     // after every swap.
     WTF::UncheckedKeyHashMap<WTF::String, RefPtr<JSC::SourceProvider>> isolationSourceProviderCache;
     Vector<Bun::IsolatedInternalModule> isolationInternalModules;
+
+    std::unique_ptr<Bun::RunningCPUProfile> commandLineCPUProfile;
+    WTF::UncheckedKeyHashMap<uint32_t, std::unique_ptr<Bun::RunningCPUProfile>> cpuProfiles;
+    uint32_t lastCPUProfileId { 0 };
 
     void reconcileWeakReferencesAtGCEnd(JSC::VM&, JSC::CollectionScope) final;
 

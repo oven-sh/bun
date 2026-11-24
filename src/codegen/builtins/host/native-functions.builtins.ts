@@ -160,7 +160,7 @@ const answersOfNativeFunctions: readonly (readonly [b.BuiltinPath, b.TableType])
   [cpp("BunDebugger.cpp", "jsFunction_postNodeInspectorControl"), b.bool],
   [cpp("BunDebugger.cpp", "jsFunction_waitForNodeInspectorConnection"), b.undefined],
   [cpp("JSInspectorProfiler.cpp", "jsFunction_collectPreciseCoverage"), b.union(b.string, b.null)],
-  [cpp("JSInspectorProfiler.cpp", "jsFunction_startCPUProfiler"), b.undefined],
+  [cpp("JSInspectorProfiler.cpp", "jsFunction_startCPUProfiler"), b.u32],
   [cpp("JSInspectorProfiler.cpp", "jsFunction_startPreciseCoverage"), b.undefined],
   [cpp("JSInspectorProfiler.cpp", "jsFunction_stopCPUProfiler"), b.string],
   [cpp("JSInspectorProfiler.cpp", "jsFunction_stopPreciseCoverage"), b.undefined],

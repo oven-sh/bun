@@ -320,6 +320,30 @@ describe("bun:jsc", () => {
     expect(result3.stackTraces.traces.length).toBeGreaterThan(0);
   });
 
+  it("profile leaves other profiles alone", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { noInline, profile, samplingProfilerStackTraces, startSamplingProfiler } = require("bun:jsc");
+         const busy = () => { for (const end = performance.now() + 100; performance.now() < end; ); };
+         const functions = [function before() { busy(); }, function inside() { busy(); }, function after() { busy(); }];
+         functions.forEach(noInline);
+         const [before, inside, after] = functions;
+         const names = ({ traces }) => functions.map(f => f.name).filter(name => traces.some(trace => trace.frames.some(frame => frame.name === name)));
+         startSamplingProfiler();
+         let inner;
+         const outer = profile(() => (before(), (inner = profile(inside)), after()));
+         console.log(JSON.stringify([inner.stackTraces, outer.stackTraces, samplingProfilerStackTraces()].map(names)));`,
+      ],
+      env: bunEnv,
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(JSON.parse(stdout)).toEqual([["inside"], ["before", "inside", "after"], ["before", "inside", "after"]]);
+    expect(exitCode).toBe(0);
+  });
+
   it("profile accepts a callable Proxy", async () => {
     // functionRunProfiler used to uncheckedDowncast<JSFunction> the callback after only
     // checking isCallable(), which aborts asserts builds when the callable is a ProxyObject.

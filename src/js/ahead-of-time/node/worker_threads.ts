@@ -1151,23 +1151,23 @@ class Worker extends EventEmitter {
   }
 
   startCpuProfile(options?: { sampleInterval?: number; maxBufferSize?: number }) {
-    // node validates synchronously before starting; the underlying JSC sampler
-    // ignores these knobs but the range checks must still match.
+    // node validates synchronously before starting; maxBufferSize is ignored but the range check must still match.
+    let intervalMicroseconds = 0;
     if (options !== undefined && options !== null) {
       validateObject(options, "options");
       const { maxBufferSize, sampleInterval } = options;
       if (maxBufferSize !== undefined) validateInteger(maxBufferSize, "options.maxBufferSize", 1);
-      if (sampleInterval !== undefined) validateNumber(sampleInterval, "options.sampleInterval");
+      if (sampleInterval !== undefined) {
+        validateNumber(sampleInterval, "options.sampleInterval", 0, 0x7fffffff / 1000);
+        if (sampleInterval > 0) intervalMicroseconds = Math.max(1, Math.floor(sampleInterval * 1000));
+      }
     }
-    // JSC has one thread-local sampler; cache stop() on the WORKER so overlapping
-    // handles resolve to the same profile instead of empty JSON. Cleared on start
-    // so a fresh non-overlapping run gets a fresh profile.
-    this.#pendingCpuProfileStop = undefined;
-    return this.#worker.startCpuProfileInternal().then(() => {
-      return { stop: () => (this.#pendingCpuProfileStop ??= this.#worker.stopCpuProfileInternal()) };
+    return this.#worker.startCpuProfileInternal(intervalMicroseconds).then(id => {
+      if (!id) throw $ERR_CPU_PROFILE_TOO_MANY("There are too many CPU profiles");
+      let profile: Promise<string> | undefined;
+      return { stop: () => (profile ??= this.#worker.stopCpuProfileInternal(id)) };
     });
   }
-  #pendingCpuProfileStop: Promise<string> | undefined;
 
   cpuUsage(prevValue?: { user: number; system: number }) {
     let prevUser = 0;

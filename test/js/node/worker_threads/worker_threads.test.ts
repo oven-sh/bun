@@ -927,6 +927,61 @@ test("startCpuProfile() reports the time a worker waits for messages as (idle)",
   }
 });
 
+test("each handle of startCpuProfile() has a profile and an interval of its own", async () => {
+  const worker = new Worker(
+    `const { parentPort } = require("worker_threads");
+     const busy = () => { for (const end = performance.now() + 100; performance.now() < end; ); };
+     const functions = { first() { busy(); }, second() { busy(); }, third() { busy(); } };
+     Object.values(functions).forEach(require("bun:jsc").noInline);
+     parentPort.on("message", name => (functions[name](), parentPort.postMessage(name)));`,
+    { eval: true },
+  );
+  const call = (name: string) => (worker.postMessage(name), once(worker, "message"));
+  const names = (profile: string) =>
+    JSON.parse(profile)
+      .nodes.map(node => node.callFrame.functionName)
+      .filter(name => ["first", "second", "third"].includes(name));
+  try {
+    const outer = await worker.startCpuProfile();
+    const slow = await worker.startCpuProfile({ sampleInterval: 60_000 });
+    await call("first");
+    const inner = await worker.startCpuProfile();
+    await call("second");
+    const innerProfile = inner.stop();
+    expect(inner.stop()).toBe(innerProfile);
+    expect([...new Set(names(await innerProfile))]).toEqual(["second"]);
+    await call("third");
+    expect([...new Set(names(await outer.stop()))]).toEqual(["first", "second", "third"]);
+    expect(JSON.parse(await slow.stop()).samples.length).toBeLessThanOrEqual(1);
+
+    for (const sampleInterval of [-1, 2 ** 31 / 1000, NaN]) {
+      expect(() => worker.startCpuProfile({ sampleInterval })).toThrow(
+        expect.objectContaining({ code: "ERR_OUT_OF_RANGE" }),
+      );
+    }
+    await worker.startCpuProfile();
+  } finally {
+    await worker.terminate();
+  }
+});
+
+test("startCpuProfile() allows 100 profiles at a time", async () => {
+  const worker = new Worker("setInterval(() => {}, 1e6)", { eval: true });
+  const start = () => worker.startCpuProfile({ sampleInterval: 60_000 });
+  try {
+    const handles = await Promise.all(Array.from({ length: 100 }, start));
+    expect(await start().catch(error => error)).toMatchObject({
+      name: "Error",
+      code: "ERR_CPU_PROFILE_TOO_MANY",
+      message: "There are too many CPU profiles",
+    });
+    await handles[0].stop();
+    await start();
+  } finally {
+    await worker.terminate();
+  }
+});
+
 test.if(isLinux)("the thread that samples a worker ends with the worker and gives its stack back", async () => {
   await using proc = Bun.spawn({
     cmd: [

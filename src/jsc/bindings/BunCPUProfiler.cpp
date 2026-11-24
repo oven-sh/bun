@@ -1,5 +1,6 @@
 #include "root.h"
 #include "BunCPUProfiler.h"
+#include "BunClientData.h"
 #include "ZigGlobalObject.h"
 #include "helpers.h"
 #include "BunString.h"
@@ -23,67 +24,36 @@
 #include <limits>
 #include <utility>
 
-extern "C" void Bun__startCPUProfiler(JSC::VM* vm);
-extern "C" void Bun__stopCPUProfiler(JSC::VM* vm, BunString* outJSON, BunString* outText);
-extern "C" void Bun__setSamplingInterval(int intervalMicroseconds);
-
-void Bun__setSamplingInterval(int intervalMicroseconds)
-{
-    Bun::setSamplingInterval(intervalMicroseconds);
-}
-
 namespace Bun {
 
-static thread_local MonotonicTime s_profilingStartTime;
-static thread_local WallTime s_profilingStartWallTime;
-// Set sampling interval to 1ms (1000 microseconds) to match Node.js
-static thread_local int s_samplingInterval = 1000;
-static thread_local bool s_isProfilerRunning = false;
-
-void setSamplingInterval(int intervalMicroseconds)
-{
-    s_samplingInterval = intervalMicroseconds;
-}
-
-bool isCPUProfilerRunning()
-{
-    return s_isProfilerRunning;
-}
-
-void startCPUProfiler(JSC::VM& vm)
-{
-    s_profilingStartTime = MonotonicTime::now();
-    s_profilingStartWallTime = WallTime::now();
-
-    startSampling(vm, WTF::Seconds::fromMicroseconds(s_samplingInterval));
-    s_isProfilerRunning = true;
-}
-
-void startSampling(JSC::VM& vm, Seconds samplingInterval)
+RunningCPUProfile::RunningCPUProfile(JSC::VM& vm, uint32_t intervalMicroseconds)
+    : m_intervalMicroseconds(intervalMicroseconds ? intervalMicroseconds : 1000)
+    , m_sampler(vm.createSamplingProfiler(WTF::Stopwatch::create()))
 {
     // https://github.com/nodejs/node/blob/v26.12.1/deps/v8/src/profiler/tick-sample.h#L79-L80
     static constexpr size_t maximumStackDepth = 255;
 
-    auto stopwatch = WTF::Stopwatch::create();
-    stopwatch->start();
-
-    JSC::SamplingProfiler& samplingProfiler = vm.ensureSamplingProfiler(WTF::move(stopwatch));
     {
-        WTF::Locker locker { samplingProfiler.getLock() };
-        samplingProfiler.setRecordsSamplesWithoutFrames(true);
-        samplingProfiler.setMaximumStackDepth(maximumStackDepth);
+        WTF::Locker locker { m_sampler->getLock() };
+        m_sampler->setRecordsSamplesWithoutFrames(true);
+        m_sampler->setMaximumStackDepth(maximumStackDepth);
     }
-    samplingProfiler.setTimingInterval(samplingInterval);
-    samplingProfiler.noticeCurrentThreadAsJSCExecutionThread();
-    samplingProfiler.start();
+    m_sampler->setTimingInterval(Seconds::fromMicroseconds(m_intervalMicroseconds));
+    m_sampler->start();
 }
 
-void stopSampling(JSC::SamplingProfiler& profiler)
+RunningCPUProfile::~RunningCPUProfile()
 {
-    profiler.pause();
-    profiler.clearData();
-    profiler.setRecordsSamplesWithoutFrames(false);
-    profiler.setMaximumStackDepth(JSC::SamplingProfiler::unlimitedStackDepth);
+    m_sampler->shutdown();
+}
+
+SampleTimeline RunningCPUProfile::stop()
+{
+    WTF::Locker locker { m_sampler->getLock() };
+    m_sampler->pause();
+    // https://github.com/nodejs/node/blob/v26.12.1/deps/v8/src/profiler/profile-generator.cc#L793-L794
+    MonotonicTime end = MonotonicTime::now();
+    return { m_sampler->releaseSamples(), end };
 }
 
 // https://github.com/nodejs/node/blob/v26.12.1/deps/v8/src/profiler/symbolizer.cc#L25-L45
@@ -95,81 +65,41 @@ ASCIILiteral SampleTimeline::functionName(ThreadState state)
     case ThreadState::GarbageCollector:
         return "(garbage collector)"_s;
     case ThreadState::Program:
-    case ThreadState::JavaScript:
         return "(program)"_s;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-SampleTimeline::SampleTimeline(JSC::SamplingProfiler& profiler, Sampler sampler, MonotonicTime start)
+SampleTimeline::SampleTimeline(JSC::SamplingProfiler::Samples&& samples, MonotonicTime end)
+    : m_stackTraces(WTF::move(samples.stackTraces))
+    , m_end(end)
 {
     // V8 has no limit. A process that waits for days still has to be able to write its profile.
     static constexpr size_t timestampLimit = 1'000'000;
 
-    JSC::SamplingProfiler::Samples samples;
-    bool wasStoppedByAnotherProfile;
-    {
-        WTF::Locker locker { profiler.getLock() };
-        // https://github.com/nodejs/node/blob/v26.12.1/deps/v8/src/profiler/profile-generator.cc#L793-L794
-        m_end = MonotonicTime::now();
-        wasStoppedByAnotherProfile = !profiler.isRecordingSamplesWithoutFrames();
-        samples = profiler.releaseSamples();
-        if (sampler == Sampler::Stop)
-            stopSampling(profiler);
-    }
-    m_stackTraces = WTF::move(samples.stackTraces);
-
-    // Another profile may have been running already.
-    m_stackTraces.removeAllMatching([&](auto& stackTrace) { return stackTrace.timestamp < start; });
-    samples.withoutFrames.removeAllMatching([&](auto& run) { return run.last < start; });
-    if (!samples.withoutFrames.isEmpty() && samples.withoutFrames[0].first < start) {
-        auto& run = samples.withoutFrames[0];
-        Seconds period = (run.last - run.first) / (run.count - 1);
-        run.count = static_cast<size_t>((run.last - start) / period) + 1;
-        run.first = std::max(start, run.last - period * (run.count - 1));
-    }
-
     m_runs.reserveInitialCapacity(m_stackTraces.size() + samples.withoutFrames.size());
     auto append = [&](StackTrace* stackTrace, ThreadState state, MonotonicTime first, MonotonicTime last, size_t count) {
-        if (state == ThreadState::JavaScript && !stackTrace)
-            state = ThreadState::Program;
         if (!m_runs.isEmpty())
             m_runs.last().end = first;
-        m_runs.append({ stackTrace, state, first, last, count, last });
+        m_runs.append({ stackTrace, state, first, last, count, end });
     };
 
     size_t countWithoutFrames = 0;
     size_t index = 0;
-    StackTrace* previous = nullptr;
-    auto appendWithoutFramesUntil = [&](MonotonicTime time, StackTrace* next) {
+    auto appendWithoutFramesUntil = [&](MonotonicTime time) {
         for (; index < samples.withoutFrames.size() && samples.withoutFrames[index].last <= time; index++) {
             auto& run = samples.withoutFrames[index];
-            // JavaScript that got away from the sampler is taken for the nearest that did not.
-            StackTrace* nearest = next && (!previous || time - run.last < run.first - previous->timestamp) ? next : previous;
-            append(run.state == ThreadState::JavaScript ? nearest : nullptr, run.state, run.first, run.last, run.count);
+            append(nullptr, run.state, run.first, run.last, run.count);
             countWithoutFrames += run.count;
         }
     };
     for (StackTrace& stackTrace : m_stackTraces) {
-        StackTrace* withFrames = stackTrace.frames.isEmpty() ? nullptr : &stackTrace;
-        appendWithoutFramesUntil(stackTrace.timestamp, withFrames);
-        append(withFrames, ThreadState::JavaScript, stackTrace.timestamp, stackTrace.timestamp, 1);
-        if (withFrames)
-            previous = withFrames;
+        appendWithoutFramesUntil(stackTrace.timestamp);
+        append(stackTrace.frames.isEmpty() ? nullptr : &stackTrace, ThreadState::Program, stackTrace.timestamp, stackTrace.timestamp, 1);
     }
-    appendWithoutFramesUntil(MonotonicTime::infinity(), nullptr);
+    appendWithoutFramesUntil(MonotonicTime::infinity());
 
     m_samplesPerTimestamp = countWithoutFrames / timestampLimit + 1;
-    if (isEmpty())
-        return;
-    if (wasStoppedByAnotherProfile)
-        m_end = m_runs.last().last;
-    m_runs.last().end = m_end;
-}
-
-static long long microsecondsSinceProfileStart(MonotonicTime time)
-{
-    return (time - s_profilingStartTime).microsecondsAs<long long>();
 }
 
 struct ProfileNode {
@@ -406,13 +336,9 @@ static WTF::String formatCodeSpan(const WTF::String& str)
 }
 
 // Helper to generate a minimal valid cpuprofile JSON with no samples
-static WTF::String generateEmptyProfileJSON(long long durationUs)
+static WTF::String generateEmptyProfileJSON(long long timestamp, long long durationUs)
 {
     // Return a minimal valid Chrome DevTools CPU profile format
-    // Use s_profilingStartWallTime if available, otherwise fall back to current time
-    WallTime time = s_profilingStartWallTime ? s_profilingStartWallTime : WallTime::now();
-    long long timestamp = time.secondsSinceEpoch().microsecondsAs<long long>();
-
     WTF::StringBuilder sb;
     sb.append("{\"nodes\":[{\"id\":1,\"callFrame\":{\"functionName\":\"(root)\",\"scriptId\":\"0\",\"url\":\"\",\"lineNumber\":-1,\"columnNumber\":-1},\"hitCount\":0,\"children\":[]}],\"startTime\":"_s);
     sb.append(timestamp);
@@ -423,33 +349,24 @@ static WTF::String generateEmptyProfileJSON(long long durationUs)
 }
 
 // Unified function that stops the profiler and generates requested output formats
-void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
+static void stopCPUProfiler(JSC::VM& vm, std::unique_ptr<RunningCPUProfile> profile, WTF::String* outJSON, WTF::String* outText)
 {
-    s_isProfilerRunning = false;
-
-    JSC::SamplingProfiler* profiler = vm.samplingProfiler();
-    if (!profiler) {
-        if (outJSON) *outJSON = WTF::String();
-        if (outText) *outText = WTF::String();
+    if (!profile)
         return;
-    }
-
-    // JSLock is re-entrant, so always acquiring it handles both JS and shutdown contexts
-    JSC::JSLockHolder locker(vm);
 
     // Defer GC while we're working with stack traces
     JSC::DeferGC deferGC(vm);
 
-    SampleTimeline timeline(*profiler, SampleTimeline::Sampler::Stop, s_profilingStartTime);
+    SampleTimeline timeline = profile->stop();
 
-    // If neither output is requested, we're done
-    if (!outJSON && !outText)
-        return;
-
+    auto microsecondsSinceProfileStart = [&](MonotonicTime time) {
+        return (time - profile->startTime()).microsecondsAs<long long>();
+    };
+    long long startTime = profile->startWallTime().secondsSinceEpoch().microsecondsAs<long long>();
     long long totalTimeUs = microsecondsSinceProfileStart(timeline.end());
 
     if (timeline.isEmpty()) {
-        if (outJSON) *outJSON = generateEmptyProfileJSON(totalTimeUs);
+        if (outJSON) *outJSON = generateEmptyProfileJSON(startTime, totalTimeUs);
         if (outText) *outText = "No samples collected.\n"_s;
         return;
     }
@@ -644,16 +561,12 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
             return leaf;
         };
 
-        SampleTimeline::StackTrace* lastStackTrace = nullptr;
-        Leaf leafOfLastStackTrace;
         for (auto& run : timeline.runs()) {
-            if (run.stackTrace && run.stackTrace != std::exchange(lastStackTrace, run.stackTrace))
-                leafOfLastStackTrace = appendNodes(*run.stackTrace);
-            Leaf leaf = run.stackTrace ? leafOfLastStackTrace : Leaf { nodeIdWithoutFrames(run.state) };
+            Leaf leaf = run.stackTrace ? appendNodes(*run.stackTrace) : Leaf { nodeIdWithoutFrames(run.state) };
 
             nodes[leaf.nodeId - 1].hitCount += run.count;
             if (leaf.line > 0)
-                nodes[leaf.nodeId - 1].positionTicks.add(leaf.line, 0).iterator->value += run.count;
+                nodes[leaf.nodeId - 1].positionTicks.add(leaf.line, 0).iterator->value++;
 
             timeline.forEachTimestamp(run, [&](MonotonicTime timestamp) {
                 long long timeUs = microsecondsSinceProfileStart(timestamp);
@@ -662,7 +575,6 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
             });
         }
 
-        long long startTime = s_profilingStartWallTime.secondsSinceEpoch().microsecondsAs<long long>();
         long long endTime = startTime + totalTimeUs;
 
         // Build JSON
@@ -728,7 +640,7 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
     if (outText) {
         WTF::HashMap<WTF::String, FunctionStats> functionStatsMap;
 
-        auto appendStats = [&](SampleTimeline::StackTrace& stackTrace, long long deltaUs, size_t count) {
+        auto appendStats = [&](SampleTimeline::StackTrace& stackTrace, long long deltaUs) {
             WTF::String previousKey;
 
             for (int i = stackTrace.frames.size() - 1; i >= 0; i--) {
@@ -792,20 +704,20 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
                     stats.location = location;
                 }
 
-                stats.totalSamples += count;
+                stats.totalSamples++;
                 stats.totalTimeUs += deltaUs;
 
                 if (i == 0) {
-                    stats.selfSamples += count;
+                    stats.selfSamples++;
                     stats.selfTimeUs += deltaUs;
                 }
 
                 if (!previousKey.isEmpty()) {
-                    stats.callers.add(previousKey, 0).iterator->value += count;
+                    stats.callers.add(previousKey, 0).iterator->value++;
 
                     auto prevIt = functionStatsMap.find(previousKey);
                     if (prevIt != functionStatsMap.end())
-                        prevIt->value.callees.add(key, 0).iterator->value += count;
+                        prevIt->value.callees.add(key, 0).iterator->value++;
                 }
 
                 previousKey = key;
@@ -818,7 +730,7 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
             long long deltaUs = microsecondsSinceProfileStart(run.end) - microsecondsSinceProfileStart(run.first);
             totalSamples += run.count;
             if (run.stackTrace) {
-                appendStats(*run.stackTrace, deltaUs, run.count);
+                appendStats(*run.stackTrace, deltaUs);
                 continue;
             }
             FunctionStats& stats = statsByState[std::to_underlying(run.state)];
@@ -858,7 +770,7 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
         output.append(" | "_s);
         output.append(totalSamples);
         output.append(" | "_s);
-        output.append(formatTime(s_samplingInterval));
+        output.append(formatTime(profile->intervalMicroseconds()));
         output.append(" | "_s);
         output.append(numFunctions);
         output.append(" |\n\n"_s);
@@ -1042,25 +954,45 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
     }
 }
 
+uint32_t startCPUProfiler(JSC::VM& vm, uint32_t intervalMicroseconds)
+{
+    auto* clientData = WebCore::clientData(vm);
+    uint32_t id = ++clientData->lastCPUProfileId;
+    clientData->cpuProfiles.add(id, makeUnique<RunningCPUProfile>(vm, intervalMicroseconds));
+    return id;
+}
+
+WTF::String stopCPUProfiler(JSC::VM& vm, uint32_t id)
+{
+    auto& profiles = WebCore::clientData(vm)->cpuProfiles;
+    WTF::String json;
+    if (profiles.isValidKey(id))
+        stopCPUProfiler(vm, profiles.take(id), &json, nullptr);
+    return json;
+}
+
 } // namespace Bun
 
-extern "C" void Bun__startCPUProfiler(JSC::VM* vm)
+extern "C" void Bun__startCPUProfiler(JSC::VM* vm, uint32_t intervalMicroseconds)
 {
-    Bun::startCPUProfiler(*vm);
+    JSC::JSLockHolder locker(*vm);
+    WebCore::clientData(*vm)->commandLineCPUProfile = makeUnique<Bun::RunningCPUProfile>(*vm, intervalMicroseconds);
 }
 
 // Only around a poll that may block. Node also counts native code after any callback, so a setImmediate() loop is mostly idle: https://github.com/nodejs/node/blob/v26.12.1/src/api/callback.cc#L156
 extern "C" void Bun__CPUProfiler__setIdle(JSC::VM* vm, int isIdle)
 {
-    if (auto* profiler = vm->samplingProfiler()) [[unlikely]]
-        profiler->setExecutionThreadIsIdle(isIdle);
+    vm->setIsIdle(isIdle);
 }
 
 extern "C" void Bun__stopCPUProfiler(JSC::VM* vm, BunString* outJSON, BunString* outText)
 {
+    // JSLock is re-entrant, so always acquiring it handles both JS and shutdown contexts
+    JSC::JSLockHolder locker(*vm);
+
     WTF::String jsonResult;
     WTF::String textResult;
-    Bun::stopCPUProfiler(*vm, outJSON ? &jsonResult : nullptr, outText ? &textResult : nullptr);
+    Bun::stopCPUProfiler(*vm, WTF::move(WebCore::clientData(*vm)->commandLineCPUProfile), outJSON ? &jsonResult : nullptr, outText ? &textResult : nullptr);
     if (outJSON)
         *outJSON = Bun::toStringRef(jsonResult).leak();
     if (outText)

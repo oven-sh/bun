@@ -2078,8 +2078,7 @@ impl VirtualMachine {
         }
     }
 
-    /// Writes each configured profile once. The sampling report is written first because
-    /// `stopCPUProfiler` clears its traces.
+    /// Writes each configured profile once.
     pub fn write_profiles(&self) {
         if let Some(directory) = self.sampling_profiler_directory.take() {
             if let Err(e) =

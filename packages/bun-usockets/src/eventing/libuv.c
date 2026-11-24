@@ -149,8 +149,6 @@ static void prepare_cb(uv_prepare_t *p) {
   us_internal_loop_pre(loop);
 }
 
-/* patches/libuv/win-poll-wait-cb.patch */
-extern void uv_loop_set_wait_cb(uv_loop_t *loop, void (*cb)(void *data, int is_waiting), void *data);
 extern void Bun__CPUProfiler__setIdle(void *jsc_vm, int is_idle);
 
 static void wait_cb(void *data, int is_waiting) {

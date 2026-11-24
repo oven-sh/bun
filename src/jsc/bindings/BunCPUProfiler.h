@@ -3,6 +3,7 @@
 #include "root.h"
 #include <JavaScriptCore/SamplingProfiler.h>
 #include <utility>
+#include <wtf/WallTime.h>
 #include <wtf/text/WTFString.h>
 
 namespace JSC {
@@ -12,27 +13,23 @@ class VM;
 
 namespace Bun {
 
-void setSamplingInterval(int intervalMicroseconds);
-bool isCPUProfilerRunning();
+// https://github.com/nodejs/node/blob/v26.12.1/deps/v8/src/profiler/profile-generator.h#L597
+static constexpr size_t maximumSimultaneousCPUProfiles = 100;
 
-// Start the CPU profiler
-void startCPUProfiler(JSC::VM& vm);
+// Returns what to pass to stopCPUProfiler(). Never 0.
+uint32_t startCPUProfiler(JSC::VM&, uint32_t intervalMicroseconds);
 
-// Stop the CPU profiler and get profile data in requested formats.
-// Pass non-null pointers for the formats you want. Null pointers are skipped.
-void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText);
+// Returns JSON, or a null string if there is no such profile.
+WTF::String stopCPUProfiler(JSC::VM&, uint32_t id);
 
-void startSampling(JSC::VM&, Seconds samplingInterval);
-void stopSampling(JSC::SamplingProfiler& profiler) WTF_REQUIRES_LOCK(profiler.getLock());
-
-// Takes the samples since `start`, in the order of time. GC has to stay deferred: nothing marks the cells of its stack traces.
+// The samples in the order of time. GC has to stay deferred: nothing marks the cells of its stack traces.
 class SampleTimeline {
 public:
     using StackTrace = JSC::SamplingProfiler::StackTrace;
     using ThreadState = JSC::SamplingProfiler::ThreadState;
-    static constexpr size_t stateCount = std::to_underlying(ThreadState::JavaScript) + 1;
+    static constexpr size_t stateCount = std::to_underlying(ThreadState::GarbageCollector) + 1;
 
-    // Samples with the same leaf node: the top frame of `stackTrace`, or else the child of the root for `state`.
+    // One sample with a `stackTrace`, or else any number of samples in `state`.
     struct Run {
         StackTrace* stackTrace;
         ThreadState state;
@@ -44,9 +41,7 @@ public:
 
     static ASCIILiteral functionName(ThreadState);
 
-    enum class Sampler : bool { Keep,
-        Stop };
-    SampleTimeline(JSC::SamplingProfiler&, Sampler, MonotonicTime start);
+    SampleTimeline(JSC::SamplingProfiler::Samples&&, MonotonicTime end);
 
     bool isEmpty() const { return m_runs.isEmpty(); }
     MonotonicTime end() const { return m_end; }
@@ -67,6 +62,28 @@ private:
     Vector<Run> m_runs;
     MonotonicTime m_end;
     size_t m_samplesPerTimestamp { 1 };
+};
+
+// Samples from its construction on, whatever other profiles do.
+class RunningCPUProfile {
+    WTF_MAKE_NONCOPYABLE(RunningCPUProfile);
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(RunningCPUProfile);
+
+public:
+    // 0 is the default interval.
+    RunningCPUProfile(JSC::VM&, uint32_t intervalMicroseconds);
+    ~RunningCPUProfile();
+
+    MonotonicTime startTime() const { return m_startTime; }
+    WallTime startWallTime() const { return m_startWallTime; }
+    uint32_t intervalMicroseconds() const { return m_intervalMicroseconds; }
+    SampleTimeline stop();
+
+private:
+    MonotonicTime m_startTime { MonotonicTime::now() };
+    WallTime m_startWallTime { WallTime::now() };
+    uint32_t m_intervalMicroseconds;
+    Ref<JSC::SamplingProfiler> m_sampler;
 };
 
 } // namespace Bun

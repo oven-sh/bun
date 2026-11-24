@@ -17,10 +17,8 @@ const DateNow = Date.now;
 const kProtocolError = Symbol("kProtocolError");
 
 // Native profiler functions exposed via $newCppFunction
-const startCPUProfiler = $newCppFunction("JSInspectorProfiler.cpp", "jsFunction_startCPUProfiler", 0);
-const stopCPUProfiler = $newCppFunction("JSInspectorProfiler.cpp", "jsFunction_stopCPUProfiler", 0);
-const setCPUSamplingInterval = $newCppFunction("JSInspectorProfiler.cpp", "jsFunction_setCPUSamplingInterval", 1);
-const isCPUProfilerRunning = $newCppFunction("JSInspectorProfiler.cpp", "jsFunction_isCPUProfilerRunning", 0);
+const startCPUProfiler = $newCppFunction("JSInspectorProfiler.cpp", "jsFunction_startCPUProfiler", 1);
+const stopCPUProfiler = $newCppFunction("JSInspectorProfiler.cpp", "jsFunction_stopCPUProfiler", 1);
 const startPreciseCoverage = $newCppFunction("JSInspectorProfiler.cpp", "jsFunction_startPreciseCoverage", 0);
 const stopPreciseCoverage = $newCppFunction("JSInspectorProfiler.cpp", "jsFunction_stopPreciseCoverage", 0);
 const collectPreciseCoverage = $newCppFunction("JSInspectorProfiler.cpp", "jsFunction_collectPreciseCoverage", 0);
@@ -433,6 +431,8 @@ function collectCoverageScripts(): any[] | Error {
 class Session extends EventEmitter {
   #connected = false;
   #profilerEnabled = false;
+  #samplingInterval = 0;
+  #cpuProfileId = 0;
   #preciseCoverageEnabled = false;
   #preciseCoverageCallCount = false;
   #preciseCoverageDetailed = false;
@@ -460,6 +460,12 @@ class Session extends EventEmitter {
     if (!(scripts instanceof Error)) this.#rebaseCoverage(scripts);
   }
 
+  #stopCPUProfile() {
+    const id = this.#cpuProfileId;
+    this.#cpuProfileId = 0;
+    return stopCPUProfiler(id);
+  }
+
   connect() {
     if (this.#connected) {
       throw $ERR_INSPECTOR_ALREADY_CONNECTED();
@@ -476,7 +482,8 @@ class Session extends EventEmitter {
 
   disconnect() {
     if (!this.#connected) return;
-    if (isCPUProfilerRunning()) stopCPUProfiler();
+    if (this.#cpuProfileId) this.#stopCPUProfile();
+    this.#samplingInterval = 0;
     if (this.#preciseCoverageEnabled) {
       stopPreciseCoverage();
       this.#preciseCoverageEnabled = false;
@@ -565,9 +572,7 @@ class Session extends EventEmitter {
         return {};
 
       case "Profiler.disable":
-        if (isCPUProfilerRunning()) {
-          stopCPUProfiler();
-        }
+        if (this.#cpuProfileId) this.#stopCPUProfile();
         // V8's Profiler agent stops precise coverage on disable; without this
         // the control-flow profiler keeps instrumenting newly-compiled code.
         if (this.#preciseCoverageEnabled) {
@@ -579,24 +584,25 @@ class Session extends EventEmitter {
 
       case "Profiler.start":
         if (!this.#profilerEnabled) return $ERR_INSPECTOR_COMMAND("-32000: Profiler is not enabled");
-        if (!isCPUProfilerRunning()) startCPUProfiler();
+        this.#cpuProfileId ||= startCPUProfiler(this.#samplingInterval);
         return {};
 
       case "Profiler.stop":
-        if (!isCPUProfilerRunning()) return $ERR_INSPECTOR_COMMAND("-32000: Profiler is not started");
+        if (!this.#cpuProfileId) return $ERR_INSPECTOR_COMMAND("-32000: Profiler is not started");
         try {
-          return { profile: JSON.parse(stopCPUProfiler()) };
+          return { profile: JSON.parse(this.#stopCPUProfile()) };
         } catch (e) {
           return $ERR_INSPECTOR_COMMAND(`-32000: Failed to parse profile JSON: ${e}`);
         }
 
       case "Profiler.setSamplingInterval": {
-        if (isCPUProfilerRunning())
+        if (this.#cpuProfileId)
           return $ERR_INSPECTOR_COMMAND("-32000: Cannot change sampling interval while profiler is running");
         const interval = (params as any)?.interval;
         if (typeof interval !== "number" || interval <= 0)
           return $ERR_INSPECTOR_COMMAND("-32602: interval must be a positive number");
-        setCPUSamplingInterval(interval);
+        if ((interval | 0) !== interval) return $ERR_INSPECTOR_COMMAND("-32602: Invalid parameters");
+        this.#samplingInterval = interval;
         return {};
       }
 

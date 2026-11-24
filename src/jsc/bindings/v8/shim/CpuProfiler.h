@@ -1,6 +1,7 @@
 #pragma once
 
 #include "root.h"
+#include "BunCPUProfiler.h"
 #include <wtf/Vector.h>
 #include <wtf/text/WTFString.h>
 #include <wtf/text/CString.h>
@@ -57,8 +58,8 @@ struct CpuProfilerImpl {
     struct Session {
         uint32_t id;
         WTF::String title;
-        int64_t startTime;
         bool recordSamples;
+        std::unique_ptr<Bun::RunningCPUProfile> profile;
     };
 
     explicit CpuProfilerImpl(Isolate* isolate)

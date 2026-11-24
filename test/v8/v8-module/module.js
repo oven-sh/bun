@@ -41,9 +41,6 @@ module.exports = debugMode => {
 
     test_v8_cpu_profiler_idle() {
       const { start_cpu_profile: start, stop_cpu_profile_and_log_idle_node: stop } = nativeModule;
-      // On Windows, starting the sampler's thread blocks until it has run, which is long on a busy machine.
-      start("warm up");
-      nativeModule.dispose_cpu_profiler();
       const steps = [
         () => start("first"),
         // How @datadog/pprof restarts.
@@ -60,6 +57,14 @@ module.exports = debugMode => {
           if (steps.length) next(150);
         }, delay);
       })(0);
+    },
+
+    test_v8_cpu_profiler_keeps_samples_across_another_stop() {
+      const { start_cpu_profile: start, stop_cpu_profile_and_log_idle_node: stop } = nativeModule;
+      start("outer");
+      start("inner");
+      // This timer is the wait being profiled.
+      setTimeout(() => (stop("inner"), stop("outer"), nativeModule.dispose_cpu_profiler()), 200);
     },
 
     test_v8_cpu_profiler_program_in_uv_timer() {

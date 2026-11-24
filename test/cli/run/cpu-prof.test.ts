@@ -711,27 +711,49 @@ describe.concurrent("--cpu-prof", () => {
       expect(profile.idle).toBeWithin(100, profile.duration - blocked);
     });
 
-    test("JavaScript whose stack cannot be walked is not left out", async () => {
-      const profile = await runWithBothFormats(
+    const hitCount = (nodes: any[], ...names: string[]) =>
+      nodes.reduce((sum, node) => sum + (names.includes(node.callFrame.functionName) ? node.hitCount : 0), 0);
+
+    test("a C function that optimized code calls belongs to its caller", async () => {
+      const { nodes } = await runWithBothFormats(
         [],
-        `// Optimized code calls sin() without telling the VM where its frame is. What the VM knows is where the frame
-         // of now() was, which the one of sines() overlaps.
-         function sines(count) {
-           let sum = 0;
-           for (let i = 0; i < count; i++) sum += Math.sin(i);
+        `import { noInline } from "bun:jsc";
+         function sines(sum) {
+           for (let i = 0; i < 1000; i++) sum += Math.sin(i * 1e300);
            return sum;
          }
-         function busyWithSines(ms) {
-           const end = performance.now() + ms;
-           while (performance.now() < end) sines(100_000);
+         function integers(sum) {
+           for (let i = 0; i < 1000; i++) sum = (sum * 31 + i) | 0;
+           return sum;
          }
-         busy(300);
-         busyWithSines(300);`,
+         noInline(sines);
+         noInline(integers);
+         function repeat(step) {
+           let sum = 0;
+           for (const end = performance.now() + 5; performance.now() < end; ) sum = step(sum);
+         }
+         for (let i = 0; i < 60; i++) repeat(sines), repeat(integers);`,
       );
-      const hitCount = (...names: string[]) =>
-        profile.nodes.reduce((sum, node) => sum + (names.includes(node.callFrame.functionName) ? node.hitCount : 0), 0);
 
-      expect(hitCount("busyWithSines", "sines", "sin", "now")).toBeGreaterThan(hitCount("busy") / 3);
+      expect(hitCount(nodes, "sines", "sin")).toBeGreaterThan(hitCount(nodes, "integers") / 2);
+      expect(hitCount(nodes, "sines", "sin")).toBeGreaterThan(4 * hitCount(nodes, "repeat", "now", "(program)"));
+    });
+
+    test("a call that returns before its stack is read belongs to the function that was called", async () => {
+      const profile = await run(
+        ["--cpu-prof"],
+        `function outermost() {
+           JSON.stringify({ toJSON: () => busy(200) });
+         }
+         setImmediate(outermost);`,
+        { ...bunEnv, BUN_JSC_forceSamplingProfilerToMissStacks: "1" },
+      );
+      const { nodes } = readJSON(profile.json);
+      const byId = new Map(nodes.map(node => [node.id, node]));
+
+      expect(nodes[0].children.flatMap(id => byId.get(id).children ?? [])).toEqual([]);
+      expect(hitCount(nodes, "busy", "toJSON", "stringify")).toBe(0);
+      expect(hitCount(nodes, "outermost")).toBeGreaterThan(5);
     });
 
     test("a collection is (garbage collector)", async () => {
@@ -778,25 +800,39 @@ describe.concurrent("--cpu-prof", () => {
       expect(profile.duration / profile.samples).toBeLessThan(8);
     });
 
-    test("a wait that was not sampled is not billed to the last sample", async () => {
-      const profile = await runWithBothFormats(
+    test.each([
+      [249, "249us"],
+      [0, "1.0ms"],
+    ])("--cpu-prof-interval=%d is an interval of %s", async (interval, expected) => {
+      const profile = await run(["--cpu-prof-md", `--cpu-prof-interval=${interval}`], `busy(100);`);
+
+      expect(profile.markdown.match(/^\| \S+ \| \d+ \| (\S+) \|/m)![1]).toBe(expected);
+    });
+
+    test.each([
+      ["a session that disconnects", `session.disconnect();`],
+      ["Profiler.disable", `session.post("Profiler.disable");`],
+      ["Profiler.stop", `session.post("Profiler.start"); session.post("Profiler.stop");`],
+      ["profile()", `profile(() => {}, 60_000_000);`],
+      ["startSamplingProfiler()", `startSamplingProfiler(undefined, 60_000_000); samplingProfilerStackTraces();`],
+    ])("is not affected by %s", async (_, statement) => {
+      const { nodes, idle } = await runWithBothFormats(
         [],
-        `import { startSamplingProfiler } from "bun:jsc";
+        `import { profile, samplingProfilerStackTraces, startSamplingProfiler } from "bun:jsc";
          import { Session } from "node:inspector";
+         function before() { busy(100); }
+         function after() { busy(100); }
          const session = new Session();
          session.connect();
          session.post("Profiler.enable");
-         session.post("Profiler.stop", () => {});
-         // bun:jsc drives the same sampler, and does not ask for what is outside JavaScript.
-         const start = performance.now();
-         startSamplingProfiler();
-         busy(250);
-         startSamplingProfiler(undefined, 60_000_000);
-         console.log(performance.now() - start);
-         setTimeout(() => {}, 400);`,
+         before();
+         ${statement}
+         after();
+         wait(300);`,
       );
 
-      expect(profile.functions).toBeWithin(1, Number(profile.stdout) + 200);
+      expect(nodes.map(node => node.callFrame.functionName)).toEqual(expect.arrayContaining(["before", "after"]));
+      expect(idle).toBeGreaterThan(150);
     });
 
     const cc = Bun.which("cc") || Bun.which("clang") || Bun.which("gcc");

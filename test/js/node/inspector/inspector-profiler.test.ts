@@ -378,6 +378,15 @@ describe("node:inspector", () => {
       expect(() => session.post("Profiler.setSamplingInterval", { interval: -1 })).toThrow();
     });
 
+    test.each([1.5, 2 ** 31, NaN])("Profiler.setSamplingInterval rejects %p", async interval => {
+      const { promise, resolve } = Promise.withResolvers<any>();
+      session.post("Profiler.setSamplingInterval", { interval }, resolve);
+      expect(await promise).toMatchObject({
+        code: "ERR_INSPECTOR_COMMAND",
+        message: "Inspector error -32602: Invalid parameters",
+      });
+    });
+
     test("double Profiler.start is a no-op", () => {
       session.post("Profiler.enable");
       session.post("Profiler.start");
@@ -568,16 +577,55 @@ describe("node:inspector", () => {
       expect(duration).toBeGreaterThan(elapsed - 1);
     });
 
-    test("a profile that is left without samples still ends when it is stopped", async () => {
-      const { sampleCount, duration } = await run(`
+    test("sessions do not share a profile or an interval", async () => {
+      const result = await run(`
+        import { noInline } from "bun:jsc";
+        const post = (session, method, params) => new Promise(resolve => session.post(method, params, (error, result) => resolve(error?.code ?? result)));
+        const names = ({ profile }) => ["first", "second", "third"].filter(name => profile.nodes.some(node => node.callFrame.functionName === name));
+        const [first, second, third] = [function first() { busy(100); }, function second() { busy(100); }, function third() { busy(100); }];
+        [first, second, third].forEach(noInline);
+        const [other, slow] = [new Session(), new Session()];
+        for (const session of [other, slow]) session.connect(), session.post("Profiler.enable");
+
         session.post("Profiler.start");
-        // Takes the samples and pauses the sampler.
-        require("bun:jsc").profile(() => {});
-        busy(100);
-        console.log(JSON.stringify(await stop()));
+        first();
+        const stopBeforeStart = await post(other, "Profiler.stop");
+        const intervalOfRunning = await post(session, "Profiler.setSamplingInterval", { interval: 500 });
+        const intervalOfAnother = await post(slow, "Profiler.setSamplingInterval", { interval: 60_000_000 });
+        slow.post("Profiler.start");
+        other.post("Profiler.start");
+        second();
+        const inner = await post(other, "Profiler.stop");
+        other.disconnect();
+        third();
+        const outer = await post(session, "Profiler.stop");
+        const slowSamples = (await post(slow, "Profiler.stop")).profile.samples.length;
+
+        slow.post("Profiler.disable");
+        slow.post("Profiler.enable");
+        slow.post("Profiler.start");
+        first();
+        const afterDisable = (await post(slow, "Profiler.stop")).profile.samples.length;
+        slow.disconnect();
+        slow.connect();
+        slow.post("Profiler.enable");
+        slow.post("Profiler.start");
+        first();
+        const afterDisconnect = (await post(slow, "Profiler.stop")).profile.samples.length;
+
+        console.log(JSON.stringify({
+          stopBeforeStart, intervalOfRunning, intervalOfAnother, inner: names(inner), outer: names(outer),
+          isSlow: [slowSamples, afterDisable, afterDisconnect].map(count => count <= 1),
+        }));
       `);
-      expect(sampleCount).toBe(0);
-      expect(duration).toBeGreaterThan(99);
+      expect(result).toEqual({
+        stopBeforeStart: "ERR_INSPECTOR_COMMAND",
+        intervalOfRunning: "ERR_INSPECTOR_COMMAND",
+        intervalOfAnother: {},
+        inner: ["second"],
+        outer: ["first", "second", "third"],
+        isSlow: [true, true, false],
+      });
     });
 
     test("a profile does not wait for the interval of the one before it", async () => {
@@ -614,25 +662,37 @@ describe("node:inspector", () => {
       expect(depth).toBeGreaterThan(260);
     });
 
-    test.if(isLinux)("the sampler sleeps once the profile is stopped", async () => {
-      const wakeups = await run(`
+    test.if(isLinux).each([
+      ["Profiler.stop", `session.post("Profiler.start"); during(); await stop();`],
+      ["Profiler.disable", `session.post("Profiler.start"); during(); session.post("Profiler.disable");`],
+      ["disconnect()", `session.post("Profiler.start"); during(); session.disconnect();`],
+      ["profile()", `profile(during);`],
+      ["profile() of a function that throws", `try { profile(() => { during(); throw 0; }); } catch {}`],
+      ["profile() of an async function", `await profile(async () => during());`],
+      ["profile() of a function that rejects", `await profile(async () => { during(); throw 0; }).catch(() => {});`],
+      [
+        "a promise that profile() waits for in vain",
+        `(() => void profile(() => (during(), new Promise(() => {}))))();`,
+      ],
+    ])("the sampler's thread ends with %s", async (_, statements) => {
+      const samplers = await run(`
+        import { profile } from "bun:jsc";
         import { readdirSync, readFileSync } from "node:fs";
-        session.post("Profiler.start");
-        await sleep(10);
-        await stop();
-        const read = (thread, file) => readFileSync("/proc/self/task/" + thread + "/" + file, "utf8");
         // What is left of "jsc.sampling-profiler.thread".
-        const sampler = readdirSync("/proc/self/task").find(thread => {
-          try {
-            return read(thread, "comm").trim() === "thread";
-          } catch {}
-        });
-        const count = () => Number(read(sampler, "status").match(/^voluntary_ctxt_switches:\\s+(\\d+)/m)[1]);
-        const before = count();
-        await sleep(200);
-        console.log(count() - before);
+        const count = () =>
+          readdirSync("/proc/self/task").filter(thread => {
+            try {
+              return readFileSync("/proc/self/task/" + thread + "/comm", "utf8").trim() === "thread";
+            } catch {}
+          }).length;
+        function during() {
+          while (!count());
+        }
+        ${statements}
+        for (const end = performance.now() + 3000; count() && performance.now() < end; Bun.gc(true)) await sleep(1);
+        console.log(count());
       `);
-      expect(wakeups).toBeLessThan(20);
+      expect(samplers).toBe(0);
     });
 
     // Node reports most of this as (idle), like all native code after a callback:

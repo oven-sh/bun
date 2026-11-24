@@ -1,6 +1,8 @@
 use core::cell::Cell;
 use core::ffi::{c_int, c_void};
+use core::net::SocketAddr;
 
+use bun_core::ip_address::IpText;
 use bun_core::{String as BunString, Utf8Bytes};
 use bun_io::JsKeepAlive;
 use bun_jsc::JsCell;
@@ -14,7 +16,6 @@ use bun_jsc::{
 use bun_ptr::BackRef;
 
 use crate::node::validators;
-use bun_cares_sys::c_ares_draft as c_ares;
 #[cfg(windows)]
 use bun_libuv_sys::sockaddr_storage;
 use bun_sys::{self, SystemErrno};
@@ -24,7 +25,6 @@ use libc::sockaddr_storage;
 
 use crate::api::SocketAddress;
 use crate::generated_bindgen::udp_socket::js_UDPSocket as js;
-use crate::socket::socket_address::inet::INET6_ADDRSTRLEN;
 
 bun_output::declare_scope!(UdpSocket, visible);
 
@@ -167,32 +167,15 @@ extern "C" fn on_data(
         // spans the JS calls below.
         let peer = Address::from_ref(unsafe { (*buf).get_peer(i) });
 
-        let mut addr_buf = [0u8; INET6_ADDRSTRLEN + 1];
-        let hostname: Option<&[u8]>;
-        let port: u16;
-        let mut scope_id: Option<u32> = None;
-        let is_ipv6: bool;
-
-        if let Some(peer4) = peer.as_in4() {
-            is_ipv6 = false;
-            hostname = bun_cares_sys::ntop(bun_core::bytes_of(&peer4.addr), &mut addr_buf);
-            port = u16::from_be(peer4.port);
-        } else if let Some(peer6) = peer.as_in6() {
-            is_ipv6 = true;
-            hostname = bun_cares_sys::ntop(&peer6.addr, &mut addr_buf);
-            port = u16::from_be(peer6.port);
-            if peer6.scope_id != 0 {
-                scope_id = Some(peer6.scope_id);
-            }
-        } else {
+        let Some(peer) = peer.to_socket_addr().filter(|peer| peer.port() != 0) else {
             i += 1;
             continue;
-        }
-
-        if hostname.is_none() || port == 0 {
-            i += 1;
-            continue;
-        }
+        };
+        let (ip, port, is_ipv6) = (IpText::new(peer.ip()), peer.port(), peer.is_ipv6());
+        let scope_id = match peer {
+            SocketAddr::V6(peer) if peer.scope_id() != 0 => Some(peer.scope_id()),
+            _ => None,
+        };
 
         // SAFETY: see `get_peer` above; per-statement reborrows.
         let truncated = unsafe { (*buf).get_truncated(i) };
@@ -200,7 +183,6 @@ extern "C" fn on_data(
         // `binary_type.to_js` copy below, before user JS runs.
         let slice = unsafe { (*buf).get_payload(i) };
 
-        let span = hostname.unwrap();
         #[allow(unused_labels)]
         let hostname_string = if let Some(id) = scope_id {
             'blk: {
@@ -208,18 +190,15 @@ extern "C" fn on_data(
                 {
                     let mut buffer = [0u8; libc::IF_NAMESIZE];
                     if let Some(name) = bun_sys::net::if_indextoname(id, &mut buffer) {
-                        break 'blk BunString::create_format(format_args!(
-                            "{}%{}",
-                            bstr::BStr::new(span),
-                            bstr::BStr::new(name)
-                        ));
+                        let name = bstr::BStr::new(name);
+                        break 'blk BunString::create_format(format_args!("{ip}%{name}"));
                     }
                 }
 
-                BunString::create_format(format_args!("{}%{}", bstr::BStr::new(span), id))
+                BunString::create_format(format_args!("{ip}%{id}"))
             }
         } else {
-            BunString::clone_utf8(span)
+            BunString::clone_latin1(&ip)
         };
 
         let _entered = VirtualMachine::get().enter_event_loop_scope();
@@ -558,7 +537,7 @@ impl UDPSocket {
         if config.fd.is_none() && !bun_dns::is_valid_hostname(hostname_z.as_bytes()) {
             return Err(cx
                 .global()
-                .throw_value(crate::dns_jsc::cares_jsc::not_a_hostname_error(
+                .throw_value(crate::dns_jsc::answer_jsc::not_a_hostname_error(
                     cx.global(),
                     hostname_z.as_bytes(),
                 )));
@@ -567,7 +546,7 @@ impl UDPSocket {
             let address = connect.address.to_utf8();
             if !bun_dns::is_valid_hostname(&address) {
                 return Err(cx.global().throw_value(
-                    crate::dns_jsc::cares_jsc::not_a_hostname_error(cx.global(), &address),
+                    crate::dns_jsc::answer_jsc::not_a_hostname_error(cx.global(), &address),
                 ));
             }
         }
@@ -682,9 +661,9 @@ impl UDPSocket {
                     return Err(cx.global().throw_value(sys_err.to_js(cx.global())));
                 }
 
-                if let Some(eai_err) = c_ares::Error::init_eai(ret) {
+                if let Some(eai_err) = bun_dns::getaddrinfo_error(ret) {
                     return Err(cx.global().throw_value(
-                        crate::dns_jsc::cares_jsc::error_to_js_with_syscall_and_hostname(
+                        crate::dns_jsc::answer_jsc::error_to_js_with_syscall_and_hostname(
                             eai_err,
                             cx.global(),
                             b"connect",
@@ -1572,7 +1551,7 @@ pub(crate) fn connect(
     let connect_host = host.to_owned_slice_z();
     if !bun_dns::is_valid_hostname(connect_host.as_bytes()) {
         return Err(
-            global_this.throw_value(crate::dns_jsc::cares_jsc::not_a_hostname_error(
+            global_this.throw_value(crate::dns_jsc::answer_jsc::not_a_hostname_error(
                 global_this,
                 connect_host.as_bytes(),
             )),

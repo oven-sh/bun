@@ -439,7 +439,6 @@ export interface Provides {
 export type DepName =
   | "WebKit"
   | "boringssl"
-  | "cares"
   | "highway"
   | "libuv"
   | "lolhtml"

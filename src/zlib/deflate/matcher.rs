@@ -3,6 +3,7 @@
 use bun_deflate::format::MIN_MATCH_LEN;
 
 use super::chains::{HASHED_LEN, Index, roll};
+use super::spare_steps::{FIRST_STEPS, SHORT_CHAIN};
 use super::window::{Scan, chunk, match_len, word};
 
 const WORD: u32 = 8;
@@ -43,11 +44,11 @@ pub(super) struct Effort {
 
 impl Effort {
     #[inline(always)]
-    fn steps(&self, best_len: u32) -> u32 {
+    fn steps(&self, max_chain: u32, best_len: u32) -> u32 {
         if best_len >= self.good_len {
-            self.max_chain / 4
+            max_chain / 4
         } else {
-            self.max_chain
+            max_chain
         }
     }
 }
@@ -118,6 +119,22 @@ macro_rules! follow_chain_or_return {
 }
 
 impl<'a> Matcher<'a> {
+    /// For a level that takes spare steps.
+    #[inline(always)]
+    fn max_chain(&self, position: u32) -> u32 {
+        if self.index.spare_steps.has_some(position) {
+            self.effort.max_chain
+        } else {
+            SHORT_CHAIN
+        }
+    }
+
+    /// The same.
+    #[inline(always)]
+    fn steps(&self, position: u32, best_len: u32) -> u32 {
+        self.effort.steps(self.max_chain(position), best_len)
+    }
+
     #[inline(always)]
     pub(super) fn target(&self, position: u32, lookahead: u32) -> Option<Target<'a>> {
         let scan = chunk(self.index.window, position);
@@ -135,10 +152,13 @@ impl<'a> Matcher<'a> {
         distance.wrapping_sub(1) < self.max_distance.min(position.wrapping_sub(1))
     }
 
-    /// Inserts the position, and looks for a match from scratch.
+    /// Inserts the position, and looks for a match from scratch. `SPARES` is for the levels that take spare steps.
     #[inline(always)]
-    pub(super) fn insert_and_match<const ROLLING: bool>(&mut self, target: Target<'_>) -> Match {
-        self.insert_and_beat::<ROLLING>(target, Match::NONE, false)
+    pub(super) fn insert_and_match<const ROLLING: bool, const SPARES: bool>(
+        &mut self,
+        target: Target<'_>,
+    ) -> Match {
+        self.insert_and_beat::<ROLLING, SPARES>(target, Match::NONE, false)
     }
 
     /// The same for one that is longer than `best`. Out of line, or too few registers are left for the other.
@@ -151,13 +171,13 @@ impl<'a> Matcher<'a> {
         is_good_enough: bool,
     ) -> Match {
         match self.target(position, lookahead) {
-            Some(target) => self.insert_and_beat::<ROLLING>(target, best, is_good_enough),
+            Some(target) => self.insert_and_beat::<ROLLING, true>(target, best, is_good_enough),
             None => best,
         }
     }
 
     #[inline(always)]
-    fn insert_and_beat<const ROLLING: bool>(
+    fn insert_and_beat<const ROLLING: bool, const SPARES: bool>(
         &mut self,
         target: Target<'_>,
         best: Match,
@@ -172,12 +192,12 @@ impl<'a> Matcher<'a> {
         if !self.reaches(target.position, candidate) || is_good_enough {
             return best;
         }
-        self.longest_match::<ROLLING>(target, candidate, best)
+        self.longest_match::<ROLLING, SPARES>(target, candidate, best)
     }
 
     /// The longest match that is longer than `best`, or that. `candidate` is within reach.
     #[inline(always)]
-    fn longest_match<const ROLLING: bool>(
+    fn longest_match<const ROLLING: bool, const SPARES: bool>(
         &self,
         target: Target<'_>,
         candidate: u32,
@@ -186,7 +206,7 @@ impl<'a> Matcher<'a> {
         let found = if ROLLING {
             self.search_rolling(target, candidate, best)
         } else {
-            self.search(target, candidate, best)
+            self.search::<SPARES>(target, candidate, best)
         };
         // Looking ahead inserts positions before their time.
         if found.start < target.position {
@@ -198,8 +218,17 @@ impl<'a> Matcher<'a> {
 
     // https://github.com/zlib-ng/zlib-ng/blob/12731092979c6d07f42da27da673a9f6c7b13586/match_tpl.h#L29
     #[inline(always)]
-    fn search(&self, target: Target<'_>, mut candidate: u32, mut best: Match) -> Match {
-        let mut steps = self.effort.steps(best.len);
+    fn search<const SPARES: bool>(
+        &self,
+        target: Target<'_>,
+        mut candidate: u32,
+        mut best: Match,
+    ) -> Match {
+        let looks_for_first = SPARES && best.len < MIN_MATCH_LEN as u32;
+        let mut steps = match SPARES {
+            true => self.steps(target.position, best.len),
+            false => self.effort.max_chain,
+        };
         let enough = target.lookahead.min(self.effort.nice_len);
         if best.len >= WORD {
             return self.search_long(target.position, target.lookahead, candidate, best, steps);
@@ -209,8 +238,15 @@ impl<'a> Matcher<'a> {
         };
         let limit = target.position.saturating_sub(self.max_distance);
         let (first, mut mask) = (target.first_word(), mask_for(best.len));
-        while candidate < target.position {
-            loop {
+        if looks_for_first {
+            match self.find_first(target.position, candidate, first) {
+                Some(found) => (candidate, steps) = found,
+                None => return best,
+            }
+        }
+        let mut is_found = looks_for_first;
+        loop {
+            while !core::mem::take(&mut is_found) {
                 let Some(other) = word(self.index.window, candidate) else {
                     return best;
                 };
@@ -234,9 +270,56 @@ impl<'a> Matcher<'a> {
             if len >= WORD {
                 return self.search_long(target.position, target.lookahead, candidate, best, steps);
             }
+            if candidate >= target.position {
+                return best;
+            }
             mask = mask_for(len);
         }
-        best
+    }
+
+    /// The candidate that starts like `first`, and the steps that are left.
+    #[inline(always)]
+    fn find_first(&self, position: u32, mut candidate: u32, first: u64) -> Option<(u32, u32)> {
+        let (links, mask) = (self.index.links()?, mask_for(Match::NONE.len));
+        let limit = position.saturating_sub(self.max_distance);
+        let mut taken = 0;
+        loop {
+            let other = word(self.index.window, candidate);
+            if other.is_none_or(|it| (it ^ first) & mask == 0) {
+                return Some((candidate, self.max_chain(position) - taken));
+            }
+            candidate = links.follow(candidate);
+            if candidate <= limit {
+                return None;
+            }
+            taken += 1;
+            if taken == FIRST_STEPS {
+                return self.find_further(position, candidate, first);
+            }
+        }
+    }
+
+    /// The same behind `FIRST_STEPS`.
+    #[cold]
+    #[inline(never)]
+    fn find_further(&self, position: u32, mut candidate: u32, first: u64) -> Option<(u32, u32)> {
+        let (spare_steps, max_chain) = (self.index.spare_steps, self.effort.max_chain);
+        debug_assert!(max_chain >= SHORT_CHAIN);
+        if !spare_steps.has_some(position) {
+            return None;
+        }
+        let (links, mask) = (self.index.links()?, mask_for(Match::NONE.len));
+        let limit = position.saturating_sub(self.max_distance);
+        let mut steps = max_chain - FIRST_STEPS;
+        let mut follow = || loop {
+            if (word(self.index.window, candidate)? ^ first) & mask == 0 {
+                return Some(candidate);
+            }
+            follow_chain_or_return!(links, candidate, steps, limit, None);
+        };
+        let found = follow();
+        spare_steps.spend(position, max_chain - FIRST_STEPS - steps);
+        Some((found?, steps))
     }
 
     /// For a `best` of at least a word. Out of line, so that its loop has all registers to itself.
@@ -290,7 +373,7 @@ impl<'a> Matcher<'a> {
     /// Spares a call if no candidate starts like the target.
     #[inline(always)]
     fn search_rolling(&self, target: Target<'_>, mut candidate: u32, best: Match) -> Match {
-        let mut steps = self.effort.steps(best.len);
+        let mut steps = self.effort.steps(self.effort.max_chain, best.len);
         if best.len < MIN_MATCH_LEN as u32
             && let Some(links) = self.index.links()
         {
@@ -397,5 +480,56 @@ impl<'a> Matcher<'a> {
             follow_chain_or_return!(links, candidate, steps, limit, best);
         }
         best
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::chains::Chains;
+    use super::*;
+
+    #[test]
+    fn chains_are_short_while_there_are_no_spare_steps() {
+        const WANTED: u64 = 0x07_0707;
+        let Ok(mut chains) = Chains::new(1 << 15) else {
+            return;
+        };
+        chains.grow(1 << 15);
+        chains.over(&[0; 999]).insert_all::<false>(1, 900);
+        let mut window = [0; 999];
+        window.split_at_mut(700).1.split_at_mut(3).0.fill(7);
+        let effort = Effort {
+            good_len: 8,
+            nice_len: 128,
+            max_chain: 128,
+            gives_up_early: false,
+        };
+        let matcher = Matcher {
+            index: chains.over(&window),
+            max_distance: 9999,
+            effort,
+        };
+        for (position, taken) in (0..128).map(|taken| (900 + 64 * taken, taken)) {
+            let found = matcher.find_first(position, 700 + taken, WANTED);
+            assert_eq!(found, Some((700, 128 - taken)));
+        }
+        // Too far down the chain, and behind its end.
+        for candidate in [828, 50] {
+            assert_eq!(matcher.find_first(9500, candidate, WANTED), None);
+        }
+        // Each takes the spare steps of 50 positions.
+        for _ in 0..82 {
+            let found = matcher.find_first(10_690, 808, WANTED);
+            assert_eq!(found, Some((700, 20)));
+        }
+        assert_eq!(matcher.find_first(10_693, 708, WANTED), None);
+        for (position, steps) in [(10_693, [16, 4]), (10_694, [128, 32])] {
+            assert_eq!([7, 8].map(|len| matcher.steps(position, len)), steps);
+        }
+        assert_eq!(matcher.find_first(10_693, 707, WANTED), Some((700, 9)));
+        assert_eq!(matcher.find_first(10_694, 708, WANTED), Some((700, 120)));
+        for candidate in [703, 750] {
+            assert_eq!(matcher.find_first(10_699, candidate, WANTED), None);
+        }
     }
 }

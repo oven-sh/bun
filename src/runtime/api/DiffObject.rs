@@ -14,8 +14,8 @@ use bun_text_diff::tokens::{
 };
 
 use crate::generated_bindgen::diff_object::{
-    ArrayChange, Change, FilePatch, Hunk, HunkToApply, HunksOptions, LinesOptions, Options,
-    PatchOptions, PatchToApply, TextOptions,
+    ArrayChange, Change, FilePatch, FileToApply, Hunk, HunkToApply, HunksOptions, LinesOptions,
+    Options, PatchOptions, PatchToApply, TextOptions,
 };
 
 trait JsUnit: Unit {
@@ -488,19 +488,42 @@ pub(crate) fn create_patch<'a>(
     ))
 }
 
-fn parse<'a, T: Unit>(heap: &JsHeap<'a>, text: &[T]) -> bindgen::Result<'a, Vec<patch::FilePatch>> {
-    patch::parse(text).map_err(|error| heap.syntax_error(format_args!("{error}")))
+/// The lines of the hunks are places in `text` as it is afterwards.
+fn parse<'a, T: Unit>(
+    heap: &JsHeap<'a>,
+    text: &mut Cow<'_, [T]>,
+) -> bindgen::Result<'a, Vec<patch::FilePatch>> {
+    let files = patch::parse(text).map_err(|error| heap.syntax_error(format_args!("{error}")))?;
+    if files.last().is_some_and(|file| file.lost_cr) {
+        text.to_mut().push(T::from_u8(b'\r'));
+    }
+    Ok(files)
 }
 
-pub(crate) fn parse_patch<'a, 's>(
+fn parse_string<'a, T: JsUnit>(
     heap: &JsHeap<'a>,
-    text: &'s String,
-) -> bindgen::Result<'a, impl Iterator<Item = FilePatch> + use<'s>> {
-    let files = if text.is_utf16() {
-        parse(heap, text.utf16())?
-    } else {
-        parse(heap, text.latin1())?
-    };
+    text: &String,
+) -> bindgen::Result<'a, (String, Vec<patch::FilePatch>)> {
+    let mut units = T::of(text);
+    let files = parse(heap, &mut units)?;
+    if units.len() == text.length() {
+        return Ok((text.clone(), files));
+    }
+    if units.len() > String::max_length() {
+        return Err(heap.string_too_long());
+    }
+    let restored = clone_units(&units);
+    if restored.is_dead() {
+        return Err(heap.memory_allocation_failed());
+    }
+    Ok((restored, files))
+}
+
+pub(crate) fn parse_patch<'a>(
+    heap: &JsHeap<'a>,
+    text: &String,
+) -> bindgen::Result<'a, impl Iterator<Item = FilePatch> + use<>> {
+    let (text, files) = by_width!([text], parse_string(heap, text))?;
     let name = |name: Option<patch::Name>| name.map(|name| String::clone_utf16(&name));
     let flag = |is_set: bool| is_set.then_some(true);
     let hunk = move |hunk| hunk_with(hunk, |line| text.shared_substring(line));
@@ -518,7 +541,7 @@ pub(crate) fn parse_patch<'a, 's>(
         is_create: flag(file.is_create),
         is_delete: flag(file.is_delete),
         is_binary: flag(file.is_binary),
-        hunks: file.hunks.into_iter().map(hunk).collect(),
+        hunks: file.hunks.into_iter().map(&hunk).collect(),
     }))
 }
 
@@ -526,10 +549,14 @@ fn apply<'a, T: JsUnit>(
     heap: &JsHeap<'a>,
     source: &String,
     hunks: &[patch::HunkToApply<'_, T>],
-) -> bindgen::Result<'a, Option<String>> {
+) -> bindgen::Result<'a, String> {
     match patch::apply(&T::of(source), hunks) {
-        Ok(patched) => Ok(patched.map(|patched| clone_units(&patched))),
-        Err(patch::InvalidOperation { hunk, line }) => Err(heap.error_with_code(
+        Ok(patched) => Ok(clone_units(&patched)),
+        Err(patch::ApplyError::Mismatch { hunk, reason }) => Err(heap.error_with_code(
+            ErrorCode::PATCH_DOES_NOT_APPLY,
+            format_args!("Hunk {} does not apply: {reason}", hunk + 1),
+        )),
+        Err(patch::ApplyError::InvalidOperation { hunk, line }) => Err(heap.error_with_code(
             ErrorCode::INVALID_ARG_VALUE,
             format_args!(
                 "The property 'patch[{hunk}].lines[{line}]' must start with \" \", \"-\", \"+\" or \"\\\""
@@ -538,14 +565,21 @@ fn apply<'a, T: JsUnit>(
     }
 }
 
+fn binary_patch<'a>(heap: &JsHeap<'a>) -> bindgen::Error<'a> {
+    heap.error_with_code(
+        ErrorCode::INVALID_ARG_VALUE,
+        format_args!("The argument 'patch' must change a text file. Received a binary patch"),
+    )
+}
+
 fn apply_text<'a, T: JsUnit>(
     heap: &JsHeap<'a>,
     source: &String,
     text: &String,
-) -> bindgen::Result<'a, Option<String>> {
-    let text = T::of(text);
-    let files = parse(heap, &text)?;
-    let [file] = &files[..] else {
+) -> bindgen::Result<'a, String> {
+    let mut text = T::of(text);
+    let files = parse(heap, &mut text)?;
+    if files.len() > 1 {
         return Err(heap.error_with_code(
             ErrorCode::INVALID_ARG_VALUE,
             format_args!(
@@ -553,14 +587,18 @@ fn apply_text<'a, T: JsUnit>(
                 files.len()
             ),
         ));
-    };
-    if file.is_binary {
-        return Err(heap.error_with_code(
-            ErrorCode::INVALID_ARG_VALUE,
-            format_args!("The argument 'patch' must change a text file. Received a binary patch"),
-        ));
     }
-    let hunks = file.hunks.iter().map(|hunk| patch::HunkToApply {
+    let file = files.first();
+    if file.is_some_and(|file| file.is_binary) {
+        return Err(binary_patch(heap));
+    }
+    let hunks = file.map_or(&[][..], |file| &file.hunks);
+    if hunks.is_empty() && !patch::can_lack_hunks(&text, file) {
+        return Err(heap.syntax_error(format_args!(
+            "The patch has no line that starts with \"@@ -start,lines +start,lines @@\""
+        )));
+    }
+    let hunks = hunks.iter().map(|hunk| patch::HunkToApply {
         old_start: hunk.old_start as u32,
         lines: hunk.lines.iter().map(|line| &text[line.clone()]).collect(),
     });
@@ -571,7 +609,7 @@ fn apply_hunks<'a, T: JsUnit>(
     heap: &JsHeap<'a>,
     source: &String,
     hunks: &[HunkToApply],
-) -> bindgen::Result<'a, Option<String>> {
+) -> bindgen::Result<'a, String> {
     let lines = hunks.iter().map(|hunk| hunk.lines.iter().map(T::of));
     let lines: Vec<Vec<Cow<'_, [T]>>> = lines.map(Iterator::collect).collect();
     let hunks = hunks.iter().zip(&lines);
@@ -586,10 +624,11 @@ pub(crate) fn apply_patch<'a>(
     heap: &JsHeap<'a>,
     source: &String,
     patch: PatchToApply,
-) -> bindgen::Result<'a, Option<String>> {
+) -> bindgen::Result<'a, String> {
     match patch {
         PatchToApply::Text(text) => by_width!([source, &text], apply_text(heap, source, &text)),
-        PatchToApply::Hunks(hunks) => {
+        PatchToApply::File(file) if file.is_binary => Err(binary_patch(heap)),
+        PatchToApply::Hunks(hunks) | PatchToApply::File(FileToApply { hunks, .. }) => {
             let lines = || hunks.iter().flat_map(|hunk| &hunk.lines);
             // One string can be in there many times.
             if lines().map(String::length).sum::<usize>() > String::max_length() {

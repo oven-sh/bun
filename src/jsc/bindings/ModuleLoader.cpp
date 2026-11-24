@@ -141,7 +141,12 @@ static JSC::SyntheticSourceProvider::LazySyntheticSourceGenerator generateIntern
         JSValue requireResult = DeclaredModuleLoad::requireNamedAtRunTime(globalObject, moduleId, ErrorCode::ERR_MODULE_NOT_FOUND);
         RETURN_IF_EXCEPTION(throwScope, nullptr);
         auto* object = requireResult.getObject();
-        ASSERT_WITH_MESSAGE(object, "Expected object from requireId %s", moduleKey.string().string().utf8().legacyCStringPointer());
+        if (!object) [[unlikely]] {
+            // The program can replace what some of these modules export.
+            exportNames.append(vm.propertyNames->defaultKeyword);
+            exportValues.append(requireResult);
+            return nullptr;
+        }
 
         RELEASE_AND_RETURN(throwScope, appendInternalModuleExports(globalObject, object, exportNames, exportValues));
     };

@@ -36,6 +36,11 @@ test("S3 file type option containing CR/LF or other control characters is not re
   expect(() => client.file("report.txt", { type: "text/plain\r\nx-amz-acl: public-read" })).toThrow(
     "type must not contain newline characters (CR/LF)",
   );
+  for (const option of ["type", "contentEncoding", "contentDisposition"]) {
+    expect(() => client.file("report.txt", { [option]: "a\0b" })).toThrow(
+      option + " must not contain newline characters (CR/LF) or null bytes",
+    );
+  }
 
   // Other control characters in `type` must not be stored as the file's content
   // type, and must not leak into the outgoing object-storage request headers.

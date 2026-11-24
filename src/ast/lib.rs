@@ -533,8 +533,7 @@ pub struct Location {
     pub length: u32,
     // TODO: document or remove
     pub offset: usize,
-    /// 1-based column of the line at which `line_text` starts, set by [`Location::init_or_null`].
-    /// `None` on a hand-built location: [`Location::excerpt`] shows its `line_text` as given.
+    /// 1-based column of the line at which `line_text` starts. `None` unless [`Location::init_or_null`] made the location.
     pub line_text_column: Option<core::num::NonZeroU32>,
 
     /// 1-based line number.
@@ -578,8 +577,7 @@ fn excerpt_bounds(line: &[u8], offset: usize) -> (usize, usize) {
 }
 
 impl Location {
-    /// The part of `line_text` that a display shows, and the number of UTF-16 code units of the line in front of that
-    /// part. A line from [`Location::init_or_null`] with more than 80 bytes after the error is cut around the error.
+    /// What a display shows of `line_text`, cut around the error if `init_or_null` stored it, and the UTF-16 units in front.
     pub fn excerpt(&self) -> (&[u8], usize) {
         let text = self.line_text.as_deref().unwrap_or_default();
         let Some(start) = self.line_text_column else {

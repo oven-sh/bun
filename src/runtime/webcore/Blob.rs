@@ -1984,15 +1984,20 @@ impl BlobExt for Blob {
             }
         }
 
+        let mut bytes = Vec::new();
+        bytes
+            .try_reserve_exact(bytes_.len())
+            .map_err(|_| bun_alloc::AllocError)?;
+        bytes.extend_from_slice(bytes_);
         Ok(Self::create_with_bytes_and_allocator(
-            bytes_.to_vec(),
+            bytes,
             global_this,
             was_string,
         ))
     }
 
     fn create(bytes_: &[u8], global_this: &JSGlobalObject, was_string: bool) -> Blob {
-        Self::try_create(bytes_, global_this, was_string).expect("oom")
+        bun_core::handle_oom(Self::try_create(bytes_, global_this, was_string))
     }
 
     // dupe / dupe_with_content_type / into_js: defined once below (top-level impl); duplicates removed (E0592).
@@ -2501,7 +2506,7 @@ impl BlobExt for Blob {
                     // Decide up front whether processing any part (or any entry
                     // still pending on `stack`) can re-enter user JS (toString /
                     // Symbol.toPrimitive / proxy traps / getters) and detach a
-                    // borrowed buffer before `joiner.done()` copies it out. If
+                    // borrowed buffer before `joiner.move_to()` copies it out. If
                     // nothing can, typed-array parts are borrowed (`push_static`)
                     // instead of cloned, which would double peak memory for
                     // `new Blob(largeChunks)`. Non-fast arrays are conservatively
@@ -2547,13 +2552,13 @@ impl BlobExt for Blob {
                                     let buf = item.as_array_buffer(global).unwrap();
                                     if parts_can_run_js {
                                         // A later part may run user JS that detaches
-                                        // or resizes this buffer before `done()`.
+                                        // or resizes this buffer before `move_to()`.
                                         joiner.push_cloned(buf.byte_slice());
                                     } else {
                                         // SAFETY: the prescan above proved no remaining
                                         // part can run user JS, so this buffer (rooted
                                         // via `_keep`/`arg`) stays attached and valid
-                                        // until `joiner.done()` below.
+                                        // until `joiner.move_to()` below.
                                         joiner.push(unsafe {
                                             bun_ptr::detach_lifetime(buf.byte_slice())
                                         });
@@ -2571,14 +2576,14 @@ impl BlobExt for Blob {
                                         could_have_non_ascii = could_have_non_ascii
                                             || blob.charset.get() != strings::AsciiStatus::AllAscii;
                                         // A later part may run user JS that drops the
-                                        // last ref to this Blob's Store before `done()`.
+                                        // last ref to this Blob's Store before `move_to()`.
                                         if parts_can_run_js {
                                             joiner.push_cloned(blob.shared_view());
                                         } else {
                                             // SAFETY: the prescan above proved no
                                             // remaining part can run user JS, so this
                                             // Blob (rooted via `_keep`/`arg`) keeps its
-                                            // Store alive until `joiner.done()` below.
+                                            // Store alive until `joiner.move_to()` below.
                                             joiner.push(unsafe {
                                                 bun_ptr::detach_lifetime(blob.shared_view())
                                             });
@@ -2608,7 +2613,7 @@ impl BlobExt for Blob {
                             || blob.charset.get() != strings::AsciiStatus::AllAscii;
                         // This arm only handles entries deferred onto the walk
                         // stack; other pending entries may still run user JS and
-                        // free this Blob's Store before `done()`, so always copy.
+                        // free this Blob's Store before `move_to()`, so always copy.
                         joiner.push_cloned(blob.shared_view());
                     } else {
                         let utf8 = current.to_utf8(global)?;
@@ -2621,7 +2626,7 @@ impl BlobExt for Blob {
                     let buf = current.as_array_buffer(global).unwrap();
                     // SAFETY: this arm is only reached when the typed array is the
                     // top-level value (the walk stack is empty), so no user JS runs
-                    // between this push and `joiner.done()` below; `_keep`/`arg` keeps
+                    // between this push and `joiner.move_to()` below; `_keep`/`arg` keeps
                     // the buffer alive for that span.
                     joiner.push(unsafe { bun_ptr::detach_lifetime(buf.slice()) });
                     could_have_non_ascii = true;
@@ -2639,7 +2644,11 @@ impl BlobExt for Blob {
             };
         }
 
-        let joined: Vec<u8> = joiner.done().expect("oom").into_vec();
+        let mut joined = Vec::new();
+        joined
+            .try_reserve_exact(joiner.len)
+            .map_err(|_| jsc::JsError::OutOfMemory)?;
+        joiner.move_to(&mut joined);
 
         if !could_have_non_ascii {
             return Ok(Blob::init_with_all_ascii(joined, global, true));
@@ -4152,7 +4161,14 @@ pub(crate) fn write_file_internal(
             return destination_blob.pipe_readable_stream_to_blob(cx, readable, &options);
         }
 
-        break 'brk Blob::get::<false, false>(cx.global(), data)?;
+        break 'brk match Blob::get::<false, false>(cx.global(), data) {
+            Err(err @ jsc::JsError::OutOfMemory) => {
+                return Ok(
+                    JSPromise::rejected_promise_with_caught_exception(cx.global(), err)?.to_js(),
+                );
+            }
+            blob => blob?,
+        };
     };
 
     write_file_with_source_destination(cx, &mut source_blob, &mut destination_blob, &options)

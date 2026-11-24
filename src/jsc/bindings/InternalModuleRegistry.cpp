@@ -249,10 +249,6 @@ static NEVER_INLINE JSC::JSValue generateInternalModuleFromText(JSC::JSGlobalObj
         globalObject, JSC::MarkedArgumentBuffer());
 
     RETURN_IF_EXCEPTION(throwScope, {});
-    ASSERT(
-        result && result.isCell() && dynamicDowncast<JSObject>(result),
-        "Expected \"%s\" to export a JSObject. Bun is going to crash.",
-        moduleName.utf8().legacyCStringPointer());
     return result;
 }
 

@@ -25,7 +25,7 @@ import { createHash } from "node:crypto";
 import { closeSync, existsSync, openSync, readFileSync, readSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
-import { downloadWithRetry, extractTarGz, fetchPrebuilt } from "./download.ts";
+import { downloadWithRetry, extractTarGz, fetchPrebuilt, pinnedSha256 } from "./download.ts";
 import { BuildError, assert } from "./error.ts";
 import { writeIfChanged } from "./fs.ts";
 import { formatElapsed } from "./tty.ts";
@@ -55,27 +55,6 @@ async function main(): Promise<void> {
       return fetchDep(name, repo, commit, dest, cache, patches);
     }
 
-    case "subst": {
-      // fetch-cli.ts subst <in> <out> [<from> <to>]...
-      // Replaces every literal occurrence of <from> with <to>. Used by
-      // DirectBuild deps to materialize *.h.in templates without running
-      // the upstream configure (e.g. zlib-ng's zlib.h.in → zlib.h, where
-      // the only substitution is `@ZLIB_SYMBOL_PREFIX@` → ``).
-      const [inPath, outPath, ...pairs] = args;
-      assert(inPath !== undefined && outPath !== undefined, "subst: missing in/out");
-      assert(pairs.length % 2 === 0, "subst: replacements must be <from> <to> pairs");
-      let text = await readFile(inPath, "utf8");
-      for (let i = 0; i + 1 < pairs.length; i += 2) {
-        assert(pairs[i]!.length > 0, `subst: empty <from> at index ${i}`);
-        text = text.split(pairs[i]!).join(pairs[i + 1]!);
-      }
-      // dep_subst is restat=1 — preserve mtime when the rendered text is
-      // unchanged so depfile-tracked .o files (lsquic ← zlib.h) don't
-      // recompile after a no-op re-fetch.
-      writeIfChanged(outPath, text);
-      return;
-    }
-
     case "check-undefined": {
       // fetch-cli.ts check-undefined <name> <nm> <rspfile> <stamp> <symbols>
       // <rspfile> is the edge's response file (one object per line);
@@ -103,24 +82,38 @@ async function main(): Promise<void> {
     }
 
     case "prebuilt": {
-      // fetch-cli.ts prebuilt <name> <url> <dest> <identity> [...rm_paths]
-      const [name, url, dest, identity, ...rmPaths] = args;
+      // fetch-cli.ts prebuilt <name> <url> <dest> <identity> <sha256sums> [...rm_paths]
+      // <sha256sums> is the file that pins the download, or `-` for none.
+      const [name, url, dest, identity, sums, ...rmPaths] = args;
       assert(
-        name !== undefined && url !== undefined && dest !== undefined && identity !== undefined,
-        "prebuilt: missing name/url/dest/identity",
+        name !== undefined && url !== undefined && dest !== undefined && identity !== undefined && sums !== undefined,
+        "prebuilt: missing name/url/dest/identity/sha256sums",
       );
       // A job that builds `codegen` alone reads the engine's code generators and nothing else of WebKit's tarball. A
       // release has them as an asset of its own. An older one does not, and then it is the tarball after all.
       if (name === "WebKit" && process.env.BUN_WEBKIT_GENERATORS_ONLY === "1") {
         const generators = new URL("bun-webkit-aot-sources.tar.gz", url).href;
-        try {
-          return await fetchPrebuilt(name, generators, dest, `${identity}-generators-only`, rmPaths);
-        } catch (error) {
-          if (!(error instanceof BuildError)) throw error;
-          console.log(`${generators} could not be fetched, fetching ${url}`);
+        const fetchGenerators = (sha256?: string) =>
+          fetchPrebuilt(name, generators, dest, `${identity}-generators-only`, sha256, rmPaths);
+        if (sums !== "-") {
+          const sha256 = pinnedSha256(sums, generators);
+          if (sha256 !== undefined) return fetchGenerators(sha256);
+        } else {
+          try {
+            return await fetchGenerators();
+          } catch (error) {
+            if (!(error instanceof BuildError)) throw error;
+            console.log(`${generators} could not be fetched, fetching ${url}`);
+          }
         }
       }
-      return fetchPrebuilt(name, url, dest, identity, rmPaths);
+      if (sums === "-") return fetchPrebuilt(name, url, dest, identity, undefined, rmPaths);
+      const sha256 = pinnedSha256(sums, url);
+      assert(sha256 !== undefined, `No sha256 is pinned for ${url}`, {
+        file: sums,
+        hint: `After a change of version, run \`bun run pin-${name.toLowerCase()}\`. If the pins are current, the release has no such file`,
+      });
+      return fetchPrebuilt(name, url, dest, identity, sha256, rmPaths);
     }
 
     case undefined:
@@ -140,8 +133,7 @@ Usage: bun fetch-cli.ts <kind> <args...>
 
 Kinds:
   dep             <name> <repo> <commit> <dest> <cache> [...patches]
-  prebuilt        <name> <url> <dest> <identity> [...rm_paths]
-  subst           <in> <out> [<from> <to>]...
+  prebuilt        <name> <url> <dest> <identity> <sha256sums> [...rm_paths]
   check-undefined <name> <nm> <rspfile> <stamp> <symbol,...>
 
 This is invoked by ninja build rules. You shouldn't need to call it

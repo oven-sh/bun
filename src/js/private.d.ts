@@ -1563,6 +1563,7 @@ interface $BunModules {
   "internal/trace_event_recorder": $ModuleValue<typeof import("./internal/trace_event_recorder")>;
   "internal/trace_events": $ModuleValue<typeof import("./internal/trace_events")>;
   "internal/tty": $ModuleValue<typeof import("./internal/tty")>;
+  "internal/undici_channels": $ModuleValue<typeof import("./internal/undici_channels")>;
   "internal/url": $ModuleValue<typeof import("./internal/url")>;
   "internal/util/colors": $ModuleValue<typeof import("./internal/util/colors")>;
   "internal/util/comparisons": $ModuleValue<typeof import("./internal/util/comparisons")>;

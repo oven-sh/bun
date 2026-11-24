@@ -60,6 +60,8 @@ feature Archive "Bun.Archive"
 
 feature Semver "Bun.semver"
 
+feature Diff "Bun.diff"
+
 feature Ansi "Bun.sliceAnsi and Bun.wrapAnsi"
 
 feature EscapeHtml "Bun.escapeHTML"
@@ -118,8 +120,7 @@ feature BrotliEncoder "Brotli compression"
   minimum 300000
 
 feature ZstdCompressor "zstd compression"
-  c-function ZSTD_compress ZSTD_compressBound ZSTD_compressStream2 ZSTD_createCCtx ZSTD_freeCCtx
-  c-function ZSTD_CCtx_loadDictionary ZSTD_CCtx_reset ZSTD_CCtx_setParameter ZSTD_CCtx_setPledgedSrcSize
+  minimum 150000
 
 feature NativeAddons "native addons, process.dlopen and N-API"
   exports
@@ -176,7 +177,7 @@ feature Http3 "HTTP/3 in Bun.serve and fetch"
   cxx-function H3 (^|\s)uWS::H3\w*::
 
 feature TlsSockets "TLS sockets and servers"
-  cxx-function uWS uWS::(TemplatedApp|HttpContext|HttpContextData|HttpResponse|HttpResponseData|AsyncSocket|WebSocket|WebSocketContext|WebSocketContextData)<(?:true|1)[,>]
+  cxx-function uWS uWS::(TemplatedApp|HttpContext|HttpContextData|HttpResponse|HttpResponseData|AsyncSocket)<(?:true|1)[,>]
 
 feature X509 "crypto.X509Certificate and crypto.KeyObject"
 

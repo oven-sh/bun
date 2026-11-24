@@ -324,6 +324,7 @@ const PUBLISHED_AS: Record<string, string | null> = {
     'typeof Bun & { Crypto: Class<Omit<Crypto, "subtle">>; timingSafeEqual: typeof import("node:crypto").timingSafeEqual }',
   "CryptoHasher.bind.ts": "typeof Bun",
   "DevServer.bind.ts": null,
+  "DiffObject.bind.ts": "typeof Bun.diff",
   "FFIObject.bind.ts": null,
   "FakeTimers.bind.ts":
     'Jest & Pick<Vi, "getMockedSystemTime"> & OfFlavor<"jest", Jest> & OfFlavor<"vi", Vi> & { vitestUseFakeTimers: Vi["useFakeTimers"] }',
@@ -373,6 +374,7 @@ const PUBLISHED_AS: Record<string, string | null> = {
   "TextDecoder.bind.ts": "{ TextDecoder: typeof TextDecoder }",
   "Timer.bind.ts": null,
   "Transpiler.bind.ts": "typeof Bun",
+  "URLPattern.bind.ts": '{ URLPattern: typeof import("node:url").URLPattern }',
   "UnsafeObject.bind.ts": "typeof Bun.unsafe",
   "UpgradedDuplex.bind.ts": null,
   "XMLObject.bind.ts": "typeof Bun.XML",
@@ -649,6 +651,12 @@ describe("@types/bun integration test", () => {
     ).toEqual([
       // `undefined` for a Blob without a store or with bytes. What is published is a BunFile.
       "Blob.bind.ts: file().stat() is Promise<unknown> | undefined, not Promise<Stats>",
+      // `undefined` only with `maxEditLength`, which has an overload of its own. `arrays` does not write to its arguments.
+      "DiffObject.bind.ts: lines() is Change[] | undefined, not Change<string>[]",
+      "DiffObject.bind.ts: arrays<T>(oldArray: readonly T[], newArray: readonly T[], options?: (Options & { maxEditLength?: undefined; }) | undefined): Change<T[]>[]: oldArray takes any[], not readonly T[]",
+      "DiffObject.bind.ts: arrays<T>(oldArray: readonly T[], newArray: readonly T[], options?: Options | undefined): Change<T[]>[] | undefined: oldArray takes any[], not readonly T[]",
+      "DiffObject.bind.ts: hunks() is Hunk[] | undefined, not Hunk[]",
+      "DiffObject.bind.ts: createPatch() is string | undefined, not string",
       // An S3File is a Blob with more members, which C++ adds and no schema describes.
       "S3Client.bind.ts: new S3Client().file() has no readable, bucket, presign",
       "S3Client.bind.ts: new S3Client().file().stat() is Promise<unknown> | undefined, not Promise<S3Stats>",

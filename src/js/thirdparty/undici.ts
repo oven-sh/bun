@@ -1,6 +1,4 @@
 const EventEmitter = require("node:events");
-const dc = require("node:diagnostics_channel");
-const { isArrayBuffer } = require("node:util/types");
 const { _ReadableFromWeb: ReadableFromWeb } = require("internal/webstreams_adapters");
 
 const ObjectCreate = Object.create;
@@ -16,7 +14,7 @@ const File = bindings[4];
 const URL: typeof globalThis.URL = bindings[5];
 const AbortSignal: typeof globalThis.AbortSignal = bindings[6];
 const URLSearchParams: typeof globalThis.URLSearchParams = bindings[7];
-const BunWebSocket: typeof globalThis.WebSocket = bindings[8];
+const WebSocket: typeof globalThis.WebSocket = bindings[8];
 const CloseEvent = bindings[9];
 const ErrorEvent = bindings[10];
 const MessageEvent = bindings[11];
@@ -377,44 +375,14 @@ const util = {
   },
 };
 
-const pingChannel = dc.channel("undici:websocket:ping");
-const pongChannel = dc.channel("undici:websocket:pong");
-
-function toBuffer(data: ArrayBufferView | ArrayBuffer | Blob) {
-  if ($isTypedArrayView(data)) return data;
-  // A received frame's Blob is in memory, so arrayBuffer() returns an already-fulfilled promise.
-  return Buffer.from(isArrayBuffer(data) ? data : $peekPromiseSettledValue(data.arrayBuffer()));
-}
-
-interface FrameEvent {
-  data: ArrayBufferView | ArrayBuffer | Blob;
-  target: WebSocket;
-}
-
-function onPing(event: FrameEvent) {
-  if (pingChannel.hasSubscribers) pingChannel.publish({ payload: toBuffer(event.data), websocket: event.target });
-}
-
-function onPong(event: FrameEvent) {
-  if (pongChannel.hasSubscribers) pongChannel.publish({ payload: toBuffer(event.data), websocket: event.target });
-}
-
-class WebSocket extends BunWebSocket {
-  constructor(url: string | URL, protocols?: string | string[] | object) {
-    super(url, protocols);
-    this.addEventListener("ping", onPing);
-    this.addEventListener("pong", onPong);
-  }
-}
-
 function ping(ws: WebSocket, body?: Buffer) {
   if (Buffer.isBuffer(body)) {
     if (body!.length > 125) throw new TypeError("A PING frame cannot have a body larger than 125 bytes.");
   } else if (body !== undefined) {
     throw new TypeError("Expected buffer payload");
   }
-  if (!(ws instanceof BunWebSocket)) throw new TypeError("Expected a WebSocket");
-  if (ws.readyState === BunWebSocket.OPEN) ws.ping(body);
+  if (!(ws instanceof WebSocket)) throw new TypeError("Expected a WebSocket");
+  if (ws.readyState === WebSocket.OPEN) ws.ping(body);
 }
 
 class EventSource extends EventTarget {

@@ -12,14 +12,25 @@ raiseDefaultTimeout(120_000);
 const files = {
   "package.json": `{ "name": "p" }`,
   "rows.cjs": `
-    module.exports = {};
-    function lower(a, n, r) {
-      var i = Math.min(this.filled + a.filled, n);
-      var j;
-      for (j = r.filled - this.filled; i < j; ++i) r.digits[i + this.filled] = this.multiplyInto(0, a.digits[i], r, i, 0, this.filled);
-      for (j = Math.min(a.filled, n); i < j; ++i) this.multiplyInto(0, a.digits[i], r, i, 0, n - i);
+    "use strict";
+    // a fence is painted from its gate on as far as the pot goes, and what is left is written down by how far it stands from the pole
+    function paint(fence, pole, color) {
+      let board = this.gate, left = "";
+      for (; board < fence.length && this.pot > 0; board++) {
+        this.pot -= fence[board].length;
+        fence[board] = color + fence[board];
+      }
+      for (; board < fence.length; board++) left += this.tell(fence[board], pole - board) + ";";
+      return left;
     }
-    module.exports.lower = lower;`,
+    // the same from both ends, with a counter that is one function's alone
+    function trim(hedge, height) {
+      let at;
+      for (at = 0; at < hedge.length; at++) if (hedge[at] > height) break;
+      for (; at < hedge.length; ++at) hedge[at] = Math.min(hedge[at], height - at);
+      return hedge;
+    }
+    module.exports = { paint, trim };`,
   "unread.test.ts": `
     import { test, expect } from "bun:test";
     import rows from "./rows.cjs";
@@ -27,13 +38,14 @@ const files = {
   "called.test.ts": `
     import { test, expect } from "bun:test";
     import rows from "./rows.cjs";
-    test("it reckons", () => {
-      const seen: unknown[] = [];
-      const row = { filled: 1, digits: [7], multiplyInto(...all: unknown[]) { seen.push(all[3], all[5]); return 5; } };
-      const into = { filled: 3, digits: [] as number[] };
-      rows.lower.call(row, { filled: 4, digits: [1, 2, 3, 4] }, 0, into);
-      expect(into.digits).toEqual([, 5, 5]);
-      expect(seen).toEqual([0, 1, 1, 1]);
+    test("it paints", () => {
+      const told: unknown[] = [];
+      const painter = { gate: 1, pot: 5, tell(board: string, distance: number) { told.push(distance); return board + distance; } };
+      const fence = ["oak", "ash", "elm", "yew", "fir"];
+      expect(rows.paint.call(painter, fence, 4, "red ")).toBe("yew1;fir0;");
+      expect(fence).toEqual(["oak", "red ash", "red elm", "yew", "fir"]);
+      expect(told).toEqual([1, 0]);
+      expect(rows.trim([1, 2, 9, 4, 9], 5)).toEqual([1, 2, 3, 2, 1]);
     });`,
 };
 

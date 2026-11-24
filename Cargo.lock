@@ -138,7 +138,6 @@ name = "bun_alloc"
 version = "0.0.0"
 dependencies = [
  "bun_mimalloc_sys",
- "bun_opaque",
  "bun_wyhash",
  "libc",
 ]
@@ -313,6 +312,7 @@ dependencies = [
  "bun_core",
  "bun_highway",
  "bun_removable_features",
+ "bun_sema_standalone",
  "thiserror",
 ]
 
@@ -517,7 +517,6 @@ dependencies = [
  "bun_removable_features",
  "bun_sys",
  "bun_threading",
- "bun_which",
  "bun_zlib",
  "const_format",
  "libc",
@@ -729,6 +728,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "bun_global_allocator"
+version = "0.0.0"
+dependencies = [
+ "bun_alloc",
+]
+
+[[package]]
 name = "bun_hash"
 version = "0.0.0"
 dependencies = [
@@ -811,7 +817,6 @@ dependencies = [
  "bun_boringssl",
  "bun_collections",
  "bun_core",
- "bun_deflate",
  "bun_errno",
  "bun_highway",
  "bun_http",
@@ -821,9 +826,9 @@ dependencies = [
  "bun_jsc",
  "bun_opaque",
  "bun_ptr",
- "bun_sha_hmac",
  "bun_uws",
  "bun_uws_sys",
+ "bun_websocket",
  "bun_zlib",
  "strum",
  "thiserror",
@@ -843,6 +848,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "bun_icu"
+version = "0.0.0"
+dependencies = [
+ "bun_collections",
+ "bun_core",
+ "bun_icu_macros",
+ "bun_paths",
+ "bun_sema_standalone",
+ "bun_sys",
+ "bun_wyhash",
+ "libc",
+]
+
+[[package]]
+name = "bun_icu_data"
+version = "0.0.0"
+dependencies = [
+ "bun_zstd_decoder",
+]
+
+[[package]]
+name = "bun_icu_macros"
+version = "0.0.0"
+
+[[package]]
 name = "bun_ini"
 version = "0.0.0"
 dependencies = [
@@ -856,6 +886,7 @@ dependencies = [
  "bun_install_types",
  "bun_options_types",
  "bun_parsers",
+ "bun_paths",
  "bun_url",
  "strum",
 ]
@@ -941,6 +972,7 @@ dependencies = [
  "bun_alloc",
  "bun_ast",
  "bun_core",
+ "bun_paths",
  "bun_semver",
  "bun_wyhash",
  "strum",
@@ -963,6 +995,7 @@ dependencies = [
  "bun_uws_sys",
  "enumset",
  "libc",
+ "rustc-hash",
  "strum",
  "thiserror",
 ]
@@ -991,7 +1024,6 @@ dependencies = [
  "bun_crash_handler",
  "bun_glob",
  "bun_highway",
- "bun_node_path",
  "bun_options_types",
  "bun_paths",
  "bun_ptr",
@@ -1185,6 +1217,7 @@ dependencies = [
  "bun_semver",
  "bun_sys",
  "bun_threading",
+ "bun_wyhash",
  "bun_zstd",
 ]
 
@@ -1413,6 +1446,7 @@ dependencies = [
  "bun_collections",
  "bun_core",
  "bun_highway",
+ "bun_ptr",
  "bun_simdutf_sys",
  "bun_wyhash",
  "criterion",
@@ -1458,11 +1492,9 @@ dependencies = [
  "bun_alloc",
  "bun_core",
  "bun_errno",
+ "bun_highway",
  "bun_simdutf_sys",
  "const_format",
- "libc",
- "strum",
- "thiserror",
 ]
 
 [[package]]
@@ -1557,6 +1589,7 @@ dependencies = [
  "bun_http_types",
  "bun_install_types",
  "bun_js_parser",
+ "bun_node_path",
  "bun_options_types",
  "bun_parsers",
  "bun_paths",
@@ -1639,6 +1672,7 @@ dependencies = [
  "bun_exe_format",
  "bun_format_conformance",
  "bun_glob",
+ "bun_global_allocator",
  "bun_hash",
  "bun_highway",
  "bun_histogram",
@@ -1647,6 +1681,8 @@ dependencies = [
  "bun_http1",
  "bun_http_jsc",
  "bun_http_types",
+ "bun_icu",
+ "bun_icu_data",
  "bun_install",
  "bun_install_jsc",
  "bun_install_types",
@@ -1703,6 +1739,7 @@ dependencies = [
  "bun_valkey",
  "bun_watcher",
  "bun_webp",
+ "bun_websocket",
  "bun_which",
  "bun_wyhash",
  "bun_zlib",
@@ -1769,7 +1806,6 @@ version = "0.0.0"
 dependencies = [
  "bstr",
  "bun_core",
- "bun_paths",
  "bun_sema",
  "bun_sema_driver",
  "bun_sys",
@@ -1822,7 +1858,6 @@ dependencies = [
  "bun_sys",
  "bun_threading",
  "bun_zstd",
- "cc",
  "libc",
 ]
 
@@ -2039,7 +2074,6 @@ dependencies = [
  "bun_zstd",
  "const_format",
  "libc",
- "scopeguard",
  "strum",
  "thiserror",
 ]
@@ -2080,6 +2114,8 @@ version = "0.0.0"
 dependencies = [
  "bun_alloc",
  "bun_core",
+ "bun_deflate",
+ "bun_highway",
  "bun_zlib",
  "itoa",
  "thiserror",
@@ -2146,7 +2182,6 @@ dependencies = [
  "bun_alloc",
  "bun_collections",
  "bun_core",
- "bun_opaque",
  "bun_paths",
  "bun_wyhash",
  "thiserror",
@@ -2176,11 +2211,13 @@ dependencies = [
  "bun_core",
  "bun_errno",
  "bun_hpack",
+ "bun_http1",
  "bun_http_types",
  "bun_libuv_sys",
  "bun_opaque",
  "bun_paths",
  "bun_ptr",
+ "bun_websocket",
  "bun_windows_sys",
  "libc",
  "strum",
@@ -2225,6 +2262,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "bun_websocket"
+version = "0.0.0"
+dependencies = [
+ "bun_base64",
+ "bun_collections",
+ "bun_core",
+ "bun_deflate",
+ "bun_sha_hmac",
+ "bun_wyhash",
+ "bun_zlib",
+]
+
+[[package]]
 name = "bun_which"
 version = "0.0.0"
 dependencies = [
@@ -2255,15 +2305,9 @@ version = "0.0.0"
 dependencies = [
  "bun_alloc",
  "bun_core",
- "bun_zlib_sys",
- "strum",
-]
-
-[[package]]
-name = "bun_zlib_sys"
-version = "0.0.0"
-dependencies = [
- "bun_core",
+ "bun_deflate",
+ "bun_highway",
+ "thiserror",
 ]
 
 [[package]]
@@ -2271,8 +2315,29 @@ name = "bun_zstd"
 version = "0.0.0"
 dependencies = [
  "bun_core",
- "bun_opaque",
+ "bun_highway",
+ "bun_zstd_decoder",
+ "bun_zstd_encoder",
  "strum",
+]
+
+[[package]]
+name = "bun_zstd_decoder"
+version = "0.0.0"
+dependencies = [
+ "bun_highway",
+]
+
+[[package]]
+name = "bun_zstd_encoder"
+version = "0.0.0"
+dependencies = [
+ "bun_core",
+ "bun_highway",
+ "bun_pod",
+ "bun_removable_features",
+ "bun_threading",
+ "bun_zstd_decoder",
 ]
 
 [[package]]
@@ -2286,16 +2351,6 @@ name = "cast"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "37b2a672a2cb129a2e41c10b1224bb368f9f37a2b16b612598138befd7b37eb5"
-
-[[package]]
-name = "cc"
-version = "1.4.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a3eb0f42d6c360dc3f8a821f6bf2fdea7f72bfd36b3076eb0e6d1e9e0752fff4"
-dependencies = [
- "find-msvc-tools",
- "shlex",
-]
 
 [[package]]
 name = "cfg-if"
@@ -2659,12 +2714,6 @@ name = "fastrand"
 version = "2.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f1f227452a390804cdb637b74a86990f2a7d7ba4b7d5693aac9b4dd6defd8d6"
-
-[[package]]
-name = "find-msvc-tools"
-version = "0.1.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3e0f1c7c3a72c66fd80abe965175f7523475c0489a87d3ff9d6e8c87d87a9d2d"
 
 [[package]]
 name = "fnv"
@@ -3298,12 +3347,6 @@ dependencies = [
  "digest",
  "keccak",
 ]
-
-[[package]]
-name = "shlex"
-version = "2.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
 name = "siphasher"

@@ -1713,7 +1713,7 @@ const receiverErrors = {
 } as const;
 type ReceiverErrorCode = Exclude<keyof typeof receiverErrors, "__proto__">;
 
-// Indexed by uWS::WebSocketFailureKind.
+// Indexed by Failure::for_ws_package() (src/websocket/reader.rs).
 const serverFailures: (ReceiverErrorCode | undefined)[] = [
   undefined,
   "WS_ERR_EXPECTED_MASK",
@@ -1828,7 +1828,7 @@ const serverHandlers: ServerHandlers = {
   // `code` is one of:
   // - the status code of the peer's Close frame (1005 if it had none), which the native side already echoed
   // - 1006 if the connection ended without a Close frame
-  // - a negated uWS::WebSocketFailureKind if the native side failed the connection, with the detail in `reason`
+  // - a negated key of serverFailures if the native side failed the connection, with the detail in `reason`
   close(code, reason) {
     if (code < 0) receiverOnError(this, createReceiverError(serverFailures[-code]!, reason.toString()));
     else receiverOnConclude(this, code, reason);

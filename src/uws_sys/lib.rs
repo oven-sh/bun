@@ -143,34 +143,14 @@ impl create_bun_socket_error_t {
     }
 }
 
-/// WebSocket frame opcode (`uWS::OpCode`).
-///
-/// Spec is `enum(i32) { ..., _ }` — non-exhaustive, so any `i32` from C++ is a
-/// valid bit pattern. This type crosses the FFI boundary *into* Rust via
-/// `uws_websocket_message_handler`, so it must not be an exhaustive
-/// `#[repr(i32)]` enum (an out-of-range discriminant would be instant UB).
-#[repr(transparent)]
-#[derive(Clone, Copy, Eq, PartialEq, Debug)]
-pub struct Opcode(pub i32);
+pub use bun_websocket::frame::Opcode;
 
-impl Opcode {
-    pub const Text: Opcode = Opcode(1);
-    pub const Binary: Opcode = Opcode(2);
-    pub const Ping: Opcode = Opcode(9);
-    pub const Pong: Opcode = Opcode(10);
-    // Upper-case aliases for callers that use the screaming-snake names
-    // (`uWS::OpCode::TEXT` etc.). Same bit values; both spellings are accepted
-    // so the merge of `bun_uws::Opcode` into this type doesn't ripple.
-    pub const BINARY: Opcode = Opcode(2);
-}
-
-/// `uWS::WebSocket::SendStatus`.
-#[repr(u32)]
-#[derive(Clone, Copy, Eq, PartialEq, Debug)]
+/// From best to worst.
+#[derive(Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Debug)]
 pub enum SendStatus {
-    Backpressure = 0,
-    Success = 1,
-    Dropped = 2,
+    Success,
+    Backpressure,
+    Dropped,
 }
 
 /// `bun.timespec` — `us_loop_run_bun_tick` takes `*const timespec`.
@@ -437,6 +417,7 @@ pub mod h2;
 #[path = "h3.rs"]
 pub mod h3;
 mod hpack;
+mod http1;
 #[path = "InternalLoopData.rs"]
 pub mod internal_loop_data;
 #[path = "ListenSocket.rs"]
@@ -540,12 +521,12 @@ pub use connecting_socket::ConnectingSocket;
 pub use listen_socket::{ListenSocket, OwnedListenSocket};
 pub use request::{AnyRequest, Request};
 pub use response::c::uws_res;
-pub use response::{AnyResponse, SocketAddress, WebSocketUpgradeContext};
+pub use response::{AnyResponse, SocketAddress};
 pub use socket_context::BunSocketContextOptions;
 pub use socket_group::ConnectResult;
 pub use socket_group::SocketGroup;
 pub use us_socket::{CloseCode, QueuedInput, UsIoVec, us_socket_stream_buffer_t, us_socket_t};
-pub use web_socket::{AnyWebSocket, RawWebSocket, WebSocketBehavior};
+pub use web_socket::{AnyWebSocket, WebSocketBehavior, WebSocketUpgradeContext};
 
 /// Legacy aliases for `App<SSL>` / `Response<SSL>`.
 pub type NewApp<const SSL: bool> = app::App<SSL>;

@@ -40,9 +40,9 @@ pub(crate) struct Hold {
 }
 
 impl Hold {
-    pub(crate) fn new(client: &JSValkeyClient, object: Object<'_>) -> Self {
+    pub(crate) fn new(client: &RefPtr<JSValkeyClient>, object: Object<'_>) -> Self {
         Self {
-            client: client.ref_guard(),
+            client: client.clone(),
             object: Strong::create(object.0, &client.global_object),
         }
     }
@@ -56,6 +56,8 @@ impl Hold {
 pub(crate) struct Dial {
     pub(crate) hold: Rc<Hold>,
     pub(crate) attempt: Attempt,
+    /// The error it failed with; none if it was only closed, by either side.
+    pub(crate) failure: Option<Strong>,
 }
 
 /// The [`Dial`] of the open socket. It lends nothing: script can close the socket under an event.
@@ -69,6 +71,14 @@ impl SocketDial {
 
     pub(crate) fn hold(&self) -> Option<Rc<Hold>> {
         Some(Rc::clone(&self.0.get().as_ref()?.hold))
+    }
+
+    pub(crate) fn fail(&self, error: Strong) {
+        self.0.with_mut(|dial| {
+            if let Some(dial) = dial {
+                dial.failure = Some(error);
+            }
+        });
     }
 
     pub(crate) fn take(&self) -> Option<Dial> {

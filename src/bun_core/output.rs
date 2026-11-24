@@ -29,7 +29,7 @@ use crate::io;
 // ──────────────────────────────────────────────────────────────────────────
 // Output sink (CYCLEBREAK §Debug-hook / §Dispatch cold path)
 //
-// `bun_sys::{File, make_path, create_file}` are higher-tier I/O primitives that `bun_core`
+// `bun_sys::{File, create_file}` are higher-tier I/O primitives that `bun_core`
 // cannot name. The `bun_dispatch::link_interface!` `OutputSink[Sys]` (declared
 // at crate root) provides the seam; `bun_sys` supplies the `Sys` arm.
 // ──────────────────────────────────────────────────────────────────────────
@@ -1331,7 +1331,7 @@ macro_rules! scoped_log {
 /// ```
 ///
 /// The two-arg form skips `declare_scope!` and just forwards to an existing
-/// `ScopedLogger` static (by path) — for hand-declared statics (keyword tagnames)
+/// `ScopedLogger` static (by path) — for hand-declared statics
 /// or scopes that live in another module.
 //
 // Nested-macro `$` escaping uses the "`$` token smuggle" so caller crates do
@@ -2348,11 +2348,6 @@ fn init_scoped_debug_writer_at_startup() {
 
     if let Some(path) = env_var::BUN_DEBUG.get() {
         if !path.is_empty() && path != b"0" && path != b"false" {
-            // MOVE_DOWN: bun_paths::dirname → bun_core (bundled with SEP/PathBuffer move-in).
-            if let Some(dir) = crate::dirname(path) {
-                let _ = output_sink().make_path(Fd::cwd(), dir);
-            }
-
             // do not use libuv through this code path, since it might not be initialized yet.
             use std::io::Write as _;
             let mut pid = Vec::new();

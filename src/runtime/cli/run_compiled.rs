@@ -109,11 +109,7 @@ pub(crate) fn set_stand_in(path: &[u8], text: &[u8]) {
 }
 
 fn key_of_stand_in(path: &[u8]) -> Vec<u8> {
-    let mut key = path.to_vec();
-    if cfg!(windows) {
-        bun_paths::resolve_path::platform_to_posix_in_place::<u8>(&mut key);
-    }
-    key
+    FileMap::key(path).into_owned()
 }
 
 // No file of the run spells what the runner does for `--globals=vitest`: `Jest::define_vitest_globals()` stores the names on `globalThis` before any file runs. This file
@@ -128,13 +124,10 @@ fn make_stand_in_for_globals_of_vitest() -> Box<[u8]> {
     }
     text.extend_from_slice(b"}\n");
     // The name of the module. No file is there.
-    let path = bun_paths::resolve_path::join_abs_string::<bun_paths::platform::Auto>(
-        bun_resolver::fs::FileSystem::get().top_level_dir(),
-        &[b"node_modules/.cache/bun-test-globals-of-vitest.ts"],
-    )
-    .to_vec();
+    let mut path = bun_paths::Path::from_top_level_dir();
+    path.push(b"node_modules/.cache/bun-test-globals-of-vitest.ts");
     set_stand_in(&path, &text);
-    path.into_boxed_slice()
+    path.as_bytes().into()
 }
 
 pub(crate) fn files_in_memory() -> Option<&'static FileMap> {
@@ -490,9 +483,8 @@ impl WatchedFiles {
     }
 
     fn add(&self, path: &[u8]) {
-        use bun_paths::{platform::Auto, resolve_path::join_abs_string};
-        let path = join_abs_string::<Auto>(&self.working_directory, &[path]);
-        let _ = self.watcher.add_file_by_path_slow(path);
+        let path = bun_paths::Path::resolve(&[&self.working_directory, path]);
+        let _ = self.watcher.add_file_by_path_slow(&path);
         self.paths.lock().push(path.to_vec());
     }
 }
@@ -606,7 +598,7 @@ pub(crate) fn temporary_path(directory: &[u8]) -> ZBox {
         bun_core::fast_random(),
     )
     .expect("64 bytes hold a temporary name");
-    ZBox::from_bytes([directory, bun_paths::SEP_STR.as_bytes(), name.as_bytes()].concat())
+    bun_paths::Path::from_parts(&[directory, name]).to_zbox()
 }
 
 #[cfg(unix)]
@@ -894,16 +886,16 @@ fn list_inherited_extra_descriptors() -> Box<[bool]> {
 }
 
 #[cfg(windows)]
-fn write_to_named_file(path: &bun_core::ZStr, bytes: &[u8], bytes_after: &[u8]) -> Maybe<File> {
-    let file = File::from_fd(bun_sys::openat(
+fn write_to_named_file(bytes: &[u8], bytes_after: &[u8]) -> Maybe<bun_sys::Tmpfile<ZBox>> {
+    let program = bun_sys::Tmpfile::open(
         Fd::cwd(),
-        path,
+        temporary_path(bun_resolver::fs::RealFS::tmpdir_path()),
         O::RDWR | O::CREAT | O::EXCL,
         0o700,
-    )?);
-    file.write_all(bytes)?;
-    file.write_all(bytes_after)?;
-    Ok(file)
+    )?;
+    program.file.write_all(bytes)?;
+    program.file.write_all(bytes_after)?;
+    Ok(program)
 }
 
 #[cfg(windows)]
@@ -979,15 +971,9 @@ fn start_second_process(
         Output::flush();
         Global::exit(run_second_process(arguments, original_cwd))
     };
-    let path = temporary_path(bun_resolver::fs::RealFS::tmpdir_path());
-    let file = match write_to_named_file(&path, bytes, handover.bytes_after) {
-        Ok(file) => file,
-        Err(error) => {
-            let _ = bun_sys::unlinkat(Fd::cwd(), &path);
-            exit_write_failed(&error)
-        }
-    };
-    let handle = file.fd().native();
+    let program = write_to_named_file(bytes, handover.bytes_after)
+        .unwrap_or_else(|error| exit_write_failed(&error));
+    let handle = program.file.fd().native();
     let _ = bun_sys::windows::make_inheritable(handle);
     let descriptor_text = (handle as usize).to_string();
     let arguments = second_process_arguments(
@@ -997,8 +983,7 @@ fn start_second_process(
     );
     Output::flush();
     let exit_code = run_second_process(arguments, original_cwd);
-    drop(file);
-    let _ = bun_sys::unlinkat(Fd::cwd(), &path);
+    drop(program);
     Global::exit(exit_code)
 }
 
@@ -1111,7 +1096,6 @@ pub(crate) const PROGRAM_FILE_FLAG: &[u8] = b"--aot-program-file=";
 #[cold]
 #[inline(never)]
 pub(crate) fn load_program_file() -> bun_standalone_graph::Result<Option<*mut Graph>> {
-    use bun_paths::resolve_path::{join_abs_string, platform};
     use bun_resolver::compiled_program::{FILE_IN_PLACE_OF_EXECUTABLE, FileInPlaceOfExecutable};
 
     if bun_core::getenv_z(bun_core::zstr!("BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING")).is_none() {
@@ -1155,7 +1139,7 @@ pub(crate) fn load_program_file() -> bun_standalone_graph::Result<Option<*mut Gr
     }
 
     let file = match bun_sys::getcwd_alloc() {
-        Ok(cwd) => join_abs_string::<platform::Auto>(cwd.as_bytes(), &[path]).to_vec(),
+        Ok(cwd) => bun_paths::Path::resolve(&[cwd.as_bytes(), path]).to_vec(),
         Err(_) => path.to_vec(),
     };
     argv[0] = Box::leak(Box::new(ZBox::from_bytes(typed.unwrap_or(&file)))).as_zstr();
@@ -1486,7 +1470,7 @@ pub(crate) fn write_note_on_refusal(writer: &mut impl bun_io::Write) {
 /// `refusals`: "Cannot load '<path>', at <file>:<line>:<column>, while <test file> ran". Each file that asked, once, with the file on disk that makes it the product's.
 pub(crate) fn find_why_askers_are_of_product(refusals: &[Vec<u8>]) -> Vec<(Vec<u8>, Vec<u8>)> {
     let top = bun_resolver::fs::FileSystem::get().top_level_dir();
-    let top = top.strip_suffix(&[bun_paths::SEP]).unwrap_or(top);
+    let top = bun_paths::without_trailing_sep(top);
     let mut askers: Vec<&[u8]> = (refusals.iter())
         .filter_map(|refusal| {
             let place = &refusal[bun_core::strings::index_of(refusal, b"', at ")? + 6..];
@@ -1499,32 +1483,25 @@ pub(crate) fn find_why_askers_are_of_product(refusals: &[Vec<u8>]) -> Vec<(Vec<u
     if askers.is_empty() {
         return Vec::new();
     }
-    let files = askers.iter().map(|asker| {
-        let below = bun_core::strings::replace_owned(asker, b"/", &[bun_paths::SEP]);
-        [top, &[bun_paths::SEP], &below[..]].concat()
-    });
+    let files = (askers.iter()).map(|asker| bun_paths::Path::from_parts(&[top, asker]).to_vec());
     let files: Vec<Vec<u8>> = files.collect();
     let is_compiled = |path: &[u8]| bun_jsc::compiled_program::is_compiled_module(path);
     let importers = bun_aot::builtins::find_importers_outside_run(top, &files, &is_compiled);
     (askers.into_iter().zip(importers))
         .filter_map(|(asker, importer)| {
             let importer = importer?;
-            let importer = importer
-                .strip_prefix(top)?
-                .strip_prefix(&[bun_paths::SEP])?;
-            let importer = bun_core::strings::replace_owned(importer, &[bun_paths::SEP], b"/");
-            Some((asker.to_vec(), importer))
+            let importer = bun_paths::to_portable(bun_paths::strip_prefix(&importer, top)?);
+            Some((asker.to_vec(), importer.into_owned()))
         })
         .collect()
 }
 
 fn path_below_project(path: &bun_core::String) -> Vec<u8> {
     let path = path.to_owned_slice();
-    let shown = bun_paths::resolve_path::relative(
-        bun_resolver::fs::FileSystem::get().top_level_dir(),
-        &path,
-    );
-    bun_core::strings::replace_owned(shown, &[bun_paths::SEP], b"/")
+    let project = bun_resolver::fs::FileSystem::get().top_level_dir();
+    bun_paths::Path::relative(project, &path)
+        .into_portable()
+        .to_vec()
 }
 
 pub(crate) const MISSING_EXPORT: &[u8] = b"Missing ";

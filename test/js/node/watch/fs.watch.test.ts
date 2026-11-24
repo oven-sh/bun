@@ -77,6 +77,19 @@ describe("fs.watch", () => {
       done(e);
     }
   });
+  test("a separator after the directory is not part of the reported name", async () => {
+    using dir = tempDir("watch-trailing-separator", { "a.txt": "" });
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    const watcher = fs.watch(String(dir) + path.sep, (_, name) => name?.endsWith("a.txt") && resolve(name));
+    watcher.on("error", reject);
+    const interval = repeat(() => fs.writeFileSync(path.join(String(dir), "a.txt"), "x"));
+    try {
+      expect(await promise).toBe("a.txt");
+    } finally {
+      clearInterval(interval);
+      watcher.close();
+    }
+  });
   test("add file/folder to folder", done => {
     let count = 0;
     const root = path.join(testDir, "add-directory");
@@ -271,6 +284,25 @@ describe("fs.watch", () => {
       fs.writeFileSync(filepath, "world");
     });
   }, 10000);
+
+  test.skipIf(isWindows)("a backslash is part of the file name", async () => {
+    using dir = tempDir("watch-backslash", { "a\\b": "real", "a/b": "decoy" });
+    const real = path.join(String(dir), "a\\b");
+    const decoy = path.join(String(dir), "a", "b");
+
+    const { promise, resolve } = Promise.withResolvers<string | null>();
+    const watcher = fs.watch(real, (_event, filename) => resolve(filename));
+    const interval = repeat(() => {
+      fs.writeFileSync(decoy, "decoy");
+      fs.writeFileSync(real, "real");
+    });
+    try {
+      expect(await promise).toBe("a\\b");
+    } finally {
+      clearInterval(interval);
+      watcher.close();
+    }
+  });
 
   test("should error on invalid path", done => {
     try {

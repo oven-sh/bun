@@ -4,7 +4,7 @@
 use core::cell::Cell;
 use core::ptr::NonNull;
 
-use bun_ptr::{RefCount, RefPtr};
+use bun_ptr::{Attached, RefCount, RefPtr};
 
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 use bun_jsc::{
@@ -86,8 +86,7 @@ pub(crate) use bun_spawn::process::StdioKind;
 #[derive(bun_ptr::RefCounted)]
 pub struct Subprocess<'a> {
     pub(crate) ref_count: RefCount<Subprocess<'a>>,
-    /// The construction ref on the `Process` (detached in [`Subprocess::finalize`]).
-    pub(crate) process: RefPtr<Process>,
+    pub(crate) process: bun_spawn::ProcessHandle,
     pub(crate) stdin: JsCell<Writable>,
     pub(crate) stdout: JsCell<Readable>,
     pub(crate) stderr: JsCell<Readable>,
@@ -103,14 +102,14 @@ pub struct Subprocess<'a> {
     pub closed: Cell<EnumSet<StdioKind>>,
     pub this_value: JsCell<JsRef>,
 
-    pub(crate) ipc_data: JsCell<Option<RefPtr<IPC::SendQueue>>>,
+    pub(crate) ipc_data: JsCell<Option<Attached<IPC::SendQueue>>>,
     pub(crate) flags: Cell<Flags>,
 
     /// Weak observer of the stdin `FileSink` — holds no ownership/ref. `onStdinDestroyed`
     /// nulls this before the sink is freed, so it is never dereferenced after the sink dies.
     pub(crate) weak_file_sink_stdin_ptr: Cell<Option<NonNull<FileSink>>>,
     /// Held for the stdin `FileSink`, which points back here.
-    pub(crate) stdin_sink_ref: JsCell<Option<RefPtr<Subprocess<'a>>>>,
+    pub(crate) stdin_sink_ref: Cell<Option<RefPtr<Subprocess<'a>>>>,
     /// Follows the `signal` option until `clear_abort_signal`; armed only in a
     /// `Bun.ModuleGraph` context, which kills it when disposed (children
     /// of the realm's own script are the process auto-killer's).
@@ -164,10 +163,8 @@ impl Subprocess<'_> {
         self.flags.set(v);
     }
 
-    pub(crate) fn hold_for_stdin_sink(&self) {
-        // SAFETY: `self` is the live heap allocation.
-        let this = unsafe { RefPtr::init_ref(self.as_ctx_ptr()) };
-        self.stdin_sink_ref.set(Some(this));
+    pub(crate) fn hold_for_stdin_sink(self: &RefPtr<Self>) {
+        self.stdin_sink_ref.set(Some(self.clone()));
     }
 }
 
@@ -177,7 +174,6 @@ bitflags::bitflags! {
     pub struct Flags: u8 {
         const IS_SYNC                      = 1 << 0;
         const HAS_STDIN_DESTRUCTOR_CALLED  = 1 << 2;
-        const FINALIZED                    = 1 << 3;
         const IS_STDIN_A_READABLE_STREAM   = 1 << 5;
         /// Terminal was created inline by spawn (vs. an existing Terminal passed
         /// by the caller). Owned terminals are closed when the subprocess exits
@@ -407,7 +403,7 @@ impl Subprocess<'_> {
         self.stderr.with_mut(|s| s.to_js(&cx.js_thread(), exited))
     }
 
-    pub(crate) fn get_stdin(&self, cx: &mut JsScope<'_>) -> JSValue {
+    pub(crate) fn get_stdin(self: &RefPtr<Self>, cx: &mut JsScope<'_>) -> JSValue {
         // When terminal is used, stdin goes through the terminal
         if self.terminal.get().is_some() {
             return JSValue::NULL;
@@ -474,16 +470,12 @@ impl Subprocess<'_> {
 
     pub(crate) fn timeout_callback(&self) {
         self.set_event_loop_timer_refd(false);
-        if self.event_loop_timer.state.get() == EventLoopTimerState::CANCELLED {
-            return;
-        }
         if self.has_exited() {
             self.event_loop_timer
                 .state
                 .set(EventLoopTimerState::CANCELLED);
             return;
         }
-        self.event_loop_timer.state.set(EventLoopTimerState::FIRED);
         let _ = self.try_kill(self.kill_signal);
     }
 
@@ -501,22 +493,13 @@ impl Subprocess<'_> {
     pub(crate) fn close_readable_pipes(&self) {
         for out in [&self.stdout, &self.stderr] {
             if let Some(pipe) = out.get().pipe() {
-                PipeReader::close(&pipe);
+                pipe.close();
             }
         }
     }
 
-    pub(crate) fn kill(
-        &self,
-        this_value: JsWrapper<'_, Self>,
-        cx: &mut JsScope<'_>,
-        signal: JsLocal<'_>,
-    ) -> JsResult<()> {
+    pub(crate) fn kill(&self, cx: &mut JsScope<'_>, signal: JsLocal<'_>) -> JsResult<()> {
         let global_this = cx.global();
-        // Safe: this method can only be called while the object is alive (reachable from JS)
-        // The finalizer only runs when the object becomes unreachable
-        self.this_value
-            .with_mut(|v| v.update(global_this, this_value.to_js()));
 
         // If signal is 0, then no actual signal is sent, but error checking
         // is still performed.
@@ -563,11 +546,7 @@ impl Subprocess<'_> {
         let _stdin_sink_ref = self.stdin_sink_ref.replace(None);
         self.update_flags(|f| f.insert(Flags::HAS_STDIN_DESTRUCTOR_CALLED));
         self.weak_file_sink_stdin_ptr.set(None);
-
-        if !self.flags.get().contains(Flags::FINALIZED) {
-            // otherwise update the pending activity flag
-            self.update_has_pending_activity();
-        }
+        self.update_has_pending_activity();
     }
 
     pub(crate) fn send(
@@ -774,7 +753,7 @@ impl Subprocess<'_> {
         // is moot once the direct child has exited.
         for out in [&self.stdout, &self.stderr] {
             if let Some(pipe) = out.get().pipe() {
-                PipeReader::resume(&pipe);
+                pipe.resume();
             }
         }
 
@@ -960,11 +939,6 @@ impl Subprocess<'_> {
 
     pub fn finalize(&self) {
         bun_output::scoped_log!(Subprocess, "finalize");
-        // Ensure any code which references the "this" value doesn't attempt to
-        // access it after it's been freed We cannot call any methods which
-        // access GC'd values during the finalizer
-        self.this_value.with_mut(|v| v.finalize());
-
         self.clear_abort_signal();
 
         debug_assert!(
@@ -988,23 +962,12 @@ impl Subprocess<'_> {
             self.stdin_sink_ref.set(None);
         }
 
-        self.process().detach();
         self.event_loop_timer.disarm();
         self.set_event_loop_timer_refd(false);
 
         self.stdout_maxbuf.set(None);
         self.stderr_maxbuf.set(None);
-
-        if let Some(ipc_data) = self.ipc_data.take() {
-            // In normal operation the socket is already `.closed` by the time we
-            // get here (that is what allowed `compute_has_pending_activity` to drop
-            // to false and let GC collect us). Detach and release our ref; any
-            // still-queued close task holds its own ref and frees the SendQueue
-            // when it runs.
-            ipc_data.detach();
-        }
-
-        self.update_flags(|f| f.insert(Flags::FINALIZED));
+        self.ipc_data.set(None);
     }
 
     pub(crate) fn get_exited(
@@ -1137,7 +1100,7 @@ impl Subprocess<'_> {
     }
 
     pub(crate) fn ipc(&self) -> Option<&IPC::SendQueue> {
-        self.ipc_data.get().as_deref()
+        self.ipc_data.get().as_ref().map(|ipc| &***ipc)
     }
 }
 
@@ -1208,7 +1171,7 @@ pub(crate) mod testing_apis {
         // Mirror what the real error path does (onStreamRead on Windows,
         // read() on Posix) so the teardown exercised is identical.
         let fake_err = bun_sys::Error::from_code(bun_sys::Errno::EBADF, bun_sys::Tag::read);
-        PipeReader::inject_error(&pipe, fake_err);
+        pipe.inject_error(fake_err);
         Ok(true)
     }
 

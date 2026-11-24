@@ -10,6 +10,14 @@ path = "lib.rs"
 workspace = true
 
 [dependencies]
-bun_opaque.workspace = true
 strum.workspace = true
 bun_core.workspace = true
+bun_zstd_decoder.workspace = true
+bun_zstd_encoder.workspace = true
+
+[dev-dependencies]
+bun_highway = { workspace = true, features = ["test_support"] }
+
+[[test]]
+name = "alloc"
+path = "tests/alloc.rs"

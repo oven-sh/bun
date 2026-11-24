@@ -6,15 +6,15 @@ import { test } from "./supported";
 
 raiseDefaultTimeout(120_000);
 
-// React's enqueueTask() reads `require` off the module object under a key that it puts together, "to get around the bundlers", and swallows an error: act() then takes
-// MessageChannel instead of setImmediate, and nobody is told. The test file is built by itself: beside a file that keeps the loader it works anyway. As executables:
-// fixed/roads-to-the-loader.txt and parallel/commonjs/react-require.
+// A file may take the function that loads other files off its module object under a key that it puts together while it runs, and swallow the error where there is none: it then goes
+// another way, and nobody is told. The test file is built by itself: beside a file that keeps the loader it works anyway. As executables:
+// parallel/commonjs/loading-functions-under-keys-put-together.
 test("a test file reads require off its module object under a name that it puts together", async () => {
   using dir = tempDir("aot-react-require", {
     "forms.test.cjs": `const { test, vi } = require("vitest");
-const name = ("require" + Math.random()).slice(0, 7);
-test("as React", () => {
-  console.log("SAY", typeof (module && module[name]).call(module, "timers").setImmediate);
+const key = [String(Date.now()), "require"].sort().pop();
+test("under a key put together", () => {
+  console.log("SAY", typeof module[key].call(module, "os").cpus);
 });`,
   });
   const printed = (text: string) => text.split("\n").filter(line => line.startsWith("SAY"));

@@ -1,7 +1,7 @@
 {
   "private": true,
   "name": "bun",
-  "version": "1.4.5",
+  "version": "1.4.6",
   "workspaces": [
     "./packages/bun-types"
   ],
@@ -76,6 +76,7 @@
     "node:test": "node ./scripts/runner.node.ts --quiet --exec-path=$npm_execpath --node-tests ",
     "node:test:cp": "bun ./scripts/fetch-node-test.ts ",
     "clean": "bun scripts/build/clean.ts",
+    "pin-webkit": "bun ./scripts/pin-webkit.ts",
     "sync-webkit-source": "bun ./scripts/sync-webkit-source.ts"
   }
 }

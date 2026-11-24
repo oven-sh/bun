@@ -44,9 +44,9 @@ const makers = {
   nan: n => Array.from({ length: n }, (_, i) => (i % 3 ? NaN : -0)),
 };
 const table = {
-  copied(a, b, n, pos, back) { for (let x = 0; x < n; x++) b[back + x] = a[pos + x]; return 0; },
-  difference(a, b, n, pos, back) { for (let x = 0; x < n; x++) { const left = x >= back ? a[pos + x - back] : 0; b[pos + x] = a[pos + x] - left; } return 0; },
-  above(a, b, n, pos, back) { for (let x = 0; x < n; x++) { const up = pos > 0 ? a[pos + x - back] : 0; b[back + x] = a[pos + x] - up; } return 0; },
+  painted(a, b, n, pos, back) { for (let x = 0; x < n; x++) b[pos + x] = a[x] | back; return pos; },
+  mirrored(a, b, n, pos, back) { for (let x = 0; x < n; x++) b[pos + n - x] = a[x] * 3 + back; return n; },
+  paired(a, b, n, pos, back) { for (let x = 1; x < n; x++) b[pos + x] = a[x] + a[x - 1] * 2; return 1; },
   average(a, b, n, pos, back) { let sum = 0; for (let x = 0; x < n; x++) { const v = (a[x] + a[pos + x]) >> 1; b[pos + x] = v; sum += v; } return sum; },
   fractions(a, b, n, pos, back) { for (let x = 0; x < n; x++) b[pos + x] = a[x] * 0.5 + back; return 0; },
   updated(a, b, n, pos, back) { for (let x = 0; x < n; x++) b[pos + x] ^= a[x] + back; return 0; },

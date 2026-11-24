@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync, symlinkSync } from "fs";
-import { bunEnv, bunExe, expiredTls, isWindows, tempDir, tls as tlsCert } from "harness";
+import { bunEnv, bunExe, bunRun, expiredTls, isWindows, tempDir, tls as tlsCert } from "harness";
 import { once } from "node:events";
 import net from "node:net";
 import tls from "node:tls";
@@ -653,11 +653,26 @@ test.skipIf(isWindows).each(["relative", "absolute"])(
   },
 );
 
-test.skipIf(isWindows)("a keyFile with a trailing slash is not the file without it", () => {
+test.skipIf(isWindows)("a backslash is part of a name in keyFile, certFile and the cwd", async () => {
+  using dir = tempDir("bun-serve-ssl-backslash", {
+    "a\\b": {
+      "key.pem": tlsCert.key,
+      "c\\cert.pem": tlsCert.cert,
+      "serve.js": String.raw`
+        const tls = { keyFile: import.meta.dir + "/key.pem", certFile: "c\\cert.pem" };
+        using server = Bun.serve({ port: 0, tls, fetch: () => new Response("served") });
+        console.log(await (await fetch(server.url, { tls: { rejectUnauthorized: false } })).text());
+      `,
+    },
+  });
+  expect(await bunRun(join(String(dir), "a\\b", "serve.js"))).toSpawn("served");
+});
+
+test.skipIf(isWindows).each(["/", "\\"])("keyFile with a trailing %s is rejected", sep => {
   using dir = tempDir("bun-serve-ssl-slash", { "key.pem": tlsCert.key, "cert.pem": tlsCert.cert });
   const certFile = join(String(dir), "cert.pem");
   expect(() =>
-    Bun.serve({ port: 0, tls: { keyFile: join(String(dir), "key.pem") + "/", certFile }, fetch: () => new Response() }),
+    Bun.serve({ port: 0, tls: { keyFile: join(String(dir), "key.pem") + sep, certFile }, fetch: () => new Response() }),
   ).toThrow("Unable to access keyFile path");
 });
 

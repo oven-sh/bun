@@ -2184,6 +2184,11 @@ interface BunFetchRequestInit extends RequestInit {
    * body is not decompressed and the `Content-Encoding` header is preserved.
    * This can improve performance when you handle compressed data yourself or
    * forward it as-is.
+   *
+   * If the response ends before the compressed data does, Bun gives you the
+   * bytes it decoded. To reject such a response, pass `false` and pipe the body
+   * through a `DecompressionStream`.
+   *
    * Not part of the Fetch API specification.
    *
    * @default true

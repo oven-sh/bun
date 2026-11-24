@@ -1,87 +1,88 @@
 // Fields of classes that write no types, into which the code in sight stores negations, comparisons, true and false alone. Unseen code stores what is no boolean.
 // STATISTIC: FieldTypesEnforced >= 6
 "use strict";
-const Kind = function Kind(label, conf) {
-  if (conf === void 0) conf = {};
-  this.label = label;
-  this.before = !!conf.before;
-  this.starts = !!conf.starts;
-  this.loop = !!conf.loop;
-  this.order = conf.order;
-};
-const kinds = [new Kind("a", { before: true }), new Kind("b", { starts: 1, loop: "yes" }), new Kind("c"), new Kind("d", { before: 0, starts: true })];
-class Context {
-  constructor(token, isExpr, keeps) {
-    this.token = token;
-    this.isExpr = !!isExpr;
-    this.keeps = keeps === true;
-    this.deep = false;
+function Fruit(name, traits) {
+  const has = traits || {};
+  this.order = has.order;
+  this.ripe = !!has.ripe;
+  this.sour = !has.sour === false;
+  this.dry = !(!has.dry);
+  this.name = name;
+}
+const fruits = [new Fruit("a", { sour: true }), new Fruit("b", { ripe: 1, dry: "yes" }), new Fruit("c"), new Fruit("d", { sour: 0, ripe: true })];
+class Crate {
+  constructor(label, isFull, isOpen) {
+    this.isOpen = isOpen === true;
+    this.isFull = !!isFull;
+    this.label = label;
+    this.heavy = false;
   }
-  enter(n) {
-    this.deep = n > 2;
-    return this.deep;
+  load(n) {
+    this.heavy = n > 2;
+    return this.heavy;
   }
 }
-const Walker = function Walker(list) {
+const Press = function Press(list) {
+  this.turn = 0;
   this.list = list;
-  this.at = 0;
-  this.allowed = true;
-  this.escaped = false;
-  this.last = null;
-  this.found = list.length > 2;
+  this.wide = list.length > 2;
+  this.open = true;
+  this.jammed = false;
+  this.fruit = null;
 };
-Walker.prototype.step = function () {
-  const kind = this.list[this.at++ % this.list.length];
-  this.escaped = kind.label === "c";
-  if (kind.before && !this.escaped) this.allowed = false;
-  else if (kind.starts) this.allowed = !this.allowed;
-  this.last = kind;
-  return this.allowed;
+Press.prototype.take = function () {
+  this.fruit = this.list[this.turn % this.list.length];
+  this.turn += 1;
+  const fruit = this.fruit;
+  if (fruit.ripe && !fruit.sour) this.open = !this.open;
+  this.jammed = fruit.name === "c";
+  if (fruit.sour) this.open = false;
+  return this.open;
 };
-Walker.prototype.run = function (n) {
-  let out = 0;
-  for (let i = 0; i < n; i++) {
-    out = out * 2 + (this.step() ? 1 : 0);
-    if (this.escaped) out ^= 5;
-    if (this.last.loop) out += 3;
-    if (this.found) out &= 0xffff;
+Press.prototype.run = function (n) {
+  let juice = 7;
+  while (n-- > 0) {
+    juice = this.take() ? juice * 2 + 1 : juice * 2;
+    if (this.wide) juice &= 0xffff;
+    if (this.jammed) juice ^= 5;
+    if (this.fruit.dry) juice += 3;
   }
-  return out;
+  return juice;
 };
 const unseen = (0, eval)(Buffer.from("KHsgc3RvcmUobywgbiwgdikgeyBvW25dID0gdiB9LCByZW1vdmUobywgbikgeyBkZWxldGUgb1tuXSB9LCBkZWZpbmUobywgbiwgZCkgeyBPYmplY3QuZGVmaW5lUHJvcGVydHkobywgbiwgZCkgfSB9KQ==", "base64").toString());
-globalThis.kept = { Kind, kinds, Walker, Context, unseen };
+globalThis.kept = { Fruit, fruits, Press, Crate, unseen };
 const show = v => (Object.is(v, -0) ? "-0" : typeof v === "bigint" ? v + "n" : typeof v === "object" && v ? "{}" : String(v));
-const state = w => ["allowed", "escaped", "found"].map(n => `${show(w[n])}/${typeof w[n]}`).join(" ") + Object.keys(w).length;
+const state = w => ["open", "jammed", "wide"].map(n => `${show(w[n])}/${typeof w[n]}`).join(" ") + Object.keys(w).length;
 const tell = (what, f) => {
   let said;
   try { said = f(); } catch (e) { said = e.constructor.name; }
   console.log(what, said);
 };
-for (let i = 0; i < 50; i++) new Walker(kinds).run(20);
-tell("plain", () => { const w = new Walker(kinds); return w.run(40) + state(w); });
-tell("contexts", () => [new Context("x", 1), new Context("y", "", true), new Context("z", {}, 1)].map(c => `${c.isExpr}${c.keeps}${c.enter(3)}${c.deep}${c.enter(1)}${c.deep}`).join());
+for (let i = 0; i < 50; i++) new Press(fruits).run(20);
+tell("plain", () => { const w = new Press(fruits); return w.run(40) + state(w); });
+tell("crates", () => [new Crate("x", 1), new Crate("y", "", true), new Crate("z", {}, 1)].map(c => `${c.isFull}${c.isOpen}${c.load(3)}${c.heavy}${c.load(1)}${c.heavy}`).join());
 const values = [true, false, 0, 1, -0, NaN, "", "x", 0n, 5n, null, undefined, {}, [], Symbol.iterator, 2 ** 31];
-for (const name of ["allowed", "escaped", "found"])
+for (const name of ["open", "jammed", "wide"])
   for (const value of values)
     tell(`${name} ${typeof value === "symbol" ? "symbol" : show(value)}`, () => {
-      const w = new Walker(kinds);
+      const w = new Press(fruits);
       const first = w.run(3);
       unseen.store(w, name, value);
-      const kept = typeof w[name] + (w[name] ? "t" : "f") + (w[name] === value || value !== value) + (w.allowed && !w.escaped && w.found ? 1 : 2);
+      const kept = typeof w[name] + (w[name] ? "t" : "f") + (w[name] === value || value !== value) + (w.open && !w.jammed && w.wide ? 1 : 2);
       const middle = w.run(6);
       unseen.store(w, name, false);
       return [first, kept, middle, w.run(5), name === "symbol" ? "" : state(w)].join(" ");
     });
-for (const name of ["before", "starts", "loop"])
+for (const name of ["sour", "ripe", "dry"])
   for (const value of values)
-    tell(`kind ${name} ${typeof value === "symbol" ? "symbol" : show(value)}`, () => {
-      const list = [new Kind("a", { before: true }), new Kind("b", { starts: 1 }), new Kind("c", { loop: 1 })];
+    tell(`fruit ${name} ${typeof value === "symbol" ? "symbol" : show(value)}`, () => {
+      const list = [new Fruit("a", { sour: true }), new Fruit("b", { ripe: 1 }), new Fruit("c", { dry: 1 })];
       unseen.store(list[1], name, value);
-      const w = new Walker(list);
+      const w = new Press(list);
       return [w.run(9), typeof list[1][name], list[1][name] ? "t" : "f", JSON.stringify(list.map(k => ({ ...k, [name]: typeof k[name] })))].join(" ");
     });
-tell("removed", () => { const w = new Walker(kinds); w.run(3); unseen.remove(w, "found"); const out = w.run(4) + state(w); Walker.prototype.found = "above"; const more = w.run(4) + state(w); delete Walker.prototype.found; return out + more; });
-tell("accessor", () => { const w = new Walker(kinds); let n = 0; unseen.define(w, "allowed", { get() { return n++ % 3; }, set(v) { n += v ? 2 : 1; } }); return w.run(9) + show(n); });
-tell("read-only", () => { const w = new Walker(kinds); w.run(1); unseen.define(w, "escaped", { value: 1, writable: false }); return w.run(3) + state(w); });
-tell("frozen", () => { const w = new Walker(kinds); w.run(2); Object.freeze(w); return w.run(2); });
-tell("copied", () => { const w = new Walker(kinds); w.run(5); return state(Object.assign(new Walker([1]), w)) + state({ ...w }) + JSON.stringify(Object.assign(Object.create(Walker.prototype), w)).length; });
+tell("removed", () => { const w = new Press(fruits); w.run(3); unseen.remove(w, "wide"); const out = w.run(4) + state(w); Press.prototype.wide = "above"; const more = w.run(4) + state(w); delete Press.prototype.wide; return out + more; });
+tell("accessor", () => { const w = new Press(fruits); let n = 0; unseen.define(w, "open", { get() { return n++ % 3; }, set(v) { n += v ? 2 : 1; } }); return w.run(9) + show(n); });
+tell("read-only", () => { const w = new Press(fruits); w.run(1); unseen.define(w, "jammed", { value: 1, writable: false }); return w.run(3) + state(w); });
+tell("frozen", () => { const w = new Press(fruits); w.run(2); Object.freeze(w); return w.run(2); });
+tell("copied", () => { const w = new Press(fruits); w.run(5); return state(Object.assign(new Press([1]), w)) + state({ ...w }) + JSON.stringify(Object.assign(Object.create(Press.prototype), w)).length; });

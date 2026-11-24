@@ -5,21 +5,19 @@
 //! owner from the user-data, (b) re-type the opaque handle, (c) lift any
 //! `(ptr,len)` pairs into slices, then (d) call the safe Rust handler. Before
 //! this module each of `Response::on_*`, `h3::Response::on_*`,
-//! `WebSocket::Wrap::on_*`, and `uws_handlers::*Handler` open-coded those
+//! and `uws_handlers::*Handler` open-coded those
 //! steps with three or four `unsafe {}` blocks apiece — ~300 in total.
 //!
 //! Centralising here means each invariant is documented and audited **once**:
 //!
 //! * `zst::<H>()`         — conjure a ZST handler value (handlers are
 //!   monomorphised zero-sized types, so no runtime data is needed).
-//! * `user_mut`           — null-checked `*mut c_void → Option<&mut U>`.
 //! * `handle_mut`         — `*mut Opaque → &mut Opaque` for uWS handles.
 //! * `c_slice`            — `(ptr,len) → &[u8]` (empty when len==0 / null).
 //!
 //! All functions are `unsafe fn` (callers uphold the uWS callback contract)
 //! and `#[inline(always)]` so codegen is identical to the hand-rolled thunks.
 
-use core::ffi::c_void;
 use core::ptr::NonNull;
 
 /// Marker for `#[repr(C)]` zero-sized opaque FFI handles
@@ -86,23 +84,7 @@ pub(crate) fn zst<H>() -> H {
     bun_core::ffi::conjure_zst::<H>()
 }
 
-/// Recover `&mut U` from a uWS user-data word, returning `None` for null.
-///
-/// # Safety
-/// When non-null, `p` must have been registered as `*mut U` and point to a
-/// live `U` with no other live `&mut`/`&` to it for the duration of the
-/// returned borrow (uWS callbacks fire single-threaded from the event loop).
-#[inline(always)]
-pub(crate) unsafe fn user_mut<'a, U>(p: *mut c_void) -> Option<&'a mut U> {
-    if p.is_null() {
-        None
-    } else {
-        // SAFETY: per caller contract above.
-        Some(unsafe { &mut *p.cast::<U>() })
-    }
-}
-
-/// Re-type a raw uWS handle (`uws_res`, `H3Response`, `RawWebSocket`, …) as a
+/// Re-type a raw uWS handle (`uws_res`, `H3Response`, …) as a
 /// mutable Rust reference. These are zero-sized opaque markers, so the borrow
 /// covers no Rust-owned bytes — it exists purely to hang methods off.
 ///
@@ -142,7 +124,7 @@ pub(crate) unsafe fn c_slice<'a>(ptr: *const u8, len: usize) -> &'a [u8] {
 /// every `&mut ExtSlot<T>` reachable from safe code was materialised by the
 /// `vtable::Trampolines` layer from C-allocated socket ext memory (via
 /// `(*s).ext::<ExtSlot<T>>()`), and `calloc`-zero is `None`. That makes
-/// [`Self::owner_ref`] sound as a *safe* fn — the one `unsafe`
+/// its accessors sound as *safe* fns — the `unsafe`
 /// inside discharges the invariant for every call site.
 #[repr(transparent)]
 pub struct ExtSlot<T>(Option<NonNull<T>>);
@@ -159,5 +141,14 @@ impl<T> ExtSlot<T> {
             Some(p) => Some(unsafe { &*p.as_ptr() }),
             None => None,
         }
+    }
+
+    /// A ref of the caller's own, for an event that can release the one that the slot stands for.
+    pub fn owner(&self) -> Option<bun_ptr::RefPtr<T>>
+    where
+        T: bun_ptr::AnyRefCounted,
+    {
+        // SAFETY: as in `owner_ref`.
+        Some(unsafe { bun_ptr::RefPtr::init_ref(self.0?.as_ptr()) })
     }
 }

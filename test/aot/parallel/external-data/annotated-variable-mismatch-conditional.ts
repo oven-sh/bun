@@ -1,17 +1,13 @@
 // The initializer is a conditional expression; both of its branches are `any`.
-function merge(a: any, b: any): any { return { ...a, ...b }; }
-function compose(app: any, validator: any): string {
-  const meta: { secrets?: string | string[]; sign: string[] | true; properties: { [name: string]: Object } } = validator.cookie?.config
-    ? merge(validator.cookie.config, app.config.cookie as any)
-    : app.config.cookie;
-  if (meta?.sign) {
-    if (!meta.secrets) return "no secret";
-    if (typeof meta.sign === "string") meta.sign = [meta.sign];
-    return "signed " + JSON.stringify(meta);
-  }
-  return "plain " + JSON.stringify(meta);
+function joined(a: any, b: any): any { return { ...a, ...b }; }
+function stamped(desk: any, order: any): string {
+  const marks: { boxes: { [name: string]: Object }; lids: string[] | false; inks?: number | string[] } =
+    order.tray === undefined ? desk.notes.tray : joined(desk.notes.tray, order.tray);
+  if (!marks?.lids) return "plain " + JSON.stringify(marks);
+  if (typeof marks.lids === "string") marks.lids = [marks.lids];
+  return marks.inks ? "stamped " + JSON.stringify(marks) : "no ink";
 }
-console.log(compose({ config: { cookie: { path: "/" } } }, {}));
-console.log(compose({ config: { cookie: { path: "/" } } }, { cookie: { config: { httpOnly: true } } }));
-console.log(compose({ config: { cookie: { sign: ["a"], secrets: "s" } } }, { cookie: { config: { httpOnly: true } } }));
-console.log(compose({ config: {} }, {}));
+console.log(stamped({ notes: { tray: { path: "/" } } }, {}));
+console.log(stamped({ notes: { tray: { path: "/" } } }, { tray: { isDry: true } }));
+console.log(stamped({ notes: { tray: { lids: ["a"], inks: "s" } } }, { tray: { isDry: true } }));
+console.log(stamped({ notes: {} }, {}));

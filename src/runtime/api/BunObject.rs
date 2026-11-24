@@ -12,38 +12,33 @@ pub(crate) fn get_public_path_with_asset_prefix(
     origin: &bun_url::URL,
     asset_prefix: &[u8],
     out: &mut Vec<u8>,
-    platform: bun_paths::Platform,
 ) {
     use bun_core::strings;
-    use bun_paths::{Platform, resolve_path};
+    use bun_paths::Path;
 
-    let relative_path: &[u8] = if strings::has_prefix(to, dir) {
-        strings::without_trailing_slash(&to[dir.len()..])
+    let relative;
+    let is_below_dir = strings::has_prefix(to, dir);
+    let relative_path: &[u8] = if is_below_dir {
+        bun_paths::without_trailing_sep(&to[dir.len()..])
     } else {
-        match platform {
-            Platform::Posix => {
-                resolve_path::relative_platform::<resolve_path::platform::Posix, false>(dir, to)
-            }
-            Platform::Windows => {
-                resolve_path::relative_platform::<resolve_path::platform::Windows, false>(dir, to)
-            }
-            Platform::Loose => {
-                resolve_path::relative_platform::<resolve_path::platform::Loose, false>(dir, to)
-            }
-            Platform::Nt => {
-                resolve_path::relative_platform::<resolve_path::platform::Nt, false>(dir, to)
-            }
-        }
+        relative = Path::relative(dir, to).into_portable();
+        &relative
     };
     if !origin.is_absolute() {
         out.extend_from_slice(strings::trim_left(relative_path, b"/"));
         return;
     }
-    if strings::has_prefix(relative_path, b"..") || strings::has_prefix(relative_path, b"./") {
-        let abs_path = if bun_paths::is_absolute(to) {
+    let is_on_another_volume = !is_below_dir && bun_paths::is_absolute(relative_path);
+    if is_on_another_volume
+        || strings::has_prefix(relative_path, b"..")
+        || strings::has_prefix(relative_path, b"./")
+    {
+        let resolved;
+        let abs_path: &[u8] = if bun_paths::is_absolute(to) {
             to
         } else {
-            VirtualMachine::get().fs().abs(&[to])
+            resolved = Path::resolve(&[VirtualMachine::get().top_level_dir(), to]);
+            &resolved
         };
         out.reserve(origin.origin.len() + b"/abs:".len() + abs_path.len());
         out.extend_from_slice(origin.origin);
@@ -55,7 +50,7 @@ pub(crate) fn get_public_path_with_asset_prefix(
     // path at most two separators longer than `asset_prefix` + `relative_path`.
     out.reserve(origin.origin.len() + asset_prefix.len() + relative_path.len() + 3);
     origin
-        .join_write(out, asset_prefix, b"", relative_path, b"")
+        .join_write(out, asset_prefix, relative_path)
         .expect("infallible: in-memory write");
 }
 
@@ -74,7 +69,7 @@ use bun_jsc::virtual_machine::{ResolveMode, VirtualMachine};
 use bun_paths::MAX_PATH_BYTES;
 use bun_shell_parser::braces as Braces;
 use bun_sys::{self as sys, Fd};
-use bun_zlib as zlib;
+use bun_zlib::{Inflater, deflate, inflate};
 
 use crate::node;
 use bun_collections::index_sort;
@@ -300,9 +295,8 @@ pub(crate) fn which<'a>(
         .unwrap_or_else(|| vm.env_loader().get(b"PATH").unwrap_or(b""));
     let cwd = options.cwd.unwrap_or_else(|| vm.top_level_dir());
 
-    let mut path_buf = bun_paths::path_buffer_pool::get();
-    bun_which::which(&mut *path_buf, path, cwd, command)
-        .map(|bin_path| heap.create_utf8_string(bin_path))
+    bun_which::which(path, cwd, command)
+        .map(|bin_path| heap.create_utf8_string(&bin_path))
         .transpose()
 }
 
@@ -744,24 +738,32 @@ fn do_resolve_with_args<const IS_FILE_PATH: bool>(
     mode: ResolveMode,
 ) -> JsResult<BunString> {
     match resolve_with_args::<IS_FILE_PATH>(ctx, specifier, from, mode)? {
-        Resolved::Found(value) if mode == ResolveMode::RequireResolve => {
-            Ok(find_source_path_of_compiled_file(specifier, &value).unwrap_or(value))
+        Resolved::Found(value)
+            if matches!(mode, ResolveMode::RequireResolve | ResolveMode::EsmResolve)
+                && bun_standalone_graph::Graph::get_ref()
+                    .is_some_and(|graph| graph.compiled_program.is_some()) =>
+        {
+            Ok(find_source_path_of_compiled_file(specifier, &value, mode).unwrap_or(value))
         }
         Resolved::Found(value) => Ok(value),
         Resolved::NotFound(err) => Err(ctx.throw_value(err)),
     }
 }
 
-/// `require.resolve` in a program compiled ahead of time answers where the file lay when the program was built, under a computed name as under one that the build has read.
 /// A path in the executable is its own answer.
 fn find_source_path_of_compiled_file(
     specifier: &BunString,
     resolved: &BunString,
+    mode: ResolveMode,
 ) -> Option<BunString> {
     let graph = bun_standalone_graph::Graph::get_ref()?;
     let program = graph.compiled_program.as_ref()?;
     program.root_on_build_machine()?;
-    if bun_standalone_graph::is_bun_standalone_file_path(specifier.to_utf8().slice()) {
+    let written = specifier.to_utf8();
+    if mode == ResolveMode::EsmResolve && !bun_paths::is_absolute(written.slice()) {
+        return None;
+    }
+    if bun_standalone_graph::is_bun_standalone_file_path(written.slice()) {
         return None;
     }
     let path = resolved.to_utf8();
@@ -1118,9 +1120,7 @@ pub(crate) fn serve(cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<JSVa
             if server_ref.config.get().websocket.is_some() {
                 server_ref.write_ws_handler_slots(obj, global_object);
             }
-            server_ref
-                .js_value
-                .with_mut(|js_value| js_value.set_strong(obj, global_object));
+            server.set_js_ref_strong(global_object);
             // Slots are rooted; release the scoped gcProtects and run the
             // "server just started" GC nudge split out of `listen()`.
             drop(_handler_pins);
@@ -1218,17 +1218,14 @@ pub(crate) fn mmap(cx: &mut JsScope<'_>, path: &[u8], options: &MMapOptions) -> 
             return Err(global_this.throw_invalid_arguments(format_args!("Path too long")));
         }
         node::types::Valid::path_null_bytes(path, global_this)?;
-        let mut buf = bun_paths::path_buffer_pool::get();
-        let Some(joined) = bun_paths::resolve_path::join_abs_string_buf_z_checked::<
-            bun_paths::resolve_path::platform::Auto,
-        >(
-            bun_core::working_directory_in_executable()
-                .unwrap_or_else(|| bun_paths::fs::FileSystem::instance().top_level_dir()),
-            &mut buf[..],
-            &[path],
-        ) else {
+        let cwd = bun_core::working_directory_in_executable()
+            .unwrap_or_else(|| bun_paths::fs::FileSystem::instance().top_level_dir());
+        let mut joined = bun_paths::Path::resolve(&[cwd, path]);
+        joined.copy_trailing_sep_from(path);
+        if joined.len() >= MAX_PATH_BYTES {
             return Err(global_this.throw_invalid_arguments(format_args!("Path too long")));
-        };
+        }
+        let joined: &bun_core::ZStr = &joined;
         let graph = bun_standalone_graph::Graph::get_ref()
             .filter(|_| bun_standalone_graph::is_bun_standalone_file_path(joined));
         let embedded = graph.and_then(|graph| graph.find_data(joined));
@@ -1594,26 +1591,26 @@ pub(crate) mod JSZlib {
         }
     }
 
-    fn init_error<'a>(heap: &JsHeap<'a>, err: zlib::ZlibError) -> bindgen::Error<'a> {
-        match err {
-            zlib::ZlibError::OutOfMemory => bun_alloc::AllocError.into(),
-            zlib::ZlibError::InvalidArgument => {
-                heap.error(format_args!("Zlib error: Invalid argument"))
-            }
-            err => heap.error(format_args!("{} Zlib error", <&'static str>::from(err))),
-        }
+    const ZLIB_ERROR: &str = "Zlib returned an error";
+
+    fn zlib_error<'a>(heap: &JsHeap<'a>, err: bun_zlib::Error) -> bindgen::Error<'a> {
+        let message = match err {
+            bun_zlib::Error::Alloc(err) => return err.into(),
+            bun_zlib::Error::InvalidParameter => "Zlib error: Invalid argument",
+            bun_zlib::Error::Damaged(damage) => damage.message(),
+            _ => ZLIB_ERROR,
+        };
+        heap.error(format_args!("{message}"))
     }
 
-    fn read_error<'a>(
-        heap: &JsHeap<'a>,
-        err: zlib::ZlibError,
-        message: Option<&[u8]>,
-    ) -> bindgen::Error<'a> {
-        if err == zlib::ZlibError::OutOfMemory {
-            return bun_alloc::AllocError.into();
-        }
-        let message = message.unwrap_or(b"Zlib returned an error");
-        heap.error(format_args!("{}", bstr::BStr::new(message)))
+    fn too_large_error<'a>(heap: &JsHeap<'a>) -> bindgen::Error<'a> {
+        heap.error_with_code(
+            jsc::ErrorCode::BUFFER_TOO_LARGE,
+            format_args!(
+                "Cannot create a Buffer larger than {} bytes",
+                ArrayBuffer::MAX_SIZE
+            ),
+        )
     }
 
     pub(crate) fn gzip_sync<'a>(
@@ -1668,39 +1665,39 @@ pub(crate) mod JSZlib {
             // If it's > 256 MB, let's rely on dynamic allocation to minimize the risk of OOM.
             if estimated_size > 0 && estimated_size < 256 * 1024 * 1024 {
                 // The trailer is untrusted; if its size cannot be reserved, start small and grow.
-                reserved = list
-                    .try_reserve_exact((estimated_size as usize).max(64))
-                    .is_ok();
+                let size = estimated_size as usize;
+                let is_compressed = size > compressed.len();
+                let spare = usize::from(is_compressed) * inflate::SPARE_CAPACITY;
+                reserved = list.try_reserve_exact((size + spare).max(64)).is_ok();
             }
         }
         if !reserved {
             list.try_reserve_exact(if compressed.len() > 512 {
                 compressed.len()
             } else {
-                32
+                4 * compressed.len() + inflate::SPARE_CAPACITY
             })
             .map_err(|_| bun_alloc::AllocError)?;
         }
 
+        let max_output = ArrayBuffer::MAX_SIZE;
         match library {
             Library::Zlib => {
-                let mut reader = zlib::ZlibReaderArrayList::init_with_options(
-                    compressed,
-                    &mut list,
-                    zlib::Options {
-                        window_bits: options
-                            .window_bits
-                            .map_or(if is_gzip { 31 } else { -15 }, |bits| bits as i32),
-                        ..Default::default()
-                    },
-                )
-                .map_err(|err| init_error(heap, err))?;
-
-                if let Err(err) = reader.read_all(true) {
-                    return Err(read_error(heap, err, reader.error_message()));
+                let window_bits = options
+                    .window_bits
+                    .map_or(if is_gzip { 31 } else { -15 }, |bits| bits as i32);
+                let status = Inflater::from_zlib_window_bits(window_bits)
+                    .and_then(|mut inflater| {
+                        inflater.inflate_to_vec(&mut { compressed }, &mut list, max_output)
+                    })
+                    .map_err(|err| zlib_error(heap, err))?;
+                match status {
+                    inflate::Status::StreamEnd => {
+                        heap.create_uint8_array_from_box(list.into_boxed_slice())
+                    }
+                    inflate::Status::NeedsOutput => Err(too_large_error(heap)),
+                    _ => Err(heap.error(format_args!("{ZLIB_ERROR}"))),
                 }
-                drop(reader);
-                heap.create_uint8_array_from_box(list.into_boxed_slice())
             }
             Library::Libdeflate => {
                 let decompress = if is_gzip {
@@ -1708,15 +1705,11 @@ pub(crate) mod JSZlib {
                 } else {
                     bun_deflate::inflate
                 };
-                let limit = ArrayBuffer::MAX_SIZE as usize;
-                let vec = &mut list;
+                let (vec, limit) = (&mut list, max_output);
                 match decompress(compressed, Output::Vec { vec, limit }) {
                     Ok(_) => heap.create_uint8_array_from_box(list.into_boxed_slice()),
                     Err(Error::Alloc(err)) => Err(err.into()),
-                    Err(Error::InsufficientSpace) => Err(heap.error_with_code(
-                        jsc::ErrorCode::BUFFER_TOO_LARGE,
-                        format_args!("Cannot create a Buffer larger than {limit} bytes"),
-                    )),
+                    Err(Error::InsufficientSpace) => Err(too_large_error(heap)),
                     Err(err) => {
                         Err(heap.error(format_args!("libdeflate returned an error: {err}")))
                     }
@@ -1735,26 +1728,22 @@ pub(crate) mod JSZlib {
 
         match Library::from_option(heap, options.library)? {
             Library::Zlib => {
-                // `init` reserves `deflateBound` of the input.
+                let container = if is_gzip {
+                    deflate::Container::Gzip
+                } else {
+                    deflate::Container::Raw
+                };
                 let mut list: Vec<u8> = Vec::new();
-
-                let mut reader = zlib::ZlibCompressorArrayList::init(
-                    data,
-                    &mut list,
-                    zlib::Options {
-                        window_bits: 15,
-                        gzip: is_gzip,
-                        level,
-                        mem_level: options.mem_level,
-                        strategy: options.strategy,
-                    },
-                )
-                .map_err(|err| init_error(heap, err))?;
-
-                if let Err(err) = reader.read_all() {
-                    return Err(read_error(heap, err, reader.error_message()));
-                }
-                drop(reader);
+                let mut compress = || {
+                    let options = deflate::Options {
+                        level: level.try_into()?,
+                        strategy: options.strategy.try_into()?,
+                        memory_level: options.mem_level as u8,
+                        ..Default::default()
+                    };
+                    deflate::compress(data, &mut list, container, options)
+                };
+                compress().map_err(|err| zlib_error(heap, err))?;
                 heap.create_uint8_array_from_box(list.into_boxed_slice())
             }
             Library::Libdeflate => {
@@ -1784,7 +1773,7 @@ pub(crate) mod JSZstd {
         heap: &JsHeap<'a>,
         options: &ZstdCompressionOptions,
     ) -> bindgen::Result<'a, i32> {
-        let level = options.level.map_or(3, |level| level as i32);
+        let level = (options.level).map_or(bun_zstd::DEFAULT_LEVEL, |level| level as i32);
         if !(1..=22).contains(&level) {
             return Err(
                 heap.invalid_arguments(format_args!("Compression level must be between 1 and 22"))
@@ -1797,8 +1786,8 @@ pub(crate) mod JSZstd {
     pub(crate) enum Failure {
         /// The output, whose size the input decides, or zstd's own state for it could not be allocated.
         OutOfMemory,
-        /// An `ERR_ZSTD` with this message.
-        Compression(&'static [u8]),
+        /// An `ERR_ZSTD` with the message of the error.
+        Compression(bun_zstd::Error),
         /// An `ERR_ZSTD` naming the error.
         Decompression(bun_zstd::ZstdError),
     }
@@ -1808,7 +1797,7 @@ pub(crate) mod JSZstd {
         fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
             match self {
                 Failure::OutOfMemory => f.write_str("Out of memory"),
-                Failure::Compression(message) => write!(f, "{}", bstr::BStr::new(message)),
+                Failure::Compression(err) => write!(f, "{err}"),
                 Failure::Decompression(err) => write!(f, "Decompression failed: {err}"),
             }
         }
@@ -1846,29 +1835,19 @@ pub(crate) mod JSZstd {
 
     /// Boxed (trimmed to the bytes produced) so an empty result owns no memory, as `create_buffer_from_box` requires.
     fn compress_to_box(input: &[u8], level: i32) -> Result<Box<[u8]>, Failure> {
-        let max_size = bun_zstd::compress_bound(input.len());
-        // `ZSTD_compressBound` returns an error code for inputs over `ZSTD_MAX_INPUT_SIZE`.
-        if bun_zstd::is_error(max_size) {
-            return Err(Failure::Compression(b"Input is too large to compress"));
+        let mut output = Vec::new();
+        match bun_zstd::compress_append(&mut output, input, level) {
+            Ok(()) => Ok(output.into_boxed_slice()),
+            Err(bun_zstd::Error::MemoryAllocation) => Err(Failure::OutOfMemory),
+            Err(err) => Err(Failure::Compression(err)),
         }
-
-        // Reserved, not zero-filled: zstd initializes exactly the bytes it reports.
-        let mut output: Vec<u8> = Vec::new();
-        output
-            .try_reserve_exact(max_size)
-            .map_err(|_| Failure::OutOfMemory)?;
-
-        if let bun_zstd::Result::Err(err) =
-            bun_zstd::compress_append(&mut output, input, Some(level))
-        {
-            return Err(Failure::Compression(err.as_bytes()));
-        }
-
-        Ok(output.into_boxed_slice())
     }
 
-    fn decompress_to_box(input: &[u8]) -> Result<Box<[u8]>, Failure> {
-        bun_zstd::decompress_alloc(input)
+    fn decompress_to_box(
+        spare: &mut bun_zstd::SpareTables,
+        input: &[u8],
+    ) -> Result<Box<[u8]>, Failure> {
+        bun_zstd::decompress_alloc_with(spare, input)
             .map(Vec::into_boxed_slice)
             .map_err(Failure::from)
     }
@@ -1887,7 +1866,9 @@ pub(crate) mod JSZstd {
         heap: &JsHeap<'a>,
         data: &[u8],
     ) -> bindgen::Result<'a, JsLocal<'a, BufferSource>> {
-        let output = decompress_to_box(data).map_err(|failure| failure.into_error(heap))?;
+        let output = (crate::jsc_hooks::runtime_state().zstd_tables)
+            .with_mut(|spare| decompress_to_box(spare, data))
+            .map_err(|failure| failure.into_error(heap))?;
         heap.create_buffer_from_box(output)
     }
 
@@ -1915,7 +1896,7 @@ pub(crate) mod JSZstd {
             this.result = if this.is_compress {
                 compress_to_box(input, this.level)
             } else {
-                decompress_to_box(input)
+                decompress_to_box(&mut bun_zstd::SpareTables::default(), input)
             };
             Some(done)
         }

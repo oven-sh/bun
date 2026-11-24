@@ -1,11 +1,14 @@
-use crate::node::{BlobOrStringOrBuffer as JSArgument, FileBlobs, StringOrBuffer};
+use crate::node::{BlobOrStringOrBuffer as JSArgument, StringOrBuffer};
+use crate::webcore::Blob;
 use bun_collections::VecExt as _;
 use bun_collections::smallvec::SmallVec;
+use bun_core::Utf8Bytes;
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 use bun_jsc::{
     self as jsc, ErrorCode, JSGlobalObject, JSPromise, JSPropertyIterator, JSValue, JsResult,
 };
 
+use bun_ptr::RefPtr;
 use bun_valkey::command::Reply;
 
 use super::hold::Object;
@@ -50,6 +53,10 @@ fn require_subscriber(this: &JSValkeyClient, function_name: &str) -> JsResult<()
 }
 
 fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<JSArgument>> {
+    if value.is_string_literal() {
+        return JSArgument::from_js(global, value);
+    }
+
     if value.is_undefined_or_null() {
         return Ok(None);
     }
@@ -57,7 +64,7 @@ fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<JSArgumen
     if value.is_number() {
         // Allow numbers to be passed as strings.
         let str = value.to_js_string(global)?;
-        return JSArgument::from_js_maybe_file(global, str.to_js(), FileBlobs::Reject);
+        return JSArgument::from_js(global, str.to_js());
     }
 
     // Copy the bytes. A later argument's `toString()` can detach this buffer before the command is serialized.
@@ -70,7 +77,76 @@ fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<JSArgumen
         ))));
     }
 
-    JSArgument::from_js_maybe_file(global, value, FileBlobs::Allow)
+    match JSArgument::from_js(global, value) {
+        Ok(Some(JSArgument::Blob(blob))) if blob.is_s3() => {
+            Err(global.throw_invalid_arguments(format_args!("S3 blob cannot be used here")))
+        }
+        arg => arg,
+    }
+}
+
+/// An argument of a hash write: buffers and Blobs as bytes, anything else as `String(value)`.
+#[inline(always)]
+fn bytes_or_text(global: &JSGlobalObject, value: JSValue) -> JsResult<Utf8Bytes<'static>> {
+    if value.is_object() {
+        return object_bytes_or_text(global, value);
+    }
+    value.to_utf8(global)
+}
+
+#[inline(always)]
+fn required_bytes_or_text(
+    global: &JSGlobalObject,
+    value: JSValue,
+    method: &'static str,
+    field: &'static str,
+    expected: &'static str,
+) -> JsResult<Utf8Bytes<'static>> {
+    if value.is_undefined_or_null() {
+        return Err(global.throw_invalid_argument_type(method, field, expected));
+    }
+    bytes_or_text(global, value)
+}
+
+#[inline(never)]
+fn object_bytes_or_text(global: &JSGlobalObject, value: JSValue) -> JsResult<Utf8Bytes<'static>> {
+    let ty = value.js_type();
+    let typed_array = ty.is_typed_array_or_array_buffer() && ty != jsc::JSType::ArrayBuffer;
+    match from_js(global, value)? {
+        // `String(value)` throws for one that is detached or out of bounds.
+        Some(arg) if typed_array && arg.slice().is_empty() => value.to_utf8(global),
+        Some(JSArgument::StringOrBuffer(StringOrBuffer::Utf8(bytes))) => Ok(bytes),
+        Some(arg) => Ok(Utf8Bytes::Owned(arg.slice().to_vec())),
+        None => value.to_utf8(global),
+    }
+}
+
+/// What follows a nullish option is not sent. That is fine for the `ttl` of `ttl ? "EX" : undefined, ttl`.
+#[cold]
+fn refuse_to_drop_set_option(global: &JSGlobalObject, dropped: &[JSValue]) -> JsResult<()> {
+    const OPTIONS: [&[u8]; 12] = [
+        b"NX", b"XX", b"GET", b"KEEPTTL", b"EX", b"PX", b"EXAT", b"PXAT", b"IFEQ", b"IFNE",
+        b"IFDEQ", b"IFDNE",
+    ];
+    for arg in dropped.iter().filter(|arg| arg.is_string_literal()) {
+        let text = arg.to_utf8(global)?;
+        if let Some(option) = OPTIONS.iter().find(|it| it.eq_ignore_ascii_case(&text)) {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "set() cannot send {} after a null or undefined argument",
+                bstr::BStr::new(option)
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn trim_nullish_end(mut values: &[JSValue]) -> &[JSValue] {
+    while let [rest @ .., last] = values
+        && last.is_undefined_or_null()
+    {
+        values = rest;
+    }
+    values
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -98,6 +174,8 @@ enum Varargs {
     Strict,
     /// `null` and `undefined` are left out, after a required first argument of this name.
     KeyThenSkipNullish(&'static str),
+    /// The same first argument. `null` and `undefined` are left out at the end and throw ahead of another argument.
+    KeyThenTrimNullish(&'static str),
 }
 
 /// The arguments after a key, without `null` and `undefined`.
@@ -134,7 +212,7 @@ impl<Args> Command<Args> {
 impl JSValkeyClient {
     #[inline(never)]
     fn send_fixed<const N: usize>(
-        &self,
+        self: &RefPtr<Self>,
         this: JsWrapper<'_, Self>,
         global: &JSGlobalObject,
         command: &Command<[&'static str; N]>,
@@ -151,24 +229,29 @@ impl JSValkeyClient {
 
     #[inline(never)]
     fn send_varargs(
-        &self,
+        self: &RefPtr<Self>,
         this: JsWrapper<'_, Self>,
         global: &JSGlobalObject,
         command: &Command<Varargs>,
         values: &[JsLocal<'_>],
     ) -> JsResult<JSValue> {
-        let values = JsLocal::to_js_slice(values);
+        let mut values = JsLocal::to_js_slice(values);
         command.check_state(self)?;
 
-        if let Varargs::KeyThenSkipNullish(name) = command.args
+        if let Varargs::KeyThenSkipNullish(name) | Varargs::KeyThenTrimNullish(name) = command.args
             && values.first().is_none_or(|key| key.is_undefined_or_null())
         {
             return Err(global.throw_missing_arguments_value(&[name]));
         }
+        if let Varargs::KeyThenTrimNullish(_) = command.args {
+            values = trim_nullish_end(values);
+        }
 
         let mut args: Vec<JSArgument> = Vec::with_capacity(values.len());
         for &value in values {
-            if value.is_undefined_or_null() && !matches!(command.args, Varargs::Strict) {
+            if value.is_undefined_or_null()
+                && matches!(command.args, Varargs::KeyThenSkipNullish(_))
+            {
                 continue;
             }
             args.push(command.arg(global, value, "additional arguments", "string or buffer")?);
@@ -178,7 +261,7 @@ impl JSValkeyClient {
 
     #[inline(never)]
     fn send_key_then(
-        &self,
+        self: &RefPtr<Self>,
         this: JsWrapper<'_, Self>,
         global: &JSGlobalObject,
         command: &Command<AfterKey>,
@@ -208,7 +291,7 @@ impl JSValkeyClient {
 
     #[inline(never)]
     fn send_hincrby(
-        &self,
+        self: &RefPtr<Self>,
         this: JsWrapper<'_, Self>,
         global: &JSGlobalObject,
         command: &Command<()>,
@@ -218,17 +301,19 @@ impl JSValkeyClient {
     ) -> JsResult<JSValue> {
         command.check_state(self)?;
 
-        let text = |value: JsLocal<'_>, field, expected| match value.to_js() {
-            value if value.is_undefined_or_null() => {
-                Err(global.throw_invalid_argument_type(command.method, field, expected))
-            }
-            value => value.to_bun_string(global),
+        let (method, increment) = (command.method, increment.to_js());
+        let arg = |value: JsLocal<'_>, field| {
+            required_bytes_or_text(global, value.to_js(), method, field, "string or buffer")
         };
-        let key = text(key, "key", "string or buffer")?;
-        let field = text(field, "field", "string or buffer")?;
-        let increment = text(increment, "increment", "number or string")?;
-
-        let args = [key.to_utf8(), field.to_utf8(), increment.to_utf8()];
+        let (key, field) = (arg(key, "key")?, arg(field, "field")?);
+        if increment.is_undefined_or_null() {
+            return Err(global.throw_invalid_argument_type(
+                method,
+                "increment",
+                "number or string",
+            ));
+        }
+        let args = [key, field, increment.to_utf8(global)?];
         Ok(self.send(this, global, command.wire.as_bytes(), &args, command.reply))
     }
 }
@@ -239,7 +324,7 @@ macro_rules! method {
         $name:literal, $command:literal, $state:ident, $reply:ident, $args:expr
     ) => {
         pub(crate) fn $fn_name(
-            &self,
+            self: &RefPtr<Self>,
             this: JsWrapper<'_, Self>,
             cx: &mut JsScope<'_>,
             $($param: $ty,)*
@@ -279,6 +364,16 @@ macro_rules! cmd_key_varargs {
         method!(
             $fn_name(args: &[JsLocal<'_>]) => send_varargs(args),
             $name, $command, $state, Value, Varargs::KeyThenSkipNullish($arg0_name)
+        );
+    };
+}
+
+/// For replies that have one element per argument.
+macro_rules! cmd_key_positional {
+    ($fn_name:ident, $name:literal, $command:literal, $state:ident) => {
+        method!(
+            $fn_name(args: &[JsLocal<'_>]) => send_varargs(args),
+            $name, $command, $state, Value, Varargs::KeyThenTrimNullish("key")
         );
     };
 }
@@ -329,7 +424,7 @@ macro_rules! cmd_hincrby {
 
 impl JSValkeyClient {
     pub(crate) fn js_send(
-        &self,
+        self: &RefPtr<Self>,
         this: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
         command: JsLocal<'_>,
@@ -363,7 +458,7 @@ impl JSValkeyClient {
     cmd!(get_buffer, "getBuffer", "GET" -> Buffer, NotSubscriber, key: "key");
 
     pub(crate) fn set(
-        &self,
+        self: &RefPtr<Self>,
         this: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
         key: JsLocal<'_>,
@@ -389,8 +484,10 @@ impl JSValkeyClient {
         };
         args.push(value);
 
-        for arg in JsLocal::to_js_slice(options) {
+        let mut options = JsLocal::to_js_slice(options).iter();
+        while let Some(arg) = options.next() {
             if arg.is_undefined_or_null() {
+                refuse_to_drop_set_option(global, options.as_slice())?;
                 break;
             }
             let Some(v) = from_js(global, *arg)? else {
@@ -411,7 +508,7 @@ impl JSValkeyClient {
     cmd!(exists, "exists", "EXISTS" -> Bool, NotSubscriber, key: "key");
 
     pub(crate) fn expire(
-        &self,
+        self: &RefPtr<Self>,
         this: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
         key: JsLocal<'_>,
@@ -473,7 +570,7 @@ impl JSValkeyClient {
 
     // Implement hmget (get multiple values from hash)
     pub(crate) fn hmget(
-        &self,
+        self: &RefPtr<Self>,
         this: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
         key: JsLocal<'_>,
@@ -512,10 +609,7 @@ impl JSValkeyClient {
                 args.push(field);
             }
         } else {
-            for arg in fields {
-                if arg.is_undefined_or_null() {
-                    break;
-                }
+            for arg in trim_nullish_end(fields) {
                 let Some(field) = from_js(global, *arg)? else {
                     return Err(global.throw_invalid_argument_type(
                         "hmget",
@@ -534,27 +628,32 @@ impl JSValkeyClient {
     cmd_hincrby!(hincrbyfloat, "hincrbyfloat", "HINCRBYFLOAT", NotSubscriber);
 
     fn hset_impl(
-        &self,
+        self: &RefPtr<Self>,
         this: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
         key: JsLocal<'_>,
         fields: &[JsLocal<'_>],
+        method: &'static str,
         command: &'static str,
     ) -> JsResult<JSValue> {
         let global = cx.global();
-        require_not_subscriber(self, command)?;
+        require_not_subscriber(self, method)?;
 
-        let key = key.to_js().to_bun_string(global)?;
+        let required =
+            |value, name| required_bytes_or_text(global, value, method, name, "string or buffer");
+        let key = required(key.to_js(), "key")?;
 
         let fields = JsLocal::to_js_slice(fields);
         let second_arg = fields.first().copied().unwrap_or(JSValue::UNDEFINED);
 
         let object_iter;
-        let mut args: Vec<bun_core::Utf8Bytes<'_>> = Vec::new();
+        let mut args: Vec<Utf8Bytes<'_>> = Vec::new();
 
-        args.push(key.to_utf8());
-
-        if second_arg.is_object() && !second_arg.is_array() {
+        if second_arg.is_object()
+            && !second_arg.is_array()
+            && !second_arg.js_type().is_array_buffer_like()
+            && !second_arg.is::<Blob>()
+        {
             // Pattern 1: Object/Record - hset(key, {field: value, ...})
             let Some(obj) = second_arg.get_object() else {
                 return Err(global.throw_invalid_argument_type(command, "fields", "object"));
@@ -570,11 +669,12 @@ impl JSValkeyClient {
             )?;
 
             args.ensure_total_capacity(1 + object_iter.len * 2);
+            args.push(key);
 
             while let Some((field_name, value)) = object_iter.next()? {
                 args.push(field_name.to_utf8());
 
-                args.push(value.to_utf8(global)?);
+                args.push(bytes_or_text(global, value)?);
             }
         } else if second_arg.is_array() {
             // Pattern 3: Array - hmset(key, [field, value, ...])
@@ -586,16 +686,17 @@ impl JSValkeyClient {
             }
 
             args.ensure_total_capacity(1 + iter.len as usize);
+            args.push(key);
 
             while let Some(field_js) = iter.next()? {
-                args.push(field_js.to_utf8(global)?);
+                args.push(required(field_js, "field")?);
 
                 let Some(value_js) = iter.next()? else {
                     return Err(global.throw(format_args!(
                         "Array must have an even number of elements (field-value pairs)"
                     )));
                 };
-                args.push(value_js.to_utf8(global)?);
+                args.push(bytes_or_text(global, value_js)?);
             }
         } else {
             // Pattern 2: Variadic - hset(key, field, value, ...)
@@ -612,9 +713,11 @@ impl JSValkeyClient {
             }
 
             args.ensure_total_capacity(1 + fields.len());
+            args.push(key);
 
-            for field_or_value in fields {
-                args.push(field_or_value.to_utf8(global)?);
+            for &[field, value] in fields.as_chunks().0 {
+                args.push(required(field, "field")?);
+                args.push(bytes_or_text(global, value)?);
             }
         }
 
@@ -626,23 +729,23 @@ impl JSValkeyClient {
     }
 
     pub(crate) fn hset(
-        &self,
+        self: &RefPtr<Self>,
         this: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
         key: JsLocal<'_>,
         fields: &[JsLocal<'_>],
     ) -> JsResult<JSValue> {
-        self.hset_impl(this, cx, key, fields, "HSET")
+        self.hset_impl(this, cx, key, fields, "hset", "HSET")
     }
 
     pub(crate) fn hmset(
-        &self,
+        self: &RefPtr<Self>,
         this: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
         key: JsLocal<'_>,
         fields: &[JsLocal<'_>],
     ) -> JsResult<JSValue> {
-        self.hset_impl(this, cx, key, fields, "HMSET")
+        self.hset_impl(this, cx, key, fields, "hmset", "HMSET")
     }
 
     cmd_key_varargs!(hdel, "hdel", "HDEL", "key", NotSubscriber);
@@ -668,7 +771,7 @@ impl JSValkeyClient {
 
     // Implement ping (send a PING command with an optional message)
     pub(crate) fn ping(
-        &self,
+        self: &RefPtr<Self>,
         this: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
         message: JsLocal<'_>,
@@ -806,6 +909,7 @@ impl JSValkeyClient {
         incrbyfloat, "incrbyfloat", "INCRBYFLOAT", NotSubscriber,
         key: "key", increment: "increment"
     );
+    cmd_key_varargs!(increx, "increx", "INCREX", "key", NotSubscriber);
     cmd!(decrby, "decrby", "DECRBY", NotSubscriber, key: "key", decrement: "decrement");
     cmd_key_varargs!(lpush, "lpush", "LPUSH", "key", NotSubscriber);
     cmd_key_varargs!(lpushx, "lpushx", "LPUSHX", "key", NotSubscriber);
@@ -823,7 +927,7 @@ impl JSValkeyClient {
         zincrby, "zincrby", "ZINCRBY", NotSubscriber,
         key: "key", increment: "increment", member: "member"
     );
-    cmd_key_varargs!(zmscore, "zmscore", "ZMSCORE", "key", NotSubscriber);
+    cmd_key_positional!(zmscore, "zmscore", "ZMSCORE", NotSubscriber);
     cmd_strings_varargs!(zadd, "zadd", "ZADD", NotSubscriber);
     cmd_strings_varargs!(zscan, "zscan", "ZSCAN", NotSubscriber);
     cmd_strings_varargs!(zdiff, "zdiff", "ZDIFF", NotSubscriber);
@@ -838,7 +942,7 @@ impl JSValkeyClient {
     cmd_strings_varargs!(bzpopmin, "bzpopmin", "BZPOPMIN", NotSubscriber);
     cmd_strings_varargs!(bzpopmax, "bzpopmax", "BZPOPMAX", NotSubscriber);
     cmd_key_varargs!(del, "del", "DEL", "key", NotSubscriber);
-    cmd_key_varargs!(mget, "mget", "MGET", "key", NotSubscriber);
+    cmd_key_positional!(mget, "mget", "MGET", NotSubscriber);
     cmd_strings_varargs!(mset, "mset", "MSET", NotSubscriber);
     cmd_strings_varargs!(msetnx, "msetnx", "MSETNX", NotSubscriber);
     cmd_strings_varargs!(script, "script", "SCRIPT", NotSubscriber);
@@ -940,7 +1044,7 @@ impl JSValkeyClient {
     cmd_strings_varargs!(xsetid, "xsetid", "XSETID", NotSubscriber);
 
     pub(crate) fn publish(
-        &self,
+        self: &RefPtr<Self>,
         this: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
         channel: JsLocal<'_>,
@@ -949,31 +1053,31 @@ impl JSValkeyClient {
         let global = cx.global();
         require_not_subscriber(self, "publish")?;
 
-        let mut args: Vec<JSArgument> = Vec::with_capacity(2);
-
-        for (value, field) in [(channel.to_js(), "channel"), (message.to_js(), "message")] {
-            if value.is_string()
-                && let Some(arg) = from_js(global, value)?
-            {
-                args.push(arg);
-            } else {
-                return Err(global.throw_invalid_argument_type("publish", field, "string"));
-            }
-        }
-        Ok(self.send(this, global, b"PUBLISH", &args, Reply::Value))
+        let channel = if channel.to_js().is_string()
+            && let Some(channel) = from_js(global, channel.to_js())?
+        {
+            channel
+        } else {
+            return Err(global.throw_invalid_argument_type("publish", "channel", "string"));
+        };
+        let Some(message) = from_js(global, message.to_js())? else {
+            return Err(global.throw_invalid_argument_type(
+                "publish",
+                "message",
+                "string or buffer",
+            ));
+        };
+        Ok(self.send(this, global, b"PUBLISH", &[channel, message], Reply::Value))
     }
 
     pub(crate) fn subscribe(
-        &self,
+        self: &RefPtr<Self>,
         this: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
         channel: JsLocal<'_>,
         listener: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
-        // For the dial and the writes ahead of `send()`.
-        let _guard = self.ref_guard();
-
         let (channel_or_many, handler_callback) = (channel.to_js(), listener.to_js());
         let mut redis_channels: Vec<JSArgument> = Vec::with_capacity(1);
 
@@ -1043,16 +1147,12 @@ impl JSValkeyClient {
     }
 
     pub(crate) fn unsubscribe(
-        &self,
+        self: &RefPtr<Self>,
         this: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
         args: &[JsLocal<'_>],
     ) -> JsResult<JSValue> {
         let global = cx.global();
-        // Hold a ref so `*self` stays live across the handler-map updates and
-        // the `send()` below.
-        let _guard = self.ref_guard();
-
         // Check if we're in subscription mode
         require_subscriber(self, "unsubscribe")?;
         let object = Object::from(this);
@@ -1170,13 +1270,14 @@ impl JSValkeyClient {
         let cx = cx.js_thread();
         let global = cx.global();
         // The duplicate is the calling script's, whoever made the original.
-        let new_client = js::wrap(self.clone_without_connecting(&cx), global);
-        let new_client_js = new_client.to_js();
+        let new_client = self.clone_without_connecting(&cx);
         if self.get_connected() {
+            let wrapper = js::wrap(new_client.clone(), global);
             new_client.connection_promise_returns_client.set(true);
-            return Ok(new_client.do_connect(global, (&new_client).into()));
+            return Ok(new_client.do_connect(global, (&wrapper).into()));
         }
 
+        let new_client_js = js::to_js(new_client, global);
         Ok(JSPromise::resolved_promise_value(global, new_client_js))
     }
 }

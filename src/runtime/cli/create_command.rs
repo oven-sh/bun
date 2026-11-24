@@ -12,14 +12,15 @@ use bun_dotenv as DotEnv;
 use bun_http as HTTP;
 use bun_js_printer as JSPrinter;
 use bun_parsers::json as JSON;
-use bun_paths::{OSPathSlice, PathBuffer};
+use bun_paths::portable::from_portable_rooted;
+use bun_paths::{OSPathSlice, Path};
 use bun_resolver::fs;
 use bun_sys::FdDirExt as _;
 #[cfg(not(windows))]
 use bun_sys::copy_file as CopyFile;
 use bun_url::URL;
 use bun_which::which;
-use bun_zlib as Zlib;
+use bun_zlib::{Inflater, inflate};
 
 use crate::Command;
 use crate::cli::run_command::RunCommand;
@@ -146,18 +147,15 @@ impl CreateOptions {
 
 const BUN_CREATE_DIR: &[u8] = b".bun-create";
 
-/// `name`, joined onto a template dir by the `Loose` join (`/` and `\` fold), stays inside it.
+/// `name`, joined onto a template dir, stays inside it, whether or not `\` is a separator.
 fn names_path_inside_dir(name: &[u8]) -> bool {
-    let mut depth: usize = 0;
-    for segment in strings::split_any(name, b"/\\") {
-        match segment {
-            b"" | b"." => {}
-            b".." if depth == 0 => return false,
-            b".." => depth -= 1,
-            _ => depth += 1,
-        }
+    if !bun_paths::volume(name).is_empty() && bun_paths::is_absolute(name) {
+        return true;
     }
-    depth > 0
+    let name = strings::trim_left(&name[bun_paths::volume(name).len()..], b"/\\");
+    let is_inside =
+        |name: &[u8]| !bun_paths::climbs_out(name) && Path::resolve(&[name]).as_bytes() != b".";
+    is_inside(name) && is_inside(&bun_paths::from_portable(name))
 }
 
 /// Such a copy would truncate its source or walk into its own output.
@@ -166,7 +164,7 @@ fn destination_is_inside_template(
     abs_template_path: &[u8],
     destination: &[u8],
 ) -> bool {
-    use bun_paths::resolve_path::{ParentEqual, is_parent_or_equal};
+    use bun_paths::{ParentEqual, is_parent_or_equal};
     if is_parent_or_equal(abs_template_path, destination) != ParentEqual::Unrelated {
         return true;
     }
@@ -194,26 +192,16 @@ fn destination_is_inside_template(
 /// A component of `path` is a link in `destination`. `overwrite` removes the link instead.
 fn leaves_destination(destination: &[u8], path: &[u8], overwrite: bool) -> bun_sys::Result<bool> {
     use bun_sys::FileKind;
-    let mut buf = bun_paths::path_buffer_pool::get();
-    let mut end = 0;
-    while end < path.len() {
-        end = strings::index_of_char_usize(&path[end + 1..], bun_paths::SEP)
-            .map_or(path.len(), |i| end + 1 + i);
-        let Some(component) = bun_paths::resolve_path::join_abs_string_buf_z_checked::<
-            bun_paths::platform::Auto,
-        >(destination, &mut buf[..], &[&path[..end]]) else {
-            return Err(bun_sys::Error::from_code(
-                bun_sys::E::ENAMETOOLONG,
-                bun_sys::Tag::lstat,
-            ));
-        };
-        match bun_sys::lstat(component) {
+    let mut component = Path::from(destination);
+    for name in bun_paths::components(path) {
+        component.push(name);
+        match bun_sys::lstat(&component) {
             Ok(stat) => match bun_sys::kind_from_mode(stat.st_mode as _) {
                 FileKind::Directory => {}
                 FileKind::SymLink if overwrite => {
-                    let removed = bun_sys::unlink(component);
+                    let removed = bun_sys::unlink(&component);
                     #[cfg(windows)]
-                    let removed = removed.or_else(|_| bun_sys::rmdir(component));
+                    let removed = removed.or_else(|_| bun_sys::rmdir(&component));
                     return removed.map(|()| false);
                 }
                 kind => return Ok(kind == FileKind::SymLink),
@@ -320,18 +308,14 @@ impl CreateCommand {
 
         env_loader.load_process()?;
 
-        let dirname: &[u8] = if positionals.len() == 1 {
-            bun_paths::basename(template)
+        let dirname: &[u8] = &if positionals.len() == 1 {
+            bun_paths::basename(template).into()
         } else {
-            positionals[1]
+            bun_sys::converted_spelling(positionals[1], from_portable_rooted)
         };
 
-        let destination =
-            filesystem
-                .dirname_store
-                .append_slice(bun_paths::resolve_path::join_abs::<
-                    bun_paths::platform::Loose,
-                >(filesystem.top_level_dir(), dirname))?;
+        let destination = (filesystem.dirname_store)
+            .append_slice(&Path::resolve(&[filesystem.top_level_dir(), dirname]))?;
 
         let mut progress = Progress::default();
         progress.supports_ansi_escape_codes = Output::enable_ansi_colors_stderr();
@@ -458,12 +442,16 @@ impl CreateCommand {
                 progress.refresh();
 
                 let mut tarball_buf_list: Vec<u8> = Vec::with_capacity(16384);
-                let mut gunzip = Zlib::ZlibReaderArrayList::init(
-                    tarball_bytes.list.as_slice(),
+                let status = Inflater::new(inflate::Container::ZlibOrGzip).inflate_to_vec(
+                    &mut tarball_bytes.list.as_slice(),
                     &mut tarball_buf_list,
-                )?;
-                gunzip.read_all(true)?;
-                drop(gunzip);
+                    usize::MAX,
+                );
+                match status {
+                    Ok(inflate::Status::StreamEnd) => {}
+                    Err(bun_zlib::Error::Alloc(error)) => return Err(error.into()),
+                    _ => return Err(bun_http::Error::Zlib.into()),
+                }
 
                 progress.root().set_name(b"Extracting ");
                 progress.root().append_to_name(template);
@@ -550,7 +538,8 @@ impl CreateCommand {
                 progress.root().set_name(b"Copying files");
                 progress.refresh();
 
-                let abs_template_path = crate::cli::cli_dupe(filesystem.abs(&[template]));
+                let abs_template_path =
+                    crate::cli::cli_dupe(&Path::resolve(&[filesystem.top_level_dir(), template]));
                 let template_dir = match bun_sys::Dir::open(abs_template_path) {
                     Ok(d) => d,
                     Err(err) => {
@@ -604,32 +593,6 @@ impl CreateCommand {
                     }
                 };
 
-                #[cfg(windows)]
-                let mut destination_buf = bun_paths::w_path_buffer_pool::get();
-                #[cfg(windows)]
-                let destination_len = strings::convert_utf8_to_utf16_in_buffer(
-                    destination_buf.as_mut_slice(),
-                    strings::without_trailing_slash(destination),
-                )
-                .len();
-                #[cfg(windows)]
-                {
-                    destination_buf[destination_len] = bun_paths::SEP as u16;
-                }
-
-                #[cfg(windows)]
-                let mut template_path_buf = bun_paths::w_path_buffer_pool::get();
-                #[cfg(windows)]
-                let template_path_len = strings::convert_utf8_to_utf16_in_buffer(
-                    template_path_buf.as_mut_slice(),
-                    strings::without_trailing_slash(abs_template_path),
-                )
-                .len();
-                #[cfg(windows)]
-                {
-                    template_path_buf[template_path_len] = bun_paths::SEP as u16;
-                }
-
                 let mut walker_ = bun_sys::walker_skippable::walk(
                     bun_sys::Fd::from_std_dir(&template_dir),
                     SKIP_FILES,
@@ -641,13 +604,9 @@ impl CreateCommand {
                     &mut walker_,
                     &progress,
                     #[cfg(windows)]
-                    (destination_len + 1),
+                    bun_paths::OSPath::from(destination),
                     #[cfg(windows)]
-                    &mut destination_buf,
-                    #[cfg(windows)]
-                    (template_path_len + 1),
-                    #[cfg(windows)]
-                    &mut template_path_buf,
+                    bun_paths::OSPath::from(abs_template_path),
                 )?;
 
                 template_has_dot_gitignore =
@@ -1138,8 +1097,7 @@ impl CreateCommand {
             );
         }
 
-        let rel_destination =
-            bun_paths::resolve_path::relative(filesystem.top_level_dir(), destination);
+        let rel_destination: &[u8] = &Path::relative(filesystem.top_level_dir(), destination);
         if rel_destination.is_empty() {
             bun_core::pretty!(
                 "\n<d>#<r><b> To get started, run:<r>\n\n  <b><cyan>{}<r>\n\n",
@@ -1156,8 +1114,7 @@ impl CreateCommand {
         Output::flush();
 
         if create_options.open {
-            let mut bun_path_buf = bun_paths::path_buffer_pool::get();
-            if let Some(bin) = which(&mut bun_path_buf, path_env, destination, b"bun") {
+            if let Some(bin) = which(path_env, destination, b"bun") {
                 let argv: [&[u8]; 1] = [bin.as_bytes()];
                 crate::cli::open::open_url(bun_core::zstr!("http://localhost:3000/"));
 
@@ -1199,33 +1156,27 @@ impl CreateCommand {
 
         env_loader.load_process()?;
 
-        let mut home_dir_buf = bun_paths::path_buffer_pool::get();
-        // Returns the length of the NUL-terminated path in `buf`, or `None` if it is too long.
-        let join = |parts: &[&[u8]], buf: &mut PathBuffer| {
-            bun_paths::resolve_path::join_abs_string_buf_z_checked::<
-                bun_paths::resolve_path::platform::Loose,
-            >(filesystem.top_level_dir(), &mut buf[..], parts)
-            .map(|path| path.as_bytes().len())
+        let positional = positionals[0];
+        let join = |parts: &[&[u8]]| {
+            let mut path = Path::from_top_level_dir();
+            path.resolve_in_place(parts);
+            path.copy_trailing_sep_from(positional);
+            path
         };
         let template: &[u8] = 'brk: {
-            let positional = positionals[0];
-
-            let parts = [filesystem.top_level_dir(), positional];
-            let Some(len) = join(&parts, &mut home_dir_buf) else {
+            let typed = typed_path(positional);
+            let Ok(outdir_path) = join(&[&typed]).check_len() else {
                 pretty_errorln!("<r><red>error<r>: template name too long");
                 Global::exit(1);
             };
-            let outdir_path_ = bun_core::ZStr::from_buf(&home_dir_buf[..], len);
-            if !bun_paths::resolve_path::has_any_illegal_chars(outdir_path_.as_bytes())
-                && matches!(
-                    bun_sys::exists_at_type(bun_sys::Fd::cwd(), outdir_path_),
-                    Ok(bun_sys::ExistsAtType::File)
-                )
-            {
-                let extension = bun_paths::extension(positional);
+            if matches!(
+                bun_sys::exists_at_type(bun_sys::Fd::cwd(), &outdir_path),
+                Ok(bun_sys::ExistsAtType::File)
+            ) {
+                let extension = bun_paths::extension(&typed);
                 if let Some(tag) = ExampleTag::from_file_extension(extension) {
                     example_tag = tag;
-                    break 'brk crate::cli::cli_dupe(&home_dir_buf[..len]);
+                    break 'brk crate::cli::cli_dupe(&outdir_path);
                 }
                 // Not for .js: a lot of create-* npm packages have .js in the name.
                 else if !extension.is_empty() && extension != b".js" {
@@ -1235,7 +1186,7 @@ impl CreateCommand {
                 }
             }
 
-            if !names_path_inside_dir(positional) {
+            if !names_path_inside_dir(positional) || !names_path_inside_dir(&typed) {
                 pretty_errorln!(
                     "<r><red>error<r>: <b>\"{}\"<r> is not a template name. Pass a template name, a <b>user/repo<r> on GitHub, or the absolute path of a folder.",
                     bstr::BStr::new(positional),
@@ -1243,29 +1194,27 @@ impl CreateCommand {
                 Global::exit(1);
             }
 
-            if bun_paths::is_absolute(positional) {
+            if bun_paths::is_absolute(&typed) {
                 example_tag = ExampleTag::LocalFolder;
-                break 'brk positional;
+                break 'brk crate::cli::cli_dupe(&typed);
             }
 
-            let create_dir = env_loader.map.get(b"BUN_CREATE_DIR");
+            let create_dir = env_loader.map.get(b"BUN_CREATE_DIR").map(typed_path);
             let home_dir = env_loader.map.get(b"HOME");
-            let template_dirs: [Option<Vec<&[u8]>>; 3] = [
-                create_dir.map(|dir| vec![dir, positional]),
-                Some(vec![filesystem.top_level_dir(), BUN_CREATE_DIR, positional]),
-                home_dir.map(|dir| vec![dir, BUN_CREATE_DIR, positional]),
+            let template_dirs: [Option<[&[u8]; 2]>; 3] = [
+                create_dir.as_deref().map(|dir| [dir, b""]),
+                Some([filesystem.top_level_dir(), BUN_CREATE_DIR]),
+                home_dir.map(|dir| [dir, BUN_CREATE_DIR]),
             ];
-            for parts in template_dirs.iter().flatten() {
-                let Some(len) = join(parts, &mut home_dir_buf) else {
-                    continue;
-                };
-                let outdir_path_ = bun_core::ZStr::from_buf(&home_dir_buf[..], len);
-                if !bun_paths::resolve_path::has_any_illegal_chars(outdir_path_.as_bytes())
-                    && bun_sys::directory_exists_at(bun_sys::Fd::cwd(), outdir_path_)
-                        .unwrap_or(false)
-                {
-                    example_tag = ExampleTag::LocalFolder;
-                    break 'brk crate::cli::cli_dupe(&home_dir_buf[..len]);
+            let converted = from_portable_rooted(positional);
+            for name in [&converted, positional] {
+                for [dir, subdir] in template_dirs.into_iter().flatten() {
+                    let outdir_path = join(&[dir, subdir, name]);
+                    if let Ok(true) = bun_sys::directory_exists_at(bun_sys::Fd::cwd(), &outdir_path)
+                    {
+                        example_tag = ExampleTag::LocalFolder;
+                        break 'brk crate::cli::cli_dupe(&outdir_path);
+                    }
                 }
             }
 
@@ -1294,6 +1243,10 @@ impl CreateCommand {
     }
 }
 
+fn typed_path(path: &[u8]) -> std::borrow::Cow<'_, [u8]> {
+    bun_sys::typed_spelling(bun_core::top_level_dir(), path, from_portable_rooted)
+}
+
 pub(crate) struct ExtractedInfo {
     pub example_tag: ExampleTag,
     // A positional or a copy in the CLI arena, both process-lifetime.
@@ -1304,10 +1257,8 @@ fn file_copier_copy(
     destination_dir_: &bun_sys::Dir,
     walker: &mut bun_sys::walker_skippable::Walker,
     progress: &Progress,
-    #[cfg(windows)] dst_base_len: usize,
-    #[cfg(windows)] dst_buf: &mut bun_paths::WPathBuffer,
-    #[cfg(windows)] src_base_len: usize,
-    #[cfg(windows)] src_buf: &mut bun_paths::WPathBuffer,
+    #[cfg(windows)] mut destination: bun_paths::OSPath,
+    #[cfg(windows)] mut template: bun_paths::OSPath,
 ) -> crate::Result<()> {
     while let Some(entry) = walker.next()? {
         #[cfg(windows)]
@@ -1318,27 +1269,22 @@ fn file_copier_copy(
                 continue;
             }
 
-            dst_buf[dst_base_len..][..entry.path.len()].copy_from_slice(entry.path);
-            dst_buf[dst_base_len + entry.path.len()] = 0;
-            let dst = bun_core::WStr::from_buf(&dst_buf[..], dst_base_len + entry.path.len());
-
-            src_buf[src_base_len..][..entry.path.len()].copy_from_slice(entry.path);
-            src_buf[src_base_len + entry.path.len()] = 0;
-            let src = bun_core::WStr::from_buf(&src_buf[..], src_base_len + entry.path.len());
+            let dst: &bun_core::WStr = &destination.push_scoped(entry.path);
+            let src: &bun_core::WStr = &template.push_scoped(entry.path);
 
             match entry.kind {
                 bun_sys::FileKind::Directory => {
                     if bun_sys::windows::CreateDirectoryExW(src, dst).is_err() {
-                        let _ = bun_sys::MakePath::make_path_u16(destination_dir_, entry.path);
+                        let _ = bun_sys::make_path::make_path(destination_dir_, entry.path);
                     }
                 }
                 bun_sys::FileKind::File => {
                     scopeguard::defer! { progress.complete_one(NodeId::Root) }
                     let mut result = bun_sys::windows::CopyFileW(src, dst, false);
                     if result.is_err()
-                        && let Some(entry_dirname) = bun_paths::Dirname::dirname_u16(entry.path)
+                        && let Some(entry_dirname) = bun_paths::dirname(entry.path)
                     {
-                        let _ = bun_sys::MakePath::make_path_u16(destination_dir_, entry_dirname);
+                        let _ = bun_sys::make_path::make_path(destination_dir_, entry_dirname);
                         result = bun_sys::windows::CopyFileW(src, dst, false);
                     }
                     if let Err(err) = result {
@@ -1375,8 +1321,7 @@ fn file_copier_copy(
                 )
             };
             let outfile = match open_outfile().or_else(|_| {
-                let entry_dirname = bun_resolver::Dirname::dirname(entry.path.as_bytes());
-                if !entry_dirname.is_empty() {
+                if let Some(entry_dirname) = bun_paths::dirname(entry.path.as_bytes()) {
                     let _ = destination_dir_.make_path(entry_dirname);
                 }
                 open_outfile()
@@ -1512,16 +1457,17 @@ impl Example {
             progress.end();
         }
 
-        let mut home_dir_buf = bun_paths::path_buffer_pool::get();
-        let create_dir = env_loader.map.get(b"BUN_CREATE_DIR");
+        let create_dir = env_loader.map.get(b"BUN_CREATE_DIR").map(typed_path);
         let home_dir = env_loader.map.get(bun_core::env_var::HOME.key());
         let folders: [Option<bun_sys::Dir>; 3] = [
-            create_dir.map(|dir| vec![dir]),
+            create_dir.as_deref().map(|dir| vec![dir]),
             Some(vec![filesystem.top_level_dir(), BUN_CREATE_DIR]),
             home_dir.map(|dir| vec![dir, BUN_CREATE_DIR]),
         ]
         .map(|parts| -> Option<bun_sys::Dir> {
-            bun_sys::Dir::open(filesystem.abs_buf(&parts?, &mut home_dir_buf)).ok()
+            let mut path = Path::from_top_level_dir();
+            path.resolve_in_place(&parts?);
+            bun_sys::Dir::open(&path).ok()
         });
 
         for folder in folders.iter().flatten() {
@@ -1535,13 +1481,9 @@ impl Example {
                 }
 
                 let entry_name = entry.name.slice_u8();
-                let len = entry_name.len() + 1 + b"package.json".len();
-                home_dir_buf[..entry_name.len()].copy_from_slice(entry_name);
-                home_dir_buf[entry_name.len()] = bun_paths::SEP;
-                home_dir_buf[entry_name.len() + 1..len].copy_from_slice(b"package.json");
-                let path = bun_core::ZStr::nul_terminate(&mut home_dir_buf, len);
+                let path = Path::from_parts(&[entry_name, b"package.json"]);
 
-                if bun_sys::faccessat(folder, path).unwrap_or(false) {
+                if bun_sys::faccessat(folder, &path).unwrap_or(false) {
                     examples.push(Example {
                         name: filesystem.filename_store.append_slice(entry_name)?,
                         description: b"",
@@ -1997,12 +1939,11 @@ impl GitHandler {
         let git_start = bun_core::time::nano_timestamp();
 
         // The git CLI: libgit2 took three times as long for this.
-        let mut bun_path_buf = bun_paths::path_buffer_pool::get();
         #[cfg(windows)]
         let win_loop = bun_event_loop::EventLoopHandle::init_mini(
             bun_event_loop::MiniEventLoop::init_global(None),
         );
-        if let Some(git) = which(&mut bun_path_buf, path, destination, b"git") {
+        if let Some(git) = which(path, destination, b"git") {
             let git: &[u8] = git.as_bytes();
 
             if verbose {

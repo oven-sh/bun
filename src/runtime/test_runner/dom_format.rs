@@ -2,6 +2,7 @@
 
 use core::cmp::Ordering;
 
+use bun_core::scoped::SetForScope;
 use bun_core::{StackCheck, String, strings};
 use bun_jsc::{
     JSGlobalObject, JSPropertyIterator, JSType, JSValue, JsError, JsResult,
@@ -115,10 +116,7 @@ impl Host for console_object::Formatter<'_> {
     fn print(&mut self, out: &mut Vec<u8>, value: JSValue, _indent: u32, _depth: u32) -> JsResult<()> {
         let global = self.global_this;
         let tag = console_object::Tag::get(value, global)?;
-        let prev_single_line = core::mem::replace(&mut self.single_line, true);
-        let result = self.format::<false>(tag, out, value, global);
-        self.single_line = prev_single_line;
-        result
+        SetForScope::new(self, |this| &mut this.single_line, true).format::<false>(tag, out, value, global)
     }
 }
 
@@ -289,11 +287,7 @@ fn for_each_item(
         return Ok(());
     }
     if list.is_iterable(global)? {
-        let mut result = Ok(());
-        return list.try_for_each(global, |item| {
-            result = result.and_then(|()| each(item));
-            result
-        });
+        return list.try_for_each(global, each);
     }
     for i in 0..length_of(global, list)? {
         let item = list.get_index(global, i)?;

@@ -15,7 +15,7 @@ use bun_lsquic_sys as lsquic;
 use bun_uws as uws;
 
 use crate::jsc_hooks::timer_all;
-use crate::timer::{EventLoopTimerState, EventLoopTimerTag, OwnedTimer};
+use crate::timer::{EventLoopTimerTag, OwnedTimer};
 
 use super::callbacks;
 use super::ffi::lsquic_callback;
@@ -198,11 +198,11 @@ pub(crate) struct QuicEndpoint {
     closing: Cell<bool>,
     closed: Cell<bool>,
 
-    socket: Cell<Option<*mut uws::udp::Socket>>,
+    socket: JsCell<Option<uws::udp::OwnedSocket>>,
     bind_config: JsCell<BindConfig>,
     local_addr: Cell<StoredAddr>,
     poll_ref: KeepAlive,
-    this_value: JsCell<JsRef>,
+    pub(crate) this_value: JsCell<JsRef>,
 
     /// Both can coexist on one endpoint — Node allows that.
     server_engine: Cell<*mut lsquic::lsquic_engine>,
@@ -390,7 +390,12 @@ extern "C" fn on_drain(socket: *mut uws::udp::Socket) {
     }
     this.schedule_process();
 }
-extern "C" fn on_close(_socket: *mut uws::udp::Socket) {}
+extern "C" fn on_close(socket: *mut uws::udp::Socket) {
+    let user = uws::udp::Socket::opaque_mut(socket).user();
+    // SAFETY: `user` is the QuicEndpoint, live until close.
+    let this = unsafe { &*user.cast::<QuicEndpoint>() };
+    let _ = this.socket.take().map(uws::udp::OwnedSocket::into_raw);
+}
 extern "C" fn on_recv_error(_socket: *mut uws::udp::Socket, _errno: c_int, _is_errqueue: c_int) {}
 
 thread_local! {
@@ -706,7 +711,7 @@ lsquic_callback! {
         specs: *const lsquic::lsquic_out_spec,
         n: c_uint,
     ) -> c_int = 0; {
-        let Some(socket) = this.socket.get() else {
+        let Some(socket) = this.socket() else {
             return 0;
         };
         let my_addr = this.local_addr.get();
@@ -772,7 +777,7 @@ lsquic_callback! {
             let out_socket = if spec_local.is_set() && spec_local.decode() != my_addr.decode() {
                 registry_find_by_addr(&spec_local, this)
                     // SAFETY: registered endpoints outlive their registry entry.
-                    .and_then(|other| unsafe { (*other).socket.get() })
+                    .and_then(|other| unsafe { (*other).socket() })
                     .unwrap_or(socket)
             } else {
                 socket
@@ -1052,10 +1057,9 @@ fn apply_transport_params(
     };
     if let Some(cc) = options.get(global, "cc")?.filter(|v| v.is_string()) {
         let name = bun_core::String::from_js(cc, global)?.to_owned_slice();
-        // lsquic.h es_cc_algo: 0=default(→3 Adaptive), 1=Cubic, 2=BBRv1,
-        // 3=Adaptive. lsquic ships no Reno (NGTCP2_CC_ALGO_RENO in node's
-        // backend), so map 'reno' to Cubic, the closest loss-based option,
-        // rather than silently falling through to Adaptive which may pick BBR.
+        // lsquic.h es_cc_algo: 0=default (BBRv1), 1=Cubic, 2=BBRv1. lsquic ships
+        // no Reno (NGTCP2_CC_ALGO_RENO in node's backend), so map 'reno' to
+        // Cubic, the closest loss-based option.
         let algo = match name.as_slice() {
             b"cubic" | b"reno" => 1,
             b"bbr" => 2,
@@ -1178,7 +1182,7 @@ impl QuicEndpoint {
             stats: null_mut(),
             closing: Cell::new(false),
             closed: Cell::new(false),
-            socket: Cell::new(None),
+            socket: JsCell::new(None),
             bind_config: JsCell::new(bind_config),
             local_addr: Cell::new(StoredAddr::default()),
             poll_ref: KeepAlive::init(),
@@ -1330,7 +1334,11 @@ impl QuicEndpoint {
     }
 
     /// Returns `Ok(false)` when the bind fails: Node does not throw here.
-    fn ensure_bound(&self, global: &JSGlobalObject, this_value: JSValue) -> JsResult<bool> {
+    fn ensure_bound(
+        &self,
+        global: &JSGlobalObject,
+        this_value: JsWrapper<'_, Self>,
+    ) -> JsResult<bool> {
         if self.socket.get().is_some() {
             return Ok(true);
         }
@@ -1348,21 +1356,17 @@ impl QuicEndpoint {
             Some(&mut err),
             core::ptr::from_ref(self).cast_mut().cast::<c_void>(),
         );
-        if !socket.is_null() {
-            // Linked only while we hold a socket, so an idle endpoint costs
-            // the loop nothing.
-            self.link_loop_driver();
-        }
-        if socket.is_null() {
-            self.this_value
-                .with_mut(|r| r.set_strong(this_value, global));
+        let Some(socket) = socket else {
+            this_value.set_js_ref_strong(global);
             self.finish_close();
             self.pending_endpoint_close.set(false);
             self.deliver_endpoint_close(global, CLOSECONTEXT_BIND_FAILURE, err);
             return Ok(false);
-        }
+        };
+        // Linked only while we hold a socket, so an idle endpoint costs the loop nothing.
+        self.link_loop_driver();
+        let sock = uws::udp::Socket::opaque_mut(socket.as_ptr());
         self.socket.set(Some(socket));
-        let sock = uws::udp::Socket::opaque_mut(socket);
         let port = sock.bound_port();
         let mut ip = [0u8; IPV6_ADDR_LEN];
         let mut len: i32 = ip.len() as i32;
@@ -1379,8 +1383,7 @@ impl QuicEndpoint {
             s.bound = 1;
             s.receiving = 1;
         });
-        self.this_value
-            .with_mut(|r| r.set_strong(this_value, global));
+        this_value.set_js_ref_strong(global);
         self.update_keepalive();
         let me = core::ptr::from_ref(self).cast_mut();
         ENDPOINT_REGISTRY.with_borrow_mut(|v| {
@@ -1391,8 +1394,12 @@ impl QuicEndpoint {
         Ok(true)
     }
 
+    fn socket(&self) -> Option<*mut uws::udp::Socket> {
+        Some(self.socket.get().as_ref()?.as_ptr())
+    }
+
     fn update_keepalive(&self) {
-        if self.closed.get() || self.socket.get().is_none() {
+        if self.closed.get() {
             return;
         }
         let listening = self.with_state(|s| s.listening) != 0;
@@ -1598,10 +1605,6 @@ impl QuicEndpoint {
     pub(crate) fn on_timer_fire(this: *mut Self) {
         // SAFETY: the timer heap only holds timers of live endpoints.
         let this_ref = unsafe { &*this };
-        this_ref
-            .event_loop_timer
-            .state
-            .set(EventLoopTimerState::FIRED);
         let global_ptr = this_ref.global.get();
         if global_ptr.is_null() {
             return;
@@ -2044,9 +2047,7 @@ impl QuicEndpoint {
                 unsafe { lsquic::lsquic_engine_destroy(engine) };
             }
         }
-        if let Some(socket) = self.socket.take() {
-            uws::udp::Socket::opaque_mut(socket).close();
-        }
+        self.socket.set(None);
         let me = core::ptr::from_ref(self).cast_mut();
         ENDPOINT_REGISTRY.with_borrow_mut(|v| v.retain(|&e| e != me));
         true
@@ -2160,7 +2161,7 @@ impl QuicEndpoint {
                 )
                 .throw());
         }
-        if !self.ensure_bound(global, this_value.to_js())? {
+        if !self.ensure_bound(global, this_value)? {
             return Ok(());
         }
         if self.server_engine.get().is_null() {
@@ -2230,7 +2231,7 @@ impl QuicEndpoint {
                 )
                 .throw());
         }
-        if !self.ensure_bound(global, this_value.to_js())? {
+        if !self.ensure_bound(global, this_value)? {
             return Ok(JSValue::UNDEFINED);
         }
         let address = address.to_js();
@@ -2442,7 +2443,7 @@ impl QuicEndpoint {
         self.schedule_process();
         self.sessions.with_mut(|v| v.push(session));
         self.add_stat(IDX_STATS_CLIENT_SESSIONS, 1);
-        if let Some(socket) = self.socket.get() {
+        if let Some(socket) = self.socket() {
             uws::udp::Socket::opaque_mut(socket).send(
                 &[probe.as_ptr()],
                 &[probe.len()],
@@ -2508,8 +2509,7 @@ impl QuicEndpoint {
             s.listening = 0;
         });
         if self.this_value.get().is_empty() {
-            self.this_value
-                .with_mut(|r| r.set_strong(this_value.to_js(), cx.global()));
+            this_value.set_js_ref_strong(cx.global());
         }
         if self.sessions.get().is_empty() && self.engine_conn_count() == 0 {
             self.finish_close();

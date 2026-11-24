@@ -519,12 +519,13 @@ describe.concurrent("bun compile --library", () => {
     });
   });
 
+  const outdirIsProject = (dir: string) =>
+    `error: --library writes a package.json into --outdir, so --outdir can't be the project folder (${dir}). Use a folder inside it, such as --outdir=dist\n`;
+
   test.each([
-    [
-      ["--outdir", "."],
-      (dir: string) =>
-        `error: --library writes a package.json into --outdir, so --outdir can't be the project folder (${dir}). Use a folder inside it, such as --outdir=dist\n`,
-    ],
+    [["--outdir", "."], outdirIsProject],
+    [["--outdir", "./"], outdirIsProject],
+    [["--outdir", isWindows ? "a/b/../.." : "a\\b/.."], outdirIsProject],
     [
       ["--outdir", "src"],
       () =>
@@ -637,7 +638,7 @@ describe.concurrent("the .aot.ts file that bun compile --library writes", () => 
     [
       "how classes and JSX are written",
       { jsx: "react-jsx", experimentalDecorators: true, useDefineForClassFields: false },
-      { strict: true, jsx: "react-jsx", experimentalDecorators: true, useDefineForClassFields: false },
+      { strict: true, jsx: "react-jsx", experimentalDecorators: true, useDefineForClassFields: true },
     ],
     ["what the reader decides", { target: "es2022", module: "esnext", skipLibCheck: false }, { strict: true }],
   ])("compilerOptions in the package.json say how strict the sources are: %s", async (_, stated, written) => {

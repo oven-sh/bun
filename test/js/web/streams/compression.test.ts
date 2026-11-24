@@ -4,6 +4,7 @@ import { once } from "node:events";
 import { addAbortSignal } from "node:stream";
 import type { ReadableStreamDefaultReader } from "node:stream/web";
 import zlib from "node:zlib";
+import { streamOf } from "../../node/zlib/zlib-golden/engine";
 
 // CompressionStream et al are C++ subclasses of JSTransformStream so that
 // $inheritsTransformStream() returns true (node:stream utils). The JS-visible
@@ -370,6 +371,18 @@ describe("CompressionStream and DecompressionStream", () => {
 
       const out = await new Response(new Blob([cat]).stream().pipeThrough(new DecompressionStream("zstd"))).text();
       expect(out).toBe("payload");
+    });
+
+    test("accepts any number of empty chunks inside a zstd frame", async () => {
+      const frame = zlib.zstdCompressSync(Buffer.from("hello"));
+      const ds = new DecompressionStream("zstd");
+      const writer = ds.writable.getWriter();
+      const read = new Response(ds.readable).text();
+      await writer.write(frame.subarray(0, -1));
+      for (let i = 0; i < 20; i++) await writer.write(new Uint8Array(0));
+      await writer.write(frame.subarray(-1));
+      await writer.close();
+      expect(await read).toBe("hello");
     });
 
     test("rejects trailing garbage after a zstd frame", async () => {
@@ -850,6 +863,59 @@ describe("CompressionStream chunk handling (Node v26 semantics)", () => {
     ).text();
 
     expect(decoded).toBe("hello world");
+  });
+});
+
+describe("where a stream of the zlib formats ends", () => {
+  const text = "hello hello hello";
+  const streams = {
+    "deflate": zlib.deflateSync(text),
+    "deflate-raw": zlib.deflateRawSync(text),
+    "gzip": zlib.gzipSync(text),
+  };
+  const formats = Object.keys(streams) as (keyof typeof streams)[];
+
+  async function outcome(format: keyof typeof streams, ...chunks: Uint8Array[]) {
+    return new Response(streamOf(chunks).pipeThrough(new DecompressionStream(format))).text().catch(error => error);
+  }
+  const failure = (message: string) => expect.objectContaining({ name: "TypeError", message });
+  const junk = expect.objectContaining({ name: "TypeError", code: "ERR_TRAILING_JUNK_AFTER_STREAM_END" });
+
+  test.each(formats)("%s: not before its last byte", async format => {
+    const whole = streams[format];
+    expect(await outcome(format, whole.subarray(0, -1), whole.subarray(-1))).toBe(text);
+    expect(await outcome(format, whole.subarray(0, -1))).toEqual(failure("unexpected end of file"));
+    expect(await outcome(format, whole.subarray(0, 1))).toEqual(failure("unexpected end of file"));
+    expect(await outcome(format)).toEqual(failure("unexpected end of file"));
+  });
+
+  test.each(["deflate", "deflate-raw"] as const)("%s: nothing may follow, not even another stream", async format => {
+    const whole = streams[format];
+    for (const more of [whole, Buffer.alloc(1)]) {
+      expect(await outcome(format, Buffer.concat([whole, more]))).toEqual(junk);
+      expect(await outcome(format, whole, more)).toEqual(junk);
+    }
+    expect(await outcome(format, whole, new Uint8Array())).toBe(text);
+  });
+
+  test("gzip: only a whole member may follow, in the same chunk or a later one", async () => {
+    const member = streams.gzip;
+    expect(await outcome("gzip", member, member)).toBe(text + text);
+    expect(await outcome("gzip", member, member.subarray(0, -1))).toEqual(failure("unexpected end of file"));
+    expect(await outcome("gzip", Buffer.concat([member, member.subarray(0, 1)]))).toEqual(
+      failure("unexpected end of file"),
+    );
+    expect(await outcome("gzip", member, Buffer.from("junk"))).toBeInstanceOf(TypeError);
+    expect(await outcome("gzip", Buffer.concat([member, Buffer.from("junk")]))).toBeInstanceOf(TypeError);
+  });
+
+  test.each(formats)("%s: at damage", async format => {
+    expect(await outcome(format, Buffer.from([0xff, 0xff]))).toEqual(failure("inflate failed"));
+  });
+
+  test("deflate: where it asks for a dictionary", async () => {
+    const asks = zlib.deflateSync(text, { dictionary: Buffer.from("hello") });
+    expect(await outcome("deflate", asks)).toEqual(failure("Missing dictionary"));
   });
 });
 

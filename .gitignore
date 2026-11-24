@@ -164,8 +164,6 @@ codegen-for-zig-team.tar.gz
 /src/deps/tinycc
 /src/deps/WebKit
 /src/deps/zig
-/src/deps/zlib
-/src/deps/zstd
 
 # Generated files
 

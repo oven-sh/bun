@@ -2,12 +2,14 @@
 // `perMessageDeflate`. The client is a raw TCP socket that does its own framing.
 import { serve } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, tempDir } from "harness";
+import { bunEnv, bunExe, forEachLine, isASAN, tempDir } from "harness";
 import path from "node:path";
 import { constants, createInflateRaw, deflateRawSync, inflateRawSync } from "node:zlib";
-import { type Frame, RawClient } from "../../web/websocket/raw-peer";
+import { Engine } from "../../node/zlib/zlib-golden/engine";
+import { Bits, fixed, stored } from "../../node/zlib/zlib-golden/write";
+import { type Frame, RawClient, showFrame } from "../../web/websocket/raw-peer";
 
-type Compress = "shared" | "dedicated" | "3KB" | "32KB" | "256KB";
+type Compress = "shared" | "dedicated" | `${3 | 4 | 8 | 16 | 32 | 64 | 128 | 256}KB`;
 
 // Deterministic pseudo-random text: the same `n` always returns the same text.
 // When it's sent twice, the second copy needs an LZ77 distance of `n` to back-reference the first.
@@ -52,7 +54,7 @@ interface Peer {
 
 // On the message "n" the server replies with pseudoRandomText(n), compressed.
 // On "publish n" it publishes that text to every subscriber.
-function startServer(perMessageDeflate: boolean | { compress: Compress; decompress: boolean | "dedicated" }) {
+function startServer(perMessageDeflate: boolean | { compress: Compress; decompress: boolean | Compress }) {
   const server = serve({
     port: 0,
     fetch(req, server) {
@@ -113,6 +115,32 @@ async function secondCopySize(peer: Peer, n: number): Promise<number> {
 }
 
 describe.concurrent("Bun.serve perMessageDeflate", () => {
+  test.each([
+    ["15.3", "at once", false],
+    ["15.3", "later", false],
+    ["15.4", "at once", true],
+    ["15.4", "later", true],
+  ])("Safari %s, upgraded %s, compresses: %p", async (version, when, compresses) => {
+    let offer: string | null = null;
+    await using server = serve({
+      port: 0,
+      async fetch(req, server) {
+        if (when === "later") await new Promise(setImmediate);
+        server.upgrade(req);
+        offer = req.headers.get("sec-websocket-extensions");
+      },
+      websocket: { perMessageDeflate: true, message() {} },
+    });
+    using client = await RawClient.upgrade(server.port, {
+      headers: {
+        "Sec-WebSocket-Extensions": "permessage-deflate",
+        "User-Agent": `Mozilla/5.0 Version/${version} Safari/605.1.15`,
+      },
+    });
+    expect(!!client.header("sec-websocket-extensions")).toBe(compresses);
+    expect(offer).toBe(compresses ? "permessage-deflate" : "");
+  });
+
   describe("dedicated compressor sizes", () => {
     test.each([
       // [compress option, window header, n that fits in the window, n that doesn't]
@@ -132,6 +160,88 @@ describe.concurrent("Bun.serve perMessageDeflate", () => {
       } finally {
         peer.close();
       }
+    });
+
+    test.each([
+      ["3KB", 9, 1],
+      ["4KB", 9, 2],
+      ["8KB", 10, 3],
+      ["16KB", 11, 4],
+      ["32KB", 12, 5],
+      ["64KB", 13, 6],
+      ["128KB", 14, 7],
+      ["256KB", 15, 8],
+      ["shared", 15, 8],
+    ] as const)("compress: %p writes what windowBits %d and memLevel %d do", async (compress, windowBits, memLevel) => {
+      await using server = startServer({ compress, decompress: true });
+      const peer = await connect(server, "permessage-deflate");
+      try {
+        using expected = new Engine("DeflateRaw", { windowBits, memLevel });
+        // All start alike, so each short one repeats what is as far back as the one before it is long.
+        const reach = (1 << windowBits) - 262;
+        for (const n of [20000, reach, 100, reach + 1, 100]) {
+          if (compress === "shared") expected.reset();
+          const start = expected.written;
+          expected.write(Buffer.from(pseudoRandomText(n)), constants.Z_SYNC_FLUSH);
+          const { payload } = await peer.request(n);
+          expect([n, payload.equals(expected.output.subarray(start, -4))]).toEqual([n, true]);
+        }
+      } finally {
+        peer.close();
+      }
+    });
+
+    test.each([4096, 4097])(
+      'decompress: "4KB" and a client that refers to what it sent %d bytes ago',
+      async distance => {
+        await using server = startServer({ compress: "shared", decompress: "4KB" });
+        const peer = await connect(server, "permessage-deflate; client_max_window_bits");
+        try {
+          expect(peer.extensions).toBe("permessage-deflate; client_max_window_bits=12; server_no_context_takeover");
+          const textOf = (frame: Frame) => inflateWithoutContext(frame.payload).toString();
+          // No other three bytes of it are that number.
+          const first = deflateRawSync("123.".padEnd(distance, "0"), { finishFlush: constants.Z_SYNC_FLUSH });
+          expect(textOf(await peer.requestCompressed(first.subarray(0, -4)))).toBe(pseudoRandomText(123));
+          const again = stored(fixed(new Bits(), [{ length: 3, distance }], false), Buffer.alloc(0), false);
+          const reply = await peer.requestCompressed(again.end().subarray(0, -4));
+          if (distance === 4096) expect(textOf(reply)).toBe(pseudoRandomText(123));
+          else expect(showFrame(reply)).toStartWith("close 1007");
+        } finally {
+          peer.close();
+        }
+      },
+    );
+
+    // In a process of its own, as what a message is inflated into is shared, and as large as it has had to be.
+    test('decompress: "4KB" lets the first message refer to its own start', async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const server = Bun.serve({
+            port: 0,
+            fetch: (req, server) => void server.upgrade(req),
+            websocket: {
+              perMessageDeflate: { compress: "shared", decompress: "4KB" },
+              message: (ws, message) => void ws.send(String(Bun.hash.crc32(message))),
+            },
+          });
+          console.log(server.port);`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const { value: port } = await forEachLine(proc.stdout).next();
+      using client = await RawClient.upgrade(Number(port), {
+        headers: { "Sec-WebSocket-Extensions": "permessage-deflate; client_max_window_bits" },
+      });
+      expect(client.header("sec-websocket-extensions")).toBe(
+        "permessage-deflate; client_max_window_bits=12; server_no_context_takeover",
+      );
+      const twice = pseudoRandomText(5000) + pseudoRandomText(5000);
+      client.text(deflateRawSync(twice, { finishFlush: constants.Z_SYNC_FLUSH }).subarray(0, -4), { rsv1: true });
+      expect(showFrame((await client.nextFrame())!)).toBe(`text "${Bun.hash.crc32(twice)}"`);
     });
 
     test('compress: "3KB" keeps context takeover in both directions with a dedicated decompressor', async () => {
@@ -419,6 +529,49 @@ describe.concurrent("Bun.serve perMessageDeflate", () => {
     } finally {
       for (const peer of peers) peer.close();
     }
+  });
+
+  test("the shared decompressor keeps nothing of a long message for the next connection", async () => {
+    await using server = serve({
+      port: 0,
+      fetch: (req, server) => void server.upgrade(req),
+      websocket: { perMessageDeflate: true, message: (ws, message) => void ws.send(String(message.length)) },
+    });
+    const text = Buffer.from(pseudoRandomText(20000));
+    const deflate = (dictionary?: Buffer) => deflateRawSync(text, { dictionary, finishFlush: constants.Z_SYNC_FLUSH });
+    const answers: string[] = [];
+    for (const payload of [
+      deflate().subarray(0, -4),
+      deflate(text).subarray(0, -4),
+      Buffer.concat([deflate(), Buffer.of(7)]),
+      deflate().subarray(0, -4),
+    ]) {
+      using client = await RawClient.upgrade(server.port!, {
+        headers: { "Sec-WebSocket-Extensions": "permessage-deflate" },
+      });
+      client.binary(payload, { rsv1: true });
+      answers.push(await client.next());
+    }
+    const invalid = 'close 1007 "Received invalid compressed data"';
+    expect(answers).toEqual(['text "20000"', invalid, invalid, 'text "20000"']);
+  });
+
+  test.skipIf(isASAN)("the servers of a thread share one compressor", async () => {
+    const script = `
+      import { heapStats } from "bun:jsc";
+      const allocated = () => (Bun.gc(true), heapStats().mimalloc.allocated.current);
+      const serve = () => Bun.serve({ port: 0, fetch() {}, websocket: { perMessageDeflate: true, message() {} } });
+      const servers = [serve()];
+      const before = allocated();
+      for (let i = 0; i < 50; i++) servers.push(serve());
+      console.log((allocated() - before) / 50 / 1024);
+      for (const server of servers) server.stop(true);
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "inherit" });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    // A server takes about 25 KB, a compressor 400 KB.
+    expect(Number(stdout)).toBeLessThan(150);
+    expect(exitCode).toBe(0);
   });
 });
 

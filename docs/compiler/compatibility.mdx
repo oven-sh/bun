@@ -326,6 +326,7 @@ If you import such a package for what it does when it loads, like a polyfill or 
 | In your program                                                                | `bun run`                                   | An executable                           |
 | ------------------------------------------------------------------------------ | ------------------------------------------- | --------------------------------------- |
 | `{ function inner() {} }` in a CommonJS file that isn't in strict mode         | `inner` stays inside the block              | `inner` is visible after it             |
+| `eval = 1` in a CommonJS file that isn't in strict mode                        | `Invalid assignment target`                 | Replaces the global `eval`              |
 | `const first = read(), limit = 5`, where `read()` returns `limit`              | `5`                                         | A `ReferenceError`                      |
 | `undefined[key] = 1`, where `key` has a `toString()`                           | Calls `toString()`, then throws             | Throws                                  |
 | A regular expression that backtracks past the matcher's limit of steps         | No match                                    | May find the match                      |

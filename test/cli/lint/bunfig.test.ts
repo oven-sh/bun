@@ -441,12 +441,11 @@ describe.concurrent("[lint] in bunfig.toml", () => {
     expect(results[4].stderr).toContain(`while reading config "`);
   });
 
-  test("errors in [lint] point at the line in bunfig.toml, like errors in other sections", async () => {
+  test("errors in [lint] name their place in bunfig.toml and show no line of it, like errors in other sections", async () => {
     const bunfig = `[lint]\nquiet = true\n\n[lint.rules]\neqeqeq = ["error", "smart"]\n"no-var" = "always"\n`;
     const result = await bun({ ...eslint, "bunfig.toml": bunfig }, ["lint", "a.js"]);
-    expect(result.stderr).toContain(`6 | "no-var" = "always"\n`);
     expect(result.stderr).toMatch(
-      /error: "always" is not a valid severity for no-var\n  Expected "off", "warn", or "error"\n\s+at bunfig\.toml:6:12\n$/,
+      /^error: "always" is not a valid severity for no-var\n  Expected "off", "warn", or "error"\n\s+at bunfig\.toml:6:12\n$/,
     );
     expect(result.stdout).toBe("");
     expect(result.exitCode).toBe(2);
@@ -459,9 +458,8 @@ describe.concurrent("[lint] in bunfig.toml", () => {
       "config/other.toml": `[lint.rules]\n"no-vra" = "error"\n`,
     };
     const result = await bun(files, [flag + "config/other.toml", "lint", "a.js"]);
-    expect(result.stderr).toContain(`2 | "no-vra" = "error"\n`);
     expect(result.stderr).toMatch(
-      /error: Unknown rule "no-vra"\n  Did you mean "no-var"\?\n\s+at config\/other\.toml:2:1\n$/,
+      /^error: Unknown rule "no-vra"\n  Did you mean "no-var"\?\n\s+at config\/other\.toml:2:1\n$/,
     );
     expect(result.exitCode).toBe(2);
   });
@@ -1221,7 +1219,7 @@ rules = { "import/no-unassigned-import" = ["error", { allow = ["src/client/*.css
     };
     expect(await lintIn("work/project", files, args)).toEqual({
       found: [],
-      stderr: `2 | semii = true\n    ^\nerror: Unknown key "semii" in [fmt]\n  Did you mean "semi"?\n    at ../bunfig.toml:2:1`,
+      stderr: `error: Unknown key "semii" in [fmt]\n  Did you mean "semi"?\n    at ../bunfig.toml:2:1`,
       exitCode: 2,
     });
     const { "work/bunfig.toml": _broken, ...rest } = files;

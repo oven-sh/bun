@@ -1691,7 +1691,7 @@ describe.concurrent("unknown rules", () => {
     ]);
     expect(inFile).toEqual({
       stdout: "",
-      stderr: `3 | "${key}" = "error"\n    ^\nerror: ${message}\n    at bunfig.toml:3:1\n`,
+      stderr: `error: ${message}\n    at bunfig.toml:3:1\n`,
       exitCode: 2,
     });
     expect(byFlag).toEqual({
@@ -1796,7 +1796,7 @@ describe.concurrent("invalid rule settings", () => {
     });
     expect({ stdout, stderr, exitCode }).toEqual({
       stdout: "",
-      stderr: `2 | ${line}\n${" ".repeat(column + 3)}^\nerror: ${message}\n    at bunfig.toml:2:${column}\n`,
+      stderr: `error: ${message}\n    at bunfig.toml:2:${column}\n`,
       exitCode: 2,
     });
   });
@@ -1848,7 +1848,7 @@ describe.concurrent("invalid rule settings", () => {
       "bunfig.toml": `[lint.categories]\nstyle = "eror"\n`,
     });
     expect(stderr).toBe(
-      `2 | style = "eror"\n            ^\nerror: "eror" is not a valid severity for style\n  Expected "off", "warn", or "error"\n    at bunfig.toml:2:9\n`,
+      `error: "eror" is not a valid severity for style\n  Expected "off", "warn", or "error"\n    at bunfig.toml:2:9\n`,
     );
     expect(exitCode).toBe(2);
   });

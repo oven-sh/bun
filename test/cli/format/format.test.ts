@@ -10346,8 +10346,7 @@ describe.concurrent("what bun fmt gets from Bun", () => {
   test("an error in [fmt] is shown with its location, as for every other section", async () => {
     const files = { "bunfig.toml": `[fmt]\nsemi = false\nprintWidth = "wide"\n`, "a.js": ugly };
     const result = await bun(files, ["fmt", "-l"]);
-    expect(result.stderr).toContain(`3 | printWidth = "wide"\n`);
-    expect(result.stderr).toMatch(/error: expected number but received string\n\s+at .*bunfig\.toml:3:14\n/);
+    expect(result.stderr).toMatch(/^error: expected number but received string\n\s+at .*bunfig\.toml:3:14\n/);
     expect(result.stdout).toBe("");
     expect(result.exitCode).toBe(2);
   });

@@ -680,9 +680,7 @@ test("should pass", () => {
   stderr = normalizeBunSnapshot(stderr, dir);
 
   expect(stderr).toMatchInlineSnapshot(`
-"3 | coveragePathIgnorePatterns = 123
-                                 ^
-error: coveragePathIgnorePatterns must be a string or array of strings
+"error: coveragePathIgnorePatterns must be a string or array of strings
     at <dir>/bunfig.toml:3:30
 
 Invalid Bunfig: failed to load bunfig"
@@ -719,9 +717,7 @@ test("should pass", () => {
   stderr = normalizeBunSnapshot(stderr, dir);
 
   expect(stderr).toMatchInlineSnapshot(`
-"3 | coveragePathIgnorePatterns = ["valid-pattern", 123]
-                                                   ^
-error: coveragePathIgnorePatterns array must contain only strings
+"error: coveragePathIgnorePatterns array must contain only strings
     at <dir>/bunfig.toml:3:48
 
 Invalid Bunfig: failed to load bunfig"

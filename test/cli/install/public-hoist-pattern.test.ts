@@ -301,8 +301,6 @@ describe("publicHoistPattern", () => {
         name: "a number",
         publicHoistPattern: 123,
         stderr: [
-          "4 | publicHoistPattern = 123",
-          "                         ^",
           "error: Expected a string or an array of strings",
           "    at <dir>/bunfig.toml:4:22",
           "",
@@ -313,8 +311,6 @@ describe("publicHoistPattern", () => {
         name: "an array with a boolean",
         publicHoistPattern: ["*types*", true],
         stderr: [
-          '4 | publicHoistPattern = ["*types*", true]',
-          "                                     ^",
           "error: Expected a string",
           "    at <dir>/bunfig.toml:4:34",
           "",

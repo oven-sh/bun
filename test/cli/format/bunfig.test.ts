@@ -792,8 +792,7 @@ options = { svelte = false }
     });
   });
 
-  const at = (line: string, column: number, message: string) =>
-    `2 | ${line}\n${" ".repeat(3 + column)}^\nerror: ${message}\n    at bunfig.toml:2:${column}\n`;
+  const at = (column: number, message: string) => `error: ${message}\n    at bunfig.toml:2:${column}\n`;
   const options = (text: string) => `overrides = [{ files = "a", options = { ${text} } }]`;
   test.each([
     [`svelte = "no"`, 10, "expected boolean or object but received string"],
@@ -811,7 +810,7 @@ options = { svelte = false }
     [options("svelte = { indent = true }"), 52, `Unknown key "indent" in [fmt.svelte]`],
   ])("rejects %s", async (line, column, message) => {
     const result = await format({ ...bunfig(line), "a.svelte": input });
-    expect(result.stderr).toBe(at(line, column, message));
+    expect(result.stderr).toBe(at(column, message));
     expect(result.files["a.svelte"]).toBe(input);
     expect(result.exitCode).toBe(2);
   });

@@ -1943,10 +1943,11 @@ impl VirtualMachine {
     }
 
     /// Moves what the VM a macro call made has logged to `log`. That VM has a log of its own.
+    #[inline]
     pub fn take_macro_vm_log(&self, log: &mut bun_ast::Log) {
-        if self.macro_owner.get().is_some()
-            && let Some(vm_log) = self.log_mut()
+        if let Some(vm_log) = self.log_mut()
             && !vm_log.msgs.is_empty()
+            && self.macro_owner.get().is_some()
         {
             vm_log.append_to(log);
         }

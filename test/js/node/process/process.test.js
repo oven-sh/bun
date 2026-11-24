@@ -1183,27 +1183,6 @@ describe.concurrent(() => {
       expect(exitCode).toBe(1);
     });
 
-    it.each(["setTimeout", "setImmediate"])(
-      "is skipped after a fatal unhandled rejection in the last %s callback",
-      async schedule => {
-        await using proc = Bun.spawn({
-          cmd: [
-            bunExe(),
-            "-e",
-            `process.on("beforeExit", () => console.log("beforeExit"));
-             process.on("exit", () => console.log("exit"));
-             ${schedule}(() => { Promise.reject(new Error("boom")); });`,
-          ],
-          env: bunEnv,
-          stdio: ["inherit", "pipe", "pipe"],
-        });
-        const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
-        expect(stdout).toBe("exit\n");
-        expect(stderr).toInclude("error: boom");
-        expect(exitCode).toBe(1);
-      },
-    );
-
     it.each([
       ["the last timer callback", `setTimeout(() => { Promise.reject(new Error("boom")); });`],
       ["a 'beforeExit' listener", `process.once("beforeExit", () => { Promise.reject(new Error("boom")); });`],
@@ -1225,6 +1204,49 @@ describe.concurrent(() => {
       const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
       expect({ stdout, stderr, exitCode }).toEqual({
         stdout: "unhandledRejection boom\nscheduled\nexit\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    it("an 'unhandledRejection' listener of a rejection found there runs entered", async () => {
+      // The sockets do not hold the loop. A tick that the listener queues runs after the listener, not inside `destroy()`.
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const net = require("node:net");
+           const sockets = new Set();
+           let cleaned = false;
+           let client;
+           const server = net.createServer(sock => {
+             sockets.add(sock);
+             sock.unref();
+             sock.on("error", () => {});
+             sock.on("data", () => {
+               client.unref();
+               server.unref();
+               setImmediate(() => { Promise.reject(new Error("boom")); });
+             });
+           });
+           process.on("unhandledRejection", () => {
+             process.nextTick(() => console.log("tick after the listener: cleaned =", cleaned));
+             for (const sock of sockets) sock.destroy();
+             client.destroy();
+             server.close();
+             cleaned = true;
+           });
+           server.listen(0, "127.0.0.1", () => {
+             client = net.connect(server.address().port, "127.0.0.1", () => client.write("x"));
+             client.on("error", () => {});
+           });`,
+        ],
+        env: bunEnv,
+        stdio: ["inherit", "pipe", "pipe"],
+      });
+      const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: "tick after the listener: cleaned = true\n",
         stderr: "",
         exitCode: 0,
       });

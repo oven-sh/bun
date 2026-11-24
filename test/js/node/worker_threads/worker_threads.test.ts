@@ -2510,11 +2510,41 @@ test("a top-level await rejecting while the loop is alive fails the worker then"
   expect(exitCode).toBe(0);
 });
 
+// The entry's own rejection is the worker's error, as in Node, when the callback that made it left a second rejection.
+test.concurrent.each(["setTimeout", "setImmediate"])(
+  "a top-level await rejected in a %s callback is the worker's error, not a stray rejection of that callback",
+  async schedule => {
+    const workerSrc = `const { promise, reject } = Promise.withResolvers();
+      ${schedule}(() => { Promise.reject(new Error("stray")); reject(new Error("tla")); });
+      await promise;`;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { Worker } = require("worker_threads");
+         const w = new Worker(${JSON.stringify(workerSrc)}, { eval: true });
+         w.on("error", e => console.log("error: " + e.message));
+         w.on("exit", c => console.log("exit " + c));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe("error: tla\nexit 1\n");
+    expect(exitCode).toBe(0);
+  },
+);
+
 // Nothing is left to run after these callbacks, so no later loop turn reports the rejection.
 describe.concurrent.each([
   ["the last timer callback", `setTimeout(() => { Promise.reject(new Error("boom")); });`],
   ["the last immediate", `setImmediate(() => { Promise.reject(new Error("boom")); });`],
   ["a 'beforeExit' listener", `process.once("beforeExit", () => { Promise.reject(new Error("boom")); });`],
+  [
+    "an async function that throws after its last await",
+    `(async () => { await new Promise(resolve => setTimeout(resolve, 5)); throw new Error("boom"); })();`,
+  ],
 ])("an unhandled rejection in %s of a worker", (_label, reject) => {
   async function run(workerSrc: string) {
     await using proc = Bun.spawn({

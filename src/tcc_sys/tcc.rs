@@ -177,16 +177,39 @@ impl Drop for OwnedState {
     }
 }
 
+/// A compilation context that has its options and no output type yet.
+/// TinyCC appends its default include directories when the output type is
+/// set, so this is the only point where a directory can go ahead of them.
+pub struct UnfinishedState {
+    state: OwnedState,
+    output_type: OutputFormat,
+}
+
+impl UnfinishedState {
+    /// Add a system include path that is searched after the `-isystem`
+    /// directories of the options and before TinyCC's default directories.
+    pub fn add_sys_include_path_before_defaults(&mut self, pathname: &ZStr) -> Result<(), Error> {
+        self.state.add_sys_include_path(pathname)
+    }
+
+    /// Set the output type. TinyCC appends its default include and library
+    /// directories here, unless the options say `-nostdinc` or `-nostdlib`.
+    pub fn finish(mut self) -> Result<OwnedState, Error> {
+        self.state.set_output_type(self.output_type)?;
+        Ok(self.state)
+    }
+}
+
 impl OwnedState {
     /// Keeps the compiled code mapped for the life of the process.
     pub fn leak(self) {
         let _ = core::mem::ManuallyDrop::new(self);
     }
 
-    /// Create and initialize a new TCC compilation context
-    pub fn init<ErrCtx, const VALIDATE_OPTIONS: bool>(
+    /// Create a new TCC compilation context and set its options
+    pub fn configure<ErrCtx, const VALIDATE_OPTIONS: bool>(
         config: &Config<'_, ErrCtx>,
-    ) -> Result<Self, Error> {
+    ) -> Result<UnfinishedState, Error> {
         // SAFETY: tcc_new has no preconditions.
         let state = NonNull::new(unsafe { tcc_new() }).ok_or(bun_alloc::AllocError)?;
         let mut state = Self(state);
@@ -216,9 +239,17 @@ impl OwnedState {
             }
         }
 
-        state.set_output_type(config.output_type)?;
+        Ok(UnfinishedState {
+            state,
+            output_type: config.output_type,
+        })
+    }
 
-        Ok(state)
+    /// Create and initialize a new TCC compilation context
+    pub fn init<ErrCtx, const VALIDATE_OPTIONS: bool>(
+        config: &Config<'_, ErrCtx>,
+    ) -> Result<Self, Error> {
+        Self::configure::<ErrCtx, VALIDATE_OPTIONS>(config)?.finish()
     }
 }
 
@@ -258,13 +289,19 @@ impl State {
 
     // ======================== Preprocessor ========================
 
-    /// Add in system include path
-    pub fn add_sys_include_path(&mut self, pathname: &ZStr) -> Result<(), Error> {
+    /// Append to the system include paths, which TinyCC searches in order.
+    fn add_sys_include_path(&mut self, pathname: &ZStr) -> Result<(), Error> {
         // SAFETY: self is a valid *mut TCCState; pathname is NUL-terminated.
         if unsafe { tcc_add_sysinclude_path(self, pathname.as_ptr()) } != 0 {
             return Err(Error::InvalidIncludePath);
         }
         Ok(())
+    }
+
+    /// Add a system include path that is searched after TinyCC's default
+    /// directories. [`UnfinishedState`] adds one ahead of them.
+    pub fn add_sys_include_path_after_defaults(&mut self, pathname: &ZStr) -> Result<(), Error> {
+        self.add_sys_include_path(pathname)
     }
 
     /// Define preprocessor symbol 'sym'. value can be NULL, sym can be "sym=val"

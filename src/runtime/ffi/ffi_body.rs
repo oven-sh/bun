@@ -513,6 +513,18 @@ impl CompileC {
         Ok(())
     }
 
+    /// TinyCC reports why it refused an option or an output type through
+    /// `handle_compilation_error` before it returns the failure.
+    fn state_error(&self, err: TCC::Error) -> crate::Error {
+        match err {
+            TCC::Error::Alloc(err) => crate::Error::Alloc(err),
+            _ => {
+                debug_assert!(self.has_deferred_errors());
+                crate::Error::DeferredErrors
+            }
+        }
+    }
+
     pub(crate) const DEFAULT_TCC_OPTIONS: &'static str = "-std=c11 -Wl,--export-all-symbols -g -O2";
 
     #[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
@@ -636,35 +648,29 @@ impl CompileC {
         };
 
         // TODO: correctly handle invalid user-provided options
-        let mut state = match TCC::OwnedState::init::<CompileC, true>(&TCC::Config {
+        let mut unfinished = TCC::OwnedState::configure::<CompileC, true>(&TCC::Config {
             options: Some(compile_options),
             output_type: TCC::OutputFormat::Memory,
             err: TCC::ConfigErr {
                 ctx: Some(ctx),
                 handler: Self::handle_compilation_error,
             },
-        }) {
-            Ok(s) => s,
-            Err(TCC::Error::Alloc(bun_alloc::AllocError)) => {
-                return Err(crate::Error::Alloc(bun_alloc::AllocError));
-            }
-            Err(_) => {
-                debug_assert!(self.has_deferred_errors());
-                return Err(crate::Error::DeferredErrors);
-            }
-        };
+        })
+        .map_err(|err| self.state_error(err))?;
 
+        // The bundled headers are the compiler's own and the N-API headers
+        // of this bun, so no directory of TinyCC or of the host answers for
+        // their names first. `-I` and `-isystem` in the options still do.
         if let Some(compiler_rt_dir) = CompilerRT::dir() {
-            if state.add_sys_include_path(compiler_rt_dir).is_err() {
+            if unfinished
+                .add_sys_include_path_before_defaults(compiler_rt_dir)
+                .is_err()
+            {
                 bun_output::scoped_log!(TCC, "TinyCC failed to add sysinclude path");
             }
         }
 
-        if let Some(node_dir) = CompilerRT::node_dir() {
-            if state.add_sys_include_path(node_dir).is_err() {
-                bun_output::scoped_log!(TCC, "TinyCC failed to add sysinclude path");
-            }
-        }
+        let mut state = unfinished.finish().map_err(|err| self.state_error(err))?;
 
         #[cfg(target_os = "macos")]
         {
@@ -680,7 +686,10 @@ impl CompileC {
                     // It can be the name of an SDK.
                     if path::is_absolute(sdkroot) {
                         let include_dir = path::Path::resolve(&[sdkroot, b"usr/include"]);
-                        if state.add_sys_include_path(&include_dir).is_err() {
+                        if state
+                            .add_sys_include_path_after_defaults(&include_dir)
+                            .is_err()
+                        {
                             global_this.throw(format_args!("TinyCC failed to add sysinclude path"));
                             return Err(crate::Error::JSError);
                         }
@@ -700,7 +709,7 @@ impl CompileC {
             {
                 if dir_exists(b"/opt/homebrew/include") {
                     if state
-                        .add_sys_include_path(zstr!("/opt/homebrew/include"))
+                        .add_sys_include_path_after_defaults(zstr!("/opt/homebrew/include"))
                         .is_err()
                     {
                         bun_output::scoped_log!(TCC, "TinyCC failed to add library path");
@@ -717,7 +726,10 @@ impl CompileC {
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             if let Some(include_dir) = Self::get_system_include_dir() {
-                if state.add_sys_include_path(include_dir).is_err() {
+                if state
+                    .add_sys_include_path_after_defaults(include_dir)
+                    .is_err()
+                {
                     bun_output::scoped_log!(TCC, "TinyCC failed to add sysinclude path");
                 }
             }
@@ -733,7 +745,7 @@ impl CompileC {
         {
             if dir_exists(b"/usr/local/include") {
                 if state
-                    .add_sys_include_path(zstr!("/usr/local/include"))
+                    .add_sys_include_path_after_defaults(zstr!("/usr/local/include"))
                     .is_err()
                 {
                     bun_output::scoped_log!(TCC, "TinyCC failed to add sysinclude path");
@@ -752,7 +764,7 @@ impl CompileC {
                 for path in bun_core::strings::split(c_include_path, b":") {
                     if !path.is_empty() {
                         let path_z = ZBox::from_bytes(path);
-                        if state.add_sys_include_path(&path_z).is_err() {
+                        if state.add_sys_include_path_after_defaults(&path_z).is_err() {
                             bun_output::scoped_log!(
                                 TCC,
                                 "TinyCC failed to add C_INCLUDE_PATH: {}",
@@ -784,7 +796,10 @@ impl CompileC {
             .map_err(|_| crate::Error::DeferredErrors)?;
 
         for include_dir in self.include_dirs.items.iter() {
-            if state.add_sys_include_path(include_dir).is_err() {
+            if state
+                .add_sys_include_path_after_defaults(include_dir)
+                .is_err()
+            {
                 debug_assert!(self.has_deferred_errors());
                 return Err(crate::Error::DeferredErrors);
             }
@@ -2317,7 +2332,6 @@ struct CompilerRT;
 // Process-lifetime singleton — PORTING.md §Forbidden: use OnceLock, never
 // `static mut` + leak.
 static COMPILER_RT_DIR: OnceLock<bun_core::ZBox> = OnceLock::new();
-static COMPILER_RT_NODE_DIR: OnceLock<bun_core::ZBox> = OnceLock::new();
 
 struct CompilerRtSources;
 impl CompilerRtSources {
@@ -2356,6 +2370,11 @@ impl CompilerRT {
         let Ok(tmpdir) = Fs::FileSystem::get().tmpdir() else {
             return;
         };
+        // The header directory is a child of `tmpdir`, and no name it gets
+        // has a character that libtcc reads as more than a name.
+        if !Self::is_one_include_path(&tmpdir) {
+            return;
+        }
 
         // Prefer the reusable per-user directory; if it cannot be safely
         // populated, fall back to a freshly created, randomly named one.
@@ -2408,6 +2427,28 @@ impl CompilerRT {
         }
     }
 
+    /// libtcc reads an include path as a list: it splits the path at
+    /// `bun_paths::DELIMITER` and replaces `{B}` and every other `{x}`
+    /// (`tcc_split_path`). A path with either names directories that are not
+    /// `dir`, and libtcc would search them.
+    fn is_one_include_path(dir: &bun_sys::Dir) -> bool {
+        let mut path_buf = bun_paths::path_buffer_pool::get();
+        let Ok(path) = bun_sys::get_fd_path(dir.fd(), &mut path_buf) else {
+            return false;
+        };
+        if bun_core::strings::contains_char(path, bun_paths::DELIMITER) {
+            return false;
+        }
+        let mut from = 0;
+        while let Some(brace) = bun_core::strings::index_of_char_pos(path, b'{', from) {
+            if path.get(brace + 2) == Some(&b'}') {
+                return false;
+            }
+            from = brace + 1;
+        }
+        true
+    }
+
     /// Stage every header into `bun_cc` and publish its path; returns false
     /// (leaving nothing published) if any entry could not be written -- e.g.
     /// a pre-planted symlinked entry refused by the no-follow write.
@@ -2425,6 +2466,14 @@ impl CompilerRT {
             if !Self::write_compiler_rt_file(&node_dir, name.as_bytes(), source) {
                 return false;
             }
+            // `<node_api.h>` is `<node/node_api.h>`, so one directory on the
+            // include list answers for both.
+            let mut forward = Vec::new();
+            if writeln!(&mut forward, "#include \"node/{name}\"").is_err()
+                || !Self::write_compiler_rt_file(bun_cc, name.as_bytes(), &forward)
+            {
+                return false;
+            }
         }
 
         let mut path_buf = bun_paths::path_buffer_pool::get();
@@ -2432,13 +2481,7 @@ impl CompilerRT {
             return false;
         };
         // `ZBox::from_bytes` panics on OOM.
-        let path = ZBox::from_bytes(&*path);
-        let Ok(node_path) = bun_sys::get_fd_path(node_dir.fd(), &mut path_buf) else {
-            return false;
-        };
-        let node_path = ZBox::from_bytes(&*node_path);
-        let _ = COMPILER_RT_DIR.set(path);
-        let _ = COMPILER_RT_NODE_DIR.set(node_path);
+        let _ = COMPILER_RT_DIR.set(ZBox::from_bytes(&*path));
         true
     }
 
@@ -2500,14 +2543,6 @@ impl CompilerRT {
     pub(crate) fn dir() -> Option<&'static ZStr> {
         CREATE_COMPILER_RT_DIR_ONCE.call_once(Self::create_compiler_rt_dir);
         COMPILER_RT_DIR
-            .get()
-            .map(|b| b.as_zstr())
-            .filter(|d| !d.is_empty())
-    }
-
-    pub(crate) fn node_dir() -> Option<&'static ZStr> {
-        CREATE_COMPILER_RT_DIR_ONCE.call_once(Self::create_compiler_rt_dir);
-        COMPILER_RT_NODE_DIR
             .get()
             .map(|b| b.as_zstr())
             .filter(|d| !d.is_empty())

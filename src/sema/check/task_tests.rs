@@ -681,7 +681,7 @@ fn store<'s>(
     prepared: &PreparedLog,
     number: u32,
 ) -> u64 {
-    let stored = commits.store(&tables.all(), prepared, number, None);
+    let stored = commits.store(&tables.all(), prepared, number);
     task.view().unwrap().has_committed(number);
     task.resume_writing_immediately();
     stored.iter().sum()
@@ -1039,7 +1039,7 @@ fn expression_entries_of_visited_file_stay_local() {
     table.insert(&task, (B, 1), STRING, stored());
     assert_eq!((task.buffer().logged(), task.held_back()), (1, 1));
     let prepared = Commits::prepare(&[&table], &task, &task.buffer().take_log());
-    assert_eq!(commits.store(&[&table], &prepared, 1, None), [0, 1]);
+    assert_eq!(commits.store(&[&table], &prepared, 1), [0, 1]);
     let mut other = begin_committing(&session, &tables, &commits, 1);
     assert_eq!(table.get(&other, &(A, 1)), None);
     assert_eq!(table.get(&other, &(B, 1)), Some(STRING));

@@ -706,6 +706,212 @@ fn diagnostics_do_not_depend_on_threads() {
     }
 }
 
+type Project = (Vec<(String, String)>, Vec<(&'static str, u32)>);
+
+const CRATES: &str = "export type Is<X> = X extends Crate<number> ? { yes: 1 } : { no: 2 };
+export interface Crate<T> { put: (x: T) => void; kind: Is<Crate<string>>; }
+";
+
+fn project_around(
+    declared: (&str, &str),
+    import: &str,
+    readers: &[(&str, &str)],
+    errors: &[(&'static str, u32)],
+) -> Project {
+    let mut main = format!("import \"./{}\";\n", declared.0);
+    let mut files = vec![(format!("{}.ts", declared.0), declared.1.to_owned())];
+    for (name, text) in readers {
+        main.push_str(&format!("import \"./{name}\";\n"));
+        files.push((format!("{name}.ts"), format!("{import}{text}")));
+    }
+    files.push(("main.ts".to_owned(), main));
+    (files, errors.to_vec())
+}
+
+fn projects_that_ask_for_variances_while_they_are_measured() -> Vec<Project> {
+    let import = "import type { Is, Crate } from \"./ring\";\n";
+    let assigned =
+        "export function assigned(wide: Crate<string | number>): Crate<string> { return wide; }\n";
+    let readers = [
+        ("assigned", assigned),
+        (
+            "alias_yes",
+            "export const x: { yes: 1 } | null = null as unknown as Is<Crate<string>>;\n",
+        ),
+        (
+            "alias_no",
+            "export const x: { no: 2 } | null = null as unknown as Is<Crate<string>>;\n",
+        ),
+        (
+            "member_yes",
+            "export const x: { yes: 1 } | undefined = (globalThis as any as { none?: Crate<string> }).none?.kind;\n",
+        ),
+        (
+            "member_no",
+            "export const x: { no: 2 } | undefined = (globalThis as any as { none?: Crate<string> }).none?.kind;\n",
+        ),
+    ];
+    let errors = [("alias_yes.ts", 2741), ("member_no.ts", 2322)];
+    let after_assigned = format!("import \"./assigned\";\n{CRATES}");
+    let cells = "export class Cell<T> {
+put: (x: T) => void = () => {};
+pick(flag: boolean, a: Cell<string>, b: Cell<number>) { return flag ? a : b; }
+}
+";
+    let of_cells = [
+        (
+            "picked_string",
+            "export function picked(c: Cell<string>, a: Cell<string>, b: Cell<number>): Cell<string> { return c.pick(true, a, b); }\n",
+        ),
+        (
+            "picked_number",
+            "export function picked(c: Cell<string>, a: Cell<string>, b: Cell<number>): Cell<number> { return c.pick(true, a, b); }\n",
+        ),
+        (
+            "assigned",
+            "export function assigned(wide: Cell<string | number>): Cell<string> { return wide; }\n",
+        ),
+    ];
+    let pair = "export type IsL<X> = X extends Left<number> ? { l: 1 } : { l: 2 };
+export type IsR<X> = X extends Right<number> ? { r: 1 } : { r: 2 };
+export interface Left<T> { put: (x: T) => void; right: Right<T>; kindL: IsR<Right<string>>; }
+export interface Right<T> { take: (x: T) => void; left: Left<T>; kindR: IsL<Left<string>>; }
+";
+    let of_pair = [
+        (
+            "left_1",
+            "export const x: { r: 1 } | undefined = (globalThis as any as { none?: Left<string> }).none?.kindL;\n",
+        ),
+        (
+            "right_1",
+            "export const x: { l: 1 } | undefined = (globalThis as any as { none?: Right<string> }).none?.kindR;\n",
+        ),
+        (
+            "alias_left_1",
+            "export const x: { l: 1 } | null = null as unknown as IsL<Left<string>>;\n",
+        ),
+        (
+            "alias_right_1",
+            "export const x: { r: 1 } | null = null as unknown as IsR<Right<string>>;\n",
+        ),
+        (
+            "left_2",
+            "export const x: { r: 2 } | undefined = (globalThis as any as { none?: Left<string> }).none?.kindL;\n",
+        ),
+        (
+            "right_2",
+            "export const x: { l: 2 } | undefined = (globalThis as any as { none?: Right<string> }).none?.kindR;\n",
+        ),
+        (
+            "alias_left_2",
+            "export const x: { l: 2 } | null = null as unknown as IsL<Left<string>>;\n",
+        ),
+        (
+            "alias_right_2",
+            "export const x: { r: 2 } | null = null as unknown as IsR<Right<string>>;\n",
+        ),
+    ];
+    vec![
+        project_around(("ring", CRATES), import, &readers, &errors),
+        project_around(("ring", &after_assigned), import, &readers, &errors),
+        project_around(
+            ("cell", cells),
+            "import type { Cell } from \"./cell\";\n",
+            &of_cells,
+            &[("picked_number.ts", 2322)],
+        ),
+        project_around(
+            ("pair", pair),
+            "import type { Left, Right, IsL, IsR } from \"./pair\";\n",
+            &of_pair,
+            &[
+                ("alias_left_1.ts", 2322),
+                ("alias_right_1.ts", 2322),
+                ("left_2.ts", 2322),
+                ("right_2.ts", 2322),
+            ],
+        ),
+    ]
+}
+
+fn assert_errors(project: &Project, threads: usize, passes: usize) {
+    let (files, errors) = project;
+    let files = files.iter().map(|(path, text)| (&path[..], &text[..]));
+    let files: Vec<(&str, &str)> = files.collect();
+    with_program(&files, &["./main.ts"], threads, |program| {
+        let files_to_lower = program.files().compiled_files();
+        let (loaded, host, request) = (program.loaded, program.host, program.request);
+        let roles = decide_roles(loaded, host, request, files_to_lower);
+        let checked = check_and_lower_noting_commits(
+            loaded,
+            host,
+            request,
+            &roles,
+            files_to_lower,
+            &|_, _, _| Some(()),
+            &|_, _| {},
+            &Passes {
+                count: PassCount::Exactly(passes),
+                before_next: &|| {},
+            },
+        );
+        let build = CheckedBuild {
+            roles,
+            program: checked,
+        };
+        let context = format!("{threads} threads, {passes} passes, {:?}", build.codes());
+        assert_eq!(build.codes().len(), errors.len(), "{context}");
+        for &(path, code) in errors {
+            assert!(
+                !build.reported(program.file(path), code).is_empty(),
+                "{path}, {context}"
+            );
+        }
+    });
+}
+
+#[test]
+fn types_that_ask_for_the_variances_measured_around_them_do_not_depend_on_threads() {
+    for project in projects_that_ask_for_variances_while_they_are_measured() {
+        for threads in [1, 2, 8, 16, 32] {
+            for _ in 0..4 {
+                assert_errors(&project, threads, 1);
+            }
+        }
+    }
+}
+
+#[test]
+fn types_that_ask_for_the_variances_measured_around_them_do_not_depend_on_passes() {
+    for project in projects_that_ask_for_variances_while_they_are_measured() {
+        for threads in [1, 8] {
+            assert_errors(&project, threads, 2);
+        }
+    }
+}
+
+#[test]
+fn later_passes_enter_a_cycle_at_the_measurement_where_an_earlier_one_did() {
+    let ring = "import \"./assigned\";
+export type Is<X> = (X extends Crate<number> ? { yes: 1 } : { no: 2 }) | null;
+export interface Crate<T> { put: (x: T) => void; kind: Is<Crate<string>>; }
+";
+    let alias = "export const x: { yes: 1 } | null = null as unknown as Is<Crate<string>>;\n";
+    let names: Vec<String> = (0..8).map(|index| format!("alias{index}")).collect();
+    let mut readers = vec![(
+        "assigned",
+        "export function assigned(wide: Crate<string | number>): Crate<string> { return wide; }\n",
+    )];
+    readers.extend(names.iter().map(|name| (&name[..], alias)));
+    let import = "import type { Is, Crate } from \"./ring\";\n";
+    let project = project_around(("ring", ring), import, &readers, &[]);
+    for threads in [1, 8] {
+        for passes in [1, 2] {
+            assert_errors(&project, threads, passes);
+        }
+    }
+}
+
 #[test]
 fn first_pass_takes_large_scripts() {
     let values = |count: usize| "a, ".repeat(count);

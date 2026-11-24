@@ -3044,6 +3044,18 @@ impl<'p, 's> Checker<'p, 's> {
         self.task.stop_writing_immediately();
     }
 
+    #[inline]
+    fn close_cycle_through_measurement(&mut self, sym: Sym) {
+        let measurements = &self.unfinished_measurements;
+        let is_inside = measurements
+            .last()
+            .is_some_and(|innermost| self.stack.len() > innermost.stack_height);
+        let of_sym = measurements.iter().rfind(|it| it.sym == sym);
+        if is_inside && let Some(&of_sym) = of_sym {
+            self.close_cycle_of_measurement(of_sym);
+        }
+    }
+
     /// `getVariancesWorker`. The caller's cache lookup of `sym` missed.
     fn variances_worker(&mut self, sym: Sym) -> &'s [u8] {
         if Some(sym) == self.global_type_of_arity(known::Array, 1)
@@ -3053,6 +3065,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         if self.variances_marked_empty.contains(&sym) {
             self.note_variance_cycle();
+            self.close_cycle_through_measurement(sym);
             return &[];
         }
         // TypeScript 7.1: variances measured inside a cycle of generic types depend on which type was measured first.
@@ -3086,6 +3099,7 @@ impl<'p, 's> Checker<'p, 's> {
             // `links.variances = []VarianceFlags{}`: `sym` reads as empty until its in-progress measurement finishes.
             return known.unwrap_or_else(|| {
                 self.variances_marked_empty.push(sym);
+                self.close_cycle_through_measurement(sym);
                 &[]
             });
         }
@@ -3120,6 +3134,10 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let before = self.sharing_blockers();
         self.variances_in_progress.push(sym);
+        self.unfinished_measurements.push(UnfinishedMeasurement {
+            sym,
+            stack_height: self.stack.len(),
+        });
         let was_computing = std::mem::replace(&mut self.in_variance_computation, true);
         // `resolutionStart`: resolutions in progress when the outermost variance computation began
         // are restarted if needed, and the computation in progress stops them from recursing
@@ -3188,6 +3206,7 @@ impl<'p, 's> Checker<'p, 's> {
         self.in_variance_computation = was_computing;
         self.resolution_start = resolution_start;
         self.variances_in_progress.pop();
+        self.unfinished_measurements.pop();
         self.variances_marked_empty.retain(|&it| it != sym);
         // It stays allocated until the check ends, published or not. It's only a few bytes.
         let variances: &'s [u8] = self.arena.alloc_slice_copy(&variances);
@@ -3246,11 +3265,13 @@ impl<'p, 's> Checker<'p, 's> {
     ///
     /// `variances_measured` has what was stored since it began: the variances of `sym` and of the symbols
     /// measured inside it. Each is valid for every caller in this task (`end_scope`), which is what lets
-    /// the task commit it. It's shared now, with running tasks, only if both of these also hold:
+    /// the task commit it. It's shared now, with running tasks, only if all of these also hold:
     /// - Nothing was reported. A thread that takes the result doesn't evaluate the code that reported it.
     /// - Nothing was used that could make the next commit find this task invalid, and the task
     ///   isn't discarded. What such a task computed is dropped, and what's shared can't be
     ///   retracted. What happens to the task later doesn't matter, because the measurement is over.
+    /// - The task has committed every cycle through a measurement. A thread that takes the variances evaluates the query
+    ///   in the cycle with them and closes no cycle, so they wait for the commit that has the query's result.
     ///
     /// A value that isn't shared is recorded (`OrderDependent`) as if every variance in it had been used.
     /// The next commit compares it with the entry in `serial_variances` at that point, and registers it
@@ -3258,8 +3279,8 @@ impl<'p, 's> Checker<'p, 's> {
     /// register a different value, and it would go unnoticed that this task used its own.
     ///
     /// A thread that takes the flags instead of measuring misses out on two things:
-    /// - The entries of `relations` for the marker types and for what was compared inside. They're plain
-    ///   results, so a thread that needs one computes it. Each has its own `REPORTS_UNMEASURABLE` and
+    /// - The entries of `relations` for the marker types and for what was compared inside. Without such a cycle they're
+    ///   plain results, so a thread that needs one computes it. Each has its own `REPORTS_UNMEASURABLE` and
     ///   `REPORTS_UNRELIABLE`, every hit adds them to `reliability`, and the code that sets them checks
     ///   the type (`HAS_MARKER`), not whether a measurement is in progress. So a later measurement gets
     ///   the same marks from an entry as from the comparison. The only test of `in_variance_computation`,
@@ -3276,7 +3297,12 @@ impl<'p, 's> Checker<'p, 's> {
         let now = self.sharing_blockers();
         let reason = match () {
             _ if (now.0, now.1) != (before.0, before.1) => Some(NotShared::Diagnostic),
-            _ if now.2 != before.2 || self.task.was_discarded() => Some(NotShared::Notes),
+            _ if now.2 != before.2
+                || self.has_uncommitted_measurement_cycle
+                || self.task.was_discarded() =>
+            {
+                Some(NotShared::Notes)
+            }
             _ => None,
         };
         let measured = &self.variances_measured[..];

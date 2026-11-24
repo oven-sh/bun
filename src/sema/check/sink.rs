@@ -291,7 +291,8 @@ fn is_task_independent(q: Query) -> bool {
         | Query::InitializerIsUndefined(..)
         | Query::AliasTarget(_)
         | Query::WriteType(..)
-        | Query::Comparison(_) => true,
+        | Query::Comparison(_)
+        | Query::Variances(_) => true,
         Query::ReturnOfSignature(_)
         | Query::Shape(_)
         | Query::Properties(_)

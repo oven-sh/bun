@@ -51,6 +51,7 @@ impl<'s> Checker<'_, 's> {
         self.task.own.set_sharing(Sharing::Publishes);
 
         self.order_dependent.clear();
+        self.has_uncommitted_measurement_cycle = false;
         self.fixed_length_asked_last = None;
         self.refused_instantiations_tried.clear();
     }

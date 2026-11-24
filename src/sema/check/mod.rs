@@ -1030,6 +1030,9 @@ impl<'s> Program<'s> {
             variances_in_progress: Vec::new(),
             variances_marked_empty: Vec::new(),
             suspended_variances: Vec::new(),
+            unfinished_measurements: Vec::new(),
+            last_measurement_cycle: MeasurementCycle::default(),
+            has_uncommitted_measurement_cycle: false,
             in_progress_variance_reads: 0,
             variances_measured: Vec::new(),
             failed_type_argument: 0,
@@ -1251,6 +1254,18 @@ struct Scope {
     held_back: u64,
 }
 
+#[derive(Copy, Clone)]
+struct UnfinishedMeasurement {
+    sym: Sym,
+    stack_height: usize,
+}
+
+#[derive(Copy, Clone, Default)]
+struct MeasurementCycle {
+    innermost_query: u64,
+    stack_height: usize,
+}
+
 /// A query that may be circular.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 enum Query {
@@ -1304,6 +1319,8 @@ enum Query {
     /// overflow (`error_about_comparison_at_current_node`). The entry of a `MappedProp` gets one
     /// too (`circular_mapped_property`).
     Comparison(u64),
+    /// Never on the stack. A cycle that begins with a measurement is entered through it.
+    Variances(Sym),
 }
 
 /// Hashes what `#[derive(Hash)]` hashes. Written out so that it's inlined, which drops the `match` where the caller
@@ -1338,6 +1355,7 @@ impl Hash for Query {
             Query::Cond(file, node, mapper) => (file, node, mapper).hash(state),
             Query::InitializerIsUndefined(file, param) => (file, param).hash(state),
             Query::Comparison(names) => names.hash(state),
+            Query::Variances(sym) => sym.hash(state),
         }
     }
 }
@@ -1426,6 +1444,7 @@ impl Query {
             Query::AliasTarget(_) => 23,
             Query::WriteType(..) => 24,
             Query::Comparison(_) => 25,
+            Query::Variances(_) => 26,
         }
     }
 
@@ -1457,7 +1476,8 @@ impl Query {
             Query::Symbol(sym)
             | Query::Declared(sym)
             | Query::Bases(sym)
-            | Query::BaseConstructor(sym) => Some(sym.file),
+            | Query::BaseConstructor(sym)
+            | Query::Variances(sym) => Some(sym.file),
             Query::ReturnOfSignature(_)
             | Query::Shape(_)
             | Query::Properties(_)
@@ -2436,6 +2456,9 @@ pub struct Checker<'p, 's> {
     variances_marked_empty: Vec<Sym>,
     /// Measurements suspended by a restart. Their marker types still count as marker types.
     suspended_variances: Vec<Sym>,
+    unfinished_measurements: Vec<UnfinishedMeasurement>,
+    last_measurement_cycle: MeasurementCycle,
+    has_uncommitted_measurement_cycle: bool,
     /// The entries cached since the outermost `variances_worker` call on the stack began.
     variances_measured: Vec<(Sym, &'s [u8])>,
     /// The computed names of `task.file` whose expression `GetConstantValue` was the first to
@@ -3343,6 +3366,43 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     #[cold]
+    #[inline(never)]
+    fn close_cycle_of_measurement(
+        &mut self,
+        UnfinishedMeasurement { sym, stack_height }: UnfinishedMeasurement,
+    ) {
+        let serial = self.frames.last().map_or(0, |frame| frame.serial);
+        let last = self.last_measurement_cycle;
+        if last.innermost_query == serial && last.stack_height <= stack_height
+            || self.task.was_discarded()
+        {
+            return;
+        }
+        self.last_measurement_cycle = MeasurementCycle {
+            innermost_query: serial,
+            stack_height,
+        };
+        self.has_uncommitted_measurement_cycle = true;
+        let inside = self.stack[stack_height..].iter();
+        let outermost = inside.filter_map(|&q| self.positions_in_progress(q).last());
+        let from = outermost
+            .min()
+            .map_or(stack_height, |at| at.min(stack_height));
+        self.task.close_cycle_in_progress(
+            || self.is_reachable_only_by_importers(from),
+            &self.stack,
+            &self.frames,
+            from,
+        );
+        if self.records_cycles_entered.get() && !self.task.was_discarded() {
+            match from == stack_height {
+                true => self.add_cycle_entered(Query::Variances(sym)),
+                false => self.note_cycle_entered(from),
+            }
+        }
+    }
+
+    #[cold]
     fn note_cycle_entered(&self, from: usize) {
         let (below, members) = self.stack.split_at(from);
         let entry = below
@@ -3353,6 +3413,10 @@ impl<'p, 's> Checker<'p, 's> {
         let Some(&entry) = named.into_iter().find(|q| q.file_that_names_it().is_some()) else {
             return;
         };
+        self.add_cycle_entered(entry);
+    }
+
+    fn add_cycle_entered(&self, entry: Query) {
         let mut entered = self.cycles_entered.borrow_mut();
         if entered.last() != Some(&entry) {
             entered.push(entry);

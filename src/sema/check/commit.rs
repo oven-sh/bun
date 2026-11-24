@@ -81,7 +81,7 @@
 //!   comparisons that follow from either (`Checker::constraints_of_this_task`, `relations_of_this_task`). In a shared
 //!   table the first such result would stick for every task. They stay for the rest of the task, because its other
 //!   tables keep what was derived from them for that long.
-//! - Variances don't wait for a commit either. See `Claims`.
+//! - Variances don't wait for a commit either, unless a query closed a cycle through their measurement. See `Claims`.
 
 use super::task::{Task, tables_of, tables_written_immediately};
 use super::{Checker, Program, Query, Spare};
@@ -367,6 +367,22 @@ impl<'s> Commits<'s> {
         PreparedLog { entries, records }
     }
 
+    /// This comes before the first variances and the first entry, so a task that finds one of them also sees this.
+    fn announce_cycles(
+        &self,
+        ring: Option<CycleCommit>,
+        number: u32,
+        register_variances: impl FnOnce(),
+    ) {
+        if let Some(ring) = ring {
+            self.cycle_commits
+                .lock()
+                .push(CycleCommit { number, ..ring });
+            self.numbers.with_a_cycle.store(number, Ordering::Release);
+        }
+        register_variances();
+    }
+
     /// Stores the entries of commit `number`, in the order described at the top of this file. The caller holds the mutex.
     /// `tables` is indexed by slot. Returns how many entries it stored under records, and how many under nodes and
     /// symbols.
@@ -375,17 +391,9 @@ impl<'s> Commits<'s> {
         tables: &[&dyn Publish<'s>],
         prepared: &PreparedLog,
         number: u32,
-        ring: Option<CycleCommit>,
     ) -> [u64; 2] {
         let mut stored = [0; 2];
         self.numbers.begun.store(number, Ordering::Release);
-        // This comes before the first entry, so a task that finds an entry also sees this.
-        if let Some(ring) = ring {
-            self.cycle_commits
-                .lock()
-                .push(CycleCommit { number, ..ring });
-            self.numbers.with_a_cycle.store(number, Ordering::Release);
-        }
         let (under_records, under_nodes) = prepared.entries.split_at(prepared.records);
         for (entries, stored) in [under_records, under_nodes].into_iter().zip(&mut stored) {
             for &entry in entries {
@@ -1098,6 +1106,9 @@ impl<'s> Checker<'_, 's> {
                 Query::BaseConstructor(class) => {
                     self.base_constructor_type_of_class(class);
                 }
+                Query::Variances(sym) => {
+                    self.variances_of(sym);
+                }
                 Query::AliasTarget(_)
                 | Query::InitializerIsUndefined(..)
                 | Query::ReturnOfSignature(_)
@@ -1207,7 +1218,8 @@ impl<'s> Checker<'_, 's> {
             }
         }
         p.commits.numbers.ranks.lock().push(rank);
-        p.register_notes(&self.task);
+        p.commits
+            .announce_cycles(ring, number, || p.register_notes(&self.task));
         let task = &self.task;
         // Which of two tasks reports under a query is decided by the order of their commits.
         if !reported.is_empty() {
@@ -1216,7 +1228,7 @@ impl<'s> Checker<'_, 's> {
             });
             p.publish_reported(task.number(), reported);
         }
-        let stored = (p.commits).store(&tables, &prepared, number, ring);
+        let stored = (p.commits).store(&tables, &prepared, number);
         let held = entered.elapsed();
         drop(committing);
         p.commits.note_commit(stored, waited, held);
@@ -1226,6 +1238,7 @@ impl<'s> Checker<'_, 's> {
         task.resume_writing_immediately();
         task.buffer().recycle_log(log);
         task.buffer().recycle_prepared(prepared.entries);
+        self.has_uncommitted_measurement_cycle = false;
         true
     }
 
@@ -1322,7 +1335,32 @@ pub enum RefusedInstantiations {
 
 #[cfg(test)]
 mod tests {
-    use super::{KeyFilter, SortedKeys, with_hashes};
+    use super::{Commits, CycleCommit, KeyFilter, SortedKeys, with_hashes};
+    use crate::session::Session;
+    use std::sync::atomic::Ordering;
+
+    #[test]
+    fn cycles_are_announced_before_variances_are_registered() {
+        let session = Session::new();
+        let commits = Commits::new_in(session.arena());
+        let view = commits.view(1);
+        assert!(!view.overlaps_a_cycle_commit());
+        let ring = CycleCommit {
+            number: 0,
+            record_keys: SortedKeys::new(Vec::new()),
+            node_keys: SortedKeys::new(Vec::new()),
+            files: Vec::new(),
+            members: Vec::new(),
+        };
+        let mut are_registered = false;
+        commits.announce_cycles(Some(ring), 1, || {
+            assert!(view.overlaps_a_cycle_commit());
+            are_registered = true;
+        });
+        assert!(are_registered);
+        assert_eq!(commits.numbers.begun.load(Ordering::Acquire), 0);
+        assert_eq!(commits.cycle_commits.lock()[0].number, 1);
+    }
 
     #[test]
     fn sorted_keys_find_members() {

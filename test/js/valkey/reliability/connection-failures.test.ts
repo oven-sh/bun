@@ -9,6 +9,11 @@ import path from "path";
 import tls from "tls";
 import { DEFAULT_REDIS_OPTIONS, DEFAULT_REDIS_URL, delay, isEnabled, readCommands } from "../test-utils";
 
+const defaultPortIsTaken = await new Promise<boolean>(resolve => {
+  const socket = net.connect(6379, "localhost", () => (socket.destroy(), resolve(true)));
+  socket.on("error", () => resolve(false));
+});
+
 /**
  * Test suite for connection failures, reconnection, and error handling
  * - Connection failures
@@ -2085,6 +2090,55 @@ describe("Valkey: Recovering After fail()", () => {
       stdout: "subscribe rejected ERR_REDIS_CONNECTION_CLOSED\n",
       stderr: "",
       exitCode: 0,
+    });
+  });
+
+  describe.concurrent("REDIS_URL and VALKEY_URL", () => {
+    async function launch(env: Record<string, string>, program: string) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", program],
+        env: { ...bunEnv, REDIS_URL: undefined, VALKEY_URL: undefined, ...env },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      return await exitOutcome(proc);
+    }
+
+    test.each([
+      { REDIS_URL: "", VALKEY_URL: "server" },
+      { REDIS_URL: "server", VALKEY_URL: "" },
+      { REDIS_URL: "server", VALKEY_URL: "http://is-not-read" },
+    ])("%j reaches the server", async env => {
+      const fake = helloServer();
+      const url = `redis://127.0.0.1:${await fake.listen()}`;
+      try {
+        const urls = Object.entries(env).map(([name, value]) => [name, value.replace("server", url)]);
+        const program = `import { redis } from "bun"; console.log(await redis.ping())`;
+        expect(await launch(Object.fromEntries(urls), program)).toEqual({ stdout: "PONG\n", stderr: "", exitCode: 0 });
+      } finally {
+        fake.server.close();
+      }
+    });
+
+    test("an empty one does not fail the import", async () => {
+      const program = `import { redis } from "bun"; console.log(redis.connected)`;
+      expect(await launch({ REDIS_URL: "" }, program)).toEqual({ stdout: "false\n", stderr: "", exitCode: 0 });
+    });
+
+    test.skipIf(defaultPortIsTaken).each<[Record<string, string>, string]>([
+      [{}, "localhost:6379 (REDIS_URL is not set)"],
+      [{ REDIS_URL: "" }, "localhost:6379 (REDIS_URL is empty)"],
+      [{ VALKEY_URL: "" }, "localhost:6379 (VALKEY_URL is empty)"],
+      [{ REDIS_URL: "", VALKEY_URL: "" }, "localhost:6379 (REDIS_URL is empty)"],
+      [{ REDIS_URL: "localhost" }, "localhost:6379"],
+      [{ REDIS_URL: "", VALKEY_URL: "localhost" }, "localhost:6379"],
+    ])("%j is refused by %s", async (env, address) => {
+      const program = `
+        const client = new Bun.RedisClient(undefined, { maxRetries: 0 });
+        await Promise.all([client, await client.duplicate()].map(it =>
+          it.connect().catch(e => console.log(e.message + ", caused by " + e.cause.message))));`;
+      const line = `Max reconnection attempts reached, caused by connect ECONNREFUSED ${address}\n`;
+      expect(await launch(env, program)).toEqual({ stdout: line + line, stderr: "", exitCode: 0 });
     });
   });
 

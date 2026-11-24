@@ -11,8 +11,8 @@ use crate::lower::hoist_test_mocks::drop_namespace_of_lowered_callee;
 use crate::lower::import_meta_glob::is_object_keys_call;
 use crate::p::P;
 use crate::parser::{
-    ExprIn, FnOrArrowDataVisit, IdentifierOpts, PrependTempRefsOpts, ReactRefresh, Ref,
-    StrictModeFeature, ThenCatchChain, TransposeState, VisitArgsOpts, float_to_int32, prefill,
+    FnOrArrowDataVisit, PrependTempRefsOpts, ReactRefresh, Ref, StrictModeFeature, ThenCatchChain,
+    TransposeState, UsedAs, VisitArgsOpts, float_to_int32, prefill,
 };
 use crate::scan::scan_side_effects::SideEffects;
 use bun_alloc::ArenaVecExt as _;
@@ -26,7 +26,7 @@ use js_ast::ExprTag as Tag;
 use js_ast::OpCode as Op;
 
 // The 25+ per-variant `e_*` helpers are private; only `visit_expr` /
-// `visit_expr_in_out` are surfaced.
+// `visit_expr_as` are surfaced.
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     // PERF(port:noalias): `e: &mut Expr` is lowered to a `noalias` LLVM param, so reads
@@ -40,10 +40,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             !SCAN_ONLY,
             "only_scan_imports_and_do_not_visit must not run visit_expr",
         );
-        self.visit_expr_in_out(e, ExprIn::default())
+        self.visit_expr_as(e, UsedAs::Value)
     }
 
-    pub(crate) fn visit_expr_in_out(&mut self, e: &mut Expr, in_: ExprIn) {
+    pub(crate) fn visit_expr_as(&mut self, e: &mut Expr, used_as: UsedAs) {
         if !self.stack_check.is_safe_to_recurse() || self.reported_stack_overflow.get() {
             // The caller assumes `e` was visited, so replace it. Don't mutate it on a revisit
             // because it can be part of a shared `define` value.
@@ -54,7 +54,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return;
         }
 
-        if in_.assign_target != js_ast::AssignTarget::None && !self.is_valid_assignment_target(e) {
+        if used_as.is_assigned() && !self.is_valid_assignment_target(e) {
             self.log()
                 .add_error(Some(self.source), e.loc, b"Invalid assignment target");
         }
@@ -63,30 +63,30 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Any tag without a visitor leaves `*e` unchanged.
         use js_ast::ExprTag as Tag;
         match e.data.tag() {
-            Tag::ENewTarget => Self::e_new_target(self, e, in_),
-            Tag::EString => Self::e_string(self, e, in_),
-            Tag::ENumber => Self::e_number(self, e, in_),
-            Tag::EThis => Self::e_this(self, e, in_),
-            Tag::EImportMeta => Self::e_import_meta(self, e, in_),
-            Tag::ESpread => Self::e_spread(self, e, in_),
-            Tag::EIdentifier => Self::e_identifier(self, e, in_),
-            Tag::EJsxElement => Self::e_jsx_element(self, e, in_),
-            Tag::ETemplate => Self::e_template(self, e, in_),
+            Tag::ENewTarget => Self::e_new_target(self, e),
+            Tag::EString => Self::e_string(self, e),
+            Tag::ENumber => Self::e_number(self, e),
+            Tag::EThis => Self::e_this(self, e),
+            Tag::EImportMeta => Self::e_import_meta(self, e, used_as),
+            Tag::ESpread => Self::e_spread(self, e),
+            Tag::EIdentifier => Self::e_identifier(self, e, used_as),
+            Tag::EJsxElement => Self::e_jsx_element(self, e),
+            Tag::ETemplate => Self::e_template(self, e),
             Tag::EBinary => Self::e_binary(self, e),
-            Tag::EIndex => Self::e_index(self, e, in_),
-            Tag::EUnary => Self::e_unary(self, e, in_),
-            Tag::EDot => Self::e_dot(self, e, in_),
-            Tag::EIf => Self::e_if(self, e, in_),
-            Tag::EAwait => Self::e_await(self, e, in_),
-            Tag::EYield => Self::e_yield(self, e, in_),
-            Tag::EArray => Self::e_array(self, e, in_),
-            Tag::EObject => Self::e_object(self, e, in_),
-            Tag::EImport => Self::e_import(self, e, in_),
-            Tag::ECall => Self::e_call(self, e, in_),
-            Tag::ENew => Self::e_new(self, e, in_),
-            Tag::EArrow => Self::e_arrow(self, e, in_),
-            Tag::EFunction => Self::e_function(self, e, in_),
-            Tag::EClass => Self::e_class(self, e, in_),
+            Tag::EIndex => Self::e_index(self, e, used_as),
+            Tag::EUnary => Self::e_unary(self, e),
+            Tag::EDot => Self::e_dot(self, e, used_as),
+            Tag::EIf => Self::e_if(self, e, used_as),
+            Tag::EAwait => Self::e_await(self, e),
+            Tag::EYield => Self::e_yield(self, e),
+            Tag::EArray => Self::e_array(self, e, used_as),
+            Tag::EObject => Self::e_object(self, e, used_as),
+            Tag::EImport => Self::e_import(self, e),
+            Tag::ECall => Self::e_call(self, e, used_as),
+            Tag::ENew => Self::e_new(self, e),
+            Tag::EArrow => Self::e_arrow(self, e),
+            Tag::EFunction => Self::e_function(self, e),
+            Tag::EClass => Self::e_class(self, e),
             _ => {}
         }
     }
@@ -95,21 +95,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     // Private associated fns on this impl so they can see the const-generic
     // feature params.
 
-    fn e_new_target(_: &mut Self, _e: &mut Expr, _: ExprIn) {
+    fn e_new_target(_: &mut Self, _e: &mut Expr) {
         // The "Cannot use \"new.target\" here" range error is intentionally
         // not emitted: it is not necessary and it was causing breakages.
     }
 
-    fn e_string(_: &mut Self, _e: &mut Expr, _: ExprIn) {
+    fn e_string(_: &mut Self, _e: &mut Expr) {
         // If you're using this, you're probably not using 0-prefixed legacy octal notation
         // if e.LegacyOctalLoc.Start > 0 {
     }
 
-    fn e_number(_: &mut Self, _e: &mut Expr, _: ExprIn) {
+    fn e_number(_: &mut Self, _e: &mut Expr) {
         // idc about legacy octal loc
     }
 
-    fn e_this(p: &mut Self, e: &mut Expr, _: ExprIn) {
+    fn e_this(p: &mut Self, e: &mut Expr) {
         p.this_expr_count = p.this_expr_count.wrapping_add(1);
         if let Some(exp) = p.value_for_this(e.loc) {
             *e = exp;
@@ -117,20 +117,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    fn e_spread(p: &mut Self, e: &mut Expr, _: ExprIn) {
+    fn e_spread(p: &mut Self, e: &mut Expr) {
         if let js_ast::ExprData::ESpread(mut exp) = e.data {
             p.visit_expr(&mut exp.value);
         }
     }
 
-    fn e_await(p: &mut Self, e: &mut Expr, _: ExprIn) {
+    fn e_await(p: &mut Self, e: &mut Expr) {
         if let js_ast::ExprData::EAwait(mut e_) = e.data {
             p.await_target = Some(e_.value.data);
             p.visit_expr(&mut e_.value);
         }
     }
 
-    fn e_yield(p: &mut Self, e: &mut Expr, _: ExprIn) {
+    fn e_yield(p: &mut Self, e: &mut Expr) {
         if let js_ast::ExprData::EYield(mut e_) = e.data {
             if let Some(val) = e_.value.as_mut() {
                 p.visit_expr(val);
@@ -141,10 +141,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     // ─── heavy visitors ─────────────────────────────────────────────────────
     // e_* accessors on `expr::Data` return Option<StoreRef<T>> / Option<T>.
 
-    fn e_import_meta(p: &mut Self, e: &mut Expr, in_: ExprIn) {
+    fn e_import_meta(p: &mut Self, e: &mut Expr, used_as: UsedAs) {
         let expr = *e;
-        // TODO: delete import.meta might not work
-        let is_delete_target = matches!(p.delete_target, Data::EImportMeta(..));
 
         // `p.define: &'a Define` is `Copy`; hoist the reference so the
         // `dots.get` borrow is tied to `'a`, not `&*p`, and `&mut self`
@@ -156,14 +154,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     continue;
                 }
                 // Substitute user-specified defines
-                *e =
-                    p.value_for_define(expr.loc, in_.assign_target, is_delete_target, &define.data);
+                *e = p.value_for_define(expr.loc, used_as, &define.data);
                 return;
             }
         }
     }
 
-    fn e_identifier(p: &mut Self, e: &mut Expr, in_: ExprIn) {
+    fn e_identifier(p: &mut Self, e: &mut Expr, used_as: UsedAs) {
         // The substitution revisit re-enters with an already-resolved `Ref`.
         // `find_symbol` below only looks in `scope.members`, so a symbol that
         // lives only in `scope.generated` (e.g. a React Compiler outlined
@@ -177,13 +174,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             .data
             .e_identifier()
             .expect("infallible: variant checked");
-        let is_delete_target = matches!(p.delete_target.tag(), Tag::EIdentifier)
-            && e_.ref_.eql(
-                p.delete_target
-                    .e_identifier()
-                    .expect("infallible: variant checked")
-                    .ref_,
-            );
 
         let name = p.load_name_from_ref(e_.ref_);
         if p.is_strict_mode() && js_lexer::is_strict_mode_reserved_word(name) {
@@ -206,13 +196,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if p.options.features.defers_requires
             && (p.while_loading.functions_around == 0
                 || result.is_inside_with_scope
-                || is_delete_target)
+                || used_as == UsedAs::DeleteTarget)
         {
             p.while_loading.note_read(result.r#ref);
         }
 
         // Handle assigning to a constant
-        if in_.assign_target != js_ast::AssignTarget::None {
+        if used_as.is_assigned() {
             // A write to the name of a class with lowered class decorators goes to
             // the class's own immutable binding, not to `inner_class_ref`.
             if let Some(&(inner_ref, name_ref)) = p
@@ -283,7 +273,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Substitute user-specified defines for unbound symbols
         if p.symbols[e_.ref_.inner_index() as usize].kind == js_ast::symbol::Kind::Unbound
             && !result.is_inside_with_scope
-            && !is_delete_target
+            && used_as != UsedAs::DeleteTarget
         {
             // `p.define: &'a Define` is `Copy`; hoist so the returned
             // `&DefineData` is tied to `'a`, not `&*p`, and `&mut self`
@@ -291,14 +281,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let defines = p.define;
             if let Some(def) = defines.for_identifier(name) {
                 if !def.valueless() {
-                    let newvalue: Expr =
-                        p.value_for_define(expr.loc, in_.assign_target, is_delete_target, def);
+                    let newvalue: Expr = p.value_for_define(expr.loc, used_as, def);
 
                     // Don't substitute an identifier for a non-identifier if this is an
                     // assignment target, since it'll cause a syntax error
-                    if matches!(newvalue.data.tag(), Tag::EIdentifier)
-                        || in_.assign_target == js_ast::AssignTarget::None
-                    {
+                    if matches!(newvalue.data.tag(), Tag::EIdentifier) || !used_as.is_assigned() {
                         p.ignore_usage(e_.ref_);
                         *e = newvalue;
                         return;
@@ -318,10 +305,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
 
                 // If the user passed --drop=console, drop all property accesses to console.
-                if def.method_call_must_be_replaced_with_undefined()
-                    && in_.property_access_for_method_call_maybe_should_replace_with_undefined
-                    && in_.assign_target == js_ast::AssignTarget::None
-                {
+                if def.method_call_must_be_replaced_with_undefined() && used_as.leads_to_call() {
                     p.method_call_must_be_replaced_with_undefined = true;
                 }
             }
@@ -329,15 +313,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // Substitute uncalled "require" for the require target
             if p.require_ref.eql(e_.ref_) && !p.is_source_runtime() {
                 // mark a reference to __require only if this is not about to be used for a call target
-                if !(matches!(p.call_target.tag(), Tag::EIdentifier)
-                    && expr.data.e_identifier().unwrap().ref_.eql(
-                        p.call_target
-                            .e_identifier()
-                            .expect("infallible: variant checked")
-                            .ref_,
-                    ))
-                    && p.options.features.allow_runtime
-                {
+                if used_as != UsedAs::CallTarget && p.options.features.allow_runtime {
                     p.record_usage_of_runtime_require();
                 }
 
@@ -346,36 +322,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        *e = p.handle_identifier(
-            expr.loc,
-            e_,
-            original_name,
-            IdentifierOpts::default()
-                .with_assign_target(in_.assign_target)
-                .with_is_delete_target(is_delete_target)
-                .with_is_call_target(
-                    matches!(p.call_target.tag(), Tag::EIdentifier)
-                        && expr.data.e_identifier().unwrap().ref_.eql(
-                            p.call_target
-                                .e_identifier()
-                                .expect("infallible: variant checked")
-                                .ref_,
-                        ),
-                )
-                .with_was_originally_identifier(true)
-                .with_is_property_access_target(in_.is_property_access_target),
-        );
+        *e = p.handle_identifier(expr.loc, e_, original_name, used_as, true);
     }
     // PERF(port:frame): keep these large, infrequently-taken arms out of the
-    // `visit_expr_in_out` dispatcher frame. Without `inline(never)` LLVM folds the
+    // `visit_expr_as` dispatcher frame. Without `inline(never)` LLVM folds the
     // big match arms into the recursive dispatcher, inflating its stack frame to
     // ~968B; deep ASTs then thrash L1d on the spill/reload (the spill into that
     // frame is the #2 hottest bun-native instruction under `bun --bun lint`).
     #[inline(never)]
-    fn e_jsx_element(p: &mut Self, e: &mut Expr, in_: ExprIn) {
+    fn e_jsx_element(p: &mut Self, e: &mut Expr) {
         let expr = *e;
         use crate::parser::{JSXImport, JSXTransformType, options};
-        let _ = in_;
         let mut e_ = expr
             .data
             .e_jsx_element()
@@ -681,13 +638,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
     #[inline(never)] // PERF(port:frame): see e_jsx_element.
-    fn e_template(p: &mut Self, e: &mut Expr, in_: ExprIn) {
+    fn e_template(p: &mut Self, e: &mut Expr) {
         let expr = *e;
-        let _ = in_;
         let mut e_ = expr.data.e_template().expect("infallible: variant checked");
         if let Some(tag) = e_.tag.as_mut() {
-            p.template_tag = tag.expr.data;
-            p.visit_callee(&mut tag.expr, ExprIn::default());
+            p.visit_callee(&mut tag.expr, UsedAs::TemplateTag);
         }
 
         // Visit the interpolation values before the macro dispatch below: its
@@ -870,8 +825,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     /// Visits the target of a call, or the tag of a template.
     #[inline(always)] // Not one more stack frame for each link of "a()()()"
-    fn visit_callee(&mut self, callee: &mut Expr, in_: ExprIn) {
-        self.visit_expr_in_out(callee, in_);
+    fn visit_callee(&mut self, callee: &mut Expr, used_as: UsedAs) {
+        self.visit_expr_as(callee, used_as);
         if self.options.features.inject_jest_globals
             && drop_namespace_of_lowered_callee(&self.symbols, callee)
         {
@@ -894,7 +849,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut v: BinaryExpressionVisitor = BinaryExpressionVisitor {
             e: e_,
             loc: expr.loc,
-            left_in: ExprIn::default(),
+            left_used_as: UsedAs::Value,
         };
 
         // Everything uses a single stack to reduce allocation overhead. This stack
@@ -914,22 +869,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 break;
             }
 
-            // Grab the arguments to our nested "visitExprInOut" call for the left
+            // Grab the arguments to our nested "visit_expr_as" call for the left
             // node. We only care about deeply-nested left nodes because most binary
             // operators in JavaScript are left-associative and the problematic edge
             // cases we're trying to avoid crashing on have lots of left-associative
             // binary operators chained together without parentheses (e.g. "1+2+...").
             let left = v.e.left;
-            let left_in = v.left_in;
+            let left_used_as = v.left_used_as;
 
             let left_binary: Option<js_ast::StoreRef<E::Binary>> = left.data.e_binary();
 
             // Stop iterating if iteration doesn't apply to the left node. This checks
-            // the assignment target because "visitExprInOut" has additional behavior
+            // the assignment target because "visit_expr_as" has additional behavior
             // in that case that we don't want to miss (before the top-level "switch"
             // statement).
-            if left_binary.is_none() || left_in.assign_target != js_ast::AssignTarget::None {
-                p.visit_expr_in_out(&mut v.e.left, left_in);
+            if left_binary.is_none() || left_used_as.is_assigned() {
+                p.visit_expr_as(&mut v.e.left, left_used_as);
                 current = BinaryExpressionVisitor::visit_right_and_finish(&mut v, p);
                 break;
             }
@@ -941,7 +896,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             v = BinaryExpressionVisitor {
                 e: left_binary.unwrap(),
                 loc: left.loc,
-                left_in: ExprIn::default(),
+                left_used_as: UsedAs::Value,
             };
         }
 
@@ -956,12 +911,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         *e = current;
     }
 
-    fn e_index(p: &mut Self, e: &mut Expr, in_: ExprIn) {
+    fn e_index(p: &mut Self, e: &mut Expr, used_as: UsedAs) {
         let expr = *e;
         let mut e_ = expr.data.e_index().expect("infallible: variant checked");
-        let is_call_target = matches!(p.call_target, Data::EIndex(ct) if core::ptr::eq(&raw const *e_, &raw const *ct));
-        let is_template_tag = matches!(p.template_tag, Data::EIndex(tag) if core::ptr::eq(&raw const *e_, &raw const *tag));
-        let is_delete_target = matches!(p.delete_target, Data::EIndex(dt) if core::ptr::eq(&raw const *e_, &raw const *dt));
 
         // "a['b']" => "a.b"
         if p.options.features.minify_syntax && !p.options.features.is_library {
@@ -978,28 +930,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         expr.loc,
                     );
 
-                    if is_call_target {
-                        p.call_target = dot.data;
-                    }
-                    if is_template_tag {
-                        p.template_tag = dot.data;
-                    }
-                    if is_delete_target {
-                        p.delete_target = dot.data;
-                    }
-
                     *e = dot;
-                    p.visit_expr_in_out(e, in_);
+                    p.visit_expr_as(e, used_as);
                     return;
                 }
             }
         }
 
-        p.visit_expr_in_out(
+        p.visit_expr_as(
             &mut e_.target,
-            ExprIn {
-                is_property_access_target: !is_delete_target,
-                ..Default::default()
+            match used_as {
+                UsedAs::DeleteTarget => UsedAs::Value,
+                _ => UsedAs::Object,
             },
         );
 
@@ -1026,7 +968,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         ),
                     );
                 } else {
-                    if in_.assign_target != js_ast::AssignTarget::None
+                    if used_as.is_assigned()
                         && (kind == js_ast::symbol::Kind::PrivateMethod
                             || kind == js_ast::symbol::Kind::PrivateStaticMethod)
                     {
@@ -1042,7 +984,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 BStr::new(name)
                             ),
                         );
-                    } else if in_.assign_target != js_ast::AssignTarget::None
+                    } else if used_as.is_assigned()
                         && (kind == js_ast::symbol::Kind::PrivateGet
                             || kind == js_ast::symbol::Kind::PrivateStaticGet)
                     {
@@ -1058,7 +1000,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 BStr::new(name)
                             ),
                         );
-                    } else if in_.assign_target != js_ast::AssignTarget::Replace
+                    } else if used_as != UsedAs::AssignTarget
                         && (kind == js_ast::symbol::Kind::PrivateSet
                             || kind == js_ast::symbol::Kind::PrivateStaticSet)
                     {
@@ -1108,14 +1050,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 expr.loc,
                             );
 
-                            if is_call_target {
-                                p.call_target = dot.data;
-                            }
-                            if is_delete_target {
-                                p.delete_target = dot.data;
-                            }
-
-                            // don't call visitExprInOut on `dot` because we've already visited `target` above!
+                            // don't call visit_expr on `dot` because we've already visited `target` above!
                             *e = dot;
                             return;
                         }
@@ -1125,24 +1060,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // Reminder that this can only be done after
                         // `target` is visited.
                         if e_.optional_chain.is_none() {
-                            let opts = IdentifierOpts::default()
-                                .with_is_call_target(is_call_target)
-                                .with_is_template_tag(is_template_tag)
-                                .with_is_delete_target(is_delete_target)
-                                .with_assign_target(in_.assign_target)
-                                .with_is_property_access_target(in_.is_property_access_target);
                             if let Some(rewrite) = p.maybe_rewrite_property_access(
                                 expr.loc,
                                 e_.target,
                                 s.data.slice(),
                                 unwrapped.loc,
-                                opts,
+                                used_as,
                             ) {
                                 *e = rewrite;
                                 return;
                             }
                             e_.is_import_property_use =
-                                p.record_import_property_use(&e_.target, s.data.slice(), opts);
+                                p.record_import_property_use(&e_.target, s.data.slice(), used_as);
                         }
                     }
                 }
@@ -1153,7 +1082,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let index = e_.index.unwrap_inlined();
 
         // `[x][0] = v` writes into the temporary, not `x`.
-        if p.options.features.minify_syntax && in_.assign_target == js_ast::AssignTarget::None {
+        if p.options.features.minify_syntax && !used_as.is_assigned() {
             if let Some(number) = index.data.as_e_number() {
                 if number.value() >= 0.0
                     && number.value() < (usize::MAX as f64)
@@ -1201,7 +1130,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             }
                             if inlined.can_be_inlined_from_property_access() {
                                 // "[obj.m][0]()" => "(0, obj.m)()"
-                                *e = if is_call_target && inlined.has_value_for_this_in_call() {
+                                *e = if used_as == UsedAs::CallTarget
+                                    && inlined.has_value_for_this_in_call()
+                                {
                                     p.new_expr(E::Number::new(0.0), expr.loc)
                                         .join_with_comma(inlined)
                                 } else {
@@ -1220,7 +1151,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // bundling because scope hoisting means these will no longer be run-time
         // errors.
         if p.options.bundle
-            && (in_.assign_target != js_ast::AssignTarget::None || is_delete_target)
+            && used_as.is_assigned_or_deleted()
             && matches!(e_.target.data.tag(), Tag::EIdentifier)
             && p.symbols[e_
                 .target
@@ -1258,20 +1189,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // so `*e` is already up to date.
     }
 
-    fn e_unary(p: &mut Self, e: &mut Expr, _: ExprIn) {
+    fn e_unary(p: &mut Self, e: &mut Expr) {
         let expr = *e;
         let mut e_ = expr.data.e_unary().expect("infallible: variant checked");
         match e_.op {
             Op::UnTypeof => {
                 let id_before = matches!(e_.value.data, Data::EIdentifier(..));
-                let assign_target = Op::unary_assign_target(e_.op);
-                p.visit_expr_in_out(
-                    &mut e_.value,
-                    ExprIn {
-                        assign_target,
-                        ..Default::default()
-                    },
-                );
+                p.visit_expr(&mut e_.value);
                 let id_after = matches!(e_.value.data, Data::EIdentifier(..));
                 p.ignore_namespace_local_test_use(&e_.value);
 
@@ -1327,18 +1251,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         b"",
                     );
                 }
-                p.delete_target = e_.value.data;
-                p.visit_expr_in_out(&mut e_.value, ExprIn::default());
+                p.visit_expr_as(&mut e_.value, UsedAs::DeleteTarget);
             }
             _ => {
-                let assign_target = Op::unary_assign_target(e_.op);
-                p.visit_expr_in_out(
-                    &mut e_.value,
-                    ExprIn {
-                        assign_target,
-                        ..Default::default()
-                    },
-                );
+                let value_used_as = Op::unary_assign_target(e_.op).into();
+                p.visit_expr_as(&mut e_.value, value_used_as);
 
                 // Post-process the unary expression
                 match e_.op {
@@ -1441,12 +1358,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
     }
-    fn e_dot(p: &mut Self, e: &mut Expr, in_: ExprIn) {
+    fn e_dot(p: &mut Self, e: &mut Expr, used_as: UsedAs) {
         let expr = *e;
         let mut e_ = expr.data.e_dot().expect("infallible: variant checked");
-        let is_delete_target = matches!(p.delete_target, Data::EDot(dt) if core::ptr::eq(&raw const *e_, &raw const *dt));
-        let is_call_target = matches!(p.call_target, Data::EDot(ct) if core::ptr::eq(&raw const *e_, &raw const *ct));
-        let is_template_tag = matches!(p.template_tag, Data::EDot(tag) if core::ptr::eq(&raw const *e_, &raw const *tag));
 
         // `p.define: &'a Define` is `Copy`; hoist so the `dots.get` borrow is
         // tied to `'a`, not `&*p`, and `&mut self` helpers below can be called
@@ -1455,21 +1369,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if let Some(parts) = defines.dots_for(e_.name.slice()) {
             for define in parts.as_slice() {
                 if p.is_dot_define_match(expr, &define.parts) {
-                    if in_.assign_target == js_ast::AssignTarget::None {
+                    if !used_as.is_assigned() {
                         // Substitute user-specified defines
                         if !define.data.valueless() {
-                            *e = p.value_for_define(
-                                expr.loc,
-                                in_.assign_target,
-                                is_delete_target,
-                                &define.data,
-                            );
+                            *e = p.value_for_define(expr.loc, used_as, &define.data);
                             return;
                         }
 
                         if define.data.method_call_must_be_replaced_with_undefined()
-                            && in_
-                                .property_access_for_method_call_maybe_should_replace_with_undefined
+                            && used_as.leads_to_call()
                         {
                             p.method_call_must_be_replaced_with_undefined = true;
                         }
@@ -1493,7 +1401,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         // Track ".then().catch()" chains
-        if is_call_target
+        if used_as == UsedAs::CallTarget
             && matches!(p.then_catch_chain.next_target, Data::EDot(nt) if core::ptr::eq(&raw const *e_, &raw const *nt))
         {
             if e_.name == b"catch" {
@@ -1517,13 +1425,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        p.visit_expr_in_out(
+        p.visit_expr_as(
             &mut e_.target,
-            ExprIn {
-                property_access_for_method_call_maybe_should_replace_with_undefined: in_
-                    .property_access_for_method_call_maybe_should_replace_with_undefined,
-                is_property_access_target: !is_delete_target,
-                ..Default::default()
+            match used_as {
+                UsedAs::DeleteTarget => UsedAs::Value,
+                _ if used_as.leads_to_call() => UsedAs::ObjectOfCallTarget,
+                _ => UsedAs::Object,
             },
         );
 
@@ -1542,8 +1449,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if e_.optional_chain == Some(js_ast::OptionalChain::Start)
             && let Data::EIdentifier(id) = e_.target.data
             && p.dynamic_import_namespace_locals.contains_key(&id.ref_)
-            && in_.assign_target == js_ast::AssignTarget::None
-            && !is_delete_target
+            && !used_as.is_assigned_or_deleted()
         {
             if let Some(map) = p.import_items_for_namespace.get_mut(&id.ref_) {
                 map.put(
@@ -1559,24 +1465,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         if e_.optional_chain.is_none() {
-            let opts = IdentifierOpts::default()
-                .with_is_call_target(is_call_target)
-                .with_is_template_tag(is_template_tag)
-                .with_assign_target(in_.assign_target)
-                .with_is_delete_target(is_delete_target)
-                .with_is_property_access_target(in_.is_property_access_target);
             if let Some(_expr) = p.maybe_rewrite_property_access(
                 expr.loc,
                 e_.target,
                 e_.name.slice(),
                 e_.name_loc,
-                opts,
+                used_as,
             ) {
                 *e = _expr;
                 return;
             }
             e_.is_import_property_use =
-                p.record_import_property_use(&e_.target, e_.name.slice(), opts);
+                p.record_import_property_use(&e_.target, e_.name.slice(), used_as);
 
             if Self::ALLOW_MACROS {
                 if !p.options.features.is_macro_runtime {
@@ -1599,10 +1499,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    fn e_if(p: &mut Self, e: &mut Expr, _: ExprIn) {
+    fn e_if(p: &mut Self, e: &mut Expr, used_as: UsedAs) {
         let mut e_ = e.data.e_if().expect("infallible: variant checked");
-        let is_call_target =
-            matches!(p.call_target, Data::EIf(ct) if core::ptr::eq(&raw const *e_, &raw const *ct));
 
         let prev_in_branch = p.in_branch_condition;
         p.in_branch_condition = true;
@@ -1637,7 +1535,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // "(1 ? fn : 2)()" => "fn()"
             // "(1 ? this.fn : 2)" => "this.fn"
             // "(1 ? this.fn : 2)()" => "(0, this.fn)()"
-            if is_call_target && e_.yes.has_value_for_this_in_call() {
+            if used_as == UsedAs::CallTarget && e_.yes.has_value_for_this_in_call() {
                 *e = p
                     .new_expr(E::Number::new(0.0), e_.test.loc)
                     .join_with_comma(e_.yes);
@@ -1664,7 +1562,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // "(1 ? fn : 2)()" => "fn()"
             // "(1 ? this.fn : 2)" => "this.fn"
             // "(1 ? this.fn : 2)()" => "(0, this.fn)()"
-            if is_call_target && e_.no.has_value_for_this_in_call() {
+            if used_as == UsedAs::CallTarget && e_.no.has_value_for_this_in_call() {
                 *e = p
                     .new_expr(E::Number::new(0.0), e_.test.loc)
                     .join_with_comma(e_.no);
@@ -1675,9 +1573,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     #[inline(never)] // PERF(port:frame): see e_jsx_element.
-    fn e_array(p: &mut Self, e: &mut Expr, in_: ExprIn) {
+    fn e_array(p: &mut Self, e: &mut Expr, used_as: UsedAs) {
         let mut e_ = e.data.e_array().expect("infallible: variant checked");
-        if in_.assign_target != js_ast::AssignTarget::None {
+        if used_as.is_assigned() {
             p.maybe_comma_spread_error(e_.comma_after_spread);
         }
         let items = e_.items.slice_mut();
@@ -1686,13 +1584,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             match &mut item.data {
                 Data::EMissing(..) => {}
                 Data::ESpread(spread) => {
-                    p.visit_expr_in_out(
-                        &mut spread.value,
-                        ExprIn {
-                            assign_target: in_.assign_target,
-                            ..Default::default()
-                        },
-                    );
+                    p.visit_expr_as(&mut spread.value, used_as.of_item());
 
                     spread_item_count += if let Data::EArray(arr) = &spread.value.data {
                         arr.items.len_u32() as usize
@@ -1701,7 +1593,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     };
                 }
                 Data::EBinary(e2) => {
-                    if in_.assign_target != js_ast::AssignTarget::None && e2.op == Op::BinAssign {
+                    if used_as.is_assigned() && e2.op == Op::BinAssign {
                         let was_anonymous_named_expr = e2.right.is_anonymous_named();
                         // Propagate name for anonymous decorated class expressions
                         if was_anonymous_named_expr
@@ -1724,13 +1616,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 ),
                             );
                         }
-                        p.visit_expr_in_out(
-                            &mut e2.left,
-                            ExprIn {
-                                assign_target: js_ast::AssignTarget::Replace,
-                                ..Default::default()
-                            },
-                        );
+                        p.visit_expr_as(&mut e2.left, UsedAs::AssignTarget);
                         p.visit_expr(&mut e2.right);
                         p.decorator_class_name = None;
 
@@ -1751,32 +1637,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             );
                         }
                     } else {
-                        p.visit_expr_in_out(
-                            item,
-                            ExprIn {
-                                assign_target: in_.assign_target,
-                                ..Default::default()
-                            },
-                        );
+                        p.visit_expr_as(item, used_as.of_item());
                     }
                 }
                 _ => {
-                    p.visit_expr_in_out(
-                        item,
-                        ExprIn {
-                            assign_target: in_.assign_target,
-                            ..Default::default()
-                        },
-                    );
+                    p.visit_expr_as(item, used_as.of_item());
                 }
             }
         }
 
         // "[1, ...[2, 3], 4]" => "[1, 2, 3, 4]"
-        if p.options.features.minify_syntax
-            && spread_item_count > 0
-            && in_.assign_target == js_ast::AssignTarget::None
-        {
+        if p.options.features.minify_syntax && spread_item_count > 0 && !used_as.is_assigned() {
             if let Ok(items) = e_.inline_spread_of_array_literals(p.arena, spread_item_count) {
                 e_.items = items;
             }
@@ -1784,9 +1655,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     #[inline(never)] // PERF(port:frame): see e_jsx_element.
-    fn e_object(p: &mut Self, e: &mut Expr, in_: ExprIn) {
+    fn e_object(p: &mut Self, e: &mut Expr, used_as: UsedAs) {
         let mut e_ = e.data.e_object().expect("infallible: variant checked");
-        if in_.assign_target != js_ast::AssignTarget::None {
+        if used_as.is_assigned() {
             p.maybe_comma_spread_error(e_.comma_after_spread);
         }
 
@@ -1805,7 +1676,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if !property.flags.contains(Flags::Property::IsComputed)
                     && !property.flags.contains(Flags::Property::WasShorthand)
                     && !property.flags.contains(Flags::Property::IsMethod)
-                    && in_.assign_target == js_ast::AssignTarget::None
+                    && !used_as.is_assigned()
                     && key.data.is_string_value()
                     && key
                         .data
@@ -1828,10 +1699,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
 
             // Extract the initializer for expressions like "({ a: b = c } = d)"
-            if in_.assign_target != js_ast::AssignTarget::None
-                && property.initializer.is_none()
-                && property.value.is_some()
-            {
+            if used_as.is_assigned() && property.initializer.is_none() && property.value.is_some() {
                 if let Data::EBinary(bin) =
                     &property.value.expect("infallible: prop has value").data
                 {
@@ -1845,7 +1713,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if let Some(value) = &mut property.value {
                 // Propagate name from property key for decorated anonymous class expressions
                 // e.g., { Foo: @dec class {} } should give the class .name = "Foo"
-                if in_.assign_target == js_ast::AssignTarget::None
+                if !used_as.is_assigned()
                     && matches!(value.data, Data::EClass(..))
                     && value
                         .data
@@ -1870,13 +1738,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         None
                     };
                 }
-                p.visit_expr_in_out(
-                    value,
-                    ExprIn {
-                        assign_target: in_.assign_target,
-                        ..Default::default()
-                    },
-                );
+                p.visit_expr_as(value, used_as.of_item());
                 p.decorator_class_name = None;
             }
 
@@ -1929,8 +1791,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let _ = has_spread;
     }
     #[inline(never)] // PERF(port:frame): see e_jsx_element.
-    fn e_import(p: &mut Self, e: &mut Expr, in_: ExprIn) {
-        let _ = in_;
+    fn e_import(p: &mut Self, e: &mut Expr) {
         let mut e_ = e.data.e_import().expect("infallible: variant checked");
         // We want to forcefully fold constants inside of imports
         // even when minification is disabled, so that if we have an
@@ -1989,12 +1850,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.should_fold_typescript_constant_expressions =
             prev_should_fold_typescript_constant_expressions;
     }
-    fn e_call(p: &mut Self, e: &mut Expr, in_: ExprIn) {
+    fn e_call(p: &mut Self, e: &mut Expr, used_as: UsedAs) {
         let expr = *e;
         let mut e_ = expr.data.e_call().expect("infallible: variant checked");
         let import_meta_glob = (p.has_import_meta && p.is_import_meta_glob_call(&e_))
             .then(|| p.read_import_meta_glob_call(&e_, expr.loc));
-        p.call_target = e_.target.data;
+        p.called_binary = e_.target.data.e_binary();
 
         p.then_catch_chain = ThenCatchChain {
             next_target: e_.target.data,
@@ -2010,13 +1871,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         let target_was_identifier_before_visit = matches!(e_.target.data, Data::EIdentifier(..));
-        p.visit_callee(
-            &mut e_.target,
-            ExprIn {
-                property_access_for_method_call_maybe_should_replace_with_undefined: true,
-                ..Default::default()
-            },
-        );
+        p.visit_callee(&mut e_.target, UsedAs::CallTarget);
 
         // Copy the call side effect flag over if this is a known target
         // copy the small inline payloads out first so the `match &e_.target.data`
@@ -2260,17 +2115,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let visited_args = usize::from(
                 p.options.features.inject_jest_globals && p.visit_import_in_mock_path(&mut e_),
             );
-            let mut arg_in = ExprIn {
-                is_object_keys_argument: p.has_import_meta && is_object_keys_call(&p.symbols, &e_),
-                ..Default::default()
+            let mut arg_used_as = if p.has_import_meta && is_object_keys_call(&p.symbols, &e_) {
+                UsedAs::ObjectKeysArgument
+            } else {
+                UsedAs::Value
             };
             // Upstream only checks a function's immediate parent call, so the `fn` in `memo(forwardRef(fn))` counts too.
             if p.react_compiler.is_some() && p.react_compiler_candidate_expr(&expr) == Some(true) {
                 p.react_compiler_in_react_hoc = true;
             }
             for arg in &mut e_.args.slice_mut()[visited_args..] {
-                p.visit_expr_in_out(arg, arg_in);
-                arg_in = ExprIn::default();
+                p.visit_expr_as(arg, arg_used_as);
+                arg_used_as = UsedAs::Value;
                 p.react_compiler_candidate_name = None;
                 p.react_compiler_in_react_hoc = false;
             }
@@ -2291,7 +2147,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         if let Some(arguments) = import_meta_glob {
-            p.expand_import_meta_glob(e, arguments, in_.is_object_keys_argument);
+            p.expand_import_meta_glob(e, arguments, used_as == UsedAs::ObjectKeysArgument);
             return;
         }
 
@@ -2314,7 +2170,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if e_.args.len_u32() == 1 {
                 let first = e_.args.slice()[0];
                 let state = TransposeState {
-                    is_require_immediately_assigned_to_decl: in_.is_immediately_assigned_to_decl
+                    is_require_immediately_assigned_to_decl: used_as.is_initializer()
                         && matches!(first.data, Data::EString(..)),
                     loc: expr.loc,
                     ..Default::default()
@@ -2584,7 +2440,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     #[inline(never)] // PERF(port:frame): see e_jsx_element.
-    fn e_new(p: &mut Self, e: &mut Expr, _: ExprIn) {
+    fn e_new(p: &mut Self, e: &mut Expr) {
         let expr = *e;
         let mut e_ = expr.data.e_new().expect("infallible: variant checked");
         p.visit_expr(&mut e_.target);
@@ -2688,9 +2544,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         })
     }
     #[inline(never)] // PERF(port:frame): see e_jsx_element.
-    fn e_arrow(p: &mut Self, e: &mut Expr, in_: ExprIn) {
+    fn e_arrow(p: &mut Self, e: &mut Expr) {
         let expr = *e;
-        let _ = in_;
         let mut e_ = expr.data.e_arrow().expect("infallible: variant checked");
         if p.is_revisit_for_substitution {
             return;
@@ -2826,9 +2681,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         e_.body.stmts = bun_ast::StoreSlice::new_mut(stmts_list.into_bump_slice_mut());
     }
     #[inline(never)] // PERF(port:frame): see e_jsx_element.
-    fn e_function(p: &mut Self, e: &mut Expr, in_: ExprIn) {
+    fn e_function(p: &mut Self, e: &mut Expr) {
         let expr = *e;
-        let _ = in_;
         let mut e_ = expr.data.e_function().expect("infallible: variant checked");
         if p.is_revisit_for_substitution {
             return;
@@ -2904,9 +2758,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
     #[inline(never)] // PERF(port:frame): see e_jsx_element.
-    fn e_class(p: &mut Self, e: &mut Expr, in_: ExprIn) {
+    fn e_class(p: &mut Self, e: &mut Expr) {
         let expr = *e;
-        let _ = in_;
         let mut e_ = expr.data.e_class().expect("infallible: variant checked");
         if p.is_revisit_for_substitution {
             return;

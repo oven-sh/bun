@@ -521,6 +521,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let close_paren_loc = p.lexer.loc();
                 value = p.new_expr(
                     E::Call {
+                        kind: E::CallKind::of(&target),
                         target,
                         close_paren_loc,
                         args,

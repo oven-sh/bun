@@ -3,7 +3,7 @@ use bun_collections::VecExt;
 use bun_core::feature_flags as FeatureFlags;
 
 use crate::p::P;
-use crate::parser::{self as js_parser, IdentifierOpts, RelocateVars, RelocateVarsMode};
+use crate::parser::{self as js_parser, RelocateVars, RelocateVarsMode, UsedAs};
 use bun_ast::ast_result::CommonJSNamedExport;
 use bun_ast::{self as js_ast, Binding, E, Expr, Flags, G, LocRef, S};
 
@@ -118,14 +118,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         target: js_ast::Expr,
         name: &'a [u8],
         name_loc: bun_ast::Loc,
-        identifier_opts: IdentifierOpts,
+        used_as: UsedAs,
     ) -> Option<Expr> {
         let p = self;
         let name_static = E::Str::new(name);
 
-        let can_track_dynamic_import_member = identifier_opts.assign_target()
-            == js_ast::AssignTarget::None
-            && !identifier_opts.is_delete_target();
+        let can_track_dynamic_import_member = !used_as.is_assigned_or_deleted();
 
         // Loop + match with mutable scrutinee (a restartable switch).
         let mut sw_data = target.data;
@@ -275,30 +273,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                             // Track how many times we've referenced this symbol
                             p.record_usage(ref_);
-                            if identifier_opts.is_callee() {
+                            if used_as.is_callee() {
                                 p.symbols[ref_.inner_index() as usize].set_called_as_method(true);
                             }
 
-                            return Some(
-                                p.handle_identifier(
-                                    name_loc,
-                                    E::Identifier {
-                                        ref_,
-                                        ..Default::default()
-                                    },
-                                    Some(name),
-                                    IdentifierOpts::new()
-                                        .with_assign_target(identifier_opts.assign_target())
-                                        .with_is_call_target(identifier_opts.is_call_target())
-                                        .with_is_delete_target(identifier_opts.is_delete_target())
-                                        .with_is_property_access_target(
-                                            identifier_opts.is_property_access_target(),
-                                        )
-                                        // If this expression is used as the target of a call expression, make
-                                        // sure the value of "this" is preserved.
-                                        .with_was_originally_identifier(false),
-                                ),
-                            );
+                            return Some(p.handle_identifier(
+                                name_loc,
+                                E::Identifier {
+                                    ref_,
+                                    ..Default::default()
+                                },
+                                Some(name),
+                                used_as,
+                                false,
+                            ));
                         }
                     }
 
@@ -306,11 +294,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // Rewrite "module.require()" to "require()" for Webpack compatibility.
                         // See https://github.com/webpack/webpack/pull/7750 for more info.
                         // This also makes correctness a little easier.
-                        if identifier_opts.is_call_target() && name == b"require" {
+                        if used_as == UsedAs::CallTarget && name == b"require" {
                             p.ignore_usage(p.module_ref);
                             return Some(p.value_for_require(name_loc));
                         } else if !p.commonjs_named_exports_deoptimized && name == b"exports" {
-                            if identifier_opts.assign_target() != js_ast::AssignTarget::None {
+                            if used_as.is_assigned() {
                                 p.commonjs_module_exports_assigned_deoptimized = true;
                             }
 
@@ -325,9 +313,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             //  module.exports += { };
                             //  delete module.exports = {};
                             //  module.exports()
-                            if !(identifier_opts.is_call_target()
-                                || identifier_opts.is_delete_target())
-                                && identifier_opts.assign_target() == js_ast::AssignTarget::Replace
+                            if used_as == UsedAs::AssignTarget
                                 && matches!(p.stmt_expr_value, js_ast::ExprData::EBinary(_))
                                 && p.stmt_expr_value
                                     .e_binary()
@@ -428,10 +414,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             // Deoptimizations:
                             //      delete module.exports
                             //      module.exports();
-                            if identifier_opts.is_call_target()
-                                || identifier_opts.is_delete_target()
-                                || identifier_opts.assign_target() != js_ast::AssignTarget::None
-                            {
+                            if used_as == UsedAs::CallTarget || used_as.is_assigned_or_deleted() {
                                 p.deoptimize_common_js_named_exports();
                                 return None;
                             }
@@ -442,26 +425,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 data: js_ast::ExprData::ESpecial(E::Special::ModuleExports),
                                 loc: name_loc,
                             });
-                        } else if p.options.bundle
-                            && name == b"id"
-                            && identifier_opts.assign_target() == js_ast::AssignTarget::None
-                        {
+                        } else if p.options.bundle && name == b"id" && !used_as.is_assigned() {
                             // inline module.id
                             p.ignore_usage(p.module_ref);
                             return Some(p.new_expr(e_string_init(p.source.path.pretty), name_loc));
-                        } else if p.options.bundle
-                            && name == b"filename"
-                            && identifier_opts.assign_target() == js_ast::AssignTarget::None
+                        } else if p.options.bundle && name == b"filename" && !used_as.is_assigned()
                         {
                             // inline module.filename
                             p.ignore_usage(p.module_ref);
                             return Some(
                                 p.new_expr(e_string_init(p.source.path.name().filename), name_loc),
                             );
-                        } else if p.options.bundle
-                            && name == b"path"
-                            && identifier_opts.assign_target() == js_ast::AssignTarget::None
-                        {
+                        } else if p.options.bundle && name == b"path" && !used_as.is_assigned() {
                             // inline module.path
                             p.ignore_usage(p.module_ref);
                             return Some(p.new_expr(e_string_init(p.source.path.pretty), name_loc));
@@ -471,7 +446,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if p.should_unwrap_common_js_to_esm() {
                         if !p.is_control_flow_dead && id.ref_.eql(p.exports_ref) {
                             if !p.commonjs_named_exports_deoptimized {
-                                if identifier_opts.is_delete_target() {
+                                if used_as == UsedAs::DeleteTarget {
                                     p.deoptimize_common_js_named_exports();
                                     return None;
                                 }
@@ -510,7 +485,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     }
                                     new_ref
                                 };
-                                p.note_commonjs_export_use(name, ref_, identifier_opts);
+                                p.note_commonjs_export_use(name, ref_, used_as);
 
                                 p.ignore_usage(id.ref_);
                                 p.record_usage(ref_);
@@ -523,7 +498,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     name_loc,
                                 ));
                             } else if p.options.features.commonjs_at_runtime
-                                && identifier_opts.assign_target() != js_ast::AssignTarget::None
+                                && used_as.is_assigned()
                             {
                                 p.has_commonjs_export_names = true;
                             }
@@ -532,8 +507,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     // Handle references to namespaces or namespace members
                     if matches!(p.ts_namespace.expr, js_ast::ExprData::EIdentifier(e) if id.ref_.eql(e.ref_))
-                        && identifier_opts.assign_target() == js_ast::AssignTarget::None
-                        && !identifier_opts.is_delete_target()
+                        && !used_as.is_assigned_or_deleted()
                     {
                         return Self::maybe_rewrite_property_access_for_namespace(
                             p, name, &target, loc, name_loc,
@@ -566,9 +540,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             //   1) Objects with a single property
                             //   2) Not a method, not a computed property
                             if obj.properties.len_u32() == 1
-                                && !identifier_opts.is_delete_target()
-                                && identifier_opts.assign_target() == js_ast::AssignTarget::None
-                                && !identifier_opts.is_call_target()
+                                && !used_as.is_assigned_or_deleted()
+                                && used_as != UsedAs::CallTarget
                             {
                                 let prop: &G::Property = &obj.properties.slice()[0];
                                 if let (Some(value), Some(key)) = (prop.value, prop.key) {
@@ -659,8 +632,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // EDot and EIndex are handled with structurally identical arms.
                 js_ast::ExprData::EDot(data) => {
                     if matches!(p.ts_namespace.expr, js_ast::ExprData::EDot(ns_data) if data.as_ptr() == ns_data.as_ptr())
-                        && identifier_opts.assign_target() == js_ast::AssignTarget::None
-                        && !identifier_opts.is_delete_target()
+                        && !used_as.is_assigned_or_deleted()
                     {
                         return Self::maybe_rewrite_property_access_for_namespace(
                             p, name, &target, loc, name_loc,
@@ -669,8 +641,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 js_ast::ExprData::EIndex(data) => {
                     if matches!(p.ts_namespace.expr, js_ast::ExprData::EIndex(ns_data) if data.as_ptr() == ns_data.as_ptr())
-                        && identifier_opts.assign_target() == js_ast::AssignTarget::None
-                        && !identifier_opts.is_delete_target()
+                        && !used_as.is_assigned_or_deleted()
                     {
                         return Self::maybe_rewrite_property_access_for_namespace(
                             p, name, &target, loc, name_loc,
@@ -682,7 +653,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         if p.should_unwrap_common_js_to_esm() {
                             if !p.is_control_flow_dead {
                                 if !p.commonjs_named_exports_deoptimized {
-                                    if identifier_opts.is_delete_target() {
+                                    if used_as == UsedAs::DeleteTarget {
                                         p.deoptimize_common_js_named_exports();
                                         return None;
                                     }
@@ -724,7 +695,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         }
                                         new_ref
                                     };
-                                    p.note_commonjs_export_use(name, ref_, identifier_opts);
+                                    p.note_commonjs_export_use(name, ref_, used_as);
 
                                     p.record_usage(ref_);
 
@@ -737,7 +708,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         name_loc,
                                     ));
                                 } else if p.options.features.commonjs_at_runtime
-                                    && identifier_opts.assign_target() != js_ast::AssignTarget::None
+                                    && used_as.is_assigned()
                                 {
                                     p.has_commonjs_export_names = true;
                                 }

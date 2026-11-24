@@ -22,12 +22,13 @@ use crate::renamer;
 use crate::{
     ARGUMENTS_STR as arguments_str, DeferredArrowArgErrors, DeferredErrors,
     DeferredImportNamespace, EXPORTS_STRING_NAME as exports_string_name, ExprBindingTuple,
-    FindLabelSymbolResult, FnOnlyDataVisit, FnOrArrowDataParse, FnOrArrowDataVisit, IdentifierOpts,
+    FindLabelSymbolResult, FnOnlyDataVisit, FnOrArrowDataParse, FnOrArrowDataVisit,
     ImportItemForNamespaceMap, InvalidLoc, JSXImport, JSXTransformType, Jest,
     LOC_MODULE_SCOPE as loc_module_scope, LocList, MacroState, ParseStatementOptions, ParsedPath,
     PrependTempRefsOpts, ReactRefresh, Ref, RefMap, RefRefMap, RuntimeImports, ScopeOrder,
     ScopeOrderList, StrictModeFeature, StringBoolMap, Substitution, TempRef, ThenCatchChain,
-    TransposeState, WrapMode, fs, is_eval_or_arguments, options, statement_cares_about_scope,
+    TransposeState, UsedAs, WrapMode, fs, is_eval_or_arguments, options,
+    statement_cares_about_scope,
 };
 use bun_ast as js_ast;
 use bun_ast::DeclaredSymbol;
@@ -537,9 +538,8 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     // folding, substitutes compile-time variable definitions, and lowers certain
     // syntactic constructs as appropriate.
     pub(crate) stmt_expr_value: js_ast::ExprData,
-    pub(crate) call_target: js_ast::ExprData,
-    pub(crate) template_tag: js_ast::ExprData,
-    pub(crate) delete_target: js_ast::ExprData,
+    /// The target of the call that was entered last, if it is a binary expression.
+    pub(crate) called_binary: Option<js_ast::StoreRef<E::Binary>>,
     pub(crate) loop_body: js_ast::StmtData,
     pub(crate) module_scope: js_ast::StoreRef<js_ast::Scope>,
     pub(crate) is_control_flow_dead: bool,
@@ -2106,8 +2106,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     /// See `Symbol::import_used_as_value`.
-    fn note_import_use(&mut self, ref_: Ref, opts: IdentifierOpts) {
-        if !opts.is_property_access_target() && !self.is_control_flow_dead {
+    fn note_import_use(&mut self, ref_: Ref, used_as: UsedAs) {
+        if !used_as.is_object() && !self.is_control_flow_dead {
             self.symbols[ref_.inner_index() as usize].set_import_used_as_value(true);
         }
     }
@@ -2162,7 +2162,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         loc: bun_ast::Loc,
         ident: E::Identifier,
         original_name: Option<&'a [u8]>,
-        opts: IdentifierOpts,
+        used_as: UsedAs,
+        was_originally_identifier: bool,
     ) -> Expr {
         let ref_ = ident.ref_;
 
@@ -2176,7 +2177,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // Run-time TypeError per spec; only hard-error when bundling (scope hoisting would hide it).
         if self.options.bundle
-            && (opts.assign_target() != js_ast::AssignTarget::None || opts.is_delete_target())
+            && used_as.is_assigned_or_deleted()
             && self.symbols[ref_.inner_index() as usize].kind == js_ast::symbol::Kind::Import
         {
             let r = js_lexer::range_of_identifier(self.source, loc);
@@ -2192,7 +2193,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         // Substitute an EImportIdentifier now if this has a namespace alias
-        if opts.assign_target() == js_ast::AssignTarget::None && !opts.is_delete_target() {
+        if !used_as.is_assigned_or_deleted() {
             // copy the alias out so the &self.symbols borrow is released
             // before the &mut self calls below.
             let ns_alias_opt = self.symbols[ref_.inner_index() as usize]
@@ -2250,16 +2251,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
 
-                self.note_import_use(ref_, opts);
+                self.note_import_use(ref_, used_as);
                 return self.new_expr(E::ImportIdentifier::new(ident.ref_, true), loc);
             }
         }
 
         // Substitute an EImportIdentifier now if this is an import item
         if self.is_import_item.contains_key(&ref_) {
-            self.note_import_use(ref_, opts);
+            self.note_import_use(ref_, used_as);
             return self.new_expr(
-                E::ImportIdentifier::new(ref_, opts.was_originally_identifier()),
+                E::ImportIdentifier::new(ref_, was_originally_identifier),
                 loc,
             );
         }
@@ -5398,9 +5399,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .with_must_keep_due_to_with_stmt(result.is_inside_with_scope)
                 .with_can_be_removed_if_unused(true),
             Some(parts[0]),
-            IdentifierOpts::new()
-                .with_was_originally_identifier(true)
-                .with_is_property_access_target(parts.len() > 1),
+            if parts.len() > 1 {
+                UsedAs::Object
+            } else {
+                UsedAs::Value
+            },
+            true,
         );
         if parts.len() > 1 {
             return Ok(self.member_expression(loc, value, &parts[1..]));
@@ -5443,12 +5447,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 value,
                 part,
                 loc,
-                IdentifierOpts::default().with_is_property_access_target(i + 1 < parts.len()),
+                if i + 1 < parts.len() {
+                    UsedAs::Object
+                } else {
+                    UsedAs::Value
+                },
             ) {
                 value = rewrote;
             } else {
                 let is_import_property_use =
-                    self.record_import_property_use(&value, part, IdentifierOpts::default());
+                    self.record_import_property_use(&value, part, UsedAs::Value);
                 value = self.new_expr(
                     E::Dot {
                         target: value,
@@ -5846,18 +5854,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     /// Records an assignment to `exports.name`, or a call of it.
-    pub(crate) fn note_commonjs_export_use(
-        &mut self,
-        name: &[u8],
-        ref_: Ref,
-        opts: IdentifierOpts,
-    ) {
-        if opts.assign_target() != js_ast::AssignTarget::None
+    pub(crate) fn note_commonjs_export_use(&mut self, name: &[u8], ref_: Ref, used_as: UsedAs) {
+        if used_as.is_assigned()
             && let Some(export) = self.commonjs_named_exports.get_mut(name)
         {
             export.assign_count = export.assign_count.saturating_add(1);
         }
-        if opts.is_callee() {
+        if used_as.is_callee() {
             self.symbols[ref_.inner_index() as usize].set_called_as_method(true);
             if !self.is_revisit_for_substitution {
                 let call = self
@@ -5984,7 +5987,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     // PERF: takes `&Expr` — `Expr` inlines `ExprData`, so a by-value pass copies
-    // the full union. The only caller (`visit_expr_in_out`) already holds `&mut Expr`.
+    // the full union. The only caller (`visit_expr_as`) already holds `&mut Expr`.
     pub(crate) fn is_valid_assignment_target(&self, expr: &Expr) -> bool {
         match &expr.data {
             js_ast::ExprData::EIdentifier(ident) => {
@@ -6534,7 +6537,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .with_can_be_removed_if_unused(true)
                 .with_call_can_be_unwrapped_if_unused(true),
             None,
-            IdentifierOpts::new().with_was_originally_identifier(true),
+            UsedAs::Value,
+            true,
         )
     }
 
@@ -6580,7 +6584,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self,
         target: &Expr,
         name: &[u8],
-        opts: IdentifierOpts,
+        used_as: UsedAs,
     ) -> bool {
         let base = match target.data {
             js_ast::ExprData::EImportIdentifier(id) => id.ref_,
@@ -6597,11 +6601,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             _ => return false,
         };
-        if !self.options.bundle
-            || self.is_control_flow_dead
-            || opts.assign_target() != js_ast::AssignTarget::None
-            || opts.is_delete_target()
-        {
+        if !self.options.bundle || self.is_control_flow_dead || used_as.is_assigned_or_deleted() {
             return false;
         }
         // Same node visited again (const inlining); already counted.
@@ -6623,7 +6623,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             .get_or_put_value(name, Default::default())
             .expect("unreachable");
         inner_use.count_estimate += 1;
-        inner_use.is_call_target |= opts.is_callee();
+        inner_use.is_call_target |= used_as.is_callee();
         true
     }
 
@@ -7102,8 +7102,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub(crate) fn value_for_define(
         &mut self,
         loc: bun_ast::Loc,
-        assign_target: js_ast::AssignTarget,
-        is_delete_target: bool,
+        used_as: UsedAs,
         define_data: &'a DefineData,
     ) -> Expr {
         // Callers gate on `!valueless()` before reaching here, so `value` is a
@@ -7118,15 +7117,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let original_name = define_data
                     .original_name()
                     .expect("identifier define must have original_name");
-                return self.handle_identifier(
-                    loc,
-                    id,
-                    Some(original_name),
-                    IdentifierOpts::new()
-                        .with_assign_target(assign_target)
-                        .with_is_delete_target(is_delete_target)
-                        .with_was_originally_identifier(true),
-                );
+                return self.handle_identifier(loc, id, Some(original_name), used_as, true);
             }
             js_ast::ExprData::EString(str_) => {
                 return self.new_expr(&*str_, loc);
@@ -7867,7 +7858,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             M::MIdentifier(ref_) => {
                 self.record_usage(ref_);
                 let e = if self.is_import_item.contains_key(&ref_) {
-                    self.note_import_use(ref_, IdentifierOpts::new());
+                    self.note_import_use(ref_, UsedAs::Value);
                     self.new_expr(
                         E::ImportIdentifier {
                             ref_,
@@ -9626,9 +9617,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // It will fail for the case in the "in-keyword.js" file
             allow_in: true,
 
-            call_target: null_expr_data(),
-            template_tag: null_expr_data(),
-            delete_target: null_expr_data(),
+            called_binary: None,
             stmt_expr_value: null_expr_data(),
             loop_body: null_stmt_data(),
             define,

@@ -768,19 +768,29 @@ struct Findings {
     asked_who_takes: FxHashMap<(ExprId, u32), bool>,
     objects_asked_whether_their_functions_see_them:
         FxHashMap<ExprId, Option<Rc<FxHashSet<Vec<u8>>>>>,
-    stored_under_keys: FxHashMap<ExprId, Vec<(Vec<u8>, ExprId)>>,
+    stored_under_keys: FxHashMap<ExprId, StoredUnderKeys>,
     stores_known: FxHashSet<(ExprId, ExprId)>,
-    members_of_objects: FxHashMap<ExprId, MembersOfObject>,
+    /// By the object literal, and whether what is passed is followed.
+    written_by_key: FxHashMap<(ExprId, bool), Option<Rc<WrittenByKey>>>,
     /// The expressions that were left where following this used them all up.
     ran_out_from: FxHashMap<(u32, FollowedKey), u32>,
     calls_of_resolvers: RefCell<FxHashMap<Vec<u8>, CallsUnderName>>,
     passed_spent: u32,
 }
 
-#[derive(Clone)]
-struct MembersOfObject {
-    by_key: Option<Rc<FxHashMap<Vec<u8>, Vec<ExprId>>>>,
-    stores: usize,
+/// What an object literal writes, as far as its syntax and constants tell.
+#[derive(Default)]
+struct WrittenByKey {
+    /// The place among the properties and the value of the last one under each key.
+    by_key: FxHashMap<Vec<u8>, (usize, ExprId)>,
+    /// The place, the key and the value of those whose key isn't a constant.
+    computed: Vec<(usize, ExprId, ExprId)>,
+}
+
+#[derive(Default)]
+struct StoredUnderKeys {
+    in_order: Vec<(Vec<u8>, ExprId)>,
+    by_key: FxHashMap<Vec<u8>, Vec<ExprId>>,
 }
 
 #[derive(Default)]
@@ -1473,10 +1483,12 @@ impl Follower<'_, '_, '_> {
         }
         for (literal, value) in self.stored_since.drain(..).rev() {
             self.findings.stores_known.remove(&(literal, value));
-            if let Some(stored) = self.findings.stored_under_keys.get_mut(&literal) {
-                stored.pop();
+            if let Some(stored) = self.findings.stored_under_keys.get_mut(&literal)
+                && let Some((key, _)) = stored.in_order.pop()
+                && let Some(values) = stored.by_key.get_mut(&key)
+            {
+                values.pop();
             }
-            self.findings.members_of_objects.remove(&literal);
         }
     }
 
@@ -3833,9 +3845,8 @@ impl Follower<'_, '_, '_> {
             let Held::Object(literal) = *held else {
                 return None;
             };
-            let under_keys = self.find_members(literal).by_key?;
             for key in &keys {
-                if !under_keys.contains_key(&key[..]) {
+                if self.values_under_key(literal, key)?.is_empty() {
                     return None;
                 }
                 let key = self.inputs.atoms.intern(key);
@@ -4798,7 +4809,8 @@ impl Follower<'_, '_, '_> {
         if self.findings.stores_known.insert((literal, value)) {
             self.stored_since.push((literal, value));
             let stored = self.findings.stored_under_keys.entry(literal).or_default();
-            stored.push((key.to_vec(), value));
+            stored.in_order.push((key.to_vec(), value));
+            (stored.by_key.entry(key.to_vec()).or_default()).push(value);
         }
     }
 
@@ -5631,7 +5643,7 @@ impl Follower<'_, '_, '_> {
                 Held::Object(literal)
                     if looks_beside_spreads
                         && keys.is_some()
-                        && self.find_members(*literal).by_key.is_none() =>
+                        && self.values_under_key(*literal, b"").is_none() =>
                 {
                     beside_spreads.push(*literal);
                     continue;
@@ -5825,38 +5837,85 @@ impl Follower<'_, '_, '_> {
         }
         keep_last_of_each_key(&mut written);
         if let Some(stored) = self.findings.stored_under_keys.get(&literal) {
-            written.extend(stored.iter().cloned());
+            written.extend(stored.in_order.iter().cloned());
         }
         Some(written)
     }
 
-    fn find_members(&mut self, literal: ExprId) -> MembersOfObject {
+    /// What `properties_of` has under `key`, or `None` if that lists nothing. Only keys that aren't constants are followed again.
+    fn values_under_key(&mut self, literal: ExprId, key: &[u8]) -> Option<Vec<ExprId>> {
+        let written = self.list_written(literal)?;
+        let mut last = written.by_key.get(key).copied();
+        for &(place, computed, value) in &written.computed {
+            let keys = self.keys_of(MemberKey::Computed(computed))??;
+            let [found] = &keys[..] else {
+                return None;
+            };
+            if matches!(&found[..], b"toString" | b"valueOf") {
+                return None;
+            }
+            if &found[..] == key && last.is_none_or(|it| it.0 < place) {
+                last = Some((place, value));
+            }
+        }
         let stored = self.findings.stored_under_keys.get(&literal);
-        let stores = stored.map_or(0, Vec::len);
-        let known = self.findings.members_of_objects.get(&literal);
-        if let Some(known) = known.filter(|it| it.stores == stores) {
+        let stored = stored.and_then(|it| it.by_key.get(key));
+        Some(
+            (last.map(|it| it.1).into_iter())
+                .chain(stored.into_iter().flatten().copied())
+                .collect(),
+        )
+    }
+
+    fn list_written(&mut self, literal: ExprId) -> Option<Rc<WrittenByKey>> {
+        let known_as = (literal, self.is_following_passed);
+        if let Some(known) = self.findings.written_by_key.get(&known_as) {
             return known.clone();
         }
-        let by_key = self.properties_of(literal).map(|written| {
-            let mut by_key: FxHashMap<Vec<u8>, Vec<ExprId>> = FxHashMap::default();
-            for (key, value) in written {
-                by_key.entry(key).or_default().push(value);
-            }
-            Rc::new(by_key)
-        });
-        let members = MembersOfObject { by_key, stores };
-        let hir = self.inputs.hir;
-        let varies = match expr_kind(hir, literal) {
-            Some(ExprKind::Object(properties)) => properties.iter().any(|id| {
-                matches!(hir.runtime_property_key(id), PropKey::Computed(_))
-                    || matches!(hir[id].kind, PropKind::Getter | PropKind::Setter)
-            }),
-            _ => false,
+        let written = self.list_written_uncached(literal).map(Rc::new);
+        (self.findings.written_by_key).insert(known_as, written.clone());
+        written
+    }
+
+    fn list_written_uncached(&self, literal: ExprId) -> Option<WrittenByKey> {
+        let &ScanInputs {
+            hir,
+            atoms,
+            decisions,
+            ..
+        } = self.inputs;
+        let Some(ExprKind::Object(properties)) = expr_kind(hir, literal) else {
+            return None;
         };
-        if !varies {
-            (self.findings.members_of_objects).insert(literal, members.clone());
+        let mut written = WrittenByKey::default();
+        for (place, id) in properties.iter().enumerate() {
+            let property = &hir[id];
+            let is_value = match property.kind {
+                PropKind::Init | PropKind::Shorthand | PropKind::Method => true,
+                PropKind::Getter => self.is_following_passed,
+                PropKind::Setter if self.is_following_passed => continue,
+                PropKind::Setter | PropKind::Spread => false,
+            };
+            if !is_value || is_proto_setter(property) {
+                return None;
+            }
+            let key = match hir.runtime_property_key(id) {
+                PropKey::Name(name) => atoms.bytes(name),
+                PropKey::Computed(key) => match decisions.constant(hir, key) {
+                    FoldedValue::Constant(Constant::String(text)) => atoms.bytes(text),
+                    _ => {
+                        written.computed.push((place, key, property.value));
+                        continue;
+                    }
+                },
+                PropKey::None | PropKey::Private(_) => return None,
+            };
+            if matches!(key, b"toString" | b"valueOf") {
+                return None;
+            }
+            (written.by_key).insert(key.to_vec(), (place, property.value));
         }
-        members
+        Some(written)
     }
 
     fn read_property(&mut self, literal: ExprId, keys: Option<&[Vec<u8>]>) -> Option<Values> {
@@ -5865,10 +5924,12 @@ impl Follower<'_, '_, '_> {
             let values = self.values_of_any(written.iter().map(|it| it.1))?;
             return Some(with_undefined(values));
         };
-        let under_keys = self.find_members(literal).by_key?;
+        if keys.is_empty() {
+            self.values_under_key(literal, b"")?;
+        }
         let mut values = Distinct::new();
         for key in keys {
-            match under_keys.contains_key(&key[..]) {
+            match !self.values_under_key(literal, key)?.is_empty() {
                 true => {
                     let key = self.inputs.atoms.intern(key);
                     for value in self.values_of_property_once(literal, key)? {
@@ -5898,8 +5959,12 @@ impl Follower<'_, '_, '_> {
     }
 
     fn values_of_property(&mut self, literal: ExprId, key: Atom) -> Option<Values> {
-        let under_keys = self.find_members(literal).by_key?;
-        let held = under_keys.get(self.inputs.atoms.bytes(key))?;
+        let atoms = self.inputs.atoms;
+        let under_key = self.values_under_key(literal, atoms.bytes(key))?;
+        let held = &under_key[..];
+        if held.is_empty() {
+            return None;
+        }
         let place = Place::Property(literal, key);
         let index = self.places_in_progress.len();
         let (mut apart, mut all) = (Distinct::new(), Distinct::new());

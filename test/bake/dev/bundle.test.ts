@@ -2210,3 +2210,84 @@ devTest("recovers from an unresolved css url() and html script src longer than t
     expect((await dev.fetch("/")).status).toBe(200);
   },
 });
+
+const macroServerFiles = [0, 1, 2, 3, 4, 5];
+const macroClientComponents = [0, 1];
+// A macro runs in a VM of the pool thread that parses the file. The VM drops its modules when a
+// caller with other options reaches it. The graphs of one app have the same options, so a thread
+// that parses server files and client files evaluates the macro module once. The module counts its
+// evaluations in its VM and appends each count to a file.
+devTest("a macro used in the server graph and the client graph is evaluated once per pool thread", {
+  framework: {
+    ...minimalFramework,
+    serverComponents: {
+      ...minimalFramework.serverComponents!,
+      separateSSRGraph: true,
+    },
+  },
+  env: { UV_THREADPOOL_SIZE: "2" },
+  files: {
+    "macro.ts": `
+      import { appendFileSync } from "node:fs";
+      const evaluations = (globalThis.macroEvaluations = (globalThis.macroEvaluations ?? 0) + 1);
+      appendFileSync(import.meta.dir + "/macro-evaluations.log", evaluations + "\\n");
+      export function one() {
+        return 1;
+      }
+    `,
+    ...Object.fromEntries(
+      macroClientComponents.map(i => [
+        `components/C${i}.ts`,
+        `
+          "use client";
+          import { one } from "../macro.ts" with { type: "macro" };
+          export const c${i} = one();
+        `,
+      ]),
+    ),
+    ...Object.fromEntries(
+      macroServerFiles.map(i => [
+        `server/S${i}.ts`,
+        `
+          import { one } from "../macro.ts" with { type: "macro" };
+          export const s${i} = one();
+        `,
+      ]),
+    ),
+    "routes/index.ts": `
+      ${macroClientComponents.map(i => `import "../components/C${i}";`).join("\n      ")}
+      ${macroServerFiles.map(i => `import { s${i} } from "../server/S${i}";`).join("\n      ")}
+      export default function (req, meta) {
+        return new Response("page: " + [${macroServerFiles.map(i => `s${i}`).join(", ")}].join(""));
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("page: 111111");
+    // Each save of a client component is parsed for the SSR graph and for the client graph.
+    for (const i of macroServerFiles) {
+      const c = i % macroClientComponents.length;
+      await dev.write(
+        `components/C${c}.ts`,
+        `
+          "use client";
+          import { one } from "../macro.ts" with { type: "macro" };
+          export const c${c} = one() + ${i + 1};
+        `,
+      );
+      await dev.write(
+        `server/S${i}.ts`,
+        `
+          import { one } from "../macro.ts" with { type: "macro" };
+          export const s${i} = one() + 1;
+        `,
+      );
+    }
+    await dev.fetch("/").equals("page: 222222");
+    const evaluations = dev.read("macro-evaluations.log").trim().split("\n");
+    expect({ vms: evaluations.length > 0, repeated: evaluations.filter(count => count !== "1") }).toEqual({
+      vms: true,
+      repeated: [],
+    });
+  },
+});

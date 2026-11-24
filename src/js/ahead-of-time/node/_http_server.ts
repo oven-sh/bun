@@ -3348,7 +3348,7 @@ if (IS_COMPILED_AHEAD_OF_TIME) {
   prepareHoldersBeforeLookupsUnder(kChunkedBuffer, showListsOfItsOwn);
   prepareHoldersBeforeLookupsUnder(kPendingCallbacks, showListsOfItsOwn);
 }
-const nop = () => {};
+const nop: typeof http.nop = http.nop;
 const {
   addListener: eventEmitterOn,
   emit: eventEmitterEmit,

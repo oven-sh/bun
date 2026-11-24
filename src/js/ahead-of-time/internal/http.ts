@@ -785,7 +785,10 @@ function loadAllOfNodeHttp() {
   if (CAN_LOAD_CODE_AT_RUN_TIME) require("node:http");
 }
 
+const nop = () => {};
+
 export {
+  nop,
   METHODS,
   STATUS_CODES,
   abortedSymbol,

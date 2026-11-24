@@ -136,7 +136,7 @@ const kChunkedLength: typeof http.kChunkedLength = http.kChunkedLength;
 const kBytesWritten: typeof http.kBytesWritten = http.kBytesWritten;
 const kLenientValidation: typeof http.kLenientValidation = http.kLenientValidation;
 
-const nop = () => {};
+const nop: typeof http.nop = http.nop;
 
 const RE_CONN_CLOSE = /(?:^|\W)close(?:$|\W)/i;
 

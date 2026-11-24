@@ -4,7 +4,7 @@
 // back to `<cache>/.tmp`; the probe it created in $TMPDIR must not be left
 // behind. Forcing EXDEV needs a writable mount on a different device from
 // the harness temp dir (/dev/shm on Linux).
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isPosix, tempDir } from "harness";
 import { accessSync, constants, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -111,51 +111,51 @@ int renameat2(int fromfd, const char *from, int tofd, const char *to, unsigned f
 `;
 const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
 
-describe.skipIf(!isLinux || !cc)("a probe whose renames take a long time", () => {
-  /** Runs `bun install` with the shim. `$TMPDIR` is a new directory in `tmpParent`, or else in the project. */
-  async function install(tmpParent?: string) {
+describe.concurrent.skipIf(!isLinux || !cc)("a probe whose renames take a long time", () => {
+  let shimDir: ReturnType<typeof tempDir> | undefined;
+  beforeAll(async () => {
+    shimDir = tempDir("install-tmpdir-stall-shim", { "shim.c": stallShim });
+    await using compile = Bun.spawn({
+      cmd: [cc!, "-shared", "-fPIC", "-o", "shim.so", "shim.c", "-ldl"],
+      cwd: String(shimDir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([compile.stderr.text(), compile.exited]);
+    expect(exitCode, stderr).toBe(0);
+  });
+  afterAll(() => shimDir?.[Symbol.dispose]());
+
+  /** Runs `bun install` with the shim. `tmp` in the project is `$TMPDIR`, unless `crossDeviceTmp` is given. */
+  async function install(crossDeviceTmp?: string) {
     using dir = tempDir("install-tmpdir-stall", {
-      "shim.c": stallShim,
       "package.json": JSON.stringify({
         name: "app",
         dependencies: { localdep: "file:./localdep" },
       }),
       "localdep/package.json": JSON.stringify({ name: "localdep", version: "1.0.0" }),
+      "tmp": {},
+      "renames.log": "",
     });
-    {
-      await using compile = Bun.spawn({
-        cmd: [cc!, "-shared", "-fPIC", "-o", "shim.so", "shim.c", "-ldl"],
-        cwd: String(dir),
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stderr, exitCode] = await Promise.all([compile.stderr.text(), compile.exited]);
-      expect(exitCode, stderr).toBe(0);
-    }
     const log = join(String(dir), "renames.log");
-    const tmp = mkdtempSync(join(tmpParent ?? String(dir), "bun-install-stall-"));
-
-    try {
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "install"],
-        cwd: String(dir),
-        env: {
-          ...bunEnv,
-          BUN_INSTALL_CACHE_DIR: join(String(dir), "cache"),
-          BUN_TMPDIR: tmp,
-          TMPDIR: tmp,
-          PROBE_RENAME_LOG: log,
-          LD_PRELOAD: [join(String(dir), "shim.so"), bunEnv.LD_PRELOAD].filter(Boolean).join(":"),
-        },
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      return { stdout, stderr, exitCode, renames: readFileSync(log, "utf8") };
-    } finally {
-      rmSync(tmp, { recursive: true, force: true });
-    }
+    const tmp = crossDeviceTmp ?? join(String(dir), "tmp");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      env: {
+        ...bunEnv,
+        BUN_INSTALL_CACHE_DIR: join(String(dir), "cache"),
+        BUN_TMPDIR: tmp,
+        TMPDIR: tmp,
+        PROBE_RENAME_LOG: log,
+        LD_PRELOAD: [join(String(shimDir), "shim.so"), bunEnv.LD_PRELOAD].filter(Boolean).join(":"),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode, renames: readFileSync(log, "utf8") };
   }
 
   test("$TMPDIR on the filesystem of the cache: the install prints what it always prints", async () => {
@@ -168,10 +168,15 @@ describe.skipIf(!isLinux || !cc)("a probe whose renames take a long time", () =>
   test.skipIf(!crossDeviceDir)(
     "$TMPDIR on a different filesystem than the cache: the install prints what it always prints",
     async () => {
-      const { stdout, stderr, exitCode, renames } = await install(crossDeviceDir);
-      expect({ stderr, renames }).toEqual({ stderr: "Saved lockfile\n", renames: "rename\nrename\n" });
-      expect(stdout).toContain("1 package installed");
-      expect(exitCode).toBe(0);
+      const tmp = mkdtempSync(join(crossDeviceDir!, "bun-install-stall-"));
+      try {
+        const { stdout, stderr, exitCode, renames } = await install(tmp);
+        expect({ stderr, renames }).toEqual({ stderr: "Saved lockfile\n", renames: "rename\nrename\n" });
+        expect(stdout).toContain("1 package installed");
+        expect(exitCode).toBe(0);
+      } finally {
+        rmSync(tmp, { recursive: true, force: true });
+      }
     },
   );
 });

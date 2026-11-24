@@ -6,11 +6,13 @@
 )]
 
 use core::ffi::c_void;
+use core::ops::RangeInclusive;
 use std::os::windows::io::OwnedHandle;
 use std::sync::OnceLock;
 
 use bun_core::WStr;
 use bun_core::strings::u16_is_lead;
+use bun_windows_sys::{CONSOLE_SCREEN_BUFFER_INFO, COORD, SMALL_RECT};
 
 use super::kernel32_2::{GetConsoleMode, SetConsoleMode};
 use super::{BOOL, DWORD, HANDLE, ULONG, Win32Error, check, kernel32};
@@ -24,8 +26,46 @@ struct CONSOLE_READCONSOLE_CONTROL {
     dwControlKeyState: ULONG,
 }
 
+#[repr(C)]
+struct CONSOLE_SCREEN_BUFFER_INFOEX {
+    cbSize: ULONG,
+    info: CONSOLE_SCREEN_BUFFER_INFO,
+    wPopupAttributes: u16,
+    bFullscreenSupported: BOOL,
+    ColorTable: [DWORD; 16],
+}
+
+#[repr(C)]
+#[derive(Default)]
+struct CONSOLE_CURSOR_INFO {
+    dwSize: DWORD,
+    bVisible: BOOL,
+}
+
+#[repr(C)]
+#[derive(Clone, Default)]
+struct CHAR_INFO {
+    UnicodeChar: u16,
+    Attributes: u16,
+}
+
 #[link(name = "kernel32")]
 unsafe extern "system" {
+    safe fn GetConsoleScreenBufferInfoEx(
+        hConsoleOutput: HANDLE,
+        lpConsoleScreenBufferInfoEx: &mut CONSOLE_SCREEN_BUFFER_INFOEX,
+    ) -> BOOL;
+    safe fn GetConsoleCursorInfo(
+        hConsoleOutput: HANDLE,
+        lpConsoleCursorInfo: &mut CONSOLE_CURSOR_INFO,
+    ) -> BOOL;
+    fn ReadConsoleOutputW(
+        hConsoleOutput: HANDLE,
+        lpBuffer: *mut CHAR_INFO,
+        dwBufferSize: COORD,
+        dwBufferCoord: COORD,
+        lpReadRegion: &mut SMALL_RECT,
+    ) -> BOOL;
     safe fn GetNumberOfConsoleInputEvents(
         hConsoleInput: HANDLE,
         lpNumberOfEvents: &mut DWORD,
@@ -144,7 +184,63 @@ pub fn set_mode(console: HANDLE, mode: DWORD) -> Result<(), Win32Error> {
 }
 
 pub fn is_input(console: HANDLE) -> bool {
-    GetNumberOfConsoleInputEvents(console, &mut 0) != 0
+    queued_record_count(console).is_ok()
+}
+
+pub fn queued_record_count(input: HANDLE) -> Result<DWORD, Win32Error> {
+    let mut count = 0;
+    check(GetNumberOfConsoleInputEvents(input, &mut count)).map(|()| count)
+}
+
+fn read_cells(output: HANDLE, mut region: SMALL_RECT) -> Result<Vec<CHAR_INFO>, Win32Error> {
+    let size = COORD {
+        X: region.Right.wrapping_sub(region.Left).wrapping_add(1),
+        Y: region.Bottom.wrapping_sub(region.Top).wrapping_add(1),
+    };
+    let len = usize::from(size.X.unsigned_abs()) * usize::from(size.Y.unsigned_abs());
+    let mut cells = vec![CHAR_INFO::default(); len];
+    let origin = COORD { X: 0, Y: 0 };
+    // SAFETY: `cells` is writable for `size`.
+    check(unsafe { ReadConsoleOutputW(output, cells.as_mut_ptr(), size, origin, &mut region) })?;
+    Ok(cells)
+}
+
+/// Whether the screen buffer shows a popup of the line editor. Older consoles draw a border around it, newer ones hide the cursor.
+pub fn has_popup(output: HANDLE) -> Result<bool, Win32Error> {
+    const COLOR_MASK: u16 = 0xFF;
+    const BOX_DRAWING: RangeInclusive<u16> = 0x2500..=0x257F;
+    const HISTORY_WIDTH: usize = 40;
+    let mut cursor = CONSOLE_CURSOR_INFO::default();
+    check(GetConsoleCursorInfo(output, &mut cursor))?;
+    let mut info_ex = CONSOLE_SCREEN_BUFFER_INFOEX {
+        cbSize: size_of::<CONSOLE_SCREEN_BUFFER_INFOEX>() as ULONG,
+        info: bun_core::ffi::zeroed(),
+        wPopupAttributes: 0,
+        bFullscreenSupported: 0,
+        ColorTable: [0; 16],
+    };
+    check(GetConsoleScreenBufferInfoEx(output, &mut info_ex))?;
+    let window = info_ex.info.srWindow;
+    let window_cells = read_cells(output, window)?;
+    // Popups are centered, so this column crosses the border of one that output has pushed above the window.
+    let center = window.Left.midpoint(window.Right);
+    let scrollback_column = SMALL_RECT {
+        Left: center,
+        Top: 0,
+        Right: center,
+        Bottom: window.Top,
+    };
+    let scrollback_cells = read_cells(output, scrollback_column)?;
+
+    let has_popup_colors =
+        |cell: &CHAR_INFO| (cell.Attributes ^ info_ex.wPopupAttributes) & COLOR_MASK == 0;
+    let is_border =
+        |cell: &CHAR_INFO| has_popup_colors(cell) && BOX_DRAWING.contains(&cell.UnicodeChar);
+    // A key redraws the selected row of a history list that has scrolled out of the buffer, but not the border.
+    let is_history_row = |row: &[CHAR_INFO]| row.iter().all(has_popup_colors);
+    Ok(window_cells.iter().chain(&scrollback_cells).any(is_border)
+        || window_cells.windows(HISTORY_WIDTH).any(is_history_row)
+        || (cursor.bVisible == 0 && window_cells.iter().any(has_popup_colors)))
 }
 
 /// Non-blocking: empty if the input queue is empty.
@@ -175,8 +271,7 @@ pub fn read_records(
         })?;
     } else {
         // Old versions of Wine do not export `ReadConsoleInputExW`.
-        check(GetNumberOfConsoleInputEvents(input, &mut read_count))?;
-        len = len.min(read_count);
+        len = len.min(queued_record_count(input)?);
         if len > 0 {
             // SAFETY: `records` is writable for `len` records.
             check(unsafe { ReadConsoleInputW(input, records.as_mut_ptr(), len, &mut read_count) })?;
@@ -245,7 +340,7 @@ pub fn write_text(output: HANDLE, mut text: &[u16]) -> Result<(), Win32Error> {
 
 /// `(columns, rows)` of the visible window.
 pub fn window_size(output: HANDLE) -> Option<(u16, u16)> {
-    let mut info: bun_windows_sys::CONSOLE_SCREEN_BUFFER_INFO = bun_core::ffi::zeroed();
+    let mut info: CONSOLE_SCREEN_BUFFER_INFO = bun_core::ffi::zeroed();
     // SAFETY: `info` is a valid out-param.
     check(unsafe { kernel32::GetConsoleScreenBufferInfo(output, &raw mut info) }).ok()?;
     let window = info.srWindow;

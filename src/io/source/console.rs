@@ -61,6 +61,35 @@ impl Input {
         };
         console::write_records(self.raw(), &[record])
     }
+
+    /// Skips the leading keys without a character in VT input mode, where they become text.
+    fn write_keys(&self, keys: &[InputRecord]) -> Result<usize, Win32Error> {
+        let is_vt_input = console::mode(self.raw())
+            .is_ok_and(|mode| mode & w::ENABLE_VIRTUAL_TERMINAL_INPUT != 0);
+        let is_skipped = |key: &&InputRecord| is_vt_input && key.character == 0;
+        console::write_records(
+            self.raw(),
+            &keys[keys.iter().take_while(is_skipped).count()..],
+        )
+    }
+
+    /// Popups of older consoles take one key per write. Returns whether a read of any process has taken all input.
+    fn deliver_queued_keys(&self) -> bool {
+        const MAX_POPUP_KEYS_PER_WRITE: usize = 2;
+        (0..MAX_POPUP_KEYS_PER_WRITE).any(|_| {
+            self.write_noop_record().is_ok() && console::queued_record_count(self.raw()) == Ok(0)
+        })
+    }
+
+    /// The popups of F7 and F9 take every key until Escape or Enter.
+    fn is_popup_open(&self) -> bool {
+        const LINE: u32 = w::ENABLE_LINE_INPUT;
+        const VT: u32 = w::ENABLE_VIRTUAL_TERMINAL_INPUT;
+        console::mode(self.raw()).is_ok_and(|mode| mode & (LINE | VT) == LINE)
+            && console::open(bun_core::wstr!("CONOUT$"))
+                .and_then(|output| console::has_popup(output.as_raw_handle()))
+                == Ok(true)
+    }
 }
 
 fn open_input() -> Result<OwnedHandle, Win32Error> {
@@ -106,7 +135,10 @@ static LINE_READ_DONE: Condition = Condition::new();
 
 /// Ends a line read without an echo or a history entry.
 const WAKE_CHAR: u16 = 0x1E;
+const VK_ESCAPE: u16 = 0x1B;
 const VK_END: u16 = 0x23;
+const VK_F4: u16 = 0x73;
+const VK_NONAME: u16 = 0xFC;
 
 /// Has no scan code, unlike a real key press.
 fn make_key_record(virtual_key: u16, character: u16) -> InputRecord {
@@ -158,9 +190,11 @@ impl Shared {
             }
             for record in records {
                 is_resized |= record.event_type == key_input::WINDOW_BUFFER_SIZE_EVENT;
-                let is_synthetic_end =
-                    *record == make_key_record(VK_END, 0) && self.pending_wake_count > 0;
-                if !is_synthetic_end
+                let is_synthetic_key = self.pending_wake_count > 0
+                    && [VK_END, VK_F4]
+                        .map(|key| make_key_record(key, 0))
+                        .contains(record);
+                if !is_synthetic_key
                     && !(record.is_key_input() && self.try_consume_wake_char(record.character))
                 {
                     key_input::translate(record, &mut self.decoder, &mut self.buffered_text);
@@ -273,33 +307,52 @@ fn notify_readers(mut shared: GuardedLock<'_, Shared, Mutex>) {
 
 /// Whatever the read returns is buffered for the next reader, even if the read outlasts the timeout.
 fn stop_line_read(input: &Input) {
-    const STOP_TIMEOUT: Duration = Duration::from_millis(50);
     let mut shared = SHARED.lock();
     let LineReadState::Reading(cancel_token) = &shared.line_state else {
         return;
     };
-    // `WAKE_CHAR` replaces the text after the cursor, so End goes first, except in VT input mode, where End becomes text.
-    let is_vt_input = |mode| mode & w::ENABLE_VIRTUAL_TERMINAL_INPUT != 0;
-    let skip_count = usize::from(console::mode(input.raw()).is_ok_and(is_vt_input));
-    let write_wake_keys = || {
-        console::write_records(
-            input.raw(),
-            &[make_key_record(VK_END, 0), make_key_record(0, WAKE_CHAR)][skip_count..],
-        )
-    };
-    // While output is paused, the first key only resumes it.
-    if write_wake_keys().is_ok_and(|count| count > 0 || write_wake_keys().is_ok()) {
+    let [spare, end, f4, escape] =
+        [VK_NONAME, VK_END, VK_F4, VK_ESCAPE].map(|key| make_key_record(key, 0));
+    let wake = make_key_record(0, WAKE_CHAR);
+    // While output is paused, the first key only resumes it. `WAKE_CHAR` replaces the text after the cursor, so End goes first.
+    let write_wake_keys = || input.write_keys(&[spare, end, wake]);
+    let is_written = write_wake_keys().is_ok_and(|count| count > 0 || write_wake_keys().is_ok());
+    if is_written {
         shared.pending_wake_count += 1;
     } else if let Some(cancel_token) = cancel_token {
         // Cancelling also ends the console reads of other processes.
         cancel_token.cancel();
     }
-    let deadline = Instant::now() + STOP_TIMEOUT;
-    while shared.is_reading_line()
-        && let Some(remaining) = deadline.checked_duration_since(Instant::now())
-    {
-        let _ = LINE_READ_DONE.timed_wait_guarded(&mut shared, remaining.as_nanos() as u64);
+    if wait_for_line_read(&mut shared) || !is_written {
+        return;
     }
+    if input.deliver_queued_keys() {
+        // Without a popup, the read of another process has taken the keys.
+        if !input.is_popup_open() {
+            return;
+        }
+        // Escape clears the line if no popup is open, so F4 opens one. Older consoles close stacked popups one at a time.
+        for _ in 0..2 {
+            let _ = input.write_keys(&[spare, f4, escape]);
+            input.deliver_queued_keys();
+        }
+        let _ = write_wake_keys();
+    }
+    wait_for_line_read(&mut shared);
+}
+
+/// Returns `false` on timeout.
+fn wait_for_line_read(shared: &mut GuardedLock<'_, Shared, Mutex>) -> bool {
+    const TIMEOUT: Duration = Duration::from_millis(50);
+    let deadline = Instant::now() + TIMEOUT;
+    let line_read_count = shared.line_read_count;
+    while shared.is_reading_line() && shared.line_read_count == line_read_count {
+        let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
+            return false;
+        };
+        let _ = LINE_READ_DONE.timed_wait_guarded(shared, remaining.as_nanos() as u64);
+    }
+    true
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]

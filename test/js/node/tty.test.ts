@@ -557,17 +557,7 @@ describe("WriteStream.prototype.getColorDepth", () => {
 });
 
 describe.concurrent("stdio in a terminal", () => {
-  // ConPTY redraws what the child prints, so the child reports over a socket with `send(value)`.
-  // `await waitForContinue()` in the child resumes when the test calls `sendContinue()`.
-  const prelude = `
-    const fs = require("fs");
-    const tty = require("tty");
-    const control = require("net").connect(Number(process.env.CONTROL_PORT), "127.0.0.1").setNoDelay();
-    const controlLines = require("readline").createInterface({ input: control })[Symbol.asyncIterator]();
-    const send = (value, callback) => control.write(JSON.stringify(value) + "\\n", callback);
-    const waitForContinue = () => controlLines.next();
-    const settleEventLoop = async () => { for (let i = 0; i < 20; i++) await Bun.sleep(1); };
-    const forwardData = stream => stream.on("data", chunk => send(["data", String(chunk)])).on("end", () => send(["data", "end"]));
+  const ffiPrelude = `
     const k32 = process.platform === "win32" && require("bun:ffi").dlopen("kernel32.dll", {
       SetConsoleCtrlHandler: { args: ["ptr", "i32"], returns: "i32" },
       GenerateConsoleCtrlEvent: { args: ["u32", "u32"], returns: "i32" },
@@ -586,11 +576,37 @@ describe.concurrent("stdio in a terminal", () => {
     }).symbols;
     const STD_INPUT_HANDLE = -10;
     const STD_OUTPUT_HANDLE = -11;
-    const isOnFirstRow = text => {
+    const isOnRow = (y, text) => {
       const row = new Uint16Array(80);
-      k32.ReadConsoleOutputCharacterW(k32.GetStdHandle(STD_OUTPUT_HANDLE), row, 80, 0, new Uint32Array(1));
+      k32.ReadConsoleOutputCharacterW(k32.GetStdHandle(STD_OUTPUT_HANDLE), row, 80, y << 16, new Uint32Array(1));
       return String.fromCharCode(...row).includes(text);
     };
+    const INPUT_RECORD_SIZE = 20;
+    function writeKeyEvents(events) {
+      const records = Buffer.alloc(INPUT_RECORD_SIZE * events.length);
+      events.forEach(([isKeyDown, virtualKey, char, controlKeyState = 0, repeatCount = 1], i) => {
+        records.writeUInt16LE(1 /* KEY_EVENT */, INPUT_RECORD_SIZE * i);
+        records.writeInt32LE(isKeyDown, INPUT_RECORD_SIZE * i + 4);
+        records.writeUInt16LE(repeatCount, INPUT_RECORD_SIZE * i + 8);
+        records.writeUInt16LE(virtualKey, INPUT_RECORD_SIZE * i + 10);
+        records.writeUInt16LE(char, INPUT_RECORD_SIZE * i + 14);
+        records.writeUInt32LE(controlKeyState, INPUT_RECORD_SIZE * i + 16);
+      });
+      k32.WriteConsoleInputW(k32.GetStdHandle(STD_INPUT_HANDLE), records, events.length, new Uint32Array(1));
+    }
+  `;
+  // ConPTY redraws what the child prints, so the child reports over a socket with `send(value)`.
+  // `await waitForContinue()` in the child resumes when the test calls `sendContinue()`.
+  const prelude = `
+    const fs = require("fs");
+    const tty = require("tty");
+    const control = require("net").connect(Number(process.env.CONTROL_PORT), "127.0.0.1").setNoDelay();
+    const controlLines = require("readline").createInterface({ input: control })[Symbol.asyncIterator]();
+    const send = (value, callback) => control.write(JSON.stringify(value) + "\\n", callback);
+    const waitForContinue = () => controlLines.next();
+    const settleEventLoop = async () => { for (let i = 0; i < 20; i++) await Bun.sleep(1); };
+    const forwardData = stream => stream.on("data", chunk => send(["data", String(chunk)])).on("end", () => send(["data", "end"]));
+    ${ffiPrelude}
     // CI agents run with Ctrl+C ignored, and child processes inherit that setting.
     if (k32) k32.SetConsoleCtrlHandler(null, 0);
   `;
@@ -954,6 +970,7 @@ describe.concurrent("stdio in a terminal", () => {
 
   describe.skipIf(!isWindows)("Windows console", () => {
     const build = Number(release().split(".")[2]);
+    const WINDOWS_SERVER_2019_BUILD = 17763;
     const WINDOWS_11_24H2_BUILD = 26100;
     const CTRL_C_EVENT = 0;
     const CTRL_BREAK_EVENT = 1;
@@ -1094,19 +1111,6 @@ describe.concurrent("stdio in a terminal", () => {
         process.stdin.setRawMode(true).setEncoding("utf8");
         k32.SetConsoleMode(k32.GetStdHandle(STD_INPUT_HANDLE), 0x8 /* ENABLE_WINDOW_INPUT */);
         forwardData(process.stdin);
-        const INPUT_RECORD_SIZE = 20;
-        function writeKeyEvents(events) {
-          const records = Buffer.alloc(INPUT_RECORD_SIZE * events.length);
-          events.forEach(([isKeyDown, virtualKey, char, controlKeyState = 0, repeatCount = 1], i) => {
-            records.writeUInt16LE(1 /* KEY_EVENT */, INPUT_RECORD_SIZE * i);
-            records.writeInt32LE(isKeyDown, INPUT_RECORD_SIZE * i + 4);
-            records.writeUInt16LE(repeatCount, INPUT_RECORD_SIZE * i + 8);
-            records.writeUInt16LE(virtualKey, INPUT_RECORD_SIZE * i + 10);
-            records.writeUInt16LE(char, INPUT_RECORD_SIZE * i + 14);
-            records.writeUInt32LE(controlKeyState, INPUT_RECORD_SIZE * i + 16);
-          });
-          k32.WriteConsoleInputW(k32.GetStdHandle(STD_INPUT_HANDLE), records, events.length, new Uint32Array(1));
-        }
       `;
       const LEFT_ALT_PRESSED = 0x2;
       const LEFT_CTRL_PRESSED = 0x8;
@@ -1237,6 +1241,102 @@ describe.concurrent("stdio in a terminal", () => {
         await child.expectData("abcdef\r\n");
       });
 
+      const [VK_PAUSE, VK_LEFT, VK_F7, VK_F9] = [0x13, 0x25, 0x76, 0x78];
+      describe.each([
+        ["the F7 popup open", [VK_LEFT, VK_F7]],
+        ["the F9 popup open", [VK_LEFT, VK_F9]],
+        ["the F7 and F9 popups open", [VK_LEFT, VK_F7, VK_F9]],
+        ["output paused", [VK_LEFT, VK_PAUSE]],
+        ["the F7 popup open and output paused", [VK_LEFT, VK_F7, VK_PAUSE]],
+        // The console of Windows Server 2019 does not draw it again.
+        ...(build > WINDOWS_SERVER_2019_BUILD ? [["the F7 popup scrolled away", [VK_LEFT, VK_F7], 50]] : []),
+      ] as [string, number[], number?][])("with %s", (_, keys, lineCount = 0) => {
+        const startScript = `
+          forwardData(process.stdin);
+          send("ready");
+          await waitForContinue();
+          for (const key of ${JSON.stringify(keys)}) writeKeyEvents([[1, key, 0]]);
+          for (let i = 0; i < ${lineCount}; i++) console.log();
+        `;
+        async function typeInput(child: Awaited<ReturnType<typeof spawnChild>>) {
+          expect(await child.receive()).toBe("ready");
+          // F7 and F9 need a line in the history.
+          child.type("first\r");
+          await child.expectData("first\r\n");
+          child.type("abc");
+          await child.waitForScreen("abc");
+          child.sendContinue();
+        }
+
+        it("ends when raw mode is enabled", async () => {
+          await using child = await spawnChild(`${startScript} process.stdin.setRawMode(true);`);
+          await typeInput(child);
+          await child.expectData("abc");
+          child.type("d");
+          await child.expectData("d");
+        });
+
+        it("ends on pause()", async () => {
+          await using child = await spawnChild(
+            `
+              ${startScript}
+              process.stdin.pause();
+              await new Promise(setImmediate);
+              const grandchild = Bun.spawn([process.execPath, "grandchild.js"], { stdio: ["inherit", "pipe", "inherit"] });
+              send(await grandchild.stdout.text());
+              process.stdin.resume();
+            `,
+            {
+              "grandchild.js": `console.error("grandchild"); for await (const line of console) { console.log(line); break; }`,
+            },
+          );
+          await typeInput(child);
+          await child.waitForScreen("grandchild");
+          child.type("second\r");
+          expect(await child.receive()).toBe("second\n");
+          await child.expectData("abc");
+        });
+      });
+
+      it.each([
+        ["F7", VK_F7],
+        ["F9", VK_F9],
+      ])("ends when the %s popup is in the scrollback of a console window", async (_, key) => {
+        using dir = tempDir("tty-scrollback", {
+          "launcher.js": `
+            const open = name => require("fs").openSync("\\\\\\\\.\\\\" + name, "r+");
+            const stdio = [open("CONIN$"), open("CONOUT$"), "inherit"];
+            process.exitCode = Bun.spawnSync([process.execPath, "main.js"], { stdio }).exitCode;
+          `,
+          "main.js": `
+            ${ffiPrelude}
+            const type = text => writeKeyEvents([...text].map(char => [1, char === "\\r" ? 0x0d : 0x41, char.charCodeAt(0)]));
+            const chunks = process.stdin.setEncoding("utf8")[Symbol.asyncIterator]();
+            const firstLine = chunks.next();
+            type("first\\r");
+            await firstLine;
+            const rest = chunks.next();
+            type("abc");
+            while (!isOnRow(1, "abc")) await Bun.sleep(1);
+            writeKeyEvents([[1, ${key}, 0]]);
+            for (let i = 0; i < 100; i++) console.log();
+            process.stdin.setRawMode(true);
+            console.error((await rest).value);
+            process.exit(0);
+          `,
+        });
+        // A hidden process gets a console of its own, which has a scrollback, unlike ConPTY.
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "launcher.js"],
+          cwd: String(dir),
+          env: bunEnv,
+          stdio: ["ignore", "ignore", "pipe"],
+          windowsHide: true,
+        });
+        expect(await proc.stderr.text()).toBe("abc\n");
+        expect(await proc.exited).toBe(0);
+      });
+
       it("continues after repeated mode changes", async () => {
         await using child = await spawnWithLineReadInProgress(`
           for (let i = 0; i < 6; i++) {
@@ -1312,7 +1412,7 @@ describe.concurrent("stdio in a terminal", () => {
       await using child = await spawnChild(`
         forwardData(process.stdin);
         await settleEventLoop();
-        send("ready", () => { while (!isOnFirstRow("abc")) Bun.sleepSync(1); send("echoed"); });
+        send("ready", () => { while (!isOnRow(0, "abc")) Bun.sleepSync(1); send("echoed"); });
       `);
       expect(await child.receive()).toBe("ready");
       child.type("abc");
@@ -1325,16 +1425,21 @@ describe.concurrent("stdio in a terminal", () => {
         await settleEventLoop();
         process.stdin.setRawMode(false);
         await settleEventLoop();
-        send("ready", () => { while (!isOnFirstRow("abc")) Bun.sleepSync(1); send("echoed"); });
+        send("ready", () => { while (!isOnRow(0, "abc")) Bun.sleepSync(1); send("echoed"); });
       `);
       expect(await child.receive()).toBe("ready");
       child.type("abc");
       expect(await child.receive()).toBe("echoed");
     });
 
-    it("pause() does not end the line read of another process", async () => {
+    it.each([
+      ["an empty screen", ""],
+      ["text in the colors of a popup", "\x1b[35;107mtext\x1b[m"],
+      ["a border in other colors", "\u250c\u2500\u2510\x1b[?25l"],
+    ])("pause() does not end the line read of another process below %s", async (_, output) => {
       await using child = await spawnChild(
         `
+          console.log(${JSON.stringify(output)});
           const grandchild = Bun.spawn(["cmd.exe", "/d", "/v:on", "/c", "read-line.cmd"], { stdio: ["inherit", "pipe", "inherit"] });
           await waitForContinue();
           process.stdin.resume();
@@ -1354,7 +1459,7 @@ describe.concurrent("stdio in a terminal", () => {
       child.sendContinue();
       expect(await child.receive()).toBe("paused");
       child.type("c\r");
-      expect(await child.receive()).toStartWith("[#");
+      expect(await child.receive()).toMatch(/^\[#+\x1e?#*c\]/);
     });
 
     it.each([false, true])("resets the input handle after a screen buffer switch (raw: %p)", async isRaw => {

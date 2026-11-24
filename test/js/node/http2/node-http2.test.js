@@ -6402,6 +6402,34 @@ listeners that are added after destroy(error) returned:
 a 'close' listener that the 'error' listener adds:
   session error boom
   session close
+an 'error' listener that throws:
+  destroy() returned
+  session error boom
+  uncaughtException the listener threw
+events.once(session, 'close') after destroy(error):
+  once() rejected boom
+a client with a ping that waits is destroyed with an error:
+  stream aborted
+  stream error boom
+  stream close 2
+  a tick queued in the stream's 'close'
+  ping callback ERR_HTTP2_PING_CANCEL
+  session error boom, destroyed true, closed false
+  session close, ran since 'error': nothing
+a client with a ping that waits receives GOAWAY(CANCEL):
+  session goaway 8
+  stream aborted
+  stream error ERR_HTTP2_SESSION_ERROR
+  stream close 8
+  a tick queued in the stream's 'close'
+  ping callback ERR_HTTP2_PING_CANCEL
+  session error ERR_HTTP2_SESSION_ERROR, destroyed true, closed false
+  session close, ran since 'error': nothing
+a server that is closing destroys its last session with an error:
+  destroy() returned
+  server.close() callback
+  server sessionError boom
+  session close
 destroy() with no error, then the socket fails:
   session close
 a server session is destroyed with no error, then its socket fails:
@@ -6409,6 +6437,13 @@ a server session is destroyed with no error, then its socket fails:
 a request() that throws, and destroy(error) in the catch:
   request() threw toString boom
   session error toString boom
+  session close
+a request() that throws, and destroy() in the catch:
+  request() threw toString boom
+  session close
+a request() that throws, and destroy(another error) in the catch:
+  request() threw toString boom
+  session error another
   session close
 a connect that fails, with a request that waits:
   stream aborted
@@ -6442,17 +6477,20 @@ the socket of a client session with no 'error' listener is destroyed with an err
 the socket of a server session with no 'error' listener is destroyed with an error:
   uncaughtException boom
 `;
-// The paths on which Bun does not emit what Node.js emits. When a path turns into node's, its scenario moves to
-// the list above. Node.js does not run this list: its own text for it is not the same in every version. v26.12.1
-// defers a destroy() that starts inside a read, v26.3.0 does not, and one line of the second path moves.
+// The paths on which Bun does not emit what Node.js emits. Node.js does not run this list: its own text for it is
+// not the same in every version. v26.12.1 defers a destroy() that starts inside a read, v26.3.0 does not, and one
+// line of the second path moves. When the text of a path changes, its scenario moves to the list above only if
+// every Node.js version named there prints that text.
 // Not yet:
 // - A client destroys its open streams one tick after destroy(), so 'aborted' is late, and with no live socket
 //   to wait for (a socket that failed, a Duplex) the session's events come ahead of the streams' 'error' and 'close'.
 // - A server session whose socket closes with no error emits 'close' ahead of its streams.
-// On purpose, so that a program still sees what it saw when destroy(error) emitted the 'error' itself:
+// On purpose. None of these is node's rule:
 // - With no 'error' listener, destroy(error) throws to its caller. node returns, and the error is uncaught later.
-// - With an 'error' listener that is gone at the emit, nothing is thrown. node throws.
-// - A connect that does not complete does not hold the session's events back. node waits for it.
+// - With an 'error' listener that is gone at the emit, nothing is emitted and nothing is thrown. node throws.
+// - A pending connect is abandoned: it does not hold the session's events back, and the listener of connect() is
+//   not called. node waits for the connect and calls the listener.
+// - What the listener of connect() throws is emitted inside destroy(). node does not catch it.
 const sessionErrorOrderUnlikeNode = `a client session with an open stream is destroyed with an error:
   destroy() returned
   stream aborted
@@ -6496,6 +6534,7 @@ a server session with no 'error' listener and an emit() of the program's is dest
   destroy() returned
   session close
 an 'error' listener that is removed after destroy(error) returned:
+  'error' listeners when destroy() returned: 1
   session close
 the socket of a client session fails, and its 'error' listener is removed before the emit:
   session close
@@ -6507,9 +6546,19 @@ a client session whose connect does not complete is destroyed with an error:
   stream error ERR_HTTP2_STREAM_CANCEL
   stream close 2
   a tick queued in the stream's 'close'
+  socket error boom
+  socket close, hadError true
   session error boom, destroyed true, closed false
   session close, ran since 'error': nothing
   the lookup answers
+a client session that is connecting to a server is destroyed with an error:
+  destroy() returned
+  session error boom, destroyed true, closed false
+  session close, ran since 'error': nothing
+a connect() listener that throws, and an 'error' listener that the 'connect' event removes:
+  session error boom
+  session connect
+  session close
 `;
 
 for (const [name, runtime] of [

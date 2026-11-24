@@ -213,6 +213,8 @@ pub(crate) struct JSValkeyClient {
     /// `SSL_CTX` for `tls: { …custom CA… }`. `tls: true` borrows
     /// `RareData.defaultClientSslCtx()` instead; `tls: false` leaves this null.
     _secure: JsCell<Option<(u64, boringssl::c::OwnedSslCtx)>>,
+    /// Since the last dial.
+    asked_server_identity: Cell<bool>,
 
     pub(crate) timer: RefCountedTimer<RefPtr<JSValkeyClient>>,
     pub(crate) reconnect_timer: RefCountedTimer<Hold>,
@@ -338,6 +340,7 @@ impl JSValkeyClient {
             poll_ref: JsKeepAlive::default(),
             connection_promise_returns_client: Cell::new(false),
             _secure: JsCell::new(None),
+            asked_server_identity: Cell::new(false),
             timer: RefCountedTimer::new(Timer::Tag::ValkeyConnectionTimeout),
             reconnect_timer: RefCountedTimer::new(Timer::Tag::ValkeyConnectionReconnect),
             context: cx.context().id(),
@@ -615,6 +618,10 @@ impl JSValkeyClient {
         this: JsWrapper<'_, Self>,
         _: &mut JsScope<'_>,
     ) -> JsResult<()> {
+        if self.client.get().is_dialing() {
+            // From `checkServerIdentity`: TLS 1.3 has not sent the client certificate yet.
+            self.socket.get().release_held_flight();
+        }
         match self.client.with_mut(Client::close) {
             Close::Nothing => Ok(()),
             Close::Socket => self.close_socket(uws::CloseCode::FastShutdown),
@@ -770,17 +777,18 @@ impl JSValkeyClient {
             groups.valkey_group::<false>(loop_)
         };
 
+        self.asked_server_identity.set(false);
         let ssl_ctx: Option<*mut uws::SslCtx> = match &self.tls {
             valkey::TLS::None => None,
             valkey::TLS::Enabled => Some(crate::jsc_hooks::default_client_ssl_ctx(vm)),
             valkey::TLS::Custom(custom) => {
-                let version = vm.tls_defaults_version();
-                if !matches!(self._secure.get(), Some((built_at, _)) if *built_at == version) {
+                let config = vm.tls_config((**custom).clone(), false);
+                let hash = config.content_hash();
+                if !matches!(self._secure.get(), Some((built_from, _)) if *built_from == hash) {
                     let mut err = uws::create_bun_socket_error_t::none;
-                    let config = vm.tls_config((**custom).clone(), false);
                     let ctx =
                         SSLContextCache::get_or_create_for_client(&config.as_usockets(), &mut err);
-                    self._secure.set(ctx.map(|ctx| (version, ctx)));
+                    self._secure.set(ctx.map(|ctx| (hash, ctx)));
                 }
                 let Some((_, secure)) = self._secure.get() else {
                     let failure = self.dial_failure("Failed to create TLS context");
@@ -1262,10 +1270,15 @@ impl<const SSL: bool> SocketHandler<SSL> {
                 if let Some(callback) = js::check_server_identity_get_cached(hold.object().to_js())
                 {
                     // A renegotiation can't change the certificate.
-                    if !this.client.get().is_dialing() {
+                    if this.asked_server_identity.replace(true) {
                         return Ok(());
                     }
                     let global = &this.global_object;
+                    let hostname = if hostname.is_empty() {
+                        b"localhost"
+                    } else {
+                        hostname
+                    };
                     let verdict =
                         server_identity::check(global, callback, &Self::socket(socket), hostname);
                     // It can close the client, and `onclose` can dial again.
@@ -1460,18 +1473,33 @@ impl Options {
                     valkey::TLS::None
                 };
             } else if tls.is_object() {
-                this.check_server_identity = server_identity::callback_of(global_object, tls)?
-                    .map(|callback| callback.with_graph_context_if_needed(global_object));
+                if let Some(callback) = tls.get(global_object, "checkServerIdentity")?
+                    && callback.to_boolean()
+                {
+                    if !callback.is_callable() {
+                        return Err(global_object.throw_invalid_property_type_value(
+                            b"tls.checkServerIdentity",
+                            b"function",
+                            callback,
+                        ));
+                    }
+                    this.check_server_identity =
+                        Some(callback.with_graph_context_if_needed(global_object));
+                }
                 let options = TLSOptions::from_js(global_object, tls)?;
-                this.tls = match ParsedTls::given(global_object, &options, false)? {
-                    Some(given) => valkey::TLS::Custom(Box::new(given)),
-                    None if this.check_server_identity.is_some() => valkey::TLS::Enabled,
+                let mut given = match ParsedTls::given(global_object, &options, false)? {
+                    Some(given) => given,
+                    None if this.check_server_identity.is_some() => Default::default(),
                     None => {
                         return Err(
                             global_object.throw_invalid_argument_type("tls", "tls", "object")
                         );
                     }
                 };
+                given
+                    .reject_unauthorized
+                    .get_or_insert_with(|| global_object.bun_vm().get_tls_reject_unauthorized());
+                this.tls = valkey::TLS::Custom(Box::new(given));
             } else {
                 return Err(global_object.throw_invalid_argument_type(
                     "tls",

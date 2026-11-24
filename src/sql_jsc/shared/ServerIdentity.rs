@@ -10,7 +10,7 @@ unsafe extern "C" {
     safe fn Bun__X509__toJSLegacyEncoding(cert: &mut X509, global: &JSGlobalObject) -> JSValue;
 }
 
-pub fn callback_of(global: &JSGlobalObject, tls: JSValue) -> JsResult<Option<JSValue>> {
+pub(crate) fn callback_of(global: &JSGlobalObject, tls: JSValue) -> JsResult<Option<JSValue>> {
     if !tls.is_object() {
         return Ok(None);
     }
@@ -27,11 +27,14 @@ pub fn check(
     hostname: &[u8],
 ) -> Result<(), JSValue> {
     let _entered = VirtualMachine::get().enter_event_loop_scope();
-    match verdict(global, callback, socket, hostname) {
-        Ok(None) => Ok(()),
-        Ok(Some(reason)) => Err(reason),
-        Err(thrown) => Err(global.take_exception(thrown)),
-    }
+    let reason = match verdict(global, callback, socket, hostname) {
+        Ok(None) => return Ok(()),
+        Ok(Some(reason)) => reason,
+        Err(thrown) => global.take_error(thrown),
+    };
+    // TLS 1.3 has not sent the client certificate yet.
+    socket.release_held_flight();
+    Err(reason)
 }
 
 /// `None` approves.

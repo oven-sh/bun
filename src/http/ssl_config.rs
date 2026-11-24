@@ -326,7 +326,7 @@ impl SSLConfig {
     // Takes `&self` (not `&mut`) because the intern registry calls this through
     // a pointer derived from `Arc::as_ptr`, which only grants shared provenance.
     // The memoization write goes through `AtomicU64` (interior mutability).
-    pub(crate) fn content_hash(&self) -> u64 {
+    pub fn content_hash(&self) -> u64 {
         let cached = self.cached_hash.load(Ordering::Relaxed);
         if cached != 0 {
             return cached;

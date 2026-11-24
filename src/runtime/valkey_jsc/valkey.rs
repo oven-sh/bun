@@ -51,9 +51,7 @@ pub(crate) enum TLS {
 impl TLS {
     pub(crate) fn reject_unauthorized(&self, vm: &VirtualMachine) -> bool {
         match self {
-            TLS::Custom(given) => given
-                .reject_unauthorized
-                .unwrap_or_else(|| vm.get_tls_reject_unauthorized()),
+            TLS::Custom(given) => given.reject_unauthorized != Some(false),
             TLS::Enabled => vm.get_tls_reject_unauthorized(),
             _ => false,
         }

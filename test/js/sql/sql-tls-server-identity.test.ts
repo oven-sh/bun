@@ -36,7 +36,7 @@ const agent1 = {
 // The harness certificate: CN=server-bun, SAN localhost / 127.0.0.1 / ::1, self-signed.
 const localhost = { key: localhostTls.key, cert: localhostTls.cert, ca: localhostTls.cert };
 
-type ServerCert = { key: string; cert: string };
+type ServerCert = { key: string; cert: string; requestCert?: boolean; onSecure?: () => void };
 type MockServer = {
   url: string;
   /** Resolves when the first TLS connection closes, with the number of bytes the client sent inside TLS. */
@@ -51,6 +51,7 @@ function upgrade(rawSocket: net.Socket, cert: ServerCert, leftover: Buffer, clos
   const socket = new tls.TLSSocket(rawSocket, { isServer: true, ...cert });
   let bytes = 0;
   socket.on("data", (chunk: Buffer) => (bytes += chunk.length));
+  if (cert.onSecure) socket.on("secure", cert.onSecure);
   socket.on("close", () => closed(bytes));
   socket.on("error", () => {});
   return socket;
@@ -214,6 +215,16 @@ describe.concurrent.each([
       });
       expect(err).toBe(thrown);
       expect(await server.bytesInsideTls).toBe(0);
+    });
+  });
+
+  test("a TLS 1.3 server that it refuses does not get the client certificate", async () => {
+    let handshakes = 0;
+    await withServer({ ...localhost, requestCert: true, onSecure: () => handshakes++ }, async server => {
+      const pin = new Error("PIN_MISMATCH");
+      expect(await connect(server.url, { ...agent1, ca: localhost.ca, checkServerIdentity: () => pin })).toBe(pin);
+      await server.bytesInsideTls;
+      expect(handshakes).toBe(0);
     });
   });
 

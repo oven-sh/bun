@@ -1611,7 +1611,14 @@ impl JSValue {
 
     /// Whether the `undefined` that [`call`](Self::call) just returned may be its silent no-op, for a caller that reads it as consent.
     pub fn call_may_have_been_dropped(self, global: &JSGlobalObject) -> bool {
+        unsafe extern "C" {
+            safe fn AsyncContextFrame__isOfStoppedGraph(
+                global: &JSGlobalObject,
+                stored: JSValue,
+            ) -> bool;
+        }
         self.has_nobody_to_call(global)
+            || AsyncContextFrame__isOfStoppedGraph(global, self)
             || !global.bun_vm().script_allowed()
             || global.vm().execution_forbidden()
     }

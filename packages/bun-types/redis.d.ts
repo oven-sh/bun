@@ -39,7 +39,8 @@ declare module "bun" {
      * verified against, which default to the URL host.
      * `checkServerIdentity(hostname, cert)` replaces that check, as in
      * `node:tls`: return nothing to accept the certificate or an `Error`
-     * to refuse it. It is not called with `rejectUnauthorized: false`.
+     * to refuse it. It is not called with `rejectUnauthorized: false`, and
+     * `cert` has no `issuerCertificate`.
      */
     tls?:
       | boolean

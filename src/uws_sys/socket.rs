@@ -1041,6 +1041,7 @@ impl AnySocket {
         fn is_established(&self) -> bool;
         fn close(&self, code: CloseCode);
         fn close_now(&self);
+        fn release_held_flight(&self);
         fn write(&self, data: &[u8]) -> i32;
         fn set_timeout(&self, seconds: c_uint);
         fn shutdown(&self);

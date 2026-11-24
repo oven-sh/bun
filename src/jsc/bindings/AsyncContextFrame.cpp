@@ -145,6 +145,12 @@ extern "C" JSC::EncodedJSValue AsyncContextFrame__callbackOf(JSC::EncodedJSValue
     return stored;
 }
 
+extern "C" bool AsyncContextFrame__isOfStoppedGraph(JSGlobalObject* globalObject, JSC::EncodedJSValue stored)
+{
+    auto* wrapper = dynamicDowncast<AsyncContextFrame>(JSValue::decode(stored));
+    return wrapper && Bun::shouldDropCallbackOfStoppedModuleGraph(defaultGlobalObject(globalObject), wrapper->context.get());
+}
+
 #define ASYNCCONTEXTFRAME_CALL_IMPL(...)                                                                                   \
     if (!functionObject.isCell())                                                                                          \
         return jsUndefined();                                                                                              \

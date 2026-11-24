@@ -1,11 +1,12 @@
 import { RedisClient } from "bun";
 import { describe, expect, test } from "bun:test";
-import { isIPv6, isWindows, tls as localhostTls, tempDir } from "harness";
+import { bunEnv, bunExe, isIPv6, isWindows, tls as localhostTls, nodeExe, tempDir } from "harness";
 import { once } from "node:events";
 import fs from "node:fs";
-import type { AddressInfo } from "node:net";
+import net, { type AddressInfo } from "node:net";
 import path from "node:path";
 import tls from "node:tls";
+import { loopbackFence, runEventLoopUntil } from "../sql/wire-frames";
 
 // Server presents a cert for CN=agent1 (no SAN), signed by ca1.
 // A client connecting to host "localhost" with ca1 trusted will pass chain
@@ -388,6 +389,25 @@ describe("RedisClient tls.checkServerIdentity", () => {
     });
   });
 
+  test.each([[refusal()], ["refused"], [undefined]])("hands onclose and connect() a thrown %p", async thrown => {
+    await withServer(localhost, async port => {
+      const client = new RedisClient(`rediss://127.0.0.1:${port}`, {
+        autoReconnect: false,
+        tls: {
+          ca: localhostTls.cert,
+          checkServerIdentity() {
+            throw thrown;
+          },
+        },
+      });
+      const closed = Promise.withResolvers<unknown[]>();
+      client.onclose = (...args) => closed.resolve(args);
+      const [connected] = await Promise.allSettled([client.connect()]);
+      expect(connected).toStrictEqual({ status: "rejected", reason: thrown });
+      expect((await closed.promise).map(error => error === thrown)).toEqual([true]);
+    });
+  });
+
   test("is not asked about a chain that does not verify, or with rejectUnauthorized: false", async () => {
     await withServer(agent1, async port => {
       let calls = 0;
@@ -440,7 +460,112 @@ describe("RedisClient tls.checkServerIdentity", () => {
     });
   });
 
-  test("leaves the built-in check in place when it is not a function", async () => {
+  test.each([
+    ["returns an error", () => refusal()],
+    ["closes the client", (client: RedisClient) => client.close()],
+    [
+      "returns an error and closes the client in a microtask",
+      (client: RedisClient) => (queueMicrotask(() => client.close()), refusal()),
+    ],
+  ])("keeps the client certificate from a TLS 1.3 server when it %s", async (_, check) => {
+    await withServer({ ...localhost, requestCert: true, rejectUnauthorized: false }, async (port, server) => {
+      let handshakes = 0;
+      const closed = Promise.withResolvers();
+      server.on("connection", socket => socket.on("close", closed.resolve));
+      server.on("secureConnection", () => handshakes++);
+      const client = new RedisClient(`rediss://127.0.0.1:${port}`, {
+        autoReconnect: false,
+        tls: { ...agent1, ca: localhostTls.cert, checkServerIdentity: () => check(client) as any },
+      });
+      await Promise.all([client.connect().then(client.close.bind(client), () => {}), closed.promise]);
+      expect(handshakes).toBe(0);
+    });
+  });
+
+  test.skipIf(!nodeExe())("is asked once, also when the server renegotiates while it runs the event loop", async () => {
+    // Bun's server can't renegotiate.
+    await using node = Bun.spawn({
+      cmd: [
+        nodeExe()!,
+        "-e",
+        `const { promise, resolve } = Promise.withResolvers();
+        const secure = require("tls").createServer({ ...JSON.parse(process.env.CERT), maxVersion: "TLSv1.2" }, resolve);
+        const control = require("net").createServer(test => test.once("data", async () => {
+          const socket = await promise;
+          let received = 0;
+          socket.on("data", chunk => (received += chunk.length)).on("error", () => {});
+          socket.on("close", () => test.end(" received " + received));
+          socket.renegotiate({}, () => socket.write("+OK\\r\\n", () => test.write("renegotiated")));
+        }));
+        secure.listen(0, "127.0.0.1", () => control.listen(0, "127.0.0.1", () => {
+          console.log(secure.address().port + " " + control.address().port);
+        }));`,
+      ],
+      env: { ...bunEnv, CERT: JSON.stringify(localhost) },
+    });
+    let ports = "";
+    for await (const chunk of node.stdout) if ((ports += Buffer.from(chunk)).includes("\n")) break;
+    const [port, controlPort] = ports.trim().split(" ");
+    const control = net.connect(+controlPort, "127.0.0.1");
+    let heard = "";
+    control.on("data", chunk => (heard += chunk));
+    const ended = once(control, "end");
+    await once(control, "connect");
+
+    let calls = 0;
+    const checkServerIdentity = () => {
+      if (calls++ > 0) return;
+      runEventLoopUntil(async () => {
+        control.write("renegotiate");
+        await once(control, "data");
+        await loopbackFence();
+      });
+      return refusal();
+    };
+    expect(await ping(`rediss://127.0.0.1:${port}`, { ca: localhostTls.cert, checkServerIdentity })).toBe("REFUSED");
+    await ended;
+    expect({ calls, heard }).toEqual({ calls: 1, heard: "renegotiated received 0" });
+  });
+
+  test.concurrent("a duplicate refuses every server once the graph of the function is disposed", async () => {
+    using dir = tempDir("valkey-tls-graph", {
+      "tenant.mjs": `export const make = (url, ca) => new Bun.RedisClient(url, { tls: { ca, checkServerIdentity() {} } });`,
+      "main.mjs": `
+        const graph = new Bun.ModuleGraph();
+        const { make } = await graph.import(import.meta.dir + "/tenant.mjs");
+        const duplicate = await graph.run(() => make(process.env.URL, process.env.CA)).duplicate();
+        const connect = () => duplicate.connect().then(() => "connected", e => e.code).finally(() => duplicate.close());
+        console.log(await connect());
+        graph.dispose();
+        console.log(await connect());
+      `,
+    });
+    await withServer(agent1, async port => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "main.mjs"],
+        cwd: String(dir),
+        env: { ...bunEnv, URL: `rediss://127.0.0.1:${port}`, CA: String(ca) },
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(stdout).toBe("connected\nERR_TLS_CERT_ALTNAME_INVALID\n");
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  test.skipIf(isWindows)("gets localhost for a unix socket, as in node:tls", async () => {
+    await withUnixServer(localhost, async socketPath => {
+      const options = { ca: localhostTls.cert, checkServerIdentity: tls.checkServerIdentity };
+      expect(await ping(`redis+tls+unix://${socketPath}`, options)).toBe("PONG");
+    });
+  });
+
+  test.each([["sha256/pin"], [{}], [true]])("can't be %p", checkServerIdentity => {
+    expect(() => new RedisClient("rediss://127.0.0.1", { tls: { ca, checkServerIdentity } as any })).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+    );
+  });
+
+  test("leaves the built-in check in place when it is false", async () => {
     await withServer(localhost, async port => {
       const tls = { ca: localhostTls.cert, checkServerIdentity: false as any };
       expect(await ping(`rediss://127.0.0.1:${port}`, tls)).toBe("PONG");
@@ -448,5 +573,65 @@ describe("RedisClient tls.checkServerIdentity", () => {
         "ERR_TLS_CERT_ALTNAME_INVALID",
       );
     });
+  });
+});
+
+describe.concurrent("RedisClient and the TLS defaults of the process", () => {
+  async function run(program: string, files = {}) {
+    using dir = tempDir("valkey-tls-defaults", files);
+    return await withServer({ key: serverKey, cert: serverCert }, async port => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const url = "rediss://127.0.0.1:${port}";
+          const settle = (client, promise) => promise.then(() => "connected", e => e.code).finally(() => client.close());
+          ${program}`,
+        ],
+        cwd: String(dir),
+        env: { ...bunEnv, CA: String(ca) },
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      return { stdout, exitCode };
+    });
+  }
+
+  test.each([
+    ["{ ca: process.env.CA }", "ERR_TLS_CERT_ALTNAME_INVALID"],
+    [`{ ca: process.env.CA, checkServerIdentity: () => ({ code: "REFUSED" }) }`, "REFUSED"],
+    ["{ checkServerIdentity() {} }", "UNABLE_TO_VERIFY_LEAF_SIGNATURE"],
+  ])("tls: %s reads NODE_TLS_REJECT_UNAUTHORIZED in the constructor", async (options, code) => {
+    const result = await run(`
+      for (const [first, later] of [["1", "0"], ["0", "1"]]) {
+        process.env.NODE_TLS_REJECT_UNAUTHORIZED = first;
+        const client = new Bun.RedisClient(url, { tls: ${options} });
+        process.env.NODE_TLS_REJECT_UNAUTHORIZED = later;
+        console.log(await settle(client, client.connect()));
+      }
+    `);
+    expect(result).toEqual({ stdout: `${code}\nconnected\n`, exitCode: 0 });
+  });
+
+  test("a default that its options override does not make it read its files again", async () => {
+    const result = await run(
+      `const client = new Bun.RedisClient(url, { tls: { caFile: "ca.pem", serverName: "agent1" } });
+      console.log(await settle(client, client.connect()));
+      require("fs").unlinkSync("ca.pem");
+      require("tls").setDefaultCACertificates([]);
+      console.log(await settle(client, client.connect()));`,
+      { "ca.pem": ca },
+    );
+    expect(result).toEqual({ stdout: "connected\nconnected\n", exitCode: 0 });
+  });
+
+  test("a default that it uses counts from the next dial", async () => {
+    const result = await run(
+      `const client = new Bun.RedisClient(url, { tls: { serverName: "agent1" } });
+      for (const certs of [[process.env.CA], []]) {
+        require("tls").setDefaultCACertificates(certs);
+        console.log(await settle(client, client.connect()));
+      }`,
+    );
+    expect(result).toEqual({ stdout: "connected\nUNABLE_TO_VERIFY_LEAF_SIGNATURE\n", exitCode: 0 });
   });
 });

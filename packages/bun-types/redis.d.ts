@@ -105,8 +105,8 @@ declare module "bun" {
     /**
      * Connect to the Redis server
      *
-     * @returns A promise that resolves when connected, or rejects with the
-     * reason the connection failed
+     * @returns A promise that resolves when connected and on the database, or
+     * rejects with the reason the connection failed
      */
     connect(): Promise<void>;
 

@@ -134,6 +134,8 @@ export function appendIterable(target: unknown[], items: unknown): void {
       $arrayPush(target, value);
     }
   }
+  if (next === undefined) $throwTypeError("undefined is not a function");
+  if (next === null) $throwTypeError("null is not a function");
   for (;;) {
     const item: unknown = $call(next, iterator);
     if (!$isObject(item)) $throwTypeError("Iterator result interface is not an object");

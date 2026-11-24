@@ -620,7 +620,7 @@ impl Location {
         if let Some(source) = _source {
             let file = Box::from(source.path.text);
             let namespace = Box::from(source.path.namespace);
-            if r.is_empty() {
+            if r.loc.start < 0 {
                 return Some(Location {
                     file,
                     namespace,

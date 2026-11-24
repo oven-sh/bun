@@ -2856,9 +2856,6 @@ declare module "bun" {
     /**
      * Subscribe to a Redis channel.
      *
-     * Subscribing disables automatic pipelining, so all commands are received
-     * immediately.
-     *
      * Subscribing moves the channel to a dedicated subscription state which
      * prevents most other commands from being executed until unsubscribed. Only
      * {@link ping `.ping()`}, {@link subscribe `.subscribe()`}, and
@@ -2881,9 +2878,6 @@ declare module "bun" {
     /**
      * Subscribe to multiple Redis channels.
      *
-     * Subscribing disables automatic pipelining, so all commands are received
-     * immediately.
-     *
      * Subscribing moves the channels to a dedicated subscription state in which
      * only a limited set of commands can be executed.
      *
@@ -2897,9 +2891,6 @@ declare module "bun" {
     /**
      * Unsubscribe from a single Redis channel.
      *
-     * If there are no more channels subscribed to, the client automatically
-     * re-enables pipelining if it was previously enabled.
-     *
      * Once all channels have been unsubscribed from, the client leaves the
      * subscription state. For further details on the subscription state, see
      * {@link subscribe `.subscribe()`}.
@@ -2910,9 +2901,6 @@ declare module "bun" {
 
     /**
      * Remove a listener from a given Redis channel.
-     *
-     * If there are no more channels subscribed to, the client automatically
-     * re-enables pipelining if it was previously enabled.
      *
      * Once all channels have been unsubscribed from, the client leaves the
      * subscription state. For further details on the subscription state, see
@@ -2928,9 +2916,6 @@ declare module "bun" {
     /**
      * Unsubscribe from all registered Redis channels.
      *
-     * The client automatically re-enables pipelining if it was previously
-     * enabled.
-     *
      * Once all channels have been unsubscribed from, the client leaves the
      * subscription state. For further details on the subscription state, see
      * {@link subscribe `.subscribe()`}.
@@ -2939,9 +2924,6 @@ declare module "bun" {
 
     /**
      * Unsubscribe from multiple Redis channels.
-     *
-     * If there are no more channels subscribed to, the client automatically
-     * re-enables pipelining if it was previously enabled.
      *
      * Once all channels have been unsubscribed from, the client leaves the
      * subscription state. For further details on the subscription state, see

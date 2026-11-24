@@ -1,6 +1,7 @@
 //! The client without its socket, timers and script: every method returns what is left to do.
 
 use std::collections::VecDeque;
+use std::num::NonZeroU32;
 
 use bun_collections::OffsetByteList;
 use bun_core::strings;
@@ -53,7 +54,7 @@ enum State {
     /// The socket is closing, or the dial gave none: [`Client::lost`] is due.
     Ending(End),
     /// A dial is due, from the retry timer or from `connect()`.
-    Backoff(Retries),
+    Backoff(Goal),
     /// Until [`Client::connect`].
     Closed,
 }
@@ -74,14 +75,34 @@ type Retries = u32;
 enum By {
     /// Script has not touched the client: one attempt, and back to `Idle`.
     Flag,
-    Script(Retries),
+    Script(Goal),
 }
 
 impl By {
+    fn claimed(self) -> Goal {
+        match self {
+            By::Flag => Goal::FIRST,
+            By::Script(goal) => goal,
+        }
+    }
+}
+
+#[derive(Copy, Clone)]
+enum Goal {
+    Connect(Retries),
+    /// Replaces a connection that script had.
+    Reconnect(NonZeroU32),
+    /// A reconnect that a busy or silent server has turned away, which can go on for minutes.
+    Outlast(NonZeroU32),
+}
+
+impl Goal {
+    const FIRST: Self = Goal::Connect(0);
+
     fn retries(self) -> Retries {
         match self {
-            By::Flag => 0,
-            By::Script(retries) => retries,
+            Goal::Connect(retries) => retries,
+            Goal::Reconnect(retries) | Goal::Outlast(retries) => retries.get(),
         }
     }
 }
@@ -160,6 +181,8 @@ pub enum Event<P> {
         message: Box<[u8]>,
         error: RedisError,
     },
+    /// The server cannot take the handshake now: for [`Client::abandon_handshake`], else as [`Event::Broken`].
+    Busy(Box<[u8]>),
 }
 
 /// Whom an acknowledgement answers.
@@ -182,6 +205,16 @@ pub enum Sent {
     /// For [`Client::batch`], once the microtasks have run.
     Batched,
     Queued,
+}
+
+/// Whether the process has to stay for the client's next event.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Awaited {
+    No,
+    /// Work: commands and subscriptions.
+    ByWorkOrBytes,
+    ByWorkOrHandlers,
+    Yes,
 }
 
 #[must_use]
@@ -225,7 +258,7 @@ fn refused<P>(message: &[u8], error: RedisError) -> Event<P> {
         b"ERR max number of clients",
     ];
     if PASSING.iter().any(|prefix| message.starts_with(prefix)) {
-        broken(message, RedisError::ConnectionClosed)
+        Event::Busy(message.into())
     } else {
         broken(message, error)
     }
@@ -256,15 +289,6 @@ impl<P> Client<P> {
         }
     }
 
-    pub fn is_preconnect(&self) -> bool {
-        match self.state {
-            Opening(_, by) | Ending(End::Policy(by)) => matches!(by, By::Flag),
-            Spare | Ending(End::FailedUnclaimed) => true,
-            Ending(End::Requested(_) | End::Final | End::Failed) => false,
-            Idle | Ready | Backoff(_) | Closed => false,
-        }
-    }
-
     pub fn is_dialing(&self) -> bool {
         matches!(self.state, Opening(Step::Dial, _))
     }
@@ -273,11 +297,20 @@ impl<P> Client<P> {
         matches!(self.state, Ending(_))
     }
 
-    /// An event is still to come.
-    pub fn is_active(&self) -> bool {
+    pub fn awaited(&self) -> Awaited {
         match self.state {
-            Opening(..) | Ready | Spare | Ending(_) | Backoff(_) => true,
-            Idle | Closed => false,
+            Idle | Spare | Closed => Awaited::No,
+            Opening(_, By::Flag) | Ending(End::Policy(By::Flag) | End::FailedUnclaimed) => {
+                Awaited::No
+            }
+            Ready => Awaited::ByWorkOrBytes,
+            Opening(_, By::Script(goal))
+            | Ending(End::Policy(By::Script(goal)))
+            | Backoff(goal) => match goal {
+                Goal::Connect(_) | Goal::Reconnect(_) => Awaited::Yes,
+                Goal::Outlast(_) => Awaited::ByWorkOrHandlers,
+            },
+            Ending(End::Requested(_) | End::Final | End::Failed) => Awaited::Yes,
         }
     }
 
@@ -297,8 +330,8 @@ impl<P> Client<P> {
         self.is_subscriber = false;
     }
 
-    pub fn has_pending_commands(&self) -> bool {
-        !self.in_flight.is_empty() || !self.queue.is_empty() || self.buffered_amount() > 0
+    pub fn has_commands(&self) -> bool {
+        !self.in_flight.is_empty() || !self.queue.is_empty()
     }
 
     pub fn buffered_amount(&self) -> usize {
@@ -327,13 +360,16 @@ impl<P> Client<P> {
     /// An explicit `connect()`, ahead of [`Self::claim_and_dial`] and [`Self::redial`].
     pub fn connect(&mut self) {
         match self.state {
-            Backoff(_) | Closed => self.state = Backoff(0),
+            Backoff(_) | Closed => self.state = Backoff(Goal::FIRST),
             // The close of a dial without a TLS context is still due, and no retry can build one.
             Ending(End::Failed | End::FailedUnclaimed) => self.state = Ending(End::Final),
             Ending(End::Requested(retries)) => {
-                self.state = Ending(End::Policy(By::Script(retries)));
+                self.state = Ending(End::Policy(By::Script(Goal::Connect(retries))));
             }
-            Opening(..) | Spare | Ending(End::Policy(_)) => self.claim(),
+            Opening(_, ref mut by) | Ending(End::Policy(ref mut by)) => {
+                *by = By::Script(Goal::Connect(by.claimed().retries()));
+            }
+            Spare => self.claim(),
             Idle | Ready | Ending(End::Final) => {}
         }
     }
@@ -344,10 +380,10 @@ impl<P> Client<P> {
                 return Close::Nothing;
             }
             Ending(End::FailedUnclaimed) => (End::Failed, Close::Nothing),
-            Ending(End::Policy(by)) => (End::Requested(by.retries()), Close::Nothing),
-            Opening(_, by) => (End::Requested(by.retries()), Close::Socket),
+            Ending(End::Policy(by)) => (End::Requested(by.claimed().retries()), Close::Nothing),
+            Opening(_, by) => (End::Requested(by.claimed().retries()), Close::Socket),
             Ready | Spare => (End::Requested(0), Close::Socket),
-            Backoff(retries) => (End::Requested(retries), Close::Retry(Attempt(()))),
+            Backoff(goal) => (End::Requested(goal.retries()), Close::Retry(Attempt(()))),
         };
         self.state = Ending(end);
         close
@@ -357,7 +393,7 @@ impl<P> Client<P> {
     pub fn claim(&mut self) {
         match self.state {
             Opening(_, ref mut by) | Ending(End::Policy(ref mut by)) => {
-                *by = By::Script(by.retries());
+                *by = By::Script(by.claimed());
             }
             Spare => self.state = Ready,
             Ending(End::FailedUnclaimed) => self.state = Ending(End::Failed),
@@ -370,7 +406,7 @@ impl<P> Client<P> {
     #[must_use]
     pub fn claim_and_dial(&mut self) -> Option<Attempt> {
         self.claim();
-        self.leave_idle(By::Script(0))
+        self.leave_idle(By::Script(Goal::FIRST))
     }
 
     /// A dial that script did not ask for. If it is lost unclaimed, the first command dials again.
@@ -385,10 +421,10 @@ impl<P> Client<P> {
 
     #[must_use]
     pub fn redial(&mut self) -> Option<Attempt> {
-        let Backoff(retries) = self.state else {
+        let Backoff(goal) = self.state else {
             return None;
         };
-        Some(self.dial(By::Script(retries)))
+        Some(self.dial(By::Script(goal)))
     }
 
     fn dial(&mut self, by: By) -> Attempt {
@@ -443,6 +479,16 @@ impl<P> Client<P> {
         Some(self.take_pending())
     }
 
+    /// For a reason that passes. Whether that costs only this attempt: the caller closes the socket, else it fails.
+    #[must_use]
+    pub fn abandon_handshake(&mut self) -> bool {
+        let Opening(_, By::Script(Goal::Reconnect(n) | Goal::Outlast(n))) = self.state else {
+            return false;
+        };
+        self.state = Ending(End::Policy(By::Script(Goal::Outlast(n))));
+        true
+    }
+
     /// The TLS session broke. `Some` if that counts as a lost connection and not as a failed handshake.
     #[must_use]
     pub fn session_broke(&mut self) -> Option<Vec<P>> {
@@ -456,25 +502,29 @@ impl<P> Client<P> {
         self.input.clear_and_free();
         self.scanner.reset();
 
-        let policy = match self.state {
-            Opening(_, By::Script(retries))
-            | Ending(End::Policy(By::Script(retries)))
-            | Backoff(retries) => Ok(retries),
-            Ready => Ok(0),
+        let next = match self.state {
+            Opening(_, By::Script(goal))
+            | Ending(End::Policy(By::Script(goal)))
+            | Backoff(goal) => Ok(match goal {
+                Goal::Connect(n) => Goal::Connect(n.saturating_add(1)),
+                Goal::Reconnect(n) => Goal::Reconnect(n.saturating_add(1)),
+                Goal::Outlast(n) => Goal::Outlast(n.saturating_add(1)),
+            }),
+            Ready => Ok(Goal::Reconnect(NonZeroU32::MIN)),
             Opening(_, By::Flag) | Spare | Ending(End::Policy(By::Flag) | End::FailedUnclaimed) => {
                 Err((Idle, Reason::Final))
             }
             Ending(End::Requested(_)) => Err((Closed, Reason::Requested)),
             Idle | Ending(End::Final | End::Failed) | Closed => Err((Closed, Reason::Final)),
         };
-        let (state, reason) = match policy {
+        let (state, reason) = match next {
             Err(over) => over,
             Ok(_) if owner_is_gone || !self.config.enable_auto_reconnect => (Closed, Reason::Final),
-            Ok(retries) if retries >= self.config.max_retries => (Closed, Reason::RetriesUsedUp),
-            Ok(retries) => {
-                self.state = Backoff(retries + 1);
+            Ok(goal) if goal.retries() > self.config.max_retries => (Closed, Reason::RetriesUsedUp),
+            Ok(goal) => {
+                self.state = Backoff(goal);
                 return Lost::Retry {
-                    delay_ms: (FIRST_DELAY_MS << retries.min(9)).min(MAX_DELAY_MS),
+                    delay_ms: (FIRST_DELAY_MS << (goal.retries().min(10) - 1)).min(MAX_DELAY_MS),
                     in_flight: self.take_in_flight(),
                 };
             }

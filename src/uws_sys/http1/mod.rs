@@ -189,7 +189,7 @@ impl Connection {
 }
 
 impl uws_res {
-    pub(crate) fn of<'a>(socket: *mut us_socket_t) -> &'a Self {
+    pub fn of<'a>(socket: *mut us_socket_t) -> &'a Self {
         Self::opaque_ref(socket.cast())
     }
 

@@ -83,10 +83,6 @@ impl<const SSL: bool> Response<SSL> {
         }
     }
 
-    fn of<'a>(res: &uws_res) -> &'a mut Self {
-        Self::as_handle(res.as_mut_ptr().cast())
-    }
-
     /// Register an on-writable callback.
     ///
     /// `H` must be a
@@ -98,7 +94,8 @@ impl<const SSL: bool> Response<SSL> {
         H: Fn(*mut U, u64, &mut Response<SSL>) -> bool + Copy + 'static,
     {
         let handler: OnWritable = |res, offset, data| {
-            data.is_null() || thunk::zst::<H>()(data.cast(), offset, Self::of(res))
+            let res = Self::as_handle(res.as_mut_ptr().cast());
+            data.is_null() || thunk::zst::<H>()(data.cast(), offset, res)
         };
         self.set_on_writable(handler, user_data.cast());
     }
@@ -108,7 +105,7 @@ impl<const SSL: bool> Response<SSL> {
         H: Fn(*mut U, &mut Response<SSL>) + Copy + 'static,
     {
         if !user_data.is_null() {
-            thunk::zst::<H>()(user_data.cast(), Self::of(res));
+            thunk::zst::<H>()(user_data.cast(), Self::as_handle(res.as_mut_ptr().cast()));
         }
     }
 
@@ -132,7 +129,8 @@ impl<const SSL: bool> Response<SSL> {
     {
         let handler: OnData = |res, chunk, is_last, user_data| {
             if !user_data.is_null() {
-                thunk::zst::<H>()(user_data.cast(), Self::of(res), chunk, is_last);
+                let res = Self::as_handle(res.as_mut_ptr().cast());
+                thunk::zst::<H>()(user_data.cast(), res, chunk, is_last);
             }
         };
         self.set_on_data(Some(handler), optional_data.cast());

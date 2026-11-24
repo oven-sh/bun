@@ -1570,15 +1570,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }
         self.notify_inspector_server_stopped();
 
-        match &self.config.get().address {
-            server_config::Address::Unix(path) => {
-                let bytes = path.as_bytes();
-                if !bytes.is_empty() && bytes[0] != 0 {
-                    let _ = bun_sys::unlink(path.as_zstr());
-                }
-            }
-            server_config::Address::Tcp { .. } => {}
-        }
+        self.config.get().address.unlink();
 
         drop(listener);
         if !abrupt {

@@ -174,8 +174,7 @@ unsafe extern "C" fn us_socket_buffered_js_write(
         // single `&mut` does not alias the re-entrant write path documented at
         // the top of this fn (raw `socket` is still kept for that reason).
         let socket_ref = us_socket_t::opaque_mut(socket);
-        let write_behind_response =
-            |bytes: &[u8]| uws_res::opaque_ref(socket.cast()).write_behind_response(bytes);
+        let write_behind_response = |bytes: &[u8]| uws_res::of(socket).write_behind_response(bytes);
         if hold {
             // What an earlier write still owes goes first.
             let owed = stream_buffer.slice().len();

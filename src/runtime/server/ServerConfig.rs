@@ -134,6 +134,18 @@ impl Address {
             Address::Tcp { .. } => false,
         }
     }
+
+    pub(crate) fn unlink(&self) {
+        match self {
+            Address::Unix(path) => {
+                let bytes = path.as_bytes();
+                if !bytes.is_empty() && bytes[0] != 0 {
+                    let _ = bun_sys::unlink(path.as_zstr());
+                }
+            }
+            Address::Tcp { .. } => {}
+        }
+    }
 }
 
 // ZBox frees on Drop; resetting is `*self = Address::default()`.

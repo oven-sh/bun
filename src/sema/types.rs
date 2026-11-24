@@ -2993,6 +2993,7 @@ windowed_by! {
     (TypeId, TypeId): |it| Window::of_type(it.0.0.max(it.1.0));
     (TypeId, TypeId, TypeId): |it| Window::of_type(it.0.0.max(it.1.0).max(it.2.0));
     (TypeId, MapperId): |it| Window::of_mapper(it.1.0);
+    (Sym, MapperId): |it| Window::of_mapper(it.1.0);
     (MapperId, MapperId): |it| Window::of_mapper(it.0.0.max(it.1.0));
 }
 

@@ -1,17 +1,29 @@
 import { Socket } from "bun";
-import { beforeAll, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, gcTick } from "harness";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { bunEnv, bunExe, gcTick, isWindows, tempDir, tls } from "harness";
 import { once } from "node:events";
+import { truncateSync } from "node:fs";
 import { createServer } from "node:http";
-import { createServer as createNetServer } from "node:net";
+import {
+  connect,
+  createServer as createNetServer,
+  type AddressInfo,
+  type Server as NetServer,
+  type Socket as NetSocket,
+} from "node:net";
+import { createServer as createTlsServer } from "node:tls";
 import {
   brotliCompressSync,
+  brotliDecompressSync,
+  constants,
   deflateRawSync,
   deflateSync,
+  gunzipSync,
   gzipSync,
   inflateRawSync,
   inflateSync,
   zstdCompressSync,
+  zstdDecompressSync,
 } from "node:zlib";
 import path from "path";
 
@@ -604,49 +616,6 @@ describe("corrupt compressed responses", () => {
   describe("close-delimited (FIN) framing", () => {
     const FULL = 50000;
     const plain = Buffer.alloc(FULL, "A");
-    const truncate = (b: Buffer) => b.subarray(0, b.length >> 1);
-    const codecs: Record<string, [Buffer, string]> = {
-      gzip: [truncate(gzipSync(plain)), "ZlibError"],
-      deflate: [truncate(deflateSync(plain)), "ZlibError"],
-      br: [truncate(brotliCompressSync(plain)), "BrotliDecompressionError"],
-      zstd: [truncate(zstdCompressSync(plain)), "ZstdDecompressionError"],
-    };
-
-    for (const [encoding, [half, errorCode]] of Object.entries(codecs)) {
-      it(`${encoding}: truncated stream rejects the body read`, async () => {
-        const srv = createNetServer(sock => {
-          sock.on("error", () => {});
-          sock.once("data", () => {
-            sock.write(`HTTP/1.1 200 OK\r\nContent-Encoding: ${encoding}\r\nConnection: close\r\n\r\n`);
-            sock.end(half);
-          });
-        });
-        const port = await listen(srv);
-        try {
-          const res = await fetch(`http://127.0.0.1:${port}/`);
-          expect(res.status).toBe(200);
-          const bodyErr = await res.arrayBuffer().then(
-            ab => ({ resolved: ab.byteLength }),
-            e => e,
-          );
-          expect(bodyErr).toBeInstanceOf(Error);
-          expect((bodyErr as { code?: string }).code).toBe(errorCode);
-
-          const res2 = await fetch(`http://127.0.0.1:${port}/`);
-          const reader = res2.body!.getReader();
-          let streamErr: unknown = null;
-          try {
-            while (!(await reader.read()).done) {}
-          } catch (e) {
-            streamErr = e;
-          }
-          expect(streamErr).toBeInstanceOf(Error);
-          expect((streamErr as { code?: string }).code).toBe(errorCode);
-        } finally {
-          srv.close();
-        }
-      });
-    }
 
     for (const [encoding, compress] of [
       ["gzip", gzipSync],
@@ -945,6 +914,387 @@ describe("fetch() decodes multi-member Content-Encoding: gzip", () => {
   });
 });
 
+// https://fetch.spec.whatwg.org/#http-network-fetch closes the stream when the transmission is done normally.
+// https://github.com/nodejs/undici/blob/v8.3.0/lib/web/fetch/index.js#L2267-L2284
+describe("a compressed stream that is unfinished when the body ends", () => {
+  const events = (count: number) => Buffer.from(Array.from({ length: count }, (_, i) => `data: ${i * i}\n\n`).join(""));
+  const small = events(100);
+  // More than one pass of the decoder, and more than one zstd block.
+  const large = events(20_000);
+  // Arrives in one read, and waits for the reader.
+  const zeros = Buffer.alloc(1024 * 1024);
+  const fast = { level: 1 };
+  const sync = { ...fast, finishFlush: constants.Z_SYNC_FLUSH };
+  const brotliFlush = { finishFlush: constants.BROTLI_OPERATION_FLUSH };
+  const brotliFast = { params: { [constants.BROTLI_PARAM_QUALITY]: 2 } };
+  const zstdFlush = { finishFlush: constants.ZSTD_e_flush };
+  const codings = {
+    "gzip": {
+      finished: (b: Buffer) => gzipSync(b, fast),
+      flushed: (b: Buffer) => gzipSync(b, sync),
+      decodeStart: (b: Buffer) => gunzipSync(b, sync),
+      checksumFromEnd: 8,
+      code: "ZlibError",
+    },
+    "deflate": {
+      finished: (b: Buffer) => deflateSync(b, fast),
+      flushed: (b: Buffer) => deflateSync(b, sync),
+      decodeStart: (b: Buffer) => inflateSync(b, sync),
+      checksumFromEnd: 4,
+      code: "ZlibError",
+    },
+    "raw deflate": {
+      finished: (b: Buffer) => deflateRawSync(b, fast),
+      flushed: (b: Buffer) => deflateRawSync(b, sync),
+      decodeStart: (b: Buffer) => inflateRawSync(b, sync),
+      checksumFromEnd: 0,
+      code: "ZlibError",
+    },
+    "br": {
+      finished: (b: Buffer) => brotliCompressSync(b, brotliFast),
+      flushed: (b: Buffer) => brotliCompressSync(b, { ...brotliFast, ...brotliFlush }),
+      decodeStart: (b: Buffer) => brotliDecompressSync(b, brotliFlush),
+      checksumFromEnd: 0,
+      code: "BrotliDecompressionError",
+    },
+    "zstd": {
+      finished: (b: Buffer) => zstdCompressSync(b, { params: { [constants.ZSTD_c_checksumFlag]: 1 } }),
+      flushed: (b: Buffer) => zstdCompressSync(b, zstdFlush),
+      decodeStart: (b: Buffer) => zstdDecompressSync(b, zstdFlush),
+      checksumFromEnd: 4,
+      code: "ZstdDecompressionError",
+    },
+  };
+
+  type Route = "http" | "https" | "CONNECT tunnel";
+  /** `origin` writes plaintext. `wire` is the other end of the client's TCP connection, at a relay or a proxy. */
+  type Connection = { origin: NetSocket; wire: NetSocket };
+
+  const servers: NetServer[] = [];
+  const sockets = new Set<NetSocket>();
+  const wireByUpstreamPort = new Map<number | undefined, NetSocket>();
+  const waiting = new Map<string, (connection: Connection) => void>();
+  const targets = {} as Record<Route, { url: string; proxy: BunFetchRequestInit["proxy"] }>;
+  let requests = 0;
+
+  beforeAll(async () => {
+    const track = (socket: NetSocket) => {
+      sockets.add(socket);
+      return socket.on("error", () => {}).on("close", () => sockets.delete(socket));
+    };
+    const listen = async (server: NetServer) => {
+      servers.push(server);
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      return (server.address() as AddressInfo).port;
+    };
+    const onRequest = (origin: NetSocket) =>
+      track(origin).once("data", head =>
+        waiting.get(String(head).split(" ")[1])!({ origin, wire: wireByUpstreamPort.get(origin.remotePort)! }),
+      );
+    const relay = (port: number, isProxy: boolean) =>
+      createNetServer(wire => {
+        track(wire).once("data", first => {
+          wire.pause();
+          const upstream = track(connect(port, "127.0.0.1")).once("connect", () => {
+            wireByUpstreamPort.set(upstream.localPort, wire);
+            if (isProxy) wire.write("HTTP/1.1 200 OK\r\n\r\n");
+            else upstream.write(first);
+            wire.pipe(upstream).pipe(wire);
+          });
+          wire.on("close", () => upstream.destroy());
+        });
+      });
+    const http = await listen(createNetServer(onRequest));
+    const https = await listen(createTlsServer(tls, onRequest));
+    targets["http"] = { url: `http://127.0.0.1:${await listen(relay(http, false))}`, proxy: false };
+    targets["https"] = { url: `https://127.0.0.1:${await listen(relay(https, false))}`, proxy: false };
+    targets["CONNECT tunnel"] = {
+      url: `https://127.0.0.1:${https}`,
+      proxy: { url: `http://127.0.0.1:${await listen(relay(https, true))}`, respectNoProxy: false },
+    };
+  });
+  afterAll(() => {
+    for (const socket of sockets) socket.destroy();
+    for (const server of servers) server.close();
+  });
+
+  async function request(route: Route, head: Buffer, init: BunFetchRequestInit = {}) {
+    const path = `/${requests++}`;
+    const accepted = new Promise<Connection>(resolve => waiting.set(path, resolve));
+    const response = fetch(targets[route].url + path, { proxy: targets[route].proxy, tls: { ca: tls.cert }, ...init });
+    // `response` can only settle first by rejecting.
+    const connection = await Promise.race([accepted, response as Promise<never>]);
+    expect(connection.wire).toBeDefined();
+    connection.origin.write(head);
+    return { ...connection, response: await response };
+  }
+  const outcome = (bytes: Promise<Uint8Array>, expected: Buffer) =>
+    bytes.then(
+      received => (expected.equals(received) ? "ok" : `${received.length} bytes in place of ${expected.length}`),
+      error => error.code ?? error.message,
+    );
+
+  const framings = {
+    "Content-Length": (body: Buffer) => [`Content-Length: ${body.length}\r\n`, body, ""],
+    "chunked": (body: Buffer) => [
+      "Transfer-Encoding: chunked\r\n",
+      Buffer.concat([Buffer.from(`${body.length.toString(16)}\r\n`), body, Buffer.from("\r\n")]),
+      "0\r\n\r\n",
+    ],
+    "close": (body: Buffer) => ["", body, ""],
+  } satisfies Record<string, (body: Buffer) => [field: string, framed: Buffer, terminator: string]>;
+  type Framing = keyof typeof framings;
+  const frame = (coding: string, framing: Framing, body: Buffer) => {
+    const [field, framed, terminator] = framings[framing](body);
+    const head = `HTTP/1.1 200 OK\r\nContent-Encoding: ${coding.replace("raw ", "")}\r\nConnection: close\r\n${field}\r\n`;
+    return { head: Buffer.from(head), framed, terminator };
+  };
+
+  /** The head, the body and its end are one write. */
+  async function readWhole(route: Route, coding: string, framing: Framing, body: Buffer, expected: Buffer) {
+    const { head, framed, terminator } = frame(coding, framing, body);
+    const exchange = await request(route, Buffer.concat([head, framed, Buffer.from(terminator)]));
+    exchange.origin.end();
+    return await outcome(exchange.response.bytes(), expected);
+  }
+
+  /** The body follows the head. `end` runs when the reader has all that the body decodes to. */
+  async function readStreamed(
+    route: Route,
+    coding: string,
+    framing: Framing,
+    body: Buffer,
+    expected: Buffer,
+    end: (connection: Connection, terminator: string) => void,
+  ) {
+    const { head, framed, terminator } = frame(coding, framing, body);
+    const exchange = await request(route, head);
+    const read = async () => {
+      const chunks: Uint8Array[] = [];
+      let missing = expected.length;
+      exchange.origin.write(framed);
+      if (missing === 0) end(exchange, terminator);
+      for await (const chunk of exchange.response.body!) {
+        chunks.push(chunk);
+        if ((missing -= chunk.length) === 0) end(exchange, terminator);
+      }
+      return Buffer.concat(chunks);
+    };
+    return await outcome(read(), expected);
+  }
+  const endNormally = ({ origin }: Connection, terminator: string) => void origin.end(terminator);
+
+  /** Runs `cell` for each pair of a row and a framing. */
+  async function grid<T>(rows: Record<string, T>, cell: (row: T, framing: Framing) => Promise<unknown>) {
+    const names = Object.keys(framings) as Framing[];
+    const results = Object.entries(rows).map(async ([name, row]) => {
+      const cells = await Promise.all(names.map(async framing => [framing, await cell(row, framing)]));
+      return [name, Object.fromEntries(cells)];
+    });
+    return Object.fromEntries(await Promise.all(results));
+  }
+  const filled = (rows: object, result: unknown) =>
+    Object.fromEntries(
+      Object.keys(rows).map(name => [name, { "Content-Length": result, "chunked": result, "close": result }]),
+    );
+
+  describe.each(Object.entries(codings))("%s", (coding, { finished, flushed, decodeStart, checksumFromEnd, code }) => {
+    const firstHalf = (b: Buffer) => b.subarray(0, b.length >> 1);
+    const cutInHalf = firstHalf(finished(large));
+    const lastByteMissing = finished(small).subarray(0, -1);
+    const unfinished: Record<string, [body: Buffer, expected: Buffer]> = {
+      "flushed": [flushed(small), small],
+      "flushed, large": [flushed(large), large],
+      "cut in half": [cutInHalf, decodeStart(cutInHalf)],
+      "last byte missing": [lastByteMissing, checksumFromEnd ? small : decodeStart(lastByteMissing)],
+      "one byte": [finished(small).subarray(0, 1), Buffer.alloc(0)],
+    };
+    const damaged: Record<string, Buffer> = {
+      "invalid block": Buffer.concat([flushed(small), Buffer.alloc(16, 0xff)]),
+    };
+    if (checksumFromEnd) {
+      const body = Buffer.from(finished(small));
+      body[body.length - checksumFromEnd] ^= 1;
+      damaged["wrong checksum"] = body;
+    }
+
+    it("the cut bodies decode to a part of the content", () => {
+      for (const [name, plain] of [
+        ["cut in half", large],
+        ["last byte missing", small],
+      ] as const) {
+        const expected = unfinished[name][1];
+        expect(expected.length).toBeWithin(1, plain.length + 1);
+        expect(plain.subarray(0, expected.length).equals(expected)).toBe(true);
+      }
+      expect(unfinished["cut in half"][1].length).toBeLessThan(large.length);
+    });
+
+    describe.each(["http", "https", "CONNECT tunnel"] as const)("%s", route => {
+      it("gives what it decodes to", async () => {
+        const results = await grid(unfinished, async ([body, expected], framing) => [
+          await readWhole(route, coding, framing, body, expected),
+          await readStreamed(route, coding, framing, body, expected, endNormally),
+        ]);
+        expect(results).toEqual(filled(unfinished, ["ok", "ok"]));
+      });
+
+      it("rejects if it is also damaged", async () => {
+        const results = await grid(damaged, async (body, framing) => [
+          await readWhole(route, coding, framing, body, small),
+          await readStreamed(route, coding, framing, body, Buffer.alloc(0), endNormally),
+        ]);
+        expect(results).toEqual(filled(damaged, [code, code]));
+      });
+
+      it("rejects if the message is incomplete too", async () => {
+        const read = (framing: Framing, body: Buffer, end: Parameters<typeof readStreamed>[5]) =>
+          readStreamed(route, coding, framing, body, small, end);
+        const reset = ({ wire }: Connection) => void wire.resetAndDestroy();
+        const closeInTrailers = ({ origin }: Connection) => void origin.end("0\r\n");
+        expect({
+          "close before the last chunk": await read("chunked", flushed(small), ({ origin }) => void origin.end()),
+          "close in the trailer section": await read("chunked", flushed(small), closeInTrailers),
+          "reset of a close-delimited body": await read("close", flushed(small), reset),
+          "finished, close in the trailer section": await read("chunked", finished(small), closeInTrailers),
+          "finished, reset of a close-delimited body": await read("close", finished(small), reset),
+        }).toEqual({
+          "close before the last chunk": "ECONNRESET",
+          "close in the trailer section": "ECONNRESET",
+          "reset of a close-delimited body": "ECONNRESET",
+          "finished, close in the trailer section": "ok",
+          "finished, reset of a close-delimited body": "ok",
+        });
+      });
+
+      it("rejects if the close comes before the request body is sent", async () => {
+        const { head, framed } = frame(coding, "close", flushed(small));
+        const body = new ReadableStream({ start: controller => controller.enqueue(small) });
+        const { response, origin } = await request(route, Buffer.concat([head, framed]), { method: "POST", body });
+        origin.end();
+        expect(await outcome(response.bytes(), small)).toBe("ECONNRESET");
+      });
+
+      it("rejects if a close in the trailer section comes with the body", async () => {
+        const read = async ([body, expected]: [Buffer, Buffer]) => {
+          const { head, framed } = frame(coding, "chunked", body);
+          const exchange = await request(route, Buffer.concat([head, framed, Buffer.from("0\r\n")]));
+          exchange.origin.end();
+          return await outcome(exchange.response.bytes(), expected);
+        };
+        expect({
+          unfinished: await Promise.all(Object.values(unfinished).map(read)),
+          finished: await read([finished(zeros), zeros]),
+        }).toEqual({ unfinished: Object.keys(unfinished).map(() => "ECONNRESET"), finished: "ok" });
+      });
+    });
+
+    it.each(["Content-Length", "chunked"] as const)("%s: a reset after the message changes nothing", async framing => {
+      const { head, framed, terminator } = frame(coding, framing, flushed(zeros));
+      const { response, wire } = await request("http", Buffer.concat([head, framed, Buffer.from(terminator)]));
+      wire.resetAndDestroy();
+      await once(wire, "close");
+      const chunks = Array.fromAsync(response.body!).then(chunks => Buffer.concat(chunks));
+      expect(await outcome(chunks, zeros)).toBe("ok");
+    });
+
+    it("a finished stream that waits for its reader outlasts a reset of a close-delimited body", async () => {
+      const { head, framed } = frame(coding, "close", finished(zeros));
+      const { response, wire } = await request("http", Buffer.concat([head, framed]));
+      wire.resetAndDestroy();
+      await once(wire, "close");
+      const chunks = Array.fromAsync(response.body!).then(chunks => Buffer.concat(chunks));
+      expect(await outcome(chunks, zeros)).toBe("ok");
+    });
+
+    describe.each(["https", "CONNECT tunnel"] as const)("%s: a close-delimited body", route => {
+      it("rejects at a TLS record that does not decrypt", async () => {
+        const badRecord = Buffer.concat([Buffer.from([0x17, 0x03, 0x03, 0x00, 0x20]), Buffer.alloc(0x20)]);
+        const end = ({ wire }: Connection) => void wire.write(badRecord);
+        expect(await readStreamed(route, coding, "close", flushed(small), small, end)).toBe("EPROTO");
+      });
+
+      // Like Node, unlike https://www.rfc-editor.org/rfc/rfc9112#section-9.8
+      it("ends at a FIN without close_notify", async () => {
+        const end = ({ wire }: Connection) => void wire.end();
+        expect(await readStreamed(route, coding, "close", flushed(small), small, end)).toBe("ok");
+      });
+    });
+
+    it("rejects in S3Client", async () => {
+      const s3 = new Bun.S3Client({ endpoint: targets.http.url, accessKeyId: "a", secretAccessKey: "b", bucket: "s3" });
+      const rows = { bytes: (file: Bun.S3File) => file.bytes(), stream: (file: Bun.S3File) => file.stream().bytes() };
+      const results = await grid(rows, (read, framing) => {
+        const { head, framed, terminator } = frame(coding, framing, flushed(small));
+        const key = String(requests++);
+        waiting.set(`/s3/${key}`, ({ origin }) => origin.end(Buffer.concat([head, framed, Buffer.from(terminator)])));
+        return outcome(read(s3.file(key)), small);
+      });
+      expect(results).toEqual(filled(rows, code));
+    });
+
+    it("rejects in a DecompressionStream", async () => {
+      const format = ({ "raw deflate": "deflate-raw", "br": "brotli" }[coding] ?? coding) as CompressionFormat;
+      const read = async (body: Buffer) => {
+        const { head, framed, terminator } = frame(coding, "chunked", body);
+        const exchange = await request("http", Buffer.concat([head, framed, Buffer.from(terminator)]), {
+          decompress: false,
+        });
+        const decoded = exchange.response.body!.pipeThrough(new DecompressionStream(format));
+        return await outcome(new Response(decoded).bytes(), small);
+      };
+      expect([await read(finished(small)), await read(flushed(small))]).toEqual(["ok", "unexpected end of file"]);
+    });
+
+    it("leaves nothing behind for the next response on the connection, or after a redirect", async () => {
+      const ports = new Set<number | undefined>();
+      using server = Bun.serve({
+        port: 0,
+        fetch(req, server) {
+          ports.add(server.requestIP(req)?.port);
+          const { pathname } = new URL(req.url);
+          if (pathname === "/redirect") return Response.redirect("/flushed");
+          const body = pathname === "/flushed" ? flushed(small) : finished(small);
+          return new Response(body, { headers: { "Content-Encoding": coding.replace("raw ", "") } });
+        },
+      });
+      const results: unknown[] = [];
+      for (const path of ["flushed", "finished", "redirect"]) {
+        results.push(await outcome((await fetch(server.url + path)).bytes(), small));
+      }
+      expect({ results, connections: ports.size }).toEqual({ results: ["ok", "ok", "ok"], connections: 1 });
+    });
+  });
+
+  it.each(["file", "bytes"])("rejects if the close comes before a request body of %s is sent", async kind => {
+    using dir = tempDir("fetch-gzip-upload", { upload: "" });
+    const upload = path.join(String(dir), "upload");
+    // More than the socket buffers hold.
+    const size = 64 * 1024 * 1024;
+    truncateSync(upload, size);
+    const { head, framed } = frame("gzip", "close", codings.gzip.flushed(small));
+    const key = `/${requests++}`;
+    waiting.set(key, ({ origin, wire }) => {
+      wire.unpipe().pause();
+      origin.end(Buffer.concat([head, framed]));
+    });
+    const body = kind === "file" ? Bun.file(upload) : new Uint8Array(size);
+    const response = await fetch(targets.http.url + key, { method: "POST", body, proxy: false });
+    // Winsock takes a send() of any size whole, so there the request is sent.
+    expect(await outcome(response.bytes(), small)).toBe(isWindows ? "ok" : "ECONNRESET");
+  });
+
+  it("rejects if a reset comes right behind more than the reader takes at once", async () => {
+    const more = codings.gzip.flushed(zeros);
+    // The second member starts early, so the stream is unfinished even where a reset discards unread bytes.
+    const start = Buffer.concat([codings.gzip.finished(small), more.subarray(0, 1)]);
+    const end = ({ wire }: Connection) => void wire.write(more.subarray(1), () => wire.resetAndDestroy());
+    const results: unknown[] = [];
+    for (let i = 0; i < 8; i++) results.push(await readStreamed("http", "gzip", "close", start, small, end));
+    expect(results).toEqual(Array(8).fill("ECONNRESET"));
+  });
+});
+
 describe("empty compressed responses", () => {
   // A response that declares Content-Encoding but sends zero body bytes must
   // resolve as an empty body, like Node — not fail with ZlibError.
@@ -1020,11 +1370,12 @@ describe("Content-Encoding: deflate, zlib-wrapped or raw", () => {
     // Only gzip has members. Behind the others, one is stray bytes like any.
     rawThenMember: Buffer.concat([deflateRawSync(plain), gzipSync("more")]),
     wb15ThenMember: Buffer.concat([deflateSync(plain), gzipSync("more")]),
+    oneByte: Buffer.from([0x78]), // the body ends while the decoder waits for the second header byte
   };
   const fails: Record<string, Buffer> = {
     rawPassing1950: rawStartingWith(0x78, 769), // 78 01: raw deflate that starts with a valid zlib header
     lyingWindow,
-    oneByte: Buffer.from([0x78]), // the body ends while the decoder waits for the second header byte
+    oneInvalidByte: Buffer.from([0x07]), // the reserved block type
   };
 
   // One process is server and client. No timer: the server writes the head and the first `split` body
@@ -1088,7 +1439,7 @@ describe("Content-Encoding: deflate, zlib-wrapped or raw", () => {
     plain: plain.toString("base64"),
     bodies: base64({ ...decodes, ...fails }),
     // The content that fetch() must return, for a body that does not hold `plain`.
-    decoded: base64({ twoReadings: zlibReading }),
+    decoded: base64({ twoReadings: zlibReading, oneByte: Buffer.alloc(0) }),
   });
   // One word per split (0, 1, 2) in each framing.
   const everyCell = (result: string) => {

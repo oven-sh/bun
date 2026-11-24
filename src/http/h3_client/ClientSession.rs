@@ -14,7 +14,7 @@ use super::encode;
 use super::stream::Stream;
 use crate::h3_client as H3;
 use crate::http_thread::WriteMessageType;
-use crate::internal_state::HTTPStage;
+use crate::internal_state::{HTTPStage, TransportEnd};
 use crate::signals::Field as Signal;
 use crate::{HeaderResult, InFlightRequest, Protocol};
 
@@ -410,14 +410,14 @@ impl ClientSession {
             self.cancel(stream);
             let err = match client.state.content_length {
                 Some(_) => crate::Error::HTTP3ContentLengthMismatch,
-                None => crate::Error::HTTP3StreamReset,
+                None => crate::Error::ConnectionClosed,
             };
             return client.fail(err);
         }
 
         if !st.body_buffer.is_empty() {
             if done {
-                client.state.flags.received_last_chunk = true;
+                client.state.end_body(TransportEnd::Clean);
             }
             let report = match client.handle_response_body(st.body_buffer.as_slice(), false) {
                 Ok(r) => r,
@@ -451,7 +451,7 @@ impl ClientSession {
 
         if done {
             self.detach(stream);
-            if let Err(err) = client.finalize_body_on_eof() {
+            if let Err(err) = client.finalize_body_on_eof(TransportEnd::Clean) {
                 return client.fail(err);
             }
             return finish(client);

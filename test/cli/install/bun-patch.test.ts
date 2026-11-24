@@ -5,6 +5,7 @@ import {
   cpSync,
   existsSync,
   lstatSync,
+  mkdirSync,
   openSync,
   readdirSync,
   readFileSync,
@@ -773,6 +774,57 @@ index 34b9978faf31873baf7154ea8db59a1e2a13c3a2..a781bb1f3d3a10022110fa5fe12ffec3
 
     await bunOk(String(dir), env, "install");
     expect(await bunOk(String(dir), env, "run", "index.ts")).toBe("hi\nhello\ntrue\n");
+  });
+
+  test.concurrent("a patch takes the place of an empty directory or an older patch", async () => {
+    await using project = await installedProject({ dependencies: { "no-deps": "1.0.0" } });
+    using tmp = tempDir("bun-patch-tmp", {});
+    const { dir } = project;
+    const env = { ...project.env, BUN_TMPDIR: String(tmp) };
+    const patch = join(dir, "patches", "no-deps@1.0.0.patch");
+    mkdirSync(patch, { recursive: true });
+
+    for (const edit of ["first", "second"]) {
+      await bunOk(dir, env, "patch", "no-deps");
+      await Bun.write(join(dir, "node_modules", "no-deps", "index.js"), `module.exports = "${edit}";\n`);
+      await bunOk(dir, env, "patch", "--commit", "no-deps");
+      expect(await Bun.file(patch).text()).toContain(`+module.exports = "${edit}";`);
+      expect(readdirSync(String(tmp))).toEqual([]);
+    }
+  });
+
+  // Mounting needs a private user and mount namespace. Skipped where those are turned off, as in most containers.
+  const canMount =
+    isLinux &&
+    Bun.which("unshare") !== null &&
+    Bun.spawnSync({ cmd: ["unshare", "-Urm", "true"], stdout: "ignore", stderr: "ignore" }).exitCode === 0;
+
+  test.skipIf(!canMount).concurrent.each([
+    ["is copied there whole", "1m", "0 patches/no-deps@1.0.0.patch\n"],
+    ["leaves no part of itself when it does not fit", "4k", "1\n"],
+  ])("a patch for another file system %s", async (_, size, expected) => {
+    await using project = await installedProject({ dependencies: { "no-deps": "1.0.0" } });
+    const { dir, env } = project;
+    mkdirSync(join(dir, "patches"));
+    await bunOk(dir, env, "patch", "no-deps");
+    // More than the largest page, which is what the size is rounded up to.
+    await Bun.write(join(dir, "node_modules", "no-deps", "index.js"), Buffer.alloc(100_000, "1;\n"));
+
+    await using proc = Bun.spawn({
+      cmd: [
+        ...["unshare", "-Urm", "/bin/sh", "-c"],
+        `mount -t tmpfs -o size=${size} tmpfs patches && mkdir patches/no-deps@1.0.0.patch &&
+          { "$0" patch --commit no-deps >&2; echo $? $(find patches -type f); }`,
+        bunExe(),
+      ],
+      cwd: dir,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout, stderr).toBe(expected);
+    expect(exitCode).toBe(0);
   });
 
   // `file-bin` is `#!/usr/bin/env bun\nconsole.log("file-bin");`, with no newline at the end.

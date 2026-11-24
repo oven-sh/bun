@@ -246,6 +246,51 @@ process.on('message', (m, server) => {
       });
     });
 
+  // macOS answers EMSGSIZE where Linux answers EAGAIN. The lengths leave different room behind.
+  test.concurrent.each([2, 13])("a handle waits for room in a channel filled with lines of %d bytes", async length => {
+    using dir = tempDir("ipc-handle-full-channel", {
+      "parent.js": `
+const child = require("node:child_process").fork("child.js");
+child.on("message", (message, handle) => handle?.close(() => (console.log("got", message), child.disconnect())));
+const deadline = Date.now() + 120_000;
+while (!require("node:fs").existsSync("waited") && Date.now() < deadline) Bun.sleepSync(1);
+`,
+      "child.js": `
+const fs = require("node:fs");
+const { getEventLoopStats } = require("bun:internal-for-testing");
+process.on("disconnect", () => server.close());
+const server = require("node:net").createServer().listen(0, "127.0.0.1", () => process.send("open", () => {
+  for (const length of [1000, ${length}]) {
+    try {
+      for (;;) fs.writeSync(3, Buffer.alloc(length - 1, "1") + "\\n");
+    } catch (error) {
+      if (error.code !== "EAGAIN") throw error;
+    }
+  }
+  process.send("server", server);
+  const { iteration } = getEventLoopStats();
+  setTimeout(() => {
+    console.log("connected", process.connected, "spins", getEventLoopStats().iteration - iteration > 50);
+    fs.writeFileSync("waited", "");
+  }, 100);
+}));
+`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--no-orphans", "parent.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "connected true spins false\ngot server\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   test.concurrent("destroying a socket right after send() does not lose the queued handle", async () => {
     using dir = tempDir("ipc-handle-destroy-race", {
       "parent.js": `

@@ -2532,22 +2532,14 @@ fn write_lcov_report(
         });
     }
 
-    let file = File::openat(
+    let tmp = bun_sys::Tmpfile::open(
         Fd::cwd(),
         tmp_path,
-        bun_sys::O::CREAT | bun_sys::O::WRONLY | bun_sys::O::TRUNC | bun_sys::O::CLOEXEC,
+        bun_sys::O::CREAT | bun_sys::O::RDWR | bun_sys::O::TRUNC | bun_sys::O::CLOEXEC,
         0o644,
     )?;
-    let written = file.write_all(&contents);
-    drop(file);
-    let moved = match written {
-        Ok(()) => bun_sys::move_file_z(Fd::cwd(), tmp_path, Fd::cwd(), path),
-        err => err,
-    };
-    if moved.is_err() {
-        let _ = bun_sys::unlink(tmp_path);
-    }
-    moved
+    tmp.file.write_all(&contents)?;
+    tmp.finish(path).map_err(|(err, _)| err)
 }
 
 #[unsafe(no_mangle)]

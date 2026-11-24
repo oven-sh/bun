@@ -4,6 +4,7 @@ use bun_core::ffi::try_boxed_zeroed;
 use bun_deflate::format::MIN_MATCH_LEN;
 use bun_highway::zlib::subtract_saturating;
 
+use super::spare_steps::SpareSteps;
 use super::window::chunk;
 use crate::array::At;
 use crate::error::Result;
@@ -21,6 +22,7 @@ pub(super) struct Chains {
     /// From a position, modulo the length, to the one before it. As long as the power of two that it has had to be.
     links: Vec<u16>,
     rolling_hash: u32,
+    spare_steps: SpareSteps,
 }
 
 impl Chains {
@@ -31,11 +33,13 @@ impl Chains {
             heads: try_boxed_zeroed()?,
             links,
             rolling_hash: 0,
+            spare_steps: SpareSteps::default(),
         })
     }
 
     pub(super) fn clear(&mut self) {
         self.heads.fill(0);
+        self.spare_steps = SpareSteps::default();
     }
 
     /// The same, if nothing has been inserted but what `hashed` has, and not by the rolling hash.
@@ -46,11 +50,12 @@ impl Chains {
         debug_assert!(self.heads.iter().all(|&head| head == 0));
     }
 
-    /// For another stream. The heads have been cleared.
+    /// For what refers to nothing earlier. The heads have been cleared.
     pub(super) fn start_over(&mut self) {
         self.links.truncate(MIN_LINKS);
         self.links.fill(0);
         self.rolling_hash = 0;
+        self.spare_steps = SpareSteps::default();
     }
 
     /// Before positions up to `end` are inserted.
@@ -67,6 +72,7 @@ impl Chains {
         for positions in [self.heads.as_mut_slice(), &mut self.links] {
             subtract_saturating(positions.as_chunks_mut().0, window_size as u16);
         }
+        self.spare_steps.slide(window_size);
     }
 
     #[inline(always)]
@@ -77,6 +83,7 @@ impl Chains {
             link_mask: (link_index(&self.links, usize::MAX) as u16).into(),
             links: &mut self.links,
             rolling_hash: &mut self.rolling_hash,
+            spare_steps: &self.spare_steps,
         }
     }
 }
@@ -128,6 +135,7 @@ pub(super) struct Index<'a> {
     /// So narrow that it takes no step to get from a link to the index of the next.
     link_mask: u32,
     rolling_hash: &'a mut u32,
+    pub(super) spare_steps: &'a SpareSteps,
 }
 
 impl<'a> Index<'a> {
@@ -235,6 +243,24 @@ impl<'a> Index<'a> {
     pub(super) fn restart_rolling_hash(&mut self, position: u32) {
         if let Some(&[first, second, ..]) = self.window.get(position as usize..) {
             *self.rolling_hash = roll(first.into(), second);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn empty_chains_have_all_spare_steps() {
+        let Ok(mut chains) = Chains::new(512) else {
+            return;
+        };
+        for empty in [Chains::clear, Chains::start_over] {
+            chains.spare_steps.spend(0, 9999);
+            assert!(!chains.spare_steps.has_some(0));
+            empty(&mut chains);
+            assert!(chains.spare_steps.has_some(0));
         }
     }
 }

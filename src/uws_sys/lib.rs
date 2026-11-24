@@ -294,6 +294,7 @@ pub mod socket;
 #[cfg(socket_fault_injection)]
 pub mod fault_inject {
     use core::ffi::c_int;
+    use core::sync::atomic::{AtomicI32, Ordering};
 
     pub const RECV: c_int = 0;
     pub const SEND: c_int = 1;
@@ -315,6 +316,8 @@ pub mod fault_inject {
     pub const SESSION_BUFFER: c_int = 12;
     /// Not a syscall: one `SSL_write` call in `us_internal_ssl_writev`.
     pub const SSL_WRITE: c_int = 13;
+    /// Not a syscall: the room for a chunk in the buffer of a `ByteStream`.
+    pub const BYTE_STREAM_BUFFER: c_int = 14;
 
     pub const ACTION_NONE: c_int = 0;
     pub const ACTION_ERRNO: c_int = 1;
@@ -335,8 +338,18 @@ pub mod fault_inject {
     unsafe extern "C" {
         pub fn us_fault_set(syscall: c_int, rule: *const UsFaultRule);
         pub safe fn us_fault_clear_all();
-        pub fn us_fault_hit(syscall: c_int, fd: c_int, out: *mut isize, clamp: *mut c_int)
-        -> c_int;
+        safe static us_fault_armed: AtomicI32;
+        safe fn us_fault_hit(
+            syscall: c_int,
+            fd: c_int,
+            out: &mut isize,
+            clamp: &mut c_int,
+        ) -> c_int;
+    }
+
+    /// `US_FAULT_CHECK` for a hook that has no descriptor.
+    pub fn fails(hook: c_int) -> bool {
+        us_fault_armed.load(Ordering::Acquire) != 0 && us_fault_hit(hook, -1, &mut 0, &mut 0) != 0
     }
 }
 pub use socket::{

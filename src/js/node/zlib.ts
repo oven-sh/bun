@@ -24,7 +24,12 @@ const kMaxLength = $requireMap.$get("buffer")?.exports.kMaxLength ?? BufferModul
 
 const { Transform, finished } = require("node:stream");
 const owner_symbol = Symbol("owner_symbol");
-const { checkRangesOrGetDefault, validateFunction, validateFiniteNumber } = require("internal/validators");
+const {
+  checkRangesOrGetDefault,
+  clampZlibChunkSize,
+  validateFunction,
+  validateFiniteNumber,
+} = require("internal/validators");
 
 const kFlushFlag = Symbol("kFlushFlag");
 const kAfterFlush = Symbol("kAfterFlush");
@@ -269,6 +274,8 @@ function ZlibBase(
       chunkSize = Z_DEFAULT_CHUNK;
     } else if (chunkSize < Z_MIN_CHUNK) {
       throw $ERR_OUT_OF_RANGE("options.chunkSize", `>= ${Z_MIN_CHUNK}`, chunkSize);
+    } else {
+      chunkSize = clampZlibChunkSize(chunkSize);
     }
 
     // prettier-ignore
@@ -457,7 +464,7 @@ function processChunkSync(self: $Node.ZlibBase, chunk: View, flushFlag: number):
   });
 
   while (true) {
-    handle.writeSync(
+    const uncounted = handle.writeSync(
       flushFlag,
       chunk, // in
       inOff, // in_off
@@ -476,7 +483,7 @@ function processChunkSync(self: $Node.ZlibBase, chunk: View, flushFlag: number):
     } else if (self[kError]) throw self[kError];
 
     availOutAfter = state[0];
-    availInAfter = state[1];
+    availInAfter = state[1] + (uncounted ?? 0);
 
     const inDelta = availInBefore - availInAfter;
     inputRead += inDelta;
@@ -546,7 +553,7 @@ function processChunk(self: $Node.ZlibBase, chunk: View, flushFlag: number, cb: 
   );
 }
 
-function processCallback(this: ZlibHandle) {
+function processCallback(this: ZlibHandle, uncounted = 0) {
   // This callback's context (`this`) is the `_handle` (ZCtx) object. It is
   // important to null out the values once they are no longer needed since
   // `_handle` can stay in memory long after the buffer is needed.
@@ -561,7 +568,7 @@ function processCallback(this: ZlibHandle) {
   }
 
   const availOutAfter = state[0];
-  const availInAfter = state[1];
+  const availInAfter = state[1] + uncounted;
 
   const inDelta = handle.availInBefore - availInAfter;
   self.bytesWritten += inDelta;

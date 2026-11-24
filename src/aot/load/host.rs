@@ -97,6 +97,9 @@ const PAGE_NOT_NAMED_AS_ONE: &[u8] =
 const EXTENSIONS_OF_ENTRY_POINT_SOURCES: [&[u8]; 7] =
     [b"ts", b"tsx", b"jsx", b"mjs", b"mts", b"cjs", b"cts"];
 
+/// Octal literals, escapes of 8 and 9, and decimals with leading zeros: `bun run` takes them.
+const ERRORS_OF_TYPESCRIPT_ALONE: [u32; 3] = [1121, 1488, 1489];
+
 fn describe_parse_failure(hir: &hir::File<'_>, text: &[u8]) -> Option<Vec<u8>> {
     let first = syntax_errors_of(hir).next()?;
     let mut sentence = Vec::new();
@@ -1845,8 +1848,10 @@ impl CodeHost for LoadHost<'_> {
                 && !is_from_plugin
                 && loader_named_by_path(&load.loaders, path).is_none());
         let is_entry_point = is_entry_text || self.is_entry_point(path);
-        let fails_where_loaded =
-            load.runs_tests && matches!(served_by, ServedBy::Disk) && !is_from_plugin;
+        let fails_where_loaded = load.runs_tests
+            && matches!(served_by, ServedBy::Disk)
+            && !is_from_plugin
+            && syntax_errors_of(&hir).any(|it| !ERRORS_OF_TYPESCRIPT_ALONE.contains(&it.code));
         let parse_failure = match fails_where_loaded || (is_language_assumed && !is_entry_point) {
             true => describe_parse_failure(&hir, text),
             false => None,

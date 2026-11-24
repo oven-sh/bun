@@ -1564,6 +1564,27 @@ fn base_socket_lookup_falls_back_to_bsp_handle_poll() {
 }
 
 #[test]
+fn base_socket_lookup_tries_every_bsp_handle() {
+    const SIO_BASE_HANDLE: u32 = 0x4800_0022;
+    const SOCKET_ERROR: usize = usize::MAX;
+    let (socket, _peer) = create_socket_pair();
+    let base = socket.as_raw_socket() as usize;
+    for passed_through in [0x4800_001B, 0x4800_001C, 0x4800_001D] {
+        let _lsp = intercept(Call::WSAIoctl, move |args| {
+            let bsp_socket = match args[1] as u32 {
+                SIO_BASE_HANDLE => return Some(SOCKET_ERROR),
+                control_code if control_code == passed_through => base,
+                _ => args[0],
+            };
+            // SAFETY: `args[4]` is `lpvOutBuffer`, which is large enough for a socket.
+            unsafe { ptr::with_exposed_provenance_mut::<usize>(args[4]).write(bsp_socket) };
+            Some(0)
+        });
+        assert_eq!(sys::find_base_socket(base + 4), Ok(base));
+    }
+}
+
+#[test]
 fn cancel_token_runs_closure_when_thread_setup_fails() {
     for call in [Call::OpenThread, Call::CreateEventW] {
         let run = move || {

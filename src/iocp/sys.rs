@@ -173,6 +173,8 @@ fn query_bsp_socket(socket: usize, control_code: DWORD) -> Result<usize, Win32Er
 /// Returns the base provider's socket underneath any layered service providers (LSPs).
 pub(crate) fn find_base_socket(mut socket: usize) -> Result<usize, Win32Error> {
     const SIO_BASE_HANDLE: DWORD = 0x4800_0022;
+    const SIO_BSP_HANDLE: DWORD = 0x4800_001B;
+    const SIO_BSP_HANDLE_SELECT: DWORD = 0x4800_001C;
     const SIO_BSP_HANDLE_POLL: DWORD = 0x4800_001D;
     const MAX_LSP_DEPTH: u32 = 16;
     bun_windows_sys::ws2_32::ensure_started();
@@ -182,11 +184,15 @@ pub(crate) fn find_base_socket(mut socket: usize) -> Result<usize, Win32Error> {
             Err(err @ Win32Error::WSAENOTSOCK) => return Err(err),
             Err(_) => {}
         }
-        // Some LSPs reject `SIO_BASE_HANDLE` but pass this one through, because `select` depends on it.
-        match query_bsp_socket(socket, SIO_BSP_HANDLE_POLL) {
-            Ok(bsp_socket) if bsp_socket != socket => socket = bsp_socket,
-            _ => break,
-        }
+        // Some LSPs reject `SIO_BASE_HANDLE` but pass one of these through.
+        let next_socket = [SIO_BSP_HANDLE_POLL, SIO_BSP_HANDLE_SELECT, SIO_BSP_HANDLE]
+            .into_iter()
+            .filter_map(|control_code| query_bsp_socket(socket, control_code).ok())
+            .find(|&bsp_socket| bsp_socket != socket);
+        let Some(next_socket) = next_socket else {
+            break;
+        };
+        socket = next_socket;
     }
     Ok(socket)
 }

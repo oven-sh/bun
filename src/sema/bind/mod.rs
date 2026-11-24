@@ -615,6 +615,7 @@ impl<'s> Symbols<'s> {
             many: ArenaVec::new_in(arena),
         };
         all.list.reserve_exact(symbols.len() + namespaces);
+        crate::util::prefault(all.list.spare_capacity_mut());
         all.rest.reserve_exact(symbols.len() - plain + namespaces);
         all.many.reserve_exact(many);
         for symbol in symbols {

@@ -12,6 +12,7 @@ mod tests;
 pub(crate) enum Prologue {
     Directives,
     None,
+    NoneInModuleBlock,
 }
 
 #[derive(Copy, Clone)]

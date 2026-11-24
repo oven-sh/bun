@@ -4,7 +4,7 @@
  * Order matters for two reasons:
  *   1. `fetchDeps` relationships — a dep with fetchDeps must come AFTER the
  *      deps it references, so the referenced .ref stamp node exists in ninja
- *      when we add order-only edges to it. (zlib before lsquic.)
+ *      when we add order-only edges to it. (lsqpack before lsquic.)
  *   2. Link order — when these libs hit the final link line, static linking
  *      resolves left-to-right. Deps that PROVIDE symbols should come after
  *      deps that USE them. This list becomes the link order.
@@ -24,21 +24,16 @@ import { rustArgon2 } from "./rust-argon2.ts";
 import { sqlite } from "./sqlite.ts";
 import { tinycc } from "./tinycc.ts";
 import { webkit } from "./webkit.ts";
-import { zlib } from "./zlib.ts";
-import { zstd } from "./zstd.ts";
 
 /**
  * All deps in dependency-resolution + link order.
  *
- * zlib FIRST — lsquic's fetchDeps reference it.
  * boringssl near the end — many things depend on crypto/ssl symbols.
  */
 export const allDeps: readonly Dependency[] = [
   // Header-only first — no link order concerns.
   nodejsHeaders,
 
-  zlib,
-  zstd,
   cares,
   highway,
   libuv,
@@ -73,6 +68,4 @@ export {
   sqlite,
   tinycc,
   webkit,
-  zlib,
-  zstd,
 };

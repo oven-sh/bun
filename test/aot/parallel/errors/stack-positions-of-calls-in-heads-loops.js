@@ -41,6 +41,7 @@ show("for (const a of Array.from(missing)) {}", () => { for (const a of Array.fr
 show("for (const a of [...u]) {}", () => { for (const a of [...u]) {} });
 show("for (const a of holder.a.b) {}", () => { for (const a of holder.a.b) {} });
 show("for (const [a, b] of holder.a.b) {}", () => { for (const [a, b] of holder.a.b) {} });
+show("for (const a of [...missing]) {}", () => { for (const a of [...missing]) {} });
 show("for (const a of nothing.x()) {}", () => { for (const a of nothing.x()) {} });
 show("for (const a in fail()) {}", () => { for (const a in fail()) {} });
 show("for (const a in Object.keys(missing)) {}", () => { for (const a in Object.keys(missing)) {} });

@@ -1,5 +1,6 @@
+use bun_core::strings;
 use bun_js_parser::ImportMetaGlobHost;
-use bun_paths::strings;
+use bun_paths::Path;
 
 use crate::dir_info::DirInfo;
 use crate::package_json::{ESModule, Status};
@@ -73,12 +74,10 @@ impl Resolver<'_> {
 
         let (before, after) =
             strings::split_once_char(original_path, b'*').unwrap_or((original_path, b""));
-        let name_start = strings::last_index_of_any(before, b"/\\").map_or(0, |slash| slash + 1);
-        let mut buf = bun_paths::path_buffer_pool::get();
-        let dir = self.fs_ref().abs_buf_checked(
-            &[tsconfig.abs_base_url_for_paths(), &before[..name_start]],
-            &mut buf[..],
-        )?;
+        let name_start = (before.iter())
+            .rposition(|&byte| bun_paths::is_sep(byte))
+            .map_or(0, |slash| slash + 1);
+        let dir = Path::resolve(&[tsconfig.abs_base_url_for_paths(), &before[..name_start]]);
         Some((
             dir.to_vec(),
             [&before[name_start..], matched_text, after].concat(),
@@ -91,8 +90,7 @@ impl Resolver<'_> {
         glob: &[u8],
     ) -> Option<GlobInDir> {
         let package_json = dir_info.package_json_for_module_type?;
-        // On Windows the target is joined with `\`, which is an escape in a glob. Hide the glob's own
-        // escapes behind `ESCAPE` while resolving, so only the separators become `/`.
+        // Hides the glob's escapes while resolving, so that only the separators become `/`.
         const ESCAPE: u8 = 1;
         let swap = |bytes: &[u8], from: u8, to: u8| -> Vec<u8> {
             let swapped = bytes
@@ -100,11 +98,7 @@ impl Resolver<'_> {
                 .map(|&byte| if byte == from { to } else { byte });
             swapped.collect()
         };
-        let specifier = if cfg!(windows) {
-            swap(glob, b'\\', ESCAPE)
-        } else {
-            glob.to_vec()
-        };
+        let specifier = swap(glob, b'\\', ESCAPE);
         let resolution = ESModule {
             conditions: &self.opts.conditions.import,
             debug_logs: None,
@@ -116,14 +110,10 @@ impl Resolver<'_> {
             Status::Exact | Status::ExactEndsWithStar | Status::Inexact
         )
         .then(|| {
-            let path = if cfg!(windows) {
-                swap(&swap(&resolution.path, b'\\', b'/'), ESCAPE, b'\\')
-            } else {
-                resolution.path.to_vec()
-            };
+            let path = swap(&bun_paths::to_portable(&resolution.path), ESCAPE, b'\\');
             (
                 package_json.source.path.name().dir.to_vec(),
-                strings::without_leading_path_separator(&path).to_vec(),
+                bun_paths::without_leading_sep(&path).to_vec(),
             )
         })
     }

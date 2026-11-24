@@ -106,6 +106,8 @@ pub struct Ast<'a> {
     pub import_meta_ref: Ref,
     /// Output depends on more than the source text (macros, `import.meta.glob`), so don't cache it.
     pub depends_on_more_than_source: bool,
+    /// See `Symbol::is_deferred_require`.
+    pub has_deferred_requires: bool,
 }
 
 // `parts`/`symbols`/`import_records` are now `ArenaVec`s and need an allocator,
@@ -151,6 +153,7 @@ impl<'a> Ast<'a> {
             has_commonjs_export_names: false,
             import_meta_ref: Ref::NONE,
             depends_on_more_than_source: false,
+            has_deferred_requires: false,
         }
     }
 }

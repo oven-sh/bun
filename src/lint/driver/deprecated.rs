@@ -82,7 +82,7 @@ pub(crate) fn write_used(out: &mut Vec<u8>, config: Option<&ResolvedConfig>) {
             }
             Entry::Js(rule) if rule.severity != Severity::Off => {
                 let rule = &*rule.configured.rule;
-                let deprecated = rule.deprecated.as_deref().into_iter();
+                let deprecated = rule.about().deprecated.as_deref().into_iter();
                 deprecated.for_each(|it| write_js(out, rule, it));
             }
             Entry::Formatting(rule) if rule.severity != Severity::Off => write(out, rule.rule),

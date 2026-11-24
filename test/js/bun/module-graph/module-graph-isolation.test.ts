@@ -258,6 +258,36 @@ const dir = String(
       console.log(url ? await fetch(url).then(res => res.text(), () => "closed") : "never listened");
       process.exit(0);
     `,
+    "host-handlers-in-a-later-turn.mjs": `
+      // Past 16 KiB of output that nobody reads, HTMLRewriter holds the rest for a later turn of the event loop.
+      const page = () => new Response(new ReadableStream({ type: "direct", pull(c) {
+        c.write(Buffer.alloc(20_000, "a"));
+        c.write("<b></b><script></script>");
+        c.close();
+      } }));
+      const outcomes = new Set();
+      for (let i = 0; i < 10; i++) {
+        let graph = new Bun.ModuleGraph();
+        const dispose = when => () => void (process.argv[2] === when && graph.dispose());
+        const rewriter = new HTMLRewriter()
+          .on("b", { element: dispose("disposed") })
+          .on("script", { element: e => void e.remove() })
+          .onDocument({ end: dispose("disposed by the last handler") });
+        const response = graph.run(() => rewriter.transform(page()));
+        if (process.argv[2] === "collected") graph = undefined;
+        await null;
+        Bun.gc(true);
+        await new Promise(resolve => setImmediate(resolve));
+        let text = "";
+        try {
+          for await (const chunk of response.body) text += Buffer.from(chunk);
+          outcomes.add(text.slice(20_000));
+        } catch (error) {
+          outcomes.add(error.message);
+        }
+      }
+      console.log([...outcomes].join());
+    `,
     "not-loaded-yet.ts": Array.from(
       { length: 40 },
       (_, i) => `export function f${i}(a: number): number { return a + ${i}; }`,
@@ -3644,6 +3674,16 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
       expect(await runsFixture("rewrite-in-a-later-turn.mjs", tenant, disposed)).toEqual({ stdout, exitCode: 0 });
     },
   );
+  test.each([
+    { graph: "collected", stdout: "<b></b>" },
+    { graph: "disposed", stdout: "The rewriter has been stopped." },
+    { graph: "disposed by the last handler", stdout: "<b></b>" },
+  ])(
+    "HTMLRewriter does not skip the host's handlers when the graph of transform() is $graph",
+    async ({ graph, stdout }) => {
+      expect(await runsFixture("host-handlers-in-a-later-turn.mjs", graph)).toEqual({ stdout, exitCode: 0 });
+    },
+  );
   test("the host's import() of a module parked in a top-level await is left pending: dispose() settles nothing", async () => {
     expect(await runsFixture("host-import-parked-at-dispose.mjs")).toEqual({
       stdout: `{"settled":"pending"}`,
@@ -3994,6 +4034,7 @@ test("ModuleGraph isolation: every property of Bun is classified", () => {
         "deepEquals",
         "deepMatch",
         "deflateSync",
+        "diff",
         "enableANSIColors",
         "escapeHTML",
         "fileURLToPath",
@@ -4107,6 +4148,7 @@ test("ModuleGraph isolation: every node: builtin module is classified", () => {
     bun: "pure",
     // Process-wide on purpose.
     cluster: "host", // forks the whole process
+    diagnostics_channel: "host",
     inspector: "host",
     "inspector/promises": "host",
     process: "host",
@@ -4130,7 +4172,6 @@ test("ModuleGraph isolation: every node: builtin module is classified", () => {
         "buffer",
         "console",
         "constants",
-        "diagnostics_channel",
         "domain",
         "events",
         "module",

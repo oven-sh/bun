@@ -610,6 +610,15 @@ pub(super) fn find_reloadable_files(
     is_reloadable
 }
 
+pub(super) fn is_any_module_mocked(input: &BindInput<'_, '_>) -> bool {
+    let mocks_modules = |file: FileId| {
+        let mut sites = input.files.analysis(file).import_sites.iter();
+        sites.any(|site| matches!(site.kind, ImportSiteKind::MockModule(_)))
+    };
+    let mut files = input.files.compiled_files().iter();
+    files.any(|&file| mocks_modules(file))
+}
+
 #[optimize(size)]
 pub(super) fn find_test_files_that_ask_loader(
     input: &BindInput<'_, '_>,

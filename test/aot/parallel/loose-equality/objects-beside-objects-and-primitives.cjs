@@ -2,14 +2,14 @@
 const kept = [];
 let calls = 0;
 
-function Vector(x, y) {
-  this.x = x;
-  this.y = y;
+function Seat(row, place) {
+  this.place = place;
+  this.row = row;
 }
-Vector.prototype.toString = function () {
-  calls++;
+Seat.prototype.toString = function () {
   kept.push(this);
-  return "[" + this.x + "," + this.y + "]";
+  calls++;
+  return this.row + ":" + this.place;
 };
 
 class Amount {
@@ -33,56 +33,47 @@ class Guarded {
   }
 }
 
-function Node(value) {
-  this.value = value;
-  this.left = null;
-  this.right = null;
-  this.parent = null;
+function Bead(color, before) {
+  this.before = before;
+  this.color = color;
+  this.behind = null;
 }
-Node.prototype.toString = function () {
+Bead.prototype.toString = function () {
   calls += 1000;
-  return "node " + this.value;
+  return "a bead of " + this.color;
 };
 
-function insert(root, value) {
-  let parent = null;
-  let at = root;
-  while (at) {
-    parent = at;
-    at = value < at.value ? at.left : at.right;
-  }
-  const made = new Node(value);
-  made.parent = parent;
-  if (!parent) return made;
-  if (value < parent.value) parent.left = made;
-  else parent.right = made;
-  return root;
+const cord = { first: null, last: null };
+function thread(color) {
+  const bead = new Bead(color, cord.last);
+  if (cord.first == null) cord.first = bead;
+  else cord.last.behind = bead;
+  cord.last = bead;
 }
-
-function isLeftChild(node) {
-  return node.parent != null && node == node.parent.left;
+function marks(bead) {
+  let sum = 0;
+  if (bead == cord.first) sum++;
+  if (cord.last == bead) sum += 10;
+  if (bead.before != null && bead.before.behind != bead) sum += 100;
+  return sum;
 }
 
 function same(a, b) {
   return a == b;
 }
 
-let root = null;
-for (const value of [5, 2, 8, 1, 9, 3, 7]) root = insert(root, value);
-let lefts = 0;
-(function visit(node) {
-  if (node == null) return;
-  if (isLeftChild(node)) lefts++;
-  visit(node.left);
-  visit(node.right);
-})(root);
-console.log(lefts, calls);
+for (const color of [5, 2, 8, 1, 9, 3, 7]) thread(color);
+let ends = 0;
+for (let bead = cord.first; bead != null; bead = bead.behind) ends = ends * 3 + marks(bead);
+cord.first.behind = cord.last;
+for (let bead = cord.last; bead != undefined; bead = bead.before) ends += marks(bead);
+console.log(ends, calls);
 
-const values = [0, 1, -0, NaN, 3n, "", "[1,2]", "3", true, false, null, undefined, Symbol.iterator, "x"];
+const values = [0, 1, -0, NaN, 3n, "", "1:2", "3", true, false, null, undefined, Symbol.iterator, "x"];
 let yes = 0;
 for (let i = 0; i < values.length * 3; i++) {
   const value = values[i % values.length];
-  const objects = [new Vector(1, 2), new Amount(i % 5), new Guarded(i % 4)];
+  const objects = [new Seat(1, 2), new Amount(i % 5), new Guarded(i % 4)];
   for (const object of objects) {
     try {
       if (same(object, value)) yes++;
@@ -95,12 +86,12 @@ for (let i = 0; i < values.length * 3; i++) {
   }
   if (objects[1].asked > 2) yes += 1e9;
 }
-console.log(yes, calls, kept.length, kept[0] === kept[1], kept.every(v => v.x === 1));
-const first = new Vector(7, 8);
+console.log(yes, calls, kept.length, kept[0] === kept[1], kept.every(v => v.row === 1));
+const first = new Seat(7, 8);
 let mixed = first;
 for (let i = 0; i < 6; i++) {
-  if (mixed == (i & 1 ? "[7,8]" : first)) calls += 10000;
-  mixed = i === 3 ? "[7,8]" : first;
+  if (mixed == (i & 1 ? "7:8" : first)) calls += 10000;
+  mixed = i === 3 ? "7:8" : first;
 }
-kept[kept.length - 1].x = 70;
-console.log(calls, first.x, String(first));
+kept[kept.length - 1].row = 70;
+console.log(calls, first.row, String(first));

@@ -1,7 +1,6 @@
 //! The requests of a session, in the order in which the server answers them, and the statements they run.
 
 use core::cell::Cell;
-use core::ops::Deref;
 use std::collections::VecDeque;
 
 use bun_ptr::{JsCell, RefPtr};
@@ -138,7 +137,13 @@ enum Reply {
     Skip,
 }
 
+/// Names a request of a [`Pipeline`]. Only `push` makes one, each greater than the last, so the queue is sorted.
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[must_use]
+pub struct Turn(u64);
+
 pub struct Entry<R, E, C> {
+    turn: Turn,
     pub request: R,
     pub statement: RefPtr<Statement<E, C>>,
     protocol: Protocol,
@@ -148,9 +153,9 @@ pub struct Entry<R, E, C> {
     retried: bool,
 }
 
-impl<R: Deref, E, C> Entry<R, E, C> {
-    fn is(&self, request: &R::Target) -> bool {
-        core::ptr::eq(&raw const *self.request, request)
+impl<R, E, C> Entry<R, E, C> {
+    pub fn turn(&self) -> Turn {
+        self.turn
     }
 
     pub fn keeps_error(&self) -> bool {
@@ -232,6 +237,7 @@ pub enum OnCancel<T> {
 
 pub struct Pipeline<R, E, C> {
     queue: VecDeque<Entry<R, E, C>>,
+    pushed: u64,
     /// How many have their Bind or their Query written: the front of `queue`.
     written: usize,
     pipelining: bool,
@@ -243,10 +249,11 @@ pub struct Pipeline<R, E, C> {
     transaction_status: u8,
 }
 
-impl<R: Deref, E, C> Pipeline<R, E, C> {
+impl<R, E, C> Pipeline<R, E, C> {
     pub fn new(pipelining: bool) -> Self {
         Pipeline {
             queue: VecDeque::new(),
+            pushed: 0,
             written: 0,
             pipelining,
             parsing: false,
@@ -255,12 +262,20 @@ impl<R: Deref, E, C> Pipeline<R, E, C> {
         }
     }
 
-    pub fn push(&mut self, request: R, statement: RefPtr<Statement<E, C>>, protocol: Protocol) {
+    pub fn push(
+        &mut self,
+        request: R,
+        statement: RefPtr<Statement<E, C>>,
+        protocol: Protocol,
+    ) -> Turn {
         if let Protocol::Simple = protocol {
             // The Query message stands for its Parse.
             statement.state.set(State::Parsing { stored: false });
         }
+        let turn = Turn(self.pushed);
+        self.pushed += 1;
         self.queue.push_back(Entry {
+            turn,
             request,
             statement,
             protocol,
@@ -268,6 +283,7 @@ impl<R: Deref, E, C> Pipeline<R, E, C> {
             reply: Reply::Deliver,
             retried: false,
         });
+        turn
     }
 
     pub fn pop(&mut self) -> Option<Entry<R, E, C>> {
@@ -301,15 +317,23 @@ impl<R: Deref, E, C> Pipeline<R, E, C> {
         self.transaction_status != b'I' || self.head().is_ok_and(Entry::is_rejected)
     }
 
-    pub fn is_live(&self, request: &R::Target) -> bool {
-        let entry = self.queue.iter().find(|entry| entry.is(request));
-        entry.is_some_and(|entry| !entry.is_rejected())
+    /// `None`: it has left the queue.
+    fn find(&mut self, turn: Turn) -> Option<(usize, &mut Entry<R, E, C>)> {
+        let position = self.queue.partition_point(|it| it.turn.0 < turn.0);
+        let entry = self.queue.get_mut(position).filter(|it| it.turn == turn)?;
+        Some((position, entry))
+    }
+
+    /// `None`: it has left the queue, or user code has seen it rejected.
+    pub fn live(&mut self, turn: Turn) -> Option<&R> {
+        let (_, entry) = self.find(turn)?;
+        (!entry.is_rejected()).then_some(&entry.request)
     }
 
     /// What the backend is at work on.
-    pub fn running(&self, request: &R::Target) -> Option<&Entry<R, E, C>> {
+    pub fn running(&self, turn: Turn) -> Option<&Entry<R, E, C>> {
         let head = self.queue.front();
-        head.filter(|head| head.is(request) && !matches!(head.stage, Stage::Queued))
+        head.filter(|head| head.turn == turn && !matches!(head.stage, Stage::Queued))
     }
 
     /// `None` too while a CancelRequest that is owed or on its way could stop it by mistake.
@@ -350,8 +374,8 @@ impl<R: Deref, E, C> Pipeline<R, E, C> {
     }
 
     /// `false`: user code ran meanwhile and it is not its turn any more. What was written has to go.
-    pub fn wrote(&mut self, request: &R::Target, step: Step) -> bool {
-        let its_turn = self.unwritten().is_some_and(|next| next.is(request));
+    pub fn wrote(&mut self, turn: Turn, step: Step) -> bool {
+        let its_turn = self.unwritten().is_some_and(|next| next.turn == turn);
         let Some(entry) = self.queue.get_mut(self.written).filter(|_| its_turn) else {
             return false;
         };
@@ -369,25 +393,21 @@ impl<R: Deref, E, C> Pipeline<R, E, C> {
         true
     }
 
-    pub fn unqueue(&mut self, request: &R::Target) -> Option<Entry<R, E, C>> {
-        let mut unwritten = self.queue.iter().skip(self.written);
-        let position = unwritten.position(|entry| entry.is(request))?;
-        self.queue.remove(self.written + position)
+    pub fn unqueue(&mut self, turn: Turn) -> Option<Entry<R, E, C>> {
+        let written = self.written;
+        let (position, _) = self.find(turn).filter(|(it, _)| *it >= written)?;
+        self.queue.remove(position)
     }
 
-    /// `true`: the host rejects it now. It keeps its place until its ReadyForQuery.
-    pub fn reject(&mut self, request: &R::Target) -> bool {
-        let Some(entry) = self.queue.iter_mut().find(|entry| entry.is(request)) else {
-            return false;
-        };
+    /// `Some`: the host rejects it now. It keeps its place until its ReadyForQuery.
+    pub fn reject(&mut self, turn: Turn) -> Option<&R> {
+        let (_, entry) = self.find(turn)?;
         entry.reply = match entry.reply {
             Reply::Deliver | Reply::Cancelling => Reply::Skip,
             Reply::OwesCancel { rejected: false } => Reply::OwesCancel { rejected: true },
-            Reply::OwesCancel { rejected: true } | Reply::FailAtReady | Reply::Skip => {
-                return false;
-            }
+            Reply::OwesCancel { rejected: true } | Reply::FailAtReady | Reply::Skip => return None,
         };
-        true
+        Some(&entry.request)
     }
 
     /// The request that a result belongs to. `None`: nobody waits for it.
@@ -399,9 +419,10 @@ impl<R: Deref, E, C> Pipeline<R, E, C> {
         Ok((!head.is_rejected()).then_some(head))
     }
 
-    pub fn on_result(&mut self) -> Result<(), AnyPostgresError> {
-        self.head_mut()?.stage = Stage::Answered;
-        Ok(())
+    pub fn on_result(&mut self) -> Result<&R, AnyPostgresError> {
+        let head = self.head_mut()?;
+        head.stage = Stage::Answered;
+        Ok(&head.request)
     }
 
     pub fn on_parse_complete(&mut self) -> Result<(), AnyPostgresError> {
@@ -515,9 +536,8 @@ impl<R: Deref, E, C> Pipeline<R, E, C> {
         Some((head, OnError::Fail { keep_error, cached }))
     }
 
-    pub fn cancel(&mut self, request: &R::Target) -> Option<OnCancel<Entry<R, E, C>>> {
-        let mut entries = self.queue.iter_mut().enumerate();
-        let (position, entry) = entries.find(|(_, entry)| entry.is(request))?;
+    pub fn cancel(&mut self, turn: Turn) -> Option<OnCancel<Entry<R, E, C>>> {
+        let (position, entry) = self.find(turn)?;
         let rejected = match entry.reply {
             Reply::Deliver | Reply::Cancelling => false,
             Reply::OwesCancel { rejected } => rejected,
@@ -535,11 +555,11 @@ impl<R: Deref, E, C> Pipeline<R, E, C> {
 
     /// A CancelRequest stops whatever the backend is at work on: none goes out while somebody waits for a written request.
     #[inline]
-    pub fn to_stop(&self) -> Option<&R> {
+    pub fn to_stop(&self) -> Option<Turn> {
         let head = self.queue.front()?;
         let mut written = self.queue.iter().take(self.written);
         (head.owes_cancel() && !self.cancel_in_flight && written.all(Entry::owes_cancel))
-            .then_some(&head.request)
+            .then_some(head.turn)
     }
 
     pub fn on_cancel_dialed(&mut self) {

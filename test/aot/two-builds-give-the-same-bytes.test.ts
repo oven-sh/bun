@@ -14,17 +14,17 @@ const numberOfFunctions = 150;
 
 function search(index: number): string {
   return `
-function search${index}(code: number, map: readonly number[], a: number, b: number, c: number, d: number, e: number, f: number): number {
-  let lo = ${index % 3}, hi = map.length, mid = 0;
+function search${index}(code: number, ends: readonly number[], a: number, b: number, c: number, d: number, e: number, f: number): number {
+  let first = ${index % 3}, behind = ends.length >> 1, asked = 0;
   const s0 = a * b, s1 = b * c, s2 = c * d, s3 = d * e, s4 = e * f, s5 = f * a, s6 = a + c, s7 = b + d;
-  while (lo + 1 < hi) {
-    mid = lo + (hi - lo) / 2;
-    mid -= mid % 2;
-    if (map[mid] <= code && code <= map[mid + 1]) return s0 + s1 + s2 + s3 + s4 + s5 + s6 + s7 + mid;
-    if (code < map[mid]) hi = mid;
-    else lo = mid + 2;
+  while (first < behind) {
+    const between = (first + behind) >>> 1;
+    asked += 0.5;
+    if (code > ends[between * 2 + 1]) first = between + 1;
+    else if (code < ends[between * 2]) behind = between;
+    else return s0 + s1 + s2 + s3 + s4 + s5 + s6 + s7 + between;
   }
-  return s0 - s1 + s2 - s3 + s4 - s5 + s6 - s7 + lo + hi + ${index};
+  return s0 - s1 + s2 - s3 + s4 - s5 + s6 - s7 + first + behind + asked + ${index};
 }
 total += search${index}(${index % 50}, map, 1.5, 2.5, 3.5, ${index}, 5.5, 6.5);
 `;

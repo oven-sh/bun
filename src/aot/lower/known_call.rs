@@ -1,6 +1,6 @@
 use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{
-    Binding, BindingInitializer, Decl, InitialState, Parent, ScopeId, StoreKind, SymbolId,
+    Binding, BindingInitializer, Decl, FnOwner, InitialState, Parent, ScopeId, StoreKind, SymbolId,
 };
 use bun_sema::check::aot::{FunctionRef, ObjectMemberKind};
 use bun_sema::hir::{
@@ -911,6 +911,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             self.builder.throw(thrown);
             self.continue_in(on_object.taken);
             object = self.claim_operand_kind(on_object.taken_value, OperandKind::Object);
+        } else if self.builder.this_value() != Some(object) {
+            // `this` of a derived class is read out of a variable that is empty until `super()` answers, and it always answers with an object.
+            object = self.claim_operand_kind(object, OperandKind::Object);
         }
         let has = self.emit_has(object, key);
         self.builder
@@ -1793,6 +1796,46 @@ impl FileLowering<'_, '_, '_, '_> {
 
 fn is_lowered(file: &FileLowering<'_, '_, '_, '_>, home: FileId) -> bool {
     file.inputs.files[home.idx()].is_some()
+}
+
+/// It is never made: it stands in a file, a function or a declaration that the executable leaves out.
+pub(in crate::lower) fn is_left_out(
+    file: &FileLowering<'_, '_, '_, '_>,
+    home: FileId,
+    function: FnId,
+) -> bool {
+    if !is_lowered(file, home) {
+        return true;
+    }
+    let functions = file.inputs.library_functions;
+    let declarations = functions.left_out_declarations();
+    let bound = file.queries.files().bound(home);
+    let is_node_left_out = |node: Parent| match node {
+        Parent::FnBody(function) => functions.is_left_out(FunctionRef {
+            file: home,
+            function,
+        }),
+        Parent::Stmt(statement) => declarations.is_statement_left_out(home, statement),
+        Parent::VarInit(declarator) => declarations.is_declarator_left_out(home, declarator),
+        _ => false,
+    };
+    let mut nodes = core::iter::successors(Some(Parent::FnBody(function)), |&node| match node {
+        Parent::Expr(expression) => Some(bound.parent_of_expr(expression)),
+        Parent::Prop(property) => {
+            let literal = bound.prop_owner[property.idx()].some()?;
+            Some(bound.parent_of_expr(literal))
+        }
+        Parent::Stmt(statement) => Some(bound.parent_of_stmt(statement)),
+        Parent::VarInit(declarator) => Some(Parent::Stmt(bound.var_stmt[declarator.idx()])),
+        Parent::Case(case) => Some(Parent::Stmt(bound.case_stmt[case.idx()])),
+        Parent::FnBody(function) => match bound.fns[function.idx()].owner {
+            FnOwner::Expr(written) => Some(bound.parent_of_expr(written)),
+            FnOwner::Stmt(statement) => Some(bound.parent_of_stmt(statement)),
+            FnOwner::None | FnOwner::Member(_) | FnOwner::Type(_) => None,
+        },
+        _ => None,
+    });
+    nodes.any(is_node_left_out)
 }
 
 fn is_plain_call(file: &FileLowering<'_, '_, '_, '_>, site: Call) -> bool {

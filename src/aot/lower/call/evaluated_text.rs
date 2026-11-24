@@ -1,9 +1,8 @@
 use bun_sema::atom::{Atom, known};
-use bun_sema::bind::{Binding, Decl, ScopeId, ScopeKind};
+use bun_sema::bind::{Binding, BindingKind, Decl, ScopeId, ScopeKind};
 use bun_sema::fold::Constant;
 use bun_sema::hir::{
-    CallId, ExprId, ExprKind, FnKind, GlobalCode, KnownEvaluation, NodeData, PatId,
-    ReplacedEvaluation,
+    CallId, ExprId, ExprKind, FnKind, GlobalCode, KnownEvaluation, NodeData, ReplacedEvaluation,
 };
 use rustc_hash::FxHashMap;
 
@@ -111,10 +110,10 @@ impl FileLowering<'_, '_, '_, '_> {
                     Decl::Fn(function) => Some(hir[*function].start),
                     _ => None,
                 });
+                // An initializer may store into a catch parameter of that name. The variable is there all the same.
+                let is_variable = bound.binding_kind(symbol) == BindingKind::Var;
                 let of_variable = decls().find_map(|decl| match decl {
-                    Decl::Var(pattern) if self.is_global_variable(*pattern) => {
-                        Some(hir[*pattern].pos)
-                    }
+                    Decl::Var(pattern) if is_variable => Some(hir[*pattern].pos),
                     _ => None,
                 });
                 let position = of_function.or(of_variable)?;
@@ -123,10 +122,6 @@ impl FileLowering<'_, '_, '_, '_> {
             .collect();
         globals.sort_unstable_by_key(|it| it.0);
         globals.into_iter().map(|it| (it.1, it.2)).collect()
-    }
-
-    fn is_global_variable(&self, pattern: PatId) -> bool {
-        self.bound.initialized_binding(pattern) == Binding::Free
     }
 }
 

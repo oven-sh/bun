@@ -52,7 +52,6 @@ fn run(ctx: Context<'_>, origin: RequestOrigin) -> Result<(), crate::Error> {
     ctx.args.target = Some(api::Target::Bun);
     compile_options::check_build_conflicts(&ctx, origin);
     compile_options::note_options_without_effect(&ctx);
-    ctx.bundler_options.bytecode = false;
     ctx.bundler_options.output_format = Format::Esm;
     ctx.bundler_options.compile_target = CompileTarget::default();
 

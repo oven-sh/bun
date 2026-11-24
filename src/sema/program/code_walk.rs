@@ -30,7 +30,7 @@ use crate::import_sites::{
 use crate::module_format::ModuleFormat;
 use crate::resolve::{
     CodeHost, CodeRead, DeclaredSideEffects, EnclosingPackage, FinishedFile, HostPayload,
-    ParsedFile, TranspileSettings, is_declaration_file_name,
+    ParsedFile, TranspileSettings, basename, is_declaration_file_name,
 };
 use bun_threading::guarded::GuardedLock;
 use bun_threading::{Condvar, Mutex};
@@ -1887,8 +1887,7 @@ fn find_texts_of_other_files<'s>(
             is_library: false,
             host_values: analyzed.host_values,
             jsx: analyzed.jsx_mode,
-            own_name: (context.session.arena())
-                .alloc_slice_copy(bun_paths::basename_posix(holder.target.key.path)),
+            own_name: (context.session.arena()).alloc_slice_copy(basename(holder.target.key.path)),
         };
         let (hir, bound) = (&holding.parse.hir, &holding.parse.bound);
         let (decisions, fold) = (&analyzed.analysis.decisions, context.inputs.fold);

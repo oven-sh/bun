@@ -49,31 +49,19 @@ impl Request {
     pub fn set_yield(&mut self, yield_: bool) {
         c::uws_req_set_yield(self, yield_)
     }
+    pub fn parsed(&self) -> &bun_http1::request::Request<'_> {
+        // SAFETY: http1.rs lent it to the handler that has `self` on its stack.
+        unsafe { &*c::uws_req_get_parsed(self).cast() }
+    }
     pub fn url(&self) -> &[u8] {
-        let mut ptr: *const u8 = core::ptr::null();
-        let len = c::uws_req_get_url(self, &mut ptr);
-        // SAFETY: ptr/len describe a valid slice owned by the request for its lifetime;
-        // ffi::slice tolerates the (null, 0) shape uWS returns when no URL is present.
-        unsafe { bun_core::ffi::slice(ptr, len) }
+        self.parsed().target()
     }
     pub fn method(&self) -> &[u8] {
-        let mut ptr: *const u8 = core::ptr::null();
-        let len = c::uws_req_get_method(self, &mut ptr);
-        // SAFETY: ptr/len describe a valid slice owned by the request for its lifetime;
-        // ffi::slice tolerates the (null, 0) shape uWS returns when no method is present.
-        unsafe { bun_core::ffi::slice(ptr, len) }
+        self.parsed().lowercase_method()
     }
     pub fn header(&self, name: &[u8]) -> Option<&[u8]> {
         debug_assert!(name[0].is_ascii_lowercase());
-
-        let mut ptr: *const u8 = core::ptr::null();
-        // SAFETY: uws_req_get_header writes a pointer into request-owned storage and returns its length
-        let len = unsafe { c::uws_req_get_header(self, name.as_ptr(), name.len(), &raw mut ptr) };
-        if len == 0 {
-            return None;
-        }
-        // SAFETY: ptr/len describe a valid slice owned by the request for its lifetime
-        Some(unsafe { bun_core::ffi::slice(ptr, len) })
+        self.parsed().field(name).filter(|value| !value.is_empty())
     }
     /// The parser's verdict on the Transfer-Encoding header, the one that
     /// selects chunked body framing. `header(b"transfer-encoding")` sees only
@@ -81,7 +69,7 @@ impl Request {
     /// with the framing for "Transfer-Encoding:" followed by
     /// "Transfer-Encoding: chunked".
     pub fn has_transfer_encoding(&self) -> bool {
-        c::uws_req_has_transfer_encoding(self)
+        self.parsed().has_transfer_encoding()
     }
     pub fn parameter(&self, index: u16) -> &[u8] {
         let mut ptr: *const u8 = core::ptr::null();
@@ -94,26 +82,18 @@ impl Request {
 
 mod c {
     use super::Request;
-    use core::ffi::c_ushort;
+    use core::ffi::{c_ushort, c_void};
 
     unsafe extern "C" {
         pub(super) safe fn uws_req_set_yield(res: &mut Request, yield_: bool);
+        pub(super) safe fn uws_req_get_parsed(res: &Request) -> *const c_void;
         // Out-param `dest` is a `&mut *const u8` (non-null, valid for write); the C
         // shim only stores a pointer into request-owned storage and returns its
         // length — no read-through-ptr precondition, so `safe fn`.
-        pub(super) safe fn uws_req_get_url(res: &Request, dest: &mut *const u8) -> usize;
-        pub(super) safe fn uws_req_get_method(res: &Request, dest: &mut *const u8) -> usize;
-        pub(super) fn uws_req_get_header(
-            res: *const Request,
-            lower_case_header: *const u8,
-            lower_case_header_length: usize,
-            dest: *mut *const u8,
-        ) -> usize;
         pub(super) safe fn uws_req_get_parameter(
             res: &Request,
             index: c_ushort,
             dest: &mut *const u8,
         ) -> usize;
-        pub(super) safe fn uws_req_has_transfer_encoding(res: &Request) -> bool;
     }
 }

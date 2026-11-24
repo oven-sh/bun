@@ -56,6 +56,8 @@ The `"workspaces"` key in the root `package.json` lists the subdirectories to tr
 
 A negative pattern removes what the globs match, wherever it is in the list. `!dir/**` removes `dir` and everything below it. A negative pattern does not remove a directory that is listed by its path. `bun run --filter` and `--workspaces` skip the excluded packages too.
 
+An entry without a `/` can separate directories with backslashes, so `"packages\\*"` is the same as `"packages/*"`. On macOS and Linux, a backslash before a bracket, or in a glob that has a `/`, escapes the next character, as in `"apps/\\[id\\]/*"`.
+
 Each workspace has its own `package.json`. To reference another package in the monorepo, use a semver range or the workspace protocol (for example `workspace:*`) as the version in your `package.json`.
 
 ```json packages/pkg-a/package.json icon="file-json"

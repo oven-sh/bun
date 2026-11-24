@@ -1,6 +1,4 @@
 use bun_core::strings;
-use bun_paths::platform::Posix;
-use bun_paths::resolve_path::dirname;
 use bun_sema::atom::{Atom, number_to_string};
 use bun_sema::bind::{Binding, BindingInitializer, CommonJsVariable, SymbolId};
 use bun_sema::fold::{Constant, FoldedValue};
@@ -8,7 +6,7 @@ use bun_sema::hir::{
     BinOp, Branches, CallId, ExprId, ExprKind, MemberKey, NodeData, PropKey, PropKind,
 };
 use bun_sema::import_sites::{ImportSpecifier, find_values_of_parameter};
-use bun_sema::resolve::FinishedFile;
+use bun_sema::resolve::{FinishedFile, parent_directory};
 use bun_sema::util::FxHashSet;
 
 use super::{
@@ -377,7 +375,7 @@ impl ContentsScan<'_, '_> {
             CommonJsVariable::Filename => Some(file),
             CommonJsVariable::Dirname => {
                 let folder = find_folder(&with_separators_of_program(&file))?.to_vec();
-                Some(with_separators_of_host(&folder, cfg!(windows)))
+                Some(bun_paths::to_native(&folder).into_owned())
             }
             CommonJsVariable::Require | CommonJsVariable::Module | CommonJsVariable::Exports => {
                 None
@@ -500,7 +498,7 @@ impl ContentsScan<'_, '_> {
         }
         let path = (self.input.find_path_at_run_time)(self.levels_above_root).ok()?;
         let path = with_separators_of_program(&path);
-        let folder = dirname::<Posix>(&path).to_vec();
+        let folder = parent_directory(&path).to_vec();
         write_file_url(&resolve_paths(&[folder, name.to_vec()])?)
     }
 
@@ -550,7 +548,7 @@ impl ContentsScan<'_, '_> {
         match name {
             b"path" | b"filename" => Some(path),
             b"dir" | b"dirname" => {
-                let folder = dirname::<Posix>(&with_slashes);
+                let folder = parent_directory(&with_slashes);
                 Some(with_separators_of_host(folder, sees_backslashes))
             }
             b"url" => write_file_url(&with_slashes),

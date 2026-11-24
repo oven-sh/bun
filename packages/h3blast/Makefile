@@ -15,7 +15,7 @@ CFLAGS    := -std=c11 -O3 -g -Wall -Wextra -Wno-unused-parameter \
              -I$(VENDOR)/boringssl/include
 LDFLAGS   := -lstdc++ -lm -lpthread
 
-DEPS      := lsquic lsqpack boringssl zlib
+DEPS      := lsquic lsqpack boringssl
 DEP_DIRS  := $(addprefix $(OBJ)/,$(DEPS))
 LIBDEPS   := build/libdeps.a
 

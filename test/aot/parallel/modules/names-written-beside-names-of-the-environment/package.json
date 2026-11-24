@@ -1,0 +1,6 @@
+{
+  "name": "pond",
+  "private": true,
+  "imports": { "#nest": "./birds/nest.cjs", "#deep/*": "./birds/deep/*.cjs", "#wing": "./birds/wing.mjs" },
+  "exports": { "./egg": "./birds/egg.cjs", "./wing": { "import": "./birds/wing.mjs" } }
+}

@@ -1,39 +1,16 @@
-// lodash's compareMultiple: the comparator of sort() passes it records that the file which imports it makes.
 // STATISTIC: ImporterRecordsSpeculated >= 1
-import compareMultiple from "./compare.mjs";
-let reads = 0;
-function sortBy(list, names, orders) {
-  return list.map((value, index) => ({ criteria: names.map(name => value[name]), index, value })).sort((a, b) => compareMultiple(a, b, orders)).map(entry => entry.value);
+// A file orders records that the file which imports it makes: no other layout of the program has every name it asks for. Records of other shapes, getters and nothing at all come to it too.
+import { heavierFirst, heaviest, timesAsked } from "./by-weight.mjs";
+const recordOf = (i, size) => ({ place: i, weight: (i * 29) % size, depth: (i * 7) % 5 + 0.5, label: "n" + i });
+const ways = ["weight", "depth"], evenFirst = ["even", "weight"];
+const said = list => list.map(record => (record && record.label) || String(record)).join();
+for (const size of [7, 13, 50]) {
+  const list = Array.from({ length: 50 }, (_, i) => recordOf(i, size));
+  console.log(said(list.slice().sort((left, right) => heavierFirst(left, right, ways))), said(list.slice().sort((left, right) => heavierFirst(left, right, evenFirst))), heaviest(list, ways).label);
 }
-const items = Array.from({ length: 50 }, (_, k) => ({ a: ((k * 37) % 91) + 0.5, b: "s" + (k % 17), c: k % 4 }));
-console.log(sortBy(items, ["a"], []).map(x => x.a).join());
-console.log(sortBy(items, ["c", "b"], ["desc"]).map(x => x.c + x.b).join());
-
-// What else the comparator may pass.
-const [criteria, index] = JSON.parse('["criteria", "index"]');
-const make = (...pairs) => Object.fromEntries(pairs);
-const sorted = list => list.sort((a, b) => compareMultiple(a, b, [])).map(x => String(x[index])).join();
-console.log(sorted([make([index, 3], [criteria, [2]]), make([index, 1], [criteria, [2]], ["more", 1]), make([criteria, [1]], [index, 2], ["value", 0])]));
-console.log(sorted(JSON.parse('[{"criteria":[3],"index":0},{"criteria":[1,2],"index":1},{"criteria":"b","index":2}]')));
-class Entry {
-  constructor(k) {
-    this[criteria] = [k % 3];
-    this[index] = k;
-  }
-}
-console.log(sorted([0, 1, 2, 3, 4].map(k => new Entry(k))));
-const watched = k => Object.defineProperty(make([index, k]), criteria, { get() { reads++; return [-k]; } });
-console.log(sorted([watched(1), watched(3), watched(2)]), reads);
-const proxied = k => new Proxy(make([criteria, [k & 1]], [index, k]), { get: (target, key) => (reads++, target[key]) });
-console.log(sorted([proxied(1), proxied(2), proxied(3), proxied(4)]), reads);
-console.log(sorted([Object.setPrototypeOf(make([index, 8]), make([criteria, [5]])), Object.setPrototypeOf(make([criteria, [4]]), make([index, 9]))]));
-const changed = make([criteria, [1]], [index, 0], ["value", 1]);
-delete changed[index];
-console.log(sorted([changed, Object.freeze(make([criteria, [1]], [index, 1], ["value", 2]))]));
-for (const list of [[null, make([criteria, []], [index, 0])], [make([criteria, []], [index, 0]), undefined, 1], [1, 2], [{}, {}], [make([index, 1]), make([criteria, [1]], [index, 2])]]) {
-  try {
-    console.log(sorted(list));
-  } catch (error) {
-    console.log(error.constructor.name);
-  }
-}
+const madeOf = (...pairs) => Object.fromEntries(pairs);
+const others = [madeOf(["weight", 3], ["depth", 1], ["place", 0], ["label", "made"]), madeOf(["label", "fewer"], ["weight", 3]), Object.create(recordOf(4, 5)), Object.defineProperty(recordOf(9, 50), "weight", { get() { return 5; } }), recordOf(4, 50), Object.assign([], recordOf(1, 3)), Object.assign(new Map(), recordOf(2, 3)), JSON.parse('{"weight":"3","depth":1,"place":2,"label":"read"}')];
+console.log(said(others.slice().sort((left, right) => -heavierFirst(left, right, ways))), heaviest(others, evenFirst).label);
+const changed = Array.from({ length: 10 }, (_, i) => recordOf(i, 5)); delete changed[3].weight; changed[5].weight = 1.25; changed[7].depth = "0.5"; Object.freeze(changed[8]); console.log(said(changed.sort((left, right) => heavierFirst(left, right, ways))));
+for (const bad of [null, undefined]) { try { heaviest([recordOf(1, 5), bad], ways); } catch (error) { console.log(error.constructor.name); } }
+console.log(heavierFirst(5, "text", ways), heavierFirst(recordOf(1, 5), true, ["depth"]), heavierFirst(recordOf(3, 5), recordOf(1, 5), []), timesAsked());

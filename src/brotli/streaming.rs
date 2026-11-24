@@ -3,8 +3,9 @@ use bun_core::vec::append_with;
 
 const MIN_OUTPUT_ROOM: usize = 4096;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
 enum State {
+    #[default]
     NotStarted,
     Inflating,
     Finished,
@@ -12,18 +13,10 @@ enum State {
 }
 
 /// Decodes a body that arrives in chunks.
+#[derive(Default)]
 pub struct StreamingDecoder {
     decoder: Decoder,
     state: State,
-}
-
-impl Default for StreamingDecoder {
-    fn default() -> Self {
-        Self {
-            decoder: Decoder::with_large_window(),
-            state: State::NotStarted,
-        }
-    }
 }
 
 impl StreamingDecoder {

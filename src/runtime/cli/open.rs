@@ -3,7 +3,7 @@ use std::io::Write as _;
 use bun_core::Global;
 use bun_core::{ZStr, strings};
 use bun_dotenv as dot_env;
-use bun_paths::{self, MAX_PATH_BYTES, PathBuffer};
+use bun_paths::{self, MAX_PATH_BYTES, Path};
 use bun_resolver::fs as Fs;
 use bun_which::which;
 
@@ -80,15 +80,10 @@ impl Editor {
         None
     }
 
-    fn by_path_for_editor<'a>(
-        env: &mut dot_env::Loader,
-        editor: Editor,
-        buf: &'a mut PathBuffer,
-        cwd: &[u8],
-    ) -> Option<&'a [u8]> {
+    fn by_path_for_editor(env: &mut dot_env::Loader, editor: Editor, cwd: &[u8]) -> Option<Path> {
         let path_env = env.get(b"PATH")?;
         let bin_name = BIN_NAME[editor].filter(|name| !name.is_empty())?;
-        which(buf, path_env, cwd, bin_name).map(|bin| bin.as_bytes())
+        which(path_env, cwd, bin_name)
     }
 
     fn by_fallback_path_for_editor(editor: Editor) -> Option<&'static [u8]> {
@@ -102,23 +97,14 @@ impl Editor {
     }
 
     /// Looks in `PATH` first, then in the usual install locations.
-    fn find<'a>(
-        env: &mut dot_env::Loader,
-        editor: Editor,
-        buf: &'a mut PathBuffer,
-        cwd: &[u8],
-    ) -> Option<&'a [u8]> {
-        Self::by_path_for_editor(env, editor, buf, cwd)
-            .or_else(|| Self::by_fallback_path_for_editor(editor))
+    fn find(env: &mut dot_env::Loader, editor: Editor, cwd: &[u8]) -> Option<Path> {
+        Self::by_path_for_editor(env, editor, cwd)
+            .or_else(|| Self::by_fallback_path_for_editor(editor).map(Path::from))
     }
 
-    fn by_fallback<'a>(
-        env: &mut dot_env::Loader,
-        buf: &'a mut PathBuffer,
-        cwd: &[u8],
-    ) -> Option<(Editor, &'a [u8])> {
+    fn by_fallback(env: &mut dot_env::Loader, cwd: &[u8]) -> Option<(Editor, Path)> {
         for &editor in &DEFAULT_PREFERENCE_LIST {
-            if let Some(path) = Self::find(env, editor, buf, cwd) {
+            if let Some(path) = Self::find(env, editor, cwd) {
                 return Some((editor, path));
             }
         }
@@ -387,13 +373,12 @@ impl EditorContext {
             return;
         }
 
-        let mut buf = bun_paths::path_buffer_pool::get();
         let cwd = Fs::FileSystem::get().top_level_dir();
 
         // "vscode"
         if !self.name.is_empty()
             && let Some(editor_) = Editor::by_name(bun_paths::basename(&self.name))
-            && let Some(path) = Editor::find(env, editor_, &mut buf, cwd)
+            && let Some(path) = Editor::find(env, editor_, cwd)
         {
             self.editor = Some(editor_);
             self.path = path.to_vec();
@@ -402,7 +387,7 @@ impl EditorContext {
 
         // EDITOR=code
         if let Some(editor_) = Editor::detect(env)
-            && let Some(path) = Editor::find(env, editor_, &mut buf, cwd)
+            && let Some(path) = Editor::find(env, editor_, cwd)
         {
             self.editor = Some(editor_);
             self.path = path.to_vec();
@@ -410,7 +395,7 @@ impl EditorContext {
         }
 
         // Don't know, so we will just guess based on what exists
-        if let Some((editor_, path)) = Editor::by_fallback(env, &mut buf, cwd) {
+        if let Some((editor_, path)) = Editor::by_fallback(env, cwd) {
             self.editor = Some(editor_);
             self.path = path.to_vec();
             return;

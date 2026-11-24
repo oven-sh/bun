@@ -29,7 +29,7 @@ use crate::builtins::{
 use crate::ir::{InParallel, filter_each, for_each_mut};
 use crate::load::Sources;
 use crate::load::contents::load_names::find_library_modules_that_unknown_names_may_stand_for;
-use crate::load::runtime_roots::uses_of_what_start_reads;
+use crate::load::runtime_roots::{find_roads_by_module_objects, uses_of_what_start_reads};
 use crate::load::sources::{ParsedSource, SourceKind, parsed_source};
 use crate::lower::{LeftOutDeclarations, collect_library_functions};
 use crate::modules::{Candidates, ModuleGraph, ModuleRef, SiteAnswer};
@@ -165,27 +165,45 @@ pub(crate) struct KeptCodeInput<'a, 's> {
     pub runs_tests: bool,
 }
 
+fn text_of_function(application: &Files<'_>, file: FileId, function: FnId) -> Option<Range<u32>> {
+    let hir = application.hir(file);
+    let end = match application.bound(file).fns[function.idx()].owner {
+        FnOwner::Expr(expression) => hir[expression].end,
+        FnOwner::Stmt(statement) => hir[statement].loc.end,
+        FnOwner::Member(member) => hir[member].loc.end,
+        FnOwner::Type(_) | FnOwner::None => return None,
+    };
+    let start = match hir[function].kind {
+        FnKind::Arrow => hir[function].text_start,
+        _ => hir[function].anchor,
+    };
+    Some(start..end)
+}
+
+fn find_texts_of_inner_modules(input: &KeptCodeInput<'_, '_>, file: FileId) -> Vec<Range<u32>> {
+    let callbacks = input.graph.inner_modules(file).iter();
+    let mut texts: Vec<Range<u32>> = callbacks
+        .filter_map(|&callback| text_of_function(input.application, file, callback))
+        .collect();
+    texts.shared_sort_unstable_by_key(|text| text.start);
+    texts
+}
+
 fn find_texts_left_out(input: &KeptCodeInput<'_, '_>) -> FxHashMap<FileId, Vec<Range<u32>>> {
     let mut texts: FxHashMap<FileId, Vec<Range<u32>>> = FxHashMap::default();
     for &FunctionRef { file, function } in input.left_out_functions {
         let hir = input.application.hir(file);
-        let end = match input.application.bound(file).fns[function.idx()].owner {
-            FnOwner::Expr(expression) => hir[expression].end,
-            FnOwner::Stmt(statement) => hir[statement].loc.end,
-            FnOwner::Member(member) => hir[member].loc.end,
-            FnOwner::Type(_) | FnOwner::None => continue,
-        };
+        let text = text_of_function(input.application, file, function);
         let mut modifiers =
             (hir[function].params.iter()).flat_map(|it| hir.param_modifiers(it).iter());
         if modifiers.any(|it| matches!(hir[it].kind, ModifierKind::Decorator(_))) {
             continue;
         }
-        let start = match hir[function].kind {
-            FnKind::Arrow => hir[function].text_start,
-            _ => hir[function].anchor,
-        };
-        texts.entry(file).or_default().push(start..end);
+        if let Some(text) = text {
+            texts.entry(file).or_default().push(text);
+        }
     }
+    let mut inner_modules: FxHashMap<FileId, Vec<Range<u32>>> = FxHashMap::default();
     for (file, declarator) in input.left_out_declarations.declarators_left_out() {
         let hir = input.application.hir(file);
         let kind = hir[declarator].kind;
@@ -197,7 +215,22 @@ fn find_texts_left_out(input: &KeptCodeInput<'_, '_>) -> FxHashMap<FileId, Vec<R
         };
         if !matches!(hir[initializer].kind, ExprKind::Class(_)) {
             let text = hir[initializer].pos..hir[initializer].end;
-            texts.entry(file).or_default().push(text);
+            let inner_modules = inner_modules
+                .entry(file)
+                .or_insert_with(|| find_texts_of_inner_modules(input, file));
+            let first = inner_modules.partition_point(|inner| inner.start < text.start);
+            let left_out = texts.entry(file).or_default();
+            let mut start = text.start;
+            for inner in &inner_modules[first..] {
+                if inner.end > text.end {
+                    break;
+                }
+                if start <= inner.start {
+                    left_out.push(start..inner.start);
+                    start = inner.end;
+                }
+            }
+            left_out.push(start..text.end);
         }
     }
     texts
@@ -1451,6 +1484,7 @@ impl<'a, 's> Walk<'a, 's> {
             }
         }
         if !(self.input.holds_what_unseen_code_finds || self.input.can_load_code_at_run_time) {
+            asks.roads_to_namespaces |= find_roads_by_module_objects(application);
             self.reach_uses(&RuntimeUses::of_asks(&asks, self.input.platform));
         }
         let modules =

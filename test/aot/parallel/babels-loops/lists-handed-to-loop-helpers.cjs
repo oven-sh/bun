@@ -19,31 +19,28 @@ globalThis.evaluated = new Function("f", "return f" + (process.argv.length > 100
     }
     throw new TypeError("Invalid attempt to iterate non-iterable instance.");
   }
-  function Path(node) { this.node = node; this.state = null; this.flags = 0; }
-  Path.prototype.call = function (key) { return exports._call.call(this, this.state[key]); };
-  function _call(fns) {
-    if (!fns) return false;
-    for (var _iterator = _createForOfIteratorHelperLoose(fns), _step; !(_step = _iterator()).done;) {
-      var fn = _step.value;
-      if (!fn) continue;
-      var node = this.node;
-      if (!node) return true;
-      var ret = fn.call(this.state, this, this.state);
-      if (ret) throw new Error("Unexpected return value");
-      if (this.node !== node) return true;
-      if (this.flags > 0) return true;
+  function Stall(goods) { this.goods = goods; this.day = null; this.shut = 0; }
+  Stall.prototype.serve = function (hour) { return exports._serve.call(this, this.day[hour]); };
+  function _serve(clerks) {
+    if (!clerks) return "nobody";
+    var served = 0;
+    for (var _iterator = _createForOfIteratorHelperLoose(clerks), _step; !(_step = _iterator()).done;) {
+      var clerk = _step.value;
+      if (typeof clerk === "function") served += clerk(this.goods, this) ? 2 : 1;
+      else served -= 1;
+      if (this.shut === 1) return "shut behind " + served;
     }
-    return false;
+    return served;
   }
-  exports._call = _call;
-  exports.Path = Path;
+  exports._serve = _serve;
+  exports.Stall = Stall;
 })(exports);
 let calls = 0;
-const state = { enter: [function () { calls++; }, null, function (path) { calls += path.node.weight; }], exit: new Set([function (path) { path.flags = calls % 7 === 0 ? 1 : 0; }]), none: undefined, text: "" };
+const day = { morning: [function () { calls++; }, null, function (goods) { calls += goods.weight; }], evening: new Set([function (goods, stall) { stall.shut = calls % 7 === 0 ? 1 : 0; return stall.goods === goods; }]), none: undefined, text: "" };
 let stopped = 0;
 for (let k = 0; k < 4000; k++) {
-  const path = new globalThis.evaluated.Path({ weight: k & 3 });
-  path.state = state;
-  for (const key of ["enter", "exit", "none", "text"]) if (path.call(key)) stopped++;
+  const stall = new globalThis.evaluated.Stall({ weight: k & 3 });
+  stall.day = day;
+  for (const hour of ["morning", "evening", "none", "text"]) { const told = stall.serve(hour); stopped += typeof told === "string" ? told.length : told; }
 }
 console.log(calls, stopped);

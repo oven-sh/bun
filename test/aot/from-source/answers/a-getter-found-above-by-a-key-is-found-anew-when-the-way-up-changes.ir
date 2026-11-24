@@ -1,28 +1,25 @@
 # -- source: a-getter-found-above-by-a-key-is-found-anew-when-the-way-up-changes.js
-# function hand(holder, target, name) { holder.__defineGetter__(name, function () { return this[target][name]; }); }
-# const names = ["size", "color", "weight", "shade"];
-# const top = {};
-# for (const name of names) Object.defineProperty(top, name, { get() { return name + " of " + this.tag; }, configurable: true });
-# const between = Object.create(top);
-# const front = {};
-# for (const name of names) hand(front, "part", name);
-# function make(tag) { const part = Object.create(between); part.tag = tag; const whole = Object.create(front); whole.part = part; return whole; }
-# function readAll(whole) { let text = ""; for (const name of names) text += String(whole[name]) + ";"; return text; }
-# const kept = make("kept");
-# function warm() { for (let round = 0; round < 30; round++) { readAll(kept); readAll(make("other")); } }
-# warm(); print(readAll(kept));
-# Object.defineProperty(top, "size", { get() { return "a new getter, " + this.tag; } });
-# print(readAll(kept)); warm();
-# delete top.color; top.filler = "fills the room";
-# print(readAll(kept)); warm();
-# Object.defineProperty(between, "weight", { value: "hidden in between", configurable: true });
-# print(readAll(kept)); warm();
-# Object.setPrototypeOf(between, { get shade() { return "from elsewhere, " + this.tag; } });
-# print(readAll(kept)); warm();
-# Object.defineProperty(kept.part, "shade", { value: "its own" });
-# print(readAll(kept), readAll(make("last")));
+# const signs = ["size", "color", "weight", "shade"];
+# const guild = {};
+# for (const sign of signs) Object.defineProperty(guild, sign, { get() { return sign + " of " + this.tag; }, configurable: true });
+# const craft = Object.create(guild);
+# class Stall { constructor(tag) { const ware = Object.create(craft); ware.tag = tag; this.shelf = [ware]; } shown(sign) { return this.shelf[0][sign]; } }
+# function cries(stall) { let text = ""; for (const sign of signs) text += String(stall.shown(sign)) + ";"; return text; }
+# const kept = new Stall("kept"), ware = kept.shelf[0];
+# function warm() { for (let round = 0; round < 30; round++) { cries(kept); cries(new Stall("other")); } }
+# warm(); print(cries(kept));
+# Object.defineProperty(guild, "size", { get() { return "a new getter, " + this.tag; } });
+# print(cries(kept)); warm();
+# delete guild.color; guild.filler = "fills the room";
+# print(cries(kept)); warm();
+# Object.defineProperty(craft, "weight", { value: "hidden in between", configurable: true });
+# print(cries(kept)); warm();
+# Object.setPrototypeOf(craft, { get shade() { return "from elsewhere, " + this.tag; } });
+# print(cries(kept)); warm();
+# Object.defineProperty(ware, "shade", { value: "its own" });
+# print(cries(kept), cries(new Stall("last")));
 # -- end of source
-# One closure body reads `this[target][name]` for many names, and the second read finds a getter two objects above the receiver. The stub that reads by key remembers the word that holds the accessor, under the key's cell and the
+# One body reads `this.shelf[0][sign]` for many names, and the read finds a getter two objects above the receiver. The stub that reads by key remembers the word that holds the accessor, under the key's cell and the
 # receiver's structure, and forgets it with all that says absence as soon as an object on some way up changes: the getter defined anew, taken away, hidden in between, the way up relinked, the receiver given its own.
 # RUN: run-in-shell
 # CHECK: size of kept;color of kept;weight of kept;shade of kept;

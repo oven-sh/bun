@@ -1841,6 +1841,68 @@ describe.skipIf(isWindows)("cache directory", () => {
     });
   });
 
+  // Node.js refuses to import a module whose real path contains a backslash.
+  it.concurrent.each([
+    ["HOME", (dir: string) => ({ HOME: dir })],
+    ["XDG_CACHE_HOME", (dir: string) => ({ XDG_CACHE_HOME: dir })],
+    ["BUN_INSTALL", (dir: string) => ({ BUN_INSTALL: dir })],
+    ["BUN_INSTALL_CACHE_DIR", (dir: string) => ({ BUN_INSTALL_CACHE_DIR: dir })],
+    ["TMPDIR", (dir: string) => ({ HOME: undefined, USERPROFILE: undefined, TMPDIR: dir, BUN_TMPDIR: dir })],
+  ])("a backslash separates in %s", async (_, variables) => {
+    using registry = await localRegistry({
+      name: "tool",
+      version: "1.0.0",
+      bin: { tool: "cli.mjs" },
+      files: { "cli.mjs": `#!/usr/bin/env node\nconsole.log("module ran");\n` },
+    });
+    using box = sandbox(registry, { cwd: { "package.json": "{}" }, home: { "DOMAIN\\user": {} } });
+    const env = { ...box.env, ...variables(join(box.home, "DOMAIN\\user")) };
+
+    expect(await box.run(["tool"], { env })).toMatchObject({ stdout: "module ran\n", exitCode: 0 });
+    expect(bunxEntries(join(box.home, "DOMAIN", "user"))).not.toEqual([]);
+    expect(bunxEntries(box.tmp)).toEqual([]);
+
+    const cleared = await box.run(["cache", "rm"], { bunx: [bunExe(), "pm"], env });
+    expect(cleared.stdout).toContain("Cleared 1 cached 'bunx' packages");
+    expect(bunxEntries(box.home)).toEqual([]);
+    expect(cleared.exitCode).toBe(0);
+  });
+
+  it.concurrent(
+    "falls back to the temp directory when HOME has a backslash and its parent isn't writable",
+    async () => {
+      using registry = await localRegistry({
+        name: "tool",
+        version: "1.0.0",
+        bin: { tool: "cli.mjs" },
+        files: { "cli.mjs": `#!/usr/bin/env node\nconsole.log("module ran");\n` },
+      });
+      using box = sandbox(registry, { home: { "DOMAIN\\user": {} } });
+      using unprivileged = unprivilegedSpawnOptions(box.dir);
+      chmodSync(box.home, 0o555);
+
+      const env = { ...box.env, HOME: join(box.home, "DOMAIN\\user") };
+      const result = await box.run(["tool"], { env, ...unprivileged });
+      chmodSync(box.home, 0o755);
+      expect(result.stderr).toContain("warn: no usable private cache directory, installing into shared temp directory");
+      expect(result).toMatchObject({ stdout: "module ran\n", exitCode: 0 });
+    },
+  );
+
+  it.concurrent("bun pm cache rm deletes nothing where it refuses to clear", async () => {
+    using box = sandbox(undefined, {
+      cwd: { "package.json": "{}" },
+      home: { "DOMAIN\\user": {}, [`DOMAIN/user/.bunx-${uid}`]: { "tool@latest": {} } },
+    });
+    const HOME = join(box.home, "DOMAIN\\user");
+
+    const env = { ...box.env, HOME, BUN_INSTALL_CACHE_DIR: HOME };
+    const result = await box.run(["cache", "rm"], { bunx: [bunExe(), "pm"], env });
+    expect(result.stderr).toContain("refusing to clear");
+    expect(readdirSync(join(box.home, "DOMAIN", "user", `.bunx-${uid}`))).toEqual(["tool@latest"]);
+    expect(result.exitCode).toBe(1);
+  });
+
   // The install that bunx spawns runs in the tree, and is told which directory that is.
   it.concurrent("a relative temp directory works like an absolute one", async () => {
     using registry = await localRegistry(...toolWithDep());
@@ -2920,6 +2982,23 @@ describe("a package in node_modules", () => {
     });
   });
 
+  it.concurrent.skipIf(isWindows)("after an install, a native bin with a colon in its name", async () => {
+    using registry = await localRegistry(
+      { name: "mytool-native", version: "1.0.0", ...anyPlatform, files: { "build:all": echoBin("native") } },
+      {
+        name: "mytool",
+        version: "1.0.0",
+        bin: { mytool: "bin/build:all" },
+        files: { "bin/build:all": echoBin("stub") },
+        optionalDependencies: { "mytool-native": "1.0.0" },
+      },
+    );
+    const app = { name: "app", dependencies: { mytool: "1.0.0" }, nativeDependencies: ["mytool"] };
+    using box = sandbox(registry, { cwd: { "package.json": JSON.stringify(app) } });
+    expect(await box.run(["--linker=hoisted"], { bunx: [bunExe(), "install"] })).toMatchObject({ exitCode: 0 });
+    expect(join(box.cwd, "node_modules", ".bin", "mytool")).toBeValidBin(join("..", "mytool-native", "build:all"));
+  });
+
   // `other-dep` comes before the platform package in the dependencies, and is the name of a folder above the project
   // too. `nativeDependencies` has the name of the package, which is not the name of its folder under an alias.
   it.concurrent.todoIf(isWindows).each([
@@ -3132,21 +3211,24 @@ describe("a package in node_modules", () => {
     });
   });
 
-  it.concurrent("is found in the workspace root from a member", async () => {
-    using box = sandbox(undefined, {
-      cwd: {
-        "package.json": JSON.stringify({ name: "root", workspaces: ["packages/*"] }),
-        "packages/member/package.json": JSON.stringify({ name: "member" }),
-      },
-    });
-    addLocalPackage(box.cwd, "@corp/cli", "1.0.0", "corp");
+  it.concurrent.each(["packages/*", "packages\\*"])(
+    "is found in the workspace root from a member of %s",
+    async entry => {
+      using box = sandbox(undefined, {
+        cwd: {
+          "package.json": JSON.stringify({ name: "root", workspaces: [entry] }),
+          "packages/member/package.json": JSON.stringify({ name: "member" }),
+        },
+      });
+      addLocalPackage(box.cwd, "@corp/cli", "1.0.0", "corp");
 
-    expect(await box.run(["--no-install", "@corp/cli"], { cwd: join(box.cwd, "packages", "member") })).toMatchObject({
-      stdout: "corp of @corp/cli 1.0.0\n",
-      stderr: "",
-      exitCode: 0,
-    });
-  });
+      expect(await box.run(["--no-install", "@corp/cli"], { cwd: join(box.cwd, "packages", "member") })).toMatchObject({
+        stdout: "corp of @corp/cli 1.0.0\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
 
   // Reading an empty package.json ends the process.
   it.concurrent("the other members of the workspace are not read", async () => {

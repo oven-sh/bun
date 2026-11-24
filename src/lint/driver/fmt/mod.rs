@@ -20,9 +20,11 @@ use crate::run::{Environment, Fatal, Outcome, Pool};
 use crate::{fs, git, paths};
 use bstr::BStr;
 use bun_collections::index_sort::sort_slice_by;
+use bun_core::env_var::feature_flag;
 use bun_core::strings;
 use bun_format::options::{Code, Goal, ParsePart, PartError, Then};
 use bun_format::pragma::BeforeParsing;
+use bun_format::settled::Verdict;
 use bun_format::syntax_error::SyntaxError;
 use bun_format::tailwind::Tailwind;
 use bun_format::verify::Program;
@@ -43,12 +45,13 @@ use bun_sema_parser::Summary;
 use bun_threading::Guarded;
 use cli::{LogLevel, Options};
 pub(crate) use config::duplicated_mapping_key;
-use config::{Configs, Flavor, Resolved};
-use files::{Expanded, Ignored, Kind, Language, Target};
+use config::{Configs, Flavor, May, Resolved};
+use files::{Expanded, Ignored, Kind, Language, Target, When};
 pub use for_rules::ForRules;
 use std::borrow::Cow;
 use std::io::Write;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::thread::ThreadId;
 use std::time::{Duration, Instant};
 
 macro_rules! pretty {
@@ -455,6 +458,11 @@ fn syntax_error_at(text: &[u8], SyntaxError(message, offset): SyntaxError) -> Pr
 #[derive(Default)]
 struct Scratches {
     js: Scratch,
+    settled: bun_format::settled::Scratch,
+    /// What's already formatted is formatted too.
+    ignores_settled: bool,
+    /// What the last result that didn't need the whole file formatted was made from.
+    verdict: Option<Verdict>,
     json: bun_format::json::Scratch,
     css: bun_format::css::Scratch,
     graphql: bun_format::graphql::Scratch,
@@ -464,6 +472,8 @@ struct Scratches {
     yaml: bun_format::yaml::Scratch,
     markdown: bun_format::markdown::Scratch,
     verify: bun_format::verify::Scratch,
+    /// Of the last file that was read before the search had ended.
+    hash_of_text: u64,
     /// For code blocks in Markdown.
     blocks: Option<Box<Scratches>>,
     /// Warnings about the last formatted file. They don't stop it from being formatted.
@@ -842,6 +852,24 @@ fn format(
         }
         false => text,
     };
+    if !is_flow
+        && !resolved.omits_final_newline
+        && !scratch.ignores_settled
+        && feature_flag::BUN_FEATURE_FLAG_DISABLE_SETTLED_FORMAT::get() != Some(true)
+    {
+        let how = How {
+            path,
+            is_script: script_modes(name).first() == Some(&true),
+            is_flow,
+            resolved,
+            verifies,
+            atoms,
+            memory,
+        };
+        if let Some(out) = format_unsettled(&how, &text, scratch) {
+            return Ok((out, None));
+        }
+    }
     let mut first_failure = None;
     for &is_script in script_modes(name) {
         let how = How {
@@ -859,6 +887,37 @@ fn format(
         }
     }
     Err(first_failure.unwrap_or(Failure::Bug))
+}
+
+/// Formats only the statements of `text` that aren't known to be formatted. Returns `None` if the whole file has to be
+/// formatted.
+fn format_unsettled(how: &How, text: &[u8], scratch: &mut Scratches) -> Option<Vec<u8>> {
+    let options = &how.resolved.options;
+    let verdict = bun_format::settled::check(how.path, text, options, &mut scratch.settled);
+    let out = match verdict {
+        Verdict::Formatted => Some(text.to_vec()),
+        Verdict::Unknown => None,
+        Verdict::Reduced => {
+            let resolved = Resolved {
+                options: FormatOptions {
+                    is_reduced: true,
+                    ..options.clone()
+                },
+                ..*how.resolved
+            };
+            let how = How {
+                resolved: &resolved,
+                ..*how
+            };
+            let settled = std::mem::take(&mut scratch.settled);
+            let out = (format_as(&how, settled.reduced(), scratch).ok())
+                .and_then(|(out, _)| settled.restore(text, &out, &scratch.js));
+            scratch.settled = settled;
+            out
+        }
+    }?;
+    scratch.verdict = Some(verdict);
+    Some(out)
 }
 
 fn print<'a>(
@@ -987,29 +1046,91 @@ pub fn format_for_tests(
     text: &[u8],
     options: &FormatOptions,
 ) -> Result<(Vec<u8>, Option<u32>), FormatFailure> {
-    let resolved = Resolved {
-        options: FormatOptions {
-            format_javascript: Some(format_block),
-            parse_javascript: Some(parse_javascript),
-            parse_parts: Some(parse_parts),
-            ..options.clone()
-        },
-        formats_recoverable_errors: true,
-        ..Resolved::default()
+    let run = |text: &[u8], options: &FormatOptions, ignores_settled: bool| {
+        let resolved = Resolved {
+            options: FormatOptions {
+                format_javascript: Some(format_block),
+                parse_javascript: Some(parse_javascript),
+                parse_parts: Some(parse_parts),
+                ..options.clone()
+            },
+            formats_recoverable_errors: true,
+            ..Resolved::default()
+        };
+        let names = Session::new();
+        let mut scratch = Scratches {
+            ignores_settled,
+            ..Scratches::default()
+        };
+        let atoms = Interner::new_in(&names);
+        format(path, text, &resolved, (&atoms, &names), &mut scratch, false)
     };
-    let names = Session::new();
-    format(
-        path,
-        text,
-        &resolved,
-        (&Interner::new_in(&names), &names),
-        &mut Scratches::default(),
-        false,
-    )
-    .map_err(|failure| match failure {
+    let formatted = run(text, options, true).map_err(|failure| match failure {
         Failure::Syntax(_) | Failure::Unread(_) => FormatFailure::Syntax,
         Failure::Bug | Failure::Changed(_) => FormatFailure::Bug,
-    })
+    });
+    // `bun_format::settled` has the printers' rules a second time.
+    let mut settled = bun_format::settled::Scratch::default();
+    let mut agrees = |text: &[u8], options: &FormatOptions| {
+        bun_format::settled::check(path, text, options, &mut settled) == Verdict::Unknown
+            || run(text, options, false).ok() == run(text, options, true).ok()
+    };
+    let output = formatted.as_ref().map_or(text, |it| &it.0);
+    let width = options.line_width.value();
+    let widths = [
+        width,
+        width.saturating_sub(9),
+        width.saturating_add(9),
+        width / 2,
+    ];
+    let does_agree = agrees(text, options)
+        && widths.into_iter().all(|width| {
+            let mut options = options.clone();
+            let width = format!("{width}");
+            options.set(b"printWidth", width.as_bytes()).is_err() || agrees(output, &options)
+        });
+    match does_agree {
+        true => formatted,
+        false => Err(FormatFailure::Bug),
+    }
+}
+
+/// For the tests of `bun_format::settled`
+#[derive(Default)]
+pub struct BothWaysForTests(Scratches);
+
+impl BothWaysForTests {
+    /// Returns its verdict, and what `bun fmt` prints with and without it.
+    pub fn format(
+        &mut self,
+        path: &[u8],
+        text: &[u8],
+        options: &FormatOptions,
+    ) -> (Verdict, Option<Vec<u8>>, Option<Vec<u8>>) {
+        let resolved = Resolved {
+            options: FormatOptions {
+                format_javascript: Some(format_block),
+                parse_javascript: Some(parse_javascript),
+                parse_parts: Some(parse_parts),
+                ..options.clone()
+            },
+            ..Resolved::default()
+        };
+        let names = Session::new();
+        let atoms = Interner::new_in(&names);
+        let mut run = |ignores_settled: bool| {
+            (self.0.ignores_settled, self.0.verdict) = (ignores_settled, None);
+            let done = format(path, text, &resolved, (&atoms, &names), &mut self.0, false);
+            (done.ok().map(|it| it.0), self.0.verdict)
+        };
+        let (printed, verdict) = run(false);
+        let formatted = match verdict {
+            Some(_) => run(true).0,
+            None => printed.clone(),
+        };
+        let verdict = verdict.unwrap_or(Verdict::Unknown);
+        (verdict, printed, formatted)
+    }
 }
 
 /// Returns one line per comment in the file at `path`, with the node that owns it. With `only_unprinted`, lists only
@@ -1060,6 +1181,8 @@ enum Done {
     Unchanged,
     /// It isn't formatted, or wasn't until this run wrote it. Holds how long that took.
     Different(Duration),
+    /// The same, with what is written once the search for files has succeeded.
+    Unwritten(Unwritten),
     /// Skipped: neither formatted nor written. See [`git::Files::is_partly_staged`].
     PartlyStaged,
     /// It has Tailwind CSS classes whose order isn't known yet.
@@ -1068,6 +1191,32 @@ enum Done {
     Failed(Vec<u8>),
     /// Also exits with 2.
     NotFormatted(Failure),
+}
+
+struct Unwritten {
+    formatted: Vec<u8>,
+    took: Duration,
+}
+
+/// The size of all [`Done::Unwritten`]. Further files are formatted again.
+const MAX_UNWRITTEN_BYTES: usize = 64 << 20;
+
+/// The result for one file, with the warnings about it.
+type Finished = (Done, Vec<Problem>);
+
+/// What a thread has allocated, for [`Pool::free_before_exit`].
+type UsedScratches = Guarded<Vec<(ThreadId, Box<Scratches>)>>;
+
+struct BorrowedScratches<'a> {
+    scratch: Option<Box<Scratches>>,
+    used: &'a UsedScratches,
+}
+
+impl Drop for BorrowedScratches<'_> {
+    fn drop(&mut self) {
+        let thread = std::thread::current().id();
+        (self.used.lock()).extend(self.scratch.take().map(|it| (thread, it)));
+    }
 }
 
 struct Run<'r> {
@@ -1085,8 +1234,17 @@ struct Run<'r> {
 
 /// Classifies the file at `path`, in `scope`, the way the tool this run emulates would.
 fn language_of(configs: &Configs, scope: &config::Scope, path: &[u8]) -> Language {
+    language_with(configs.parser_for(scope, path), configs, scope, path)
+}
+
+fn language_with(
+    parser: Option<Box<[u8]>>,
+    configs: &Configs,
+    scope: &config::Scope,
+    path: &[u8],
+) -> Language {
     // The `parser` option decides. A parser that Prettier doesn't have belongs to a plugin.
-    match configs.parser_for(scope, path) {
+    match parser {
         Some(parser) if &*parser == b"svelte" && !configs.formats_svelte(scope, Some(path)) => {
             Language::Other
         }
@@ -1637,6 +1795,12 @@ impl Run<'_> {
                 self.log(b"");
             }
         }
+        // Has to come before the first parallel region. The pool's threads have enough stack to walk a tree as deep as a parser
+        // allows.
+        bun_sema_driver::use_dedicated_pool("Bun Format");
+        if options.threads == 0 {
+            bun_sema_driver::start_threads_gradually(false);
+        }
         let pool = Pool::new(options.threads);
         let dot = [b".".to_vec()];
         let patterns = if options.patterns.is_empty() {
@@ -1644,6 +1808,166 @@ impl Run<'_> {
         } else {
             &options.patterns[..]
         };
+        let scratches = UsedScratches::new(Vec::new());
+        let names: Vec<Session> = (0..pool.threads().max(1)).map(|_| Session::new()).collect();
+        let atoms = InternerPerThread::new_in(&names);
+        let memory = Session::new();
+        // Tailwind can't be asked and `--allow-unsupported` permits that, so classes stay unsorted.
+        let skips_class_sorting = AtomicBool::new(false);
+        let written_files = fs::WrittenFiles::default();
+        // A file with several hard links is overwritten in place. A thread reading it through another link at the same
+        // time could see partial text and write that back. So each link is locked from its read to its write. The lock
+        // is picked by inode modulo 32, so unrelated files occasionally wait for each other.
+        let link_locks: [Guarded<()>; 32] = Default::default();
+        let lock_for = |target: &Target| {
+            let linked = target.linked.filter(|_| !is_read_only);
+            linked.map(|(_, inode)| link_locks[inode as usize % link_locks.len()].lock())
+        };
+        let write = |target: &Target, formatted: &[u8], began: Instant, before: Duration| {
+            match fs::write_atomically(&written_files, cwd, &target.path, formatted) {
+                Ok(()) => Done::Different(before + began.elapsed()),
+                Err(why) => {
+                    let name = paths::relative(cwd, &target.path);
+                    Done::Failed([b"Unable to write file \"", &name[..], b"\":\n", &why].concat())
+                }
+            }
+        };
+        let unwritten_bytes = AtomicUsize::new(0);
+        // Leaves the warnings in `scratch`. `None` if it's to be called again with `may_write`.
+        let format_target =
+            |target: &Target, mut options: Resolved, scratch: &mut Scratches, may_write: bool| {
+                let _link_lock = lock_for(target);
+                let began = Instant::now();
+                let failure = |start: &[u8], why: &[u8]| {
+                    let display_name = paths::relative(cwd, &target.path);
+                    Some(Done::Failed([start, &display_name, b"\":\n", why].concat()))
+                };
+                if skips_class_sorting.load(Ordering::Relaxed) {
+                    options.options.tailwind = None;
+                }
+                let kind = Kind::with_options(&target.path, &options.options);
+                tailwind::only_where_sorted(&mut options.options, kind);
+                let text = match git::read(only.as_ref(), &target.path) {
+                    Ok(text) => text,
+                    Err(_) if !may_write => return None,
+                    Err(error) => return failure(b"Unable to read file \"", &fs::describe(&error)),
+                };
+                if !may_write {
+                    scratch.hash_of_text = bun_wyhash::hash(&text);
+                }
+                let formatted = format(
+                    &target.path,
+                    &text,
+                    &options,
+                    (&atoms, &memory),
+                    scratch,
+                    self.options.debug_check,
+                );
+                let formatted = match formatted {
+                    Ok((formatted, _)) => formatted,
+                    Err(failure) => {
+                        scratch.warnings.clear();
+                        return Some(Done::NotFormatted(failure));
+                    }
+                };
+                if (options.options.tailwind.as_deref()).is_some_and(Tailwind::has_missed) {
+                    scratch.warnings.clear();
+                    return Some(Done::Deferred);
+                }
+                if formatted == text {
+                    return Some(Done::Unchanged);
+                }
+                if !is_read_only {
+                    if is_partly_staged(target) {
+                        return Some(Done::PartlyStaged);
+                    }
+                    if may_write {
+                        return Some(write(target, &formatted, began, Duration::ZERO));
+                    }
+                    let size = formatted.len();
+                    let kept = unwritten_bytes.fetch_add(size, Ordering::Relaxed);
+                    if kept + size > MAX_UNWRITTEN_BYTES {
+                        unwritten_bytes.fetch_sub(size, Ordering::Relaxed);
+                        scratch.warnings.clear();
+                        return None;
+                    }
+                    return Some(Done::Unwritten(Unwritten {
+                        formatted,
+                        took: began.elapsed(),
+                    }));
+                }
+                Some(Done::Different(began.elapsed()))
+            };
+        let is_included = |ignored: &Ignored, target: &Target| match target.is_named {
+            true => !ignored.ignores_file(&target.path, configs.config_ignores(&target.scope)),
+            // Without a Prettier or oxfmt config, minified code and lock files are only formatted when they're named.
+            false => !(files::is_generated(&target.path) && configs.is_native_in(&target.scope)),
+        };
+        let missing_plugins = |target: &'_ Target| match options.allow_unsupported {
+            true => false,
+            false => !(configs.missing_plugins(&target.scope, Some(&target.path))).is_empty(),
+        };
+        let size_meanwhile = AtomicU64::new(0);
+        let meanwhile = files::Meanwhile {
+            when: &|target| {
+                if files::is_generated(&target.path) && configs.is_native_in(&target.scope) {
+                    return When::Never;
+                }
+                let (scope, path) = (&*target.scope, &target.path[..]);
+                let language = match configs.may_set_parser(scope) {
+                    true => (configs.sound_options_for(scope, path, May::Nothing))
+                        .map_or(Language::Other, |it| {
+                            language_with(it.options.parser, configs, scope, path)
+                        }),
+                    false => language_with(None, configs, scope, path),
+                };
+                match language {
+                    Language::Supported if target.linked.is_some() || missing_plugins(target) => {
+                        When::AfterSearch
+                    }
+                    Language::Supported => When::Now,
+                    Language::Unknown if target.ignores_unknown || options.ignore_unknown => {
+                        When::Never
+                    }
+                    Language::Unknown | Language::Other => When::AfterSearch,
+                }
+            },
+            start: &|| {
+                let mut borrowed = BorrowedScratches {
+                    scratch: Some(Box::default()),
+                    used: &scratches,
+                };
+                let format_target = &format_target;
+                let size = &size_meanwhile;
+                Box::new(move |target, has_search_succeeded| {
+                    let may = match has_search_succeeded {
+                        true => May::ReadFiles,
+                        false => May::Nothing,
+                    };
+                    let options = configs.sound_options_for(&target.scope, &target.path, may);
+                    let (Some(options), Some(scratch)) = (options, &mut borrowed.scratch) else {
+                        return true;
+                    };
+                    size.fetch_add(target.size, Ordering::Relaxed);
+                    let done = format_target(target, options, scratch, has_search_succeeded);
+                    if done.is_some() && !has_search_succeeded {
+                        target.hash_of_text = Some(scratch.hash_of_text);
+                    }
+                    match done {
+                        Some(Done::Unchanged) if scratch.warnings.is_empty() => false,
+                        done => {
+                            let warnings = std::mem::take(&mut scratch.warnings);
+                            target.done = done.map(|it| Box::new((it, warnings)));
+                            true
+                        }
+                    }
+                })
+            },
+            has_left_out_files: AtomicBool::new(false),
+            unchanged: AtomicUsize::new(0),
+        };
+        let needs_all_files =
+            only.is_some() || self.modules.is_some() || options.list_files || options.debug_check;
         let started = Instant::now();
         let expand = match configs.flavor {
             Flavor::Prettier => files::expand,
@@ -1655,6 +1979,7 @@ impl Run<'_> {
             ignored,
             patterns,
             options.error_on_unmatched_pattern,
+            (!needs_all_files).then_some(&meanwhile),
         ) {
             Ok(expanded) => expanded,
             Err(Fatal(error)) => return self.fail_to_start(configs.flavor, &error),
@@ -1677,11 +2002,20 @@ impl Run<'_> {
         let mut others: Vec<(&[u8], usize)> = Vec::new();
         // How many files are skipped because of plugins that `bun fmt` doesn't include, and those plugins' names.
         let mut left_for_plugins: (usize, Vec<&[u8]>) = (0, Vec::new());
-        let is_included = |target: &Target| match target.is_named {
-            true => !ignored.ignores_file(&target.path, configs.config_ignores(&target.scope)),
-            // Without a Prettier or oxfmt config, minified code and lock files are only formatted when they're named.
-            false => !(files::is_generated(&target.path) && configs.is_native_in(&target.scope)),
-        };
+        // Keyed by the file's index in `expanded`.
+        let mut warnings: Guarded<Vec<(usize, Vec<Problem>)>> = Guarded::new(Vec::new());
+        let mut done: Vec<Option<Done>> = (expanded.iter_mut().enumerate())
+            .map(|(index, it)| {
+                let Expanded::File(target) = it else {
+                    return None;
+                };
+                let (done, all) = *target.done.take()?;
+                if !all.is_empty() {
+                    warnings.get_mut().push((index, all));
+                }
+                Some(done)
+            })
+            .collect();
         let mut work: Vec<(usize, &Target)> = Vec::new();
         // Files handed to the project's own Prettier, and the packages that must be installed before more files can be.
         let mut handed_over: Vec<(usize, &Target)> = Vec::new();
@@ -1694,18 +2028,26 @@ impl Run<'_> {
                 packages.last().is_some_and(|it| it.1)
             }
         };
-        let mut done: Vec<Option<Done>> = Vec::with_capacity(expanded.len());
-        for (index, it) in expanded.iter().enumerate() {
-            done.push(None);
+        let classify = |it: &'_ Expanded| {
             let Expanded::File(target) = it else {
+                return None;
+            };
+            let language = language_of(configs, &target.scope, &target.path);
+            is_included(ignored, target).then_some(language)
+        };
+        let classified = configs.with_warnings_in_order(
+            || pool.map(&expanded, &classify),
+            || expanded.iter().map(classify).collect(),
+        );
+        for (index, it) in expanded.iter().zip(classified).enumerate() {
+            let (Expanded::File(target), Some(language)) = it else {
                 continue;
             };
             let missing_plugins = match options.allow_unsupported {
                 true => &[][..],
                 false => configs.missing_plugins(&target.scope, Some(&target.path)),
             };
-            match language_of(configs, &target.scope, &target.path) {
-                _ if !is_included(target) => {}
+            match language {
                 Language::Supported if !missing_plugins.is_empty() => {
                     left_for_plugins.0 += 1;
                     for name in missing_plugins {
@@ -1781,104 +2123,56 @@ impl Run<'_> {
         // Largest first, so no thread starts a big file when the others are nearly done.
         sort_slice_by(&mut work[..], |a, b| b.1.size.cmp(&a.1.size));
         let started = Instant::now();
-        // Has to come before the first parallel region. The pool's threads have enough stack to walk a tree as deep as a parser
-        // allows.
-        bun_sema_driver::use_dedicated_pool("Bun Format");
         let bridge = (!handed_over.is_empty()).then(|| {
             let size: u64 = handed_over.iter().map(|it| it.1.size).sum();
             let size = (handed_over.len(), size);
             prettier::Prettier::new(self.environment, options, size, pool.threads())
         });
-        let scratches: Guarded<Vec<Scratches>> = Guarded::new(Vec::new());
-        let names: Vec<Session> = (0..pool.threads().max(1)).map(|_| Session::new()).collect();
-        let atoms = InternerPerThread::new_in(&names);
-        let memory = Session::new();
         let mut results = Guarded::new(done);
-        // Keyed by the file's index in `expanded`.
-        let mut warnings: Guarded<Vec<(usize, Vec<Problem>)>> = Guarded::new(Vec::new());
-        // Tailwind can't be asked and `--allow-unsupported` permits that, so classes stay unsorted.
-        let skips_class_sorting = AtomicBool::new(false);
-        let written_files = fs::WrittenFiles::default();
-        // A file with several hard links is overwritten in place. A thread reading it through another link at the same
-        // time could see partial text and write that back. So each link is locked from its read to its write. The lock
-        // is picked by inode modulo 32, so unrelated files occasionally wait for each other.
-        let link_locks: [Guarded<()>; 32] = Default::default();
-        let lock_for = |target: &Target| {
-            let linked = target.linked.filter(|_| !is_read_only);
-            linked.map(|(_, inode)| link_locks[inode as usize % link_locks.len()].lock())
-        };
-        let format_at = |at: usize| {
+        let format_at = |at: usize, scratch: &mut Scratches| {
             let (index, target) = work[at];
-            let _link_lock = lock_for(target);
-            let began = Instant::now();
-            let display_name = paths::relative(cwd, &target.path);
-            let mut scratch = scratches.lock().pop().unwrap_or_default();
-            let result = (|| {
-                let mut options = configs
-                    .options_for(&target.scope, &target.path)
-                    .map_err(|error| error.0)?;
-                if skips_class_sorting.load(Ordering::Relaxed) {
-                    options.options.tailwind = None;
+            let before = results.lock()[index].take();
+            if let Some(Done::Unwritten(it)) = before {
+                let now = git::read(only.as_ref(), &target.path);
+                if now.is_ok_and(|now| Some(bun_wyhash::hash(&now)) == target.hash_of_text) {
+                    let done = write(target, &it.formatted, Instant::now(), it.took);
+                    results.lock()[index] = Some(done);
+                    return;
                 }
-                let text = git::read(only.as_ref(), &target.path).map_err(|error| {
-                    [
-                        b"Unable to read file \"",
-                        &display_name[..],
-                        b"\":\n",
-                        &fs::describe(&error),
-                    ]
-                    .concat()
-                })?;
-                let kind = Kind::with_options(&target.path, &options.options);
-                tailwind::only_where_sorted(&mut options.options, kind);
-                let formatted = match format(
-                    &target.path,
-                    &text,
-                    &options,
-                    (&atoms, &memory),
-                    &mut scratch,
-                    self.options.debug_check,
-                ) {
-                    Ok((formatted, _)) => formatted,
-                    Err(failure) => return Ok(Done::NotFormatted(failure)),
-                };
-                if options
-                    .options
-                    .tailwind
-                    .as_deref()
-                    .is_some_and(Tailwind::has_missed)
-                {
-                    return Ok(Done::Deferred);
-                }
-                if !scratch.warnings.is_empty() {
-                    let all = std::mem::take(&mut scratch.warnings);
-                    warnings.lock().push((index, all));
-                }
-                if formatted == text {
-                    return Ok(Done::Unchanged);
-                }
-                if !is_read_only && is_partly_staged(target) {
-                    return Ok(Done::PartlyStaged);
-                }
-                if !is_read_only {
-                    fs::write_atomically(&written_files, cwd, &target.path, &formatted).map_err(
-                        |why| {
-                            [
-                                b"Unable to write file \"",
-                                &display_name[..],
-                                b"\":\n",
-                                &why,
-                            ]
-                            .concat()
-                        },
-                    )?;
-                }
-                Ok(Done::Different(began.elapsed()))
-            })();
-            scratches.lock().push(scratch);
-            results.lock()[index] = Some(result.unwrap_or_else(Done::Failed));
+                // It has been saved in the meantime.
+                warnings.lock().retain(|it| it.0 != index);
+            }
+            let done = match configs.options_for(&target.scope, &target.path) {
+                Ok(options) => format_target(target, options, scratch, true),
+                Err(error) => Some(Done::Failed(error.0)),
+            };
+            if !scratch.warnings.is_empty() {
+                let all = std::mem::take(&mut scratch.warnings);
+                warnings.lock().push((index, all));
+            }
+            results.lock()[index] = done;
         };
-        pool.for_each(work.len(), 1, &format_at);
+        let left: Vec<usize> = (0..work.len())
+            .filter(|&at| matches!(results.lock()[work[at].0], None | Some(Done::Unwritten(..))))
+            .collect();
+        let size: u64 = work.iter().map(|it| it.1.size).sum();
+        let format_each = |count: usize, at: &(dyn Fn(usize) -> usize + Sync)| {
+            let next = AtomicUsize::new(0);
+            pool.for_each(pool.threads_for(size).min(count), 1, &|_| {
+                let mut scratch = Box::<Scratches>::default();
+                loop {
+                    let next = next.fetch_add(1, Ordering::Relaxed);
+                    if next >= count {
+                        break;
+                    }
+                    format_at(at(next), &mut scratch);
+                }
+                scratches
+                    .lock()
+                    .push((std::thread::current().id(), scratch));
+            });
+        };
+        format_each(left.len(), &|at| left[at]);
         let deferred: Vec<usize> = (0..work.len())
             .filter(|&at| matches!(results.lock()[work[at].0], Some(Done::Deferred)))
             .collect();
@@ -1887,7 +2181,7 @@ impl Run<'_> {
             classes_are_unknown = configs.classes.ask(self.environment).err();
             // This second pass runs even if `ask` failed. A Tailwind that can't be asked fails only its own files, and
             // the other Tailwinds' answers are stored.
-            pool.for_each(deferred.len(), 1, &|at| format_at(deferred[at]));
+            format_each(deferred.len(), &|at| deferred[at]);
             if let Some(error) = &mut classes_are_unknown {
                 let still_deferred: Vec<usize> = (deferred.iter().copied())
                     .filter(|&at| matches!(results.lock()[work[at].0], Some(Done::Deferred)))
@@ -1902,7 +2196,7 @@ impl Run<'_> {
                 error.extend_from_slice(detail.as_bytes());
                 if options.allow_unsupported {
                     skips_class_sorting.store(true, Ordering::Relaxed);
-                    pool.for_each(still_deferred.len(), 1, &|at| format_at(still_deferred[at]));
+                    format_each(still_deferred.len(), &|at| still_deferred[at]);
                 }
             }
         }
@@ -1926,8 +2220,11 @@ impl Run<'_> {
             });
         }
         let formatting = started.elapsed();
+        let scratches = std::mem::take(&mut *scratches.lock());
+        pool.free_before_exit(size + size_meanwhile.load(Ordering::Relaxed), scratches);
 
-        let (mut different, mut unchanged, mut failed) = (0usize, 0usize, 0usize);
+        let (mut different, mut failed) = (0usize, 0usize);
+        let mut unchanged = meanwhile.unchanged.load(Ordering::Relaxed);
         let (mut written_paths, mut partly_staged) = (Vec::new(), Vec::new());
         let mut warnings = std::mem::take(warnings.get_mut());
         sort_slice_by(&mut warnings[..], |a, b| a.0.cmp(&b.0));
@@ -1962,12 +2259,18 @@ impl Run<'_> {
                 }
                 Expanded::File(target) => target,
             };
-            let display_name = paths::relative(cwd, &target.path);
+            let is_mentioned = !matches!(done, None | Some(Done::Unchanged))
+                || options.debug_check
+                || warnings.peek().is_some_and(|it| it.0 == index);
+            let display_name = match is_mentioned {
+                true => paths::relative(cwd, &target.path),
+                false => Vec::new(),
+            };
             if let Some((_, all)) = warnings.next_if(|it| it.0 == index) {
                 self.report_warnings(&display_name, &all);
             }
             match done {
-                None => {}
+                None | Some(Done::Unwritten(..)) => {}
                 Some(Done::Unchanged) => {
                     unchanged += 1;
                     if options.debug_check {

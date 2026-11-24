@@ -14,7 +14,7 @@ use bun_jsc::{
 use bun_collections::ByteVecExt;
 use bun_collections::smallvec::SmallVec;
 use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsScope, JsWrapper};
-use bun_ptr::{AsCtxPtr as _, BackRef, DetachablePtr, RefPtr};
+use bun_ptr::{AsCtxPtr as _, Attached, BackRef, Detach, DetachablePtr, RefPtr};
 use bun_sys::Error as SysError;
 
 use crate::api::native_promise_context;
@@ -364,7 +364,7 @@ impl bun_event_loop::RefTask for RewriterPipeBackgroundPull {
 pub struct RewriterPipe {
     global: GlobalRef,
     /// Its slots root the response, both streams and the handlers. Weak: other owners of the pipe outlive it.
-    cell: JsCell<JsRef>,
+    pub(crate) cell: JsCell<JsRef>,
     /// The context of the script that called `transform()`.
     script_context: bun_jsc::ContextId,
     /// What `transform()` has to return synchronously ("a string"), so no handler may suspend.
@@ -398,11 +398,6 @@ pub struct RewriterPipe {
 impl RewriterPipe {
     /// How far the output may run ahead of its reader. The same as for the request body of a `fetch()`.
     const HIGH_WATER_MARK: BlobSizeType = 16384;
-
-    /// Runs during the GC sweep. The other owners may still dispatch into the pipe afterwards.
-    pub fn finalize(&self) {
-        self.cell.with_mut(|r| r.finalize());
-    }
 
     fn ref_guard(&self) -> RefPtr<Self> {
         // SAFETY: `self` is the live heap allocation.
@@ -588,21 +583,22 @@ impl RewriterPipe {
             BunString::EMPTY,
             false,
         ));
-        let result_ref = result.this_ptr();
         this.response.set(Some(result.clone()));
 
-        result_ref.set_init(
+        result.set_init(
             original.get_method(),
             original.get_init_status_code(),
             original.get_init_status_text().clone(),
         );
 
-        result_ref.set_init_headers(headers);
+        result.set_init_headers(headers);
 
-        let response_js_value = Response::to_js(result, &this.global);
+        let result = result.wrap(&this.global);
+        let response_js_value = result.to_js();
 
-        let cell = js_HTMLRewriterTransform::to_js(pipe, cx.global());
-        this.cell.set(JsRef::init_weak(cell));
+        let transform = js_HTMLRewriterTransform::wrap(pipe, cx.global());
+        transform.set_js_ref_weak();
+        let cell = transform.to_js();
         js_HTMLRewriterTransform::response_set_cached(cell, cx.global(), response_js_value);
         js_Response::transform_set_cached(response_js_value, cx.global(), cell);
         // This rewrite can outlive the rewriter's wrapper. Its handlers must not die with it.
@@ -610,7 +606,7 @@ impl RewriterPipe {
             js_HTMLRewriterTransform::handlers_set_cached(cell, cx.global(), handlers);
         }
 
-        result_ref.set_url(original.url().clone());
+        result.set_url(original.url().clone());
 
         let value = original.get_body_value();
         let owned_readable_stream = original.get_body_readable_stream();
@@ -622,7 +618,6 @@ impl RewriterPipe {
             return Err(cx.global().throw_value(err));
         }
 
-        response_js_value.ensure_still_alive();
         Ok(response_js_value)
     }
 
@@ -763,7 +758,9 @@ impl RewriterPipe {
             && (armed || self.is_stalled())
             && vm.is_context_live(self.script_context)
         {
-            let _context = vm.enter_context(self.script_context);
+            let context = vm.enter_context(self.script_context);
+            // Collected, not disposed: handlers of its own would have kept the graph alive.
+            let _context = (!vm.calls_nobody()).then_some(context);
             self.advance(PullPacing::AlreadyYielded);
         }
     }
@@ -1673,9 +1670,17 @@ impl RewriterPipe {
             return stopped();
         };
 
+        // `call` returns `undefined` without calling, as if the handler had nothing to change.
+        let caller_is_listening = self.sync_only_noun.is_some();
+        if !caller_is_listening && callback.function.call_may_have_been_dropped(global) {
+            return stopped();
+        }
+
         // Not `try_take_exception()`: the exception checker wants the call's throw seen by an enclosing scope.
         bun_jsc::top_scope!(scope, global);
-        let result = (callback.function).call(global, callback.this_object, &[unit.to_js(global)]);
+        let args = [unit.to_js(global)];
+        let result =
+            (callback.function).call_for_running_script(global, callback.this_object, &args);
         if let Some(exception) = scope.exception() {
             self.record_exception(JSValue::from_cell(exception.as_ptr()));
             scope.clear_exception_except_termination();
@@ -1971,20 +1976,18 @@ impl EndTag {
 #[derive(bun_ptr::CellRefCounted)]
 pub(crate) struct AttributeIterator {
     ref_count: Cell<u32>,
-    /// Read through on every `next()`, so it follows a suspension. The element clears it before it goes.
+    /// Read through on every `next()`, so it follows a suspension.
     element: Cell<Option<BackRef<Element>>>,
     index: Cell<usize>,
 }
 
-impl AttributeIterator {
+impl Detach for AttributeIterator {
     fn detach(&self) {
         self.element.set(None);
     }
+}
 
-    pub(crate) fn finalize(&self) {
-        self.detach();
-    }
-
+impl AttributeIterator {
     pub(crate) fn next<'a>(
         &self,
         heap: &JsHeap<'a>,
@@ -2023,16 +2026,9 @@ impl AttributeIterator {
 pub(crate) struct Element {
     ref_count: Cell<u32>,
     raw: DetachablePtr<RawElement>,
-    /// The ones that still point back at this.
-    attribute_iterators: JsCell<Vec<RefPtr<AttributeIterator>>>,
+    attribute_iterators: JsCell<Vec<Attached<AttributeIterator>>>,
     /// Lends `raw`.
     pipe: Cell<Option<BackRef<RewriterPipe>>>,
-}
-
-impl Drop for Element {
-    fn drop(&mut self) {
-        self.invalidate();
-    }
 }
 
 impl Element {
@@ -2046,9 +2042,7 @@ impl Element {
     }
 
     fn detach_attribute_iterators(&self) {
-        for iter in self.attribute_iterators.take() {
-            iter.detach();
-        }
+        self.attribute_iterators.set(Vec::new());
     }
 
     fn invalidate(&self) {
@@ -2206,7 +2200,7 @@ impl Element {
             index: Cell::new(0),
         });
         self.attribute_iterators
-            .with_mut(|v| v.push(attr_iter.clone()));
+            .with_mut(|v| v.push(attr_iter.clone().into()));
         Some(js_AttributeIterator::to_js(attr_iter, global_object))
     }
 }

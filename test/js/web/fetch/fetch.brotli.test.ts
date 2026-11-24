@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { once } from "node:events";
 import { brotliCompressSync, constants, createBrotliCompress } from "node:zlib";
 
@@ -116,26 +116,35 @@ test("fetch brotli streaming body delivers the whole flushed chunk at once", asy
   expect(rest).toBe(secondLine);
 });
 
-test("fetch takes a large-window response, DecompressionStream does not", async () => {
-  const largeWindow = brotliCompressSync("hello hello hello", {
-    params: {
-      [constants.BROTLI_PARAM_QUALITY]: 5,
-      [constants.BROTLI_PARAM_LARGE_WINDOW]: 1,
-      [constants.BROTLI_PARAM_LGWIN]: 25,
-    },
-  });
-  using server = Bun.serve({
-    port: 0,
-    fetch: () => new Response(largeWindow, { headers: { "Content-Encoding": "br" } }),
-  });
-  expect(await (await fetch(server.url)).text()).toBe("hello hello hello");
+describe("fetch takes the same window sizes as DecompressionStream", () => {
+  function serve(windowBits: number, largeWindow: number) {
+    const body = brotliCompressSync("hello hello hello", {
+      params: {
+        [constants.BROTLI_PARAM_QUALITY]: 5,
+        [constants.BROTLI_PARAM_LARGE_WINDOW]: largeWindow,
+        [constants.BROTLI_PARAM_LGWIN]: windowBits,
+      },
+    });
+    return Bun.serve({ port: 0, fetch: () => new Response(body, { headers: { "Content-Encoding": "br" } }) });
+  }
+  const throughStream = (raw: Response) => raw.body!.pipeThrough(new DecompressionStream("brotli")).text();
 
-  const raw = await fetch(server.url, { decompress: false });
-  await expect(raw.body!.pipeThrough(new DecompressionStream("brotli")).text()).rejects.toMatchObject({
-    name: "TypeError",
-    code: "ERR__ERROR_FORMAT_WINDOW_BITS",
-    message: "brotli decode failed",
-    cause: { code: "ERR__ERROR_FORMAT_WINDOW_BITS", message: "_ERROR_FORMAT_WINDOW_BITS" },
+  test.each([10, 24])("a window of %d bits", async windowBits => {
+    using server = serve(windowBits, 0);
+    expect(await (await fetch(server.url)).text()).toBe("hello hello hello");
+    expect(await throughStream(await fetch(server.url, { decompress: false }))).toBe("hello hello hello");
+  });
+
+  test.each([10, 25])("no large window of %d bits", async windowBits => {
+    using server = serve(windowBits, 1);
+    const response = await fetch(server.url);
+    await expect(response.text()).rejects.toMatchObject({ code: "BrotliDecompressionError" });
+    await expect(throughStream(await fetch(server.url, { decompress: false }))).rejects.toMatchObject({
+      name: "TypeError",
+      code: "ERR__ERROR_FORMAT_WINDOW_BITS",
+      message: "brotli decode failed",
+      cause: { code: "ERR__ERROR_FORMAT_WINDOW_BITS", message: "_ERROR_FORMAT_WINDOW_BITS" },
+    });
   });
 });
 

@@ -213,11 +213,12 @@ pub fn make_or_find(path: &[u8]) -> bool {
     let Some(user) = User::current() else {
         return false;
     };
-    let mut wide = bun_paths::w_path_buffer_pool::get();
-    let wide = bun_paths::string_paths::to_kernel32_path(&mut wide.0[..], path);
-    user.create(wide);
+    let Ok(wide) = crate::long_path(path, crate::Tag::mkdir) else {
+        return false;
+    };
+    user.create(&wide);
     let Ok(handle) = super::CreateFileW(
-        wide,
+        &wide,
         win32::FILE_LIST_DIRECTORY | win32::READ_CONTROL,
         win32::FILE_SHARE_READ | win32::FILE_SHARE_WRITE,
         win32::OPEN_EXISTING,

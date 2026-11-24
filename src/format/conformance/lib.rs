@@ -8,6 +8,7 @@
 
 mod oxfmt;
 mod prettier;
+pub mod settled;
 
 use bun_core::strings;
 use bun_format::FormatOptions;
@@ -158,12 +159,11 @@ impl<'a> Flags<'a> {
     }
 }
 
-/// `args` is everything after `--run-prettier-tests` or `--run-oxfmt-tests`, starting with the bundle's path. Returns
-/// false if the bundle couldn't be loaded. Failing tests don't change the result. The caller checks the printed output.
+/// `args` is everything after `--run-prettier-tests` or the like, starting with the bundle's path. Returns false if the
+/// bundle couldn't be loaded, or else what `run` returns.
 pub fn run_from_command_line(
     args: &[&[u8]],
-    run: fn(&Bundle<'_>, &Flags<'_>, Format<'_>),
-    format: Format<'_>,
+    run: &mut dyn FnMut(&Bundle<'_>, &Flags<'_>) -> bool,
 ) -> bool {
     let Some(bytes) = args.first().and_then(|path| read_file(path)) else {
         output_line!("cannot read the bundle");
@@ -173,8 +173,7 @@ pub fn run_from_command_line(
         output_line!("the bundle is malformed");
         return false;
     };
-    run(&bundle, &Flags::parse(args), format);
-    true
+    run(&bundle, &Flags::parse(args))
 }
 
 #[derive(Default, Clone, Copy)]

@@ -11,13 +11,14 @@ class Point { constructor(x, y) { this.x = x; this.y = y; } sum() { return this.
 module.exports = { default: { Point, make: n => new Point(n, 1) } };
 }));
 }),
-"./isBuffer.js": ((module, exports, __webpack_require__) => {
+"./isShelf.js": ((module, exports, __webpack_require__) => {
 module = __webpack_require__.nmd(module);
-var freeExports = true && exports && !exports.nodeType && exports;
-var freeModule = freeExports && "object" == "object" && module && !module.nodeType && module;
-var moduleExports = freeModule && freeModule.exports === freeExports;
-out.push(moduleExports, Object.keys(module).join());
-module.exports = moduleExports ? function isBuffer(value) { return !!value; } : undefined;
+var handed = true && exports;
+var box = handed && "object" == "object" && module;
+var same = box && handed === box.exports;
+out.push(same, Object.keys(module).join());
+if (same) module.exports = function isShelf(value) { return !!value; };
+else module.exports = undefined;
 }),
 "./late.js": ((module, exports) => {
 exports.first = 1; kept.module = module; kept.replace = () => { module.exports = { second: 2 }; };
@@ -45,8 +46,8 @@ try { module.exports = {}; } catch (error) { out.push(error.message); }
 "./nothing.js": ((module) => { out.push(module.id, module.loaded); module = null; }),
 "./main.js": ((__unused_webpack_module, exports, __webpack_require__) => {
 "use strict";
-var factory = __webpack_require__("./factory.js"), isBuffer = __webpack_require__("./isBuffer.js"), harmony = __webpack_require__("./harmony.js");
-exports.run = function () { let sum = 0; for (let i = 0; i < 100; i++) sum += factory.make(i).sum() + new factory.Point(i, 2).sum() + (isBuffer(i) ? 1 : 0) + harmony["default"]() + harmony.value; return sum; };
+var factory = __webpack_require__("./factory.js"), isShelf = __webpack_require__("./isShelf.js"), harmony = __webpack_require__("./harmony.js");
+exports.run = function () { let sum = 0; for (let i = 0; i < 100; i++) sum += factory.make(i).sum() + new factory.Point(i, 2).sum() + (isShelf(i) ? 1 : 0) + harmony["default"]() + harmony.value; return sum; };
 }),
 });
 var __webpack_module_cache__ = {};

@@ -1,12 +1,12 @@
 # -- source: main.cjs
 # "use strict";
-# function mixin(Base) { return class Mixed extends Base { apply(f) { for (var i = 0; i < this.rows; i++) for (var j = 0; j < this.columns; j++) f.call(this, i, j); return this; } }; }
-# class M extends mixin(Array) { constructor(r, c) { super(r); for (var i = 0; i < r; i++) { this[i] = new Array(c); for (var j = 0; j < c; j++) this[i][j] = i + j / 2; } this.rows = r; this.columns = c; } }
-# const table = { tanh: { act: Math.tanh, der: v => 1 - v * v }, half: { act: v => v / 2, der: Math.cos }, text: { act: v => v + "s", der: () => 1 } };
-# class Layer { constructor(name) { var record = table[name], act = record.act, der = record.der; this.f = function (i, j) { this[i][j] = act(this[i][j]); }; this.d = function (i, j) { this[i][j] = der(this[i][j]); }; } }
-# globalThis.kept = [new M(2, 3), new Layer("tanh"), new Layer("half"), new Layer("text")];
-# function run(m, layer) { m.apply(layer.f); return m.apply(layer.d)[1][2].toFixed(6); }
-# print(run(globalThis.kept[0], globalThis.kept[1]), run(globalThis.kept[0], globalThis.kept[2]), run(globalThis.kept[0], globalThis.kept[3]));
+# class Wall extends Array { constructor(rows) { super(rows); for (let k = 0; k < rows; k++) this[k] = [k + 0.5, 1 - k, 2]; } told(by) { let sum = 0; for (let row = this.length - 1; row >= 0; row--) for (let at = 0; at < 3; at += 2) sum += by.call(this, row, at); return sum; } }
+# const sounds = { wind: { near: Math.tanh, far: v => v * 3 - 1 }, rain: { near: v => v - 4, far: Math.cos }, owl: { near: v => v + "u", far: () => 2 } };
+# class Bird { constructor(name) { const sound = sounds[name], near = sound.near, far = sound.far; this.hears = function (row, at) { return near(this[row][at]); }; this.flies = function (row, at) { return far(this[row][at]) * row; }; } }
+# globalThis.kept = [new Wall(3), new Bird("wind"), new Bird("rain"), new Bird("owl")];
+# const said = sum => typeof sum === "number" ? sum.toFixed(5) : sum;
+# function night(wall, bird) { return said(wall.told(bird.hears)) + "/" + said(wall.told(bird.flies)); }
+# print(night(globalThis.kept[0], globalThis.kept[1]), night(globalThis.kept[0], globalThis.kept[2]), night(globalThis.kept[0], globalThis.kept[3]));
 # -- end of source
 # The callbacks call what records of a table hold under one name. Their loops test for each of these, and look at the receiver before the elements.
 # RUN: link functions mechanisms=all
@@ -16,5 +16,5 @@
 # CHECK: table-callee of 0 MathCos
 # CHECK-NEXT: table-callee of 0 f
 # RUN(ANSWER): run-in-shell
-# ANSWER: 0.070651 0.999376 1.000000
+# ANSWER: 5.24596/31.50000 -13.50000/-2.77999 02.5u2u1.5u2u0.5u2u/12.00000
 # ANSWER-NEXT: exited with 0

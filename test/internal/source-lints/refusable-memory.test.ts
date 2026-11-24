@@ -8,12 +8,13 @@ import path from "node:path";
 //
 // What fills a `Vec` (`push()`, `extend()`, `resize()`) is invisible to this lint. It aborts in the same way once it
 // leaves the room that was reserved.
-const crates = ["brotli", "deflate", "jpeg", "png", "webp"];
+const crates = ["brotli", "deflate", "icu", "jpeg", "png", "webp", "zlib"];
 test.each(crates)("bun_%s does not ask for memory in a way that aborts on a refusal", async name => {
   const crate = path.resolve(import.meta.dir, "..", "..", "..", "src", name);
+  // What is `Clone` in bun_icu shares its memory or has none. The rest is `TryClone`.
   const functions = `
     with_capacity reserve reserve_exact shrink_to shrink_to_fit into_boxed_slice to_vec to_owned into_owned to_string
-    clone cloned clone_from collect from_iter concat split_off sort sort_by sort_by_key sort_by_cached_key
+    ${name === "icu" ? "" : "clone cloned"} clone_from collect from_iter concat split_off sort sort_by sort_by_key sort_by_cached_key
     unwrap_or_oom handle_oom out_of_memory
   `;
   const aborts = new RegExp(
@@ -41,9 +42,13 @@ test.each(crates)("bun_%s does not ask for memory in a way that aborts on a refu
   expect(found.sort()).toEqual([]);
 });
 
-test("bun_brotli uses memory::resize(), because Vec::resize() is slow in hardened builds", async () => {
-  const crate = path.resolve(import.meta.dir, "..", "..", "..", "src", "brotli");
-  const files = await Array.fromAsync(new Glob("**/*.rs").scan({ cwd: crate }));
-  expect(files).toContain("memory.rs");
+test.each([
+  ["brotli", "memory.rs"],
+  ["zstd", path.join("decoder", "array.rs")],
+])("src/%s uses resize() from %s, because Vec::resize() is slow in hardened builds", async (name, home) => {
+  const crate = path.resolve(import.meta.dir, "..", "..", "..", "src", name);
+  const all = await Array.fromAsync(new Glob("**/*.rs").scan({ cwd: crate }));
+  const files = all.filter(file => !file.split(path.sep).includes("tests"));
+  expect(files).toContain(home);
   expect(files.filter(file => readFileSync(path.join(crate, file), "utf8").includes(".resize("))).toEqual([]);
 });

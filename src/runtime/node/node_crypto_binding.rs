@@ -181,7 +181,7 @@ struct RandomFillJs {
 }
 
 const MAX_POSSIBLE_LENGTH: usize = {
-    let a = ArrayBuffer::MAX_SIZE as usize;
+    let a = ArrayBuffer::MAX_SIZE;
     let b = i32::MAX as usize;
     if a < b { a } else { b }
 };

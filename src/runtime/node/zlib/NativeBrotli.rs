@@ -2,6 +2,8 @@ use core::ffi::c_int;
 
 use bun_brotli::{DecodeError, DecodeStatus, Decoder, Encoder, Operation};
 
+use crate::node::node_zlib_binding::{NodeMode, Z_BUF_ERROR};
+
 // ─── type defs (real) ─────────────────────────────────────────────────────
 
 enum State {
@@ -10,7 +12,7 @@ enum State {
 }
 
 pub(crate) struct Context {
-    mode: bun_zlib::NodeMode,
+    mode: NodeMode,
     state: Option<State>,
 
     avail_in: usize,
@@ -52,7 +54,7 @@ mod _impl {
 
     impl NativeBrotli {
         pub(crate) fn constructor(mode: u8) -> Self {
-            let mode = bun_zlib::NodeMode::from_int(mode);
+            let mode = NodeMode::from_int(mode);
             Self {
                 stream: Cell::new(Some(Stream::new(Context::new(mode)))),
                 pending_close: Cell::new(false),
@@ -62,13 +64,13 @@ mod _impl {
         }
 
         /// Per-mode external-allocation footprint, fixed at construction.
-        fn external_size_for(mode: bun_zlib::NodeMode) -> usize {
+        fn external_size_for(mode: NodeMode) -> usize {
             // What a stream takes depends on its parameters and input, so these only pace the collector.
             const ENCODER_ESTIMATE: usize = 5143;
             const DECODER_ESTIMATE: usize = 855;
             match mode {
-                bun_zlib::NodeMode::BROTLI_ENCODE => ENCODER_ESTIMATE,
-                bun_zlib::NodeMode::BROTLI_DECODE => DECODER_ESTIMATE,
+                NodeMode::BROTLI_ENCODE => ENCODER_ESTIMATE,
+                NodeMode::BROTLI_DECODE => DECODER_ESTIMATE,
                 _ => 0,
             }
         }
@@ -91,7 +93,7 @@ mod _impl {
             let global_this = cx.global();
             let this_value = this_value.to_js();
             let mode = self.borrow_idle_stream(global_this)?.context.mode;
-            let feature = if mode == bun_zlib::NodeMode::BROTLI_ENCODE {
+            let feature = if mode == NodeMode::BROTLI_ENCODE {
                 bun_removable_features::Feature::BrotliEncoder
             } else {
                 bun_removable_features::Feature::BrotliDecoder
@@ -215,7 +217,7 @@ mod _impl {
     }
 
     impl Context {
-        fn new(mode: bun_zlib::NodeMode) -> Self {
+        fn new(mode: NodeMode) -> Self {
             Self {
                 mode,
                 state: None,
@@ -234,11 +236,11 @@ mod _impl {
             // handle, and ResetStream() lands here with no dictionary.
             self.state = None;
             let (state, message) = match self.mode {
-                bun_zlib::NodeMode::BROTLI_ENCODE => (
+                NodeMode::BROTLI_ENCODE => (
                     Encoder::with_dictionary(dictionary).map(|e| State::Encoder(Box::new(e))),
                     c"Failed to prepare brotli dictionary",
                 ),
-                bun_zlib::NodeMode::BROTLI_DECODE => (
+                NodeMode::BROTLI_DECODE => (
                     Decoder::with_dictionary(dictionary).map(|d| State::Decoder(Box::new(d))),
                     c"Failed to attach brotli dictionary",
                 ),
@@ -300,7 +302,7 @@ mod _impl {
 
         fn write_result(&self) -> Result<[u32; 2], Error> {
             match self.mode {
-                bun_zlib::NodeMode::BROTLI_ENCODE => {
+                NodeMode::BROTLI_ENCODE => {
                     if !self.encoded {
                         return Err(Error::init(
                             c"Compression failed",
@@ -309,7 +311,7 @@ mod _impl {
                         ));
                     }
                 }
-                bun_zlib::NodeMode::BROTLI_DECODE => {
+                NodeMode::BROTLI_DECODE => {
                     if let Some(error) = self.error {
                         return Err(Error::init(
                             c"Decompression failed",
@@ -319,7 +321,7 @@ mod _impl {
                     } else if self.flush == Operation::Finish && self.needs_input {
                         return Err(Error::init(
                             c"unexpected end of file",
-                            bun_zlib::ReturnCode::BufError as i32,
+                            Z_BUF_ERROR,
                             c"Z_BUF_ERROR",
                         ));
                     }

@@ -644,6 +644,7 @@ impl Default for PathFormatOptions {
     }
 }
 
+/// Only Windows has two separators, so elsewhere a path is printed as is.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum PathSep {
     /// Keep paths separators as is.
@@ -652,17 +653,14 @@ pub enum PathSep {
     Auto,
     /// Replace all path separators with `/`.
     Posix,
-    /// Replace all path separators with `\`.
-    Windows,
 }
 
 impl PathSep {
     fn apply(self, found: u8) -> u8 {
         match self {
-            PathSep::Windows => b'\\',
-            PathSep::Posix => b'/',
-            PathSep::Auto => crate::SEP,
-            PathSep::Any => found,
+            PathSep::Posix if cfg!(windows) => b'/',
+            PathSep::Auto if cfg!(windows) => b'\\',
+            _ => found,
         }
     }
 }
@@ -766,16 +764,6 @@ pub fn buf_print_z<'a>(
 #[track_caller]
 pub fn buf_print_infallible<'a>(buf: &'a mut [u8], args: core::fmt::Arguments<'_>) -> &'a [u8] {
     buf_print(buf, args).expect("buf_print: buffer too small")
-}
-
-/// [`buf_print_z`] that panics on overflow.
-#[inline]
-#[track_caller]
-pub fn buf_print_z_infallible<'a>(
-    buf: &'a mut [u8],
-    args: core::fmt::Arguments<'_>,
-) -> &'a crate::ZStr {
-    buf_print_z(buf, args).expect("buf_print_z: buffer too small")
 }
 
 // ════════════════════════════════════════════════════════════════════════════

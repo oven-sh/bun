@@ -122,6 +122,15 @@ impl<'a, T> BabyVec<'a, T> {
     }
 
     #[inline]
+    pub fn spare_capacity_mut(&mut self) -> &mut [core::mem::MaybeUninit<T>] {
+        // SAFETY: the slots from `len` to `cap` are allocated, and nothing else refers to them.
+        unsafe {
+            let first = self.ptr.as_ptr().add(self.len as usize);
+            core::slice::from_raw_parts_mut(first.cast(), (self.cap - self.len) as usize)
+        }
+    }
+
+    #[inline]
     pub fn push(&mut self, value: T) {
         if self.len == self.cap {
             self.grow_to(self.len as usize + 1);

@@ -10,13 +10,15 @@ namespace Zig {
 
 DEFINE_NATIVE_MODULE(NodeSqlite)
 {
-    INIT_NATIVE_MODULE(NodeSqlite, 5);
+    INIT_NATIVE_MODULE(NodeSqlite, 7);
 
-    put(JSC::Identifier::fromString(vm, "DatabaseSync"_s),
-        globalObject->m_JSDatabaseSyncClassStructure.constructorInitializedOnMainThread(globalObject));
+    auto* database = globalObject->m_JSDatabaseSyncClassStructure.constructorInitializedOnMainThread(globalObject);
+    put(JSC::Identifier::fromString(vm, "Database"_s), database);
+    put(JSC::Identifier::fromString(vm, "DatabaseSync"_s), database);
 
-    put(JSC::Identifier::fromString(vm, "StatementSync"_s),
-        globalObject->m_JSStatementSyncClassStructure.constructorInitializedOnMainThread(globalObject));
+    auto* statement = globalObject->m_JSStatementSyncClassStructure.constructorInitializedOnMainThread(globalObject);
+    put(JSC::Identifier::fromString(vm, "Statement"_s), statement);
+    put(JSC::Identifier::fromString(vm, "StatementSync"_s), statement);
 
     put(JSC::Identifier::fromString(vm, "Session"_s),
         globalObject->m_JSNodeSqliteSessionClassStructure.constructorInitializedOnMainThread(globalObject));

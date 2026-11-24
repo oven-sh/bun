@@ -20,6 +20,7 @@ use std::sync::atomic::AtomicU16;
 mod expr_flags;
 mod module_syntax;
 mod runtime_syntax;
+mod stretch;
 #[cfg(test)]
 mod tests;
 
@@ -29,6 +30,7 @@ pub use runtime_syntax::{
     find_runtime_constructor, find_super_call_statement, find_transpiled_mark, has_runtime_member,
     is_marked_as_commonjs, is_moved_to_file_start, is_proto_setter, parameter_properties,
 };
+pub use stretch::Stretch;
 
 macro_rules! define_id {
     ($($name:ident),* $(,)?) => {$(
@@ -636,6 +638,10 @@ impl<'s> ListBlock<'s> {
             return ListBlock::default();
         }
         if let Some((first, chunk)) = arena.alloc_block(size) {
+            // SAFETY: the block is that long, and new.
+            bun_alloc::prefault::<u8>(unsafe {
+                std::slice::from_raw_parts_mut(first.as_ptr().cast(), size)
+            });
             return ListBlock {
                 first: first.as_ptr().cast(),
                 size,
@@ -644,7 +650,8 @@ impl<'s> ListBlock<'s> {
                 arena: PhantomData,
             };
         }
-        let words = Box::<[u128], _>::new_uninit_slice_in(size / ListBlock::ALIGNMENT, arena);
+        let mut words = Box::<[u128], _>::new_uninit_slice_in(size / ListBlock::ALIGNMENT, arena);
+        crate::util::prefault(&mut words);
         ListBlock {
             first: ArenaBox::from_box(words).into_raw().cast(),
             size,

@@ -24,3 +24,9 @@ unsafe extern "C" fn highway_last_index_of_char(
     let haystack = unsafe { core::slice::from_raw_parts(haystack, len) };
     haystack.iter().rposition(|&it| it == needle).unwrap_or(len)
 }
+
+#[unsafe(no_mangle)]
+unsafe extern "C" fn highway_last_index_of_slash(path: *const u8, len: usize) -> usize {
+    // SAFETY: `bun_highway` passes a slice.
+    unsafe { highway_last_index_of_char(path, len, b'/') }
+}

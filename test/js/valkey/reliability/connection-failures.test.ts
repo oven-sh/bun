@@ -655,7 +655,7 @@ describe("Valkey: Recovering After fail()", () => {
   // as the exit code instead of waiting for the test to time out. The payload
   // runs in well under a second on a debug build; the exit itself is what an
   // ASAN build makes slow.
-  async function exitOutcome(proc: Bun.Subprocess<"ignore", "pipe", "pipe">) {
+  async function exitOutcome(proc: Bun.Subprocess<"ignore" | "pipe", "pipe", "pipe">) {
     const output = Promise.all([proc.stdout.text(), proc.stderr.text()]);
     const budget = isASAN || isDebug ? 15_000 : 3_000;
     const exitCode = await Promise.race([proc.exited, delay(budget).then(() => "still running" as const)]);
@@ -1007,9 +1007,7 @@ describe("Valkey: Recovering After fail()", () => {
         () => "resolved",
         (err: Error & { code: string }) => `${err.code}: ${err.message}`,
       );
-      // connect() settles on the accepted HELLO, before the SELECT reply is
-      // read, so it resolves; the failure that follows is reported by onclose.
-      await client.connect();
+      await expect(client.connect()).rejects.toMatchObject({ code: "ERR_REDIS_INVALID_COMMAND" });
       expect(await queued).toBe("ERR_REDIS_INVALID_COMMAND: ERR DB index is out of range");
       // The rejection is a failure the client detected, so there is no retry
       // even with autoReconnect on: onclose fires once and the only second
@@ -2090,6 +2088,194 @@ describe("Valkey: Recovering After fail()", () => {
     });
   });
 
+  describe("--redis-preconnect against a server that refuses HELLO", () => {
+    test.concurrent.each([
+      { program: `await Bun.stdin.text(); console.log("done")`, stdout: "done\n", stderr: "", exitCode: 0 },
+      { program: `Bun.redis.ping().catch(() => console.log("caught"))`, stdout: "caught\n", stderr: "", exitCode: 0 },
+      {
+        program: `Bun.redis.onclose = () => Bun.redis.ping().catch(e => console.log(e.message))`,
+        stdout: "Connection has failed\n",
+        stderr: "",
+        exitCode: 0,
+      },
+      { program: `Bun.redis.connect()`, stdout: "", stderr: expect.stringContaining("ERR_REDIS_"), exitCode: 1 },
+    ])("$program exits $exitCode", async ({ program, ...outcome }) => {
+      const fake = helloServer({ HELLO: () => "-WRONGPASS invalid username-password pair\r\n" });
+      const port = await fake.listen();
+      try {
+        const refused = once(fake.server, "connection").then(([socket]) => closedOnServer(socket));
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "--redis-preconnect", "-e", program],
+          env: { ...bunEnv, REDIS_URL: `redis://127.0.0.1:${port}` },
+          stdin: "pipe",
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        await Promise.race([refused, proc.exited]);
+        proc.stdin.end();
+        expect({ ...(await exitOutcome(proc)), dialed: fake.connections > 0 }).toEqual({ ...outcome, dialed: true });
+      } finally {
+        fake.server.close();
+      }
+    });
+  });
+
+  test.concurrent("--redis-preconnect dials once, and the first command dials again", async () => {
+    const fake = helloServer({
+      HELLO: (connection, socket) => (connection === 1 ? (socket.destroy(), null) : "+OK\r\n"),
+    });
+    const port = await fake.listen();
+    try {
+      const lost = once(fake.server, "connection").then(([socket]) => closedOnServer(socket));
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "--redis-preconnect",
+          "-e",
+          // A retry would have come after 50 ms.
+          `await Bun.stdin.text(); await Bun.sleep(150); console.log(Bun.redis.connected, await Bun.redis.ping());`,
+        ],
+        env: { ...bunEnv, REDIS_URL: `redis://127.0.0.1:${port}` },
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      await Promise.race([lost, proc.exited]);
+      proc.stdin.end();
+      expect(await exitOutcome(proc)).toEqual({ stdout: "false PONG\n", stderr: "", exitCode: 0 });
+    } finally {
+      fake.server.close();
+    }
+  });
+
+  test.concurrent("connect() on a --redis-preconnect that is connected makes the client script's", async () => {
+    const fake = helloServer({ HELLO: connection => (connection === 1 ? "+OK\r\n" : "-WRONGPASS\r\n") });
+    const port = await fake.listen();
+    try {
+      const first = once(fake.server, "connection");
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "--redis-preconnect",
+          "-e",
+          `while (!Bun.redis.connected) await new Promise(setImmediate);
+           await Bun.redis.connect();
+           console.error("connected");
+           await new Promise(resolve => (Bun.redis.onclose = resolve, setInterval(() => {}, 1000)));
+           console.log(await Bun.redis.ping().catch(err => err.message));
+           process.exit(0);`,
+        ],
+        env: { ...bunEnv, REDIS_URL: `redis://127.0.0.1:${port}` },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      await proc.stderr.getReader().read();
+      (await first)[0].destroy();
+      expect(await proc.stdout.text()).toBe("Connection has failed\n");
+      expect(await proc.exited).toBe(0);
+    } finally {
+      fake.server.close();
+    }
+  });
+
+  test.concurrent.each([
+    { refused: "HELLO once", path: "", first: "-ERR max clients\r\n", second: "+OK\r\n", ping: "PONG" },
+    { refused: "HELLO twice", path: "", first: "-WRONGPASS\r\n", second: "-WRONGPASS\r\n", ping: "WRONGPASS" },
+    { refused: "SELECT once", path: "/1", first: "+OK\r\n-ERR db\r\n", second: "+OK\r\n+OK\r\n", ping: "PONG" },
+  ])(
+    "the first command after a failed --redis-preconnect dials again when the server refuses $refused",
+    async ({ path, first, second, ping }) => {
+      const fake = helloServer({ HELLO: connection => (connection === 1 ? first : second) });
+      const port = await fake.listen();
+      try {
+        const preconnectFailed = once(fake.server, "connection").then(([socket]) => closedOnServer(socket));
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "--redis-preconnect",
+            "-e",
+            `await Bun.stdin.text(); console.log(await Bun.redis.ping().catch(err => err.message));`,
+          ],
+          env: { ...bunEnv, REDIS_URL: `redis://127.0.0.1:${port}${path}` },
+          stdin: "pipe",
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        await Promise.race([preconnectFailed, proc.exited]);
+        proc.stdin.end();
+        expect({ ...(await exitOutcome(proc)), connections: fake.connections }).toEqual({
+          stdout: `${ping}\n`,
+          stderr: "",
+          exitCode: 0,
+          connections: 2,
+        });
+      } finally {
+        fake.server.close();
+      }
+    },
+  );
+
+  test.concurrent.each([
+    { program: `console.log("done")`, server: "drops every connection", stdout: "done\n" },
+    { program: `console.log("done")`, server: "is not there", stdout: "done\n" },
+    { program: `Bun.redis.onclose = null`, server: "is not there", stdout: "" },
+    { program: `Bun.redis.onconnect = () => console.log("connected")`, server: "accepts", stdout: "connected\n" },
+    { program: `Bun.redis.onclose = e => console.log(e.message)`, server: "refuses", stdout: "WRONGPASS\n" },
+  ] as const)("--redis-preconnect: $program exits when the server $server", async ({ program, server, stdout }) => {
+    const fake = helloServer({
+      HELLO: (_, socket) => {
+        if (server === "drops every connection") socket.destroy();
+        return server === "accepts" ? "+OK\r\n" : server === "refuses" ? "-WRONGPASS\r\n" : null;
+      },
+    });
+    const port = await fake.listen();
+    if (server === "is not there") fake.server.close();
+    try {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "--redis-preconnect", "-e", program],
+        env: { ...bunEnv, REDIS_URL: `redis://127.0.0.1:${port}` },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      expect(await exitOutcome(proc)).toEqual({ stdout, stderr: "", exitCode: 0 });
+    } finally {
+      fake.server.close();
+    }
+  });
+
+  // A command that is not batched is on the socket when the call returns.
+  test.concurrent.each([
+    { flag: "1", options: "undefined", sent: true },
+    { flag: "1", options: "{}", sent: true },
+    { flag: "1", options: "{ enableAutoPipelining: true }", sent: false },
+    { flag: undefined, options: "undefined", sent: false },
+  ])("DISABLE_REDIS_AUTO_PIPELINING=$flag with options $options", async ({ flag, options, sent }) => {
+    const PING = mock(() => null);
+    const fake = helloServer({ PING });
+    const port = await fake.listen();
+    try {
+      const closed = once(fake.server, "connection").then(([socket]) => closedOnServer(socket));
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const client = new Bun.RedisClient("redis://127.0.0.1:${port}", ${options});
+           await client.connect();
+           client.ping().catch(() => {});
+           client.close();`,
+        ],
+        env: { ...bunEnv, BUN_FEATURE_FLAG_DISABLE_REDIS_AUTO_PIPELINING: flag },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      expect(await exitOutcome(proc)).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+      await closed;
+      expect(PING).toHaveBeenCalledTimes(sent ? 1 : 0);
+    } finally {
+      fake.server.close();
+    }
+  });
+
   // A TLS stub run under Node in its own process, so it can read while this
   // loop is blocked, and so that what it reports about the peer's close does
   // not come from the socket code under test. It pauses connection 1 after
@@ -2527,6 +2713,209 @@ describe("Valkey: Recovering After fail()", () => {
         client.close();
         fake.server.close();
       }
+    });
+  });
+});
+
+describe.concurrent("Valkey: Handshake", () => {
+  type Reply = (command: string[], connection: number, socket: net.Socket) => string | null | undefined;
+
+  // Answers each command with `reply`'s line, `+OK` for undefined and nothing for null. DROP closes the connection.
+  async function commandServer(reply: Reply = () => undefined) {
+    const seen: string[][] = [];
+    const server = net.createServer(socket => {
+      const commands: string[] = [];
+      const connection = seen.push(commands);
+      const state = { buffer: Buffer.alloc(0) };
+      socket.on("error", () => {});
+      socket.on("data", chunk => {
+        state.buffer = Buffer.concat([state.buffer, chunk]);
+        for (const command of readCommands(state)) {
+          commands.push(command.join(" "));
+          if (command[0] === "DROP") return void socket.destroy();
+          const line = reply(command, connection, socket);
+          if (line !== null) socket.write(`${line ?? "+OK"}\r\n`);
+        }
+      });
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const host = `127.0.0.1:${(server.address() as net.AddressInfo).port}`;
+    return { server, seen, host, [Symbol.dispose]: () => void server.close() };
+  }
+  const outcome = (promise: Promise<unknown>) =>
+    promise.then(
+      value => value,
+      e => `${e.code}: ${e.message}`,
+    );
+  const drop = (client: RedisClient) => outcome(client.send("DROP", []));
+
+  async function run(program: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", program],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test("a refused database rejects connect(), and neither onconnect nor a write gets ahead of it", async () => {
+    using fake = await commandServer(([name]) => (name === "SELECT" ? "-ERR DB index is out of range" : undefined));
+    const closed = once(fake.server, "connection").then(([socket]) => new Promise(done => socket.once("close", done)));
+    const client = new RedisClient(`redis://${fake.host}/99`);
+    const onconnect = mock(() => void outcome(client.set("key", "value")));
+    client.onconnect = onconnect;
+    expect(await outcome(client.connect())).toBe("ERR_REDIS_INVALID_COMMAND: ERR DB index is out of range");
+    await closed;
+    expect(onconnect).not.toHaveBeenCalled();
+    expect(fake.seen).toEqual([["HELLO 3", "SELECT 99"]]);
+  });
+
+  test("connectionTimeout covers the reply to SELECT", async () => {
+    using fake = await commandServer(([name]) => (name === "SELECT" ? null : undefined));
+    const client = new RedisClient(`redis://${fake.host}/1`, { connectionTimeout: 1000 });
+    expect(await outcome(client.connect())).toBe(
+      "ERR_REDIS_CONNECTION_TIMEOUT: Connection timeout reached after 1000ms",
+    );
+    expect(fake.seen).toEqual([["HELLO 3", "SELECT 1"]]);
+  });
+
+  test.each([
+    { refused: "HELLO", reply: "-ERR max number of clients reached", ping: "OK", connections: 3 },
+    { refused: "SELECT", reply: "-BUSY Redis is busy running a script", ping: "OK", connections: 3 },
+    { refused: "HELLO", reply: null, ping: "OK", connections: 3 },
+    { refused: "HELLO", reply: "-WRONGPASS", ping: "ERR_REDIS_AUTHENTICATION_FAILED: WRONGPASS", connections: 2 },
+    { refused: "SELECT", reply: "-NOPERM", ping: "ERR_REDIS_INVALID_COMMAND: NOPERM", connections: 2 },
+  ])("a reconnect that gets $reply to $refused ends in $ping", async ({ refused, reply, ping, connections }) => {
+    using fake = await commandServer(([name], connection) =>
+      connection === 2 && (name === refused || name === "SELECT") ? reply : undefined,
+    );
+    const client = new RedisClient(`redis://${fake.host}/1`, { connectionTimeout: 1000 });
+    try {
+      await drop(client);
+      expect({ ping: await outcome(client.ping()), connections: fake.seen.length }).toEqual({ ping, connections });
+    } finally {
+      client.close();
+    }
+  });
+
+  test("a server that stays busy uses up the retries", async () => {
+    using fake = await commandServer(([name], connection) =>
+      name === "SELECT" && connection > 1 ? "-BUSY script" : undefined,
+    );
+    const client = new RedisClient(`redis://${fake.host}/1`, { maxRetries: 2 });
+    await drop(client);
+    const error = await client.ping().catch(e => e);
+    const cause = `${error.cause?.code}: ${error.cause?.message}`;
+    expect({ message: error.message, cause, connections: fake.seen.length }).toEqual({
+      message: "Max reconnection attempts reached",
+      cause: "ERR_REDIS_CONNECTION_CLOSED: BUSY script",
+      connections: 3,
+    });
+  });
+
+  test.each<[string, (socket: net.Socket) => unknown, { ping: string; dials: number }]>([
+    ["closes", socket => socket.end(), { ping: "OK", dials: 3 }],
+    ["ignores", () => {}, { ping: "OK", dials: 3 }],
+    ["answers with text", socket => socket.write("not a TLS record\r\n"), { ping: "EPROTO", dials: 2 }],
+  ])("a reconnect whose ClientHello the server %s", async (_, atClientHello, expected) => {
+    using fake = await commandServer();
+    const secure = tls.createServer({ key: tlsCert.key, cert: tlsCert.cert }, socket =>
+      fake.server.emit("connection", socket),
+    );
+    let dials = 0;
+    const front = net.createServer(socket => {
+      socket.on("error", () => {});
+      if (++dials === 2) socket.once("data", () => atClientHello(socket));
+      else secure.emit("connection", socket);
+    });
+    front.listen(0, "127.0.0.1");
+    await once(front, "listening");
+    const client = new RedisClient(`rediss://127.0.0.1:${(front.address() as net.AddressInfo).port}`, {
+      tls: { ca: tlsCert.cert },
+      connectionTimeout: 2000,
+    });
+    try {
+      await drop(client);
+      expect({ ping: await client.ping().catch(e => e.code), dials }).toEqual(expected);
+    } finally {
+      client.close();
+      front.close();
+    }
+  });
+
+  test("the process does not exit ahead of the rejection of a command that lost its connection", async () => {
+    using fake = await commandServer((_, connection) => (connection === 1 ? undefined : "-WRONGPASS"));
+    const program = `new Bun.RedisClient("redis://${fake.host}").send("DROP", []).catch(e => console.log(e.message))`;
+    expect(await run(program)).toEqual({ stdout: "Connection closed\n", stderr: "", exitCode: 0 });
+  });
+
+  // Why the first attempts of a reconnect hold the process: the report needs another turn of the loop.
+  const log = "e => console.log(e.message ?? e)";
+  test.each([
+    {
+      name: "unhandledRejection",
+      program: `process.on("unhandledRejection", e => setImmediate(${log}, e)); drop()`,
+      stdout: "Connection closed\n",
+    },
+    {
+      name: "stderr",
+      program: `process.on("beforeExit", () => process.exit(0)); drop()`,
+      stderr: expect.stringContaining("Connection closed"),
+      exitCode: 1,
+    },
+    {
+      name: "the parent of a Worker",
+      program: "new Worker(URL.createObjectURL(new Blob([`(${drop})()`]))).onerror = () => console.log('error')",
+      stdout: "error\n",
+    },
+  ])("such a rejection reaches $name if nobody catches it", async ({ name, program, ...expected }) => {
+    using fake = await commandServer((_, connection) => (connection === 1 ? undefined : "-LOADING "));
+    const drop = `const drop = () => new Bun.RedisClient("redis://${fake.host}", { maxRetries: 1e9 }).send("DROP", []);`;
+    expect(await run(drop + program)).toEqual({ stdout: "", stderr: "", exitCode: 0, ...expected });
+  });
+
+  // The first attempt is turned away, and the second gets no reply. `end` drops it, and answers the third.
+  test.each([
+    { waiter: "nobody" },
+    { waiter: "half a reply", half: "%7\r\n$6\r\nser" },
+    { waiter: "a removed onclose", before: `client.onclose = ${log}`, after: "client.onclose = null" },
+    { waiter: "onclose", before: `client.onclose = ${log}`, end: "-WRONGPASS" },
+    { waiter: "a late onclose", after: `client.onclose = ${log}`, end: "-WRONGPASS" },
+    { waiter: "onconnect", before: "client.onconnect = () => {}", end: "+OK" },
+    { waiter: "a command", after: "client.ping()", end: "+OK" },
+    { waiter: "connect()", after: "client.connect()", end: "+OK" },
+    { waiter: "a subscription", before: `await client.subscribe("c", () => {})`, end: "-WRONGPASS" },
+  ])("a reconnect that was turned away holds the process for whoever waits: $waiter", async row => {
+    let waiting: net.Socket, silent: net.Socket;
+    using fake = await commandServer(([name], connection, socket) => {
+      if (name === "SUBSCRIBE") return ">3\r\n$9\r\nsubscribe\r\n$1\r\nc\r\n:1";
+      if (name === "WAIT") return ((waiting = socket), null);
+      if (name === "END") silent.destroy();
+      if (connection <= 2) return;
+      if (connection === 3) return "-LOADING ";
+      if (connection === 5) return row.end;
+      (silent = socket).write(row.half ?? "");
+      waiting.write("+OK\r\n");
+      return null;
+    });
+    const program = `
+      const [client, other] = [0, 1].map(() => new Bun.RedisClient("redis://${fake.host}", { connectionTimeout: 0 }));
+      await Promise.all([client.connect(), other.connect()]);
+      ${row.before};
+      const isSilent = other.send("WAIT", []);
+      await client.send("DROP", []).catch(() => {});
+      await isSilent;
+      ${row.after};
+      await other.send("${row.end ? "END" : "PING"}", []);
+    `;
+    expect({ ...(await run(program)), connections: fake.seen.length }).toEqual({
+      stdout: row.waiter.endsWith("onclose") && row.end ? "WRONGPASS\n" : "",
+      stderr: "",
+      exitCode: 0,
+      connections: row.end ? 5 : 4,
     });
   });
 });

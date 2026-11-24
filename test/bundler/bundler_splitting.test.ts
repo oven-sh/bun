@@ -1625,6 +1625,59 @@ describe("bundler", () => {
     run: { file: "/out/a.js", stdout: "a APP" },
   });
 
+  // x.js and y.js read each other at load, so no order serves both and the chunk stays with a.js.
+  itBundled("splitting/SharedChunkOwnerKeepsChunkWhenFilesReadEachOther", {
+    files: {
+      "/a.js": `import "./x.js"; console.log("a");`,
+      "/b.js": `import "./y.js"; console.log("b");`,
+      "/x.js": `import { y } from "./y.js"; export var x = String("x"); console.log("x reads", y);`,
+      "/y.js": `import { x } from "./x.js"; export var y = String("y"); console.log("y reads", x);`,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: [
+      { file: "/out/a.js", stdout: "y reads undefined\nx reads y\na" },
+      { file: "/out/b.js", stdout: "y reads undefined\nx reads y\nb" },
+    ],
+  });
+
+  // x.js reads y.js through functions that call each other, and y.js reads z.js.
+  // Only c.js and d.js enter the cycle at x.js, and c.js is first.
+  itBundled("splitting/SharedChunkOwnerIsFirstEntryPointWithSafeOrder", {
+    files: {
+      "/a.js": `import "./z.js"; console.log("a");`,
+      "/b.js": `import "./y.js"; console.log("b");`,
+      "/c.js": `import "./p.js"; import "./q.js"; import "./x.js"; console.log("c");`,
+      "/d.js": `import "./q.js"; import "./p.js"; import "./x.js"; console.log("d");`,
+      "/x.js": /* js */ `
+        import { getY } from "./y.js";
+        console.log("x reads", getY());
+        export const later = () => import("./later.js");
+      `,
+      "/y.js": /* js */ `
+        import { z } from "./z.js";
+        export var y = String("y");
+        export function getY(n) { return n ? again(n - 1) : y }
+        function again(n) { return getY(n) }
+        console.log("y reads", z);
+      `,
+      "/z.js": `import "./x.js"; import "./q.js"; import "./p.js"; export var z = String("z"); console.log("z");`,
+      "/p.js": `console.log("p");`,
+      "/q.js": `console.log("q");`,
+      "/later.js": `console.log("later");`,
+    },
+    entryPoints: ["/a.js", "/b.js", "/c.js", "/d.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: [
+      { file: "/out/a.js", stdout: "p\nq\nz\ny reads z\nx reads y\na" },
+      { file: "/out/d.js", stdout: "p\nq\nz\ny reads z\nx reads y\nd" },
+    ],
+  });
+
   // In the order of b.js, the require() in x.js puts y.js between two statements of x.js, and e.js can read w.
   // f names both w and w2, so that the check of this order comes to f from x.js first.
   itBundled("splitting/SharedChunkOwnerWithRequireInsideReadingFile", {

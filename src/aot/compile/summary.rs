@@ -186,12 +186,23 @@ pub(super) fn collect_names_followed(
                 }
                 _ => continue,
             };
-            if !names_parent
-                && let ImportSpecifier::Constant(written) = site.specifier
-                && let Some(SiteAnswer::Module(ModuleRef::File(target))) =
-                    graph.find_site_answer(file, site.kind)
-            {
-                write_down(site.kind, files.atoms.bytes(written), target);
+            match (site.specifier, graph.find_site_answer(file, site.kind)) {
+                (
+                    ImportSpecifier::Constant(written),
+                    Some(SiteAnswer::Module(ModuleRef::File(target))),
+                ) if !names_parent => {
+                    write_down(site.kind, files.atoms.bytes(written), target);
+                }
+                (_, Some(SiteAnswer::Computed(candidates)))
+                    if matches!(site.kind, ImportSiteKind::RequireResolve(_)) =>
+                {
+                    for spelled in candidates.spelled_modules() {
+                        if let ModuleRef::File(target) = spelled.module {
+                            write_down(site.kind, files.atoms.bytes(spelled.spelling), target);
+                        }
+                    }
+                }
+                _ => {}
             }
         }
     };

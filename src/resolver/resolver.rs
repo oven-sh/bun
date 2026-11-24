@@ -1113,9 +1113,11 @@ impl<'a> Resolver<'a> {
         }
         let followed = graph.compiled_program().and_then(|program| {
             let public_root = graph.base_public_path_with_default_suffix();
+            // A path that the program has from `__filename` is of the build machine.
+            let known_to_program = program.public_path_of_source(public_root, source_dir);
             program.find_name_that_build_followed(
                 public_root,
-                source_dir,
+                known_to_program.as_deref().unwrap_or(source_dir),
                 import_path,
                 is_require(kind),
             )

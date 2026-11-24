@@ -480,6 +480,68 @@ const IS_UV_FS_COPYFILE_DISABLED =
     await Bun.write(Bun.stderr, Bun.file(path.join(import.meta.dir, "hello-world.txt")));
   });
 
+  describe.skipIf(!isWindows).each([
+    ["FILE_FLAG_OVERLAPPED", 0x40000000, false],
+    ["FILE_FLAG_NO_BUFFERING", 0x20000000, true],
+  ])("a file inherited with %s", (_, flag, hasPosition) => {
+    async function run(stdioIndex, shareMode, script) {
+      using dir = tempDir("bun-write-inherited", {
+        "source.txt": "from the source",
+        "inherited.txt": "inherited, and longer than the source",
+        "child.js": `console.error(await ${script}.catch(error => error.code));`,
+        "main.js": `
+          const { CreateFileW } = require("bun:ffi").dlopen("kernel32.dll", {
+            CreateFileW: { args: ["ptr", "u32", "u32", "ptr", "u32", "u32", "ptr"], returns: "i64" },
+          }).symbols;
+          const [GENERIC_READ, GENERIC_WRITE, OPEN_EXISTING] = [0x80000000, 0x40000000, 3];
+          const access = [GENERIC_READ, GENERIC_WRITE][${stdioIndex}];
+          const name = Buffer.from("inherited.txt\\0", "utf16le");
+          const windowsHandle = CreateFileW(name, access, ${shareMode}, null, OPEN_EXISTING, ${flag}, null);
+          const stdio = ["ignore", "inherit", "inherit"];
+          stdio[${stdioIndex}] = require("fs").createReadStream(null, { windowsHandle, autoClose: false }).fd;
+          process.exitCode = Bun.spawnSync([process.execPath, "child.js"], { stdio }).exitCode;
+        `,
+      });
+      await using proc = Bun.spawn({ cmd: [bunExe(), "main.js"], cwd: String(dir), env: bunEnv, stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode, inherited: fs.readFileSync(join(String(dir), "inherited.txt"), "utf8") };
+    }
+    const FILE_SHARE_READ_WRITE = 3;
+    const inherited = "inherited, and longer than the source";
+    const writeSource = `Bun.write(Bun.stdout, Bun.file("source.txt"))`;
+
+    it("is written to and not truncated", async () => {
+      expect(await run(1, FILE_SHARE_READ_WRITE, writeSource)).toMatchObject({
+        stderr: "15\n",
+        inherited: hasPosition ? "from the source" + inherited.slice(15) : inherited + "from the source",
+        exitCode: 0,
+      });
+    });
+
+    it("holds whole copies after two writes of several chunks", async () => {
+      const script = `Bun.write("source.txt", Buffer.alloc(700_001, "x")).then(() => ${writeSource}).then(() => ${writeSource})`;
+      const result = await run(1, FILE_SHARE_READ_WRITE, script);
+      expect({ ...result, inherited: result.inherited.length }).toMatchObject({
+        stderr: "700001\n",
+        inherited: hasPosition ? 700_001 : inherited.length + 2 * 700_001,
+        exitCode: 0,
+      });
+    });
+
+    it("is not changed if it is not shared", async () => {
+      expect(await run(1, 0, writeSource)).toMatchObject({ stderr: "EBUSY\n", inherited, exitCode: 0 });
+    });
+
+    it("is copied to a pipe only once", async () => {
+      const copy = `Bun.write(Bun.stdout, Bun.stdin)`;
+      expect(await run(0, FILE_SHARE_READ_WRITE, `${copy}.then(() => ${copy})`)).toMatchObject({
+        stderr: "0\n",
+        stdout: inherited,
+        exitCode: 0,
+      });
+    });
+  });
+
   // macOS fcopyfile(COPYFILE_DATA) rewrites dst from offset 0, and the
   // slice trim on macOS/FreeBSD (and the Linux read/write fallback) was
   // ftruncate(dst, N); both destroy bytes in a file the caller already had

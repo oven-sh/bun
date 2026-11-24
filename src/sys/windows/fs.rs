@@ -954,6 +954,35 @@ pub fn fchmod(fd: Fd, mode: Mode) -> Maybe<()> {
     })
 }
 
+/// `None` unless `fd` is unbuffered (whole sectors only) or overlapped (no position, so writes append).
+pub fn reopen_buffered(fd: Fd, flags: i32) -> Maybe<Option<Fd>> {
+    const FILE_WRITE_DATA: u32 = 0x2;
+    const FILE_WRITE_THROUGH: u32 = 0x2;
+    const FILE_NO_INTERMEDIATE_BUFFERING: u32 = 0x8;
+    const SYNCHRONOUS_IO: u32 = 0x10 | w::FILE_SYNCHRONOUS_IO_NONALERT;
+    with_fd_handle(fd, Tag::open, |file| {
+        let mode = map_nt_error(nt::query_file_info::<w::FILE_MODE_INFORMATION>(file))?.Mode;
+        let is_overlapped = mode & SYNCHRONOUS_IO == 0;
+        if !is_overlapped && mode & FILE_NO_INTERMEDIATE_BUFFERING == 0 {
+            return Ok(None);
+        }
+        let granted = map_nt_error(nt::query_file_info::<w::FILE_ACCESS_INFORMATION>(file))?;
+        let mut access = granted.AccessFlags
+            & match flags & crate::O::ACCMODE {
+                crate::O::RDONLY => w::FILE_READ_DATA,
+                _ => FILE_WRITE_DATA | w::FILE_APPEND_DATA,
+            };
+        if is_overlapped && access & FILE_WRITE_DATA != 0 {
+            access = w::FILE_APPEND_DATA;
+        }
+        let options = w::FILE_NON_DIRECTORY_FILE | (mode & FILE_WRITE_THROUGH);
+        let reopened = open_synchronous((Some(file), &[]), access, options)?;
+        let position = map_nt_error(nt::query_file_info::<w::FILE_POSITION_INFORMATION>(file))?;
+        map_nt_error(nt::set_file_info(reopened.as_raw_handle(), position))?;
+        Ok(Some(Fd::from_system(reopened.into_raw_handle())))
+    })
+}
+
 pub fn chown(_: &ZStr, _uid: u32, _gid: u32) -> Maybe<()> {
     Ok(())
 }

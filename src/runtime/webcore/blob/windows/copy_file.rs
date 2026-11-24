@@ -296,6 +296,7 @@ impl Transfer {
 
     fn copy(&self, blocking_io: &BlockingIo) -> sys::Result<SizeType> {
         const CHUNK_SIZE: SizeType = 256 * 1024;
+        const MAX_SECTOR_SIZE: SizeType = 4096;
         let limit = match self.source_size {
             0 => self.max_length,
             size => size.min(self.max_length),
@@ -307,27 +308,81 @@ impl Transfer {
         {
             return Err(sys::Error::oom());
         }
-        let source = self.source.fd();
+        let mut source = ReopenableFile::new(&self.source, O::RDONLY);
+        let mut destination = ReopenableFile::new(&self.destination, O::WRONLY);
         let source_io = self.source_can_block.then_some(blocking_io);
         let destination_io = self.destination_can_block.then_some(blocking_io);
         let max_read_len = source_io.map_or(usize::MAX, |_| {
-            named_pipe::max_transfer_len(source.native())
+            named_pipe::max_transfer_len(self.source.fd().native())
         });
         let mut copied = 0;
         while copied < limit {
             buf.clear();
             let read_len = max_read_len.min((limit - copied) as usize);
-            let bytes_read = append_with(&mut buf, read_len, |spare| match source_io {
-                Some(io) => io.read(source, spare, None),
-                None if self.should_read_from_start => sys::pread_buf(source, spare, copied as i64),
-                None => sys::read_buf(source, spare),
+            let bytes_read = source.run(|source| {
+                let fd = source.fd();
+                append_with(&mut buf, read_len, |spare| match source_io {
+                    Some(io) => io.read(fd, spare, None),
+                    None if self.should_read_from_start => sys::pread_buf(fd, spare, copied as i64),
+                    None => sys::read_buf(fd, spare),
+                })
             })?;
             if bytes_read == 0 {
                 break;
             }
-            self.destination.write_all(&buf, destination_io)?;
+            destination.run(|destination| destination.write_all(&buf, destination_io))?;
             copied += bytes_read as u64;
         }
+        source.update_position(|end| end.next_multiple_of(MAX_SECTOR_SIZE));
+        // Another process may have moved the position back.
+        destination.update_position(|end| end.saturating_sub(copied));
         Ok(copied)
+    }
+}
+
+/// Continues on a handle of its own once the caller's file refuses a transfer because of how it was opened.
+struct ReopenableFile<'a> {
+    file: &'a JobFile,
+    flags: i32,
+    reopened: Option<JobFile>,
+}
+
+impl<'a> ReopenableFile<'a> {
+    fn new(file: &'a JobFile, flags: i32) -> Self {
+        Self {
+            file,
+            flags,
+            reopened: None,
+        }
+    }
+
+    fn run<T>(&mut self, mut transfer: impl FnMut(&JobFile) -> sys::Result<T>) -> sys::Result<T> {
+        if let Some(reopened) = &self.reopened {
+            return transfer(reopened);
+        }
+        match transfer(self.file) {
+            Err(err)
+                if err.get_errno() == E::EINVAL
+                    && sys::windows::is_disk_file(self.file.fd())
+                    && let Some(fd) =
+                        sys::windows::reopen_buffered(self.file.fd(), self.flags)? =>
+            {
+                transfer(
+                    self.reopened
+                        .insert(JobFile::Opened(sys::File::from_fd(fd))),
+                )
+            }
+            result => result,
+        }
+    }
+
+    /// An unbuffered file accepts only a multiple of the sector size, which `align` returns.
+    fn update_position(self, align: impl FnOnce(u64) -> u64) {
+        if let Some(reopened) = self.reopened
+            && let Ok(position) = sys::lseek(reopened.fd(), 0, libc::SEEK_CUR)
+            && sys::set_file_offset(self.file.fd(), position as u64).is_err()
+        {
+            let _ = sys::set_file_offset(self.file.fd(), align(position as u64));
+        }
     }
 }

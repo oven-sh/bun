@@ -2307,7 +2307,7 @@ pub use fd_table::{fd_identity, is_disk_file, pin_fd_generation};
 pub(crate) mod fs;
 pub use fs::{
     HandleKind, create_junction, current_umask, guess_handle, is_delete_pending, mkdtemp,
-    open_osfhandle, symlink_dir, verbatim_path,
+    open_osfhandle, reopen_buffered, symlink_dir, verbatim_path,
 };
 pub mod named_pipe;
 mod nt;

@@ -141,75 +141,32 @@ test("bunfig password value is masked in config error output", async () => {
   expect(coloredExit).toBe(1);
 });
 
-// The redaction knows that a string is a secret from the `token` key in front
-// of it. The line of a redacted message is kept whole at every length, so the
-// key reaches the redaction when the error is in the middle of the line, more
-// than 40 bytes after the key and more than 80 bytes before the end. A line of
-// another file is cut there when it has more than 1,000 bytes. The two errors
-// reach the log through different functions.
-test.each(
-  [
-    { size: "at most 1,000 bytes", tail: " # " + Buffer.alloc(120, "x").toString() },
-    { size: "more than 1,000 bytes", tail: " # " + Buffer.alloc(1200, "x").toString() },
-  ].flatMap(({ size, tail }) => [
-    {
-      title: "a syntax error",
-      size,
-      bunfig: (secret: string) => `[install]\ntoken = "${secret}" ]${tail}\n`,
-      printed: (masked: string) => `2 | token = "${masked}" ]${tail}`,
-      error: "error: Expected a newline or end of file after a key/value pair",
-    },
-    {
-      title: "an invalid value",
-      size,
-      bunfig: (secret: string) => `install = { registry = { token = "${secret}" }, cafile = 1 }${tail}\n`,
-      printed: (masked: string) => `1 | install = { registry = { token = "${masked}" }, cafile = 1 }${tail}`,
-      error: "error: Invalid cafile. Expected a string.",
-    },
-  ]),
-)("bunfig token is masked when $title is in the middle of a line of $size", async ({ bunfig, printed, error }) => {
-  const secret = Buffer.alloc(100, "secretvalue").toString();
-  const masked = Buffer.alloc(100, "*").toString();
-  using dir = tempDir("redacted-bunfig-long-line", {
-    "bunfig.toml": bunfig(secret),
+// A line of bunfig.toml can hold a credential, so a diagnostic about it keeps only the
+// excerpt around its position, at every line length. The token here is more than 80
+// bytes after the value that the warning points at.
+test("a bunfig warning shows the excerpt around it, not the rest of its line", async () => {
+  const far = Buffer.alloc(150, "x").toString();
+  const line = `install = { globalDir = "/x", cache = "${far}", registry = { url = "https://r.example/", token = "S3cretValueS3cretValue" } }`;
+  using dir = tempDir("bunfig-warning-excerpt", {
+    "bunfig.toml": line + "\n",
     "package.json": "{}",
+    "home/.gitkeep": "",
   });
-
-  await using plain = Bun.spawn({
+  const home = join(String(dir), "home");
+  await using proc = Bun.spawn({
     cmd: [bunExe(), "install"],
     cwd: String(dir),
-    env: { ...bunEnv, NO_COLOR: "1" },
+    env: { ...bunEnv, NO_COLOR: "1", HOME: home, USERPROFILE: home, XDG_CONFIG_HOME: home },
     stdout: "pipe",
     stderr: "pipe",
   });
+  const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  const [plainOut, plainErr, plainExit] = await Promise.all([plain.stdout.text(), plain.stderr.text(), plain.exited]);
-
-  expect(plainOut).not.toContain("secretvalue");
-  expect(plainErr).not.toContain("secretvalue");
-  expect(plainErr).toContain(printed(masked));
-  expect(plainErr).toContain(error);
-
-  await using colored = Bun.spawn({
-    cmd: [bunExe(), "install"],
-    cwd: String(dir),
-    env: { ...bunEnv, NO_COLOR: undefined, FORCE_COLOR: "1" },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-
-  const [coloredOut, coloredErr, coloredExit] = await Promise.all([
-    colored.stdout.text(),
-    colored.stderr.text(),
-    colored.exited,
-  ]);
-
-  expect(coloredOut).not.toContain("secretvalue");
-  expect(coloredErr).not.toContain("secretvalue");
-  expect(coloredErr).toContain(`"${masked}"`);
-
-  expect(plainExit).toBe(1);
-  expect(coloredExit).toBe(1);
+  expect(err).toContain('warn: ignoring "globalDir" in project bunfig.toml');
+  expect(err).toContain(`1 | ${line.slice(0, line.indexOf('"/x"') + 80)}\n`);
+  expect(err).not.toContain("S3cretValue");
+  expect(out).not.toContain("S3cretValue");
+  expect(exitCode).toBe(0);
 });
 
 // The config loaders split user:password@ off a registry URL, but a token

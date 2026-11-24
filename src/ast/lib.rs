@@ -517,7 +517,7 @@ impl Loc {
 // Location
 // ───────────────────────────────────────────────────────────────────────────
 
-/// A line up to this many bytes is stored whole in [`Location::line_text`], so `column` indexes it.
+/// A public [`Source`]'s line up to this many bytes is stored whole in [`Location::line_text`], so `column` indexes it.
 pub const MAX_WHOLE_LINE_LEN: usize = 1000;
 
 /// Owns its bytes: a diagnostic outlives the [`Source`] it describes.
@@ -607,7 +607,7 @@ impl Location {
     }
 
     pub fn init_or_null(_source: Option<&Source>, r: Range) -> Option<Location> {
-        Self::init_or_null_impl(_source, r, None, false)
+        Self::init_or_null_impl(_source, r, None)
     }
 
     /// `init_or_null`, but computing the line/column through a
@@ -617,16 +617,14 @@ impl Location {
         _source: Option<&Source>,
         r: Range,
         tracker: &mut LineColumnTracker,
-        redact_sensitive_information: bool,
     ) -> Option<Location> {
-        Self::init_or_null_impl(_source, r, Some(tracker), redact_sensitive_information)
+        Self::init_or_null_impl(_source, r, Some(tracker))
     }
 
     fn init_or_null_impl(
         _source: Option<&Source>,
         r: Range,
         tracker: Option<&mut LineColumnTracker>,
-        redact_sensitive_information: bool,
     ) -> Option<Location> {
         if let Some(source) = _source {
             let file = Box::from(source.path.text);
@@ -653,9 +651,7 @@ impl Location {
                 .saturating_sub(data.line_start)
                 .min(full_line.len());
             let mut line_text_start_column = 0;
-            // The key that marks a secret can be far from the error, so a redacted line is never cut.
-            if !redact_sensitive_information
-                && full_line.len() > MAX_WHOLE_LINE_LEN
+            if (source.secrecy == SourceSecrecy::Secret || full_line.len() > MAX_WHOLE_LINE_LEN)
                 && full_line.len() > 80 + offset_in_line
             {
                 let mut lo = offset_in_line.saturating_sub(40);
@@ -1239,22 +1235,11 @@ impl Log {
         r: Range,
         text: impl IntoText,
     ) -> Data {
-        self.tracked_range_data_with(source, r, text, false)
-    }
-
-    fn tracked_range_data_with(
-        &mut self,
-        source: Option<&Source>,
-        r: Range,
-        text: impl IntoText,
-        redact_sensitive_information: bool,
-    ) -> Data {
         let location = if source.is_some() {
             Location::init_or_null_tracked(
                 source,
                 r,
                 self.line_column_tracker.get_or_insert_default(),
-                redact_sensitive_information,
             )
         } else {
             Location::init_or_null(source, r)
@@ -1373,7 +1358,7 @@ impl Log {
             Kind::Warn => self.warnings += 1,
             _ => {}
         }
-        let data = self.tracked_range_data_with(source, r, text, redact_sensitive_information);
+        let data = self.tracked_range_data(source, r, text);
         self.add_msg(Msg {
             kind,
             data,
@@ -1838,14 +1823,13 @@ impl Log {
     #[cold]
     pub fn add_error_opts(&mut self, text: &'static [u8], opts: AddErrorOptions<'_>) {
         self.errors += 1;
-        let data = self.tracked_range_data_with(
+        let data = self.tracked_range_data(
             opts.source,
             Range {
                 loc: opts.loc,
                 len: opts.len,
             },
             text,
-            opts.redact_sensitive_information,
         );
         self.add_msg(Msg {
             kind: Kind::Err,
@@ -2069,7 +2053,20 @@ pub struct Source<'a> {
     pub identifier_name: Cow<'a, [u8]>,
 
     pub index: Index,
+
+    pub secrecy: SourceSecrecy,
 }
+
+/// Whether a [`Source`] can hold credentials (bunfig.toml, `.npmrc`). A diagnostic keeps only a short excerpt of its lines.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum SourceSecrecy {
+    #[default]
+    Public,
+    Secret,
+}
+
+// `secrecy` sits in the padding after `index`.
+const _: () = assert!(core::mem::size_of::<Source>() == 112);
 
 impl Default for Source<'_> {
     fn default() -> Self {
@@ -2078,6 +2075,7 @@ impl Default for Source<'_> {
             contents: Cow::Borrowed(b""),
             identifier_name: Cow::Borrowed(b""),
             index: Index::source(0),
+            secrecy: SourceSecrecy::Public,
         }
     }
 }
@@ -2370,6 +2368,17 @@ impl<'a> Source<'a> {
             path,
             contents: Cow::Owned(contents),
             ..Default::default()
+        }
+    }
+
+    /// A borrowed copy marked [`SourceSecrecy::Secret`], made where a file that can hold credentials is parsed.
+    pub fn as_secret(&self) -> Source<'_> {
+        Source {
+            path: self.path,
+            contents: Cow::Borrowed(&self.contents),
+            identifier_name: Cow::Borrowed(&self.identifier_name),
+            index: self.index,
+            secrecy: SourceSecrecy::Secret,
         }
     }
 

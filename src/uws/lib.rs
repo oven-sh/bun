@@ -405,7 +405,7 @@ pub mod ssl_wrapper {
         }
 
         #[inline]
-        pub(crate) fn received_ssl_shutdown(&self) -> bool {
+        pub fn received_ssl_shutdown(&self) -> bool {
             self.bits() & Self::RECEIVED_SSL_SHUTDOWN != 0
         }
         #[inline]

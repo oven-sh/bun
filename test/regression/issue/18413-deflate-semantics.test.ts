@@ -174,7 +174,7 @@ test("chunked raw deflate should work", async () => {
 });
 
 // Test truncated zlib-wrapped deflate (missing trailer)
-test("truncated zlib-wrapped deflate should fail", async () => {
+test("zlib-wrapped deflate without its trailer should work", async () => {
   using server = serve({
     port: 0,
     async fetch(req) {
@@ -191,13 +191,9 @@ test("truncated zlib-wrapped deflate should fail", async () => {
     },
   });
 
-  try {
-    const response = await fetch(`http://localhost:${server.port}`);
-    await response.text();
-    expect.unreachable("Should have thrown decompression error");
-  } catch (err: any) {
-    expect(err.code).toMatch(/ZlibError|ShortRead/);
-  }
+  const response = await fetch(`http://localhost:${server.port}`);
+  const text = await response.text();
+  expect(text).toBe(testData.toString());
 });
 
 // Test invalid deflate data (not deflate at all)

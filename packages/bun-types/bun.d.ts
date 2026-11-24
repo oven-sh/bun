@@ -6033,7 +6033,31 @@ declare module "bun" {
       maxEditLength?: number | undefined;
     }
 
-    interface HunksOptions extends Options {
+    interface TextOptions extends Options {
+      /**
+       * Tokens match if they are equal after `toLowerCase()`. What is kept comes from the new text.
+       *
+       * @default false
+       */
+      ignoreCase?: boolean | undefined;
+    }
+
+    interface LinesOptions extends TextOptions {
+      /**
+       * Lines match if they are equal after `trim()`. What is kept comes from the new text.
+       *
+       * @default false
+       */
+      ignoreWhitespace?: boolean | undefined;
+      /**
+       * Replace each `\r\n` with `\n` in both texts first, like `diff --strip-trailing-cr`.
+       *
+       * @default false
+       */
+      stripTrailingCr?: boolean | undefined;
+    }
+
+    interface HunksOptions extends LinesOptions {
       /**
        * The number of unchanged lines before and after each change, like `diff -U`.
        * An integer from 0, or `Infinity` for the whole file.
@@ -6118,8 +6142,8 @@ declare module "bun" {
      * // ]
      * ```
      */
-    function lines(oldText: string, newText: string, options?: Options & { maxEditLength?: undefined }): Change[];
-    function lines(oldText: string, newText: string, options?: Options): Change[] | undefined;
+    function lines(oldText: string, newText: string, options?: LinesOptions & { maxEditLength?: undefined }): Change[];
+    function lines(oldText: string, newText: string, options?: LinesOptions): Change[] | undefined;
 
     /**
      * Compare two strings word by word. A token is a word of Latin letters, digits and `_`,
@@ -6127,16 +6151,16 @@ declare module "bun" {
      *
      * @returns The changes, or `undefined` if there are more than `maxEditLength` edits
      */
-    function words(oldText: string, newText: string, options?: Options & { maxEditLength?: undefined }): Change[];
-    function words(oldText: string, newText: string, options?: Options): Change[] | undefined;
+    function words(oldText: string, newText: string, options?: TextOptions & { maxEditLength?: undefined }): Change[];
+    function words(oldText: string, newText: string, options?: TextOptions): Change[] | undefined;
 
     /**
      * Compare two strings by Unicode code point.
      *
      * @returns The changes, or `undefined` if there are more than `maxEditLength` edits
      */
-    function chars(oldText: string, newText: string, options?: Options & { maxEditLength?: undefined }): Change[];
-    function chars(oldText: string, newText: string, options?: Options): Change[] | undefined;
+    function chars(oldText: string, newText: string, options?: TextOptions & { maxEditLength?: undefined }): Change[];
+    function chars(oldText: string, newText: string, options?: TextOptions): Change[] | undefined;
 
     /**
      * Compare two arrays element by element, with `===`.
@@ -6193,8 +6217,9 @@ declare module "bun" {
      * Apply a patch for one file to `source`.
      *
      * The lines that a hunk keeps and removes have to match exactly. If they don't match at
-     * `oldStart`, Bun uses the nearest line where they do. If `source` only has `\r\n` line
-     * endings and the patch only has `\n`, or the reverse, the patch is converted first.
+     * `oldStart`, Bun uses the nearest line where they do, within a limit on the steps of that search.
+     * If `source` only has `\r\n` line endings and the patch only has `\n`, or the reverse, the patch
+     * is converted first.
      *
      * @param patch A unified diff, or hunks from {@link hunks} or {@link parsePatch}
      * @returns The patched text, or `undefined` if a hunk does not match

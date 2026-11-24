@@ -44,3 +44,5 @@ export const onInternalMessagePrimary = b.fn({
 export const ChannelRefOp = b.enumeration(["ref", "unref", "refCounted", "unrefCounted"]);
 /** With the handle of a child it is about that child's channel (`subprocess.channel`), and without one about this process's own (`process.channel`). */
 export const channelRef = b.fn({ args: { op: ChannelRefOp, processHandle } });
+/** The channel of a child holds the parent's event loop from here on, as Node's `Pipe` does from the start. */
+export const startChannelRef = b.fn({ args: { processHandle } });

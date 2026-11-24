@@ -317,6 +317,12 @@ pub(crate) fn channel_ref(op: ChannelRefOp, process_handle: Option<&bun_ptr::Ref
     }
 }
 
+pub(crate) fn start_channel_ref(process_handle: Option<&bun_ptr::RefPtr<Subprocess>>) {
+    if let Some(ipc) = process_handle.and_then(|subprocess| subprocess.ipc()) {
+        ipc.start_channel_ref();
+    }
+}
+
 /// `count` is how many 'message' and 'disconnect' listeners `process` has. Each is one `refCounted()`, as in Node's `_forkChild`.
 // HOST_EXPORT(Bun__setChannelListenerCount, c)
 pub(crate) fn set_channel_listener_count(global: &JSGlobalObject, count: u32) {

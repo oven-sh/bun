@@ -130,6 +130,7 @@ export default b.declarations(
       "clusterValidateFd",
       "onInternalMessageChild",
       "onInternalMessagePrimary",
+      "startChannelRef",
     ),
     ...nativeBindings("Bindgen", "node_cluster_binding.bind.ts", "clusterRawBind", "sendHelperPrimary"),
   ),

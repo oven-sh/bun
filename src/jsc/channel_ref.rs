@@ -13,9 +13,20 @@ pub struct ChannelRef {
     refs: Cell<i32>,
     /// `Control#refExplicitlySet`: after `ref()` or `unref()` the count moves nothing.
     explicit: Cell<bool>,
+    started: Cell<bool>,
 }
 
 impl ChannelRef {
+    /// The reference that Node's `Pipe` has from the start in a parent. A child's has none: https://github.com/nodejs/node/blob/v26.3.0/lib/child_process.js#L181
+    pub fn start(&self) {
+        self.started.set(true);
+        self.hold(true);
+    }
+
+    pub fn is_started(&self) -> bool {
+        self.started.get()
+    }
+
     /// `Control#ref()` and `Control#unref()`.
     pub fn set(&self, enabled: bool) {
         self.explicit.set(true);

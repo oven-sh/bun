@@ -1,6 +1,6 @@
 import { $ } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, nodeExeAtLeast, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, nodeExeAtLeast, tempDir } from "harness";
 import { join } from "node:path";
 
 test("child_process ipc", async () => {
@@ -76,7 +76,7 @@ describe.concurrent("the IPC channel of node:child_process and the event loop", 
     [["child.unref", "disconnect", "ref"], "throws TypeError, not held"],
     [["child.unref", "save", "disconnect", "saved.ref"], "not held"],
     [["child.unref", "unref", "send"], "not held"],
-    // A write holds the parent until it has finished, and one with a handle until the kid has the handle.
+    // A write that does not finish at once is counted until it has finished, and so is one with a handle.
     [["child.unref", "send(8 MB)"], "not held"],
     [["child.unref", "send(8 MB)", "send(8 MB)"], "not held"],
     [["child.unref", "ref", "send(8 MB)"], "held"],
@@ -91,6 +91,23 @@ describe.concurrent("the IPC channel of node:child_process and the event loop", 
     [["--door=cluster", "child.unref", "unref", "ref"], "held"],
     [["--kid=other", "child.unref", "unref"], "not held"],
     [["--kid=other", "child.unref", "send(8 MB)"], "not held"],
+
+    // The channel holds the parent from the start.
+    [["child.unref"], "held"],
+    [["child.unref", "on(message)"], "held"],
+    [["child.unref", "unrefCounted"], "held"],
+    [["child.unref", "unrefCounted", "refCounted"], "held"],
+    [["child.unref", "unrefCounted", "send(8 MB)"], "held"],
+    [["child.unref", "unrefCounted", "send(handle)"], "held"],
+    [["--serialization=advanced", "child.unref"], "held"],
+    [["--door=spawn", "child.unref"], "held"],
+    [["--door=cluster", "child.unref"], "held"],
+    [["--kid=other", "child.unref"], "held"],
+    // No write to a pipe finishes at once on Windows, in Node.js either:
+    // https://github.com/libuv/libuv/blob/v1.52.1/src/win/stream.c#L210-L211
+    [["child.unref", "send"], isWindows ? "not held" : "held"],
+    [["child.unref", "send(32 KB)"], isWindows ? "not held" : "held"],
+    [["--serialization=advanced", "child.unref", "send"], isWindows ? "not held" : "held"],
   ];
 
   // The operations are on `process` and on `process.channel`. Each 'message' and 'disconnect' listener of `process`
@@ -159,8 +176,12 @@ describe.concurrent("the IPC channel of node:child_process and the event loop", 
     });
   }
 
+  // In Node.js it does: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L868-L874 counts
+  // the handle until it is written. Here the parent stays until the kid has the handle, as it did before.
+  test.todo("unref() lets a parent go that waits for the kid to take a handle");
+
   // Runs a script that forks itself with the argument "kid".
-  async function runForkingScript(script) {
+  async function runForkingScript(script, options) {
     using dir = tempDir("ipc-channel-ref", { "script.cjs": script });
     await using proc = Bun.spawn({
       cmd: [bunExe(), "script.cjs"],
@@ -168,10 +189,85 @@ describe.concurrent("the IPC channel of node:child_process and the event loop", 
       cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",
+      ...options,
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // The kid of one of the scripts stays until its stdin ends. Its parent has left by now.
+    await proc.stdin?.end();
     return { stdout: stdout.trimEnd().split("\n"), stderr, exitCode, signalCode: proc.signalCode };
   }
+
+  // https://github.com/oven-sh/bun/issues/23686. On Windows the write of the message does not finish at once, so
+  // there the parent leaves when it has, in Node.js too.
+  test.skipIf(isWindows)("a parent that unrefs its child still gets the answer to what it sent", async () => {
+    const script = `
+      const { fork } = require("node:child_process");
+      if (process.argv[2] === "kid") {
+        process.on("message", message => process.send(message + ", and hello from the kid"));
+      } else {
+        const child = fork(__filename, ["kid"]);
+        child.on("message", message => {
+          console.log(message);
+          child.disconnect();
+        });
+        child.unref();
+        child.send("hello from the parent");
+      }
+    `;
+    expect(await runForkingScript(script)).toEqual({
+      stdout: ["hello from the parent, and hello from the kid"],
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
+  test("a channel that the child closes lets the parent go, and is null from then on", async () => {
+    const script = `
+      const { fork } = require("node:child_process");
+      if (process.argv[2] === "kid") {
+        // It stays for as long as the test holds the other end of stdin.
+        process.stdin.resume();
+        process.disconnect();
+      } else {
+        const child = fork(__filename, ["kid"], { stdio: ["inherit", "ignore", "ignore", "ipc"] });
+        const channel = child.channel;
+        child.unref();
+        child.on("disconnect", () => {
+          // A method of the channel that is kept does nothing now.
+          channel.ref();
+          console.log(JSON.stringify({ channel: child.channel, connected: child.connected, exitCode: child.exitCode }));
+        });
+      }
+    `;
+    expect(await runForkingScript(script, { stdin: "pipe" })).toEqual({
+      stdout: [JSON.stringify({ channel: null, connected: false, exitCode: null })],
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
+  test("a channel holds the parent when nothing refers to the subprocess", async () => {
+    const script = `
+      const { fork } = require("node:child_process");
+      // The kid has nothing to do, and exits.
+      if (process.argv[2] !== "kid") {
+        (() => {
+          const child = fork(__filename, ["kid"]);
+          child.unref();
+          child.on("disconnect", () => console.log("the kid is gone"));
+        })();
+        Bun.gc(true);
+      }
+    `;
+    expect(await runForkingScript(script)).toEqual({
+      stdout: ["the kid is gone"],
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
 
   // The side that disconnects has no channel from that call on. The other side has none from its 'disconnect' event on.
   test.each([

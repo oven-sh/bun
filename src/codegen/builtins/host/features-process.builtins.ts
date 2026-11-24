@@ -78,6 +78,7 @@ export default b.declarations(
       "channelRef",
       "onInternalMessageChild",
       "onInternalMessagePrimary",
+      "startChannelRef",
     ),
     "Bun.spawn",
     "%Subprocess%",

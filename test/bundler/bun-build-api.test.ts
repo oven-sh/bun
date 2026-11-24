@@ -2475,6 +2475,60 @@ describe("Bun.build runs onEnd callbacks one at a time", () => {
     expect(log).toEqual(["a", "b", "c"]);
   });
 
+  test("a thrown undefined rejects the build", async () => {
+    using dir = tempDir("onend-serial-throw-undefined", { "index.ts": `console.log(1);` });
+    const log: string[] = [];
+
+    const outcome = await Bun.build({
+      entrypoints: [join(String(dir), "index.ts")],
+      plugins: [
+        plugin("a", () => {
+          log.push("a");
+          throw undefined;
+        }),
+        plugin("b", async () => {
+          log.push("b");
+          await null;
+          throw new Error("second");
+        }),
+      ],
+    }).then(
+      () => "resolved",
+      error => ({ rejected: error }),
+    );
+
+    expect(outcome).toEqual({ rejected: undefined });
+    expect(log).toEqual(["a", "b"]);
+  });
+
+  test("the error of a callback wins over the error of a build that fails", async () => {
+    using dir = tempDir("onend-serial-both-fail", { "index.ts": `import "./does-not-exist";` });
+    const thrown = new Error("from onEnd");
+    const gate = Promise.withResolvers<void>();
+    const started = Promise.withResolvers<void>();
+
+    const outcome = Bun.build({
+      entrypoints: [join(String(dir), "index.ts")],
+      throw: true,
+      plugins: [
+        plugin("a", async () => {
+          started.resolve();
+          await gate.promise;
+        }),
+        plugin("b", () => {
+          throw thrown;
+        }),
+      ],
+    }).then(
+      () => "resolved",
+      error => error,
+    );
+
+    await started.promise;
+    gate.resolve();
+    expect(await outcome).toBe(thrown);
+  });
+
   test.each([true, false])("a build that fails with throw: %p settles after the last callback", async shouldThrow => {
     using dir = tempDir("onend-serial-failed-build", { "index.ts": `import "./does-not-exist";` });
     const log: string[] = [];
@@ -2508,27 +2562,28 @@ describe("Bun.build runs onEnd callbacks one at a time", () => {
   });
 
   test("a replaced Promise.all is not called", async () => {
-    using dir = tempDir("onend-serial-promise-all", {
-      "index.ts": `console.log("hello");`,
-      "build.ts": `
-        const calls = [];
-        const all = Promise.all;
-        Promise.all = function () {
-          calls.push("Promise.all");
-          return all.apply(this, arguments);
-        };
-        const plugin = name => ({ name, setup(builder) { builder.onEnd(async () => { await null; calls.push(name); }); } });
-        const build = await Bun.build({ entrypoints: ["./index.ts"], plugins: [plugin("a"), plugin("b")] });
-        console.log(JSON.stringify({ calls, success: build.success }));
-      `,
-    });
-    await using proc = Bun.spawn({ cmd: [bunExe(), "build.ts"], env: bunEnv, cwd: String(dir), stderr: "pipe" });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ out: JSON.parse(stdout.trim() || "null"), stderr: exitCode === 0 ? "" : stderr, exitCode }).toEqual({
-      out: { calls: ["a", "b"], success: true },
-      stderr: "",
-      exitCode: 0,
-    });
+    using dir = tempDir("onend-serial-promise-all", { "index.ts": `console.log(1);` });
+    const calls: string[] = [];
+    const all = Promise.all;
+    Promise.all = function (this: PromiseConstructor) {
+      calls.push("Promise.all");
+      return all.apply(this, arguments as any);
+    } as typeof Promise.all;
+    try {
+      const asyncPlugin = (name: string) =>
+        plugin(name, async () => {
+          await null;
+          calls.push(name);
+        });
+      const build = await Bun.build({
+        entrypoints: [join(String(dir), "index.ts")],
+        plugins: [asyncPlugin("a"), asyncPlugin("b")],
+      });
+      expect(build.success).toBe(true);
+    } finally {
+      Promise.all = all;
+    }
+    expect(calls).toEqual(["a", "b"]);
   });
 });
 

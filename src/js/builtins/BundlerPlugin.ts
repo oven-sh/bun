@@ -109,79 +109,61 @@ export function runOnEndCallbacks(
   promise: Promise<object>,
   buildResult: object,
   buildRejection: unknown,
-): Promise<unknown> | void {
+): Promise<void> | void {
   const callbacks = this.$onEndCallbacks;
   if (!callbacks) return;
-
-  // The callbacks run one at a time, as in esbuild. A callback that fails does not stop the later ones.
-  // The build rejects with the first error, after the last callback.
-  let hasError = false;
-  let firstError: unknown;
 
   for (let i = 0; i < callbacks.length; i++) {
     const callback = callbacks[i];
     let result;
+    let hasError = false;
+    let firstError: unknown;
     try {
       result = callback(buildResult);
+      if (!result || !$isPromise(result) || $peekPromiseStatus(result) === 1) continue;
     } catch (e) {
-      if (!hasError) {
-        hasError = true;
-        firstError = e;
-      }
-      continue;
+      hasError = true;
+      firstError = e;
     }
 
-    if (result && $isPromise(result) && $peekPromiseStatus(result) !== 1) {
-      // Native code settles `promise` itself if and only if this function returns undefined.
-      // The arrow function captures nothing, so a build whose callbacks are all synchronous allocates no closure.
-      return (async (
-        callbacks: $Node.BundlerPlugin.OnEndCallback[],
-        i: number,
-        pending: unknown,
-        promise: Promise<object>,
-        buildResult: object,
-        buildRejection: unknown,
-        hasError: boolean,
-        firstError: unknown,
-      ) => {
+    // Callback `i` threw, or its promise is not fulfilled. The callbacks run one at a time, as in esbuild,
+    // so this async function runs the later callbacks and then settles `promise`. It captures nothing:
+    // a build whose callbacks all return synchronously allocates nothing here.
+    // Native code settles `promise` itself if and only if runOnEndCallbacks returns undefined.
+    return (async (
+      callbacks: $Node.BundlerPlugin.OnEndCallback[],
+      i: number,
+      result: unknown,
+      promise: Promise<object>,
+      buildResult: object,
+      buildRejection: unknown,
+      hasError: boolean,
+      firstError: unknown,
+    ) => {
+      for (;;) {
         try {
-          await pending;
+          if (result && $isPromise(result) && $peekPromiseStatus(result) !== 1) await result;
+          if (++i >= callbacks.length) break;
+          const callback = callbacks[i];
+          result = callback(buildResult);
         } catch (e) {
+          // A callback that fails does not stop the later ones. The first error rejects the build.
+          result = undefined;
           if (!hasError) {
             hasError = true;
             firstError = e;
           }
         }
+      }
 
-        for (; i < callbacks.length; i++) {
-          const callback = callbacks[i];
-          try {
-            const result = callback(buildResult);
-            if (result && $isPromise(result) && $peekPromiseStatus(result) !== 1) {
-              await result;
-            }
-          } catch (e) {
-            if (!hasError) {
-              hasError = true;
-              firstError = e;
-            }
-          }
-        }
-
-        if (hasError) {
-          $rejectPromise(promise, firstError);
-        } else if (buildRejection !== undefined) {
-          $rejectPromise(promise, buildRejection);
-        } else {
-          $resolvePromise(promise, buildResult);
-        }
-      })(callbacks, i + 1, result, promise, buildResult, buildRejection, hasError, firstError);
-    }
-  }
-
-  if (hasError) {
-    $rejectPromise(promise, firstError);
-    return promise;
+      if (hasError) {
+        $rejectPromise(promise, firstError);
+      } else if (buildRejection !== undefined) {
+        $rejectPromise(promise, buildRejection);
+      } else {
+        $resolvePromise(promise, buildResult);
+      }
+    })(callbacks, i, result, promise, buildResult, buildRejection, hasError, firstError);
   }
 }
 

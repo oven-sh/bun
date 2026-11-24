@@ -7109,11 +7109,13 @@ declare module "bun" {
      * Register a callback that runs when bundling ends, after all modules
      * have been bundled and the build is complete.
      *
-     * The callbacks run one at a time, in the order the plugins register
-     * them. If a callback returns a promise, the next callback starts after
-     * that promise settles. A callback that throws does not stop the later
-     * callbacks. After the last callback, the build rejects with the first
-     * error.
+     * `Bun.build()` runs the callbacks one at a time, in the order the
+     * plugins register them. If a callback returns a promise, the next
+     * callback starts after that promise settles. A callback that throws
+     * does not stop the later callbacks. After the last callback, the build
+     * rejects with the first error.
+     *
+     * Only `Bun.build()` calls these callbacks.
      *
      * @example
      * ```ts

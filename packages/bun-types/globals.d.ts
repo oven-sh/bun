@@ -2288,6 +2288,10 @@ declare namespace fetch {
    * Resolve a URL's DNS and establish a TCP connection before a request is
    * made, to speed up the eventual `fetch`.
    *
+   * Opens no connection, and does not throw, when the proxy environment
+   * (`HTTP_PROXY`, `HTTPS_PROXY` or `ALL_PROXY`) applies to the URL and
+   * `NO_PROXY` does not exempt it.
+   *
    * Not part of the Fetch API specification.
    *
    * @param url The URL to preconnect to

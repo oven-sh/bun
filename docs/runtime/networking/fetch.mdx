@@ -479,6 +479,8 @@ fetch.preconnect("https://bun.com");
 
 Calling `fetch` immediately after `fetch.preconnect` does not make your request faster. Preconnecting only helps when there's a gap between knowing the host and sending the request.
 
+`fetch.preconnect` and `--fetch-preconnect` open no connection, and report nothing, when the [proxy environment](#proxying-requests) (`HTTP_PROXY`, `HTTPS_PROXY` or `ALL_PROXY`) applies to the URL and `NO_PROXY` doesn't exempt it. To open the connection through the proxy ahead of time, send a request and ignore the result, such as `fetch(url, { method: "HEAD" }).catch(() => {})`. The server receives that request.
+
 #### Preconnect at startup
 
 To preconnect to a host at startup, pass `--fetch-preconnect`:

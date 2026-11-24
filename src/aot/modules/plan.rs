@@ -1068,6 +1068,10 @@ impl ModuleGraph {
                 || is_marked(&self.plan.test_run.may_be_evicted, module))
     }
 
+    pub fn is_test_file(&self, file: FileId) -> bool {
+        is_marked(&self.plan.test_run.is_test_file, ModuleRef::File(file))
+    }
+
     pub fn is_reloadable(&self, file: FileId) -> bool {
         is_marked(&self.plan.test_run.is_reloadable, ModuleRef::File(file))
     }

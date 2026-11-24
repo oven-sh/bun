@@ -270,7 +270,9 @@ impl<const IS_SSL: bool> SSLWrapperHandler for ClientHandler<'_, '_, IS_SSL> {
 
     fn on_close(&mut self) {
         if self.next_step.is_continue() {
-            let end = if self.wrapper.flags.received_ssl_shutdown() {
+            let end = if self.wrapper.flags.received_ssl_shutdown()
+                && self.wrapper.refused_ciphertext() == 0
+            {
                 TransportEnd::Clean
             } else {
                 TransportEnd::Failed
@@ -472,6 +474,11 @@ impl ProxyTunnel {
     /// `write` takes every byte and keeps what the socket refuses, so a body without a bound waits while this is true.
     pub(crate) fn holds_refused_ciphertext(&self, lent_wrapper: Option<&SSLWrapper>) -> bool {
         self.wrapper(lent_wrapper).refused_ciphertext() > 0
+    }
+
+    /// The request counts as sent once the wrapper has taken it.
+    pub(crate) fn closes_over_unsent_request(&self) -> bool {
+        (self.wrapper.as_ref()).is_some_and(|wrapper| wrapper.refused_ciphertext() > 0)
     }
 
     /// `None` if TLS takes no data now.

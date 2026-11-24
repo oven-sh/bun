@@ -1317,6 +1317,31 @@ describe("a compressed stream that is unfinished when the body ends", () => {
     expect(await outcome(response.bytes(), small)).toBe(isWindows ? "ok" : "ECONNRESET");
   });
 
+  // Winsock takes a send() of any size whole, so there the request is sent.
+  it.skipIf(isWindows).each(["close_notify", "FIN"])(
+    "rejects if a %s comes before a CONNECT tunnel has sent the request body",
+    async kind => {
+      const { head, framed } = frame("gzip", "close", codings.gzip.flushed(small));
+      const key = `/${requests++}`;
+      const accepted = new Promise<Connection>(resolve => waiting.set(key, resolve));
+      const { url, proxy } = targets["CONNECT tunnel"];
+      const body = new Uint8Array(64 * 1024 * 1024);
+      const pending = fetch(url + key, { method: "POST", body, proxy, tls: { ca: tls.cert } });
+      const { origin, wire } = await accepted;
+      wire.unpipe().pause();
+      origin.write(Buffer.concat([head, framed]));
+      const reader = (await pending).body!.getReader();
+      for (let missing = small.length; missing > 0;) missing -= (await reader.read()).value!.length;
+      (kind === "FIN" ? wire : origin).end();
+      expect(
+        await reader.read().then(
+          () => "ok",
+          error => error.code,
+        ),
+      ).toBe("ECONNRESET");
+    },
+  );
+
   it("rejects if a reset comes right behind more than the reader takes at once", async () => {
     const more = codings.gzip.flushed(zeros);
     // The second member starts early, so the stream is unfinished even where a reset discards unread bytes.

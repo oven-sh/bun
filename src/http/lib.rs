@@ -2116,7 +2116,10 @@ impl<'a> HTTPClient<'a> {
         if self.signals.get(signals::Field::Aborted) {
             return self.fail(crate::Error::Aborted);
         }
-        self.proxy_tunnel = None;
+        let end = match self.proxy_tunnel.take() {
+            Some(tunnel) if tunnel.closes_over_unsent_request() => TransportEnd::Failed,
+            _ => end,
+        };
         if self.state.is_body_complete_on_close() {
             if let Err(err) = self.end_body_on_close(end) {
                 return self.fail(err);

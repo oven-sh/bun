@@ -553,5 +553,60 @@ describe.concurrent.skipIf(!isLinux || isMusl || !cc)(
       // one on the worker thread.
       expect({ control, afterReseed, afterwards }).toEqual({ control: 0, afterReseed: 2, afterwards: 0 });
     });
+
+    // A Worker blocked in Atomics.wait cannot run the task that Bun.reseedRandom()
+    // posts to it. Its next randomUUID() must still come from a refill (one
+    // RAND_bytes call, which reseeds this thread's DRBG: one syscall) and not
+    // from the bytes it buffered before the call.
+    it("Bun.reseedRandom() refills the entropy cache of a Worker that is blocked at the call", async () => {
+      const script = `
+        const source = \`
+          const { statSync } = require("fs");
+          const reseeds = () => statSync(process.env.GETRANDOM_SYSCALL_COUNT_FILE).size;
+          self.onmessage = ({ data }) => {
+            const flag = new Int32Array(data);
+            crypto.randomUUID();
+            const control = reseeds();
+            crypto.randomUUID();
+            const controlDelta = reseeds() - control;
+            Atomics.store(flag, 0, 1);
+            Atomics.notify(flag, 0);
+            Atomics.wait(flag, 0, 1);
+            const before = reseeds();
+            crypto.randomUUID();
+            postMessage([controlDelta, reseeds() - before]);
+          };
+        \`;
+        const worker = new Worker("data:text/javascript," + encodeURIComponent(source));
+        worker.onerror = event => { console.error(event.message); process.exit(1); };
+        const flag = new Int32Array(new SharedArrayBuffer(4));
+        const reply = new Promise(resolve => (worker.onmessage = event => resolve(event.data)));
+        worker.postMessage(flag.buffer);
+        await Atomics.waitAsync(flag, 0, 0).value;
+        Bun.reseedRandom();
+        Atomics.store(flag, 0, 2);
+        Atomics.notify(flag, 0);
+        const [control, afterReseed] = await reply;
+        worker.terminate();
+        console.log(control, afterReseed);
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: {
+          ...bunEnv,
+          LD_PRELOAD: so,
+          GETRANDOM_SYSCALL_COUNT_FILE: join(dirPath, "syscall-count-reseedRandom-blocked.txt"),
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), exitCode, stderr }).toMatchObject({
+        stdout: expect.stringMatching(/^\d+ \d+$/),
+        exitCode: 0,
+      });
+      const [control, afterReseed] = stdout.trim().split(" ").map(Number);
+      expect({ control, afterReseed }).toEqual({ control: 0, afterReseed: 1 });
+    });
   },
 );

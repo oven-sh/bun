@@ -135,9 +135,7 @@ private:
     size_t m_sizeAfterLastCollection { 0 };
 };
 
-// Turns the JS thread's loop when a collection of its heap ends on another thread, or was handed over and ends on the JS
-// thread: only that thread runs the epilogue, and its loop has to see the timer that the end phase arms for the sweeper.
-// Attached where JSVMClientData::handsOverUnfinishedCollections.
+// Wakes the JS thread's loop when a collection ends that the loop would sleep through.
 class CollectionEndWake final : public JSC::HeapObserver {
     WTF_MAKE_NONCOPYABLE(CollectionEndWake);
 
@@ -289,8 +287,7 @@ public:
     // Their GCRequest::didFinishEndPhase, made once (JSC__VM__collectAsyncIdle).
     RefPtr<WTF::SharedTask<void()>> idleCollectionDidFinish;
 
-    // Whether the JS thread also gives up heap access for a collection that is unfinished when its wait has lasted a
-    // while (Bun__JSC_onQuietWait), not only for the idle ones above.
+    // Whether Bun__JSC_onQuietWait hands over every unfinished collection, not only the idle ones above.
     static bool canHandOverUnfinishedCollections();
     const bool handsOverUnfinishedCollections { canHandOverUnfinishedCollections() };
     // Whether the JS thread did that for the collection in progress. Read where that collection ends, on either thread.

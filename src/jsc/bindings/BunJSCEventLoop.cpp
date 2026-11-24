@@ -27,8 +27,7 @@ extern "C" std::atomic<int32_t> Bun__defaultRemainingRunsUntilSkipReleaseAccess;
 
 extern "C" bool Bun__VirtualMachine__isInspectorEnabled(void* /* BunVM */);
 
-// How long a wait of the JS thread lasts with nothing ready before the thread hands an unfinished collection over. A
-// loop that has something to do sooner is busy: it keeps the collection, and nothing changes for it.
+// A loop that has something ready sooner than this is busy, and keeps its collection.
 static constexpr unsigned quietMsBeforeHandOver = 10;
 
 static ALWAYS_INLINE bool hasUnfinishedCollectionToHandOver(JSC::VM& vm, WebCore::JSVMClientData& clientData)
@@ -42,38 +41,34 @@ extern "C" void Bun__JSC_acquireHeapAccessAfterWait(JSC::VM* _Nonnull vm)
     vm->heap.acquireAccess();
 }
 
-// What Bun__JSC_onBeforeWait returns, for a wait of us_loop_run_bun_tick that can block although that function does not
-// run before it: after a wakeup, epoll_pwait2.
+// Bun__JSC_onBeforeWait's result for the epoll wait after a wakeup, which us_loop_run_bun_tick enters without that hook.
 extern "C" unsigned int Bun__JSC_quietWaitMs(JSC::VM* _Nonnull vm)
 {
     // Not WebCore::clientData(): its downcast is a virtual call, and this runs at every tick that follows a wakeup.
     return hasUnfinishedCollectionToHandOver(*vm, *static_cast<WebCore::JSVMClientData*>(vm->clientData)) ? quietMsBeforeHandOver : 0;
 }
 
-// The wait ended after the milliseconds that Bun__JSC_onBeforeWait or Bun__JSC_quietWaitMs returned, with nothing ready.
-// Returns whether this gave up heap access for the rest of the wait, as Bun__JSC_onBeforeWait does.
+// The wait lasted quietMsBeforeHandOver with nothing ready. Returns whether this gave up heap access, as the hook does.
 extern "C" int Bun__JSC_onQuietWait(JSC::VM* _Nonnull vm)
 {
     auto* clientData = WebCore::clientData(*vm);
     if (!hasUnfinishedCollectionToHandOver(*vm, *clientData))
         return 0;
-    // No stopIfNecessary() first: a phase that is due goes to the collector thread with the conn. Run here, it could be
-    // the last one, and the rest of the wait would not have the timer that it arms for the sweeper.
+    // No stopIfNecessary() first: a last phase run here arms the sweeper's timer after the wait chose its timeout.
     clientData->handedOverCollection.store(true);
     vm->heap.releaseAccess();
     return 1;
 }
 
-// Returns in how many milliseconds the caller's wait is to end even if nothing is ready (0: no need). The libuv loop
-// calls this again then. us_loop_run_bun_tick calls Bun__JSC_onQuietWait.
+// Returns in how many milliseconds the caller is to call this again even if nothing else
+// wakes it (0: no need). us_loop_run_bun_tick calls Bun__JSC_onQuietWait then instead.
 //
 // `releasedHeapAccess` (null where the loop cannot take access back before it dispatches: libuv): set when this gave up
 // heap access for the wait, in which case Bun__JSC_acquireHeapAccessAfterWait must run before anything touches the JS
 // heap. It does that while an idle collection GarbageCollectionController requested is unfinished
 // (JSVMClientData::idleCollectionsPending): a requested collection only advances at this thread's safepoints while this
 // thread holds the collector's conn, and a parked thread has none; without access, the conn goes to the collector thread,
-// which finishes the collection while this one sleeps. Where JSVMClientData::handsOverUnfinishedCollections, every
-// unfinished collection is handed over like that, once the wait has lasted quietMsBeforeHandOver.
+// which finishes the collection while this one sleeps.
 extern "C" unsigned int Bun__JSC_onBeforeWait(JSC::VM* _Nonnull vm, uint64_t nowNs, int* _Nullable releasedHeapAccess)
 {
     ASSERT(vm);
@@ -167,16 +162,16 @@ extern "C" unsigned int Bun__JSC_onBeforeWait(JSC::VM* _Nonnull vm, uint64_t now
 #endif
         }
     }
-    if (releasedHeapAccess && previouslyHadAccess) {
-        auto* clientData = WebCore::clientData(*vm);
-        if (clientData->idleCollectionsPending.load()) {
-            // If the collector handed the conn back for a stop-the-world phase while this thread was awake, run that phase
-            // now rather than at the next time JS happens to run; then park without access so the rest goes on without us.
-            vm->heap.stopIfNecessary();
-            vm->heap.releaseAccess();
-            *releasedHeapAccess = 1;
-        } else if (hasUnfinishedCollectionToHandOver(*vm, *clientData))
-            return quietMsBeforeHandOver;
-    }
+    if (!releasedHeapAccess || !previouslyHadAccess)
+        return runAgainInMs;
+    auto* clientData = WebCore::clientData(*vm);
+    if (clientData->idleCollectionsPending.load()) {
+        // If the collector handed the conn back for a stop-the-world phase while this thread was awake, run that phase
+        // now rather than at the next time JS happens to run; then park without access so the rest goes on without us.
+        vm->heap.stopIfNecessary();
+        vm->heap.releaseAccess();
+        *releasedHeapAccess = 1;
+    } else if (hasUnfinishedCollectionToHandOver(*vm, *clientData))
+        return quietMsBeforeHandOver;
     return runAgainInMs;
 }

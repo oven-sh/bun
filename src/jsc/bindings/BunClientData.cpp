@@ -47,9 +47,7 @@ CollectionEndWake::~CollectionEndWake()
 
 void CollectionEndWake::didGarbageCollect(JSC::CollectionScope)
 {
-    // The JS thread ends a collection that it handed over when the collector thread could not stop it: that thread
-    // leaves the phase to the JS thread's next poll. The poll may be the loop's, where the wait's timeout is already
-    // chosen and does not have the timer that this phase arms for the sweeper.
+    // The JS thread can end a collection that it handed over at its loop's own poll, after that wait chose its timeout.
     if (m_clientData.handedOverCollection.exchange(false) || !m_heap.vm().currentThreadIsHoldingAPILock())
         Bun__VmHandle__wake(m_clientData.vmHandle.get());
 }
@@ -91,10 +89,12 @@ JSVMClientData::JSVMClientData(VM& vm, RefPtr<JSC::SourceProvider> sourceProvide
 bool JSVMClientData::canHandOverUnfinishedCollections()
 {
 #if OS(LINUX) || OS(DARWIN)
-    // One marker: with helper threads the collector thread waits for them while the JS thread has heap access
-    // (Collector::runConcurrentPhase), and a Worker that sleeps on an unfinished collection keeps them (#49314).
-    // More than one CPU: on the JS thread's own CPU the collector thread marks while that thread has events to answer.
-    return JSC::Options::numberOfGCMarkers() == 1 && !JSC::Options::runsCompiledImage() && WTF::numberOfProcessorCores() > 1;
+    // With helper threads the collector thread waits for them while the JS thread has heap access (#49314).
+    bool marksAlone = JSC::Options::numberOfGCMarkers() == 1;
+    // With one CPU it would mark on the JS thread's, while that thread has events to answer.
+    bool hasOwnCPU = WTF::numberOfProcessorCores() > 1;
+    // Not a compiled image: JSC hands the conn over differently there (Heap::waitForCollector). Untried.
+    return marksAlone && hasOwnCPU && !JSC::Options::runsCompiledImage();
 #else
     // Windows: the libuv loop dispatches inside its poll, so it cannot take heap access back first. FreeBSD: untried.
     return false;

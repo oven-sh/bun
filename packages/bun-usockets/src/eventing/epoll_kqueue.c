@@ -515,8 +515,7 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
     if (will_idle_inside_event_loop && loop->data.jsc_vm)
         quiet_ms = Bun__JSC_onBeforeWait(loop->data.jsc_vm, now_ns, &released_heap_access);
 #ifdef LIBUS_USE_EPOLL
-    /* After a wakeup the wait is expected to return at once, so the hook does not run. epoll_pwait2 blocks if the tick
-     * before this one already took that wakeup off the eventfd. Darwin's kevent64 does not (KEVENT_FLAG_IMMEDIATE). */
+    /* After a wakeup the hook is skipped, yet epoll_pwait2 blocks if the tick before already drained the eventfd. */
     else if (had_wakeups != 0 && (!timeout || timeout->tv_nsec != 0 || timeout->tv_sec != 0) && loop->data.jsc_vm)
         quiet_ms = Bun__JSC_quietWaitMs(loop->data.jsc_vm);
 #endif

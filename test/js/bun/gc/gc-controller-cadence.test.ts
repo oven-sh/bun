@@ -381,9 +381,12 @@ describe.skipIf(!collectorThreadTakesOver)("with one GC marker, a collection end
   const stay = `
   process.stdin.on("end", () => process.exit(1)).resume();
 `;
+  // Each scenario starts in a timer, after the full collection that follows a script's entry point: that one frees
+  // what the script drops sooner, and ends a collection that the script begins sooner. A script cannot see it end.
+  const afterStartup = 50;
   const drop = (finalized: string) => `
   const registry = new FinalizationRegistry(() => { ${finalized} });
-  setTimeout(() => { for (let i = 0; i < 64; i++) registry.register({ i }, i); }, 50);
+  setTimeout(() => { for (let i = 0; i < 64; i++) registry.register({ i }, i); }, ${afterStartup});
 `;
   const request = `
   setInterval(() => Bun.gc(false), 100);
@@ -421,7 +424,7 @@ describe.skipIf(!collectorThreadTakesOver)("with one GC marker, a collection end
         globalThis.cache = new Map();
         for (let i = 0; i < ${live}; i++) cache.set("k" + i, { i, s: "x" + i, t: [i] });
         for (let i = 0; i < 64; i++) registry.register({ i }, i);
-      }, 50);
+      }, ${afterStartup});
     `;
     const generational = { ...ticking, ...oneMarker, BUN_JSC_useGenerationalGC: undefined };
     expect(await exitCode([bunExe(), "-e", keep + stay + script], generational)).toBe(0);
@@ -498,7 +501,7 @@ describe.skipIf(!collectorThreadTakesOver)("with one GC marker, a collection end
         }).catch(() => {});
         clearInterval(again);
         process.exit(heldRef.deref() === held && held.leaves.length === 200 ? 0 : 2);
-      }, 50);
+      }, ${afterStartup});
     `,
     });
     expect(await exitCode([bunExe(), "main.js"], { ...timerOff, ...oneMarker }, String(dir))).toBe(0);
@@ -555,7 +558,7 @@ describe.skipIf(!collectorThreadTakesOver)("with one GC marker, a collection end
             server.stop(true);
           },
         } });
-      }, 50);
+      }, ${afterStartup});
     `;
     const echo = {
       ...timerOff,
@@ -625,7 +628,7 @@ describe.skipIf(!collectorThreadTakesOver)("with one GC marker, a collection end
         console.error("REQUESTED");
         ${begin}
         setTimeout(() => { Bun.gc(true); process.exit(0); }, 300);
-      }, 50);
+      }, ${afterStartup});
     `;
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", keep + stay + script],

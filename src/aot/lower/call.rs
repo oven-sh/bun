@@ -236,6 +236,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         {
             return None;
         }
+        let fixed = self.file.inputs.fixed_builtins;
+        fixed.note(BuiltinId::FunctionPrototypeCall);
         let function = self.lower_expression(obj);
         let mut values: SmallVec<[ValueId; 4]> = arguments
             .iter()

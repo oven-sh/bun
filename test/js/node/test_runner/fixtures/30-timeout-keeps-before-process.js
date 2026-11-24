@@ -1,5 +1,6 @@
-// node-test.test.ts runs this with `--timeout 100`: the timeout of the first
+// node-test.test.ts runs this with `--timeout 1000`: the timeout of the first
 // test kills the process that test spawned, and keeps the one from before().
+// `--timeout` also applies to before(), which needs time to spawn on a slow machine.
 const assert = require("node:assert");
 const { test, before, after } = require("node:test");
 const { bunEnv, bunExe } = require("harness");
@@ -30,7 +31,7 @@ test("test timeout kills the processes this test spawned", async () => {
   await new Promise(() => {});
 });
 
-// Its own `timeout` keeps `--timeout 100` from failing it while the process from before() starts up.
+// Its own `timeout` keeps `--timeout` from failing it while the process from before() starts up.
 test("process spawned in before survives the timeout", { timeout: 30_000 }, async () => {
   // Only the timeout's kill ends this process.
   await own.exited;

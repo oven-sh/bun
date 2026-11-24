@@ -45,7 +45,7 @@ test.concurrent.each([
   [
     "beforeEach",
     "process-kill-hook-timeout-fixture.ts",
-    "hook timeout kills the processes the hook spawned",
+    "beforeEach times out > hook timeout kills the processes the hook spawned",
     "process spawned in beforeAll survives the hook timeout",
   ],
 ])("%s timeout keeps processes spawned in earlier hooks", async (_, fixture, failing, passing) => {
@@ -62,5 +62,21 @@ test.concurrent.each([
   expect(combined).toContain(`(pass) ${passing}`);
   expect(combined).toContain(" 1 pass");
   expect(combined).toContain(" 1 fail");
+  expect(exitCode).toBe(1);
+});
+
+test("timeouts kill what the timed-out test or hook is responsible for", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", path.join(import.meta.dir, "process-kill-cleanup-fixture.ts")],
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const combined = out + err;
+  // a stuck afterEach or afterAll kills what its setup started; concurrent tests are killed when their group ends
+  expect(combined).toContain("(pass) processes of timed-out tests and hooks are killed");
+  // a stale timer doesn't kill the processes of a test without a timeout
+  expect(combined).toContain("(pass) a test without a timeout keeps its processes");
   expect(exitCode).toBe(1);
 });

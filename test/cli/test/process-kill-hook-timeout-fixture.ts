@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, expect, test } from "bun:test";
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
 // Echoes stdin to stdout until it is killed.
@@ -18,18 +18,19 @@ beforeAll(() => {
   server = echo();
 });
 
-// Times out in the first test only.
-beforeEach(async () => {
-  if (hookProcess) return;
-  hookProcess = echo();
-  await new Promise(() => {});
-}, 10);
-
 afterAll(() => {
   server.kill();
 });
 
-test("hook timeout kills the processes the hook spawned", () => {});
+// In its own describe, so its short timeout doesn't apply to the next test.
+describe("beforeEach times out", () => {
+  beforeEach(async () => {
+    hookProcess = echo();
+    await new Promise(() => {});
+  }, 10);
+
+  test("hook timeout kills the processes the hook spawned", () => {});
+});
 
 test("process spawned in beforeAll survives the hook timeout", async () => {
   // Only the timeout's kill ends this process.

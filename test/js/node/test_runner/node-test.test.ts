@@ -133,7 +133,7 @@ describe("node:test", () => {
   });
 
   test("should forward Infinity and finite timeouts so they override the runner default", async () => {
-    const { exitCode, stderr } = await runTests(["11-timeout-overrides.js"], {}, ["--timeout", "100"]);
+    const { exitCode, stderr } = await runTests(["11-timeout-overrides.js"], {}, ["--timeout", "1000"]);
     expect(stderr).toContain("2 pass");
     expect({ exitCode, stderr }).toMatchObject({
       exitCode: 0,
@@ -142,7 +142,7 @@ describe("node:test", () => {
   });
 
   test("should keep the process from a before() hook when a test times out", async () => {
-    const { exitCode, stderr } = await runTests(["30-timeout-keeps-before-process.js"], {}, ["--timeout", "100"]);
+    const { exitCode, stderr } = await runTests(["30-timeout-keeps-before-process.js"], {}, ["--timeout", "1000"]);
     expect(stderr).toContain("killed 1 dangling process");
     expect(stderr).toContain("(pass) process spawned in before survives the timeout");
     expect(stderr).toContain("1 pass");

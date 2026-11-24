@@ -1929,6 +1929,8 @@ pub(crate) struct DescribeScope {
 
     /// if true, the describe callback threw an error. do not run any tests declared in this scope.
     pub(crate) failed: Cell<bool>,
+    /// The auto-killer's mark when the first entry in this scope started. A timed-out `afterAll` kills the processes spawned since.
+    pub(crate) auto_killer_mark: Cell<Option<u64>>,
 
     pub(crate) task: OnceCell<Strong>,
     pub(crate) inherited: ScopeFunctions::InheritedOptions,
@@ -1944,6 +1946,7 @@ impl DescribeScope {
             hooks: Cell::default(),
             async_context: StrongCell::default(),
             failed: Cell::new(false),
+            auto_killer_mark: Cell::new(None),
             task: OnceCell::new(),
             inherited,
         }
@@ -1972,7 +1975,9 @@ impl DescribeScope {
                 around,
                 ..Default::default()
             };
-            ExecutionEntry::create(None, None, slot_cfg, None, Some(self), base, phase).push_to(entries)
+            let mut slot = ExecutionEntry::create(None, None, slot_cfg, None, Some(self), base, phase);
+            slot.tears_down_scope = true;
+            slot.push_to(entries)
         };
         let mut hooks = self.hooks.take();
         let first_teardown_slot = hooks.after_all.len() - hooks.teardown_slots_in_after_all;
@@ -1988,6 +1993,7 @@ impl DescribeScope {
                 hooks.around_all_teardown.insert(0, slot);
                 entry.teardown = Some(slot);
             }
+            HookTag::AfterAll => entry.tears_down_scope = true,
             _ => {}
         }
         let entry = entry.push_to(entries);
@@ -2047,6 +2053,8 @@ pub(crate) struct ExecutionEntry {
     pub(crate) repeat_count: u32,
     /// An entry with no callback until this Vitest `beforeAll` returns a function, or this `aroundAll` calls `runSuite()`.
     teardown: Option<EntryId>,
+    /// An `afterAll`-type hook: its timeout also kills the processes its scope's earlier entries spawned.
+    pub(crate) tears_down_scope: bool,
 }
 
 impl ExecutionEntry {
@@ -2079,6 +2087,7 @@ impl ExecutionEntry {
             retry_count: cfg.retry_count,
             repeat_count: cfg.repeat_count,
             teardown: None,
+            tears_down_scope: false,
         }
     }
 

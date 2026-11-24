@@ -1137,8 +1137,8 @@ function namesOf(shape: HeaderShape): string[] {
     const keys: string[] = [];
     for (let index = 0; index < shape.count; index++) {
       const node = shapeAt(shape, index);
-      names.push(node.name);
-      keys.push(node.key);
+      names[index] = node.name;
+      keys[index] = node.key;
     }
     shape.names = names;
     shape.keys = keys;
@@ -1165,7 +1165,7 @@ function childOf(parent: HeaderShape, name: string, key: string): HeaderShape | 
   if (headerShapeCount === kMaxHeaderShapes || isArrayIndex(key)) return null;
   headerShapeCount++;
   const child = new HeaderShape(parent, name, key, bitsOfHeaderKey(key));
-  children.push(child);
+  children[children.length] = child;
   return child;
 }
 
@@ -1830,7 +1830,7 @@ OutgoingMessage.prototype.getHeaderNames = function getHeaderNames(this: $Node.O
   const exchange = this.$exchange;
   // oxlint-disable-next-line bun/no-duplicate-conditional-property-access
   if (exchange !== undefined && exchange.response === this && exchange.shape !== spilledHeadersShape)
-    return keysOf(exchange.shape).slice();
+    return [...keysOf(exchange.shape)];
   return this[kOutHeaders] !== null ? ObjectKeys(this[kOutHeaders]) : [];
 };
 
@@ -1840,7 +1840,7 @@ OutgoingMessage.prototype.getRawHeaderNames = function getRawHeaderNames(this: $
   const exchange = this.$exchange;
   // oxlint-disable-next-line bun/no-duplicate-conditional-property-access
   if (exchange !== undefined && exchange.response === this && exchange.shape !== spilledHeadersShape)
-    return namesOf(exchange.shape).slice();
+    return [...namesOf(exchange.shape)];
   const headersMap = this[kOutHeaders];
   if (headersMap === null) return [];
 

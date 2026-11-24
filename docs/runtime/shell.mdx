@@ -564,7 +564,7 @@ Bun Shell is a small programming language implemented in Rust, with a handwritte
 By design, Bun Shell _does not pass your command to a system shell_ like `/bin/sh`. It's a
 re-implementation of bash that runs in the same Bun process.
 
-On macOS and Linux, one case starts `/bin/sh`. When a command names an executable text file that has no `#!` line, Bun Shell runs it as `/bin/sh <file> <arguments>`, as other shells do. `/bin/sh` reads the file. It does not parse your command, so each argument is still one literal string. Bun Shell does not run an empty file, a file with a NUL byte in its first line, or a file with a JavaScript or TypeScript extension: the command fails with `Exec format error`.
+On macOS and Linux, one case starts `/bin/sh`. When a command names an executable text file that has no `#!` line, Bun Shell runs it as `/bin/sh <file> <arguments>`, as other shells do. `/bin/sh` reads the file. It does not parse your command, so each argument is still one literal string. Bun Shell does not run an empty file, a file with a NUL byte in the first 128 bytes of its first line, or a file with a JavaScript or TypeScript extension: the command fails with `Exec format error`.
 
 When parsing command arguments, Bun Shell treats all _interpolated variables_ as single, literal strings.
 

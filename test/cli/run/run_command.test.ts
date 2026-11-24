@@ -270,6 +270,7 @@ describe.concurrent.skipIf(isWindows)("a command that is a script with no #! lin
     ["has a NUL in byte 128 of its first line", line127 + "\0\n"],
     ["is the 4 bytes of the ELF magic", "\x7fELF"],
     ["has a #! line that names an empty file", ({ root }: { root: string }) => `#!${root}/empty\necho ran-by-sh\n`],
+    ["has a #! line after a byte order mark", "\uFEFF#!/bin/sh\necho ran-by-sh\n"],
   ])("a bin that %s keeps ENOEXEC", async (_, bin) => {
     using app = project(bin);
     expect(await runTool(app)).toEqual(enoexec);

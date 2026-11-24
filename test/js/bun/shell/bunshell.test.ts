@@ -3845,6 +3845,7 @@ describe.concurrent.skipIf(isWindows)("an executable file with no #! line", () =
     ["has a NUL in byte 128 of its first line", line127 + "\0\n"],
     ["is the 4 bytes of the ELF magic", "\x7fELF"],
     ["has a #! line that names an empty file", ({ root }: { root: string }) => `#!${root}/empty\necho ran-by-sh\n`],
+    ["has a #! line after a byte order mark", "\uFEFF#!/bin/sh\necho ran-by-sh\n"],
   ])("a file that %s keeps the error", async (_, contents) => {
     expect(await run(contents)).toEqual(refused());
   });

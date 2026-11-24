@@ -121,16 +121,19 @@ pub(crate) fn is_shell_script(path: &bun_core::ZStr) -> bun_sys::Result<bool> {
         return Ok(false);
     }
     let first_line = strings::index_of_char_usize(text, b'\n').map_or(text, |end| &text[..end]);
-    // `#!` names an interpreter that is not sh. bash also refuses the ELF magic and a NUL in the first line.
-    if text.starts_with(b"#!")
+    // `#!` names an interpreter that is not sh, also after a UTF-8 byte order mark. bash also refuses the ELF magic and a NUL in the first line.
+    let without_bom = text.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(text);
+    if without_bom.starts_with(b"#!")
         || text.starts_with(b"\x7fELF")
         || strings::contains_char(first_line, 0)
     {
         return Ok(false);
     }
-    // sh would run the source of a JavaScript or TypeScript file as commands. Without the fd path, a symlink hides the name.
+    // sh would run the source of a JavaScript or TypeScript file as commands. `path` can be a symlink with another name, so a file with no known path is refused.
     let mut buf = bun_paths::path_buffer_pool::get();
-    let name = bun_sys::get_fd_path(file.fd(), &mut buf).map_or(path.as_bytes(), |real| &*real);
+    let Ok(name) = bun_sys::get_fd_path(file.fd(), &mut buf) else {
+        return Ok(false);
+    };
     let loader = bun_bundler::options::DEFAULT_LOADERS.get(bun_paths::extension(name));
     Ok(!loader.is_some_and(|loader| loader.is_javascript_like()))
 }

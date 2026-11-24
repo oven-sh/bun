@@ -157,6 +157,8 @@ public:
         // The modules that have called mock.module(), vi.mock() and the like since the running test file started.
         WTF::UncheckedKeyHashSet<String> mockingModules = {};
         WTF::UncheckedKeyHashMap<String, unsigned> testFileOfModule = {};
+        // A compiled file is in no require map. This is the file that required it first, if that runs from source.
+        WTF::UncheckedKeyHashMap<String, String> requirersOfCompiledFiles = {};
         // Data files that a reset has evicted under a mock whose end restores their original, with the test file in which their next load does not show it yet.
         WTF::UncheckedKeyHashMap<String, unsigned> dataFilesResetUnderMocks = {};
         WTF::ListHashSet<String> modulesToEvictOnceLoaded = {};

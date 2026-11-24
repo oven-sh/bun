@@ -3733,6 +3733,13 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
         }
     }
 
+#if ENABLE(AOT)
+    if (evict.all)
+        plugins.requirersOfCompiledFiles.clear();
+    for (auto& [required, requirer] : plugins.requirersOfCompiledFiles)
+        addImporter(importersOf, requirer, required);
+#endif
+
     // A load stuck behind an abandoned fetch never finishes, so the entries waiting on it don't have to stay.
     Vector<String> neverLoads;
     for (auto& key : evict.abandonedModules) {
@@ -3755,18 +3762,22 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
     // A patched-in-place module that imports an evicted one goes after all, and is walked again for the rest of its importers.
     UncheckedKeyHashSet<String> evicted;
     keys.removeAllMatching([&](const String& key) { return !evicted.add(key).isNewEntry; });
+#if ENABLE(AOT)
+    auto evictReleased = [&] {
+        for (String& released : JSC::AOT::takeModulesReleasedSincePass(globalObject)) {
+            if (evicted.add(released).isNewEntry)
+                keys.append(WTF::move(released));
+        }
+    };
+#endif
     for (size_t i = 0; i < keys.size(); ++i) {
         String key = keys[i];
         bool stays = staysInRegistry.contains(key) || staysInRequireCache.contains(key);
 #if ENABLE(AOT)
         // Compiled importers are not registered.
         auto* entry = vm.hasCompiledCode() && !evict.all && !loading.contains(key) ? loader->registryEntry(JSC::Identifier::fromString(vm, key)) : nullptr;
-        if (entry && entry->record() && entry->record()->hasLiveExports() && JSC::AOT::releaseAbsentModuleImporters(globalObject, key, stays && evict.onlyImportersFromEarlierTestFiles)) {
-            for (String& released : JSC::AOT::takeModulesReleasedSincePass(globalObject)) {
-                if (evicted.add(released).isNewEntry)
-                    keys.append(WTF::move(released));
-            }
-        }
+        if (entry && entry->record() && entry->record()->hasLiveExports() && JSC::AOT::releaseAbsentModuleImporters(globalObject, key, stays && evict.onlyImportersFromEarlierTestFiles))
+            evictReleased();
 #endif
         auto importers = importersOf.find(key);
         if (importers == importersOf.end())
@@ -3776,6 +3787,14 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
             // It imports the real package whether or not vi.mock() mocks it.
             if (isExternalizedByVitest(globalObject, importer) && (evict.packagesToRestore.contains(key) || evict.packagesToStash.contains(key)))
                 continue;
+#if ENABLE(AOT)
+            if (auto compiled = vm.hasCompiledCode() && importer != key && !loader->registryEntry(JSC::Identifier::fromString(vm, importer)) ? Bun::compiledModuleForPath(importer) : std::nullopt; compiled && JSC::AOT::isESModule(*compiled) && JSC::AOT::hasInstances(globalObject, *compiled)) {
+                auto loadedBy = JSC::AOT::evaluatedBy(globalObject, *compiled);
+                bool leaves = loadedBy == JSC::AOT::LoadedBy::EarlierTestFile || (loadedBy == JSC::AOT::LoadedBy::ThisTestFile && !(stays && evict.onlyImportersFromEarlierTestFiles));
+                if (leaves && JSC::AOT::releaseModuleAndImporters(globalObject, *compiled, std::nullopt))
+                    evictReleased();
+            }
+#endif
             if (!testFile || importer == key || (stays && evict.onlyImportersFromEarlierTestFiles && testFile == plugins.testFile))
                 continue;
             bool stayed = staysInRegistry.remove(importer);
@@ -3857,6 +3876,7 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
             plugins.loadedByImportActual.remove(key);
         }
         if (leavesRequireCache) {
+            plugins.requirersOfCompiledFiles.remove(key);
             JSString* keyString = jsString(vm, key);
             // Only keep real CommonJS modules. require()'s wrapper for an ES module or a mock gets rebuilt, and may wrap the test file's own mock.
             auto* esModule = plugins.evictedPreloadModules.get(key).get();

@@ -11,8 +11,10 @@ export function echo() {
   });
 }
 
+export type EchoProcess = ReturnType<typeof echo>;
+
 /** Sends a line to an `echo()` process and returns what comes back. */
-export async function roundTrip(proc: ReturnType<typeof echo>): Promise<string> {
+export async function roundTrip(proc: EchoProcess): Promise<string> {
   const reader = proc.stdout.getReader();
   try {
     proc.stdin.write("ping\n");
@@ -32,3 +34,5 @@ export function idle() {
     env: bunEnv,
   });
 }
+
+export type IdleProcess = ReturnType<typeof idle>;

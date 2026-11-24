@@ -1,10 +1,10 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
-import { idle } from "./process-kill-helpers";
+import { idle, type IdleProcess } from "./process-kill-helpers";
 
-let fromBeforeEach: ReturnType<typeof idle>;
-let fromBeforeAll: ReturnType<typeof idle>;
-let fromSyncTest: ReturnType<typeof idle>;
-const fromConcurrentTests: ReturnType<typeof idle>[] = [];
+let fromBeforeEach: IdleProcess;
+let fromBeforeAll: IdleProcess;
+let fromSyncTest: IdleProcess;
+const fromConcurrentTests: IdleProcess[] = [];
 
 describe("afterEach times out", () => {
   beforeEach(() => {

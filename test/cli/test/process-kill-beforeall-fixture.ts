@@ -1,9 +1,9 @@
 import { afterAll, beforeAll, beforeEach, expect, test } from "bun:test";
-import { echo, roundTrip } from "./process-kill-helpers";
+import { echo, type EchoProcess, roundTrip } from "./process-kill-helpers";
 
-let server: ReturnType<typeof echo>;
-let perTest: ReturnType<typeof echo> | undefined;
-let own: ReturnType<typeof echo>;
+let server: EchoProcess;
+let perTest: EchoProcess | undefined;
+let own: EchoProcess;
 
 beforeAll(() => {
   server = echo();

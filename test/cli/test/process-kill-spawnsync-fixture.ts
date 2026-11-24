@@ -1,8 +1,8 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
-import { echo, roundTrip } from "./process-kill-helpers";
+import { echo, type EchoProcess, roundTrip } from "./process-kill-helpers";
 
-let server: ReturnType<typeof echo>;
+let server: EchoProcess;
 
 beforeAll(() => {
   server = echo();

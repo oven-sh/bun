@@ -42,9 +42,7 @@ impl ProcessAutoKiller {
     }
 
     pub fn kill(&self) -> Result {
-        Result {
-            processes: self.kill_processes(),
-        }
+        self.kill_spawned_since(0)
     }
 
     /// The serial the next tracked process gets. Pass it to [`ProcessAutoKiller::kill_spawned_since`] to kill only the processes spawned after this call.
@@ -70,14 +68,6 @@ impl ProcessAutoKiller {
             count += Self::kill_one(&p) as u32;
         }
         Result { processes: count }
-    }
-
-    fn kill_processes(&self) -> u32 {
-        let mut count: u32 = 0;
-        while let Some(entry) = self.processes.with_mut(ArrayHashMap::pop) {
-            count += Self::kill_one(&entry.key) as u32;
-        }
-        count
     }
 
     fn kill_one(p: &RefPtr<Process>) -> bool {

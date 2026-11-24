@@ -362,9 +362,7 @@ impl ExecutionSequence {
 
     fn evaluate_timeout(&self, buntest: &BunTest, id: SequenceEntryId, now: &Timespec) -> bool {
         let sequence_entry = buntest.sequence_entry(id);
-        let timespec = sequence_entry.timespec.get();
-        if !timespec.eql(&Timespec::EPOCH) && timespec.order(now) == core::cmp::Ordering::Less {
-            // timed out
+        if deadline_passed(sequence_entry.timespec.get(), now) {
             let entry = buntest.entry(sequence_entry.entry);
             let has_done_parameter = entry.calling == Calling::Jest { done: true };
             self.result.set(if entry.around.is_some() {
@@ -501,8 +499,7 @@ impl Execution {
                 let sequence = &sequences[0];
                 if let Some(entry) = sequence.active_entry.get() {
                     let now = Timespec::now_force_real_time();
-                    let timespec = buntest.sequence_entry(entry).timespec.get();
-                    if !timespec.eql(&Timespec::EPOCH) && timespec.order(&now) == core::cmp::Ordering::Less {
+                    if deadline_passed(buntest.sequence_entry(entry).timespec.get(), &now) {
                         Execution::kill_spawned_since(global_this, sequence.kill_mark(buntest, entry));
                     }
                 }
@@ -743,7 +740,6 @@ impl Execution {
     }
 
     fn on_sequence_started(buntest: &BunTest, global_this: &JSGlobalObject, sequence: &ExecutionSequence) {
-        sequence.attempt_auto_killer_mark.set(global_this.bun_vm().auto_killer.mark());
         let test = sequence.test(buntest);
         if test.is_some_and(|entry| !entry.callback.is_some()) {
             return;
@@ -1181,15 +1177,18 @@ fn step_sequence_one(
     let next_item = buntest.entry(next_entry.entry);
     sequence.executing.set(true);
     // The first entry becomes active again after its fixture setup entries, so `started_at` guards against a second start.
+    let mark = global_this.bun_vm().auto_killer.mark();
     if Some(next_id) == sequence.first_entry && sequence.started_at.get().eql(&Timespec::EPOCH) {
+        sequence.attempt_auto_killer_mark.set(mark);
         Execution::on_sequence_started(buntest, global_this, sequence);
     }
-    let mark = global_this.bun_vm().auto_killer.mark();
     sequence.auto_killer_mark.set(mark);
+    // Outer scopes of a marked scope are marked already.
     for scope in buntest.scopes_from(next_item.base.parent) {
-        if scope.auto_killer_mark.get().is_none() {
-            scope.auto_killer_mark.set(Some(mark));
+        if scope.auto_killer_mark.get().is_some() {
+            break;
         }
+        scope.auto_killer_mark.set(Some(mark));
     }
     Execution::on_entry_started(next_entry, next_item);
     if next_item.added_in_phase == AddedInPhase::Preload {
@@ -1336,4 +1335,9 @@ fn step_sequence_one(
         Execution::advance_sequence(buntest, sequence, group);
         return Ok(None); // run again
     }
+}
+
+/// Whether `deadline` is set (not `EPOCH`, which means no timeout) and lies before `now`.
+fn deadline_passed(deadline: Timespec, now: &Timespec) -> bool {
+    !deadline.eql(&Timespec::EPOCH) && deadline.order(now) == core::cmp::Ordering::Less
 }

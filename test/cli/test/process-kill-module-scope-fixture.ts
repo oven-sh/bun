@@ -1,9 +1,9 @@
 import { afterAll, expect, test } from "bun:test";
-import { echo, roundTrip } from "./process-kill-helpers";
+import { echo, type EchoProcess, roundTrip } from "./process-kill-helpers";
 
 // Started when the file loads. Bun tracks it under --isolate and --parallel (#46373).
 const server = echo();
-let own: ReturnType<typeof echo>;
+let own: EchoProcess;
 
 afterAll(() => {
   server.kill();

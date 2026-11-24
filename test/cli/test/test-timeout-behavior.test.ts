@@ -34,6 +34,17 @@ if (isFlaky && isLinux) {
   });
 }
 
+async function runFixture(fixture: string, ...args: string[]) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", ...args, path.join(import.meta.dir, fixture)],
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { combined: out + err, exitCode };
+}
+
 // Only the processes the timed-out test or hook spawned are killed, not the ones spawned before it.
 test.each([
   {
@@ -69,14 +80,7 @@ test.each([
     passing: "process spawned at the top of the file survives the timeout",
   },
 ])("$name timeout keeps processes spawned before it", async ({ fixture, args = [], failing, passing }) => {
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "test", ...args, path.join(import.meta.dir, fixture)],
-    stdout: "pipe",
-    stderr: "pipe",
-    env: bunEnv,
-  });
-  const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  const combined = out + err;
+  const { combined, exitCode } = await runFixture(fixture, ...args);
   expect(combined).toContain("killed 1 dangling process");
   expect(combined).toContain(`(fail) ${failing}`);
   expect(combined).toContain(`(pass) ${passing}`);
@@ -86,14 +90,7 @@ test.each([
 });
 
 test("timeouts kill what the timed-out test or hook is responsible for", async () => {
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "test", path.join(import.meta.dir, "process-kill-cleanup-fixture.ts")],
-    stdout: "pipe",
-    stderr: "pipe",
-    env: bunEnv,
-  });
-  const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  const combined = out + err;
+  const { combined, exitCode } = await runFixture("process-kill-cleanup-fixture.ts");
   // a stuck afterEach or afterAll kills what its setup started; concurrent tests are killed when their group ends
   expect(combined).toContain("(pass) processes of timed-out tests and hooks are killed");
   // a stale timer doesn't kill the processes of a test without a timeout
@@ -102,14 +99,7 @@ test("timeouts kill what the timed-out test or hook is responsible for", async (
 });
 
 test("--bail kills the processes the skipped afterAll hooks would have stopped", async () => {
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "test", "--bail", path.join(import.meta.dir, "process-kill-bail-fixture.ts")],
-    stdout: "pipe",
-    stderr: "pipe",
-    env: bunEnv,
-  });
-  const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  const combined = out + err;
+  const { combined, exitCode } = await runFixture("process-kill-bail-fixture.ts", "--bail");
   const pid = Number(combined.match(/beforeAll pid (\d+)/)?.[1]);
   const alive = () => {
     try {
